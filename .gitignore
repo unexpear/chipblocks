@@ -1,0 +1,64 @@
+# Node / Electron / npm
+node_modules/
+dist/
+out/
+release/
+build/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.yarn/
+
+# Python / LiteX
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# HDL / build artifacts
+*.vcd
+*.fst
+*.bit
+*.bin
+*.elf
+*.hex
+*.gds
+*.gdsii
+build_*/
+soc_*.v
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Secrets / local config
+.env
+.env.local
+.env.*.local
+*.local
+.claude/local.json
+
+# Tool caches
+.cache/
+.parcel-cache/
+
+# Allow these in case wildcard catches them
+!docs/build/
+!.gitkeep
