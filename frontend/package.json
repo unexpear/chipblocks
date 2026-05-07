@@ -19,6 +19,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@xyflow/react": "^12.10.2",
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {
