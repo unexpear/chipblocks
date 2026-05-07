@@ -135,6 +135,8 @@ The bottleneck **isn't manufacturing** — fabs at mature nodes (130nm+) and FPG
 - AI fully designs chip from English specification (architecture should not preclude, but unreliable in 2026)
 - Closed-PDK support for advanced nodes (when more foundries open PDKs)
 - Internationalization (multi-language UI and AI consultant)
+- **PCB and board design** — schematic capture, component libraries (resistors / caps / ICs / connectors), layout editor, Gerber + drill + BOM output for PCB fabs. Possible "chip → product" flow: design a chip in ChipForge, drop it onto a PCB in the same app. Closest comparables: KiCad (engineer-grade), EasyEDA (web-based), Fritzing (drag-drop beginner). The visual node-graph + block-library architecture extends naturally to schematic capture.
+- **Other board / kit support** — deeper FPGA dev-board integration (beyond just bitstream output), breadboard prototyping view, Arduino shields, Raspberry Pi HATs, custom carrier-board generation, modular synth eurorack panels.
 
 ## Success Metrics
 
@@ -212,9 +214,11 @@ The defining metric is **(E) anyone other than the developer using the tool**. W
 | **2 — First External User** | 3–6 | Someone who isn't the developer makes a chip with it | Add 10–15 audio blocks, basic FPGA bitstream output (iCE40), polish UI, basic docs, ship to GitHub |
 | **3 — Domain Expansion** | 6–12 | 100+ external users, community starts contributing | Add second domain (custom MCU or sensor), more FPGA targets, ASIC tape-out, Tiny Tapeout integration |
 | **4 — Polish & Reach** | 12–18 | Real chips fabricated, sustained community | Web version, classroom mode, marketplace, more domains, conference / Hackaday presence |
+| **5 — Boards & PCBs (future)** | 18–30+ | Extend beyond the chip into the physical board around it | Schematic editor, component library (passives + connectors + common ICs), Gerber + drill + BOM output for PCB fabs, "drop your ChipForge chip onto a PCB" flow. Reuses the visual node-graph editor and block-library system from the chip side. Possibly also: deeper FPGA dev-board integration, Arduino shields, Pi HATs, eurorack panels. |
 
 **Schedule risks**:
 - Block library quality is the biggest single risk; one bad block breaks every user using it
 - ASIC PnR runtime (hours per build) means Phase 3 needs an async UX or cloud workers
 - Solo + non-technical means Claude Code reliability matters; Anthropic API outages or capability changes could slow specific weeks
 - **Burnout** — solo 18-month projects often die at month 9 when the early excitement fades. Plan for sustainability: regular breaks, public progress posts, community engagement before you need it
+- **Phase 5 (PCB) is essentially a second product** — schematic capture, layout, routing, and Gerber output is a fundamentally different workflow from chip RTL. Worth treating as a separate workstream when we get there, possibly a sibling project under the ChipForge brand. Don't let it bleed into Phases 1–4 timelines.
