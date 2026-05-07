@@ -158,23 +158,49 @@ Edge cases handled:
 **✓ Done — 2026-05-07** (alongside Item 1). `winToWsl()` in `frontend/electron/main/ipc.ts` converts `C:\foo\bar` → `/mnt/c/foo/bar` via regex on the drive letter + slash flip. The renderer never sees WSL paths — main translates on the way in (script + JSON + WAV paths) and reads the WAV via `fs.readFile` on the Windows path. Tested end-to-end with a temp dir under `%TEMP%\chipforge-XXXXXX\` containing graph.json + out.wav.
 
 ### Item 7 — E2E demo
-*[fill in when complete]*
+**✓ Done — 2026-05-07.** Full demo verified by hand in the running Electron app. Sequence confirmed end-to-end:
+1. Click ▶ Play → status flips to spinner + "Synthesizing…" + Cancel button appears
+2. ~3 seconds total (synth + playback): Electron main spawns `wsl python3 synth.py`, the script reads the IPC-supplied graph JSON, instantiates Oscillator + Mixer + Output blocks from `BLOCK_REGISTRY`, wires their ports per the React Flow edges, runs the Amaranth simulation, writes a 176 KB WAV
+3. Status flips to "Playing (172 KB)" and the 440 Hz tone plays through the speakers
+4. Cancel mid-synth: kills the wsl python3 process, clears UI, no error toast (cancellation isn't an error)
+5. Block positions on the canvas don't matter — only wiring drives the audio (verified by dragging blocks before pressing Play)
+
+**Item 7 closed; the wow demo works.** This is the moment Sprint 2 was designed around.
 
 ### Item 8 — Sprint retrospective
-*[fill in at end of sprint]*
+**✓ Done — 2026-05-07.** Filled in below. Sprint 2 closed; Sprint 3 plan TBD.
 
 ---
 
 ## Retrospective (end of sprint)
 
 **What went well:**
-*[fill in]*
+- **Research agents pulled real weight again** — the Electron + WSL + Python IPC research delivered the entire `spawn('wsl.exe', [...])` + WSLENV + temp-file + JSON-on-stderr cookbook before I wrote a single line. Item 1 worked first try because of it. Same for the HDL audit agent that recommended Amaranth + runtime-composition; we ate both recommendations.
+- **The IPC bridge ran first attempt.** No debug pass needed. That was the biggest unknown of the sprint and it just worked.
+- **Migen → Amaranth swap was nearly free.** Same author, same license (BSD-2), and Amaranth's API is genuinely cleaner. Got the swap in mid-sprint without delaying anything.
+- **Runtime composition > codegen** for the translator. We don't generate Migen/Amaranth source code; we instantiate block classes at simulation time and wire them via `m.d.comb`. ~150 lines of `synth.py` does the whole job. Codegen would have been many times more code and much more fragile.
+- **All 5 translator smoke tests passed on first run.** The block-library contract (`input_ports` / `output_ports` dicts keyed by React Flow handle ids) made the translator cleanly mechanical.
+- **Sprint 2 finished in one session.** Original plan was 3 weeks at ~15 hrs/week; actual was a single focused day. Solo + Claude Code + good research up front is fast.
+- **License-policy lockdown landed cleanly mid-sprint** (the user-driven cleanup): permissive-only stance documented in PRD/CLAUDE/CREDITS without disrupting any sprint work.
 
 **What didn't:**
-*[fill in]*
+- **Amaranth's testbench API needed `ctx.delay()` for combinational-only blocks**, not `ctx.tick()` — `add_clock("sync")` errors when no `sync` domain exists. Caught it on first test run; quick fix. Worth documenting in the block-author docs whenever those exist.
+- **No real visual polish on the spinner / toast.** Functional, but not beautiful. Sprint 3 polish if we feel like it.
+- **15 npm vulnerabilities still unaddressed** (carried from Sprint 1). Mostly transitive, low real risk; defer until we're closer to public release.
+- **No tests for the Electron main IPC layer.** The Python translator is well-tested (test_synth.py), but `ipc.ts` (path translation, spawn args, error parsing) is verified only by the live demo. Worth adding unit tests in a future sprint.
 
 **What surprised me:**
-*[fill in]*
+- **Amaranth 0.5.8 is on PyPI** and installable directly via `pip install --user --break-system-packages amaranth`. No litex_setup-style heavyweight install needed.
+- **Amaranth's `Simulator.add_testbench` async pattern** is much nicer than Migen's generator-based testbenches. `await ctx.tick()` reads naturally; `samples.append(ctx.get(signal))` is obvious.
+- **The full graph → audio pipeline survived first contact with reality with zero bugs.** I expected at least one round of "the WAV is silent" or "ports aren't wiring." Got neither.
+- **The runtime-composition pattern means the translator is also the simulator harness** — there's no intermediate code-generation stage to debug. The whole thing fits in one mental model.
+- **Cancellation worked first try.** Module-level `currentProc` + `wasCancelled` flag + SIGKILL was enough; no need for AbortController or per-request id maps yet.
 
 **What changes Sprint 3:**
-*[fill in]*
+- Sprint 3 = **AI consultant integration** + **broader block library** + **project save/load improvements**. Specifically:
+  - Chat sidebar that knows the block library (`BLOCK_REGISTRY` + per-block port specs) and the current canvas state (nodes + edges JSON), powered by BYOK Claude/GPT API
+  - More audio blocks: triangle wave, sawtooth, ADSR envelope, low-pass filter, sample-and-hold — each a small Amaranth `Elaboratable` matching the existing port-dict contract
+  - Block parameter editing in the UI (the deferred Sprint 2 P1 #9): change Oscillator freq → press Play → hear the change
+  - Extend save/load to include cached audio output (so reloading a saved project doesn't require re-synth)
+- Carry forward: npm audit cleanup, IPC unit tests, spinner/toast visual polish.
+- The whole product is now demoable. Sprint 3 starts to make it _useful_.
