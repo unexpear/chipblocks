@@ -115,7 +115,7 @@ If Sprint 2 succeeds, you should be able to say:
 > Fill this in as you go. One paragraph per completed item. Be honest about what didn't work — that's where the value is.
 
 ### Item 1 — Electron ↔ Python IPC
-*[fill in when complete]*
+**✓ Done — 2026-05-07.** Full bridge working end-to-end. Click Play in the toolbar → renderer calls `window.chipforge.synth({nodes, edges})` → main spawns `wsl.exe -d Ubuntu -- python3 <wsl-path> --in <graph.json> --out <out.wav>` → script reads JSON, writes WAV → main reads WAV bytes via `fs.readFile`, sends back as ArrayBuffer over IPC → renderer creates a Blob URL and plays via `<audio>`. **Manually verified by clicking Play in the running app — heard the 440 Hz tone.** Patterns: `spawn` (never `exec`/`shell:true`), argv as array, `WSLENV=PYTHONIOENCODING/u:PYTHONUNBUFFERED/u`, JSON-on-stderr error parsing, 30s kill timeout. Implementation in `frontend/electron/main/ipc.ts`. **Items 4 (Play button) and 6 (Windows ↔ WSL path translation) closed in the same change** since they were tightly coupled. **Item 5 (loading + error states) partially done** via the inline `.toolbar-status` text — full spinner + toast UX still TODO.
 
 ### Item 2 — Python block implementations
 *[fill in when complete]*
@@ -124,13 +124,13 @@ If Sprint 2 succeeds, you should be able to say:
 *[fill in when complete]*
 
 ### Item 4 — Play button
-*[fill in when complete]*
+**✓ Done — 2026-05-07** (alongside Item 1). Button appears in the toolbar between the title and Save/Load. While in flight, button label flips to "Synthesizing…" and is disabled. Status text shown left of buttons (`Synthesizing…` → `Playing (172 KB)` → cleared on next click).
 
 ### Item 5 — Loading + error states
 *[fill in when complete]*
 
 ### Item 6 — Path handling
-*[fill in when complete]*
+**✓ Done — 2026-05-07** (alongside Item 1). `winToWsl()` in `frontend/electron/main/ipc.ts` converts `C:\foo\bar` → `/mnt/c/foo/bar` via regex on the drive letter + slash flip. The renderer never sees WSL paths — main translates on the way in (script + JSON + WAV paths) and reads the WAV via `fs.readFile` on the Windows path. Tested end-to-end with a temp dir under `%TEMP%\chipforge-XXXXXX\` containing graph.json + out.wav.
 
 ### Item 7 — E2E demo
 *[fill in when complete]*
