@@ -117,7 +117,7 @@ If those four are true, **Sprint 2 = "wire them together"** — add the translat
 **✓ Done — 2026-05-07.** Added `@xyflow/react@12.10.2` and built a working node-graph editor in `frontend/src/blocks/`. Three custom block components: **Oscillator** (audio-out), **Mixer** (in-1, in-2 → mix-out), **Output** (audio-in). Initial graph shows the three blocks pre-wired Osc → Mixer → Output. User can drag blocks, drag connections between handles, save the graph as a JSON file (browser download), and load a saved graph back via file input. CSS adjusted (stripped body's `place-items: center` from index.css; imported `@xyflow/react/dist/style.css` globally in main.tsx) so the canvas fills the Electron window. `nodeTypes` is hoisted to module scope per React Flow best practice. `tsc --noEmit` clean. **To run**: `cd frontend && npm run dev`.
 
 ### Item 5 — LiteX install + lab004/pwm.py
-*[fill in when complete]*
+**✓ Done — 2026-05-07.** Installed in WSL2 Ubuntu (Python 3.12). Migen 0.9.2 and LiteX 2025.12 installed to user-site (`~/.local/`) via `pip3 install --user --break-system-packages` (Ubuntu 24.04's PEP 668 default blocks plain pip without a venv, and `python3.12-venv` requires sudo so we used the user-site escape hatch — works fine for our purposes). Cloned `litex-hub/fpga_101` to `backend/fpga_101/` (gitignored); ran `lab004/pwm.py` and got a 278KB `pwm.vcd` simulation output. Created `backend/README.md` and `backend/setup.sh` so the install is reproducible. **Note**: LiteX CLI tools (`litex_sim`, `litex_term`, etc.) installed to `~/.local/bin/` — not on PATH by default; we don't need them yet.
 
 ### Item 6 — PWM example → WAV
 *[fill in when complete]*

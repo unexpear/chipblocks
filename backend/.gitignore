@@ -1,0 +1,15 @@
+# Reference repos (cloned for examples, not part of ChipForge code)
+fpga_101/
+
+# Python venv (if/when we set one up)
+.venv/
+
+# Simulation / build outputs
+*.vcd
+*.fst
+*.wav
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
