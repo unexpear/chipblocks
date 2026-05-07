@@ -120,7 +120,7 @@ If those four are true, **Sprint 2 = "wire them together"** — add the translat
 **✓ Done — 2026-05-07.** Installed in WSL2 Ubuntu (Python 3.12). Migen 0.9.2 and LiteX 2025.12 installed to user-site (`~/.local/`) via `pip3 install --user --break-system-packages` (Ubuntu 24.04's PEP 668 default blocks plain pip without a venv, and `python3.12-venv` requires sudo so we used the user-site escape hatch — works fine for our purposes). Cloned `litex-hub/fpga_101` to `backend/fpga_101/` (gitignored); ran `lab004/pwm.py` and got a 278KB `pwm.vcd` simulation output. Created `backend/README.md` and `backend/setup.sh` so the install is reproducible. **Note**: LiteX CLI tools (`litex_sim`, `litex_term`, etc.) installed to `~/.local/bin/` — not on PATH by default; we don't need them yet.
 
 ### Item 6 — PWM example → WAV
-*[fill in when complete]*
+**✓ Done — 2026-05-07.** Wrote `backend/sim/pwm_to_wav.py` (~85 lines incl. comments) — adapts the upstream `_PWM` Migen module unchanged but rewrites the testbench to capture `pwm` per cycle, then writes a playable 16-bit mono PCM `.wav` via stdlib `wave` + `struct` (no extra deps). Configured for 2 seconds of 440 Hz square wave at 44100 Hz; `period = SAMPLE_RATE / NOTE_HZ = 100` ticks, `width = period/2` for 50% duty. Generated `pwm.wav` (176 KB, validated as `RIFF / WAVE audio / 16 bit / mono / 44100 Hz` by `file`). **To listen**: open `backend/sim/pwm.wav` in any media player. The WAV file is gitignored (binary output); regenerate with `python3 backend/sim/pwm_to_wav.py` from WSL2.
 
 ### Item 7 — Sprint retrospective
 *[fill in at end of sprint]*
