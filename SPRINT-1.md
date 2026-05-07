@@ -111,7 +111,7 @@ If those four are true, **Sprint 2 = "wire them together"** — add the translat
 **✓ Done — 2026-05-07.** Saved at repo root. Loaded automatically by Claude Code in this directory. Captures vision, tech stack, conventions, environment notes (WSL2 for Python tooling), and pointers to PRD.md / SPRINT-1.md.
 
 ### Item 3 — Electron + React + TypeScript scaffold
-*[fill in when complete]*
+**✓ Done — 2026-05-07.** Scaffolded from `electron-vite-react` boilerplate (MIT, cloned via `degit electron-vite/electron-vite-react`) into `frontend/`. Stack: Electron 33, React 18, TypeScript 5.4, Vite 5.4, Tailwind 3.4. Customized: window title and HTML `<title>` → "ChipForge"; `App.tsx` replaced with minimal landing + counter (HMR proof); removed auto-updater import and call from main process; removed boilerplate `.github/` CI templates, Chinese readme, sample `.txt` configs, and ~14 MB of marketing GIFs. `npm install` completed cleanly, `npx tsc --noEmit` passes. **To run**: `cd frontend && npm run dev` — opens an Electron window titled "ChipForge". Auto-updater UI files (`src/components/update/`, `electron/main/update.ts`) left in place but unused; can clean up later if desired.
 
 ### Item 4 — React Flow demo
 *[fill in when complete]*
