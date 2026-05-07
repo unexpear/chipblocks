@@ -30,9 +30,9 @@ function winToWsl(p: string): string {
   return `/mnt/${m[1].toLowerCase()}${m[2]}`
 }
 
-// Locate the synth script at <project_root>/backend/synth_stub.py.
+// Locate the synth script at <project_root>/backend/synth.py.
 function getSynthScriptPath(): string {
-  return path.join(process.env.APP_ROOT ?? '', '..', 'backend', 'synth_stub.py')
+  return path.join(process.env.APP_ROOT ?? '', '..', 'backend', 'synth.py')
 }
 
 async function runSynth(graph: SynthGraph): Promise<SynthResult> {

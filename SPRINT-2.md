@@ -129,8 +129,24 @@ Each block exposes `input_ports` / `output_ports` dicts keyed by the React Flow 
 
 Smoke tests in `backend/sim/test_blocks.py`: Oscillator (200 samples, 4 transitions = ~441Hz pattern), Mixer (XOR truth table matches), Output (passthrough verified). All PASS. **Gotcha logged**: Mixer + Output are purely combinational so their tests use `await ctx.delay(1e-9)` instead of `await ctx.tick()` (no sync domain to tick).
 
-### Item 3 — Graph → Migen translator
-*[fill in when complete]*
+### Item 3 — Graph → Amaranth translator
+**✓ Done — 2026-05-07.** Wrote `backend/synth.py` (`GraphTop` class + `synthesize()` + `write_wav()`). Replaces the earlier `synth_stub.py` (deleted). Architecture per the audit recommendation: **runtime composition, no codegen.** The translator reads the React Flow graph JSON, instantiates blocks from `BLOCK_REGISTRY` by `node.type`, and connects edges via `m.d.comb += tgt.input_ports[handle].eq(src.output_ports[handle])`. The first `Output` block found in the graph becomes the audio sink. Per-block parameter mapping is centralized in `_build_params()` (currently: oscillator's `data.freq` → `freq_hz`).
+
+Updated `frontend/electron/main/ipc.ts` to point the spawn at `synth.py` instead of `synth_stub.py`.
+
+Smoke tests in `backend/sim/test_synth.py`: 5 cases all PASS:
+- **simple** (osc → mix.in-1 → out): 882 transitions in 1 sec = 440 Hz × 2 transitions/cycle ✓
+- **direct** (osc 220Hz → out): 441 transitions = 220 Hz × 2 ✓
+- **two-osc XOR** (440 + 660 → mix → out): 2165 transitions, complex waveform ✓
+- **invalid: no Output block** → raises `ValueError("Graph has no Output block — nothing to sample.")` ✓
+- **invalid: unknown block type** → raises `ValueError("Unknown block type: 'wat-is-this'. Known types: ['mixer', 'oscillator', 'output'])` ✓
+
+Manual verification: ran `synth.py` with the IPC-payload-style graph (osc → mixer → output) and got a valid 176 KB / 2-second WAV. The full chain (React click → Electron IPC → wsl python3 synth.py → graph → Amaranth → WAV → blob URL → Audio play) is now wired end-to-end. **Item 7 (E2E demo verification) only requires a Play click in the running app to confirm.**
+
+Edge cases handled:
+- React Flow node ids with dashes get sanitized to valid Python identifiers (`block_xxx_yyy`) for `m.submodules`.
+- Edges referencing missing nodes are skipped (rather than erroring) so the user can have orphan edges in flight while editing.
+- Invalid handle names produce errors with the available alternatives listed.
 
 ### Item 4 — Play button
 **✓ Done — 2026-05-07** (alongside Item 1). Button appears in the toolbar between the title and Save/Load. While in flight, button label flips to "Synthesizing…" and is disabled. Status text shown left of buttons (`Synthesizing…` → `Playing (172 KB)` → cleared on next click).
