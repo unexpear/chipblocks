@@ -2,16 +2,19 @@
 synth_stub.py — Sprint 2 Item 1 stub.
 
 Reads a graph JSON from --in, writes a WAV to --out. For Sprint 2 v1
-this ignores the graph contents and produces a fixed 440 Hz square
-wave — just enough to prove the Electron <-> WSL <-> Python bridge
-works end-to-end. Sprint 2 Item 3 (the real graph -> Migen translator)
-will replace this stub.
+this ignores the graph contents and drives the Oscillator block from
+the ChipForge block library at 440 Hz for 2 seconds. Item 3 (the real
+graph -> Amaranth translator) will replace this stub.
+
+Stack note: switched from Migen to Amaranth in Sprint 2 Item 2.
+Amaranth is the modern successor to Migen by the same maintainers
+(M-Labs); both are BSD-2-Clause so the licensing stance is unchanged.
 
 Usage:
     python3 synth_stub.py --in graph.json --out out.wav
 
-Errors are emitted as a JSON blob on stderr so the Electron side can
-parse them into a friendly message:
+Errors are emitted as JSON on stderr so the Electron side can parse
+them into a friendly message:
     {"error": "...", "type": "ExceptionClassName"}
 """
 
@@ -20,32 +23,14 @@ import json
 import struct
 import sys
 import wave
+from pathlib import Path
 
-from migen import *
+# Make `from blocks import ...` work whether the script is invoked from
+# backend/ or via an absolute path from elsewhere.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-
-# Square-wave oscillator. Same shape as backend/sim/pwm_to_wav.py
-# from Sprint 1 — kept here as a self-contained copy so the stub
-# has no internal imports to worry about during development.
-class _SquareOsc(Module):
-    def __init__(self, pwm):
-        self.enable = Signal()
-        self.width = Signal(32)
-        self.period = Signal(32)
-        count = Signal(32)
-        self.sync += [
-            If(self.enable,
-                If(count < self.width, pwm.eq(1)).Else(pwm.eq(0)),
-                If(count == self.period - 1,
-                    count.eq(0)
-                ).Else(
-                    count.eq(count + 1)
-                )
-            ).Else(
-                count.eq(0),
-                pwm.eq(0)
-            )
-        ]
+from amaranth.sim import Simulator  # noqa: E402
+from blocks import Oscillator  # noqa: E402
 
 
 SAMPLE_RATE = 44100
@@ -54,25 +39,22 @@ NOTE_HZ = 440
 
 
 def synthesize(_graph: dict) -> list[int]:
-    """Generate audio samples. Sprint 2 v1: ignores the graph."""
-    period = SAMPLE_RATE // NOTE_HZ
-    width = period // 2
+    """Generate audio samples. Sprint 2 v1 stub: ignores the graph and
+    drives the Oscillator block at NOTE_HZ for DURATION_S seconds."""
+    osc = Oscillator(freq_hz=NOTE_HZ, sample_rate=SAMPLE_RATE)
+    sim = Simulator(osc)
+    sim.add_clock(1e-6)  # arbitrary clock period — we count ticks as samples
+
+    samples: list[int] = []
     total_ticks = SAMPLE_RATE * DURATION_S
 
-    pwm = Signal()
-    dut = _SquareOsc(pwm)
-    samples: list[int] = []
-
-    def tb(d):
-        yield d.enable.eq(1)
-        yield d.width.eq(width)
-        yield d.period.eq(period)
-        yield
+    async def process(ctx):
         for _ in range(total_ticks):
-            samples.append((yield pwm))
-            yield
+            samples.append(ctx.get(osc.audio_out))
+            await ctx.tick()
 
-    run_simulation(dut, tb(dut))
+    sim.add_testbench(process)
+    sim.run()
     return samples
 
 
@@ -101,7 +83,11 @@ def main() -> int:
 
     samples = synthesize(graph)
     write_wav(samples, args.output_path)
-    print(f"[synth_stub] Wrote {args.output_path}: {len(samples)} samples ({DURATION_S}s @ {SAMPLE_RATE}Hz)", flush=True)
+    print(
+        f"[synth_stub] Wrote {args.output_path}: {len(samples)} samples "
+        f"({DURATION_S}s @ {SAMPLE_RATE}Hz, Amaranth Oscillator @ {NOTE_HZ}Hz)",
+        flush=True,
+    )
     return 0
 
 
@@ -109,6 +95,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as e:
-        # Emit JSON on stderr so the Electron side can parse it as a friendly error.
         sys.stderr.write(json.dumps({"error": str(e), "type": type(e).__name__}) + "\n")
         sys.exit(1)

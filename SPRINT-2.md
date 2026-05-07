@@ -118,7 +118,16 @@ If Sprint 2 succeeds, you should be able to say:
 **✓ Done — 2026-05-07.** Full bridge working end-to-end. Click Play in the toolbar → renderer calls `window.chipforge.synth({nodes, edges})` → main spawns `wsl.exe -d Ubuntu -- python3 <wsl-path> --in <graph.json> --out <out.wav>` → script reads JSON, writes WAV → main reads WAV bytes via `fs.readFile`, sends back as ArrayBuffer over IPC → renderer creates a Blob URL and plays via `<audio>`. **Manually verified by clicking Play in the running app — heard the 440 Hz tone.** Patterns: `spawn` (never `exec`/`shell:true`), argv as array, `WSLENV=PYTHONIOENCODING/u:PYTHONUNBUFFERED/u`, JSON-on-stderr error parsing, 30s kill timeout. Implementation in `frontend/electron/main/ipc.ts`. **Items 4 (Play button) and 6 (Windows ↔ WSL path translation) closed in the same change** since they were tightly coupled. **Item 5 (loading + error states) partially done** via the inline `.toolbar-status` text — full spinner + toast UX still TODO.
 
 ### Item 2 — Python block implementations
-*[fill in when complete]*
+**✓ Done — 2026-05-07.** Wrote three Amaranth `Elaboratable` classes in `backend/blocks/`:
+- **`Oscillator`** (`oscillator.py`) — square-wave source. `freq_hz` + `sample_rate` parameters; output port `audio-out`.
+- **`Mixer`** (`mixer.py`) — 2-input XOR mixer. Input ports `in-1`, `in-2`; output port `mix-out`. Combinational only (no `sync` domain).
+- **`Output`** (`output.py`) — audio sink. Input port `audio-in`. No internal logic; the simulation harness samples `audio_in` to produce the WAV.
+
+Each block exposes `input_ports` / `output_ports` dicts keyed by the React Flow handle id strings — this is the contract the Item 3 translator will consume to wire blocks together. Module-level `BLOCK_REGISTRY` in `blocks/__init__.py` maps graph node `type` strings to block classes.
+
+**Switched Migen → Amaranth** while we were here. Amaranth 0.5.8 is the modern successor by the same maintainers (M-Labs); both BSD-2-Clause so licensing posture is unchanged. Cleaner API: `class X(Elaboratable)` + `def elaborate(self, platform)`, `m.d.sync` / `m.d.comb`, `with m.If(): ...` `with m.Else(): ...`. Updated `synth_stub.py` to use the new `Oscillator` block instead of an inline Migen `_SquareOsc` — same 176KB WAV output, verified manually.
+
+Smoke tests in `backend/sim/test_blocks.py`: Oscillator (200 samples, 4 transitions = ~441Hz pattern), Mixer (XOR truth table matches), Output (passthrough verified). All PASS. **Gotcha logged**: Mixer + Output are purely combinational so their tests use `await ctx.delay(1e-9)` instead of `await ctx.tick()` (no sync domain to tick).
 
 ### Item 3 — Graph → Migen translator
 *[fill in when complete]*
