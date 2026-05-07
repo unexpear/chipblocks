@@ -123,20 +123,37 @@ If those four are true, **Sprint 2 = "wire them together"** — add the translat
 **✓ Done — 2026-05-07.** Wrote `backend/sim/pwm_to_wav.py` (~85 lines incl. comments) — adapts the upstream `_PWM` Migen module unchanged but rewrites the testbench to capture `pwm` per cycle, then writes a playable 16-bit mono PCM `.wav` via stdlib `wave` + `struct` (no extra deps). Configured for 2 seconds of 440 Hz square wave at 44100 Hz; `period = SAMPLE_RATE / NOTE_HZ = 100` ticks, `width = period/2` for 50% duty. Generated `pwm.wav` (176 KB, validated as `RIFF / WAVE audio / 16 bit / mono / 44100 Hz` by `file`). **To listen**: open `backend/sim/pwm.wav` in any media player. The WAV file is gitignored (binary output); regenerate with `python3 backend/sim/pwm_to_wav.py` from WSL2.
 
 ### Item 7 — Sprint retrospective
-*[fill in at end of sprint]*
+**✓ Done — 2026-05-07.** See Retrospective section below. Sprint 1 closed; Sprint 2 plan in [SPRINT-2.md](SPRINT-2.md).
 
 ---
 
 ## Retrospective (end of sprint)
 
 **What went well:**
-*[fill in]*
+- **The boilerplate-and-customize approach saved enormous time.** Cloning `electron-vite-react` and stripping what we didn't need was done in ~2 hours of work for what would've been weeks of bespoke setup. Same playbook on the audio side: gutting `litex-hub/fpga_101/lab004/pwm.py` and replacing only the testbench beat writing from scratch.
+- **Research agents pulled real weight.** The React Flow agent delivered a complete cookbook (custom nodes, save/load, dark mode, gotchas) that translated directly into working code. The LiteX audio agent identified the perfect starting file in minutes and saved an estimated 4–8 hours of friction (no Verilator, no FPGA, just Python).
+- **Solo + Claude Code worked for a non-technical builder.** I drove direction, the AI executed. No bottleneck on my own coding skills.
+- **Sprint estimates were realistic to slightly conservative.** Items 5 and 6 came in *under* their original budgets thanks to the audio research short-circuit.
+- **The mid-sprint PCB scope expansion** absorbed cleanly into the PRD (Phases 5 + 6) without disrupting any current sprint work.
 
 **What didn't:**
-*[fill in]*
+- **The first scaffold attempt hit an interactive prompt** (`@quick-start/electron` asking "Add Electron updater?"). Switching to `degit` for direct boilerplate cloning was the workaround. Lesson: prefer non-interactive scaffolds.
+- **WSL2 Ubuntu's PEP 668 + `python3.12-venv` needing sudo** blocked the venv approach. Worked around with `pip --user --break-system-packages` — functional but not ideal long-term.
+- **Bash tool CWD persistence caused a confusing moment** when `git status` returned `?? ./` because a previous `cd frontend` had stuck. Lesson: prefer absolute paths, or explicitly cd back when working across folders.
+- **Boilerplate cleanup was a real pass** — ~14 MB of marketing GIFs, an unused UpdateElectron component, demos folder, logos, `.github/` CI templates. 17 files removed in the polish commit. A leaner starter would have saved this.
 
 **What surprised me:**
-*[fill in]*
+- **LiteX 2025.12 is pip-installable from git** (`pip install git+https://github.com/enjoy-digital/litex.git`). The official heavyweight `litex_setup.py` flow wasn't actually needed for our use case.
+- **The PWM → WAV worked first try with zero debugging.** ~85 lines of Python, mostly the unchanged Migen module plus a small testbench rewrite and stdlib `wave` calls. Research had it dead-on.
+- **React Flow's `colorMode="dark"` is a one-line fix** for dark theme. No CSS overrides needed for minimap/controls.
+- **Frontend on Windows + backend in WSL2 coexists fine** for development. The `/mnt/c/...` boundary is slow but functional. Performance is a Sprint 2+ concern.
+- **Solo + AI dev was faster than expected.** Knocked out 6 of 7 P0 items in one focused session — the original plan budgeted weeks.
 
 **What changes Sprint 2:**
-*[fill in]*
+- Sprint 2 is the **integration sprint** — a single Play button that runs the full graph → LiteX → WAV pipeline end-to-end. Sprint 1 proved the architecture; Sprint 2 makes it usable.
+- Need an **Electron ↔ Python IPC layer** — main process spawns `wsl python3 <script>` and reads back the WAV path.
+- The **3 demo blocks need real Migen implementations** matching their visual ports.
+- The **graph → Migen translator** is the hardest piece — read the frontend's JSON, generate Migen code that wires up the corresponding modules. Hardcode for the 3 blocks in v1; generalize later.
+- **Loading + error UX** matters more now that simulation takes seconds.
+- Carry forward (non-blocking): 15 npm audit warnings (mostly transitive), unused `electron-builder.json` until we actually package.
+- See [SPRINT-2.md](SPRINT-2.md) for the full Sprint 2 plan.
