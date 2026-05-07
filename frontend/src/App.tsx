@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   ReactFlow,
   Background,
@@ -21,6 +21,7 @@ declare global {
         wavData?: ArrayBuffer
         error?: string
       }>
+      cancel: () => Promise<boolean>
     }
   }
 }
@@ -41,6 +42,14 @@ function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initialEdges)
   const [isPlaying, setIsPlaying] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const [errorToast, setErrorToast] = useState<string | null>(null)
+
+  // Auto-dismiss error toast after 6 seconds.
+  useEffect(() => {
+    if (!errorToast) return
+    const t = setTimeout(() => setErrorToast(null), 6000)
+    return () => clearTimeout(t)
+  }, [errorToast])
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
@@ -71,7 +80,7 @@ function App() {
         if (parsed.nodes) setNodes(parsed.nodes)
         if (parsed.edges) setEdges(parsed.edges)
       } catch {
-        alert('Invalid graph file')
+        setErrorToast('Invalid graph file — could not parse JSON.')
       }
     }
     input.click()
@@ -80,32 +89,49 @@ function App() {
   const handlePlay = async () => {
     setIsPlaying(true)
     setStatusMessage('Synthesizing…')
+    setErrorToast(null)
     try {
       const result = await window.chipforge.synth({ nodes, edges })
       if (!result.ok) {
-        setStatusMessage(`Error: ${result.error ?? 'Unknown error'}`)
+        setStatusMessage(null)
+        // Don't toast a user-initiated cancel — it's not an error.
+        if (result.error && result.error !== 'Cancelled by user') {
+          setErrorToast(result.error)
+        }
         return
       }
       if (!result.wavData) {
-        setStatusMessage('Error: no WAV data returned')
+        setStatusMessage(null)
+        setErrorToast('Synth returned no WAV data.')
         return
       }
       const blob = new Blob([result.wavData], { type: 'audio/wav' })
       const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
-      audio.addEventListener('ended', () => URL.revokeObjectURL(url))
-      audio.addEventListener('error', () => {
-        setStatusMessage('Audio playback error')
+      audio.addEventListener('ended', () => {
         URL.revokeObjectURL(url)
+        setStatusMessage(null)
+      })
+      audio.addEventListener('error', () => {
+        URL.revokeObjectURL(url)
+        setStatusMessage(null)
+        setErrorToast('Audio playback error')
       })
       const sizeKb = (result.wavData.byteLength / 1024).toFixed(0)
       setStatusMessage(`Playing (${sizeKb} KB)`)
       await audio.play()
     } catch (err) {
-      setStatusMessage(`Failed: ${(err as Error).message}`)
+      setStatusMessage(null)
+      setErrorToast(`Failed: ${(err as Error).message}`)
     } finally {
       setIsPlaying(false)
     }
+  }
+
+  const handleCancel = async () => {
+    // The in-flight handlePlay() promise will resolve with
+    // "Cancelled by user" once the spawned process is killed.
+    await window.chipforge.cancel()
   }
 
   return (
@@ -113,9 +139,18 @@ function App() {
       <div className="toolbar">
         <span className="app-title">ChipForge</span>
         <span className="toolbar-spacer" />
-        {statusMessage && <span className="toolbar-status">{statusMessage}</span>}
+        {isPlaying && (
+          <>
+            <span className="spinner" aria-label="Synthesizing" />
+            <span className="toolbar-status">{statusMessage}</span>
+            <button onClick={handleCancel} className="toolbar-cancel">Cancel</button>
+          </>
+        )}
+        {!isPlaying && statusMessage && (
+          <span className="toolbar-status">{statusMessage}</span>
+        )}
         <button onClick={handlePlay} disabled={isPlaying}>
-          {isPlaying ? 'Synthesizing…' : '▶ Play'}
+          ▶ Play
         </button>
         <button onClick={handleSave}>Save graph</button>
         <button onClick={handleLoad}>Load graph</button>
@@ -136,6 +171,18 @@ function App() {
           <MiniMap />
         </ReactFlow>
       </div>
+      {errorToast && (
+        <div
+          className="error-toast"
+          role="alert"
+          onClick={() => setErrorToast(null)}
+          title="Click to dismiss"
+        >
+          <strong>Error:</strong>
+          <span className="toast-message">{errorToast}</span>
+          <span className="toast-close">×</span>
+        </div>
+      )}
     </div>
   )
 }

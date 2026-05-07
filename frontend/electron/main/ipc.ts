@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import type { ChildProcess } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { writeFile, mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -15,8 +16,13 @@ interface SynthResult {
   error?: string
 }
 
+// Single in-flight process slot. v1 is single-flight (only one synth at a
+// time). If multi-concurrent ever matters, swap this for a Map keyed by
+// request id.
+let currentProc: ChildProcess | null = null
+let wasCancelled = false
+
 // Convert a Windows path "C:\foo\bar" to a WSL path "/mnt/c/foo/bar".
-// The Python script (running inside WSL) needs the WSL form.
 function winToWsl(p: string): string {
   const normalized = p.replace(/\\/g, '/')
   const m = normalized.match(/^([A-Za-z]):(\/.*)$/)
@@ -25,7 +31,6 @@ function winToWsl(p: string): string {
 }
 
 // Locate the synth script at <project_root>/backend/synth_stub.py.
-// process.env.APP_ROOT is set by main/index.ts to the frontend/ directory.
 function getSynthScriptPath(): string {
   return path.join(process.env.APP_ROOT ?? '', '..', 'backend', 'synth_stub.py')
 }
@@ -47,6 +52,8 @@ async function runSynth(graph: SynthGraph): Promise<SynthResult> {
     return { ok: false, error: `Path conversion failed: ${(err as Error).message}` }
   }
 
+  wasCancelled = false
+
   return new Promise<SynthResult>((resolve) => {
     const proc = spawn(
       'wsl.exe',
@@ -63,11 +70,11 @@ async function runSynth(graph: SynthGraph): Promise<SynthResult> {
           ...process.env,
           PYTHONIOENCODING: 'utf-8',
           PYTHONUNBUFFERED: '1',
-          // WSLENV passes Windows env vars into WSL; /u marks them as Unix-path-style
           WSLENV: 'PYTHONIOENCODING/u:PYTHONUNBUFFERED/u',
         },
       },
     )
+    currentProc = proc
 
     let stderr = ''
     let stdout = ''
@@ -77,16 +84,21 @@ async function runSynth(graph: SynthGraph): Promise<SynthResult> {
     const TIMEOUT_MS = 30_000
     const timer = setTimeout(() => {
       proc.kill('SIGKILL')
-      resolve({ ok: false, error: `Synth timed out after ${TIMEOUT_MS / 1000}s` })
+      // The close handler will resolve with the cancelled / timed-out message.
     }, TIMEOUT_MS)
 
     proc.on('close', async (code) => {
       clearTimeout(timer)
+      currentProc = null
+
+      if (wasCancelled) {
+        resolve({ ok: false, error: 'Cancelled by user' })
+        return
+      }
       if (code === 0) {
         if (stdout) console.log('[synth stdout]', stdout)
         try {
           const buf = await readFile(winWavPath)
-          // Convert Node Buffer to ArrayBuffer for IPC structured clone
           const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
           resolve({ ok: true, wavData: ab as ArrayBuffer })
         } catch (err) {
@@ -99,13 +111,23 @@ async function runSynth(graph: SynthGraph): Promise<SynthResult> {
 
     proc.on('error', (err) => {
       clearTimeout(timer)
+      currentProc = null
       resolve({ ok: false, error: `Failed to spawn wsl.exe: ${err.message}` })
     })
   })
 }
 
+function cancelSynth(): boolean {
+  if (currentProc) {
+    wasCancelled = true
+    currentProc.kill('SIGKILL')
+    currentProc = null
+    return true
+  }
+  return false
+}
+
 function friendlyError(stderr: string, code: number | null): string {
-  // synth_stub.py emits a JSON error blob on stderr; parse the last line as JSON.
   const lines = stderr.trim().split(/\r?\n/)
   for (let i = lines.length - 1; i >= 0; i--) {
     try {
@@ -121,5 +143,8 @@ function friendlyError(stderr: string, code: number | null): string {
 export function registerIpcHandlers() {
   ipcMain.handle('synth:run', async (_event, graph: SynthGraph) => {
     return runSynth(graph)
+  })
+  ipcMain.handle('synth:cancel', async () => {
+    return cancelSynth()
   })
 }
