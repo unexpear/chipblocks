@@ -195,7 +195,7 @@ The defining metric is **(E) anyone other than the developer using the tool**. W
 - AI key management UX — how to make BYOK painless for non-technical users? [eng + design]
 
 **Strategic / Business**
-- License: MIT, Apache 2.0, or AGPL? AGPL prevents commercial closed-source forks. [user]
+- ~~License: MIT, Apache 2.0, or AGPL?~~ **DECIDED 2026-05-07: MIT.** Permissive, monetization-friendly, the natural fit for the "free no strings" policy. See [LICENSE](LICENSE).
 - Monetization: free forever, $5 desktop bundle, donate-ware (Patreon / GitHub Sponsors)? [user]
 - Anonymous telemetry to understand usage? Privacy + open-source-ethic implications. [user]
 
