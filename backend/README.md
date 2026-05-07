@@ -30,7 +30,7 @@ python3 pwm.py
 ls *.vcd  # should produce pwm.vcd
 ```
 
-`pwm.vcd` is a waveform dump openable in [GTKWave](http://gtkwave.sourceforge.net/) or [Surfer](https://surfer-project.org/).
+`pwm.vcd` is a waveform dump (Value Change Dump). For ChipForge's licensing posture (permissive only — see [CREDITS.md](../CREDITS.md)), we don't recommend GTKWave (GPL-2.0) or Surfer (EUPL-1.2) as bundled viewers. For the audio domain, simulation output goes to a `.wav` file you can play directly. A permissive built-in waveform view is planned for later phases.
 
 ## Reference: fpga_101
 

@@ -20,7 +20,7 @@ Read [PRD.md](PRD.md) for the full vision. Read [SPRINT-1.md](SPRINT-1.md) for w
 - **Frontend**: Electron + React + TypeScript
 - **Node-graph editor**: React Flow
 - **Backend orchestration**: Python (with LiteX as the chip-composition framework)
-- **Bundled tools** (called as subprocesses): Verilator, Yosys, Icarus, SymbiYosys
+- **Invoked tools** (called as subprocesses, **separately installed in WSL2 — never bundled inside the shipped app**, to keep the shipped product fully permissive): Verilator (BSD-3), Yosys (ISC), nextpnr (ISC), SymbiYosys (MIT). **Icarus Verilog dropped — GPL-2.0.**
 - **AI integration**: BYOK — user supplies Claude / GPT / Ollama / etc. key
 
 ## Environment
@@ -83,7 +83,7 @@ chipzzzd/
 - ✅ Visual editor, AI consultant, validator, output engine
 - ✅ v1 flagship: audio/synth/retro-game chips
 - ✅ Multi-domain architecture (extensible to MCU, sensor, video later)
-- ✅ Python (LiteX) backend, Verilator/Icarus simulation
+- ✅ Python (LiteX) backend, Verilator simulation (Icarus dropped — GPL-2.0)
 - ✅ FPGA bitstream output (later sprints)
 - ✅ ASIC tape-out package output via OpenLane / LibreLane (later sprints)
 - ❌ Cutting-edge ASIC nodes (5nm / 3nm / 2nm) — see PRD non-goals
@@ -93,7 +93,9 @@ chipzzzd/
 ## Key project documents
 
 - [PRD.md](PRD.md) — full product requirements
-- [SPRINT-1.md](SPRINT-1.md) — current sprint plan + log
+- [SPRINT-1.md](SPRINT-1.md) — closed sprint plan + log + retro
+- [SPRINT-2.md](SPRINT-2.md) — current sprint plan + log
+- [CREDITS.md](CREDITS.md) — licensing policy + open-source attributions (permissive only; no copyleft in shipped product)
 - (Future) `BLOCKS.md` — block library reference
 - (Future) `ARCHITECTURE.md` — system architecture + data flow
 - (Future) `README.md` — public-facing project readme

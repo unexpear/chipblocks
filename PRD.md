@@ -35,6 +35,7 @@ The bottleneck **isn't manufacturing** — fabs at mature nodes (130nm+) and FPG
 5. **Real-time multi-user collaborative editing.** Single-user, file-based, version-controllable via git. Collaboration happens through GitHub, not in-app.
 6. **Hosting paid AI inference.** Users bring their own API key (Claude, GPT, local Llama via Ollama). Project never pays AI bills on behalf of users.
 7. **All HDL languages on day one.** Internal generation uses one HDL backbone (LiteX → Verilog) initially. Chisel, Amaranth, SpinalHDL support are designed-for but added later.
+8. **Copyleft licensed code in the shipped product.** ChipForge ships only permissively-licensed code (MIT / Apache 2.0 / BSD / ISC / PSF). No GPL, AGPL, LGPL, MPL, or EUPL components are bundled in the distributed application, even transitively. This keeps the door open for future monetization (paid desktop bundle, Pro tier, hosted SaaS) without re-licensing surprises. We may **invoke** copyleft tools as separately-installed user binaries (e.g., the user's own GTKWave install), but we never redistribute them. Full licensing policy and dependency list in [CREDITS.md](CREDITS.md).
 
 ## Target Users / Personas
 
@@ -100,7 +101,7 @@ The bottleneck **isn't manufacturing** — fabs at mature nodes (130nm+) and FPG
 
 **Output Engine**
 - Generate Verilog RTL from the visual graph (via LiteX or equivalent)
-- Run simulation and produce viewable results (waveforms via GTKWave/Surfer; for audio chips, also a WAV file)
+- Run simulation and produce viewable results (waveforms via a permissively-licensed viewer — built-in or future TBD; **we drop GTKWave (GPL-2.0) and Surfer (EUPL-1.2)** from plans per the licensing policy below). For audio chips, also a playable WAV file.
 - Generate FPGA bitstream for at least 3 popular dev boards: one iCE40 board (fully open flow), one ECP5 board, one Xilinx 7-Series board
 - Generate Tiny Tapeout submission package
 - Generate ASIC GDSII via OpenLane / LibreLane integration
@@ -120,7 +121,7 @@ The bottleneck **isn't manufacturing** — fabs at mature nodes (130nm+) and FPG
 - Web-based version (browser-only, cloud workers for heavy synthesis)
 - Real-time collaborative editing (à la Figma)
 - Block marketplace where users contribute new blocks
-- In-app waveform viewer (no need to launch GTKWave/Surfer separately)
+- In-app waveform viewer built with permissive components (no copyleft viewers like GTKWave or Surfer)
 - Templates beyond the flagship domain (sensor chips, custom MCUs, video chips)
 - Mobile/tablet read-only viewer
 - Curriculum/classroom mode with progress tracking
