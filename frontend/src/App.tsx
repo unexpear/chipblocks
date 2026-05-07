@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import {
   ReactFlow,
   Background,
@@ -12,6 +12,18 @@ import {
 } from '@xyflow/react'
 import { nodeTypes, type AppNode } from './blocks'
 import './App.css'
+
+declare global {
+  interface Window {
+    chipforge: {
+      synth: (graph: unknown) => Promise<{
+        ok: boolean
+        wavData?: ArrayBuffer
+        error?: string
+      }>
+    }
+  }
+}
 
 const initialNodes: AppNode[] = [
   { id: '1', type: 'oscillator', position: { x: 50, y: 100 }, data: { freq: 440 } },
@@ -27,6 +39,8 @@ const initialEdges: Edge[] = [
 function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState<AppNode>(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initialEdges)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
@@ -63,11 +77,46 @@ function App() {
     input.click()
   }
 
+  const handlePlay = async () => {
+    setIsPlaying(true)
+    setStatusMessage('Synthesizing…')
+    try {
+      const result = await window.chipforge.synth({ nodes, edges })
+      if (!result.ok) {
+        setStatusMessage(`Error: ${result.error ?? 'Unknown error'}`)
+        return
+      }
+      if (!result.wavData) {
+        setStatusMessage('Error: no WAV data returned')
+        return
+      }
+      const blob = new Blob([result.wavData], { type: 'audio/wav' })
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      audio.addEventListener('ended', () => URL.revokeObjectURL(url))
+      audio.addEventListener('error', () => {
+        setStatusMessage('Audio playback error')
+        URL.revokeObjectURL(url)
+      })
+      const sizeKb = (result.wavData.byteLength / 1024).toFixed(0)
+      setStatusMessage(`Playing (${sizeKb} KB)`)
+      await audio.play()
+    } catch (err) {
+      setStatusMessage(`Failed: ${(err as Error).message}`)
+    } finally {
+      setIsPlaying(false)
+    }
+  }
+
   return (
     <div className="app-root">
       <div className="toolbar">
         <span className="app-title">ChipForge</span>
         <span className="toolbar-spacer" />
+        {statusMessage && <span className="toolbar-status">{statusMessage}</span>}
+        <button onClick={handlePlay} disabled={isPlaying}>
+          {isPlaying ? 'Synthesizing…' : '▶ Play'}
+        </button>
         <button onClick={handleSave}>Save graph</button>
         <button onClick={handleLoad}>Load graph</button>
       </div>

@@ -23,6 +23,12 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
   // ...
 })
 
+// ChipForge synth API. The renderer calls window.chipforge.synth(graph)
+// and the main process spawns wsl.exe + python3 to run the simulation.
+contextBridge.exposeInMainWorld('chipforge', {
+  synth: (graph: unknown) => ipcRenderer.invoke('synth:run', graph),
+})
+
 // --------- Preload scripts loading ---------
 function domReady(condition: DocumentReadyState[] = ['complete', 'interactive']) {
   return new Promise(resolve => {
