@@ -79,6 +79,7 @@ function App() {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          colorMode="dark"
           fitView
         >
           <Background />
