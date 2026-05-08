@@ -112,16 +112,16 @@ If Sprint 4 ships clean, the consultant becomes a real collaborator (not just a 
 > Fill in as you go. One paragraph per completed item. Be honest about what didn't work.
 
 ### Item 1 — Block palette sidebar
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** Left-side sidebar lists all 9 block types as draggable items with color-coded swatches matching each block's canvas border. Drag onto canvas → spawn a new node at the drop location with default parameters via React Flow's `screenToFlowPosition`. Implementation in `frontend/src/Palette.tsx` (component + `PALETTE_DRAG_TYPE` MIME constant + `defaultDataForType()` helper). Canvas wrapper in `App.tsx` gets `onDragOver` (gated by checking `dataTransfer.types.includes(PALETTE_DRAG_TYPE)` so unrelated drags don't get intercepted) + `onDrop`. Sidebar is collapsible to 28 px to maximize canvas room. Hover state uses CSS variable `--swatch` so each item's hover border matches its color.
 
 ### Item 2 — Low-pass Filter block
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** 1-pole IIR low-pass: `y[n] = (alpha * x[n] + (256-alpha) * y[n-1]) >> 8` with `alpha` computed at construction from `cutoff_hz` via `1 - exp(-2π·fc/fs)` and clamped to 1..255 fixed-point. Wider intermediate (`signed(18)`) avoids overflow in the multiply-and-add. Smoke test: 200 Hz square wave through 200 Hz cutoff produces 142 distinct values (vs. 2 on input) and attenuated range `[-77, 64]` (vs. ±100). `synth.py _build_params()` handles `cutoff_hz`. Frontend `LowPassFilterNode.tsx` with teal border (#00897b) and inline cutoff_hz input.
 
 ### Item 3 — Sample-and-Hold block
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** Edge-triggered sample-and-hold: registers `audio_in` into `audio_out` only on rising edge of `clock_in`. Clock edge detection via a `prev_clock` register. Smoke test confirms: held at 0 for 10 cycles before clock rises, latches to 60 on rising edge, holds 60 across the next 5 cycles even as `audio_in` changes to 100, 101, 102, 103, 104. Frontend `SampleAndHoldNode.tsx` with slate-gray border (#607d8b) and two left handles (`audio-in` top, `clock` middle) staggered like Mixer / ADSR. Library is now 9 blocks total.
 
 ### Item 4 — Model picker in Settings
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** Settings modal grew a Model section with a `<select>` listing Haiku 4.5, Sonnet 4.6 (default, recommended), and Opus 4.7. Selection persists to `localStorage` under `chipblocks:model` (model id is non-sensitive, unlike the API key — no need for `safeStorage`). `Chat.tsx` reads the stored model on each send and includes it in the IPC payload. `electron/main/ai.ts` whitelists the three allowed model ids and falls back to the default if anything else arrives. Footer in the chat panel now displays the active model name dynamically.
 
 ### Item 5 — AI tool-calls
 *[fill in when complete]*
