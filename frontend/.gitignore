@@ -24,8 +24,8 @@ release
 *.sln
 *.sw?
 
-#lockfile
-package-lock.json
+# pnpm and yarn lockfiles ignored (we use npm); package-lock.json is
+# tracked so contributors and CI get reproducible installs.
 pnpm-lock.yaml
 yarn.lock
 /test-results/
