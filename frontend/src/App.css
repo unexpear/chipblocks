@@ -67,6 +67,14 @@
   border-color: #f44336;
 }
 
+.block-triangle {
+  border-color: #ffc107;
+}
+
+.block-sawtooth {
+  border-color: #9c27b0;
+}
+
 /* Inline parameter editor inside a block (e.g. Oscillator frequency). */
 .block-input {
   background: #2a2a2a;

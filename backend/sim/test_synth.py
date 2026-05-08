@@ -85,15 +85,19 @@ def test_graph(name: str, graph: dict, expect_min_transitions: int = 100) -> boo
     samples = synthesize(graph, duration_s=1)  # 1 second is enough for smoke test
     n = len(samples)
     t = transitions(samples)
-    nonzero = sum(samples)
-    print(f"  Samples: {n}, transitions: {t}, nonzero: {nonzero}")
+    # 8-bit signed samples can be balanced around 0, so sum() is misleading.
+    # A real signal has variance: at least some samples should differ from 0.
+    has_signal = any(s != 0 for s in samples)
+    sample_min = min(samples)
+    sample_max = max(samples)
+    print(f"  Samples: {n}, transitions: {t}, range: [{sample_min}, {sample_max}]")
     if n != 44100:
         print(f"  FAIL: expected 44100 samples, got {n}")
         return False
     if t < expect_min_transitions:
         print(f"  FAIL: expected >= {expect_min_transitions} transitions, got {t}")
         return False
-    if nonzero == 0:
+    if not has_signal:
         print(f"  FAIL: all-zero output (no signal reaching Output block)")
         return False
     print(f"  PASS")

@@ -27,14 +27,17 @@ declare global {
 }
 
 const initialNodes: AppNode[] = [
-  { id: '1', type: 'oscillator', position: { x: 50, y: 100 }, data: { freq: 440 } },
-  { id: '2', type: 'mixer', position: { x: 350, y: 100 }, data: {} },
-  { id: '3', type: 'output', position: { x: 650, y: 100 }, data: {} },
+  { id: '1', type: 'oscillator', position: { x: 50, y: 60 }, data: { freq: 440 } },
+  { id: '2', type: 'triangle', position: { x: 50, y: 200 }, data: { freq: 660 } },
+  { id: '3', type: 'sawtooth', position: { x: 50, y: 340 }, data: { freq: 220 } },
+  { id: '4', type: 'mixer', position: { x: 350, y: 130 }, data: {} },
+  { id: '5', type: 'output', position: { x: 650, y: 130 }, data: {} },
 ]
 
 const initialEdges: Edge[] = [
-  { id: 'e1-2', source: '1', target: '2', sourceHandle: 'audio-out', targetHandle: 'in-1' },
-  { id: 'e2-3', source: '2', target: '3', sourceHandle: 'mix-out', targetHandle: 'audio-in' },
+  { id: 'e1-4', source: '1', target: '4', sourceHandle: 'audio-out', targetHandle: 'in-1' },
+  { id: 'e2-4', source: '2', target: '4', sourceHandle: 'audio-out', targetHandle: 'in-2' },
+  { id: 'e4-5', source: '4', target: '5', sourceHandle: 'mix-out', targetHandle: 'audio-in' },
 ]
 
 function App() {

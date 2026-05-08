@@ -1,11 +1,13 @@
 """
-Oscillator block — square-wave signal source.
+Oscillator block — square-wave signal source (8-bit signed).
 
-Output: `audio-out` — 1-bit signal toggling at `freq_hz` when the
-simulation clock runs at `sample_rate` Hz.
+Output: `audio-out` — `Signal(signed(8))`. Alternates between +127 and
+-128 at the configured frequency. Uses a 16-bit phase accumulator so
+arbitrary frequencies (not just integer divisors of the sample rate)
+play in tune.
 """
 
-from amaranth import Elaboratable, Module, Signal
+from amaranth import Elaboratable, Module, Signal, signed
 
 
 class Oscillator(Elaboratable):
@@ -15,28 +17,25 @@ class Oscillator(Elaboratable):
         self.freq_hz = freq_hz
         self.sample_rate = sample_rate
 
-        # Output port
-        self.audio_out = Signal()
+        # Output port: 8-bit signed audio sample.
+        self.audio_out = Signal(signed(8))
 
-        # Port maps used by the graph -> HDL translator (Sprint 2 Item 3).
-        # Keys are the port-id strings used by the React Flow front-end's
-        # custom node Handles (see frontend/src/blocks/OscillatorNode.tsx).
         self.input_ports: dict = {}
         self.output_ports = {"audio-out": self.audio_out}
 
     def elaborate(self, platform):
         m = Module()
 
-        period = self.sample_rate // self.freq_hz
-        half_period = period // 2
+        # 16-bit phase accumulator. step = 2^16 * freq / sample_rate.
+        # The high bit (phase[15]) toggles at the configured frequency,
+        # so a 50/50 square wave drops out naturally.
+        step = max(1, (1 << 16) * self.freq_hz // self.sample_rate)
+        phase = Signal(16)
+        m.d.sync += phase.eq(phase + step)
 
-        # Counter wide enough to count up to (period-1).
-        count = Signal(range(period))
-
-        with m.If(count == period - 1):
-            m.d.sync += count.eq(0)
+        with m.If(phase[15]):
+            m.d.comb += self.audio_out.eq(-128)
         with m.Else():
-            m.d.sync += count.eq(count + 1)
+            m.d.comb += self.audio_out.eq(127)
 
-        m.d.sync += self.audio_out.eq(count < half_period)
         return m

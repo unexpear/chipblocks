@@ -1,34 +1,30 @@
 """
-Mixer block — combines two 1-bit audio signals via XOR.
+Mixer block — combines two 8-bit signed audio signals by averaging.
 
-XOR-ing two square waves doesn't sum them in a linear-audio sense, but
-it produces audibly interesting harmonic content (ring-modulator-ish).
-For the Sprint 2 demo this is enough; a future Mixer variant can do
-proper signed-sum mixing once block widths are wider than 1 bit.
+Inputs:  `in-1`, `in-2` — 8-bit signed signals
+Output:  `mix-out`      — 8-bit signed signal: (in_1 + in_2) / 2
 
-Inputs:  `in-1`, `in-2` — 1-bit signals
-Output:  `mix-out`      — 1-bit signal (in_1 XOR in_2)
+Averaging keeps the result inside int8 range without clipping. (A direct
+sum of two int8 values can overflow into a 9-bit result; halving makes
+the operation lossless except for the bottom bit.)
 """
 
-from amaranth import Elaboratable, Module, Signal
+from amaranth import Elaboratable, Module, Signal, signed
 
 
 class Mixer(Elaboratable):
-    """Two-input XOR mixer for 1-bit audio."""
+    """Two-input averaging mixer for 8-bit signed audio."""
 
     def __init__(self):
-        # Input ports
-        self.in_1 = Signal()
-        self.in_2 = Signal()
-        # Output port
-        self.mix_out = Signal()
+        self.in_1 = Signal(signed(8))
+        self.in_2 = Signal(signed(8))
+        self.mix_out = Signal(signed(8))
 
-        # Port maps for the translator (must match React Flow handle ids
-        # in frontend/src/blocks/MixerNode.tsx).
         self.input_ports = {"in-1": self.in_1, "in-2": self.in_2}
         self.output_ports = {"mix-out": self.mix_out}
 
     def elaborate(self, platform):
         m = Module()
-        m.d.comb += self.mix_out.eq(self.in_1 ^ self.in_2)
+        # Arithmetic right shift on signed values gives signed-safe halving.
+        m.d.comb += self.mix_out.eq((self.in_1 + self.in_2) >> 1)
         return m

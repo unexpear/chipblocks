@@ -154,8 +154,12 @@ def synthesize(graph: dict, duration_s: int = DURATION_S) -> list[int]:
 
 
 def write_wav(samples: list[int], out_path: str) -> None:
-    AMPLITUDE = 8000  # ~25% of int16 max — keep volume reasonable
-    pcm = [AMPLITUDE if s else -AMPLITUDE for s in samples]
+    # Block outputs are 8-bit signed (-128 to +127). Scale by 64 to put the
+    # peak at roughly ±8128 in 16-bit PCM — about 25% of int16 max — which
+    # matches the loudness of the earlier 1-bit-era output.
+    SCALE = 64
+    INT16_MIN, INT16_MAX = -32768, 32767
+    pcm = [max(INT16_MIN, min(INT16_MAX, s * SCALE)) for s in samples]
     with wave.open(out_path, "wb") as f:
         f.setnchannels(1)
         f.setsampwidth(2)

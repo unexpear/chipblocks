@@ -114,13 +114,22 @@ If Sprint 3 succeeds, the app feels like a real instrument: you build a chip, ch
 > Fill in as you go. One paragraph per completed item. Be honest about what didn't work — that's where the value is.
 
 ### Item 1 — Block parameter editing
-*[fill in when complete]*
+**✓ Done — 2026-05-07.** Oscillator's frequency is now an inline editable `<input type="number">` inside the node. Bounds-checked 20–20000 Hz. `useReactFlow().updateNodeData(id, { freq })` flows the new value into the React Flow nodes state, which then ships through the existing `{nodes, edges}` IPC payload to `synth.py` on Play. `e.stopPropagation()` on click + mousedown so React Flow doesn't try to drag the node while the user is editing. Pattern reused identically in Triangle and Sawtooth (Items 2–3); will be extended to multi-parameter blocks (ADSR) in Item 4. Native spinner arrows hidden via CSS for visual cleanliness; keyboard arrow keys still work.
 
 ### Item 2 — Triangle Wave block
-*[fill in when complete]*
+**✓ Done — 2026-05-07.** Pulled in the bit-width pivot flagged in the sprint risks: all audio signals across the existing block library widened from 1-bit to **8-bit signed** (-128 to +127). 1-bit triangles and sawtooths are essentially squares; widening was cheaper to do now than later. Added `backend/blocks/triangle.py` using a 16-bit phase accumulator + high-byte ramp pattern (so any frequency plays in tune, not just integer divisors of the sample rate). Added `frontend/src/blocks/TriangleNode.tsx` mirroring the Oscillator pattern with a yellow border for visual differentiation. Triangle smoke test produces 256 distinct sample values across the full -128..+127 range — proper triangle, not approximation.
 
 ### Item 3 — Sawtooth Wave block
-*[fill in when complete]*
+**✓ Done — 2026-05-07** (alongside Item 2). `backend/blocks/sawtooth.py` uses the same phase-accumulator pattern, just with the high byte mapped directly to signed amplitude (no fold). 256 distinct values, full range. `frontend/src/blocks/SawtoothNode.tsx` with a purple border. Together with Triangle, the block library is now 5 types (Oscillator, Triangle, Sawtooth, Mixer, Output).
+
+**Bit-width pivot details** (changes triggered by Items 2 + 3):
+- `Oscillator` re-implemented with the phase-accumulator pattern; outputs ±127/-128 at the configured frequency. Frequency resolution improved at the same time (440 Hz now plays at 440 Hz, not 441 Hz from period truncation).
+- `Mixer` changed from XOR (1-bit only) to **average** (`(in_1 + in_2) >> 1`). For audio this is a proper mix rather than ring-modulator harmonics; XOR can come back later as a separate "Ring Mod" block if we want it.
+- `Output.audio_in` widened to `Signal(signed(8))`.
+- `synth.py write_wav()` now scales 8-bit signed samples to 16-bit PCM (×64 to keep loudness in line with the previous era's 1-bit ±8000 amplitude).
+- `BLOCK_REGISTRY` adds `"triangle"` and `"sawtooth"` keys.
+- `App.tsx` initial graph upgraded from 3 blocks to 5: Oscillator (440 Hz) + Triangle (660 Hz) → Mixer → Output, with a Sawtooth (220 Hz) sitting unwired so users see the new type and can wire it in.
+- All 5 block tests in `test_blocks.py` updated for the new behaviors and PASS. All 5 translator tests in `test_synth.py` PASS. End-to-end `synth.py` run with the new 5-block graph produces a valid 176 KB WAV.
 
 ### Item 4 — ADSR Envelope block
 *[fill in when complete]*
