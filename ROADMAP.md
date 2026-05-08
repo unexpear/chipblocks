@@ -76,7 +76,7 @@ Once `v0.1.0-alpha` is tagged and at least one external user has tried it, these
 | ~~**Mac + Linux installer build pipeline**~~ | — | — | — | **✓ Done in Sprint 9 post-launch prep.** `.github/workflows/release.yml` builds Windows NSIS + macOS DMG + Linux AppImage on tag push, attaches all three to the GitHub Release. Unsigned for alpha; signing is config-only when certs are acquired. **Untested until first tag push.** |
 | **2 more DSP blocks: pick from {wavetable, FM, delay}** — *not* reverb (BRAM-bounded on iCE40) | 1 sprint | all audio users | Med-High | Each block widens the design space. Wavetable is highest-bang (table lookup is small + flexible); FM gives complex timbres for ~1 multiplier; delay opens up echo / chorus territory. |
 | ~~**IPC layer regression test**~~ | — | — | — | **✓ Done in Sprint 9 post-launch prep.** 6 vitest tests covering synth/build/AI IPC contract boundaries. Plus 19 pytest tests for the backend (first real coverage). Both run in CI. |
-| **Tiny Tapeout submission package** | 1.5 sprints | indie hardware founder persona | Low-Med | PRD's "real chips fabricated" lagging indicator. The bitstream pipeline already produces Verilog; need a Tiny Tapeout-shaped wrapper, tile-area constraints, cohort timing. **Check next submission window before committing.** |
+| ~~**Tiny Tapeout submission package**~~ | — | — | — | **✓ Done in Sprint 10.** `--target tt` produces a 5-file bundle (tt_top.v, chipblocks_user.v, info.yaml, docs/info.md, SUBMIT.md) targeting yaml_version 6 (TTSKY26a/TTGF26a cohorts). **Outstanding fix**: TT wrapper missing sample-rate divider — audio pitch will be wrong at 50 MHz clock. Fix before any user submits. |
 
 ---
 
