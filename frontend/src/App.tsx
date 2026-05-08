@@ -16,7 +16,9 @@ import {
 import { nodeTypes, type AppNode } from './blocks'
 import { Chat, type CanvasActions } from './Chat'
 import { SettingsModal } from './SettingsModal'
+import { AboutModal } from './AboutModal'
 import { Palette, PALETTE_DRAG_TYPE, defaultDataForType } from './Palette'
+import { EXAMPLES, type ExampleGraph } from './examples'
 import { type DragEvent } from 'react'
 import './App.css'
 
@@ -41,6 +43,7 @@ declare global {
 
 const SAVE_VERSION = 1
 const APP_NAME = 'ChipBlocks'
+const STARTER_HINT_KEY = 'chipblocks:starterHintDismissed'
 
 interface SaveFileV1 {
   version: 1
@@ -51,18 +54,17 @@ interface SaveFileV1 {
   edges: Edge[]
 }
 
+// Default starter graph. Intentionally minimal — Oscillator -> Output is
+// the smallest thing that produces sound, and "click Play" is the
+// shortest possible learning loop. Bigger demos live in examples/ and
+// are reachable from the Load -> Examples menu.
 const initialNodes: AppNode[] = [
-  { id: '1', type: 'oscillator', position: { x: 50, y: 60 },  data: { freq: 440 } },
-  { id: '2', type: 'triangle',   position: { x: 50, y: 200 }, data: { freq: 660 } },
-  { id: '3', type: 'sawtooth',   position: { x: 50, y: 340 }, data: { freq: 220 } },
-  { id: '4', type: 'mixer',      position: { x: 350, y: 130 }, data: {} },
-  { id: '5', type: 'output',     position: { x: 650, y: 130 }, data: {} },
+  { id: 'starter-osc', type: 'oscillator', position: { x: 100, y: 200 }, data: { freq: 440 } },
+  { id: 'starter-out', type: 'output',     position: { x: 450, y: 200 }, data: {} },
 ]
 
 const initialEdges: Edge[] = [
-  { id: 'e1-4', source: '1', target: '4', sourceHandle: 'audio-out', targetHandle: 'in-1' },
-  { id: 'e2-4', source: '2', target: '4', sourceHandle: 'audio-out', targetHandle: 'in-2' },
-  { id: 'e4-5', source: '4', target: '5', sourceHandle: 'mix-out',   targetHandle: 'audio-in' },
+  { id: 'starter-edge', source: 'starter-osc', target: 'starter-out', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
 ]
 
 function AppContent() {
@@ -73,8 +75,13 @@ function AppContent() {
   const [errorToast, setErrorToast] = useState<string | null>(null)
   const [chatOpen, setChatOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [aboutOpen, setAboutOpen] = useState(false)
+  const [examplesOpen, setExamplesOpen] = useState(false)
   const [hasApiKey, setHasApiKey] = useState(false)
   const [paletteCollapsed, setPaletteCollapsed] = useState(false)
+  const [showStarterHint, setShowStarterHint] = useState(
+    () => typeof window !== 'undefined' && !window.localStorage.getItem(STARTER_HINT_KEY),
+  )
 
   const { getViewport, setViewport, screenToFlowPosition, getNodes } = useReactFlow()
 
@@ -94,6 +101,22 @@ function AppContent() {
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
     [setEdges],
   )
+
+  const dismissStarterHint = useCallback(() => {
+    setShowStarterHint(false)
+    try {
+      window.localStorage.setItem(STARTER_HINT_KEY, '1')
+    } catch {
+      // localStorage unavailable (Electron security policy edge case) — banner just won't be sticky.
+    }
+  }, [])
+
+  const loadExample = (ex: ExampleGraph) => {
+    setNodes(ex.nodes)
+    setEdges(ex.edges)
+    setExamplesOpen(false)
+    dismissStarterHint()
+  }
 
   const refreshKeyStatus = useCallback(async () => {
     try {
@@ -123,6 +146,7 @@ function AppContent() {
   }
 
   const handleLoad = () => {
+    dismissStarterHint()
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = 'application/json'
@@ -154,6 +178,7 @@ function AppContent() {
   }
 
   const handlePlay = async () => {
+    dismissStarterHint()
     setIsPlaying(true)
     setStatusMessage('Synthesizing…')
     setErrorToast(null)
@@ -333,6 +358,7 @@ function AppContent() {
     const type = e.dataTransfer.getData(PALETTE_DRAG_TYPE)
     if (!type) return
     e.preventDefault()
+    dismissStarterHint()
     const position = screenToFlowPosition({ x: e.clientX, y: e.clientY })
     const id = `${type}_${Date.now().toString(36)}`
     setNodes((nds) => [
@@ -367,6 +393,33 @@ function AppContent() {
         </button>
         <button onClick={handleSave}>Save</button>
         <button onClick={handleLoad}>Load</button>
+        <div className="toolbar-dropdown-anchor">
+          <button
+            onClick={() => setExamplesOpen((v) => !v)}
+            className={examplesOpen ? 'toolbar-toggle-active' : ''}
+            title="Open a bundled example graph"
+          >
+            Examples ▾
+          </button>
+          {examplesOpen && (
+            <>
+              <div className="toolbar-dropdown-overlay" onClick={() => setExamplesOpen(false)} />
+              <div className="toolbar-dropdown" role="menu">
+                {EXAMPLES.map((ex) => (
+                  <button
+                    key={ex.id}
+                    className="toolbar-dropdown-item"
+                    onClick={() => loadExample(ex)}
+                    title={ex.description}
+                  >
+                    <span className="toolbar-dropdown-label">{ex.label}</span>
+                    <span className="toolbar-dropdown-desc">{ex.description}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         <button
           onClick={() => setChatOpen((v) => !v)}
           className={chatOpen ? 'toolbar-toggle-active' : ''}
@@ -375,6 +428,7 @@ function AppContent() {
           💬 Chat
         </button>
         <button onClick={() => setSettingsOpen(true)} title="Settings">⚙</button>
+        <button onClick={() => setAboutOpen(true)} title="About ChipBlocks">ℹ</button>
       </div>
       <div className="main-area">
         <Palette
@@ -396,6 +450,22 @@ function AppContent() {
             <Controls />
             <MiniMap />
           </ReactFlow>
+          {showStarterHint && (
+            <div className="starter-hint" role="note">
+              <span className="starter-hint-icon">▶</span>
+              <span className="starter-hint-text">
+                Sample graph — click <strong>▶ Play</strong> in the toolbar to hear it.
+              </span>
+              <button
+                className="starter-hint-close"
+                onClick={dismissStarterHint}
+                title="Dismiss"
+                aria-label="Dismiss starter hint"
+              >
+                ×
+              </button>
+            </div>
+          )}
         </div>
         {chatOpen && (
           <Chat
@@ -427,6 +497,7 @@ function AppContent() {
           onKeyChanged={refreshKeyStatus}
         />
       )}
+      {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
     </div>
   )
 }
