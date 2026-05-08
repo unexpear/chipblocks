@@ -16,6 +16,8 @@ import {
 import { nodeTypes, type AppNode } from './blocks'
 import { Chat } from './Chat'
 import { SettingsModal } from './SettingsModal'
+import { Palette, PALETTE_DRAG_TYPE, defaultDataForType } from './Palette'
+import { type DragEvent } from 'react'
 import './App.css'
 
 declare global {
@@ -66,8 +68,9 @@ function AppContent() {
   const [chatOpen, setChatOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [hasApiKey, setHasApiKey] = useState(false)
+  const [paletteCollapsed, setPaletteCollapsed] = useState(false)
 
-  const { getViewport, setViewport } = useReactFlow()
+  const { getViewport, setViewport, screenToFlowPosition } = useReactFlow()
 
   // On mount, check whether an API key is already saved.
   useEffect(() => {
@@ -189,6 +192,28 @@ function AppContent() {
     await window.chipblocks.cancel()
   }
 
+  // Drag-and-drop from the palette: the canvas wrapper accepts drops
+  // carrying our private MIME type and spawns a new node at the drop
+  // location with the block type's default data.
+  const onDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (e.dataTransfer.types.includes(PALETTE_DRAG_TYPE)) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+    }
+  }
+
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    const type = e.dataTransfer.getData(PALETTE_DRAG_TYPE)
+    if (!type) return
+    e.preventDefault()
+    const position = screenToFlowPosition({ x: e.clientX, y: e.clientY })
+    const id = `${type}_${Date.now().toString(36)}`
+    setNodes((nds) => [
+      ...nds,
+      { id, type, position, data: defaultDataForType(type) } as AppNode,
+    ])
+  }
+
   return (
     <div className="app-root">
       <div className="toolbar">
@@ -217,7 +242,11 @@ function AppContent() {
         <button onClick={() => setSettingsOpen(true)} title="Settings">⚙</button>
       </div>
       <div className="main-area">
-        <div className="canvas">
+        <Palette
+          collapsed={paletteCollapsed}
+          onToggle={() => setPaletteCollapsed((v) => !v)}
+        />
+        <div className="canvas" onDragOver={onDragOver} onDrop={onDrop}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
