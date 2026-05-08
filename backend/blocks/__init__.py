@@ -6,7 +6,7 @@ Each block exposes:
 - `input_ports`:  dict[str, Signal] — keys match the React Flow handle ids
 - `output_ports`: dict[str, Signal] — keys match the React Flow handle ids
 
-Audio signals are `Signal(signed(8))` (-128 to +127). Gate / trigger
+Audio signals are `Signal(signed(8))` (-128 to +127). Gate / clock
 signals are 1-bit `Signal()`. The translator (synth.py) reads a graph
 JSON, instantiates blocks from BLOCK_REGISTRY by `node.type`, and wires
 edges via `m.d.comb += tgt.input_ports[handle].eq(src.output_ports[handle])`.
@@ -19,6 +19,8 @@ from .mixer import Mixer
 from .output import Output
 from .adsr import ADSR
 from .gate import Gate
+from .lowpass import LowPassFilter
+from .sample_and_hold import SampleAndHold
 
 # Registry mapping graph node `type` (from React Flow JSON) to block class.
 BLOCK_REGISTRY = {
@@ -29,6 +31,8 @@ BLOCK_REGISTRY = {
     "output": Output,
     "adsr": ADSR,
     "gate": Gate,
+    "lowpass": LowPassFilter,
+    "samplehold": SampleAndHold,
 }
 
 __all__ = [
@@ -39,5 +43,7 @@ __all__ = [
     "Output",
     "ADSR",
     "Gate",
+    "LowPassFilter",
+    "SampleAndHold",
     "BLOCK_REGISTRY",
 ]

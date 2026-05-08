@@ -61,7 +61,11 @@ def _build_params(node_type: str, data: dict) -> dict:
         if "duty_pct" in data:
             params["duty_pct"] = int(data["duty_pct"])
         params["sample_rate"] = SAMPLE_RATE
-    # Mixer and Output have no parameters.
+    elif node_type == "lowpass":
+        if "cutoff_hz" in data:
+            params["cutoff_hz"] = int(data["cutoff_hz"])
+        params["sample_rate"] = SAMPLE_RATE
+    # Mixer, Output, SampleAndHold have no parameters.
     return params
 
 

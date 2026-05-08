@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from amaranth.sim import Simulator
-from blocks import Oscillator, Triangle, Sawtooth, Mixer, Output, ADSR, Gate
+from blocks import Oscillator, Triangle, Sawtooth, Mixer, Output, ADSR, Gate, LowPassFilter, SampleAndHold
 
 
 def _transitions(samples: list[int]) -> int:
@@ -226,6 +226,76 @@ def test_adsr() -> bool:
     return pre_max == 0 and during_max > 100 and post_min_after_release == 0 and distinct >= 30
 
 
+def test_lowpass() -> bool:
+    """LPF should attenuate fast transitions. Drive a square wave through
+    a low-cutoff filter; output should have smaller swings than input."""
+    lpf = LowPassFilter(cutoff_hz=200, sample_rate=44100)
+    sim = Simulator(lpf)
+    sim.add_clock(1e-6)
+
+    captured: list[int] = []
+
+    async def process(ctx):
+        # Drive a square wave: ±100 alternating every 50 ticks.
+        for cycle in range(8):
+            value = 100 if (cycle % 2 == 0) else -100
+            for _ in range(50):
+                ctx.set(lpf.audio_in, value)
+                await ctx.tick()
+                captured.append(ctx.get(lpf.audio_out))
+
+    sim.add_testbench(process)
+    sim.run()
+
+    distinct = len(set(captured))
+    sample_max = max(captured)
+    sample_min = min(captured)
+    print(f"LPF (200Hz on 200Hz square): {len(captured)} samples, {distinct} distinct, range [{sample_min}, {sample_max}], alpha={lpf.alpha}")
+    # The output should NOT be a clean square (would be only 2 distinct values).
+    # Smoothed output ramps -> many distinct values across the full range.
+    return distinct >= 30
+
+
+def test_sample_and_hold() -> bool:
+    """S&H should hold the input value between rising clock edges."""
+    sh = SampleAndHold()
+    sim = Simulator(sh)
+    sim.add_clock(1e-6)
+
+    captured: list[int] = []
+
+    async def process(ctx):
+        ctx.set(sh.clock_in, 0)
+        # Tick 0..9: clock low, audio_in changing, output should stay at 0.
+        for i in range(10):
+            ctx.set(sh.audio_in, 50 + i)  # 50, 51, 52, ...
+            await ctx.tick()
+            captured.append(ctx.get(sh.audio_out))
+        # Tick 10: clock rises while audio_in == 60. Sample should latch.
+        ctx.set(sh.audio_in, 60)
+        ctx.set(sh.clock_in, 1)
+        await ctx.tick()
+        captured.append(ctx.get(sh.audio_out))
+        # Subsequent ticks with clock still high should NOT re-sample.
+        for i in range(5):
+            ctx.set(sh.audio_in, 100 + i)
+            await ctx.tick()
+            captured.append(ctx.get(sh.audio_out))
+
+    sim.add_testbench(process)
+    sim.run()
+
+    print(f"S&H captured: {captured}")
+    # Pre-clock: 10 samples at 0 (held default).
+    # On clock rise: sample latches to whatever audio_in was when the
+    # rising edge was detected (1-cycle lag through prev_clock register
+    # is normal for edge-detected sample-and-hold).
+    # After: held value persists despite audio_in changing.
+    pre_clock = captured[:10]
+    post_clock = captured[11:]  # skip the transition cycle
+    return all(s == 0 for s in pre_clock) and len(set(post_clock)) == 1
+
+
 if __name__ == "__main__":
     results = {
         "Oscillator": test_oscillator(),
@@ -235,6 +305,8 @@ if __name__ == "__main__":
         "Output": test_output(),
         "Gate": test_gate(),
         "ADSR": test_adsr(),
+        "LowPassFilter": test_lowpass(),
+        "SampleAndHold": test_sample_and_hold(),
     }
     print()
     print("=== Summary ===")

@@ -25,6 +25,8 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'mixer',      label: 'Mixer',      color: '#2196f3', description: 'Average two audio inputs' },
   { type: 'adsr',       label: 'ADSR',       color: '#ff9800', description: 'Attack/Decay/Sustain/Release envelope' },
   { type: 'gate',       label: 'Gate',       color: '#00bcd4', description: 'Periodic 1-bit pulse' },
+  { type: 'lowpass',    label: 'Low-pass',   color: '#00897b', description: '1-pole IIR low-pass filter' },
+  { type: 'samplehold', label: 'S & H',      color: '#607d8b', description: 'Sample-and-Hold on clock edge' },
   { type: 'output',     label: 'Output',     color: '#f44336', description: 'Audio sink (where Play reads from)' },
 ]
 
@@ -40,8 +42,11 @@ export function defaultDataForType(type: string): Record<string, unknown> {
       return { attack_ms: 10, decay_ms: 100, sustain_level: 80, release_ms: 200 }
     case 'gate':
       return { rate_hz: 4, duty_pct: 50 }
+    case 'lowpass':
+      return { cutoff_hz: 800 }
     case 'mixer':
     case 'output':
+    case 'samplehold':
     default:
       return {}
   }

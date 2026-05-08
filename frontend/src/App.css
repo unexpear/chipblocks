@@ -512,6 +512,15 @@
   border-color: #00bcd4;
 }
 
+.block-lowpass {
+  border-color: #00897b;
+}
+
+.block-samplehold {
+  border-color: #607d8b;
+  min-width: 130px;
+}
+
 /* Multi-row parameter blocks (ADSR, Gate, future LPF, etc.) */
 .block-row {
   display: flex;
