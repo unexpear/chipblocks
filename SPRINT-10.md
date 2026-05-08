@@ -143,7 +143,7 @@ End-to-end CLI test confirmed working.
 - **PyYAML is genuinely useful** for the kind of structured-output tooling we're building. Adding it to backend setup was a one-line config change (BSD-2 licensed, fits the no-copyleft policy, preinstalled in WSL2 Ubuntu 24.04).
 
 **What changes Sprint 11:**
-- **Fix the TT clock-rate gap.** Bake the sample-rate divider into the TT wrapper. Half-day of work; should land before any user actually clicks submit.
+- ~~**Fix the TT clock-rate gap.**~~ **✓ Done in-sprint after the user pushed back: "the output should work in the already output form, the manufacturer should at most just need to quick check and slot it all in."** Closing the gap pulled in deeper research and ended up materially upgrading the TT bundle: 14-file canonical `ttsky-verilog-template` layout (src/, test/, docs/, info.yaml, README, LICENSE, .gitignore, plus a cocotb testbench), `EnableInserter`-based clock-gating in both the TT wrapper AND BoardTop (same bug, both places), `--project-name` CLI flag with auto-slug, info.yaml validated against `tt-support-tools/project_info.py`. Drop-in ready: TTSKY26a closes 2026-05-11 (3 days from sprint close); a user can submit today.
 - **Sprint 9 launch carryforwards still pending user-action**: tag v0.1.0-alpha + push installers + screenshots + announcements + GitHub Discussions.
 - **More candidate work** per ROADMAP "Next" / "Later":
   - MIDI input + polyphony (the flagship-domain unlock for synth makers)
