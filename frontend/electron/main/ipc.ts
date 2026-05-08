@@ -165,7 +165,16 @@ interface BuildResult {
 
 let currentBuildProc: ChildProcess | null = null
 
-async function runBuildIce40(graph: SynthGraph): Promise<BuildResult> {
+type BuildTarget = 'icestick' | 'tinyfpga-bx' | 'tt'
+
+// Maps target id -> the bundle zip filename produced by build.py.
+const BUNDLE_FILENAMES: Record<BuildTarget, string> = {
+  'icestick': 'chipblocks-fpga-icestick.zip',
+  'tinyfpga-bx': 'chipblocks-fpga-tinyfpga-bx.zip',
+  'tt': 'chipblocks-tt.zip',
+}
+
+async function runBuild(graph: SynthGraph, target: BuildTarget): Promise<BuildResult> {
   const dir = await mkdtemp(path.join(tmpdir(), 'chipblocks-build-'))
   const winJsonPath = path.join(dir, 'graph.json')
   const winOutDir = dir
@@ -183,15 +192,15 @@ async function runBuildIce40(graph: SynthGraph): Promise<BuildResult> {
   }
 
   return new Promise<BuildResult>((resolve) => {
-    // We have to source the OSS CAD Suite environment so yosys / nextpnr /
-    // icepack are on PATH. Run inside `bash -c` so the source statement
-    // and the python invocation share a shell.
+    // FPGA targets need yosys / nextpnr / icepack on PATH (sourced via the
+    // OSS CAD Suite). The TT target is sources-only, no PnR — but sourcing
+    // the env is harmless and keeps the invocation symmetric.
     const innerCmd =
-      `source ~/oss-cad-suite/environment && ` +
+      `source ~/oss-cad-suite/environment 2>/dev/null; ` +
       `python3 ${shellQuote(wslScriptPath)} ` +
       `--in ${shellQuote(wslJsonPath)} ` +
       `--out-dir ${shellQuote(wslOutDir)} ` +
-      `--target ice40`
+      `--target ${shellQuote(target)}`
 
     const proc = spawn(
       'wsl.exe',
@@ -213,8 +222,8 @@ async function runBuildIce40(graph: SynthGraph): Promise<BuildResult> {
     proc.stdout.on('data', (d: Buffer) => { stdout += d.toString('utf8') })
     proc.stderr.on('data', (d: Buffer) => { stderr += d.toString('utf8') })
 
-    // PnR can take meaningful time on bigger graphs.
-    const TIMEOUT_MS = 120_000
+    // FPGA PnR can take meaningful time; TT is fast (sources-only).
+    const TIMEOUT_MS = target === 'tt' ? 30_000 : 120_000
     const timer = setTimeout(() => {
       proc.kill('SIGKILL')
       resolve({ ok: false, error: `Build timed out after ${TIMEOUT_MS / 1000}s` })
@@ -226,7 +235,7 @@ async function runBuildIce40(graph: SynthGraph): Promise<BuildResult> {
       if (code === 0) {
         if (stdout) console.log('[build stdout]', stdout)
         try {
-          const winZipPath = path.join(winOutDir, 'chipblocks-fpga.zip')
+          const winZipPath = path.join(winOutDir, BUNDLE_FILENAMES[target])
           const buf = await readFile(winZipPath)
           const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
           resolve({ ok: true, zipData: ab as ArrayBuffer })
@@ -268,8 +277,8 @@ export function registerIpcHandlers() {
   ipcMain.handle('synth:cancel', async () => {
     return cancelSynth()
   })
-  ipcMain.handle('build:ice40', async (_event, graph: SynthGraph) => {
-    return runBuildIce40(graph)
+  ipcMain.handle('build:run', async (_event, payload: { graph: SynthGraph; target: BuildTarget }) => {
+    return runBuild(payload.graph, payload.target)
   })
   ipcMain.handle('build:cancel', async () => {
     return cancelBuild()

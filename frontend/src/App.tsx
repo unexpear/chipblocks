@@ -31,7 +31,7 @@ declare global {
         error?: string
       }>
       cancel: () => Promise<boolean>
-      buildIce40: (graph: unknown) => Promise<{
+      build: (graph: unknown, target: BuildTarget) => Promise<{
         ok: boolean
         zipData?: ArrayBuffer
         error?: string
@@ -44,6 +44,40 @@ declare global {
 const SAVE_VERSION = 1
 const APP_NAME = 'ChipBlocks'
 const STARTER_HINT_KEY = 'chipblocks:starterHintDismissed'
+
+type BuildTarget = 'icestick' | 'tinyfpga-bx' | 'tt'
+
+interface BuildTargetOption {
+  id: BuildTarget
+  label: string
+  description: string
+  icon: string
+  bundleFilename: string
+}
+
+const BUILD_TARGETS: BuildTargetOption[] = [
+  {
+    id: 'icestick',
+    label: 'Lattice iCEstick',
+    description: 'iCE40 HX1K · ~$30 USB dev board · flash with iceprog',
+    icon: '🔧',
+    bundleFilename: 'chipblocks-fpga-icestick.zip',
+  },
+  {
+    id: 'tinyfpga-bx',
+    label: 'TinyFPGA BX',
+    description: 'iCE40 LP8K · USB-native, ~5× the LUTs · flash with tinyprog',
+    icon: '🔧',
+    bundleFilename: 'chipblocks-fpga-tinyfpga-bx.zip',
+  },
+  {
+    id: 'tt',
+    label: 'Tiny Tapeout (real ASIC)',
+    description: 'Submission package for Tiny Tapeout · sources + info.yaml · they fab the chip',
+    icon: '🚀',
+    bundleFilename: 'chipblocks-tt.zip',
+  },
+]
 
 interface SaveFileV1 {
   version: 1
@@ -77,6 +111,7 @@ function AppContent() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
   const [examplesOpen, setExamplesOpen] = useState(false)
+  const [buildMenuOpen, setBuildMenuOpen] = useState(false)
   const [hasApiKey, setHasApiKey] = useState(false)
   const [paletteCollapsed, setPaletteCollapsed] = useState(false)
   const [showStarterHint, setShowStarterHint] = useState(
@@ -223,17 +258,19 @@ function AppContent() {
     await window.chipblocks.cancel()
   }
 
-  // Build for FPGA: spawn the iCE40 build pipeline in WSL2, get back a
-  // zip with the bitstream + Verilog source + flash instructions, prompt
-  // the user to download it.
+  // Build: spawn the build pipeline in WSL2 for the selected target
+  // (FPGA bitstream for icestick / tinyfpga-bx, or sources-only Tiny
+  // Tapeout submission package). Get back a zip and prompt download.
   const [isBuilding, setIsBuilding] = useState(false)
 
-  const handleBuild = async () => {
+  const handleBuild = async (target: BuildTargetOption) => {
+    dismissStarterHint()
+    setBuildMenuOpen(false)
     setIsBuilding(true)
-    setStatusMessage('Building bitstream…')
+    setStatusMessage(target.id === 'tt' ? 'Generating Tiny Tapeout package…' : `Building bitstream (${target.label})…`)
     setErrorToast(null)
     try {
-      const result = await window.chipblocks.buildIce40({ nodes, edges })
+      const result = await window.chipblocks.build({ nodes, edges }, target.id)
       if (!result.ok) {
         setStatusMessage(null)
         setErrorToast(result.error ?? 'Build failed')
@@ -248,11 +285,11 @@ function AppContent() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = 'chipblocks-fpga.zip'
+      a.download = target.bundleFilename
       a.click()
       URL.revokeObjectURL(url)
       const sizeKb = (result.zipData.byteLength / 1024).toFixed(1)
-      setStatusMessage(`Bitstream ready (${sizeKb} KB)`)
+      setStatusMessage(target.id === 'tt' ? `Submission ready (${sizeKb} KB)` : `Bitstream ready (${sizeKb} KB)`)
     } catch (err) {
       setStatusMessage(null)
       setErrorToast(`Build failed: ${(err as Error).message}`)
@@ -388,9 +425,34 @@ function AppContent() {
           <span className="toolbar-status">{statusMessage}</span>
         )}
         <button onClick={handlePlay} disabled={isPlaying || isBuilding}>▶ Play</button>
-        <button onClick={handleBuild} disabled={isPlaying || isBuilding} title="Build a flashable iCE40 bitstream">
-          🔧 Build for FPGA
-        </button>
+        <div className="toolbar-dropdown-anchor">
+          <button
+            onClick={() => setBuildMenuOpen((v) => !v)}
+            disabled={isPlaying || isBuilding}
+            className={buildMenuOpen ? 'toolbar-toggle-active' : ''}
+            title="Pick a target and build the chip"
+          >
+            🔧 Build ▾
+          </button>
+          {buildMenuOpen && (
+            <>
+              <div className="toolbar-dropdown-overlay" onClick={() => setBuildMenuOpen(false)} />
+              <div className="toolbar-dropdown" role="menu">
+                {BUILD_TARGETS.map((target) => (
+                  <button
+                    key={target.id}
+                    className="toolbar-dropdown-item"
+                    onClick={() => handleBuild(target)}
+                    title={target.description}
+                  >
+                    <span className="toolbar-dropdown-label">{target.icon} {target.label}</span>
+                    <span className="toolbar-dropdown-desc">{target.description}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         <button onClick={handleSave}>Save</button>
         <button onClick={handleLoad}>Load</button>
         <div className="toolbar-dropdown-anchor">

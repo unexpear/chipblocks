@@ -96,7 +96,7 @@ describe('Synth IPC contract', () => {
     vi.stubGlobal('chipblocks', {
       synth: synthSpy,
       cancel: vi.fn(),
-      buildIce40: vi.fn(),
+      build: vi.fn(),
       cancelBuild: vi.fn(),
     })
 
@@ -136,7 +136,7 @@ describe('Synth IPC contract', () => {
     vi.stubGlobal('chipblocks', {
       synth: synthSpy,
       cancel: vi.fn(),
-      buildIce40: vi.fn(),
+      build: vi.fn(),
       cancelBuild: vi.fn(),
     })
 
@@ -163,12 +163,12 @@ describe('Synth IPC contract', () => {
 // Build IPC
 
 describe('Build IPC contract', () => {
-  it('buildIce40() is called with the current graph when 🔧 Build is clicked', async () => {
+  it('build() is called with the current graph + iCEstick target when picked from the menu', async () => {
     const buildSpy = vi.fn(async () => ({ ok: true as const, zipData: new ArrayBuffer(8) }))
     vi.stubGlobal('chipblocks', {
       synth: vi.fn(),
       cancel: vi.fn(),
-      buildIce40: buildSpy,
+      build: buildSpy,
       cancelBuild: vi.fn(),
     })
 
@@ -180,16 +180,26 @@ describe('Build IPC contract', () => {
 
     const { container, unmount } = render(React.createElement(App))
     try {
-      const buildBtn = findButton(container, '🔧 Build for FPGA')
+      // Open the build-target popover, then click the iCEstick entry.
+      const buildBtn = findButton(container, '🔧 Build ▾')
       await act(async () => {
         buildBtn.click()
       })
       await flush()
+      const icestickItem = findButton(container, 'Lattice iCEstick')
+      await act(async () => {
+        icestickItem.click()
+      })
+      await flush()
 
       expect(buildSpy).toHaveBeenCalledTimes(1)
-      const arg = buildSpy.mock.calls[0][0] as { nodes: unknown[]; edges: unknown[] }
-      expect(Array.isArray(arg.nodes)).toBe(true)
-      expect(Array.isArray(arg.edges)).toBe(true)
+      const [graphArg, targetArg] = buildSpy.mock.calls[0] as [
+        { nodes: unknown[]; edges: unknown[] },
+        string,
+      ]
+      expect(Array.isArray(graphArg.nodes)).toBe(true)
+      expect(Array.isArray(graphArg.edges)).toBe(true)
+      expect(targetArg).toBe('icestick')
       // After a successful build, the renderer should have minted a Blob
       // URL and clicked the download anchor.
       expect(URL.createObjectURL).toHaveBeenCalled()
@@ -199,7 +209,7 @@ describe('Build IPC contract', () => {
     }
   })
 
-  it('buildIce40() failure surfaces the error in a toast', async () => {
+  it('build() failure surfaces the error in a toast', async () => {
     const buildSpy = vi.fn(async () => ({
       ok: false as const,
       error: 'yosys: command not found',
@@ -207,15 +217,20 @@ describe('Build IPC contract', () => {
     vi.stubGlobal('chipblocks', {
       synth: vi.fn(),
       cancel: vi.fn(),
-      buildIce40: buildSpy,
+      build: buildSpy,
       cancelBuild: vi.fn(),
     })
 
     const { container, unmount } = render(React.createElement(App))
     try {
-      const buildBtn = findButton(container, '🔧 Build for FPGA')
+      const buildBtn = findButton(container, '🔧 Build ▾')
       await act(async () => {
         buildBtn.click()
+      })
+      await flush()
+      const icestickItem = findButton(container, 'Lattice iCEstick')
+      await act(async () => {
+        icestickItem.click()
       })
       await flush()
       await flush()
