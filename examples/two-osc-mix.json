@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "app": "ChipBlocks",
+  "savedAt": "2026-05-08T00:00:00.000Z",
+  "viewport": { "x": 0, "y": 0, "zoom": 1 },
+  "nodes": [
+    {
+      "id": "osc1",
+      "type": "oscillator",
+      "position": { "x": 50, "y": 60 },
+      "data": { "freq": 440 }
+    },
+    {
+      "id": "osc2",
+      "type": "sawtooth",
+      "position": { "x": 50, "y": 220 },
+      "data": { "freq": 660 }
+    },
+    {
+      "id": "mixer",
+      "type": "mixer",
+      "position": { "x": 400, "y": 130 },
+      "data": {}
+    },
+    {
+      "id": "out",
+      "type": "output",
+      "position": { "x": 700, "y": 130 },
+      "data": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "osc1",
+      "target": "mixer",
+      "sourceHandle": "audio-out",
+      "targetHandle": "in-1"
+    },
+    {
+      "id": "e2",
+      "source": "osc2",
+      "target": "mixer",
+      "sourceHandle": "audio-out",
+      "targetHandle": "in-2"
+    },
+    {
+      "id": "e3",
+      "source": "mixer",
+      "target": "out",
+      "sourceHandle": "mix-out",
+      "targetHandle": "audio-in"
+    }
+  ]
+}

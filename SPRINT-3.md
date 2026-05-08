@@ -149,7 +149,21 @@ Frontend:
 Default graph unchanged (still the 5-block Osc/Tri/Saw/Mixer/Output layout from Items 2+3). To use ADSR + Gate in the running app you currently need to load a JSON graph that wires them in — a drag-from-palette UI is a future item.
 
 ### Item 5 — Project save/load (full state)
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** Save format upgraded from `{nodes, edges}` to a versioned envelope:
+```json
+{ "version": 1, "app": "ChipBlocks", "savedAt": "<iso>", "viewport": {...}, "nodes": [...], "edges": [...] }
+```
+Block parameters were already preserved (they live inside `node.data`); the new pieces are **viewport** (zoom + pan position) and **metadata** (version, app, savedAt) so future format changes can be migrated cleanly.
+
+Implementation: refactored App into `App` (thin `ReactFlowProvider` wrapper) + `AppContent` (the actual component) so `useReactFlow()` is in scope; `getViewport()` on save and `setViewport()` on load. Backwards-compatible: older `{nodes, edges}` saves still load (the loader treats missing `viewport` as "leave current viewport alone"). Forward-compatible: a newer-version save shows a warning toast but still attempts to load.
+
+Also added an `examples/` directory with two demo graph files:
+- `adsr-pulse.json` — Oscillator + Gate + ADSR + Output, showing the ADSR pulse-shaping a 440 Hz tone four times per second
+- `two-osc-mix.json` — square + sawtooth into a Mixer (chiptune-y dissonance)
+
+…plus a small `examples/README.md` so they're discoverable from the GitHub landing page. Load via the **Load graph** toolbar button.
+
+`tsc --noEmit` clean.
 
 ### Item 6 — AI consultant chat sidebar
 *[fill in when complete]*
