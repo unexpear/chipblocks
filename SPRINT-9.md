@@ -129,46 +129,65 @@ User direction at the end of S9 — same fork, but now with real launch-feedback
 > Fill in as you go. One paragraph per completed item. Be honest about what didn't work.
 
 ### Item 1 — Default starter graph on first launch
-*Pending.*
+**✓ Done — 2026-05-08.** Replaced the old 5-node demo (3 oscillators + mixer + output, daunting for a first impression) with a minimal 2-node Oscillator → Output graph. The simplest thing that produces sound on Play. Layered a dismissible hint banner at the top of the canvas: *"Sample graph — click ▶ Play in the toolbar to hear it."* The banner persists until the user (a) clicks ▶ Play, (b) drops a block from the palette, (c) clicks Load or selects an example, or (d) clicks the × button. State is keyed by `localStorage.chipblocks:starterHintDismissed`, so it never reappears once dismissed. Bigger demos moved to the bundled examples (Item 4).
 
 ### Item 2 — Noise block
-*Pending.*
+**✓ Done — 2026-05-08.** Pseudo-random 8-bit signed audio source via a 16-bit Galois LFSR (taps at bits 15/13/12/10, period 65535, ≈1.5s before repeat at 44.1 kHz — easily noisy enough for percussion). Backend: [backend/blocks/noise.py](backend/blocks/noise.py). Frontend: [frontend/src/blocks/NoiseNode.tsx](frontend/src/blocks/NoiseNode.tsx). No parameters. Wired into BLOCK_REGISTRY, synth.py, palette, AI system prompt, and tool schemas. End-to-end smoke-tested by the implementing agent: ran `synth.py` against a 2-node `noise → output` graph in WSL2; produced a valid 88200-sample WAV at 44.1 kHz.
 
 ### Item 3 — Constant block
-*Pending.*
+**✓ Done — 2026-05-08.** Emits a fixed 8-bit signed value. One parameter `value` (-128 to 127, default 0), clamped at construction time. Useful as a DC offset, ADSR test stimulus, or mixer "ground" input. Backend: [backend/blocks/constant.py](backend/blocks/constant.py). Frontend: [frontend/src/blocks/ConstantNode.tsx](frontend/src/blocks/ConstantNode.tsx). Block count is now **11** — closes the PRD Phase-2 "10–15 blocks" gap.
 
 ### Item 4 — Examples submenu in Load button
-*Pending.*
+**✓ Done — 2026-05-08.** Added a separate **Examples ▾** button to the toolbar (kept Load as a plain file picker for backward compat). Clicking it opens a popover with the bundled examples — currently *"Two oscillators mixed"* and *"ADSR-shaped pulse"* — each with a one-line description as a hover tooltip. Picking one replaces the canvas. Examples are bundled into the renderer at build time via [frontend/src/examples.ts](frontend/src/examples.ts), so they work identically in dev and packaged builds without IPC or runtime file reads. No changes to electron-builder.json needed.
 
 ### Item 5 — Help → About menu
-*Pending.*
+**✓ Done — 2026-05-08.** Toolbar **ℹ** button (next to ⚙) opens an [AboutModal](frontend/src/AboutModal.tsx) with: tagline, version (`0.1.0-alpha`), MIT note, "Built with Claude Code by a non-technical solo developer" line, links to the GitHub repo + CREDITS.md + ROADMAP.md + Discussions, and the BYOK explainer. Mirrors the SettingsModal's structure and CSS classes for consistency. Satisfies the PRD's "Help → About → Open-Source Credits" requirement at the v0.1 level.
 
 ### Item 6 — Pre-write RELEASE-NOTES-v0.1.0-alpha.md
-*Pending.*
+**✓ Done — 2026-05-08.** Drafted by an agent following the SPRINT-9 brief: 397 words, structured as one-paragraph framing → feature list → install instructions (with the unsigned-installer SmartScreen workaround) → backend setup → what's NOT in this release → what's coming → help/discussion → license + credits. Lives at the repo root as [RELEASE-NOTES-v0.1.0-alpha.md](RELEASE-NOTES-v0.1.0-alpha.md). Will become the body of the GitHub Release when the user runs `gh release create`.
 
 ### Item 7 — Pre-write announcement copy
-*Pending.*
+**✓ Done — 2026-05-08.** Drafted by an agent: 868 words across four self-contained drafts in [ANNOUNCEMENT-DRAFTS.md](ANNOUNCEMENT-DRAFTS.md) (a throwaway file annotated for deletion after launch). Targets: r/synthdiy (chip-design + Play angle), r/FPGA (Yosys + nextpnr + iCE40 angle), Hacker News Show HN, Hackaday tip line. Each draft uses `[GitHub Release URL]` as a placeholder for the user to substitute at launch.
 
 ### Item 8 — Fresh-install smoke test
-*Pending.*
+*Pending — needs user action. The unpacked-process launch was verified in S7 but the full feature path (install the .exe, click ▶ Play, click 🔧 Build for FPGA) was not. This is the gate before tagging the public release.*
 
 ### Item 9 — Tag + push v0.1.0-alpha, post announcements
-*Pending — needs user action.*
+*Pending — needs user action. After Item 8 passes, run:* `git tag v0.1.0-alpha && git push origin v0.1.0-alpha && gh release create v0.1.0-alpha frontend/release/0.1.0/ChipBlocks_0.1.0.exe -F RELEASE-NOTES-v0.1.0-alpha.md`. *Then post the four drafts from `ANNOUNCEMENT-DRAFTS.md` (substituting the real release URL).*
 
 ### Item 10 — Capture screenshots
-*Pending — needs user action.*
+*Pending — needs user action. Drop into `docs/screenshots/` and reference from README.*
 
 ### Item 11 — Smoke-test S8 AI grounding
-*Pending — needs user action.*
+*Pending — needs user action. The 7 queries from `SPRINT-8.md` sprint-goal section.*
 
 ### Item 12 — Enable GitHub Discussions
-*Pending — needs user action.*
+*Pending — needs user action. Settings → Features → check Discussions.*
 
 ### Item 13 — Sprint retrospective
-*Pending.*
+*Partially filled in below; full retro after the launch carry-overs (Items 8–12) are done by the user.*
 
 ---
 
-## Retrospective (end of sprint)
+## Retrospective (partial — post-coding, pre-launch)
 
-*To be filled in when the sprint closes.*
+> The autonomous-coding portion of S9 (Items 1–7) closed in one focused session. Items 8–12 are user-action gates that close the sprint when the launch goes live. Filling in the retrospective in two passes: this one for the coding work, the user fills in the launch part later.
+
+**What went well:**
+- **Two parallel agents handled ~70% of the sprint's coding work in ~5 minutes of wall time.** The block-expansion agent (Noise + Constant — backend + frontend + palette + AI prompt + CSS) and the docs agent (release notes + announcement copy) both delivered cleanly the first time. Doing either of those serially in the main loop would have been ~30 minutes of context-window churn each.
+- **The starter-graph + hint banner pattern matched the "respect the user's time" brief.** A 2-node Oscillator → Output is the smallest learning loop. The hint dismisses on any clear-engagement signal (Play, Drop, Load, ×), then is gone for good — keyed by `localStorage` so it never re-greets returning users.
+- **Bundling examples via TypeScript imports was the right call** vs. shipping them as runtime files. Zero electron-builder config change. Zero IPC plumbing. Identical behaviour in dev and packaged builds. Tradeoff: examples can't be added without a rebuild, but for an alpha that's the right level of investment.
+- **Block count went 9 → 11** (Noise + Constant). Closes the PRD Phase-2 "10–15 blocks" gap with two blocks that both have legitimate use cases (Noise: percussion textures; Constant: DC offsets, test stimuli, mixer ground).
+- **Sprint scope held.** The plan budgeted 7–11 hrs of P0 autonomous coding; actual elapsed was within range. No scope creep.
+
+**What didn't:**
+- **The dev box is the same machine that built the installer**, so I can't verify the "installed app actually works on a fresh machine" path autonomously. Item 8 (fresh-install smoke test) carries forward as a user action — same situation as S7. This is a genuine limitation of doing release work from a coding agent.
+- **No way to preview the new toolbar layout** (Examples popover + About button) without the user running the dev server. TS compiles + Vite builds prove it doesn't crash; layout-correctness is unverified until the user looks.
+- **No automated test exists for the AI prompt update** — the agent expanded `STATIC_SYSTEM` and tool schemas to mention Noise + Constant, but verifying the AI actually uses them requires the S8 manual smoke test (Item 11). Adding a manual eval script (Sprint plan P1 item 14) would have closed this loop, but I deprioritized it given the autonomous-coding cap.
+
+**What surprised me:**
+- **The block-expansion agent's "I added CSS for the new block borders too because every other block has one" call** was exactly the right kind of judgment that's hard to specify in advance. Same for choosing a maximal-length LFSR polynomial vs. just "any random source"; the agent thought a step deeper than the brief required.
+- **The system-prompt diff for adding two blocks was tiny** — about 15 lines into a 7.5 KB prompt. The S8 grounding work paid for itself: the prompt is now structured enough that adding a block is a matter of slotting one stanza into the existing block-library section, not rewriting prose.
+
+**What changes Sprint 10:**
+- *Will be decided after the launch carry-overs (Items 8–12) close. The most likely next-fork directions, per ROADMAP.md "Next" bucket: MIDI input + polyphony, Mac/Linux + cross-platform CI, more DSP blocks (wavetable / FM / delay), Hackaday submission, Tiny Tapeout package, IPC regression test alongside the CI sprint.*
