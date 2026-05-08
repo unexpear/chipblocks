@@ -81,7 +81,7 @@ beforeEach(() => {
   vi.stubGlobal('chipblocks', {
     synth: vi.fn(async () => ({ ok: true })),
     cancel: vi.fn(async () => true),
-    buildIce40: vi.fn(async () => ({ ok: true })),
+    build: vi.fn(async () => ({ ok: true })),
     cancelBuild: vi.fn(async () => true),
   })
 
