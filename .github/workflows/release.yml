@@ -57,7 +57,11 @@ jobs:
           # unsigned. Setting this to false avoids electron-builder
           # noise when no Developer ID is present.
           CSC_IDENTITY_AUTO_DISCOVERY: false
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Deliberately NOT setting GH_TOKEN here — that would trigger
+          # electron-builder's auto-publish flow, which requires a
+          # detected repo and tries to push artifacts itself. We
+          # instead upload artifacts via softprops/action-gh-release
+          # in the release job below, which gives us per-tag control.
         run: npm run build
 
       - name: Upload installer artifact (workflow run)
