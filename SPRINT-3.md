@@ -166,7 +166,29 @@ Also added an `examples/` directory with two demo graph files:
 `tsc --noEmit` clean.
 
 ### Item 6 — AI consultant chat sidebar
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** The marquee Sprint 3 item. Right-side chat panel powered by **`@anthropic-ai/sdk@0.94.x`** (MIT — clean for the project's no-copyleft policy). Architecture follows the research-agent recommendations (and the Sprint 3 risk register's "box it" note for Item 6 scope):
+
+**Key choices:**
+- **Main process owns the API calls.** The renderer never sees the Anthropic key. Streaming text deltas flow back via `webContents.send('ai:chunk', ...)` IPC events keyed by per-request id.
+- **Encrypted key storage via Electron `safeStorage`** — OS keychain (Keychain on macOS, DPAPI on Windows, libsecret on Linux). Recommended over localStorage even with our non-adversarial threat model.
+- **Model: `claude-sonnet-4-6`** at `max_tokens: 4096`. Best speed/quality balance for chat. Future tuning can expose this as a setting.
+- **Prompt caching** (`cache_control: { type: "ephemeral" }`) on the static block-library spec; per-turn canvas-state JSON is the un-cached portion. Keeps per-turn cost down across a long conversation.
+- **AbortController** per-request for clean cancel; `id` correlation prevents stale streams from updating the UI after cancel.
+
+**Files:**
+- `frontend/electron/main/ai.ts` — IPC handlers (`ai:save-key` / `ai:has-key` / `ai:clear-key` / `ai:chat` / `ai:cancel`) plus the streaming runChat loop.
+- `frontend/electron/main/index.ts` — registers `registerAiHandlers()` inside `app.whenReady()`.
+- `frontend/electron/preload/index.ts` — exposes `window.ai` with chat / cancel / key management plus `onChunk`/`onDone`/`onError` event subscriptions that return cleanup functions.
+- `frontend/src/Chat.tsx` — chat panel component; streaming text accumulator (via `useRef` to avoid React-state-lag); typing-cursor animation; cancel button while streaming; token counter in the footer.
+- `frontend/src/SettingsModal.tsx` — modal for API key entry; password-style input; explicit privacy disclosure about safeStorage.
+- `frontend/src/App.tsx` — toolbar gets 💬 Chat toggle + ⚙ Settings buttons; layout wraps canvas + chat in a `.main-area` flex row.
+- `frontend/src/App.css` — chat-panel + modal styles, streaming-cursor blink animation, toolbar-toggle-active state.
+
+**Empty state when no key is configured**: chat panel shows a clear "add your API key" message + a Settings button, plus the privacy explanation. No silent fail.
+
+**System prompt** is two parts: a static cached spec describing all 7 block types (their ports, parameters, ranges) plus a per-turn canvas-state block listing the actual nodes + edges JSON. This way the AI's suggestions are concretely grounded in what the user has on screen.
+
+`tsc --noEmit` clean. Dev server bundles cleanly with the SDK in the main bundle (preload 14.83 kB, main 9.72 kB — both modest). End-to-end "click Chat → see panel → enter key in settings → ask a question → stream answer" flow is wired but requires the user to provide their Anthropic API key for live verification.
 
 ### Item 7 — E2E demo
 *[fill in when complete]*
