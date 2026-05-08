@@ -10,6 +10,53 @@
   outline-offset: 2px;
 }
 
+/* Renderer error-boundary fallback. Bounds the blast radius of a
+   render-time exception in any block component / chat panel to the
+   wrapped subtree, with a Reload button as the recovery path. */
+.error-boundary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 2rem;
+  height: 100%;
+  background: #1a1010;
+  color: #f5d4d4;
+  text-align: center;
+}
+
+.error-boundary h2 {
+  margin: 0;
+  color: #ff8888;
+}
+
+.error-boundary-message {
+  background: #2a1818;
+  border: 1px solid #f44336;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  max-width: 600px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.error-boundary button {
+  background: #2a4d2e;
+  border: 1px solid #4caf50;
+  color: #fff;
+  padding: 0.5rem 1.25rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.error-boundary button:hover {
+  background: #356238;
+}
+
 .toolbar {
   display: flex;
   align-items: center;

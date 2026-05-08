@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Edge } from '@xyflow/react'
 import type { AppNode } from './blocks'
 import { getStoredModel, MODEL_OPTIONS } from './SettingsModal'
+import { PALETTE } from './Palette'
 import { buildSystemBlocks, buildTools } from './ai/prompt'
 // Side-effect import: ./types/ipc declares the global Window types
 // for window.chipblocks and window.ai. No symbols imported, just
@@ -211,6 +212,30 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
     }
   }, [])
 
+  // Validate the AI's tool-call input before applying it to the
+  // canvas state. This is a defense-in-depth check (m4 from the
+  // 2026-05-08 security review): the AI is the model, which is
+  // ultimately untrusted user-controllable text — a prompt-injected
+  // graph file or a creative model could try to add a node with
+  // type "__proto__" or wire an edge to a non-existent node id.
+  // Today's nodeTypes map and React Flow handle most of these
+  // gracefully, but rejecting at the door means a bad tool call
+  // is a clean error to the AI rather than a corrupted canvas.
+  const KNOWN_BLOCK_TYPES = new Set(PALETTE.map((p) => p.type))
+
+  const isPlainData = (v: unknown): v is Record<string, unknown> => {
+    if (v === null || typeof v !== 'object' || Array.isArray(v)) return false
+    for (const [, value] of Object.entries(v)) {
+      if (
+        value !== null &&
+        typeof value !== 'string' &&
+        typeof value !== 'number' &&
+        typeof value !== 'boolean'
+      ) return false
+    }
+    return true
+  }
+
   const applyToolCall = async (
     name: string,
     input: Record<string, unknown>,
@@ -218,28 +243,47 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
     try {
       if (name === 'add_node') {
         const type = String(input.type ?? '')
-        const data = (input.data as Record<string, unknown> | undefined) ?? undefined
-        const id = canvasActions.addNode(type, data)
+        if (!KNOWN_BLOCK_TYPES.has(type)) {
+          return { ok: false, result: `Unknown block type "${type}". Valid types: ${[...KNOWN_BLOCK_TYPES].join(', ')}` }
+        }
+        const data = input.data === undefined ? undefined : input.data
+        if (data !== undefined && !isPlainData(data)) {
+          return { ok: false, result: `Invalid data for ${type}: must be a flat object of strings/numbers/booleans.` }
+        }
+        const id = canvasActions.addNode(type, data as Record<string, unknown> | undefined)
         return { ok: true, result: `Added ${type} as ${id}` }
       }
       if (name === 'add_edge') {
+        const sourceId = String(input.source_id ?? '')
+        const targetId = String(input.target_id ?? '')
+        if (!nodes.some((n) => n.id === sourceId)) {
+          return { ok: false, result: `Source node "${sourceId}" not found on the canvas.` }
+        }
+        if (!nodes.some((n) => n.id === targetId)) {
+          return { ok: false, result: `Target node "${targetId}" not found on the canvas.` }
+        }
         const id = canvasActions.addEdge(
-          String(input.source_id ?? ''),
-          String(input.target_id ?? ''),
+          sourceId,
+          targetId,
           input.source_handle ? String(input.source_handle) : undefined,
           input.target_handle ? String(input.target_handle) : undefined,
         )
         return {
           ok: true,
-          result: `Wired ${input.source_id}.${input.source_handle} → ${input.target_id}.${input.target_handle} as ${id}`,
+          result: `Wired ${sourceId}.${input.source_handle} → ${targetId}.${input.target_handle} as ${id}`,
         }
       }
       if (name === 'update_node_params') {
-        canvasActions.updateNodeData(
-          String(input.id ?? ''),
-          (input.data as Record<string, unknown>) ?? {},
-        )
-        return { ok: true, result: `Updated ${input.id}` }
+        const id = String(input.id ?? '')
+        if (!nodes.some((n) => n.id === id)) {
+          return { ok: false, result: `Node "${id}" not found on the canvas.` }
+        }
+        const data = input.data
+        if (!isPlainData(data)) {
+          return { ok: false, result: `Invalid data: must be a flat object of strings/numbers/booleans.` }
+        }
+        canvasActions.updateNodeData(id, data)
+        return { ok: true, result: `Updated ${id}` }
       }
       // Destructive tools: route through the preview-and-apply modal.
       if (name === 'delete_node' || name === 'delete_edge') {

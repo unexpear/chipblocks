@@ -17,7 +17,8 @@ import { nodeTypes, type AppNode } from './blocks'
 import { Chat, type CanvasActions } from './Chat'
 import { SettingsModal } from './SettingsModal'
 import { AboutModal } from './AboutModal'
-import { Palette, PALETTE_DRAG_TYPE, defaultDataForType } from './Palette'
+import { ErrorBoundary } from './ErrorBoundary'
+import { Palette, PALETTE, PALETTE_DRAG_TYPE, defaultDataForType } from './Palette'
 import { EXAMPLES, type ExampleGraph } from './examples'
 import { type DragEvent } from 'react'
 import type { BuildTarget } from './types/ipc'
@@ -80,6 +81,96 @@ const initialNodes: AppNode[] = [
 const initialEdges: Edge[] = [
   { id: 'starter-edge', source: 'starter-osc', target: 'starter-out', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
 ]
+
+// Validate a parsed `chipblocks-graph.json` before swapping it onto
+// the canvas. m5 from the 2026-05-08 security review: a maliciously
+// crafted save file shared user-to-user could embed prompt-injection
+// strings in `data` fields that leak into the AI consultant's
+// per-turn canvas-state system block. Type-checking on the data
+// fields (only flat objects of strings/numbers/booleans, only known
+// block types) neutralizes the vector at the door.
+const KNOWN_BLOCK_TYPES = new Set(PALETTE.map((p) => p.type))
+
+interface ValidatedGraph {
+  ok: true
+  nodes: AppNode[]
+  edges: Edge[]
+  viewport?: Viewport
+  versionWarning?: string
+}
+
+interface InvalidGraph {
+  ok: false
+  error: string
+}
+
+function isPlainPrimitiveObject(v: unknown): v is Record<string, string | number | boolean | null> {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return false
+  for (const value of Object.values(v)) {
+    if (
+      value !== null &&
+      typeof value !== 'string' &&
+      typeof value !== 'number' &&
+      typeof value !== 'boolean'
+    ) return false
+  }
+  return true
+}
+
+function validateLoadedGraph(input: unknown): ValidatedGraph | InvalidGraph {
+  if (input === null || typeof input !== 'object') {
+    return { ok: false, error: 'Graph file is not an object.' }
+  }
+  const parsed = input as Record<string, unknown>
+  if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
+    return { ok: false, error: 'Graph file is missing nodes/edges arrays.' }
+  }
+  let versionWarning: string | undefined
+  if (typeof parsed.version === 'number' && parsed.version > SAVE_VERSION) {
+    versionWarning = `Graph was saved with a newer ChipBlocks (v${parsed.version}); attempting to load anyway.`
+  }
+  const nodeIds = new Set<string>()
+  const validNodes: AppNode[] = []
+  for (const raw of parsed.nodes as unknown[]) {
+    if (raw === null || typeof raw !== 'object') {
+      return { ok: false, error: 'A node entry is not an object.' }
+    }
+    const n = raw as Record<string, unknown>
+    if (typeof n.id !== 'string' || typeof n.type !== 'string') {
+      return { ok: false, error: 'A node is missing a string `id` or `type`.' }
+    }
+    if (!KNOWN_BLOCK_TYPES.has(n.type)) {
+      return { ok: false, error: `Unknown block type "${n.type}" in saved graph.` }
+    }
+    if (n.data !== undefined && !isPlainPrimitiveObject(n.data)) {
+      return { ok: false, error: `Node "${n.id}" has invalid data (must be a flat object of primitives).` }
+    }
+    if (n.position !== null && typeof n.position !== 'object') {
+      return { ok: false, error: `Node "${n.id}" has invalid position.` }
+    }
+    nodeIds.add(n.id)
+    validNodes.push(raw as AppNode)
+  }
+  const validEdges: Edge[] = []
+  for (const raw of parsed.edges as unknown[]) {
+    if (raw === null || typeof raw !== 'object') {
+      return { ok: false, error: 'An edge entry is not an object.' }
+    }
+    const e = raw as Record<string, unknown>
+    if (typeof e.id !== 'string' || typeof e.source !== 'string' || typeof e.target !== 'string') {
+      return { ok: false, error: 'An edge is missing string id/source/target.' }
+    }
+    if (!nodeIds.has(e.source) || !nodeIds.has(e.target)) {
+      return { ok: false, error: `Edge "${e.id}" references unknown node id.` }
+    }
+    validEdges.push(raw as Edge)
+  }
+  let viewport: Viewport | undefined
+  if (parsed.viewport && typeof parsed.viewport === 'object') {
+    viewport = parsed.viewport as Viewport
+  }
+  return { ok: true, nodes: validNodes, edges: validEdges, viewport, versionWarning }
+}
 
 function AppContent() {
   const [nodes, setNodes, onNodesChange] = useNodesState<AppNode>(initialNodes)
@@ -169,25 +260,25 @@ function AppContent() {
       const file = (e.target as HTMLInputElement).files?.[0]
       if (!file) return
       const text = await file.text()
+      let parsed: unknown
       try {
-        const parsed = JSON.parse(text)
-        if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
-          setErrorToast('Graph file is missing nodes/edges arrays.')
-          return
-        }
-        if (typeof parsed.version === 'number' && parsed.version > SAVE_VERSION) {
-          setErrorToast(
-            `Graph was saved with a newer ChipBlocks (v${parsed.version}); attempting to load anyway.`,
-          )
-        }
-        setNodes(parsed.nodes as AppNode[])
-        setEdges(parsed.edges as Edge[])
-        if (parsed.viewport && typeof parsed.viewport === 'object') {
-          setViewport(parsed.viewport as Viewport)
-        }
+        parsed = JSON.parse(text)
       } catch {
         setErrorToast('Invalid graph file — could not parse JSON.')
+        return
       }
+      const validation = validateLoadedGraph(parsed)
+      if (!validation.ok) {
+        setErrorToast(validation.error)
+        return
+      }
+      const { nodes: validNodes, edges: validEdges, viewport, versionWarning } = validation
+      if (versionWarning) {
+        setErrorToast(versionWarning)
+      }
+      setNodes(validNodes)
+      setEdges(validEdges)
+      if (viewport) setViewport(viewport)
     }
     input.click()
   }
@@ -485,20 +576,22 @@ function AppContent() {
           onToggle={() => setPaletteCollapsed((v) => !v)}
         />
         <div className="canvas" onDragOver={onDragOver} onDrop={onDrop}>
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            colorMode="dark"
-            fitView
-          >
-            <Background />
-            <Controls />
-            <MiniMap />
-          </ReactFlow>
+          <ErrorBoundary surface="the canvas">
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              colorMode="dark"
+              fitView
+            >
+              <Background />
+              <Controls />
+              <MiniMap />
+            </ReactFlow>
+          </ErrorBoundary>
           {showStarterHint && (
             <div className="starter-hint" role="note">
               <span className="starter-hint-icon">▶</span>
@@ -517,14 +610,16 @@ function AppContent() {
           )}
         </div>
         {chatOpen && (
-          <Chat
-            nodes={nodes}
-            edges={edges}
-            hasApiKey={hasApiKey}
-            canvasActions={canvasActions}
-            onClose={() => setChatOpen(false)}
-            onOpenSettings={() => setSettingsOpen(true)}
-          />
+          <ErrorBoundary surface="the AI chat panel">
+            <Chat
+              nodes={nodes}
+              edges={edges}
+              hasApiKey={hasApiKey}
+              canvasActions={canvasActions}
+              onClose={() => setChatOpen(false)}
+              onOpenSettings={() => setSettingsOpen(true)}
+            />
+          </ErrorBoundary>
         )}
       </div>
       {errorToast && (
