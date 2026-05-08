@@ -13,6 +13,7 @@
   "extraResources": [
     { "from": "../backend/synth.py", "to": "backend/synth.py" },
     { "from": "../backend/build.py", "to": "backend/build.py" },
+    { "from": "../backend/tinytapeout.py", "to": "backend/tinytapeout.py" },
     { "from": "../backend/setup.sh", "to": "backend/setup.sh" },
     { "from": "../backend/README.md", "to": "backend/README.md" },
     {
