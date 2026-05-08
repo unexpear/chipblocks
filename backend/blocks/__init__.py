@@ -15,6 +15,7 @@ edges via `m.d.comb += tgt.input_ports[handle].eq(src.output_ports[handle])`.
 from .oscillator import Oscillator
 from .triangle import Triangle
 from .sawtooth import Sawtooth
+from .sine import Sine
 from .mixer import Mixer
 from .output import Output
 from .adsr import ADSR
@@ -29,6 +30,7 @@ BLOCK_REGISTRY = {
     "oscillator": Oscillator,
     "triangle": Triangle,
     "sawtooth": Sawtooth,
+    "sine": Sine,
     "mixer": Mixer,
     "output": Output,
     "adsr": ADSR,
@@ -43,6 +45,7 @@ __all__ = [
     "Oscillator",
     "Triangle",
     "Sawtooth",
+    "Sine",
     "Mixer",
     "Output",
     "ADSR",

@@ -1,6 +1,7 @@
 import { OscillatorNode,     type OscillatorBlock }     from './OscillatorNode'
 import { TriangleNode,       type TriangleBlock }       from './TriangleNode'
 import { SawtoothNode,       type SawtoothBlock }       from './SawtoothNode'
+import { SineNode,           type SineBlock }           from './SineNode'
 import { MixerNode,          type MixerBlock }          from './MixerNode'
 import { OutputNode,         type OutputBlock }         from './OutputNode'
 import { ADSRNode,           type ADSRBlock }           from './ADSRNode'
@@ -16,6 +17,7 @@ export const nodeTypes = {
   oscillator: OscillatorNode,
   triangle:   TriangleNode,
   sawtooth:   SawtoothNode,
+  sine:       SineNode,
   mixer:      MixerNode,
   output:     OutputNode,
   adsr:       ADSRNode,
@@ -30,6 +32,7 @@ export type AppNode =
   | OscillatorBlock
   | TriangleBlock
   | SawtoothBlock
+  | SineBlock
   | MixerBlock
   | OutputBlock
   | ADSRBlock

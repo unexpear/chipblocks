@@ -688,6 +688,10 @@
   border-color: #9c27b0;
 }
 
+.block-sine {
+  border-color: #ce93d8;
+}
+
 .block-adsr {
   border-color: #ff9800;
   min-width: 140px;
