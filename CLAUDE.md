@@ -108,6 +108,7 @@ chipzzzd/
 - [SPRINT-10.md](SPRINT-10.md) — closed sprint plan + log + retro (output completeness — multi-target build)
 - [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — deferred-issue tracker (npm audit, etc.)
 - [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08.md) — WCAG 2.1 AA audit snapshot (23 findings, tiered remediation plan)
+- Tech-debt tracking lives inline: highest-priority items in [KNOWN-ISSUES.md](KNOWN-ISSUES.md), tiered remediation plan in [ROADMAP.md](ROADMAP.md)'s "Tech-debt workstream" section. Last full audit 2026-05-08.
 - [CREDITS.md](CREDITS.md) — licensing policy + open-source attributions (permissive only; no copyleft in shipped product)
 - (Future) `BLOCKS.md` — block library reference
 - (Future) `ARCHITECTURE.md` — system architecture + data flow

@@ -57,6 +57,21 @@ These are the four "you have failed" signals from the PRD. Tracking them honestl
 
 ---
 
+## Tech-debt workstream (added 2026-05-08)
+
+Source: in-conversation tech-debt audit (2026-05-08). 30+ items across code / architecture / test / dependency / documentation / infrastructure debt. Tiered:
+
+| Tier | Items | Effort | Slot |
+|---|---|---|---|
+| **Sprint 11 batch** (5 items, ~1 hr) bundled with the a11y Tier-1 work | C1 (IPC contract centralization), DOC1 (README refresh for multi-target), D1 (pin amaranth + pyyaml), I4 (commit `package-lock.json`), A2 (renderer `ErrorBoundary`); plus I1 (push `v0.0.0-test` tag to pre-flight CI) | ~1 hr code + ~5 min infra | Sprint 11 P0 alongside a11y |
+| **Sprint 12 batch** (4 items, ~4 hrs) bundled with whatever Sprint 12's feature work is | C2 (BUNDLE_FILENAMES coordination), C3 (examples/ ↔ examples.ts dedup), T1 (frontend block-component tests, ~10 simple cases), T3 (save/load roundtrip test) | ~4 hrs | Sprint 12 |
+| **Opportunistic** (~7 items) — only when motivated by a specific friction | A1 (block-manifest refactor — only when block growth slows), DOC2 (ARCHITECTURE.md), DOC5 (BLOCKS.md), C5/C6 (App.tsx/Chat.tsx file splits), T2 (AI agentic loop integration test) | varies | Whenever the friction earns the fix |
+| **Already deferred via [KNOWN-ISSUES.md](KNOWN-ISSUES.md)** | D2 (5 npm advisories), D3 (vitest 4 + Vite 6), D4 (7zip-bin LGPL), npm-audit growth | varies | Bundled into a future "deps refresh" sprint |
+
+**What's deliberately not on the list**: monitoring, distributed tracing, A/B testing, multi-region — building those before there's any user is debt-by-overengineering for a desktop-app alpha.
+
+---
+
 ## Now (Sprint 9 — start of next sprint)
 
 **Theme:** Make `v0.1.0-alpha` actually shippable to strangers. Half autonomous coding + half user-authorization actions.

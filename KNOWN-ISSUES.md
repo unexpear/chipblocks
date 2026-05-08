@@ -41,6 +41,18 @@ Full audit at [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08
 
 **Action**: address Critical-tier in Sprint 11 P0 (~1.5 hrs total; bundled into one commit). Major / Minor items tracked in ROADMAP.md a11y workstream and the audit doc.
 
+## Tech-debt — 5 highest-priority items from the 2026-05-08 audit
+
+Surfaced in an in-conversation tech-debt audit. Full tiered remediation plan in [ROADMAP.md](ROADMAP.md)'s tech-debt workstream section. The five items here are individually trackable as Sprint 11 P0s (paired with the a11y Tier-1 work — same touch surface).
+
+- **C1 — IPC contract type duplicated in 3 places.** `declare global { interface Window { chipblocks: {...} } }` lives in `App.tsx` AND `Chat.tsx`; the actual contract lives in `preload/index.ts`. Drift between any two = silent runtime failures. Fix: extract to `frontend/src/types/ipc.ts` and import. ~30 min.
+- **I1 — CI workflow untested.** `.github/workflows/{ci,release}.yml` were written in S9 but no tag/PR has triggered them. The first `v0.1.0-alpha` tag push is also the first CI run. Fix: push a throwaway `v0.0.0-test` tag, confirm both workflows green, delete it; or fix-forward on the real launch tag. ~5 min plus iteration if it fails.
+- **DOC1 — README only mentions iCEstick.** Sprint 10 added TinyFPGA BX + Tiny Tapeout but the README's "How it works today" section never got updated. Fix: refresh the diagram + feature list to mention both new targets. ~20 min.
+- **D1 — Backend deps not pinned.** `backend/setup.sh` runs `pip install --user --break-system-packages amaranth pyyaml` with no version pins. A future Amaranth release could break the synth pipeline silently. Fix: pin to `amaranth==0.5.8 pyyaml==6.0.2` (or use `requirements.txt`). ~5 min.
+- **I4 — `frontend/package-lock.json` not committed.** Lockfile exists locally but isn't tracked. Each fresh `npm install` could resolve subtly different transitives. Fix: `git add frontend/package-lock.json && git commit`. ~2 min.
+
+**Action**: address all five in Sprint 11 (~1 hr total) bundled with the a11y Tier-1 work since the touch surface overlaps.
+
 ## Random-jitter for AI-placed nodes is a heuristic, not a layout engine
 
 `canvasActions.addNode` places new nodes to the right of the existing rightmost node with a small vertical jitter. For complex multi-block AI sessions, blocks tile to the right and the user has to drag for cleanup. A real auto-layout (e.g. ELK or dagre) would compute an actual graph layout.
