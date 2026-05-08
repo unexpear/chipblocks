@@ -31,6 +31,33 @@ contextBridge.exposeInMainWorld('chipblocks', {
   cancel: () => ipcRenderer.invoke('synth:cancel') as Promise<boolean>,
 })
 
+// AI consultant API. The API key is stored encrypted in the main process
+// (Electron safeStorage) and never crosses the IPC boundary into the
+// renderer. Streaming responses are pushed back via ai:chunk events.
+contextBridge.exposeInMainWorld('ai', {
+  saveKey: (key: string) => ipcRenderer.invoke('ai:save-key', key) as Promise<boolean>,
+  hasKey: () => ipcRenderer.invoke('ai:has-key') as Promise<boolean>,
+  clearKey: () => ipcRenderer.invoke('ai:clear-key') as Promise<boolean>,
+  chat: (req: { id: string; messages: unknown[]; system: unknown }) =>
+    ipcRenderer.invoke('ai:chat', req) as Promise<boolean>,
+  cancel: (id: string) => ipcRenderer.invoke('ai:cancel', id) as Promise<boolean>,
+  onChunk: (cb: (data: { id: string; text: string }) => void) => {
+    const h = (_e: unknown, d: { id: string; text: string }) => cb(d)
+    ipcRenderer.on('ai:chunk', h)
+    return () => ipcRenderer.removeListener('ai:chunk', h)
+  },
+  onDone: (cb: (data: { id: string; usage: { input: number; output: number } }) => void) => {
+    const h = (_e: unknown, d: { id: string; usage: { input: number; output: number } }) => cb(d)
+    ipcRenderer.on('ai:done', h)
+    return () => ipcRenderer.removeListener('ai:done', h)
+  },
+  onError: (cb: (data: { id: string; message: string }) => void) => {
+    const h = (_e: unknown, d: { id: string; message: string }) => cb(d)
+    ipcRenderer.on('ai:error', h)
+    return () => ipcRenderer.removeListener('ai:error', h)
+  },
+})
+
 // --------- Preload scripts loading ---------
 function domReady(condition: DocumentReadyState[] = ['complete', 'interactive']) {
   return new Promise(resolve => {

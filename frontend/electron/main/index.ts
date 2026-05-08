@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
 import { registerIpcHandlers } from './ipc'
+import { registerAiHandlers } from './ai'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -72,6 +73,7 @@ async function createWindow() {
 
 app.whenReady().then(() => {
   registerIpcHandlers()
+  registerAiHandlers()
   createWindow()
 })
 

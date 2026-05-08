@@ -14,6 +14,8 @@ import {
   type Viewport,
 } from '@xyflow/react'
 import { nodeTypes, type AppNode } from './blocks'
+import { Chat } from './Chat'
+import { SettingsModal } from './SettingsModal'
 import './App.css'
 
 declare global {
@@ -29,16 +31,13 @@ declare global {
   }
 }
 
-// Save-file schema. Bump SAVE_VERSION when the format changes
-// incompatibly. Loaders should accept any version <= SAVE_VERSION
-// and apply migrations.
 const SAVE_VERSION = 1
 const APP_NAME = 'ChipBlocks'
 
 interface SaveFileV1 {
   version: 1
   app: typeof APP_NAME
-  savedAt: string  // ISO 8601
+  savedAt: string
   viewport: Viewport
   nodes: AppNode[]
   edges: Edge[]
@@ -64,8 +63,16 @@ function AppContent() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [errorToast, setErrorToast] = useState<string | null>(null)
+  const [chatOpen, setChatOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [hasApiKey, setHasApiKey] = useState(false)
 
   const { getViewport, setViewport } = useReactFlow()
+
+  // On mount, check whether an API key is already saved.
+  useEffect(() => {
+    window.ai.hasKey().then(setHasApiKey).catch(() => setHasApiKey(false))
+  }, [])
 
   // Auto-dismiss error toast after 6 seconds.
   useEffect(() => {
@@ -78,6 +85,14 @@ function AppContent() {
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
     [setEdges],
   )
+
+  const refreshKeyStatus = useCallback(async () => {
+    try {
+      setHasApiKey(await window.ai.hasKey())
+    } catch {
+      setHasApiKey(false)
+    }
+  }, [])
 
   const handleSave = () => {
     const payload: SaveFileV1 = {
@@ -108,21 +123,15 @@ function AppContent() {
       const text = await file.text()
       try {
         const parsed = JSON.parse(text)
-
-        // Validate minimum shape.
         if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
           setErrorToast('Graph file is missing nodes/edges arrays.')
           return
         }
-
-        // Newer-version safety: warn but still try to load.
         if (typeof parsed.version === 'number' && parsed.version > SAVE_VERSION) {
           setErrorToast(
-            `Graph was saved with a newer ChipBlocks (v${parsed.version}); ` +
-              `attempting to load anyway.`,
+            `Graph was saved with a newer ChipBlocks (v${parsed.version}); attempting to load anyway.`,
           )
         }
-
         setNodes(parsed.nodes as AppNode[])
         setEdges(parsed.edges as Edge[])
         if (parsed.viewport && typeof parsed.viewport === 'object') {
@@ -195,27 +204,44 @@ function AppContent() {
         {!isPlaying && statusMessage && (
           <span className="toolbar-status">{statusMessage}</span>
         )}
-        <button onClick={handlePlay} disabled={isPlaying}>
-          ▶ Play
-        </button>
-        <button onClick={handleSave}>Save graph</button>
-        <button onClick={handleLoad}>Load graph</button>
-      </div>
-      <div className="canvas">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          colorMode="dark"
-          fitView
+        <button onClick={handlePlay} disabled={isPlaying}>▶ Play</button>
+        <button onClick={handleSave}>Save</button>
+        <button onClick={handleLoad}>Load</button>
+        <button
+          onClick={() => setChatOpen((v) => !v)}
+          className={chatOpen ? 'toolbar-toggle-active' : ''}
+          title="Toggle AI consultant"
         >
-          <Background />
-          <Controls />
-          <MiniMap />
-        </ReactFlow>
+          💬 Chat
+        </button>
+        <button onClick={() => setSettingsOpen(true)} title="Settings">⚙</button>
+      </div>
+      <div className="main-area">
+        <div className="canvas">
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            colorMode="dark"
+            fitView
+          >
+            <Background />
+            <Controls />
+            <MiniMap />
+          </ReactFlow>
+        </div>
+        {chatOpen && (
+          <Chat
+            nodes={nodes}
+            edges={edges}
+            hasApiKey={hasApiKey}
+            onClose={() => setChatOpen(false)}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
+        )}
       </div>
       {errorToast && (
         <div
@@ -229,13 +255,18 @@ function AppContent() {
           <span className="toast-close">×</span>
         </div>
       )}
+      {settingsOpen && (
+        <SettingsModal
+          hasApiKey={hasApiKey}
+          onClose={() => setSettingsOpen(false)}
+          onKeyChanged={refreshKeyStatus}
+        />
+      )}
     </div>
   )
 }
 
 function App() {
-  // ReactFlowProvider exposes useReactFlow() to AppContent so we can
-  // capture and restore the viewport during save/load.
   return (
     <ReactFlowProvider>
       <AppContent />
