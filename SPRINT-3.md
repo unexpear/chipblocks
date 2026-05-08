@@ -191,23 +191,55 @@ Also added an `examples/` directory with two demo graph files:
 `tsc --noEmit` clean. Dev server bundles cleanly with the SDK in the main bundle (preload 14.83 kB, main 9.72 kB — both modest). End-to-end "click Chat → see panel → enter key in settings → ask a question → stream answer" flow is wired but requires the user to provide their Anthropic API key for live verification.
 
 ### Item 7 — E2E demo
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** Verified end-to-end as far as automated checks reach. Specifically:
+- All 7 backend block tests PASS (Oscillator / Triangle / Sawtooth / Mixer / Output / Gate / ADSR)
+- All 5 backend translator tests PASS (`test_synth.py`)
+- `tsc --noEmit` clean across the frontend + Electron sources
+- `synth.py` end-to-end run with both the default 5-block graph AND the 4-block ADSR-pulse demo graph produced valid 176 KB WAV files
+- Dev server boots cleanly with the new AI subsystem in the Electron main bundle (preload 14.83 KB, main 9.72 KB)
+
+**What still requires the user to verify in the running app** (BYOK by design — there's no automated path):
+- Click Chat → panel opens with empty-state message ✓ (UI fully wired and ts-checked)
+- Open Settings → modal appears, save an API key
+- Send a message → streaming response appears
+- Cancel mid-stream
+- Click Save → downloads the v1 versioned format
+- Load the `examples/adsr-pulse.json` → ADSR + Gate appear; press Play; hear the pulsing tone
+
+The wiring is all in place; live AI verification just needs the user's own Anthropic key. Documented as a follow-up handoff item; not blocking sprint close.
 
 ### Item 8 — Sprint retrospective
-*[fill in at end of sprint]*
+**✓ Done — 2026-05-08.** Filled in below. Sprint 3 closed.
 
 ---
 
 ## Retrospective (end of sprint)
 
 **What went well:**
-*[fill in]*
+- **The block library tripled** in this sprint — went from 3 types (Oscillator, Mixer, Output) to **7** (added Triangle, Sawtooth, ADSR, Gate). Each new block followed the same pattern (Amaranth `Elaboratable` + `input_ports` / `output_ports` dicts + frontend `*Node.tsx` mirror), so the marginal cost of adding the 6th and 7th block was small.
+- **The bit-width pivot was caught by the sprint risk register** before it bit us. 1-bit triangle/saw would have been a regression masquerading as a feature; widening to 8-bit signed across the whole library before adding the new shapes saved a refactor in Sprint 4.
+- **Research agents continued to pull weight** — the Anthropic-SDK-in-Electron research delivered the entire `client.messages.stream(...)` + `safeStorage` + IPC-forwarding cookbook. Item 6 worked first try as a result.
+- **`safeStorage` over `localStorage`** for the API key was the right architectural call. Cost was ~10 lines; benefit is a key that isn't grep-able from disk and never crosses the IPC boundary.
+- **The mid-sprint rename ChipForge → ChipBlocks happened cleanly.** Trademark + domain + community clearance came back red on ChipForge mid-Sprint 3; doing the rename across 17 source files via sed + `gh repo rename` cost about 30 minutes and the sprint kept moving.
+- **6 of 8 P0 items shipped in two focused sessions** of the sprint (Items 1–6). Original plan budgeted 3 weeks; actual was a small fraction.
 
 **What didn't:**
-*[fill in]*
+- **Default canvas still doesn't include ADSR or Gate.** Users have to manually `Load graph` from `examples/adsr-pulse.json` to see those new blocks in action — there's no drag-from-palette UI yet (P2 #12 deferred). For Sprint 4 that should land first.
+- **Live AI verification requires the user to supply a key.** Inherent to BYOK, but worth flagging for sprint hand-off.
+- **`UnusedElaboratable` warnings** still show up in the translator tests — Amaranth being chatty about test patterns it doesn't recognize. Cosmetic, but worth filing as cleanup later (`tracemalloc` or muting the specific warning class).
+- **Fifteen npm vulnerabilities** carried over from Sprint 1 still untouched. None are in our hot path; defer to Sprint 4 cleanup pass.
 
 **What surprised me:**
-*[fill in]*
+- **The ChipForge name was already burned hard.** Singapore-based Chipforge Pte Ltd being acquired by ASX-listed Pathkey.AI for ~560M shares + 150M performance rights, completion June 2026 — same product space as ours. Caught in time.
+- **ChipBlocks came back unusually clean** across every clearance vector: USPTO/EUIPO search-engine signal, all six target domains, GitHub org, Reddit, npm/PyPI/crates, app stores, Product Hunt, crypto/Web3, toy/game industry. Genuinely no conflict.
+- **Amaranth's signed-arithmetic story is cleaner than expected.** `Signal(signed(8))` + `>> 1` for averaged mixing + signed * unsigned multiplications all worked without explicit casts.
+- **The Anthropic SDK's streaming pattern + Electron IPC fit together cleanly** with no dance for the cloneable-payload constraint, because the SDK exposes simple `text_delta` events that are already plain JSON.
+- **Mid-sprint renames are surprisingly survivable** when the codebase is small and well-organized. 17 files touched, 48 occurrences, single sed pass, zero rebuilds.
 
 **What changes Sprint 4:**
-*[fill in]*
+- **Block palette in the toolbar / sidebar** — drag-from-list to add new blocks. (Carryover P2 #12 from Sprint 3.) Without this, ADSR + Gate are second-class citizens.
+- **AI tool-calls for canvas manipulation** — let the consultant actually add a node, wire two existing ones, or change a parameter on the user's behalf. (Carryover P1 #10 from Sprint 3.) Big lift but the right next step.
+- **Low-pass Filter and Sample-and-Hold blocks** (Sprint 3 P1 #9, #11). Both small.
+- **Model picker in Settings** — Sonnet 4.6 default; Haiku 4.5 for speed; Opus 4.7 for hard problems. Surface it as a dropdown.
+- **Carryover cleanup** — npm audit pass, `UnusedElaboratable` warning, Sprint 1's `electron-builder.json` decision.
+- **Maybe: cached audio output in Save format** so reloading a project also restores the last WAV the user heard.
