@@ -20,32 +20,12 @@ import { AboutModal } from './AboutModal'
 import { Palette, PALETTE_DRAG_TYPE, defaultDataForType } from './Palette'
 import { EXAMPLES, type ExampleGraph } from './examples'
 import { type DragEvent } from 'react'
+import type { BuildTarget } from './types/ipc'
 import './App.css'
-
-declare global {
-  interface Window {
-    chipblocks: {
-      synth: (graph: unknown) => Promise<{
-        ok: boolean
-        wavData?: ArrayBuffer
-        error?: string
-      }>
-      cancel: () => Promise<boolean>
-      build: (graph: unknown, target: BuildTarget) => Promise<{
-        ok: boolean
-        zipData?: ArrayBuffer
-        error?: string
-      }>
-      cancelBuild: () => Promise<boolean>
-    }
-  }
-}
 
 const SAVE_VERSION = 1
 const APP_NAME = 'ChipBlocks'
 const STARTER_HINT_KEY = 'chipblocks:starterHintDismissed'
-
-type BuildTarget = 'icestick' | 'tinyfpga-bx' | 'tt'
 
 interface BuildTargetOption {
   id: BuildTarget

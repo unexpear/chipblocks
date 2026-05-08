@@ -3,34 +3,10 @@ import type { Edge } from '@xyflow/react'
 import type { AppNode } from './blocks'
 import { getStoredModel, MODEL_OPTIONS } from './SettingsModal'
 import { buildSystemBlocks, buildTools } from './ai/prompt'
-
-declare global {
-  interface Window {
-    ai: {
-      saveKey: (key: string) => Promise<boolean>
-      hasKey: () => Promise<boolean>
-      clearKey: () => Promise<boolean>
-      chat: (req: {
-        id: string
-        model?: string
-        messages: ApiMessage[]
-        system: { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }[]
-        tools?: unknown[]
-      }) => Promise<boolean>
-      cancel: (id: string) => Promise<boolean>
-      onChunk: (cb: (data: { id: string; text: string }) => void) => () => void
-      onDone: (
-        cb: (data: {
-          id: string
-          usage: { input: number; output: number }
-          stop_reason?: string
-          tool_calls?: { id: string; name: string; input: Record<string, unknown> }[]
-        }) => void,
-      ) => () => void
-      onError: (cb: (data: { id: string; message: string }) => void) => () => void
-    }
-  }
-}
+// Side-effect import: ./types/ipc declares the global Window types
+// for window.chipblocks and window.ai. No symbols imported, just
+// the ambient declaration.
+import './types/ipc'
 
 // ---- Anthropic content-block types -----------------------------------------
 //

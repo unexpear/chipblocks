@@ -8,19 +8,19 @@
 
 set -e
 
-echo "==> Installing Migen..."
-pip3 install --user --break-system-packages migen
-
-echo "==> Installing LiteX from git..."
-pip3 install --user --break-system-packages git+https://github.com/enjoy-digital/litex.git
+echo "==> Installing Amaranth (HDL frontend) and amaranth-yosys (Yosys fallback)..."
+# Pinned for reproducibility across user installs and CI.
+pip3 install --user --break-system-packages 'amaranth==0.5.8' amaranth-yosys
 
 echo "==> Installing PyYAML (for Tiny Tapeout info.yaml emission)..."
-# PyYAML is BSD-licensed and ships preinstalled on most Linux distros, but
-# install explicitly so `--target tt` works on a fresh machine.
-pip3 install --user --break-system-packages pyyaml
+pip3 install --user --break-system-packages 'pyyaml==6.0.2'
+
+echo "==> Installing Migen + LiteX (legacy; kept for fpga_101 reference scripts)..."
+pip3 install --user --break-system-packages migen
+pip3 install --user --break-system-packages git+https://github.com/enjoy-digital/litex.git
 
 echo "==> Verifying imports..."
-python3 -c 'import migen, litex, yaml; print("Migen + LiteX + PyYAML import OK")'
+python3 -c 'import amaranth, yaml, migen, litex; print("Amaranth + PyYAML + Migen + LiteX import OK")'
 
 echo "==> Done."
 echo "    Migen and LiteX are installed to ~/.local/lib/python*/site-packages/"

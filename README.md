@@ -1,8 +1,8 @@
 # ChipBlocks
 
-> Visual chip design for everyone. Drag blocks, wire them together, hear the chip — then build a real FPGA bitstream.
+> Visual chip design for everyone. Drag blocks, wire them together, hear the chip — then build a real FPGA bitstream or a Tiny Tapeout ASIC submission package.
 
-**Status:** v0.1.0-alpha. Visual editor, AI consultant, simulated audio output, and iCE40 FPGA bitstream output all working end-to-end. Public alpha.
+**Status:** v0.1.0-alpha. Visual editor, AI consultant, simulated audio, three real-silicon output paths (Lattice iCEstick FPGA / TinyFPGA BX FPGA / Tiny Tapeout ASIC submission), all working end-to-end. Public alpha.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -10,30 +10,36 @@
 
 ## What it is
 
-ChipBlocks is a free, open-source desktop app that lets **non-technical people design custom silicon chips** by wiring visual blocks together. Drop an oscillator on the canvas, connect it to a mixer, connect that to an output, press Play — hear the chip you just designed simulate through your speakers. Click 🔧 Build for FPGA — get back a real iCE40 bitstream you can flash to a $30 dev board.
+ChipBlocks is a free, open-source desktop app that lets **non-technical people design custom silicon chips** by wiring visual blocks together. Drop an oscillator on the canvas, connect it to a mixer, connect that to an output, press ▶ Play — hear the chip you just designed simulate through your speakers. Click 🔧 Build → pick a target — get back a real flashable FPGA bitstream OR a complete Tiny Tapeout submission package that goes to a fab and comes back as a chip in your hand.
 
 The first flagship domain is **audio / synth / retro-game chips**. The architecture extends to custom microcontrollers, sensor pre-processors, PCBs, motherboards, and other digital chip categories in later phases.
 
 ## What it does today
 
 ```
- ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
- │ Visual editor    │ →  │ Block library    │ →  │ ▶ Play           │
- │ (React Flow)     │    │ (Amaranth HDL)   │ →  │ 🔧 Build for FPGA│
- └──────────────────┘    └──────────────────┘    └──────────────────┘
+ ┌──────────────────┐    ┌──────────────────┐    ┌────────────────────────┐
+ │ Visual editor    │ →  │ Block library    │ →  │ ▶ Play                 │
+ │ (React Flow)     │    │ (Amaranth HDL)   │    │ 🔧 Build → iCEstick    │
+ └──────────────────┘    └──────────────────┘    │ 🔧 Build → TinyFPGA BX │
+                                                 │ 🚀 Build → Tiny Tapeout│
+                                                 └────────────────────────┘
                                                           ↓
-                                                 ┌──────────────────┐
-                                                 │ .wav (sim audio) │
-                                                 │ + .bin (iCE40)   │
-                                                 └──────────────────┘
+                                  ┌─────────────────────────────────────────┐
+                                  │ .wav (simulated audio)                  │
+                                  │ + .bin + Verilog + .pcf (FPGA)          │
+                                  │ + tt_top.v + info.yaml + testbench (TT) │
+                                  └─────────────────────────────────────────┘
 ```
 
-- **Block library**: oscillator (square / triangle / saw), mixer, ADSR envelope, gate, low-pass filter, sample-and-hold, output. Drag from the side palette onto the canvas.
-- **Visual wiring**: edges enforce port directionality. Nodes have parameter editors (frequency, cutoff, attack/decay/sustain/release, etc.).
+- **14 audio blocks**: oscillator (square), triangle, sawtooth, sine, noise, constant, mixer, output, ADSR envelope, gate, low-pass filter, sample-and-hold, FM voice, multiply (ring modulator). Drag from the side palette onto the canvas.
+- **Visual wiring**: edges enforce port directionality. Nodes have parameter editors with full screen-reader labels (frequency, cutoff, attack/decay/sustain/release, etc.).
 - **▶ Play**: Python backend simulates the design in [Amaranth](https://github.com/amaranth-lang/amaranth), produces a 16-bit WAV at 44.1 kHz, and the app plays it.
-- **🔧 Build for FPGA**: same backend translates the graph to Verilog, runs it through Yosys → nextpnr-ice40 → icepack, and hands you a zip with a flashable `.bin` for the Lattice iCEstick (~$30). Wire one resistor + one cap + a speaker and your chip is on real silicon.
-- **AI consultant** (BYOK): bring an Anthropic API key and chat with Claude about the design. The consultant can read the canvas, suggest blocks, even add or wire blocks for you (with a preview-and-confirm step before destructive edits).
-- **Save / load**: graphs are versioned JSON. The repo includes example graphs you can open from `examples/`.
+- **🔧 Build → Lattice iCEstick**: graph → Verilog → Yosys → nextpnr-ice40 → icepack → flashable `.bin` for the Lattice iCEstick (~$30 USB dev board). Bundle includes a `BUILD.md` utilization report so you know if your design fits.
+- **🔧 Build → TinyFPGA BX**: same flow targeting the iCE40LP8K-CM81 board (USB-native, ~5× the LUTs of the iCEstick).
+- **🚀 Build → Tiny Tapeout**: 14-file submission package in canonical [`ttsky-verilog-template`](https://github.com/TinyTapeout/ttsky-verilog-template) layout (src/, test/, docs/, info.yaml validated against `tt-support-tools/project_info.py`, plus a working cocotb testbench). Drop-in ready: unzip on the GitHub template, push, submit at [app.tinytapeout.com](https://app.tinytapeout.com/). Their flow runs OpenLane on Sky130 or GF180 and ships you a real ASIC chip months later.
+- **AI consultant** (BYOK): bring an Anthropic API key and chat with Claude about the design. The consultant is grounded in the full app surface (toolbar, blocks, naming conventions, what each target produces) and can read the canvas, suggest blocks, or add and wire blocks for you (with preview-and-confirm for destructive edits).
+- **Save / load + 7 bundled examples**: graphs are versioned JSON. The Examples menu opens "Two oscillators mixed", "ADSR-shaped pulse", "Kick drum", "Snare drum", "Bass lead", "Lo-fi pad", and "Stair-stepped arpeggio" without leaving the app.
+- **Help → About** (ℹ button): version + credits + GitHub link + BYOK explainer.
 
 ## Quick start (end user)
 
@@ -72,8 +78,11 @@ Click **▶ Play** in the running app to hear the default Oscillator → Mixer �
 - ✅ **Sprint 4** — Block palette + drag-to-canvas, low-pass filter, sample-and-hold, AI tool-calling so the consultant can edit the canvas, model picker. ([retro](SPRINT-4.md))
 - ✅ **Sprint 5** — Multi-step agentic AI loop, smarter node placement, preview-and-apply for destructive AI tool calls. ([retro](SPRINT-5.md))
 - ✅ **Sprint 6** — FPGA bitstream output: graph → Verilog → Yosys → nextpnr-ice40 → icepack → `.bin` for Lattice iCEstick. ([retro](SPRINT-6.md))
-- ✅ **Sprint 7** — First public alpha: dependency upgrades, packaged Windows installer, this README, [v0.1.0-alpha](https://github.com/unexpear/chipblocks/releases) tagged. ([retro](SPRINT-7.md))
-- 📋 **Future** — Tiny Tapeout submission package (real ASIC silicon), Mac/Linux installers, signed binaries, more DSP blocks, PCBs, motherboards.
+- ✅ **Sprint 7** — First public alpha: dependency upgrades, packaged Windows installer, this README. ([retro](SPRINT-7.md))
+- ✅ **Sprint 8** — AI consultant grounding: full system-prompt + tool-description rewrite so the consultant knows app navigation, naming conventions, and common workflows. ([retro](SPRINT-8.md))
+- ✅ **Sprint 9** — Onboarding + 6 more blocks (Sine, Noise, Constant, FM, Multiply, Wavetable), starter graph + dismissible hint, Examples menu, About modal, GitHub Actions CI + cross-platform release pipeline (Windows/Mac/Linux), 19 backend pytest + 6 frontend vitest. ([retro](SPRINT-9.md))
+- ✅ **Sprint 10** — Output completeness: TinyFPGA BX added as a second FPGA target, Tiny Tapeout submission package landed (genuinely drop-in ready for the active 2026 cohorts), structured BUILD.md utilization parsing. ([retro](SPRINT-10.md))
+- 📋 **Future** — Mac/Linux installers (CI pipeline already builds them; needs signing certs to ship), MIDI input + polyphony, more DSP blocks, additional FPGA targets, PCBs, motherboards. See [ROADMAP.md](ROADMAP.md) for what's slotted into Sprint 11/12.
 
 See [PRD.md](PRD.md) for the full vision.
 
@@ -83,7 +92,8 @@ See [PRD.md](PRD.md) for the full vision.
 |---|---|
 | [PRD.md](PRD.md) | Full product vision, goals, non-goals, target users, requirements, success metrics |
 | [ROADMAP.md](ROADMAP.md) | Operational Now / Next / Later — what's actually being built next |
-| [SPRINT-1.md](SPRINT-1.md) … [SPRINT-7.md](SPRINT-7.md) | Per-sprint plan + log + retrospective |
+| [SPRINT-1.md](SPRINT-1.md) … [SPRINT-10.md](SPRINT-10.md) | Per-sprint plan + log + retrospective |
+| [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08.md) | WCAG 2.1 AA audit snapshot + tiered remediation plan |
 | [CLAUDE.md](CLAUDE.md) | Project brief for AI dev tools — vision, tech stack, conventions |
 | [CREDITS.md](CREDITS.md) | Open-source attributions and licensing policy |
 | [KNOWN-ISSUES.md](KNOWN-ISSUES.md) | Tracked deferred issues |

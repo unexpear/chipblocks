@@ -167,10 +167,17 @@ async function runChat(window: BrowserWindow, req: ChatRequest): Promise<void> {
 
 export function registerAiHandlers(): void {
   ipcMain.handle('ai:save-key', async (_event, key: string) => {
-    if (typeof key !== 'string' || key.length < 10) {
+    if (typeof key !== 'string') {
+      throw new Error('API key looks invalid (not a string).')
+    }
+    const trimmed = key.trim()
+    if (trimmed.length < 10) {
       throw new Error('API key looks invalid (too short).')
     }
-    await saveApiKey(key)
+    if (!trimmed.startsWith('sk-ant-')) {
+      throw new Error('Anthropic API keys start with "sk-ant-". Did you paste the right token?')
+    }
+    await saveApiKey(trimmed)
     return true
   })
 
