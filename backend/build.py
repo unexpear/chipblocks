@@ -8,14 +8,25 @@ depending on --target, produces one of:
                             No external tools needed; uses Amaranth's
                             built-in `amaranth.back.verilog.convert()`.
 
-    --target ice40          Full pipeline: Verilog -> Yosys synth ->
-                            nextpnr-ice40 -> icepack -> .bin file.
-                            Requires Yosys + nextpnr-ice40 + icestorm
-                            on PATH (e.g. via the OSS CAD Suite tarball).
+    --target ice40          Full pipeline against the Lattice iCEstick.
+                            Alias for --target icestick (kept for back-
+                            compat with Sprint 6's original CLI shape).
 
-The ice40 target wraps the user's design with an iCEstick toplevel
-that hooks the on-board 12 MHz clock to a sample-rate divider and
-projects the 8-bit-signed audio onto a single 1-bit PWM output pin
+    --target icestick       Same as --target ice40.
+
+    --target tinyfpga-bx    Full pipeline against the TinyFPGA BX
+                            (iCE40LP8K-CM81, 16 MHz, USB-native via
+                            `tinyprog`). Different chip family + package
+                            from the iCEstick, so the bitstream layout
+                            and size differ.
+
+    --target tt             Tiny Tapeout submission (NOT YET WIRED UP — a
+                            parallel agent owns the implementation; this
+                            target raises NotImplementedError today).
+
+The FPGA targets all wrap the user's design with a board-specific
+toplevel that hooks the on-board oscillator to a sample-rate divider
+and projects the 8-bit-signed audio onto a single 1-bit PWM output pin
 the user can attach to a speaker (with a small RC filter).
 
 Errors are emitted as JSON on stderr so the Electron side can parse
@@ -34,6 +45,7 @@ import subprocess
 import sys
 import time
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -44,27 +56,184 @@ from amaranth.back import verilog  # noqa: E402
 from synth import GraphTop, SAMPLE_RATE  # noqa: E402
 
 
-# Lattice iCEstick board parameters.
-ICESTICK_CLOCK_HZ = 12_000_000
-ICESTICK_AUDIO_PIN = "B1"  # GPIO pin we route PWM to (see chipblocks.pcf)
+# ---------------------------------------------------------------------------
+# Board profiles
+# ---------------------------------------------------------------------------
+#
+# Each supported FPGA dev board has a profile capturing everything the
+# build pipeline needs to know: which iCE40 family + package to target,
+# the on-board clock frequency, which physical pins to route clock and
+# audio to, and a board-specific FLASH.md template.
+#
+# Adding a new board (e.g. iCE40-HX8K-EVB) is a matter of writing a new
+# FPGABoard instance and registering it in ALL_BOARDS — no other code
+# changes required, because build_fpga / make_bundle / BoardTop all read
+# from the profile rather than hard-coded constants.
+#
+# Note on pin names: the iCEstick (HX1K, TQ144 package) uses NUMERIC pin
+# numbers in its .pcf (e.g. "21", "112"). The TinyFPGA BX (LP8K, CM81
+# package) uses ALPHANUMERIC pad names (e.g. "B2", "A2"). Both are valid
+# `set_io` arguments for their respective chipdbs — they're just the
+# naming conventions the icestorm chipdb files use for those packages.
 
 
-class IcestickTop(Elaboratable):
-    """Top-level wrapper for the iCEstick.
+@dataclass(frozen=True)
+class FPGABoard:
+    id: str  # e.g. "icestick" — what --target accepts
+    label: str  # human-readable name
+    chip_family: str  # nextpnr-ice40 family flag value: "hx1k" | "lp8k"
+    package: str  # nextpnr-ice40 --package value: "tq144" | "cm81"
+    clock_hz: int  # on-board oscillator frequency
+    clock_pin: str  # pin label for the global clock input
+    audio_pin: str  # pin label for the PWM-modulated audio output
+    pcf_template: str  # multi-line .pcf with {clock_pin}/{audio_pin} placeholders
+    flash_md_template: str  # FLASH.md content (per-board flashing instructions)
+
+
+# Lattice iCEstick (iCE40HX-1k, TQ144 package). Onboard 12 MHz oscillator
+# is wired to global clock pin 21. Audio output goes to pin 112 — that's
+# header J3 pin 1 (top-left of the board, next to the USB connector),
+# documented in iCEstick literature as pad "B1". HX1K TQ144 chipdbs use
+# numeric pin numbers exclusively, so we use "112" rather than "B1" in
+# the .pcf even though the user-visible label on the board is B1.
+ICESTICK = FPGABoard(
+    id="icestick",
+    label="Lattice iCEstick",
+    chip_family="hx1k",
+    package="tq144",
+    clock_hz=12_000_000,
+    clock_pin="21",
+    audio_pin="112",
+    pcf_template="""\
+# iCEstick (iCE40HX-1k) constraints for ChipBlocks
+# Onboard 12 MHz oscillator (Y1) is wired to global clock pin 21
+set_io clk {clock_pin}
+# PWM-modulated audio output: GPIO header J3 pin 1 -> physical pad B1
+set_io audio_pin {audio_pin}
+""",
+    flash_md_template="""\
+# Flashing chipblocks.bin to a Lattice iCEstick
+
+## What you need
+
+- A Lattice **iCEstick** (iCE40HX-1k dev board) — about $30 from Mouser, Digi-Key, or your favorite distributor.
+- A small speaker or headphones.
+- A simple RC filter (1 kΩ resistor + 100 nF capacitor) wired between the audio output pin and the speaker. The capacitor smooths the PWM into analog audio; the resistor protects the FPGA pin.
+- The `iceprog` flashing tool. Install via:
+  - **Ubuntu / Debian / WSL2:** `sudo apt install fpga-icestorm`
+  - **Or via the OSS CAD Suite:** already included if you installed it for ChipBlocks itself.
+
+## Steps
+
+1. Plug the iCEstick into a USB port. It should enumerate as a USB device automatically (Windows: WinUSB driver via Zadig if needed; Linux: works out of the box).
+2. Wire the audio:
+    - **Pin B1** (header J3 pin 1 — top-left corner of the board) → 1 kΩ resistor → 100 nF capacitor → speaker positive
+    - Speaker negative → any GND pin (header J3 pin 9–14 are all GND)
+3. Flash the bitstream:
+    ```bash
+    iceprog chipblocks.bin
+    ```
+    The on-board LED blinks during programming. The chip starts running as soon as flashing finishes.
+4. You should hear your chip through the speaker.
+
+## Troubleshooting
+
+- **`iceprog: can't find iCE FTDI USB device`** — make sure the board is plugged in. On Linux, you may need `sudo usermod -aG plugdev $USER` and log out/in for USB access.
+- **Silent or noisy output** — check the RC filter values. PWM at 47 kHz needs a few kHz cutoff; 1 kΩ + 100 nF gives ~1.6 kHz. Higher capacitor values smooth more but attenuate high audio frequencies.
+- **Pin numbering** — pin B1 is the top-left of the header J3 closest to the USB connector. See the [iCEstick reference](https://www.latticesemi.com/icestick) for the full pinout.
+""",
+)
+
+
+# TinyFPGA BX (iCE40LP8K, CM81 package). Onboard 16 MHz oscillator is
+# wired to pad B2. Audio output goes to pad A2 — that's GPIO connector
+# pin 1 on the board, the first general-purpose pin in the row of 13
+# along the left side. We pick A2 because it's unused by the bootloader
+# (which only needs the USB pins B4/A4/A3 and the SPI flash pins F7/G7/
+# G6/H7/H4/J8) and is the most accessible header pin for soldering an
+# RC filter + speaker. CM81 chipdbs use alphanumeric pad names like
+# "A2", not numeric pin numbers.
+#
+# Programming uses `tinyprog` (USB bootloader, no external programmer),
+# unlike the iCEstick which uses `iceprog` over its FT2232 USB-to-JTAG
+# bridge.
+TINYFPGA_BX = FPGABoard(
+    id="tinyfpga-bx",
+    label="TinyFPGA BX",
+    chip_family="lp8k",
+    package="cm81",
+    clock_hz=16_000_000,
+    clock_pin="B2",
+    audio_pin="A2",
+    pcf_template="""\
+# TinyFPGA BX (iCE40LP8K, CM81 package) constraints for ChipBlocks
+# Onboard 16 MHz oscillator wired to pad B2
+set_io clk {clock_pin}
+# PWM-modulated audio output: GPIO connector pin 1 -> pad A2
+set_io audio_pin {audio_pin}
+""",
+    flash_md_template="""\
+# Flashing chipblocks.bin to a TinyFPGA BX
+
+## What you need
+
+- A **TinyFPGA BX** (iCE40LP8K-based dev board) — about $40 from the TinyFPGA shop or Crowd Supply. USB-native; no external programmer needed.
+- A small speaker or headphones.
+- A simple RC filter (1 kΩ resistor + 100 nF capacitor) wired between the audio output pin and the speaker. The capacitor smooths the PWM into analog audio; the resistor protects the FPGA pin.
+- The `tinyprog` flashing tool. Install via:
+  - **pip (any platform):** `pip install tinyprog`
+  - **Or via the OSS CAD Suite:** already included if you installed it for ChipBlocks itself (the suite ships `tinyprog` and `tinyfpgab`).
+
+## Steps
+
+1. Plug the TinyFPGA BX into a USB port. The on-board bootloader enumerates as a USB serial device. (Windows: you may need the Adafruit/TinyFPGA driver — see the [TinyFPGA BX user guide](https://tinyfpga.com/bx/guide.html). Linux: works out of the box, but you may need to add yourself to the `dialout` group.)
+2. Wire the audio:
+    - **Pad A2** (GPIO connector pin 1 — first pin in the long row of 13 along the left side of the board) → 1 kΩ resistor → 100 nF capacitor → speaker positive
+    - Speaker negative → any GND pin on the board
+3. Flash the bitstream:
+    ```bash
+    tinyprog -p chipblocks.bin
+    ```
+    `tinyprog` finds the BX automatically over USB. The bootloader writes the bitstream to SPI flash; the FPGA reboots and runs your design as soon as flashing finishes.
+4. You should hear your chip through the speaker.
+
+## Troubleshooting
+
+- **`tinyprog: no boards found`** — make sure the board is plugged in and you're not running another program that has the serial port open. On Linux, `sudo usermod -aG dialout $USER` and log out/in for USB access.
+- **Silent or noisy output** — check the RC filter values. PWM at 62.5 kHz (16 MHz / 256) needs a few kHz cutoff; 1 kΩ + 100 nF gives ~1.6 kHz. Higher capacitor values smooth more but attenuate high audio frequencies.
+- **Pin numbering** — pad A2 is GPIO connector pin 1, the first pin on the left-side row of 13 (the row labeled `1` to `13` on the silkscreen). See the [TinyFPGA BX pinout](https://tinyfpga.com/bx/guide.html) for the full pin map.
+""",
+)
+
+
+# Maps --target argument values to their FPGABoard. "ice40" is preserved
+# as an alias for "icestick" so the Sprint 6 IPC channel and any pre-
+# existing scripts/docs continue to work unchanged.
+ALL_BOARDS: dict[str, FPGABoard] = {
+    "icestick": ICESTICK,
+    "ice40": ICESTICK,
+    "tinyfpga-bx": TINYFPGA_BX,
+}
+
+
+class BoardTop(Elaboratable):
+    """Top-level wrapper for any supported iCE40 board.
 
     Drops the user's GraphTop into a sync domain clocked at
-    ICESTICK_CLOCK_HZ, divided down to the project sample rate. The
+    `board.clock_hz`, divided down to the project sample rate. The
     Output block's audio_in (signed 8-bit) is fed into a 1-bit PWM
     modulator whose duty cycle tracks the audio amplitude, exposed as
     a single GPIO output the user can connect to a speaker (via a
     simple RC low-pass).
 
-    For Sprint-6 v1 this is the simplest mapping that produces audible
-    output on a real iCEstick. A future iteration could use a Sigma-
-    Delta DAC for cleaner audio.
+    The PWM modulator is identical across boards — 1-bit PWM on a
+    single GPIO with an external RC filter is a board-agnostic
+    approach. The only board-specific knob is the input clock
+    frequency, which sets the sample-rate divider.
     """
 
-    def __init__(self, graph: dict):
+    def __init__(self, graph: dict, board: FPGABoard):
+        self.board = board
         self.inner = GraphTop(graph)
         # Single 1-bit GPIO output for PWM-modulated audio.
         self.audio_pin = Signal()
@@ -74,7 +243,9 @@ class IcestickTop(Elaboratable):
         m.submodules.inner = self.inner
 
         # Sample-rate divider: count clock ticks per audio sample.
-        divider = ICESTICK_CLOCK_HZ // SAMPLE_RATE  # 12_000_000 / 44_100 ≈ 272
+        # iCEstick @ 12 MHz: 12_000_000 / 44_100 ≈ 272.
+        # TinyFPGA BX @ 16 MHz: 16_000_000 / 44_100 ≈ 362.
+        divider = self.board.clock_hz // SAMPLE_RATE
         sample_tick = Signal()
         sample_counter = Signal(range(divider))
         with m.If(sample_counter == divider - 1):
@@ -92,8 +263,10 @@ class IcestickTop(Elaboratable):
             m.d.sync += latched_sample.eq((audio_in_signed + 128).as_unsigned())
 
         # PWM modulator: an 8-bit counter cycles 0..255 every 256 clock
-        # ticks (~47 kHz at 12 MHz). PWM out is high while the counter
-        # < latched_sample, giving a duty cycle proportional to amplitude.
+        # ticks. PWM out is high while the counter < latched_sample,
+        # giving a duty cycle proportional to amplitude. Carrier frequency
+        # is clock_hz/256 — well above audible at both 12 MHz (~47 kHz)
+        # and 16 MHz (~62 kHz), so the external RC filter cleans it up.
         pwm_count = Signal(8)
         m.d.sync += pwm_count.eq(pwm_count + 1)
         m.d.comb += self.audio_pin.eq(pwm_count < latched_sample)
@@ -101,21 +274,17 @@ class IcestickTop(Elaboratable):
         return m
 
 
-# iCEstick pin-constraint file. References the iCEstick HX1K's
-# onboard 12 MHz oscillator and routes our audio_pin to GPIO B1
-# (header J3, pin 1 — accessible on the breakout).
-ICESTICK_PCF = """\
-# iCEstick (iCE40HX-1k) constraints for ChipBlocks
-# Onboard 12 MHz oscillator (Y1) is wired to global clock pin 21
-set_io clk 21
-# PWM-modulated audio output: GPIO header J3 pin 1 -> physical pad B1
-set_io audio_pin 112
-"""
+def emit_verilog(graph: dict, out_dir: Path, board: FPGABoard | None = None) -> Path:
+    """Run amaranth.back.verilog.convert() on the wrapped design.
 
-
-def emit_verilog(graph: dict, out_dir: Path) -> Path:
-    """Run amaranth.back.verilog.convert() on the wrapped design."""
-    top = IcestickTop(graph)
+    `board` defaults to the iCEstick when only --target verilog is
+    requested. The wrapper only differs across boards by sample-rate-
+    divider value, so the emitted Verilog has near-identical structure
+    regardless of board choice — just different constant widths.
+    """
+    if board is None:
+        board = ICESTICK
+    top = BoardTop(graph, board)
     out_dir.mkdir(parents=True, exist_ok=True)
     verilog_path = out_dir / "chipblocks.v"
     verilog_text = verilog.convert(
@@ -147,8 +316,13 @@ def run_step(name: str, args: list[str], cwd: Path) -> tuple[str, float]:
     return out, duration
 
 
-def build_ice40(graph: dict, out_dir: Path) -> dict:
-    """Full iCE40 pipeline: Verilog -> Yosys synth -> nextpnr -> icepack."""
+def build_fpga(graph: dict, out_dir: Path, board: FPGABoard) -> dict:
+    """Full iCE40 pipeline for any supported board.
+
+    Verilog -> Yosys synth -> nextpnr-ice40 -> icepack. Tools and flags
+    are identical across boards; only `--<chip_family>` and `--package`
+    differ, both pulled from the board profile.
+    """
     # Verify required binaries are on PATH.
     for tool in ("yosys", "nextpnr-ice40", "icepack"):
         if shutil.which(tool) is None:
@@ -161,9 +335,14 @@ def build_ice40(graph: dict, out_dir: Path) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Verilog
-    verilog_path = emit_verilog(graph, out_dir)
+    verilog_path = emit_verilog(graph, out_dir, board)
     pcf_path = out_dir / "chipblocks.pcf"
-    pcf_path.write_text(ICESTICK_PCF)
+    pcf_path.write_text(
+        board.pcf_template.format(
+            clock_pin=board.clock_pin,
+            audio_pin=board.audio_pin,
+        )
+    )
 
     # 2. Yosys synth.
     # NB: don't pass `-q`. We parse the cell-count statistics from Yosys's
@@ -180,10 +359,12 @@ def build_ice40(graph: dict, out_dir: Path) -> dict:
         cwd=out_dir,
     )
 
-    # 3. nextpnr-ice40 (HX1K, on the iCEstick TQ144 package).
+    # 3. nextpnr-ice40. Family flag is "--hx1k" / "--lp8k" / "--up5k" /
+    # etc. — passed as an argv flag, not a value, so we build it as
+    # f"--{board.chip_family}".
     # --pcf-allow-unconstrained lets us skip a pin assignment for the
-    # auto-generated `rst` port that Amaranth emits — unused on the
-    # iCEstick (no reset button wired in v1).
+    # auto-generated `rst` port that Amaranth emits — unused on these
+    # boards (no reset button wired in v1).
     # NB: don't pass `--quiet`. The "Device utilisation" block and
     # "Max frequency for clock" lines we parse for BUILD.md only appear at
     # the default verbosity.
@@ -192,9 +373,9 @@ def build_ice40(graph: dict, out_dir: Path) -> dict:
         "nextpnr-ice40",
         [
             "nextpnr-ice40",
-            "--hx1k",
+            f"--{board.chip_family}",
             "--package",
-            "tq144",
+            board.package,
             "--json",
             json_path.name,
             "--pcf",
@@ -227,44 +408,13 @@ def build_ice40(graph: dict, out_dir: Path) -> dict:
         "nextpnr_duration_s": nextpnr_duration,
         "icepack_log": icepack_log,
         "icepack_duration_s": icepack_duration,
+        "board": board,
     }
 
 
 # ---------------------------------------------------------------------------
 # Bundle creation: zip the artifacts + auto-generated docs into a single file
 # ---------------------------------------------------------------------------
-
-FLASH_INSTRUCTIONS = """\
-# Flashing chipblocks.bin to a Lattice iCEstick
-
-## What you need
-
-- A Lattice **iCEstick** (iCE40HX-1k dev board) — about $30 from Mouser, Digi-Key, or your favorite distributor.
-- A small speaker or headphones.
-- A simple RC filter (1 kΩ resistor + 100 nF capacitor) wired between the audio output pin and the speaker. The capacitor smooths the PWM into analog audio; the resistor protects the FPGA pin.
-- The `iceprog` flashing tool. Install via:
-  - **Ubuntu / Debian / WSL2:** `sudo apt install fpga-icestorm`
-  - **Or via the OSS CAD Suite:** already included if you installed it for ChipBlocks itself.
-
-## Steps
-
-1. Plug the iCEstick into a USB port. It should enumerate as a USB device automatically (Windows: WinUSB driver via Zadig if needed; Linux: works out of the box).
-2. Wire the audio:
-    - **Pin B1** (header J3 pin 1 — top-left corner of the board) → 1 kΩ resistor → 100 nF capacitor → speaker positive
-    - Speaker negative → any GND pin (header J3 pin 9–14 are all GND)
-3. Flash the bitstream:
-    ```bash
-    iceprog chipblocks.bin
-    ```
-    The on-board LED blinks during programming. The chip starts running as soon as flashing finishes.
-4. You should hear your chip through the speaker.
-
-## Troubleshooting
-
-- **`iceprog: can't find iCE FTDI USB device`** — make sure the board is plugged in. On Linux, you may need `sudo usermod -aG plugdev $USER` and log out/in for USB access.
-- **Silent or noisy output** — check the RC filter values. PWM at 47 kHz needs a few kHz cutoff; 1 kΩ + 100 nF gives ~1.6 kHz. Higher capacitor values smooth more but attenuate high audio frequencies.
-- **Pin numbering** — pin B1 is the top-left of the header J3 closest to the USB connector. See the [iCEstick reference](https://www.latticesemi.com/icestick) for the full pinout.
-"""
 
 
 def parse_utilization(yosys_out: str, nextpnr_out: str) -> dict:
@@ -433,6 +583,7 @@ def _generate_build_report(graph: dict, result: dict) -> str:
     timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     util = parse_utilization(result.get("yosys_log", ""), result.get("nextpnr_log", ""))
+    board: FPGABoard = result["board"]
 
     # Utilisation table rows.
     lut_row = (
@@ -498,11 +649,16 @@ def _generate_build_report(graph: dict, result: dict) -> str:
     nextpnr_tail = result.get("nextpnr_log", "")[-2000:].strip()
     icepack_tail = result.get("icepack_log", "").strip() or "(no output)"
 
+    target_line = (
+        f"{board.label} (iCE40 {board.chip_family.upper()}, "
+        f"{board.package.upper()} package)"
+    )
+
     return f"""\
 # ChipBlocks FPGA Build Report
 
 **Generated:** {timestamp}
-**Target:** Lattice iCEstick (iCE40HX-1k, TQ144 package)
+**Target:** {target_line}
 **Source graph:** {n_nodes} node{"s" if n_nodes != 1 else ""}, {n_edges} edge{"s" if n_edges != 1 else ""}
 **Block types:** {", ".join(block_types) if block_types else "(none)"}
 
@@ -538,9 +694,9 @@ LUTs and flip-flops both live inside iCE40 logic cells (LCs); the same LC can ho
 
 | File | What it is |
 |---|---|
-| `chipblocks.bin` | The compiled iCE40 bitstream. Flash to an iCEstick with `iceprog chipblocks.bin`. |
+| `chipblocks.bin` | The compiled iCE40 bitstream. Flash to a {board.label} per `FLASH.md`. |
 | `chipblocks.v` | The generated Verilog source. Output of `amaranth.back.verilog.convert()` on the visual graph. Included for transparency / debugging — you don't need to flash this. |
-| `chipblocks.pcf` | Pin constraint file. Maps the Verilog top module's `clk` and `audio_pin` ports to physical iCEstick pins. |
+| `chipblocks.pcf` | Pin constraint file. Maps the Verilog top module's `clk` and `audio_pin` ports to physical {board.label} pins. |
 | `BUILD.md` | This file. |
 | `FLASH.md` | How to flash and wire for audio out. |
 
@@ -573,15 +729,20 @@ LUTs and flip-flops both live inside iCE40 logic cells (LCs); the same LC can ho
 
 
 def make_bundle(out_dir: Path, graph: dict, result: dict) -> Path:
-    """Pack the build artifacts + auto-generated docs into a single zip."""
-    bundle_path = out_dir / "chipblocks-fpga.zip"
+    """Pack the build artifacts + auto-generated docs into a single zip.
+
+    Bundle filename includes the board id so that running multiple
+    builds in the same out_dir doesn't overwrite an earlier zip.
+    """
+    board: FPGABoard = result["board"]
+    bundle_path = out_dir / f"chipblocks-fpga-{board.id}.zip"
     build_md = _generate_build_report(graph, result)
     with zipfile.ZipFile(bundle_path, "w", zipfile.ZIP_DEFLATED) as z:
         z.write(result["bin"], "chipblocks.bin")
         z.write(result["verilog"], "chipblocks.v")
         z.write(result["pcf"], "chipblocks.pcf")
         z.writestr("BUILD.md", build_md)
-        z.writestr("FLASH.md", FLASH_INSTRUCTIONS)
+        z.writestr("FLASH.md", board.flash_md_template)
     return bundle_path
 
 
@@ -591,9 +752,14 @@ def main() -> int:
     p.add_argument("--out-dir", dest="out_dir", required=True)
     p.add_argument(
         "--target",
-        choices=["verilog", "ice40"],
+        choices=["verilog", "ice40", "icestick", "tinyfpga-bx", "tt"],
         default="verilog",
-        help="verilog: just emit the generated Verilog file. ice40: full pipeline through icepack.",
+        help=(
+            "verilog: just emit the generated Verilog file. "
+            "ice40 / icestick: full pipeline for the Lattice iCEstick (HX1K). "
+            "tinyfpga-bx: full pipeline for the TinyFPGA BX (LP8K). "
+            "tt: Tiny Tapeout submission package (sources + info.yaml; no local PnR)."
+        ),
     )
     args = p.parse_args()
 
@@ -610,8 +776,20 @@ def main() -> int:
         print(f"[build] Wrote {verilog_path} ({verilog_path.stat().st_size} bytes)", flush=True)
         return 0
 
-    # ice40
-    result = build_ice40(graph, out_dir)
+    if args.target == "tt":
+        from tinytapeout import build_tinytapeout
+        result = build_tinytapeout(graph, out_dir)
+        print(f"[build] Tiny Tapeout submission ready: {result['bundle_path']}", flush=True)
+        return 0
+
+    # FPGA targets: look up the board profile and run the full pipeline.
+    board = ALL_BOARDS[args.target]
+    print(
+        f"[build] Board: {board.label} ({board.chip_family.upper()}-{board.package.upper()})",
+        flush=True,
+    )
+
+    result = build_fpga(graph, out_dir, board)
     bundle_path = make_bundle(out_dir, graph, result)
     print(
         f"[build] Wrote {result['bin']} ({result['size_bytes']} bytes)",

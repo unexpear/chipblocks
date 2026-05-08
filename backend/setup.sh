@@ -14,8 +14,13 @@ pip3 install --user --break-system-packages migen
 echo "==> Installing LiteX from git..."
 pip3 install --user --break-system-packages git+https://github.com/enjoy-digital/litex.git
 
+echo "==> Installing PyYAML (for Tiny Tapeout info.yaml emission)..."
+# PyYAML is BSD-licensed and ships preinstalled on most Linux distros, but
+# install explicitly so `--target tt` works on a fresh machine.
+pip3 install --user --break-system-packages pyyaml
+
 echo "==> Verifying imports..."
-python3 -c 'import migen, litex; print("Migen + LiteX import OK")'
+python3 -c 'import migen, litex, yaml; print("Migen + LiteX + PyYAML import OK")'
 
 echo "==> Done."
 echo "    Migen and LiteX are installed to ~/.local/lib/python*/site-packages/"
