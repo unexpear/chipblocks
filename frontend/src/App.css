@@ -243,6 +243,15 @@
 
 .chat-msg-user .chat-msg-role { color: #6ec1ff; }
 .chat-msg-assistant .chat-msg-role { color: #b08aff; }
+.chat-msg-tool .chat-msg-role { color: #4caf50; }
+
+.chat-msg-tool .chat-msg-body {
+  background: #1a2218;
+  border-color: #2a3a28;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  color: #b6c9b3;
+}
 
 .chat-msg-body {
   white-space: pre-wrap;

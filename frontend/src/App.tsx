@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -14,7 +14,7 @@ import {
   type Viewport,
 } from '@xyflow/react'
 import { nodeTypes, type AppNode } from './blocks'
-import { Chat } from './Chat'
+import { Chat, type CanvasActions } from './Chat'
 import { SettingsModal } from './SettingsModal'
 import { Palette, PALETTE_DRAG_TYPE, defaultDataForType } from './Palette'
 import { type DragEvent } from 'react'
@@ -192,6 +192,44 @@ function AppContent() {
     await window.chipblocks.cancel()
   }
 
+  // Canvas actions exposed to the AI consultant via tool calls. Each
+  // returns a short string id of the new entity (or true for in-place
+  // updates) so the Chat component can display a confirmation.
+  const canvasActions: CanvasActions = useMemo(
+    () => ({
+      addNode: (type, data, position) => {
+        const id = `${type}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`
+        const finalPosition = position ?? {
+          x: 200 + Math.random() * 300,
+          y: 100 + Math.random() * 200,
+        }
+        const finalData = data ?? defaultDataForType(type)
+        setNodes((nds) => [
+          ...nds,
+          { id, type, position: finalPosition, data: finalData } as AppNode,
+        ])
+        return id
+      },
+      addEdge: (sourceId, targetId, sourceHandle, targetHandle) => {
+        const id = `e_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`
+        setEdges((eds) => [
+          ...eds,
+          { id, source: sourceId, target: targetId, sourceHandle, targetHandle },
+        ])
+        return id
+      },
+      updateNodeData: (id, newData) => {
+        setNodes((nds) =>
+          nds.map((n) =>
+            n.id === id ? ({ ...n, data: { ...n.data, ...newData } } as AppNode) : n,
+          ),
+        )
+        return true
+      },
+    }),
+    [setNodes, setEdges],
+  )
+
   // Drag-and-drop from the palette: the canvas wrapper accepts drops
   // carrying our private MIME type and spawns a new node at the drop
   // location with the block type's default data.
@@ -267,6 +305,7 @@ function AppContent() {
             nodes={nodes}
             edges={edges}
             hasApiKey={hasApiKey}
+            canvasActions={canvasActions}
             onClose={() => setChatOpen(false)}
             onOpenSettings={() => setSettingsOpen(true)}
           />

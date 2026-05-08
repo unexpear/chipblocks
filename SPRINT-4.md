@@ -124,26 +124,72 @@ If Sprint 4 ships clean, the consultant becomes a real collaborator (not just a 
 **✓ Done — 2026-05-08.** Settings modal grew a Model section with a `<select>` listing Haiku 4.5, Sonnet 4.6 (default, recommended), and Opus 4.7. Selection persists to `localStorage` under `chipblocks:model` (model id is non-sensitive, unlike the API key — no need for `safeStorage`). `Chat.tsx` reads the stored model on each send and includes it in the IPC payload. `electron/main/ai.ts` whitelists the three allowed model ids and falls back to the default if anything else arrives. Footer in the chat panel now displays the active model name dynamically.
 
 ### Item 5 — AI tool-calls
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** The AI consultant can now mutate the canvas via Anthropic-SDK tool definitions, scoped per the sprint risk register's "box it" guidance:
+
+- `add_node(type, data?)` — spawn a new block; returns the new id
+- `add_edge(source_id, target_id, source_handle, target_handle)` — wire two existing blocks
+- `update_node_params(id, data)` — change parameters on an existing block
+
+Destructive operations (`delete_node`, `delete_edge`) intentionally **NOT shipped** in v1 — the risk register's "AI applies the wrong change" entry suggested a confirmation dialog before allowing destructive tool calls; punted to a future sprint with the preview-and-apply UX.
+
+**Architecture (single-turn, no agentic loop in v1):**
+- `Chat.tsx` builds the tool definitions from `PALETTE` (block-type enum) and sends them in the `tools` field of every chat request.
+- `electron/main/ai.ts`: `ChatRequest` now accepts an optional `tools` array; passes it through to `client.messages.stream()`. Text deltas continue to stream as before. After `stream.finalMessage()`, the main process extracts any `tool_use` content blocks (each carries `id`/`name`/`input`) and ships them in the `ai:done` payload alongside usage and stop_reason.
+- `Chat.tsx` `onDone` handler: applies each tool call via the new `canvasActions` props and appends a synthetic `tool`-role message to the chat showing `✓ <name>: <result>`. Failures show `✗`. Tool messages are display-only — they're filtered out before sending the next turn to the API (Claude doesn't see them).
+- `App.tsx`: `canvasActions` (typed `CanvasActions`) is a `useMemo`'d object that closes over `setNodes` / `setEdges`. Provides `addNode` (auto-generates id and sensible random position), `addEdge`, `updateNodeData`. Passed as a prop to `Chat`.
+
+**Single-turn simplification**: each user message produces one Claude response with possibly multiple tool calls; we apply them and end the turn. No multi-step agentic loop. This lets the user say "drop in a low-pass filter and wire it" and watch ~3 tool calls land in real-time, but doesn't yet support "now make sure the cutoff sounds right" follow-ups where the AI would need to hear the result of its previous call. That richer pattern is Sprint 5+ territory.
+
+**System prompt** updated to teach the AI that the tools exist and to prefer using them over describing changes in text.
+
+`tsc --noEmit` clean.
 
 ### Item 6 — E2E demo
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** Verified via automated checks:
+- All 9 backend block tests PASS (`test_blocks.py`)
+- All 5 backend translator tests PASS (`test_synth.py`)
+- `tsc --noEmit` clean across the frontend + Electron sources
+- Dev server bundles cleanly with the now-nine-block library and AI tool definitions
+
+**Live verification by the user** (BYOK, requires their API key) covers:
+- Drag any block from the palette onto the canvas → spawns at the drop location
+- Edit a parameter → press Play → hear the change
+- Open Chat, ask "drop in a low-pass filter at 600 Hz between the oscillator and the output" → AI calls tools → canvas updates in real time
+- Save / Load round-trips include all 9 block types
 
 ### Item 7 — Sprint retrospective
-*[fill in at end of sprint]*
+**✓ Done — 2026-05-08.** Filled in below. Sprint 4 closed.
 
 ---
 
 ## Retrospective (end of sprint)
 
 **What went well:**
-*[fill in]*
+- **Block library reached 9 types.** Library doubled-and-then-some from where Sprint 2 started (3 blocks). Each new block followed the established pattern, so the marginal cost was small.
+- **Palette UX fell out of the existing port-dict architecture cleanly.** No coupling to the AI subsystem; could have shipped without ever building Item 5.
+- **AI tool-calls landed in one focused session.** The Sprint 3 research-agent recommendation to use `stream.finalMessage()` for tool extraction was exactly right — much simpler than tracking individual `tool_use` events through the stream.
+- **The "single-turn, no agentic loop" simplification.** Per the risk register's "box it" guidance, shipping `add_node` + `add_edge` + `update_node_params` first (and explicitly NOT `delete_*`) kept Item 5 to a single session instead of multi-day.
+- **Model picker shipped clean.** localStorage for non-sensitive prefs, safeStorage for the API key — the right split.
+- **`useMemo` on `canvasActions`** turned out to be the right call for stability — keeps the prop reference identical across renders so `Chat`'s effect deps don't churn.
 
 **What didn't:**
-*[fill in]*
+- **No multi-step agentic loop yet.** Each chat turn is self-contained; the AI can't see the result of its previous tool call when it makes the next one. For "set the cutoff so it sounds right" follow-ups, the user would need to ask twice. Punted to Sprint 5.
+- **No destructive tool calls.** `delete_node` / `delete_edge` would need a preview-and-apply UX (per Sprint 3 retro's risk note); shipping those without confirmation is too dangerous. Punted alongside the agentic-loop work.
+- **Tool-call positioning is random.** New nodes spawn at semi-random coordinates within a small region. Better would be to place them near existing related nodes; punted.
+- **15 npm vulnerabilities still untouched.** P1 #10 in this sprint plan; the higher-priority items consumed the session.
+- **No IPC unit tests** (Sprint 3 carryover P1 #9). Same reason.
 
 **What surprised me:**
-*[fill in]*
+- **Anthropic's tool-use schema is plain JSON Schema.** No proprietary format; works exactly the way you'd expect. Easy to author the three tools by hand.
+- **The single-turn pattern is genuinely useful** — even without follow-up agentic loops, the user can say "drop in a low-pass filter" and watch the canvas update in real time. That's the UX win, not the agentic generality.
+- **Anthropic SDK's `stream.finalMessage()`** returns the assembled message including tool_use blocks, even when streaming text deltas. No special tracking needed. Big simplifier vs the alternative of hand-collecting tool_use events from the stream.
+- **The block library doubled in three sprint-3-and-4 days of work.** Going from 3 → 9 blocks felt small per-block because the contract (`input_ports` / `output_ports` dicts) is simple. Adding a 10th would be cheap.
+- **Mid-sprint type widening** (when ChatRequest grew a `tools?` field) propagated cleanly through preload + renderer with one type-check.
 
 **What changes Sprint 5:**
-*[fill in]*
+- **Multi-step agentic loop**: AI sends back a `tool_result` content block for each tool, gets the next AI message, loops until `stop_reason: "end_turn"`. Unblocks "tune the parameter until it sounds right"-style flows.
+- **Preview-and-apply for destructive tools**: a "the AI wants to delete X — confirm?" dialog. Then `delete_node` / `delete_edge` can ship safely.
+- **Smarter tool-call placement**: new nodes appear near related existing nodes, not at random coordinates.
+- **Cached audio output in save format** (Sprint 4 P1 #8 carryover).
+- **First steps toward FPGA bitstream output** (PRD Phase 2): pick iCE40 as the first target, chain `synth.py` to Yosys + nextpnr to produce a `.bin`. Larger lift.
+- **Sprint cleanups**: npm audit pass, IPC unit tests, mute the `UnusedElaboratable` warning. Carry-forward from Sprint 1 + 2 + 3 + 4.

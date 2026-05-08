@@ -45,6 +45,10 @@ interface ChatRequest {
   // System is an array of blocks; first is the cached static spec,
   // second is the per-turn canvas-state context. Built by the renderer.
   system: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }>
+  // Optional Anthropic tool definitions. When supplied, Claude can emit
+  // tool_use content blocks; we forward those to the renderer in ai:done
+  // so the renderer can mutate the canvas accordingly.
+  tools?: unknown[]
 }
 
 // ---- API key storage --------------------------------------------------------
@@ -97,13 +101,21 @@ async function runChat(window: BrowserWindow, req: ChatRequest): Promise<void> {
 
   try {
     const model = req.model && ALLOWED_MODELS.has(req.model) ? req.model : DEFAULT_MODEL
+    const streamArgs: Record<string, unknown> = {
+      model,
+      max_tokens: MAX_TOKENS,
+      system: req.system,
+      messages: req.messages,
+    }
+    if (req.tools && req.tools.length > 0) {
+      streamArgs.tools = req.tools
+    }
+    // SDK type for stream() is strict about the discriminated union of
+    // params; we cast through unknown because we're building the args
+    // dynamically. The whitelist + JSON-schema-validated tools above
+    // make this safe.
     const stream = client.messages.stream(
-      {
-        model,
-        max_tokens: MAX_TOKENS,
-        system: req.system,
-        messages: req.messages,
-      },
+      streamArgs as Parameters<typeof client.messages.stream>[0],
       { signal: controller.signal },
     )
 
@@ -120,12 +132,25 @@ async function runChat(window: BrowserWindow, req: ChatRequest): Promise<void> {
 
     const final = await stream.finalMessage()
     if (!window.isDestroyed()) {
+      // Extract any tool_use content blocks so the renderer can apply them.
+      // (The text content was already streamed via ai:chunk events above.)
+      type ContentBlock = { type: string; id?: string; name?: string; input?: unknown }
+      const toolCalls = (final.content as ContentBlock[])
+        .filter((b) => b.type === 'tool_use')
+        .map((b) => ({
+          id: b.id,
+          name: b.name,
+          input: b.input,
+        }))
+
       window.webContents.send('ai:done', {
         id: req.id,
         usage: {
           input: final.usage.input_tokens,
           output: final.usage.output_tokens,
         },
+        stop_reason: final.stop_reason,
+        tool_calls: toolCalls,
       })
     }
   } catch (err) {

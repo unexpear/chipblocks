@@ -38,7 +38,7 @@ contextBridge.exposeInMainWorld('ai', {
   saveKey: (key: string) => ipcRenderer.invoke('ai:save-key', key) as Promise<boolean>,
   hasKey: () => ipcRenderer.invoke('ai:has-key') as Promise<boolean>,
   clearKey: () => ipcRenderer.invoke('ai:clear-key') as Promise<boolean>,
-  chat: (req: { id: string; model?: string; messages: unknown[]; system: unknown }) =>
+  chat: (req: { id: string; model?: string; messages: unknown[]; system: unknown; tools?: unknown[] }) =>
     ipcRenderer.invoke('ai:chat', req) as Promise<boolean>,
   cancel: (id: string) => ipcRenderer.invoke('ai:cancel', id) as Promise<boolean>,
   onChunk: (cb: (data: { id: string; text: string }) => void) => {
