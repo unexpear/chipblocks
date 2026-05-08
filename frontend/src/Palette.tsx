@@ -30,6 +30,8 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'gate',       label: 'Gate',       color: '#00bcd4', description: 'Periodic 1-bit pulse' },
   { type: 'lowpass',    label: 'Low-pass',   color: '#00897b', description: '1-pole IIR low-pass filter' },
   { type: 'samplehold', label: 'S & H',      color: '#607d8b', description: 'Sample-and-Hold on clock edge' },
+  { type: 'fm',         label: 'FM',         color: '#e91e63', description: 'Two-operator FM voice (carrier + modulator)' },
+  { type: 'multiply',   label: 'Multiply',   color: '#3f51b5', description: 'Ring modulator / VCA: (a * b) >> 7' },
   { type: 'output',     label: 'Output',     color: '#f44336', description: 'Audio sink (where Play reads from)' },
 ]
 
@@ -50,10 +52,13 @@ export function defaultDataForType(type: string): Record<string, unknown> {
       return { cutoff_hz: 800 }
     case 'constant':
       return { value: 0 }
+    case 'fm':
+      return { carrier_freq: 440, modulator_freq: 110, mod_depth: 64 }
     case 'mixer':
     case 'output':
     case 'samplehold':
     case 'noise':
+    case 'multiply':
     default:
       return {}
   }

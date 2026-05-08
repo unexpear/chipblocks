@@ -68,7 +68,15 @@ def _build_params(node_type: str, data: dict) -> dict:
     elif node_type == "constant":
         if "value" in data:
             params["value"] = int(data["value"])
-    # Mixer, Output, SampleAndHold, Noise have no parameters.
+    elif node_type == "fm":
+        if "carrier_freq" in data:
+            params["carrier_freq"] = int(data["carrier_freq"])
+        if "modulator_freq" in data:
+            params["modulator_freq"] = int(data["modulator_freq"])
+        if "mod_depth" in data:
+            params["mod_depth"] = int(data["mod_depth"])
+        params["sample_rate"] = SAMPLE_RATE
+    # Mixer, Output, SampleAndHold, Noise, Multiply have no parameters.
     return params
 
 

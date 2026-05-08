@@ -718,6 +718,15 @@
   border-color: #9e9e9e;
 }
 
+.block-fm {
+  border-color: #e91e63;
+  min-width: 140px;
+}
+
+.block-multiply {
+  border-color: #3f51b5;
+}
+
 /* Multi-row parameter blocks (ADSR, Gate, future LPF, etc.) */
 .block-row {
   display: flex;

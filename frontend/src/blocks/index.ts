@@ -10,6 +10,8 @@ import { LowPassFilterNode,  type LowPassFilterBlock }  from './LowPassFilterNod
 import { SampleAndHoldNode,  type SampleAndHoldBlock }  from './SampleAndHoldNode'
 import { NoiseNode,          type NoiseBlock }          from './NoiseNode'
 import { ConstantNode,       type ConstantBlock }       from './ConstantNode'
+import { FmNode,             type FmBlock }             from './FmNode'
+import { MultiplyNode,       type MultiplyBlock }       from './MultiplyNode'
 
 // Hoisted to module scope to avoid React Flow's
 // "It looks like you've created a new nodeTypes object" warning.
@@ -26,6 +28,8 @@ export const nodeTypes = {
   samplehold: SampleAndHoldNode,
   noise:      NoiseNode,
   constant:   ConstantNode,
+  fm:         FmNode,
+  multiply:   MultiplyNode,
 }
 
 export type AppNode =
@@ -41,3 +45,5 @@ export type AppNode =
   | SampleAndHoldBlock
   | NoiseBlock
   | ConstantBlock
+  | FmBlock
+  | MultiplyBlock

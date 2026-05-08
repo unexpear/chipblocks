@@ -24,6 +24,8 @@ from .lowpass import LowPassFilter
 from .sample_and_hold import SampleAndHold
 from .noise import Noise
 from .constant import Constant
+from .fm import Fm
+from .multiply import Multiply
 
 # Registry mapping graph node `type` (from React Flow JSON) to block class.
 BLOCK_REGISTRY = {
@@ -39,6 +41,8 @@ BLOCK_REGISTRY = {
     "samplehold": SampleAndHold,
     "noise": Noise,
     "constant": Constant,
+    "fm": Fm,
+    "multiply": Multiply,
 }
 
 __all__ = [
@@ -54,5 +58,7 @@ __all__ = [
     "SampleAndHold",
     "Noise",
     "Constant",
+    "Fm",
+    "Multiply",
     "BLOCK_REGISTRY",
 ]

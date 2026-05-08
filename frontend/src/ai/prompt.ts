@@ -28,7 +28,7 @@ Inside the app, the user:
 
 When the canvas is rendering or building, a Cancel button appears that aborts cleanly. Status text reads "Synthesizing…" or "Building bitstream…". Errors appear as a dismissible toast bottom-left.
 
-# Block library (all 12 types — these are the EXACT type strings)
+# Block library (all 14 types — these are the EXACT type strings)
 
 All audio signals are 8-bit signed (-128 to +127) at 44100 Hz.
 
@@ -91,11 +91,23 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz.
 - Output port \`audio-out\`
 - No parameters
 
+**fm** — single self-contained two-operator FM voice. A modulator oscillator displaces a carrier oscillator's phase, producing the classic frequency-modulation timbre (DX7-style bell / electric piano). Output is a square wave from the carrier MSB. No external inputs.
+- Output port \`audio-out\`
+- Parameters:
+  - \`carrier_freq\`: 20–20000 Hz (default 440)
+  - \`modulator_freq\`: 20–20000 Hz (default 110)
+  - \`mod_depth\`: 0–127 (default 64) — how strongly the modulator displaces the carrier's phase
+
+**multiply** — combinational signed multiply with a >> 7 scale: \`(in-1 * in-2) >> 7\`. Use it for ring modulation (multiply two audio signals for metallic / inharmonic timbres) and amplitude modulation (multiply audio by a control envelope to vary loudness).
+- Input ports \`in-1\`, \`in-2\`
+- Output port \`audio-out\`
+- No parameters
+
 # Naming conventions
 
-- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`samplehold\`.
+- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`samplehold\`, \`fm\`, \`multiply\`.
 - **Port handle ids** are kebab-case: \`audio-out\`, \`audio-in\`, \`gate-out\`, \`mix-out\`, \`in-1\`, \`in-2\`. Two are unhyphenated for control signals: \`gate\` (an ADSR input) and \`clock\` (a samplehold input).
-- **Block parameters** are snake_case: \`freq\`, \`attack_ms\`, \`decay_ms\`, \`sustain_level\`, \`release_ms\`, \`rate_hz\`, \`duty_pct\`, \`cutoff_hz\`, \`value\`.
+- **Block parameters** are snake_case: \`freq\`, \`attack_ms\`, \`decay_ms\`, \`sustain_level\`, \`release_ms\`, \`rate_hz\`, \`duty_pct\`, \`cutoff_hz\`, \`value\`, \`carrier_freq\`, \`modulator_freq\`, \`mod_depth\`.
 
 # Save format
 
@@ -155,7 +167,7 @@ After tool calls, you'll receive \`tool_result\` content blocks with the outcome
 
 - Be concrete. Reference specific block types, parameter values, and port names.
 - Keep responses tight — a short paragraph or a short list.
-- If a goal isn't possible with the current 12 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
+- If a goal isn't possible with the current 14 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
 - After multi-step tool sequences, end with a short text confirmation of what you did so the user knows where things landed.`
 
 export function buildSystemBlocks(nodes: AppNode[], edges: Edge[]) {
@@ -191,7 +203,8 @@ The \`data\` field shape depends on \`type\`:
 - gate: { rate_hz: 1-1000 (default 4), duty_pct: 1-99 (default 50) }
 - lowpass: { cutoff_hz: 1-22050 (default 800) }
 - constant: { value: -128 to 127 (default 0) }
-- mixer | output | samplehold | noise: {} (no parameters)
+- fm: { carrier_freq: 20-20000 (default 440), modulator_freq: 20-20000 (default 110), mod_depth: 0-127 (default 64) }
+- mixer | output | samplehold | noise | multiply: {} (no parameters)
 
 Omit \`data\` to use defaults.`,
       input_schema: {
@@ -255,7 +268,8 @@ Allowed fields per block type (same as add_node):
 - gate: rate_hz, duty_pct
 - lowpass: cutoff_hz
 - constant: value
-- mixer | output | samplehold | noise: (no parameters; this tool is a no-op for these types)`,
+- fm: carrier_freq, modulator_freq, mod_depth
+- mixer | output | samplehold | noise | multiply: (no parameters; this tool is a no-op for these types)`,
       input_schema: {
         type: 'object',
         properties: {
