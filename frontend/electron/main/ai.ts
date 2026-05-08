@@ -22,7 +22,14 @@ const keyFile = () => path.join(app.getPath('userData'), 'anthropic-key.dat')
 // Track in-flight streams per request id so we can cancel them.
 const inflight = new Map<string, AbortController>()
 
-const MODEL = 'claude-sonnet-4-6'
+const DEFAULT_MODEL = 'claude-sonnet-4-6'
+// Whitelist accepted model ids so a malformed renderer payload can't
+// pick anything outside the supported set.
+const ALLOWED_MODELS = new Set([
+  'claude-haiku-4-5-20251001',
+  'claude-sonnet-4-6',
+  'claude-opus-4-7',
+])
 const MAX_TOKENS = 4096
 
 interface ChatMessage {
@@ -32,6 +39,8 @@ interface ChatMessage {
 
 interface ChatRequest {
   id: string
+  // Optional Claude model id; defaults to DEFAULT_MODEL if omitted.
+  model?: string
   messages: ChatMessage[]
   // System is an array of blocks; first is the cached static spec,
   // second is the per-turn canvas-state context. Built by the renderer.
@@ -87,9 +96,10 @@ async function runChat(window: BrowserWindow, req: ChatRequest): Promise<void> {
   const client = new Anthropic({ apiKey })
 
   try {
+    const model = req.model && ALLOWED_MODELS.has(req.model) ? req.model : DEFAULT_MODEL
     const stream = client.messages.stream(
       {
-        model: MODEL,
+        model,
         max_tokens: MAX_TOKENS,
         system: req.system,
         messages: req.messages,

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Edge } from '@xyflow/react'
 import type { AppNode } from './blocks'
+import { getStoredModel, MODEL_OPTIONS } from './SettingsModal'
 
 declare global {
   interface Window {
@@ -10,6 +11,7 @@ declare global {
       clearKey: () => Promise<boolean>
       chat: (req: {
         id: string
+        model?: string
         messages: { role: 'user' | 'assistant'; content: string }[]
         system: { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }[]
       }) => Promise<boolean>
@@ -170,6 +172,7 @@ export function Chat({ nodes, edges, hasApiKey, onClose, onOpenSettings }: ChatP
     try {
       await window.ai.chat({
         id,
+        model: getStoredModel(),
         messages: newHistory,
         system: buildSystemBlocks(nodes, edges),
       })
@@ -272,7 +275,10 @@ export function Chat({ nodes, edges, hasApiKey, onClose, onOpenSettings }: ChatP
           <div className="chat-footer">
             <span>Tokens: {tokenTotals.input.toLocaleString()} in / {tokenTotals.output.toLocaleString()} out</span>
             <span className="chat-spacer" />
-            <span className="chat-model">claude-sonnet-4-6</span>
+            <span className="chat-model">{
+              MODEL_OPTIONS.find((m) => m.id === getStoredModel())?.label.split(' — ')[0]
+              ?? getStoredModel()
+            }</span>
           </div>
         </>
       )}

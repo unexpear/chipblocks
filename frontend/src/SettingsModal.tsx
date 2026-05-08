@@ -6,10 +6,41 @@ interface SettingsModalProps {
   onKeyChanged: () => void
 }
 
+// Available Claude model IDs and human-readable labels.
+// `claude-sonnet-4-6` is the default per the Sprint 3 research:
+// best speed/quality balance for chat.
+export const MODEL_OPTIONS = [
+  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 — fastest, cheapest' },
+  { id: 'claude-sonnet-4-6',          label: 'Sonnet 4.6 — recommended' },
+  { id: 'claude-opus-4-7',            label: 'Opus 4.7 — smartest, slowest' },
+] as const
+
+export const DEFAULT_MODEL = 'claude-sonnet-4-6'
+const MODEL_STORAGE_KEY = 'chipblocks:model'
+
+export function getStoredModel(): string {
+  try {
+    const stored = localStorage.getItem(MODEL_STORAGE_KEY)
+    if (stored && MODEL_OPTIONS.some((m) => m.id === stored)) return stored
+  } catch {
+    // localStorage might be unavailable; fall through.
+  }
+  return DEFAULT_MODEL
+}
+
+function setStoredModel(id: string) {
+  try {
+    localStorage.setItem(MODEL_STORAGE_KEY, id)
+  } catch {
+    // Best-effort; ignore.
+  }
+}
+
 export function SettingsModal({ hasApiKey, onClose, onKeyChanged }: SettingsModalProps) {
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; msg: string } | null>(null)
+  const [model, setModel] = useState<string>(getStoredModel())
 
   // Close on Escape.
   useEffect(() => {
@@ -48,6 +79,12 @@ export function SettingsModal({ hasApiKey, onClose, onKeyChanged }: SettingsModa
     } finally {
       setBusy(false)
     }
+  }
+
+  const onModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const id = e.target.value
+    setModel(id)
+    setStoredModel(id)
   }
 
   return (
@@ -92,8 +129,6 @@ export function SettingsModal({ hasApiKey, onClose, onKeyChanged }: SettingsModa
             {hasApiKey && (
               <button onClick={clear} disabled={busy} className="modal-danger">Clear stored key</button>
             )}
-            <span className="chat-spacer" />
-            <button onClick={onClose}>Close</button>
           </div>
 
           {status && (
@@ -101,6 +136,26 @@ export function SettingsModal({ hasApiKey, onClose, onKeyChanged }: SettingsModa
               {status.msg}
             </p>
           )}
+
+          <hr className="modal-divider" />
+
+          <h3>Model</h3>
+          <p className="modal-note">
+            Which Claude model the consultant uses. Sonnet 4.6 is the recommended default. Haiku is faster and cheaper; Opus is smarter but slower and pricier. Your choice persists in <code>localStorage</code>.
+          </p>
+          <label className="modal-label">
+            Selected model
+            <select className="modal-input" value={model} onChange={onModelChange}>
+              {MODEL_OPTIONS.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+          </label>
+
+          <div className="modal-actions">
+            <span className="chat-spacer" />
+            <button onClick={onClose}>Close</button>
+          </div>
         </div>
       </div>
     </div>

@@ -463,6 +463,12 @@
 .modal-status-msg.modal-status-ok { color: #6c6; }
 .modal-status-msg.modal-status-err { color: #f88; }
 
+.modal-divider {
+  border: none;
+  border-top: 1px solid #2a2a2a;
+  margin: 0.5rem 0;
+}
+
 .block {
   padding: 8px 12px;
   border: 1px solid #555;
