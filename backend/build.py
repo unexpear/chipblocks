@@ -28,9 +28,11 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import re
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -126,9 +128,11 @@ def emit_verilog(graph: dict, out_dir: Path) -> Path:
     return verilog_path
 
 
-def run_step(name: str, args: list[str], cwd: Path) -> str:
-    """Run one toolchain step. Returns combined stdout+stderr; raises on
-    non-zero exit. The combined output goes into the build report."""
+def run_step(name: str, args: list[str], cwd: Path) -> tuple[str, float]:
+    """Run one toolchain step. Returns (combined stdout+stderr, wall-clock
+    seconds); raises on non-zero exit. The combined output goes into the
+    build report; the duration goes into the per-tool timing summary."""
+    start = time.monotonic()
     proc = subprocess.run(
         args,
         cwd=str(cwd),
@@ -136,10 +140,11 @@ def run_step(name: str, args: list[str], cwd: Path) -> str:
         text=True,
         check=False,
     )
+    duration = time.monotonic() - start
     out = (proc.stdout or "") + (proc.stderr or "")
     if proc.returncode != 0:
         raise RuntimeError(f"{name} failed (exit {proc.returncode}):\n{out[-2000:]}")
-    return out
+    return out, duration
 
 
 def build_ice40(graph: dict, out_dir: Path) -> dict:
@@ -160,13 +165,14 @@ def build_ice40(graph: dict, out_dir: Path) -> dict:
     pcf_path = out_dir / "chipblocks.pcf"
     pcf_path.write_text(ICESTICK_PCF)
 
-    # 2. Yosys synth
+    # 2. Yosys synth.
+    # NB: don't pass `-q`. We parse the cell-count statistics from Yosys's
+    # stdout for the BUILD.md utilisation report, and `-q` suppresses them.
     json_path = out_dir / "chipblocks.json"
-    yosys_log = run_step(
+    yosys_log, yosys_duration = run_step(
         "yosys",
         [
             "yosys",
-            "-q",
             "-p",
             f"synth_ice40 -top top -json {json_path.name}",
             verilog_path.name,
@@ -178,8 +184,11 @@ def build_ice40(graph: dict, out_dir: Path) -> dict:
     # --pcf-allow-unconstrained lets us skip a pin assignment for the
     # auto-generated `rst` port that Amaranth emits — unused on the
     # iCEstick (no reset button wired in v1).
+    # NB: don't pass `--quiet`. The "Device utilisation" block and
+    # "Max frequency for clock" lines we parse for BUILD.md only appear at
+    # the default verbosity.
     asc_path = out_dir / "chipblocks.asc"
-    nextpnr_log = run_step(
+    nextpnr_log, nextpnr_duration = run_step(
         "nextpnr-ice40",
         [
             "nextpnr-ice40",
@@ -193,14 +202,13 @@ def build_ice40(graph: dict, out_dir: Path) -> dict:
             "--pcf-allow-unconstrained",
             "--asc",
             asc_path.name,
-            "--quiet",
         ],
         cwd=out_dir,
     )
 
     # 4. icepack -> .bin
     bin_path = out_dir / "chipblocks.bin"
-    icepack_log = run_step(
+    icepack_log, icepack_duration = run_step(
         "icepack",
         ["icepack", asc_path.name, bin_path.name],
         cwd=out_dir,
@@ -214,8 +222,11 @@ def build_ice40(graph: dict, out_dir: Path) -> dict:
         "bin": str(bin_path),
         "size_bytes": bin_path.stat().st_size,
         "yosys_log": yosys_log,
+        "yosys_duration_s": yosys_duration,
         "nextpnr_log": nextpnr_log,
+        "nextpnr_duration_s": nextpnr_duration,
         "icepack_log": icepack_log,
+        "icepack_duration_s": icepack_duration,
     }
 
 
@@ -256,45 +267,272 @@ FLASH_INSTRUCTIONS = """\
 """
 
 
+def parse_utilization(yosys_out: str, nextpnr_out: str) -> dict:
+    """Extract structured utilisation + timing info from raw tool stdout.
+
+    Yosys gives us cell counts (SB_LUT4, SB_DFF*, SB_CARRY, etc.). nextpnr
+    gives us LC / RAM / IO / global-buffer percentages and the achievable
+    max frequency. Each piece is best-effort: if a field can't be parsed,
+    it comes back as `None` and the BUILD.md template renders an em-dash.
+
+    These regexes are nextpnr-ice40 / synth_ice40 specific. They were
+    written against:
+      - Yosys 0.64+197 (synth_ice40)
+      - nextpnr-ice40 0.10-65
+    Future tool releases may shift the wording; the per-field None
+    fallback means a reformat won't break the whole report — just the
+    field that moved.
+    """
+    info: dict = {
+        "luts_used": None,
+        "luts_avail": None,  # ICESTORM_LC total — not LUT4-specific
+        "dffs_used": None,
+        "dffs_avail": None,
+        "lcs_used": None,
+        "lcs_avail": None,
+        "lcs_pct": None,
+        "brams_used": None,
+        "brams_avail": None,
+        "ios_used": None,
+        "ios_avail": None,
+        "globals_used": None,
+        "globals_avail": None,
+        "max_freq_mhz": None,
+        "target_freq_mhz": None,
+        "timing_pass": None,
+        "clock_name": None,
+        "cell_counts": {},
+    }
+
+    # --- Yosys: cell counts -------------------------------------------------
+    # synth_ice40 prints a "=== top ===" block at the very end with the final
+    # cell breakdown. Grab everything from the LAST occurrence of "=== top ==="
+    # up to the next "=== ... ===" header (or end of string).
+    top_blocks = list(re.finditer(r"=== top ===", yosys_out))
+    if top_blocks:
+        start = top_blocks[-1].end()
+        rest = yosys_out[start:]
+        next_header = re.search(r"^===", rest, re.MULTILINE)
+        block = rest[: next_header.start()] if next_header else rest
+        # Inside the block, lines like "       70   SB_LUT4" are submodule cell
+        # counts (3-space indent before name, multiple-space indent before count).
+        for m in re.finditer(
+            r"^\s+(?P<count>\d+)\s{2,}(?P<cell>SB_[A-Z0-9_]+)\s*$",
+            block,
+            re.MULTILINE,
+        ):
+            info["cell_counts"][m.group("cell")] = int(m.group("count"))
+
+    # --- nextpnr: LUT / DFF breakdown --------------------------------------
+    # Earlier in the run, nextpnr prints LC packing stats:
+    #   Info:       15 LCs used as LUT4 only
+    #   Info:       55 LCs used as LUT4 and DFF
+    #   Info:        0 LCs used as DFF only
+    #   Info:        9 LCs used as CARRY only
+    # An LC contains both a LUT4 and a DFF; "used as LUT4 and DFF" counts as
+    # both a LUT and a DFF. CARRY-only LCs use the carry chain hardware, not
+    # the LUT4, so we don't count them as LUTs.
+    luts_only = _grep_int(nextpnr_out, r"Info:\s+(\d+) LCs used as LUT4 only")
+    luts_and_dff = _grep_int(nextpnr_out, r"Info:\s+(\d+) LCs used as LUT4 and DFF")
+    dffs_only = _grep_int(nextpnr_out, r"Info:\s+(\d+) LCs used as DFF only")
+    if luts_only is not None and luts_and_dff is not None:
+        info["luts_used"] = luts_only + luts_and_dff
+    if luts_and_dff is not None and dffs_only is not None:
+        info["dffs_used"] = luts_and_dff + dffs_only
+
+    # --- nextpnr: Device utilisation block ---------------------------------
+    # Lines like:
+    #   Info: 	         ICESTORM_LC:      76/   1280     5%
+    #   Info: 	        ICESTORM_RAM:       0/     16     0%
+    #   Info: 	               SB_IO:       3/     96     3%
+    #   Info: 	               SB_GB:       2/      8    25%
+    util_pat = re.compile(
+        r"Info:\s+(?P<resource>[A-Z][A-Z0-9_]+):\s+(?P<used>\d+)\s*/\s*(?P<avail>\d+)\s+(?P<pct>\d+)%"
+    )
+    for m in util_pat.finditer(nextpnr_out):
+        used = int(m.group("used"))
+        avail = int(m.group("avail"))
+        pct = int(m.group("pct"))
+        resource = m.group("resource")
+        if resource == "ICESTORM_LC":
+            info["lcs_used"] = used
+            info["lcs_avail"] = avail
+            info["lcs_pct"] = pct
+            # Use total LCs as the LUT/DFF pool. iCE40 LCs are a shared
+            # LUT4+DFF resource, so this is the closest single "available"
+            # number for both rows in the utilisation table.
+            if info["luts_avail"] is None:
+                info["luts_avail"] = avail
+            if info["dffs_avail"] is None:
+                info["dffs_avail"] = avail
+        elif resource == "ICESTORM_RAM":
+            info["brams_used"] = used
+            info["brams_avail"] = avail
+        elif resource == "SB_IO":
+            info["ios_used"] = used
+            info["ios_avail"] = avail
+        elif resource == "SB_GB":
+            info["globals_used"] = used
+            info["globals_avail"] = avail
+
+    # --- nextpnr: timing ---------------------------------------------------
+    # "Info: Max frequency for clock 'NAME': N.NN MHz (PASS at Y.YY MHz)"
+    # nextpnr prints this twice — once after placement, once after routing.
+    # The post-routing number is the authoritative one; take the LAST match.
+    freq_pat = re.compile(
+        r"Info: Max frequency for clock '(?P<clk>[^']+)': "
+        r"(?P<freq>\d+\.\d+) MHz \((?P<status>PASS|FAIL) at (?P<target>\d+\.\d+) MHz\)"
+    )
+    matches = list(freq_pat.finditer(nextpnr_out))
+    if matches:
+        m = matches[-1]
+        info["clock_name"] = m.group("clk")
+        info["max_freq_mhz"] = float(m.group("freq"))
+        info["target_freq_mhz"] = float(m.group("target"))
+        info["timing_pass"] = m.group("status") == "PASS"
+
+    return info
+
+
+def _grep_int(text: str, pattern: str) -> int | None:
+    """First int captured by `pattern` in `text`, or None if no match."""
+    m = re.search(pattern, text)
+    return int(m.group(1)) if m else None
+
+
+def _fmt_pct(used: int | None, avail: int | None) -> str:
+    """Render `used / avail * 100` as "N%" or "—" when either is missing."""
+    if used is None or avail is None or avail == 0:
+        return "—"
+    return f"{used / avail * 100:.0f}%"
+
+
+def _fmt_or_dash(value) -> str:
+    """Render `value` as a string, or em-dash when it's None."""
+    return "—" if value is None else str(value)
+
+
+def _fmt_duration(seconds: float | None) -> str:
+    """Render a wall-clock duration as e.g. "1.04 s" or "(not measured)"."""
+    if seconds is None:
+        return "(not measured)"
+    return f"{seconds:.2f} s"
+
+
 def _generate_build_report(graph: dict, result: dict) -> str:
-    """Auto-generate BUILD.md describing what was built and how it sized."""
+    """Auto-generate BUILD.md describing what was built and how it sized.
+
+    The report has a structured summary up top (utilisation, timing, cell
+    breakdown, bitstream metadata) followed by collapsible blocks of raw
+    tool output for debugging. The collapsibles render in GitHub Markdown
+    via <details> / <summary>; in plain-text viewers the user just sees
+    everything inline."""
     n_nodes = len(graph.get("nodes", []))
     n_edges = len(graph.get("edges", []))
     block_types = sorted({n.get("type", "?") for n in graph.get("nodes", [])})
     timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    util = parse_utilization(result.get("yosys_log", ""), result.get("nextpnr_log", ""))
+
+    # Utilisation table rows.
+    lut_row = (
+        f"| LUTs (LC) | {_fmt_or_dash(util['luts_used'])} | "
+        f"{_fmt_or_dash(util['luts_avail'])} | "
+        f"{_fmt_pct(util['luts_used'], util['luts_avail'])} |"
+    )
+    dff_row = (
+        f"| Flip-flops (DFF) | {_fmt_or_dash(util['dffs_used'])} | "
+        f"{_fmt_or_dash(util['dffs_avail'])} | "
+        f"{_fmt_pct(util['dffs_used'], util['dffs_avail'])} |"
+    )
+    lc_row = (
+        f"| Logic cells (total) | {_fmt_or_dash(util['lcs_used'])} | "
+        f"{_fmt_or_dash(util['lcs_avail'])} | "
+        f"{_fmt_pct(util['lcs_used'], util['lcs_avail'])} |"
+    )
+    bram_row = (
+        f"| BRAMs | {_fmt_or_dash(util['brams_used'])} | "
+        f"{_fmt_or_dash(util['brams_avail'])} | "
+        f"{_fmt_pct(util['brams_used'], util['brams_avail'])} |"
+    )
+    io_row = (
+        f"| IOs | {_fmt_or_dash(util['ios_used'])} | "
+        f"{_fmt_or_dash(util['ios_avail'])} | "
+        f"{_fmt_pct(util['ios_used'], util['ios_avail'])} |"
+    )
+    gb_row = (
+        f"| Global buffers | {_fmt_or_dash(util['globals_used'])} | "
+        f"{_fmt_or_dash(util['globals_avail'])} | "
+        f"{_fmt_pct(util['globals_used'], util['globals_avail'])} |"
+    )
+
+    # Timing summary.
+    if util["max_freq_mhz"] is not None and util["target_freq_mhz"] is not None:
+        pass_str = "**PASS** (target met)" if util["timing_pass"] else "**FAIL** (target NOT met)"
+        timing_lines = (
+            f"- Clock: `{util['clock_name'] or '?'}` "
+            f"({util['target_freq_mhz']:.2f} MHz target)\n"
+            f"- Max achievable frequency: {util['max_freq_mhz']:.2f} MHz — {pass_str}"
+        )
+    else:
+        timing_lines = "- Timing data not parsed from nextpnr output (see raw log below)."
+
+    # Cell breakdown — top 10 by count, descending.
+    cell_counts = util.get("cell_counts", {})
+    if cell_counts:
+        top_cells = sorted(cell_counts.items(), key=lambda kv: -kv[1])[:10]
+        cell_lines = "\n".join(f"- `{name}`: {count}" for name, count in top_cells)
+        total_cells = sum(cell_counts.values())
+        cell_lines += f"\n- **Total: {total_cells}**"
+    else:
+        cell_lines = "- (no cell counts parsed from Yosys output)"
+
+    # Per-tool durations and versions.
+    yosys_dur = _fmt_duration(result.get("yosys_duration_s"))
+    nextpnr_dur = _fmt_duration(result.get("nextpnr_duration_s"))
+    icepack_dur = _fmt_duration(result.get("icepack_duration_s"))
+
+    # Last 2 KB of each tool's stdout — useful for debugging without
+    # drowning the user in 1000+ lines of synth log.
+    yosys_tail = result.get("yosys_log", "")[-2000:].strip()
+    nextpnr_tail = result.get("nextpnr_log", "")[-2000:].strip()
+    icepack_tail = result.get("icepack_log", "").strip() or "(no output)"
+
     return f"""\
-# ChipBlocks build report
+# ChipBlocks FPGA Build Report
 
-**Built:** {timestamp}
+**Generated:** {timestamp}
 **Target:** Lattice iCEstick (iCE40HX-1k, TQ144 package)
-**Bitstream:** `chipblocks.bin` ({result["size_bytes"]:,} bytes)
+**Source graph:** {n_nodes} node{"s" if n_nodes != 1 else ""}, {n_edges} edge{"s" if n_edges != 1 else ""}
+**Block types:** {", ".join(block_types) if block_types else "(none)"}
 
-## Source graph
+## Utilization
 
-- {n_nodes} block{"s" if n_nodes != 1 else ""}
-- {n_edges} edge{"s" if n_edges != 1 else ""}
-- Block types used: {", ".join(block_types) if block_types else "(none)"}
+| Resource | Used | Available | % |
+|---|---|---|---|
+{lut_row}
+{dff_row}
+{lc_row}
+{bram_row}
+{io_row}
+{gb_row}
 
-## Toolchain output
+LUTs and flip-flops both live inside iCE40 logic cells (LCs); the same LC can host one of each. The "Logic cells (total)" row is the underlying pool nextpnr reports against.
 
-### Yosys (synthesis)
+## Timing
 
-```
-{result["yosys_log"][-2000:].strip()}
-```
+{timing_lines}
 
-### nextpnr-ice40 (place-and-route)
+## Cell breakdown (Yosys)
 
-```
-{result["nextpnr_log"][-2000:].strip()}
-```
+{cell_lines}
 
-### icepack (bitstream generation)
+## Bitstream
 
-```
-{result["icepack_log"].strip() or "(no output)"}
-```
+- Output: `chipblocks.bin` ({result["size_bytes"]:,} bytes)
+- Synth: Yosys `synth_ice40` — completed in {yosys_dur}
+- PnR: nextpnr-ice40 — completed in {nextpnr_dur}
+- Pack: icepack — completed in {icepack_dur}
 
 ## Files in this bundle
 
@@ -305,6 +543,32 @@ def _generate_build_report(graph: dict, result: dict) -> str:
 | `chipblocks.pcf` | Pin constraint file. Maps the Verilog top module's `clk` and `audio_pin` ports to physical iCEstick pins. |
 | `BUILD.md` | This file. |
 | `FLASH.md` | How to flash and wire for audio out. |
+
+## Raw tool output
+
+<details>
+<summary>Yosys (last 2 KB of synth log)</summary>
+
+```
+{yosys_tail}
+```
+</details>
+
+<details>
+<summary>nextpnr-ice40 (last 2 KB of PnR log)</summary>
+
+```
+{nextpnr_tail}
+```
+</details>
+
+<details>
+<summary>icepack</summary>
+
+```
+{icepack_tail}
+```
+</details>
 """
 
 
