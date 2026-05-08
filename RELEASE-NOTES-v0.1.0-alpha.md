@@ -5,11 +5,11 @@ ChipBlocks is a free, open-source desktop app that lets non-technical people des
 ## What's in the alpha
 
 - Visual node-graph editor with drag-from-palette, port-directional wiring, per-block parameter editors.
-- 11 audio blocks: Oscillator (square / triangle / saw), Mixer, ADSR Envelope, Gate, Low-Pass Filter, Sample-and-Hold, Output, Noise, Constant.
+- **14 blocks**: Oscillator (square), Triangle, Sawtooth, Sine, Noise, Constant, Mixer, ADSR Envelope, Gate, Low-Pass Filter, Sample-and-Hold, FM voice, Multiply (ring-mod / VCA), Output.
 - AI consultant in a chat sidebar — BYOK Anthropic. Reads the canvas, suggests blocks, can add or wire blocks for you with a preview-and-confirm step before destructive edits.
 - ▶ Play: simulates the design via Amaranth, produces a 16-bit 44.1 kHz WAV that the app plays.
 - 🔧 Build for FPGA: runs the graph through Yosys, nextpnr-ice40, and icepack into a flashable `.bin` for the Lattice iCEstick.
-- Project save / load (versioned JSON), Examples menu, Help → About, and a default starter graph on first launch so the canvas is never empty.
+- Project save / load (versioned JSON). **7 bundled examples** in the Load → Examples menu (Two oscillators mixed, ADSR-shaped pulse, Kick drum, Snare drum, Bass lead, Lo-fi pad, Stair-stepped arpeggio), Help → About, and a default starter graph on first launch so the canvas is never empty.
 
 ## Install
 
@@ -25,14 +25,14 @@ Windows will warn "Windows protected your PC". Click "More info" → "Run anyway
 
 ## Not in this release
 
-- No polyphony, no MIDI, no reverb / delay / wavetable / FM blocks.
+- No polyphony, no MIDI, no reverb / delay / wavetable blocks.
 - Windows only — no Mac or Linux installers.
 - No code-signed binaries (hence the SmartScreen warning).
 - No auto-update.
 
 ## Coming next
 
-Full plan in [ROADMAP.md](ROADMAP.md). Highest-leverage Next items: MIDI + polyphony, Mac/Linux installer builds via cross-platform CI, more DSP blocks (wavetable, FM, delay).
+Full plan in [ROADMAP.md](ROADMAP.md). Highest-leverage Next items: MIDI + polyphony, Mac/Linux installer builds via cross-platform CI, more DSP blocks (wavetable, delay, reverb).
 
 ## Help and discussion
 
