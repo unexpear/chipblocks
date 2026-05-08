@@ -67,6 +67,39 @@
   border-color: #f44336;
 }
 
+/* Inline parameter editor inside a block (e.g. Oscillator frequency). */
+.block-input {
+  background: #2a2a2a;
+  color: #eee;
+  border: 1px solid #444;
+  border-radius: 3px;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 0.85rem;
+  width: 70px;
+  /* Hide spinner buttons in Chrome/Safari to keep the block compact;
+     users can still arrow-up/down via keyboard. */
+  -webkit-appearance: textfield;
+  appearance: textfield;
+}
+
+.block-input::-webkit-outer-spin-button,
+.block-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.block-input:focus {
+  outline: none;
+  border-color: #4caf50;
+}
+
+.block-input-suffix {
+  color: #aaa;
+  font-size: 0.8rem;
+  margin-left: 4px;
+}
+
 /* Spinner shown while synth is in flight */
 .spinner {
   display: inline-block;
