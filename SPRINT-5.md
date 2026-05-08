@@ -118,7 +118,11 @@ System prompt updated: now mentions that the AI will receive `tool_result` block
 `tsc --noEmit` clean. Existing single-turn behavior is a special case of the loop (one iteration, no tool calls).
 
 ### Item 2 — Smarter placement for AI-added nodes
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** When the AI calls `add_node` without an explicit `position`, the new node now lands just to the right of the existing rightmost node, at vertical position close to the average node `y` with a small random jitter (±40 px) to avoid stacking exactly on top of an existing node. Falls back to a fixed `(200, 200)` when the canvas is empty. Caller-supplied positions still win.
+
+Implementation: `App.tsx`'s `canvasActions.addNode` now reads the live nodes via `useReactFlow().getNodes()` (rather than closing over a stale `nodes` snapshot — that was the previous random-position implementation's reason for being random). The dependency array on the `useMemo` adds `getNodes`, but `getNodes` is a stable reference returned by `useReactFlow()`, so this doesn't churn `canvasActions` per render.
+
+Tradeoff acknowledged: this is a heuristic, not a layout engine. For complex multi-block AI sessions, blocks pile up to the right; the user can drag them. A proper auto-layout (e.g. ELK or dagre) is a future-sprint upgrade.
 
 ### Item 3 — Preview-and-apply for destructive tools
 *[fill in when complete]*

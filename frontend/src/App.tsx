@@ -70,7 +70,7 @@ function AppContent() {
   const [hasApiKey, setHasApiKey] = useState(false)
   const [paletteCollapsed, setPaletteCollapsed] = useState(false)
 
-  const { getViewport, setViewport, screenToFlowPosition } = useReactFlow()
+  const { getViewport, setViewport, screenToFlowPosition, getNodes } = useReactFlow()
 
   // On mount, check whether an API key is already saved.
   useEffect(() => {
@@ -199,9 +199,23 @@ function AppContent() {
     () => ({
       addNode: (type, data, position) => {
         const id = `${type}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`
-        const finalPosition = position ?? {
-          x: 200 + Math.random() * 300,
-          y: 100 + Math.random() * 200,
+        // Smarter default placement: just to the right of the existing
+        // rightmost node, vertically near the average node y. Falls back
+        // to a fixed position when the canvas is empty. Override always
+        // wins if the caller passes an explicit `position`.
+        let finalPosition = position
+        if (!finalPosition) {
+          const allNodes = getNodes()
+          if (allNodes.length === 0) {
+            finalPosition = { x: 200, y: 200 }
+          } else {
+            const rightmostX = Math.max(...allNodes.map((n) => n.position.x))
+            const avgY = allNodes.reduce((s, n) => s + n.position.y, 0) / allNodes.length
+            finalPosition = {
+              x: rightmostX + 200,
+              y: avgY + (Math.random() - 0.5) * 80,
+            }
+          }
         }
         const finalData = data ?? defaultDataForType(type)
         setNodes((nds) => [
@@ -227,7 +241,7 @@ function AppContent() {
         return true
       },
     }),
-    [setNodes, setEdges],
+    [setNodes, setEdges, getNodes],
   )
 
   // Drag-and-drop from the palette: the canvas wrapper accepts drops
