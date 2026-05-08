@@ -167,6 +167,15 @@ User direction at the end of S9 — same fork, but now with real launch-feedback
 ### Item 13 — Sprint retrospective
 *Partially filled in below; full retro after the launch carry-overs (Items 8–12) are done by the user.*
 
+### Item 14 — Manual eval script (P1, promoted in-sprint)
+**✓ Done — 2026-05-08.** Closes the long-standing validation-telemetry gap. [scripts/eval-ai.ts](scripts/eval-ai.ts) reads `ANTHROPIC_API_KEY` from env, imports the prompt + tool defs from the new shared `frontend/src/ai/prompt.ts` module (so eval and renderer stay in sync), sends the 7 smoke-test queries from [SPRINT-8.md](SPRINT-8.md) to `claude-sonnet-4-6`, grades each against expected substrings (or against a `tool_use` shape for query 6), and writes a Markdown report to `eval-results.md`. The grading is intentionally rough — these are smoke tests; false-positives are tolerable. Run it with `cd frontend && ANTHROPIC_API_KEY=sk-ant-... npx tsx ../scripts/eval-ai.ts`. Setup docs in [scripts/README.md](scripts/README.md). Did not run against the live API (no key in the environment); verified the fast-fail path.
+
+### Item 15 — Sine block (added, was P2 wavetable/FM/delay; substituted Sine because it rounds out the basic waveform set)
+**✓ Done — 2026-05-08.** Block library is now **12 types** (added Sine). Pattern is identical to Oscillator/Triangle/Sawtooth: 16-bit phase accumulator, output via 256-entry signed-8-bit lookup table generated at construction time from `math.sin`. Mirrors the existing waveform-block shape at every layer (backend, registry, synth.py params, frontend node, palette entry, AI prompt block-library reference, tool schemas). Why Sine over wavetable/FM/delay: cleanest implementation, smallest scope, fills an obvious gap (every basic synthesizer has square + triangle + saw + sine). Wavetable / FM / delay deferred to S10's DSP-block expansion.
+
+### Item 16 — Extract AI prompt + tools to shared module (S8 retro follow-up)
+**✓ Done — 2026-05-08.** The Sprint 8 retro flagged the inline 7.5 KB `STATIC_SYSTEM` template literal in [Chat.tsx](frontend/src/Chat.tsx) as a refactor worth doing the next time the prompt was edited. This sprint added Sine to that prompt, so this was that time. Extracted to [frontend/src/ai/prompt.ts](frontend/src/ai/prompt.ts), which exports `STATIC_SYSTEM`, `buildSystemBlocks(nodes, edges)`, and `buildTools()`. Chat.tsx now imports them; net 290-line reduction in the component. The eval script (Item 14) imports the same module — single source of truth for what the AI sees.
+
 ---
 
 ## Retrospective (partial — post-coding, pre-launch)
