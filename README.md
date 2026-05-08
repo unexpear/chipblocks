@@ -82,6 +82,7 @@ See [PRD.md](PRD.md) for the full vision.
 | Document | What's in it |
 |---|---|
 | [PRD.md](PRD.md) | Full product vision, goals, non-goals, target users, requirements, success metrics |
+| [ROADMAP.md](ROADMAP.md) | Operational Now / Next / Later — what's actually being built next |
 | [SPRINT-1.md](SPRINT-1.md) … [SPRINT-7.md](SPRINT-7.md) | Per-sprint plan + log + retrospective |
 | [CLAUDE.md](CLAUDE.md) | Project brief for AI dev tools — vision, tech stack, conventions |
 | [CREDITS.md](CREDITS.md) | Open-source attributions and licensing policy |

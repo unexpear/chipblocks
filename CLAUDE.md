@@ -92,7 +92,8 @@ chipzzzd/
 
 ## Key project documents
 
-- [PRD.md](PRD.md) — full product requirements
+- [PRD.md](PRD.md) — full product requirements (strategic)
+- [ROADMAP.md](ROADMAP.md) — operational Now / Next / Later (revisited each sprint)
 - [SPRINT-1.md](SPRINT-1.md) — closed sprint plan + log + retro
 - [SPRINT-2.md](SPRINT-2.md) — closed sprint plan + log + retro
 - [SPRINT-3.md](SPRINT-3.md) — closed sprint plan + log + retro
