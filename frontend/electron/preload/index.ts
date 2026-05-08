@@ -1,27 +1,11 @@
 import { ipcRenderer, contextBridge } from 'electron'
 
-// --------- Expose some API to the Renderer process ---------
-contextBridge.exposeInMainWorld('ipcRenderer', {
-  on(...args: Parameters<typeof ipcRenderer.on>) {
-    const [channel, listener] = args
-    return ipcRenderer.on(channel, (event, ...args) => listener(event, ...args))
-  },
-  off(...args: Parameters<typeof ipcRenderer.off>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.off(channel, ...omit)
-  },
-  send(...args: Parameters<typeof ipcRenderer.send>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.send(channel, ...omit)
-  },
-  invoke(...args: Parameters<typeof ipcRenderer.invoke>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.invoke(channel, ...omit)
-  },
-
-  // You can expose other APTs you need here.
-  // ...
-})
+// Note: we deliberately do NOT expose a generic `window.ipcRenderer`
+// bridge. The boilerplate from the electron-vite-react template did,
+// which would let any compromised renderer (XSS in any dep) call any
+// ipcMain.handle channel — including ai:save-key with an attacker-
+// supplied value. The two narrow bridges below (chipblocks, ai) are
+// the only IPC surface the renderer actually uses; keep it that way.
 
 // ChipBlocks synth API. The renderer calls window.chipblocks.synth(graph)
 // and the main process spawns wsl.exe + python3 to run the simulation.

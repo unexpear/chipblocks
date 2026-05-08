@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, ipcMain } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -50,6 +50,13 @@ async function createWindow() {
     icon: path.join(process.env.VITE_PUBLIC, 'favicon.ico'),
     webPreferences: {
       preload,
+      // Pin defensively. Electron's current defaults match these, but
+      // pinning means a future version bump or absent-minded edit
+      // can't silently flip them and reviewers can see the choice.
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
     },
   })
 
@@ -98,18 +105,11 @@ app.on('activate', () => {
   }
 })
 
-ipcMain.handle('open-win', (_, arg) => {
-  const childWindow = new BrowserWindow({
-    webPreferences: {
-      preload,
-      nodeIntegration: true,
-      contextIsolation: false,
-    },
-  })
-
-  if (VITE_DEV_SERVER_URL) {
-    childWindow.loadURL(`${VITE_DEV_SERVER_URL}#${arg}`)
-  } else {
-    childWindow.loadFile(indexHtml, { hash: arg })
-  }
-})
+// (Removed: an `open-win` ipcMain.handle from the boilerplate that
+// constructed a child BrowserWindow with `nodeIntegration: true,
+// contextIsolation: false`. Combined with the broad ipcRenderer
+// bridge that used to be in the preload, this was a path to RCE
+// from any renderer-side XSS. Neither the renderer nor any test
+// ever called this handler. Deleted in the v0.1.0-alpha security
+// pass; bring back later only if a feature actually needs a child
+// window AND with safe webPreferences.)
