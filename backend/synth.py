@@ -65,7 +65,10 @@ def _build_params(node_type: str, data: dict) -> dict:
         if "cutoff_hz" in data:
             params["cutoff_hz"] = int(data["cutoff_hz"])
         params["sample_rate"] = SAMPLE_RATE
-    # Mixer, Output, SampleAndHold have no parameters.
+    elif node_type == "constant":
+        if "value" in data:
+            params["value"] = int(data["value"])
+    # Mixer, Output, SampleAndHold, Noise have no parameters.
     return params
 
 

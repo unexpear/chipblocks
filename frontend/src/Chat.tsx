@@ -117,7 +117,7 @@ Inside the app, the user:
 
 When the canvas is rendering or building, a Cancel button appears that aborts cleanly. Status text reads "Synthesizing…" or "Building bitstream…". Errors appear as a dismissible toast bottom-left.
 
-# Block library (all 9 types — these are the EXACT type strings)
+# Block library (all 11 types — these are the EXACT type strings)
 
 All audio signals are 8-bit signed (-128 to +127) at 44100 Hz.
 
@@ -132,6 +132,14 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz.
 **sawtooth** — sawtooth-wave source. Brightest harmonics. Often paired with low-pass.
 - Output port \`audio-out\`
 - Parameter \`freq\`: 20–20000 Hz (default 440)
+
+**noise** — pseudo-random 8-bit signed source (16-bit Galois LFSR). Useful for snare drums, percussion textures, and noise modulation.
+- Output port \`audio-out\`
+- No parameters
+
+**constant** — emits a fixed 8-bit signed value. Useful as a DC offset, ADSR test stimulus, or mixer "ground" input.
+- Output port \`audio-out\`
+- Parameter \`value\`: -128 to 127 (default 0)
 
 **mixer** — averages two 8-bit signed inputs: \`(in-1 + in-2) / 2\`. Combinational.
 - Input ports \`in-1\`, \`in-2\`
@@ -170,9 +178,9 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz.
 
 # Naming conventions
 
-- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`samplehold\`.
+- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`samplehold\`.
 - **Port handle ids** are kebab-case: \`audio-out\`, \`audio-in\`, \`gate-out\`, \`mix-out\`, \`in-1\`, \`in-2\`. Two are unhyphenated for control signals: \`gate\` (an ADSR input) and \`clock\` (a samplehold input).
-- **Block parameters** are snake_case: \`freq\`, \`attack_ms\`, \`decay_ms\`, \`sustain_level\`, \`release_ms\`, \`rate_hz\`, \`duty_pct\`, \`cutoff_hz\`.
+- **Block parameters** are snake_case: \`freq\`, \`attack_ms\`, \`decay_ms\`, \`sustain_level\`, \`release_ms\`, \`rate_hz\`, \`duty_pct\`, \`cutoff_hz\`, \`value\`.
 
 # Save format
 
@@ -232,7 +240,7 @@ After tool calls, you'll receive \`tool_result\` content blocks with the outcome
 
 - Be concrete. Reference specific block types, parameter values, and port names.
 - Keep responses tight — a short paragraph or a short list.
-- If a goal isn't possible with the current 9 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
+- If a goal isn't possible with the current 11 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
 - After multi-step tool sequences, end with a short text confirmation of what you did so the user knows where things landed.`
 
 function buildSystemBlocks(nodes: AppNode[], edges: Edge[]) {
@@ -267,7 +275,8 @@ The \`data\` field shape depends on \`type\`:
 - adsr: { attack_ms: 1-5000 (default 10), decay_ms: 1-5000 (default 100), sustain_level: 0-127 (default 80), release_ms: 1-5000 (default 200) }
 - gate: { rate_hz: 1-1000 (default 4), duty_pct: 1-99 (default 50) }
 - lowpass: { cutoff_hz: 1-22050 (default 800) }
-- mixer | output | samplehold: {} (no parameters)
+- constant: { value: -128 to 127 (default 0) }
+- mixer | output | samplehold | noise: {} (no parameters)
 
 Omit \`data\` to use defaults.`,
       input_schema: {
@@ -293,7 +302,7 @@ Omit \`data\` to use defaults.`,
         `Wire two blocks. Connects source.source_handle to target.target_handle.
 
 Valid handle pairings (port handle names are kebab-case):
-- Audio sources (oscillator/triangle/sawtooth/mixer/adsr/lowpass/samplehold) emit \`audio-out\` (or mixer's \`mix-out\`). Audio sinks (mixer/adsr/lowpass/samplehold/output) accept on \`audio-in\` (or mixer's \`in-1\`/\`in-2\`).
+- Audio sources (oscillator/triangle/sawtooth/noise/constant/mixer/adsr/lowpass/samplehold) emit \`audio-out\` (or mixer's \`mix-out\`). Audio sinks (mixer/adsr/lowpass/samplehold/output) accept on \`audio-in\` (or mixer's \`in-1\`/\`in-2\`).
 - gate emits \`gate-out\`. Valid targets: adsr's \`gate\` input, samplehold's \`clock\` input.
 - output has \`audio-in\` and no output handle (it is a sink).
 
@@ -330,7 +339,8 @@ Allowed fields per block type (same as add_node):
 - adsr: attack_ms, decay_ms, sustain_level, release_ms
 - gate: rate_hz, duty_pct
 - lowpass: cutoff_hz
-- mixer | output | samplehold: (no parameters; this tool is a no-op for these types)`,
+- constant: value
+- mixer | output | samplehold | noise: (no parameters; this tool is a no-op for these types)`,
       input_schema: {
         type: 'object',
         properties: {

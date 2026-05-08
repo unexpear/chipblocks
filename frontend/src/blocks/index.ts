@@ -7,6 +7,8 @@ import { ADSRNode,           type ADSRBlock }           from './ADSRNode'
 import { GateNode,           type GateBlock }           from './GateNode'
 import { LowPassFilterNode,  type LowPassFilterBlock }  from './LowPassFilterNode'
 import { SampleAndHoldNode,  type SampleAndHoldBlock }  from './SampleAndHoldNode'
+import { NoiseNode,          type NoiseBlock }          from './NoiseNode'
+import { ConstantNode,       type ConstantBlock }       from './ConstantNode'
 
 // Hoisted to module scope to avoid React Flow's
 // "It looks like you've created a new nodeTypes object" warning.
@@ -20,6 +22,8 @@ export const nodeTypes = {
   gate:       GateNode,
   lowpass:    LowPassFilterNode,
   samplehold: SampleAndHoldNode,
+  noise:      NoiseNode,
+  constant:   ConstantNode,
 }
 
 export type AppNode =
@@ -32,3 +36,5 @@ export type AppNode =
   | GateBlock
   | LowPassFilterBlock
   | SampleAndHoldBlock
+  | NoiseBlock
+  | ConstantBlock

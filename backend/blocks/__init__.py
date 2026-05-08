@@ -21,6 +21,8 @@ from .adsr import ADSR
 from .gate import Gate
 from .lowpass import LowPassFilter
 from .sample_and_hold import SampleAndHold
+from .noise import Noise
+from .constant import Constant
 
 # Registry mapping graph node `type` (from React Flow JSON) to block class.
 BLOCK_REGISTRY = {
@@ -33,6 +35,8 @@ BLOCK_REGISTRY = {
     "gate": Gate,
     "lowpass": LowPassFilter,
     "samplehold": SampleAndHold,
+    "noise": Noise,
+    "constant": Constant,
 }
 
 __all__ = [
@@ -45,5 +49,7 @@ __all__ = [
     "Gate",
     "LowPassFilter",
     "SampleAndHold",
+    "Noise",
+    "Constant",
     "BLOCK_REGISTRY",
 ]

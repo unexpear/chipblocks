@@ -22,6 +22,8 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'oscillator', label: 'Oscillator', color: '#4caf50', description: 'Square wave source' },
   { type: 'triangle',   label: 'Triangle',   color: '#ffc107', description: 'Triangle wave source' },
   { type: 'sawtooth',   label: 'Sawtooth',   color: '#9c27b0', description: 'Sawtooth wave source' },
+  { type: 'noise',      label: 'Noise',      color: '#795548', description: 'Pseudo-random 8-bit signed source' },
+  { type: 'constant',   label: 'Constant',   color: '#9e9e9e', description: 'Fixed 8-bit signed value (-128..127)' },
   { type: 'mixer',      label: 'Mixer',      color: '#2196f3', description: 'Average two audio inputs' },
   { type: 'adsr',       label: 'ADSR',       color: '#ff9800', description: 'Attack/Decay/Sustain/Release envelope' },
   { type: 'gate',       label: 'Gate',       color: '#00bcd4', description: 'Periodic 1-bit pulse' },
@@ -44,9 +46,12 @@ export function defaultDataForType(type: string): Record<string, unknown> {
       return { rate_hz: 4, duty_pct: 50 }
     case 'lowpass':
       return { cutoff_hz: 800 }
+    case 'constant':
+      return { value: 0 }
     case 'mixer':
     case 'output':
     case 'samplehold':
+    case 'noise':
     default:
       return {}
   }
