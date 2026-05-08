@@ -20,9 +20,15 @@ depending on --target, produces one of:
                             from the iCEstick, so the bitstream layout
                             and size differ.
 
-    --target tt             Tiny Tapeout submission (NOT YET WIRED UP — a
-                            parallel agent owns the implementation; this
-                            target raises NotImplementedError today).
+    --target tt             Tiny Tapeout ASIC submission package. Generates
+                            the canonical TT project layout (src/, test/,
+                            docs/, info.yaml, README.md, LICENSE,
+                            .gitignore, SUBMIT.md) targeting the active
+                            yaml_version 6 cohorts (TTSKY26a Sky130 /
+                            TTGF26a GF180). No local PnR — TT runs the
+                            hardener on submission. Wrapper includes the
+                            sample-rate divider so audio runs at 44.1 kHz
+                            on the cohort's 50 MHz clock.
 
 The FPGA targets all wrap the user's design with a board-specific
 toplevel that hooks the on-board oscillator to a sample-rate divider
@@ -50,7 +56,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from amaranth import Elaboratable, Module, Signal, signed  # noqa: E402
+from amaranth import Elaboratable, EnableInserter, Module, Signal, signed  # noqa: E402
 from amaranth.back import verilog  # noqa: E402
 
 from synth import GraphTop, SAMPLE_RATE  # noqa: E402
@@ -220,11 +226,22 @@ class BoardTop(Elaboratable):
     """Top-level wrapper for any supported iCE40 board.
 
     Drops the user's GraphTop into a sync domain clocked at
-    `board.clock_hz`, divided down to the project sample rate. The
-    Output block's audio_in (signed 8-bit) is fed into a 1-bit PWM
-    modulator whose duty cycle tracks the audio amplitude, exposed as
-    a single GPIO output the user can connect to a speaker (via a
-    simple RC low-pass).
+    `board.clock_hz`, with a sample-rate enable signal so the graph's
+    flip-flops only advance once per audio sample (the rate the blocks
+    were synthesised for). The Output block's audio_in (signed 8-bit)
+    is fed into a 1-bit PWM modulator whose duty cycle tracks the
+    audio amplitude, exposed as a single GPIO output the user can
+    connect to a speaker via a simple RC low-pass filter.
+
+    Why the enable signal:
+        Every block in the graph (oscillator, ADSR, gate, etc.) computes
+        its phase increments assuming one tick == one audio sample at
+        SAMPLE_RATE Hz. Without gating, the iCEstick's 12 MHz clock
+        would advance the oscillators 272× too fast (audio out of
+        range, ADSR envelopes inaudibly short). EnableInserter wraps
+        the GraphTop and gates every internal flip-flop by sample_tick,
+        so the inner advances exactly once per audio sample regardless
+        of the surrounding clock frequency.
 
     The PWM modulator is identical across boards — 1-bit PWM on a
     single GPIO with an external RC filter is a board-agnostic
@@ -240,7 +257,6 @@ class BoardTop(Elaboratable):
 
     def elaborate(self, platform):
         m = Module()
-        m.submodules.inner = self.inner
 
         # Sample-rate divider: count clock ticks per audio sample.
         # iCEstick @ 12 MHz: 12_000_000 / 44_100 ≈ 272.
@@ -253,6 +269,12 @@ class BoardTop(Elaboratable):
             m.d.comb += sample_tick.eq(1)
         with m.Else():
             m.d.sync += sample_counter.eq(sample_counter + 1)
+
+        # Gate the inner graph by sample_tick so its flip-flops advance
+        # at the audio sample rate (44.1 kHz), not the chip clock rate
+        # (12-16 MHz). EnableInserter rewrites every m.d.sync statement
+        # inside `inner` to be conditional on sample_tick.
+        m.submodules.inner = EnableInserter(sample_tick)(self.inner)
 
         # Latch a new sample at the audio rate.
         # `inner.output_block.audio_in` is signed(8); convert to unsigned
@@ -761,6 +783,20 @@ def main() -> int:
             "tt: Tiny Tapeout submission package (sources + info.yaml; no local PnR)."
         ),
     )
+    # --project-name is only meaningful for --target tt. It controls the
+    # tt_um_<slug> top-module name. Defaults to None so the tt target
+    # auto-generates a unique slug.
+    p.add_argument(
+        "--project-name",
+        dest="project_name",
+        default=None,
+        help=(
+            "Unique project slug for Tiny Tapeout (--target tt only). "
+            "Becomes part of the tt_um_<slug> top-module name. Defaults "
+            "to an auto-generated unique slug so two ChipBlocks builds "
+            "don't collide on the shuttle."
+        ),
+    )
     args = p.parse_args()
 
     with open(args.input_path, "r", encoding="utf-8") as f:
@@ -778,8 +814,12 @@ def main() -> int:
 
     if args.target == "tt":
         from tinytapeout import build_tinytapeout
-        result = build_tinytapeout(graph, out_dir)
-        print(f"[build] Tiny Tapeout submission ready: {result['bundle_path']}", flush=True)
+        result = build_tinytapeout(graph, out_dir, project_name=args.project_name)
+        print(
+            f"[build] Tiny Tapeout submission ready: {result['bundle_path']} "
+            f"(top module: {result['tt_module']})",
+            flush=True,
+        )
         return 0
 
     # FPGA targets: look up the board profile and run the full pipeline.
