@@ -41,6 +41,17 @@ Full audit at [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08
 
 **Action**: address Critical-tier in Sprint 11 P0 (~1.5 hrs total; bundled into one commit). Major / Minor items tracked in ROADMAP.md a11y workstream and the audit doc.
 
+## Security — minor findings from the 2026-05-08 review
+
+In-conversation `/engineering:debug` security review (2026-05-08). The 3 critical findings (broad `ipcRenderer` bridge, `open-win` handler with `nodeIntegration: true`, unpinned `webPreferences`) shipped in commit `eb8d2b1` before the public push. The findings below are minor / defense-in-depth items that don't block launch.
+
+- **m1 — API key validation accepts any 10+ char string.** [ai.ts:170-172](frontend/electron/main/ai.ts) accepts any string ≥ 10 chars as an Anthropic key. A user fat-fingering and pasting another secret (e.g. a GitHub token) silently stores it under DPAPI as their "Anthropic key." Not a security issue per se (DPAPI still protects it, key never leaves main), but a usability/secret-hygiene smell. Fix: add `key.startsWith('sk-ant-')`.
+- **m4 — Tool-call inputs aren't validated against the JSON schema before applying to React state.** The AI can return `add_node` with `type: '__proto__'` or `add_edge` with non-existent node ids. Today's `nodeTypes` map only handles 15 known types so unknown types render as a React Flow warning (not RCE), and JS object spread doesn't trigger prototype pollution. Worst observed outcome: broken canvas state, fixed by Clear conversation. Fix: whitelist `type` against `PALETTE.map(p => p.type)` + existence checks for `addEdge` source/target ids.
+- **m5 — Saved graph JSON loaded via Load button feeds the AI's system block unsanitized.** A maliciously crafted `chipblocks-graph.json` shared user-to-user could embed prompt-injection text in a `data` field that influences the AI. Blast radius is bounded — destructive tools require human confirmation, no path to filesystem/network/code-exec. Fix: type-check `data` fields against the per-block schema on Load.
+- **m1.5 / M1 — `runBuild` uses `bash -c "<innerCmd>"`** with `shellQuote()` on interpolated paths. Today no renderer-controlled value lands in `innerCmd` (target is a 3-element enum, paths come from `mkdtemp` + bundled scripts), so it's not exploitable. But the pattern is fragile — any future addition that interpolates a graph-derived value (custom project name, output filename) without going through `shellQuote` would bypass it. Defensive fix: rewrite `runBuild` to mirror `runSynth`'s argv-only spawn, sourcing the OSS CAD Suite env via a small wrapper shell script.
+
+**Action**: address as Sprint 12 polish items (~30 min total). None block the v0.1.0-alpha launch.
+
 ## Tech-debt — 5 highest-priority items from the 2026-05-08 audit
 
 Surfaced in an in-conversation tech-debt audit. Full tiered remediation plan in [ROADMAP.md](ROADMAP.md)'s tech-debt workstream section. The five items here are individually trackable as Sprint 11 P0s (paired with the a11y Tier-1 work — same touch surface).
