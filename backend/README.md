@@ -21,6 +21,25 @@ python3 -c 'import migen, litex; print("backend OK")'
 
 Should print `backend OK`.
 
+## Running tests
+
+The backend has a smoke-level pytest suite under `backend/tests/`. It wires small graphs through the full synth pipeline and asserts gross properties of the generated audio (zero-crossing counts, silence vs non-silence, filter attenuation, etc.) — not bit-exact sample values, which would over-specify the implementation.
+
+One-time install of the dev requirements:
+
+```bash
+pip3 install --user --break-system-packages -r requirements-dev.txt
+```
+
+Run the suite from a WSL2 Ubuntu shell:
+
+```bash
+cd /mnt/c/Users/micha/Desktop/chipzzzd/backend
+python3 -m pytest tests/ -v
+```
+
+Expected runtime is under a minute on a modern machine. The suite needs the same Amaranth install that `synth.py` uses — no extra system packages or simulators required.
+
 ## Quick test — run the PWM example
 
 ```bash
