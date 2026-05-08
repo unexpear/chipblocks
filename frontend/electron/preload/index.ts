@@ -23,10 +23,10 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
   // ...
 })
 
-// ChipForge synth API. The renderer calls window.chipforge.synth(graph)
+// ChipBlocks synth API. The renderer calls window.chipblocks.synth(graph)
 // and the main process spawns wsl.exe + python3 to run the simulation.
 // cancel() kills any in-flight synth.
-contextBridge.exposeInMainWorld('chipforge', {
+contextBridge.exposeInMainWorld('chipblocks', {
   synth: (graph: unknown) => ipcRenderer.invoke('synth:run', graph),
   cancel: () => ipcRenderer.invoke('synth:cancel') as Promise<boolean>,
 })

@@ -1,12 +1,12 @@
 # Credits & Open-Source Notices
 
-ChipForge is built on the work of many open-source projects. This file is the canonical attribution / credits record. The licenses below are all **permissive** (MIT / Apache 2.0 / BSD / ISC / PSF) — they require attribution but not source disclosure, and place no restrictions on commercial use.
+ChipBlocks is built on the work of many open-source projects. This file is the canonical attribution / credits record. The licenses below are all **permissive** (MIT / Apache 2.0 / BSD / ISC / PSF) — they require attribution but not source disclosure, and place no restrictions on commercial use.
 
 ---
 
 ## Licensing policy (the rule that governs what we accept)
 
-ChipForge ships only under permissive licenses. Concretely:
+ChipBlocks ships only under permissive licenses. Concretely:
 
 - ✅ **Allowed in shipped code**: MIT, Apache 2.0, BSD (any clause), ISC, PSF, Unlicense, CC0, public domain
 - ❌ **Not allowed in shipped code**: GPL (any version), AGPL, LGPL, MPL, EUPL, CDDL, EPL, or any other copyleft / share-alike / file-level-copyleft license
@@ -76,7 +76,7 @@ These are **user-installed** tools we shell out to; we don't redistribute them. 
 
 ## AI integration (BYOK — bring your own key)
 
-ChipForge calls third-party AI services using the **user's own API key**. We do not bundle or redistribute these services.
+ChipBlocks calls third-party AI services using the **user's own API key**. We do not bundle or redistribute these services.
 
 | Service | License / Terms | URL |
 |---|---|---|
@@ -107,7 +107,7 @@ These were considered and rejected because they're copyleft-licensed and would c
 
 ## How attributions are surfaced in the shipped product
 
-When ChipForge ships a public release, this `CREDITS.md` content (or a generated equivalent) will be:
+When ChipBlocks ships a public release, this `CREDITS.md` content (or a generated equivalent) will be:
 1. Embedded in the app under **Help → About → Open-Source Credits**
 2. Included in the installer / package as a `CREDITS.txt`
 3. Linked from the public-facing website / README

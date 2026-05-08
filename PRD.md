@@ -1,4 +1,4 @@
-# Product Requirements Document: ChipForge
+# Product Requirements Document: ChipBlocks
 
 > **Status:** Draft v0.1 · Working name (rename anytime) · Author: [User] · Date: 2026-05-07
 
@@ -15,7 +15,7 @@ These users currently have only three options:
 
 The bottleneck **isn't manufacturing** — fabs at mature nodes (130nm+) and FPGA dev boards have plenty of capacity. The bottleneck is the design tools and the skills required to use them. Cadence and Synopsys cost $50K–$1M per seat and require an engineering team. Free academic alternatives (Verilator, Yosys, LiteX, OpenLane) are powerful but assume the user is already a chip engineer.
 
-**There is no tool that lets a non-technical person turn "I need a chip that does X" into a fabricable design.** That gap is what ChipForge addresses.
+**There is no tool that lets a non-technical person turn "I need a chip that does X" into a fabricable design.** That gap is what ChipBlocks addresses.
 
 ## Goals
 
@@ -23,19 +23,19 @@ The bottleneck **isn't manufacturing** — fabs at mature nodes (130nm+) and FPG
 2. **Be free or near-free.** Core tool is open-source; an optional desktop bundle costs at most $5 one-time. No subscriptions, no AI-cost liability for the developer (BYOK model).
 3. **Cover the full non-physical chip-design flow** — architecture, RTL, verification, simulation — in one workspace. Physical design integrates with existing open-source flows (OpenLane, LibreLane, F4PGA).
 4. **Build trust through validation.** Non-technical users need confidence the chip will actually work. The validator (lint + simulation + formal checks) catches problems before users waste money on fabrication or burn time on broken designs.
-5. **Keep advanced users productive.** Pro engineers using ChipForge should be at least as fast as a traditional flow — never slower. Full underlying access is always available.
+5. **Keep advanced users productive.** Pro engineers using ChipBlocks should be at least as fast as a traditional flow — never slower. Full underlying access is always available.
 6. **Apply pressure to the manufacturing side of chips at mature nodes** by lowering the design barrier, expanding the population of people who can produce custom silicon.
 
 ## Non-Goals
 
 1. **Cutting-edge nodes (5nm, 3nm, 2nm).** Fab-capacity-bound, not design-tool-bound. Also enterprise-only PDKs under heavy NDA. Out of scope.
-2. **Physical-design tools (place-and-route, layout, DRC).** Existing open-source flows handle this. ChipForge integrates with them, doesn't replicate them.
-3. **Enterprise EDA replacement.** Not "Cadence killer." Production teams designing flagship SoCs at advanced nodes will keep using enterprise tools. ChipForge serves the long tail those tools don't.
-4. **Manufacturing or fulfillment.** ChipForge outputs files. The user takes them to a fab, FPGA programmer, or service like Tiny Tapeout. We never ship physical chips. Avoids inventory, NDA, and liability headaches.
+2. **Physical-design tools (place-and-route, layout, DRC).** Existing open-source flows handle this. ChipBlocks integrates with them, doesn't replicate them.
+3. **Enterprise EDA replacement.** Not "Cadence killer." Production teams designing flagship SoCs at advanced nodes will keep using enterprise tools. ChipBlocks serves the long tail those tools don't.
+4. **Manufacturing or fulfillment.** ChipBlocks outputs files. The user takes them to a fab, FPGA programmer, or service like Tiny Tapeout. We never ship physical chips. Avoids inventory, NDA, and liability headaches.
 5. **Real-time multi-user collaborative editing.** Single-user, file-based, version-controllable via git. Collaboration happens through GitHub, not in-app.
 6. **Hosting paid AI inference.** Users bring their own API key (Claude, GPT, local Llama via Ollama). Project never pays AI bills on behalf of users.
 7. **All HDL languages on day one.** Internal generation uses one HDL backbone (LiteX → Verilog) initially. Chisel, Amaranth, SpinalHDL support are designed-for but added later.
-8. **Copyleft licensed code in the shipped product.** ChipForge ships only permissively-licensed code (MIT / Apache 2.0 / BSD / ISC / PSF). No GPL, AGPL, LGPL, MPL, or EUPL components are bundled in the distributed application, even transitively. This keeps the door open for future monetization (paid desktop bundle, Pro tier, hosted SaaS) without re-licensing surprises. We may **invoke** copyleft tools as separately-installed user binaries (e.g., the user's own GTKWave install), but we never redistribute them. Full licensing policy and dependency list in [CREDITS.md](CREDITS.md).
+8. **Copyleft licensed code in the shipped product.** ChipBlocks ships only permissively-licensed code (MIT / Apache 2.0 / BSD / ISC / PSF). No GPL, AGPL, LGPL, MPL, or EUPL components are bundled in the distributed application, even transitively. This keeps the door open for future monetization (paid desktop bundle, Pro tier, hosted SaaS) without re-licensing surprises. We may **invoke** copyleft tools as separately-installed user binaries (e.g., the user's own GTKWave install), but we never redistribute them. Full licensing policy and dependency list in [CREDITS.md](CREDITS.md).
 
 ## Target Users / Personas
 
@@ -46,7 +46,7 @@ The bottleneck **isn't manufacturing** — fabs at mature nodes (130nm+) and FPG
 | **Hobbyist engineer** | Secondary | Some technical background (Arduino, FPGA tinkering) but not a pro chip designer. Wants to make custom synths, retro chips, specialty sensors without a full EDA toolchain. |
 | **Indie hardware founder** | Secondary | Small product company, can't afford a chip-design consultancy. Wants to prototype custom silicon. |
 | **Educator / classroom user** | Secondary | Teaching chip design or digital logic. Wants visual, accessible, free tools for students. |
-| **Pro engineer power user** | Tertiary | Already knows EDA. Uses ChipForge for fast prototyping or to access open-source flows in a friendlier UI. |
+| **Pro engineer power user** | Tertiary | Already knows EDA. Uses ChipBlocks for fast prototyping or to access open-source flows in a friendlier UI. |
 
 ## User Stories
 
@@ -69,7 +69,7 @@ The bottleneck **isn't manufacturing** — fabs at mature nodes (130nm+) and FPG
 
 ### Indie Hardware Founder
 - As a founder, I want to take a working FPGA prototype and convert it to an ASIC tape-out package (Tiny Tapeout, SkyWater MPW, IHP) so that I can produce real silicon when my product takes off.
-- As a founder, I want my designs portable — exportable as Verilog/IP-XACT/SystemC — so that I'm not locked into ChipForge.
+- As a founder, I want my designs portable — exportable as Verilog/IP-XACT/SystemC — so that I'm not locked into ChipBlocks.
 
 ### Educator
 - As an educator, I want a curriculum-friendly version with starter projects, lesson templates, and progress tracking so that I can use it in a classroom.
@@ -136,7 +136,7 @@ The bottleneck **isn't manufacturing** — fabs at mature nodes (130nm+) and FPG
 - AI fully designs chip from English specification (architecture should not preclude, but unreliable in 2026)
 - Closed-PDK support for advanced nodes (when more foundries open PDKs)
 - Internationalization (multi-language UI and AI consultant)
-- **Full general-purpose PCB / board design** — covers everything from hobby PCBs through motherboards, RAM modules (DIMMs / SODIMMs), expansion cards, server boards, and complex multi-layer boards. Schematic capture, comprehensive component library (passives, ICs, connectors, modules, MCUs, RAM, sockets), multi-layer layout + routing, design-rule checks (DRC), impedance control, Gerber + drill + BOM + pick-and-place output. **Goal: a free open-source competitor to KiCad / EasyEDA / Altium**, covering tier-1 (hobby) through tier-3 (prosumer/enterprise) board complexity. The visual node-graph + block-library architecture extends naturally to schematic capture; multi-layer routing is a much harder problem and may require a separate engine (or integration with an existing OSS router like FreeRouting). Possible "chip → product" flow as a special case: design a chip in ChipForge, drop it onto a PCB in the same app.
+- **Full general-purpose PCB / board design** — covers everything from hobby PCBs through motherboards, RAM modules (DIMMs / SODIMMs), expansion cards, server boards, and complex multi-layer boards. Schematic capture, comprehensive component library (passives, ICs, connectors, modules, MCUs, RAM, sockets), multi-layer layout + routing, design-rule checks (DRC), impedance control, Gerber + drill + BOM + pick-and-place output. **Goal: a free open-source competitor to KiCad / EasyEDA / Altium**, covering tier-1 (hobby) through tier-3 (prosumer/enterprise) board complexity. The visual node-graph + block-library architecture extends naturally to schematic capture; multi-layer routing is a much harder problem and may require a separate engine (or integration with an existing OSS router like FreeRouting). Possible "chip → product" flow as a special case: design a chip in ChipBlocks, drop it onto a PCB in the same app.
 - **Beginner-friendly board views** — drag-and-drop breadboard view (Fritzing-style) for early prototyping before committing to a PCB layout. Useful for non-technical users learning electronics. Templates for common starter projects: Arduino shields, Raspberry Pi HATs, eurorack synth panels, sensor breakouts, custom carrier boards.
 
 ## Success Metrics
@@ -183,7 +183,7 @@ The defining metric is **(E) anyone other than the developer using the tool**. W
 ## Open Questions
 
 **Product / Design**
-- Final product name? Working title is **ChipForge** — placeholder. [user]
+- Final product name? Working title is **ChipBlocks** — placeholder. [user]
 - Visual style — playful (Scratch-like) or pro-tool (Figma-like)? Likely a blend, but lean direction? [user/design]
 - How does the AI consultant handle disagreement with the user? ("I think you're wrong" vs. "Sure, let me help") [user/design]
 
@@ -216,12 +216,12 @@ The defining metric is **(E) anyone other than the developer using the tool**. W
 | **3 — Domain Expansion** | 6–12 | 100+ external users, community starts contributing | Add second domain (custom MCU or sensor), more FPGA targets, ASIC tape-out, Tiny Tapeout integration |
 | **4 — Polish & Reach** | 12–18 | Real chips fabricated, sustained community | Web version, classroom mode, marketplace, more domains, conference / Hackaday presence |
 | **5 — General-purpose PCB tool (future)** | 18+ | Free open-source competitor to KiCad / EasyEDA / Altium covering hobby through prosumer boards | Schematic editor, comprehensive component library, multi-layer layout + routing, DRC, Gerber + drill + BOM + pick-and-place output. Templates for common boards (Arduino shields, Pi HATs, eurorack, breakouts). Reuses the visual node-graph editor and block-library system from the chip side. Tier 1 (1–2 layer hobby) and tier 2 (4-layer prosumer) realistic for solo + AI dev. |
-| **6 — High-complexity boards (future-future)** | 30+ | Tackle motherboards, RAM modules, server-class boards, high-speed digital | DDR4 / DDR5 memory routing, PCIe Gen 4–5 lanes, advanced power-delivery networks, signal-integrity simulation, impedance control, 8–16 layer stackups. Direct competitor space to Altium / Cadence Allegro. Almost certainly multi-developer / partnership / paid-tier territory. May be split off as a sibling project under the ChipForge brand. |
+| **6 — High-complexity boards (future-future)** | 30+ | Tackle motherboards, RAM modules, server-class boards, high-speed digital | DDR4 / DDR5 memory routing, PCIe Gen 4–5 lanes, advanced power-delivery networks, signal-integrity simulation, impedance control, 8–16 layer stackups. Direct competitor space to Altium / Cadence Allegro. Almost certainly multi-developer / partnership / paid-tier territory. May be split off as a sibling project under the ChipBlocks brand. |
 
 **Schedule risks**:
 - Block library quality is the biggest single risk; one bad block breaks every user using it
 - ASIC PnR runtime (hours per build) means Phase 3 needs an async UX or cloud workers
 - Solo + non-technical means Claude Code reliability matters; Anthropic API outages or capability changes could slow specific weeks
 - **Burnout** — solo 18-month projects often die at month 9 when the early excitement fades. Plan for sustainability: regular breaks, public progress posts, community engagement before you need it
-- **Phase 5 (PCB) is essentially a second full product** — schematic capture, multi-layer layout, routing, and Gerber output is a fundamentally different workflow from chip RTL. Worth treating as a separate workstream when we get there, possibly a sibling project under the ChipForge brand. Don't let it bleed into Phases 1–4 timelines.
+- **Phase 5 (PCB) is essentially a second full product** — schematic capture, multi-layer layout, routing, and Gerber output is a fundamentally different workflow from chip RTL. Worth treating as a separate workstream when we get there, possibly a sibling project under the ChipBlocks brand. Don't let it bleed into Phases 1–4 timelines.
 - **Phase 6 (motherboards / RAM / server-class boards) is genuinely hard** — DDR4/5 routing, PCIe high-speed lanes, multi-layer impedance control, signal integrity, and power-delivery networks require expertise that even Altium / Cadence Allegro users spend years acquiring. A free open-source tool replacing them at the cutting edge is extremely ambitious. Realistic plan: nail tier-1 (hobby) and tier-2 (4-layer prosumer) PCBs first; tier-3 (motherboards / RAM / DDR5) is multi-year, may need partnerships, possibly a paid tier, and the explicit option to never fully replace pro tools at the bleeding edge.

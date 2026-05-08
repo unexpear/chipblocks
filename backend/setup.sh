@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup.sh — one-time WSL2 Ubuntu setup for ChipForge backend.
+# setup.sh — one-time WSL2 Ubuntu setup for ChipBlocks backend.
 # Installs Migen and LiteX to user-site (~/.local/) — no venv needed.
 #
 # Run from WSL2 Ubuntu (not Windows PowerShell):

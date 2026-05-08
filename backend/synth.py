@@ -2,7 +2,7 @@
 synth.py — Graph -> Amaranth -> WAV pipeline.
 
 Reads a graph JSON from --in (the React Flow {nodes, edges} format),
-instantiates blocks from the ChipForge block library according to each
+instantiates blocks from the ChipBlocks block library according to each
 node's `type`, wires edges between block ports, runs the resulting
 Amaranth design in simulation, samples the Output block's `audio_in`
 per cycle, and writes a 16-bit mono WAV to --out.

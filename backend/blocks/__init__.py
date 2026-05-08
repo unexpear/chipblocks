@@ -1,5 +1,5 @@
 """
-ChipForge block library — Amaranth Elaboratables matching the
+ChipBlocks block library — Amaranth Elaboratables matching the
 front-end React Flow node types.
 
 Each block exposes:

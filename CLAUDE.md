@@ -1,4 +1,4 @@
-# Project: ChipForge
+# Project: ChipBlocks
 
 > Working title — rename anytime in this file and across the codebase.
 
@@ -10,7 +10,7 @@ Read [PRD.md](PRD.md) for the full vision. Read [SPRINT-1.md](SPRINT-1.md) for w
 
 ## Core constraints
 
-- **Free / open-source** — every dependency must be permissively licensed (MIT, Apache 2.0, BSD, ISC). Avoid GPL or AGPL dependencies in core. ChipForge itself is **MIT-licensed** (see [LICENSE](LICENSE)).
+- **Free / open-source** — every dependency must be permissively licensed (MIT, Apache 2.0, BSD, ISC). Avoid GPL or AGPL dependencies in core. ChipBlocks itself is **MIT-licensed** (see [LICENSE](LICENSE)).
 - **No paid AI inference** — users bring their own API key (BYOK). Never hard-code keys or arrange for the project to pay AI bills on behalf of users.
 - **Solo dev + Claude Code** — the human user is non-technical. Explain non-obvious decisions in plain English in commit messages and code.
 - **"Fine taking time"** — no rushed shortcuts. Quality over speed. Ship when ready.
@@ -44,7 +44,7 @@ chipzzzd/
 │   └── ...
 ├── backend/                # Python + LiteX
 │   ├── pyproject.toml
-│   ├── chipforge/
+│   ├── chipblocks/
 │   └── ...
 └── docs/                   # Additional documentation
 ```

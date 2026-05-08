@@ -36,7 +36,7 @@ function getSynthScriptPath(): string {
 }
 
 async function runSynth(graph: SynthGraph): Promise<SynthResult> {
-  const dir = await mkdtemp(path.join(tmpdir(), 'chipforge-'))
+  const dir = await mkdtemp(path.join(tmpdir(), 'chipblocks-'))
   const winJsonPath = path.join(dir, 'graph.json')
   const winWavPath = path.join(dir, 'out.wav')
   await writeFile(winJsonPath, JSON.stringify(graph), 'utf8')

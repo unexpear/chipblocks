@@ -15,7 +15,7 @@ import './App.css'
 
 declare global {
   interface Window {
-    chipforge: {
+    chipblocks: {
       synth: (graph: unknown) => Promise<{
         ok: boolean
         wavData?: ArrayBuffer
@@ -62,7 +62,7 @@ function App() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'chipforge-graph.json'
+    a.download = 'chipblocks-graph.json'
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -91,7 +91,7 @@ function App() {
     setStatusMessage('Synthesizing…')
     setErrorToast(null)
     try {
-      const result = await window.chipforge.synth({ nodes, edges })
+      const result = await window.chipblocks.synth({ nodes, edges })
       if (!result.ok) {
         setStatusMessage(null)
         // Don't toast a user-initiated cancel — it's not an error.
@@ -131,13 +131,13 @@ function App() {
   const handleCancel = async () => {
     // The in-flight handlePlay() promise will resolve with
     // "Cancelled by user" once the spawned process is killed.
-    await window.chipforge.cancel()
+    await window.chipblocks.cancel()
   }
 
   return (
     <div className="app-root">
       <div className="toolbar">
-        <span className="app-title">ChipForge</span>
+        <span className="app-title">ChipBlocks</span>
         <span className="toolbar-spacer" />
         {isPlaying && (
           <>

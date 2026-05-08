@@ -4,7 +4,7 @@
 
 **Dates:** TBD start — 21 days later (3-week sprint, longer than Sprint 1's 2-week because integration scope is meatier)
 **Team:** Solo (you + Claude Code as your dev pair)
-**Sprint Goal:** *Demo end-to-end. Open the ChipForge app, drag oscillator → mixer → output, click Play, hear a chip you designed. The whole pipeline runs from one button click.*
+**Sprint Goal:** *Demo end-to-end. Open the ChipBlocks app, drag oscillator → mixer → output, click Play, hear a chip you designed. The whole pipeline runs from one button click.*
 
 ---
 
@@ -23,7 +23,7 @@
 ## Sprint Goal — concrete demo target
 
 After Sprint 2:
-1. Open the ChipForge app
+1. Open the ChipBlocks app
 2. See the 3 demo blocks pre-wired (Oscillator → Mixer → Output) — same UI as Sprint 1
 3. Click a new **Play** button in the toolbar
 4. ~3-second loading state visible
@@ -115,7 +115,7 @@ If Sprint 2 succeeds, you should be able to say:
 > Fill this in as you go. One paragraph per completed item. Be honest about what didn't work — that's where the value is.
 
 ### Item 1 — Electron ↔ Python IPC
-**✓ Done — 2026-05-07.** Full bridge working end-to-end. Click Play in the toolbar → renderer calls `window.chipforge.synth({nodes, edges})` → main spawns `wsl.exe -d Ubuntu -- python3 <wsl-path> --in <graph.json> --out <out.wav>` → script reads JSON, writes WAV → main reads WAV bytes via `fs.readFile`, sends back as ArrayBuffer over IPC → renderer creates a Blob URL and plays via `<audio>`. **Manually verified by clicking Play in the running app — heard the 440 Hz tone.** Patterns: `spawn` (never `exec`/`shell:true`), argv as array, `WSLENV=PYTHONIOENCODING/u:PYTHONUNBUFFERED/u`, JSON-on-stderr error parsing, 30s kill timeout. Implementation in `frontend/electron/main/ipc.ts`. **Items 4 (Play button) and 6 (Windows ↔ WSL path translation) closed in the same change** since they were tightly coupled. **Item 5 (loading + error states) partially done** via the inline `.toolbar-status` text — full spinner + toast UX still TODO.
+**✓ Done — 2026-05-07.** Full bridge working end-to-end. Click Play in the toolbar → renderer calls `window.chipblocks.synth({nodes, edges})` → main spawns `wsl.exe -d Ubuntu -- python3 <wsl-path> --in <graph.json> --out <out.wav>` → script reads JSON, writes WAV → main reads WAV bytes via `fs.readFile`, sends back as ArrayBuffer over IPC → renderer creates a Blob URL and plays via `<audio>`. **Manually verified by clicking Play in the running app — heard the 440 Hz tone.** Patterns: `spawn` (never `exec`/`shell:true`), argv as array, `WSLENV=PYTHONIOENCODING/u:PYTHONUNBUFFERED/u`, JSON-on-stderr error parsing, 30s kill timeout. Implementation in `frontend/electron/main/ipc.ts`. **Items 4 (Play button) and 6 (Windows ↔ WSL path translation) closed in the same change** since they were tightly coupled. **Item 5 (loading + error states) partially done** via the inline `.toolbar-status` text — full spinner + toast UX still TODO.
 
 ### Item 2 — Python block implementations
 **✓ Done — 2026-05-07.** Wrote three Amaranth `Elaboratable` classes in `backend/blocks/`:
@@ -155,7 +155,7 @@ Edge cases handled:
 *[fill in when complete]*
 
 ### Item 6 — Path handling
-**✓ Done — 2026-05-07** (alongside Item 1). `winToWsl()` in `frontend/electron/main/ipc.ts` converts `C:\foo\bar` → `/mnt/c/foo/bar` via regex on the drive letter + slash flip. The renderer never sees WSL paths — main translates on the way in (script + JSON + WAV paths) and reads the WAV via `fs.readFile` on the Windows path. Tested end-to-end with a temp dir under `%TEMP%\chipforge-XXXXXX\` containing graph.json + out.wav.
+**✓ Done — 2026-05-07** (alongside Item 1). `winToWsl()` in `frontend/electron/main/ipc.ts` converts `C:\foo\bar` → `/mnt/c/foo/bar` via regex on the drive letter + slash flip. The renderer never sees WSL paths — main translates on the way in (script + JSON + WAV paths) and reads the WAV via `fs.readFile` on the Windows path. Tested end-to-end with a temp dir under `%TEMP%\chipblocks-XXXXXX\` containing graph.json + out.wav.
 
 ### Item 7 — E2E demo
 **✓ Done — 2026-05-07.** Full demo verified by hand in the running Electron app. Sequence confirmed end-to-end:

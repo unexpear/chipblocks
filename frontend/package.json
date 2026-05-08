@@ -1,8 +1,8 @@
 {
-  "name": "chipforge",
+  "name": "chipblocks",
   "version": "0.0.1",
   "main": "dist-electron/main/index.js",
-  "description": "ChipForge — visual chip-design app (frontend, Electron + React + TypeScript). Scaffolded from electron-vite-react boilerplate.",
+  "description": "ChipBlocks — visual chip-design app (frontend, Electron + React + TypeScript). Scaffolded from electron-vite-react boilerplate.",
   "license": "MIT",
   "private": true,
   "debug": {

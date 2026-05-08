@@ -1,12 +1,12 @@
-# ChipForge Contributor License Agreement
+# ChipBlocks Contributor License Agreement
 
-This Contributor License Agreement ("Agreement") sets out the terms under which You contribute to the ChipForge project ("Project"), maintained by unexpear ("Maintainer"). By submitting a Contribution, You agree to the terms below.
+This Contributor License Agreement ("Agreement") sets out the terms under which You contribute to the ChipBlocks project ("Project"), maintained by unexpear ("Maintainer"). By submitting a Contribution, You agree to the terms below.
 
 ## 1. Definitions
 
 - **"You"** means the individual or legal entity making a Contribution.
 - **"Contribution"** means any code, documentation, design, or other work You submit to the Project, in any form — pull request, patch, issue, comment, or attached file.
-- **"Project"** means ChipForge, hosted at <https://github.com/unexpear/chipforge>, and any successor repositories.
+- **"Project"** means ChipBlocks, hosted at <https://github.com/unexpear/chipblocks>, and any successor repositories.
 
 ## 2. Grant of Copyright License
 
@@ -48,6 +48,6 @@ Each `Signed-off-by` line indicates Your agreement to the version of this CLA in
 ---
 
 **Maintainer:** unexpear
-**Project:** <https://github.com/unexpear/chipforge>
+**Project:** <https://github.com/unexpear/chipblocks>
 **Current License:** [MIT](LICENSE)
 **CLA version:** 2026-05-07
