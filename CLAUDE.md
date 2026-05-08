@@ -107,6 +107,7 @@ chipzzzd/
 - [SPRINT-9.md](SPRINT-9.md) — open sprint plan: make v0.1.0-alpha actually shippable to strangers
 - [SPRINT-10.md](SPRINT-10.md) — closed sprint plan + log + retro (output completeness — multi-target build)
 - [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — deferred-issue tracker (npm audit, etc.)
+- [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08.md) — WCAG 2.1 AA audit snapshot (23 findings, tiered remediation plan)
 - [CREDITS.md](CREDITS.md) — licensing policy + open-source attributions (permissive only; no copyleft in shipped product)
 - (Future) `BLOCKS.md` — block library reference
 - (Future) `ARCHITECTURE.md` — system architecture + data flow

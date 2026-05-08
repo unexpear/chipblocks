@@ -43,6 +43,20 @@ These are the four "you have failed" signals from the PRD. Tracking them honestl
 
 ---
 
+## Accessibility workstream (added 2026-05-08)
+
+[ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08.md) is the canonical reference. 23 findings against WCAG 2.1 AA, tiered:
+
+| Tier | Items | Effort | Slot |
+|---|---|---|---|
+| **Tier 1 — Critical** (4 items) | P2 (input labels), R3+R4 (dialog semantics + focus mgmt), O8 (focus-visible), U1+U5 (live regions) | ~1.5 hrs | **Sprint 11 P0** — block before any external user uses the alpha |
+| **Tier 2 — Major** (12 items) | O1 (palette keyboard), O3/O4/O5 (Escape-everywhere), O7 (44px targets), R1 (aria-pressed/expanded), P1 (footer contrast), U3 (param error msgs), R2 (menuitem roles), and a few smaller items | ~4 hrs | **Sprint 12** or earlier "Next" slot |
+| **Tier 3 — Minor** (7 items) | Block titles as headings, popover arrow-keys, form-wrap, prefers-reduced-motion, etc. | as time allows | **Later** |
+
+**Re-audit triggers**: any new color in `App.css`, new modal/popover, new interactive block, new toolbar button, or before any `v0.2.0+` tag. Schedule manual NVDA + VoiceOver testing before that v0.2 cut — Claude's audit catches ~70% of issues; real AT testing catches the rest.
+
+---
+
 ## Now (Sprint 9 — start of next sprint)
 
 **Theme:** Make `v0.1.0-alpha` actually shippable to strangers. Half autonomous coding + half user-authorization actions.

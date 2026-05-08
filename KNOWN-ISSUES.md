@@ -24,6 +24,23 @@ Documented in [CREDITS.md](CREDITS.md). `7zip-bin` is build-time only — not pr
 
 **Action**: monitor on every electron-builder major upgrade.
 
+## Accessibility — 23 findings against WCAG 2.1 AA (2026-05-08 audit)
+
+Full audit at [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08.md). The four critical-tier items here are flagged as standalone entries because they're individually actionable and worth tracking; the rest of the 23 are tracked inside the audit doc and the ROADMAP a11y workstream.
+
+### Critical-tier findings (block real users; ship in S11 P0)
+
+- **P2 — Block parameter inputs have no programmatic labels.** ADSR's "A/D/S/R" abbreviations, oscillator frequency, lowpass cutoff, etc. are visual-only. Screen readers announce "440, spinbutton" with no context. Fix: `aria-label` on each `<input>` across the 10 block-node TSX files. ~14 inputs total.
+- **R3+R4 — Modals lack `role="dialog"` + `aria-modal` + focus management.** All three modals (Settings, About, AI confirm-preview) are missing the basic dialog semantics. SettingsModal has Escape-close but the others don't. Fix: ~30 lines per modal.
+- **O8 — No visible focus indicator on most focusable elements.** `App.css` has `:focus` on inputs but not on buttons / palette items / dropdown items. Browser default focus rings on the dark theme are weak/invisible. Fix: single global `*:focus-visible { outline: 2px solid #6ec1ff; outline-offset: 2px; }` rule.
+- **U1+U5 — Status messages don't announce to AT.** "Synthesizing…", "Bitstream ready (4.7 KB)", new chat-streaming messages aren't in `aria-live` regions. Long async work finishes silently for screen-reader users. Fix: `role="status" aria-live="polite"` on `.toolbar-status` + `aria-live="polite"` on `.chat-messages`.
+
+### Color-contrast finding (single failure)
+
+- **P1 — Palette footer "Drag onto canvas" text** at `#666 on #141414` ≈ 3.6:1, fails AA's 4.5:1 normal-text threshold. Fix: bump to `#888` for ~4.7:1, or upgrade to large/bold to qualify under the 3:1 large-text rule. One-line CSS edit.
+
+**Action**: address Critical-tier in Sprint 11 P0 (~1.5 hrs total; bundled into one commit). Major / Minor items tracked in ROADMAP.md a11y workstream and the audit doc.
+
 ## Random-jitter for AI-placed nodes is a heuristic, not a layout engine
 
 `canvasActions.addNode` places new nodes to the right of the existing rightmost node with a small vertical jitter. For complex multi-block AI sessions, blocks tile to the right and the user has to drag for cleanup. A real auto-layout (e.g. ELK or dagre) would compute an actual graph layout.
