@@ -97,7 +97,8 @@ chipzzzd/
 - [SPRINT-2.md](SPRINT-2.md) — closed sprint plan + log + retro
 - [SPRINT-3.md](SPRINT-3.md) — closed sprint plan + log + retro
 - [SPRINT-4.md](SPRINT-4.md) — closed sprint plan + log + retro
-- [SPRINT-5.md](SPRINT-5.md) — current sprint plan + log
+- [SPRINT-5.md](SPRINT-5.md) — closed sprint plan + log + retro
+- [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — deferred-issue tracker (npm audit, etc.)
 - [CREDITS.md](CREDITS.md) — licensing policy + open-source attributions (permissive only; no copyleft in shipped product)
 - (Future) `BLOCKS.md` — block library reference
 - (Future) `ARCHITECTURE.md` — system architecture + data flow

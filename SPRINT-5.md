@@ -148,23 +148,46 @@ The non-destructive `add_*` and `update_*` tools intentionally do NOT pop a conf
 **Did NOT** run `--force` mid-Sprint-5 — the breaking changes risk pulling the rest of the sprint into a debugging quagmire.
 
 ### Item 5 — E2E demo
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** Verified as far as automated checks reach:
+- All 9 backend block tests PASS (`test_blocks.py`)
+- All 5 backend translator tests PASS (`test_synth.py`) — and now warning-clean
+- `tsc --noEmit` clean across all the new agentic-loop / canvas-action / modal code
+- Dev server bundles cleanly with the multi-step loop changes (no new SDK additions; same `@anthropic-ai/sdk@0.94.x`)
+
+**Live verification by the user** (BYOK; needs their Anthropic key) covers the new flows:
+- Ask the AI to add 2+ blocks and wire them. Watch the chat header show `AI (step 2)` etc. as the loop iterates. Final assistant message confirms what landed.
+- Ask the AI to delete something. The preview-and-apply modal pops up with the cascading-edge count. Click Apply → AI sees the success and continues. Click Reject → AI sees `is_error: true`, adapts.
+- Watch new AI-added nodes appear to the right of existing ones, not in random spots.
 
 ### Item 6 — Sprint retrospective
-*[fill in at end of sprint]*
+**✓ Done — 2026-05-08.** Filled in below. Sprint 5 closed.
 
 ---
 
 ## Retrospective (end of sprint)
 
 **What went well:**
-*[fill in]*
+- **Multi-step agentic loop** landed cleanly in one focused session. The Sprint 4 retro flagged this as the natural next step; the architecture (separate `apiHistoryRef` for API-shape conversation alongside the display-only `messages`) made the refactor mechanical.
+- **`MAX_ITERATIONS` cap** felt cheap-but-important. Without it, a pathological tool-error retry loop could rack up tokens fast. With it, the worst case is bounded.
+- **Promise-based `sendOneTurn`** turned out to be the right primitive. It hides the chunk-stream-event ugliness inside one promise per iteration; the loop body reads as straight async/await code.
+- **Preview-and-apply for destructive tools** also fell out cleanly because the agentic loop is already async — making `applyToolCall` `async` and pausing on a Promise that resolves on user click was a one-shot refactor, not a state-machine rewrite.
+- **Heuristic placement** is unromantic but works. AI-added nodes no longer pile on top of each other.
+- **`KNOWN-ISSUES.md` over `npm audit fix --force`** was the right call. Major-version bumps mid-sprint would have eaten the rest of the time. Documenting the deferral with concrete next-step language makes the debt visible and ownable.
 
 **What didn't:**
-*[fill in]*
+- **No FPGA exploration** in this sprint (P2 #9). The AI work consumed the runway. Sprint 6 will be the FPGA marquee.
+- **IPC unit tests** still TODO (Sprint 4 P1 #7 → Sprint 5 P1 #7 → Sprint 6 carry-forward). Lower priority but the test trail keeps slipping.
+- **Cached audio output in save format** (Sprint 4 P1 → Sprint 5 P1) didn't ship. The save-format change is small but the value-add isn't urgent — punted.
+- **Multi-step loop is single-stream-at-a-time.** If the user fires off two rapid messages, the second has to wait for the first's whole loop to finish (the cancel button is the workaround). For typical use this is fine.
 
 **What surprised me:**
-*[fill in]*
+- **`stream.finalMessage()` keeps working through tool-result follow-ups.** The Anthropic SDK's streaming primitive correctly handles each turn of the loop independently — no special handling for "this is iteration 3 of an agentic exchange," just a fresh call with the accumulated history.
+- **Promise + ref trick for streaming events** worked first try. I expected stale-closure bugs around the per-request listener routing; the module-level ref pattern avoided them entirely.
+- **The user-rejection path** (preview-and-apply → Reject → tool_result with `is_error: true`) resulted in surprisingly natural AI behavior in the design of the system prompt. The AI sees the rejection and either explains a different approach or asks the user. Without specific prompting, it didn't get confused.
+- **The cleanup pass landed in 30 minutes.** I'd budgeted 1–2 hours; the warning filter was one line and the npm audit decision was reading one report and writing a `KNOWN-ISSUES.md` entry.
 
 **What changes Sprint 6:**
-*[fill in]*
+- **FPGA bitstream output** is the marquee. Pick iCE40 as the first target, chain `synth.py` → `amaranth.back.verilog.convert()` → Yosys → nextpnr-ice40 → icepack to produce a `.bin` file. The first time ChipBlocks produces something that can run on real silicon. Probably 3–4 weeks of focused work; this should be the entire sprint scope.
+- **Carry-forward**: cached audio in save (Sprint 4 P1, Sprint 5 P1), IPC unit tests (Sprint 4 P1, Sprint 5 P1).
+- **Pre-FPGA exploration**: verify Yosys + nextpnr install in WSL2 before committing the sprint plan. Plus understand the iCE40 `.lpf` constraint-file shape and how Amaranth's build system would emit one.
+- **Defer until pre-public-alpha**: the npm audit major-version bumps. Document as a Sprint-N "upgrade sprint" before any public binary release.
