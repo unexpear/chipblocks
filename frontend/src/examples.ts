@@ -47,4 +47,88 @@ export const EXAMPLES: ExampleGraph[] = [
       { id: 'e3', source: 'env',  target: 'out', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
     ],
   },
+  {
+    id: 'kick-drum',
+    label: 'Kick drum',
+    description: 'A 60 Hz sine pulsed by a fast-decay envelope — short low-frequency thump.',
+    nodes: [
+      { id: 'sine', type: 'sine',   position: { x: 50,  y: 60  }, data: { freq: 60 } },
+      { id: 'gate', type: 'gate',   position: { x: 50,  y: 220 }, data: { rate_hz: 2, duty_pct: 5 } },
+      { id: 'env',  type: 'adsr',   position: { x: 400, y: 80  }, data: { attack_ms: 1, decay_ms: 80, sustain_level: 0, release_ms: 1 } },
+      { id: 'out',  type: 'output', position: { x: 700, y: 130 }, data: {} },
+    ],
+    edges: [
+      { id: 'e1', source: 'sine', target: 'env', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+      { id: 'e2', source: 'gate', target: 'env', sourceHandle: 'gate-out',  targetHandle: 'gate'     },
+      { id: 'e3', source: 'env',  target: 'out', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+    ],
+  },
+  {
+    id: 'snare-drum',
+    label: 'Snare drum',
+    description: 'A noise burst gated by a fast-decay envelope — classic snare crack.',
+    nodes: [
+      { id: 'noise', type: 'noise',  position: { x: 50,  y: 60  }, data: {} },
+      { id: 'gate',  type: 'gate',   position: { x: 50,  y: 220 }, data: { rate_hz: 2, duty_pct: 5 } },
+      { id: 'env',   type: 'adsr',   position: { x: 400, y: 80  }, data: { attack_ms: 1, decay_ms: 60, sustain_level: 0, release_ms: 1 } },
+      { id: 'out',   type: 'output', position: { x: 700, y: 130 }, data: {} },
+    ],
+    edges: [
+      { id: 'e1', source: 'noise', target: 'env', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+      { id: 'e2', source: 'gate',  target: 'env', sourceHandle: 'gate-out',  targetHandle: 'gate'     },
+      { id: 'e3', source: 'env',   target: 'out', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+    ],
+  },
+  {
+    id: 'bass-lead',
+    label: 'Bass lead',
+    description: 'A 110 Hz sawtooth low-pass filtered, then gated by a sustaining envelope — punchy bass line.',
+    nodes: [
+      { id: 'saw',  type: 'sawtooth', position: { x: 50,  y: 60  }, data: { freq: 110 } },
+      { id: 'gate', type: 'gate',     position: { x: 50,  y: 380 }, data: { rate_hz: 2, duty_pct: 50 } },
+      { id: 'lpf',  type: 'lowpass',  position: { x: 350, y: 60  }, data: { cutoff_hz: 600 } },
+      { id: 'env',  type: 'adsr',     position: { x: 600, y: 80  }, data: { attack_ms: 5, decay_ms: 40, sustain_level: 100, release_ms: 100 } },
+      { id: 'out',  type: 'output',   position: { x: 900, y: 130 }, data: {} },
+    ],
+    edges: [
+      { id: 'e1', source: 'saw',  target: 'lpf', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+      { id: 'e2', source: 'lpf',  target: 'env', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+      { id: 'e3', source: 'gate', target: 'env', sourceHandle: 'gate-out',  targetHandle: 'gate'     },
+      { id: 'e4', source: 'env',  target: 'out', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+    ],
+  },
+  {
+    id: 'lofi-pad',
+    label: 'Lo-fi pad',
+    description: 'Two triangles a major-third apart (220 + 277 Hz), mixed and softly low-passed — sustained drone.',
+    nodes: [
+      { id: 'tri1',  type: 'triangle', position: { x: 50,  y: 60  }, data: { freq: 220 } },
+      { id: 'tri2',  type: 'triangle', position: { x: 50,  y: 220 }, data: { freq: 277 } },
+      { id: 'mixer', type: 'mixer',    position: { x: 350, y: 130 }, data: {} },
+      { id: 'lpf',   type: 'lowpass',  position: { x: 600, y: 130 }, data: { cutoff_hz: 1500 } },
+      { id: 'out',   type: 'output',   position: { x: 900, y: 130 }, data: {} },
+    ],
+    edges: [
+      { id: 'e1', source: 'tri1',  target: 'mixer', sourceHandle: 'audio-out', targetHandle: 'in-1'     },
+      { id: 'e2', source: 'tri2',  target: 'mixer', sourceHandle: 'audio-out', targetHandle: 'in-2'     },
+      { id: 'e3', source: 'mixer', target: 'lpf',   sourceHandle: 'mix-out',   targetHandle: 'audio-in' },
+      { id: 'e4', source: 'lpf',   target: 'out',   sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+    ],
+  },
+  {
+    id: 'arpeggio',
+    label: 'Stair-stepped arpeggio',
+    description: 'A slow 4 Hz sawtooth sampled by an 8 Hz clock — sample-and-hold turns the ramp into a quantized note sequence.',
+    nodes: [
+      { id: 'saw',  type: 'sawtooth',   position: { x: 50,  y: 60  }, data: { freq: 4 } },
+      { id: 'gate', type: 'gate',       position: { x: 50,  y: 220 }, data: { rate_hz: 8, duty_pct: 50 } },
+      { id: 'snh',  type: 'samplehold', position: { x: 400, y: 130 }, data: {} },
+      { id: 'out',  type: 'output',     position: { x: 700, y: 130 }, data: {} },
+    ],
+    edges: [
+      { id: 'e1', source: 'saw',  target: 'snh', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+      { id: 'e2', source: 'gate', target: 'snh', sourceHandle: 'gate-out',  targetHandle: 'clock'    },
+      { id: 'e3', source: 'snh',  target: 'out', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+    ],
+  },
 ]

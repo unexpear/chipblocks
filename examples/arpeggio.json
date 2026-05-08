@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "app": "ChipBlocks",
+  "savedAt": "2026-05-08T00:00:00.000Z",
+  "viewport": { "x": 0, "y": 0, "zoom": 1 },
+  "nodes": [
+    {
+      "id": "saw",
+      "type": "sawtooth",
+      "position": { "x": 50, "y": 60 },
+      "data": { "freq": 4 }
+    },
+    {
+      "id": "gate",
+      "type": "gate",
+      "position": { "x": 50, "y": 220 },
+      "data": { "rate_hz": 8, "duty_pct": 50 }
+    },
+    {
+      "id": "snh",
+      "type": "samplehold",
+      "position": { "x": 400, "y": 130 },
+      "data": {}
+    },
+    {
+      "id": "out",
+      "type": "output",
+      "position": { "x": 700, "y": 130 },
+      "data": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "saw",
+      "target": "snh",
+      "sourceHandle": "audio-out",
+      "targetHandle": "audio-in"
+    },
+    {
+      "id": "e2",
+      "source": "gate",
+      "target": "snh",
+      "sourceHandle": "gate-out",
+      "targetHandle": "clock"
+    },
+    {
+      "id": "e3",
+      "source": "snh",
+      "target": "out",
+      "sourceHandle": "audio-out",
+      "targetHandle": "audio-in"
+    }
+  ]
+}

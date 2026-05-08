@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "app": "ChipBlocks",
+  "savedAt": "2026-05-08T00:00:00.000Z",
+  "viewport": { "x": 0, "y": 0, "zoom": 1 },
+  "nodes": [
+    {
+      "id": "saw",
+      "type": "sawtooth",
+      "position": { "x": 50, "y": 60 },
+      "data": { "freq": 110 }
+    },
+    {
+      "id": "gate",
+      "type": "gate",
+      "position": { "x": 50, "y": 380 },
+      "data": { "rate_hz": 2, "duty_pct": 50 }
+    },
+    {
+      "id": "lpf",
+      "type": "lowpass",
+      "position": { "x": 350, "y": 60 },
+      "data": { "cutoff_hz": 600 }
+    },
+    {
+      "id": "env",
+      "type": "adsr",
+      "position": { "x": 600, "y": 80 },
+      "data": {
+        "attack_ms": 5,
+        "decay_ms": 40,
+        "sustain_level": 100,
+        "release_ms": 100
+      }
+    },
+    {
+      "id": "out",
+      "type": "output",
+      "position": { "x": 900, "y": 130 },
+      "data": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "saw",
+      "target": "lpf",
+      "sourceHandle": "audio-out",
+      "targetHandle": "audio-in"
+    },
+    {
+      "id": "e2",
+      "source": "lpf",
+      "target": "env",
+      "sourceHandle": "audio-out",
+      "targetHandle": "audio-in"
+    },
+    {
+      "id": "e3",
+      "source": "gate",
+      "target": "env",
+      "sourceHandle": "gate-out",
+      "targetHandle": "gate"
+    },
+    {
+      "id": "e4",
+      "source": "env",
+      "target": "out",
+      "sourceHandle": "audio-out",
+      "targetHandle": "audio-in"
+    }
+  ]
+}
