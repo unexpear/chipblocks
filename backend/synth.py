@@ -41,11 +41,27 @@ DURATION_S = 2
 # ---------------------------------------------------------------------------
 def _build_params(node_type: str, data: dict) -> dict:
     params: dict = {}
-    if node_type == "oscillator":
+    if node_type in ("oscillator", "triangle", "sawtooth"):
         if "freq" in data:
             params["freq_hz"] = int(data["freq"])
         params["sample_rate"] = SAMPLE_RATE
-    # Mixer and Output have no parameters yet.
+    elif node_type == "adsr":
+        if "attack_ms" in data:
+            params["attack_ms"] = int(data["attack_ms"])
+        if "decay_ms" in data:
+            params["decay_ms"] = int(data["decay_ms"])
+        if "sustain_level" in data:
+            params["sustain_level"] = int(data["sustain_level"])
+        if "release_ms" in data:
+            params["release_ms"] = int(data["release_ms"])
+        params["sample_rate"] = SAMPLE_RATE
+    elif node_type == "gate":
+        if "rate_hz" in data:
+            params["rate_hz"] = int(data["rate_hz"])
+        if "duty_pct" in data:
+            params["duty_pct"] = int(data["duty_pct"])
+        params["sample_rate"] = SAMPLE_RATE
+    # Mixer and Output have no parameters.
     return params
 
 
