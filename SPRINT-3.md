@@ -131,8 +131,22 @@ If Sprint 3 succeeds, the app feels like a real instrument: you build a chip, ch
 - `App.tsx` initial graph upgraded from 3 blocks to 5: Oscillator (440 Hz) + Triangle (660 Hz) → Mixer → Output, with a Sawtooth (220 Hz) sitting unwired so users see the new type and can wire it in.
 - All 5 block tests in `test_blocks.py` updated for the new behaviors and PASS. All 5 translator tests in `test_synth.py` PASS. End-to-end `synth.py` run with the new 5-block graph produces a valid 176 KB WAV.
 
-### Item 4 — ADSR Envelope block
-*[fill in when complete]*
+### Item 4 — ADSR Envelope block (+ Gate source)
+**✓ Done — 2026-05-08.** ADSR is the first block with multi-parameter UI and an FSM-based design. Bundled a Gate source block (cyan border) since ADSR needs a trigger signal to fire from. The block library is now **7 types**.
+
+`backend/blocks/adsr.py` — Amaranth `Elaboratable` with 5-state FSM (IDLE → ATTACK → DECAY → SUSTAIN → RELEASE → IDLE). 16-bit envelope accumulator; high byte (0..127) is the multiplier `audio_out = (audio_in * env_byte) >> 7`. Edge-detected gate so retrigger requires a fresh rising edge, not just a high level. Parameters: `attack_ms`, `decay_ms`, `sustain_level` (0..127), `release_ms`, `sample_rate`. Smoke test drives constant +127 audio_in and pulses gate; verified envelope idles at 0, peaks at ~126 during gate-high, returns to 0 after release. 127 distinct envelope values across the curve.
+
+`backend/blocks/gate.py` — counter-based 1-bit pulse generator. Params: `rate_hz`, `duty_pct`. Verified: 441 Hz / 50% duty produces 7+ transitions and ~equal high/low samples in 400 ticks.
+
+`synth.py _build_params()` extended to map `data.attack_ms` / `data.decay_ms` / `data.sustain_level` / `data.release_ms` for ADSR and `data.rate_hz` / `data.duty_pct` for Gate. End-to-end run of a 4-node ADSR graph (Osc 440 → ADSR ← Gate 4Hz → Output) produces a valid 176 KB WAV with 8 ADSR cycles in 2 seconds — the pulsing chiptune note effect.
+
+Frontend:
+- `ADSRNode.tsx` — orange border, 4 parameter rows (A / D / S / R) with compact narrow inputs, 2 input handles on the left (gate at top, audio-in at bottom) staggered like Mixer.
+- `GateNode.tsx` — cyan border, 2 parameter rows (rate, duty %).
+- `App.css` — added `.block-row` / `.block-label` / `.block-input-narrow` utilities for multi-parameter blocks. Reusable for the future LPF block.
+- `blocks/index.ts` — `AppNode` union now spans 7 variants.
+
+Default graph unchanged (still the 5-block Osc/Tri/Saw/Mixer/Output layout from Items 2+3). To use ADSR + Gate in the running app you currently need to load a JSON graph that wires them in — a drag-from-palette UI is a future item.
 
 ### Item 5 — Project save/load (full state)
 *[fill in when complete]*
