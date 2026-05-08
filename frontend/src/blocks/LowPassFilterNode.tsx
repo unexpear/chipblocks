@@ -31,6 +31,7 @@ export function LowPassFilterNode({ id, data }: NodeProps<LowPassFilterBlock>) {
           min={1}
           max={22050}
           step={1}
+          aria-label="Cutoff frequency in hertz"
           onChange={handleChange}
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}

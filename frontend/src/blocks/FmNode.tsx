@@ -20,15 +20,16 @@ type FieldKey = keyof FmBlockData
 interface FieldSpec {
   key: FieldKey
   label: string
+  ariaLabel: string
   suffix: string
   min: number
   max: number
 }
 
 const FIELDS: FieldSpec[] = [
-  { key: 'carrier_freq',   label: 'C',  suffix: 'Hz', min: 20, max: 20000 },
-  { key: 'modulator_freq', label: 'M',  suffix: 'Hz', min: 20, max: 20000 },
-  { key: 'mod_depth',      label: 'D',  suffix: '',   min: 0,  max: 127   },
+  { key: 'carrier_freq',   label: 'C',  ariaLabel: 'Carrier frequency in hertz',     suffix: 'Hz', min: 20, max: 20000 },
+  { key: 'modulator_freq', label: 'M',  ariaLabel: 'Modulator frequency in hertz',   suffix: 'Hz', min: 20, max: 20000 },
+  { key: 'mod_depth',      label: 'D',  ariaLabel: 'Modulation depth (0 to 127)',    suffix: '',   min: 0,  max: 127   },
 ]
 
 export function FmNode({ id, data }: NodeProps<FmBlock>) {
@@ -56,6 +57,7 @@ export function FmNode({ id, data }: NodeProps<FmBlock>) {
               min={f.min}
               max={f.max}
               step={1}
+              aria-label={f.ariaLabel}
               onChange={update(f.key, f.min, f.max)}
               onClick={(e) => e.stopPropagation()}
               onMouseDown={(e) => e.stopPropagation()}

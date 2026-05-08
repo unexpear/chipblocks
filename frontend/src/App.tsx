@@ -412,7 +412,7 @@ function AppContent() {
         {(isPlaying || isBuilding) && (
           <>
             <span className="spinner" aria-label={isBuilding ? 'Building' : 'Synthesizing'} />
-            <span className="toolbar-status">{statusMessage}</span>
+            <span className="toolbar-status" role="status" aria-live="polite">{statusMessage}</span>
             <button
               onClick={isBuilding ? handleCancelBuild : handleCancel}
               className="toolbar-cancel"
@@ -422,7 +422,7 @@ function AppContent() {
           </>
         )}
         {!isPlaying && !isBuilding && statusMessage && (
-          <span className="toolbar-status">{statusMessage}</span>
+          <span className="toolbar-status" role="status" aria-live="polite">{statusMessage}</span>
         )}
         <button onClick={handlePlay} disabled={isPlaying || isBuilding}>▶ Play</button>
         <div className="toolbar-dropdown-anchor">
@@ -430,6 +430,8 @@ function AppContent() {
             onClick={() => setBuildMenuOpen((v) => !v)}
             disabled={isPlaying || isBuilding}
             className={buildMenuOpen ? 'toolbar-toggle-active' : ''}
+            aria-expanded={buildMenuOpen}
+            aria-haspopup="menu"
             title="Pick a target and build the chip"
           >
             🔧 Build ▾
@@ -442,6 +444,7 @@ function AppContent() {
                   <button
                     key={target.id}
                     className="toolbar-dropdown-item"
+                    role="menuitem"
                     onClick={() => handleBuild(target)}
                     title={target.description}
                   >
@@ -459,6 +462,8 @@ function AppContent() {
           <button
             onClick={() => setExamplesOpen((v) => !v)}
             className={examplesOpen ? 'toolbar-toggle-active' : ''}
+            aria-expanded={examplesOpen}
+            aria-haspopup="menu"
             title="Open a bundled example graph"
           >
             Examples ▾
@@ -471,6 +476,7 @@ function AppContent() {
                   <button
                     key={ex.id}
                     className="toolbar-dropdown-item"
+                    role="menuitem"
                     onClick={() => loadExample(ex)}
                     title={ex.description}
                   >
@@ -485,12 +491,13 @@ function AppContent() {
         <button
           onClick={() => setChatOpen((v) => !v)}
           className={chatOpen ? 'toolbar-toggle-active' : ''}
+          aria-pressed={chatOpen}
           title="Toggle AI consultant"
         >
           💬 Chat
         </button>
-        <button onClick={() => setSettingsOpen(true)} title="Settings">⚙</button>
-        <button onClick={() => setAboutOpen(true)} title="About ChipBlocks">ℹ</button>
+        <button onClick={() => setSettingsOpen(true)} aria-label="Settings" title="Settings">⚙</button>
+        <button onClick={() => setAboutOpen(true)} aria-label="About ChipBlocks" title="About ChipBlocks">ℹ</button>
       </div>
       <div className="main-area">
         <Palette

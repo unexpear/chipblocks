@@ -30,6 +30,7 @@ export function ConstantNode({ id, data }: NodeProps<ConstantBlock>) {
           min={-128}
           max={127}
           step={1}
+          aria-label="Constant value (-128 to 127)"
           onChange={handleChange}
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}

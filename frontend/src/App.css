@@ -5,6 +5,11 @@
   width: 100vw;
 }
 
+*:focus-visible {
+  outline: 2px solid #6ec1ff;
+  outline-offset: 2px;
+}
+
 .toolbar {
   display: flex;
   align-items: center;

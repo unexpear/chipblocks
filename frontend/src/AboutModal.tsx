@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react'
+
 interface AboutModalProps {
   onClose: () => void
 }
@@ -6,11 +8,43 @@ const VERSION = '0.1.0-alpha'
 const REPO_URL = 'https://github.com/unexpear/chipblocks'
 
 export function AboutModal({ onClose }: AboutModalProps) {
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null)
+
+  // Close on Escape.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
+  // Focus management: on open, capture the trigger element so we can
+  // restore focus on close, then move focus inside the dialog. On
+  // unmount, return focus to the trigger.
+  useEffect(() => {
+    previouslyFocusedRef.current = document.activeElement as HTMLElement | null
+    const raf = requestAnimationFrame(() => {
+      headingRef.current?.focus()
+    })
+    return () => {
+      cancelAnimationFrame(raf)
+      previouslyFocusedRef.current?.focus?.()
+    }
+  }, [])
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="about-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-header">
-          <h2>About ChipBlocks</h2>
+          <h2 id="about-modal-title" ref={headingRef} tabIndex={-1}>About ChipBlocks</h2>
         </div>
         <div className="modal-body">
           <p className="about-tagline">

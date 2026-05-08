@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 interface SettingsModalProps {
   hasApiKey: boolean
@@ -42,6 +42,9 @@ export function SettingsModal({ hasApiKey, onClose, onKeyChanged }: SettingsModa
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; msg: string } | null>(null)
   const [model, setModel] = useState<string>(getStoredModel())
 
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null)
+
   // Close on Escape.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -50,6 +53,20 @@ export function SettingsModal({ hasApiKey, onClose, onKeyChanged }: SettingsModa
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [onClose])
+
+  // Focus management: on open, capture the trigger element so we can
+  // restore focus on close, then move focus inside the dialog. On
+  // unmount, return focus to the trigger.
+  useEffect(() => {
+    previouslyFocusedRef.current = document.activeElement as HTMLElement | null
+    const raf = requestAnimationFrame(() => {
+      headingRef.current?.focus()
+    })
+    return () => {
+      cancelAnimationFrame(raf)
+      previouslyFocusedRef.current?.focus?.()
+    }
+  }, [])
 
   const save = async () => {
     if (!key.trim()) return
@@ -89,10 +106,16 @@ export function SettingsModal({ hasApiKey, onClose, onKeyChanged }: SettingsModa
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-header">
-          <h2>Settings</h2>
-          <button className="chat-icon-btn" onClick={onClose} title="Close">×</button>
+          <h2 id="settings-modal-title" ref={headingRef} tabIndex={-1}>Settings</h2>
+          <button className="chat-icon-btn" onClick={onClose} aria-label="Close" title="Close">×</button>
         </div>
 
         <div className="modal-body">

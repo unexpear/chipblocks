@@ -37,6 +37,7 @@ export function GateNode({ id, data }: NodeProps<GateBlock>) {
             min={1}
             max={1000}
             step={1}
+            aria-label="Rate in hertz"
             onChange={update('rate_hz', 1, 1000)}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
@@ -51,6 +52,7 @@ export function GateNode({ id, data }: NodeProps<GateBlock>) {
             min={1}
             max={99}
             step={1}
+            aria-label="Duty cycle percent"
             onChange={update('duty_pct', 1, 99)}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}

@@ -173,6 +173,8 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
     input: Record<string, unknown>
   } | null>(null)
   const pendingResolveRef = useRef<((r: { ok: boolean; result: string }) => void) | null>(null)
+  const pendingHeadingRef = useRef<HTMLHeadingElement>(null)
+  const pendingPreviousFocusRef = useRef<HTMLElement | null>(null)
 
   // For the agentic loop, we set up listeners once and route by request id.
   // The Promise-based `sendOneTurn` below registers per-request callbacks
@@ -193,6 +195,28 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
     const el = messageListRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [messages, streaming])
+
+  // Focus management + Escape handling for the destructive-action confirm
+  // modal. When `pending` flips from null to set: capture the previously
+  // focused element, move focus to the dialog heading, listen for Escape
+  // (treated as Reject). When it flips back to null: restore focus.
+  useEffect(() => {
+    if (!pending) return
+    pendingPreviousFocusRef.current = document.activeElement as HTMLElement | null
+    const raf = requestAnimationFrame(() => {
+      pendingHeadingRef.current?.focus()
+    })
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onRejectPending()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      cancelAnimationFrame(raf)
+      document.removeEventListener('keydown', onKeyDown)
+      pendingPreviousFocusRef.current?.focus?.()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending])
 
   useEffect(() => {
     const offChunk = window.ai.onChunk((data) => {
@@ -515,7 +539,7 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
         </div>
       ) : (
         <>
-          <div className="chat-messages" ref={messageListRef}>
+          <div className="chat-messages" ref={messageListRef} aria-live="polite">
             {messages.length === 0 && !streaming && (
               <div className="chat-hint">
                 Ask anything — e.g. <em>"Drop in a low-pass filter at 600 Hz between the oscillator and the output, then tell me what changed"</em> or <em>"What does my current graph produce?"</em>
@@ -576,9 +600,17 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
     </aside>
     {pending && pendingPreview && (
       <div className="modal-backdrop">
-        <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-preview-title"
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="modal-header">
-            <h2>AI wants to {pendingPreview.title.toLowerCase()}</h2>
+            <h2 id="confirm-preview-title" ref={pendingHeadingRef} tabIndex={-1}>
+              AI wants to {pendingPreview.title.toLowerCase()}
+            </h2>
           </div>
           <div className="modal-body">
             <p className="modal-note">

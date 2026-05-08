@@ -21,16 +21,17 @@ type FieldKey = keyof ADSRBlockData
 interface FieldSpec {
   key: FieldKey
   label: string
+  ariaLabel: string
   suffix: string
   min: number
   max: number
 }
 
 const FIELDS: FieldSpec[] = [
-  { key: 'attack_ms',     label: 'A', suffix: 'ms', min: 1, max: 5000 },
-  { key: 'decay_ms',      label: 'D', suffix: 'ms', min: 1, max: 5000 },
-  { key: 'sustain_level', label: 'S', suffix: '',   min: 0, max: 127 },
-  { key: 'release_ms',    label: 'R', suffix: 'ms', min: 1, max: 5000 },
+  { key: 'attack_ms',     label: 'A', ariaLabel: 'Attack milliseconds',         suffix: 'ms', min: 1, max: 5000 },
+  { key: 'decay_ms',      label: 'D', ariaLabel: 'Decay milliseconds',          suffix: 'ms', min: 1, max: 5000 },
+  { key: 'sustain_level', label: 'S', ariaLabel: 'Sustain level (0 to 127)',    suffix: '',   min: 0, max: 127 },
+  { key: 'release_ms',    label: 'R', ariaLabel: 'Release milliseconds',        suffix: 'ms', min: 1, max: 5000 },
 ]
 
 export function ADSRNode({ id, data }: NodeProps<ADSRBlock>) {
@@ -60,6 +61,7 @@ export function ADSRNode({ id, data }: NodeProps<ADSRBlock>) {
               min={f.min}
               max={f.max}
               step={1}
+              aria-label={f.ariaLabel}
               onChange={update(f.key, f.min, f.max)}
               onClick={(e) => e.stopPropagation()}
               onMouseDown={(e) => e.stopPropagation()}

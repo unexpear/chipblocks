@@ -56,6 +56,7 @@ export function WavetableNode({ id, data }: NodeProps<WavetableBlock>) {
             min={20}
             max={20000}
             step={1}
+            aria-label="Frequency in hertz"
             onChange={handleFreqChange}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
@@ -66,6 +67,7 @@ export function WavetableNode({ id, data }: NodeProps<WavetableBlock>) {
           <select
             className="block-input"
             value={data.shape}
+            aria-label="Wavetable shape"
             onChange={handleShapeChange}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}

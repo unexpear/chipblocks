@@ -30,6 +30,7 @@ export function OscillatorNode({ id, data }: NodeProps<OscillatorBlock>) {
           min={20}
           max={20000}
           step={1}
+          aria-label="Frequency in hertz"
           onChange={handleChange}
           // Stop React Flow from interpreting input clicks as node-drag.
           onClick={(e) => e.stopPropagation()}

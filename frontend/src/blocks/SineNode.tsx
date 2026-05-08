@@ -30,6 +30,7 @@ export function SineNode({ id, data }: NodeProps<SineBlock>) {
           min={20}
           max={20000}
           step={1}
+          aria-label="Frequency in hertz"
           onChange={handleChange}
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
