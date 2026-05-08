@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
 import type { ChildProcess } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { writeFile, mkdtemp, readFile } from 'node:fs/promises'
@@ -30,14 +30,22 @@ function winToWsl(p: string): string {
   return `/mnt/${m[1].toLowerCase()}${m[2]}`
 }
 
-// Locate the synth script at <project_root>/backend/synth.py.
-function getSynthScriptPath(): string {
-  return path.join(process.env.APP_ROOT ?? '', '..', 'backend', 'synth.py')
+// Locate the bundled backend folder. In dev it lives at <repo>/backend; when
+// packaged, electron-builder copies it under resources/backend (see
+// extraResources in electron-builder.json).
+function getBackendDir(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'backend')
+  }
+  return path.join(process.env.APP_ROOT ?? '', '..', 'backend')
 }
 
-// Locate the FPGA-build script at <project_root>/backend/build.py.
+function getSynthScriptPath(): string {
+  return path.join(getBackendDir(), 'synth.py')
+}
+
 function getBuildScriptPath(): string {
-  return path.join(process.env.APP_ROOT ?? '', '..', 'backend', 'build.py')
+  return path.join(getBackendDir(), 'build.py')
 }
 
 async function runSynth(graph: SynthGraph): Promise<SynthResult> {

@@ -1,6 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "YourAppID",
+  "appId": "com.chipblocks.app",
+  "productName": "ChipBlocks",
   "asar": true,
   "directories": {
     "output": "release/${version}"
@@ -8,6 +9,17 @@
   "files": [
     "dist-electron",
     "dist"
+  ],
+  "extraResources": [
+    { "from": "../backend/synth.py", "to": "backend/synth.py" },
+    { "from": "../backend/build.py", "to": "backend/build.py" },
+    { "from": "../backend/setup.sh", "to": "backend/setup.sh" },
+    { "from": "../backend/README.md", "to": "backend/README.md" },
+    {
+      "from": "../backend/blocks",
+      "to": "backend/blocks",
+      "filter": ["**/*.py"]
+    }
   ],
   "mac": {
     "artifactName": "${productName}_${version}.${ext}",
@@ -32,10 +44,5 @@
     "perMachine": false,
     "allowToChangeInstallationDirectory": true,
     "deleteAppDataOnUninstall": false
-  },
-  "publish": {
-    "provider": "generic",
-    "channel": "latest",
-    "url": "https://github.com/electron-vite/electron-vite-react/releases/download/v0.9.9/"
   }
 }
