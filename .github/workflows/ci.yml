@@ -1,0 +1,59 @@
+# Continuous-integration checks: TypeScript build, frontend tests,
+# backend tests. Runs on every push and PR to master. Fast (~3 min),
+# Linux-only — the cross-platform installer build lives in release.yml
+# and only fires on tag push.
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  frontend:
+    name: Frontend (TS + vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      - name: Vitest
+        run: npm test
+
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install runtime + dev dependencies
+        run: |
+          pip install --upgrade pip
+          pip install amaranth==0.5.8
+          pip install -r requirements-dev.txt
+
+      - name: Pytest
+        run: python -m pytest tests/ -v

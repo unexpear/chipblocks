@@ -1,0 +1,107 @@
+# Cross-platform installer build, fired on `git push origin v*` (e.g.
+# v0.1.0-alpha). Produces a Windows NSIS .exe, a macOS .dmg + .zip,
+# and a Linux AppImage; attaches all three to the GitHub Release for
+# the tag.
+#
+# Notes:
+# * All artifacts are UNSIGNED for the v0.1.x alpha. Windows
+#   SmartScreen / macOS Gatekeeper will warn on first run; users click
+#   through. Once we have paid certs, set CSC_LINK / CSC_KEY_PASSWORD
+#   secrets and electron-builder picks them up automatically.
+# * The backend Python files are bundled via extraResources in
+#   electron-builder.json. WSL2 + Python + amaranth + the OSS CAD
+#   Suite remain user-installed; we don't ship the Python runtime.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write  # needed for softprops/action-gh-release to attach assets
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_glob: 'frontend/release/*/ChipBlocks_*.AppImage'
+          - os: macos-latest
+            artifact_glob: 'frontend/release/*/ChipBlocks_*.dmg'
+          - os: windows-latest
+            artifact_glob: 'frontend/release/*/ChipBlocks_*.exe'
+
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Build installer
+        env:
+          # Skip auto-discovery of macOS signing identity — alpha is
+          # unsigned. Setting this to false avoids electron-builder
+          # noise when no Developer ID is present.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run build
+
+      - name: Upload installer artifact (workflow run)
+        uses: actions/upload-artifact@v4
+        with:
+          name: chipblocks-${{ matrix.os }}
+          path: ${{ matrix.artifact_glob }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      # Pick the release-notes file: RELEASE-NOTES-<tag>.md if present
+      # (so v0.1.1 looks for RELEASE-NOTES-v0.1.1.md), else fall back
+      # to RELEASE-NOTES-v0.1.0-alpha.md, else empty body.
+      - name: Resolve release-notes file
+        id: notes
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [ -f "RELEASE-NOTES-${TAG}.md" ]; then
+            echo "path=RELEASE-NOTES-${TAG}.md" >> "$GITHUB_OUTPUT"
+          elif [ -f "RELEASE-NOTES-v0.1.0-alpha.md" ]; then
+            echo "path=RELEASE-NOTES-v0.1.0-alpha.md" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update GitHub Release with installers
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: ${{ steps.notes.outputs.path }}
+          files: |
+            dist/**/*.exe
+            dist/**/*.dmg
+            dist/**/*.AppImage
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}

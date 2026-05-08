@@ -69,8 +69,10 @@ chipzzzd/
 - Match the user's pace — they will direct the project; act on direction rather than racing ahead.
 
 ### Testing
-- Each block / module: at minimum a smoke test that runs in simulation.
-- Visual / UI changes: manual verification in the running Electron app. The TypeScript compiler passing is *not* the same as the feature working.
+- **Backend**: pytest under `backend/tests/` — 19 property-based smoke tests covering all 15 blocks + 4 pipeline tests against the example graphs. Run via `python3 -m pytest backend/tests/ -v` (~54 s).
+- **Frontend**: vitest IPC contract tests under `frontend/test/` — 6 tests covering the renderer↔main process boundary (synth/build/AI). Run via `cd frontend && npm test` (~8 s).
+- **CI**: both test suites run on every push/PR to master via `.github/workflows/ci.yml`. Cross-platform installer builds run on tag push (`v*`) via `.github/workflows/release.yml` — Windows NSIS, macOS DMG, Linux AppImage, all unsigned.
+- **Visual / UI changes**: manual verification in the running Electron app. The TypeScript compiler passing is *not* the same as the feature working.
 - Document how to run each piece in the **Sprint Log** section of the relevant `SPRINT-N.md`.
 
 ### Risk handling

@@ -39,6 +39,18 @@
     ],
     "artifactName": "${productName}_${version}.${ext}"
   },
+  "linux": {
+    "target": [
+      {
+        "target": "AppImage",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "category": "Development",
+    "artifactName": "${productName}_${version}.${ext}"
+  },
   "nsis": {
     "oneClick": false,
     "perMachine": false,
