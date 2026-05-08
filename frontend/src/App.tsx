@@ -29,6 +29,12 @@ declare global {
         error?: string
       }>
       cancel: () => Promise<boolean>
+      buildIce40: (graph: unknown) => Promise<{
+        ok: boolean
+        zipData?: ArrayBuffer
+        error?: string
+      }>
+      cancelBuild: () => Promise<boolean>
     }
   }
 }
@@ -192,6 +198,48 @@ function AppContent() {
     await window.chipblocks.cancel()
   }
 
+  // Build for FPGA: spawn the iCE40 build pipeline in WSL2, get back a
+  // zip with the bitstream + Verilog source + flash instructions, prompt
+  // the user to download it.
+  const [isBuilding, setIsBuilding] = useState(false)
+
+  const handleBuild = async () => {
+    setIsBuilding(true)
+    setStatusMessage('Building bitstream…')
+    setErrorToast(null)
+    try {
+      const result = await window.chipblocks.buildIce40({ nodes, edges })
+      if (!result.ok) {
+        setStatusMessage(null)
+        setErrorToast(result.error ?? 'Build failed')
+        return
+      }
+      if (!result.zipData) {
+        setStatusMessage(null)
+        setErrorToast('Build returned no zip data')
+        return
+      }
+      const blob = new Blob([result.zipData], { type: 'application/zip' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'chipblocks-fpga.zip'
+      a.click()
+      URL.revokeObjectURL(url)
+      const sizeKb = (result.zipData.byteLength / 1024).toFixed(1)
+      setStatusMessage(`Bitstream ready (${sizeKb} KB)`)
+    } catch (err) {
+      setStatusMessage(null)
+      setErrorToast(`Build failed: ${(err as Error).message}`)
+    } finally {
+      setIsBuilding(false)
+    }
+  }
+
+  const handleCancelBuild = async () => {
+    await window.chipblocks.cancelBuild()
+  }
+
   // Canvas actions exposed to the AI consultant via tool calls. Each
   // returns a short string id of the new entity (or true for in-place
   // updates) so the Chat component can display a confirmation.
@@ -298,17 +346,25 @@ function AppContent() {
       <div className="toolbar">
         <span className="app-title">ChipBlocks</span>
         <span className="toolbar-spacer" />
-        {isPlaying && (
+        {(isPlaying || isBuilding) && (
           <>
-            <span className="spinner" aria-label="Synthesizing" />
+            <span className="spinner" aria-label={isBuilding ? 'Building' : 'Synthesizing'} />
             <span className="toolbar-status">{statusMessage}</span>
-            <button onClick={handleCancel} className="toolbar-cancel">Cancel</button>
+            <button
+              onClick={isBuilding ? handleCancelBuild : handleCancel}
+              className="toolbar-cancel"
+            >
+              Cancel
+            </button>
           </>
         )}
-        {!isPlaying && statusMessage && (
+        {!isPlaying && !isBuilding && statusMessage && (
           <span className="toolbar-status">{statusMessage}</span>
         )}
-        <button onClick={handlePlay} disabled={isPlaying}>▶ Play</button>
+        <button onClick={handlePlay} disabled={isPlaying || isBuilding}>▶ Play</button>
+        <button onClick={handleBuild} disabled={isPlaying || isBuilding} title="Build a flashable iCE40 bitstream">
+          🔧 Build for FPGA
+        </button>
         <button onClick={handleSave}>Save</button>
         <button onClick={handleLoad}>Load</button>
         <button

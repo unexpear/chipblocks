@@ -29,6 +29,12 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
 contextBridge.exposeInMainWorld('chipblocks', {
   synth: (graph: unknown) => ipcRenderer.invoke('synth:run', graph),
   cancel: () => ipcRenderer.invoke('synth:cancel') as Promise<boolean>,
+  buildIce40: (graph: unknown) => ipcRenderer.invoke('build:ice40', graph) as Promise<{
+    ok: boolean
+    zipData?: ArrayBuffer
+    error?: string
+  }>,
+  cancelBuild: () => ipcRenderer.invoke('build:cancel') as Promise<boolean>,
 })
 
 // AI consultant API. The API key is stored encrypted in the main process

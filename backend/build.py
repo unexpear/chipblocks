@@ -26,10 +26,12 @@ them into a friendly message:
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -217,6 +219,108 @@ def build_ice40(graph: dict, out_dir: Path) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Bundle creation: zip the artifacts + auto-generated docs into a single file
+# ---------------------------------------------------------------------------
+
+FLASH_INSTRUCTIONS = """\
+# Flashing chipblocks.bin to a Lattice iCEstick
+
+## What you need
+
+- A Lattice **iCEstick** (iCE40HX-1k dev board) — about $30 from Mouser, Digi-Key, or your favorite distributor.
+- A small speaker or headphones.
+- A simple RC filter (1 kΩ resistor + 100 nF capacitor) wired between the audio output pin and the speaker. The capacitor smooths the PWM into analog audio; the resistor protects the FPGA pin.
+- The `iceprog` flashing tool. Install via:
+  - **Ubuntu / Debian / WSL2:** `sudo apt install fpga-icestorm`
+  - **Or via the OSS CAD Suite:** already included if you installed it for ChipBlocks itself.
+
+## Steps
+
+1. Plug the iCEstick into a USB port. It should enumerate as a USB device automatically (Windows: WinUSB driver via Zadig if needed; Linux: works out of the box).
+2. Wire the audio:
+    - **Pin B1** (header J3 pin 1 — top-left corner of the board) → 1 kΩ resistor → 100 nF capacitor → speaker positive
+    - Speaker negative → any GND pin (header J3 pin 9–14 are all GND)
+3. Flash the bitstream:
+    ```bash
+    iceprog chipblocks.bin
+    ```
+    The on-board LED blinks during programming. The chip starts running as soon as flashing finishes.
+4. You should hear your chip through the speaker.
+
+## Troubleshooting
+
+- **`iceprog: can't find iCE FTDI USB device`** — make sure the board is plugged in. On Linux, you may need `sudo usermod -aG plugdev $USER` and log out/in for USB access.
+- **Silent or noisy output** — check the RC filter values. PWM at 47 kHz needs a few kHz cutoff; 1 kΩ + 100 nF gives ~1.6 kHz. Higher capacitor values smooth more but attenuate high audio frequencies.
+- **Pin numbering** — pin B1 is the top-left of the header J3 closest to the USB connector. See the [iCEstick reference](https://www.latticesemi.com/icestick) for the full pinout.
+"""
+
+
+def _generate_build_report(graph: dict, result: dict) -> str:
+    """Auto-generate BUILD.md describing what was built and how it sized."""
+    n_nodes = len(graph.get("nodes", []))
+    n_edges = len(graph.get("edges", []))
+    block_types = sorted({n.get("type", "?") for n in graph.get("nodes", [])})
+    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    return f"""\
+# ChipBlocks build report
+
+**Built:** {timestamp}
+**Target:** Lattice iCEstick (iCE40HX-1k, TQ144 package)
+**Bitstream:** `chipblocks.bin` ({result["size_bytes"]:,} bytes)
+
+## Source graph
+
+- {n_nodes} block{"s" if n_nodes != 1 else ""}
+- {n_edges} edge{"s" if n_edges != 1 else ""}
+- Block types used: {", ".join(block_types) if block_types else "(none)"}
+
+## Toolchain output
+
+### Yosys (synthesis)
+
+```
+{result["yosys_log"][-2000:].strip()}
+```
+
+### nextpnr-ice40 (place-and-route)
+
+```
+{result["nextpnr_log"][-2000:].strip()}
+```
+
+### icepack (bitstream generation)
+
+```
+{result["icepack_log"].strip() or "(no output)"}
+```
+
+## Files in this bundle
+
+| File | What it is |
+|---|---|
+| `chipblocks.bin` | The compiled iCE40 bitstream. Flash to an iCEstick with `iceprog chipblocks.bin`. |
+| `chipblocks.v` | The generated Verilog source. Output of `amaranth.back.verilog.convert()` on the visual graph. Included for transparency / debugging — you don't need to flash this. |
+| `chipblocks.pcf` | Pin constraint file. Maps the Verilog top module's `clk` and `audio_pin` ports to physical iCEstick pins. |
+| `BUILD.md` | This file. |
+| `FLASH.md` | How to flash and wire for audio out. |
+"""
+
+
+def make_bundle(out_dir: Path, graph: dict, result: dict) -> Path:
+    """Pack the build artifacts + auto-generated docs into a single zip."""
+    bundle_path = out_dir / "chipblocks-fpga.zip"
+    build_md = _generate_build_report(graph, result)
+    with zipfile.ZipFile(bundle_path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(result["bin"], "chipblocks.bin")
+        z.write(result["verilog"], "chipblocks.v")
+        z.write(result["pcf"], "chipblocks.pcf")
+        z.writestr("BUILD.md", build_md)
+        z.writestr("FLASH.md", FLASH_INSTRUCTIONS)
+    return bundle_path
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--in", dest="input_path", required=True)
@@ -244,11 +348,12 @@ def main() -> int:
 
     # ice40
     result = build_ice40(graph, out_dir)
+    bundle_path = make_bundle(out_dir, graph, result)
     print(
         f"[build] Wrote {result['bin']} ({result['size_bytes']} bytes)",
         flush=True,
     )
-    print(f"[build] Verilog: {result['verilog']}")
+    print(f"[build] Bundle: {bundle_path} ({bundle_path.stat().st_size} bytes)", flush=True)
     return 0
 
 

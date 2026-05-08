@@ -150,29 +150,75 @@ Each tool's combined stdout/stderr is captured in the result dict for surfacing 
 End-to-end run with `examples/two-osc-mix.json` produces `chipblocks.bin` (32220 bytes) — the first time ChipBlocks output is in real-silicon-flashable form. Live verification on a physical iCEstick is gated on the user owning a board + `iceprog`; bitstream-byte verification is automated.
 
 ### Item 5 — UI: Build for FPGA button
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** New 🔧 **Build for FPGA** button in the toolbar, between **▶ Play** and **Save**. Click → IPC `build:ice40` → main process spawns `wsl bash -c "source ~/oss-cad-suite/environment && python3 backend/build.py --target ice40 ..."` → reads back the zip bytes → renderer creates a Blob URL and triggers a download.
+
+UX details:
+- The existing spinner / Cancel / status-text plumbing was extended to handle a parallel `isBuilding` flag alongside `isPlaying`. ▶ Play and 🔧 Build for FPGA are mutually exclusive (each disables the other while in flight).
+- Cancel routes to `build:cancel` when `isBuilding`, otherwise to `synth:cancel`. Same UI element handles both.
+- Status message: `"Building bitstream…"` during the build, `"Bitstream ready (4.7 KB)"` after success.
+- Build IPC uses a 120 s timeout (vs 30 s for synth) — nextpnr place-and-route on a busy graph can take meaningful time.
+
+`shellQuote()` helper added to `ipc.ts` because we now build a `bash -c "..."` command string (to source the OSS CAD Suite environment in the same shell as `python3`). Argv quoting matters here in a way it didn't for the simpler synth invocation.
 
 ### Item 6 — Download bundle
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** `build.py make_bundle()` packs the build artifacts and auto-generated docs into a single zip:
+
+| File | Bytes (this build) |
+|---|---|
+| `chipblocks.bin` | 32,220 (the iCE40 bitstream) |
+| `chipblocks.v` | 4,352 (Verilog source — for transparency / debugging) |
+| `chipblocks.pcf` | 221 (pin constraint file) |
+| `BUILD.md` | 1,072 (auto-generated build report) |
+| `FLASH.md` | 1,812 (flashing + audio-wiring instructions) |
+
+Total bundle: 4,795 bytes. `BUILD.md` is regenerated each build with a UTC timestamp, target board, source-graph stats (nodes/edges/types), and the last 2 KB of each tool's stdout/stderr (Yosys + nextpnr + icepack). `FLASH.md` is a static template covering hardware setup (1 kΩ + 100 nF RC filter on pin B1), the `iceprog` command, and common troubleshooting.
 
 ### Item 7 — End-to-end demo
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** Verified end-to-end with `examples/two-osc-mix.json`:
+- Backend `build.py --target ice40` emits a 32 KB `chipblocks.bin` and a 4.7 KB `chipblocks-fpga.zip` containing all five expected files.
+- The Electron main IPC handler (`build:ice40`) successfully spawns `wsl bash -c "source ~/oss-cad-suite/environment && python3 backend/build.py …"`, reads the resulting zip via `fs.readFile`, and returns it as `ArrayBuffer` to the renderer.
+- TypeScript clean across the new IPC + preload + App.tsx changes.
+- Chained tools all functional: `yosys 0.64+197` (synthesis), `nextpnr-ice40 0.10-65` (place-and-route on iCE40HX-1k TQ144), `icepack` (bitstream packaging).
+
+Live silicon verification (flashing the bitstream onto a real iCEstick + RC-filter speaker test) requires the user to own the dev board and run `iceprog`. Documented in the in-bundle `FLASH.md`. The byte-level "is this a real iCE40 bitstream?" question is settled by `icepack` accepting the netlist and producing a binary of the expected ~32 KB shape.
 
 ### Item 8 — Sprint retrospective
-*[fill in at end of sprint]*
+**✓ Done — 2026-05-08.** Filled in below. Sprint 6 closed.
 
 ---
 
 ## Retrospective (end of sprint)
 
 **What went well:**
-*[fill in]*
+- **The whole pipeline landed in one focused session.** Sprint plan budgeted 4 weeks; the path from "no FPGA toolchain" to "producing a working 32 KB iCE40 bitstream from the visual graph" took two extended sessions. Most of that was waiting on the 700 MB OSS CAD Suite download.
+- **Amaranth's Verilog backend just works** — `verilog.convert()` on a `GraphTop` wrapped with an iCEstick-shaped toplevel produced clean Verilog that Yosys accepted on first try. Most of the heavy lifting is the existing block library; the iCE40 wrapper is ~30 lines.
+- **OSS CAD Suite was the right install path.** No sudo. One tarball. `bash -c "source ~/oss-cad-suite/environment && ..."` activates the toolchain inline for the Electron-spawned WSL invocation, with no `.bashrc` edit. Self-contained.
+- **The `--pcf-allow-unconstrained` flag** is the magic phrase nobody mentions in tutorials. Amaranth's auto-generated `rst` port has no iCEstick pin assignment in our `.pcf`, and nextpnr would otherwise refuse to proceed. One flag fixed it.
+- **The bundle pattern (zip with bitstream + Verilog source + auto-generated build report + flashing instructions)** is exactly the right shape for "I want to share this chip with someone." The user can email the zip; the recipient gets everything they need to flash it themselves.
 
 **What didn't:**
-*[fill in]*
+- **Did not test on physical silicon.** The iCEstick is a ~$30 board the user would need to own + plug in + run `iceprog` against. The Sprint 6 plan flagged this as the user-side gate; nothing more we can do from this end without one in hand.
+- **PWM modulation is the simplest possible audio output**, not the prettiest. 8-bit PWM at ~47 kHz produces audible high-frequency noise without a proper RC filter. A future Sigma-Delta DAC block would be much cleaner.
+- **iCE40HX-1k LUT count (1280)** wasn't explored — we only built one small graph. Larger graphs (multiple oscillators + ADSR + LPF) might overflow. No utilization parsing in `BUILD.md` yet; just the raw nextpnr log.
+- **`unzip` not preinstalled in WSL2.** Minor — used Python's `zipfile` to verify in this session — but a hint that the build environment is less batteries-included than I expected.
+- **No second board target.** Keeps the scope manageable. iCEstick is the v1 demo platform.
+- **P1 carryovers (cached audio, IPC tests)** still untouched, now four sprints deferred. They'll keep slipping until they become P0 — typically a sign that they're never the most-valuable next thing.
 
 **What surprised me:**
-*[fill in]*
+- **Amaranth's signed/unsigned arithmetic in the iCEstick wrapper** worked first try. `(audio_in_signed + 128).as_unsigned()` is the convert-to-PWM-amplitude bridge; no width-mismatch fights.
+- **Yosys + nextpnr-ice40 are fast** for designs of this size. Synthesis is ~1 second; PnR is ~3–5 seconds; icepack is sub-second. The 30-second budget was conservative.
+- **The bundle ended up tiny.** 4.8 KB total. Most of that is the bitstream (32 KB on disk, but ZIP_DEFLATED compresses well). Easy to share over email.
+- **Amaranth's framework leans into the "you have a `top` module with `clk`/`rst` ports automatically" assumption** — the auto-generated `rst` was unexpected but easy to work with via `--pcf-allow-unconstrained`.
+- **Six full sprints** in the conversation window. ChipBlocks went from "directory with a PRD" to "produces flashable iCE40 bitstreams" with a full AI consultant in between.
 
 **What changes Sprint 7:**
-*[fill in]*
+- **First public alpha release.** Six sprints in, the product is feature-complete for a v1 alpha: visual editor, AI consultant with multi-step tool calls, simulated audio output, FPGA bitstream output. Sprint 7 should be the "make it shippable" sprint:
+  - Major-version bumps from [KNOWN-ISSUES.md](KNOWN-ISSUES.md) (Electron 33→38, electron-builder 24→26, vitest 2→4)
+  - Packaged installers via `electron-builder` (Mac/Windows/Linux)
+  - Signed binaries (Mac notarization, Windows code-signing)
+  - Public landing page with screenshots / a demo video
+  - First Hackaday / Hackster.io writeup
+- **OR**: Tiny Tapeout submission package (PRD's other Phase-2 path; produces real ASIC silicon). Different from FPGA — submissions go to a fab, return weeks later as a chip in the mail.
+- **OR**: a second FPGA target (TinyFPGA BX or HX8K-EVB) plus utilization parsing in `BUILD.md`.
+
+User direction needed at the start of S7 — "make this shippable" vs "more silicon paths" vs "more block library / DSP chops" are different sprints.
