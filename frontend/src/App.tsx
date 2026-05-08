@@ -240,6 +240,33 @@ function AppContent() {
         )
         return true
       },
+      deleteNode: (id) => {
+        // Removing a node also removes any edges connected to it.
+        let removedCount = 0
+        setEdges((eds) =>
+          eds.filter((e) => {
+            const connected = e.source === id || e.target === id
+            if (connected) removedCount += 1
+            return !connected
+          }),
+        )
+        setNodes((nds) => nds.filter((n) => n.id !== id))
+        return removedCount
+      },
+      deleteEdge: (id) => {
+        let found = false
+        setEdges((eds) => {
+          const next = eds.filter((e) => {
+            if (e.id === id) {
+              found = true
+              return false
+            }
+            return true
+          })
+          return next
+        })
+        return found
+      },
     }),
     [setNodes, setEdges, getNodes],
   )

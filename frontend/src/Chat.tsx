@@ -68,6 +68,8 @@ export interface CanvasActions {
     targetHandle?: string,
   ) => string
   updateNodeData: (id: string, data: Record<string, unknown>) => boolean
+  deleteNode: (id: string) => number  // returns # of edges also removed
+  deleteEdge: (id: string) => boolean
 }
 
 interface ChatProps {
@@ -136,9 +138,16 @@ ChipBlocks has 9 block types. All audio signals are 8-bit signed (-128 to +127) 
 
 # Tool use
 
-You have three tools to mutate the canvas: \`add_node\`, \`add_edge\`, and \`update_node_params\`. When the user asks you to make a change, use the tools — don't just describe the change in text.
+You have five tools to mutate the canvas:
+- \`add_node\` — spawn a new block
+- \`add_edge\` — wire two blocks
+- \`update_node_params\` — change a block's parameters
+- \`delete_node\` — remove a block (DESTRUCTIVE; user must confirm)
+- \`delete_edge\` — remove an edge (DESTRUCTIVE; user must confirm)
 
-After tool calls, you'll receive \`tool_result\` content blocks with the outcome of each call (the new node/edge id, or an error). Use those results to plan further calls or to write a final text summary of what you did.
+When the user asks you to make a change, use the tools — don't just describe the change in text.
+
+After tool calls, you'll receive \`tool_result\` content blocks with the outcome of each call. For destructive tools, the user sees a preview dialog and may reject — in which case the tool_result will have \`is_error\` set and you should not assume the deletion happened. Adapt your plan based on what actually succeeded.
 
 # Style
 
@@ -217,7 +226,85 @@ function buildTools() {
         required: ['id', 'data'],
       },
     },
+    {
+      name: 'delete_node',
+      description:
+        'Delete a node and all edges connected to it. This is destructive — the user will see a confirmation dialog and can reject the change. If they reject, you will receive a tool_result with is_error true and should consider the deletion did NOT happen.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'ID of the node to delete' },
+        },
+        required: ['id'],
+      },
+    },
+    {
+      name: 'delete_edge',
+      description:
+        'Delete a single edge by id. Destructive — the user must confirm. If they reject, you will receive a tool_result with is_error true and should consider the deletion did NOT happen.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'ID of the edge to delete (visible in the canvas state JSON)' },
+        },
+        required: ['id'],
+      },
+    },
   ]
+}
+
+// Used by the preview-and-apply modal: format a one-line preview of a
+// pending destructive tool call.
+function describePendingDestructive(
+  name: string,
+  input: Record<string, unknown>,
+  nodes: AppNode[],
+  edges: Edge[],
+): { title: string; lines: string[] } {
+  if (name === 'delete_node') {
+    const id = String(input.id ?? '')
+    const node = nodes.find((n) => n.id === id)
+    const edgeCount = edges.filter((e) => e.source === id || e.target === id).length
+    if (!node) {
+      return {
+        title: 'Delete node',
+        lines: [`Node ${id} not found on the canvas — nothing would change.`],
+      }
+    }
+    const params =
+      node.data && Object.keys(node.data).length > 0
+        ? `(${Object.entries(node.data as Record<string, unknown>).map(([k, v]) => `${k}=${v}`).join(', ')})`
+        : ''
+    return {
+      title: 'Delete node',
+      lines: [
+        `Type: ${node.type} ${params}`,
+        `ID: ${id}`,
+        edgeCount > 0
+          ? `${edgeCount} connected edge${edgeCount === 1 ? '' : 's'} will also be removed.`
+          : 'No connected edges.',
+      ],
+    }
+  }
+  if (name === 'delete_edge') {
+    const id = String(input.id ?? '')
+    const edge = edges.find((e) => e.id === id)
+    if (!edge) {
+      return {
+        title: 'Delete edge',
+        lines: [`Edge ${id} not found — nothing would change.`],
+      }
+    }
+    return {
+      title: 'Delete edge',
+      lines: [
+        `From: ${edge.source}.${edge.sourceHandle ?? '?'}`,
+        `To:   ${edge.target}.${edge.targetHandle ?? '?'}`,
+        `ID:   ${id}`,
+      ],
+    }
+  }
+  return { title: name, lines: [JSON.stringify(input)] }
 }
 
 export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSettings }: ChatProps) {
@@ -240,6 +327,14 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
   const currentReqId = useRef<string | null>(null)
   const streamingRef = useRef('')
   const messageListRef = useRef<HTMLDivElement>(null)
+
+  // Pending destructive tool call: when set, the modal renders and the
+  // agentic loop is awaiting the user's Apply/Reject decision.
+  const [pending, setPending] = useState<{
+    name: 'delete_node' | 'delete_edge'
+    input: Record<string, unknown>
+  } | null>(null)
+  const pendingResolveRef = useRef<((r: { ok: boolean; result: string }) => void) | null>(null)
 
   // For the agentic loop, we set up listeners once and route by request id.
   // The Promise-based `sendOneTurn` below registers per-request callbacks
@@ -278,10 +373,10 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
     }
   }, [])
 
-  const applyToolCall = (
+  const applyToolCall = async (
     name: string,
     input: Record<string, unknown>,
-  ): { ok: boolean; result: string } => {
+  ): Promise<{ ok: boolean; result: string }> => {
     try {
       if (name === 'add_node') {
         const type = String(input.type ?? '')
@@ -308,10 +403,52 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
         )
         return { ok: true, result: `Updated ${input.id}` }
       }
+      // Destructive tools: route through the preview-and-apply modal.
+      if (name === 'delete_node' || name === 'delete_edge') {
+        return await new Promise<{ ok: boolean; result: string }>((resolve) => {
+          pendingResolveRef.current = resolve
+          setPending({ name, input })
+        })
+      }
       return { ok: false, result: `Unknown tool: ${name}` }
     } catch (err) {
       return { ok: false, result: (err as Error).message }
     }
+  }
+
+  const onConfirmPending = () => {
+    if (!pending) return
+    let result: { ok: boolean; result: string }
+    try {
+      if (pending.name === 'delete_node') {
+        const id = String(pending.input.id ?? '')
+        const removedEdges = canvasActions.deleteNode(id)
+        result = {
+          ok: true,
+          result: `Deleted node ${id}${removedEdges > 0 ? ` and ${removedEdges} connected edge${removedEdges === 1 ? '' : 's'}` : ''}`,
+        }
+      } else {
+        const id = String(pending.input.id ?? '')
+        const found = canvasActions.deleteEdge(id)
+        result = found
+          ? { ok: true, result: `Deleted edge ${id}` }
+          : { ok: false, result: `Edge ${id} not found` }
+      }
+    } catch (err) {
+      result = { ok: false, result: (err as Error).message }
+    }
+    setPending(null)
+    const resolve = pendingResolveRef.current
+    pendingResolveRef.current = null
+    resolve?.(result)
+  }
+
+  const onRejectPending = () => {
+    if (!pending) return
+    setPending(null)
+    const resolve = pendingResolveRef.current
+    pendingResolveRef.current = null
+    resolve?.({ ok: false, result: 'User rejected the change.' })
   }
 
   // One iteration of the loop: ship the current history, await a complete
@@ -414,10 +551,12 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
       }
 
       // Apply each tool, display the result in chat, and assemble
-      // tool_result blocks for the follow-up user message.
+      // tool_result blocks for the follow-up user message. applyToolCall
+      // is async because destructive tools route through the
+      // preview-and-apply modal and resolve only when the user clicks.
       const toolResults: ToolResultBlock[] = []
       for (const call of toolCalls) {
-        const r = applyToolCall(call.name, call.input)
+        const r = await applyToolCall(call.name, call.input)
         setMessages((prev) => [
           ...prev,
           {
@@ -510,7 +649,15 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
     }
   }
 
+  // Render the preview-and-apply modal when a destructive tool call is
+  // pending. This sits alongside the chat aside; CSS positions it as a
+  // fixed overlay regardless of DOM placement.
+  const pendingPreview = pending
+    ? describePendingDestructive(pending.name, pending.input, nodes, edges)
+    : null
+
   return (
+    <>
     <aside className="chat-panel">
       <div className="chat-header">
         <span className="chat-title">AI Consultant</span>
@@ -589,5 +736,29 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
         </>
       )}
     </aside>
+    {pending && pendingPreview && (
+      <div className="modal-backdrop">
+        <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header">
+            <h2>AI wants to {pendingPreview.title.toLowerCase()}</h2>
+          </div>
+          <div className="modal-body">
+            <p className="modal-note">
+              The AI consultant is about to make a destructive change. Apply it, or reject and the AI will see the rejection and can try something else.
+            </p>
+            <div className="confirm-preview">
+              {pendingPreview.lines.map((line, i) => (
+                <div key={i} className="confirm-line">{line}</div>
+              ))}
+            </div>
+            <div className="modal-actions">
+              <button onClick={onConfirmPending} className="confirm-apply">Apply</button>
+              <button onClick={onRejectPending} className="modal-danger">Reject</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   )
 }

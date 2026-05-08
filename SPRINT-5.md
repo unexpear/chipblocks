@@ -125,7 +125,18 @@ Implementation: `App.tsx`'s `canvasActions.addNode` now reads the live nodes via
 Tradeoff acknowledged: this is a heuristic, not a layout engine. For complex multi-block AI sessions, blocks pile up to the right; the user can drag them. A proper auto-layout (e.g. ELK or dagre) is a future-sprint upgrade.
 
 ### Item 3 — Preview-and-apply for destructive tools
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** Two new tools, `delete_node` and `delete_edge`, both routed through a confirmation dialog before execution. The user sees a one-line preview of what would change ("Delete node oscillator @ 440 Hz; 3 connected edges will also be removed"), with **Apply** and **Reject** buttons. If they reject, the agentic loop receives a `tool_result` with `is_error: true` and the AI sees the rejection in the next turn — it can adapt or apologize.
+
+Implementation:
+- `App.tsx`'s `canvasActions` gained `deleteNode(id)` (returns the count of cascading edges removed) and `deleteEdge(id)` (returns whether anything was found).
+- `Chat.tsx`'s `applyToolCall` is now `async`. Non-destructive tools resolve immediately as before. Destructive ones set a `pending` state with the call payload and return a `Promise` that resolves only when the user clicks Apply or Reject. The agentic loop's `await applyToolCall(...)` blocks waiting on that resolution — the loop is paused naturally while the modal is up.
+- `describePendingDestructive()` formats a per-tool preview from the live nodes/edges (not from the AI's input alone, so the user sees the actual node parameters and the cascading-edge count for `delete_node`).
+- The modal is rendered alongside the chat panel via a fragment; it's `position: fixed` so DOM placement doesn't matter.
+- System prompt updated to mention that destructive tool results may include `is_error: true` when the user rejects, and the AI should adapt accordingly.
+
+The non-destructive `add_*` and `update_*` tools intentionally do NOT pop a confirmation — that would be too intrusive for routine use. Only the two destructive operations require a click. This matches the risk-register guidance: "Only show preview-and-apply for `delete_*` tools."
+
+`tsc --noEmit` clean.
 
 ### Item 4 — Cleanup pass
 *[fill in when complete]*
