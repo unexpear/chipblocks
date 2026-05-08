@@ -11,11 +11,17 @@ Run from WSL2:
 """
 
 import sys
+import warnings
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from synth import synthesize, GraphTop  # noqa: E402
+
+# Mute Amaranth's "<obj> created but never used" warnings — the
+# invalid-graph tests intentionally construct GraphTop and Elaboratables
+# without running them through the simulator.
+warnings.filterwarnings("ignore", message=".*never used.*")
 
 
 def make_graph_simple() -> dict:

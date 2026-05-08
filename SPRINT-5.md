@@ -139,7 +139,13 @@ The non-destructive `add_*` and `update_*` tools intentionally do NOT pop a conf
 `tsc --noEmit` clean.
 
 ### Item 4 — Cleanup pass
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** Two pieces:
+
+**`UnusedElaboratable` warnings**: `backend/sim/test_synth.py` deliberately constructs `GraphTop` instances for the invalid-graph tests without running them through the simulator (we want the constructor to raise `ValueError`, not a successful sim). Amaranth emits a warning whenever an `Elaboratable` is created but not converted. Added a one-line `warnings.filterwarnings("ignore", message=".*never used.*")` at module load. Test output is now clean — all 5 translator tests PASS without the warning noise.
+
+**npm audit**: `npm audit fix` (no `--force`) had nothing to apply — all 15 advisories require major-version bumps (Electron 33→38+, electron-builder 24→26, vitest 2→4). Most of the high-severity items live inside Electron itself (ASAR integrity bypass, macOS AppleScript injection, service-worker IPC spoofing, origin-permission handling); they primarily affect packaged production builds, not the dev-mode-only state ChipBlocks is in today. **Documented as a deferred item in [KNOWN-ISSUES.md](KNOWN-ISSUES.md)** with a clear next-step (a future dedicated upgrade sprint to `npm audit fix --force` and work through the breaking changes; one of the gates to public alpha).
+
+**Did NOT** run `--force` mid-Sprint-5 — the breaking changes risk pulling the rest of the sprint into a debugging quagmire.
 
 ### Item 5 — E2E demo
 *[fill in when complete]*
