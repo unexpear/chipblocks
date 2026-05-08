@@ -16,7 +16,7 @@ This keeps the door open for **future monetization** — a paid desktop bundle, 
 
 ---
 
-## Frontend dependencies (as of 2026-05-07)
+## Frontend dependencies (as of 2026-05-08)
 
 All MIT or Apache 2.0. Each is `npm install`-ed and bundled at build time.
 
@@ -25,8 +25,9 @@ All MIT or Apache 2.0. Each is `npm install`-ed and bundled at build time.
 | react | ^18.3.1 | MIT | © Meta Platforms, Inc. and affiliates | https://react.dev |
 | react-dom | ^18.3.1 | MIT | © Meta Platforms, Inc. and affiliates | https://react.dev |
 | @xyflow/react | ^12.10.2 | MIT | © xyflow GmbH (formerly webkid GmbH) | https://reactflow.dev |
-| electron | ^33.2.0 | MIT | © Electron contributors / GitHub Inc. | https://electronjs.org |
-| electron-builder | ^24.13.3 | MIT | © Stefan Judis & contributors | https://www.electron.build |
+| @anthropic-ai/sdk | ^0.95.1 | MIT | © Anthropic, PBC | https://github.com/anthropics/anthropic-sdk-typescript |
+| electron | ^38.0.0 | MIT | © Electron contributors / GitHub Inc. | https://electronjs.org |
+| electron-builder | ^26.0.0 | MIT | © Stefan Judis & contributors | https://www.electron.build |
 | vite | ^5.4.11 | MIT | © Yuxi (Evan) You & Vite contributors | https://vitejs.dev |
 | @vitejs/plugin-react | ^4.3.3 | MIT | © Vite contributors | https://github.com/vitejs/vite-plugin-react |
 | vite-plugin-electron | ^0.29.0 | MIT | © electron-vite team | https://github.com/electron-vite/vite-plugin-electron |
@@ -38,39 +39,43 @@ All MIT or Apache 2.0. Each is `npm install`-ed and bundled at build time.
 | postcss | ^8.4.49 | MIT | © Andrey Sitnik & PostCSS contributors | https://postcss.org |
 | postcss-import | ^16.1.0 | MIT | © PostCSS contributors | https://github.com/postcss/postcss-import |
 | autoprefixer | ^10.4.20 | MIT | © Andrey Sitnik | https://github.com/postcss/autoprefixer |
-| vitest | ^2.1.5 | MIT | © Anthony Fu, Matias Capeletto & Vitest contributors | https://vitest.dev |
+| vitest | ^3.0.0 | MIT | © Anthony Fu, Matias Capeletto & Vitest contributors | https://vitest.dev |
 
 Initial frontend scaffold cloned (and heavily customized) from:
 - **electron-vite-react** boilerplate — MIT — © 草鞋没号 — https://github.com/electron-vite/electron-vite-react
 
 ---
 
-## Backend dependencies (as of 2026-05-07)
+## Backend dependencies (as of 2026-05-08)
 
 | Package | Version | License | Copyright / Authors | URL |
 |---|---|---|---|---|
 | Python | 3.12 | PSF License | © Python Software Foundation | https://python.org |
-| migen | 0.9.2 | BSD-2-Clause | © M-Labs Limited | https://m-labs.hk/gateware/migen/ |
+| amaranth | 0.5.8 | BSD-2-Clause | © Amaranth HDL contributors | https://github.com/amaranth-lang/amaranth |
+| amaranth-yosys | latest | ISC | © Amaranth HDL contributors / YosysHQ | https://github.com/amaranth-lang/amaranth-yosys |
 | litex | 2025.12 | BSD-2-Clause | © EnjoyDigital / M-Labs | https://github.com/enjoy-digital/litex |
-| stdlib `wave`, `struct`, `argparse`, `json` | (Python) | PSF License | © Python Software Foundation | (built-in) |
+| migen | 0.9.2 | BSD-2-Clause | © M-Labs Limited | https://m-labs.hk/gateware/migen/ |
+| stdlib `wave`, `struct`, `argparse`, `json`, `zipfile` | (Python) | PSF License | © Python Software Foundation | (built-in) |
 
 Reference repos cloned for examples (gitignored — not part of shipped product):
 - **litex-hub/fpga_101** — BSD-2-Clause — © LiteX Hub contributors — https://github.com/litex-hub/fpga_101 (the `lab004/pwm.py` was the starting point for our PWM-to-WAV simulation)
 
 ---
 
-## Tools we plan to invoke (separately installed, never bundled)
+## Tools we invoke (separately installed by the user, never bundled)
 
-These are **user-installed** tools we shell out to; we don't redistribute them. All happen to be permissively licensed, but the rule is "user install, not bundled" regardless.
+These are **user-installed** tools we shell out to; we don't redistribute them. All happen to be permissively licensed, but the rule is "user install, not bundled" regardless. As of v0.1.0-alpha, we ship the YosysHQ OSS CAD Suite distribution as a single user install (extracted to `~/oss-cad-suite/`).
 
-| Tool | License | Use |
-|---|---|---|
-| Verilator | BSD-3 (executable) / LGPL-3 (small generated runtime) | RTL simulation. Generated runtime is LGPL but we don't statically link or redistribute it. |
-| Yosys | ISC | Synthesis |
-| nextpnr | ISC | FPGA place-and-route |
-| SymbiYosys | MIT | Formal verification |
-| OpenLane / LibreLane | Apache-2.0 | ASIC tape-out flow |
-| Ollama | MIT | Optional local LLM for AI consultant (BYO-model) |
+| Tool | License | Use | Status |
+|---|---|---|---|
+| Yosys | ISC | RTL synthesis (graph → netlist) | **Invoked** (Sprint 6) |
+| nextpnr-ice40 | ISC | FPGA place-and-route on iCE40 targets | **Invoked** (Sprint 6) |
+| icepack | ISC | iCE40 bitstream packaging | **Invoked** (Sprint 6) |
+| iceprog | ISC | iCE40 USB flashing utility | Documented in `FLASH.md` (user-invoked) |
+| Verilator | BSD-3 (executable) / LGPL-3 (small generated runtime) | RTL simulation. Generated runtime is LGPL but we don't statically link or redistribute it. | Planned (post-alpha) |
+| SymbiYosys | MIT | Formal verification | Planned |
+| OpenLane / LibreLane | Apache-2.0 | ASIC tape-out flow | Planned (Tiny Tapeout sprint) |
+| Ollama | MIT | Optional local LLM for AI consultant | Planned |
 
 ---
 
@@ -78,11 +83,11 @@ These are **user-installed** tools we shell out to; we don't redistribute them. 
 
 ChipBlocks calls third-party AI services using the **user's own API key**. We do not bundle or redistribute these services.
 
-| Service | License / Terms | URL |
-|---|---|---|
-| Anthropic Claude API | Commercial (per Anthropic's terms) | https://www.anthropic.com |
-| OpenAI API | Commercial (per OpenAI's terms) | https://platform.openai.com |
-| Local Ollama models | Varies per model | https://ollama.com |
+| Service | License / Terms | URL | Status |
+|---|---|---|---|
+| Anthropic Claude API | Commercial (per Anthropic's terms) | https://www.anthropic.com | **Wired up** (Sprint 3+; `@anthropic-ai/sdk`) |
+| OpenAI API | Commercial (per OpenAI's terms) | https://platform.openai.com | Planned |
+| Local Ollama models | Varies per model | https://ollama.com | Planned |
 
 ---
 
