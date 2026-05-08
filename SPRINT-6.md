@@ -124,16 +124,30 @@ If Sprint 6 ships, ChipBlocks produces real-silicon-ready bitstreams. **Sprint 7
 > Fill in as you go. One paragraph per completed item. Be honest about what didn't work.
 
 ### Item 1 — Install + verify the OSS FPGA toolchain
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** Downloaded YosysHQ's OSS CAD Suite (679 MB tarball, 2.4 GB extracted) to `~/oss-cad-suite/`. The release of the day was conveniently `2026-05-08`. All four tools work: `yosys 0.64+197`, `nextpnr-ice40 0.10-65`, `icepack`, `iceprog`. Verified the env activates correctly in a non-interactive shell (`bash -c "source ~/oss-cad-suite/environment && yosys --version"`) — that's the exact pattern the Electron main process will use, so non-interactive activation works without a `.bashrc` edit. Documented the full install + activation flow in `backend/README.md`.
 
 ### Item 2 — Generate Verilog from the canvas
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** `backend/build.py` (NEW) wraps the existing `synth.GraphTop` in a new `IcestickTop` Elaboratable, then runs `amaranth.back.verilog.convert(top, ports=[top.audio_pin])` to emit Verilog. Smoke-tested with `examples/two-osc-mix.json` → 4352-byte / 187-line Verilog file. The generated module is `top(rst, audio_pin, clk)`, with the right port directions and an Amaranth-emitted comment header. Amaranth's Verilog backend internally shells out to `yosys`, so this step also requires the OSS CAD Suite to be on PATH.
 
 ### Item 3 — Wrap the design for the iCEstick
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** `IcestickTop` (in `build.py`) does three things on top of `GraphTop`:
+1. Drives the user's design at the iCEstick's 12 MHz onboard oscillator (clock pin 21 in the `.pcf`).
+2. Uses a sample-rate divider (`12_000_000 / 44_100 ≈ 272`) to latch a new audio sample at the configured rate.
+3. Maps the Output block's signed(8) `audio_in` onto a single 1-bit GPIO via PWM modulation (8-bit counter, output high while `count < latched_sample + 128`). The PWM cycles at ~47 kHz — well above audible, so an external RC low-pass on the output pin filters it into clean analog audio.
+
+Constraint file (`ICESTICK_PCF` constant in `build.py`): assigns `clk → pin 21` (the onboard oscillator) and `audio_pin → pin 112` (header J3 pin 1, physical pad B1). Pin 112 is a 3.3 V CMOS GPIO — the user adds a series resistor + capacitor + speaker for audible output.
 
 ### Item 4 — Synthesis + PnR + bitstream pipeline
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** `build_ice40()` chains the three external tools:
+1. `yosys -p "synth_ice40 -top top -json chipblocks.json" chipblocks.v` → 497 KB netlist
+2. `nextpnr-ice40 --hx1k --package tq144 --json … --pcf chipblocks.pcf --pcf-allow-unconstrained --asc chipblocks.asc` → 207 KB ASCII bitstream
+3. `icepack chipblocks.asc chipblocks.bin` → **32 KB iCE40 binary bitstream**
+
+`--pcf-allow-unconstrained` is the workaround for Amaranth's auto-generated `rst` port; the iCEstick has no reset button, so we don't pin-assign it. nextpnr leaves it floating, which is fine (Amaranth's reset-driven init is one-cycle, runs naturally on power-up).
+
+Each tool's combined stdout/stderr is captured in the result dict for surfacing in a future build report. Step ordering and error propagation: `run_step()` raises `RuntimeError` with the last 2 KB of output on non-zero exit, which `build.py`'s top-level handler emits as a JSON error blob on stderr (same convention as `synth.py`).
+
+End-to-end run with `examples/two-osc-mix.json` produces `chipblocks.bin` (32220 bytes) — the first time ChipBlocks output is in real-silicon-flashable form. Live verification on a physical iCEstick is gated on the user owning a board + `iceprog`; bitstream-byte verification is automated.
 
 ### Item 5 — UI: Build for FPGA button
 *[fill in when complete]*
