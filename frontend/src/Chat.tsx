@@ -13,7 +13,7 @@ declare global {
       chat: (req: {
         id: string
         model?: string
-        messages: { role: 'user' | 'assistant'; content: string }[]
+        messages: ApiMessage[]
         system: { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }[]
         tools?: unknown[]
       }) => Promise<boolean>
@@ -30,6 +30,28 @@ declare global {
       onError: (cb: (data: { id: string; message: string }) => void) => () => void
     }
   }
+}
+
+// ---- Anthropic content-block types -----------------------------------------
+//
+// The conversation history sent to the API has one of three content-block
+// shapes per assistant message: text, tool_use, or tool_result (in user
+// follow-up messages). For string-only assistant messages we use the
+// short form `content: string`.
+
+type TextBlock      = { type: 'text';        text: string }
+type ToolUseBlock   = { type: 'tool_use';    id: string; name: string; input: Record<string, unknown> }
+type ToolResultBlock = {
+  type: 'tool_result'
+  tool_use_id: string
+  content: string
+  is_error?: boolean
+}
+type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock
+
+interface ApiMessage {
+  role: 'user' | 'assistant'
+  content: string | ContentBlock[]
 }
 
 // Renderer-supplied callbacks the AI can invoke via tool calls.
@@ -57,12 +79,15 @@ interface ChatProps {
   onOpenSettings: () => void
 }
 
-interface ChatMessage {
-  // 'tool' is a synthetic role for display only — shows the result of an
-  // AI tool call. Not sent back to the model.
+interface DisplayMessage {
+  // 'tool' is a synthetic display-only role for showing tool-call results.
   role: 'user' | 'assistant' | 'tool'
   content: string
 }
+
+// Hard cap on agentic-loop iterations per user turn. Without this, a
+// pathological tool-error retry loop could rack up tokens fast.
+const MAX_ITERATIONS = 5
 
 const STATIC_SYSTEM = `You are the AI consultant for ChipBlocks, a free open-source visual chip-design app.
 
@@ -91,35 +116,36 @@ ChipBlocks has 9 block types. All audio signals are 8-bit signed (-128 to +127) 
 **Output** — audio sink. Whatever's wired to its \`audio-in\` port becomes the WAV file when the user hits Play. There must be exactly one Output block in the graph for audio to come out.
 - Input port \`audio-in\`
 
-**ADSR** — Attack/Decay/Sustain/Release amplitude envelope. Shapes a signal so it fades in, fades down to a sustain level, holds, then fades out when its gate drops.
+**ADSR** — Attack/Decay/Sustain/Release amplitude envelope.
 - Input ports: \`gate\` (1-bit trigger), \`audio-in\` (8-bit signed)
 - Output port: \`audio-out\`
 - Parameters: \`attack_ms\`, \`decay_ms\`, \`sustain_level\` (0–127), \`release_ms\`
 
-**Gate** — periodic 1-bit pulse generator. Wire to ADSR's \`gate\` port to retrigger the envelope on every pulse.
+**Gate** — periodic 1-bit pulse generator. Wire to ADSR's \`gate\` to retrigger the envelope.
 - Output port \`gate-out\` (1-bit)
 - Parameters: \`rate_hz\`, \`duty_pct\` (1–99)
 
-**Low-pass** — 1-pole IIR low-pass filter. Smooths an audio signal; lower cutoff = more smoothing.
+**Low-pass** — 1-pole IIR low-pass filter. Lower cutoff = more smoothing.
 - Input port \`audio-in\` (8-bit signed)
 - Output port \`audio-out\`
 - Parameter \`cutoff_hz\` (1–22050)
 
-**S & H** (sample-and-hold) — captures \`audio-in\` on each rising edge of \`clock\`, holds the value at \`audio-out\` until the next rising edge. Useful for arpeggio/stair-step effects.
+**S & H** — sample-and-hold. Captures \`audio-in\` on each rising edge of \`clock\`.
 - Input ports: \`audio-in\` (8-bit signed), \`clock\` (1-bit)
 - Output port \`audio-out\`
 
 # Tool use
 
-You have three tools to mutate the canvas: \`add_node\`, \`add_edge\`, and \`update_node_params\`. When the user asks you to make a change ("drop in a low-pass filter", "make the oscillator 880 Hz", "wire the sawtooth to the mixer's second input"), use the tools — don't just describe the change. The user sees each tool call appear as a confirmation in the chat.
+You have three tools to mutate the canvas: \`add_node\`, \`add_edge\`, and \`update_node_params\`. When the user asks you to make a change, use the tools — don't just describe the change in text.
 
-Use \`add_node\` first to spawn new blocks, then \`add_edge\` to wire them, then \`update_node_params\` if needed. Reference existing nodes by their \`id\` from the canvas state below.
+After tool calls, you'll receive \`tool_result\` content blocks with the outcome of each call (the new node/edge id, or an error). Use those results to plan further calls or to write a final text summary of what you did.
 
 # Style
 
 - Be concrete. Reference specific block types and parameter values.
-- Keep responses tight — a short paragraph or a short list. The user can ask follow-ups.
-- If the goal isn't possible with the current 9 block types, say so plainly. Don't invent capabilities.`
+- Keep responses tight — a short paragraph or a short list.
+- If the goal isn't possible with the current 9 block types, say so plainly. Don't invent capabilities.
+- After multi-step tool sequences, end with a short text confirmation of what you did so the user knows where things landed.`
 
 function buildSystemBlocks(nodes: AppNode[], edges: Edge[]) {
   return [
@@ -140,14 +166,13 @@ function buildSystemBlocks(nodes: AppNode[], edges: Edge[]) {
   ]
 }
 
-// Anthropic tool definitions. Schema-validated by the API.
 function buildTools() {
   const blockTypeIds = PALETTE.map((p) => p.type)
   return [
     {
       name: 'add_node',
       description:
-        'Add a new block to the canvas. Returns the new node id. Use this to introduce new blocks before wiring them with add_edge.',
+        'Add a new block to the canvas. Returns the new node id.',
       input_schema: {
         type: 'object',
         properties: {
@@ -159,7 +184,7 @@ function buildTools() {
           data: {
             type: 'object',
             description:
-              'Optional initial parameters specific to the block type (e.g. {"freq": 440} for oscillator/triangle/sawtooth, {"cutoff_hz": 800} for lowpass, {"attack_ms": 10, "decay_ms": 100, "sustain_level": 80, "release_ms": 200} for adsr). Omit to use defaults.',
+              'Optional initial parameters (e.g. {"freq": 440} for waveform sources, {"cutoff_hz": 800} for lowpass, {"attack_ms": 10, "decay_ms": 100, "sustain_level": 80, "release_ms": 200} for adsr). Omit to use defaults.',
           },
         },
         required: ['type'],
@@ -168,37 +193,26 @@ function buildTools() {
     {
       name: 'add_edge',
       description:
-        'Wire two blocks together. Connects the source block`s named output handle to the target block`s named input handle.',
+        "Wire two blocks together. Connects the source block's named output handle to the target block's named input handle.",
       input_schema: {
         type: 'object',
         properties: {
-          source_id: { type: 'string', description: 'ID of the source (output) node' },
-          target_id: { type: 'string', description: 'ID of the target (input) node' },
-          source_handle: {
-            type: 'string',
-            description:
-              'Output port name on the source (e.g. "audio-out" for waveform sources, "mix-out" for mixer, "gate-out" for gate).',
-          },
-          target_handle: {
-            type: 'string',
-            description:
-              'Input port name on the target (e.g. "audio-in", "in-1", "in-2", "gate", "clock").',
-          },
+          source_id: { type: 'string' },
+          target_id: { type: 'string' },
+          source_handle: { type: 'string', description: 'e.g. "audio-out", "mix-out", "gate-out"' },
+          target_handle: { type: 'string', description: 'e.g. "audio-in", "in-1", "in-2", "gate", "clock"' },
         },
         required: ['source_id', 'target_id', 'source_handle', 'target_handle'],
       },
     },
     {
       name: 'update_node_params',
-      description: "Change a parameter on an existing block by id. Pass only the fields you want to change.",
+      description: 'Change parameters on an existing block by id. Pass only the fields you want to change.',
       input_schema: {
         type: 'object',
         properties: {
-          id: { type: 'string', description: 'ID of the node to update' },
-          data: {
-            type: 'object',
-            description: 'Partial parameters to merge into the node`s data',
-          },
+          id: { type: 'string' },
+          data: { type: 'object' },
         },
         required: ['id', 'data'],
       },
@@ -207,24 +221,63 @@ function buildTools() {
 }
 
 export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSettings }: ChatProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [messages, setMessages] = useState<DisplayMessage[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
+  const [iteration, setIteration] = useState(0)
   const [tokenTotals, setTokenTotals] = useState({ input: 0, output: 0 })
   const [error, setError] = useState<string | null>(null)
 
+  // API-format conversation history (separate from `messages` because it
+  // includes structured ContentBlock arrays for assistant messages and
+  // synthetic user messages with tool_result blocks). Stays in sync with
+  // displayed messages but also captures the tool_use / tool_result wiring
+  // the API needs to thread tool calls properly.
+  const apiHistoryRef = useRef<ApiMessage[]>([])
+
+  // Track the in-flight request id so we can cancel.
   const currentReqId = useRef<string | null>(null)
   const streamingRef = useRef('')
   const messageListRef = useRef<HTMLDivElement>(null)
+
+  // For the agentic loop, we set up listeners once and route by request id.
+  // The Promise-based `sendOneTurn` below registers per-request callbacks
+  // via these refs.
+  const onChunkRef = useRef<((d: { id: string; text: string }) => void) | null>(null)
+  const onDoneRef = useRef<
+    | ((d: {
+        id: string
+        usage: { input: number; output: number }
+        tool_calls?: { id: string; name: string; input: Record<string, unknown> }[]
+        stop_reason?: string
+      }) => void)
+    | null
+  >(null)
+  const onErrorRef = useRef<((d: { id: string; message: string }) => void) | null>(null)
 
   useEffect(() => {
     const el = messageListRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [messages, streaming])
 
-  // Apply a tool call from Claude to the canvas; return a short status string
-  // for display in the chat as a tool annotation.
+  useEffect(() => {
+    const offChunk = window.ai.onChunk((data) => {
+      onChunkRef.current?.(data)
+    })
+    const offDone = window.ai.onDone((data) => {
+      onDoneRef.current?.(data)
+    })
+    const offError = window.ai.onError((data) => {
+      onErrorRef.current?.(data)
+    })
+    return () => {
+      offChunk()
+      offDone()
+      offError()
+    }
+  }, [])
+
   const applyToolCall = (
     name: string,
     input: Record<string, unknown>,
@@ -261,56 +314,146 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
     }
   }
 
-  useEffect(() => {
-    const offChunk = window.ai.onChunk(({ id, text }) => {
-      if (id !== currentReqId.current) return
-      streamingRef.current += text
-      setStreaming(streamingRef.current)
-    })
-    const offDone = window.ai.onDone(({ id, usage, tool_calls }) => {
-      if (id !== currentReqId.current) return
-      const finalText = streamingRef.current
+  // One iteration of the loop: ship the current history, await a complete
+  // response (text + any tool calls), return what came back.
+  const sendOneTurn = (apiMessages: ApiMessage[]) =>
+    new Promise<{
+      text: string
+      toolCalls: { id: string; name: string; input: Record<string, unknown> }[]
+      usage: { input: number; output: number }
+    }>(async (resolve, reject) => {
+      const id = crypto.randomUUID()
+      currentReqId.current = id
       streamingRef.current = ''
       setStreaming('')
-      setIsStreaming(false)
-      currentReqId.current = null
 
-      // Append the assistant message (text portion) if non-empty.
-      const newMessages: ChatMessage[] = []
-      if (finalText.trim()) {
-        newMessages.push({ role: 'assistant', content: finalText })
+      onChunkRef.current = ({ id: chunkId, text }) => {
+        if (chunkId !== id) return
+        streamingRef.current += text
+        setStreaming(streamingRef.current)
+      }
+      onDoneRef.current = ({ id: doneId, usage, tool_calls }) => {
+        if (doneId !== id) return
+        onChunkRef.current = null
+        onDoneRef.current = null
+        onErrorRef.current = null
+        resolve({
+          text: streamingRef.current,
+          toolCalls: tool_calls ?? [],
+          usage,
+        })
+      }
+      onErrorRef.current = ({ id: errId, message }) => {
+        if (errId !== id) return
+        onChunkRef.current = null
+        onDoneRef.current = null
+        onErrorRef.current = null
+        reject(new Error(message))
       }
 
-      // Apply each tool call and append a synthetic 'tool' message
-      // describing the result.
-      if (tool_calls && tool_calls.length > 0) {
-        for (const call of tool_calls) {
-          const r = applyToolCall(call.name, call.input)
-          newMessages.push({
+      try {
+        await window.ai.chat({
+          id,
+          model: getStoredModel(),
+          messages: apiMessages,
+          system: buildSystemBlocks(nodes, edges),
+          tools: buildTools(),
+        })
+      } catch (err) {
+        onChunkRef.current = null
+        onDoneRef.current = null
+        onErrorRef.current = null
+        reject(err)
+      }
+    })
+
+  // Drives the multi-step agentic loop. Each iteration: send, get text +
+  // tools, append assistant message to history, apply tools (if any),
+  // append tool_result user message to history, repeat — bounded by
+  // MAX_ITERATIONS — until the model stops calling tools.
+  const runAgenticTurn = async (initialHistory: ApiMessage[]) => {
+    let history = initialHistory
+
+    for (let i = 0; i < MAX_ITERATIONS; i++) {
+      setIteration(i + 1)
+      streamingRef.current = ''
+      setStreaming('')
+
+      const { text, toolCalls, usage } = await sendOneTurn(history)
+      setTokenTotals((t) => ({ input: t.input + usage.input, output: t.output + usage.output }))
+
+      // Display the streamed text as a final assistant message.
+      if (text.trim()) {
+        setMessages((prev) => [...prev, { role: 'assistant', content: text }])
+      }
+
+      // Build the assistant API message: text + any tool_use blocks.
+      const assistantContent: ContentBlock[] = []
+      if (text.trim()) assistantContent.push({ type: 'text', text })
+      for (const tc of toolCalls) {
+        assistantContent.push({
+          type: 'tool_use',
+          id: tc.id,
+          name: tc.name,
+          input: tc.input,
+        })
+      }
+      const assistantMsg: ApiMessage = {
+        role: 'assistant',
+        // If only text and no tool_use, use string form for cleanliness.
+        content:
+          toolCalls.length === 0 && text.trim()
+            ? text
+            : assistantContent,
+      }
+      history = [...history, assistantMsg]
+
+      if (toolCalls.length === 0) {
+        // No tools called this turn — conversation has stopped naturally.
+        break
+      }
+
+      // Apply each tool, display the result in chat, and assemble
+      // tool_result blocks for the follow-up user message.
+      const toolResults: ToolResultBlock[] = []
+      for (const call of toolCalls) {
+        const r = applyToolCall(call.name, call.input)
+        setMessages((prev) => [
+          ...prev,
+          {
             role: 'tool',
             content: `${r.ok ? '✓' : '✗'} ${call.name}: ${r.result}`,
-          })
-        }
+          },
+        ])
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: call.id,
+          content: JSON.stringify({ ok: r.ok, message: r.result }),
+          is_error: !r.ok,
+        })
       }
 
-      setMessages((prev) => [...prev, ...newMessages])
-      setTokenTotals((t) => ({ input: t.input + usage.input, output: t.output + usage.output }))
-    })
-    const offError = window.ai.onError(({ id, message }) => {
-      if (id !== currentReqId.current) return
-      streamingRef.current = ''
-      setStreaming('')
-      setIsStreaming(false)
-      currentReqId.current = null
-      setError(message)
-    })
-    return () => {
-      offChunk()
-      offDone()
-      offError()
+      // Synthetic user message carrying the tool_result blocks back to Claude.
+      history = [...history, { role: 'user', content: toolResults }]
+
+      if (i === MAX_ITERATIONS - 1) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'tool',
+            content: `(reached ${MAX_ITERATIONS}-iteration cap; stopping)`,
+          },
+        ])
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+
+    apiHistoryRef.current = history
+    setIteration(0)
+    setIsStreaming(false)
+    streamingRef.current = ''
+    setStreaming('')
+    currentReqId.current = null
+  }
 
   const send = async () => {
     const text = input.trim()
@@ -319,35 +462,23 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
       setError('Configure your Anthropic API key in Settings first.')
       return
     }
-    const userMsg: ChatMessage = { role: 'user', content: text }
-    const newHistory = [...messages, userMsg]
-    setMessages(newHistory)
+
+    setMessages((prev) => [...prev, { role: 'user', content: text }])
     setInput('')
     setError(null)
     setIsStreaming(true)
-    streamingRef.current = ''
-    setStreaming('')
 
-    const id = crypto.randomUUID()
-    currentReqId.current = id
-
-    // Filter out synthetic 'tool' role messages before sending to the API
-    // — they're for display only.
-    const apiMessages = newHistory
-      .filter((m) => m.role === 'user' || m.role === 'assistant')
-      .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+    const newHistory: ApiMessage[] = [
+      ...apiHistoryRef.current,
+      { role: 'user', content: text },
+    ]
 
     try {
-      await window.ai.chat({
-        id,
-        model: getStoredModel(),
-        messages: apiMessages,
-        system: buildSystemBlocks(nodes, edges),
-        tools: buildTools(),
-      })
+      await runAgenticTurn(newHistory)
     } catch (err) {
       setError((err as Error).message)
       setIsStreaming(false)
+      setIteration(0)
       currentReqId.current = null
     }
   }
@@ -357,6 +488,7 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
     if (!id) return
     await window.ai.cancel(id)
     setIsStreaming(false)
+    setIteration(0)
     streamingRef.current = ''
     setStreaming('')
     currentReqId.current = null
@@ -364,9 +496,11 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
 
   const clearConversation = () => {
     setMessages([])
+    apiHistoryRef.current = []
     setStreaming('')
     setError(null)
     setTokenTotals({ input: 0, output: 0 })
+    setIteration(0)
   }
 
   const onInputKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -399,7 +533,7 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
           <div className="chat-messages" ref={messageListRef}>
             {messages.length === 0 && !streaming && (
               <div className="chat-hint">
-                Ask anything — e.g. <em>"Drop in a low-pass filter between the oscillator and the output"</em> or <em>"What does my current graph produce?"</em>
+                Ask anything — e.g. <em>"Drop in a low-pass filter at 600 Hz between the oscillator and the output, then tell me what changed"</em> or <em>"What does my current graph produce?"</em>
               </div>
             )}
             {messages.map((m, i) => (
@@ -414,7 +548,7 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
             ))}
             {isStreaming && (
               <div className="chat-msg chat-msg-assistant">
-                <div className="chat-msg-role">AI</div>
+                <div className="chat-msg-role">AI{iteration > 1 ? ` (step ${iteration})` : ''}</div>
                 <div className="chat-msg-body">{streaming}<span className="chat-cursor">▍</span></div>
               </div>
             )}

@@ -102,7 +102,20 @@ If Sprint 5 ships clean, the AI consultant becomes a genuine collaborator and th
 > Fill in as you go. One paragraph per completed item. Be honest about what didn't work.
 
 ### Item 1 — Multi-step agentic loop
-*[fill in when complete]*
+**✓ Done — 2026-05-08.** The Sprint 5 marquee. After applying tool calls, the AI now sees the results (as `tool_result` content blocks in a synthetic user message) and continues until it produces a text-only response — typically a confirmation of what just landed on the canvas.
+
+Architecture:
+- `Chat.tsx` reshaped: alongside the display-only `messages` array, an `apiHistoryRef` now tracks the API-format conversation including `tool_use` and `tool_result` content blocks. The two stay in sync but the API history is what gets sent on each iteration.
+- `sendOneTurn(apiMessages)`: a Promise-based wrapper around the existing IPC chat call. Resolves with `{ text, toolCalls, usage }` once the main process emits `ai:done` for the matching request id. Routes streaming chunk events through three module-level refs (`onChunkRef` / `onDoneRef` / `onErrorRef`) so each call's listeners replace the previous ones cleanly.
+- `runAgenticTurn(initialHistory)`: the loop body. Up to `MAX_ITERATIONS = 5` iterations of `sendOneTurn → apply tools → append tool_results → repeat`. Breaks when the model returns no tool calls.
+- Hard cap (5 iterations) prevents runaway error-retry loops; the chat shows a final synthetic note when the cap is hit. The iteration count surfaces in the streaming-message header (`AI (step 3)`) so the user sees the loop is multi-step.
+- Token totals accumulate across all iterations of a single user turn.
+
+Content-block types are written as a TypeScript discriminated union (`TextBlock | ToolUseBlock | ToolResultBlock`), so the API request payload's shape gets compiler-enforced. Anthropic accepts both string and array content forms; the loop emits string content for text-only assistant messages and the array form whenever `tool_use` blocks are present.
+
+System prompt updated: now mentions that the AI will receive `tool_result` blocks after tool calls and should plan further calls or write a final summary based on them. The behavioral hint at the bottom is "after multi-step tool sequences, end with a short text confirmation of what you did so the user knows where things landed."
+
+`tsc --noEmit` clean. Existing single-turn behavior is a special case of the loop (one iteration, no tool calls).
 
 ### Item 2 — Smarter placement for AI-added nodes
 *[fill in when complete]*
