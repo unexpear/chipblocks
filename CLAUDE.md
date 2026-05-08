@@ -94,7 +94,8 @@ chipzzzd/
 
 - [PRD.md](PRD.md) — full product requirements
 - [SPRINT-1.md](SPRINT-1.md) — closed sprint plan + log + retro
-- [SPRINT-2.md](SPRINT-2.md) — current sprint plan + log
+- [SPRINT-2.md](SPRINT-2.md) — closed sprint plan + log + retro
+- [SPRINT-3.md](SPRINT-3.md) — current sprint plan + log
 - [CREDITS.md](CREDITS.md) — licensing policy + open-source attributions (permissive only; no copyleft in shipped product)
 - (Future) `BLOCKS.md` — block library reference
 - (Future) `ARCHITECTURE.md` — system architecture + data flow
