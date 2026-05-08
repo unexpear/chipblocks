@@ -23,6 +23,7 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'triangle',   label: 'Triangle',   color: '#ffc107', description: 'Triangle wave source' },
   { type: 'sawtooth',   label: 'Sawtooth',   color: '#9c27b0', description: 'Sawtooth wave source' },
   { type: 'sine',       label: 'Sine',       color: '#ce93d8', description: 'Sine wave source (cleanest tone)' },
+  { type: 'wavetable',  label: 'Wavetable',  color: '#8bc34a', description: 'Morphable single-cycle waveform (4 preset shapes)' },
   { type: 'noise',      label: 'Noise',      color: '#795548', description: 'Pseudo-random 8-bit signed source' },
   { type: 'constant',   label: 'Constant',   color: '#9e9e9e', description: 'Fixed 8-bit signed value (-128..127)' },
   { type: 'mixer',      label: 'Mixer',      color: '#2196f3', description: 'Average two audio inputs' },
@@ -54,6 +55,8 @@ export function defaultDataForType(type: string): Record<string, unknown> {
       return { value: 0 }
     case 'fm':
       return { carrier_freq: 440, modulator_freq: 110, mod_depth: 64 }
+    case 'wavetable':
+      return { freq: 440, shape: 'sine' }
     case 'mixer':
     case 'output':
     case 'samplehold':

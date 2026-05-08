@@ -76,6 +76,12 @@ def _build_params(node_type: str, data: dict) -> dict:
         if "mod_depth" in data:
             params["mod_depth"] = int(data["mod_depth"])
         params["sample_rate"] = SAMPLE_RATE
+    elif node_type == "wavetable":
+        if "freq" in data:
+            params["freq_hz"] = int(data["freq"])
+        if "shape" in data:
+            params["shape"] = str(data["shape"])
+        params["sample_rate"] = SAMPLE_RATE
     # Mixer, Output, SampleAndHold, Noise, Multiply have no parameters.
     return params
 

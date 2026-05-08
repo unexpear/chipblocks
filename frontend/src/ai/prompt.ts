@@ -28,7 +28,7 @@ Inside the app, the user:
 
 When the canvas is rendering or building, a Cancel button appears that aborts cleanly. Status text reads "Synthesizing…" or "Building bitstream…". Errors appear as a dismissible toast bottom-left.
 
-# Block library (all 14 types — these are the EXACT type strings)
+# Block library (all 15 types — these are the EXACT type strings)
 
 All audio signals are 8-bit signed (-128 to +127) at 44100 Hz.
 
@@ -103,11 +103,17 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz.
 - Output port \`audio-out\`
 - No parameters
 
+**wavetable** — morphable single-cycle waveform source. Reads a 256-entry signed-8-bit lookup table cyclically at the configured frequency. The \`shape\` parameter picks one of 4 preset tables, so a single block covers four timbres without four separate block types.
+- Output port \`audio-out\`
+- Parameters:
+  - \`freq\`: 20–20000 Hz (default 440)
+  - \`shape\`: one of "sine", "pulse_25", "ramp_up", "formant" (default "sine"). \`sine\` matches the dedicated sine block; \`pulse_25\` is a 25% duty pulse (thinner / nasal vs. the 50% square oscillator); \`ramp_up\` is a positive-going ramp (same waveform as sawtooth); \`formant\` is a vowel-like rich-harmonic shape with the most distinctive timbre.
+
 # Naming conventions
 
-- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`samplehold\`, \`fm\`, \`multiply\`.
+- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`.
 - **Port handle ids** are kebab-case: \`audio-out\`, \`audio-in\`, \`gate-out\`, \`mix-out\`, \`in-1\`, \`in-2\`. Two are unhyphenated for control signals: \`gate\` (an ADSR input) and \`clock\` (a samplehold input).
-- **Block parameters** are snake_case: \`freq\`, \`attack_ms\`, \`decay_ms\`, \`sustain_level\`, \`release_ms\`, \`rate_hz\`, \`duty_pct\`, \`cutoff_hz\`, \`value\`, \`carrier_freq\`, \`modulator_freq\`, \`mod_depth\`.
+- **Block parameters** are snake_case: \`freq\`, \`attack_ms\`, \`decay_ms\`, \`sustain_level\`, \`release_ms\`, \`rate_hz\`, \`duty_pct\`, \`cutoff_hz\`, \`value\`, \`carrier_freq\`, \`modulator_freq\`, \`mod_depth\`, \`shape\`. (\`shape\` is a string-enum on \`wavetable\`; all others are integers.)
 
 # Save format
 
@@ -167,7 +173,7 @@ After tool calls, you'll receive \`tool_result\` content blocks with the outcome
 
 - Be concrete. Reference specific block types, parameter values, and port names.
 - Keep responses tight — a short paragraph or a short list.
-- If a goal isn't possible with the current 14 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
+- If a goal isn't possible with the current 15 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
 - After multi-step tool sequences, end with a short text confirmation of what you did so the user knows where things landed.`
 
 export function buildSystemBlocks(nodes: AppNode[], edges: Edge[]) {
@@ -204,6 +210,7 @@ The \`data\` field shape depends on \`type\`:
 - lowpass: { cutoff_hz: 1-22050 (default 800) }
 - constant: { value: -128 to 127 (default 0) }
 - fm: { carrier_freq: 20-20000 (default 440), modulator_freq: 20-20000 (default 110), mod_depth: 0-127 (default 64) }
+- wavetable: { freq: 20-20000 (default 440), shape: one of "sine" | "pulse_25" | "ramp_up" | "formant" (default "sine") }
 - mixer | output | samplehold | noise | multiply: {} (no parameters)
 
 Omit \`data\` to use defaults.`,
@@ -230,7 +237,7 @@ Omit \`data\` to use defaults.`,
         `Wire two blocks. Connects source.source_handle to target.target_handle.
 
 Valid handle pairings (port handle names are kebab-case):
-- Audio sources (oscillator/triangle/sawtooth/sine/noise/constant/mixer/adsr/lowpass/samplehold) emit \`audio-out\` (or mixer's \`mix-out\`). Audio sinks (mixer/adsr/lowpass/samplehold/output) accept on \`audio-in\` (or mixer's \`in-1\`/\`in-2\`).
+- Audio sources (oscillator/triangle/sawtooth/sine/wavetable/noise/constant/mixer/adsr/lowpass/samplehold/fm/multiply) emit \`audio-out\` (or mixer's \`mix-out\`). Audio sinks (mixer/adsr/lowpass/samplehold/multiply/output) accept on \`audio-in\` (or mixer's \`in-1\`/\`in-2\`).
 - gate emits \`gate-out\`. Valid targets: adsr's \`gate\` input, samplehold's \`clock\` input.
 - output has \`audio-in\` and no output handle (it is a sink).
 
@@ -269,6 +276,7 @@ Allowed fields per block type (same as add_node):
 - lowpass: cutoff_hz
 - constant: value
 - fm: carrier_freq, modulator_freq, mod_depth
+- wavetable: freq, shape (string: "sine" | "pulse_25" | "ramp_up" | "formant")
 - mixer | output | samplehold | noise | multiply: (no parameters; this tool is a no-op for these types)`,
       input_schema: {
         type: 'object',

@@ -12,6 +12,7 @@ import { NoiseNode,          type NoiseBlock }          from './NoiseNode'
 import { ConstantNode,       type ConstantBlock }       from './ConstantNode'
 import { FmNode,             type FmBlock }             from './FmNode'
 import { MultiplyNode,       type MultiplyBlock }       from './MultiplyNode'
+import { WavetableNode,      type WavetableBlock }      from './WavetableNode'
 
 // Hoisted to module scope to avoid React Flow's
 // "It looks like you've created a new nodeTypes object" warning.
@@ -30,6 +31,7 @@ export const nodeTypes = {
   constant:   ConstantNode,
   fm:         FmNode,
   multiply:   MultiplyNode,
+  wavetable:  WavetableNode,
 }
 
 export type AppNode =
@@ -47,3 +49,4 @@ export type AppNode =
   | ConstantBlock
   | FmBlock
   | MultiplyBlock
+  | WavetableBlock

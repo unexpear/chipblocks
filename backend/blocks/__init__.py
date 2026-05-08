@@ -26,6 +26,7 @@ from .noise import Noise
 from .constant import Constant
 from .fm import Fm
 from .multiply import Multiply
+from .wavetable import Wavetable
 
 # Registry mapping graph node `type` (from React Flow JSON) to block class.
 BLOCK_REGISTRY = {
@@ -43,6 +44,7 @@ BLOCK_REGISTRY = {
     "constant": Constant,
     "fm": Fm,
     "multiply": Multiply,
+    "wavetable": Wavetable,
 }
 
 __all__ = [
@@ -60,5 +62,6 @@ __all__ = [
     "Constant",
     "Fm",
     "Multiply",
+    "Wavetable",
     "BLOCK_REGISTRY",
 ]

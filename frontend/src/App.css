@@ -727,6 +727,11 @@
   border-color: #3f51b5;
 }
 
+.block-wavetable {
+  border-color: #8bc34a;
+  min-width: 140px;
+}
+
 /* Multi-row parameter blocks (ADSR, Gate, future LPF, etc.) */
 .block-row {
   display: flex;
