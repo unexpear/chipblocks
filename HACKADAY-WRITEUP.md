@@ -60,7 +60,7 @@ MIDI input + polyphony are the highest-leverage next items — without them, the
 
 ## Try it
 
-Grab the installer for your OS from the [v0.1.0-alpha GitHub Release](https://github.com/unexpear/chipblocks/releases/tag/v0.1.0-alpha) — Windows NSIS, macOS DMG, and Linux AppImage are all attached. Discussions are open at [github.com/unexpear/chipblocks/discussions](https://github.com/unexpear/chipblocks/discussions) — bug reports, questions, "look what I built" posts all welcome. The AI consultant is **bring-your-own-key** (Anthropic); there's no hosted inference, the project never pays AI bills on your behalf, and your designs never leave your machine except for the round-trips you make to Anthropic. If that's a deal-breaker, the Play and Build paths work fully without it — the AI is an assistant, not a dependency.
+Grab the installer for your OS from the [v0.1.0-alpha.1 GitHub Release](https://github.com/unexpear/chipblocks/releases/tag/v0.1.0-alpha.1) — Windows NSIS, macOS DMG, and Linux AppImage are all attached. Discussions are open at [github.com/unexpear/chipblocks/discussions](https://github.com/unexpear/chipblocks/discussions) — bug reports, questions, "look what I built" posts all welcome. The AI consultant is **bring-your-own-key** (Anthropic); there's no hosted inference, the project never pays AI bills on your behalf, and your designs never leave your machine except for the round-trips you make to Anthropic. If that's a deal-breaker, the Play and Build paths work fully without it — the AI is an assistant, not a dependency.
 
 ## Credits and sign-off
 
