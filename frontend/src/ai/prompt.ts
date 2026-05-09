@@ -28,9 +28,9 @@ Inside the app, the user:
 
 When the canvas is rendering or building, a Cancel button appears that aborts cleanly. Status text reads "Synthesizing…" or "Building bitstream…". Errors appear as a dismissible toast bottom-left.
 
-# Block library (all 24 types — these are the EXACT type strings)
+# Block library (all 27 types — these are the EXACT type strings)
 
-All audio signals are 8-bit signed (-128 to +127) at 44100 Hz.
+All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The three visual blocks (vgatiming, colorbars, vgaoutput) drive a VGA monitor through the iCEBreaker FPGA's PMOD1B socket; ▶ Play renders audio only, so visual graphs need 🔧 Build → iCEBreaker to see anything.
 
 **oscillator** — square-wave source. Sharp / harmonically rich.
 - Output port \`audio-out\` (8-bit signed)
@@ -154,11 +154,26 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz.
 - Output port \`audio-out\`
 - Parameter \`max_value\`: 1–127 (default 16)
 
+**vgatiming** — VGA timing generator. No inputs; emits the five canonical VGA timing signals from the implicit pixel clock: \`hsync\` (horizontal sync, active LOW), \`vsync\` (vertical sync, active LOW), \`visible\` (high during the active drawable area), \`x\` (10-bit pixel column 0..639), \`y\` (10-bit pixel row 0..479). Drives a 640×480 / 60 Hz raster when fed a 25 MHz pixel clock; on the iCEBreaker's bare 12 MHz oscillator the same counters produce a valid 320×240 / 60 Hz mode that virtually every monitor accepts.
+- No input ports
+- Output ports: \`hsync\` (1-bit), \`vsync\` (1-bit), \`visible\` (1-bit), \`x\` (10-bit), \`y\` (10-bit)
+- No parameters
+
+**colorbars** — 8-stripe SMPTE-style color-bar test pattern. Combinational: looks at the high three bits of \`x\` (which divide the active 640- or 320-pixel width into 8 equal vertical bars) and emits a 1-bit-per-channel color from the SMPTE palette: white, yellow, cyan, green, magenta, red, blue, black. When \`visible\` is low the channels are forced to 0 (mandatory for VGA: any non-zero color signal during sync confuses the monitor's sync separator).
+- Input ports: \`x\` (10-bit pixel column from vgatiming), \`visible\` (1-bit from vgatiming)
+- Output ports: \`r\` (1-bit), \`g\` (1-bit), \`b\` (1-bit)
+- No parameters
+
+**vgaoutput** — visual sink. Routes 5 input signals (R, G, B, HSYNC, VSYNC) to specific iCEBreaker FPGA pins on PMOD1B. The audio ▶ Play path **doesn't render visuals** — Play renders audio only and a graph with vgaoutput but no \`output\` block fails with a friendly hint; click 🔧 Build → iCEBreaker to flash the bitstream and see the picture on a monitor connected via a VGA PMOD attachment.
+- Input ports: \`r\` (1-bit), \`g\` (1-bit), \`b\` (1-bit), \`hsync\` (1-bit), \`vsync\` (1-bit)
+- No output ports
+- No parameters
+
 # Naming conventions
 
-- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`.
-- **Port handle ids** are kebab-case: \`audio-out\`, \`audio-in\`, \`gate-out\`, \`gate-in\`, \`mix-out\`, \`in-1\`, \`in-2\`. Two are unhyphenated for control signals: \`gate\` (an ADSR input) and \`clock\` (a samplehold / counter input).
-- **Block parameters** are snake_case: \`freq\`, \`attack_ms\`, \`decay_ms\`, \`sustain_level\`, \`release_ms\`, \`rate_hz\`, \`duty_pct\`, \`cutoff_hz\` (lowpass + highpass), \`center_hz\` (bandpass), \`value\`, \`carrier_freq\`, \`modulator_freq\`, \`mod_depth\`, \`shape\`, \`bits\`, \`delay_samples\`, \`max_value\` (counter). (\`shape\` is a string-enum on \`wavetable\`; all others are integers.)
+- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`, \`vgatiming\`, \`colorbars\`, \`vgaoutput\`.
+- **Port handle ids** are kebab-case for audio/gate signals (\`audio-out\`, \`audio-in\`, \`gate-out\`, \`gate-in\`, \`mix-out\`, \`in-1\`, \`in-2\`). Control signals are unhyphenated: \`gate\` (an ADSR input), \`clock\` (a samplehold / counter input). VGA handles are short single-token names (\`r\`, \`g\`, \`b\`, \`hsync\`, \`vsync\`, \`visible\`, \`x\`, \`y\`) — same convention used in every open-source VGA core.
+- **Block parameters** are snake_case: \`freq\`, \`attack_ms\`, \`decay_ms\`, \`sustain_level\`, \`release_ms\`, \`rate_hz\`, \`duty_pct\`, \`cutoff_hz\` (lowpass + highpass), \`center_hz\` (bandpass), \`value\`, \`carrier_freq\`, \`modulator_freq\`, \`mod_depth\`, \`shape\`, \`bits\`, \`delay_samples\`, \`max_value\` (counter). (\`shape\` is a string-enum on \`wavetable\`; all others are integers.) The three visual blocks (vgatiming, colorbars, vgaoutput) have no parameters.
 
 # Save format
 
@@ -186,7 +201,8 @@ Saved graphs do **not** include cached audio — Play re-renders from scratch ea
 - **"Remove DC offset / brighten a sound"** → put a Highpass between the source and the Output. Low cutoff (~50 Hz) only kills DC; mid cutoff (~2000 Hz) leaves only the bright top end.
 - **"Make a kick drum"** → Gate (rate_hz: 2, duty_pct: 5) → ADSR.gate (attack_ms: 1, decay_ms: 80, sustain_level: 0, release_ms: 0); Oscillator (freq: 60) → ADSR.audio-in; ADSR.audio-out → Output.audio-in.
 - **"Stair-stepped pitch / arpeggio"** → Sawtooth → Samplehold.audio-in; Gate → Samplehold.clock; Samplehold.audio-out → Output. The slow gate quantizes the saw into a sequence of held tones.
-- **"Why doesn't my graph play?"** → Check (1) is there exactly one output block? (2) is something wired to its audio-in? (3) does at least one chain reach an audio source (oscillator/triangle/sawtooth)?
+- **"Color bars on a VGA monitor"** → vgatiming.x → colorbars.x; vgatiming.visible → colorbars.visible; colorbars.r/g/b → vgaoutput.r/g/b; vgatiming.hsync → vgaoutput.hsync; vgatiming.vsync → vgaoutput.vsync. No \`output\` (audio) block needed. Build with 🔧 Build → iCEBreaker; the bitstream drives the iCEBreaker's PMOD1B socket — plug in a VGA PMOD attachment and a monitor sees 8 vertical SMPTE bars.
+- **"Why doesn't my graph play?"** → Check (1) is there exactly one output block? (2) is something wired to its audio-in? (3) does at least one chain reach an audio source (oscillator/triangle/sawtooth)? If the graph has a \`vgaoutput\` block but no \`output\` block, ▶ Play will say "this graph has visual outputs but no audio Output" — that's normal: visual graphs don't simulate, they build to a flashable iCEBreaker bitstream.
 
 # What ChipBlocks does NOT do (v0.1.0-alpha)
 
@@ -220,7 +236,7 @@ After tool calls, you'll receive \`tool_result\` content blocks with the outcome
 
 - Be concrete. Reference specific block types, parameter values, and port names.
 - Keep responses tight — a short paragraph or a short list.
-- If a goal isn't possible with the current 24 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
+- If a goal isn't possible with the current 27 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
 - After multi-step tool sequences, end with a short text confirmation of what you did so the user knows where things landed.`
 
 export function buildSystemBlocks(nodes: AppNode[], edges: Edge[]) {
@@ -263,7 +279,7 @@ The \`data\` field shape depends on \`type\`:
 - bitcrusher: { bits: 1-8 (default 4) }
 - delay: { delay_samples: 1-1024 (default 128) }
 - counter: { max_value: 1-127 (default 16) }
-- mixer | output | samplehold | noise | multiply | and | or | xor | not: {} (no parameters)
+- mixer | output | samplehold | noise | multiply | and | or | xor | not | vgatiming | colorbars | vgaoutput: {} (no parameters)
 
 Omit \`data\` to use defaults.`,
       input_schema: {
@@ -288,10 +304,11 @@ Omit \`data\` to use defaults.`,
       description:
         `Wire two blocks. Connects source.source_handle to target.target_handle.
 
-Valid handle pairings (port handle names are kebab-case):
+Valid handle pairings (port handle names are kebab-case for audio/gate; short single-token names for VGA):
 - Audio sources (oscillator/triangle/sawtooth/sine/wavetable/noise/constant/mixer/adsr/lowpass/highpass/bandpass/samplehold/fm/multiply/bitcrusher/delay/counter) emit \`audio-out\` (or mixer's \`mix-out\`). Audio sinks (mixer/adsr/lowpass/highpass/bandpass/samplehold/multiply/bitcrusher/delay/output) accept on \`audio-in\` (or mixer's \`in-1\`/\`in-2\`).
 - 1-bit sources (gate, and, or, xor, not) emit \`gate-out\`. Valid 1-bit targets: adsr's \`gate\` input, samplehold's / counter's \`clock\` input, the boolean gates' \`in-1\`/\`in-2\` (and/or/xor) or \`gate-in\` (not) inputs.
-- output has \`audio-in\` and no output handle (it is a sink).
+- VGA: vgatiming emits \`hsync\`, \`vsync\`, \`visible\`, \`x\`, \`y\`. colorbars takes \`x\` + \`visible\` and emits \`r\`, \`g\`, \`b\`. vgaoutput takes \`r\`, \`g\`, \`b\`, \`hsync\`, \`vsync\` and is a sink.
+- output has \`audio-in\` and no output handle (it is the audio sink). vgaoutput has 5 inputs and no outputs (it is the visual sink).
 
 Common patterns:
 - oscillator.audio-out → adsr.audio-in
@@ -300,7 +317,11 @@ Common patterns:
 - gate.gate-out → samplehold.clock
 - gate.gate-out → counter.clock
 - gate.gate-out → not.gate-in
-- lowpass.audio-out → output.audio-in`,
+- lowpass.audio-out → output.audio-in
+- vgatiming.x → colorbars.x
+- vgatiming.visible → colorbars.visible
+- colorbars.r → vgaoutput.r (same for g, b)
+- vgatiming.hsync → vgaoutput.hsync (same for vsync)`,
       input_schema: {
         type: 'object',
         properties: {
@@ -308,11 +329,11 @@ Common patterns:
           target_id: { type: 'string', description: 'Node id of the target block' },
           source_handle: {
             type: 'string',
-            description: 'One of: audio-out, mix-out, gate-out',
+            description: 'One of: audio-out, mix-out, gate-out, hsync, vsync, visible, x, y, r, g, b',
           },
           target_handle: {
             type: 'string',
-            description: 'One of: audio-in, in-1, in-2, gate, gate-in, clock',
+            description: 'One of: audio-in, in-1, in-2, gate, gate-in, clock, x, visible, r, g, b, hsync, vsync',
           },
         },
         required: ['source_id', 'target_id', 'source_handle', 'target_handle'],
@@ -336,7 +357,7 @@ Allowed fields per block type (same as add_node):
 - bitcrusher: bits
 - delay: delay_samples
 - counter: max_value
-- mixer | output | samplehold | noise | multiply | and | or | xor | not: (no parameters; this tool is a no-op for these types)`,
+- mixer | output | samplehold | noise | multiply | and | or | xor | not | vgatiming | colorbars | vgaoutput: (no parameters; this tool is a no-op for these types)`,
       input_schema: {
         type: 'object',
         properties: {

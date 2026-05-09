@@ -168,4 +168,23 @@ export const EXAMPLES: ExampleGraph[] = [
       { id: 'e3', source: 'smooth', target: 'out',    sourceHandle: 'audio-out', targetHandle: 'audio-in' },
     ],
   },
+  {
+    id: 'color-bars',
+    label: 'Color bars on a VGA monitor',
+    description: 'VGA Timing → Color Bars → VGA Output. The first visual chip: build to iCEBreaker, plug a VGA-PMOD into PMOD1B, see 8 SMPTE color bars.',
+    nodes: [
+      { id: 'vt', type: 'vgatiming', position: { x: 50,  y: 60 }, data: {} },
+      { id: 'cb', type: 'colorbars', position: { x: 380, y: 60 }, data: {} },
+      { id: 'vo', type: 'vgaoutput', position: { x: 700, y: 60 }, data: {} },
+    ],
+    edges: [
+      { id: 'e1', source: 'vt', target: 'cb', sourceHandle: 'x',       targetHandle: 'x'       },
+      { id: 'e2', source: 'vt', target: 'cb', sourceHandle: 'visible', targetHandle: 'visible' },
+      { id: 'e3', source: 'cb', target: 'vo', sourceHandle: 'r',       targetHandle: 'r'       },
+      { id: 'e4', source: 'cb', target: 'vo', sourceHandle: 'g',       targetHandle: 'g'       },
+      { id: 'e5', source: 'cb', target: 'vo', sourceHandle: 'b',       targetHandle: 'b'       },
+      { id: 'e6', source: 'vt', target: 'vo', sourceHandle: 'hsync',   targetHandle: 'hsync'   },
+      { id: 'e7', source: 'vt', target: 'vo', sourceHandle: 'vsync',   targetHandle: 'vsync'   },
+    ],
+  },
 ]

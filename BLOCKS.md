@@ -1,8 +1,8 @@
 # ChipBlocks block library
 
-> **Last updated:** 2026-05-09 · Reference for the 24 blocks shipping in v0.1.0-alpha. The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). For how the renderer talks to the backend and how to add another block, see [ARCHITECTURE.md](ARCHITECTURE.md).
+> **Last updated:** 2026-05-09 · Reference for the 27 blocks shipping in v0.1.0-alpha. The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). For how the renderer talks to the backend and how to add another block, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-This document describes what each block does, what its inputs and outputs are, what its parameters mean, and roughly how it sounds. Blocks are 8-bit signed (–128..+127) at a 44.1 kHz sample rate. Audio handles carry signed 8-bit samples; gate / clock handles carry 1-bit signals. Edges are direction-checked by React Flow at edit time.
+This document describes what each block does, what its inputs and outputs are, what its parameters mean, and roughly how it sounds (or looks). Audio blocks are 8-bit signed (–128..+127) at a 44.1 kHz sample rate. Audio handles carry signed 8-bit samples; gate / clock handles carry 1-bit signals; visual handles are short single-token names (`r`, `g`, `b`, `hsync`, `vsync`, `visible`, `x`, `y`) following the convention used in every open-source VGA core. Edges are direction-checked by React Flow at edit time.
 
 A note on parameter ranges: the React Flow node components enforce **musically sensible** ranges (e.g. an oscillator frequency is capped at 20–20 000 Hz). The Amaranth backends enforce only the **structurally necessary** lower bounds (frequency must be >= 1 Hz so the phase accumulator advances). Where the two differ, both are listed.
 
@@ -44,6 +44,12 @@ A note on parameter ranges: the React Flow node components enforce **musically s
 
 - [Bitcrusher](#bitcrusher)
 - [Delay](#delay)
+
+### Visual
+
+- [VGA Timing](#vga-timing)
+- [Color Bars](#color-bars)
+- [VGA Output](#vga-output)
 
 ### Mixing and routing
 
@@ -516,6 +522,86 @@ Fixed-length delay line. The output is the input shifted forward in time by `del
 **Behavior.** A circular buffer in `amaranth.lib.memory.Memory` (block-RAM-backed when targeting iCE40 silicon). One pointer walks the buffer; on each cycle the asynchronously-read value (the slot `delay_samples` cycles old) becomes the output, then the current input synchronously overwrites that slot. 1 024 8-bit entries fit easily in a single iCE40 4 KB BRAM, which is why that's the cap. The buffer is zero-initialized, so the output is silent for the first `delay_samples` cycles after reset.
 
 **Common usage.** Around 50 samples gives chorus thickening; 200–500 samples gives flange / slap-back. For an actual echo, loop the delay output back through a Multiply (by a constant <127 for feedback below unity) and a Mixer with the original — a small graph rather than a single block.
+
+---
+
+## Visual
+
+The three visual blocks turn ChipBlocks from "audio-only" into "audio or video." They drive a VGA monitor through the iCEBreaker FPGA's PMOD1B socket; the audio ▶ Play path doesn't render visuals — visual graphs need 🔧 Build → iCEBreaker and a flashed bitstream to produce a picture. A graph with a VGA Output but no audio Output fails ▶ Play with a friendly hint pointing to the build button.
+
+The "first visual chip" demo (bundled as `examples/color-bars.json`) is VGA Timing → (visible / x → Color Bars) → Color Bars → VGA Output. Flash to an iCEBreaker, plug a VGA-PMOD into PMOD1B, attach a monitor, and you see eight vertical SMPTE color bars.
+
+**iCEBreaker pin mapping (PMOD1B).** Per [`amaranth_boards/icebreaker.py`](https://github.com/amaranth-lang/amaranth-boards/blob/main/amaranth_boards/icebreaker.py)'s PMOD1B connector string `"43 38 34 31 - - 42 36 32 28 - -"` and the standard 1BitSquared / Digilent VGA-PMOD signal-to-pin convention:
+
+| VGA signal | PMOD pin | Package pin |
+|---|---|---|
+| R0      | PMOD1B pin 1 | 43 |
+| G0      | PMOD1B pin 2 | 38 |
+| B0      | PMOD1B pin 3 | 34 |
+| HSYNC   | PMOD1B pin 4 | 31 |
+| VSYNC   | PMOD1B pin 7 | 42 |
+
+**Resolution.** The VGA Timing block's counters are wired for the canonical 640×480 / 60 Hz raster (800 × 525 ticks per frame). v0.1 drives those counters directly from the iCEBreaker's 12 MHz oscillator without a PLL, which produces a 320×240 / 60 Hz mode at the same H/V cadence — still a perfectly valid VGA mode that virtually every monitor accepts. The full 640×480 raster needs a 25 MHz pixel clock from an SB_PLL40_CORE primitive; that's deferred so v0.1 can ship a known-working visual story now.
+
+### VGA Timing
+
+Generates standard VGA timing from the implicit pixel clock. The five outputs are the canonical signals every VGA pipeline needs.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `hsync` | source | 1-bit | Horizontal sync, active LOW (high during the visible / porch intervals, low during the 96-tick sync window) |
+| `vsync` | source | 1-bit | Vertical sync, active LOW |
+| `visible` | source | 1-bit | High during the 640×480 active area, low during all blanking and sync intervals |
+| `x` | source | 10-bit unsigned | Pixel column 0..639 while `visible` is high (porch / sync values elsewhere — downstream blocks gate on `visible`) |
+| `y` | source | 10-bit unsigned | Pixel row 0..479 while `visible` is high |
+
+**Parameters.** None.
+
+**Behavior.** Two counters: a horizontal counter walks 0..H_TOTAL−1 (800), and on each H wrap a vertical counter advances 0..V_TOTAL−1 (525). The `visible` output is `(h < 640) & (v < 480)`. Sync polarities are active-low — that's the VESA-DMT standard for 640×480 / 60 Hz.
+
+**Common usage.** The leftmost block in every visual graph: feed `x` and `visible` into a pixel-generator block (Color Bars in v0.1) and route `hsync` / `vsync` straight through to VGA Output's matching inputs.
+
+### Color Bars
+
+8-vertical-stripe SMPTE color-bar test pattern — the canonical "is the chip alive?" image. Combinational: looks at the high three bits of `x` and emits a 1-bit-per-channel color from a small lookup.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `x` | target | 10-bit unsigned | Pixel column from VGA Timing |
+| `visible` | target | 1-bit | When low, all channels are forced to 0 |
+| `r` | source | 1-bit | Red channel |
+| `g` | source | 1-bit | Green channel |
+| `b` | source | 1-bit | Blue channel |
+
+**Parameters.** None.
+
+**Behavior.** Bits `[6:9]` of `x` (i.e. `x / 64`) form the bar index 0..7. We use 64-pixel-wide bars rather than the strict 1/8-of-640 = 80-pixel bars so the index falls out as a free bit-slice — cheaper on the iCE40 than a divide-by-80 ladder, and 8 × 64 = 512 pixels comfortably fills the 320-pixel active area v0.1 ships in 12 MHz / 320×240 mode. The bar palette is the standard SMPTE NTSC test pattern, left-to-right: white, yellow, cyan, green, magenta, red, blue, black. When `visible` is low (during VGA blanking / sync), all three channels are forced to 0 — that's required by VGA: any non-zero color signal during sync confuses the monitor's HSYNC/VSYNC separator.
+
+**Common usage.** Pair it with VGA Timing for the canonical "first picture on a monitor" demo. Replacing Color Bars with a future user-built pixel-generator (sprite tiles, character ROMs, framebuffer reads) keeps the rest of the pipeline unchanged.
+
+### VGA Output
+
+The visual sink. Five inputs (R, G, B, HSYNC, VSYNC) routed to physical FPGA pins on the iCEBreaker's PMOD1B socket.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `r` | target | 1-bit | Red channel |
+| `g` | target | 1-bit | Green channel |
+| `b` | target | 1-bit | Blue channel |
+| `hsync` | target | 1-bit | Horizontal sync |
+| `vsync` | target | 1-bit | Vertical sync |
+
+**Parameters.** None.
+
+**Behavior.** No internal logic. The block is a marker that says "route these five 1-bit signals to the VGA pins." `build.py` looks for the presence of a VGA Output node and, when targeting the iCEBreaker, generates extra `set_io` lines in the .pcf binding each signal to its physical PMOD1B pad. The audio ▶ Play path doesn't render visuals: VGA Output blocks elaborate but contribute nothing to the WAV; a graph with VGA Output but no audio Output fails Play with a friendly "🔧 Build → iCEBreaker" hint.
+
+**Common usage.** The destination of every visual graph. Mirror the audio Output's role: the shortest possible useful visual patch is VGA Timing → Color Bars → VGA Output (with the obvious wiring on `x` / `visible` / `hsync` / `vsync`).
 
 ---
 

@@ -30,6 +30,13 @@ from amaranth.sim import Simulator  # noqa: E402
 from blocks import BLOCK_REGISTRY, Output  # noqa: E402
 
 
+# Block types that emit visuals (drive a VGA monitor) rather than audio.
+# Used to give a friendly hint when ▶ Play is invoked on a visual-only
+# graph — Play renders the audio path; the visual signals only become
+# observable on a real monitor after 🔧 Build → iCEBreaker.
+_VISUAL_OUTPUT_TYPES = {"vgaoutput"}
+
+
 SAMPLE_RATE = 44100
 DURATION_S = 2
 
@@ -108,14 +115,34 @@ def _build_params(node_type: str, data: dict) -> dict:
 # Top-level module: composes block instances from the graph and wires edges.
 # ---------------------------------------------------------------------------
 class GraphTop(Elaboratable):
-    def __init__(self, graph: dict):
+    def __init__(self, graph: dict, require_audio_output: bool = True):
         self.graph = graph
         self.blocks: dict[str, Elaboratable] = {}
         self.output_block: Output | None = None
+        # Tracked separately so the FPGA wrapper can route a VGA Output
+        # block's signals to physical pins. None for graphs without one.
+        self.vga_output_block = None
 
         nodes = graph.get("nodes", [])
         if not nodes:
             raise ValueError("Graph has no nodes.")
+
+        # Friendly bail-out for visual-only graphs in the audio-Play
+        # pipeline: if the user wired up a VGA Output but no audio
+        # Output, tell them where to go next rather than letting the
+        # generic "no Output block" error fire. The FPGA build path
+        # passes require_audio_output=False because visual-only graphs
+        # are flashable; only ▶ Play needs an audio sink.
+        node_types = {n.get("type") for n in nodes}
+        has_audio_output = "output" in node_types
+        has_visual_output = bool(_VISUAL_OUTPUT_TYPES & node_types)
+        if require_audio_output and has_visual_output and not has_audio_output:
+            raise ValueError(
+                "This graph has visual outputs but no audio Output. "
+                "▶ Play renders audio only — click \U0001f527 "
+                "Build → iCEBreaker to flash this design to FPGA "
+                "and see it on a VGA monitor."
+            )
 
         for node in nodes:
             node_id = node.get("id")
@@ -137,8 +164,12 @@ class GraphTop(Elaboratable):
             # Track the (first) Output block as our audio sink.
             if isinstance(block, Output) and self.output_block is None:
                 self.output_block = block
+            # Same for the (first) VGA Output block — exposed by name
+            # rather than isinstance to avoid a circular import.
+            if node_type == "vgaoutput" and self.vga_output_block is None:
+                self.vga_output_block = block
 
-        if self.output_block is None:
+        if require_audio_output and self.output_block is None:
             raise ValueError("Graph has no Output block — nothing to sample.")
 
     def elaborate(self, platform):

@@ -867,6 +867,28 @@
   min-width: 130px;
 }
 
+.block-vgatiming {
+  border-color: #673ab7;
+  /* Tall enough for 5 stacked output handles at 32 px spacing
+     (24, 56, 88, 120, 152 → max bottom edge ≈ 168 px). */
+  min-height: 180px;
+  min-width: 130px;
+}
+
+.block-colorbars {
+  border-color: #ab47bc;
+  /* 3 right-side outputs at 24/56/88 + 2 left-side inputs at 24/56. */
+  min-height: 110px;
+  min-width: 130px;
+}
+
+.block-vgaoutput {
+  border-color: #d81b60;
+  /* 5 stacked input handles, same shape as VGA Timing. */
+  min-height: 180px;
+  min-width: 130px;
+}
+
 /* Multi-row parameter blocks (ADSR, Gate, future LPF, etc.) */
 .block-row {
   display: flex;

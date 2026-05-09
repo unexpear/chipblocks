@@ -36,6 +36,9 @@ from .or_gate import OrGate
 from .xor_gate import XorGate
 from .not_gate import NotGate
 from .counter import Counter
+from .vga_timing import VgaTiming
+from .color_bars import ColorBars
+from .vga_output import VgaOutput
 
 # Registry mapping graph node `type` (from React Flow JSON) to block class.
 BLOCK_REGISTRY = {
@@ -63,6 +66,9 @@ BLOCK_REGISTRY = {
     "xor": XorGate,
     "not": NotGate,
     "counter": Counter,
+    "vgatiming": VgaTiming,
+    "colorbars": ColorBars,
+    "vgaoutput": VgaOutput,
 }
 
 __all__ = [
@@ -90,5 +96,8 @@ __all__ = [
     "XorGate",
     "NotGate",
     "Counter",
+    "VgaTiming",
+    "ColorBars",
+    "VgaOutput",
     "BLOCK_REGISTRY",
 ]

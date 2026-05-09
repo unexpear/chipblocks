@@ -5,12 +5,12 @@ ChipBlocks is a free, open-source desktop app that lets non-technical people des
 ## What's in the alpha
 
 - Visual node-graph editor with drag-from-palette, port-directional wiring, per-block parameter editors. WCAG 2.1 AA accessibility (keyboard navigation, focus indicators, screen-reader labels, live regions for status messages).
-- **24 blocks**: Oscillator (square), Triangle, Sawtooth, Sine, Wavetable (4 shapes), Noise, Constant, Mixer, ADSR Envelope, Gate, Low-Pass / High-Pass / Band-Pass Filters, Sample-and-Hold, FM voice, Multiply (ring-mod / VCA), Bitcrusher, Delay, AND / OR / XOR / NOT / Counter (digital logic), Output. Per-block reference in [BLOCKS.md](BLOCKS.md).
+- **27 blocks**: Oscillator (square), Triangle, Sawtooth, Sine, Wavetable (4 shapes), Noise, Constant, Mixer, ADSR Envelope, Gate, Low-Pass / High-Pass / Band-Pass Filters, Sample-and-Hold, FM voice, Multiply (ring-mod / VCA), Bitcrusher, Delay, AND / OR / XOR / NOT / Counter (digital logic), VGA Timing / Color Bars / VGA Output (visual — turns a graph into a video chip on the iCEBreaker FPGA's PMOD1B header), Output. Per-block reference in [BLOCKS.md](BLOCKS.md).
 - AI consultant in a chat sidebar — BYOK Anthropic. Reads the canvas, suggests blocks, can add or wire blocks for you with a preview-and-confirm step before destructive edits.
 - ▶ Play: simulates the design via Amaranth, produces a 16-bit 44.1 kHz WAV that the app plays.
 - 🔧 Build for **Lattice iCEstick**, **TinyFPGA BX**, or **1BitSquared iCEBreaker**: runs the graph through Yosys, nextpnr-ice40, and icepack into a flashable `.bin`. Bundle includes a `BUILD.md` utilization report so you know if your design fits.
 - 🚀 Build for **Tiny Tapeout**: emits a 14-file submission package in canonical `ttsky-verilog-template` layout with a working cocotb testbench. Drop into the GitHub template, push, submit at [app.tinytapeout.com](https://app.tinytapeout.com/) — your design becomes real silicon on the next SkyWater 130 or GlobalFoundries 180 shuttle.
-- Project save / load (versioned JSON). **9 bundled examples** in the Load → Examples menu (Two oscillators mixed, ADSR-shaped pulse, Kick drum, Snare drum, Bass lead, Lo-fi pad, Stair-stepped arpeggio, Echo, Lo-fi crunch), Help → About, and a default starter graph on first launch so the canvas is never empty.
+- Project save / load (versioned JSON). **10 bundled examples** in the Load → Examples menu (Two oscillators mixed, ADSR-shaped pulse, Kick drum, Snare drum, Bass lead, Lo-fi pad, Stair-stepped arpeggio, Echo, Lo-fi crunch, Color bars on a VGA monitor), Help → About, and a default starter graph on first launch so the canvas is never empty.
 
 ## Install
 

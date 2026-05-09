@@ -44,6 +44,9 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'xor',        label: 'XOR',        color: '#039be5', description: '1-bit exclusive OR (a ^ b)' },
   { type: 'not',        label: 'NOT',        color: '#03a9f4', description: '1-bit inverter (~a)' },
   { type: 'counter',    label: 'Counter',    color: '#01579b', description: 'Wrapping counter clocked by a 1-bit signal' },
+  { type: 'vgatiming',  label: 'VGA Timing', color: '#673ab7', description: '640×480 / 60 Hz VGA timing generator' },
+  { type: 'colorbars',  label: 'Color Bars', color: '#ab47bc', description: '8-stripe SMPTE color-bar test pattern' },
+  { type: 'vgaoutput',  label: 'VGA Output', color: '#d81b60', description: 'Visual sink — drives a VGA monitor (iCEBreaker PMOD1B)' },
   { type: 'output',     label: 'Output',     color: '#f44336', description: 'Audio sink (where Play reads from)' },
 ]
 
@@ -87,6 +90,9 @@ export function defaultDataForType(type: string): Record<string, unknown> {
     case 'or':
     case 'xor':
     case 'not':
+    case 'vgatiming':
+    case 'colorbars':
+    case 'vgaoutput':
     default:
       return {}
   }

@@ -50,6 +50,9 @@ import { OrGateNode } from '../src/blocks/OrGateNode'
 import { XorGateNode } from '../src/blocks/XorGateNode'
 import { NotGateNode } from '../src/blocks/NotGateNode'
 import { CounterNode } from '../src/blocks/CounterNode'
+import { VgaTimingNode } from '../src/blocks/VgaTimingNode'
+import { ColorBarsNode } from '../src/blocks/ColorBarsNode'
+import { VgaOutputNode } from '../src/blocks/VgaOutputNode'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -808,5 +811,45 @@ describe('Counter block', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/1.*127/)
     await user.tab()
     expect(input.value).toBe('16')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Visual blocks: VgaTiming (5 outputs, no inputs), ColorBars (2 inputs,
+// 3 outputs), VgaOutput (5 inputs, no outputs). All parameterless.
+
+describe('VgaTiming block', () => {
+  it('renders title with 5 source handles and no target handles', () => {
+    const { container } = wrap(
+      <VgaTimingNode {...nodePropsBase('vt-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('VGA Timing')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(0)
+    expect(countHandles(container, 'source')).toBe(5)
+  })
+})
+
+describe('ColorBars block', () => {
+  it('renders title with 2 inputs and 3 outputs, no params', () => {
+    const { container } = wrap(
+      <ColorBarsNode {...nodePropsBase('cb-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Color Bars')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(2)
+    expect(countHandles(container, 'source')).toBe(3)
+  })
+})
+
+describe('VgaOutput block', () => {
+  it('renders title with 5 inputs and 0 outputs', () => {
+    const { container } = wrap(
+      <VgaOutputNode {...nodePropsBase('vo-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('VGA Output')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(5)
+    expect(countHandles(container, 'source')).toBe(0)
   })
 })

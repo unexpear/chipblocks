@@ -14,7 +14,7 @@ That gap is what ChipBlocks targets. Not as a Cadence-killer for production SoCs
 
 ## What the alpha actually does
 
-The editor is React Flow on top of Electron, with a side palette of 24 blocks: square / triangle / sawtooth / sine oscillators plus a 4-shape wavetable, noise, constant, mixer, ADSR envelope, gate, sample-and-hold, multiply (ring modulator), FM voice, low-pass / high-pass / band-pass filters, bitcrusher, delay, AND / OR / XOR / NOT / counter (digital-logic primitives), output. Each block is a parameterized HDL module under the hood; the visual graph is just a friendly view of an Amaranth design. There's an AI consultant in a chat sidebar (BYOK Anthropic) that can read the canvas, suggest blocks, and even add or wire them for you, with a preview-and-confirm step before destructive edits.
+The editor is React Flow on top of Electron, with a side palette of 27 blocks: square / triangle / sawtooth / sine oscillators plus a 4-shape wavetable, noise, constant, mixer, ADSR envelope, gate, sample-and-hold, multiply (ring modulator), FM voice, low-pass / high-pass / band-pass filters, bitcrusher, delay, AND / OR / XOR / NOT / counter (digital-logic primitives), VGA Timing / Color Bars / VGA Output (the visual chain — turns the iCEBreaker into a video chip via its standard PMOD1B socket), output. Each block is a parameterized HDL module under the hood; the visual graph is just a friendly view of an Amaranth design. There's an AI consultant in a chat sidebar (BYOK Anthropic) that can read the canvas, suggest blocks, and even add or wire them for you, with a preview-and-confirm step before destructive edits.
 
 Two big buttons live in the toolbar. Click ▶ Play and the Python backend translates the graph to Amaranth, simulates it, and hands the renderer a 16-bit 44.1 kHz WAV that plays through your speakers. Click 🔧 Build and a dropdown picks the silicon target:
 
@@ -42,6 +42,20 @@ Now click 🔧 Build for FPGA. About thirty seconds later, a download fires: `ch
 - `FLASH.md` — `iceprog chipblocks.bin` instructions plus a wiring diagram
 
 Plug an iCEstick into USB. Run `iceprog chipblocks.bin`. Wire pin B1 through a 1 kΩ resistor and a 100 nF cap (the cheapest possible RC low-pass to filter out the PWM carrier) into a small speaker. Power-cycle the board. Your kick drum is now real silicon — Yosys took the Verilog, nextpnr packed the design into the iCE40HX-1k's 1280 LUTs, icepack spat out the binary. The same `.bin` pattern works for any graph you can build on the canvas.
+
+## Worked example: color bars on a VGA monitor, in 5 minutes
+
+Drag three blocks from the palette: **VGA Timing**, **Color Bars**, **VGA Output**. Wire them up:
+
+- `VGA Timing.x` → `Color Bars.x`, `VGA Timing.visible` → `Color Bars.visible` (the timing block tells Color Bars where on the screen we are and whether it's the active draw area)
+- `Color Bars.r/g/b` → `VGA Output.r/g/b` (the picture data)
+- `VGA Timing.hsync` → `VGA Output.hsync`, `VGA Timing.vsync` → `VGA Output.vsync` (the sync signals that keep the monitor in lock)
+
+No audio Output. There's nothing to play through speakers — this is a video chip. Click ▶ Play and the app politely tells you: "this graph has visual outputs but no audio Output. ▶ Play renders audio only — click 🔧 Build → iCEBreaker to flash this design to FPGA and see it on a VGA monitor."
+
+So click 🔧 Build and pick the **iCEBreaker**. Same Yosys + nextpnr-ice40 + icepack pipeline — about 30 seconds — and out comes `chipblocks-fpga-icebreaker.zip`. Same internal layout as the audio bundle, except the `chipblocks.pcf` carries 5 extra `set_io` lines mapping the R / G / B / HSYNC / VSYNC top-level Verilog ports to PMOD1B's package pins (43 / 38 / 34 / 31 / 42 — the convention from `amaranth_boards/icebreaker.py`'s PMOD1B connector string). FLASH.md has a "Flashing for VGA output" section telling you which slot to plug the PMOD into.
+
+The hardware: a 1BitSquared or Digilent **VGA-PMOD attachment** ($8), a standard VGA cable, and any monitor that takes one. Plug the PMOD into the iCEBreaker's PMOD1B header (second from the left, distinct from the audio PMOD1A on the right). Run `iceprog chipblocks.bin`. The on-board oscillator is 12 MHz, so v0.1 produces a 320×240 / 60 Hz raster (still a perfectly valid VGA mode — virtually every monitor accepts it; the 25 MHz / 640×480 path needs an `SB_PLL40_CORE` primitive that's deferred). The monitor wakes up showing 8 vertical SMPTE color bars: white, yellow, cyan, green, magenta, red, blue, black. Total cost to go from "drag three blocks" to "real picture on a real monitor": ~$80 (iCEBreaker + VGA-PMOD + a monitor you probably already own).
 
 ## Under the hood
 

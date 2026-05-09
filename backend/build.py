@@ -101,6 +101,13 @@ class FPGABoard:
     audio_pin: str  # pin label for the PWM-modulated audio output
     pcf_template: str  # multi-line .pcf with {clock_pin}/{audio_pin} placeholders
     flash_md_template: str  # FLASH.md content (per-board flashing instructions)
+    # VGA pin map for boards that expose a standard VGA PMOD slot. None
+    # for boards without a documented VGA convention (the iCEstick lacks
+    # standard PMOD headers; the TinyFPGA BX doesn't ship with a VGA
+    # PMOD reference). Only iCEBreaker has these set in v0.1.
+    vga_pins: dict[str, str] | None = None
+    vga_pcf_template: str | None = None
+    vga_flash_md_section: str = ""
 
 
 # Lattice iCEstick (iCE40HX-1k, TQ144 package). Onboard 12 MHz oscillator
@@ -243,6 +250,43 @@ ICEBREAKER = FPGABoard(
     clock_hz=12_000_000,
     clock_pin="35",
     audio_pin="4",
+    # PMOD1B pin map for the canonical 1BitSquared / Digilent VGA PMOD.
+    # Verified against amaranth_boards/icebreaker.py's PMOD1B connector
+    # string ("43 38 34 31 - - 42 36 32 28 - -"): PMOD pin 1 = 43,
+    # pin 2 = 38, pin 3 = 34, pin 4 = 31, pin 7 = 42. The standard
+    # VGA-PMOD signal-to-pin convention is R0->p1, G0->p2, B0->p3,
+    # HSYNC->p4, VSYNC->p7, giving the dictionary below.
+    vga_pins={
+        "vga_r": "43",
+        "vga_g": "38",
+        "vga_b": "34",
+        "vga_hsync": "31",
+        "vga_vsync": "42",
+    },
+    vga_pcf_template="""\
+# VGA PMOD on PMOD1B (1BitSquared / Digilent VGA-PMOD attachment)
+set_io vga_r {vga_r}
+set_io vga_g {vga_g}
+set_io vga_b {vga_b}
+set_io vga_hsync {vga_hsync}
+set_io vga_vsync {vga_vsync}
+""",
+    vga_flash_md_section="""\
+
+## Flashing for VGA output (graphs with a VGA Output block)
+
+If your graph has a VGA Output block, the bitstream drives 5 extra pins on the iCEBreaker's PMOD1B socket. To see the picture:
+
+1. Plug a **VGA-PMOD attachment** (1BitSquared sells one for ~$8; the Digilent VGA PMOD also works) into the **PMOD1B** header — that's the second PMOD socket from the left edge, distinct from the audio PMOD1A used for the speaker output.
+2. Connect the PMOD's DB-15 socket to your monitor with a standard VGA cable.
+3. Flash exactly as for audio:
+    ```bash
+    iceprog chipblocks.bin
+    ```
+4. The monitor should show the visual pattern your graph generates (e.g. SMPTE color bars).
+
+Note: at v0.1 the pixel clock is the iCEBreaker's bare 12 MHz oscillator, so the timing block produces 320×240 @ 60 Hz rather than full 640×480. Virtually every monitor accepts this; if yours rejects it, try a different monitor or a cheap HDMI-to-VGA adapter (some adapters tolerate non-standard timings better than direct VGA).
+""",
     pcf_template="""\
 # iCEBreaker (iCE40UP-5k, SG48 package) constraints for ChipBlocks
 # Onboard 12 MHz oscillator is wired to global clock pin 35
@@ -295,6 +339,11 @@ ALL_BOARDS: dict[str, FPGABoard] = {
 }
 
 
+def _graph_has_vga_output(graph: dict) -> bool:
+    """True iff the graph contains at least one VGA Output node."""
+    return any(n.get("type") == "vgaoutput" for n in graph.get("nodes", []))
+
+
 class BoardTop(Elaboratable):
     """Top-level wrapper for any supported iCE40 board.
 
@@ -320,16 +369,74 @@ class BoardTop(Elaboratable):
     single GPIO with an external RC filter is a board-agnostic
     approach. The only board-specific knob is the input clock
     frequency, which sets the sample-rate divider.
+
+    Visual graphs:
+        Graphs containing a VGA Output block run at the board's full
+        clock rate rather than the audio rate — VGA timing wants the
+        12 MHz oscillator as its pixel clock, not 44.1 kHz. We detect
+        this case from the graph and skip the EnableInserter; the audio
+        Output block's signal then advances at the same fast rate (which
+        won't sound right, but the bitstream still builds). v0.1
+        therefore expects designs to be either audio-only OR visual-
+        only; mixing the two in one graph is on the roadmap.
     """
 
     def __init__(self, graph: dict, board: FPGABoard):
         self.board = board
-        self.inner = GraphTop(graph)
+        self.has_vga = _graph_has_vga_output(graph)
+        # Visual-only graphs don't need an audio Output, so the GraphTop
+        # constructor is asked to skip that requirement when this build
+        # is targeting a VGA design.
+        self.inner = GraphTop(graph, require_audio_output=not self.has_vga)
         # Single 1-bit GPIO output for PWM-modulated audio.
         self.audio_pin = Signal()
+        # 5 extra GPIOs for VGA. Always allocated (cheap) but only
+        # surfaced as Verilog top-level ports / .pcf entries when the
+        # graph actually has a VGA Output node.
+        self.vga_r = Signal()
+        self.vga_g = Signal()
+        self.vga_b = Signal()
+        self.vga_hsync = Signal()
+        self.vga_vsync = Signal()
 
     def elaborate(self, platform):
         m = Module()
+
+        if self.has_vga:
+            # VGA path: run the inner graph at the full board clock
+            # rate so the VGA Timing block sees a sane pixel clock.
+            # Audio gating is skipped; the audio Output (if any) just
+            # comes along for the ride at the wrong rate.
+            m.submodules.inner = self.inner
+
+            # Route the VGA Output block's input ports straight to the
+            # top-level pins. The translator inside GraphTop has
+            # already wired user edges (e.g. ColorBars.r ->
+            # VgaOutput.r) into these signals.
+            vga_block = self.inner.vga_output_block
+            m.d.comb += [
+                self.vga_r.eq(vga_block.r),
+                self.vga_g.eq(vga_block.g),
+                self.vga_b.eq(vga_block.b),
+                self.vga_hsync.eq(vga_block.hsync),
+                self.vga_vsync.eq(vga_block.vsync),
+            ]
+
+            # If an audio Output exists too, drive the PWM pin from it
+            # (uncalibrated rate); otherwise hold the audio pin low.
+            if self.inner.output_block is not None:
+                pwm_count = Signal(8)
+                m.d.sync += pwm_count.eq(pwm_count + 1)
+                audio_in_signed = self.inner.output_block.audio_in
+                amp = (audio_in_signed + 128).as_unsigned()
+                m.d.comb += self.audio_pin.eq(pwm_count < amp)
+            else:
+                m.d.comb += self.audio_pin.eq(0)
+
+            return m
+
+        # Audio path (the original Sprint 6 behavior): gate the inner
+        # graph by sample_tick so its flip-flops advance at 44.1 kHz.
 
         # Sample-rate divider: count clock ticks per audio sample.
         # iCEstick / iCEBreaker @ 12 MHz: 12_000_000 / 44_100 ≈ 272.
@@ -376,15 +483,21 @@ def emit_verilog(graph: dict, out_dir: Path, board: FPGABoard | None = None) -> 
     requested. The wrapper only differs across boards by sample-rate-
     divider value, so the emitted Verilog has near-identical structure
     regardless of board choice — just different constant widths.
+
+    For graphs containing a VGA Output, the 5 VGA pins are added as
+    extra top-level ports so nextpnr can route them to physical pads.
     """
     if board is None:
         board = ICESTICK
     top = BoardTop(graph, board)
     out_dir.mkdir(parents=True, exist_ok=True)
     verilog_path = out_dir / "chipblocks.v"
+    ports = [top.audio_pin]
+    if top.has_vga:
+        ports += [top.vga_r, top.vga_g, top.vga_b, top.vga_hsync, top.vga_vsync]
     verilog_text = verilog.convert(
         top,
-        ports=[top.audio_pin],
+        ports=ports,
         # iCEstick toolchain expects modules without language extensions.
         emit_src=False,
     )
@@ -432,12 +545,17 @@ def build_fpga(graph: dict, out_dir: Path, board: FPGABoard) -> dict:
     # 1. Verilog
     verilog_path = emit_verilog(graph, out_dir, board)
     pcf_path = out_dir / "chipblocks.pcf"
-    pcf_path.write_text(
-        board.pcf_template.format(
-            clock_pin=board.clock_pin,
-            audio_pin=board.audio_pin,
-        )
+    pcf_text = board.pcf_template.format(
+        clock_pin=board.clock_pin,
+        audio_pin=board.audio_pin,
     )
+    # Extend the .pcf with VGA pin constraints when the graph wires a
+    # VGA Output AND the target board has a documented VGA convention
+    # (today only the iCEBreaker). Without these lines nextpnr-ice40
+    # would refuse to route the 5 extra top-level ports.
+    if _graph_has_vga_output(graph) and board.vga_pcf_template and board.vga_pins:
+        pcf_text += "\n" + board.vga_pcf_template.format(**board.vga_pins)
+    pcf_path.write_text(pcf_text)
 
     # 2. Yosys synth.
     # NB: don't pass `-q`. We parse the cell-count statistics from Yosys's
@@ -832,12 +950,18 @@ def make_bundle(out_dir: Path, graph: dict, result: dict) -> Path:
     board: FPGABoard = result["board"]
     bundle_path = out_dir / f"chipblocks-fpga-{board.id}.zip"
     build_md = _generate_build_report(graph, result)
+    flash_md = board.flash_md_template
+    # When the graph drives a VGA Output and the board has a VGA
+    # convention, append the per-board VGA flashing section so the user
+    # knows which slot to plug the PMOD into.
+    if _graph_has_vga_output(graph) and board.vga_flash_md_section:
+        flash_md = flash_md + board.vga_flash_md_section
     with zipfile.ZipFile(bundle_path, "w", zipfile.ZIP_DEFLATED) as z:
         z.write(result["bin"], "chipblocks.bin")
         z.write(result["verilog"], "chipblocks.v")
         z.write(result["pcf"], "chipblocks.pcf")
         z.writestr("BUILD.md", build_md)
-        z.writestr("FLASH.md", board.flash_md_template)
+        z.writestr("FLASH.md", flash_md)
     return bundle_path
 
 

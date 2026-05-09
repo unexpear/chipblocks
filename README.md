@@ -14,7 +14,7 @@
 
 ChipBlocks is a free, open-source desktop app that lets **non-technical people design custom silicon chips** by wiring visual blocks together. Drop an oscillator on the canvas, connect it to a mixer, connect that to an output, press ▶ Play — hear the chip you just designed simulate through your speakers. Click 🔧 Build → pick a target — get back a real flashable FPGA bitstream OR a complete Tiny Tapeout submission package that goes to a fab and comes back as a chip in your hand.
 
-The first flagship domain is **audio / synth / retro-game chips**. The architecture extends to custom microcontrollers, sensor pre-processors, PCBs, motherboards, and other digital chip categories in later phases.
+The first flagship domain is **audio / synth / retro-game chips** — including video, with the VGA Timing / Color Bars / VGA Output block trio that lets a graph drive a real monitor on the iCEBreaker FPGA's PMOD1B header. The architecture extends to custom microcontrollers, sensor pre-processors, PCBs, motherboards, and other digital chip categories in later phases.
 
 ## What it does today
 
@@ -34,7 +34,7 @@ The first flagship domain is **audio / synth / retro-game chips**. The architect
                                   └─────────────────────────────────────────┘
 ```
 
-- **24 blocks**: oscillator (square), triangle, sawtooth, sine, noise, constant, mixer, output, ADSR envelope, gate, low-pass filter, high-pass filter, band-pass filter, sample-and-hold, FM voice, multiply (ring modulator), wavetable, bitcrusher, delay, plus the digital-logic primitives AND / OR / XOR / NOT / counter. Drag from the side palette onto the canvas.
+- **27 blocks**: oscillator (square), triangle, sawtooth, sine, noise, constant, mixer, output, ADSR envelope, gate, low-pass filter, high-pass filter, band-pass filter, sample-and-hold, FM voice, multiply (ring modulator), wavetable, bitcrusher, delay, the digital-logic primitives AND / OR / XOR / NOT / counter, and the visual blocks VGA Timing / Color Bars / VGA Output that drive a monitor through an iCEBreaker FPGA + VGA-PMOD attachment. Drag from the side palette onto the canvas.
 - **Visual wiring**: edges enforce port directionality. Nodes have parameter editors with full screen-reader labels (frequency, cutoff, attack/decay/sustain/release, etc.).
 - **▶ Play**: Python backend simulates the design in [Amaranth](https://github.com/amaranth-lang/amaranth), produces a 16-bit WAV at 44.1 kHz, and the app plays it.
 - **🔧 Build → Lattice iCEstick**: graph → Verilog → Yosys → nextpnr-ice40 → icepack → flashable `.bin` for the Lattice iCEstick (~$30 USB dev board). Bundle includes a `BUILD.md` utilization report so you know if your design fits.
@@ -42,7 +42,7 @@ The first flagship domain is **audio / synth / retro-game chips**. The architect
 - **🔧 Build → 1BitSquared iCEBreaker**: same iceprog flow against the iCE40UP5K-SG48 board (~$70, standard PMOD headers — the canonical board for FPGA tutorials).
 - **🚀 Build → Tiny Tapeout**: 14-file submission package in canonical [`ttsky-verilog-template`](https://github.com/TinyTapeout/ttsky-verilog-template) layout (src/, test/, docs/, info.yaml validated against `tt-support-tools/project_info.py`, plus a working cocotb testbench). Drop-in ready: unzip on the GitHub template, push, submit at [app.tinytapeout.com](https://app.tinytapeout.com/). Their flow runs OpenLane on Sky130 or GF180 and ships you a real ASIC chip months later.
 - **AI consultant** (BYOK): bring an Anthropic API key and chat with Claude about the design. The consultant is grounded in the full app surface (toolbar, blocks, naming conventions, what each target produces) and can read the canvas, suggest blocks, or add and wire blocks for you (with preview-and-confirm for destructive edits).
-- **Save / load + 7 bundled examples**: graphs are versioned JSON. The Examples menu opens "Two oscillators mixed", "ADSR-shaped pulse", "Kick drum", "Snare drum", "Bass lead", "Lo-fi pad", and "Stair-stepped arpeggio" without leaving the app.
+- **Save / load + 10 bundled examples**: graphs are versioned JSON. The Examples menu opens "Two oscillators mixed", "ADSR-shaped pulse", "Kick drum", "Snare drum", "Bass lead", "Lo-fi pad", "Stair-stepped arpeggio", "Echo", "Lo-fi crunch", and "Color bars on a VGA monitor" without leaving the app.
 - **Help → About** (ℹ button): version + credits + GitHub link + BYOK explainer.
 
 ## Quick start (end user)

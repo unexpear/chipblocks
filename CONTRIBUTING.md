@@ -16,12 +16,12 @@ Requirements: Node 20+ on the host OS, WSL2 Ubuntu (on Windows) or native Linux/
 # Backend (in WSL2 on Windows; native on Linux/macOS):
 cd backend
 bash setup.sh
-python3 -m pytest tests/ -v   # ~60 s, 37 tests
+python3 -m pytest tests/ -v   # ~60 s, 45 tests
 
 # Frontend (host OS):
 cd frontend
 npm install
-npm test                      # ~10 s, 93 vitest tests
+npm test                      # ~10 s, 98 vitest tests
 npx tsc --noEmit              # clean
 npm run dev                   # hot-reload Electron dev mode
 ```

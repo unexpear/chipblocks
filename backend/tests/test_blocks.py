@@ -721,6 +721,215 @@ def test_counter_cycles_through_values(run_synth, wav_samples):
     )
 
 
+# ---------------------------------------------------------------------------
+# Visual-block tests — VGA Timing, Color Bars, VGA Output.
+#
+# These don't go through synth.py (which is audio-only by design). They
+# instantiate the block directly under an Amaranth Simulator and look at
+# the signals each block exposes.
+# ---------------------------------------------------------------------------
+def _run_block_sim(block, signal_specs, ticks):
+    """Step `block` through `ticks` clock cycles; return a dict of
+    {name: list[int]} sampled per cycle from `signal_specs`.
+
+    `signal_specs` is a dict {name: signal_attribute_path}, where the
+    path is a sequence of attribute names off the block (e.g. for a
+    nested submodule). We resolve each path and sample with ctx.get()
+    every cycle. Mirrors the per-tick loop synth.synthesize uses.
+
+    A dummy sync flop is added to the host module so the simulator has
+    a `sync` domain to attach a clock to — needed for combinational
+    blocks that don't have any `m.d.sync` of their own.
+    """
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+
+    m = Module()
+    m.submodules.b = block
+    # Anchor the sync domain — combinational blocks (Color Bars,
+    # VGA Output, the boolean gates) have no internal flip-flops and
+    # the simulator refuses to add a clock to a domain that doesn't
+    # exist. One unused flop is the cheapest fix.
+    _anchor = Signal()
+    m.d.sync += _anchor.eq(~_anchor)
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    samples: dict[str, list[int]] = {name: [] for name in signal_specs}
+
+    async def process(ctx):
+        for _ in range(ticks):
+            for name, sig in signal_specs.items():
+                samples[name].append(ctx.get(sig))
+            await ctx.tick()
+
+    sim.add_testbench(process)
+    sim.run()
+    return samples
+
+
+def test_vga_timing_produces_640x480_60hz_signals():
+    """Run the VGA timing block for one full frame; assert the visible-
+    high cycle count matches 640 × 480 = 307_200 and that hsync / vsync
+    are active LOW (default high, brief LOW pulses) with the right
+    number of pulses per frame."""
+    from blocks.vga_timing import VgaTiming, H_TOTAL, V_TOTAL
+
+    block = VgaTiming()
+    # One full frame = H_TOTAL × V_TOTAL ticks (800 × 525 = 420_000).
+    ticks = H_TOTAL * V_TOTAL
+    samples = _run_block_sim(
+        block,
+        {
+            "hsync": block.hsync,
+            "vsync": block.vsync,
+            "visible": block.visible,
+        },
+        ticks,
+    )
+
+    visible_high = sum(samples["visible"])
+    assert visible_high == 640 * 480, (
+        f"VGA Timing: expected 640*480 = {640 * 480} visible-high ticks "
+        f"per frame; got {visible_high}"
+    )
+
+    # HSYNC is active LOW, normally high. One LOW window per scan line —
+    # 525 scan lines per frame, so we should see 525 high→low transitions.
+    h_falling = sum(
+        1 for a, b in zip(samples["hsync"], samples["hsync"][1:]) if a == 1 and b == 0
+    )
+    assert h_falling == V_TOTAL, (
+        f"VGA Timing: expected {V_TOTAL} HSYNC falling edges per frame; "
+        f"got {h_falling}"
+    )
+
+    # VSYNC is active LOW; exactly ONE LOW window per frame.
+    v_falling = sum(
+        1 for a, b in zip(samples["vsync"], samples["vsync"][1:]) if a == 1 and b == 0
+    )
+    assert v_falling == 1, (
+        f"VGA Timing: expected exactly 1 VSYNC falling edge per frame; "
+        f"got {v_falling}"
+    )
+
+
+def test_color_bars_8_vertical_stripes():
+    """Drive the Color Bars block with hand-set x values that fall in
+    the middle of each of the 8 bars; assert the SMPTE 1-bit-per-channel
+    palette comes out as expected.
+
+    SMPTE bar order (left → right): white, yellow, cyan, green, magenta,
+    red, blue, black. Each bar is 64 pixels wide (chosen so the bar
+    index is x[6:9] — a free bit-slice, cheaper than an x/80 ladder).
+    Sampling at the centre of each bar (32, 96, 160, ...) lets us
+    verify the index → palette mapping precisely.
+    """
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.color_bars import ColorBars
+
+    block = ColorBars()
+    m = Module()
+    m.submodules.b = block
+    # Anchor sync (the block is purely combinational).
+    _anchor = Signal()
+    m.d.sync += _anchor.eq(~_anchor)
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    # Expected (R, G, B) per SMPTE bar (bars 0..7).
+    expected = [
+        (1, 1, 1),  # 0 white
+        (1, 1, 0),  # 1 yellow
+        (0, 1, 1),  # 2 cyan
+        (0, 1, 0),  # 3 green
+        (1, 0, 1),  # 4 magenta
+        (1, 0, 0),  # 5 red
+        (0, 0, 1),  # 6 blue
+        (0, 0, 0),  # 7 black
+    ]
+
+    captured: list[tuple[int, int, int]] = []
+
+    async def process(ctx):
+        # Force visible high; sweep x through the centre of each bar.
+        ctx.set(block.visible, 1)
+        for bar_index in range(8):
+            ctx.set(block.x, bar_index * 64 + 32)  # centre of the bar
+            await ctx.tick()
+            # Outputs are combinational; read them on the next tick so
+            # the simulator has propagated `x` through the comb chain.
+            await ctx.tick()
+            captured.append(
+                (ctx.get(block.r), ctx.get(block.g), ctx.get(block.b))
+            )
+
+        # Force visible LOW: all channels must be 0 regardless of x.
+        ctx.set(block.visible, 0)
+        ctx.set(block.x, 100)
+        await ctx.tick()
+        await ctx.tick()
+        captured.append(
+            (ctx.get(block.r), ctx.get(block.g), ctx.get(block.b))
+        )
+
+    sim.add_testbench(process)
+    sim.run()
+
+    for i, exp in enumerate(expected):
+        assert captured[i] == exp, (
+            f"Color Bars bar {i}: expected RGB={exp}, got {captured[i]}"
+        )
+    # Last sample is the visible=0 case: black on every channel.
+    assert captured[-1] == (0, 0, 0), (
+        f"Color Bars during blanking should be all-zero RGB; got {captured[-1]}"
+    )
+
+
+def test_vga_output_pass_through():
+    """VGA Output is a pin-routing sink — no internal logic. Just
+    verify it instantiates with the expected port set; the build.py
+    wrapper is what actually wires them to physical pins."""
+    from blocks.vga_output import VgaOutput
+
+    block = VgaOutput()
+    # 5 inputs, 0 outputs.
+    assert set(block.input_ports.keys()) == {"r", "g", "b", "hsync", "vsync"}
+    assert block.output_ports == {}
+    # The block must elaborate without raising — even with no edges
+    # wired to its inputs.
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+
+    m = Module()
+    m.submodules.b = block
+    # Anchor sync (the block has no internal state).
+    _anchor = Signal()
+    m.d.sync += _anchor.eq(~_anchor)
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    async def process(ctx):
+        # Drive each input to a known value, confirm the signal
+        # carries it (the block is purely combinational so the
+        # internal Signal IS the pin).
+        ctx.set(block.r, 1)
+        ctx.set(block.g, 0)
+        ctx.set(block.b, 1)
+        ctx.set(block.hsync, 0)
+        ctx.set(block.vsync, 1)
+        await ctx.tick()
+        assert ctx.get(block.r) == 1
+        assert ctx.get(block.g) == 0
+        assert ctx.get(block.b) == 1
+        assert ctx.get(block.hsync) == 0
+        assert ctx.get(block.vsync) == 1
+
+    sim.add_testbench(process)
+    sim.run()
+
+
 def test_counter_smoke_through_full_pipeline(run_synth, wav_samples):
     """End-to-end: drive the new logic blocks together (Gate → AND with
     a NOT-ed copy of itself = always-low; Counter → Output), confirm the

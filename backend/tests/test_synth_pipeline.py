@@ -115,6 +115,112 @@ def test_icebreaker_board_profile_registered():
     assert f"set_io audio_pin {board.audio_pin}" in rendered_pcf
 
 
+def test_visual_graph_without_audio_output_fails_friendly():
+    """A graph with VGA Timing + Color Bars + VGA Output but no audio
+    Output should fail ▶ Play with the friendly hint pointing the user
+    at 🔧 Build → iCEBreaker — not the generic 'Graph has no Output
+    block' message.
+    """
+    import synth
+
+    graph = {
+        "nodes": [
+            {"id": "vt", "type": "vgatiming", "data": {}},
+            {"id": "cb", "type": "colorbars", "data": {}},
+            {"id": "vo", "type": "vgaoutput", "data": {}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "vt", "target": "cb",
+             "sourceHandle": "x", "targetHandle": "x"},
+            {"id": "e2", "source": "vt", "target": "cb",
+             "sourceHandle": "visible", "targetHandle": "visible"},
+            {"id": "e3", "source": "cb", "target": "vo",
+             "sourceHandle": "r", "targetHandle": "r"},
+            {"id": "e4", "source": "cb", "target": "vo",
+             "sourceHandle": "g", "targetHandle": "g"},
+            {"id": "e5", "source": "cb", "target": "vo",
+             "sourceHandle": "b", "targetHandle": "b"},
+            {"id": "e6", "source": "vt", "target": "vo",
+             "sourceHandle": "hsync", "targetHandle": "hsync"},
+            {"id": "e7", "source": "vt", "target": "vo",
+             "sourceHandle": "vsync", "targetHandle": "vsync"},
+        ],
+    }
+
+    with pytest.raises(ValueError, match="visual outputs but no audio Output"):
+        synth.synthesize(graph, duration_s=1)
+
+
+def test_visual_graph_pcf_contains_vga_pin_assignments(tmp_path: Path, examples_dir: Path):
+    """The .pcf for an iCEBreaker build of a visual graph must contain
+    each of the 5 VGA pin assignments (R, G, B, HSYNC, VSYNC) on the
+    canonical PMOD1B pin numbers from amaranth_boards/icebreaker.py.
+
+    No external toolchain needed — we only run emit_verilog + the .pcf
+    string-formatting paths, which are pure Python.
+    """
+    from build import ALL_BOARDS, _graph_has_vga_output, ICEBREAKER, emit_verilog
+
+    graph = _load_example(examples_dir, "color-bars.json")
+    assert _graph_has_vga_output(graph), "color-bars example missing vgaoutput"
+
+    # emit_verilog must succeed and the .pcf assembly must reference
+    # all 5 VGA pin-name lines.
+    emit_verilog(graph, tmp_path, ICEBREAKER)
+    pcf_text = ICEBREAKER.pcf_template.format(
+        clock_pin=ICEBREAKER.clock_pin, audio_pin=ICEBREAKER.audio_pin
+    )
+    pcf_text += "\n" + ICEBREAKER.vga_pcf_template.format(**ICEBREAKER.vga_pins)
+
+    for line in (
+        "set_io vga_r 43",
+        "set_io vga_g 38",
+        "set_io vga_b 34",
+        "set_io vga_hsync 31",
+        "set_io vga_vsync 42",
+    ):
+        assert line in pcf_text, f"iCEBreaker VGA .pcf missing line: {line!r}"
+
+
+@pytest.mark.skipif(
+    not _toolchain_available(),
+    reason="Yosys / nextpnr-ice40 / icepack not on PATH (OSS CAD Suite not sourced)",
+)
+def test_visual_graph_builds_to_icebreaker_bitstream(tmp_path: Path, examples_dir: Path):
+    """Run the full graph -> Verilog -> Yosys -> nextpnr-ice40 ->
+    icepack chain for the color-bars example and verify the bitstream
+    is non-empty and the .pcf contains the VGA assignments.
+
+    Skipped when the toolchain isn't installed.
+    """
+    from build import ALL_BOARDS, build_fpga, make_bundle
+
+    graph = _load_example(examples_dir, "color-bars.json")
+    board = ALL_BOARDS["icebreaker"]
+    result = build_fpga(graph, tmp_path, board)
+    bundle_path = make_bundle(tmp_path, graph, result)
+
+    bin_path = Path(result["bin"])
+    assert bin_path.exists() and bin_path.stat().st_size > 0, (
+        "color-bars iCEBreaker .bin is missing or empty"
+    )
+
+    pcf_text = Path(result["pcf"]).read_text()
+    for line in (
+        "set_io vga_r 43",
+        "set_io vga_g 38",
+        "set_io vga_b 34",
+        "set_io vga_hsync 31",
+        "set_io vga_vsync 42",
+    ):
+        assert line in pcf_text, (
+            f"color-bars iCEBreaker .pcf missing line: {line!r}"
+        )
+
+    # Bundle still has the canonical filename pattern.
+    assert bundle_path.name == "chipblocks-fpga-icebreaker.zip"
+
+
 @pytest.mark.skipif(
     not _toolchain_available(),
     reason="Yosys / nextpnr-ice40 / icepack not on PATH (OSS CAD Suite not sourced)",

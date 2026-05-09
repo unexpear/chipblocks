@@ -22,6 +22,9 @@ import { OrGateNode,         type OrGateBlock }         from './OrGateNode'
 import { XorGateNode,        type XorGateBlock }        from './XorGateNode'
 import { NotGateNode,        type NotGateBlock }        from './NotGateNode'
 import { CounterNode,        type CounterBlock }        from './CounterNode'
+import { VgaTimingNode,      type VgaTimingBlock }      from './VgaTimingNode'
+import { ColorBarsNode,      type ColorBarsBlock }      from './ColorBarsNode'
+import { VgaOutputNode,      type VgaOutputBlock }      from './VgaOutputNode'
 
 // Hoisted to module scope to avoid React Flow's
 // "It looks like you've created a new nodeTypes object" warning.
@@ -50,6 +53,9 @@ export const nodeTypes = {
   xor:        XorGateNode,
   not:        NotGateNode,
   counter:    CounterNode,
+  vgatiming:  VgaTimingNode,
+  colorbars:  ColorBarsNode,
+  vgaoutput:  VgaOutputNode,
 }
 
 export type AppNode =
@@ -77,3 +83,6 @@ export type AppNode =
   | XorGateBlock
   | NotGateBlock
   | CounterBlock
+  | VgaTimingBlock
+  | ColorBarsBlock
+  | VgaOutputBlock
