@@ -1,6 +1,6 @@
 # ChipBlocks architecture
 
-> **Last updated:** 2026-05-08 · Living doc; refresh when the data flow or process model changes materially. Strategic vision lives in [PRD.md](PRD.md); operational sprint plan lives in [ROADMAP.md](ROADMAP.md). This file describes how the *code* is shaped.
+> **Last updated:** 2026-05-09 · Living doc; refresh when the data flow or process model changes materially. Strategic vision lives in [PRD.md](PRD.md); operational sprint plan lives in [ROADMAP.md](ROADMAP.md). This file describes how the *code* is shaped.
 
 A solo-developer non-technical user is the contributor model. Optimize for "obvious where to make a change" over "extracted-for-reuse-but-spread-across-eight-files."
 
@@ -146,16 +146,17 @@ Eval script at `scripts/eval-ai.ts` runs 7 representative queries against the li
 ## Testing
 
 ```
-backend/tests/        pytest, 27 tests, ~54 s
-  test_blocks.py        per-block property assertions (zero-crossing rate, etc.)
-  test_synth_pipeline.py end-to-end against examples/*.json
-  test_tinytapeout.py   TT bundle shape + info.yaml schema
+backend/tests/        pytest, 31 tests, ~60 s
+  test_blocks.py             19 per-block property assertions (zero-crossing rate, etc.) — covers all 19 blocks
+  test_synth_pipeline.py     4 end-to-end tests against examples/*.json
+  test_tinytapeout.py        8 TT bundle shape + info.yaml schema tests
 
-frontend/test/        vitest, 50 tests, ~10 s
-  ipc-contract.test.ts       renderer↔main IPC mock tests (synth/build/AI)
-  blocks.test.tsx            block render + parameter editing + range validation
-  save-load.test.tsx         save/load roundtrip + m5 rejection paths
+frontend/test/        vitest, 87 tests, ~10 s
+  ipc-contract.test.ts          renderer↔main IPC mock tests (synth/build/AI)
+  blocks.test.tsx               block render + parameter editing + range validation (51 tests across all 19 blocks)
+  save-load.test.tsx            save/load roundtrip + m5 rejection paths
   examples-consistency.test.ts  examples.ts ↔ examples/*.json drift check
+  classify-backend-error.test.ts friendly-error classifier (14 cases)
 ```
 
 CI runs both suites on every push to master. The cross-platform installer build runs on tag push; verified end-to-end via a v0.0.0-test pre-flight.
@@ -166,7 +167,7 @@ Permissive only. MIT for ChipBlocks itself; every shipped dependency is MIT/Apac
 
 ## Pointers for future contributors
 
-- **Sprint history**: [SPRINT-1.md](SPRINT-1.md) … [SPRINT-10.md](SPRINT-10.md). Each has a Sprint Log + Retrospective with the "what didn't work" notes that explain why the code is shaped the way it is.
+- **Sprint history**: [SPRINT-1.md](SPRINT-1.md) … [SPRINT-13.md](SPRINT-13.md). Each has a Sprint Log + Retrospective with the "what didn't work" notes that explain why the code is shaped the way it is.
 - **Current backlog**: [ROADMAP.md](ROADMAP.md) — Now / Next / Later, plus the a11y workstream + tech-debt workstream.
 - **Known issues**: [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — deliberately deferred items with rationale.
 - **Last accessibility audit**: [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08.md) (Critical + Major tiers shipped, Minor polish tracked in ROADMAP).
