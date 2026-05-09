@@ -1,4 +1,5 @@
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
+import { handleTop } from './handleSpacing'
 
 export type ColorBarsBlock = Node<Record<string, never>, 'colorbars'>
 
@@ -12,14 +13,14 @@ export function ColorBarsNode({ id }: NodeProps<ColorBarsBlock>) {
         position={Position.Left}
         id="x"
         aria-label="Pixel column input"
-        style={{ top: 24 }}
+        style={{ top: handleTop(0) }}
       />
       <Handle
         type="target"
         position={Position.Left}
         id="visible"
         aria-label="Active-area enable input"
-        style={{ top: 56 }}
+        style={{ top: handleTop(1) }}
       />
       <h3 id={titleId} className="block-title">Color Bars</h3>
       <div className="block-body">8 SMPTE bars</div>
@@ -28,21 +29,21 @@ export function ColorBarsNode({ id }: NodeProps<ColorBarsBlock>) {
         position={Position.Right}
         id="r"
         aria-label="Red channel output"
-        style={{ top: 24 }}
+        style={{ top: handleTop(0) }}
       />
       <Handle
         type="source"
         position={Position.Right}
         id="g"
         aria-label="Green channel output"
-        style={{ top: 56 }}
+        style={{ top: handleTop(1) }}
       />
       <Handle
         type="source"
         position={Position.Right}
         id="b"
         aria-label="Blue channel output"
-        style={{ top: 88 }}
+        style={{ top: handleTop(2) }}
       />
     </div>
   )

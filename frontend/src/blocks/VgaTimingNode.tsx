@@ -1,4 +1,5 @@
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
+import { handleTop } from './handleSpacing'
 
 export type VgaTimingBlock = Node<Record<string, never>, 'vgatiming'>
 
@@ -17,35 +18,35 @@ export function VgaTimingNode({ id }: NodeProps<VgaTimingBlock>) {
         position={Position.Right}
         id="hsync"
         aria-label="Horizontal sync output"
-        style={{ top: 24 }}
+        style={{ top: handleTop(0) }}
       />
       <Handle
         type="source"
         position={Position.Right}
         id="vsync"
         aria-label="Vertical sync output"
-        style={{ top: 56 }}
+        style={{ top: handleTop(1) }}
       />
       <Handle
         type="source"
         position={Position.Right}
         id="visible"
         aria-label="Active-area enable output"
-        style={{ top: 88 }}
+        style={{ top: handleTop(2) }}
       />
       <Handle
         type="source"
         position={Position.Right}
         id="x"
         aria-label="Pixel column output"
-        style={{ top: 120 }}
+        style={{ top: handleTop(3) }}
       />
       <Handle
         type="source"
         position={Position.Right}
         id="y"
         aria-label="Pixel row output"
-        style={{ top: 152 }}
+        style={{ top: handleTop(4) }}
       />
     </div>
   )

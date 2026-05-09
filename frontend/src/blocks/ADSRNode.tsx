@@ -7,6 +7,7 @@ import {
 } from '@xyflow/react'
 import { useCallback } from 'react'
 import { useValidatedNumber } from './useValidatedNumber'
+import { handleTop } from './handleSpacing'
 
 export type ADSRBlockData = {
   attack_ms: number
@@ -75,8 +76,8 @@ export function ADSRNode({ id, data }: NodeProps<ADSRBlock>) {
   const titleId = `block-${id}-title`
   return (
     <div className="block block-adsr" role="group" aria-labelledby={titleId}>
-      <Handle type="target" position={Position.Left} id="gate"     style={{ top: 24 }} />
-      <Handle type="target" position={Position.Left} id="audio-in" style={{ top: 56 }} />
+      <Handle type="target" position={Position.Left} id="gate"     style={{ top: handleTop(0) }} />
+      <Handle type="target" position={Position.Left} id="audio-in" style={{ top: handleTop(1) }} />
       <h3 id={titleId} className="block-title">ADSR</h3>
       <div className="block-body">
         <FieldRow

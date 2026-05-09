@@ -1,4 +1,5 @@
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
+import { handleTop } from './handleSpacing'
 
 export type VgaOutputBlock = Node<Record<string, never>, 'vgaoutput'>
 
@@ -13,35 +14,35 @@ export function VgaOutputNode({ id }: NodeProps<VgaOutputBlock>) {
         position={Position.Left}
         id="r"
         aria-label="Red channel input"
-        style={{ top: 24 }}
+        style={{ top: handleTop(0) }}
       />
       <Handle
         type="target"
         position={Position.Left}
         id="g"
         aria-label="Green channel input"
-        style={{ top: 56 }}
+        style={{ top: handleTop(1) }}
       />
       <Handle
         type="target"
         position={Position.Left}
         id="b"
         aria-label="Blue channel input"
-        style={{ top: 88 }}
+        style={{ top: handleTop(2) }}
       />
       <Handle
         type="target"
         position={Position.Left}
         id="hsync"
         aria-label="Horizontal sync input"
-        style={{ top: 120 }}
+        style={{ top: handleTop(3) }}
       />
       <Handle
         type="target"
         position={Position.Left}
         id="vsync"
         aria-label="Vertical sync input"
-        style={{ top: 152 }}
+        style={{ top: handleTop(4) }}
       />
       <h3 id={titleId} className="block-title">VGA Output</h3>
       <div className="block-body">→ monitor</div>
