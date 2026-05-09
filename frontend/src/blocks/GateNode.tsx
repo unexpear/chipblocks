@@ -5,7 +5,8 @@ import {
   type NodeProps,
   type Node,
 } from '@xyflow/react'
-import { type ChangeEvent } from 'react'
+import { useCallback } from 'react'
+import { useValidatedNumber } from './useValidatedNumber'
 
 export type GateBlockData = {
   rate_hz: number
@@ -14,51 +15,74 @@ export type GateBlockData = {
 
 export type GateBlock = Node<GateBlockData, 'gate'>
 
+interface FieldRowProps {
+  ariaLabel: string
+  suffix: string
+  min: number
+  max: number
+  value: number
+  commit: (v: number) => void
+}
+
+function FieldRow({ ariaLabel, suffix, min, max, value, commit }: FieldRowProps) {
+  const { displayValue, isInvalid, errorMessage, onChange, onBlur } = useValidatedNumber({
+    value,
+    min,
+    max,
+    commit,
+  })
+  return (
+    <div className="block-row-group">
+      <div className="block-row">
+        <input
+          type="number"
+          className={`block-input block-input-narrow${isInvalid ? ' block-input-invalid' : ''}`}
+          value={displayValue}
+          min={min}
+          max={max}
+          step={1}
+          aria-label={ariaLabel}
+          aria-invalid={isInvalid || undefined}
+          onChange={onChange}
+          onBlur={onBlur}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        />
+        <span className="block-input-suffix">{suffix}</span>
+      </div>
+      {isInvalid && (
+        <div className="block-input-error" role="alert" aria-live="polite">{errorMessage}</div>
+      )}
+    </div>
+  )
+}
+
 export function GateNode({ id, data }: NodeProps<GateBlock>) {
   const { updateNodeData } = useReactFlow()
 
-  const update = (key: keyof GateBlockData, min: number, max: number) =>
-    (e: ChangeEvent<HTMLInputElement>) => {
-      const v = parseInt(e.target.value, 10)
-      if (Number.isFinite(v) && v >= min && v <= max) {
-        updateNodeData(id, { [key]: v })
-      }
-    }
+  const commitRate = useCallback((v: number) => updateNodeData(id, { rate_hz: v }), [id, updateNodeData])
+  const commitDuty = useCallback((v: number) => updateNodeData(id, { duty_pct: v }), [id, updateNodeData])
 
   return (
     <div className="block block-gate">
       <div className="block-title">Gate</div>
       <div className="block-body">
-        <div className="block-row">
-          <input
-            type="number"
-            className="block-input block-input-narrow"
-            value={data.rate_hz}
-            min={1}
-            max={1000}
-            step={1}
-            aria-label="Rate in hertz"
-            onChange={update('rate_hz', 1, 1000)}
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-          />
-          <span className="block-input-suffix">Hz</span>
-        </div>
-        <div className="block-row">
-          <input
-            type="number"
-            className="block-input block-input-narrow"
-            value={data.duty_pct}
-            min={1}
-            max={99}
-            step={1}
-            aria-label="Duty cycle percent"
-            onChange={update('duty_pct', 1, 99)}
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-          />
-          <span className="block-input-suffix">% duty</span>
-        </div>
+        <FieldRow
+          ariaLabel="Rate in hertz"
+          suffix="Hz"
+          min={1}
+          max={1000}
+          value={data.rate_hz}
+          commit={commitRate}
+        />
+        <FieldRow
+          ariaLabel="Duty cycle percent"
+          suffix="% duty"
+          min={1}
+          max={99}
+          value={data.duty_pct}
+          commit={commitDuty}
+        />
       </div>
       <Handle type="source" position={Position.Right} id="gate-out" />
     </div>

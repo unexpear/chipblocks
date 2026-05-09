@@ -82,6 +82,22 @@
   margin-right: 0.5rem;
 }
 
+/* Toolbar icon-only buttons (⚙, ℹ) — WCAG 2.5.5 prefers 44×44 CSS px
+   touch targets, but applying 44px here would push the toolbar height
+   noticeably (the toolbar is a tight horizontal row alongside text
+   buttons like Save/Load/Play). Using 32×32 as a pragmatic compromise:
+   still significantly larger than the bare emoji glyph and an
+   improvement over the previous ~24px implicit size, but doesn't
+   reflow the toolbar. The chat-header and palette-header icons (which
+   have more vertical room) get the full 44×44 treatment below. */
+.toolbar-icon-btn {
+  min-width: 32px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .main-area {
   display: flex;
   flex: 1;
@@ -196,6 +212,12 @@
   border-radius: 4px;
   cursor: pointer;
   margin-left: 0.25rem;
+  /* WCAG 2.5.5 — 44×44 minimum touch target for icon-only buttons. */
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .starter-hint-close:hover {
@@ -258,7 +280,9 @@
 }
 
 .palette-collapsed {
-  width: 28px;
+  /* Widened from 28px to 48px to accommodate the 44×44 toggle button
+     (WCAG 2.5.5 touch target) without horizontal overflow. */
+  width: 48px;
   align-items: center;
   justify-content: flex-start;
   padding-top: 6px;
@@ -289,6 +313,12 @@
   padding: 2px 6px;
   border-radius: 4px;
   cursor: pointer;
+  /* WCAG 2.5.5 — 44×44 minimum touch target for icon-only buttons. */
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .palette-toggle:hover {
@@ -307,6 +337,9 @@
 }
 
 .palette-item {
+  /* The element was a <div> in the past — now a <button> for keyboard
+     accessibility (Tab + Enter/Space to spawn the block). The reset
+     below strips native button styling so it still looks like a row. */
   display: flex;
   align-items: center;
   gap: 8px;
@@ -314,6 +347,10 @@
   border: 1px solid #2a2a2a;
   border-radius: 4px;
   background: #1d1d1d;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  width: 100%;
   cursor: grab;
   user-select: none;
   transition: border-color 0.1s, background 0.1s;
@@ -345,7 +382,9 @@
   padding: 0.4rem 0.75rem;
   border-top: 1px solid #2a2a2a;
   background: #141414;
-  color: #666;
+  /* Bumped from #666 (3.6:1) to #888 (≈4.7:1) to clear WCAG AA 4.5:1
+     for normal text on the #141414 footer background. */
+  color: #888;
   font-size: 0.7rem;
   text-align: center;
 }
@@ -388,6 +427,12 @@
   padding: 2px 6px;
   border-radius: 4px;
   cursor: pointer;
+  /* WCAG 2.5.5 — 44×44 minimum touch target for icon-only buttons. */
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .chat-icon-btn:hover {
@@ -828,6 +873,29 @@
 .block-input:focus {
   outline: none;
   border-color: #4caf50;
+}
+
+/* Out-of-range validation: red border + inline error message below. */
+.block-input-invalid {
+  border-color: #f44336;
+}
+
+.block-input-invalid:focus {
+  border-color: #f44336;
+}
+
+.block-input-error {
+  margin-top: 2px;
+  color: #f88;
+  font-size: 0.7rem;
+  line-height: 1.2;
+}
+
+/* Wrapper for a block-row + its error message, so the error appears
+   directly under the field rather than affecting row layout. */
+.block-row-group {
+  display: flex;
+  flex-direction: column;
 }
 
 .block-input-suffix {

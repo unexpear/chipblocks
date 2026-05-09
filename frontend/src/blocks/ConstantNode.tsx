@@ -5,19 +5,24 @@ import {
   type NodeProps,
   type Node,
 } from '@xyflow/react'
-import { type ChangeEvent } from 'react'
+import { useCallback } from 'react'
+import { useValidatedNumber } from './useValidatedNumber'
 
 export type ConstantBlock = Node<{ value: number }, 'constant'>
 
 export function ConstantNode({ id, data }: NodeProps<ConstantBlock>) {
   const { updateNodeData } = useReactFlow()
 
-  const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const v = parseInt(e.target.value, 10)
-    if (Number.isFinite(v) && v >= -128 && v <= 127) {
-      updateNodeData(id, { value: v })
-    }
-  }
+  const commit = useCallback(
+    (v: number) => updateNodeData(id, { value: v }),
+    [id, updateNodeData],
+  )
+  const { displayValue, isInvalid, errorMessage, onChange, onBlur } = useValidatedNumber({
+    value: data.value,
+    min: -128,
+    max: 127,
+    commit,
+  })
 
   return (
     <div className="block block-constant">
@@ -25,16 +30,21 @@ export function ConstantNode({ id, data }: NodeProps<ConstantBlock>) {
       <div className="block-body">
         <input
           type="number"
-          className="block-input"
-          value={data.value}
+          className={`block-input${isInvalid ? ' block-input-invalid' : ''}`}
+          value={displayValue}
           min={-128}
           max={127}
           step={1}
           aria-label="Constant value (-128 to 127)"
-          onChange={handleChange}
+          aria-invalid={isInvalid || undefined}
+          onChange={onChange}
+          onBlur={onBlur}
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
         />
+        {isInvalid && (
+          <div className="block-input-error" role="alert" aria-live="polite">{errorMessage}</div>
+        )}
       </div>
       <Handle type="source" position={Position.Right} id="audio-out" />
     </div>

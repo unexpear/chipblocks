@@ -1,8 +1,10 @@
 /**
  * Block palette — left-side sidebar that lets the user drag a new block
- * onto the canvas. Each entry is `draggable`; the dragged data carries
- * the block `type` string. The canvas (in App.tsx) handles `onDrop` and
- * spawns a new node at the drop location with default parameters.
+ * onto the canvas. Each entry is a `<button draggable>`: keyboard users
+ * can Tab to it and press Enter / Space to spawn the block at a default
+ * canvas position; mouse users can still drag-and-drop to spawn at the
+ * drop point. The canvas (in App.tsx) handles `onDrop` and the
+ * `onAddBlock` callback handles keyboard / click activation.
  */
 
 import type { CSSProperties, DragEvent } from 'react'
@@ -70,10 +72,14 @@ export function defaultDataForType(type: string): Record<string, unknown> {
 interface PaletteProps {
   collapsed: boolean
   onToggle: () => void
+  /** Called when a palette item is activated by click / keyboard
+   * (Enter or Space on a focused button). Implementations should
+   * place the new node at a sensible default location. */
+  onAddBlock: (type: string) => void
 }
 
-export function Palette({ collapsed, onToggle }: PaletteProps) {
-  const onDragStart = (e: DragEvent<HTMLDivElement>, type: string) => {
+export function Palette({ collapsed, onToggle, onAddBlock }: PaletteProps) {
+  const onDragStart = (e: DragEvent<HTMLButtonElement>, type: string) => {
     e.dataTransfer.setData(PALETTE_DRAG_TYPE, type)
     e.dataTransfer.effectAllowed = 'move'
   }
@@ -81,7 +87,14 @@ export function Palette({ collapsed, onToggle }: PaletteProps) {
   if (collapsed) {
     return (
       <aside className="palette palette-collapsed">
-        <button className="palette-toggle" onClick={onToggle} title="Show palette">▶</button>
+        <button
+          className="palette-toggle"
+          onClick={onToggle}
+          aria-label="Show palette"
+          title="Show palette"
+        >
+          ▶
+        </button>
       </aside>
     )
   }
@@ -91,25 +104,35 @@ export function Palette({ collapsed, onToggle }: PaletteProps) {
       <div className="palette-header">
         <span className="palette-title">Blocks</span>
         <span className="palette-spacer" />
-        <button className="palette-toggle" onClick={onToggle} title="Hide palette">◀</button>
+        <button
+          className="palette-toggle"
+          onClick={onToggle}
+          aria-label="Hide palette"
+          title="Hide palette"
+        >
+          ◀
+        </button>
       </div>
       <div className="palette-list">
         {PALETTE.map((entry) => (
-          <div
+          <button
             key={entry.type}
+            type="button"
             className="palette-item"
             draggable
             onDragStart={(e) => onDragStart(e, entry.type)}
+            onClick={() => onAddBlock(entry.type)}
             title={entry.description}
+            aria-label={`Add ${entry.label} block`}
             style={{ '--swatch': entry.color } as CSSProperties}
           >
             <span className="palette-swatch" />
             <span className="palette-label">{entry.label}</span>
-          </div>
+          </button>
         ))}
       </div>
       <div className="palette-footer">
-        Drag onto canvas
+        Drag or click to add
       </div>
     </aside>
   )

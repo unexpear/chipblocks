@@ -5,7 +5,8 @@ import {
   type NodeProps,
   type Node,
 } from '@xyflow/react'
-import { type ChangeEvent } from 'react'
+import { useCallback, type ChangeEvent } from 'react'
+import { useValidatedNumber } from './useValidatedNumber'
 
 export type WavetableShape = 'sine' | 'pulse_25' | 'ramp_up' | 'formant'
 
@@ -30,12 +31,16 @@ function isWavetableShape(v: string): v is WavetableShape {
 export function WavetableNode({ id, data }: NodeProps<WavetableBlock>) {
   const { updateNodeData } = useReactFlow()
 
-  const handleFreqChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const v = parseInt(e.target.value, 10)
-    if (Number.isFinite(v) && v >= 20 && v <= 20000) {
-      updateNodeData(id, { freq: v })
-    }
-  }
+  const commitFreq = useCallback(
+    (v: number) => updateNodeData(id, { freq: v }),
+    [id, updateNodeData],
+  )
+  const { displayValue, isInvalid, errorMessage, onChange, onBlur } = useValidatedNumber({
+    value: data.freq,
+    min: 20,
+    max: 20000,
+    commit: commitFreq,
+  })
 
   const handleShapeChange = (e: ChangeEvent<HTMLSelectElement>) => {
     const v = e.target.value
@@ -48,20 +53,27 @@ export function WavetableNode({ id, data }: NodeProps<WavetableBlock>) {
     <div className="block block-wavetable">
       <div className="block-title">Wavetable</div>
       <div className="block-body">
-        <div className="block-row">
-          <input
-            type="number"
-            className="block-input block-input-narrow"
-            value={data.freq}
-            min={20}
-            max={20000}
-            step={1}
-            aria-label="Frequency in hertz"
-            onChange={handleFreqChange}
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-          />
-          <span className="block-input-suffix">Hz</span>
+        <div className="block-row-group">
+          <div className="block-row">
+            <input
+              type="number"
+              className={`block-input block-input-narrow${isInvalid ? ' block-input-invalid' : ''}`}
+              value={displayValue}
+              min={20}
+              max={20000}
+              step={1}
+              aria-label="Frequency in hertz"
+              aria-invalid={isInvalid || undefined}
+              onChange={onChange}
+              onBlur={onBlur}
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+            />
+            <span className="block-input-suffix">Hz</span>
+          </div>
+          {isInvalid && (
+            <div className="block-input-error" role="alert" aria-live="polite">{errorMessage}</div>
+          )}
         </div>
         <div className="block-row">
           <select

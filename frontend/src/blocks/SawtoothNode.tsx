@@ -5,19 +5,24 @@ import {
   type NodeProps,
   type Node,
 } from '@xyflow/react'
-import { type ChangeEvent } from 'react'
+import { useCallback } from 'react'
+import { useValidatedNumber } from './useValidatedNumber'
 
 export type SawtoothBlock = Node<{ freq: number }, 'sawtooth'>
 
 export function SawtoothNode({ id, data }: NodeProps<SawtoothBlock>) {
   const { updateNodeData } = useReactFlow()
 
-  const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const v = parseInt(e.target.value, 10)
-    if (Number.isFinite(v) && v >= 20 && v <= 20000) {
-      updateNodeData(id, { freq: v })
-    }
-  }
+  const commit = useCallback(
+    (v: number) => updateNodeData(id, { freq: v }),
+    [id, updateNodeData],
+  )
+  const { displayValue, isInvalid, errorMessage, onChange, onBlur } = useValidatedNumber({
+    value: data.freq,
+    min: 20,
+    max: 20000,
+    commit,
+  })
 
   return (
     <div className="block block-sawtooth">
@@ -25,17 +30,22 @@ export function SawtoothNode({ id, data }: NodeProps<SawtoothBlock>) {
       <div className="block-body">
         <input
           type="number"
-          className="block-input"
-          value={data.freq}
+          className={`block-input${isInvalid ? ' block-input-invalid' : ''}`}
+          value={displayValue}
           min={20}
           max={20000}
           step={1}
           aria-label="Frequency in hertz"
-          onChange={handleChange}
+          aria-invalid={isInvalid || undefined}
+          onChange={onChange}
+          onBlur={onBlur}
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
         />
         <span className="block-input-suffix">Hz</span>
+        {isInvalid && (
+          <div className="block-input-error" role="alert" aria-live="polite">{errorMessage}</div>
+        )}
       </div>
       <Handle type="source" position={Position.Right} id="audio-out" />
     </div>

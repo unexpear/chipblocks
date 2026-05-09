@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -172,6 +172,44 @@ function validateLoadedGraph(input: unknown): ValidatedGraph | InvalidGraph {
   return { ok: true, nodes: validNodes, edges: validEdges, viewport, versionWarning }
 }
 
+// APG menu pattern keyboard navigation: ArrowDown/Up move focus
+// between items, Home/End jump to first/last, with wrap-around.
+// `refs` is a sparse array of buttons (entries can be null until
+// React mounts each item). We filter to mounted buttons before
+// computing the next focus target.
+function handleMenuKeyDown(
+  e: KeyboardEvent<HTMLElement>,
+  refs: (HTMLButtonElement | null)[],
+) {
+  const items = refs.filter((b): b is HTMLButtonElement => b !== null)
+  if (items.length === 0) return
+  const currentIndex = items.findIndex((b) => b === document.activeElement)
+  let nextIndex = currentIndex
+  switch (e.key) {
+    case 'ArrowDown':
+      e.preventDefault()
+      nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length
+      break
+    case 'ArrowUp':
+      e.preventDefault()
+      nextIndex = currentIndex < 0
+        ? items.length - 1
+        : (currentIndex - 1 + items.length) % items.length
+      break
+    case 'Home':
+      e.preventDefault()
+      nextIndex = 0
+      break
+    case 'End':
+      e.preventDefault()
+      nextIndex = items.length - 1
+      break
+    default:
+      return
+  }
+  items[nextIndex]?.focus()
+}
+
 function AppContent() {
   const [nodes, setNodes, onNodesChange] = useNodesState<AppNode>(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initialEdges)
@@ -191,10 +229,31 @@ function AppContent() {
 
   const { getViewport, setViewport, screenToFlowPosition, getNodes } = useReactFlow()
 
+  // Refs for popover items so we can move focus via ArrowUp/Down.
+  // Index matches BUILD_TARGETS / EXAMPLES order.
+  const buildItemRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const exampleItemRefs = useRef<(HTMLButtonElement | null)[]>([])
+
   // On mount, check whether an API key is already saved.
   useEffect(() => {
     window.ai.hasKey().then(setHasApiKey).catch(() => setHasApiKey(false))
   }, [])
+
+  // When a popover opens, focus its first item — APG menu pattern. The
+  // RAF defer lets React paint the popover before we look up the ref.
+  useEffect(() => {
+    if (!buildMenuOpen) return
+    requestAnimationFrame(() => {
+      buildItemRefs.current[0]?.focus()
+    })
+  }, [buildMenuOpen])
+
+  useEffect(() => {
+    if (!examplesOpen) return
+    requestAnimationFrame(() => {
+      exampleItemRefs.current[0]?.focus()
+    })
+  }, [examplesOpen])
 
   // Auto-dismiss error toast after 6 seconds.
   useEffect(() => {
@@ -510,10 +569,15 @@ function AppContent() {
           {buildMenuOpen && (
             <>
               <div className="toolbar-dropdown-overlay" onClick={() => setBuildMenuOpen(false)} />
-              <div className="toolbar-dropdown" role="menu">
-                {BUILD_TARGETS.map((target) => (
+              <div
+                className="toolbar-dropdown"
+                role="menu"
+                onKeyDown={(e) => handleMenuKeyDown(e, buildItemRefs.current)}
+              >
+                {BUILD_TARGETS.map((target, idx) => (
                   <button
                     key={target.id}
+                    ref={(el) => { buildItemRefs.current[idx] = el }}
                     className="toolbar-dropdown-item"
                     role="menuitem"
                     onClick={() => handleBuild(target)}
@@ -542,10 +606,15 @@ function AppContent() {
           {examplesOpen && (
             <>
               <div className="toolbar-dropdown-overlay" onClick={() => setExamplesOpen(false)} />
-              <div className="toolbar-dropdown" role="menu">
-                {EXAMPLES.map((ex) => (
+              <div
+                className="toolbar-dropdown"
+                role="menu"
+                onKeyDown={(e) => handleMenuKeyDown(e, exampleItemRefs.current)}
+              >
+                {EXAMPLES.map((ex, idx) => (
                   <button
                     key={ex.id}
+                    ref={(el) => { exampleItemRefs.current[idx] = el }}
                     className="toolbar-dropdown-item"
                     role="menuitem"
                     onClick={() => loadExample(ex)}
@@ -567,13 +636,17 @@ function AppContent() {
         >
           💬 Chat
         </button>
-        <button onClick={() => setSettingsOpen(true)} aria-label="Settings" title="Settings">⚙</button>
-        <button onClick={() => setAboutOpen(true)} aria-label="About ChipBlocks" title="About ChipBlocks">ℹ</button>
+        <button className="toolbar-icon-btn" onClick={() => setSettingsOpen(true)} aria-label="Settings" title="Settings">⚙</button>
+        <button className="toolbar-icon-btn" onClick={() => setAboutOpen(true)} aria-label="About ChipBlocks" title="About ChipBlocks">ℹ</button>
       </div>
       <div className="main-area">
         <Palette
           collapsed={paletteCollapsed}
           onToggle={() => setPaletteCollapsed((v) => !v)}
+          onAddBlock={(type) => {
+            dismissStarterHint()
+            canvasActions.addNode(type)
+          }}
         />
         <div className="canvas" onDragOver={onDragOver} onDrop={onDrop}>
           <ErrorBoundary surface="the canvas">
