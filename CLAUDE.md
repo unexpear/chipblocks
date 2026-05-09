@@ -81,8 +81,8 @@ chipzzzd/
 - Match the user's pace — they will direct the project; act on direction rather than racing ahead.
 
 ### Testing
-- **Backend**: pytest under `backend/tests/` — 31 tests total: 19 property-based block tests covering all 19 blocks, 4 pipeline tests against the example graphs, 8 Tiny Tapeout submission-package tests. Run via `python3 -m pytest backend/tests/ -v` from WSL2 (~60 s).
-- **Frontend**: vitest under `frontend/test/` — 87 tests covering IPC contracts (synth/build/AI), block-component rendering + parameter editing, error classification, save/load roundtrip. Run via `cd frontend && npm test` (~8 s).
+- **Backend**: pytest under `backend/tests/` — 37 tests total: 25 property-based block tests covering all 24 blocks (one mixed-logic pipeline smoke test on top), 4 pipeline tests against the example graphs, 8 Tiny Tapeout submission-package tests. Run via `python3 -m pytest backend/tests/ -v` from WSL2 (~60 s).
+- **Frontend**: vitest under `frontend/test/` — 93 tests covering IPC contracts (synth/build/AI), block-component rendering + parameter editing, error classification, save/load roundtrip. Run via `cd frontend && npm test` (~8 s).
 - **CI**: both test suites run on every push/PR to master via `.github/workflows/ci.yml`. Cross-platform installer builds run on tag push (`v*`) via `.github/workflows/release.yml` — Windows NSIS, macOS DMG, Linux AppImage, all unsigned.
 - **Visual / UI changes**: manual verification in the running Electron app. The TypeScript compiler passing is *not* the same as the feature working.
 - Document how to run each piece in the **Sprint Log** section of the relevant `SPRINT-N.md`.
@@ -127,7 +127,7 @@ chipzzzd/
 - [CONTRIBUTING.md](CONTRIBUTING.md) — contributor guide: setup, tests, commit style, license posture, where to ask
 - Tech-debt tracking lives inline: highest-priority items in [KNOWN-ISSUES.md](KNOWN-ISSUES.md), tiered remediation plan in [ROADMAP.md](ROADMAP.md)'s "Tech-debt workstream" section. Last full audit 2026-05-08.
 - [CREDITS.md](CREDITS.md) — licensing policy + open-source attributions (permissive only; no copyleft in shipped product)
-- [BLOCKS.md](BLOCKS.md) — block library reference: per-block ports, parameters, behavior, common-usage notes for all 19 blocks
+- [BLOCKS.md](BLOCKS.md) — block library reference: per-block ports, parameters, behavior, common-usage notes for all 24 blocks
 
 ## Sprint cadence
 

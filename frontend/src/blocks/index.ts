@@ -17,6 +17,11 @@ import { MultiplyNode,       type MultiplyBlock }       from './MultiplyNode'
 import { WavetableNode,      type WavetableBlock }      from './WavetableNode'
 import { BitcrusherNode,     type BitcrusherBlock }     from './BitcrusherNode'
 import { DelayNode,          type DelayBlock }          from './DelayNode'
+import { AndGateNode,        type AndGateBlock }        from './AndGateNode'
+import { OrGateNode,         type OrGateBlock }         from './OrGateNode'
+import { XorGateNode,        type XorGateBlock }        from './XorGateNode'
+import { NotGateNode,        type NotGateBlock }        from './NotGateNode'
+import { CounterNode,        type CounterBlock }        from './CounterNode'
 
 // Hoisted to module scope to avoid React Flow's
 // "It looks like you've created a new nodeTypes object" warning.
@@ -40,6 +45,11 @@ export const nodeTypes = {
   wavetable:  WavetableNode,
   bitcrusher: BitcrusherNode,
   delay:      DelayNode,
+  and:        AndGateNode,
+  or:         OrGateNode,
+  xor:        XorGateNode,
+  not:        NotGateNode,
+  counter:    CounterNode,
 }
 
 export type AppNode =
@@ -62,3 +72,8 @@ export type AppNode =
   | WavetableBlock
   | BitcrusherBlock
   | DelayBlock
+  | AndGateBlock
+  | OrGateBlock
+  | XorGateBlock
+  | NotGateBlock
+  | CounterBlock

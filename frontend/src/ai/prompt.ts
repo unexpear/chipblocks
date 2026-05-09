@@ -28,7 +28,7 @@ Inside the app, the user:
 
 When the canvas is rendering or building, a Cancel button appears that aborts cleanly. Status text reads "Synthesizing…" or "Building bitstream…". Errors appear as a dismissible toast bottom-left.
 
-# Block library (all 19 types — these are the EXACT type strings)
+# Block library (all 24 types — these are the EXACT type strings)
 
 All audio signals are 8-bit signed (-128 to +127) at 44100 Hz.
 
@@ -129,11 +129,36 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz.
 - Output port \`audio-out\`
 - Parameter \`delay_samples\`: 1–1024 (default 128). At 44100 Hz, 128 samples ≈ 2.9 ms; 1024 ≈ 23 ms.
 
+**and** — combinational 1-bit logical AND. Glue logic for combining two gate sources so the output fires only when both are high.
+- Input ports \`in-1\`, \`in-2\` (1-bit each)
+- Output port \`gate-out\` (1-bit)
+- No parameters
+
+**or** — combinational 1-bit logical OR. Output fires when either input is high; useful for merging two gate sources into one.
+- Input ports \`in-1\`, \`in-2\` (1-bit each)
+- Output port \`gate-out\` (1-bit)
+- No parameters
+
+**xor** — combinational 1-bit exclusive OR. Output is high exactly when the inputs differ; building block for parity / frequency dividers.
+- Input ports \`in-1\`, \`in-2\` (1-bit each)
+- Output port \`gate-out\` (1-bit)
+- No parameters
+
+**not** — combinational 1-bit inverter. Flips a gate or clock; pair with AND/OR to build any other boolean primitive.
+- Input port \`gate-in\` (1-bit)
+- Output port \`gate-out\` (1-bit)
+- No parameters
+
+**counter** — wrapping integer counter clocked by a 1-bit signal. Each rising edge of \`clock\` increments; on hitting \`max_value\` it resets to 0. Output is the count expressed as a centred 8-bit signed sample (count − 64) so it can drive any audio-shaped target — useful for building stair-step sequencers or state-machine state outputs.
+- Input port \`clock\` (1-bit)
+- Output port \`audio-out\`
+- Parameter \`max_value\`: 1–127 (default 16)
+
 # Naming conventions
 
-- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`.
-- **Port handle ids** are kebab-case: \`audio-out\`, \`audio-in\`, \`gate-out\`, \`mix-out\`, \`in-1\`, \`in-2\`. Two are unhyphenated for control signals: \`gate\` (an ADSR input) and \`clock\` (a samplehold input).
-- **Block parameters** are snake_case: \`freq\`, \`attack_ms\`, \`decay_ms\`, \`sustain_level\`, \`release_ms\`, \`rate_hz\`, \`duty_pct\`, \`cutoff_hz\` (lowpass + highpass), \`center_hz\` (bandpass), \`value\`, \`carrier_freq\`, \`modulator_freq\`, \`mod_depth\`, \`shape\`, \`bits\`, \`delay_samples\`. (\`shape\` is a string-enum on \`wavetable\`; all others are integers.)
+- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`.
+- **Port handle ids** are kebab-case: \`audio-out\`, \`audio-in\`, \`gate-out\`, \`gate-in\`, \`mix-out\`, \`in-1\`, \`in-2\`. Two are unhyphenated for control signals: \`gate\` (an ADSR input) and \`clock\` (a samplehold / counter input).
+- **Block parameters** are snake_case: \`freq\`, \`attack_ms\`, \`decay_ms\`, \`sustain_level\`, \`release_ms\`, \`rate_hz\`, \`duty_pct\`, \`cutoff_hz\` (lowpass + highpass), \`center_hz\` (bandpass), \`value\`, \`carrier_freq\`, \`modulator_freq\`, \`mod_depth\`, \`shape\`, \`bits\`, \`delay_samples\`, \`max_value\` (counter). (\`shape\` is a string-enum on \`wavetable\`; all others are integers.)
 
 # Save format
 
@@ -195,7 +220,7 @@ After tool calls, you'll receive \`tool_result\` content blocks with the outcome
 
 - Be concrete. Reference specific block types, parameter values, and port names.
 - Keep responses tight — a short paragraph or a short list.
-- If a goal isn't possible with the current 19 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
+- If a goal isn't possible with the current 24 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
 - After multi-step tool sequences, end with a short text confirmation of what you did so the user knows where things landed.`
 
 export function buildSystemBlocks(nodes: AppNode[], edges: Edge[]) {
@@ -237,7 +262,8 @@ The \`data\` field shape depends on \`type\`:
 - wavetable: { freq: 20-20000 (default 440), shape: one of "sine" | "pulse_25" | "ramp_up" | "formant" (default "sine") }
 - bitcrusher: { bits: 1-8 (default 4) }
 - delay: { delay_samples: 1-1024 (default 128) }
-- mixer | output | samplehold | noise | multiply: {} (no parameters)
+- counter: { max_value: 1-127 (default 16) }
+- mixer | output | samplehold | noise | multiply | and | or | xor | not: {} (no parameters)
 
 Omit \`data\` to use defaults.`,
       input_schema: {
@@ -263,8 +289,8 @@ Omit \`data\` to use defaults.`,
         `Wire two blocks. Connects source.source_handle to target.target_handle.
 
 Valid handle pairings (port handle names are kebab-case):
-- Audio sources (oscillator/triangle/sawtooth/sine/wavetable/noise/constant/mixer/adsr/lowpass/highpass/bandpass/samplehold/fm/multiply/bitcrusher/delay) emit \`audio-out\` (or mixer's \`mix-out\`). Audio sinks (mixer/adsr/lowpass/highpass/bandpass/samplehold/multiply/bitcrusher/delay/output) accept on \`audio-in\` (or mixer's \`in-1\`/\`in-2\`).
-- gate emits \`gate-out\`. Valid targets: adsr's \`gate\` input, samplehold's \`clock\` input.
+- Audio sources (oscillator/triangle/sawtooth/sine/wavetable/noise/constant/mixer/adsr/lowpass/highpass/bandpass/samplehold/fm/multiply/bitcrusher/delay/counter) emit \`audio-out\` (or mixer's \`mix-out\`). Audio sinks (mixer/adsr/lowpass/highpass/bandpass/samplehold/multiply/bitcrusher/delay/output) accept on \`audio-in\` (or mixer's \`in-1\`/\`in-2\`).
+- 1-bit sources (gate, and, or, xor, not) emit \`gate-out\`. Valid 1-bit targets: adsr's \`gate\` input, samplehold's / counter's \`clock\` input, the boolean gates' \`in-1\`/\`in-2\` (and/or/xor) or \`gate-in\` (not) inputs.
 - output has \`audio-in\` and no output handle (it is a sink).
 
 Common patterns:
@@ -272,6 +298,8 @@ Common patterns:
 - oscillator.audio-out → mixer.in-1
 - gate.gate-out → adsr.gate
 - gate.gate-out → samplehold.clock
+- gate.gate-out → counter.clock
+- gate.gate-out → not.gate-in
 - lowpass.audio-out → output.audio-in`,
       input_schema: {
         type: 'object',
@@ -284,7 +312,7 @@ Common patterns:
           },
           target_handle: {
             type: 'string',
-            description: 'One of: audio-in, in-1, in-2, gate, clock',
+            description: 'One of: audio-in, in-1, in-2, gate, gate-in, clock',
           },
         },
         required: ['source_id', 'target_id', 'source_handle', 'target_handle'],
@@ -307,7 +335,8 @@ Allowed fields per block type (same as add_node):
 - wavetable: freq, shape (string: "sine" | "pulse_25" | "ramp_up" | "formant")
 - bitcrusher: bits
 - delay: delay_samples
-- mixer | output | samplehold | noise | multiply: (no parameters; this tool is a no-op for these types)`,
+- counter: max_value
+- mixer | output | samplehold | noise | multiply | and | or | xor | not: (no parameters; this tool is a no-op for these types)`,
       input_schema: {
         type: 'object',
         properties: {

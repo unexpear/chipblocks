@@ -31,6 +31,11 @@ from .multiply import Multiply
 from .wavetable import Wavetable
 from .bitcrusher import Bitcrusher
 from .delay import Delay
+from .and_gate import AndGate
+from .or_gate import OrGate
+from .xor_gate import XorGate
+from .not_gate import NotGate
+from .counter import Counter
 
 # Registry mapping graph node `type` (from React Flow JSON) to block class.
 BLOCK_REGISTRY = {
@@ -53,6 +58,11 @@ BLOCK_REGISTRY = {
     "wavetable": Wavetable,
     "bitcrusher": Bitcrusher,
     "delay": Delay,
+    "and": AndGate,
+    "or": OrGate,
+    "xor": XorGate,
+    "not": NotGate,
+    "counter": Counter,
 }
 
 __all__ = [
@@ -75,5 +85,10 @@ __all__ = [
     "Wavetable",
     "Bitcrusher",
     "Delay",
+    "AndGate",
+    "OrGate",
+    "XorGate",
+    "NotGate",
+    "Counter",
     "BLOCK_REGISTRY",
 ]

@@ -5,7 +5,7 @@ ChipBlocks is a free, open-source desktop app that lets non-technical people des
 ## What's in the alpha
 
 - Visual node-graph editor with drag-from-palette, port-directional wiring, per-block parameter editors. WCAG 2.1 AA accessibility (keyboard navigation, focus indicators, screen-reader labels, live regions for status messages).
-- **19 blocks**: Oscillator (square), Triangle, Sawtooth, Sine, Wavetable (4 shapes), Noise, Constant, Mixer, ADSR Envelope, Gate, Low-Pass / High-Pass / Band-Pass Filters, Sample-and-Hold, FM voice, Multiply (ring-mod / VCA), Bitcrusher, Delay, Output. Per-block reference in [BLOCKS.md](BLOCKS.md).
+- **24 blocks**: Oscillator (square), Triangle, Sawtooth, Sine, Wavetable (4 shapes), Noise, Constant, Mixer, ADSR Envelope, Gate, Low-Pass / High-Pass / Band-Pass Filters, Sample-and-Hold, FM voice, Multiply (ring-mod / VCA), Bitcrusher, Delay, AND / OR / XOR / NOT / Counter (digital logic), Output. Per-block reference in [BLOCKS.md](BLOCKS.md).
 - AI consultant in a chat sidebar — BYOK Anthropic. Reads the canvas, suggests blocks, can add or wire blocks for you with a preview-and-confirm step before destructive edits.
 - ▶ Play: simulates the design via Amaranth, produces a 16-bit 44.1 kHz WAV that the app plays.
 - 🔧 Build for **Lattice iCEstick** or **TinyFPGA BX**: runs the graph through Yosys, nextpnr-ice40, and icepack into a flashable `.bin`. Bundle includes a `BUILD.md` utilization report so you know if your design fits.

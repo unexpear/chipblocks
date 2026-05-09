@@ -12,13 +12,13 @@ Each section below is a self-contained announcement for a different venue. The r
 
 **Body:**
 
-Hi r/synthdiy. I'm a non-technical solo developer and I've been building a free open-source desktop app called ChipBlocks. The pitch: drag blocks onto a canvas — square/triangle/sawtooth/sine oscillators, wavetable, noise, constant, mixer, ADSR, gate, sample-and-hold, multiply (ring mod), FM voice, low/high/band-pass filters, bitcrusher, delay, output — wire them up, hit Play to hear the chip simulate through your speakers, then click "Build" to get one of three things:
+Hi r/synthdiy. I'm a non-technical solo developer and I've been building a free open-source desktop app called ChipBlocks. The pitch: drag blocks onto a canvas — square/triangle/sawtooth/sine oscillators, wavetable, noise, constant, mixer, ADSR, gate, sample-and-hold, multiply (ring mod), FM voice, low/high/band-pass filters, bitcrusher, delay, AND/OR/XOR/NOT/counter logic primitives, output — wire them up, hit Play to hear the chip simulate through your speakers, then click "Build" to get one of three things:
 
 - A real flashable `.bin` for a $30 Lattice iCEstick FPGA
 - A `.bin` for the TinyFPGA BX (the same flow but a bigger, USB-native iCE40 board)
 - A complete Tiny Tapeout submission package — drop into the GitHub template, push, and your design becomes a real ASIC chip on the SkyWater 130nm or GlobalFoundries 180nm shuttle
 
-19 blocks in this alpha. There's also an AI consultant in the sidebar (bring your own Anthropic API key) that can read your canvas, suggest blocks, and wire things up for you with a preview-and-confirm step.
+24 blocks in this alpha. There's also an AI consultant in the sidebar (bring your own Anthropic API key) that can read your canvas, suggest blocks, and wire things up for you with a preview-and-confirm step.
 
 Stack: Electron + React on the front, Python + Amaranth HDL on the back, Yosys + nextpnr + icepack for the FPGA pipeline. MIT-licensed, no GPL in the shipped product.
 
@@ -36,7 +36,7 @@ Feedback very welcome, especially from people who actually build synths.
 
 **Body:**
 
-First alpha of ChipBlocks: a free open-source desktop app that puts a visual node-graph editor on top of the open iCE40 toolchain. You wire 19 blocks (oscillators in four shapes, wavetable, noise, constant, mixer, ADSR, gate, sample-and-hold, multiply, FM voice, low/high/band-pass filters, bitcrusher, delay, output) on a canvas, the backend translates the graph to Verilog via Amaranth HDL, and runs it through Yosys → nextpnr-ice40 → icepack to produce a flashable `.bin`. There's also an audio simulation path that produces a WAV from the Amaranth design so you can hear it before flashing.
+First alpha of ChipBlocks: a free open-source desktop app that puts a visual node-graph editor on top of the open iCE40 toolchain. You wire 24 blocks (oscillators in four shapes, wavetable, noise, constant, mixer, ADSR, gate, sample-and-hold, multiply, FM voice, low/high/band-pass filters, bitcrusher, delay, AND/OR/XOR/NOT/counter logic primitives, output) on a canvas, the backend translates the graph to Verilog via Amaranth HDL, and runs it through Yosys → nextpnr-ice40 → icepack to produce a flashable `.bin`. There's also an audio simulation path that produces a WAV from the Amaranth design so you can hear it before flashing.
 
 Three real-silicon outputs in this release:
 
@@ -64,7 +64,7 @@ Bug reports, PRs, board-support requests all welcome.
 
 ChipBlocks is a free open-source desktop app for designing custom chips by wiring visual blocks. Drop an oscillator, connect it to a mixer and an output, hit Play and hear the design simulate through your speakers, then build one of three things: an iCE40 bitstream for a $30 dev board, a TinyFPGA BX bitstream, or a Tiny Tapeout submission package that becomes a real ASIC on the next SkyWater 130 or GlobalFoundries 180 shuttle.
 
-First alpha covers audio / synth / retro-game chips — 19 blocks across oscillators (square / triangle / sawtooth / sine / wavetable), modulation (gate, ADSR, sample-and-hold, multiply, FM voice), filtering (low/high/band-pass), effects (bitcrusher, delay), and routing (mixer, output, noise, constant). MIT-licensed, ships only permissively-licensed code (MIT / Apache 2.0 / BSD / ISC). Pipeline is Amaranth HDL → Verilog → Yosys → nextpnr-ice40 → icepack for the FPGA paths; Tiny Tapeout's flow runs OpenLane on Sky130 or GF180.
+First alpha covers audio / synth / retro-game chips — 24 blocks across oscillators (square / triangle / sawtooth / sine / wavetable), modulation (gate, ADSR, sample-and-hold, multiply, FM voice), filtering (low/high/band-pass), effects (bitcrusher, delay), digital logic (AND, OR, XOR, NOT, counter), and routing (mixer, output, noise, constant). MIT-licensed, ships only permissively-licensed code (MIT / Apache 2.0 / BSD / ISC). Pipeline is Amaranth HDL → Verilog → Yosys → nextpnr-ice40 → icepack for the FPGA paths; Tiny Tapeout's flow runs OpenLane on Sky130 or GF180.
 
 There's an AI consultant in a sidebar that can read the canvas and edit it for you (with a preview-confirm step). BYOK — you supply an Anthropic API key. The project never pays AI bills on behalf of users.
 
@@ -84,7 +84,7 @@ Happy to take questions.
 
 Hi Hackaday team,
 
-ChipBlocks is a free open-source desktop app that lets non-engineers design custom chips by dragging visual blocks. The first alpha covers audio / synth / retro-game chips — 19 blocks in a node-graph editor, simulated audio output, plus three real-silicon outputs: a flashable iCE40 bitstream for the $30 Lattice iCEstick, a bitstream for the TinyFPGA BX, and a Tiny Tapeout submission package that drops into the canonical `ttsky-verilog-template` layout (so the same graph can become a real ASIC on the next Sky130 or GF180 shuttle). There's an optional AI consultant (bring your own Anthropic API key) that can read the canvas and wire things up with a preview-confirm step.
+ChipBlocks is a free open-source desktop app that lets non-engineers design custom chips by dragging visual blocks. The first alpha covers audio / synth / retro-game chips — 24 blocks in a node-graph editor, simulated audio output, plus three real-silicon outputs: a flashable iCE40 bitstream for the $30 Lattice iCEstick, a bitstream for the TinyFPGA BX, and a Tiny Tapeout submission package that drops into the canonical `ttsky-verilog-template` layout (so the same graph can become a real ASIC on the next Sky130 or GF180 shuttle). There's an optional AI consultant (bring your own Anthropic API key) that can read the canvas and wire things up with a preview-confirm step.
 
 It's MIT-licensed, ships only permissively-licensed code, and the author is a non-technical solo developer building with Claude Code — eating their own dog food, since the project's whole point is making custom silicon reachable for people who don't know Verilog. v0.1.0-alpha just tagged.
 

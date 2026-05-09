@@ -1,6 +1,6 @@
 # ChipBlocks block library
 
-> **Last updated:** 2026-05-09 · Reference for the 19 blocks shipping in v0.1.0-alpha. The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). For how the renderer talks to the backend and how to add a 20th block, see [ARCHITECTURE.md](ARCHITECTURE.md).
+> **Last updated:** 2026-05-09 · Reference for the 24 blocks shipping in v0.1.0-alpha. The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). For how the renderer talks to the backend and how to add another block, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 This document describes what each block does, what its inputs and outputs are, what its parameters mean, and roughly how it sounds. Blocks are 8-bit signed (–128..+127) at a 44.1 kHz sample rate. Audio handles carry signed 8-bit samples; gate / clock handles carry 1-bit signals. Edges are direction-checked by React Flow at edit time.
 
@@ -25,6 +25,14 @@ A note on parameter ranges: the React Flow node components enforce **musically s
 - [Sample-and-hold](#sample-and-hold)
 - [Multiply (ring modulator)](#multiply-ring-modulator)
 - [FM voice](#fm-voice)
+
+### Logic
+
+- [AND](#and)
+- [OR](#or)
+- [XOR](#xor)
+- [NOT](#not)
+- [Counter](#counter)
 
 ### Filtering
 
@@ -299,6 +307,102 @@ A self-contained two-operator FM voice. A modulator oscillator displaces a carri
 **Behavior.** Two 16-bit phase accumulators run in parallel. The modulator advances by `mod_step = 2^16 * modulator_freq / 44100`. The carrier advances by `carrier_step + (modulator_phase[8:16] * mod_depth)` — the modulator's high 8 bits form the per-tick phase displacement added on top of the carrier's natural step. With `mod_depth = 0` the FM block degenerates to a plain square oscillator at `carrier_freq`.
 
 **Common usage.** Carrier at the desired note pitch, modulator at a small integer ratio (2:1, 3:2, 5:4) gives bell, electric piano, and metallic tones. Modulator-much-greater-than-carrier gives noisy / metallic textures.
+
+---
+
+## Logic
+
+### AND
+
+Combinational 1-bit AND of two inputs. The simplest glue-logic primitive.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `in-1` | target | 1-bit | First operand |
+| `in-2` | target | 1-bit | Second operand |
+| `gate-out` | source | 1-bit | `in-1 & in-2` |
+
+**Parameters.** None.
+
+**Behavior.** Combinational — no internal state. The output is high only when both inputs are high.
+
+**Common usage.** Combine two gate sources so an envelope only fires when both clocks are high — for example, a fast Gate AND-ed with a slow Gate gives a fast tick that stops between long beats.
+
+### OR
+
+Combinational 1-bit OR of two inputs.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `in-1` | target | 1-bit | First operand |
+| `in-2` | target | 1-bit | Second operand |
+| `gate-out` | source | 1-bit | `in-1 \| in-2` |
+
+**Parameters.** None.
+
+**Behavior.** Combinational — no internal state. The output is high whenever either input is high.
+
+**Common usage.** Merge two gate sources so an envelope retriggers on either one — a regular tempo Gate OR-ed with a one-shot Gate gives "play on the beat, plus an extra hit on demand."
+
+### XOR
+
+Combinational 1-bit exclusive OR of two inputs.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `in-1` | target | 1-bit | First operand |
+| `in-2` | target | 1-bit | Second operand |
+| `gate-out` | source | 1-bit | `in-1 ^ in-2` |
+
+**Parameters.** None.
+
+**Behavior.** Combinational — no internal state. The output is high exactly when the inputs differ.
+
+**Common usage.** XOR-ing a Gate with itself delayed by one cycle (using a Sample-and-hold or downstream NOT trick) gives a half-rate divider — the building block of frequency dividers and parity checkers.
+
+### NOT
+
+Combinational 1-bit inverter.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `gate-in` | target | 1-bit | Source signal |
+| `gate-out` | source | 1-bit | `~gate-in` |
+
+**Parameters.** None.
+
+**Behavior.** Combinational — the output is the bit-flip of the input.
+
+**Common usage.** Drive an envelope from the off-phase of a clock by passing a Gate through a NOT before wiring it to ADSR's `gate` input. Pairs with AND / OR to build the rest of the boolean primitives (`a NAND b = NOT(a AND b)`, etc.).
+
+### Counter
+
+Wrapping integer counter clocked by a 1-bit signal. Each rising edge of `clock` increments the count; when the count reaches `max_value` it wraps back to 0. The output exposes the count as a centred 8-bit signed sample so it can drive any audio-shaped target.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `clock` | target | 1-bit | Rising edge increments the count |
+| `audio-out` | source | signed 8-bit audio | Current count minus 64 |
+
+**Parameters**
+
+| Name | Type | Range (frontend / backend) | Default | What it does |
+|---|---|---|---|---|
+| `max_value` | integer | 1–127 / 1–127 | 16 | Wrap point: counter cycles 0, 1, ..., max_value−1, then resets |
+
+**Behavior.** The clock is edge-detected so a held-high clock doesn't continuously increment. Internally the counter is unsigned (0..max_value−1); the output subtracts 64 to map onto the signed −128..+127 audio bus, mirroring the same offset-by-half pattern used in the Sawtooth block.
+
+**Common usage.** Drive a Counter with a slow Gate, run its `audio-out` into a Sample-and-hold's `audio-in`, and clock the S&H from the same Gate to build a stair-step sequencer. Pair with the boolean gates and a Sample-and-hold to build small state machines without leaving the canvas.
 
 ---
 

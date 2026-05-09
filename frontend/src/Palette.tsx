@@ -39,6 +39,11 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'multiply',   label: 'Multiply',   color: '#3f51b5', description: 'Ring modulator / VCA: (a * b) >> 7' },
   { type: 'bitcrusher', label: 'Bitcrusher', color: '#5d4037', description: 'Lo-fi bit-depth reduction (1–8 effective bits)' },
   { type: 'delay',      label: 'Delay',      color: '#7c4dff', description: 'Fixed-length delay line (1–1024 samples)' },
+  { type: 'and',        label: 'AND',        color: '#0277bd', description: '1-bit logical AND (a & b)' },
+  { type: 'or',         label: 'OR',         color: '#0288d1', description: '1-bit logical OR (a | b)' },
+  { type: 'xor',        label: 'XOR',        color: '#039be5', description: '1-bit exclusive OR (a ^ b)' },
+  { type: 'not',        label: 'NOT',        color: '#03a9f4', description: '1-bit inverter (~a)' },
+  { type: 'counter',    label: 'Counter',    color: '#01579b', description: 'Wrapping counter clocked by a 1-bit signal' },
   { type: 'output',     label: 'Output',     color: '#f44336', description: 'Audio sink (where Play reads from)' },
 ]
 
@@ -71,11 +76,17 @@ export function defaultDataForType(type: string): Record<string, unknown> {
       return { bits: 4 }
     case 'delay':
       return { delay_samples: 128 }
+    case 'counter':
+      return { max_value: 16 }
     case 'mixer':
     case 'output':
     case 'samplehold':
     case 'noise':
     case 'multiply':
+    case 'and':
+    case 'or':
+    case 'xor':
+    case 'not':
     default:
       return {}
   }

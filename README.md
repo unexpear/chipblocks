@@ -33,7 +33,7 @@ The first flagship domain is **audio / synth / retro-game chips**. The architect
                                   └─────────────────────────────────────────┘
 ```
 
-- **19 audio blocks**: oscillator (square), triangle, sawtooth, sine, noise, constant, mixer, output, ADSR envelope, gate, low-pass filter, high-pass filter, band-pass filter, sample-and-hold, FM voice, multiply (ring modulator), wavetable, bitcrusher, delay. Drag from the side palette onto the canvas.
+- **24 blocks**: oscillator (square), triangle, sawtooth, sine, noise, constant, mixer, output, ADSR envelope, gate, low-pass filter, high-pass filter, band-pass filter, sample-and-hold, FM voice, multiply (ring modulator), wavetable, bitcrusher, delay, plus the digital-logic primitives AND / OR / XOR / NOT / counter. Drag from the side palette onto the canvas.
 - **Visual wiring**: edges enforce port directionality. Nodes have parameter editors with full screen-reader labels (frequency, cutoff, attack/decay/sustain/release, etc.).
 - **▶ Play**: Python backend simulates the design in [Amaranth](https://github.com/amaranth-lang/amaranth), produces a 16-bit WAV at 44.1 kHz, and the app plays it.
 - **🔧 Build → Lattice iCEstick**: graph → Verilog → Yosys → nextpnr-ice40 → icepack → flashable `.bin` for the Lattice iCEstick (~$30 USB dev board). Bundle includes a `BUILD.md` utilization report so you know if your design fits.

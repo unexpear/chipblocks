@@ -45,6 +45,11 @@ import { MultiplyNode } from '../src/blocks/MultiplyNode'
 import { WavetableNode } from '../src/blocks/WavetableNode'
 import { BitcrusherNode } from '../src/blocks/BitcrusherNode'
 import { DelayNode } from '../src/blocks/DelayNode'
+import { AndGateNode } from '../src/blocks/AndGateNode'
+import { OrGateNode } from '../src/blocks/OrGateNode'
+import { XorGateNode } from '../src/blocks/XorGateNode'
+import { NotGateNode } from '../src/blocks/NotGateNode'
+import { CounterNode } from '../src/blocks/CounterNode'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -722,5 +727,86 @@ describe('Delay block', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/1.*1024/)
     await user.tab()
     expect(input.value).toBe('128')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Logic blocks: AND / OR / XOR are 2-input parameterless 1-bit gates;
+// NOT is 1-input parameterless; Counter has a clock input + max_value
+// parameter [1..127].
+
+describe('AndGate block', () => {
+  it('renders title with 2 inputs and 1 output, no params', () => {
+    const { container } = wrap(
+      <AndGateNode {...nodePropsBase('and-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('AND')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(2)
+    expect(countHandles(container, 'source')).toBe(1)
+  })
+})
+
+describe('OrGate block', () => {
+  it('renders title with 2 inputs and 1 output, no params', () => {
+    const { container } = wrap(
+      <OrGateNode {...nodePropsBase('or-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('OR')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(2)
+    expect(countHandles(container, 'source')).toBe(1)
+  })
+})
+
+describe('XorGate block', () => {
+  it('renders title with 2 inputs and 1 output, no params', () => {
+    const { container } = wrap(
+      <XorGateNode {...nodePropsBase('xor-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('XOR')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(2)
+    expect(countHandles(container, 'source')).toBe(1)
+  })
+})
+
+describe('NotGate block', () => {
+  it('renders title with 1 input and 1 output, no params', () => {
+    const { container } = wrap(
+      <NotGateNode {...nodePropsBase('not-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('NOT')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(1)
+    expect(countHandles(container, 'source')).toBe(1)
+  })
+})
+
+describe('Counter block', () => {
+  it('renders title + max_value input with default', () => {
+    const { container } = wrap(
+      <CounterNode {...nodePropsBase('cnt-1')} data={{ max_value: 16 }} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Counter')
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')
+    expect(input?.value).toBe('16')
+    expect(input?.getAttribute('aria-label')).toBe('Wrap value (1 to 127)')
+    expect(countHandles(container, 'target')).toBe(1)
+    expect(countHandles(container, 'source')).toBe(1)
+  })
+
+  it('out-of-range max_value (200) shows an error and snaps back on blur', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <CounterNode {...nodePropsBase('cnt-2')} data={{ max_value: 16 }} />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '200')
+    expect(input.value).toBe('200')
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/1.*127/)
+    await user.tab()
+    expect(input.value).toBe('16')
   })
 })

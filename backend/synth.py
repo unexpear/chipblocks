@@ -96,7 +96,11 @@ def _build_params(node_type: str, data: dict) -> dict:
     elif node_type == "delay":
         if "delay_samples" in data:
             params["delay_samples"] = int(data["delay_samples"])
-    # Mixer, Output, SampleAndHold, Noise, Multiply have no parameters.
+    elif node_type == "counter":
+        if "max_value" in data:
+            params["max_value"] = int(data["max_value"])
+    # Mixer, Output, SampleAndHold, Noise, Multiply, and the boolean gates
+    # (and / or / xor / not) have no parameters.
     return params
 
 

@@ -9,9 +9,9 @@
 ## Snapshot — where we actually are
 
 - **13 sprints completed**, all closed cleanly with retrospectives. Most recent: Sprint 13 (block library expansion + CONTRIBUTING.md) on 2026-05-09.
-- **v0.1.0-alpha installer built + verified locally**: `frontend/release/0.1.0/ChipBlocks_0.1.0.exe` (~93 MB, unsigned NSIS, Windows). Cross-platform CI (`.github/workflows/release.yml`) builds Mac DMG + Linux AppImage on tag push. Backend pytest 31/31 + frontend vitest 87/87 green on every push. Fresh-install smoke test passed on the developer's machine. **Not yet tagged on GitHub.**
+- **v0.1.0-alpha installer built + verified locally**: `frontend/release/0.1.0/ChipBlocks_0.1.0.exe` (~93 MB, unsigned NSIS, Windows). Cross-platform CI (`.github/workflows/release.yml`) builds Mac DMG + Linux AppImage on tag push. Backend pytest 37/37 + frontend vitest 93/93 green on every push. Fresh-install smoke test passed on the developer's machine. **Not yet tagged on GitHub.**
 - **0 external users** — the PRD's **(E) anyone-but-the-developer-using-it** metric. Capabilities + onboarding + accessibility are now genuinely launch-ready; the remaining gap is the user-action of pushing a release tag and posting the announcement drafts.
-- **19 audio blocks** — well above the PRD's Phase 2 "10–15 blocks" range. Adds since the 2026-05-08 snapshot: Sine, Noise, Constant, FM voice, Multiply, Wavetable (S9); Bitcrusher + Delay (S13); Highpass + Bandpass filters (S13).
+- **24 blocks** — well above the PRD's Phase 2 "10–15 blocks" range. Adds since the 2026-05-08 snapshot: Sine, Noise, Constant, FM voice, Multiply, Wavetable (S9); Bitcrusher + Delay (S13); Highpass + Bandpass filters (S13); AND / OR / XOR / NOT / Counter logic primitives (post-S13).
 
 ---
 
@@ -20,7 +20,7 @@
 | PRD Phase | Original target | Capabilities | Distribution / discoverability | Notes |
 |---|---|---|---|---|
 | **Phase 1 — Proof of Concept** | months 1–3 | **Done** (S1–S5) | n/a | 9 blocks + AI sidebar + WAV simulation. Beat the original "7 blocks" bar. |
-| **Phase 2 — First External User** | months 3–6 | **Done** (S6–S13) | **Tag pending** | All 3 silicon targets shipping (iCEstick + TinyFPGA BX FPGA + Tiny Tapeout ASIC). 19 blocks (vs. 10–15 target). Onboarding starter graph + dismissible hint. WCAG 2.1 AA Tier 1 + Tier 2 done. CI + cross-platform release pipeline live. Installer + screenshot in repo. **Last gap:** user pushes the `v0.1.0-alpha` tag + posts the 4 announcement drafts. |
+| **Phase 2 — First External User** | months 3–6 | **Done** (S6–S13) | **Tag pending** | All 3 silicon targets shipping (iCEstick + TinyFPGA BX FPGA + Tiny Tapeout ASIC). 24 blocks (vs. 10–15 target). Onboarding starter graph + dismissible hint. WCAG 2.1 AA Tier 1 + Tier 2 done. CI + cross-platform release pipeline live. Installer + screenshot in repo. **Last gap:** user pushes the `v0.1.0-alpha` tag + posts the 4 announcement drafts. |
 | **Phase 3 — Domain Expansion** | months 6–12 | **Partially started** (Tiny Tapeout shipped in S10, second FPGA target shipped in S10) | Not started | Remaining: second domain (custom MCU or sensor), ECP5/Xilinx FPGA targets. |
 | **Phase 4 — Polish & Reach** | months 12–18 | Not started | Not started | Web version, classroom mode, marketplace. |
 | **Phase 5 — General-purpose PCB** | months 18+ | Sibling project | Sibling project | Treated as a separate workstream when we get there. |

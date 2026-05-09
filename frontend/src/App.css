@@ -846,6 +846,27 @@
   border-color: #7c4dff;
 }
 
+.block-and {
+  border-color: #0277bd;
+}
+
+.block-or {
+  border-color: #0288d1;
+}
+
+.block-xor {
+  border-color: #039be5;
+}
+
+.block-not {
+  border-color: #03a9f4;
+}
+
+.block-counter {
+  border-color: #01579b;
+  min-width: 130px;
+}
+
 /* Multi-row parameter blocks (ADSR, Gate, future LPF, etc.) */
 .block-row {
   display: flex;

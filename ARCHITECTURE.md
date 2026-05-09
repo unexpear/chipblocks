@@ -146,14 +146,14 @@ Eval script at `scripts/eval-ai.ts` runs 7 representative queries against the li
 ## Testing
 
 ```
-backend/tests/        pytest, 31 tests, ~60 s
-  test_blocks.py             19 per-block property assertions (zero-crossing rate, etc.) — covers all 19 blocks
+backend/tests/        pytest, 37 tests, ~60 s
+  test_blocks.py             25 per-block property assertions (zero-crossing rate, etc.) — covers all 24 blocks plus a mixed-logic pipeline smoke test
   test_synth_pipeline.py     4 end-to-end tests against examples/*.json
   test_tinytapeout.py        8 TT bundle shape + info.yaml schema tests
 
-frontend/test/        vitest, 87 tests, ~10 s
+frontend/test/        vitest, 93 tests, ~10 s
   ipc-contract.test.ts          renderer↔main IPC mock tests (synth/build/AI)
-  blocks.test.tsx               block render + parameter editing + range validation (51 tests across all 19 blocks)
+  blocks.test.tsx               block render + parameter editing + range validation (57 tests across all 24 blocks)
   save-load.test.tsx            save/load roundtrip + m5 rejection paths
   examples-consistency.test.ts  examples.ts ↔ examples/*.json drift check
   classify-backend-error.test.ts friendly-error classifier (14 cases)

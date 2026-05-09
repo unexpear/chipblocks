@@ -568,3 +568,187 @@ def test_delay_holds_silence_then_passes_input(run_synth, wav_samples):
         f"Delay should pass through Constant(64) after 10 samples; got "
         f"min={min(samples[10:200])}, max={max(samples[10:200])}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Logic-block tests — AND, OR, XOR, NOT, Counter.
+#
+# The boolean gates output 1-bit signals on `gate-out`. We wire them
+# straight to the Output block's `audio-in` (which is signed 8-bit);
+# Amaranth zero-extends, so the WAV ends up as 0 (gate low) or +64
+# (gate high, after the WAV scale factor of 64). That gives a clean
+# proportion-of-high-samples check per block.
+# ---------------------------------------------------------------------------
+def test_and_gate_combines_two_clocks(run_synth, wav_samples):
+    """AND of a 4 Hz / 50% gate and a 2 Hz / 50% gate should be high
+    only when both are high — the same proportion as the slower gate's
+    duty when their phases align (here both start at t=0 with high)."""
+    graph = {
+        "nodes": [
+            {"id": "g1", "type": "gate", "data": {"rate_hz": 4, "duty_pct": 50}},
+            {"id": "g2", "type": "gate", "data": {"rate_hz": 2, "duty_pct": 50}},
+            {"id": "a", "type": "and", "data": {}},
+            _output_node(),
+        ],
+        "edges": [
+            _edge("e1", "g1", "a", "gate-out", "in-1"),
+            _edge("e2", "g2", "a", "gate-out", "in-2"),
+            _edge("e3", "a", "out", "gate-out", "audio-in"),
+        ],
+    }
+    samples = wav_samples(run_synth(graph, duration_s=1))
+    # Output should only ever be 0 or +64 (1-bit zero-extended × WAV scale 64).
+    distinct = set(samples)
+    assert distinct.issubset({0, 64}), (
+        f"AND output should only contain 0 or 64; got {sorted(distinct)}"
+    )
+    # Both gates start high; the AND is high while both are high. Over
+    # 1 second the high-fraction is roughly the slower gate's high-fraction
+    # intersected with the faster — about 25% (two 50%s overlap a quarter
+    # of the time on average).
+    high = sum(1 for s in samples if s != 0)
+    fraction = high / len(samples)
+    assert 0.15 < fraction < 0.40, (
+        f"AND high-fraction should be ~25%, got {fraction:.3f}"
+    )
+
+
+def test_or_gate_combines_two_clocks(run_synth, wav_samples):
+    """OR of two 50%-duty gates at different rates should be high about
+    75% of the time (both off only ~25%)."""
+    graph = {
+        "nodes": [
+            {"id": "g1", "type": "gate", "data": {"rate_hz": 4, "duty_pct": 50}},
+            {"id": "g2", "type": "gate", "data": {"rate_hz": 2, "duty_pct": 50}},
+            {"id": "o", "type": "or", "data": {}},
+            _output_node(),
+        ],
+        "edges": [
+            _edge("e1", "g1", "o", "gate-out", "in-1"),
+            _edge("e2", "g2", "o", "gate-out", "in-2"),
+            _edge("e3", "o", "out", "gate-out", "audio-in"),
+        ],
+    }
+    samples = wav_samples(run_synth(graph, duration_s=1))
+    high = sum(1 for s in samples if s != 0)
+    fraction = high / len(samples)
+    assert 0.60 < fraction < 0.90, (
+        f"OR high-fraction should be ~75%, got {fraction:.3f}"
+    )
+
+
+def test_xor_gate_differs_from_or(run_synth, wav_samples):
+    """XOR of the same two gates as the OR test should be high about 50%
+    of the time (each gate is on 50%, XOR is on whenever they differ —
+    which for two independent-phase 50% gates averages to 50%)."""
+    graph = {
+        "nodes": [
+            {"id": "g1", "type": "gate", "data": {"rate_hz": 4, "duty_pct": 50}},
+            {"id": "g2", "type": "gate", "data": {"rate_hz": 2, "duty_pct": 50}},
+            {"id": "x", "type": "xor", "data": {}},
+            _output_node(),
+        ],
+        "edges": [
+            _edge("e1", "g1", "x", "gate-out", "in-1"),
+            _edge("e2", "g2", "x", "gate-out", "in-2"),
+            _edge("e3", "x", "out", "gate-out", "audio-in"),
+        ],
+    }
+    samples = wav_samples(run_synth(graph, duration_s=1))
+    high = sum(1 for s in samples if s != 0)
+    fraction = high / len(samples)
+    # XOR of two independent 50%-duty signals averages to 50% high.
+    assert 0.35 < fraction < 0.65, (
+        f"XOR high-fraction should be ~50%, got {fraction:.3f}"
+    )
+
+
+def test_not_gate_inverts_a_clock(run_synth, wav_samples):
+    """NOT of a 4 Hz / 50% gate should be high while the source is low —
+    i.e. the inverted output's high-fraction equals 1 minus the source's
+    high-fraction (~50% in, ~50% out, but the phase is flipped)."""
+    inv_graph = {
+        "nodes": [
+            {"id": "g", "type": "gate", "data": {"rate_hz": 4, "duty_pct": 50}},
+            {"id": "n", "type": "not", "data": {}},
+            _output_node(),
+        ],
+        "edges": [
+            _edge("e1", "g", "n", "gate-out", "gate-in"),
+            _edge("e2", "n", "out", "gate-out", "audio-in"),
+        ],
+    }
+    inv_samples = wav_samples(run_synth(inv_graph, duration_s=1))
+    inv_high = sum(1 for s in inv_samples if s != 0)
+    inv_fraction = inv_high / len(inv_samples)
+    # Source gate is high 50% of the time; NOT should also land near 50%
+    # (the on / off durations are equal at 50% duty), but the very first
+    # sample should be low — the source gate starts high.
+    assert 0.45 < inv_fraction < 0.55, (
+        f"NOT high-fraction should be ~50% for a 50%-duty source, got {inv_fraction:.3f}"
+    )
+    # First sample: source gate is high at t=0, so NOT output is low.
+    assert inv_samples[0] == 0, (
+        f"NOT's first sample should be 0 (source gate starts high); got {inv_samples[0]}"
+    )
+
+
+def test_counter_cycles_through_values(run_synth, wav_samples):
+    """A 4 Hz gate clocking a Counter(max_value=8) should produce 4
+    distinct counter values per second on average (one per rising
+    edge). Output is `count - 64`, so values land in {-64, -63, ..., -57}."""
+    graph = {
+        "nodes": [
+            {"id": "g", "type": "gate", "data": {"rate_hz": 4, "duty_pct": 50}},
+            {"id": "c", "type": "counter", "data": {"max_value": 8}},
+            _output_node(),
+        ],
+        "edges": [
+            _edge("e1", "g", "c", "gate-out", "clock"),
+            _edge("e2", "c", "out", "audio-out", "audio-in"),
+        ],
+    }
+    samples = wav_samples(run_synth(graph, duration_s=2))
+    # Expected distinct values: 0..7 minus 64 = -64..-57, scaled by 64 in
+    # the WAV writer. So {-64, -63, -62, -61, -60, -59, -58, -57} × 64.
+    distinct = set(samples)
+    expected = {(v - 64) * 64 for v in range(8)}
+    # Over 2 seconds at 4 Hz we get 8 rising edges — exactly enough to
+    # visit all 8 counter states. The very first sample sits at -64*64
+    # (count == 0 before the first edge), so {-64..-57}*64 should appear.
+    assert distinct == expected, (
+        f"Counter should produce all 8 distinct values × 64; got {sorted(distinct)}"
+    )
+
+
+def test_counter_smoke_through_full_pipeline(run_synth, wav_samples):
+    """End-to-end: drive the new logic blocks together (Gate → AND with
+    a NOT-ed copy of itself = always-low; Counter → Output), confirm the
+    full pipeline runs and produces a non-empty WAV without errors."""
+    graph = {
+        "nodes": [
+            {"id": "g", "type": "gate", "data": {"rate_hz": 4, "duty_pct": 50}},
+            {"id": "n", "type": "not", "data": {}},
+            {"id": "a", "type": "and", "data": {}},
+            {"id": "c", "type": "counter", "data": {"max_value": 4}},
+            _output_node(),
+        ],
+        "edges": [
+            # Always-low signal: g AND (NOT g) = 0.
+            _edge("e1", "g", "n", "gate-out", "gate-in"),
+            _edge("e2", "g", "a", "gate-out", "in-1"),
+            _edge("e3", "n", "a", "gate-out", "in-2"),
+            # AND output ignored — Counter drives the audio bus.
+            _edge("e4", "g", "c", "gate-out", "clock"),
+            _edge("e5", "c", "out", "audio-out", "audio-in"),
+        ],
+    }
+    samples = wav_samples(run_synth(graph, duration_s=1))
+    # Counter(max_value=4) at 4 Hz over 1 s visits 4 states in the
+    # range 0..3, so the audio output should sit at {-64, -63, -62, -61}*64.
+    distinct = set(samples)
+    expected = {(v - 64) * 64 for v in range(4)}
+    assert distinct == expected, (
+        f"Mixed logic graph: counter should cycle through 4 values × 64; "
+        f"got {sorted(distinct)}"
+    )
