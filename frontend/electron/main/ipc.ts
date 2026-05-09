@@ -48,6 +48,14 @@ function getBuildScriptPath(): string {
   return path.join(getBackendDir(), 'build.py')
 }
 
+// Wrapper shell script that sources the OSS CAD Suite environment and
+// execs python3. Lets us invoke the build pipeline via argv-only spawn
+// (no `bash -c "<cmdline>"`), so caller-supplied arguments can't be
+// reinterpreted as shell metacharacters.
+function getBuildWrapperPath(): string {
+  return path.join(getBackendDir(), 'scripts', 'wsl-build-wrapper.sh')
+}
+
 async function runSynth(graph: SynthGraph): Promise<SynthResult> {
   const dir = await mkdtemp(path.join(tmpdir(), 'chipblocks-'))
   const winJsonPath = path.join(dir, 'graph.json')
@@ -193,28 +201,33 @@ async function runBuild(graph: SynthGraph, target: BuildTarget): Promise<BuildRe
   let wslJsonPath: string
   let wslOutDir: string
   let wslScriptPath: string
+  let wslWrapperPath: string
   try {
     wslJsonPath = winToWsl(winJsonPath)
     wslOutDir = winToWsl(winOutDir)
     wslScriptPath = winToWsl(getBuildScriptPath())
+    wslWrapperPath = winToWsl(getBuildWrapperPath())
   } catch (err) {
     return { ok: false, error: `Path conversion failed: ${(err as Error).message}` }
   }
 
   return new Promise<BuildResult>((resolve) => {
-    // FPGA targets need yosys / nextpnr / icepack on PATH (sourced via the
-    // OSS CAD Suite). The TT target is sources-only, no PnR — but sourcing
-    // the env is harmless and keeps the invocation symmetric.
-    const innerCmd =
-      `source ~/oss-cad-suite/environment 2>/dev/null; ` +
-      `python3 ${shellQuote(wslScriptPath)} ` +
-      `--in ${shellQuote(wslJsonPath)} ` +
-      `--out-dir ${shellQuote(wslOutDir)} ` +
-      `--target ${shellQuote(target)}`
-
+    // Argv-only spawn: every element is its own slot, so embedded shell
+    // metacharacters in any argument can't escape into a command. The
+    // wrapper script sources the OSS CAD Suite env (FPGA targets need
+    // yosys / nextpnr / icepack on PATH; the TT target doesn't but the
+    // wrapper tolerates the env file being absent) then execs python3.
     const proc = spawn(
       'wsl.exe',
-      ['-d', 'Ubuntu', '--', 'bash', '-c', innerCmd],
+      [
+        '-d', 'Ubuntu',
+        '--',
+        'bash', wslWrapperPath,
+        wslScriptPath,
+        '--in', wslJsonPath,
+        '--out-dir', wslOutDir,
+        '--target', target,
+      ],
       {
         windowsHide: true,
         env: {
@@ -280,12 +293,6 @@ function cancelBuild(): boolean {
     return true
   }
   return false
-}
-
-// Quote a string for safe interpolation into a single-line bash command.
-// Used for build.py's argv inside `bash -c "..."`.
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
 export function registerIpcHandlers() {
