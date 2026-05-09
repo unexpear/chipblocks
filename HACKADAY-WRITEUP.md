@@ -1,8 +1,8 @@
 <!-- DRAFT for Hackaday / Hackster.io submission. Delete after submission. -->
 
-# ChipBlocks: Drag Blocks, Hear the Chip, Get a Real iCE40 Bitstream
+# ChipBlocks: Drag Blocks, Hear the Chip, Get a Real iCE40 Bitstream — or Send the Same Graph to Tiny Tapeout
 
-Designing a custom chip currently costs $50K and a CS degree. [ChipBlocks](https://github.com/unexpear/chipblocks) — a free, open-source desktop app — lets you drag oscillators, envelopes, and filters onto a canvas, wire them up, click Play to hear the design, then click Build for FPGA to get a flashable `.bin` for a $30 Lattice iCEstick. The first public alpha is out now. It runs the same Yosys + nextpnr-ice40 + icepack pipeline that the open-FPGA crowd has been quietly perfecting for a decade — just behind a node-graph editor a non-engineer can actually use.
+Designing a custom chip currently costs $50K and a CS degree. [ChipBlocks](https://github.com/unexpear/chipblocks) — a free, open-source desktop app — lets you drag oscillators, envelopes, and filters onto a canvas, wire them up, click Play to hear the design, then pick one of three real-silicon outputs: a flashable `.bin` for a $30 Lattice iCEstick, a bitstream for the TinyFPGA BX, or a Tiny Tapeout submission package that becomes an actual ASIC on the next SkyWater 130nm or GlobalFoundries 180nm shuttle. The first public alpha is out now. It runs the same Yosys + nextpnr-ice40 + icepack pipeline that the open-FPGA crowd has been quietly perfecting for a decade — just behind a node-graph editor a non-engineer can actually use.
 
 ## The bottleneck isn't manufacturing
 
@@ -14,9 +14,13 @@ That gap is what ChipBlocks targets. Not as a Cadence-killer for production SoCs
 
 ## What the alpha actually does
 
-The editor is React Flow on top of Electron, with a side palette of 12+ audio blocks: square / triangle / sawtooth / sine oscillators, noise, constant, mixer, ADSR envelope, gate, low-pass filter, sample-and-hold, output, plus FM and multiply for modulation. Each block is a parameterized HDL module under the hood; the visual graph is just a friendly view of an Amaranth design. There's an AI consultant in a chat sidebar (BYOK Anthropic) that can read the canvas, suggest blocks, and even add or wire them for you, with a preview-and-confirm step before destructive edits.
+The editor is React Flow on top of Electron, with a side palette of 19 audio blocks: square / triangle / sawtooth / sine oscillators plus a 4-shape wavetable, noise, constant, mixer, ADSR envelope, gate, sample-and-hold, multiply (ring modulator), FM voice, low-pass / high-pass / band-pass filters, bitcrusher, delay, output. Each block is a parameterized HDL module under the hood; the visual graph is just a friendly view of an Amaranth design. There's an AI consultant in a chat sidebar (BYOK Anthropic) that can read the canvas, suggest blocks, and even add or wire them for you, with a preview-and-confirm step before destructive edits.
 
-Two big buttons live in the toolbar. Click ▶ Play and the Python backend translates the graph to Amaranth, simulates it, and hands the renderer a 16-bit 44.1 kHz WAV that plays through your speakers. Click 🔧 Build for FPGA and the same backend emits Verilog, runs it through Yosys, packs it with nextpnr-ice40, and wraps the output in `icepack` — about 30 to 60 seconds later, you get a zip with a flashable `.bin` for the Lattice iCEstick.
+Two big buttons live in the toolbar. Click ▶ Play and the Python backend translates the graph to Amaranth, simulates it, and hands the renderer a 16-bit 44.1 kHz WAV that plays through your speakers. Click 🔧 Build and a dropdown picks the silicon target:
+
+- **Lattice iCEstick** — Verilog → Yosys → nextpnr-ice40 → icepack. About 30–60 seconds later, a zip with the flashable `.bin` for the $30 USB dev board.
+- **TinyFPGA BX** — same flow targeting the iCE40LP-8K (USB-native, ~5x the LUTs of the iCEstick).
+- **Tiny Tapeout** — emits a 14-file submission package in the canonical `ttsky-verilog-template` layout (src/, test/, docs/, info.yaml validated against `tt-support-tools/project_info.py`, plus a working cocotb testbench). Drop into the GitHub template, push, submit at [app.tinytapeout.com](https://app.tinytapeout.com/). Their flow runs OpenLane on Sky130 or GF180 and ships you a real ASIC chip months later.
 
 ## Worked example: a kick drum, in about a minute
 
@@ -48,11 +52,11 @@ The novel part isn't "an LLM in a hardware app" — it's that the consultant kno
 
 ## Honest scope
 
-This is an alpha and looks like one. Windows-only for now (Mac/Linux installers are coming via cross-platform CI). The installer is unsigned, so SmartScreen will warn you the first time — click "More info → Run anyway." Audio output is 8-bit signed at 44.1 kHz; FPGA audio comes out as 1-bit PWM through an external RC filter. No MIDI input yet. No polyphony. No reverb, delay, or chorus blocks (reverb is BRAM-bound on the iCE40HX-1k, so it's waiting on a bigger target). The Python backend runs in WSL2 on Windows — that's a real install hurdle, and we're not pretending otherwise.
+This is an alpha and looks like one. Cross-platform CI builds Windows NSIS, Mac DMG, and Linux AppImage on tag push, but all three are unsigned for the alpha (SmartScreen / Gatekeeper will warn the first time — click "More info → Run anyway"). Audio output is 8-bit signed at 44.1 kHz; FPGA audio comes out as 1-bit PWM through an external RC filter. No MIDI input yet. No polyphony. No reverb or chorus blocks (reverb is BRAM-bound on the iCE40HX-1k, so it's waiting on a bigger FPGA target). The Python backend runs in WSL2 on Windows — that's a real install hurdle, and we're not pretending otherwise.
 
 ## What's next
 
-MIDI input + polyphony are the highest-leverage next items — without them, the synth use case stops at "interesting demo." Then more DSP blocks (wavetable, delay), Mac/Linux installers via GitHub Actions, additional FPGA targets beyond the iCEstick (TinyFPGA BX, ECP5, Xilinx 7-Series), and a Tiny Tapeout submission package so the same graph can become real ASIC silicon on a SkyWater 130 or GF180 shuttle. Full plan in [ROADMAP.md](https://github.com/unexpear/chipblocks/blob/master/ROADMAP.md).
+MIDI input + polyphony are the highest-leverage next items — without them, the synth use case stops at "interesting demo." Beyond that: more DSP blocks (chorus, distortion, allpass), additional FPGA targets (ECP5 via Trellis, Xilinx 7-Series via prjxray), and code-signing certificates to remove the unsigned-installer warnings. Full plan in [ROADMAP.md](https://github.com/unexpear/chipblocks/blob/master/ROADMAP.md).
 
 ## Try it
 
