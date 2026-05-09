@@ -28,7 +28,7 @@ Inside the app, the user:
 
 When the canvas is rendering or building, a Cancel button appears that aborts cleanly. Status text reads "Synthesizing…" or "Building bitstream…". Errors appear as a dismissible toast bottom-left.
 
-# Block library (all 17 types — these are the EXACT type strings)
+# Block library (all 19 types — these are the EXACT type strings)
 
 All audio signals are 8-bit signed (-128 to +127) at 44100 Hz.
 
@@ -86,6 +86,16 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz.
 - Output port \`audio-out\`
 - Parameter \`cutoff_hz\`: 1–22050 Hz (default 800)
 
+**highpass** — 1-pole IIR high-pass filter. The complement of \`lowpass\`: content above \`cutoff_hz\` passes through, content below it is attenuated. Useful for removing DC offset or isolating bright/percussive content. 6 dB/octave rolloff.
+- Input port \`audio-in\` (8-bit signed)
+- Output port \`audio-out\`
+- Parameter \`cutoff_hz\`: 1–22050 Hz (default 800)
+
+**bandpass** — 1-pole IIR band-pass filter (HP-then-LP cascade). Passes content near \`center_hz\` and rolls off above and below it; bandwidth is fixed at 1 octave (low ≈ center / √2, high ≈ center × √2). Useful for telephone-voice / wah-style sweeps and isolating mid-frequency content.
+- Input port \`audio-in\` (8-bit signed)
+- Output port \`audio-out\`
+- Parameter \`center_hz\`: 10–22050 Hz (default 1000)
+
 **samplehold** — sample-and-hold. Captures \`audio-in\` on each rising edge of \`clock\`. Holds until next edge.
 - Input ports: \`audio-in\` (8-bit signed), \`clock\` (1-bit)
 - Output port \`audio-out\`
@@ -121,9 +131,9 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz.
 
 # Naming conventions
 
-- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`.
+- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`.
 - **Port handle ids** are kebab-case: \`audio-out\`, \`audio-in\`, \`gate-out\`, \`mix-out\`, \`in-1\`, \`in-2\`. Two are unhyphenated for control signals: \`gate\` (an ADSR input) and \`clock\` (a samplehold input).
-- **Block parameters** are snake_case: \`freq\`, \`attack_ms\`, \`decay_ms\`, \`sustain_level\`, \`release_ms\`, \`rate_hz\`, \`duty_pct\`, \`cutoff_hz\`, \`value\`, \`carrier_freq\`, \`modulator_freq\`, \`mod_depth\`, \`shape\`, \`bits\`, \`delay_samples\`. (\`shape\` is a string-enum on \`wavetable\`; all others are integers.)
+- **Block parameters** are snake_case: \`freq\`, \`attack_ms\`, \`decay_ms\`, \`sustain_level\`, \`release_ms\`, \`rate_hz\`, \`duty_pct\`, \`cutoff_hz\` (lowpass + highpass), \`center_hz\` (bandpass), \`value\`, \`carrier_freq\`, \`modulator_freq\`, \`mod_depth\`, \`shape\`, \`bits\`, \`delay_samples\`. (\`shape\` is a string-enum on \`wavetable\`; all others are integers.)
 
 # Save format
 
@@ -147,6 +157,8 @@ Saved graphs do **not** include cached audio — Play re-renders from scratch ea
 - **"Make a sound with attack and release"** → Gate → ADSR.gate; Oscillator → ADSR.audio-in; ADSR.audio-out → Output.audio-in. Set the gate's \`rate_hz\` to ~2 Hz and ADSR's \`release_ms\` ~400 for a plucky feel.
 - **"Two oscillators mixed"** → Oscillator.audio-out → Mixer.in-1; Sawtooth.audio-out → Mixer.in-2; Mixer.mix-out → Output.audio-in. Detune one (e.g. 440 Hz vs. 442 Hz) for chorus.
 - **"Filter a bright sound"** → put a Lowpass between any audio source and the Output. \`cutoff_hz\` ~600 mellows; ~5000 keeps brightness.
+- **"Telephone / radio voice effect"** → wire any source through a Bandpass and into the Output: e.g. Sawtooth.audio-out → Bandpass.audio-in (\`center_hz\`: 1000) → Output.audio-in. The 1-octave passband around 1 kHz mimics a narrow-band channel.
+- **"Remove DC offset / brighten a sound"** → put a Highpass between the source and the Output. Low cutoff (~50 Hz) only kills DC; mid cutoff (~2000 Hz) leaves only the bright top end.
 - **"Make a kick drum"** → Gate (rate_hz: 2, duty_pct: 5) → ADSR.gate (attack_ms: 1, decay_ms: 80, sustain_level: 0, release_ms: 0); Oscillator (freq: 60) → ADSR.audio-in; ADSR.audio-out → Output.audio-in.
 - **"Stair-stepped pitch / arpeggio"** → Sawtooth → Samplehold.audio-in; Gate → Samplehold.clock; Samplehold.audio-out → Output. The slow gate quantizes the saw into a sequence of held tones.
 - **"Why doesn't my graph play?"** → Check (1) is there exactly one output block? (2) is something wired to its audio-in? (3) does at least one chain reach an audio source (oscillator/triangle/sawtooth)?
@@ -155,7 +167,7 @@ Saved graphs do **not** include cached audio — Play re-renders from scratch ea
 
 - **No polyphony.** Each oscillator is a single voice; the audio chain is monophonic.
 - **No MIDI** input or export.
-- **No reverb / chorus / EQ blocks.** Delay and Lowpass are the available time/frequency-shaping blocks; chorus / slap-back can be built from Delay + Multiply + Mixer; EQ has only the 1-pole low-pass.
+- **No reverb / chorus / EQ blocks.** Delay, Lowpass, Highpass, and Bandpass are the available time/frequency-shaping blocks; chorus / slap-back can be built from Delay + Multiply + Mixer; EQ has only the three 1-pole filters (LP / HP / BP).
 - **No real-time audio** — changes are heard only on the next ▶ Play.
 - **No multiple output blocks.** Exactly one.
 - **No PCB layout / motherboard design.** Roadmap, not built.
@@ -183,7 +195,7 @@ After tool calls, you'll receive \`tool_result\` content blocks with the outcome
 
 - Be concrete. Reference specific block types, parameter values, and port names.
 - Keep responses tight — a short paragraph or a short list.
-- If a goal isn't possible with the current 17 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
+- If a goal isn't possible with the current 19 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
 - After multi-step tool sequences, end with a short text confirmation of what you did so the user knows where things landed.`
 
 export function buildSystemBlocks(nodes: AppNode[], edges: Edge[]) {
@@ -218,6 +230,8 @@ The \`data\` field shape depends on \`type\`:
 - adsr: { attack_ms: 1-5000 (default 10), decay_ms: 1-5000 (default 100), sustain_level: 0-127 (default 80), release_ms: 1-5000 (default 200) }
 - gate: { rate_hz: 1-1000 (default 4), duty_pct: 1-99 (default 50) }
 - lowpass: { cutoff_hz: 1-22050 (default 800) }
+- highpass: { cutoff_hz: 1-22050 (default 800) }
+- bandpass: { center_hz: 10-22050 (default 1000) }
 - constant: { value: -128 to 127 (default 0) }
 - fm: { carrier_freq: 20-20000 (default 440), modulator_freq: 20-20000 (default 110), mod_depth: 0-127 (default 64) }
 - wavetable: { freq: 20-20000 (default 440), shape: one of "sine" | "pulse_25" | "ramp_up" | "formant" (default "sine") }
@@ -249,7 +263,7 @@ Omit \`data\` to use defaults.`,
         `Wire two blocks. Connects source.source_handle to target.target_handle.
 
 Valid handle pairings (port handle names are kebab-case):
-- Audio sources (oscillator/triangle/sawtooth/sine/wavetable/noise/constant/mixer/adsr/lowpass/samplehold/fm/multiply/bitcrusher/delay) emit \`audio-out\` (or mixer's \`mix-out\`). Audio sinks (mixer/adsr/lowpass/samplehold/multiply/bitcrusher/delay/output) accept on \`audio-in\` (or mixer's \`in-1\`/\`in-2\`).
+- Audio sources (oscillator/triangle/sawtooth/sine/wavetable/noise/constant/mixer/adsr/lowpass/highpass/bandpass/samplehold/fm/multiply/bitcrusher/delay) emit \`audio-out\` (or mixer's \`mix-out\`). Audio sinks (mixer/adsr/lowpass/highpass/bandpass/samplehold/multiply/bitcrusher/delay/output) accept on \`audio-in\` (or mixer's \`in-1\`/\`in-2\`).
 - gate emits \`gate-out\`. Valid targets: adsr's \`gate\` input, samplehold's \`clock\` input.
 - output has \`audio-in\` and no output handle (it is a sink).
 
@@ -286,6 +300,8 @@ Allowed fields per block type (same as add_node):
 - adsr: attack_ms, decay_ms, sustain_level, release_ms
 - gate: rate_hz, duty_pct
 - lowpass: cutoff_hz
+- highpass: cutoff_hz
+- bandpass: center_hz
 - constant: value
 - fm: carrier_freq, modulator_freq, mod_depth
 - wavetable: freq, shape (string: "sine" | "pulse_25" | "ramp_up" | "formant")

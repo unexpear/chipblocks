@@ -333,6 +333,91 @@ def test_lowpass_attenuates_high_frequency(run_synth, wav_samples):
     )
 
 
+def test_highpass_attenuates_low_frequency(run_synth, wav_samples):
+    """A constant +127 (pure DC, the lowest possible 'frequency') routed
+    through a HP at cutoff=2000 Hz should be attenuated way more than
+    the same DC through a HP at cutoff=10 Hz. The HP is 'input minus
+    lowpass-of-input', so a higher cutoff means the lowpass tracks DC
+    less aggressively and the difference is smaller — i.e. the steady-
+    state output approaches zero from above."""
+
+    def make_graph(cutoff_hz: int) -> dict:
+        return {
+            "nodes": [
+                {"id": "src", "type": "constant", "data": {"value": 127}},
+                {"id": "hpf", "type": "highpass", "data": {"cutoff_hz": cutoff_hz}},
+                # Unconnected gate so the simulator has a sync domain.
+                {"id": "g", "type": "gate", "data": {"rate_hz": 1, "duty_pct": 50}},
+                _output_node(),
+            ],
+            "edges": [
+                _edge("e1", "src", "hpf", "audio-out", "audio-in"),
+                _edge("e2", "hpf", "out", "audio-out", "audio-in"),
+            ],
+        }
+
+    # Skip the very first samples while the internal lowpass settles —
+    # at startup lp_state is 0, so the HP momentarily passes the full
+    # DC value through, which is exactly the spike we'd want a real HP
+    # to remove. The settled steady-state response is the interesting
+    # property to test.
+    SETTLE_SAMPLES = 2000
+    quiet = wav_samples(run_synth(make_graph(2000), duration_s=1))[SETTLE_SAMPLES:]
+    loud = wav_samples(run_synth(make_graph(10), duration_s=1))[SETTLE_SAMPLES:]
+
+    quiet_peak = max(abs(s) for s in quiet)
+    loud_peak = max(abs(s) for s in loud)
+
+    # The 2 kHz-cutoff path should be at least 2x quieter than the
+    # 10 Hz-cutoff path against a DC source: a high cutoff smooths the
+    # internal lowpass quickly toward the DC, leaving little residue;
+    # a low cutoff leaves a slow-tracking lowpass and a larger residue.
+    assert quiet_peak * 2 < loud_peak, (
+        f"Highpass doesn't attenuate DC enough: cutoff=2000 Hz peak={quiet_peak}, "
+        f"cutoff=10 Hz peak={loud_peak}"
+    )
+
+
+def test_bandpass_rejects_out_of_band_frequency(run_synth, wav_samples):
+    """A pure 5 kHz sine (one frequency, no harmonics to confuse the
+    comparison) routed through a BP centered at 200 Hz (way out of
+    band) should be substantially quieter than the same source through
+    a BP centered at 5000 Hz (in band)."""
+
+    def make_graph(center_hz: int) -> dict:
+        return {
+            "nodes": [
+                {"id": "src", "type": "sine", "data": {"freq": 5000}},
+                {"id": "bpf", "type": "bandpass", "data": {"center_hz": center_hz}},
+                _output_node(),
+            ],
+            "edges": [
+                _edge("e1", "src", "bpf", "audio-out", "audio-in"),
+                _edge("e2", "bpf", "out", "audio-out", "audio-in"),
+            ],
+        }
+
+    # Skip the first ~50 ms so the 2-stage filter's internal state has
+    # settled past the startup transient (which momentarily passes the
+    # full input through while lp_state is 0).
+    SETTLE_SAMPLES = 2200
+    out_of_band = wav_samples(run_synth(make_graph(200), duration_s=1))[SETTLE_SAMPLES:]
+    in_band = wav_samples(run_synth(make_graph(5000), duration_s=1))[SETTLE_SAMPLES:]
+
+    out_peak = max(abs(s) for s in out_of_band)
+    in_peak = max(abs(s) for s in in_band)
+
+    # 5 kHz sine through a BP centered at 200 Hz should be at least 2x
+    # quieter than the same tone through a BP centered at 5 kHz. The
+    # out-of-band cutoff (high = 200 * sqrt(2) ≈ 283 Hz) leaves the
+    # 5 kHz tone ~17.7 octaves above the LP corner; the in-band cutoff
+    # (high ≈ 7071 Hz) lets it through largely intact.
+    assert out_peak * 2 < in_peak, (
+        f"Bandpass doesn't reject out-of-band content enough: "
+        f"center=200 Hz peak={out_peak}, center=5000 Hz peak={in_peak}"
+    )
+
+
 def test_samplehold_holds_between_clock_edges(run_synth, wav_samples):
     """Sample-and-hold sampling a sawtooth at a slow gate clock should
     produce piecewise-constant output: between rising edges of the clock,

@@ -37,6 +37,8 @@ import { OutputNode } from '../src/blocks/OutputNode'
 import { ADSRNode } from '../src/blocks/ADSRNode'
 import { GateNode } from '../src/blocks/GateNode'
 import { LowPassFilterNode } from '../src/blocks/LowPassFilterNode'
+import { HighPassFilterNode } from '../src/blocks/HighPassFilterNode'
+import { BandPassFilterNode } from '../src/blocks/BandPassFilterNode'
 import { SampleAndHoldNode } from '../src/blocks/SampleAndHoldNode'
 import { FmNode } from '../src/blocks/FmNode'
 import { MultiplyNode } from '../src/blocks/MultiplyNode'
@@ -295,6 +297,113 @@ describe('LowPassFilter block', () => {
     await user.type(input, '50000')
     expect(input.value).toBe('50000')
     expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/22050/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// HighPassFilter: 1 input handle, 1 output handle, 1 cutoff field [1, 22050].
+
+describe('HighPassFilter block', () => {
+  it('renders title + cutoff_hz input with default', () => {
+    const { container } = wrap(
+      <HighPassFilterNode
+        {...nodePropsBase('hpf-1')}
+        data={{ cutoff_hz: 800 }}
+      />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('High-pass')
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')
+    expect(input?.value).toBe('800')
+    expect(countHandles(container, 'target')).toBe(1)
+    expect(countHandles(container, 'source')).toBe(1)
+    // aria-label on the cutoff input.
+    expect(input?.getAttribute('aria-label')).toBe('Cutoff frequency in hertz')
+  })
+
+  it('typing a valid cutoff (4000) updates the input', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <HighPassFilterNode
+        {...nodePropsBase('hpf-2')}
+        data={{ cutoff_hz: 800 }}
+      />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '4000')
+    expect(input.value).toBe('4000')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('out-of-range cutoff (50000) shows an error and snaps back on blur', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <HighPassFilterNode
+        {...nodePropsBase('hpf-3')}
+        data={{ cutoff_hz: 800 }}
+      />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '50000')
+    expect(input.value).toBe('50000')
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/22050/)
+    await user.tab()
+    expect(input.value).toBe('800')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// BandPassFilter: 1 input handle, 1 output handle, 1 center_hz field [10, 22050].
+
+describe('BandPassFilter block', () => {
+  it('renders title + center_hz input with default', () => {
+    const { container } = wrap(
+      <BandPassFilterNode
+        {...nodePropsBase('bpf-1')}
+        data={{ center_hz: 1000 }}
+      />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Band-pass')
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')
+    expect(input?.value).toBe('1000')
+    expect(countHandles(container, 'target')).toBe(1)
+    expect(countHandles(container, 'source')).toBe(1)
+    // aria-label on the center input.
+    expect(input?.getAttribute('aria-label')).toBe('Center frequency in hertz')
+  })
+
+  it('typing a valid center (500) updates the input', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <BandPassFilterNode
+        {...nodePropsBase('bpf-2')}
+        data={{ center_hz: 1000 }}
+      />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '500')
+    expect(input.value).toBe('500')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('out-of-range center (5) shows an error and snaps back on blur', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <BandPassFilterNode
+        {...nodePropsBase('bpf-3')}
+        data={{ center_hz: 1000 }}
+      />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '5')
+    expect(input.value).toBe('5')
+    // 5 is below the min of 10.
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/10.*22050/)
+    await user.tab()
+    expect(input.value).toBe('1000')
   })
 })
 

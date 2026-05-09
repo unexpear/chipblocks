@@ -32,6 +32,8 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'adsr',       label: 'ADSR',       color: '#ff9800', description: 'Attack/Decay/Sustain/Release envelope' },
   { type: 'gate',       label: 'Gate',       color: '#00bcd4', description: 'Periodic 1-bit pulse' },
   { type: 'lowpass',    label: 'Low-pass',   color: '#00897b', description: '1-pole IIR low-pass filter' },
+  { type: 'highpass',   label: 'High-pass',  color: '#006064', description: '1-pole IIR high-pass filter' },
+  { type: 'bandpass',   label: 'Band-pass',  color: '#5e35b1', description: '1-pole IIR band-pass filter (1-octave bandwidth)' },
   { type: 'samplehold', label: 'S & H',      color: '#607d8b', description: 'Sample-and-Hold on clock edge' },
   { type: 'fm',         label: 'FM',         color: '#e91e63', description: 'Two-operator FM voice (carrier + modulator)' },
   { type: 'multiply',   label: 'Multiply',   color: '#3f51b5', description: 'Ring modulator / VCA: (a * b) >> 7' },
@@ -55,6 +57,10 @@ export function defaultDataForType(type: string): Record<string, unknown> {
       return { rate_hz: 4, duty_pct: 50 }
     case 'lowpass':
       return { cutoff_hz: 800 }
+    case 'highpass':
+      return { cutoff_hz: 800 }
+    case 'bandpass':
+      return { center_hz: 1000 }
     case 'constant':
       return { value: 0 }
     case 'fm':

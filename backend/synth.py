@@ -65,6 +65,14 @@ def _build_params(node_type: str, data: dict) -> dict:
         if "cutoff_hz" in data:
             params["cutoff_hz"] = int(data["cutoff_hz"])
         params["sample_rate"] = SAMPLE_RATE
+    elif node_type == "highpass":
+        if "cutoff_hz" in data:
+            params["cutoff_hz"] = int(data["cutoff_hz"])
+        params["sample_rate"] = SAMPLE_RATE
+    elif node_type == "bandpass":
+        if "center_hz" in data:
+            params["center_hz"] = int(data["center_hz"])
+        params["sample_rate"] = SAMPLE_RATE
     elif node_type == "constant":
         if "value" in data:
             params["value"] = int(data["value"])

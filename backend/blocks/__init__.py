@@ -21,6 +21,8 @@ from .output import Output
 from .adsr import ADSR
 from .gate import Gate
 from .lowpass import LowPassFilter
+from .highpass import HighPassFilter
+from .bandpass import BandPassFilter
 from .sample_and_hold import SampleAndHold
 from .noise import Noise
 from .constant import Constant
@@ -41,6 +43,8 @@ BLOCK_REGISTRY = {
     "adsr": ADSR,
     "gate": Gate,
     "lowpass": LowPassFilter,
+    "highpass": HighPassFilter,
+    "bandpass": BandPassFilter,
     "samplehold": SampleAndHold,
     "noise": Noise,
     "constant": Constant,
@@ -61,6 +65,8 @@ __all__ = [
     "ADSR",
     "Gate",
     "LowPassFilter",
+    "HighPassFilter",
+    "BandPassFilter",
     "SampleAndHold",
     "Noise",
     "Constant",

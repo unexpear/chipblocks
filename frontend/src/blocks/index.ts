@@ -7,6 +7,8 @@ import { OutputNode,         type OutputBlock }         from './OutputNode'
 import { ADSRNode,           type ADSRBlock }           from './ADSRNode'
 import { GateNode,           type GateBlock }           from './GateNode'
 import { LowPassFilterNode,  type LowPassFilterBlock }  from './LowPassFilterNode'
+import { HighPassFilterNode, type HighPassFilterBlock } from './HighPassFilterNode'
+import { BandPassFilterNode, type BandPassFilterBlock } from './BandPassFilterNode'
 import { SampleAndHoldNode,  type SampleAndHoldBlock }  from './SampleAndHoldNode'
 import { NoiseNode,          type NoiseBlock }          from './NoiseNode'
 import { ConstantNode,       type ConstantBlock }       from './ConstantNode'
@@ -28,6 +30,8 @@ export const nodeTypes = {
   adsr:       ADSRNode,
   gate:       GateNode,
   lowpass:    LowPassFilterNode,
+  highpass:   HighPassFilterNode,
+  bandpass:   BandPassFilterNode,
   samplehold: SampleAndHoldNode,
   noise:      NoiseNode,
   constant:   ConstantNode,
@@ -48,6 +52,8 @@ export type AppNode =
   | ADSRBlock
   | GateBlock
   | LowPassFilterBlock
+  | HighPassFilterBlock
+  | BandPassFilterBlock
   | SampleAndHoldBlock
   | NoiseBlock
   | ConstantBlock

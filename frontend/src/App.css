@@ -803,6 +803,14 @@
   border-color: #00897b;
 }
 
+.block-highpass {
+  border-color: #006064;
+}
+
+.block-bandpass {
+  border-color: #5e35b1;
+}
+
 .block-samplehold {
   border-color: #607d8b;
   min-width: 130px;
