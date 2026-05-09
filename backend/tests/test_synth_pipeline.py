@@ -9,6 +9,9 @@ block type, empty graph, etc.).
 from __future__ import annotations
 
 import json
+import shutil
+import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +19,17 @@ import pytest
 def _load_example(examples_dir, name: str) -> dict:
     with open(examples_dir / name, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _toolchain_available() -> bool:
+    """The FPGA pipeline needs Yosys + nextpnr-ice40 + icepack on PATH.
+    On developer boxes the OSS CAD Suite has to be sourced first; CI
+    workers usually skip this entirely. Either way we just probe for the
+    binaries and skip if any are missing rather than failing the suite."""
+    return all(
+        shutil.which(tool) is not None
+        for tool in ("yosys", "nextpnr-ice40", "icepack")
+    )
 
 
 def test_loads_two_osc_mix_example(run_synth, wav_samples, examples_dir):
@@ -75,3 +89,67 @@ def test_invalid_block_type_raises():
     }
     with pytest.raises(ValueError, match="Unknown block type"):
         synth.synthesize(graph, duration_s=1)
+
+
+def test_icebreaker_board_profile_registered():
+    """The iCEBreaker should be wired into the FPGA target table with
+    the chip family + package the open iCE40 toolchain expects, and the
+    bundle filename pattern the IPC layer keys off."""
+    from build import ALL_BOARDS
+
+    assert "icebreaker" in ALL_BOARDS, (
+        "iCEBreaker missing from ALL_BOARDS — --target icebreaker won't resolve"
+    )
+    board = ALL_BOARDS["icebreaker"]
+    assert board.id == "icebreaker"
+    assert board.chip_family == "up5k"
+    assert board.package == "sg48"
+    assert board.clock_hz == 12_000_000
+    # PCF template must reference both the clock and audio pins by name
+    # — otherwise nextpnr would refuse the pin assignment at PnR.
+    rendered_pcf = board.pcf_template.format(
+        clock_pin=board.clock_pin,
+        audio_pin=board.audio_pin,
+    )
+    assert f"set_io clk {board.clock_pin}" in rendered_pcf
+    assert f"set_io audio_pin {board.audio_pin}" in rendered_pcf
+
+
+@pytest.mark.skipif(
+    not _toolchain_available(),
+    reason="Yosys / nextpnr-ice40 / icepack not on PATH (OSS CAD Suite not sourced)",
+)
+def test_icebreaker_full_pipeline_against_example(tmp_path: Path, examples_dir: Path):
+    """Run the actual graph -> Verilog -> Yosys -> nextpnr-ice40 ->
+    icepack chain for the iCEBreaker against a real example graph and
+    verify the bundle is well-formed (non-zero .bin, expected files).
+    Skipped when the toolchain isn't installed."""
+    from build import ALL_BOARDS, build_fpga, make_bundle
+
+    graph = _load_example(examples_dir, "two-osc-mix.json")
+    board = ALL_BOARDS["icebreaker"]
+
+    result = build_fpga(graph, tmp_path, board)
+    bundle_path = make_bundle(tmp_path, graph, result)
+
+    # Bitstream must exist and be non-empty (an empty .bin would mean
+    # icepack swallowed an error).
+    bin_path = Path(result["bin"])
+    assert bin_path.exists()
+    assert bin_path.stat().st_size > 0, "icebreaker .bin is zero bytes"
+
+    # Bundle filename must match the pattern the renderer's IPC layer
+    # parses out of the [bundle] marker.
+    assert bundle_path.name == "chipblocks-fpga-icebreaker.zip"
+
+    with zipfile.ZipFile(bundle_path) as z:
+        names = set(z.namelist())
+    expected = {
+        "chipblocks.bin",
+        "chipblocks.v",
+        "chipblocks.pcf",
+        "BUILD.md",
+        "FLASH.md",
+    }
+    missing = expected - names
+    assert not missing, f"iCEBreaker bundle missing files: {missing}"

@@ -1,6 +1,6 @@
 # ChipBlocks v0.1.0-alpha
 
-ChipBlocks is a free, open-source desktop app that lets non-technical people design custom chips by wiring visual blocks — drag an oscillator, connect it to a mixer and an output, hear it through your speakers, then build a real iCE40 FPGA bitstream for a $30 dev board, a TinyFPGA BX bitstream, or a Tiny Tapeout submission package that goes to fab and comes back as an ASIC. This first alpha is for hobbyist synth builders, FPGA tinkerers, and anyone curious about silicon who doesn't want to learn Verilog first.
+ChipBlocks is a free, open-source desktop app that lets non-technical people design custom chips by wiring visual blocks — drag an oscillator, connect it to a mixer and an output, hear it through your speakers, then build a real iCE40 FPGA bitstream for a $30 dev board, a TinyFPGA BX bitstream, a 1BitSquared iCEBreaker bitstream, or a Tiny Tapeout submission package that goes to fab and comes back as an ASIC. This first alpha is for hobbyist synth builders, FPGA tinkerers, and anyone curious about silicon who doesn't want to learn Verilog first.
 
 ## What's in the alpha
 
@@ -8,7 +8,7 @@ ChipBlocks is a free, open-source desktop app that lets non-technical people des
 - **24 blocks**: Oscillator (square), Triangle, Sawtooth, Sine, Wavetable (4 shapes), Noise, Constant, Mixer, ADSR Envelope, Gate, Low-Pass / High-Pass / Band-Pass Filters, Sample-and-Hold, FM voice, Multiply (ring-mod / VCA), Bitcrusher, Delay, AND / OR / XOR / NOT / Counter (digital logic), Output. Per-block reference in [BLOCKS.md](BLOCKS.md).
 - AI consultant in a chat sidebar — BYOK Anthropic. Reads the canvas, suggests blocks, can add or wire blocks for you with a preview-and-confirm step before destructive edits.
 - ▶ Play: simulates the design via Amaranth, produces a 16-bit 44.1 kHz WAV that the app plays.
-- 🔧 Build for **Lattice iCEstick** or **TinyFPGA BX**: runs the graph through Yosys, nextpnr-ice40, and icepack into a flashable `.bin`. Bundle includes a `BUILD.md` utilization report so you know if your design fits.
+- 🔧 Build for **Lattice iCEstick**, **TinyFPGA BX**, or **1BitSquared iCEBreaker**: runs the graph through Yosys, nextpnr-ice40, and icepack into a flashable `.bin`. Bundle includes a `BUILD.md` utilization report so you know if your design fits.
 - 🚀 Build for **Tiny Tapeout**: emits a 14-file submission package in canonical `ttsky-verilog-template` layout with a working cocotb testbench. Drop into the GitHub template, push, submit at [app.tinytapeout.com](https://app.tinytapeout.com/) — your design becomes real silicon on the next SkyWater 130 or GlobalFoundries 180 shuttle.
 - Project save / load (versioned JSON). **9 bundled examples** in the Load → Examples menu (Two oscillators mixed, ADSR-shaped pulse, Kick drum, Snare drum, Bass lead, Lo-fi pad, Stair-stepped arpeggio, Echo, Lo-fi crunch), Help → About, and a default starter graph on first launch so the canvas is never empty.
 

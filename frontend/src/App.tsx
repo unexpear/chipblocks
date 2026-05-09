@@ -52,6 +52,13 @@ const BUILD_TARGETS: BuildTargetOption[] = [
     bundleFilename: 'chipblocks-fpga-tinyfpga-bx.zip',
   },
   {
+    id: 'icebreaker',
+    label: '1BitSquared iCEBreaker',
+    description: 'iCE40 UP5K · ~$70 with PMOD headers · flash with iceprog',
+    icon: '🔧',
+    bundleFilename: 'chipblocks-fpga-icebreaker.zip',
+  },
+  {
     id: 'tt',
     label: 'Tiny Tapeout (real ASIC)',
     description: 'Submission package for Tiny Tapeout · sources + info.yaml · they fab the chip',

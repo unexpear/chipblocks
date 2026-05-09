@@ -18,7 +18,7 @@
 // Build target ids accepted by window.chipblocks.build's second arg.
 // Mirrored from backend/build.py's --target choices (FPGA boards) and
 // the Tiny Tapeout submission target. Keep in sync.
-export type BuildTarget = 'icestick' | 'tinyfpga-bx' | 'tt'
+export type BuildTarget = 'icestick' | 'tinyfpga-bx' | 'icebreaker' | 'tt'
 
 // Classified backend-failure modes the renderer can pattern-match on
 // to render a tailored "how to fix" affordance. Keep in sync with the

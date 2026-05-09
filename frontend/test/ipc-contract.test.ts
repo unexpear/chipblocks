@@ -329,6 +329,41 @@ describe('Build IPC contract', () => {
     }
   })
 
+  it('build() is called with target="icebreaker" when the iCEBreaker entry is picked', async () => {
+    const buildSpy = vi.fn(async () => ({ ok: true as const, zipData: new ArrayBuffer(8) }))
+    vi.stubGlobal('chipblocks', {
+      synth: vi.fn(),
+      cancel: vi.fn(),
+      build: buildSpy,
+      cancelBuild: vi.fn(),
+    })
+
+    const anchorClickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {})
+
+    const { container, unmount } = render(React.createElement(App))
+    try {
+      const buildBtn = findButton(container, '🔧 Build ▾')
+      await act(async () => {
+        buildBtn.click()
+      })
+      await flush()
+      const icebreakerItem = findButton(container, '1BitSquared iCEBreaker')
+      await act(async () => {
+        icebreakerItem.click()
+      })
+      await flush()
+
+      expect(buildSpy).toHaveBeenCalledTimes(1)
+      const [, targetArg] = buildSpy.mock.calls[0] as [unknown, string]
+      expect(targetArg).toBe('icebreaker')
+      expect(anchorClickSpy).toHaveBeenCalled()
+    } finally {
+      unmount()
+    }
+  })
+
   it('build() failure surfaces the error in a toast', async () => {
     const buildSpy = vi.fn(async () => ({
       ok: false as const,

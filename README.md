@@ -2,7 +2,7 @@
 
 > Visual chip design for everyone. Drag blocks, wire them together, hear the chip — then build a real FPGA bitstream or a Tiny Tapeout ASIC submission package.
 
-**Status:** v0.1.0-alpha. Visual editor, AI consultant, simulated audio, three real-silicon output paths (Lattice iCEstick FPGA / TinyFPGA BX FPGA / Tiny Tapeout ASIC submission), all working end-to-end. Public alpha.
+**Status:** v0.1.0-alpha. Visual editor, AI consultant, simulated audio, four real-silicon output paths (Lattice iCEstick FPGA / TinyFPGA BX FPGA / 1BitSquared iCEBreaker FPGA / Tiny Tapeout ASIC submission), all working end-to-end. Public alpha.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -23,6 +23,7 @@ The first flagship domain is **audio / synth / retro-game chips**. The architect
  │ Visual editor    │ →  │ Block library    │ →  │ ▶ Play                 │
  │ (React Flow)     │    │ (Amaranth HDL)   │    │ 🔧 Build → iCEstick    │
  └──────────────────┘    └──────────────────┘    │ 🔧 Build → TinyFPGA BX │
+                                                 │ 🔧 Build → iCEBreaker  │
                                                  │ 🚀 Build → Tiny Tapeout│
                                                  └────────────────────────┘
                                                           ↓
@@ -38,6 +39,7 @@ The first flagship domain is **audio / synth / retro-game chips**. The architect
 - **▶ Play**: Python backend simulates the design in [Amaranth](https://github.com/amaranth-lang/amaranth), produces a 16-bit WAV at 44.1 kHz, and the app plays it.
 - **🔧 Build → Lattice iCEstick**: graph → Verilog → Yosys → nextpnr-ice40 → icepack → flashable `.bin` for the Lattice iCEstick (~$30 USB dev board). Bundle includes a `BUILD.md` utilization report so you know if your design fits.
 - **🔧 Build → TinyFPGA BX**: same flow targeting the iCE40LP8K-CM81 board (USB-native, ~5× the LUTs of the iCEstick).
+- **🔧 Build → 1BitSquared iCEBreaker**: same iceprog flow against the iCE40UP5K-SG48 board (~$70, standard PMOD headers — the canonical board for FPGA tutorials).
 - **🚀 Build → Tiny Tapeout**: 14-file submission package in canonical [`ttsky-verilog-template`](https://github.com/TinyTapeout/ttsky-verilog-template) layout (src/, test/, docs/, info.yaml validated against `tt-support-tools/project_info.py`, plus a working cocotb testbench). Drop-in ready: unzip on the GitHub template, push, submit at [app.tinytapeout.com](https://app.tinytapeout.com/). Their flow runs OpenLane on Sky130 or GF180 and ships you a real ASIC chip months later.
 - **AI consultant** (BYOK): bring an Anthropic API key and chat with Claude about the design. The consultant is grounded in the full app surface (toolbar, blocks, naming conventions, what each target produces) and can read the canvas, suggest blocks, or add and wire blocks for you (with preview-and-confirm for destructive edits).
 - **Save / load + 7 bundled examples**: graphs are versioned JSON. The Examples menu opens "Two oscillators mixed", "ADSR-shaped pulse", "Kick drum", "Snare drum", "Bass lead", "Lo-fi pad", and "Stair-stepped arpeggio" without leaving the app.

@@ -45,6 +45,7 @@ A solo-developer non-technical user is the contributor model. Optimize for "obvi
 │  │   ├── --target verilog            (stops here)               │  │
 │  │   ├── --target icestick           ─► Yosys ─► nextpnr ─►     │  │
 │  │   │  / tinyfpga-bx                  icepack ─► .bin + zip    │  │
+│  │   │  / icebreaker                                              │  │
 │  │   └── --target tt                                             │  │
 │  │       └─► backend/tinytapeout.py  (TT-shaped wrapper, info.  │  │
 │  │           yaml, cocotb tb, LICENSE, SUBMIT.md → zip)         │  │
@@ -68,7 +69,7 @@ The frontend never executes Python. The backend never sees a renderer event. Eve
 |---|---|---|
 | `synth:run` | renderer → main | Render the graph to a WAV via Amaranth's simulator. ~3 s for a few seconds of audio. |
 | `synth:cancel` | renderer → main | SIGKILL the in-flight synth. |
-| `build:run` | renderer → main | Build a target (`icestick` / `tinyfpga-bx` / `tt`). Spawns the WSL build wrapper. Returns the zip bytes. |
+| `build:run` | renderer → main | Build a target (`icestick` / `tinyfpga-bx` / `icebreaker` / `tt`). Spawns the WSL build wrapper. Returns the zip bytes. |
 | `build:cancel` | renderer → main | SIGKILL the in-flight build. |
 | `ai:save-key` / `:has-key` / `:clear-key` | renderer → main | API key lifecycle. Plaintext key never leaves main. Stored via `safeStorage` (DPAPI / Keychain / libsecret). |
 | `ai:chat` | renderer → main | Stream a chat completion to Anthropic. Renderer gets `ai:chunk` / `ai:done` / `ai:error` events back. |
@@ -121,12 +122,13 @@ Test it via `pytest backend/tests/test_blocks.py` (auto-discovers from `BLOCK_RE
 
 ## Adding a new build target
 
-The FPGA path is profile-driven. `backend/build.py` defines `@dataclass(frozen=True) FPGABoard` with `chip_family / package / clock_hz / clock_pin / audio_pin / pcf_template / flash_md_template`. To add a third FPGA board:
+The FPGA path is profile-driven. `backend/build.py` defines `@dataclass(frozen=True) FPGABoard` with `chip_family / package / clock_hz / clock_pin / audio_pin / pcf_template / flash_md_template`. To add another FPGA board:
 
 1. Define a new `FPGABoard(...)` instance in `build.py`.
-2. Register it in the `ALL_BOARDS` map.
-3. Add a `BuildTargetOption` entry in `frontend/src/App.tsx`'s `BUILD_TARGETS` array.
-4. (Optional) update `frontend/electron-builder.json` if the new board needs a runtime resource we don't already ship.
+2. Register it in the `ALL_BOARDS` map and the `--target` argparse `choices`.
+3. Add the new id to the `BuildTarget` union in `frontend/src/types/ipc.ts` (and the mirrored union in `frontend/electron/main/ipc.ts` + `frontend/electron/preload/index.ts`).
+4. Add a `BuildTargetOption` entry in `frontend/src/App.tsx`'s `BUILD_TARGETS` array.
+5. (Optional) update `frontend/electron-builder.json` if the new board needs a runtime resource we don't already ship.
 
 The IPC handler doesn't need to know about new targets — it parses the produced bundle filename out of `build.py`'s `[bundle] <basename>` stdout marker.
 

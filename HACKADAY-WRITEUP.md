@@ -2,7 +2,7 @@
 
 # ChipBlocks: Drag Blocks, Hear the Chip, Get a Real iCE40 Bitstream — or Send the Same Graph to Tiny Tapeout
 
-Designing a custom chip currently costs $50K and a CS degree. [ChipBlocks](https://github.com/unexpear/chipblocks) — a free, open-source desktop app — lets you drag oscillators, envelopes, and filters onto a canvas, wire them up, click Play to hear the design, then pick one of three real-silicon outputs: a flashable `.bin` for a $30 Lattice iCEstick, a bitstream for the TinyFPGA BX, or a Tiny Tapeout submission package that becomes an actual ASIC on the next SkyWater 130nm or GlobalFoundries 180nm shuttle. The first public alpha is out now. It runs the same Yosys + nextpnr-ice40 + icepack pipeline that the open-FPGA crowd has been quietly perfecting for a decade — just behind a node-graph editor a non-engineer can actually use.
+Designing a custom chip currently costs $50K and a CS degree. [ChipBlocks](https://github.com/unexpear/chipblocks) — a free, open-source desktop app — lets you drag oscillators, envelopes, and filters onto a canvas, wire them up, click Play to hear the design, then pick one of four real-silicon outputs: a flashable `.bin` for a $30 Lattice iCEstick, a bitstream for the TinyFPGA BX, a bitstream for the 1BitSquared iCEBreaker, or a Tiny Tapeout submission package that becomes an actual ASIC on the next SkyWater 130nm or GlobalFoundries 180nm shuttle. The first public alpha is out now. It runs the same Yosys + nextpnr-ice40 + icepack pipeline that the open-FPGA crowd has been quietly perfecting for a decade — just behind a node-graph editor a non-engineer can actually use.
 
 ## The bottleneck isn't manufacturing
 
@@ -20,6 +20,7 @@ Two big buttons live in the toolbar. Click ▶ Play and the Python backend trans
 
 - **Lattice iCEstick** — Verilog → Yosys → nextpnr-ice40 → icepack. About 30–60 seconds later, a zip with the flashable `.bin` for the $30 USB dev board.
 - **TinyFPGA BX** — same flow targeting the iCE40LP-8K (USB-native, ~5x the LUTs of the iCEstick).
+- **1BitSquared iCEBreaker** — same iceprog flow against the iCE40UP-5K (~$70, the canonical board most FPGA tutorials are written against — standard PMOD headers, on-board FT2232 for programming).
 - **Tiny Tapeout** — emits a 14-file submission package in the canonical `ttsky-verilog-template` layout (src/, test/, docs/, info.yaml validated against `tt-support-tools/project_info.py`, plus a working cocotb testbench). Drop into the GitHub template, push, submit at [app.tinytapeout.com](https://app.tinytapeout.com/). Their flow runs OpenLane on Sky130 or GF180 and ships you a real ASIC chip months later.
 
 ## Worked example: a kick drum, in about a minute

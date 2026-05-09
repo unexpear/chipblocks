@@ -191,7 +191,7 @@ interface BuildResult {
 
 let currentBuildProc: ChildProcess | null = null
 
-type BuildTarget = 'icestick' | 'tinyfpga-bx' | 'tt'
+type BuildTarget = 'icestick' | 'tinyfpga-bx' | 'icebreaker' | 'tt'
 
 // build.py emits a machine-readable `[bundle] <basename>` line on
 // success. Parse the LAST one out of stdout to locate the produced

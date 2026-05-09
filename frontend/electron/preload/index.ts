@@ -13,7 +13,7 @@ import { ipcRenderer, contextBridge } from 'electron'
 contextBridge.exposeInMainWorld('chipblocks', {
   synth: (graph: unknown) => ipcRenderer.invoke('synth:run', graph),
   cancel: () => ipcRenderer.invoke('synth:cancel') as Promise<boolean>,
-  build: (graph: unknown, target: 'icestick' | 'tinyfpga-bx' | 'tt') =>
+  build: (graph: unknown, target: 'icestick' | 'tinyfpga-bx' | 'icebreaker' | 'tt') =>
     ipcRenderer.invoke('build:run', { graph, target }) as Promise<{
       ok: boolean
       zipData?: ArrayBuffer

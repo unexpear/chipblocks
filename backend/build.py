@@ -20,6 +20,13 @@ depending on --target, produces one of:
                             from the iCEstick, so the bitstream layout
                             and size differ.
 
+    --target icebreaker     Full pipeline against the 1BitSquared
+                            iCEBreaker (iCE40UP5K-SG48, 12 MHz, flashed
+                            via `iceprog` over the on-board FT2232).
+                            ~4× the LUTs of the iCEstick and exposes
+                            standard PMOD headers, so it's the canonical
+                            board for tutorials and PMOD peripherals.
+
     --target tt             Tiny Tapeout ASIC submission package. Generates
                             the canonical TT project layout (src/, test/,
                             docs/, info.yaml, README.md, LICENSE,
@@ -212,6 +219,71 @@ set_io audio_pin {audio_pin}
 )
 
 
+# 1BitSquared iCEBreaker (iCE40UP5K, SG48 package). Onboard 12 MHz
+# oscillator is wired to global clock pin 35. Audio output goes to
+# PMOD1A pin 1 — that's the top-left pin of the dual-row PMOD socket on
+# the right edge of the board, which the open-source iCEBreaker pin map
+# (verified against `amaranth_boards/icebreaker.py`'s "PMOD1A" connector
+# string `" 4  2 47 45 - -  3 48 46 44 - -"`) routes to package pin 4.
+# SG48 chipdbs use numeric pin numbers exclusively (same convention as
+# the iCEstick TQ144 chipdb), so we use "4" rather than "P1A1" in the
+# .pcf even though the user-visible label on the board silkscreen is
+# P1A1.
+#
+# Programming uses `iceprog` (same as iCEstick) over the on-board FT2232
+# bridge. The UP5K has 5280 LCs (vs. the iCEstick's 1280 and the BX's
+# 7680) — comfortably bigger than the iCEstick, slightly smaller than
+# the BX, and ships with the canonical PMOD header layout used in the
+# vast majority of FPGA tutorials and PMOD peripherals.
+ICEBREAKER = FPGABoard(
+    id="icebreaker",
+    label="1BitSquared iCEBreaker",
+    chip_family="up5k",
+    package="sg48",
+    clock_hz=12_000_000,
+    clock_pin="35",
+    audio_pin="4",
+    pcf_template="""\
+# iCEBreaker (iCE40UP-5k, SG48 package) constraints for ChipBlocks
+# Onboard 12 MHz oscillator is wired to global clock pin 35
+set_io clk {clock_pin}
+# PWM-modulated audio output: PMOD1A pin 1 -> physical pad P1A1 (pin 4)
+set_io audio_pin {audio_pin}
+""",
+    flash_md_template="""\
+# Flashing chipblocks.bin to a 1BitSquared iCEBreaker
+
+## What you need
+
+- A **1BitSquared iCEBreaker** (iCE40UP-5k dev board) — about $70 from 1BitSquared / Crowd Supply. The on-board FT2232 lets you program over the same USB cable that powers the board.
+- A small speaker or headphones.
+- A simple RC filter (1 kΩ resistor + 100 nF capacitor) wired between the audio output pin and the speaker. The capacitor smooths the PWM into analog audio; the resistor protects the FPGA pin.
+- The `iceprog` flashing tool. Install via:
+  - **Ubuntu / Debian / WSL2:** `sudo apt install fpga-icestorm`
+  - **Or via the OSS CAD Suite:** already included if you installed it for ChipBlocks itself.
+
+## Steps
+
+1. Plug the iCEBreaker into a USB port. The on-board FT2232 enumerates as a USB device automatically (Windows: WinUSB driver via Zadig if needed; Linux: works out of the box).
+2. Wire the audio:
+    - **PMOD1A pin 1** (P1A1 — top-left pin of the dual-row PMOD socket on the right edge of the board) → 1 kΩ resistor → 100 nF capacitor → speaker positive
+    - Speaker negative → any GND pin on the same PMOD header (PMOD pins 5 and 11 on each row are GND)
+3. Flash the bitstream:
+    ```bash
+    iceprog chipblocks.bin
+    ```
+    The on-board LED blinks during programming. The chip starts running as soon as flashing finishes.
+4. You should hear your chip through the speaker.
+
+## Troubleshooting
+
+- **`iceprog: can't find iCE FTDI USB device`** — make sure the board is plugged in. On Linux, you may need `sudo usermod -aG plugdev $USER` and log out/in for USB access.
+- **Silent or noisy output** — check the RC filter values. PWM at 47 kHz needs a few kHz cutoff; 1 kΩ + 100 nF gives ~1.6 kHz. Higher capacitor values smooth more but attenuate high audio frequencies.
+- **Pin numbering** — P1A1 is the top-left pin of PMOD1A (the dual-row 12-pin PMOD socket on the right edge of the board). The numeric package pin is 4 in the iCEBreaker pin map. See the [iCEBreaker FPGA repo](https://github.com/icebreaker-fpga/icebreaker) for the full pinout.
+""",
+)
+
+
 # Maps --target argument values to their FPGABoard. "ice40" is preserved
 # as an alias for "icestick" so the Sprint 6 IPC channel and any pre-
 # existing scripts/docs continue to work unchanged.
@@ -219,6 +291,7 @@ ALL_BOARDS: dict[str, FPGABoard] = {
     "icestick": ICESTICK,
     "ice40": ICESTICK,
     "tinyfpga-bx": TINYFPGA_BX,
+    "icebreaker": ICEBREAKER,
 }
 
 
@@ -259,7 +332,7 @@ class BoardTop(Elaboratable):
         m = Module()
 
         # Sample-rate divider: count clock ticks per audio sample.
-        # iCEstick @ 12 MHz: 12_000_000 / 44_100 ≈ 272.
+        # iCEstick / iCEBreaker @ 12 MHz: 12_000_000 / 44_100 ≈ 272.
         # TinyFPGA BX @ 16 MHz: 16_000_000 / 44_100 ≈ 362.
         divider = self.board.clock_hz // SAMPLE_RATE
         sample_tick = Signal()
@@ -774,12 +847,13 @@ def main() -> int:
     p.add_argument("--out-dir", dest="out_dir", required=True)
     p.add_argument(
         "--target",
-        choices=["verilog", "ice40", "icestick", "tinyfpga-bx", "tt"],
+        choices=["verilog", "ice40", "icestick", "tinyfpga-bx", "icebreaker", "tt"],
         default="verilog",
         help=(
             "verilog: just emit the generated Verilog file. "
             "ice40 / icestick: full pipeline for the Lattice iCEstick (HX1K). "
             "tinyfpga-bx: full pipeline for the TinyFPGA BX (LP8K). "
+            "icebreaker: full pipeline for the 1BitSquared iCEBreaker (UP5K). "
             "tt: Tiny Tapeout submission package (sources + info.yaml; no local PnR)."
         ),
     )
