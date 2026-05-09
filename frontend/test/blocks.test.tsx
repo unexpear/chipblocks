@@ -192,6 +192,18 @@ describe('Constant block', () => {
     expect(countHandles(container, 'source')).toBe(1)
   })
 
+  it('typing a valid value (42) updates the input', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <ConstantNode {...nodePropsBase('const-3')} data={{ value: 0 }} />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '42')
+    expect(input.value).toBe('42')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
   it('out-of-range value (200) shows an error', async () => {
     const user = userEvent.setup()
     const { container } = wrap(
@@ -282,6 +294,21 @@ describe('LowPassFilter block', () => {
     expect(input?.value).toBe('800')
     expect(countHandles(container, 'target')).toBe(1)
     expect(countHandles(container, 'source')).toBe(1)
+  })
+
+  it('typing a valid cutoff (4000) updates the input', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <LowPassFilterNode
+        {...nodePropsBase('lpf-3')}
+        data={{ cutoff_hz: 800 }}
+      />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '4000')
+    expect(input.value).toBe('4000')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
   })
 
   it('out-of-range cutoff (50000) shows an error', async () => {
@@ -432,6 +459,21 @@ describe('ADSR block', () => {
     expect(countHandles(container, 'source')).toBe(1)
   })
 
+  it('typing a valid attack (250) updates the input', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <ADSRNode
+        {...nodePropsBase('adsr-3')}
+        data={{ attack_ms: 10, decay_ms: 100, sustain_level: 80, release_ms: 200 }}
+      />,
+    )
+    const attackInput = container.querySelectorAll<HTMLInputElement>('input[type="number"]')[0]
+    await user.clear(attackInput)
+    await user.type(attackInput, '250')
+    expect(attackInput.value).toBe('250')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
   it('out-of-range sustain (200, max 127) shows an error and snaps back on blur', async () => {
     const user = userEvent.setup()
     const { container } = wrap(
@@ -466,6 +508,21 @@ describe('Gate block', () => {
     expect(inputs.length).toBe(2)
     expect(inputs[0].value).toBe('4')
     expect(inputs[1].value).toBe('50')
+  })
+
+  it('typing a valid rate (10) updates the input', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <GateNode
+        {...nodePropsBase('gate-3')}
+        data={{ rate_hz: 4, duty_pct: 50 }}
+      />,
+    )
+    const rateInput = container.querySelectorAll<HTMLInputElement>('input[type="number"]')[0]
+    await user.clear(rateInput)
+    await user.type(rateInput, '10')
+    expect(rateInput.value).toBe('10')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
   })
 
   it('out-of-range duty (150) shows an error', async () => {
@@ -517,6 +574,21 @@ describe('FM block', () => {
     expect(depth.value).toBe('100')
     expect(container.querySelector('[role="alert"]')).toBeNull()
   })
+
+  it('out-of-range depth (200, max 127) shows an error', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <FmNode
+        {...nodePropsBase('fm-3')}
+        data={{ carrier_freq: 440, modulator_freq: 110, mod_depth: 64 }}
+      />,
+    )
+    const depth = container.querySelectorAll<HTMLInputElement>('input[type="number"]')[2]
+    await user.clear(depth)
+    await user.type(depth, '200')
+    expect(depth.value).toBe('200')
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/0.*127/)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -538,6 +610,21 @@ describe('Wavetable block', () => {
     expect(select?.value).toBe('sine')
     // Shape options: sine, pulse_25, ramp_up, formant.
     expect(select?.querySelectorAll('option').length).toBe(4)
+  })
+
+  it('typing a valid freq (880) updates the input', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <WavetableNode
+        {...nodePropsBase('wt-3')}
+        data={{ freq: 440, shape: 'sine' }}
+      />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '880')
+    expect(input.value).toBe('880')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
   })
 
   it('out-of-range freq (50000) shows an error', async () => {
