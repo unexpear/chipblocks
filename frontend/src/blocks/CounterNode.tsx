@@ -27,7 +27,7 @@ export function CounterNode({ id, data }: NodeProps<CounterBlock>) {
   const titleId = `block-${id}-title`
   return (
     <div className="block block-counter" role="group" aria-labelledby={titleId}>
-      <Handle type="target" position={Position.Left} id="clock" />
+      <Handle type="target" position={Position.Left} id="clock" aria-label="Clock input" />
       <h3 id={titleId} className="block-title">Counter</h3>
       <div className="block-body">
         <input
@@ -49,7 +49,7 @@ export function CounterNode({ id, data }: NodeProps<CounterBlock>) {
           <div className="block-input-error" role="alert" aria-live="polite">{errorMessage}</div>
         )}
       </div>
-      <Handle type="source" position={Position.Right} id="audio-out" />
+      <Handle type="source" position={Position.Right} id="audio-out" aria-label="Audio output" />
     </div>
   )
 }

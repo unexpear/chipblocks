@@ -91,7 +91,7 @@ export function WavetableNode({ id, data }: NodeProps<WavetableBlock>) {
           </select>
         </div>
       </div>
-      <Handle type="source" position={Position.Right} id="audio-out" />
+      <Handle type="source" position={Position.Right} id="audio-out" aria-label="Audio output" />
     </div>
   )
 }

@@ -8,7 +8,7 @@ export function NoiseNode({ id }: NodeProps<NoiseBlock>) {
     <div className="block block-noise" role="group" aria-labelledby={titleId}>
       <h3 id={titleId} className="block-title">Noise</h3>
       <div className="block-body">pseudo-random</div>
-      <Handle type="source" position={Position.Right} id="audio-out" />
+      <Handle type="source" position={Position.Right} id="audio-out" aria-label="Audio output" />
     </div>
   )
 }

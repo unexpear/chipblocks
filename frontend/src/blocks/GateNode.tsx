@@ -85,7 +85,7 @@ export function GateNode({ id, data }: NodeProps<GateBlock>) {
           commit={commitDuty}
         />
       </div>
-      <Handle type="source" position={Position.Right} id="gate-out" />
+      <Handle type="source" position={Position.Right} id="gate-out" aria-label="Gate output" />
     </div>
   )
 }

@@ -6,10 +6,10 @@ export function NotGateNode({ id }: NodeProps<NotGateBlock>) {
   const titleId = `block-${id}-title`
   return (
     <div className="block block-not" role="group" aria-labelledby={titleId}>
-      <Handle type="target" position={Position.Left} id="gate-in" />
+      <Handle type="target" position={Position.Left} id="gate-in" aria-label="Gate input" />
       <h3 id={titleId} className="block-title">NOT</h3>
       <div className="block-body">~a</div>
-      <Handle type="source" position={Position.Right} id="gate-out" />
+      <Handle type="source" position={Position.Right} id="gate-out" aria-label="Gate output" />
     </div>
   )
 }

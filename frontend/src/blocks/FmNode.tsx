@@ -100,7 +100,7 @@ export function FmNode({ id, data }: NodeProps<FmBlock>) {
           commit={commitDepth}
         />
       </div>
-      <Handle type="source" position={Position.Right} id="audio-out" />
+      <Handle type="source" position={Position.Right} id="audio-out" aria-label="Audio output" />
     </div>
   )
 }

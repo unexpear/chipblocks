@@ -27,7 +27,7 @@ export function DelayNode({ id, data }: NodeProps<DelayBlock>) {
   const titleId = `block-${id}-title`
   return (
     <div className="block block-delay" role="group" aria-labelledby={titleId}>
-      <Handle type="target" position={Position.Left} id="audio-in" />
+      <Handle type="target" position={Position.Left} id="audio-in" aria-label="Audio input" />
       <h3 id={titleId} className="block-title">Delay</h3>
       <div className="block-body">
         <input
@@ -49,7 +49,7 @@ export function DelayNode({ id, data }: NodeProps<DelayBlock>) {
           <div className="block-input-error" role="alert" aria-live="polite">{errorMessage}</div>
         )}
       </div>
-      <Handle type="source" position={Position.Right} id="audio-out" />
+      <Handle type="source" position={Position.Right} id="audio-out" aria-label="Audio output" />
     </div>
   )
 }

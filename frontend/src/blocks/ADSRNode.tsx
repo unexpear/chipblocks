@@ -76,8 +76,8 @@ export function ADSRNode({ id, data }: NodeProps<ADSRBlock>) {
   const titleId = `block-${id}-title`
   return (
     <div className="block block-adsr" role="group" aria-labelledby={titleId}>
-      <Handle type="target" position={Position.Left} id="gate"     style={{ top: handleTop(0) }} />
-      <Handle type="target" position={Position.Left} id="audio-in" style={{ top: handleTop(1) }} />
+      <Handle type="target" position={Position.Left} id="gate"     aria-label="Gate input"  style={{ top: handleTop(0) }} />
+      <Handle type="target" position={Position.Left} id="audio-in" aria-label="Audio input" style={{ top: handleTop(1) }} />
       <h3 id={titleId} className="block-title">ADSR</h3>
       <div className="block-body">
         <FieldRow
@@ -117,7 +117,7 @@ export function ADSRNode({ id, data }: NodeProps<ADSRBlock>) {
           commit={commitRelease}
         />
       </div>
-      <Handle type="source" position={Position.Right} id="audio-out" />
+      <Handle type="source" position={Position.Right} id="audio-out" aria-label="Audio output" />
     </div>
   )
 }
