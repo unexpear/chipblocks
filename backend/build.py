@@ -820,6 +820,10 @@ def main() -> int:
             f"(top module: {result['tt_module']})",
             flush=True,
         )
+        # Machine-readable marker the Electron main process parses to
+        # locate the bundle zip without duplicating filename knowledge.
+        # Format is intentionally trivial: `[bundle] <basename>`.
+        print(f"[bundle] {Path(result['bundle_path']).name}", flush=True)
         return 0
 
     # FPGA targets: look up the board profile and run the full pipeline.
@@ -836,6 +840,8 @@ def main() -> int:
         flush=True,
     )
     print(f"[build] Bundle: {bundle_path} ({bundle_path.stat().st_size} bytes)", flush=True)
+    # Machine-readable marker (see TT branch above).
+    print(f"[bundle] {bundle_path.name}", flush=True)
     return 0
 
 

@@ -167,11 +167,21 @@ let currentBuildProc: ChildProcess | null = null
 
 type BuildTarget = 'icestick' | 'tinyfpga-bx' | 'tt'
 
-// Maps target id -> the bundle zip filename produced by build.py.
-const BUNDLE_FILENAMES: Record<BuildTarget, string> = {
-  'icestick': 'chipblocks-fpga-icestick.zip',
-  'tinyfpga-bx': 'chipblocks-fpga-tinyfpga-bx.zip',
-  'tt': 'chipblocks-tt.zip',
+// build.py emits a machine-readable `[bundle] <basename>` line on
+// success. Parse the LAST one out of stdout to locate the produced
+// zip — no need to duplicate filename knowledge here. If the marker
+// is missing, that's a backend contract violation; fall back to a
+// recognisable error rather than a wrong path.
+const BUNDLE_MARKER_RE = /^\[bundle\]\s+(.+)$/m
+
+function findBundleFilename(stdout: string): string | null {
+  // Take the last matching line in case multiple targets ever print
+  // the marker (current backend prints exactly one per successful run).
+  let match: RegExpExecArray | null = null
+  const re = new RegExp(BUNDLE_MARKER_RE, 'gm')
+  let m: RegExpExecArray | null
+  while ((m = re.exec(stdout)) !== null) match = m
+  return match ? match[1].trim() : null
 }
 
 async function runBuild(graph: SynthGraph, target: BuildTarget): Promise<BuildResult> {
@@ -234,8 +244,16 @@ async function runBuild(graph: SynthGraph, target: BuildTarget): Promise<BuildRe
       currentBuildProc = null
       if (code === 0) {
         if (stdout) console.log('[build stdout]', stdout)
+        const bundleName = findBundleFilename(stdout)
+        if (!bundleName) {
+          resolve({
+            ok: false,
+            error: `Build succeeded but did not emit a [bundle] marker on stdout — backend contract violation.`,
+          })
+          return
+        }
         try {
-          const winZipPath = path.join(winOutDir, BUNDLE_FILENAMES[target])
+          const winZipPath = path.join(winOutDir, bundleName)
           const buf = await readFile(winZipPath)
           const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
           resolve({ ok: true, zipData: ab as ArrayBuffer })
