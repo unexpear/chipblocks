@@ -453,6 +453,21 @@ function AppContent() {
   const handleBuild = async (target: BuildTargetOption) => {
     dismissStarterHint()
     setBuildMenuOpen(false)
+    // Pre-check: v0.1 doesn't support graphs that mix audio Output and
+    // VGA Output. Backend rejects too, but catching it here saves the
+    // ~30 s WSL2 round trip and shows a friendly message immediately.
+    const hasAudioOutput = nodes.some((n) => n.type === 'output')
+    const hasVgaOutput = nodes.some((n) => n.type === 'vgaoutput')
+    if (hasAudioOutput && hasVgaOutput) {
+      setErrorToast(
+        "v0.1 doesn't support graphs that mix audio Output and VGA Output. " +
+        'Pick one — Output for audio chips that play through speakers, VGA ' +
+        'Output for visual chips that drive a monitor. Mixed audio + visual ' +
+        "chips need clock-domain plumbing that's coming in a later release."
+      )
+      setErrorToastType(null)
+      return
+    }
     setIsBuilding(true)
     setStatusMessage(target.id === 'tt' ? 'Generating Tiny Tapeout package…' : `Building bitstream (${target.label})…`)
     setErrorToast(null)

@@ -151,6 +151,46 @@ def test_visual_graph_without_audio_output_fails_friendly():
         synth.synthesize(graph, duration_s=1)
 
 
+def test_mixed_audio_and_visual_graph_rejected_on_build():
+    """A graph with both an audio Output and a VGA Output should fail
+    BoardTop construction with a friendly message rather than silently
+    downgrading the audio path. Tracked in KNOWN-ISSUES — proper fix is
+    multi-domain clock plumbing in BoardTop (Phase 3).
+    """
+    import build
+
+    graph = {
+        "nodes": [
+            {"id": "osc", "type": "oscillator", "data": {"freq": 440}},
+            {"id": "out", "type": "output", "data": {}},
+            {"id": "vt", "type": "vgatiming", "data": {}},
+            {"id": "cb", "type": "colorbars", "data": {}},
+            {"id": "vo", "type": "vgaoutput", "data": {}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "osc", "target": "out",
+             "sourceHandle": "audio-out", "targetHandle": "audio-in"},
+            {"id": "e2", "source": "vt", "target": "cb",
+             "sourceHandle": "x", "targetHandle": "x"},
+            {"id": "e3", "source": "vt", "target": "cb",
+             "sourceHandle": "visible", "targetHandle": "visible"},
+            {"id": "e4", "source": "cb", "target": "vo",
+             "sourceHandle": "r", "targetHandle": "r"},
+            {"id": "e5", "source": "cb", "target": "vo",
+             "sourceHandle": "g", "targetHandle": "g"},
+            {"id": "e6", "source": "cb", "target": "vo",
+             "sourceHandle": "b", "targetHandle": "b"},
+            {"id": "e7", "source": "vt", "target": "vo",
+             "sourceHandle": "hsync", "targetHandle": "hsync"},
+            {"id": "e8", "source": "vt", "target": "vo",
+             "sourceHandle": "vsync", "targetHandle": "vsync"},
+        ],
+    }
+
+    with pytest.raises(ValueError, match="mix audio Output and VGA Output"):
+        build.BoardTop(graph, build.ICEBREAKER)
+
+
 def test_visual_graph_pcf_contains_vga_pin_assignments(tmp_path: Path, examples_dir: Path):
     """The .pcf for an iCEBreaker build of a visual graph must contain
     each of the 5 VGA pin assignments (R, G, B, HSYNC, VSYNC) on the

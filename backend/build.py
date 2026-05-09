@@ -344,6 +344,36 @@ def _graph_has_vga_output(graph: dict) -> bool:
     return any(n.get("type") == "vgaoutput" for n in graph.get("nodes", []))
 
 
+def _graph_has_audio_output(graph: dict) -> bool:
+    """True iff the graph contains at least one (audio) Output node."""
+    return any(n.get("type") == "output" for n in graph.get("nodes", []))
+
+
+def reject_mixed_audio_and_visual(graph: dict) -> None:
+    """Raise ValueError if the graph mixes audio Output and VGA Output.
+
+    v0.1 supports either-or, not both. The two domains have different
+    clock-rate expectations: audio is gated to 44.1 kHz via
+    ``EnableInserter(sample_tick)``; VGA needs the full pixel clock.
+    Mixing them in one graph silently downgrades the audio path because
+    ``BoardTop.has_vga`` is set on graph contents alone.
+
+    The proper fix is multi-domain clock plumbing in ``BoardTop`` —
+    tracked as a Phase 3 deliverable in KNOWN-ISSUES.md. Until then,
+    explicitly rejecting mixed graphs is preferable to silent
+    miselaboration. Renderer-side ``handleBuild`` mirrors this check
+    so the user sees the friendly message before the WSL2 round trip.
+    """
+    if _graph_has_audio_output(graph) and _graph_has_vga_output(graph):
+        raise ValueError(
+            "v0.1 doesn't support graphs that mix audio Output and "
+            "VGA Output. Pick one — Output for audio chips that play "
+            "through speakers, VGA Output for visual chips that drive "
+            "a monitor. Mixed audio + visual chips need clock-domain "
+            "plumbing that's coming in a later release."
+        )
+
+
 class BoardTop(Elaboratable):
     """Top-level wrapper for any supported iCE40 board.
 
@@ -382,6 +412,12 @@ class BoardTop(Elaboratable):
     """
 
     def __init__(self, graph: dict, board: FPGABoard):
+        # Reject mixed audio + visual graphs explicitly. Without this,
+        # the has_vga branch below silently downgrades the audio path
+        # because the EnableInserter that gates audio at 44.1 kHz gets
+        # skipped. Friendly message preferable to silent miselaboration.
+        reject_mixed_audio_and_visual(graph)
+
         self.board = board
         self.has_vga = _graph_has_vga_output(graph)
         # GraphTop no longer enforces an audio-Output requirement — that
