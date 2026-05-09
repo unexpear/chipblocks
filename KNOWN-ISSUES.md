@@ -34,9 +34,9 @@ Full audit + tiered remediation plan: [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESS
 
 ## GitHub Actions — Node 20 deprecated by 2026-09-16
 
-GitHub announced Node.js 20 deprecation on 2025-09-19; default flips to Node 24 on 2026-06-02 and Node 20 is removed from runners on 2026-09-16. Our workflows use `actions/checkout@v4` and `actions/setup-node@v4` — both currently runner-Node-20. CI emits the deprecation warning on every run today.
+GitHub announced Node.js 20 deprecation on 2025-09-19; default flips to Node 24 on 2026-06-02 and Node 20 is removed from runners on 2026-09-16. Our workflows use `actions/checkout@v4`, `actions/setup-node@v4`, and `actions/setup-python@v5` — all three currently runner-Node-20. CI emits the deprecation warning on every run today.
 
-**Action**: bump to `actions/checkout@v5` + `actions/setup-node@v5` (or whichever majors land on Node 24) before 2026-06-02, ideally bundled with the next CI workflow touch. Low priority — no actual breakage until June 2026, and even then GitHub provides escape hatches.
+**Action**: bump to whichever majors land on Node 24 (likely `actions/checkout@v5` + `actions/setup-node@v5` + `actions/setup-python@v6` once published) before 2026-06-02, ideally bundled with the next CI workflow touch. Low priority — no actual breakage until June 2026, and even then GitHub provides escape hatches (`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` or `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true`).
 
 ## Random-jitter for AI-placed nodes is a heuristic, not a layout engine
 
