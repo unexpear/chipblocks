@@ -6,7 +6,7 @@
 
 A free, open-source, accessible chip-design app. Visual node-graph editor + AI consultant + built-in validator. Lets a non-technical person turn "I need a chip that does X" into a fabricable design (FPGA bitstream / ASIC tape-out / sim files).
 
-Read [PRD.md](PRD.md) for the full vision. Read [SPRINT-1.md](SPRINT-1.md) for what we're building right now.
+Read [PRD.md](PRD.md) for the full vision. Read [ROADMAP.md](ROADMAP.md) for what's next. Per-sprint plans + retros live in [SPRINT-1.md](SPRINT-1.md) through [SPRINT-13.md](SPRINT-13.md). Status as of 2026-05-09: 13 sprints closed; v0.1.0-alpha capability-complete; pending user-action launch gates (tag push + announcements + Discussions enable).
 
 ## Core constraints
 
@@ -30,23 +30,35 @@ Read [PRD.md](PRD.md) for the full vision. Read [SPRINT-1.md](SPRINT-1.md) for w
 - **Python / LiteX / Verilator / Yosys / etc. run in WSL2.** Frontend (Electron, npm, React) runs in Windows.
 - **Keep code in the WSL2 filesystem** (`/home/...`) — accessing Windows-side files via `/mnt/c/...` is much slower and prone to file-permission/line-ending issues.
 
-## Project structure (planned)
+## Project structure
 
 ```
 chipzzzd/
 ├── PRD.md                  # Full product spec
-├── SPRINT-1.md             # Current sprint plan + log
+├── ROADMAP.md              # Now / Next / Later
+├── ARCHITECTURE.md         # High-level code shape
+├── CONTRIBUTING.md         # Contributor on-ramp
+├── KNOWN-ISSUES.md         # Deferred-issue tracker
+├── CREDITS.md              # Open-source attributions
+├── SPRINT-1.md … SPRINT-13.md   # Per-sprint plan + log + retro
 ├── CLAUDE.md               # This file (Claude Code project brief)
-├── README.md               # Public-facing readme (not yet)
+├── README.md               # Public-facing readme
 ├── frontend/               # Electron + React + TypeScript
 │   ├── package.json
-│   ├── src/
-│   └── ...
-├── backend/                # Python + LiteX
-│   ├── pyproject.toml
-│   ├── chipblocks/
-│   └── ...
-└── docs/                   # Additional documentation
+│   ├── electron/main/      # Electron main process (IPC handlers, AI loop)
+│   ├── electron/preload/   # contextBridge surface
+│   ├── src/                # React renderer (App.tsx, blocks/, types/, etc.)
+│   └── test/               # vitest IPC contract tests
+├── backend/                # Python + Amaranth HDL
+│   ├── setup.sh            # one-time WSL2 install
+│   ├── synth.py            # graph -> Amaranth -> WAV simulation
+│   ├── build.py            # graph -> Yosys -> nextpnr -> bitstream
+│   ├── tinytapeout.py      # graph -> TT submission package
+│   ├── blocks/             # one Python file per block
+│   ├── scripts/            # wsl-build-wrapper.sh + helpers
+│   └── tests/              # pytest property-based block tests
+├── examples/               # bundled .json example graphs
+└── docs/screenshots/       # README screenshots
 ```
 
 ## Conventions
@@ -69,8 +81,8 @@ chipzzzd/
 - Match the user's pace — they will direct the project; act on direction rather than racing ahead.
 
 ### Testing
-- **Backend**: pytest under `backend/tests/` — 19 property-based smoke tests covering all 15 blocks + 4 pipeline tests against the example graphs. Run via `python3 -m pytest backend/tests/ -v` (~54 s).
-- **Frontend**: vitest IPC contract tests under `frontend/test/` — 6 tests covering the renderer↔main process boundary (synth/build/AI). Run via `cd frontend && npm test` (~8 s).
+- **Backend**: pytest under `backend/tests/` — 31 tests total: 19 property-based block tests covering all 19 blocks, 4 pipeline tests against the example graphs, 8 Tiny Tapeout submission-package tests. Run via `python3 -m pytest backend/tests/ -v` from WSL2 (~60 s).
+- **Frontend**: vitest under `frontend/test/` — 87 tests covering IPC contracts (synth/build/AI), block-component rendering + parameter editing, error classification, save/load roundtrip. Run via `cd frontend && npm test` (~8 s).
 - **CI**: both test suites run on every push/PR to master via `.github/workflows/ci.yml`. Cross-platform installer builds run on tag push (`v*`) via `.github/workflows/release.yml` — Windows NSIS, macOS DMG, Linux AppImage, all unsigned.
 - **Visual / UI changes**: manual verification in the running Electron app. The TypeScript compiler passing is *not* the same as the feature working.
 - Document how to run each piece in the **Sprint Log** section of the relevant `SPRINT-N.md`.
@@ -104,7 +116,7 @@ chipzzzd/
 - [SPRINT-6.md](SPRINT-6.md) — closed sprint plan + log + retro
 - [SPRINT-7.md](SPRINT-7.md) — closed sprint plan + log + retro (first public alpha — v0.1.0-alpha)
 - [SPRINT-8.md](SPRINT-8.md) — closed sprint plan + log + retro (AI consultant grounding)
-- [SPRINT-9.md](SPRINT-9.md) — open sprint plan: make v0.1.0-alpha actually shippable to strangers
+- [SPRINT-9.md](SPRINT-9.md) — closed sprint plan + log + retro (onboarding + 6 new blocks + CI/release pipeline)
 - [SPRINT-10.md](SPRINT-10.md) — closed sprint plan + log + retro (output completeness — multi-target build)
 - [SPRINT-11.md](SPRINT-11.md) — closed sprint plan + log + retro (pre-public hardening — Critical a11y + tech-debt + renderer security)
 - [SPRINT-12.md](SPRINT-12.md) — closed sprint plan + log + retro (Major a11y + 44 new tests + ARCHITECTURE.md)
@@ -116,8 +128,6 @@ chipzzzd/
 - Tech-debt tracking lives inline: highest-priority items in [KNOWN-ISSUES.md](KNOWN-ISSUES.md), tiered remediation plan in [ROADMAP.md](ROADMAP.md)'s "Tech-debt workstream" section. Last full audit 2026-05-08.
 - [CREDITS.md](CREDITS.md) — licensing policy + open-source attributions (permissive only; no copyleft in shipped product)
 - (Future) `BLOCKS.md` — block library reference
-- (Future) `ARCHITECTURE.md` — system architecture + data flow
-- (Future) `README.md` — public-facing project readme
 
 ## Sprint cadence
 
