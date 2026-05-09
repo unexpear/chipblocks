@@ -5,6 +5,7 @@ import { writeFile, mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { classifyBackendError, type BackendErrorType } from './classify-backend-error'
+import type { BuildTarget } from '../../src/types/ipc'
 
 interface SynthGraph {
   nodes: Array<{ id: string; type?: string; data?: Record<string, unknown> }>
@@ -190,8 +191,6 @@ interface BuildResult {
 }
 
 let currentBuildProc: ChildProcess | null = null
-
-type BuildTarget = 'icestick' | 'tinyfpga-bx' | 'icebreaker' | 'tt'
 
 // build.py emits a machine-readable `[bundle] <basename>` line on
 // success. Parse the LAST one out of stdout to locate the produced

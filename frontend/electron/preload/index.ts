@@ -1,4 +1,5 @@
 import { ipcRenderer, contextBridge } from 'electron'
+import type { BuildTarget, BackendErrorType } from '../../src/types/ipc'
 
 // Note: we deliberately do NOT expose a generic `window.ipcRenderer`
 // bridge. The boilerplate from the electron-vite-react template did,
@@ -13,12 +14,12 @@ import { ipcRenderer, contextBridge } from 'electron'
 contextBridge.exposeInMainWorld('chipblocks', {
   synth: (graph: unknown) => ipcRenderer.invoke('synth:run', graph),
   cancel: () => ipcRenderer.invoke('synth:cancel') as Promise<boolean>,
-  build: (graph: unknown, target: 'icestick' | 'tinyfpga-bx' | 'icebreaker' | 'tt') =>
+  build: (graph: unknown, target: BuildTarget) =>
     ipcRenderer.invoke('build:run', { graph, target }) as Promise<{
       ok: boolean
       zipData?: ArrayBuffer
       error?: string
-      errorType?: 'backend_deps_missing' | 'wsl_missing' | 'oss_cad_suite_missing'
+      errorType?: BackendErrorType
     }>,
   cancelBuild: () => ipcRenderer.invoke('build:cancel') as Promise<boolean>,
 })
