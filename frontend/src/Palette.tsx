@@ -39,6 +39,7 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'multiply',   label: 'Multiply',   color: '#3f51b5', description: 'Ring modulator / VCA: (a * b) >> 7' },
   { type: 'bitcrusher', label: 'Bitcrusher', color: '#5d4037', description: 'Lo-fi bit-depth reduction (1–8 effective bits)' },
   { type: 'delay',      label: 'Delay',      color: '#7c4dff', description: 'Fixed-length delay line (1–1024 samples)' },
+  { type: 'distortion', label: 'Distortion', color: '#ff6f00', description: 'Hard-clipping waveshaper (guitar / synth overdrive)' },
   { type: 'and',        label: 'AND',        color: '#0277bd', description: '1-bit logical AND (a & b)' },
   { type: 'or',         label: 'OR',         color: '#0288d1', description: '1-bit logical OR (a | b)' },
   { type: 'xor',        label: 'XOR',        color: '#039be5', description: '1-bit exclusive OR (a ^ b)' },
@@ -46,6 +47,8 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'counter',    label: 'Counter',    color: '#01579b', description: 'Wrapping counter clocked by a 1-bit signal' },
   { type: 'vgatiming',  label: 'VGA Timing', color: '#673ab7', description: '640×480 / 60 Hz VGA timing generator' },
   { type: 'colorbars',  label: 'Color Bars', color: '#ab47bc', description: '8-stripe SMPTE color-bar test pattern' },
+  { type: 'pixelrange', label: 'Pixel Range', color: '#7b1fa2', description: 'Inside-window comparator (start ≤ pixel ≤ end)' },
+  { type: 'solidcolor', label: 'Solid Color', color: '#c2185b', description: 'Constant 1-bit RGB source (8 named colors)' },
   { type: 'vgaoutput',  label: 'VGA Output', color: '#d81b60', description: 'Visual sink — drives a VGA monitor (iCEBreaker PMOD1B)' },
   { type: 'output',     label: 'Output',     color: '#f44336', description: 'Audio sink (where Play reads from)' },
 ]
@@ -81,6 +84,12 @@ export function defaultDataForType(type: string): Record<string, unknown> {
       return { delay_samples: 128 }
     case 'counter':
       return { max_value: 16 }
+    case 'distortion':
+      return { threshold: 32 }
+    case 'pixelrange':
+      return { start: 100, end: 200 }
+    case 'solidcolor':
+      return { color: 'white' }
     case 'mixer':
     case 'output':
     case 'samplehold':

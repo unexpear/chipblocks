@@ -187,4 +187,22 @@ export const EXAMPLES: ExampleGraph[] = [
       { id: 'e7', source: 'vt', target: 'vo', sourceHandle: 'vsync',   targetHandle: 'vsync'   },
     ],
   },
+  {
+    id: 'vga-stripe',
+    label: 'White vertical stripe on a VGA monitor',
+    description: 'VGA Timing → Pixel Range → VGA Output. The Pixel Range output drives all three R/G/B channels, so the in-window pixels paint white on a black background. v0.1 has no visual mixer, so background-and-foreground rectangles need a future block — this is the simplest patch the visual chain currently supports.',
+    nodes: [
+      { id: 'vt', type: 'vgatiming',  position: { x: 50,  y: 60 }, data: {} },
+      { id: 'pr', type: 'pixelrange', position: { x: 380, y: 60 }, data: { start: 100, end: 200 } },
+      { id: 'vo', type: 'vgaoutput',  position: { x: 700, y: 60 }, data: {} },
+    ],
+    edges: [
+      { id: 'e1', source: 'vt', target: 'pr', sourceHandle: 'x',      targetHandle: 'pixel'  },
+      { id: 'e2', source: 'pr', target: 'vo', sourceHandle: 'inside', targetHandle: 'r'      },
+      { id: 'e3', source: 'pr', target: 'vo', sourceHandle: 'inside', targetHandle: 'g'      },
+      { id: 'e4', source: 'pr', target: 'vo', sourceHandle: 'inside', targetHandle: 'b'      },
+      { id: 'e5', source: 'vt', target: 'vo', sourceHandle: 'hsync',  targetHandle: 'hsync'  },
+      { id: 'e6', source: 'vt', target: 'vo', sourceHandle: 'vsync',  targetHandle: 'vsync'  },
+    ],
+  },
 ]

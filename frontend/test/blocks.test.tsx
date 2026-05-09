@@ -53,6 +53,9 @@ import { CounterNode } from '../src/blocks/CounterNode'
 import { VgaTimingNode } from '../src/blocks/VgaTimingNode'
 import { ColorBarsNode } from '../src/blocks/ColorBarsNode'
 import { VgaOutputNode } from '../src/blocks/VgaOutputNode'
+import { DistortionNode } from '../src/blocks/DistortionNode'
+import { PixelRangeNode } from '../src/blocks/PixelRangeNode'
+import { SolidColorNode } from '../src/blocks/SolidColorNode'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -851,5 +854,98 @@ describe('VgaOutput block', () => {
     expect(container.querySelectorAll('input').length).toBe(0)
     expect(countHandles(container, 'target')).toBe(5)
     expect(countHandles(container, 'source')).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Distortion: 1 input handle, 1 output handle, 1 threshold field [1, 127].
+
+describe('Distortion block', () => {
+  it('renders title + threshold input with default', () => {
+    const { container } = wrap(
+      <DistortionNode {...nodePropsBase('dist-1')} data={{ threshold: 32 }} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Distortion')
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')
+    expect(input?.value).toBe('32')
+    expect(input?.getAttribute('aria-label')).toBe('Clip threshold (1 to 127)')
+    expect(countHandles(container, 'target')).toBe(1)
+    expect(countHandles(container, 'source')).toBe(1)
+  })
+
+  it('typing a valid threshold (16) updates the input', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <DistortionNode {...nodePropsBase('dist-2')} data={{ threshold: 32 }} />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '16')
+    expect(input.value).toBe('16')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('out-of-range threshold (200) shows an error and snaps back on blur', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <DistortionNode {...nodePropsBase('dist-3')} data={{ threshold: 32 }} />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '200')
+    expect(input.value).toBe('200')
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/1.*127/)
+    await user.tab()
+    expect(input.value).toBe('32')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// PixelRange: 1 input handle, 1 output handle, 2 fields (start, end) each [0, 639].
+
+describe('PixelRange block', () => {
+  it('renders title + 2 number inputs with defaults', () => {
+    const { container } = wrap(
+      <PixelRangeNode {...nodePropsBase('pr-1')} data={{ start: 100, end: 200 }} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Pixel Range')
+    const inputs = container.querySelectorAll<HTMLInputElement>('input[type="number"]')
+    expect(inputs.length).toBe(2)
+    expect(inputs[0].value).toBe('100')
+    expect(inputs[1].value).toBe('200')
+    expect(countHandles(container, 'target')).toBe(1)
+    expect(countHandles(container, 'source')).toBe(1)
+  })
+
+  it('out-of-range start (700) shows an error and snaps back on blur', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <PixelRangeNode {...nodePropsBase('pr-2')} data={{ start: 100, end: 200 }} />,
+    )
+    const startInput = container.querySelectorAll<HTMLInputElement>('input[type="number"]')[0]
+    await user.clear(startInput)
+    await user.type(startInput, '700')
+    expect(startInput.value).toBe('700')
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/0.*639/)
+    await user.tab()
+    expect(startInput.value).toBe('100')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SolidColor: no inputs, 3 output handles, 1 color select.
+
+describe('SolidColor block', () => {
+  it('renders title + color select with default and 8 options', () => {
+    const { container } = wrap(
+      <SolidColorNode {...nodePropsBase('sc-1')} data={{ color: 'white' }} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Solid Color')
+    const select = container.querySelector<HTMLSelectElement>('select')
+    expect(select).not.toBeNull()
+    expect(select?.value).toBe('white')
+    expect(select?.querySelectorAll('option').length).toBe(8)
+    expect(countHandles(container, 'target')).toBe(0)
+    expect(countHandles(container, 'source')).toBe(3)
   })
 })

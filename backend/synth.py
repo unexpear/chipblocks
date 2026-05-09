@@ -106,6 +106,17 @@ def _build_params(node_type: str, data: dict) -> dict:
     elif node_type == "counter":
         if "max_value" in data:
             params["max_value"] = int(data["max_value"])
+    elif node_type == "distortion":
+        if "threshold" in data:
+            params["threshold"] = int(data["threshold"])
+    elif node_type == "pixelrange":
+        if "start" in data:
+            params["start"] = int(data["start"])
+        if "end" in data:
+            params["end"] = int(data["end"])
+    elif node_type == "solidcolor":
+        if "color" in data:
+            params["color"] = str(data["color"])
     # Mixer, Output, SampleAndHold, Noise, Multiply, and the boolean gates
     # (and / or / xor / not) have no parameters.
     return params

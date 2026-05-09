@@ -91,7 +91,7 @@ frontend/src/
 ├── blocks/
 │   ├── index.ts               nodeTypes + AppNode union
 │   ├── useValidatedNumber.ts  Shared number-input validation hook
-│   └── *Node.tsx              One file per of the 27 block types
+│   └── *Node.tsx              One file per of the 30 block types
 ├── Palette.tsx                Left-side block palette + drag-and-drop
 ├── Chat.tsx                   AI consultant sidebar + agentic loop
 ├── SettingsModal.tsx          API key + model picker
@@ -152,14 +152,14 @@ Eval script at `scripts/eval-ai.ts` runs 7 representative queries against the li
 ## Testing
 
 ```
-backend/tests/        pytest, 45 tests, ~60 s
-  test_blocks.py             28 per-block property assertions (zero-crossing rate, etc.) — covers all 27 blocks (including the 3 visual blocks driven directly under an Amaranth Simulator) plus a mixed-logic pipeline smoke test
+backend/tests/        pytest, 48 tests, ~60 s
+  test_blocks.py             31 per-block property assertions (zero-crossing rate, etc.) — covers all 30 blocks (including the 5 visual blocks driven directly under an Amaranth Simulator) plus a mixed-logic pipeline smoke test
   test_synth_pipeline.py     9 end-to-end tests against examples/*.json (3 exercise the visual path: friendly-error rejection on ▶ Play, .pcf carries VGA pin assignments, and an end-to-end build of the color-bars graph through Yosys + nextpnr-ice40 + icepack to a real iCEBreaker bitstream — that one is skipped when OSS CAD Suite isn't on PATH)
   test_tinytapeout.py        8 TT bundle shape + info.yaml schema tests
 
-frontend/test/        vitest, 98 tests, ~10 s
+frontend/test/        vitest, 103 tests, ~10 s
   ipc-contract.test.ts          renderer↔main IPC mock tests (synth/build/AI)
-  blocks.test.tsx               block render + parameter editing + range validation (60 tests across all 27 blocks)
+  blocks.test.tsx               block render + parameter editing + range validation (65 tests across all 30 blocks)
   save-load.test.tsx            save/load roundtrip + m5 rejection paths
   examples-consistency.test.ts  examples.ts ↔ examples/*.json drift check (now also covers color-bars.json)
   classify-backend-error.test.ts friendly-error classifier (14 cases)

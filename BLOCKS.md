@@ -1,6 +1,6 @@
 # ChipBlocks block library
 
-> **Last updated:** 2026-05-09 · Reference for the 27 blocks shipping in v0.1.0-alpha. The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). For how the renderer talks to the backend and how to add another block, see [ARCHITECTURE.md](ARCHITECTURE.md).
+> **Last updated:** 2026-05-09 · Reference for the 30 blocks shipping in v0.1.0-alpha. The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). For how the renderer talks to the backend and how to add another block, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 This document describes what each block does, what its inputs and outputs are, what its parameters mean, and roughly how it sounds (or looks). Audio blocks are 8-bit signed (–128..+127) at a 44.1 kHz sample rate. Audio handles carry signed 8-bit samples; gate / clock handles carry 1-bit signals; visual handles are short single-token names (`r`, `g`, `b`, `hsync`, `vsync`, `visible`, `x`, `y`) following the convention used in every open-source VGA core. Edges are direction-checked by React Flow at edit time.
 
@@ -44,11 +44,14 @@ A note on parameter ranges: the React Flow node components enforce **musically s
 
 - [Bitcrusher](#bitcrusher)
 - [Delay](#delay)
+- [Distortion](#distortion)
 
 ### Visual
 
 - [VGA Timing](#vga-timing)
 - [Color Bars](#color-bars)
+- [Pixel Range](#pixel-range)
+- [Solid Color](#solid-color)
 - [VGA Output](#vga-output)
 
 ### Mixing and routing
@@ -523,6 +526,27 @@ Fixed-length delay line. The output is the input shifted forward in time by `del
 
 **Common usage.** Around 50 samples gives chorus thickening; 200–500 samples gives flange / slap-back. For an actual echo, loop the delay output back through a Multiply (by a constant <127 for feedback below unity) and a Mixer with the original — a small graph rather than a single block.
 
+### Distortion
+
+Hard-clipping waveshaper. Saturates the input to ±`threshold` and rescales the result to fill the ±127 range, so the output stays loud — that's what gives overdrive its characteristic "all the way to the rails" energy. Classic guitar / synth-amp tone.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `audio-in` | target | signed 8-bit audio | Source signal |
+| `audio-out` | source | signed 8-bit audio | Hard-clipped + rescaled signal |
+
+**Parameters**
+
+| Name | Type | Range (frontend / backend) | Default | What it does |
+|---|---|---|---|---|
+| `threshold` | integer | 1–127 / 1–127 | 32 | Clip point. Smaller = more clipping; at 127 the block is effectively pass-through |
+
+**Behavior.** Combinational. The input is saturated to `[-threshold, +threshold]`, then multiplied by 127 and divided by `threshold` so the result spans the full signed-8-bit range. Both operations synthesise into a small fixed-coefficient unit on iCE40 — no per-sample latency, no internal state. At `threshold = 4` the output is essentially a square wave regardless of input shape; at `threshold = 64` the clipping is gentler and you can still hear the original shape underneath.
+
+**Common usage.** Drop one between any oscillator and Output for instant overdriven-amp tone. `Sawtooth -> Distortion(threshold=16) -> Lowpass(cutoff_hz=2000) -> Output` gives the canonical "saw lead through a guitar amp" sound — clip it, then take the harshest top off with the low-pass.
+
 ---
 
 ## Visual
@@ -582,6 +606,52 @@ Generates standard VGA timing from the implicit pixel clock. The five outputs ar
 **Behavior.** Bits `[6:9]` of `x` (i.e. `x / 64`) form the bar index 0..7. We use 64-pixel-wide bars rather than the strict 1/8-of-640 = 80-pixel bars so the index falls out as a free bit-slice — cheaper on the iCE40 than a divide-by-80 ladder, and 8 × 64 = 512 pixels comfortably fills the 320-pixel active area v0.1 ships in 12 MHz / 320×240 mode. The bar palette is the standard SMPTE NTSC test pattern, left-to-right: white, yellow, cyan, green, magenta, red, blue, black. When `visible` is low (during VGA blanking / sync), all three channels are forced to 0 — that's required by VGA: any non-zero color signal during sync confuses the monitor's HSYNC/VSYNC separator.
 
 **Common usage.** Pair it with VGA Timing for the canonical "first picture on a monitor" demo. Replacing Color Bars with a future user-built pixel-generator (sprite tiles, character ROMs, framebuffer reads) keeps the rest of the pipeline unchanged.
+
+### Pixel Range
+
+A 1-bit window comparator: emits high when the input pixel coordinate falls inside `[start, end]` and low otherwise. The foundation for drawing rectangles, vertical / horizontal stripes, and frames on a VGA monitor.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `pixel` | target | 10-bit unsigned | The x or y coordinate from VGA Timing |
+| `inside` | source | 1-bit | High when `start <= pixel <= end` |
+
+**Parameters**
+
+| Name | Type | Range (frontend / backend) | Default | What it does |
+|---|---|---|---|---|
+| `start` | integer | 0–639 / 0–639 | 100 | Lower bound of the in-window range (inclusive) |
+| `end` | integer | 0–639 / 0–639 | 200 | Upper bound of the in-window range (inclusive) |
+
+**Resolution caveat.** v0.1's iCEBreaker path runs at 320×240 / 60 Hz on the bare 12 MHz oscillator. The `start` / `end` parameters cover the full 0–639 range used by the underlying 640×480 raster, so values above 320 (for x) or 240 (for y) are valid in the timing but won't paint anywhere visible until the 25 MHz / 640×480 path lands (deferred — needs an `SB_PLL40_CORE` primitive).
+
+**Behavior.** Combinational. The `inside` output is `(pixel >= start) & (pixel <= end)`, both bounds inclusive. No internal state, no per-sample latency.
+
+**Common usage.** `VGA Timing.x -> PixelRange.pixel`, then `PixelRange.inside -> VGA Output.r/g/b` (wire to all three for a white stripe, or to a single channel for a colored stripe) draws a vertical band. To draw a rectangle, use TWO PixelRange instances — one fed by `x`, one fed by `y` — AND-ed together (`AND.in-1 / AND.in-2 -> AND.gate-out -> VGA Output`). Bundle file: `examples/vga-stripe.json`.
+
+### Solid Color
+
+A constant 1-bit-per-channel RGB source. Lets you wire a fixed color into VGA Output without composing logic gates by hand. The 8 named colors match the SMPTE palette the Color Bars block produces.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `r` | source | 1-bit | Red channel constant |
+| `g` | source | 1-bit | Green channel constant |
+| `b` | source | 1-bit | Blue channel constant |
+
+**Parameters**
+
+| Name | Type | Range (frontend / backend) | Default | What it does |
+|---|---|---|---|---|
+| `color` | enum | `black` \| `red` \| `green` \| `blue` \| `yellow` \| `cyan` \| `magenta` \| `white` | `white` | Picks the fixed color |
+
+**Behavior.** Combinational. The enum is mapped at construction time to literal 1-bit constants on each of the three output channels — the elaborated hardware is just three tied wires. No internal state.
+
+**Common usage.** Wire `r` / `g` / `b` straight into VGA Output for a single-color screen. v0.1 has no visual mixer, so a "blue background with a red rectangle" patch needs a future block — for now, Solid Color is most useful as the standalone background for "is the chip alive?" smoke tests, or as a constant source for one of the three channels when another block (PixelRange, Color Bars) drives the others.
 
 ### VGA Output
 

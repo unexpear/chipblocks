@@ -539,6 +539,36 @@ def test_bitcrusher_1bit_squares_a_sine(run_synth, wav_samples):
     )
 
 
+def test_distortion_clips_a_constant_to_full_scale(run_synth, wav_samples):
+    """Constant +64 fed through Distortion(threshold=32) should clip
+    above the threshold and rescale to ±127. Specifically, +64 saturates
+    to +32, then × 127 // 32 = 127 — the full positive rail. After WAV
+    scaling that's 127*64 = 8128.
+
+    The pipeline also includes the small "no implicit sync domain"
+    workaround: Distortion is purely combinational, so we add an
+    unconnected Gate to give the simulator a sync domain to clock.
+    """
+    graph = {
+        "nodes": [
+            {"id": "src", "type": "constant", "data": {"value": 64}},
+            {"id": "dst", "type": "distortion", "data": {"threshold": 32}},
+            {"id": "g", "type": "gate", "data": {"rate_hz": 1, "duty_pct": 50}},
+            _output_node(),
+        ],
+        "edges": [
+            _edge("e1", "src", "dst", "audio-out", "audio-in"),
+            _edge("e2", "dst", "out", "audio-out", "audio-in"),
+        ],
+    }
+    samples = wav_samples(run_synth(graph, duration_s=1))
+    expected = 127 * 64
+    assert all(s == expected for s in samples), (
+        f"Distortion(threshold=32) on Constant(64) should clip-and-rescale "
+        f"to {expected}; got min={min(samples)}, max={max(samples)}"
+    )
+
+
 def test_delay_holds_silence_then_passes_input(run_synth, wav_samples):
     """A delay of 10 samples means the first 10 output samples are 0 (the
     buffer's reset state) and subsequent samples are the input from 10
@@ -928,6 +958,90 @@ def test_vga_output_pass_through():
 
     sim.add_testbench(process)
     sim.run()
+
+
+def test_pixel_range_window_comparator():
+    """PixelRange(start=100, end=200) should output `inside`=1 only for
+    pixel coordinates in [100, 200], and 0 elsewhere. We sweep a few
+    representative coordinates and verify the boundary behavior is
+    inclusive on both ends."""
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.pixel_range import PixelRange
+
+    block = PixelRange(start=100, end=200)
+    m = Module()
+    m.submodules.b = block
+    # Anchor sync (the block is purely combinational).
+    _anchor = Signal()
+    m.d.sync += _anchor.eq(~_anchor)
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    # (pixel, expected_inside)
+    cases = [
+        (0, 0),
+        (50, 0),
+        (99, 0),
+        (100, 1),  # inclusive lower bound
+        (150, 1),
+        (200, 1),  # inclusive upper bound
+        (201, 0),
+        (300, 0),
+        (639, 0),
+    ]
+    captured: list[tuple[int, int]] = []
+
+    async def process(ctx):
+        for pixel, _expected in cases:
+            ctx.set(block.pixel, pixel)
+            await ctx.tick()
+            await ctx.tick()
+            captured.append((pixel, ctx.get(block.inside)))
+
+    sim.add_testbench(process)
+    sim.run()
+
+    for (pixel, expected), (_p, got) in zip(cases, captured):
+        assert got == expected, (
+            f"PixelRange(start=100, end=200): pixel={pixel} expected "
+            f"inside={expected}, got {got}"
+        )
+
+
+def test_solid_color_blue_drives_only_b():
+    """SolidColor('blue') should hold r=0, g=0, b=1 forever — pure blue
+    on the SMPTE 1-bit-per-channel palette. We tick a few cycles and
+    verify all three channels stay at the expected constants."""
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.solid_color import SolidColor
+
+    block = SolidColor(color="blue")
+    m = Module()
+    m.submodules.b = block
+    # Anchor sync (the block is purely combinational, no internal state).
+    _anchor = Signal()
+    m.d.sync += _anchor.eq(~_anchor)
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    captured: list[tuple[int, int, int]] = []
+
+    async def process(ctx):
+        for _ in range(5):
+            await ctx.tick()
+            captured.append(
+                (ctx.get(block.r), ctx.get(block.g), ctx.get(block.b))
+            )
+
+    sim.add_testbench(process)
+    sim.run()
+
+    for sample in captured:
+        assert sample == (0, 0, 1), (
+            f"SolidColor('blue') should hold (R,G,B)=(0,0,1); got {sample}"
+        )
 
 
 def test_counter_smoke_through_full_pipeline(run_synth, wav_samples):

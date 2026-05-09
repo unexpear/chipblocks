@@ -25,6 +25,9 @@ import { CounterNode,        type CounterBlock }        from './CounterNode'
 import { VgaTimingNode,      type VgaTimingBlock }      from './VgaTimingNode'
 import { ColorBarsNode,      type ColorBarsBlock }      from './ColorBarsNode'
 import { VgaOutputNode,      type VgaOutputBlock }      from './VgaOutputNode'
+import { DistortionNode,     type DistortionBlock }     from './DistortionNode'
+import { PixelRangeNode,     type PixelRangeBlock }     from './PixelRangeNode'
+import { SolidColorNode,     type SolidColorBlock }     from './SolidColorNode'
 
 // Hoisted to module scope to avoid React Flow's
 // "It looks like you've created a new nodeTypes object" warning.
@@ -56,6 +59,9 @@ export const nodeTypes = {
   vgatiming:  VgaTimingNode,
   colorbars:  ColorBarsNode,
   vgaoutput:  VgaOutputNode,
+  distortion: DistortionNode,
+  pixelrange: PixelRangeNode,
+  solidcolor: SolidColorNode,
 }
 
 export type AppNode =
@@ -86,3 +92,6 @@ export type AppNode =
   | VgaTimingBlock
   | ColorBarsBlock
   | VgaOutputBlock
+  | DistortionBlock
+  | PixelRangeBlock
+  | SolidColorBlock

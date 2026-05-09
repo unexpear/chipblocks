@@ -42,7 +42,7 @@ GitHub announced Node.js 20 deprecation on 2025-09-19; default flips to Node 24 
 
 Source: in-conversation `/engineering:system-design` review (2026-05-09) after the multi-domain expansion landed (commits `5be6d05` + `4ec6e8b` + `be0aeca`).
 
-Adding a block touches 8 files (the "block-addition cookbook" in [ARCHITECTURE.md](ARCHITECTURE.md) and [CONTRIBUTING.md](CONTRIBUTING.md)). At 27 blocks this is ~160 lines of mechanical boilerplate per block plus the constant tax of any cross-cutting change (a parameter rename means hunting through synth.py + Palette.tsx + prompt.ts + the Node component + tests). Tracked as tech-debt item A1 in [ROADMAP.md](ROADMAP.md)'s tech-debt workstream since 2026-05-08.
+Adding a block touches 8 files (the "block-addition cookbook" in [ARCHITECTURE.md](ARCHITECTURE.md) and [CONTRIBUTING.md](CONTRIBUTING.md)). At 30 blocks this is ~160 lines of mechanical boilerplate per block plus the constant tax of any cross-cutting change (a parameter rename means hunting through synth.py + Palette.tsx + prompt.ts + the Node component + tests). Tracked as tech-debt item A1 in [ROADMAP.md](ROADMAP.md)'s tech-debt workstream since 2026-05-08.
 
 **Why deferred**: the right shape (per-block `BLOCK_TYPE` + `PARAM_SCHEMA` + `DESCRIPTION` constants discovered via filesystem glob; `frontend/src/blocks/index.ts` likewise auto-imports via `import.meta.glob`) only earns its keep when block-shape variance is low. Today VGA Timing has 5 outputs, Counter has clocked semantics with audio-shaped output, ADSR has multi-row UI — the manifest format would have to model all of that, and freezing the shape early forces the next 5 blocks to fit a frozen mold.
 

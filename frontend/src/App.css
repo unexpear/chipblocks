@@ -846,6 +846,10 @@
   border-color: #7c4dff;
 }
 
+.block-distortion {
+  border-color: #ff6f00;
+}
+
 .block-and {
   border-color: #0277bd;
 }
@@ -886,6 +890,18 @@
   border-color: #d81b60;
   /* 5 stacked input handles, same shape as VGA Timing. */
   min-height: 180px;
+  min-width: 130px;
+}
+
+.block-pixelrange {
+  border-color: #7b1fa2;
+  min-width: 130px;
+}
+
+.block-solidcolor {
+  border-color: #c2185b;
+  /* 3 stacked output handles at 24/56/88. */
+  min-height: 110px;
   min-width: 130px;
 }
 

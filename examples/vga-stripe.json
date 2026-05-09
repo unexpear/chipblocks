@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "app": "ChipBlocks",
+  "savedAt": "2026-05-09T00:00:00.000Z",
+  "viewport": { "x": 0, "y": 0, "zoom": 1 },
+  "nodes": [
+    {
+      "id": "vt",
+      "type": "vgatiming",
+      "position": { "x": 50, "y": 60 },
+      "data": {}
+    },
+    {
+      "id": "pr",
+      "type": "pixelrange",
+      "position": { "x": 380, "y": 60 },
+      "data": { "start": 100, "end": 200 }
+    },
+    {
+      "id": "vo",
+      "type": "vgaoutput",
+      "position": { "x": 700, "y": 60 },
+      "data": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "vt",
+      "target": "pr",
+      "sourceHandle": "x",
+      "targetHandle": "pixel"
+    },
+    {
+      "id": "e2",
+      "source": "pr",
+      "target": "vo",
+      "sourceHandle": "inside",
+      "targetHandle": "r"
+    },
+    {
+      "id": "e3",
+      "source": "pr",
+      "target": "vo",
+      "sourceHandle": "inside",
+      "targetHandle": "g"
+    },
+    {
+      "id": "e4",
+      "source": "pr",
+      "target": "vo",
+      "sourceHandle": "inside",
+      "targetHandle": "b"
+    },
+    {
+      "id": "e5",
+      "source": "vt",
+      "target": "vo",
+      "sourceHandle": "hsync",
+      "targetHandle": "hsync"
+    },
+    {
+      "id": "e6",
+      "source": "vt",
+      "target": "vo",
+      "sourceHandle": "vsync",
+      "targetHandle": "vsync"
+    }
+  ]
+}

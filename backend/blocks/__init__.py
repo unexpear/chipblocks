@@ -39,6 +39,9 @@ from .counter import Counter
 from .vga_timing import VgaTiming
 from .color_bars import ColorBars
 from .vga_output import VgaOutput
+from .distortion import Distortion
+from .pixel_range import PixelRange
+from .solid_color import SolidColor
 
 # Registry mapping graph node `type` (from React Flow JSON) to block class.
 BLOCK_REGISTRY = {
@@ -69,6 +72,9 @@ BLOCK_REGISTRY = {
     "vgatiming": VgaTiming,
     "colorbars": ColorBars,
     "vgaoutput": VgaOutput,
+    "distortion": Distortion,
+    "pixelrange": PixelRange,
+    "solidcolor": SolidColor,
 }
 
 __all__ = [
@@ -99,5 +105,8 @@ __all__ = [
     "VgaTiming",
     "ColorBars",
     "VgaOutput",
+    "Distortion",
+    "PixelRange",
+    "SolidColor",
     "BLOCK_REGISTRY",
 ]
