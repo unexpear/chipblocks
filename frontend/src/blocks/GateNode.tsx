@@ -63,9 +63,10 @@ export function GateNode({ id, data }: NodeProps<GateBlock>) {
   const commitRate = useCallback((v: number) => updateNodeData(id, { rate_hz: v }), [id, updateNodeData])
   const commitDuty = useCallback((v: number) => updateNodeData(id, { duty_pct: v }), [id, updateNodeData])
 
+  const titleId = `block-${id}-title`
   return (
-    <div className="block block-gate">
-      <div className="block-title">Gate</div>
+    <div className="block block-gate" role="group" aria-labelledby={titleId}>
+      <h3 id={titleId} className="block-title">Gate</h3>
       <div className="block-body">
         <FieldRow
           ariaLabel="Rate in hertz"

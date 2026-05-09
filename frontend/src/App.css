@@ -757,7 +757,8 @@
 
 .block-title {
   font-weight: bold;
-  margin-bottom: 4px;
+  margin: 0 0 4px 0;
+  font-size: inherit;
 }
 
 .block-body {

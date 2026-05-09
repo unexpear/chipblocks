@@ -72,11 +72,12 @@ export function ADSRNode({ id, data }: NodeProps<ADSRBlock>) {
   const commitSustain = useCallback((v: number) => updateNodeData(id, { sustain_level: v }), [id, updateNodeData])
   const commitRelease = useCallback((v: number) => updateNodeData(id, { release_ms: v }), [id, updateNodeData])
 
+  const titleId = `block-${id}-title`
   return (
-    <div className="block block-adsr">
+    <div className="block block-adsr" role="group" aria-labelledby={titleId}>
       <Handle type="target" position={Position.Left} id="gate"     style={{ top: 24 }} />
       <Handle type="target" position={Position.Left} id="audio-in" style={{ top: 56 }} />
-      <div className="block-title">ADSR</div>
+      <h3 id={titleId} className="block-title">ADSR</h3>
       <div className="block-body">
         <FieldRow
           label="A"

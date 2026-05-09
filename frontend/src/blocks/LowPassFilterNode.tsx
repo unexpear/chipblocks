@@ -24,10 +24,11 @@ export function LowPassFilterNode({ id, data }: NodeProps<LowPassFilterBlock>) {
     commit,
   })
 
+  const titleId = `block-${id}-title`
   return (
-    <div className="block block-lowpass">
+    <div className="block block-lowpass" role="group" aria-labelledby={titleId}>
       <Handle type="target" position={Position.Left} id="audio-in" />
-      <div className="block-title">Low-pass</div>
+      <h3 id={titleId} className="block-title">Low-pass</h3>
       <div className="block-body">
         <input
           type="number"

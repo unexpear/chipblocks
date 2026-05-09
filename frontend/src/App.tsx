@@ -666,7 +666,7 @@ function AppContent() {
             </ReactFlow>
           </ErrorBoundary>
           {showStarterHint && (
-            <div className="starter-hint" role="note">
+            <div className="starter-hint" role="status">
               <span className="starter-hint-icon">▶</span>
               <span className="starter-hint-text">
                 Sample graph — click <strong>▶ Play</strong> in the toolbar to hear it.

@@ -24,9 +24,10 @@ export function SawtoothNode({ id, data }: NodeProps<SawtoothBlock>) {
     commit,
   })
 
+  const titleId = `block-${id}-title`
   return (
-    <div className="block block-sawtooth">
-      <div className="block-title">Sawtooth</div>
+    <div className="block block-sawtooth" role="group" aria-labelledby={titleId}>
+      <h3 id={titleId} className="block-title">Sawtooth</h3>
       <div className="block-body">
         <input
           type="number"

@@ -67,9 +67,10 @@ export function FmNode({ id, data }: NodeProps<FmBlock>) {
   const commitModulator = useCallback((v: number) => updateNodeData(id, { modulator_freq: v }), [id, updateNodeData])
   const commitDepth = useCallback((v: number) => updateNodeData(id, { mod_depth: v }), [id, updateNodeData])
 
+  const titleId = `block-${id}-title`
   return (
-    <div className="block block-fm">
-      <div className="block-title">FM</div>
+    <div className="block block-fm" role="group" aria-labelledby={titleId}>
+      <h3 id={titleId} className="block-title">FM</h3>
       <div className="block-body">
         <FieldRow
           label="C"

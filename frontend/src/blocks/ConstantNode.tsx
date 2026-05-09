@@ -24,9 +24,10 @@ export function ConstantNode({ id, data }: NodeProps<ConstantBlock>) {
     commit,
   })
 
+  const titleId = `block-${id}-title`
   return (
-    <div className="block block-constant">
-      <div className="block-title">Constant</div>
+    <div className="block block-constant" role="group" aria-labelledby={titleId}>
+      <h3 id={titleId} className="block-title">Constant</h3>
       <div className="block-body">
         <input
           type="number"

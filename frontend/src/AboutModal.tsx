@@ -79,6 +79,17 @@ export function AboutModal({ onClose }: AboutModalProps) {
             ChipBlocks ships <strong>BYOK</strong> — bring your own Anthropic API key, configured in Settings (⚙). Your key is encrypted via your OS keychain (Electron <code>safeStorage</code>) and never sent anywhere except Anthropic. ChipBlocks does not pay for AI inference on your behalf.
           </p>
 
+          <hr className="modal-divider" />
+
+          <h3>Keyboard shortcuts</h3>
+          <ul className="about-links">
+            <li><strong>Tab</strong> — cycle focus between nodes</li>
+            <li><strong>Backspace / Delete</strong> — remove selected nodes and edges</li>
+            <li><strong>Cmd/Ctrl + drag</strong> — multi-select</li>
+            <li><strong>Space + drag</strong> — pan the canvas</li>
+            <li><strong>Mouse wheel</strong> — zoom in/out</li>
+          </ul>
+
           <div className="modal-actions">
             <button onClick={onClose}>Close</button>
           </div>

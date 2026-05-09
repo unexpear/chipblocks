@@ -134,25 +134,35 @@ export function SettingsModal({ hasApiKey, onClose, onKeyChanged }: SettingsModa
             )}
           </p>
 
-          <label className="modal-label">
-            New API key
-            <input
-              type="password"
-              className="modal-input"
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              placeholder="sk-ant-..."
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </label>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              save()
+            }}
+          >
+            <label className="modal-label">
+              New API key
+              <input
+                type="password"
+                className="modal-input"
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+                placeholder="sk-ant-..."
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
 
-          <div className="modal-actions">
-            <button onClick={save} disabled={busy || !key.trim()}>Save key</button>
-            {hasApiKey && (
+            <div className="modal-actions">
+              <button type="submit" disabled={busy || !key.trim()}>Save key</button>
+            </div>
+          </form>
+
+          {hasApiKey && (
+            <div className="modal-actions">
               <button onClick={clear} disabled={busy} className="modal-danger">Clear stored key</button>
-            )}
-          </div>
+            </div>
+          )}
 
           {status && (
             <p className={`modal-status-msg modal-status-${status.kind}`}>

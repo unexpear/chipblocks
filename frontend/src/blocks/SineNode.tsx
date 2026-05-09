@@ -24,9 +24,10 @@ export function SineNode({ id, data }: NodeProps<SineBlock>) {
     commit,
   })
 
+  const titleId = `block-${id}-title`
   return (
-    <div className="block block-sine">
-      <div className="block-title">Sine</div>
+    <div className="block block-sine" role="group" aria-labelledby={titleId}>
+      <h3 id={titleId} className="block-title">Sine</h3>
       <div className="block-body">
         <input
           type="number"

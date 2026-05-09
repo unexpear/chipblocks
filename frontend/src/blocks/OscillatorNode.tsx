@@ -24,9 +24,10 @@ export function OscillatorNode({ id, data }: NodeProps<OscillatorBlock>) {
     commit,
   })
 
+  const titleId = `block-${id}-title`
   return (
-    <div className="block block-oscillator">
-      <div className="block-title">Oscillator</div>
+    <div className="block block-oscillator" role="group" aria-labelledby={titleId}>
+      <h3 id={titleId} className="block-title">Oscillator</h3>
       <div className="block-body">
         <input
           type="number"

@@ -24,9 +24,10 @@ export function TriangleNode({ id, data }: NodeProps<TriangleBlock>) {
     commit,
   })
 
+  const titleId = `block-${id}-title`
   return (
-    <div className="block block-triangle">
-      <div className="block-title">Triangle</div>
+    <div className="block block-triangle" role="group" aria-labelledby={titleId}>
+      <h3 id={titleId} className="block-title">Triangle</h3>
       <div className="block-body">
         <input
           type="number"

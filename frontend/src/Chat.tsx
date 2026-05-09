@@ -633,7 +633,7 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
             </h2>
           </div>
           <div className="modal-body">
-            <p className="modal-note">
+            <p id="confirm-preview-desc" className="modal-note">
               The AI consultant is about to make a destructive change. Apply it, or reject and the AI will see the rejection and can try something else.
             </p>
             <div className="confirm-preview">
@@ -642,8 +642,20 @@ export function Chat({ nodes, edges, hasApiKey, canvasActions, onClose, onOpenSe
               ))}
             </div>
             <div className="modal-actions">
-              <button onClick={onConfirmPending} className="confirm-apply">Apply</button>
-              <button onClick={onRejectPending} className="modal-danger">Reject</button>
+              <button
+                onClick={onConfirmPending}
+                className="confirm-apply"
+                aria-describedby="confirm-preview-desc"
+              >
+                Apply
+              </button>
+              <button
+                onClick={onRejectPending}
+                className="modal-danger"
+                aria-describedby="confirm-preview-desc"
+              >
+                Reject
+              </button>
             </div>
           </div>
         </div>

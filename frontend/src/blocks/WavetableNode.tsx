@@ -49,9 +49,10 @@ export function WavetableNode({ id, data }: NodeProps<WavetableBlock>) {
     }
   }
 
+  const titleId = `block-${id}-title`
   return (
-    <div className="block block-wavetable">
-      <div className="block-title">Wavetable</div>
+    <div className="block block-wavetable" role="group" aria-labelledby={titleId}>
+      <h3 id={titleId} className="block-title">Wavetable</h3>
       <div className="block-body">
         <div className="block-row-group">
           <div className="block-row">
