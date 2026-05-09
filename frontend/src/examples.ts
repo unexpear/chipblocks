@@ -131,4 +131,41 @@ export const EXAMPLES: ExampleGraph[] = [
       { id: 'e3', source: 'snh',  target: 'out', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
     ],
   },
+  {
+    id: 'echo',
+    label: 'Echo',
+    description: 'Direct + delayed signal mixed; the delayed copy is scaled to half-amplitude via Multiply by Constant 64. Demonstrates Delay + Multiply + Mixer composition.',
+    nodes: [
+      { id: 'src',   type: 'oscillator', position: { x: 50,   y: 60  }, data: { freq: 220 } },
+      { id: 'delay', type: 'delay',      position: { x: 350,  y: 220 }, data: { delay_samples: 256 } },
+      { id: 'scale', type: 'constant',   position: { x: 350,  y: 380 }, data: { value: 64 } },
+      { id: 'wet',   type: 'multiply',   position: { x: 600,  y: 300 }, data: {} },
+      { id: 'mix',   type: 'mixer',      position: { x: 850,  y: 180 }, data: {} },
+      { id: 'out',   type: 'output',     position: { x: 1100, y: 180 }, data: {} },
+    ],
+    edges: [
+      { id: 'e1', source: 'src',   target: 'mix',   sourceHandle: 'audio-out', targetHandle: 'in-1'     },
+      { id: 'e2', source: 'src',   target: 'delay', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+      { id: 'e3', source: 'delay', target: 'wet',   sourceHandle: 'audio-out', targetHandle: 'in-1'     },
+      { id: 'e4', source: 'scale', target: 'wet',   sourceHandle: 'audio-out', targetHandle: 'in-2'     },
+      { id: 'e5', source: 'wet',   target: 'mix',   sourceHandle: 'audio-out', targetHandle: 'in-2'     },
+      { id: 'e6', source: 'mix',   target: 'out',   sourceHandle: 'mix-out',   targetHandle: 'audio-in' },
+    ],
+  },
+  {
+    id: 'lofi-crunch',
+    label: 'Lo-fi crunch',
+    description: 'A 220 Hz sawtooth bit-crushed to 3 effective bits, then softened with a low-pass at 2 kHz — gritty retro tone.',
+    nodes: [
+      { id: 'saw',    type: 'sawtooth',   position: { x: 50,  y: 130 }, data: { freq: 220 } },
+      { id: 'crunch', type: 'bitcrusher', position: { x: 350, y: 130 }, data: { bits: 3 } },
+      { id: 'smooth', type: 'lowpass',    position: { x: 600, y: 130 }, data: { cutoff_hz: 2000 } },
+      { id: 'out',    type: 'output',     position: { x: 850, y: 130 }, data: {} },
+    ],
+    edges: [
+      { id: 'e1', source: 'saw',    target: 'crunch', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+      { id: 'e2', source: 'crunch', target: 'smooth', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+      { id: 'e3', source: 'smooth', target: 'out',    sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+    ],
+  },
 ]
