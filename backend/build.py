@@ -384,10 +384,12 @@ class BoardTop(Elaboratable):
     def __init__(self, graph: dict, board: FPGABoard):
         self.board = board
         self.has_vga = _graph_has_vga_output(graph)
-        # Visual-only graphs don't need an audio Output, so the GraphTop
-        # constructor is asked to skip that requirement when this build
-        # is targeting a VGA design.
-        self.inner = GraphTop(graph, require_audio_output=not self.has_vga)
+        # GraphTop no longer enforces an audio-Output requirement — that
+        # check lives in synth.py's validate_has_audio_output() for the
+        # ▶ Play path. Build paths (here) are fine with visual-only
+        # graphs, audio-only graphs, and (with explicit reject elsewhere)
+        # audio+visual mixed graphs.
+        self.inner = GraphTop(graph)
         # Single 1-bit GPIO output for PWM-modulated audio.
         self.audio_pin = Signal()
         # 5 extra GPIOs for VGA. Always allocated (cheap) but only

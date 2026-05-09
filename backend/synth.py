@@ -114,8 +114,48 @@ def _build_params(node_type: str, data: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Top-level module: composes block instances from the graph and wires edges.
 # ---------------------------------------------------------------------------
+def validate_has_audio_output(graph: dict) -> None:
+    """Raise a friendly ValueError if the graph has no audio Output block.
+
+    Called from synth.py's ``synthesize()`` (the ▶ Play path) before
+    ``GraphTop`` construction so the user gets a tailored message rather
+    than the generic "no Output block" error. The FPGA build path
+    (build.py) does NOT call this — visual-only graphs are flashable
+    even without an audio Output.
+
+    The two failure modes are reported differently:
+      * Visual sink present but no audio sink → tell the user to
+        click 🔧 Build instead of ▶ Play.
+      * No sink of any kind → say "no Output block."
+    """
+    nodes = graph.get("nodes", [])
+    node_types = {n.get("type") for n in nodes}
+    has_audio_output = "output" in node_types
+    has_visual_output = bool(_VISUAL_OUTPUT_TYPES & node_types)
+
+    if has_audio_output:
+        return  # nothing to validate
+
+    if has_visual_output:
+        raise ValueError(
+            "This graph has visual outputs but no audio Output. "
+            "▶ Play renders audio only — click \U0001f527 "
+            "Build → iCEBreaker to flash this design to FPGA "
+            "and see it on a VGA monitor."
+        )
+
+    raise ValueError("Graph has no Output block — nothing to sample.")
+
+
 class GraphTop(Elaboratable):
-    def __init__(self, graph: dict, require_audio_output: bool = True):
+    def __init__(self, graph: dict):
+        """Elaborate the graph as an Amaranth Module.
+
+        Does NOT validate that an audio Output block exists — that's
+        the caller's responsibility (use ``validate_has_audio_output``
+        for the ▶ Play path; visual-only FPGA builds are fine without
+        one).
+        """
         self.graph = graph
         self.blocks: dict[str, Elaboratable] = {}
         self.output_block: Output | None = None
@@ -126,23 +166,6 @@ class GraphTop(Elaboratable):
         nodes = graph.get("nodes", [])
         if not nodes:
             raise ValueError("Graph has no nodes.")
-
-        # Friendly bail-out for visual-only graphs in the audio-Play
-        # pipeline: if the user wired up a VGA Output but no audio
-        # Output, tell them where to go next rather than letting the
-        # generic "no Output block" error fire. The FPGA build path
-        # passes require_audio_output=False because visual-only graphs
-        # are flashable; only ▶ Play needs an audio sink.
-        node_types = {n.get("type") for n in nodes}
-        has_audio_output = "output" in node_types
-        has_visual_output = bool(_VISUAL_OUTPUT_TYPES & node_types)
-        if require_audio_output and has_visual_output and not has_audio_output:
-            raise ValueError(
-                "This graph has visual outputs but no audio Output. "
-                "▶ Play renders audio only — click \U0001f527 "
-                "Build → iCEBreaker to flash this design to FPGA "
-                "and see it on a VGA monitor."
-            )
 
         for node in nodes:
             node_id = node.get("id")
@@ -168,9 +191,6 @@ class GraphTop(Elaboratable):
             # rather than isinstance to avoid a circular import.
             if node_type == "vgaoutput" and self.vga_output_block is None:
                 self.vga_output_block = block
-
-        if require_audio_output and self.output_block is None:
-            raise ValueError("Graph has no Output block — nothing to sample.")
 
     def elaborate(self, platform):
         m = Module()
@@ -220,6 +240,7 @@ class GraphTop(Elaboratable):
 # Simulation harness: run the design, sample the Output block's input.
 # ---------------------------------------------------------------------------
 def synthesize(graph: dict, duration_s: int = DURATION_S) -> list[int]:
+    validate_has_audio_output(graph)
     top = GraphTop(graph)
     sim = Simulator(top)
     sim.add_clock(1e-6)  # arbitrary; one tick == one audio sample
