@@ -16,7 +16,7 @@ This keeps the door open for **future monetization** — a paid desktop bundle, 
 
 ---
 
-## Frontend dependencies (as of 2026-05-08)
+## Frontend dependencies (as of 2026-05-09)
 
 All MIT or Apache 2.0. Each is `npm install`-ed and bundled at build time.
 
@@ -40,19 +40,25 @@ All MIT or Apache 2.0. Each is `npm install`-ed and bundled at build time.
 | postcss-import | ^16.1.0 | MIT | © PostCSS contributors | https://github.com/postcss/postcss-import |
 | autoprefixer | ^10.4.20 | MIT | © Andrey Sitnik | https://github.com/postcss/autoprefixer |
 | vitest | ^3.0.0 | MIT | © Anthony Fu, Matias Capeletto & Vitest contributors | https://vitest.dev |
+| @testing-library/dom | ^10.4.1 | MIT | © Kent C. Dodds | https://github.com/testing-library/dom-testing-library |
+| @testing-library/react | ^16.3.2 | MIT | © Kent C. Dodds | https://github.com/testing-library/react-testing-library |
+| @testing-library/user-event | ^14.6.1 | MIT | © Giorgio Polvara & Testing Library contributors | https://github.com/testing-library/user-event |
+| jsdom | ^26.1.0 | MIT | © Elijah Insua, Domenic Denicola, Sebastian Mayr & jsdom contributors | https://github.com/jsdom/jsdom |
+| tsx | ^4.20.0 | MIT | © Hiroki Osame | https://github.com/privatenumber/tsx |
 
 Initial frontend scaffold cloned (and heavily customized) from:
 - **electron-vite-react** boilerplate — MIT — © 草鞋没号 — https://github.com/electron-vite/electron-vite-react
 
 ---
 
-## Backend dependencies (as of 2026-05-08)
+## Backend dependencies (as of 2026-05-09)
 
 | Package | Version | License | Copyright / Authors | URL |
 |---|---|---|---|---|
 | Python | 3.12 | PSF License | © Python Software Foundation | https://python.org |
 | amaranth | 0.5.8 | BSD-2-Clause | © Amaranth HDL contributors | https://github.com/amaranth-lang/amaranth |
 | amaranth-yosys | latest | ISC | © Amaranth HDL contributors / YosysHQ | https://github.com/amaranth-lang/amaranth-yosys |
+| pyyaml | 6.0.2 | MIT | © Kirill Simonov & PyYAML contributors | https://github.com/yaml/pyyaml |
 | litex | 2025.12 | BSD-2-Clause | © EnjoyDigital / M-Labs | https://github.com/enjoy-digital/litex |
 | migen | 0.9.2 | BSD-2-Clause | © M-Labs Limited | https://m-labs.hk/gateware/migen/ |
 | stdlib `wave`, `struct`, `argparse`, `json`, `zipfile` | (Python) | PSF License | © Python Software Foundation | (built-in) |
@@ -74,7 +80,7 @@ These are **user-installed** tools we shell out to; we don't redistribute them. 
 | iceprog | ISC | iCE40 USB flashing utility | Documented in `FLASH.md` (user-invoked) |
 | Verilator | BSD-3 (executable) / LGPL-3 (small generated runtime) | RTL simulation. Generated runtime is LGPL but we don't statically link or redistribute it. | Planned (post-alpha) |
 | SymbiYosys | MIT | Formal verification | Planned |
-| OpenLane / LibreLane | Apache-2.0 | ASIC tape-out flow | Planned (Tiny Tapeout sprint) |
+| OpenLane / LibreLane | Apache-2.0 | ASIC tape-out flow | Run by Tiny Tapeout's submission pipeline (not invoked locally; we emit a TT-compatible submission package — Sprint 10) |
 | Ollama | MIT | Optional local LLM for AI consultant | Planned |
 
 ---
