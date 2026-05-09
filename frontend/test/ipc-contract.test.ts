@@ -157,6 +157,126 @@ describe('Synth IPC contract', () => {
       unmount()
     }
   })
+
+  it('synth() backend_deps_missing renders an actionable setup toast with code block', async () => {
+    // When the main process reports the classified failure mode the
+    // renderer should:
+    //   - swap the toast label from "Error:" to "Setup needed:"
+    //   - render the embedded command in a <code> element so it`s
+    //     selectable / triple-clickable for copy
+    //   - apply the .error-toast-actionable class so the longer
+    //     dwell-time / wider-layout styles kick in.
+    const synthSpy = vi.fn(async () => ({
+      ok: false as const,
+      error:
+        "ChipBlocks's Python backend isn't installed yet. Open WSL2 Ubuntu and run: `cd backend && bash setup.sh` (one-time setup; takes ~30 seconds).",
+      errorType: 'backend_deps_missing' as const,
+    }))
+    vi.stubGlobal('chipblocks', {
+      synth: synthSpy,
+      cancel: vi.fn(),
+      build: vi.fn(),
+      cancelBuild: vi.fn(),
+    })
+
+    const { container, unmount } = render(React.createElement(App))
+    try {
+      const playBtn = findButton(container, '▶ Play')
+      await act(async () => {
+        playBtn.click()
+      })
+      await flush()
+      await flush()
+
+      const toast = container.querySelector('[role="alert"]') as HTMLElement
+      expect(toast).toBeTruthy()
+      expect(toast.className).toContain('error-toast-actionable')
+      expect(toast.textContent).toContain('Setup needed:')
+      expect(toast.textContent).not.toContain('ModuleNotFoundError')
+
+      const code = toast.querySelector('code')
+      expect(code).toBeTruthy()
+      expect(code?.textContent).toBe('cd backend && bash setup.sh')
+    } finally {
+      unmount()
+    }
+  })
+
+  it('synth() wsl_missing renders an actionable toast with the install command in a code block', async () => {
+    const synthSpy = vi.fn(async () => ({
+      ok: false as const,
+      error:
+        "WSL2 (Windows Subsystem for Linux) isn't installed. ChipBlocks's backend runs in WSL2 Ubuntu. Install via: `wsl --install` from PowerShell (admin), reboot, then run `bash backend/setup.sh` in WSL2.",
+      errorType: 'wsl_missing' as const,
+    }))
+    vi.stubGlobal('chipblocks', {
+      synth: synthSpy,
+      cancel: vi.fn(),
+      build: vi.fn(),
+      cancelBuild: vi.fn(),
+    })
+
+    const { container, unmount } = render(React.createElement(App))
+    try {
+      const playBtn = findButton(container, '▶ Play')
+      await act(async () => {
+        playBtn.click()
+      })
+      await flush()
+      await flush()
+
+      const toast = container.querySelector('[role="alert"]') as HTMLElement
+      expect(toast).toBeTruthy()
+      expect(toast.className).toContain('error-toast-actionable')
+      // wsl_missing messages have multiple backtick spans; ensure the
+      // splitter rendered each as its own <code>.
+      const codes = Array.from(toast.querySelectorAll('code')).map((c) => c.textContent)
+      expect(codes).toContain('wsl --install')
+      expect(codes).toContain('bash backend/setup.sh')
+    } finally {
+      unmount()
+    }
+  })
+
+  it('build() oss_cad_suite_missing renders an actionable toast', async () => {
+    const buildSpy = vi.fn(async () => ({
+      ok: false as const,
+      error:
+        "The OSS CAD Suite (Yosys + nextpnr + icepack) isn't installed in WSL2. Required for FPGA builds. Download from https://github.com/YosysHQ/oss-cad-suite-build/releases and extract to ~/oss-cad-suite/ in WSL2.",
+      errorType: 'oss_cad_suite_missing' as const,
+    }))
+    vi.stubGlobal('chipblocks', {
+      synth: vi.fn(),
+      cancel: vi.fn(),
+      build: buildSpy,
+      cancelBuild: vi.fn(),
+    })
+
+    const { container, unmount } = render(React.createElement(App))
+    try {
+      const buildBtn = findButton(container, '🔧 Build ▾')
+      await act(async () => {
+        buildBtn.click()
+      })
+      await flush()
+      const icestickItem = findButton(container, 'Lattice iCEstick')
+      await act(async () => {
+        icestickItem.click()
+      })
+      await flush()
+      await flush()
+
+      const toast = container.querySelector('[role="alert"]') as HTMLElement
+      expect(toast).toBeTruthy()
+      expect(toast.className).toContain('error-toast-actionable')
+      // The OSS CAD message has no backticks (path + URL only) — the
+      // body still renders, just without a <code> child.
+      expect(toast.textContent).toContain('OSS CAD Suite')
+      expect(toast.textContent).toContain('oss-cad-suite-build/releases')
+    } finally {
+      unmount()
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -988,6 +988,43 @@
   opacity: 1;
 }
 
+.toast-close {
+  cursor: pointer;
+}
+
+/* Classified backend-setup error: gives the toast more room and
+ * styles the embedded command so it reads as a selectable code
+ * block rather than inline body text. */
+.error-toast-actionable {
+  max-width: min(640px, 80vw);
+  align-items: flex-start;
+  padding: 1rem 1.25rem;
+  cursor: default;
+}
+
+.error-toast-actionable strong {
+  flex-shrink: 0;
+  margin-top: 0.05rem;
+}
+
+.error-toast-actionable .toast-message {
+  line-height: 1.45;
+}
+
+.toast-code {
+  display: inline-block;
+  background: #1a1010;
+  border: 1px solid #553030;
+  color: #ffd28a;
+  padding: 0.05rem 0.35rem;
+  margin: 0 0.1rem;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  user-select: text;
+  cursor: text;
+}
+
 @keyframes cf-toast-in {
   from {
     transform: translate(-50%, 1rem);

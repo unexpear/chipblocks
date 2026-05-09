@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process'
 import { writeFile, mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { classifyBackendError, type BackendErrorType } from './classify-backend-error'
 
 interface SynthGraph {
   nodes: Array<{ id: string; type?: string; data?: Record<string, unknown> }>
@@ -14,6 +15,7 @@ interface SynthResult {
   ok: boolean
   wavData?: ArrayBuffer
   error?: string
+  errorType?: BackendErrorType
 }
 
 // Single in-flight process slot. v1 is single-flight (only one synth at a
@@ -126,14 +128,29 @@ async function runSynth(graph: SynthGraph): Promise<SynthResult> {
           resolve({ ok: false, error: `Failed to read WAV: ${(err as Error).message}` })
         }
       } else {
-        resolve({ ok: false, error: friendlyError(stderr, code) })
+        const classified = classifyBackendError(stderr, stdout)
+        if (classified) {
+          resolve({ ok: false, error: classified.message, errorType: classified.type })
+        } else {
+          resolve({ ok: false, error: friendlyError(stderr, code) })
+        }
       }
     })
 
     proc.on('error', (err) => {
       clearTimeout(timer)
       currentProc = null
-      resolve({ ok: false, error: `Failed to spawn wsl.exe: ${err.message}` })
+      // The spawn itself failed (typically wsl.exe missing). Run the
+      // synthesized error message through the classifier so a clean-
+      // Windows-no-WSL machine gets the friendly "install WSL2"
+      // explanation instead of a raw ENOENT.
+      const synthesized = `spawn wsl.exe ${err.message}`
+      const classified = classifyBackendError(synthesized, '')
+      if (classified) {
+        resolve({ ok: false, error: classified.message, errorType: classified.type })
+      } else {
+        resolve({ ok: false, error: `Failed to spawn wsl.exe: ${err.message}` })
+      }
     })
   })
 }
@@ -169,6 +186,7 @@ interface BuildResult {
   ok: boolean
   zipData?: ArrayBuffer
   error?: string
+  errorType?: BackendErrorType
 }
 
 let currentBuildProc: ChildProcess | null = null
@@ -274,14 +292,25 @@ async function runBuild(graph: SynthGraph, target: BuildTarget): Promise<BuildRe
           resolve({ ok: false, error: `Failed to read bundle zip: ${(err as Error).message}` })
         }
       } else {
-        resolve({ ok: false, error: friendlyError(stderr, code) })
+        const classified = classifyBackendError(stderr, stdout)
+        if (classified) {
+          resolve({ ok: false, error: classified.message, errorType: classified.type })
+        } else {
+          resolve({ ok: false, error: friendlyError(stderr, code) })
+        }
       }
     })
 
     proc.on('error', (err) => {
       clearTimeout(timer)
       currentBuildProc = null
-      resolve({ ok: false, error: `Failed to spawn wsl.exe: ${err.message}` })
+      const synthesized = `spawn wsl.exe ${err.message}`
+      const classified = classifyBackendError(synthesized, '')
+      if (classified) {
+        resolve({ ok: false, error: classified.message, errorType: classified.type })
+      } else {
+        resolve({ ok: false, error: `Failed to spawn wsl.exe: ${err.message}` })
+      }
     })
   })
 }

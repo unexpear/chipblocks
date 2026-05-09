@@ -20,17 +20,28 @@
 // the Tiny Tapeout submission target. Keep in sync.
 export type BuildTarget = 'icestick' | 'tinyfpga-bx' | 'tt'
 
+// Classified backend-failure modes the renderer can pattern-match on
+// to render a tailored "how to fix" affordance. Keep in sync with the
+// `BackendErrorType` union in
+// frontend/electron/main/classify-backend-error.ts.
+export type BackendErrorType =
+  | 'backend_deps_missing'
+  | 'wsl_missing'
+  | 'oss_cad_suite_missing'
+
 export interface ChipblocksBridge {
   synth: (graph: unknown) => Promise<{
     ok: boolean
     wavData?: ArrayBuffer
     error?: string
+    errorType?: BackendErrorType
   }>
   cancel: () => Promise<boolean>
   build: (graph: unknown, target: BuildTarget) => Promise<{
     ok: boolean
     zipData?: ArrayBuffer
     error?: string
+    errorType?: BackendErrorType
   }>
   cancelBuild: () => Promise<boolean>
 }

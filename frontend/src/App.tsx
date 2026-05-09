@@ -21,7 +21,7 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { Palette, PALETTE, PALETTE_DRAG_TYPE, defaultDataForType } from './Palette'
 import { EXAMPLES, type ExampleGraph } from './examples'
 import { type DragEvent } from 'react'
-import type { BuildTarget } from './types/ipc'
+import type { BuildTarget, BackendErrorType } from './types/ipc'
 import './App.css'
 
 const SAVE_VERSION = 1
@@ -210,12 +210,47 @@ function handleMenuKeyDown(
   items[nextIndex]?.focus()
 }
 
+// Render an error-toast message body, splitting backtick-delimited
+// spans into selectable <code> elements. Used so a classified
+// backend-setup error like "...run: `cd backend && bash setup.sh` (one-time
+// setup...)" displays the command as a copy-friendly inline code block.
+// For unclassified errors (type === null) we just render the raw text.
+function ToastBody({
+  message,
+  type,
+}: {
+  message: string
+  type: BackendErrorType | null
+}) {
+  if (!type) {
+    return <span className="toast-message">{message}</span>
+  }
+  // Split on backtick-quoted segments, alternating text / code spans.
+  // We only need shallow parsing — no nested or multi-line code blocks.
+  const parts = message.split(/`([^`]+)`/g)
+  return (
+    <span className="toast-message">
+      {parts.map((part, i) =>
+        // Even-indexed parts are surrounding text; odd-indexed are the
+        // captured code spans.
+        i % 2 === 0
+          ? part
+          : <code key={i} className="toast-code">{part}</code>,
+      )}
+    </span>
+  )
+}
+
 function AppContent() {
   const [nodes, setNodes, onNodesChange] = useNodesState<AppNode>(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initialEdges)
   const [isPlaying, setIsPlaying] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [errorToast, setErrorToast] = useState<string | null>(null)
+  // When a backend failure has been classified by the main process we
+  // also stash the type so the toast can render an inline "how to fix"
+  // affordance (e.g. selectable setup command). null for plain errors.
+  const [errorToastType, setErrorToastType] = useState<BackendErrorType | null>(null)
   const [chatOpen, setChatOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
@@ -255,12 +290,19 @@ function AppContent() {
     })
   }, [examplesOpen])
 
-  // Auto-dismiss error toast after 6 seconds.
+  // Auto-dismiss error toast after 6 seconds. Backend-setup errors
+  // need a longer dwell because they include a command the user must
+  // copy and run — 6s isn't enough to read the message and copy the
+  // snippet. Bump those to 20s.
   useEffect(() => {
     if (!errorToast) return
-    const t = setTimeout(() => setErrorToast(null), 6000)
+    const dismissMs = errorToastType ? 20_000 : 6_000
+    const t = setTimeout(() => {
+      setErrorToast(null)
+      setErrorToastType(null)
+    }, dismissMs)
     return () => clearTimeout(t)
-  }, [errorToast])
+  }, [errorToast, errorToastType])
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
@@ -324,16 +366,19 @@ function AppContent() {
         parsed = JSON.parse(text)
       } catch {
         setErrorToast('Invalid graph file — could not parse JSON.')
+        setErrorToastType(null)
         return
       }
       const validation = validateLoadedGraph(parsed)
       if (!validation.ok) {
         setErrorToast(validation.error)
+        setErrorToastType(null)
         return
       }
       const { nodes: validNodes, edges: validEdges, viewport, versionWarning } = validation
       if (versionWarning) {
         setErrorToast(versionWarning)
+        setErrorToastType(null)
       }
       setNodes(validNodes)
       setEdges(validEdges)
@@ -347,18 +392,21 @@ function AppContent() {
     setIsPlaying(true)
     setStatusMessage('Synthesizing…')
     setErrorToast(null)
+    setErrorToastType(null)
     try {
       const result = await window.chipblocks.synth({ nodes, edges })
       if (!result.ok) {
         setStatusMessage(null)
         if (result.error && result.error !== 'Cancelled by user') {
           setErrorToast(result.error)
+          setErrorToastType(result.errorType ?? null)
         }
         return
       }
       if (!result.wavData) {
         setStatusMessage(null)
         setErrorToast('Synth returned no WAV data.')
+        setErrorToastType(null)
         return
       }
       const blob = new Blob([result.wavData], { type: 'audio/wav' })
@@ -372,6 +420,7 @@ function AppContent() {
         URL.revokeObjectURL(url)
         setStatusMessage(null)
         setErrorToast('Audio playback error')
+        setErrorToastType(null)
       })
       const sizeKb = (result.wavData.byteLength / 1024).toFixed(0)
       setStatusMessage(`Playing (${sizeKb} KB)`)
@@ -379,6 +428,7 @@ function AppContent() {
     } catch (err) {
       setStatusMessage(null)
       setErrorToast(`Failed: ${(err as Error).message}`)
+      setErrorToastType(null)
     } finally {
       setIsPlaying(false)
     }
@@ -399,16 +449,19 @@ function AppContent() {
     setIsBuilding(true)
     setStatusMessage(target.id === 'tt' ? 'Generating Tiny Tapeout package…' : `Building bitstream (${target.label})…`)
     setErrorToast(null)
+    setErrorToastType(null)
     try {
       const result = await window.chipblocks.build({ nodes, edges }, target.id)
       if (!result.ok) {
         setStatusMessage(null)
         setErrorToast(result.error ?? 'Build failed')
+        setErrorToastType(result.errorType ?? null)
         return
       }
       if (!result.zipData) {
         setStatusMessage(null)
         setErrorToast('Build returned no zip data')
+        setErrorToastType(null)
         return
       }
       const blob = new Blob([result.zipData], { type: 'application/zip' })
@@ -423,6 +476,7 @@ function AppContent() {
     } catch (err) {
       setStatusMessage(null)
       setErrorToast(`Build failed: ${(err as Error).message}`)
+      setErrorToastType(null)
     } finally {
       setIsBuilding(false)
     }
@@ -697,14 +751,29 @@ function AppContent() {
       </div>
       {errorToast && (
         <div
-          className="error-toast"
+          className={errorToastType ? 'error-toast error-toast-actionable' : 'error-toast'}
           role="alert"
-          onClick={() => setErrorToast(null)}
-          title="Click to dismiss"
+          // Don't dismiss on bubbling clicks from inside the toast — a
+          // user trying to triple-click the embedded command to copy
+          // it shouldn't accidentally close the message.
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setErrorToast(null)
+              setErrorToastType(null)
+            }
+          }}
+          title={errorToastType ? undefined : 'Click to dismiss'}
         >
-          <strong>Error:</strong>
-          <span className="toast-message">{errorToast}</span>
-          <span className="toast-close">×</span>
+          <strong>{errorToastType === 'backend_deps_missing' ? 'Setup needed:' : 'Error:'}</strong>
+          <ToastBody message={errorToast} type={errorToastType} />
+          <span
+            className="toast-close"
+            onClick={() => {
+              setErrorToast(null)
+              setErrorToastType(null)
+            }}
+            title="Dismiss"
+          >×</span>
         </div>
       )}
       {settingsOpen && (

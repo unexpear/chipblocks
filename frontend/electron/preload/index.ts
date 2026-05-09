@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('chipblocks', {
       ok: boolean
       zipData?: ArrayBuffer
       error?: string
+      errorType?: 'backend_deps_missing' | 'wsl_missing' | 'oss_cad_suite_missing'
     }>,
   cancelBuild: () => ipcRenderer.invoke('build:cancel') as Promise<boolean>,
 })
