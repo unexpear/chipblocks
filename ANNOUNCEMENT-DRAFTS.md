@@ -2,7 +2,7 @@
 
 > Throwaway file. Delete after launch once each draft has been posted.
 
-Each section below is a self-contained announcement for a different venue. Replace `[GitHub Release URL]` with the real link once the tag is pushed.
+Each section below is a self-contained announcement for a different venue. The release URL has been substituted in (tag pushed 2026-05-09).
 
 ---
 
@@ -24,7 +24,7 @@ Stack: Electron + React on the front, Python + Amaranth HDL on the back, Yosys +
 
 v0.1.0-alpha. CI builds Windows NSIS + Mac DMG + Linux AppImage on tag push (all unsigned, so SmartScreen / Gatekeeper will warn the first time). Missing things you might want: no MIDI in, no polyphony, no reverb — all on the next-up list.
 
-Repo + installer: [GitHub Release URL]
+Repo + installer: https://github.com/unexpear/chipblocks/releases/tag/v0.1.0-alpha
 
 Feedback very welcome, especially from people who actually build synths.
 
@@ -50,7 +50,7 @@ Frontend: Electron + React + TypeScript (React Flow). Backend: Python + Amaranth
 
 Author is a non-technical solo dev working with Claude Code, so this is genuinely "make the open toolchain reachable for people who don't know what nextpnr means." v0.1.0-alpha — CI builds Windows NSIS + Mac DMG + Linux AppImage; all unsigned for the alpha (SmartScreen / Gatekeeper warn).
 
-Repo + installer: [GitHub Release URL]
+Repo + installer: https://github.com/unexpear/chipblocks/releases/tag/v0.1.0-alpha
 
 Bug reports, PRs, board-support requests all welcome.
 
@@ -70,7 +70,7 @@ There's an AI consultant in a sidebar that can read the canvas and edit it for y
 
 Counterintuitively, I'm not a chip engineer. I'm a non-technical solo developer working with Claude Code, and the whole point is to make chip design reachable for people in that position. So the alpha is rough where you'd expect: unsigned installers (SmartScreen / Gatekeeper warn the first time), no MIDI, no polyphony, no reverb. CI ships Win NSIS + Mac DMG + Linux AppImage on tag push.
 
-[GitHub Release URL]
+https://github.com/unexpear/chipblocks/releases/tag/v0.1.0-alpha
 
 Happy to take questions.
 
@@ -88,6 +88,6 @@ ChipBlocks is a free open-source desktop app that lets non-engineers design cust
 
 It's MIT-licensed, ships only permissively-licensed code, and the author is a non-technical solo developer building with Claude Code — eating their own dog food, since the project's whole point is making custom silicon reachable for people who don't know Verilog. v0.1.0-alpha just tagged.
 
-Repo + installer: [GitHub Release URL]
+Repo + installer: https://github.com/unexpear/chipblocks/releases/tag/v0.1.0-alpha
 
 Happy to answer questions or send screenshots.
