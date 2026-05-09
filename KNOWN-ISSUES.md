@@ -24,45 +24,19 @@ Documented in [CREDITS.md](CREDITS.md). `7zip-bin` is build-time only — not pr
 
 **Action**: monitor on every electron-builder major upgrade.
 
-## Accessibility — 23 findings against WCAG 2.1 AA (2026-05-08 audit)
+## Accessibility — Major / Minor findings against WCAG 2.1 AA
 
-Full audit at [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08.md). The four critical-tier items here are flagged as standalone entries because they're individually actionable and worth tracking; the rest of the 23 are tracked inside the audit doc and the ROADMAP a11y workstream.
+The four Critical-tier findings (P2 input labels, R3+R4 modal dialog semantics, O8 focus-visible, U1+U5 aria-live) and the P1 palette-footer contrast fix all shipped in Sprint 11 / Sprint 12. Tier 2 polish (palette keyboard nav, touch targets, popover arrows, parameter-error announcements) shipped in Sprint 12. The remaining ~14 Major / Minor items live in the audit doc and the ROADMAP a11y workstream.
 
-### Critical-tier findings (block real users; ship in S11 P0)
+Full audit + tiered remediation plan: [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08.md) and [ROADMAP.md](ROADMAP.md).
 
-- **P2 — Block parameter inputs have no programmatic labels.** ADSR's "A/D/S/R" abbreviations, oscillator frequency, lowpass cutoff, etc. are visual-only. Screen readers announce "440, spinbutton" with no context. Fix: `aria-label` on each `<input>` across the 10 block-node TSX files. ~14 inputs total.
-- **R3+R4 — Modals lack `role="dialog"` + `aria-modal` + focus management.** All three modals (Settings, About, AI confirm-preview) are missing the basic dialog semantics. SettingsModal has Escape-close but the others don't. Fix: ~30 lines per modal.
-- **O8 — No visible focus indicator on most focusable elements.** `App.css` has `:focus` on inputs but not on buttons / palette items / dropdown items. Browser default focus rings on the dark theme are weak/invisible. Fix: single global `*:focus-visible { outline: 2px solid #6ec1ff; outline-offset: 2px; }` rule.
-- **U1+U5 — Status messages don't announce to AT.** "Synthesizing…", "Bitstream ready (4.7 KB)", new chat-streaming messages aren't in `aria-live` regions. Long async work finishes silently for screen-reader users. Fix: `role="status" aria-live="polite"` on `.toolbar-status` + `aria-live="polite"` on `.chat-messages`.
+**Action**: pick up incrementally as user-facing UI lands. None block launch.
 
-### Color-contrast finding (single failure)
+## GitHub Actions — Node 20 deprecated by 2026-09-16
 
-- **P1 — Palette footer "Drag onto canvas" text** at `#666 on #141414` ≈ 3.6:1, fails AA's 4.5:1 normal-text threshold. Fix: bump to `#888` for ~4.7:1, or upgrade to large/bold to qualify under the 3:1 large-text rule. One-line CSS edit.
+GitHub announced Node.js 20 deprecation on 2025-09-19; default flips to Node 24 on 2026-06-02 and Node 20 is removed from runners on 2026-09-16. Our workflows use `actions/checkout@v4` and `actions/setup-node@v4` — both currently runner-Node-20. CI emits the deprecation warning on every run today.
 
-**Action**: address Critical-tier in Sprint 11 P0 (~1.5 hrs total; bundled into one commit). Major / Minor items tracked in ROADMAP.md a11y workstream and the audit doc.
-
-## Security — minor findings from the 2026-05-08 review
-
-In-conversation `/engineering:debug` security review (2026-05-08). The 3 critical findings (broad `ipcRenderer` bridge, `open-win` handler with `nodeIntegration: true`, unpinned `webPreferences`) shipped in commit `eb8d2b1` before the public push. The findings below are minor / defense-in-depth items that don't block launch.
-
-- **m1 — API key validation accepts any 10+ char string.** [ai.ts:170-172](frontend/electron/main/ai.ts) accepts any string ≥ 10 chars as an Anthropic key. A user fat-fingering and pasting another secret (e.g. a GitHub token) silently stores it under DPAPI as their "Anthropic key." Not a security issue per se (DPAPI still protects it, key never leaves main), but a usability/secret-hygiene smell. Fix: add `key.startsWith('sk-ant-')`.
-- **m4 — Tool-call inputs aren't validated against the JSON schema before applying to React state.** The AI can return `add_node` with `type: '__proto__'` or `add_edge` with non-existent node ids. Today's `nodeTypes` map only handles 15 known types so unknown types render as a React Flow warning (not RCE), and JS object spread doesn't trigger prototype pollution. Worst observed outcome: broken canvas state, fixed by Clear conversation. Fix: whitelist `type` against `PALETTE.map(p => p.type)` + existence checks for `addEdge` source/target ids.
-- **m5 — Saved graph JSON loaded via Load button feeds the AI's system block unsanitized.** A maliciously crafted `chipblocks-graph.json` shared user-to-user could embed prompt-injection text in a `data` field that influences the AI. Blast radius is bounded — destructive tools require human confirmation, no path to filesystem/network/code-exec. Fix: type-check `data` fields against the per-block schema on Load.
-- **m1.5 / M1 — `runBuild` uses `bash -c "<innerCmd>"`** with `shellQuote()` on interpolated paths. Today no renderer-controlled value lands in `innerCmd` (target is a 3-element enum, paths come from `mkdtemp` + bundled scripts), so it's not exploitable. But the pattern is fragile — any future addition that interpolates a graph-derived value (custom project name, output filename) without going through `shellQuote` would bypass it. Defensive fix: rewrite `runBuild` to mirror `runSynth`'s argv-only spawn, sourcing the OSS CAD Suite env via a small wrapper shell script.
-
-**Action**: address as Sprint 12 polish items (~30 min total). None block the v0.1.0-alpha launch.
-
-## Tech-debt — 5 highest-priority items from the 2026-05-08 audit
-
-Surfaced in an in-conversation tech-debt audit. Full tiered remediation plan in [ROADMAP.md](ROADMAP.md)'s tech-debt workstream section. The five items here are individually trackable as Sprint 11 P0s (paired with the a11y Tier-1 work — same touch surface).
-
-- **C1 — IPC contract type duplicated in 3 places.** `declare global { interface Window { chipblocks: {...} } }` lives in `App.tsx` AND `Chat.tsx`; the actual contract lives in `preload/index.ts`. Drift between any two = silent runtime failures. Fix: extract to `frontend/src/types/ipc.ts` and import. ~30 min.
-- **I1 — CI workflow untested.** `.github/workflows/{ci,release}.yml` were written in S9 but no tag/PR has triggered them. The first `v0.1.0-alpha` tag push is also the first CI run. Fix: push a throwaway `v0.0.0-test` tag, confirm both workflows green, delete it; or fix-forward on the real launch tag. ~5 min plus iteration if it fails.
-- **DOC1 — README only mentions iCEstick.** Sprint 10 added TinyFPGA BX + Tiny Tapeout but the README's "How it works today" section never got updated. Fix: refresh the diagram + feature list to mention both new targets. ~20 min.
-- **D1 — Backend deps not pinned.** `backend/setup.sh` runs `pip install --user --break-system-packages amaranth pyyaml` with no version pins. A future Amaranth release could break the synth pipeline silently. Fix: pin to `amaranth==0.5.8 pyyaml==6.0.2` (or use `requirements.txt`). ~5 min.
-- **I4 — `frontend/package-lock.json` not committed.** Lockfile exists locally but isn't tracked. Each fresh `npm install` could resolve subtly different transitives. Fix: `git add frontend/package-lock.json && git commit`. ~2 min.
-
-**Action**: address all five in Sprint 11 (~1 hr total) bundled with the a11y Tier-1 work since the touch surface overlaps.
+**Action**: bump to `actions/checkout@v5` + `actions/setup-node@v5` (or whichever majors land on Node 24) before 2026-06-02, ideally bundled with the next CI workflow touch. Low priority — no actual breakage until June 2026, and even then GitHub provides escape hatches.
 
 ## Random-jitter for AI-placed nodes is a heuristic, not a layout engine
 
