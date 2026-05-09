@@ -8,7 +8,7 @@
 
 ## Snapshot — where we actually are
 
-- **13 sprints completed**, all closed cleanly with retrospectives. Most recent: Sprint 13 (block library expansion + CONTRIBUTING.md) on 2026-05-09.
+- **14 sprints completed**, all closed cleanly with retrospectives. Most recent: Sprint 14 (architectural hygiene + a11y backport from the 2026-05-09 audits) on 2026-05-09.
 - **v0.1.0-alpha installer built + verified locally**: `frontend/release/0.1.0/ChipBlocks_0.1.0.exe` (~93 MB, unsigned NSIS, Windows). Cross-platform CI (`.github/workflows/release.yml`) builds Mac DMG + Linux AppImage on tag push. Backend pytest 37/37 + frontend vitest 93/93 green on every push. Fresh-install smoke test passed on the developer's machine. **Not yet tagged on GitHub.**
 - **0 external users** — the PRD's **(E) anyone-but-the-developer-using-it** metric. Capabilities + onboarding + accessibility are now genuinely launch-ready; the remaining gap is the user-action of pushing a release tag and posting the announcement drafts.
 - **27 blocks** — well above the PRD's Phase 2 "10–15 blocks" range. Adds since the 2026-05-08 snapshot: Sine, Noise, Constant, FM voice, Multiply, Wavetable (S9); Bitcrusher + Delay (S13); Highpass + Bandpass filters (S13); AND / OR / XOR / NOT / Counter logic primitives (post-S13); VGA Timing / Color Bars / VGA Output visual blocks (post-S13).
@@ -67,7 +67,7 @@ Source: in-conversation tech-debt audit (2026-05-08). 30+ items across code / ar
 | **Sprint 12 batch** (4 items, ~4 hrs) bundled with whatever Sprint 12's feature work is | C2 (BUNDLE_FILENAMES coordination), C3 (examples/ ↔ examples.ts dedup), T1 (frontend block-component tests, ~10 simple cases), T3 (save/load roundtrip test) | ~4 hrs | ✅ **Done in Sprint 12.** Plus 6 bonus tests via the Sprint 12 audit-fill (51 vitest at the end). |
 | **Opportunistic** (~7 items) — only when motivated by a specific friction | A1 (block-manifest refactor — only when block growth slows), DOC2 (ARCHITECTURE.md ✅), DOC5 (BLOCKS.md ✅), C5/C6 (App.tsx/Chat.tsx file splits), T2 (AI agentic loop integration test) | varies | ARCHITECTURE.md shipped in S12; CONTRIBUTING.md in S13; BLOCKS.md added 2026-05-09. The rest stay opportunistic. |
 | **Already deferred via [KNOWN-ISSUES.md](KNOWN-ISSUES.md)** | D2 (3 npm advisories), D3 (vitest 4 + Vite 6), D4 (7zip-bin LGPL), npm-audit growth, GitHub Actions Node 20 deprecation | varies | Bundled into a future "deps refresh" sprint. |
-| **Sprint 14 batch** (4 backend hygiene + 2 frontend hygiene from the post-multi-domain audits, 2026-05-09) | Centralize `BuildTarget` (5 min), `require_audio_output` → caller-composed validators (~30 lines), explicit reject of mixed audio + visual graphs (~40 lines), split `BoardTop._elaborate_audio_only` / `_elaborate_vga` (~20 lines), aria-label backport on 10 blocks' Handle elements (~30 lines), `HANDLE_SPACING_PX` constant (5 min) | ~1.5 days | **Drafted in [SPRINT-14.md](SPRINT-14.md), not yet open.** Surfaced by `/design:design-system` audit (82/100) and `/engineering:system-design` review of the v0.1.0-alpha.3 codebase. |
+| **Sprint 14 batch** (4 backend hygiene + 2 frontend hygiene from the post-multi-domain audits, 2026-05-09) | Centralize `BuildTarget` (commit `1dc97be`), `require_audio_output` → caller-composed validators (`9f2c63a`), explicit reject of mixed audio + visual graphs (`24308fd`), split `BoardTop._elaborate_audio_only` / `_elaborate_vga` (`23391fe`), aria-label backport across all 24 non-visual blocks (`9ed4b9e`), `HANDLE_FIRST_PX` + `HANDLE_SPACING_PX` + `handleTop()` helper (`b4dfb13`) | ~1.5 days as predicted | ✅ **Done in Sprint 14.** All 6 items shipped. The aria-label backport went beyond the audit's named 10 to bring all 24 non-visual blocks to parity with the 3 visual ones — library now at 100% Handle-level a11y coverage. |
 | **Multi-domain + manifest deferrals** (post-audit) | Block-manifest auto-discovery, multi-domain clock plumbing, peripheral abstraction, logic-block port-naming asymmetry, VGA 640×480 PLL | varies | All have explicit triggers documented in [KNOWN-ISSUES.md](KNOWN-ISSUES.md). |
 
 **What's deliberately not on the list**: monitoring, distributed tracing, A/B testing, multi-region — building those before there's any user is debt-by-overengineering for a desktop-app alpha.
@@ -99,22 +99,24 @@ These remain blocked on the user; nothing more for autonomous polish to do until
 | **P0** (user) | Enable GitHub Discussions on the repo | User | 5 min | A free Q&A surface for the first external users. |
 | **P1** (user) | Submit the Hackaday writeup ([HACKADAY-WRITEUP.md](HACKADAY-WRITEUP.md)) | User | 15 min | PRD success metric (D) targets one feature within 90 days of launch. Cheap to send; cost of not sending is invisibility. |
 
-**Sprint 14 is drafted but not opened.** Plan in [SPRINT-14.md](SPRINT-14.md) — architectural hygiene + a11y backport, ~1.5 days. Surfaced by the post-multi-domain `/design:design-system` audit + `/engineering:system-design` review on 2026-05-09. Expected to run alongside or after the launch gates above.
+**Sprint 14 closed 2026-05-09 (PM)** — all 6 planned items shipped in 6 commits, full retro in [SPRINT-14.md](SPRINT-14.md). No release tag; alpha.3 remains the live release because S14 was pure architectural cleanup, not user-visible features.
 
 ---
 
-## Next (Sprint 14, drafted)
+## Done — Sprint 14 (closed 2026-05-09 PM)
 
-Source: post-multi-domain audits run after v0.1.0-alpha.3 shipped. The expansion (5 logic blocks + iCEBreaker target + 3 visual blocks) absorbed correctly but layered two band-aids: `require_audio_output` flag on `GraphTop` and `has_vga` branch in `BoardTop.elaborate`. Sprint 14 narrows them while there are still only 2 callers each. Plus an a11y backport: 10 blocks fell behind the standard the visual-blocks agent applied. Full plan in [SPRINT-14.md](SPRINT-14.md).
+Surfaced by the post-multi-domain `/design:design-system` audit + `/engineering:system-design` review run right after v0.1.0-alpha.3 shipped. Six independent commits closing the seams the multi-domain expansion left behind. CI green on every commit; alpha.3 unchanged.
 
-| Pri | Item | Effort | Why now |
-|---|---|---|---|
-| **P0** | Centralize `BuildTarget` union (single source in `frontend/src/types/ipc.ts`) | 5 min | Currently duplicated in 3 files; 5th silicon target adds 3 places to drift. |
-| **P0** | Replace `GraphTop.require_audio_output: bool` with caller-composed validators | ~30 lines | The 4th domain (e.g. UART/serial) will need a 3rd flag — flag soup. Two callers today, easy to refactor. |
-| **P0** | Explicit reject of mixed audio + visual graphs in `BoardTop` + renderer pre-Build warning | ~40 lines | Today the constraint lives in build.py wrapper code, not in any user-facing affordance. Closes the silent-miselaboration window without doing the Phase-3 multi-domain refactor. |
-| **P0** | Split `BoardTop._elaborate_audio_only` / `_elaborate_vga` helpers | ~20 lines (no behavior change) | Pure refactor; sets up Phase-3 multi-domain clock-domain plumbing. |
-| **P1** | Backport `aria-label` on `<Handle>` elements to 10 blocks | ~30 lines | Visual-blocks agent applied stricter standard; bring older blocks to parity. Non-breaking. |
-| **P1** | Extract `HANDLE_SPACING_PX = 32` constant | 5 min | Magic number cargo-culted by future blocks. |
+| # | Commit | Item |
+|---|---|---|
+| 1 | `1dc97be` | Centralize `BuildTarget` union (3 files → 1 canonical declaration) |
+| 2 | `b4dfb13` | Extract `HANDLE_FIRST_PX` + `HANDLE_SPACING_PX` + `handleTop()` helper; migrate 10 block components |
+| 3 | `9f2c63a` | Replace `GraphTop.require_audio_output: bool` with caller-composed `validate_has_audio_output(graph)` |
+| 4 | `24308fd` | Explicit `reject_mixed_audio_and_visual(graph)` in `BoardTop` + renderer pre-Build mirror; new pytest test |
+| 5 | `23391fe` | Split `BoardTop._elaborate_audio_only` / `_elaborate_vga` (pure refactor + dead-code removal); both verified end-to-end |
+| 6 | `9ed4b9e` | aria-label backport: every Handle in every block (24 files; library now at 100% Handle-level coverage across all 27 blocks) |
+
+Test counts after sprint: pytest **44 passed + 2 skipped** (was 43 + 2; +1 test for mixed-graph reject), vitest **98 passed**, tsc clean.
 
 ---
 

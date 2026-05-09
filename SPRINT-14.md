@@ -1,8 +1,8 @@
 # Sprint Plan: Sprint 14 — Architectural hygiene + a11y backport
 
-> **Solo dev + Claude Code** · Drafted 2026-05-09 · Successor to [SPRINT-13.md](SPRINT-13.md) · Operational source: in-conversation `/design:design-system` audit + `/engineering:system-design` review (2026-05-09)
+> **Solo dev + Claude Code** · Drafted 2026-05-09 (PM) · Closed 2026-05-09 (PM, same session) · Successor to [SPRINT-13.md](SPRINT-13.md) · Operational source: in-conversation `/design:design-system` audit + `/engineering:system-design` review (2026-05-09)
 
-**Status:** **PLANNED, NOT OPEN.** This file captures the next-sprint shape so Sprint 13's velocity carries forward; the user has not yet committed to opening the sprint. Per the v0.1.0-alpha.3 launch posture, the user-action launch gates (announcement posts, Hackaday submission) take priority — Sprint 14 starts whenever those land or whenever external-user signal calls for it.
+**Status:** **CLOSED.** All 6 planned items shipped in 6 commits. CI green on master. No sprint-14 release tag — these were pure architectural cleanups, not user-visible features; v0.1.0-alpha.3 stays the live release.
 
 **Dates:** TBD — single session expected (~1.5 days backend + ~1 hour frontend).
 **Team:** Solo (user + Claude Code as dev pair).
@@ -69,10 +69,48 @@ Source: in-conversation `/design:design-system` audit, 2026-05-09. Score 82/100.
 
 ## Sprint Log
 
-> *Filled in as the sprint runs. Empty until opened.*
+Six commits in sequence on master, each one a single P0 or P1 item from the plan above. CI green on every commit.
+
+| # | Commit | Item | Files | Notes |
+|---|---|---|---|---|
+| 1 | `1dc97be` | Centralize `BuildTarget` union | 2 | Type-only `import type { BuildTarget }` from `frontend/src/types/ipc` in both Electron-side files. ~5 min as predicted. |
+| 2 | `b4dfb13` | Extract handle-spacing constants | 11 (+1 new) | New `frontend/src/blocks/handleSpacing.ts` exports `HANDLE_FIRST_PX = 24`, `HANDLE_SPACING_PX = 32`, `handleTop(slot)`. Migrated all 10 block components that had inline `top: 24/56/88/120/152` literals. Slot-index reads more clearly than absolute pixels. |
+| 3 | `9f2c63a` | Replace `require_audio_output` flag with caller-side validator | 2 | New top-level `validate_has_audio_output(graph)` in `synth.py`. `GraphTop` constructor drops the parameter. `BoardTop` no longer passes `require_audio_output=not self.has_vga`. The 4th domain won't need a 3rd flag. |
+| 4 | `24308fd` | Explicit reject of mixed audio + visual graphs | 3 (+1 test) | New `reject_mixed_audio_and_visual(graph)` in `build.py`. `BoardTop.__init__` calls it first. Renderer-side mirror in `App.tsx`'s `handleBuild` saves the WSL2 round trip. New pytest test covers the BoardTop reject path. Closes the silent-miselaboration window without doing the Phase-3 multi-domain refactor. |
+| 5 | `23391fe` | Split `BoardTop._elaborate_audio_only` / `_elaborate_vga` | 1 | Pure refactor + dead-code removal: the "audio in a VGA graph" fallback branch is now unreachable thanks to S14-4's reject. Both build paths verified end-to-end on real iCEBreaker — both produce 104,090-byte bitstreams identical to pre-refactor. |
+| 6 | `9ed4b9e` | aria-label on every Handle in every block | 24 | Went beyond the audit's named 10 to bring all 24 non-visual blocks to full parity with the 3 visual ones. Pattern matches the visual-block precedent: `aria-label="<Signal name> <direction>"`. Library now has 100% Handle-level aria-label coverage across all 27 blocks. |
+
+Test counts after sprint:
+- backend pytest: 44 passed + 2 skipped (was 43 + 2 — added 1 test for mixed-graph reject)
+- frontend vitest: 98 passed (unchanged; the renderer-side reject is a 4-line guard not worth a vitest at this scale)
+- tsc: clean
+
+End-to-end verification on real OSS CAD Suite hardware pipeline (post-S14-5):
+- `examples/two-osc-mix.json` → iCEBreaker: 104,090-byte bitstream + 7,057-byte zip ✓
+- `examples/color-bars.json` → iCEBreaker: 104,090-byte bitstream + 7,692-byte zip ✓
 
 ---
 
 ## Retrospective
 
-> *Filled in at sprint close.*
+### What worked
+
+- **Audit-first ordering.** Doing `/design:design-system` and `/engineering:system-design` in the same session as v0.1.0-alpha.3's launch surfaced the seams while they were still cheap to fix. Each item was 5 min to ~40 lines; doing them now while only 2 callers depend on each shape is much cheaper than waiting until the 4th domain ships and the band-aids have compounded.
+- **Six small commits, not one big one.** Every item had its own commit with its own test green. If signal had shifted at any point, we could have stopped after S14-1 (5 min in) or S14-3 (~30 min in) with consistent state.
+- **Going beyond the audit on aria-labels.** The audit named 10 blocks. Doing all 24 was the same kind of work and avoided leaving a future agent to revisit the same files. Library-wide consistency is the real goal; the audit's count was a floor not a ceiling.
+- **Catching dead code in S14-5.** The "audio in a VGA graph" fallback branch in `BoardTop` was only reachable via the path S14-4 had just made explicitly impossible. Removing it in the same sprint as the reject keeps the architectural narrative coherent.
+
+### What surfaced
+
+- **The block component file structure is now ready for the manifest refactor.** Six commits' worth of mechanical edits across 24 files is exactly the kind of change that wants a single block-manifest format — adding aria-label took 24 file edits because each block component lists its handles inline. Tracked as KNOWN-ISSUES item; trigger remains "block #35 OR five-blocks-of-uniform-shape." S14 didn't touch this; correctly so.
+- **The test suite still doesn't cover the wsl-build-wrapper.sh script directly.** S14-3 changed how the wrapper is invoked (no flag from BoardTop) and S14-5 changed BoardTop's elaboration shape, but both rely on pytest catching regressions through the existing `test_icebreaker_full_pipeline_against_example`. A direct wrapper test (mocking OSS CAD Suite environment with a fake `python3` shim) would catch the v0.1.0-alpha bug class earlier. Not done in S14; flagged for a future sprint.
+- **`SAVE_VERSION` bump didn't happen.** The audit's logic-block port-naming asymmetry (AND/OR/XOR `in-1`/`in-2` vs NOT `gate-in`) requires a save-format-breaking change. Deliberately deferred to KNOWN-ISSUES; bundle with the next save-format-breaking change. S14 explicitly didn't touch this.
+
+### What we'd do differently
+
+- **The audit reports were great inputs.** Both `/design:design-system` and `/engineering:system-design` produced specific, file-and-line-cited findings. Future audits should feed sprints directly the same way — write the SPRINT-N.md plan from the audit output, then execute.
+- **TSX file-by-file Reads are slow.** S14-6 (aria-label backport) would've been faster as a single batched read of all 24 files via a script, then 24 Edit calls. The "Read first or Edit fails" guard makes batched edits across many files chatty.
+
+### Sprint 14 outcome
+
+The two band-aid seams the audit named (`require_audio_output` flag; `has_vga` branch with mixed-graph silent downgrade) are gone. Block-library a11y is at parity. The 8-files-per-block tech-debt and the multi-domain clock plumbing remain explicitly deferred with documented triggers. Capability surface is unchanged — alpha.3 stays the live release.

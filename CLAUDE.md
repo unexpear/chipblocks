@@ -121,7 +121,7 @@ chipzzzd/
 - [SPRINT-11.md](SPRINT-11.md) — closed sprint plan + log + retro (pre-public hardening — Critical a11y + tech-debt + renderer security)
 - [SPRINT-12.md](SPRINT-12.md) — closed sprint plan + log + retro (Major a11y + 44 new tests + ARCHITECTURE.md)
 - [SPRINT-13.md](SPRINT-13.md) — closed sprint plan + log + retro (Bitcrusher + Delay + CONTRIBUTING.md)
-- [SPRINT-14.md](SPRINT-14.md) — drafted, not yet open (architectural hygiene + a11y backport, surfaced by 2026-05-09 post-multi-domain audits)
+- [SPRINT-14.md](SPRINT-14.md) — closed sprint plan + log + retro (architectural hygiene + a11y backport — 6 commits across the 4 backend P0 + 2 frontend P1 items)
 - [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — deferred-issue tracker (npm audit, etc.)
 - [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08.md) — WCAG 2.1 AA audit snapshot (23 findings, tiered remediation plan)
 - [ARCHITECTURE.md](ARCHITECTURE.md) — high-level code shape: process model, IPC surfaces, renderer/backend layout, block-addition cookbook, build-target system, AI loop, testing strategy
