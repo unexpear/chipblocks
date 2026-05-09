@@ -99,6 +99,7 @@ See [PRD.md](PRD.md) for the full vision.
 | [ROADMAP.md](ROADMAP.md) | Operational Now / Next / Later — what's actually being built next |
 | [SPRINT-1.md](SPRINT-1.md) … [SPRINT-13.md](SPRINT-13.md) | Per-sprint plan + log + retrospective |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | High-level code shape: process model, IPC, block-addition cookbook |
+| [BLOCKS.md](BLOCKS.md) | Block library reference — every block's ports, parameters, behavior, and common-usage notes |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor on-ramp: setup, tests, commit style, license posture |
 | [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08.md) | WCAG 2.1 AA audit snapshot + tiered remediation plan |
 | [CLAUDE.md](CLAUDE.md) | Project brief for AI dev tools — vision, tech stack, conventions |

@@ -127,7 +127,7 @@ chipzzzd/
 - [CONTRIBUTING.md](CONTRIBUTING.md) — contributor guide: setup, tests, commit style, license posture, where to ask
 - Tech-debt tracking lives inline: highest-priority items in [KNOWN-ISSUES.md](KNOWN-ISSUES.md), tiered remediation plan in [ROADMAP.md](ROADMAP.md)'s "Tech-debt workstream" section. Last full audit 2026-05-08.
 - [CREDITS.md](CREDITS.md) — licensing policy + open-source attributions (permissive only; no copyleft in shipped product)
-- (Future) `BLOCKS.md` — block library reference
+- [BLOCKS.md](BLOCKS.md) — block library reference: per-block ports, parameters, behavior, common-usage notes for all 19 blocks
 
 ## Sprint cadence
 
