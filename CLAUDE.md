@@ -109,6 +109,7 @@ chipzzzd/
 - [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — deferred-issue tracker (npm audit, etc.)
 - [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08.md) — WCAG 2.1 AA audit snapshot (23 findings, tiered remediation plan)
 - [ARCHITECTURE.md](ARCHITECTURE.md) — high-level code shape: process model, IPC surfaces, renderer/backend layout, block-addition cookbook, build-target system, AI loop, testing strategy
+- [CONTRIBUTING.md](CONTRIBUTING.md) — contributor guide: setup, tests, commit style, license posture, where to ask
 - Tech-debt tracking lives inline: highest-priority items in [KNOWN-ISSUES.md](KNOWN-ISSUES.md), tiered remediation plan in [ROADMAP.md](ROADMAP.md)'s "Tech-debt workstream" section. Last full audit 2026-05-08.
 - [CREDITS.md](CREDITS.md) — licensing policy + open-source attributions (permissive only; no copyleft in shipped product)
 - (Future) `BLOCKS.md` — block library reference
