@@ -6,6 +6,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+![ChipBlocks v0.1.0-alpha — visual editor with starter graph and dismissible hint banner](docs/screenshots/starter-graph.png)
+
 ---
 
 ## What it is
