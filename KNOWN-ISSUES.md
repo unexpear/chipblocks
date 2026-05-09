@@ -38,6 +38,58 @@ GitHub announced Node.js 20 deprecation on 2025-09-19; default flips to Node 24 
 
 **Action**: bump to whichever majors land on Node 24 (likely `actions/checkout@v5` + `actions/setup-node@v5` + `actions/setup-python@v6` once published) before 2026-06-02, ideally bundled with the next CI workflow touch. Low priority — no actual breakage until June 2026, and even then GitHub provides escape hatches (`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` or `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true`).
 
+## Block-manifest auto-discovery deferred until block growth slows
+
+Source: in-conversation `/engineering:system-design` review (2026-05-09) after the multi-domain expansion landed (commits `5be6d05` + `4ec6e8b` + `be0aeca`).
+
+Adding a block touches 8 files (the "block-addition cookbook" in [ARCHITECTURE.md](ARCHITECTURE.md) and [CONTRIBUTING.md](CONTRIBUTING.md)). At 27 blocks this is ~160 lines of mechanical boilerplate per block plus the constant tax of any cross-cutting change (a parameter rename means hunting through synth.py + Palette.tsx + prompt.ts + the Node component + tests). Tracked as tech-debt item A1 in [ROADMAP.md](ROADMAP.md)'s tech-debt workstream since 2026-05-08.
+
+**Why deferred**: the right shape (per-block `BLOCK_TYPE` + `PARAM_SCHEMA` + `DESCRIPTION` constants discovered via filesystem glob; `frontend/src/blocks/index.ts` likewise auto-imports via `import.meta.glob`) only earns its keep when block-shape variance is low. Today VGA Timing has 5 outputs, Counter has clocked semantics with audio-shaped output, ADSR has multi-row UI — the manifest format would have to model all of that, and freezing the shape early forces the next 5 blocks to fit a frozen mold.
+
+**Action**: the trigger is **block #35 OR five consecutive blocks fitting the same shape, whichever comes first**. Until then, keep the cookbook. A cheaper interim step: hoist `BLOCK_REGISTRY` + `__all__` populating into a `pathlib.Path(__file__).parent.glob('*.py')` scan in `backend/blocks/__init__.py` (each module declares a module-level `BLOCK_TYPE = "and"` constant). Retires 1 file from the cookbook per block; ~30 minutes of work; no shape freeze.
+
+## Multi-domain clock plumbing for mixed audio + visual graphs
+
+Source: same `/engineering:system-design` review (2026-05-09). Surfaced when the 3 visual blocks landed alongside the 19 audio blocks.
+
+`BoardTop.elaborate` (build.py around lines 402–475) has a top-level `if has_vga:` branch. The audio path inserts `EnableInserter(sample_tick)` around the inner `GraphTop`; the visual path runs the inner at full clock rate. Same inner graph, two different clock-rate behaviors decided by which sibling block exists.
+
+A user graph that contains BOTH an `Output` block (audio at 44.1 kHz) AND a `VgaTiming` block (pixel clock at 12 MHz) has no coherent answer in the current shape. v0.1.0-alpha.3 tacitly disallows this: build.py's `has_vga` purely-graph-content detection downgrades the audio path silently. Sprint 14 P0 #3 makes that rejection **explicit** to close the silent-miselaboration window — but doesn't actually solve mixed-domain.
+
+**Action**: proper fix is `m.d.audio` and `m.d.pixel` `ClockDomain`s in `BoardTop`, with a per-block `domain: str = "audio"` attribute. Audio subgraph runs in `m.d.audio` (gated by `EnableInserter(sample_tick)`); pixel subgraph runs in `m.d.pixel`. Cross-domain edges are explicit and synthesizable via Amaranth's `FFSynchronizer`. **Phase-3 deliverable** (per [ROADMAP.md](ROADMAP.md)) — 1+ sprint of investment for zero v0.1 user payoff. Trigger: first user actually asks to combine audio + visual on one chip.
+
+## Logic-block input port naming asymmetric with NOT
+
+Source: in-conversation `/design:design-system` audit (2026-05-09) on the 27-block library.
+
+AND, OR, XOR use `in-1`/`in-2` for their two 1-bit inputs and `gate-out` for the output. NOT uses `gate-in`/`gate-out`. The asymmetry — three gates that take "in-1/in-2 → gate-out" alongside one gate that takes "gate-in → gate-out" — creates a small mental tax for users routing logic-only patches.
+
+**Why deferred**: handle ids appear in saved graph JSON edges (`{ source: 'and1', sourceHandle: 'gate-out', target: 'mixer1', targetHandle: 'in-1' }`). Renaming `in-1` / `in-2` on AND/OR/XOR to `gate-1` / `gate-2` (or any alternative) would break every saved graph that uses logic blocks. That requires a `SAVE_VERSION` bump + a migration in `loadGraph` to rewrite old handle ids to new ones. Cosmetic improvement, save-format-breaking change — not worth it in v0.1.
+
+**Action**: bundle into the next save-format-breaking change (when there's another reason to bump `SAVE_VERSION`). Until then leave the asymmetry. Note in BLOCKS.md if confusion shows up in user reports.
+
+## Counter outputs `audio-out` despite being a logic block
+
+Source: same `/design:design-system` audit (2026-05-09).
+
+The Counter block lives in the "Logic" palette category (alongside AND/OR/XOR/NOT) but exposes `audio-out` (8-bit signed) rather than `gate-out` (1-bit). This is **deliberate** — Counter outputs a multi-step value (the count, mapped onto 8-bit signed via the `count - 64` centring trick) — so a 1-bit gate-shaped output would lose the information. The block needs a wide output to be useful. The choice is documented in [BLOCKS.md](BLOCKS.md) on the Counter entry.
+
+**Why noted here anyway**: when the next agent or external contributor adds a counter-like block, they may copy the pattern (1-bit-domain block with audio-shaped output) without thinking. Worth flagging so the convention is "logic blocks default to 1-bit; widen to audio-out only when the block carries multi-step state."
+
+**Action**: no fix needed. Watch for accidental wider use of the pattern.
+
+## Optional-peripheral abstraction (FPGABoard.vga_pins) deferred until peripheral #2
+
+Source: same `/engineering:system-design` review (2026-05-09).
+
+`FPGABoard` (build.py around line 93) is a frozen dataclass with three currently-optional fields: `vga_pins`, `vga_pcf_template`, `vga_flash_md_section`. Today only iCEBreaker has them set. `build_fpga` conditionally appends the VGA template when `vga_pcf_template is not None`. Works for one optional peripheral.
+
+Adding a 2nd optional peripheral (audio jack PMOD, OLED PMOD, MIDI in, encoder PMOD) means another set of three fields plus another conditional append. At 4–5 peripherals, the dataclass is a lump.
+
+**Why deferred**: pre-abstraction at peripheral #1 is overengineering. The shape that's likely right (`peripherals: list[Peripheral]` where each `Peripheral` carries its own pin-map + pcf-template + flash-md-section + presence-detector lambda) earns its keep at peripheral #2.
+
+**Action**: when peripheral #2 ships, refactor in the same commit that adds it. Until then leave the inline `vga_*` fields.
+
 ## Random-jitter for AI-placed nodes is a heuristic, not a layout engine
 
 `canvasActions.addNode` places new nodes to the right of the existing rightmost node with a small vertical jitter. For complex multi-block AI sessions, blocks tile to the right and the user has to drag for cleanup. A real auto-layout (e.g. ELK or dagre) would compute an actual graph layout.

@@ -1,8 +1,8 @@
 # ChipBlocks Roadmap
 
-> **Last reviewed:** 2026-05-09 · **Format:** Now / Next / Later · **Cadence:** revisit at the end of each sprint
+> **Last reviewed:** 2026-05-09 (PM, post-multi-domain audit pass) · **Format:** Now / Next / Later · **Cadence:** revisit at the end of each sprint
 >
-> This is the operational "what's next" document. The strategic vision lives in [PRD.md](PRD.md). Per-sprint plans + retrospectives live in [SPRINT-1.md](SPRINT-1.md) through [SPRINT-13.md](SPRINT-13.md). When this roadmap and the PRD disagree, the roadmap is more recent — but big disagreements should trigger a PRD update rather than silently drifting.
+> This is the operational "what's next" document. The strategic vision lives in [PRD.md](PRD.md). Per-sprint plans + retrospectives live in [SPRINT-1.md](SPRINT-1.md) through [SPRINT-13.md](SPRINT-13.md), with [SPRINT-14.md](SPRINT-14.md) drafted but not yet open. When this roadmap and the PRD disagree, the roadmap is more recent — but big disagreements should trigger a PRD update rather than silently drifting.
 
 ---
 
@@ -67,6 +67,8 @@ Source: in-conversation tech-debt audit (2026-05-08). 30+ items across code / ar
 | **Sprint 12 batch** (4 items, ~4 hrs) bundled with whatever Sprint 12's feature work is | C2 (BUNDLE_FILENAMES coordination), C3 (examples/ ↔ examples.ts dedup), T1 (frontend block-component tests, ~10 simple cases), T3 (save/load roundtrip test) | ~4 hrs | ✅ **Done in Sprint 12.** Plus 6 bonus tests via the Sprint 12 audit-fill (51 vitest at the end). |
 | **Opportunistic** (~7 items) — only when motivated by a specific friction | A1 (block-manifest refactor — only when block growth slows), DOC2 (ARCHITECTURE.md ✅), DOC5 (BLOCKS.md ✅), C5/C6 (App.tsx/Chat.tsx file splits), T2 (AI agentic loop integration test) | varies | ARCHITECTURE.md shipped in S12; CONTRIBUTING.md in S13; BLOCKS.md added 2026-05-09. The rest stay opportunistic. |
 | **Already deferred via [KNOWN-ISSUES.md](KNOWN-ISSUES.md)** | D2 (3 npm advisories), D3 (vitest 4 + Vite 6), D4 (7zip-bin LGPL), npm-audit growth, GitHub Actions Node 20 deprecation | varies | Bundled into a future "deps refresh" sprint. |
+| **Sprint 14 batch** (4 backend hygiene + 2 frontend hygiene from the post-multi-domain audits, 2026-05-09) | Centralize `BuildTarget` (5 min), `require_audio_output` → caller-composed validators (~30 lines), explicit reject of mixed audio + visual graphs (~40 lines), split `BoardTop._elaborate_audio_only` / `_elaborate_vga` (~20 lines), aria-label backport on 10 blocks' Handle elements (~30 lines), `HANDLE_SPACING_PX` constant (5 min) | ~1.5 days | **Drafted in [SPRINT-14.md](SPRINT-14.md), not yet open.** Surfaced by `/design:design-system` audit (82/100) and `/engineering:system-design` review of the v0.1.0-alpha.3 codebase. |
+| **Multi-domain + manifest deferrals** (post-audit) | Block-manifest auto-discovery, multi-domain clock plumbing, peripheral abstraction, logic-block port-naming asymmetry, VGA 640×480 PLL | varies | All have explicit triggers documented in [KNOWN-ISSUES.md](KNOWN-ISSUES.md). |
 
 **What's deliberately not on the list**: monitoring, distributed tracing, A/B testing, multi-region — building those before there's any user is debt-by-overengineering for a desktop-app alpha.
 
@@ -97,18 +99,34 @@ These remain blocked on the user; nothing more for autonomous polish to do until
 | **P0** (user) | Enable GitHub Discussions on the repo | User | 5 min | A free Q&A surface for the first external users. |
 | **P1** (user) | Submit the Hackaday writeup ([HACKADAY-WRITEUP.md](HACKADAY-WRITEUP.md)) | User | 15 min | PRD success metric (D) targets one feature within 90 days of launch. Cheap to send; cost of not sending is invisibility. |
 
-**Sprint 14 is unscheduled.** Once the launch gates are through and there's external-user signal, the highest-leverage candidates are below ("Next").
+**Sprint 14 is drafted but not opened.** Plan in [SPRINT-14.md](SPRINT-14.md) — architectural hygiene + a11y backport, ~1.5 days. Surfaced by the post-multi-domain `/design:design-system` audit + `/engineering:system-design` review on 2026-05-09. Expected to run alongside or after the launch gates above.
 
 ---
 
-## Next (Sprint 14+, candidates)
+## Next (Sprint 14, drafted)
 
-Once `v0.1.0-alpha` is tagged and at least one external user has tried it, these are the highest-leverage items. Order is not committed — pick based on whatever signal arrives first.
+Source: post-multi-domain audits run after v0.1.0-alpha.3 shipped. The expansion (5 logic blocks + iCEBreaker target + 3 visual blocks) absorbed correctly but layered two band-aids: `require_audio_output` flag on `GraphTop` and `has_vga` branch in `BoardTop.elaborate`. Sprint 14 narrows them while there are still only 2 callers each. Plus an a11y backport: 10 blocks fell behind the standard the visual-blocks agent applied. Full plan in [SPRINT-14.md](SPRINT-14.md).
+
+| Pri | Item | Effort | Why now |
+|---|---|---|---|
+| **P0** | Centralize `BuildTarget` union (single source in `frontend/src/types/ipc.ts`) | 5 min | Currently duplicated in 3 files; 5th silicon target adds 3 places to drift. |
+| **P0** | Replace `GraphTop.require_audio_output: bool` with caller-composed validators | ~30 lines | The 4th domain (e.g. UART/serial) will need a 3rd flag — flag soup. Two callers today, easy to refactor. |
+| **P0** | Explicit reject of mixed audio + visual graphs in `BoardTop` + renderer pre-Build warning | ~40 lines | Today the constraint lives in build.py wrapper code, not in any user-facing affordance. Closes the silent-miselaboration window without doing the Phase-3 multi-domain refactor. |
+| **P0** | Split `BoardTop._elaborate_audio_only` / `_elaborate_vga` helpers | ~20 lines (no behavior change) | Pure refactor; sets up Phase-3 multi-domain clock-domain plumbing. |
+| **P1** | Backport `aria-label` on `<Handle>` elements to 10 blocks | ~30 lines | Visual-blocks agent applied stricter standard; bring older blocks to parity. Non-breaking. |
+| **P1** | Extract `HANDLE_SPACING_PX = 32` constant | 5 min | Magic number cargo-culted by future blocks. |
+
+---
+
+## Next (Sprint 15+, candidates)
+
+Once Sprint 14's hygiene is in and there's external-user signal, the highest-leverage product items. Order is not committed — pick based on whatever signal arrives first.
 
 | Item | Effort | Reach | Confidence | Rationale |
 |---|---|---|---|---|
 | **MIDI input block + polyphony (2–4 voices)** | 1.5–2 sprints | hobbyist synth makers | High | The flagship domain is "audio/synth/retro-game chips." Without MIDI, the synth user can't play notes from a keyboard. Polyphony is what turns "interesting demo" into "actually usable instrument." Start with WebMIDI (renderer-side); defer USB-MIDI. |
 | **More DSP blocks** — already shipped {wavetable, FM, delay, highpass, bandpass, bitcrusher, multiply}; remaining candidates: {chorus, distortion, comb filter, allpass, ring modulator variants} — *not* reverb (BRAM-bounded on iCE40) | 1 sprint each | all audio users | Med-High | Each block widens the design space. Pick by user request. |
+| **More visual blocks** — already shipped {VGA Timing, Color Bars, VGA Output @ 320×240}; remaining candidates: {SB_PLL40_CORE for 640×480, sprite engine, framebuffer, character / tile generator, pixel-x/y math primitives} | 1 sprint each | retro-game chip designers | Med | Visual story is at "draw color bars" today. Sprite + framebuffer get to "draw something the user designed." |
 | **Validation telemetry / manual eval script** | 0.5 sprint | catches AI-quality regressions | Med | Hits the Anthropic API with smoke-test queries and grades against expected substrings. First step toward the 30%-failure anti-metric. Cheap and reusable; deferred from S9-P1 because there were no AI-built graphs to evaluate yet. |
 | **Code-signing certs** ($300–$700/yr) | 0.5 sprint config + ongoing | removes Win SmartScreen + Mac Gatekeeper warnings | High | The release.yml workflow already tolerates absence (`CSC_IDENTITY_AUTO_DISCOVERY: false`); adding signing is config-only once certs are acquired. Defer until a user actually complains about the warning. |
 
@@ -120,8 +138,11 @@ Once `v0.1.0-alpha` is tagged and at least one external user has tried it, these
 |---|---|---|
 | **ECP5 + Xilinx 7-Series support** | 1–2 sprints | PRD P0 for full release. ECP5 has fully-open toolchain (Trellis); Xilinx 7-Series is semi-open via prjxray. |
 | **Auto-layout for AI-placed nodes** (ELK or dagre) | 0.5 sprint | UX polish; the rightward-jitter heuristic is good enough until users complain. |
-| **vitest 4 + Vite 6 paired upgrade** | 0.5 sprint | Bundled deps refresh. The 87-test vitest suite gives us a forcing function; do this when next touching frontend infra. |
-| **GitHub Actions Node 20 → Node 24 bump** | 1 hour | `actions/checkout@v4` + `actions/setup-node@v4` use Node 20 which GitHub deprecates 2026-09-16. Bump to v5. Tracked in [KNOWN-ISSUES.md](KNOWN-ISSUES.md). |
+| **vitest 4 + Vite 6 paired upgrade** | 0.5 sprint | Bundled deps refresh. The 98-test vitest suite gives us a forcing function; do this when next touching frontend infra. |
+| **GitHub Actions Node 20 → Node 24 bump** | 1 hour | `actions/checkout@v4` + `actions/setup-node@v4` + `actions/setup-python@v5` use Node 20 which GitHub deprecates 2026-09-16. Tracked in [KNOWN-ISSUES.md](KNOWN-ISSUES.md). |
+| **Block-manifest auto-discovery** (kills the 8-files-per-block cookbook) | 1 sprint | The right-shape refactor is per-block `BLOCK_TYPE` + `PARAM_SCHEMA` + `DESCRIPTION` constants discovered via filesystem glob. Trigger: block #35 OR five consecutive blocks fitting the same shape. Today's block-shape variance (VGA Timing has 5 outputs, Counter has clocked semantics, ADSR has multi-row UI) is too high to freeze. Tracked in [KNOWN-ISSUES.md](KNOWN-ISSUES.md). |
+| **Multi-domain clock plumbing** (mixed audio + visual chips) | 1+ sprint | Proper fix to `BoardTop`'s `has_vga` band-aid: explicit `m.d.audio` / `m.d.pixel` `ClockDomain`s with per-block `domain` attribute. Phase-3 deliverable. Trigger: first user who actually wants a chip that sings AND shows. |
+| **VGA at 640×480 (PLL configuration)** | 0.5 sprint | Ship 320×240 today via the bare 12 MHz oscillator; 640×480 needs `SB_PLL40_CORE` configured to multiply 12 MHz → 25.175 MHz. Roadmap when a user wants higher resolution. |
 | **Cached audio in save format** (carryforward) | 0.5 sprint | **Dropped.** Long stale. Workaround: include a `.wav` alongside the `.json` when sharing. If a user complains, promote. |
 | **Reverb block** | 1 sprint | iCE40HX-1k has only 8 BRAMs; quality reverb is BRAM-bound. Revisit when we have a higher-end FPGA target with more memory. |
 | **Web version** | 4–6 sprints | PRD P1. Big lift (cloud workers for synthesis). Defer until there's clear demand. |
@@ -140,10 +161,21 @@ Once `v0.1.0-alpha` is tagged and at least one external user has tried it, these
 | **Tiny Tapeout cohort timing** — submissions are quarterly; missing one is 3 months added latency | Low-Med | TTSKY26a closed 2026-05-11 (already past for the alpha-launch cohort); TTGF26a closes 2026-06-22. |
 | **Solo-dev burnout** (PRD-flagged risk) | Med | Plan sustainable pacing. Don't pile on. Use Discussions for community accountability once enabled. |
 | **AI consultant validation pass rate is unmeasured** | Low-Med | First step is a manual eval script — listed in "Next" but deferred until there are AI-built graphs from external users to evaluate. |
+| **Multi-agent code-additions accumulate seam debt faster than refactoring catches up** | Med | The post-multi-domain audits (2026-05-09) found two band-aid seams (`require_audio_output`, `has_vga` branch) shipped during the visual-blocks expansion. Sprint 14 narrows them while there are still only 2 callers each. If the next 2-3 expansions don't pause for hygiene the debt compounds. |
 
 ---
 
-## Decision log — what changed in this update (2026-05-09)
+## Decision log — what changed in this update (2026-05-09 PM)
+
+Post-multi-domain audit pass after v0.1.0-alpha.3 shipped (added 5 logic blocks + iCEBreaker + 3 visual blocks; 19 → 27 blocks, 3 → 4 silicon paths).
+
+- **Sprint 14 drafted as architectural hygiene + a11y backport.** Plan in [SPRINT-14.md](SPRINT-14.md). Six items, ~1.5 days total. Independently surfaced by `/design:design-system` audit and `/engineering:system-design` review. Not yet open — the launch-gate user actions still take priority.
+- **Five new deferrals added to KNOWN-ISSUES.md with explicit triggers**: block-manifest auto-discovery (trigger: block #35 OR five-blocks-of-uniform-shape), multi-domain clock plumbing (trigger: first user wanting audio + visual on one chip), peripheral abstraction (trigger: peripheral #2 ships), logic-block port-naming asymmetry (trigger: next save-format-breaking change), counter's `audio-out` semantic crossing (no fix; convention note).
+- **"Next" split into Sprint 14 (drafted) and Sprint 15+ (candidates).** The 4 cheap backend hygiene fixes plus 2 frontend hygiene items are now their own bucket distinct from the larger product items (MIDI, more DSP, more visual blocks).
+- **"Later" added 3 entries from the audit**: block-manifest auto-discovery (1 sprint), multi-domain clock plumbing (1+ sprint), VGA 640×480 PLL configuration (0.5 sprint).
+- **Risks list extended**: "Multi-agent code-additions accumulate seam debt faster than refactoring catches up" added as a Med-severity risk surfaced by the audits — Sprint 14 is the explicit mitigation.
+
+### Earlier decision log (2026-05-09 AM)
 
 Snapshot refresh after Sprint 13 closed. Decisions made vs. just bumping numbers:
 
