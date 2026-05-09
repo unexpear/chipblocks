@@ -439,43 +439,43 @@ class BoardTop(Elaboratable):
 
     def elaborate(self, platform):
         m = Module()
-
         if self.has_vga:
-            # VGA path: run the inner graph at the full board clock
-            # rate so the VGA Timing block sees a sane pixel clock.
-            # Audio gating is skipped; the audio Output (if any) just
-            # comes along for the ride at the wrong rate.
-            m.submodules.inner = self.inner
+            self._elaborate_vga(m)
+        else:
+            self._elaborate_audio_only(m)
+        return m
 
-            # Route the VGA Output block's input ports straight to the
-            # top-level pins. The translator inside GraphTop has
-            # already wired user edges (e.g. ColorBars.r ->
-            # VgaOutput.r) into these signals.
-            vga_block = self.inner.vga_output_block
-            m.d.comb += [
-                self.vga_r.eq(vga_block.r),
-                self.vga_g.eq(vga_block.g),
-                self.vga_b.eq(vga_block.b),
-                self.vga_hsync.eq(vga_block.hsync),
-                self.vga_vsync.eq(vga_block.vsync),
-            ]
+    def _elaborate_vga(self, m: Module) -> None:
+        """Visual path: inner graph runs at the full board clock so the
+        VGA Timing block sees a sane pixel clock. The mixed-domain
+        reject in __init__ guarantees there's no audio Output in this
+        graph, so the audio pin is held low.
+        """
+        m.submodules.inner = self.inner
 
-            # If an audio Output exists too, drive the PWM pin from it
-            # (uncalibrated rate); otherwise hold the audio pin low.
-            if self.inner.output_block is not None:
-                pwm_count = Signal(8)
-                m.d.sync += pwm_count.eq(pwm_count + 1)
-                audio_in_signed = self.inner.output_block.audio_in
-                amp = (audio_in_signed + 128).as_unsigned()
-                m.d.comb += self.audio_pin.eq(pwm_count < amp)
-            else:
-                m.d.comb += self.audio_pin.eq(0)
+        # Route the VGA Output block's input ports straight to the
+        # top-level pins. The translator inside GraphTop has already
+        # wired user edges (e.g. ColorBars.r → VgaOutput.r) into these
+        # signals.
+        vga_block = self.inner.vga_output_block
+        m.d.comb += [
+            self.vga_r.eq(vga_block.r),
+            self.vga_g.eq(vga_block.g),
+            self.vga_b.eq(vga_block.b),
+            self.vga_hsync.eq(vga_block.hsync),
+            self.vga_vsync.eq(vga_block.vsync),
+        ]
 
-            return m
+        # Visual graphs can't have an audio Output (rejected at
+        # __init__), so the audio pin is unused. Tie it low rather than
+        # leaving it floating in synthesis.
+        m.d.comb += self.audio_pin.eq(0)
 
-        # Audio path (the original Sprint 6 behavior): gate the inner
-        # graph by sample_tick so its flip-flops advance at 44.1 kHz.
-
+    def _elaborate_audio_only(self, m: Module) -> None:
+        """Audio path (the original Sprint 6 behavior): gate the inner
+        graph by sample_tick so its flip-flops advance at 44.1 kHz, then
+        PWM-modulate the audio pin.
+        """
         # Sample-rate divider: count clock ticks per audio sample.
         # iCEstick / iCEBreaker @ 12 MHz: 12_000_000 / 44_100 ≈ 272.
         # TinyFPGA BX @ 16 MHz: 16_000_000 / 44_100 ≈ 362.
@@ -510,8 +510,6 @@ class BoardTop(Elaboratable):
         pwm_count = Signal(8)
         m.d.sync += pwm_count.eq(pwm_count + 1)
         m.d.comb += self.audio_pin.eq(pwm_count < latched_sample)
-
-        return m
 
 
 def emit_verilog(graph: dict, out_dir: Path, board: FPGABoard | None = None) -> Path:
