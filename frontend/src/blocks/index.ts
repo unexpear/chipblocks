@@ -13,6 +13,8 @@ import { ConstantNode,       type ConstantBlock }       from './ConstantNode'
 import { FmNode,             type FmBlock }             from './FmNode'
 import { MultiplyNode,       type MultiplyBlock }       from './MultiplyNode'
 import { WavetableNode,      type WavetableBlock }      from './WavetableNode'
+import { BitcrusherNode,     type BitcrusherBlock }     from './BitcrusherNode'
+import { DelayNode,          type DelayBlock }          from './DelayNode'
 
 // Hoisted to module scope to avoid React Flow's
 // "It looks like you've created a new nodeTypes object" warning.
@@ -32,6 +34,8 @@ export const nodeTypes = {
   fm:         FmNode,
   multiply:   MultiplyNode,
   wavetable:  WavetableNode,
+  bitcrusher: BitcrusherNode,
+  delay:      DelayNode,
 }
 
 export type AppNode =
@@ -50,3 +54,5 @@ export type AppNode =
   | FmBlock
   | MultiplyBlock
   | WavetableBlock
+  | BitcrusherBlock
+  | DelayBlock

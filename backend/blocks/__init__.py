@@ -27,6 +27,8 @@ from .constant import Constant
 from .fm import Fm
 from .multiply import Multiply
 from .wavetable import Wavetable
+from .bitcrusher import Bitcrusher
+from .delay import Delay
 
 # Registry mapping graph node `type` (from React Flow JSON) to block class.
 BLOCK_REGISTRY = {
@@ -45,6 +47,8 @@ BLOCK_REGISTRY = {
     "fm": Fm,
     "multiply": Multiply,
     "wavetable": Wavetable,
+    "bitcrusher": Bitcrusher,
+    "delay": Delay,
 }
 
 __all__ = [
@@ -63,5 +67,7 @@ __all__ = [
     "Fm",
     "Multiply",
     "Wavetable",
+    "Bitcrusher",
+    "Delay",
     "BLOCK_REGISTRY",
 ]

@@ -420,3 +420,66 @@ def test_wavetable_sine_matches_sine_block(run_synth, wav_samples):
     assert abs(crossings - expected) < expected * 0.10, (
         f"Wavetable(sine) at 440 Hz: expected ~{expected} crossings, got {crossings}"
     )
+
+
+def test_bitcrusher_1bit_squares_a_sine(run_synth, wav_samples):
+    """At bits=1 only the sign bit survives, so any input collapses to a
+    2-level square wave at the input's fundamental. Feeding a 440 Hz sine
+    yields a 440 Hz square — matched zero-crossing count, but the output
+    sits at exactly two values (0 for nonneg input, -128 for negative)."""
+    graph = {
+        "nodes": [
+            {"id": "src", "type": "sine", "data": {"freq": 440}},
+            {"id": "bc", "type": "bitcrusher", "data": {"bits": 1}},
+            _output_node(),
+        ],
+        "edges": [
+            _edge("e1", "src", "bc", "audio-out", "audio-in"),
+            _edge("e2", "bc", "out", "audio-out", "audio-in"),
+        ],
+    }
+    samples = wav_samples(run_synth(graph, duration_s=1))
+    crossings = _count_zero_crossings(samples)
+    expected = 2 * 440
+    assert abs(crossings - expected) < expected * 0.10, (
+        f"Bitcrusher(bits=1) on 440 Hz sine: expected ~{expected} crossings, "
+        f"got {crossings}"
+    )
+    # At bits=1 the int8 output can only be 0 (nonneg input) or -128 (neg
+    # input). After WAV scaling those become 0 and -128*64 = -8192.
+    distinct = set(samples)
+    assert distinct.issubset({0, -8192}), (
+        f"Bitcrusher(bits=1) output should only contain 0 or -8192; "
+        f"saw {sorted(distinct)}"
+    )
+
+
+def test_delay_holds_silence_then_passes_input(run_synth, wav_samples):
+    """A delay of 10 samples means the first 10 output samples are 0 (the
+    buffer's reset state) and subsequent samples are the input from 10
+    samples ago. We feed a Constant +64 through and check both ends."""
+    graph = {
+        "nodes": [
+            {"id": "src", "type": "constant", "data": {"value": 64}},
+            {"id": "dl", "type": "delay", "data": {"delay_samples": 10}},
+            # Unconnected gate so the simulator has a sync domain.
+            {"id": "g", "type": "gate", "data": {"rate_hz": 1, "duty_pct": 50}},
+            _output_node(),
+        ],
+        "edges": [
+            _edge("e1", "src", "dl", "audio-out", "audio-in"),
+            _edge("e2", "dl", "out", "audio-out", "audio-in"),
+        ],
+    }
+    samples = wav_samples(run_synth(graph, duration_s=1))
+    # First 10 samples should be the buffer's reset value (0).
+    SCALED = 64 * 64  # 8-bit value 64 × WAV SCALE 64 = 4096.
+    assert all(s == 0 for s in samples[:10]), (
+        f"Delay's first 10 samples should be 0 (buffer reset); got "
+        f"{samples[:10]}"
+    )
+    # After the delay, samples should match the (constant) input.
+    assert all(s == SCALED for s in samples[10:200]), (
+        f"Delay should pass through Constant(64) after 10 samples; got "
+        f"min={min(samples[10:200])}, max={max(samples[10:200])}"
+    )

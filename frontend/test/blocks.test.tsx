@@ -41,6 +41,8 @@ import { SampleAndHoldNode } from '../src/blocks/SampleAndHoldNode'
 import { FmNode } from '../src/blocks/FmNode'
 import { MultiplyNode } from '../src/blocks/MultiplyNode'
 import { WavetableNode } from '../src/blocks/WavetableNode'
+import { BitcrusherNode } from '../src/blocks/BitcrusherNode'
+import { DelayNode } from '../src/blocks/DelayNode'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -442,5 +444,87 @@ describe('Wavetable block', () => {
     await user.type(input, '50000')
     expect(input.value).toBe('50000')
     expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/20.*20000/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Bitcrusher: 1 input handle, 1 output handle, 1 bits field [1, 8].
+
+describe('Bitcrusher block', () => {
+  it('renders title + bits input with default', () => {
+    const { container } = wrap(
+      <BitcrusherNode {...nodePropsBase('bc-1')} data={{ bits: 4 }} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Bitcrusher')
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')
+    expect(input?.value).toBe('4')
+    expect(countHandles(container, 'target')).toBe(1)
+    expect(countHandles(container, 'source')).toBe(1)
+  })
+
+  it('typing a valid bits value (2) updates the input', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <BitcrusherNode {...nodePropsBase('bc-2')} data={{ bits: 4 }} />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '2')
+    expect(input.value).toBe('2')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('out-of-range bits (12) shows an error', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <BitcrusherNode {...nodePropsBase('bc-3')} data={{ bits: 4 }} />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '12')
+    expect(input.value).toBe('12')
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/1.*8/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Delay: 1 input handle, 1 output handle, 1 delay_samples field [1, 1024].
+
+describe('Delay block', () => {
+  it('renders title + delay_samples input with default', () => {
+    const { container } = wrap(
+      <DelayNode {...nodePropsBase('dl-1')} data={{ delay_samples: 128 }} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Delay')
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')
+    expect(input?.value).toBe('128')
+    expect(countHandles(container, 'target')).toBe(1)
+    expect(countHandles(container, 'source')).toBe(1)
+  })
+
+  it('typing a valid value (500) updates the input', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <DelayNode {...nodePropsBase('dl-2')} data={{ delay_samples: 128 }} />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '500')
+    expect(input.value).toBe('500')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('out-of-range delay_samples (2000) shows an error and snaps back on blur', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <DelayNode {...nodePropsBase('dl-3')} data={{ delay_samples: 128 }} />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '2000')
+    expect(input.value).toBe('2000')
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/1.*1024/)
+    await user.tab()
+    expect(input.value).toBe('128')
   })
 })

@@ -82,6 +82,12 @@ def _build_params(node_type: str, data: dict) -> dict:
         if "shape" in data:
             params["shape"] = str(data["shape"])
         params["sample_rate"] = SAMPLE_RATE
+    elif node_type == "bitcrusher":
+        if "bits" in data:
+            params["bits"] = int(data["bits"])
+    elif node_type == "delay":
+        if "delay_samples" in data:
+            params["delay_samples"] = int(data["delay_samples"])
     # Mixer, Output, SampleAndHold, Noise, Multiply have no parameters.
     return params
 
