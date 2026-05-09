@@ -106,6 +106,9 @@ chipzzzd/
 - [SPRINT-8.md](SPRINT-8.md) — closed sprint plan + log + retro (AI consultant grounding)
 - [SPRINT-9.md](SPRINT-9.md) — open sprint plan: make v0.1.0-alpha actually shippable to strangers
 - [SPRINT-10.md](SPRINT-10.md) — closed sprint plan + log + retro (output completeness — multi-target build)
+- [SPRINT-11.md](SPRINT-11.md) — closed sprint plan + log + retro (pre-public hardening — Critical a11y + tech-debt + renderer security)
+- [SPRINT-12.md](SPRINT-12.md) — closed sprint plan + log + retro (Major a11y + 44 new tests + ARCHITECTURE.md)
+- [SPRINT-13.md](SPRINT-13.md) — closed sprint plan + log + retro (Bitcrusher + Delay + CONTRIBUTING.md)
 - [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — deferred-issue tracker (npm audit, etc.)
 - [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08.md) — WCAG 2.1 AA audit snapshot (23 findings, tiered remediation plan)
 - [ARCHITECTURE.md](ARCHITECTURE.md) — high-level code shape: process model, IPC surfaces, renderer/backend layout, block-addition cookbook, build-target system, AI loop, testing strategy

@@ -31,7 +31,7 @@ The first flagship domain is **audio / synth / retro-game chips**. The architect
                                   └─────────────────────────────────────────┘
 ```
 
-- **14 audio blocks**: oscillator (square), triangle, sawtooth, sine, noise, constant, mixer, output, ADSR envelope, gate, low-pass filter, sample-and-hold, FM voice, multiply (ring modulator). Drag from the side palette onto the canvas.
+- **19 audio blocks**: oscillator (square), triangle, sawtooth, sine, noise, constant, mixer, output, ADSR envelope, gate, low-pass filter, high-pass filter, band-pass filter, sample-and-hold, FM voice, multiply (ring modulator), wavetable, bitcrusher, delay. Drag from the side palette onto the canvas.
 - **Visual wiring**: edges enforce port directionality. Nodes have parameter editors with full screen-reader labels (frequency, cutoff, attack/decay/sustain/release, etc.).
 - **▶ Play**: Python backend simulates the design in [Amaranth](https://github.com/amaranth-lang/amaranth), produces a 16-bit WAV at 44.1 kHz, and the app plays it.
 - **🔧 Build → Lattice iCEstick**: graph → Verilog → Yosys → nextpnr-ice40 → icepack → flashable `.bin` for the Lattice iCEstick (~$30 USB dev board). Bundle includes a `BUILD.md` utilization report so you know if your design fits.
@@ -82,7 +82,10 @@ Click **▶ Play** in the running app to hear the default Oscillator → Mixer �
 - ✅ **Sprint 8** — AI consultant grounding: full system-prompt + tool-description rewrite so the consultant knows app navigation, naming conventions, and common workflows. ([retro](SPRINT-8.md))
 - ✅ **Sprint 9** — Onboarding + 6 more blocks (Sine, Noise, Constant, FM, Multiply, Wavetable), starter graph + dismissible hint, Examples menu, About modal, GitHub Actions CI + cross-platform release pipeline (Windows/Mac/Linux), 19 backend pytest + 6 frontend vitest. ([retro](SPRINT-9.md))
 - ✅ **Sprint 10** — Output completeness: TinyFPGA BX added as a second FPGA target, Tiny Tapeout submission package landed (genuinely drop-in ready for the active 2026 cohorts), structured BUILD.md utilization parsing. ([retro](SPRINT-10.md))
-- 📋 **Future** — Mac/Linux installers (CI pipeline already builds them; needs signing certs to ship), MIDI input + polyphony, more DSP blocks, additional FPGA targets, PCBs, motherboards. See [ROADMAP.md](ROADMAP.md) for what's slotted into Sprint 11/12.
+- ✅ **Sprint 11** — Pre-public hardening: WCAG 2.1 AA Critical-tier accessibility (input labels, modal dialog semantics, focus-visible, aria-live), tech-debt batch (IPC types, pinned backend deps, README refresh), renderer security (Load JSON validation, AI tool-call validation, ErrorBoundary). ([retro](SPRINT-11.md))
+- ✅ **Sprint 12** — A11y Tier 2 (palette keyboard, touch targets, popover arrows, parameter errors), test coverage explosion (6 → 50 vitest), bundle-filename coordination, argv-only build IPC, Tier 3 polish, ARCHITECTURE.md. ([retro](SPRINT-12.md))
+- ✅ **Sprint 13** — Block library expansion (Bitcrusher + Delay) + CONTRIBUTING.md contributor on-ramp. ([retro](SPRINT-13.md))
+- 📋 **Future** — Mac/Linux installer signing (CI pipeline already builds; needs paid certs to ship), MIDI input + polyphony, more DSP blocks (Highpass + Bandpass also already shipped), additional FPGA targets, PCBs, motherboards. See [ROADMAP.md](ROADMAP.md).
 
 See [PRD.md](PRD.md) for the full vision.
 
@@ -92,7 +95,9 @@ See [PRD.md](PRD.md) for the full vision.
 |---|---|
 | [PRD.md](PRD.md) | Full product vision, goals, non-goals, target users, requirements, success metrics |
 | [ROADMAP.md](ROADMAP.md) | Operational Now / Next / Later — what's actually being built next |
-| [SPRINT-1.md](SPRINT-1.md) … [SPRINT-10.md](SPRINT-10.md) | Per-sprint plan + log + retrospective |
+| [SPRINT-1.md](SPRINT-1.md) … [SPRINT-13.md](SPRINT-13.md) | Per-sprint plan + log + retrospective |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | High-level code shape: process model, IPC, block-addition cookbook |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor on-ramp: setup, tests, commit style, license posture |
 | [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08.md) | WCAG 2.1 AA audit snapshot + tiered remediation plan |
 | [CLAUDE.md](CLAUDE.md) | Project brief for AI dev tools — vision, tech stack, conventions |
 | [CREDITS.md](CREDITS.md) | Open-source attributions and licensing policy |
