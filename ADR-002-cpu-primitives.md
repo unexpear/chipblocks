@@ -1,6 +1,6 @@
 # ADR-002: CPU primitive block set for Sprint 17
 
-**Status:** Proposed (drafted 2026-05-10) · **Deciders:** solo dev (you) + Claude Code · **Implements:** Sprint 17 (to be opened)
+**Status:** Accepted (2026-05-10) · **Deciders:** solo dev (you) + Claude Code · **Implements:** Sprint 17 ([SPRINT-17.md](SPRINT-17.md))
 
 > Second project ADR. Builds on [ADR-001](ADR-001-multi-bit-bus-types.md) (typed bus system, shipped in Sprint 16). With the bus-type infrastructure in place, every CPU primitive can declare its port widths cleanly and the validator catches miswiring. The remaining decisions are **which primitives, what shapes, and how programs get loaded into ROM.**
 
