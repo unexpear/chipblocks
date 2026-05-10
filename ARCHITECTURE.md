@@ -91,7 +91,7 @@ frontend/src/
 ├── blocks/
 │   ├── index.ts               nodeTypes + AppNode union
 │   ├── useValidatedNumber.ts  Shared number-input validation hook
-│   └── *Node.tsx              One file per of the 32 block types
+│   └── *Node.tsx              One file per of the 36 block types
 ├── Palette.tsx                Left-side block palette + drag-and-drop
 ├── Chat.tsx                   AI consultant sidebar + agentic loop
 ├── SettingsModal.tsx          API key + model picker
@@ -152,14 +152,14 @@ Eval script at `scripts/eval-ai.ts` runs 7 representative queries against the li
 ## Testing
 
 ```
-backend/tests/        pytest, 49 tests + 2 skipped, ~75 s
-  test_blocks.py             33 per-block property assertions (zero-crossing rate, etc.) — covers all 32 blocks (including the 5 visual blocks and the 2 bus-composition blocks driven directly under an Amaranth Simulator) plus a mixed-logic pipeline smoke test
+backend/tests/        pytest, 56 tests + 2 skipped, ~90 s
+  test_blocks.py             40 per-block property assertions (zero-crossing rate, accumulator round-trip, etc.) — covers all 36 blocks (including the 5 visual blocks, the 2 bus-composition blocks, the 4 CPU primitives Adder / Register / RAM / ROM, the Counter.addr-out extension, plus a mixed-logic pipeline smoke test and a CPU-primitives pipeline smoke test)
   test_synth_pipeline.py     9 end-to-end tests against examples/*.json (3 exercise the visual path: friendly-error rejection on ▶ Play, .pcf carries VGA pin assignments, and an end-to-end build of the color-bars graph through Yosys + nextpnr-ice40 + icepack to a real iCEBreaker bitstream — that one is skipped when OSS CAD Suite isn't on PATH)
   test_tinytapeout.py        8 TT bundle shape + info.yaml schema tests
 
-frontend/test/        vitest, 136 tests, ~6 s
+frontend/test/        vitest, 143 tests, ~9 s
   ipc-contract.test.ts          renderer↔main IPC mock tests (synth/build/AI)
-  blocks.test.tsx               block render + parameter editing + range validation (68 tests across all 32 blocks)
+  blocks.test.tsx               block render + parameter editing + range validation (75 tests across all 36 blocks)
   bus-types.test.ts             bus-type compatibility helper (29 tests covering the Sprint 16 typed-bus system)
   save-load.test.tsx            save/load roundtrip + m5 rejection paths
   examples-consistency.test.ts  examples.ts ↔ examples/*.json drift check (now also covers color-bars.json)

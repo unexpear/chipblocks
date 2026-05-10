@@ -30,6 +30,10 @@ import { PixelRangeNode,     type PixelRangeBlock }     from './PixelRangeNode'
 import { SolidColorNode,     type SolidColorBlock }     from './SolidColorNode'
 import { BusSplitNode,       type BusSplitBlock }       from './BusSplitNode'
 import { BusJoinNode,        type BusJoinBlock }        from './BusJoinNode'
+import { AdderNode,          type AdderBlock }          from './AdderNode'
+import { RegisterNode,       type RegisterBlock }       from './RegisterNode'
+import { RAMNode,            type RAMBlock }            from './RAMNode'
+import { ROMNode,            type ROMBlock }            from './ROMNode'
 
 // Hoisted to module scope to avoid React Flow's
 // "It looks like you've created a new nodeTypes object" warning.
@@ -66,6 +70,10 @@ export const nodeTypes = {
   solidcolor: SolidColorNode,
   bussplit:   BusSplitNode,
   busjoin:    BusJoinNode,
+  adder:      AdderNode,
+  register:   RegisterNode,
+  ram:        RAMNode,
+  rom:        ROMNode,
 }
 
 export type AppNode =
@@ -101,3 +109,7 @@ export type AppNode =
   | SolidColorBlock
   | BusSplitBlock
   | BusJoinBlock
+  | AdderBlock
+  | RegisterBlock
+  | RAMBlock
+  | ROMBlock

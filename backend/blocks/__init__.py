@@ -44,6 +44,10 @@ from .pixel_range import PixelRange
 from .solid_color import SolidColor
 from .bus_split import BusSplit
 from .bus_join import BusJoin
+from .adder import Adder
+from .register import Register
+from .ram import RAM
+from .rom import ROM
 
 # Registry mapping graph node `type` (from React Flow JSON) to block class.
 BLOCK_REGISTRY = {
@@ -79,6 +83,10 @@ BLOCK_REGISTRY = {
     "solidcolor": SolidColor,
     "bussplit": BusSplit,
     "busjoin": BusJoin,
+    "adder": Adder,
+    "register": Register,
+    "ram": RAM,
+    "rom": ROM,
 }
 
 __all__ = [
@@ -114,5 +122,9 @@ __all__ = [
     "SolidColor",
     "BusSplit",
     "BusJoin",
+    "Adder",
+    "Register",
+    "RAM",
+    "ROM",
     "BLOCK_REGISTRY",
 ]

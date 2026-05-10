@@ -751,6 +751,56 @@ def test_counter_cycles_through_values(run_synth, wav_samples):
     )
 
 
+def test_counter_addr_out_emits_low_4_bits():
+    """Sprint 17 extension: Counter now exposes a raw `addr-out` port
+    carrying the low 4 bits of the internal count. Drive a Counter
+    directly under the simulator with a hand-pulsed clock and verify
+    addr-out walks 1..15, wraps to 0, and audio-out tracks count - 64.
+    """
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.counter import Counter
+
+    block = Counter(max_value=16)
+    m = Module()
+    m.submodules.b = block
+    # Anchor the sync domain (Counter has its own sync logic but we
+    # mirror the visual-block tests' boilerplate for consistency).
+    _anchor = Signal()
+    m.d.sync += _anchor.eq(~_anchor)
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    captured: list[tuple[int, int]] = []
+
+    async def process(ctx):
+        # Toggle the clock-input pin to generate rising edges. Each
+        # rising edge advances the counter by 1; max_value=16 wraps at 16.
+        ctx.set(block.clock_in, 0)
+        for _step in range(20):  # 20 edges: walk 1..15, wrap, walk 0..4
+            ctx.set(block.clock_in, 1)
+            await ctx.tick()
+            await ctx.tick()  # let comb propagation settle
+            captured.append((ctx.get(block.addr_out), ctx.get(block.audio_out)))
+            ctx.set(block.clock_in, 0)
+            await ctx.tick()
+
+    sim.add_testbench(process)
+    sim.run()
+
+    addr_values = [a for a, _audio in captured]
+    audio_values = [aud for _a, aud in captured]
+    expected_addr = list(range(1, 16)) + [0, 1, 2, 3, 4]
+    assert addr_values == expected_addr, (
+        f"Counter.addr-out should walk 1..15, wrap to 0, continue; got {addr_values}"
+    )
+    # audio-out is count - 64 (signed-8).
+    expected_audio = [v - 64 for v in expected_addr]
+    assert audio_values == expected_audio, (
+        f"Counter.audio-out should track count - 64; got {audio_values}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Visual-block tests — VGA Timing, Color Bars, VGA Output.
 #
@@ -1160,4 +1210,265 @@ def test_counter_smoke_through_full_pipeline(run_synth, wav_samples):
     assert distinct == expected, (
         f"Mixed logic graph: counter should cycle through 4 values × 64; "
         f"got {sorted(distinct)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# CPU primitive tests — Adder, Register, RAM, ROM (Sprint 17, ADR-002).
+#
+# These blocks operate on 8-bit unsigned data + 4-bit unsigned addresses
+# rather than 8-bit signed audio, so they don't compose cleanly with the
+# audio-bus Output block (a Sprint 18 "Reinterpret" block could bridge
+# the two). Tests drive each block directly under an Amaranth Simulator
+# and check the combinational / synchronous behavior in isolation.
+# ---------------------------------------------------------------------------
+def test_adder_100_plus_50_is_150_with_carry_clear():
+    """Adder is combinational. Hand-drive in-a=100, in-b=50; expect
+    sum-out=150, carry-out=0. Then drive 200+100 = 300 (overflow);
+    expect sum-out=44 (300 mod 256), carry-out=1."""
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.adder import Adder
+
+    block = Adder()
+    m = Module()
+    m.submodules.b = block
+    _anchor = Signal()
+    m.d.sync += _anchor.eq(~_anchor)
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    captured: list[tuple[int, int]] = []
+
+    async def process(ctx):
+        ctx.set(block.in_a, 100)
+        ctx.set(block.in_b, 50)
+        await ctx.tick()
+        await ctx.tick()
+        captured.append((ctx.get(block.sum_out), ctx.get(block.carry_out)))
+        # Overflow case: 200 + 100 = 300 → sum_out=44, carry_out=1.
+        ctx.set(block.in_a, 200)
+        ctx.set(block.in_b, 100)
+        await ctx.tick()
+        await ctx.tick()
+        captured.append((ctx.get(block.sum_out), ctx.get(block.carry_out)))
+
+    sim.add_testbench(process)
+    sim.run()
+
+    assert captured[0] == (150, 0), (
+        f"Adder(100, 50): expected sum=150, carry=0; got {captured[0]}"
+    )
+    assert captured[1] == (44, 1), (
+        f"Adder(200, 100): expected sum=44 (300 mod 256), carry=1; got {captured[1]}"
+    )
+
+
+def test_register_latches_on_write_enable_edge():
+    """Drive data-in=42 with write-enable high for one clock — the next
+    cycle, data-out should read 42 and continue reading 42 even after
+    write-enable drops low and a new (ignored) data-in is presented."""
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.register import Register
+
+    block = Register()
+    m = Module()
+    m.submodules.b = block
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    captured: list[int] = []
+
+    async def process(ctx):
+        # Pre-state: write-enable low, data-out should be 0 (reset).
+        ctx.set(block.write_enable, 0)
+        ctx.set(block.data_in, 0)
+        await ctx.tick()
+        captured.append(ctx.get(block.data_out))  # 0
+        # Pulse write-enable for one clock with data-in=42.
+        ctx.set(block.data_in, 42)
+        ctx.set(block.write_enable, 1)
+        await ctx.tick()
+        # Latch settles the next cycle.
+        await ctx.tick()
+        captured.append(ctx.get(block.data_out))  # 42
+        # Drop write-enable, change data-in to 99 — data-out must stay 42.
+        ctx.set(block.write_enable, 0)
+        ctx.set(block.data_in, 99)
+        await ctx.tick()
+        await ctx.tick()
+        captured.append(ctx.get(block.data_out))  # 42 still
+        # Latch a new value (99) to confirm the gate still works.
+        ctx.set(block.write_enable, 1)
+        await ctx.tick()
+        await ctx.tick()
+        captured.append(ctx.get(block.data_out))  # 99
+
+    sim.add_testbench(process)
+    sim.run()
+
+    assert captured[0] == 0, f"Register pre-reset: expected 0; got {captured[0]}"
+    assert captured[1] == 42, f"Register after write-enable=1, data=42: expected 42; got {captured[1]}"
+    assert captured[2] == 42, f"Register holds value when write-enable is low: expected 42; got {captured[2]}"
+    assert captured[3] == 99, f"Register latches new value 99 on next write-enable: got {captured[3]}"
+
+
+def test_ram_round_trip_at_address_5():
+    """Write 99 to RAM cell 5 with write-enable=1, then read it back
+    with write-enable=0 and a fresh data-in (which must be ignored).
+    Verify a different cell (3) still reads zero — proves the address
+    decode worked rather than every cell getting the value."""
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.ram import RAM
+
+    block = RAM()
+    m = Module()
+    m.submodules.b = block
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    captured: dict[str, int] = {}
+
+    async def process(ctx):
+        # Write 99 to cell 5.
+        ctx.set(block.addr, 5)
+        ctx.set(block.data_in, 99)
+        ctx.set(block.write_enable, 1)
+        await ctx.tick()
+        await ctx.tick()
+        # Drop write-enable, present a different data-in to make sure
+        # the readback isn't just echoing the current input.
+        ctx.set(block.write_enable, 0)
+        ctx.set(block.data_in, 7)
+        await ctx.tick()
+        await ctx.tick()
+        captured["cell_5"] = ctx.get(block.data_out)
+        # Read a cell we never wrote — should still be the initial 0.
+        ctx.set(block.addr, 3)
+        await ctx.tick()
+        await ctx.tick()
+        captured["cell_3"] = ctx.get(block.data_out)
+
+    sim.add_testbench(process)
+    sim.run()
+
+    assert captured["cell_5"] == 99, (
+        f"RAM cell 5 should read back 99 after write; got {captured['cell_5']}"
+    )
+    assert captured["cell_3"] == 0, (
+        f"RAM cell 3 (never written) should read 0; got {captured['cell_3']}"
+    )
+
+
+def test_rom_returns_initialised_contents_at_each_address():
+    """Instantiate ROM with the first 8 Fibonacci numbers (padded with
+    zeros to 16 entries). Sweep the address through all 16 entries and
+    verify each readback matches the stored contents."""
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.rom import ROM
+
+    program = [1, 1, 2, 3, 5, 8, 13, 21]  # padded inside ROM to 16
+    block = ROM(contents=program)
+    m = Module()
+    m.submodules.b = block
+    _anchor = Signal()
+    m.d.sync += _anchor.eq(~_anchor)
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    captured: list[int] = []
+
+    async def process(ctx):
+        for addr in range(16):
+            ctx.set(block.addr, addr)
+            await ctx.tick()
+            await ctx.tick()
+            captured.append(ctx.get(block.data_out))
+
+    sim.add_testbench(process)
+    sim.run()
+
+    expected = program + [0] * (16 - len(program))
+    assert captured == expected, (
+        f"ROM contents readback mismatch: expected {expected}, got {captured}"
+    )
+
+
+def test_rom_clamps_oversize_values_to_byte_range():
+    """ROM's constructor should clamp each entry to 0..255 (defensive
+    against renderer-side validation gaps) and pad with zeros. We
+    inspect the normalised contents attribute directly rather than
+    elaborating the block — the test is about the constructor's input
+    sanitiser, not the synthesised memory."""
+    from blocks.rom import ROM
+
+    # Allocate-and-discard pattern fires Amaranth's UnusedElaboratable
+    # warning by default. Suppressing locally rather than instantiating
+    # an enclosing Module just for the assertion.
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=Warning)
+        block = ROM(contents=[300, -5, 200])
+        assert block.contents == [255, 0, 200] + [0] * 13, (
+            f"ROM should clamp 300→255, -5→0, and pad to 16 entries; got {block.contents}"
+        )
+
+
+def test_cpu_accumulator_pipeline_runs(run_synth, wav_samples):
+    """End-to-end smoke: drive a ROM-fed accumulator alongside an idle
+    audio path so the four new primitives elaborate together through the
+    full synth pipeline.
+
+    Layout:
+        Counter.addr-out → ROM.addr
+        ROM.data-out     → Adder.in-a       (per-cycle increment)
+        Register.data-out → Adder.in-b      (running sum)
+        Adder.sum-out    → Register.data-in
+        Gate.gate-out    → Register.write-enable
+        Gate.gate-out    → Counter.clock
+        RAM (unconnected accumulator scratch, also drives the build path)
+        Constant(value=0) → Output.audio-in  (silence — accumulator is
+                                              CPU-domain, no audio path)
+
+    Per-block correctness is asserted by the individual tests above;
+    this test only verifies "all 4 new primitives + the Counter
+    extension instantiate, wire, and run through synth.py without
+    raising." Sample assertion is just "WAV is the expected silence."
+    """
+    graph = {
+        "nodes": [
+            {"id": "g", "type": "gate", "data": {"rate_hz": 100, "duty_pct": 50}},
+            {"id": "cnt", "type": "counter", "data": {"max_value": 16}},
+            {"id": "rom", "type": "rom", "data": {"contents": [1] * 16}},
+            {"id": "add", "type": "adder", "data": {}},
+            {"id": "reg", "type": "register", "data": {}},
+            {"id": "ram", "type": "ram", "data": {}},
+            {"id": "k_audio", "type": "constant", "data": {"value": 0}},
+            _output_node(),
+        ],
+        "edges": [
+            _edge("e1", "g", "cnt", "gate-out", "clock"),
+            _edge("e2", "cnt", "rom", "addr-out", "addr"),
+            _edge("e3", "rom", "add", "data-out", "in-a"),
+            _edge("e4", "reg", "add", "data-out", "in-b"),
+            _edge("e5", "add", "reg", "sum-out", "data-in"),
+            _edge("e6", "g", "reg", "gate-out", "write-enable"),
+            # RAM in the same graph so the build path elaborates all 4
+            # new primitives. Wire it to the accumulator's output so it
+            # can store the running sum at address 0.
+            _edge("e7", "cnt", "ram", "addr-out", "addr"),
+            _edge("e8", "reg", "ram", "data-out", "data-in"),
+            _edge("e9", "g", "ram", "gate-out", "write-enable"),
+            # Silent audio path so the synth pipeline has an Output sink.
+            _edge("e10", "k_audio", "out", "audio-out", "audio-in"),
+        ],
+    }
+    samples = wav_samples(run_synth(graph, duration_s=1))
+    assert all(s == 0 for s in samples), (
+        f"CPU primitives pipeline shouldn't disturb the silent audio path; "
+        f"got non-zero samples: min={min(samples)}, max={max(samples)}"
     )

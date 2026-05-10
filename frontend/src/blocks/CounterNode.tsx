@@ -7,6 +7,7 @@ import {
 } from '@xyflow/react'
 import { useCallback } from 'react'
 import { useValidatedNumber } from './useValidatedNumber'
+import { handleTop } from './handleSpacing'
 
 export type CounterBlock = Node<{ max_value: number }, 'counter'>
 
@@ -49,7 +50,20 @@ export function CounterNode({ id, data }: NodeProps<CounterBlock>) {
           <div className="block-input-error" role="alert" aria-live="polite">{errorMessage}</div>
         )}
       </div>
-      <Handle type="source" position={Position.Right} id="audio-out" aria-label="Audio output" />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="audio-out"
+        aria-label="Audio output"
+        style={{ top: handleTop(0) }}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="addr-out"
+        aria-label="Address output"
+        style={{ top: handleTop(1) }}
+      />
     </div>
   )
 }

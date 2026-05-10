@@ -52,6 +52,10 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'vgaoutput',  label: 'VGA Output', color: '#d81b60', description: 'Visual sink — drives a VGA monitor (iCEBreaker PMOD1B)' },
   { type: 'bussplit',   label: 'Bus Split',  color: '#90a4ae', description: 'Fan one 8-bit bus out to 8 individual 1-bit signals' },
   { type: 'busjoin',    label: 'Bus Join',   color: '#78909c', description: 'Concatenate 8 individual 1-bit signals into one 8-bit bus' },
+  { type: 'adder',      label: 'Adder',      color: '#1976d2', description: 'Combinational 8-bit unsigned add with carry-out' },
+  { type: 'register',   label: 'Register',   color: '#1565c0', description: '8-bit data register with gated write-enable' },
+  { type: 'ram',        label: 'RAM',        color: '#0d47a1', description: '16 × 8-bit synchronous read/write memory' },
+  { type: 'rom',        label: 'ROM',        color: '#283593', description: '16-byte combinational ROM (contents in the block)' },
   { type: 'output',     label: 'Output',     color: '#f44336', description: 'Audio sink (where Play reads from)' },
 ]
 
@@ -92,6 +96,8 @@ export function defaultDataForType(type: string): Record<string, unknown> {
       return { start: 100, end: 200 }
     case 'solidcolor':
       return { color: 'white' }
+    case 'rom':
+      return { contents: Array(16).fill(0) }
     case 'mixer':
     case 'output':
     case 'samplehold':
@@ -106,6 +112,9 @@ export function defaultDataForType(type: string): Record<string, unknown> {
     case 'vgaoutput':
     case 'bussplit':
     case 'busjoin':
+    case 'adder':
+    case 'register':
+    case 'ram':
     default:
       return {}
   }

@@ -109,7 +109,17 @@ Per ADR-002:
 
 ## Sprint Log
 
-> *Filled in as the sprint runs. Currently in flight.*
+| # | Commit | What | Notes |
+|---|---|---|---|
+| - | (uncommitted, staged for review) | S17-1: Counter extension — added `addr-out: addr-u4` second output port wired to the low 4 bits of the internal count. Backend + frontend + registry + test. Existing `audio-out` preserved so saved graphs from earlier alphas keep working. |
+| - | (uncommitted, staged for review) | S17-2: Adder block — combinational 8-bit unsigned add with separate `sum-out: data-u8` and `carry-out: gate-1` outputs. **Scope adjustment from ADR-002:** the ADR originally specified a single 9-bit `sum-out`; the split-shape composes more cleanly with the 8-bit data path the other primitives use (no BusSplit needed to cascade two adders). |
+| - | (uncommitted, staged for review) | S17-3: Register block — single 8-bit register with synchronous write-enable. Adder + Register form the accumulator pattern. |
+| - | (uncommitted, staged for review) | S17-4: RAM block — 16 × 8-bit synchronous read/write memory via `amaranth.lib.memory.Memory` (same primitive Delay uses). Combinational read, gated synchronous write. |
+| - | (uncommitted, staged for review) | S17-5: ROM block — 16-byte combinational ROM with a `contents: number[]` parameter. First block in the library where the parameter is a list; textarea UI with comma-separated parsing + inline validation errors. |
+| - | (uncommitted, staged for review) | S17-6: Worked example `examples/cpu-accumulator.json` — Counter→ROM→Adder→Register loop with a parallel RAM scratchpad. Builds end-to-end on iCEBreaker (104,090-byte bitstream). The audio Output is wired to a silent Constant — the CPU primitives stay CPU-domain in v0.1; Sprint 18+ Reinterpret block can bridge to audio when worth the effort. |
+| - | (uncommitted, staged for review) | S17-7: Doc + test updates — BLOCKS.md "Computation" section (Adder / Register / RAM / ROM + "How these compose" walkthrough), 32 → 36 across README / ROADMAP / CLAUDE / ARCHITECTURE / RELEASE-NOTES / ANNOUNCEMENT-DRAFTS / HACKADAY-WRITEUP. AI prompt registers all 4 new blocks + the Counter.addr-out extension and the canonical "Counter.addr-out → ROM.addr / RAM.addr" pattern. |
+
+**Test counts after S17:** pytest 56 passed + 2 skipped (was 49 + 2); vitest 144 passed (was 136); tsc clean.
 
 ---
 

@@ -919,6 +919,50 @@
   min-width: 130px;
 }
 
+/* CPU primitives (Sprint 17). Cool blue ramp so the four read as a
+   family — distinct from the audio (warm) / visual (purple) / logic
+   (deep blue) / bus (silver) groups already on the canvas. */
+.block-adder {
+  border-color: #1976d2;
+  /* 2 left handles (in-a, in-b) + 2 right handles (sum-out, carry-out)
+     at 24/56 → max bottom ≈ 72. Leave headroom for the title row. */
+  min-height: 110px;
+  min-width: 130px;
+}
+
+.block-register {
+  border-color: #1565c0;
+  /* 2 left handles (data-in, write-enable) + 1 right handle. */
+  min-height: 110px;
+  min-width: 130px;
+}
+
+.block-ram {
+  border-color: #0d47a1;
+  /* 3 left handles (addr, data-in, write-enable) at 24/56/88 +
+     1 right handle. */
+  min-height: 140px;
+  min-width: 130px;
+}
+
+.block-rom {
+  border-color: #283593;
+  /* 1 left handle + 1 right + a textarea for the contents — sized
+     wider than other blocks so 16 comma-separated bytes fit on a few
+     lines without horizontal scroll. */
+  min-width: 200px;
+}
+
+/* ROM contents textarea — wider than the standard block input so the
+   16-byte array stays readable. */
+.block-input-rom {
+  width: 100%;
+  min-height: 60px;
+  resize: vertical;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+}
+
 /* Multi-row parameter blocks (ADSR, Gate, future LPF, etc.) */
 .block-row {
   display: flex;

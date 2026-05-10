@@ -58,6 +58,10 @@ import { PixelRangeNode } from '../src/blocks/PixelRangeNode'
 import { SolidColorNode } from '../src/blocks/SolidColorNode'
 import { BusSplitNode } from '../src/blocks/BusSplitNode'
 import { BusJoinNode } from '../src/blocks/BusJoinNode'
+import { AdderNode } from '../src/blocks/AdderNode'
+import { RegisterNode } from '../src/blocks/RegisterNode'
+import { RAMNode } from '../src/blocks/RAMNode'
+import { ROMNode } from '../src/blocks/ROMNode'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -792,7 +796,7 @@ describe('NotGate block', () => {
 })
 
 describe('Counter block', () => {
-  it('renders title + max_value input with default', () => {
+  it('renders title + max_value input with default + 2 source handles', () => {
     const { container } = wrap(
       <CounterNode {...nodePropsBase('cnt-1')} data={{ max_value: 16 }} />,
     )
@@ -801,7 +805,12 @@ describe('Counter block', () => {
     expect(input?.value).toBe('16')
     expect(input?.getAttribute('aria-label')).toBe('Wrap value (1 to 127)')
     expect(countHandles(container, 'target')).toBe(1)
-    expect(countHandles(container, 'source')).toBe(1)
+    // Sprint 17 / ADR-002: Counter now exposes audio-out + addr-out.
+    expect(countHandles(container, 'source')).toBe(2)
+    const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
+    const ids = Array.from(handles).map((h) => h.getAttribute('data-handleid'))
+    expect(ids).toContain('audio-out')
+    expect(ids).toContain('addr-out')
   })
 
   it('out-of-range max_value (200) shows an error and snaps back on blur', async () => {
@@ -990,5 +999,126 @@ describe('BusJoin block', () => {
     for (let i = 0; i < 8; i++) {
       expect(ids).toContain(`bit-${i}`)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// CPU primitives (Sprint 17, ADR-002): Adder, Register, RAM, ROM.
+// All four follow the 8-file cookbook; ROM is the only one with a
+// parameter, and that parameter is an array (a textarea editor rather
+// than a number input).
+
+describe('Adder block', () => {
+  it('renders title with 2 inputs and 2 outputs, no params', () => {
+    const { container } = wrap(
+      <AdderNode {...nodePropsBase('add-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Adder')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(2)
+    expect(countHandles(container, 'source')).toBe(2)
+    const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
+    const ids = Array.from(handles).map((h) => h.getAttribute('data-handleid'))
+    expect(ids).toContain('in-a')
+    expect(ids).toContain('in-b')
+    expect(ids).toContain('sum-out')
+    expect(ids).toContain('carry-out')
+  })
+})
+
+describe('Register block', () => {
+  it('renders title with 2 inputs and 1 output, no params', () => {
+    const { container } = wrap(
+      <RegisterNode {...nodePropsBase('reg-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Register')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(2)
+    expect(countHandles(container, 'source')).toBe(1)
+    const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
+    const ids = Array.from(handles).map((h) => h.getAttribute('data-handleid'))
+    expect(ids).toContain('data-in')
+    expect(ids).toContain('write-enable')
+    expect(ids).toContain('data-out')
+  })
+})
+
+describe('RAM block', () => {
+  it('renders title with 3 inputs and 1 output, no params', () => {
+    const { container } = wrap(
+      <RAMNode {...nodePropsBase('ram-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('RAM')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(3)
+    expect(countHandles(container, 'source')).toBe(1)
+    const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
+    const ids = Array.from(handles).map((h) => h.getAttribute('data-handleid'))
+    expect(ids).toContain('addr')
+    expect(ids).toContain('data-in')
+    expect(ids).toContain('write-enable')
+    expect(ids).toContain('data-out')
+  })
+})
+
+describe('ROM block', () => {
+  it('renders title + contents textarea with default zeros', () => {
+    const { container } = wrap(
+      <ROMNode
+        {...nodePropsBase('rom-1')}
+        data={{ contents: Array(16).fill(0) }}
+      />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('ROM')
+    // The contents field is a textarea, not an <input type=number>.
+    const ta = container.querySelector<HTMLTextAreaElement>('textarea')
+    expect(ta).not.toBeNull()
+    expect(ta?.value).toBe(
+      '0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0',
+    )
+    expect(countHandles(container, 'target')).toBe(1)
+    expect(countHandles(container, 'source')).toBe(1)
+  })
+
+  it('renders pre-populated contents as comma-separated text', () => {
+    const program = [1, 1, 2, 3, 5, 8, 13, 21]
+    const { container } = wrap(
+      <ROMNode
+        {...nodePropsBase('rom-2')}
+        data={{ contents: program }}
+      />,
+    )
+    const ta = container.querySelector<HTMLTextAreaElement>('textarea')!
+    expect(ta.value).toBe('1, 1, 2, 3, 5, 8, 13, 21')
+  })
+
+  it('typing a non-numeric token surfaces an inline error', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <ROMNode
+        {...nodePropsBase('rom-3')}
+        data={{ contents: Array(16).fill(0) }}
+      />,
+    )
+    const ta = container.querySelector<HTMLTextAreaElement>('textarea')!
+    await user.clear(ta)
+    await user.type(ta, '1, 2, abc')
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(
+      /not a number/,
+    )
+  })
+
+  it('typing an out-of-range value flags the entry', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <ROMNode
+        {...nodePropsBase('rom-4')}
+        data={{ contents: Array(16).fill(0) }}
+      />,
+    )
+    const ta = container.querySelector<HTMLTextAreaElement>('textarea')!
+    await user.clear(ta)
+    await user.type(ta, '1, 2, 300')
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/0.255/)
   })
 })

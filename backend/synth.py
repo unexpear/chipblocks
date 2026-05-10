@@ -117,8 +117,19 @@ def _build_params(node_type: str, data: dict) -> dict:
     elif node_type == "solidcolor":
         if "color" in data:
             params["color"] = str(data["color"])
+    elif node_type == "rom":
+        # First block where the parameter is a list. Renderer hands us
+        # a JSON array of integers; ROM's __init__ clamps each to 0..255
+        # and pads/truncates to 16 entries, so the only job here is to
+        # coerce array-shaped data through to the constructor.
+        contents = data.get("contents", [])
+        if isinstance(contents, list):
+            params["contents"] = [int(v) for v in contents[:16]]
+        else:
+            params["contents"] = []
     # Mixer, Output, SampleAndHold, Noise, Multiply, BusSplit, BusJoin,
-    # and the boolean gates (and / or / xor / not) have no parameters.
+    # Adder, Register, RAM, and the boolean gates (and / or / xor / not)
+    # have no parameters.
     return params
 
 

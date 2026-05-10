@@ -146,11 +146,16 @@ export const BLOCK_PORT_TYPES: Record<string, Record<string, BusType>> = {
   or:          { 'in-1': 'gate-1', 'in-2': 'gate-1', 'gate-out': 'gate-1' },
   xor:         { 'in-1': 'gate-1', 'in-2': 'gate-1', 'gate-out': 'gate-1' },
   not:         { 'gate-in': 'gate-1', 'gate-out': 'gate-1' },
-  // Counter is a logic block but its output is multi-bit (centred 8-bit
-  // signed audio) so it composes with audio-domain blocks. Documented in
+  // Counter is a logic block but exposes two outputs: a centred 8-bit
+  // signed audio sample (composes with audio-domain blocks; the original
+  // S15 shape) and a raw 4-bit unsigned address (Sprint 17, ADR-002, so
+  // the counter can drive RAM/ROM addresses without a bus-conversion
+  // chain). The audio-out is a documented semantic crossing — see
   // KNOWN-ISSUES under "Counter outputs audio-out despite being a logic
-  // block — semantic crossing." Intentional, not a bug.
-  counter:     { 'clock': 'gate-1', 'audio-out': 'audio-s8' },
+  // block." Intentional, not a bug.
+  counter:     { 'clock':     'gate-1',
+                 'audio-out': 'audio-s8',
+                 'addr-out':  'addr-u4' },
 
   // ─── Mixing / routing ──────────────────────────────────────────
   mixer:       { 'in-1': 'audio-s8', 'in-2': 'audio-s8', 'mix-out': 'audio-s8' },
@@ -187,6 +192,24 @@ export const BLOCK_PORT_TYPES: Record<string, Record<string, BusType>> = {
                  'bit-4':  'data-u1', 'bit-5':  'data-u1',
                  'bit-6':  'data-u1', 'bit-7':  'data-u1',
                  'bus-out': 'data-u8' },
+
+  // ─── Computation / CPU primitives (Sprint 17, ADR-002) ─────────
+  // 8-bit unsigned data path + 4-bit unsigned address. Adder's split
+  // sum-out/carry-out shape is documented in adder.py (deviation from
+  // the ADR's single 9-bit sum-out).
+  adder:       { 'in-a':         'data-u8',
+                 'in-b':         'data-u8',
+                 'sum-out':      'data-u8',
+                 'carry-out':    'gate-1' },
+  register:    { 'data-in':      'data-u8',
+                 'write-enable': 'gate-1',
+                 'data-out':     'data-u8' },
+  ram:         { 'addr':         'addr-u4',
+                 'data-in':      'data-u8',
+                 'write-enable': 'gate-1',
+                 'data-out':     'data-u8' },
+  rom:         { 'addr':         'addr-u4',
+                 'data-out':     'data-u8' },
 }
 
 // ---------------------------------------------------------------------------

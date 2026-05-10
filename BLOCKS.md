@@ -1,6 +1,6 @@
 # ChipBlocks block library
 
-> **Last updated:** 2026-05-10 · Reference for the 32 blocks shipping in v0.1.0-alpha. The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). For how the renderer talks to the backend and how to add another block, see [ARCHITECTURE.md](ARCHITECTURE.md).
+> **Last updated:** 2026-05-10 · Reference for the 36 blocks shipping in v0.1.0-alpha. The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). For how the renderer talks to the backend and how to add another block, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 This document describes what each block does, what its inputs and outputs are, what its parameters mean, and roughly how it sounds (or looks). Audio blocks are 8-bit signed (–128..+127) at a 44.1 kHz sample rate. Audio handles carry signed 8-bit samples; gate / clock handles carry 1-bit signals; visual handles are short single-token names (`r`, `g`, `b`, `hsync`, `vsync`, `visible`, `x`, `y`) following the convention used in every open-source VGA core. Edges are direction-checked by React Flow at edit time.
 
@@ -53,6 +53,13 @@ A note on parameter ranges: the React Flow node components enforce **musically s
 - [Pixel Range](#pixel-range)
 - [Solid Color](#solid-color)
 - [VGA Output](#vga-output)
+
+### Computation
+
+- [Adder](#adder)
+- [Register](#register)
+- [RAM](#ram)
+- [ROM](#rom)
 
 ### Bus
 
@@ -399,7 +406,7 @@ Combinational 1-bit inverter.
 
 ### Counter
 
-Wrapping integer counter clocked by a 1-bit signal. Each rising edge of `clock` increments the count; when the count reaches `max_value` it wraps back to 0. The output exposes the count as a centred 8-bit signed sample so it can drive any audio-shaped target.
+Wrapping integer counter clocked by a 1-bit signal. Each rising edge of `clock` increments the count; when the count reaches `max_value` it wraps back to 0. Two outputs: an audio-shaped `audio-out` (count − 64, mapped onto the signed audio bus) and a raw `addr-out` (low 4 bits of the count, as an unsigned address bus) so the Counter can drive ROM or RAM addresses directly.
 
 **Inputs / outputs**
 
@@ -407,6 +414,7 @@ Wrapping integer counter clocked by a 1-bit signal. Each rising edge of `clock` 
 |---|---|---|---|
 | `clock` | target | 1-bit | Rising edge increments the count |
 | `audio-out` | source | signed 8-bit audio | Current count minus 64 |
+| `addr-out` | source | 4-bit unsigned address | Low 4 bits of the raw count — feeds ROM.addr / RAM.addr |
 
 **Parameters**
 
@@ -414,9 +422,12 @@ Wrapping integer counter clocked by a 1-bit signal. Each rising edge of `clock` 
 |---|---|---|---|---|
 | `max_value` | integer | 1–127 / 1–127 | 16 | Wrap point: counter cycles 0, 1, ..., max_value−1, then resets |
 
-**Behavior.** The clock is edge-detected so a held-high clock doesn't continuously increment. Internally the counter is unsigned (0..max_value−1); the output subtracts 64 to map onto the signed −128..+127 audio bus, mirroring the same offset-by-half pattern used in the Sawtooth block.
+**Behavior.** The clock is edge-detected so a held-high clock doesn't continuously increment. Internally the counter is unsigned (0..max_value−1); `audio-out` subtracts 64 to map onto the signed −128..+127 audio bus (mirroring the offset-by-half pattern used in the Sawtooth block), and `addr-out` is a straight bit-slice of the unsigned count — when `max_value ≤ 16` it covers the full 0..15 range a 4-bit address bus encodes.
 
-**Common usage.** Drive a Counter with a slow Gate, run its `audio-out` into a Sample-and-hold's `audio-in`, and clock the S&H from the same Gate to build a stair-step sequencer. Pair with the boolean gates and a Sample-and-hold to build small state machines without leaving the canvas.
+**Common usage.** Two patterns:
+
+- *Stair-step sequencer:* Counter.audio-out → Sample-and-hold.audio-in (clocked by the same Gate that drives Counter.clock) → Output, for a quantized note sequence on the audio bus.
+- *Program-counter for the CPU primitives:* Counter.addr-out → ROM.addr or → RAM.addr, walking the 16-entry memory one cell per clock pulse. This is the canonical way to wire a "program counter" in the Sprint 17 CPU primitive set.
 
 ---
 
@@ -677,6 +688,121 @@ The visual sink. Five inputs (R, G, B, HSYNC, VSYNC) routed to physical FPGA pin
 **Behavior.** No internal logic. The block is a marker that says "route these five 1-bit signals to the VGA pins." `build.py` looks for the presence of a VGA Output node and, when targeting the iCEBreaker, generates extra `set_io` lines in the .pcf binding each signal to its physical PMOD1B pad. The audio ▶ Play path doesn't render visuals: VGA Output blocks elaborate but contribute nothing to the WAV; a graph with VGA Output but no audio Output fails Play with a friendly "🔧 Build → iCEBreaker" hint.
 
 **Common usage.** The destination of every visual graph. Mirror the audio Output's role: the shortest possible useful visual patch is VGA Timing → Color Bars → VGA Output (with the obvious wiring on `x` / `visible` / `hsync` / `vsync`).
+
+---
+
+## Computation
+
+The four CPU primitives — Adder, Register, RAM, ROM — make up a data-path. They work on 8-bit unsigned data (`data-u8`) and 4-bit unsigned addresses (`addr-u4`), so they compose with each other and with Counter's `addr-out` port, but they don't directly drive the audio Output (`audio-s8`). A Sprint 18+ "Reinterpret" block will likely bridge the two for graphs that want to send the accumulator's running sum to the speaker; until then, the CPU-domain patches stay CPU-domain.
+
+v0.1 ships 8-bit data + 4-bit address (16-byte memory). The widths are chosen so the design fits cleanly on a single iCE40 BRAM and the visual canvas stays uncluttered. ADR-002 documents the choice and the Sprint 18+ list of deferred primitives (Subtractor, Comparator, Shifter, Register File, 8-bit address space).
+
+### Adder
+
+Combinational 8-bit unsigned add. Outputs are the 8-bit low byte of the sum plus a 1-bit carry-out signal that fires when the unsigned add overflows past 255.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `in-a` | target | 8-bit unsigned data | First operand |
+| `in-b` | target | 8-bit unsigned data | Second operand |
+| `sum-out` | source | 8-bit unsigned data | Low 8 bits of `in_a + in_b` |
+| `carry-out` | source | 1-bit | Set when the sum overflows past 255 |
+
+**Parameters.** None.
+
+**Behavior.** Pure combinational. The 9-bit intermediate is split into the 8-bit sum and the 1-bit carry so the sum can flow into another 8-bit-input block (Register, RAM, another Adder) without truncation, while the carry stays available on its own gate-1 line for cascading or overflow indicators. Yosys collapses the `+` into a ripple-carry chain that maps onto iCE40's `SB_CARRY` cells.
+
+> **Scope note.** [ADR-002](ADR-002-cpu-primitives.md) originally specified a single 9-bit `sum-out` port. The split-shape lands in v0.1 because it composes more cleanly with the 8-bit data path the other CPU primitives use — pure-9-bit output would have required a BusSplit on every cascade.
+
+**Common usage.** Pair with Register for the canonical accumulator pattern: Constant or ROM source → Adder.in-a; Register.data-out → Adder.in-b; Adder.sum-out → Register.data-in; Gate → Register.write-enable. Each pulse adds the source to the running sum. The carry-out can drive a status LED via BusSplit, or feed the carry-in of a wider add chain (Sprint 18+ when wider Adders exist).
+
+### Register
+
+Single 8-bit data register with synchronous write-enable. The store latches `data-in` on the clock edge whenever `write-enable` is high; otherwise it holds its current value.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `data-in` | target | 8-bit unsigned data | Value to latch |
+| `write-enable` | target | 1-bit gate | High = capture data-in on the next edge |
+| `data-out` | source | 8-bit unsigned data | The currently-stored value |
+
+**Parameters.** None.
+
+**Behavior.** Synchronous. On reset the store is zero. While write-enable is low the output holds whatever was last latched indefinitely.
+
+**Common usage.** The Adder + Register accumulator pattern described above. Also useful as a "remember the last computed value" element wherever the rest of the graph needs to refer back to it — feed the output back through a Multiplexer-equivalent (built from boolean gates + BusJoin in v0.1) for a tiny scratchpad.
+
+### RAM
+
+16-byte synchronous read/write memory. 4-bit address selects one of 16 cells; combinational read on the current address (so reads come back the same cycle the address is presented); synchronous write gated by `write-enable`.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `addr` | target | 4-bit unsigned address | Selects cell 0..15 |
+| `data-in` | target | 8-bit unsigned data | Value to write |
+| `write-enable` | target | 1-bit gate | High = write data-in to cell `addr` on the next edge |
+| `data-out` | source | 8-bit unsigned data | Combinational read of cell `addr` |
+
+**Parameters.** None.
+
+**Behavior.** Backed by `amaranth.lib.memory.Memory` (the same primitive Delay uses) zero-initialized at reset. Both write and read share the address port; on iCE40 the 16 × 8-bit array maps to a single BRAM (0.4% of one 4 KB block).
+
+**Common usage.** Drive `addr` from Counter.addr-out so the RAM walks through 16 cells on a clock tick. Pair the write side with a Gate on `write-enable` to log values into successive cells; flip write-enable low and the same address sweep reads them back. The scratchpad half of the "ROM holds the program, RAM holds the working data" CPU pattern.
+
+### ROM
+
+16-byte combinational read-only memory. The `contents` parameter is a list of 16 integers (each 0..255), edited as comma-separated values in a textarea on the block. No write port — drive `addr` to read.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `addr` | target | 4-bit unsigned address | Selects cell 0..15 |
+| `data-out` | source | 8-bit unsigned data | Combinational read of `contents[addr]` |
+
+**Parameters**
+
+| Name | Type | Range | Default | What it does |
+|---|---|---|---|---|
+| `contents` | list of integers | 16 entries, each 0..255 | `[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]` | The byte stored at each address |
+
+The textarea accepts comma-separated values. Missing entries are zero-padded to 16; extra entries are truncated; out-of-range entries are clamped to 0..255 by the backend. The contents round-trip through Save/Load as a JSON array.
+
+> **Scope note.** ROM is the first block in the library where the parameter is a list rather than a scalar. The textarea approach is deliberately simple; per-cell numeric inputs (16 individual fields) were considered and rejected because they're visually heavy and the comma-separated form is hand-editable and AI-tool-call-friendly.
+
+**Behavior.** Combinational lookup against a Memory initialised at construction time from the contents. Yosys recognises constant-init memories and instances a single BRAM for the data.
+
+**Common usage.** The "program" half of the CPU pattern. Wire Counter.addr-out → ROM.addr to step through the 16 bytes; ROM.data-out is your per-cycle byte, which feeds an Adder (for an accumulator), a Bus Split (for "drive an LED off bit N"), or any other 8-bit-input block. The canonical worked example is `examples/cpu-accumulator.json` (Load → Examples → CPU accumulator) — a ROM holding the first 8 Fibonacci numbers, fed into an Adder + Register accumulator and a parallel RAM scratchpad.
+
+### How these compose
+
+The `examples/cpu-accumulator.json` graph wires all four primitives plus the Counter extension into a single data-path:
+
+```
+Gate (100 Hz) ──► Counter.clock
+                  Counter.addr-out ─┬─► ROM.addr
+                                    └─► RAM.addr
+
+ROM (Fibonacci) ─► Adder.in-a
+Register.data-out ► Adder.in-b
+Adder.sum-out ───► Register.data-in
+Gate.gate-out ───► Register.write-enable
+                   Register.data-out ─► RAM.data-in
+                                        RAM.write-enable ◄─ Gate.gate-out
+```
+
+Each clock pulse:
+1. The Counter advances by 1, presenting the new address to ROM and RAM.
+2. ROM emits the byte at that address; the Adder adds it to the running sum stored in the Register.
+3. On the same clock edge, the Register latches the new sum, and RAM writes the previous-cycle sum into the cell at the new address.
+
+The audio Output in the example is wired to a silent Constant(0) — Sprint 17 deliberately keeps the CPU primitives CPU-domain. A Sprint 18+ Reinterpret block (or a Subtractor + bias-correction) will let the accumulator's running sum drive a speaker.
 
 ---
 
