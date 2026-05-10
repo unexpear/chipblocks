@@ -73,7 +73,7 @@ export function FmNode({ id, data }: NodeProps<FmBlock>) {
       <h3 id={titleId} className="block-title">FM</h3>
       <div className="block-body">
         <FieldRow
-          label="C"
+          label="Carr"
           ariaLabel="Carrier frequency in hertz"
           suffix="Hz"
           min={20}
@@ -82,7 +82,7 @@ export function FmNode({ id, data }: NodeProps<FmBlock>) {
           commit={commitCarrier}
         />
         <FieldRow
-          label="M"
+          label="Mod"
           ariaLabel="Modulator frequency in hertz"
           suffix="Hz"
           min={20}
@@ -91,7 +91,7 @@ export function FmNode({ id, data }: NodeProps<FmBlock>) {
           commit={commitModulator}
         />
         <FieldRow
-          label="D"
+          label="Depth"
           ariaLabel="Modulation depth (0 to 127)"
           suffix=""
           min={0}

@@ -41,7 +41,7 @@ export function PixelRangeNode({ id, data }: NodeProps<PixelRangeBlock>) {
       <h3 id={titleId} className="block-title">Pixel Range</h3>
       <div className="block-body">
         <div className="block-row">
-          <span className="block-label">a</span>
+          <span className="block-label">start</span>
           <input
             type="number"
             className={`block-input block-input-narrow${startField.isInvalid ? ' block-input-invalid' : ''}`}
@@ -58,7 +58,7 @@ export function PixelRangeNode({ id, data }: NodeProps<PixelRangeBlock>) {
           />
         </div>
         <div className="block-row">
-          <span className="block-label">b</span>
+          <span className="block-label">end</span>
           <input
             type="number"
             className={`block-input block-input-narrow${endField.isInvalid ? ' block-input-invalid' : ''}`}

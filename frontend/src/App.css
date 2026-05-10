@@ -792,7 +792,7 @@
 
 .block-adsr {
   border-color: #ff9800;
-  min-width: 140px;
+  min-width: 150px;
 }
 
 .block-gate {
@@ -826,7 +826,7 @@
 
 .block-fm {
   border-color: #e91e63;
-  min-width: 140px;
+  min-width: 150px;
 }
 
 .block-multiply {
@@ -1003,7 +1003,12 @@
 }
 
 .block-label {
-  width: 1.2em;
+  /* Min-width fits 3-char labels ("Atk", "Dec", "Sus", "Rel", "Mod",
+   * "end") at the 0.8rem font size; longer labels like "Carr",
+   * "Depth", "start" grow the cell out to fit their content rather
+   * than getting clipped. Right-aligned so the input columns line up
+   * across rows regardless of label length. */
+  min-width: 3.2em;
   text-align: right;
   color: #aaa;
   font-size: 0.8rem;
@@ -1083,6 +1088,26 @@
 
 @keyframes cf-spin {
   to { transform: rotate(360deg); }
+}
+
+/* Compact volume slider sits next to ▶ Play. Default 50% gives the
+ * user a gentle starting amplitude — first Play on a square-wave-heavy
+ * graph used to be a sudden-onset full-amplitude jolt. */
+.toolbar-volume {
+  width: 80px;
+  margin: 0 0.25rem;
+  accent-color: #4caf50;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+/* Persistent last-build status line, anchored to the toolbar end so
+ * a slow-reading user can still see the result after clicking elsewhere. */
+.toolbar-last-build {
+  font-size: 0.75rem;
+  color: #888;
+  margin-right: 0.5rem;
+  white-space: nowrap;
 }
 
 /* Cancel button — colored differently from the regular toolbar buttons */
@@ -1181,5 +1206,23 @@
   to {
     transform: translateX(-50%);
     opacity: 1;
+  }
+}
+
+/* Respect the user's reduced-motion preference. WCAG 2.3.3 + autistic
+ * / vestibular users need a system-level opt-out for the spinner, the
+ * blinking chat cursor, and the toast slide-in. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner,
+  .chat-cursor,
+  .error-toast {
+    animation: none !important;
+  }
+  /* Also slow any transition durations to instant */
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
   }
 }

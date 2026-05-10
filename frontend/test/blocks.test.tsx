@@ -511,6 +511,20 @@ describe('ADSR block', () => {
     await user.tab()
     expect(sustainInput.value).toBe('80')
   })
+
+  // Regression-guard: LD audit (2026-05-10) replaced the A/D/S/R
+  // single-letter labels with 3-char expansions. Any agent that flips
+  // back to single letters must update both this test and the audit.
+  it('uses 3-char Atk/Dec/Sus/Rel labels (not A/D/S/R)', () => {
+    const { container } = wrap(
+      <ADSRNode
+        {...nodePropsBase('adsr-labels')}
+        data={{ attack_ms: 10, decay_ms: 100, sustain_level: 80, release_ms: 200 }}
+      />,
+    )
+    const labels = Array.from(container.querySelectorAll('.block-label')).map((el) => el.textContent)
+    expect(labels).toEqual(['Atk', 'Dec', 'Sus', 'Rel'])
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -609,6 +623,19 @@ describe('FM block', () => {
     await user.type(depth, '200')
     expect(depth.value).toBe('200')
     expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/0.*127/)
+  })
+
+  // Regression-guard: LD audit (2026-05-10) replaced the C/M/D
+  // single-letter labels with word expansions ("Carr"/"Mod"/"Depth").
+  it('uses Carr/Mod/Depth labels (not C/M/D)', () => {
+    const { container } = wrap(
+      <FmNode
+        {...nodePropsBase('fm-labels')}
+        data={{ carrier_freq: 440, modulator_freq: 110, mod_depth: 64 }}
+      />,
+    )
+    const labels = Array.from(container.querySelectorAll('.block-label')).map((el) => el.textContent)
+    expect(labels).toEqual(['Carr', 'Mod', 'Depth'])
   })
 })
 
@@ -944,6 +971,17 @@ describe('PixelRange block', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/0.*639/)
     await user.tab()
     expect(startInput.value).toBe('100')
+  })
+
+  // Regression-guard: LD audit (2026-05-10) replaced the a/b labels
+  // with start/end so working-memory users don't have to recall which
+  // letter is which after a context-switch.
+  it('uses start/end labels (not a/b)', () => {
+    const { container } = wrap(
+      <PixelRangeNode {...nodePropsBase('pr-labels')} data={{ start: 100, end: 200 }} />,
+    )
+    const labels = Array.from(container.querySelectorAll('.block-label')).map((el) => el.textContent)
+    expect(labels).toEqual(['start', 'end'])
   })
 })
 

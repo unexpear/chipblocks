@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -28,6 +28,31 @@ import './App.css'
 const SAVE_VERSION = 1
 const APP_NAME = 'ChipBlocks'
 const STARTER_HINT_KEY = 'chipblocks:starterHintDismissed'
+const AUDIO_VOLUME_KEY = 'chipblocks:audio-volume'
+const LAST_BUILD_KEY = 'chipblocks:last-build-result'
+const DEFAULT_VOLUME_PCT = 50
+
+function readStoredVolume(): number {
+  if (typeof window === 'undefined') return DEFAULT_VOLUME_PCT
+  try {
+    const raw = window.localStorage.getItem(AUDIO_VOLUME_KEY)
+    if (raw === null) return DEFAULT_VOLUME_PCT
+    const parsed = Number(raw)
+    if (!Number.isFinite(parsed)) return DEFAULT_VOLUME_PCT
+    return Math.max(0, Math.min(100, Math.round(parsed)))
+  } catch {
+    return DEFAULT_VOLUME_PCT
+  }
+}
+
+function readStoredLastBuild(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return window.localStorage.getItem(LAST_BUILD_KEY)
+  } catch {
+    return null
+  }
+}
 
 interface BuildTargetOption {
   id: BuildTarget
@@ -297,6 +322,17 @@ function AppContent() {
   const [showStarterHint, setShowStarterHint] = useState(
     () => typeof window !== 'undefined' && !window.localStorage.getItem(STARTER_HINT_KEY),
   )
+  // Audio output volume (0-100). Defaults to 50 so the first Play
+  // isn't a sudden-onset 8-bit square wave at full amplitude — gentler
+  // for autistic / startle-prone users. Persisted to localStorage so
+  // the user's chosen level survives a reload.
+  const [volumePct, setVolumePct] = useState<number>(() => readStoredVolume())
+  // Last-build status: a persistent companion to the transient
+  // statusMessage. statusMessage is cleared by any subsequent action,
+  // which a slow-reading user might miss; lastBuildResult mirrors a
+  // successful build's status and stays visible across actions, and
+  // survives a reload via localStorage.
+  const [lastBuildResult, setLastBuildResult] = useState<string | null>(() => readStoredLastBuild())
 
   const { getViewport, setViewport, screenToFlowPosition, getNodes } = useReactFlow()
 
@@ -395,6 +431,16 @@ function AppContent() {
     }
   }, [])
 
+  const handleVolumeChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    const next = Math.max(0, Math.min(100, Number(e.target.value) || 0))
+    setVolumePct(next)
+    try {
+      window.localStorage.setItem(AUDIO_VOLUME_KEY, String(next))
+    } catch {
+      // localStorage unavailable — slider still works for the current session.
+    }
+  }, [])
+
   const loadExample = (ex: ExampleGraph) => {
     setNodes(ex.nodes)
     setEdges(ex.edges)
@@ -427,6 +473,15 @@ function AppContent() {
     a.download = 'chipblocks-graph.json'
     a.click()
     URL.revokeObjectURL(url)
+    // Visual confirmation that the save actually fired. Auto-clears
+    // after 4 s; slow-processing users at least see *something*
+    // happened beyond the browser's download bar.
+    setStatusMessage('Saved as chipblocks-graph.json')
+    window.setTimeout(() => {
+      setStatusMessage((curr) =>
+        curr === 'Saved as chipblocks-graph.json' ? null : curr,
+      )
+    }, 4000)
   }
 
   const handleLoad = () => {
@@ -489,6 +544,10 @@ function AppContent() {
       const blob = new Blob([result.wavData], { type: 'audio/wav' })
       const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
+      // Default 50% volume gives the user a comfortable starting level;
+      // the slider in the toolbar lets them dial it up/down per their
+      // hearing + speaker setup.
+      audio.volume = Math.max(0, Math.min(1, volumePct / 100))
       audio.addEventListener('ended', () => {
         URL.revokeObjectURL(url)
         setStatusMessage(null)
@@ -564,7 +623,19 @@ function AppContent() {
       a.click()
       URL.revokeObjectURL(url)
       const sizeKb = (result.zipData.byteLength / 1024).toFixed(1)
-      setStatusMessage(target.id === 'tt' ? `Submission ready (${sizeKb} KB)` : `Bitstream ready (${sizeKb} KB)`)
+      const buildSummary = target.id === 'tt'
+        ? `Submission ready (${sizeKb} KB)`
+        : `Bitstream ready (${sizeKb} KB)`
+      setStatusMessage(buildSummary)
+      // Mirror the build outcome into the persistent slot so a slow-
+      // reading user can still see the size after their next click.
+      const persistentLine = `Last build: ${buildSummary}`
+      setLastBuildResult(persistentLine)
+      try {
+        window.localStorage.setItem(LAST_BUILD_KEY, persistentLine)
+      } catch {
+        // localStorage unavailable — line still shows until reload.
+      }
     } catch (err) {
       setStatusMessage(null)
       setErrorToast(`Build failed: ${(err as Error).message}`)
@@ -685,6 +756,11 @@ function AppContent() {
       <div className="toolbar">
         <span className="app-title">ChipBlocks</span>
         <span className="toolbar-spacer" />
+        {lastBuildResult && !isPlaying && !isBuilding && (
+          <span className="toolbar-last-build" title="Most recent build result — persists across actions">
+            {lastBuildResult}
+          </span>
+        )}
         {(isPlaying || isBuilding) && (
           <>
             <span className="spinner" aria-label={isBuilding ? 'Building' : 'Synthesizing'} />
@@ -701,6 +777,17 @@ function AppContent() {
           <span className="toolbar-status" role="status" aria-live="polite">{statusMessage}</span>
         )}
         <button onClick={handlePlay} disabled={isPlaying || isBuilding}>▶ Play</button>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={volumePct}
+          onChange={handleVolumeChange}
+          className="toolbar-volume"
+          aria-label="Audio output volume"
+          title={`Audio output volume (${volumePct}%)`}
+        />
         <div className="toolbar-dropdown-anchor">
           <button
             onClick={() => setBuildMenuOpen((v) => !v)}

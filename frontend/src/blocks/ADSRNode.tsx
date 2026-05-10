@@ -81,7 +81,7 @@ export function ADSRNode({ id, data }: NodeProps<ADSRBlock>) {
       <h3 id={titleId} className="block-title">ADSR</h3>
       <div className="block-body">
         <FieldRow
-          label="A"
+          label="Atk"
           ariaLabel="Attack milliseconds"
           suffix="ms"
           min={1}
@@ -90,7 +90,7 @@ export function ADSRNode({ id, data }: NodeProps<ADSRBlock>) {
           commit={commitAttack}
         />
         <FieldRow
-          label="D"
+          label="Dec"
           ariaLabel="Decay milliseconds"
           suffix="ms"
           min={1}
@@ -99,7 +99,7 @@ export function ADSRNode({ id, data }: NodeProps<ADSRBlock>) {
           commit={commitDecay}
         />
         <FieldRow
-          label="S"
+          label="Sus"
           ariaLabel="Sustain level (0 to 127)"
           suffix=""
           min={0}
@@ -108,7 +108,7 @@ export function ADSRNode({ id, data }: NodeProps<ADSRBlock>) {
           commit={commitSustain}
         />
         <FieldRow
-          label="R"
+          label="Rel"
           ariaLabel="Release milliseconds"
           suffix="ms"
           min={1}
