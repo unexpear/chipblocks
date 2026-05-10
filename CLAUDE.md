@@ -123,7 +123,7 @@ chipzzzd/
 - [SPRINT-13.md](SPRINT-13.md) — closed sprint plan + log + retro (Bitcrusher + Delay + CONTRIBUTING.md)
 - [SPRINT-14.md](SPRINT-14.md) — closed sprint plan + log + retro (architectural hygiene + a11y backport — 6 commits across the 4 backend P0 + 2 frontend P1 items)
 - [SPRINT-16.md](SPRINT-16.md) — closed sprint plan + log + retro (ADR-001 implementation: typed bus system + BusSplit/BusJoin; 5 of 7 planned items shipped, 2 deferred per mid-sprint tech-debt prioritization)
-- [SPRINT-17.md](SPRINT-17.md) — **open sprint plan** (ADR-002 implementation: 4 CPU primitives — Adder, Register, RAM, ROM — at 8-bit data + 4-bit address; Counter extension for raw addr-out)
+- [SPRINT-17.md](SPRINT-17.md) — closed sprint plan + log + retro (ADR-002 implementation: 4 CPU primitives + Counter extension; single-shot agent dispatch, all 7 tasks in one commit; surfaced the data-u8 ↔ audio-s8 bridge gap as Sprint 18 candidate)
 - [ADR-001-multi-bit-bus-types.md](ADR-001-multi-bit-bus-types.md) — first ADR. Typed bus system for CPU/data-path expansion. New project pattern: ADR-NNN-<topic>.md at repo root for cross-cutting decisions. **Status: Accepted, implemented in Sprint 16.**
 - [ADR-002-cpu-primitives.md](ADR-002-cpu-primitives.md) — CPU primitive block set + ROM loading mechanism for Sprint 17. **Status: Accepted, in implementation.** 4 new blocks (Adder, Register, RAM, ROM) at 8-bit data + 4-bit address; Counter extension for `addr-u4` output.
 - [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — deferred-issue tracker (npm audit, etc.)

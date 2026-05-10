@@ -2,7 +2,7 @@
 
 > **Solo dev + Claude Code** · Drafted + opened 2026-05-10 · Successor to [SPRINT-16.md](SPRINT-16.md) · Operational source: [ADR-002-cpu-primitives.md](ADR-002-cpu-primitives.md) (Accepted 2026-05-10)
 
-**Status:** **OPEN — in flight 2026-05-10.**
+**Status:** **CLOSED 2026-05-10.** All 7 planned tasks shipped in a single commit (`00a2902`). Sprint 17 was a single-shot agent dispatch — the 8-files-per-block cookbook is well-established enough that 4 new blocks + 1 Counter extension + worked example + doc updates landed cleanly without per-task commits. v0.1.0-alpha.6 release tag follows.
 
 **Sprint Goal:** *Ship the 4 minimum-viable CPU primitives from ADR-002 — Adder, Register, RAM, ROM — at 8-bit data + 4-bit address. Block count 32 → 36. Plus a small Counter extension that exposes a raw `addr-u4` output (not just the centred 8-bit audio output it already has) so Counter can address ROM/RAM directly without a bus-conversion chain. After this sprint, a user can drag the 4 new primitives onto the canvas and wire a sequencer/lookup-table-style design that elaborates end-to-end on iCEBreaker.*
 
