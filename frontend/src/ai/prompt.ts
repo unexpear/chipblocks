@@ -198,6 +198,24 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual b
 
 - **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`distortion\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`, \`vgatiming\`, \`colorbars\`, \`pixelrange\`, \`solidcolor\`, \`vgaoutput\`, \`bussplit\`, \`busjoin\`.
 - **Port handle ids** are kebab-case for audio/gate signals (\`audio-out\`, \`audio-in\`, \`gate-out\`, \`gate-in\`, \`mix-out\`, \`in-1\`, \`in-2\`). Control signals are unhyphenated: \`gate\` (an ADSR input), \`clock\` (a samplehold / counter input). VGA handles are short single-token names (\`r\`, \`g\`, \`b\`, \`hsync\`, \`vsync\`, \`visible\`, \`x\`, \`y\`, \`pixel\`, \`inside\`) — same convention used in every open-source VGA core. Bus blocks use \`bus-in\` / \`bus-out\` for the wide port and \`bit-0\` … \`bit-7\` for the per-bit ports.
+
+# Connection rules (bus types)
+
+Every port carries a typed bus. The renderer rejects edges with mismatched bus types both at drag time and at Load time, so an \`add_edge\` tool call that violates these rules fails — picking compatible ports up front avoids the rework. Rules per [ADR-001](ADR-001-multi-bit-bus-types.md):
+
+- **gate-1**: 1-bit gate / clock / sync / pulse. Used by gate.gate-out, hsync, vsync, visible, ADSR.gate, samplehold.clock, counter.clock, AND/OR/XOR/NOT inputs and outputs, vgaoutput.hsync/vsync, colorbars.r/g/b, solidcolor.r/g/b, pixelrange.inside, vgaoutput.r/g/b, vgatiming.hsync/vsync/visible.
+- **audio-s8**: 8-bit signed audio sample (–128..+127). Used by every audio block's \`audio-out\` / \`audio-in\` / \`mix-out\`, the multiply block's \`in-1\` / \`in-2\`, the counter's \`audio-out\` (centred 8-bit), and Output's \`audio-in\`.
+- **pixel-u10**: 10-bit unsigned VGA coordinate (0..1023). Used by vgatiming.x/y, colorbars.x, pixelrange.pixel.
+- **data-u8** / **data-u1**: generic 8-bit and 1-bit unsigned. Used by bussplit.bus-in (data-u8) → 8 × bit-N (data-u1 each); busjoin is the reverse.
+
+Compatibility rules:
+- Same type both sides → connect.
+- gate-1 ↔ data-u1 → connect (1-bit unsigned special case).
+- Different widths → reject. Re-route through bussplit (one wide → 8 × 1-bit) or busjoin (8 × 1-bit → one wide).
+- Different sign (e.g. \`audio-s8\` ↔ \`data-u8\`) → reject.
+- Semantic-vs-generic same width + sign (e.g. \`audio-s8\` → \`data-s8\`) → connects but the renderer styles the edge dashed as a soft "are you sure?" cue.
+
+Concretely, the most common AI-suggested patches stay inside the audio domain (audio-s8 → audio-s8) or inside the visual domain (pixel-u10 → pixel-u10, gate-1 → gate-1), so the rules rarely trip a synth-style suggestion. They matter when the user asks for cross-domain logic (e.g. "drive an LED off bit 3 of an 8-bit counter" → use bussplit between the wide source and the 1-bit destination).
 - **Block parameters** are snake_case: \`freq\`, \`attack_ms\`, \`decay_ms\`, \`sustain_level\`, \`release_ms\`, \`rate_hz\`, \`duty_pct\`, \`cutoff_hz\` (lowpass + highpass), \`center_hz\` (bandpass), \`value\`, \`carrier_freq\`, \`modulator_freq\`, \`mod_depth\`, \`shape\`, \`bits\`, \`delay_samples\`, \`threshold\` (distortion), \`max_value\` (counter), \`start\` / \`end\` (pixelrange), \`color\` (solidcolor). (\`shape\` and \`color\` are string-enums; all others are integers.) The vgatiming, colorbars, and vgaoutput visual blocks have no parameters.
 
 # Save format
