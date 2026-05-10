@@ -190,3 +190,78 @@ export function getPortBusType(
   if (!nodeType || !handleId) return undefined
   return BLOCK_PORT_TYPES[nodeType]?.[handleId]
 }
+
+// ---------------------------------------------------------------------------
+// Compatibility helper — implements the connection rules from ADR-001
+// ---------------------------------------------------------------------------
+//
+// Returns:
+//   'compatible'     - Edge draws normally. Same name on both sides, OR
+//                      generic-to-generic with matching width and sign,
+//                      OR the gate-1 ↔ data-u1 special case (both are
+//                      1-bit unsigned and functionally interchangeable).
+//
+//   'semantic-cross' - Edge is allowed but the renderer should style it
+//                      dashed (Sprint 16 S16-3). One side is a semantic
+//                      type (audio-s8 / pixel-u10) and the other is the
+//                      generic equivalent (data-s8 / data-u10) — usually
+//                      intentional but worth flagging. Also covers
+//                      address-bus aliases: addr-uN ↔ data-uN at the
+//                      same width is semantic-cross.
+//
+//   'incompatible'   - Edge is rejected. Width mismatch, sign mismatch,
+//                      or no overlap between the two types' meanings.
+//
+// React Flow's isValidConnection callback (App.tsx S16-2) treats
+// 'incompatible' as a hard reject and surfaces a friendly toast.
+// 'compatible' and 'semantic-cross' both let the edge through; the
+// visual distinction lands in S16-3.
+
+export type CompatResult = 'compatible' | 'semantic-cross' | 'incompatible'
+
+// Sign extraction. Used internally to compare two BusTypes.
+//   gate-1 -> 'g' (1-bit gate; functionally unsigned but tagged distinctly)
+//   data-uN / pixel-u10 / addr-uN -> 'u'
+//   data-sN / audio-s8 -> 's'
+function busSign(t: BusType): 'g' | 'u' | 's' {
+  if (t === 'gate-1') return 'g'
+  // The character before the trailing digits is the sign marker.
+  const m = t.match(/([usg])(\d+)$/)
+  if (!m) throw new Error(`BusType missing sign: ${t}`)
+  const ch = m[1]
+  return ch === 's' ? 's' : 'u'
+}
+
+// Is this a semantic (domain-tagged) type, or a generic data/addr/gate?
+function isSemantic(t: BusType): boolean {
+  return t === 'gate-1' || t === 'audio-s8' || t === 'pixel-u10'
+}
+
+export function arePortTypesCompatible(source: BusType, target: BusType): CompatResult {
+  if (source === target) return 'compatible'
+
+  // gate-1 ↔ data-u1 special case: both are 1-bit unsigned and
+  // functionally interchangeable. Treat as fully compatible (not
+  // semantic-cross — the gate semantic doesn't add information at
+  // 1-bit beyond what data-u1 already carries).
+  if (
+    (source === 'gate-1' && target === 'data-u1') ||
+    (source === 'data-u1' && target === 'gate-1')
+  ) {
+    return 'compatible'
+  }
+
+  // Width mismatch is always incompatible. Use BusSplit / BusJoin.
+  if (busWidth(source) !== busWidth(target)) return 'incompatible'
+
+  // Sign-class mismatch is incompatible — different number ranges.
+  if (busSign(source) !== busSign(target)) return 'incompatible'
+
+  // Same width + same sign-class. If neither side is semantic, the two
+  // generics are interchangeable — clean compatible.
+  if (!isSemantic(source) && !isSemantic(target)) return 'compatible'
+
+  // One side is semantic, one is generic. Allowed but flagged so the
+  // renderer can dash the edge as a soft "are you sure?" cue.
+  return 'semantic-cross'
+}

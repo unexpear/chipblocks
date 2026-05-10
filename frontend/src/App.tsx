@@ -14,6 +14,7 @@ import {
   type Viewport,
 } from '@xyflow/react'
 import { nodeTypes, type AppNode } from './blocks'
+import { arePortTypesCompatible, getPortBusType, busWidth } from './blocks/busTypes'
 import { Chat, type CanvasActions } from './Chat'
 import { SettingsModal } from './SettingsModal'
 import { AboutModal } from './AboutModal'
@@ -314,6 +315,47 @@ function AppContent() {
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
     [setEdges],
+  )
+
+  // Edge validation per ADR-001. React Flow calls this during the drag
+  // gesture and on connect-attempt; returning false aborts the edge and
+  // gives the user immediate feedback. We surface a friendly toast on
+  // rejection so the failure mode isn't "edge silently disappeared."
+  const isValidConnection = useCallback(
+    (conn: Connection | Edge) => {
+      const sourceNode = nodes.find((n) => n.id === conn.source)
+      const targetNode = nodes.find((n) => n.id === conn.target)
+      const sourceType = getPortBusType(sourceNode?.type, conn.sourceHandle)
+      const targetType = getPortBusType(targetNode?.type, conn.targetHandle)
+      // Unknown port (block missing from BLOCK_PORT_TYPES, or stale handle id)
+      // is an architectural error — block adders should keep the registry in
+      // sync. Reject defensively rather than silently allow.
+      if (!sourceType || !targetType) {
+        setErrorToast(
+          'This connection references a port the renderer does not recognise. ' +
+          'If you saved this graph before upgrading, try recreating it. ' +
+          'Otherwise this is an internal error worth reporting.',
+        )
+        setErrorToastType(null)
+        return false
+      }
+      const compat = arePortTypesCompatible(sourceType, targetType)
+      if (compat === 'incompatible') {
+        const sw = busWidth(sourceType)
+        const tw = busWidth(targetType)
+        const reason = sw !== tw
+          ? `${sw}-bit ${sourceType} cannot connect to ${tw}-bit ${targetType}.`
+          : `${sourceType} and ${targetType} have different sign or domain.`
+        setErrorToast(
+          `${reason} Use a BusSplit (one wide bus → many 1-bit) or BusJoin ` +
+          '(many 1-bit → one wide bus) to convert.',
+        )
+        setErrorToastType(null)
+        return false
+      }
+      return true
+    },
+    [nodes],
   )
 
   const dismissStarterHint = useCallback(() => {
@@ -733,6 +775,7 @@ function AppContent() {
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
+              isValidConnection={isValidConnection}
               colorMode="dark"
               fitView
             >
