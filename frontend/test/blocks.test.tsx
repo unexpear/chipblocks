@@ -62,6 +62,10 @@ import { AdderNode } from '../src/blocks/AdderNode'
 import { RegisterNode } from '../src/blocks/RegisterNode'
 import { RAMNode } from '../src/blocks/RAMNode'
 import { ROMNode } from '../src/blocks/ROMNode'
+import { ReinterpretNode } from '../src/blocks/ReinterpretNode'
+import { SubtractorNode } from '../src/blocks/SubtractorNode'
+import { ComparatorNode } from '../src/blocks/ComparatorNode'
+import { MuxNode } from '../src/blocks/MuxNode'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1120,5 +1124,93 @@ describe('ROM block', () => {
     await user.clear(ta)
     await user.type(ta, '1, 2, 300')
     expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/0.255/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Sprint 18 primitives — Reinterpret / Subtractor / Comparator / Mux. All
+// parameter-less; Subtractor mirrors Adder's split shape, Comparator emits
+// three flag projections, Mux picks one of two 8-bit values per select,
+// Reinterpret bridges data-u8 to audio-s8 with no inputs/outputs other
+// than the rename.
+
+describe('Reinterpret block', () => {
+  it('renders title with 1 input and 1 output, no params', () => {
+    const { container } = wrap(
+      <ReinterpretNode {...nodePropsBase('ri-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Reinterpret')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(1)
+    expect(countHandles(container, 'source')).toBe(1)
+    const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
+    const ids = Array.from(handles).map((h) => h.getAttribute('data-handleid'))
+    expect(ids).toContain('data-in')
+    expect(ids).toContain('audio-out')
+  })
+})
+
+describe('Subtractor block', () => {
+  it('renders title with 2 inputs and 2 outputs, no params', () => {
+    const { container } = wrap(
+      <SubtractorNode {...nodePropsBase('sub-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Subtractor')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(2)
+    expect(countHandles(container, 'source')).toBe(2)
+    const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
+    const ids = Array.from(handles).map((h) => h.getAttribute('data-handleid'))
+    expect(ids).toContain('in-a')
+    expect(ids).toContain('in-b')
+    expect(ids).toContain('diff-out')
+    expect(ids).toContain('borrow-out')
+  })
+
+  it('every handle has an aria-label', () => {
+    const { container } = wrap(
+      <SubtractorNode {...nodePropsBase('sub-2')} data={{}} />,
+    )
+    const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
+    for (const h of Array.from(handles)) {
+      expect(h.getAttribute('aria-label')).toBeTruthy()
+    }
+  })
+})
+
+describe('Comparator block', () => {
+  it('renders title with 2 inputs and 3 outputs, no params', () => {
+    const { container } = wrap(
+      <ComparatorNode {...nodePropsBase('cmp-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Comparator')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(2)
+    expect(countHandles(container, 'source')).toBe(3)
+    const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
+    const ids = Array.from(handles).map((h) => h.getAttribute('data-handleid'))
+    expect(ids).toContain('in-a')
+    expect(ids).toContain('in-b')
+    expect(ids).toContain('eq-out')
+    expect(ids).toContain('lt-out')
+    expect(ids).toContain('gt-out')
+  })
+})
+
+describe('Mux block', () => {
+  it('renders title with 3 inputs and 1 output, no params', () => {
+    const { container } = wrap(
+      <MuxNode {...nodePropsBase('mux-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Mux')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(3)
+    expect(countHandles(container, 'source')).toBe(1)
+    const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
+    const ids = Array.from(handles).map((h) => h.getAttribute('data-handleid'))
+    expect(ids).toContain('in-a')
+    expect(ids).toContain('in-b')
+    expect(ids).toContain('select')
+    expect(ids).toContain('data-out')
   })
 })

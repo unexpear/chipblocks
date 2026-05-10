@@ -34,6 +34,10 @@ import { AdderNode,          type AdderBlock }          from './AdderNode'
 import { RegisterNode,       type RegisterBlock }       from './RegisterNode'
 import { RAMNode,            type RAMBlock }            from './RAMNode'
 import { ROMNode,            type ROMBlock }            from './ROMNode'
+import { ReinterpretNode,    type ReinterpretBlock }    from './ReinterpretNode'
+import { SubtractorNode,     type SubtractorBlock }     from './SubtractorNode'
+import { ComparatorNode,     type ComparatorBlock }     from './ComparatorNode'
+import { MuxNode,            type MuxBlock }            from './MuxNode'
 
 // Hoisted to module scope to avoid React Flow's
 // "It looks like you've created a new nodeTypes object" warning.
@@ -70,10 +74,14 @@ export const nodeTypes = {
   solidcolor: SolidColorNode,
   bussplit:   BusSplitNode,
   busjoin:    BusJoinNode,
-  adder:      AdderNode,
-  register:   RegisterNode,
-  ram:        RAMNode,
-  rom:        ROMNode,
+  adder:       AdderNode,
+  register:    RegisterNode,
+  ram:         RAMNode,
+  rom:         ROMNode,
+  reinterpret: ReinterpretNode,
+  subtractor:  SubtractorNode,
+  comparator:  ComparatorNode,
+  mux:         MuxNode,
 }
 
 export type AppNode =
@@ -113,3 +121,7 @@ export type AppNode =
   | RegisterBlock
   | RAMBlock
   | ROMBlock
+  | ReinterpretBlock
+  | SubtractorBlock
+  | ComparatorBlock
+  | MuxBlock

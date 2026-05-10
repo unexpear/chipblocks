@@ -210,6 +210,36 @@ export const BLOCK_PORT_TYPES: Record<string, Record<string, BusType>> = {
                  'data-out':     'data-u8' },
   rom:         { 'addr':         'addr-u4',
                  'data-out':     'data-u8' },
+
+  // ─── Computation / branching (Sprint 18) ───────────────────────
+  // Subtractor mirrors Adder's split shape (data-u8 diff + gate-1
+  // borrow). Comparator emits three flag projections of the same
+  // compare. Mux picks between two 8-bit data values per a 1-bit
+  // select. All combinational; pair Comparator + Mux for branching
+  // without a state machine.
+  subtractor:  { 'in-a':         'data-u8',
+                 'in-b':         'data-u8',
+                 'diff-out':     'data-u8',
+                 'borrow-out':   'gate-1' },
+  comparator:  { 'in-a':         'data-u8',
+                 'in-b':         'data-u8',
+                 'eq-out':       'gate-1',
+                 'lt-out':       'gate-1',
+                 'gt-out':       'gate-1' },
+  mux:         { 'in-a':         'data-u8',
+                 'in-b':         'data-u8',
+                 'select':       'gate-1',
+                 'data-out':     'data-u8' },
+
+  // ─── Bus (Sprint 18 addition: Reinterpret) ─────────────────────
+  // The explicit data-u8 → audio-s8 bridge. Same 8 bits on the wire,
+  // different sign interpretation. The validator correctly rejects an
+  // implicit cross between sign classes (per ADR-001); this block is
+  // the user-flagged "yes, I want that bit-level reinterpretation"
+  // escape hatch, counterpart to BusSplit/BusJoin for cross-width
+  // composition.
+  reinterpret: { 'data-in':      'data-u8',
+                 'audio-out':    'audio-s8' },
 }
 
 // ---------------------------------------------------------------------------

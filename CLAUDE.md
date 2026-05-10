@@ -6,7 +6,7 @@
 
 A free, open-source, accessible chip-design app. Visual node-graph editor + AI consultant + built-in validator. Lets a non-technical person turn "I need a chip that does X" into a fabricable design (FPGA bitstream / ASIC tape-out / sim files).
 
-Read [PRD.md](PRD.md) for the full vision. Read [ROADMAP.md](ROADMAP.md) for what's next. Per-sprint plans + retros live in [SPRINT-1.md](SPRINT-1.md) through [SPRINT-17.md](SPRINT-17.md). Status as of 2026-05-10: 16 sprints closed plus Sprint 17 in flight. v0.1.0-alpha capability-complete (36 blocks — the 32 from the alpha plus the Sprint 17 CPU primitives Adder / Register / RAM / ROM that make the PRD's "tiny CPU on Tiny Tapeout silicon" use case structurally buildable). Pending user-action launch gates (tag push + announcements + Discussions enable).
+Read [PRD.md](PRD.md) for the full vision. Read [ROADMAP.md](ROADMAP.md) for what's next. Per-sprint plans + retros live in [SPRINT-1.md](SPRINT-1.md) through [SPRINT-18.md](SPRINT-18.md). Status as of 2026-05-10: 17 sprints closed plus Sprint 18 in flight. v0.1.0-alpha capability-complete (40 blocks — the 32 from the alpha plus the Sprint 17 CPU primitives Adder / Register / RAM / ROM and the Sprint 18 conditional-control trio Subtractor / Comparator / Mux + the Reinterpret bridge that closes the data-u8 ↔ audio-s8 sign-class barrier). Pending user-action launch gates (tag push + announcements + Discussions enable).
 
 ## Core constraints
 
@@ -40,7 +40,7 @@ chipzzzd/
 ├── CONTRIBUTING.md         # Contributor on-ramp
 ├── KNOWN-ISSUES.md         # Deferred-issue tracker
 ├── CREDITS.md              # Open-source attributions
-├── SPRINT-1.md … SPRINT-13.md   # Per-sprint plan + log + retro
+├── SPRINT-1.md … SPRINT-18.md   # Per-sprint plan + log + retro
 ├── CLAUDE.md               # This file (Claude Code project brief)
 ├── README.md               # Public-facing readme
 ├── frontend/               # Electron + React + TypeScript
@@ -81,8 +81,8 @@ chipzzzd/
 - Match the user's pace — they will direct the project; act on direction rather than racing ahead.
 
 ### Testing
-- **Backend**: pytest under `backend/tests/` — 56 tests + 2 skipped: 40 property-based block tests covering all 36 blocks (including the 5 visual blocks, the 2 bus-composition blocks, the 4 CPU primitives Adder / Register / RAM / ROM, the Counter.addr-out extension, and two pipeline smoke tests), 9 pipeline tests against the example graphs (3 of which exercise the visual path: a friendly-error rejection on ▶ Play, the iCEBreaker .pcf carrying VGA pin assignments, and an end-to-end build of the color-bars graph to a real iCEBreaker bitstream), 8 Tiny Tapeout submission-package tests. Run via `python3 -m pytest backend/tests/ -v` from WSL2 (~90 s).
-- **Frontend**: vitest under `frontend/test/` — 143 tests covering IPC contracts (synth/build/AI), block-component rendering + parameter editing (now including all 36 blocks), bus-type compatibility, error classification, save/load roundtrip. Run via `cd frontend && npm test` (~9 s).
+- **Backend**: pytest under `backend/tests/` — 60 tests + 2 skipped: 44 property-based block tests covering all 40 blocks (including the 5 visual blocks, the 2 bus-composition blocks, the 7 CPU primitives Adder / Subtractor / Comparator / Mux / Register / RAM / ROM, the Reinterpret bridge, the Counter.addr-out extension, and two pipeline smoke tests), 9 pipeline tests against the example graphs (3 of which exercise the visual path), 8 Tiny Tapeout submission-package tests. Run via `python3 -m pytest backend/tests/ -v` from WSL2 (~110 s).
+- **Frontend**: vitest under `frontend/test/` — 150 tests covering IPC contracts (synth/build/AI), block-component rendering + parameter editing (now including all 40 blocks), bus-type compatibility, error classification, save/load roundtrip. Run via `cd frontend && npm test` (~9 s).
 - **CI**: both test suites run on every push/PR to master via `.github/workflows/ci.yml`. Cross-platform installer builds run on tag push (`v*`) via `.github/workflows/release.yml` — Windows NSIS, macOS DMG, Linux AppImage, all unsigned.
 - **Visual / UI changes**: manual verification in the running Electron app. The TypeScript compiler passing is *not* the same as the feature working.
 - Document how to run each piece in the **Sprint Log** section of the relevant `SPRINT-N.md`.
@@ -124,6 +124,7 @@ chipzzzd/
 - [SPRINT-14.md](SPRINT-14.md) — closed sprint plan + log + retro (architectural hygiene + a11y backport — 6 commits across the 4 backend P0 + 2 frontend P1 items)
 - [SPRINT-16.md](SPRINT-16.md) — closed sprint plan + log + retro (ADR-001 implementation: typed bus system + BusSplit/BusJoin; 5 of 7 planned items shipped, 2 deferred per mid-sprint tech-debt prioritization)
 - [SPRINT-17.md](SPRINT-17.md) — closed sprint plan + log + retro (ADR-002 implementation: 4 CPU primitives + Counter extension; single-shot agent dispatch, all 7 tasks in one commit; surfaced the data-u8 ↔ audio-s8 bridge gap as Sprint 18 candidate)
+- [SPRINT-18.md](SPRINT-18.md) — closed sprint plan + log + retro (4 new blocks: Reinterpret + Subtractor + Comparator + Mux; closes both Sprint 17 retro surfacings — the audio-bridge gap and the conditional-control trio for branchable programs)
 - [ADR-001-multi-bit-bus-types.md](ADR-001-multi-bit-bus-types.md) — first ADR. Typed bus system for CPU/data-path expansion. New project pattern: ADR-NNN-<topic>.md at repo root for cross-cutting decisions. **Status: Accepted, implemented in Sprint 16.**
 - [ADR-002-cpu-primitives.md](ADR-002-cpu-primitives.md) — CPU primitive block set + ROM loading mechanism for Sprint 17. **Status: Accepted, in implementation.** 4 new blocks (Adder, Register, RAM, ROM) at 8-bit data + 4-bit address; Counter extension for `addr-u4` output.
 - [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — deferred-issue tracker (npm audit, etc.)
@@ -132,7 +133,7 @@ chipzzzd/
 - [CONTRIBUTING.md](CONTRIBUTING.md) — contributor guide: setup, tests, commit style, license posture, where to ask
 - Tech-debt tracking lives inline: highest-priority items in [KNOWN-ISSUES.md](KNOWN-ISSUES.md), tiered remediation plan in [ROADMAP.md](ROADMAP.md)'s "Tech-debt workstream" section. Last full audit 2026-05-08.
 - [CREDITS.md](CREDITS.md) — licensing policy + open-source attributions (permissive only; no copyleft in shipped product)
-- [BLOCKS.md](BLOCKS.md) — block library reference: per-block ports, parameters, behavior, common-usage notes for all 36 blocks (including the "Visual" section covering VGA Timing / Color Bars / Pixel Range / Solid Color / VGA Output, the "Bus" section covering Bus Split / Bus Join, and the "Computation" section covering Adder / Register / RAM / ROM)
+- [BLOCKS.md](BLOCKS.md) — block library reference: per-block ports, parameters, behavior, common-usage notes for all 40 blocks (including the "Visual" section covering VGA Timing / Color Bars / Pixel Range / Solid Color / VGA Output, the "Bus" section covering Bus Split / Bus Join / Reinterpret, and the "Computation" section covering Adder / Subtractor / Comparator / Mux / Register / RAM / ROM)
 
 ## Sprint cadence
 

@@ -1,6 +1,6 @@
 # ChipBlocks block library
 
-> **Last updated:** 2026-05-10 · Reference for the 36 blocks shipping in v0.1.0-alpha. The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). For how the renderer talks to the backend and how to add another block, see [ARCHITECTURE.md](ARCHITECTURE.md).
+> **Last updated:** 2026-05-10 · Reference for the 40 blocks shipping in v0.1.0-alpha. The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). For how the renderer talks to the backend and how to add another block, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 This document describes what each block does, what its inputs and outputs are, what its parameters mean, and roughly how it sounds (or looks). Audio blocks are 8-bit signed (–128..+127) at a 44.1 kHz sample rate. Audio handles carry signed 8-bit samples; gate / clock handles carry 1-bit signals; visual handles are short single-token names (`r`, `g`, `b`, `hsync`, `vsync`, `visible`, `x`, `y`) following the convention used in every open-source VGA core. Edges are direction-checked by React Flow at edit time.
 
@@ -57,6 +57,9 @@ A note on parameter ranges: the React Flow node components enforce **musically s
 ### Computation
 
 - [Adder](#adder)
+- [Subtractor](#subtractor)
+- [Comparator](#comparator)
+- [Mux](#mux)
 - [Register](#register)
 - [RAM](#ram)
 - [ROM](#rom)
@@ -65,6 +68,7 @@ A note on parameter ranges: the React Flow node components enforce **musically s
 
 - [Bus Split](#bus-split)
 - [Bus Join](#bus-join)
+- [Reinterpret](#reinterpret)
 
 ### Mixing and routing
 
@@ -693,9 +697,9 @@ The visual sink. Five inputs (R, G, B, HSYNC, VSYNC) routed to physical FPGA pin
 
 ## Computation
 
-The four CPU primitives — Adder, Register, RAM, ROM — make up a data-path. They work on 8-bit unsigned data (`data-u8`) and 4-bit unsigned addresses (`addr-u4`), so they compose with each other and with Counter's `addr-out` port, but they don't directly drive the audio Output (`audio-s8`). A Sprint 18+ "Reinterpret" block will likely bridge the two for graphs that want to send the accumulator's running sum to the speaker; until then, the CPU-domain patches stay CPU-domain.
+The seven CPU primitives — Adder, Subtractor, Comparator, Mux, Register, RAM, ROM — make up a data-path with conditional control. They work on 8-bit unsigned data (`data-u8`) and 4-bit unsigned addresses (`addr-u4`), so they compose with each other and with Counter's `addr-out` port. To drive audio from the CPU domain, route the output through the [Reinterpret](#reinterpret) block (in the [Bus](#bus) section): same 8 bits on the wire, sign reinterpreted from unsigned to signed.
 
-v0.1 ships 8-bit data + 4-bit address (16-byte memory). The widths are chosen so the design fits cleanly on a single iCE40 BRAM and the visual canvas stays uncluttered. ADR-002 documents the choice and the Sprint 18+ list of deferred primitives (Subtractor, Comparator, Shifter, Register File, 8-bit address space).
+v0.1 ships 8-bit data + 4-bit address (16-byte memory). The widths are chosen so the design fits cleanly on a single iCE40 BRAM and the visual canvas stays uncluttered. ADR-002 documents the choice and the still-deferred primitives (Shifter, Register File, 8-bit address space).
 
 ### Adder
 
@@ -717,6 +721,64 @@ Combinational 8-bit unsigned add. Outputs are the 8-bit low byte of the sum plus
 > **Scope note.** [ADR-002](ADR-002-cpu-primitives.md) originally specified a single 9-bit `sum-out` port. The split-shape lands in v0.1 because it composes more cleanly with the 8-bit data path the other CPU primitives use — pure-9-bit output would have required a BusSplit on every cascade.
 
 **Common usage.** Pair with Register for the canonical accumulator pattern: Constant or ROM source → Adder.in-a; Register.data-out → Adder.in-b; Adder.sum-out → Register.data-in; Gate → Register.write-enable. Each pulse adds the source to the running sum. The carry-out can drive a status LED via BusSplit, or feed the carry-in of a wider add chain (Sprint 18+ when wider Adders exist).
+
+### Subtractor
+
+Combinational 8-bit unsigned subtract. Mirrors Adder's split-output shape: an 8-bit difference plus a 1-bit borrow-out flag.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `in-a` | target | 8-bit unsigned data | Minuend |
+| `in-b` | target | 8-bit unsigned data | Subtrahend |
+| `diff-out` | source | 8-bit unsigned data | Low 8 bits of `in_a - in_b` (mod 256) |
+| `borrow-out` | source | 1-bit | Set when `in_a < in_b` (the unsigned subtract underflowed) |
+
+**Parameters.** None.
+
+**Behavior.** Pure combinational. The difference truncates to 8 bits — `20 - 50` reads as 226 (256 - 30) with borrow=1. Pair with Adder for "running difference" patterns or with Comparator for branching. Yosys collapses the `-` into the same SB_CARRY chain Adder uses, just in subtract mode.
+
+**Common usage.** Mirror of the Adder accumulator: Constant or ROM source → Subtractor.in-a; Register.data-out → Subtractor.in-b; Subtractor.diff-out → Register.data-in. Each pulse subtracts the source from the running value, useful for countdown timers or running differences.
+
+### Comparator
+
+Combinational 8-bit unsigned compare with three flag projections of the same compare. One block, three outputs (eq / lt / gt) since splitting them across three blocks would clutter the canvas without adding expressive power, and all three are zero-cost projections of the internal compare.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `in-a` | target | 8-bit unsigned data | Left operand |
+| `in-b` | target | 8-bit unsigned data | Right operand |
+| `eq-out` | source | 1-bit | High when `in_a == in_b` |
+| `lt-out` | source | 1-bit | High when `in_a < in_b` (unsigned) |
+| `gt-out` | source | 1-bit | High when `in_a > in_b` (unsigned) |
+
+**Parameters.** None.
+
+**Behavior.** Pure combinational. The three flags are mutually exclusive — exactly one is high at any instant (eq when equal, lt when strictly less, gt when strictly greater).
+
+**Common usage.** Pairs with Mux for branchable program control: feed Comparator.eq-out into Mux.select to pick between two data values based on whether the comparison was equal. The "counter that resets at a target" pattern is the canonical worked example (`examples/cpu-counter-with-branch.json`).
+
+### Mux
+
+2-to-1 multiplexer on 8-bit data. The minimum branching primitive: pick `in-a` when select is 0, `in-b` when select is 1.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `in-a` | target | 8-bit unsigned data | Picked when `select == 0` |
+| `in-b` | target | 8-bit unsigned data | Picked when `select == 1` |
+| `select` | target | 1-bit gate | The control line |
+| `data-out` | source | 8-bit unsigned data | The chosen input |
+
+**Parameters.** None.
+
+**Behavior.** Pure combinational. Compiles to a one-hot AND/OR pair per output bit; on iCE40, an 8-bit Mux is 8 LUT4s.
+
+**Common usage.** Conditional control without a state machine: pair Comparator + Mux for "if equal, take this value, otherwise take that value." A counter that resets at a target value uses Comparator(running == target).eq-out to drive Mux.select, picking between the incremented sum and 0 — that's a branchable program in two blocks.
 
 ### Register
 
@@ -782,7 +844,7 @@ The textarea accepts comma-separated values. Missing entries are zero-padded to 
 
 ### How these compose
 
-The `examples/cpu-accumulator.json` graph wires all four primitives plus the Counter extension into a single data-path:
+The `examples/cpu-accumulator.json` graph wires the data-path primitives plus the Counter extension and the Sprint 18 Reinterpret bridge into a single design:
 
 ```
 Gate (100 Hz) ──► Counter.clock
@@ -793,24 +855,26 @@ ROM (Fibonacci) ─► Adder.in-a
 Register.data-out ► Adder.in-b
 Adder.sum-out ───► Register.data-in
 Gate.gate-out ───► Register.write-enable
-                   Register.data-out ─► RAM.data-in
-                                        RAM.write-enable ◄─ Gate.gate-out
+                   Register.data-out ─┬─► RAM.data-in
+                                      │   RAM.write-enable ◄─ Gate.gate-out
+                                      └─► Reinterpret.data-in
+                                          Reinterpret.audio-out ─► Output.audio-in
 ```
 
 Each clock pulse:
 1. The Counter advances by 1, presenting the new address to ROM and RAM.
 2. ROM emits the byte at that address; the Adder adds it to the running sum stored in the Register.
-3. On the same clock edge, the Register latches the new sum, and RAM writes the previous-cycle sum into the cell at the new address.
+3. On the same clock edge, the Register latches the new sum, RAM writes the previous-cycle sum into the cell at the new address, and Reinterpret rewires the running sum onto the audio bus so the speaker hears the accumulator's motion as crackle.
 
-The audio Output in the example is wired to a silent Constant(0) — Sprint 17 deliberately keeps the CPU primitives CPU-domain. A Sprint 18+ Reinterpret block (or a Subtractor + bias-correction) will let the accumulator's running sum drive a speaker.
+The `examples/cpu-counter-with-branch.json` graph extends this with the Sprint 18 Comparator + Mux trio for conditional control. The Register holds a counter that increments by 1 each cycle, but Comparator detects when the running value equals a target (7 in the bundled example), and Mux picks between the incremented sum and 0 based on that flag — so the counter resets at 7 every time, producing a 0..7..0..7.. pattern audible as a saw-shaped buzz through Reinterpret.
 
 ---
 
 ## Bus
 
-The two bus blocks are the explicit escape hatch for cross-width signal routing. The connection validator rejects edges where source and target ports carry different bus widths; Bus Split and Bus Join are how you bridge the gap on purpose. They're a counterpart to a Mixer: where Mixer combines two audio signals, Bus Split / Bus Join move data between an 8-bit bus and 8 individual 1-bit lines.
+The three bus blocks are the explicit escape hatch for cross-width and cross-sign-class signal routing. The connection validator rejects edges where source and target ports carry different bus widths or sign classes; Bus Split, Bus Join, and Reinterpret are how you bridge the gap on purpose. Bus Split / Bus Join move data between an 8-bit bus and 8 individual 1-bit lines (cross-width); Reinterpret renames `data-u8` as `audio-s8` so the CPU domain can drive audio (cross-sign-class).
 
-v0.1 fixes both blocks at 8-bit width — wide enough for ~80% of cases, and the dynamic-handle-rendering needed for parameterized widths is a novel pattern worth waiting until the actual width requirements are clearer (Sprint 17's CPU primitives will probably want 8-bit + 16-bit). Configurable widths are roadmap.
+v0.1 fixes Bus Split / Bus Join at 8-bit width — wide enough for ~80% of cases, and the dynamic-handle-rendering needed for parameterized widths is a novel pattern worth waiting until the actual width requirements are clearer (Sprint 17's CPU primitives will probably want 8-bit + 16-bit). Configurable widths are roadmap.
 
 ### Bus Split
 
@@ -859,6 +923,23 @@ The inverse of Bus Split: collect 8 individual 1-bit signals and present them as
 **Behavior.** Combinational. The output is the LSB-first concatenation of the 8 input bits — `bus_out[0]` comes from `bit-0`, ..., `bus_out[7]` comes from `bit-7`. Mirror of Bus Split's ordering.
 
 **Common usage.** Use it whenever several 1-bit outputs need to drive a wide-bus input — for example, hand-assembling an 8-bit register's input from individual flag computations, or composing an address bus from per-bit logic. Pairs naturally with Bus Split: `BusSplit → some 1-bit operations on each bit → BusJoin` is a common shape.
+
+### Reinterpret
+
+Pure no-op bridge from `data-u8` to `audio-s8`. Same 8 bits on the wire, different sign interpretation. The connection validator correctly rejects an implicit cross between sign classes (per ADR-001 — `data-u8` is unsigned 0..255, `audio-s8` is signed –128..+127), so this is the explicit "yes, I want that bit-level reinterpretation" escape hatch.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `data-in` | target | 8-bit unsigned data | The wire to reinterpret |
+| `audio-out` | source | signed 8-bit audio | Same bits, viewed as signed |
+
+**Parameters.** None.
+
+**Behavior.** Pure combinational. Amaranth's `Signal.as_signed()` cast inserts no logic — Yosys collapses the connection to a wire. `data-in = 0` reads as `audio-out = 0`; `data-in = 128` reads as `audio-out = -128` (the high bit becomes the sign bit, classic 2's-complement reinterpretation).
+
+**Common usage.** Wire a CPU-domain accumulator's running sum into Reinterpret.data-in, then Reinterpret.audio-out into Output.audio-in to make the accumulator audible. The LSBs of the running sum vary per cycle, so the reinterpreted audio carries the accumulator's motion as crackle / rhythmic noise — most intelligible at gate rates above ~50 Hz. The `examples/cpu-accumulator.json` graph shows this pattern end-to-end.
 
 ---
 

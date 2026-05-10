@@ -1419,25 +1419,26 @@ def test_rom_clamps_oversize_values_to_byte_range():
 
 
 def test_cpu_accumulator_pipeline_runs(run_synth, wav_samples):
-    """End-to-end smoke: drive a ROM-fed accumulator alongside an idle
-    audio path so the four new primitives elaborate together through the
-    full synth pipeline.
+    """End-to-end smoke: drive a ROM-fed accumulator wired to audio via
+    the Sprint 18 Reinterpret bridge so all four CPU primitives + the
+    Counter extension + Reinterpret elaborate together through the full
+    synth pipeline.
 
     Layout:
         Counter.addr-out → ROM.addr
-        ROM.data-out     → Adder.in-a       (per-cycle increment)
+        ROM.data-out     → Adder.in-a       (per-cycle increment of 1)
         Register.data-out → Adder.in-b      (running sum)
         Adder.sum-out    → Register.data-in
         Gate.gate-out    → Register.write-enable
         Gate.gate-out    → Counter.clock
-        RAM (unconnected accumulator scratch, also drives the build path)
-        Constant(value=0) → Output.audio-in  (silence — accumulator is
-                                              CPU-domain, no audio path)
+        RAM logs the running sum at the same address each cycle.
+        Register.data-out → Reinterpret.data-in → Output.audio-in
+            (the CPU-to-audio bridge: same 8 bits, sign reinterpreted)
 
     Per-block correctness is asserted by the individual tests above;
-    this test only verifies "all 4 new primitives + the Counter
-    extension instantiate, wire, and run through synth.py without
-    raising." Sample assertion is just "WAV is the expected silence."
+    this test only verifies "the 4 CPU primitives + the Counter
+    extension + Reinterpret instantiate, wire, and run through synth.py
+    without raising and produce a non-silent audio path."
     """
     graph = {
         "nodes": [
@@ -1447,7 +1448,7 @@ def test_cpu_accumulator_pipeline_runs(run_synth, wav_samples):
             {"id": "add", "type": "adder", "data": {}},
             {"id": "reg", "type": "register", "data": {}},
             {"id": "ram", "type": "ram", "data": {}},
-            {"id": "k_audio", "type": "constant", "data": {"value": 0}},
+            {"id": "ri", "type": "reinterpret", "data": {}},
             _output_node(),
         ],
         "edges": [
@@ -1458,17 +1459,244 @@ def test_cpu_accumulator_pipeline_runs(run_synth, wav_samples):
             _edge("e5", "add", "reg", "sum-out", "data-in"),
             _edge("e6", "g", "reg", "gate-out", "write-enable"),
             # RAM in the same graph so the build path elaborates all 4
-            # new primitives. Wire it to the accumulator's output so it
-            # can store the running sum at address 0.
+            # primitives. Wire it to the accumulator's output so it can
+            # store the running sum at address 0.
             _edge("e7", "cnt", "ram", "addr-out", "addr"),
             _edge("e8", "reg", "ram", "data-out", "data-in"),
             _edge("e9", "g", "ram", "gate-out", "write-enable"),
-            # Silent audio path so the synth pipeline has an Output sink.
-            _edge("e10", "k_audio", "out", "audio-out", "audio-in"),
+            # CPU-to-audio bridge via Reinterpret.
+            _edge("e10", "reg", "ri", "data-out", "data-in"),
+            _edge("e11", "ri", "out", "audio-out", "audio-in"),
         ],
     }
     samples = wav_samples(run_synth(graph, duration_s=1))
-    assert all(s == 0 for s in samples), (
-        f"CPU primitives pipeline shouldn't disturb the silent audio path; "
-        f"got non-zero samples: min={min(samples)}, max={max(samples)}"
+    # The running sum advances every clock — once it's non-zero, the
+    # reinterpreted audio carries the accumulator's motion through the
+    # output. We don't assert a specific shape (the LSBs flap a lot);
+    # we just verify the pipeline produces something audible rather
+    # than dead silence.
+    assert any(s != 0 for s in samples), (
+        "CPU accumulator + Reinterpret should drive a non-silent audio "
+        "path; got all-zero samples"
     )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 18 primitives — Reinterpret bridge + Subtractor / Comparator / Mux.
+#
+# Reinterpret closes the data-u8 ↔ audio-s8 sign-class barrier flagged in the
+# Sprint 17 retro. The other three round out the conditional-control set
+# (Subtractor, Comparator, Mux) so a CPU-domain pattern can branch — pair
+# Comparator + Mux to get "if equal pick reset, else pick incremented" in
+# two blocks with no state machine.
+# ---------------------------------------------------------------------------
+def test_reinterpret_passes_bits_through_changing_only_sign():
+    """Drive data-in with 0 and 128. The output is signed — same bits, but
+    the high bit becomes the sign bit, so 0 reads as 0 and 128 reads as
+    -128 (the classic 2's-complement reinterpretation).
+
+    A few in-between values check that the low 7 bits pass through:
+    127 (the largest positive signed) reads as +127, 200 reads as -56
+    (200 - 256), and 1 reads as +1. No truncation, no logic — pure bit
+    reinterpretation.
+    """
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.reinterpret import Reinterpret
+
+    block = Reinterpret()
+    m = Module()
+    m.submodules.b = block
+    _anchor = Signal()
+    m.d.sync += _anchor.eq(~_anchor)
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    captured: list[tuple[int, int]] = []
+
+    async def process(ctx):
+        for value in (0, 1, 127, 128, 200, 255):
+            ctx.set(block.data_in, value)
+            await ctx.tick()
+            await ctx.tick()
+            captured.append((value, ctx.get(block.audio_out)))
+
+    sim.add_testbench(process)
+    sim.run()
+
+    expected = [
+        (0, 0),
+        (1, 1),
+        (127, 127),
+        (128, -128),
+        (200, -56),
+        (255, -1),
+    ]
+    assert captured == expected, (
+        f"Reinterpret should pass 8 bits through with sign reinterpreted; "
+        f"got {captured}, expected {expected}"
+    )
+
+
+def test_subtractor_50_minus_20_is_30_with_borrow_clear():
+    """Subtractor mirrors Adder. Hand-drive in-a=50, in-b=20; expect
+    diff-out=30, borrow-out=0. Then 20 - 50 underflows: expect
+    diff-out=226 (256 - 30), borrow-out=1. Equal operands wash out
+    cleanly: 100 - 100 = 0 with borrow=0."""
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.subtractor import Subtractor
+
+    block = Subtractor()
+    m = Module()
+    m.submodules.b = block
+    _anchor = Signal()
+    m.d.sync += _anchor.eq(~_anchor)
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    captured: list[tuple[int, int]] = []
+
+    async def process(ctx):
+        ctx.set(block.in_a, 50)
+        ctx.set(block.in_b, 20)
+        await ctx.tick()
+        await ctx.tick()
+        captured.append((ctx.get(block.diff_out), ctx.get(block.borrow_out)))
+        # Underflow: 20 - 50 = -30 mod 256 = 226, borrow=1.
+        ctx.set(block.in_a, 20)
+        ctx.set(block.in_b, 50)
+        await ctx.tick()
+        await ctx.tick()
+        captured.append((ctx.get(block.diff_out), ctx.get(block.borrow_out)))
+        # Equal operands: diff=0, borrow=0.
+        ctx.set(block.in_a, 100)
+        ctx.set(block.in_b, 100)
+        await ctx.tick()
+        await ctx.tick()
+        captured.append((ctx.get(block.diff_out), ctx.get(block.borrow_out)))
+
+    sim.add_testbench(process)
+    sim.run()
+
+    assert captured[0] == (30, 0), (
+        f"Subtractor(50, 20): expected diff=30, borrow=0; got {captured[0]}"
+    )
+    assert captured[1] == (226, 1), (
+        f"Subtractor(20, 50): expected diff=226 (256-30), borrow=1; got {captured[1]}"
+    )
+    assert captured[2] == (0, 0), (
+        f"Subtractor(100, 100): expected diff=0, borrow=0; got {captured[2]}"
+    )
+
+
+def test_comparator_emits_correct_eq_lt_gt_flags():
+    """Three drive cases — in-a < in-b, in-a > in-b, in-a == in-b — each
+    asserts the expected one-hot flag pattern. Three flag outputs from a
+    single block, all combinational projections of the same compare."""
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.comparator import Comparator
+
+    block = Comparator()
+    m = Module()
+    m.submodules.b = block
+    _anchor = Signal()
+    m.d.sync += _anchor.eq(~_anchor)
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    captured: list[tuple[int, int, int]] = []
+
+    async def process(ctx):
+        # in-a < in-b → eq=0, lt=1, gt=0.
+        ctx.set(block.in_a, 10)
+        ctx.set(block.in_b, 20)
+        await ctx.tick()
+        await ctx.tick()
+        captured.append(
+            (ctx.get(block.eq_out), ctx.get(block.lt_out), ctx.get(block.gt_out))
+        )
+        # in-a > in-b → eq=0, lt=0, gt=1.
+        ctx.set(block.in_a, 20)
+        ctx.set(block.in_b, 10)
+        await ctx.tick()
+        await ctx.tick()
+        captured.append(
+            (ctx.get(block.eq_out), ctx.get(block.lt_out), ctx.get(block.gt_out))
+        )
+        # in-a == in-b → eq=1, lt=0, gt=0.
+        ctx.set(block.in_a, 42)
+        ctx.set(block.in_b, 42)
+        await ctx.tick()
+        await ctx.tick()
+        captured.append(
+            (ctx.get(block.eq_out), ctx.get(block.lt_out), ctx.get(block.gt_out))
+        )
+
+    sim.add_testbench(process)
+    sim.run()
+
+    assert captured[0] == (0, 1, 0), (
+        f"Comparator(10, 20): expected eq/lt/gt=(0,1,0); got {captured[0]}"
+    )
+    assert captured[1] == (0, 0, 1), (
+        f"Comparator(20, 10): expected eq/lt/gt=(0,0,1); got {captured[1]}"
+    )
+    assert captured[2] == (1, 0, 0), (
+        f"Comparator(42, 42): expected eq/lt/gt=(1,0,0); got {captured[2]}"
+    )
+
+
+def test_mux_picks_in_a_when_select_is_low_in_b_when_high():
+    """With select=0, Mux output should follow in-a regardless of in-b.
+    With select=1, output should follow in-b regardless of in-a. Drive
+    a few in-a / in-b combinations under each select value to confirm
+    the selection isn't accidentally tied to one input."""
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.mux import Mux
+
+    block = Mux()
+    m = Module()
+    m.submodules.b = block
+    _anchor = Signal()
+    m.d.sync += _anchor.eq(~_anchor)
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    captured: list[tuple[int, int, int, int]] = []
+
+    async def process(ctx):
+        # select=0 → out follows in-a, ignoring in-b.
+        ctx.set(block.select, 0)
+        for in_a, in_b in ((10, 200), (99, 0), (255, 1)):
+            ctx.set(block.in_a, in_a)
+            ctx.set(block.in_b, in_b)
+            await ctx.tick()
+            await ctx.tick()
+            captured.append((0, in_a, in_b, ctx.get(block.data_out)))
+        # select=1 → out follows in-b, ignoring in-a.
+        ctx.set(block.select, 1)
+        for in_a, in_b in ((10, 200), (99, 0), (255, 1)):
+            ctx.set(block.in_a, in_a)
+            ctx.set(block.in_b, in_b)
+            await ctx.tick()
+            await ctx.tick()
+            captured.append((1, in_a, in_b, ctx.get(block.data_out)))
+
+    sim.add_testbench(process)
+    sim.run()
+
+    # First three samples: select=0, expect data-out == in-a.
+    for sel, in_a, in_b, out in captured[:3]:
+        assert sel == 0
+        assert out == in_a, (
+            f"Mux(select=0, in-a={in_a}, in-b={in_b}): expected {in_a}; got {out}"
+        )
+    # Last three: select=1, expect data-out == in-b.
+    for sel, in_a, in_b, out in captured[3:]:
+        assert sel == 1
+        assert out == in_b, (
+            f"Mux(select=1, in-a={in_a}, in-b={in_b}): expected {in_b}; got {out}"
+        )

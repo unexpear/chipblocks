@@ -52,11 +52,15 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'vgaoutput',  label: 'VGA Output', color: '#d81b60', description: 'Visual sink — drives a VGA monitor (iCEBreaker PMOD1B)' },
   { type: 'bussplit',   label: 'Bus Split',  color: '#90a4ae', description: 'Fan one 8-bit bus out to 8 individual 1-bit signals' },
   { type: 'busjoin',    label: 'Bus Join',   color: '#78909c', description: 'Concatenate 8 individual 1-bit signals into one 8-bit bus' },
-  { type: 'adder',      label: 'Adder',      color: '#1976d2', description: 'Combinational 8-bit unsigned add with carry-out' },
-  { type: 'register',   label: 'Register',   color: '#1565c0', description: '8-bit data register with gated write-enable' },
-  { type: 'ram',        label: 'RAM',        color: '#0d47a1', description: '16 × 8-bit synchronous read/write memory' },
-  { type: 'rom',        label: 'ROM',        color: '#283593', description: '16-byte combinational ROM (contents in the block)' },
-  { type: 'output',     label: 'Output',     color: '#f44336', description: 'Audio sink (where Play reads from)' },
+  { type: 'adder',       label: 'Adder',       color: '#1976d2', description: 'Combinational 8-bit unsigned add with carry-out' },
+  { type: 'subtractor',  label: 'Subtractor',  color: '#1e88e5', description: 'Combinational 8-bit unsigned subtract with borrow-out' },
+  { type: 'comparator',  label: 'Comparator',  color: '#3949ab', description: '8-bit unsigned compare; emits eq / lt / gt flags' },
+  { type: 'mux',         label: 'Mux',         color: '#5e35b1', description: '2-to-1 multiplexer: select picks in-a or in-b' },
+  { type: 'register',    label: 'Register',    color: '#1565c0', description: '8-bit data register with gated write-enable' },
+  { type: 'ram',         label: 'RAM',         color: '#0d47a1', description: '16 × 8-bit synchronous read/write memory' },
+  { type: 'rom',         label: 'ROM',         color: '#283593', description: '16-byte combinational ROM (contents in the block)' },
+  { type: 'reinterpret', label: 'Reinterpret', color: '#546e7a', description: 'No-op bridge: data-u8 → audio-s8 (same bits, different sign)' },
+  { type: 'output',      label: 'Output',      color: '#f44336', description: 'Audio sink (where Play reads from)' },
 ]
 
 // Default `data` for a freshly-spawned node. Keep in sync with each
@@ -115,6 +119,10 @@ export function defaultDataForType(type: string): Record<string, unknown> {
     case 'adder':
     case 'register':
     case 'ram':
+    case 'reinterpret':
+    case 'subtractor':
+    case 'comparator':
+    case 'mux':
     default:
       return {}
   }

@@ -128,8 +128,9 @@ def _build_params(node_type: str, data: dict) -> dict:
         else:
             params["contents"] = []
     # Mixer, Output, SampleAndHold, Noise, Multiply, BusSplit, BusJoin,
-    # Adder, Register, RAM, and the boolean gates (and / or / xor / not)
-    # have no parameters.
+    # Adder, Register, RAM, the boolean gates (and / or / xor / not), and
+    # the Sprint 18 bridge / branching blocks (Reinterpret, Subtractor,
+    # Comparator, Mux) all have no parameters.
     return params
 
 

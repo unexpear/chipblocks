@@ -43,15 +43,15 @@
       "data": {}
     },
     {
-      "id": "k_audio",
-      "type": "constant",
-      "position": { "x": 40, "y": 320 },
-      "data": { "value": 0 }
+      "id": "ri",
+      "type": "reinterpret",
+      "position": { "x": 940, "y": 320 },
+      "data": {}
     },
     {
       "id": "out",
       "type": "output",
-      "position": { "x": 240, "y": 320 },
+      "position": { "x": 1140, "y": 320 },
       "data": {}
     }
   ],
@@ -121,7 +121,14 @@
     },
     {
       "id": "e10",
-      "source": "k_audio",
+      "source": "reg",
+      "target": "ri",
+      "sourceHandle": "data-out",
+      "targetHandle": "data-in"
+    },
+    {
+      "id": "e11",
+      "source": "ri",
       "target": "out",
       "sourceHandle": "audio-out",
       "targetHandle": "audio-in"

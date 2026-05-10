@@ -48,6 +48,10 @@ from .adder import Adder
 from .register import Register
 from .ram import RAM
 from .rom import ROM
+from .reinterpret import Reinterpret
+from .subtractor import Subtractor
+from .comparator import Comparator
+from .mux import Mux
 
 # Registry mapping graph node `type` (from React Flow JSON) to block class.
 BLOCK_REGISTRY = {
@@ -87,6 +91,10 @@ BLOCK_REGISTRY = {
     "register": Register,
     "ram": RAM,
     "rom": ROM,
+    "reinterpret": Reinterpret,
+    "subtractor": Subtractor,
+    "comparator": Comparator,
+    "mux": Mux,
 }
 
 __all__ = [
@@ -126,5 +134,9 @@ __all__ = [
     "Register",
     "RAM",
     "ROM",
+    "Reinterpret",
+    "Subtractor",
+    "Comparator",
+    "Mux",
     "BLOCK_REGISTRY",
 ]

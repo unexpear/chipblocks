@@ -963,6 +963,37 @@
   font-size: 0.8rem;
 }
 
+/* Sprint 18 additions. Subtractor / Comparator / Mux extend the
+   computation family with cooler-blue / indigo hues so they read as
+   cousins of Adder; Reinterpret is the data-u8 → audio-s8 bridge and
+   sits with the Bus blocks (silver/slate) since it's a sign-class
+   rewrite, not a computation. */
+.block-subtractor {
+  border-color: #1e88e5;
+  /* 2 left handles + 2 right handles at 24/56 — matches Adder. */
+  min-height: 110px;
+  min-width: 130px;
+}
+
+.block-comparator {
+  border-color: #3949ab;
+  /* 2 left handles + 3 right handles at 24/56/88. */
+  min-height: 130px;
+  min-width: 130px;
+}
+
+.block-mux {
+  border-color: #5e35b1;
+  /* 3 left handles (in-a, in-b, select) + 1 right handle. */
+  min-height: 130px;
+  min-width: 130px;
+}
+
+.block-reinterpret {
+  border-color: #546e7a;
+  min-width: 130px;
+}
+
 /* Multi-row parameter blocks (ADSR, Gate, future LPF, etc.) */
 .block-row {
   display: flex;
