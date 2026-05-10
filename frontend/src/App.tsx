@@ -171,6 +171,34 @@ function validateLoadedGraph(input: unknown): ValidatedGraph | InvalidGraph {
     if (!nodeIds.has(e.source) || !nodeIds.has(e.target)) {
       return { ok: false, error: `Edge "${e.id}" references unknown node id.` }
     }
+    // Bus-type compatibility check (Sprint 16 S16-5, ADR-001). Same
+    // rules as the drag-time isValidConnection callback in App.tsx —
+    // catches malformed graphs (or graphs hand-edited around the
+    // validator) before they reach the synth/build pipeline. Edges
+    // with no sourceHandle/targetHandle are accepted: React Flow can
+    // emit those for dragless edges and they're caught later in synth.
+    const sourceNode = validNodes.find((n) => n.id === e.source)
+    const targetNode = validNodes.find((n) => n.id === e.target)
+    const sourceHandle = typeof e.sourceHandle === 'string' ? e.sourceHandle : null
+    const targetHandle = typeof e.targetHandle === 'string' ? e.targetHandle : null
+    if (sourceHandle && targetHandle) {
+      const sourceType = getPortBusType(sourceNode?.type, sourceHandle)
+      const targetType = getPortBusType(targetNode?.type, targetHandle)
+      if (!sourceType || !targetType) {
+        return {
+          ok: false,
+          error: `Edge "${e.id}" references an unknown port — handle "${
+            !sourceType ? sourceHandle : targetHandle
+          }" missing from the bus-type registry.`,
+        }
+      }
+      if (arePortTypesCompatible(sourceType, targetType) === 'incompatible') {
+        return {
+          ok: false,
+          error: `Edge "${e.id}" connects incompatible bus types: ${sourceType} → ${targetType}. Re-route through a BusSplit / BusJoin or pick same-width same-sign ports.`,
+        }
+      }
+    }
     validEdges.push(raw as Edge)
   }
   let viewport: Viewport | undefined
