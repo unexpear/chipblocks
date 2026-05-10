@@ -2,7 +2,7 @@
 
 > **Solo dev + Claude Code** · Drafted 2026-05-10 · Successor to [SPRINT-15-AND-PRECEDING.md no, just SPRINT-14.md](SPRINT-14.md) · Operational source: [ADR-001-multi-bit-bus-types.md](ADR-001-multi-bit-bus-types.md)
 
-**Status:** **OPEN — in flight 2026-05-10.**
+**Status:** **CLOSED 2026-05-10.** 5 of 7 planned items shipped (S16-1 through S16-2, S16-4 through S16-6). S16-3 (visual handle styling) and S16-7 (additional rendering tests) deferred to opportunistic-polish per the in-conversation `/engineering:tech-debt` prioritization run mid-sprint — both scored low on Impact + Risk vs. Effort once the architectural foundation was complete.
 
 **Sprint Goal:** *Implement [ADR-001](ADR-001-multi-bit-bus-types.md): typed bus system with edge validation + Split/Join blocks. After this sprint, every block port declares a `BusType`, the canvas rejects miswired connections at drag time and at Load time, and a Bus category in the palette gives users explicit cross-width composition. Block count 30 → 32. This is the architectural gate on the upcoming CPU expansion (Sprint 17+).*
 

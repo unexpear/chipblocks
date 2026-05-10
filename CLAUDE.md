@@ -122,7 +122,7 @@ chipzzzd/
 - [SPRINT-12.md](SPRINT-12.md) — closed sprint plan + log + retro (Major a11y + 44 new tests + ARCHITECTURE.md)
 - [SPRINT-13.md](SPRINT-13.md) — closed sprint plan + log + retro (Bitcrusher + Delay + CONTRIBUTING.md)
 - [SPRINT-14.md](SPRINT-14.md) — closed sprint plan + log + retro (architectural hygiene + a11y backport — 6 commits across the 4 backend P0 + 2 frontend P1 items)
-- [SPRINT-16.md](SPRINT-16.md) — open sprint plan: ADR-001 implementation (typed bus system + Split/Join blocks, gates the CPU expansion)
+- [SPRINT-16.md](SPRINT-16.md) — closed sprint plan + log + retro (ADR-001 implementation: typed bus system + BusSplit/BusJoin; 5 of 7 planned items shipped, 2 deferred per mid-sprint tech-debt prioritization)
 - [ADR-001-multi-bit-bus-types.md](ADR-001-multi-bit-bus-types.md) — first ADR. Typed bus system for CPU/data-path expansion. New project pattern: ADR-NNN-<topic>.md at repo root for cross-cutting decisions.
 - [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — deferred-issue tracker (npm audit, etc.)
 - [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08.md) — WCAG 2.1 AA audit snapshot (23 findings, tiered remediation plan)
