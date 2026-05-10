@@ -1044,6 +1044,92 @@ def test_solid_color_blue_drives_only_b():
         )
 
 
+def test_bus_split_breaks_8bit_value_into_bits():
+    """Drive bus-in with 0b10101010 (170) and verify each output bit
+    matches the expected position. bit-0 is the LSB (0), bit-1 is 1,
+    bit-2 is 0, ... — alternating LSB-first per the binary layout."""
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.bus_split import BusSplit
+
+    block = BusSplit()
+    m = Module()
+    m.submodules.b = block
+    # Anchor sync (the block is purely combinational).
+    _anchor = Signal()
+    m.d.sync += _anchor.eq(~_anchor)
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    captured: list[int] = []
+
+    async def process(ctx):
+        ctx.set(block.bus_in, 0b10101010)  # 170 — alternating from LSB up
+        await ctx.tick()
+        await ctx.tick()
+        for i in range(8):
+            captured.append(ctx.get(block.bits[i]))
+
+    sim.add_testbench(process)
+    sim.run()
+
+    expected = [0, 1, 0, 1, 0, 1, 0, 1]
+    assert captured == expected, (
+        f"BusSplit on 0b10101010: expected {expected} (LSB-first); got {captured}"
+    )
+
+
+def test_bus_join_concats_bits_into_8bit_value():
+    """Set bit-0=1, bit-2=1, bit-5=1 (all others 0) and verify the
+    output is 0b00100101 = 37 (LSB-first concat). bit-0 → output[0]
+    matches BusSplit's ordering exactly."""
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.bus_join import BusJoin
+
+    block = BusJoin()
+    m = Module()
+    m.submodules.b = block
+    # Anchor sync (the block is purely combinational).
+    _anchor = Signal()
+    m.d.sync += _anchor.eq(~_anchor)
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    captured: list[int] = []
+
+    async def process(ctx):
+        # Bit pattern: bit-0 + bit-2 + bit-5 = 0b00100101 = 37.
+        ctx.set(block.bits[0], 1)
+        ctx.set(block.bits[1], 0)
+        ctx.set(block.bits[2], 1)
+        ctx.set(block.bits[3], 0)
+        ctx.set(block.bits[4], 0)
+        ctx.set(block.bits[5], 1)
+        ctx.set(block.bits[6], 0)
+        ctx.set(block.bits[7], 0)
+        await ctx.tick()
+        await ctx.tick()
+        captured.append(ctx.get(block.bus_out))
+
+        # Flip to all-ones — output should be 255.
+        for i in range(8):
+            ctx.set(block.bits[i], 1)
+        await ctx.tick()
+        await ctx.tick()
+        captured.append(ctx.get(block.bus_out))
+
+    sim.add_testbench(process)
+    sim.run()
+
+    assert captured[0] == 0b00100101, (
+        f"BusJoin LSB-first: expected 0b00100101 (37); got {captured[0]}"
+    )
+    assert captured[1] == 0xFF, (
+        f"BusJoin all-ones: expected 255; got {captured[1]}"
+    )
+
+
 def test_counter_smoke_through_full_pipeline(run_synth, wav_samples):
     """End-to-end: drive the new logic blocks together (Gate → AND with
     a NOT-ed copy of itself = always-low; Counter → Output), confirm the

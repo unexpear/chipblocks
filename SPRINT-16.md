@@ -112,6 +112,30 @@ Target: vitest 105 → ~115 (10ish new cases).
 
 > *Filled in as the sprint runs. Currently in flight.*
 
+### S16-4 — `BusSplit` + `BusJoin` blocks (30 → 32) — **Done** (commit pending)
+
+Shipped both blocks fixed at 8-bit width — a deliberate v0.1 scope adjustment from the ADR's parameterized 1–16 width. Reasoning: 8-bit covers ~80% of use cases, the dynamic-handle-rendering needed for parameterized widths is a novel pattern in the codebase, and the actual width requirements will be clearer once Sprint 17's CPU primitives ship (probably 8 + 16). Configurable width is roadmap.
+
+Touched:
+- `backend/blocks/bus_split.py` — new Amaranth Elaboratable: 8-bit input → 8 × 1-bit outputs (combinational bit-slice).
+- `backend/blocks/bus_join.py` — new Amaranth Elaboratable: 8 × 1-bit inputs → 8-bit output (combinational `Cat(...)`).
+- `backend/blocks/__init__.py` — registered `BusSplit` + `BusJoin` in `BLOCK_REGISTRY` and `__all__`.
+- `backend/synth.py` — comment-only update; neither block has parameters.
+- `frontend/src/blocks/BusSplitNode.tsx` + `BusJoinNode.tsx` — new React Flow node components, 9 handles each, `aria-label` on every handle (S14-6 standard), positions via `handleTop(slot)` (S14-2 standard).
+- `frontend/src/blocks/index.ts` — registered both in `nodeTypes` + `AppNode` union.
+- `frontend/src/Palette.tsx` — appended both palette entries (silver/grey hues for "infrastructure" tone) plus default-data fall-through.
+- `frontend/src/App.css` — `.block-bussplit` + `.block-busjoin` rules with `min-height: 270px` to fit 8 stacked handles.
+- `frontend/src/blocks/busTypes.ts` — `BLOCK_PORT_TYPES` entries: `bus-in` / `bus-out` are `data-u8`; the eight `bit-N` ports on each block are `data-u1`.
+- `frontend/src/ai/prompt.ts` — registered both blocks in the consultant's block-library reference, type-string list, and the `add_node` / `add_edge` / `update_node_params` tool descriptions.
+- `backend/tests/test_blocks.py` — `test_bus_split_breaks_8bit_value_into_bits` (drives 0b10101010 in, asserts the 8 outputs alternate as expected) + `test_bus_join_concats_bits_into_8bit_value` (sets bits 0/2/5 high, asserts output is 37; then all-ones, asserts 255).
+- `frontend/test/blocks.test.tsx` — render tests for both, asserting handle counts + the expected `data-handleid` ids.
+- `BLOCKS.md` — new "Bus" section between Visual and Mixing-and-routing with full per-block reference matching the existing format.
+- `README.md`, `ROADMAP.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `ARCHITECTURE.md`, `RELEASE-NOTES-v0.1.0-alpha.md`, `ANNOUNCEMENT-DRAFTS.md` (all 4 venue drafts), `HACKADAY-WRITEUP.md` — bumped block count 30 → 32.
+
+End-to-end check: `python3 backend/synth.py` against a `Constant(value=127) → BusSplit.bus-in, BusSplit.bit-0 → Output.audio-in` graph rendered the 88200-sample WAV cleanly with no errors.
+
+Tests after the change: backend pytest **49 passed + 2 skipped** (was 47/2 before), frontend vitest **136 passed** (was 134), tsc clean.
+
 ---
 
 ## Retrospective

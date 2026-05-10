@@ -1,6 +1,6 @@
 # ChipBlocks block library
 
-> **Last updated:** 2026-05-09 · Reference for the 30 blocks shipping in v0.1.0-alpha. The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). For how the renderer talks to the backend and how to add another block, see [ARCHITECTURE.md](ARCHITECTURE.md).
+> **Last updated:** 2026-05-10 · Reference for the 32 blocks shipping in v0.1.0-alpha. The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). For how the renderer talks to the backend and how to add another block, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 This document describes what each block does, what its inputs and outputs are, what its parameters mean, and roughly how it sounds (or looks). Audio blocks are 8-bit signed (–128..+127) at a 44.1 kHz sample rate. Audio handles carry signed 8-bit samples; gate / clock handles carry 1-bit signals; visual handles are short single-token names (`r`, `g`, `b`, `hsync`, `vsync`, `visible`, `x`, `y`) following the convention used in every open-source VGA core. Edges are direction-checked by React Flow at edit time.
 
@@ -53,6 +53,11 @@ A note on parameter ranges: the React Flow node components enforce **musically s
 - [Pixel Range](#pixel-range)
 - [Solid Color](#solid-color)
 - [VGA Output](#vga-output)
+
+### Bus
+
+- [Bus Split](#bus-split)
+- [Bus Join](#bus-join)
 
 ### Mixing and routing
 
@@ -672,6 +677,62 @@ The visual sink. Five inputs (R, G, B, HSYNC, VSYNC) routed to physical FPGA pin
 **Behavior.** No internal logic. The block is a marker that says "route these five 1-bit signals to the VGA pins." `build.py` looks for the presence of a VGA Output node and, when targeting the iCEBreaker, generates extra `set_io` lines in the .pcf binding each signal to its physical PMOD1B pad. The audio ▶ Play path doesn't render visuals: VGA Output blocks elaborate but contribute nothing to the WAV; a graph with VGA Output but no audio Output fails Play with a friendly "🔧 Build → iCEBreaker" hint.
 
 **Common usage.** The destination of every visual graph. Mirror the audio Output's role: the shortest possible useful visual patch is VGA Timing → Color Bars → VGA Output (with the obvious wiring on `x` / `visible` / `hsync` / `vsync`).
+
+---
+
+## Bus
+
+The two bus blocks are the explicit escape hatch for cross-width signal routing. The connection validator rejects edges where source and target ports carry different bus widths; Bus Split and Bus Join are how you bridge the gap on purpose. They're a counterpart to a Mixer: where Mixer combines two audio signals, Bus Split / Bus Join move data between an 8-bit bus and 8 individual 1-bit lines.
+
+v0.1 fixes both blocks at 8-bit width — wide enough for ~80% of cases, and the dynamic-handle-rendering needed for parameterized widths is a novel pattern worth waiting until the actual width requirements are clearer (Sprint 17's CPU primitives will probably want 8-bit + 16-bit). Configurable widths are roadmap.
+
+### Bus Split
+
+Fan a single 8-bit data bus out to 8 individual 1-bit signals. Pure combinational bit-slice — no internal state, no per-sample latency.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `bus-in` | target | 8-bit unsigned | The wide bus to split |
+| `bit-0` | source | 1-bit | Least significant bit (`bus_in[0]`) |
+| `bit-1` | source | 1-bit | `bus_in[1]` |
+| `bit-2` | source | 1-bit | `bus_in[2]` |
+| `bit-3` | source | 1-bit | `bus_in[3]` |
+| `bit-4` | source | 1-bit | `bus_in[4]` |
+| `bit-5` | source | 1-bit | `bus_in[5]` |
+| `bit-6` | source | 1-bit | `bus_in[6]` |
+| `bit-7` | source | 1-bit | Most significant bit (`bus_in[7]`) |
+
+**Parameters.** None.
+
+**Behavior.** Combinational. Each `bit-N` output is wired to the N-th bit of `bus-in`. `bit-0` is the LSB and `bit-7` is the MSB — same convention as Bus Join, so `BusSplit.bit-N → BusJoin.bit-N` in order is identity.
+
+**Common usage.** Use it whenever a wide-bus output needs to drive several 1-bit-only inputs — for example, probing the LSB of a counter on a status LED, or splitting an ALU result into individual flag wires. This is also the block the connection-validator's friendly toast points users to ("Use a BusSplit (one wide bus → many 1-bit) or BusJoin (many 1-bit → one wide bus) to convert") when they try to wire mismatched widths.
+
+### Bus Join
+
+The inverse of Bus Split: collect 8 individual 1-bit signals and present them as a single 8-bit data bus. Pure combinational concatenation.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `bit-0` | target | 1-bit | Least significant bit |
+| `bit-1` | target | 1-bit | |
+| `bit-2` | target | 1-bit | |
+| `bit-3` | target | 1-bit | |
+| `bit-4` | target | 1-bit | |
+| `bit-5` | target | 1-bit | |
+| `bit-6` | target | 1-bit | |
+| `bit-7` | target | 1-bit | Most significant bit |
+| `bus-out` | source | 8-bit unsigned | `Cat(bit-0, bit-1, ..., bit-7)` |
+
+**Parameters.** None.
+
+**Behavior.** Combinational. The output is the LSB-first concatenation of the 8 input bits — `bus_out[0]` comes from `bit-0`, ..., `bus_out[7]` comes from `bit-7`. Mirror of Bus Split's ordering.
+
+**Common usage.** Use it whenever several 1-bit outputs need to drive a wide-bus input — for example, hand-assembling an 8-bit register's input from individual flag computations, or composing an address bus from per-bit logic. Pairs naturally with Bus Split: `BusSplit → some 1-bit operations on each bit → BusJoin` is a common shape.
 
 ---
 

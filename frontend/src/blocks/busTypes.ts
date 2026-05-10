@@ -174,6 +174,19 @@ export const BLOCK_PORT_TYPES: Record<string, Record<string, BusType>> = {
                  'vsync': 'gate-1' },
   pixelrange:  { 'pixel':  'pixel-u10', 'inside': 'gate-1' },
   solidcolor:  { 'r': 'gate-1', 'g': 'gate-1', 'b': 'gate-1' },
+
+  // ─── Bus (cross-width composition — Sprint 16) ─────────────────
+  // v0.1 fixes the width at 8 bits; configurable widths are roadmap.
+  bussplit:    { 'bus-in': 'data-u8',
+                 'bit-0':  'data-u1', 'bit-1':  'data-u1',
+                 'bit-2':  'data-u1', 'bit-3':  'data-u1',
+                 'bit-4':  'data-u1', 'bit-5':  'data-u1',
+                 'bit-6':  'data-u1', 'bit-7':  'data-u1' },
+  busjoin:     { 'bit-0':  'data-u1', 'bit-1':  'data-u1',
+                 'bit-2':  'data-u1', 'bit-3':  'data-u1',
+                 'bit-4':  'data-u1', 'bit-5':  'data-u1',
+                 'bit-6':  'data-u1', 'bit-7':  'data-u1',
+                 'bus-out': 'data-u8' },
 }
 
 // ---------------------------------------------------------------------------

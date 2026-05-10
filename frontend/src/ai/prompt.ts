@@ -28,7 +28,7 @@ Inside the app, the user:
 
 When the canvas is rendering or building, a Cancel button appears that aborts cleanly. Status text reads "Synthesizing…" or "Building bitstream…". Errors appear as a dismissible toast bottom-left.
 
-# Block library (all 30 types — these are the EXACT type strings)
+# Block library (all 32 types — these are the EXACT type strings)
 
 All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual blocks (vgatiming, colorbars, pixelrange, solidcolor, vgaoutput) drive a VGA monitor through the iCEBreaker FPGA's PMOD1B socket; ▶ Play renders audio only, so visual graphs need 🔧 Build → iCEBreaker to see anything.
 
@@ -184,10 +184,20 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual b
 - No output ports
 - No parameters
 
+**bussplit** — bus fan-out. Splits one 8-bit bus into 8 individual 1-bit signals. Use when one block emits an 8-bit value and you need to wire individual bits into separate 1-bit-input blocks (e.g. probing the LSB on a status LED). Width is fixed at 8 bits in v0.1.
+- Input port: \`bus-in\` (8-bit unsigned)
+- Output ports: \`bit-0\`, \`bit-1\`, \`bit-2\`, \`bit-3\`, \`bit-4\`, \`bit-5\`, \`bit-6\`, \`bit-7\` (each 1-bit). \`bit-0\` is the LSB, \`bit-7\` is the MSB.
+- No parameters
+
+**busjoin** — bus concat. The inverse of bussplit: takes 8 individual 1-bit signals and combines them into one 8-bit bus. Use when 8 separate 1-bit-output blocks need to feed an 8-bit-input block.
+- Input ports: \`bit-0\`, \`bit-1\`, \`bit-2\`, \`bit-3\`, \`bit-4\`, \`bit-5\`, \`bit-6\`, \`bit-7\` (each 1-bit). Same LSB-first ordering as bussplit.
+- Output port: \`bus-out\` (8-bit unsigned)
+- No parameters
+
 # Naming conventions
 
-- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`distortion\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`, \`vgatiming\`, \`colorbars\`, \`pixelrange\`, \`solidcolor\`, \`vgaoutput\`.
-- **Port handle ids** are kebab-case for audio/gate signals (\`audio-out\`, \`audio-in\`, \`gate-out\`, \`gate-in\`, \`mix-out\`, \`in-1\`, \`in-2\`). Control signals are unhyphenated: \`gate\` (an ADSR input), \`clock\` (a samplehold / counter input). VGA handles are short single-token names (\`r\`, \`g\`, \`b\`, \`hsync\`, \`vsync\`, \`visible\`, \`x\`, \`y\`, \`pixel\`, \`inside\`) — same convention used in every open-source VGA core.
+- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`distortion\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`, \`vgatiming\`, \`colorbars\`, \`pixelrange\`, \`solidcolor\`, \`vgaoutput\`, \`bussplit\`, \`busjoin\`.
+- **Port handle ids** are kebab-case for audio/gate signals (\`audio-out\`, \`audio-in\`, \`gate-out\`, \`gate-in\`, \`mix-out\`, \`in-1\`, \`in-2\`). Control signals are unhyphenated: \`gate\` (an ADSR input), \`clock\` (a samplehold / counter input). VGA handles are short single-token names (\`r\`, \`g\`, \`b\`, \`hsync\`, \`vsync\`, \`visible\`, \`x\`, \`y\`, \`pixel\`, \`inside\`) — same convention used in every open-source VGA core. Bus blocks use \`bus-in\` / \`bus-out\` for the wide port and \`bit-0\` … \`bit-7\` for the per-bit ports.
 - **Block parameters** are snake_case: \`freq\`, \`attack_ms\`, \`decay_ms\`, \`sustain_level\`, \`release_ms\`, \`rate_hz\`, \`duty_pct\`, \`cutoff_hz\` (lowpass + highpass), \`center_hz\` (bandpass), \`value\`, \`carrier_freq\`, \`modulator_freq\`, \`mod_depth\`, \`shape\`, \`bits\`, \`delay_samples\`, \`threshold\` (distortion), \`max_value\` (counter), \`start\` / \`end\` (pixelrange), \`color\` (solidcolor). (\`shape\` and \`color\` are string-enums; all others are integers.) The vgatiming, colorbars, and vgaoutput visual blocks have no parameters.
 
 # Save format
@@ -253,7 +263,7 @@ After tool calls, you'll receive \`tool_result\` content blocks with the outcome
 
 - Be concrete. Reference specific block types, parameter values, and port names.
 - Keep responses tight — a short paragraph or a short list.
-- If a goal isn't possible with the current 30 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
+- If a goal isn't possible with the current 32 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
 - After multi-step tool sequences, end with a short text confirmation of what you did so the user knows where things landed.`
 
 export function buildSystemBlocks(nodes: AppNode[], edges: Edge[]) {
@@ -299,7 +309,7 @@ The \`data\` field shape depends on \`type\`:
 - counter: { max_value: 1-127 (default 16) }
 - pixelrange: { start: 0-639 (default 100), end: 0-639 (default 200) }
 - solidcolor: { color: one of "black" | "red" | "green" | "blue" | "yellow" | "cyan" | "magenta" | "white" (default "white") }
-- mixer | output | samplehold | noise | multiply | and | or | xor | not | vgatiming | colorbars | vgaoutput: {} (no parameters)
+- mixer | output | samplehold | noise | multiply | and | or | xor | not | vgatiming | colorbars | vgaoutput | bussplit | busjoin: {} (no parameters)
 
 Omit \`data\` to use defaults.`,
       input_schema: {
@@ -328,6 +338,7 @@ Valid handle pairings (port handle names are kebab-case for audio/gate; short si
 - Audio sources (oscillator/triangle/sawtooth/sine/wavetable/noise/constant/mixer/adsr/lowpass/highpass/bandpass/samplehold/fm/multiply/bitcrusher/delay/distortion/counter) emit \`audio-out\` (or mixer's \`mix-out\`). Audio sinks (mixer/adsr/lowpass/highpass/bandpass/samplehold/multiply/bitcrusher/delay/distortion/output) accept on \`audio-in\` (or mixer's \`in-1\`/\`in-2\`).
 - 1-bit sources (gate, and, or, xor, not) emit \`gate-out\`. Valid 1-bit targets: adsr's \`gate\` input, samplehold's / counter's \`clock\` input, the boolean gates' \`in-1\`/\`in-2\` (and/or/xor) or \`gate-in\` (not) inputs. The pixelrange block also emits a 1-bit \`inside\` output that can drive any 1-bit input (boolean gate's \`in-1\`/\`in-2\` or vgaoutput's \`r\`/\`g\`/\`b\`).
 - VGA: vgatiming emits \`hsync\`, \`vsync\`, \`visible\`, \`x\`, \`y\`. colorbars takes \`x\` + \`visible\` and emits \`r\`, \`g\`, \`b\`. pixelrange takes \`pixel\` (10-bit) and emits \`inside\` (1-bit). solidcolor has no inputs and emits \`r\`, \`g\`, \`b\`. vgaoutput takes \`r\`, \`g\`, \`b\`, \`hsync\`, \`vsync\` and is a sink.
+- Bus: bussplit takes \`bus-in\` (8-bit) and emits \`bit-0\` … \`bit-7\` (1-bit each). busjoin takes \`bit-0\` … \`bit-7\` (1-bit each) and emits \`bus-out\` (8-bit). Use these to bridge bus-width mismatches when you need to wire an 8-bit output into a 1-bit input or vice versa.
 - output has \`audio-in\` and no output handle (it is the audio sink). vgaoutput has 5 inputs and no outputs (it is the visual sink).
 
 Common patterns:
@@ -353,11 +364,11 @@ Common patterns:
           target_id: { type: 'string', description: 'Node id of the target block' },
           source_handle: {
             type: 'string',
-            description: 'One of: audio-out, mix-out, gate-out, hsync, vsync, visible, x, y, r, g, b, inside',
+            description: 'One of: audio-out, mix-out, gate-out, hsync, vsync, visible, x, y, r, g, b, inside, bus-out, bit-0, bit-1, bit-2, bit-3, bit-4, bit-5, bit-6, bit-7',
           },
           target_handle: {
             type: 'string',
-            description: 'One of: audio-in, in-1, in-2, gate, gate-in, clock, x, visible, r, g, b, hsync, vsync, pixel',
+            description: 'One of: audio-in, in-1, in-2, gate, gate-in, clock, x, visible, r, g, b, hsync, vsync, pixel, bus-in, bit-0, bit-1, bit-2, bit-3, bit-4, bit-5, bit-6, bit-7',
           },
         },
         required: ['source_id', 'target_id', 'source_handle', 'target_handle'],
@@ -384,7 +395,7 @@ Allowed fields per block type (same as add_node):
 - counter: max_value
 - pixelrange: start, end
 - solidcolor: color (string: "black" | "red" | "green" | "blue" | "yellow" | "cyan" | "magenta" | "white")
-- mixer | output | samplehold | noise | multiply | and | or | xor | not | vgatiming | colorbars | vgaoutput: (no parameters; this tool is a no-op for these types)`,
+- mixer | output | samplehold | noise | multiply | and | or | xor | not | vgatiming | colorbars | vgaoutput | bussplit | busjoin: (no parameters; this tool is a no-op for these types)`,
       input_schema: {
         type: 'object',
         properties: {

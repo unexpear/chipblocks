@@ -905,6 +905,20 @@
   min-width: 130px;
 }
 
+.block-bussplit {
+  border-color: #90a4ae;
+  /* 8 stacked output handles at 24/56/.../248 — bottom edge ≈ 264 px. */
+  min-height: 270px;
+  min-width: 130px;
+}
+
+.block-busjoin {
+  border-color: #78909c;
+  /* 8 stacked input handles, same shape as Bus Split. */
+  min-height: 270px;
+  min-width: 130px;
+}
+
 /* Multi-row parameter blocks (ADSR, Gate, future LPF, etc.) */
 .block-row {
   display: flex;

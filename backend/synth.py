@@ -117,8 +117,8 @@ def _build_params(node_type: str, data: dict) -> dict:
     elif node_type == "solidcolor":
         if "color" in data:
             params["color"] = str(data["color"])
-    # Mixer, Output, SampleAndHold, Noise, Multiply, and the boolean gates
-    # (and / or / xor / not) have no parameters.
+    # Mixer, Output, SampleAndHold, Noise, Multiply, BusSplit, BusJoin,
+    # and the boolean gates (and / or / xor / not) have no parameters.
     return params
 
 

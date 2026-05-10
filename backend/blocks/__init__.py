@@ -42,6 +42,8 @@ from .vga_output import VgaOutput
 from .distortion import Distortion
 from .pixel_range import PixelRange
 from .solid_color import SolidColor
+from .bus_split import BusSplit
+from .bus_join import BusJoin
 
 # Registry mapping graph node `type` (from React Flow JSON) to block class.
 BLOCK_REGISTRY = {
@@ -75,6 +77,8 @@ BLOCK_REGISTRY = {
     "distortion": Distortion,
     "pixelrange": PixelRange,
     "solidcolor": SolidColor,
+    "bussplit": BusSplit,
+    "busjoin": BusJoin,
 }
 
 __all__ = [
@@ -108,5 +112,7 @@ __all__ = [
     "Distortion",
     "PixelRange",
     "SolidColor",
+    "BusSplit",
+    "BusJoin",
     "BLOCK_REGISTRY",
 ]

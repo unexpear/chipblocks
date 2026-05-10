@@ -28,6 +28,8 @@ import { VgaOutputNode,      type VgaOutputBlock }      from './VgaOutputNode'
 import { DistortionNode,     type DistortionBlock }     from './DistortionNode'
 import { PixelRangeNode,     type PixelRangeBlock }     from './PixelRangeNode'
 import { SolidColorNode,     type SolidColorBlock }     from './SolidColorNode'
+import { BusSplitNode,       type BusSplitBlock }       from './BusSplitNode'
+import { BusJoinNode,        type BusJoinBlock }        from './BusJoinNode'
 
 // Hoisted to module scope to avoid React Flow's
 // "It looks like you've created a new nodeTypes object" warning.
@@ -62,6 +64,8 @@ export const nodeTypes = {
   distortion: DistortionNode,
   pixelrange: PixelRangeNode,
   solidcolor: SolidColorNode,
+  bussplit:   BusSplitNode,
+  busjoin:    BusJoinNode,
 }
 
 export type AppNode =
@@ -95,3 +99,5 @@ export type AppNode =
   | DistortionBlock
   | PixelRangeBlock
   | SolidColorBlock
+  | BusSplitBlock
+  | BusJoinBlock

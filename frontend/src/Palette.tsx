@@ -50,6 +50,8 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'pixelrange', label: 'Pixel Range', color: '#7b1fa2', description: 'Inside-window comparator (start ≤ pixel ≤ end)' },
   { type: 'solidcolor', label: 'Solid Color', color: '#c2185b', description: 'Constant 1-bit RGB source (8 named colors)' },
   { type: 'vgaoutput',  label: 'VGA Output', color: '#d81b60', description: 'Visual sink — drives a VGA monitor (iCEBreaker PMOD1B)' },
+  { type: 'bussplit',   label: 'Bus Split',  color: '#90a4ae', description: 'Fan one 8-bit bus out to 8 individual 1-bit signals' },
+  { type: 'busjoin',    label: 'Bus Join',   color: '#78909c', description: 'Concatenate 8 individual 1-bit signals into one 8-bit bus' },
   { type: 'output',     label: 'Output',     color: '#f44336', description: 'Audio sink (where Play reads from)' },
 ]
 
@@ -102,6 +104,8 @@ export function defaultDataForType(type: string): Record<string, unknown> {
     case 'vgatiming':
     case 'colorbars':
     case 'vgaoutput':
+    case 'bussplit':
+    case 'busjoin':
     default:
       return {}
   }

@@ -56,6 +56,8 @@ import { VgaOutputNode } from '../src/blocks/VgaOutputNode'
 import { DistortionNode } from '../src/blocks/DistortionNode'
 import { PixelRangeNode } from '../src/blocks/PixelRangeNode'
 import { SolidColorNode } from '../src/blocks/SolidColorNode'
+import { BusSplitNode } from '../src/blocks/BusSplitNode'
+import { BusJoinNode } from '../src/blocks/BusJoinNode'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -947,5 +949,46 @@ describe('SolidColor block', () => {
     expect(select?.querySelectorAll('option').length).toBe(8)
     expect(countHandles(container, 'target')).toBe(0)
     expect(countHandles(container, 'source')).toBe(3)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Bus blocks: BusSplit (1 input, 8 outputs) and BusJoin (8 inputs, 1 output).
+// Both parameter-less; v0.1 fixes the width at 8 bits.
+
+describe('BusSplit block', () => {
+  it('renders title with 1 input and 8 outputs, no params', () => {
+    const { container } = wrap(
+      <BusSplitNode {...nodePropsBase('bs-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Bus Split')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(1)
+    expect(countHandles(container, 'source')).toBe(8)
+    // Spot-check the LSB and MSB handle ids are present and labelled.
+    const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
+    const ids = Array.from(handles).map((h) => h.getAttribute('data-handleid'))
+    expect(ids).toContain('bus-in')
+    for (let i = 0; i < 8; i++) {
+      expect(ids).toContain(`bit-${i}`)
+    }
+  })
+})
+
+describe('BusJoin block', () => {
+  it('renders title with 8 inputs and 1 output, no params', () => {
+    const { container } = wrap(
+      <BusJoinNode {...nodePropsBase('bj-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Bus Join')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(8)
+    expect(countHandles(container, 'source')).toBe(1)
+    const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
+    const ids = Array.from(handles).map((h) => h.getAttribute('data-handleid'))
+    expect(ids).toContain('bus-out')
+    for (let i = 0; i < 8; i++) {
+      expect(ids).toContain(`bit-${i}`)
+    }
   })
 })
