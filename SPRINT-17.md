@@ -125,4 +125,23 @@ Per ADR-002:
 
 ## Retrospective
 
-> *Filled in at sprint close.*
+### What worked
+
+- **Single-shot agent dispatch was the right move at this maturity level.** The 8-files-per-block cookbook is now well-trodden enough that the agent could implement 4 new blocks + a Counter extension + a worked example + doc updates in a single coherent change. Earlier sprints split work across multiple commits because the patterns were less established; this one landed cleanly as one commit (`00a2902`) with clear per-task attribution in the message + this Sprint Log. Bigger-batch dispatch is now appropriate.
+- **ADR-002's worked-example flexibility paid off.** The plan said "the agent picks the concrete demo with the constraint that it must elaborate end-to-end on iCEBreaker AND demonstrate at least 3 of the 4 new primitives." The agent used 4 of 4 + the new Counter extension — better than mandated. This worked because the constraint was clear (composability + end-to-end build) without prescribing the shape.
+- **Honest scope-deviation reporting.** The agent explicitly called out the Adder shape change (ADR's `data-u9` → shipped `data-u8` + `gate-1` carry) with reasoning, mirroring how Sprint 16's S16-4 noted the BusSplit parameterization deferral. This pattern — ADR specifies the ideal, sprint commits explicitly note pragmatic deltas — keeps the design rationale honest in git history.
+
+### What surfaced
+
+- **The data-u8 ↔ audio-s8 sign-class barrier is now a real friction.** Per ADR-001 the validator correctly rejects the cross. CPU primitives produce `data-u8` outputs; audio Output expects `audio-s8`. There's no clean composition without one of: a Reinterpret block (pure no-op rename of bus-type), a Subtractor block + a Constant(128) to convert unsigned to centered signed, or accepting that CPU and audio domains stay separate. Sprint 18 should address this head-on — Reinterpret is probably the right primitive (~20 LOC of Amaranth that's a no-op, ~30 LOC of TSX). Without it, every CPU-domain-to-audio-domain demo lives in its own silo.
+- **`_run_block_sim` test helper has reached its limits.** None of the 7 new pytest tests could use the existing helper because it doesn't support driving inputs mid-simulation. Each test inlines ~10 LOC of Module + Simulator boilerplate. A `_run_block_with_inputs(block, driver_coro)` helper that takes an async function to drive inputs across simulation cycles would simplify a bunch of follow-on work. Tracked as opportunistic test-infra debt.
+- **Tech-debt item A1 (block manifest) is approaching its trigger condition.** ADR-001's KNOWN-ISSUES entry says "trigger: block #35 OR five-blocks-of-uniform-shape." We're now at 36 blocks. Adder/Register both fit a uniform shape (`data-u8` in/out, ≤2 inputs, optional `gate-1` control). The next 1–2 blocks of similar shape (probably Subtractor + Comparator in Sprint 18) will trip the trigger; the manifest refactor is appropriate to start scoping.
+
+### What we'd do differently
+
+- **The original ADR-002 worked-example claim ("8-bit Fibonacci accumulator on Tiny Tapeout silicon") was over-scoped** for a sprint that doesn't ship Comparator + Mux. The revised SPRINT-17.md scope (any composing-3-of-4-primitives demo) was right; the lesson is that ADRs should describe the *eventual* deliverable but the sprint plan should reflect what's buildable with the *current* primitive set. ADR-002 stays Accepted but its "worked example" framing should be read as aspirational once the supporting primitives ship.
+- **Pre-allocate the audio-domain bridge decision at ADR time, not at sprint time.** Knowing that `data-u8` ↔ `audio-s8` is a hard barrier per ADR-001, the question of "how does CPU output reach audio out?" should have been a sub-decision in ADR-002 itself. The agent had to discover the friction during implementation. Future ADRs that introduce new bus types or cross-domain primitives should call out the bridging story up front.
+
+### Sprint 17 outcome
+
+The 4 CPU primitives ship. Block count 36. The architectural path from "32-block visual chip designer" to "designs a tiny CPU on real silicon" is structurally complete — the data-path primitives are present; what's missing for a real instruction-decoding CPU is conditional control (Comparator, Mux), explicitly deferred to Sprint 18 per ADR-002. v0.1.0-alpha.6 tag follows.
