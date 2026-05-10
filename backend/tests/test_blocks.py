@@ -1700,3 +1700,36 @@ def test_mux_picks_in_a_when_select_is_low_in_b_when_high():
         assert out == in_b, (
             f"Mux(select=1, in-a={in_a}, in-b={in_b}): expected {in_b}; got {out}"
         )
+
+
+def test_byte_constant_emits_configured_value():
+    """ByteConstant is the CPU-domain Constant (data-u8 instead of
+    audio-s8). Combinational; data_out is always the configured value.
+    Test that the clamping logic clamps 300 -> 255 and -5 -> 0 (the
+    constructor should silently coerce out-of-range values rather than
+    raise — same pattern as Constant)."""
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.byte_constant import ByteConstant
+
+    for stored, expected in [(0, 0), (1, 1), (127, 127), (128, 128), (255, 255), (300, 255), (-5, 0)]:
+        block = ByteConstant(value=stored)
+        m = Module()
+        m.submodules.b = block
+        _anchor = Signal()
+        m.d.sync += _anchor.eq(~_anchor)
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+
+        captured: list[int] = []
+
+        async def process(ctx):
+            await ctx.tick()
+            captured.append(ctx.get(block.data_out))
+
+        sim.add_testbench(process)
+        sim.run()
+
+        assert captured[0] == expected, (
+            f"ByteConstant({stored}) clamped to {captured[0]}; expected {expected}"
+        )

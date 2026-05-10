@@ -52,6 +52,7 @@ from .reinterpret import Reinterpret
 from .subtractor import Subtractor
 from .comparator import Comparator
 from .mux import Mux
+from .byte_constant import ByteConstant
 
 # Registry mapping graph node `type` (from React Flow JSON) to block class.
 BLOCK_REGISTRY = {
@@ -95,6 +96,7 @@ BLOCK_REGISTRY = {
     "subtractor": Subtractor,
     "comparator": Comparator,
     "mux": Mux,
+    "byteconstant": ByteConstant,
 }
 
 __all__ = [
@@ -138,5 +140,6 @@ __all__ = [
     "Subtractor",
     "Comparator",
     "Mux",
+    "ByteConstant",
     "BLOCK_REGISTRY",
 ]

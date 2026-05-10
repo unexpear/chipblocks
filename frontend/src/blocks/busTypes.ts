@@ -230,6 +230,10 @@ export const BLOCK_PORT_TYPES: Record<string, Record<string, BusType>> = {
                  'in-b':         'data-u8',
                  'select':       'gate-1',
                  'data-out':     'data-u8' },
+  // ByteConstant — fixed 8-bit unsigned value (0..255). CPU-domain
+  // counterpart to Constant (audio-s8). Useful as a literal in CPU
+  // graphs: a single byte hard-wired into the data path.
+  byteconstant: { 'data-out':    'data-u8' },
 
   // ─── Bus (Sprint 18 addition: Reinterpret) ─────────────────────
   // The explicit data-u8 → audio-s8 bridge. Same 8 bits on the wire,

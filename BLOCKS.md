@@ -225,6 +225,26 @@ Emits a fixed 8-bit signed value forever.
 
 **Common usage.** Useful as a DC offset, a dummy "ground" input on a Mixer when you only have one source, an ADSR test stimulus (multiply by a constant +127 to see the envelope shape clearly), or a debugging probe.
 
+### Byte Constant
+
+Emits a fixed 8-bit unsigned value forever. The CPU-domain counterpart to Constant — same combinational always-emit behaviour, but the output is `data-u8` (0..255) instead of `audio-s8` (-128..+127). Useful as a literal in CPU graphs: an `Adder.in-b` for "add a constant 1", a `Mux.in-a` for a fixed branch destination, or a `RAM.data-in` for a hard-wired write value.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `data-out` | source | 8-bit unsigned data | Held at `value` |
+
+**Parameters**
+
+| Name | Type | Range (frontend / backend) | Default | What it does |
+|---|---|---|---|---|
+| `value` | integer | 0 to 255 / silently clamped to 0..255 | 0 | The held output value |
+
+**Behavior.** Combinational — no internal state. The output is wired directly to the literal `value` constant. Out-of-range constructor values are silently clamped (mirrors Constant's behavior).
+
+**Common usage.** Hard-wired CPU literals — `ByteConstant(1) → Adder.in-b` for "increment by 1 per cycle", `ByteConstant(0) → RAM.data-in` paired with a `write-enable` pulse to clear a memory cell, or `ByteConstant(targetValue) → Comparator.in-b` for a branch-when-equal test.
+
 ---
 
 ## Modulation and control

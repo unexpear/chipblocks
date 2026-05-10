@@ -60,6 +60,7 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'ram',         label: 'RAM',         color: '#0d47a1', description: '16 × 8-bit synchronous read/write memory' },
   { type: 'rom',         label: 'ROM',         color: '#283593', description: '16-byte combinational ROM (contents in the block)' },
   { type: 'reinterpret', label: 'Reinterpret', color: '#546e7a', description: 'No-op bridge: data-u8 → audio-s8 (same bits, different sign)' },
+  { type: 'byteconstant',label: 'Byte Constant', color: '#37474f', description: 'Fixed 8-bit unsigned value (0..255) — CPU-domain Constant' },
   { type: 'output',      label: 'Output',      color: '#f44336', description: 'Audio sink (where Play reads from)' },
 ]
 
@@ -83,6 +84,8 @@ export function defaultDataForType(type: string): Record<string, unknown> {
     case 'bandpass':
       return { center_hz: 1000 }
     case 'constant':
+      return { value: 0 }
+    case 'byteconstant':
       return { value: 0 }
     case 'fm':
       return { carrier_freq: 440, modulator_freq: 110, mod_depth: 64 }

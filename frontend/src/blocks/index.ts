@@ -38,6 +38,7 @@ import { ReinterpretNode,    type ReinterpretBlock }    from './ReinterpretNode'
 import { SubtractorNode,     type SubtractorBlock }     from './SubtractorNode'
 import { ComparatorNode,     type ComparatorBlock }     from './ComparatorNode'
 import { MuxNode,            type MuxBlock }            from './MuxNode'
+import { ByteConstantNode,   type ByteConstantBlock }   from './ByteConstantNode'
 
 // Hoisted to module scope to avoid React Flow's
 // "It looks like you've created a new nodeTypes object" warning.
@@ -82,6 +83,7 @@ export const nodeTypes = {
   subtractor:  SubtractorNode,
   comparator:  ComparatorNode,
   mux:         MuxNode,
+  byteconstant: ByteConstantNode,
 }
 
 export type AppNode =
@@ -125,3 +127,4 @@ export type AppNode =
   | SubtractorBlock
   | ComparatorBlock
   | MuxBlock
+  | ByteConstantBlock

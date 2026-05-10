@@ -994,6 +994,13 @@
   min-width: 130px;
 }
 
+.block-byteconstant {
+  border-color: #37474f;
+  /* No inputs, single output. Single number input field — same footprint
+     as Constant but darker grey to read as "CPU-domain literal." */
+  min-width: 130px;
+}
+
 /* Multi-row parameter blocks (ADSR, Gate, future LPF, etc.) */
 .block-row {
   display: flex;

@@ -83,6 +83,9 @@ def _build_params(node_type: str, data: dict) -> dict:
     elif node_type == "constant":
         if "value" in data:
             params["value"] = int(data["value"])
+    elif node_type == "byteconstant":
+        if "value" in data:
+            params["value"] = int(data["value"])
     elif node_type == "fm":
         if "carrier_freq" in data:
             params["carrier_freq"] = int(data["carrier_freq"])
