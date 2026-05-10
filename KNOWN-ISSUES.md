@@ -32,12 +32,6 @@ Full audit + tiered remediation plan: [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESS
 
 **Action**: pick up incrementally as user-facing UI lands. None block launch.
 
-## GitHub Actions — Node 20 deprecated by 2026-09-16
-
-GitHub announced Node.js 20 deprecation on 2025-09-19; default flips to Node 24 on 2026-06-02 and Node 20 is removed from runners on 2026-09-16. Our workflows use `actions/checkout@v4`, `actions/setup-node@v4`, and `actions/setup-python@v5` — all three currently runner-Node-20. CI emits the deprecation warning on every run today.
-
-**Action**: bump to whichever majors land on Node 24 (likely `actions/checkout@v5` + `actions/setup-node@v5` + `actions/setup-python@v6` once published) before 2026-06-02, ideally bundled with the next CI workflow touch. Low priority — no actual breakage until June 2026, and even then GitHub provides escape hatches (`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` or `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true`).
-
 ## Block-manifest auto-discovery deferred until block growth slows
 
 Source: in-conversation `/engineering:system-design` review (2026-05-09) after the multi-domain expansion landed (commits `5be6d05` + `4ec6e8b` + `be0aeca`).
