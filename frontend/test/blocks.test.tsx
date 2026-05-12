@@ -516,7 +516,7 @@ describe('ADSR block', () => {
   // Regression-guard: LD audit (2026-05-10) replaced the A/D/S/R
   // single-letter labels with 3-char expansions. Any agent that flips
   // back to single letters must update both this test and the audit.
-  it('uses 3-char Atk/Dec/Sus/Rel labels (not A/D/S/R)', () => {
+  it('uses 3-char Att/Dec/Sus/Rel labels (not A/D/S/R)', () => {
     const { container } = wrap(
       <ADSRNode
         {...nodePropsBase('adsr-labels')}
@@ -524,7 +524,7 @@ describe('ADSR block', () => {
       />,
     )
     const labels = Array.from(container.querySelectorAll('.block-label')).map((el) => el.textContent)
-    expect(labels).toEqual(['Atk', 'Dec', 'Sus', 'Rel'])
+    expect(labels).toEqual(['Att', 'Dec', 'Sus', 'Rel'])
   })
 })
 
@@ -627,8 +627,8 @@ describe('FM block', () => {
   })
 
   // Regression-guard: LD audit (2026-05-10) replaced the C/M/D
-  // single-letter labels with word expansions ("Carr"/"Mod"/"Depth").
-  it('uses Carr/Mod/Depth labels (not C/M/D)', () => {
+  // single-letter labels with 3-char expansions ("Car"/"Mod"/"Dep").
+  it('uses Car/Mod/Dep labels (not C/M/D)', () => {
     const { container } = wrap(
       <FmNode
         {...nodePropsBase('fm-labels')}
@@ -636,7 +636,7 @@ describe('FM block', () => {
       />,
     )
     const labels = Array.from(container.querySelectorAll('.block-label')).map((el) => el.textContent)
-    expect(labels).toEqual(['Carr', 'Mod', 'Depth'])
+    expect(labels).toEqual(['Car', 'Mod', 'Dep'])
   })
 })
 

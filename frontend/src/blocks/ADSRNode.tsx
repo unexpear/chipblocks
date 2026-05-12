@@ -81,7 +81,7 @@ export function ADSRNode({ id, data }: NodeProps<ADSRBlock>) {
       <h3 id={titleId} className="block-title">ADSR</h3>
       <div className="block-body">
         <FieldRow
-          label="Atk"
+          label="Att"
           ariaLabel="Attack milliseconds"
           suffix="ms"
           min={1}

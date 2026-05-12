@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 interface AboutModalProps {
   onClose: () => void
@@ -10,6 +10,11 @@ const REPO_URL = 'https://github.com/unexpear/chipblocks'
 export function AboutModal({ onClose }: AboutModalProps) {
   const headingRef = useRef<HTMLHeadingElement>(null)
   const previouslyFocusedRef = useRef<HTMLElement | null>(null)
+  // LD audit 2026-05-10: ignore backdrop-click close once the user has
+  // engaged with the modal content (any keypress or pointer event inside).
+  // A stim-prone tap outside the modal shouldn't lose their reading place.
+  // Escape and the × button still close.
+  const [hasInteracted, setHasInteracted] = useState(false)
 
   // Close on Escape.
   useEffect(() => {
@@ -34,14 +39,22 @@ export function AboutModal({ onClose }: AboutModalProps) {
     }
   }, [])
 
+  const onBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return
+    if (hasInteracted) return
+    onClose()
+  }
+
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={onBackdropClick}>
       <div
         className="modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="about-modal-title"
         onClick={(e) => e.stopPropagation()}
+        onKeyDownCapture={() => setHasInteracted(true)}
+        onPointerDownCapture={() => setHasInteracted(true)}
       >
         <div className="modal-header">
           <h2 id="about-modal-title" ref={headingRef} tabIndex={-1}>About ChipBlocks</h2>

@@ -41,6 +41,10 @@ export function SettingsModal({ hasApiKey, onClose, onKeyChanged }: SettingsModa
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; msg: string } | null>(null)
   const [model, setModel] = useState<string>(getStoredModel())
+  // LD audit 2026-05-10: once the user starts typing or changes the model,
+  // ignore backdrop-click close so a stim-prone tap outside the modal
+  // doesn't lose a partial paste. Escape and × still close.
+  const [hasInteracted, setHasInteracted] = useState(false)
 
   const headingRef = useRef<HTMLHeadingElement>(null)
   const previouslyFocusedRef = useRef<HTMLElement | null>(null)
@@ -104,14 +108,22 @@ export function SettingsModal({ hasApiKey, onClose, onKeyChanged }: SettingsModa
     setStoredModel(id)
   }
 
+  const onBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return
+    if (hasInteracted) return
+    onClose()
+  }
+
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={onBackdropClick}>
       <div
         className="modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-modal-title"
         onClick={(e) => e.stopPropagation()}
+        onKeyDownCapture={() => setHasInteracted(true)}
+        onPointerDownCapture={() => setHasInteracted(true)}
       >
         <div className="modal-header">
           <h2 id="settings-modal-title" ref={headingRef} tabIndex={-1}>Settings</h2>

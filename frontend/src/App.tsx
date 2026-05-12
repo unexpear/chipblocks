@@ -362,13 +362,15 @@ function AppContent() {
     })
   }, [examplesOpen])
 
-  // Auto-dismiss error toast after 6 seconds. Backend-setup errors
-  // need a longer dwell because they include a command the user must
-  // copy and run — 6s isn't enough to read the message and copy the
-  // snippet. Bump those to 20s.
+  // Auto-dismiss error toast. The LD audit (2026-05-10) flagged the
+  // original 6 s dwell as too short for readers with attention drift
+  // or slow processing — the message can disappear before the user
+  // re-orients to it. Unclassified toasts now stay 12 s. Backend-setup
+  // errors stay 20 s because they include a command the user must copy
+  // and run, and that's already past the LD-audit threshold.
   useEffect(() => {
     if (!errorToast) return
-    const dismissMs = errorToastType ? 20_000 : 6_000
+    const dismissMs = errorToastType ? 20_000 : 12_000
     const t = setTimeout(() => {
       setErrorToast(null)
       setErrorToastType(null)

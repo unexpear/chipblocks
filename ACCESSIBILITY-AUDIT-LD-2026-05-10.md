@@ -24,7 +24,7 @@ The biggest LD-aimed improvement area is **density and jargon in the system prom
 
 | Issue | Where | Severity | Proposed fix |
 |---|---|---|---|
-| Error toast auto-dismiss after 6 s (or 20 s for setup errors). 6 s is short for someone re-reading a sentence with attention drift; the message disappears before they re-orient. | `App.tsx:333-341` | High | Bump unclassified to 12 s, or — better — only auto-dismiss after the user has interacted with the page once (mouse move, keystroke); persistent toasts pin until ×. |
+| Error toast auto-dismiss after 6 s (or 20 s for setup errors). 6 s is short for someone re-reading a sentence with attention drift; the message disappears before they re-orient. | `App.tsx:333-341` | High | Bump unclassified to 12 s, or — better — only auto-dismiss after the user has interacted with the page once (mouse move, keystroke); persistent toasts pin until ×. **Status: Done 2026-05-10** — unclassified bumped 6 s → 12 s; setup errors stay at 20 s. |
 | Status messages live in `aria-live="polite"` but only as long as `statusMessage` is set; "Bitstream ready" disappears the next time the user clicks Build. No history view. | `App.tsx:691, 701` | Med | Add a "Last build" line in the toolbar that persists the last 1-line outcome, or surface a small notifications icon they can re-open. |
 | Build menu and Examples menu close on outside click. A user who clicks the canvas to scroll while reading the descriptions loses the menu and has to reopen it. | `App.tsx:717, 754` | Low | Already accessible via Escape — add a hover delay or a "pin" affordance, or document Escape behavior in About → Keyboard shortcuts. |
 | Multiple competing attention surfaces when chat is open: toolbar, palette, canvas, chat panel, plus minimap + controls in canvas. Five regions, no single "where do I look first" cue once the starter hint dismisses. | `App.tsx:683-844` | Med | Consider an adjustable focus mode (collapse minimap + chat by default; their open state already persists in `paletteCollapsed`). |
@@ -38,7 +38,7 @@ The biggest LD-aimed improvement area is **density and jargon in the system prom
 | **Audio plays at full WAV amplitude.** No volume control, no fade-in, no warning before pressing Play. A user with a square-wave-rich graph at 440 Hz has a sudden-onset loud signal on first keypress. | `App.tsx:467-512` | High | Add a volume slider in toolbar (defaulting to ~50 %), or apply a 50-ms fade-in to the audio buffer before `audio.play()`. The `Audio` element supports `audio.volume`. |
 | Chat panel's blinking cursor has no aria-hidden and no reduced-motion guard. | `Chat.tsx:581`, `App.css:514-521` | Med | Add `aria-hidden="true"` to the `<span className="chat-cursor">`. **Trivial fix candidate.** |
 | The error-toast `role="alert"` interrupts screen-reader output instantly. Combined with the toast slide-in animation, it's two simultaneous stimuli for a sensory-sensitive user. | `App.tsx:848` | Low | `role="status"` for non-blocking errors (which most are), keep `alert` only for build/setup failures. |
-| Modal backdrop click closes Settings/About modals. A stim-prone user touching outside the modal loses their place mid-paste of an API key. | `SettingsModal.tsx:108`, `AboutModal.tsx:38` | Med | Same pattern the toast already uses (`e.target === e.currentTarget` plus user-hasn't-typed-since-opening guard). |
+| Modal backdrop click closes Settings/About modals. A stim-prone user touching outside the modal loses their place mid-paste of an API key. | `SettingsModal.tsx:108`, `AboutModal.tsx:38` | Med | Same pattern the toast already uses (`e.target === e.currentTarget` plus user-hasn't-typed-since-opening guard). **Status: Done 2026-05-10** — both modals now track `hasInteracted` via `onKeyDownCapture` + `onPointerDownCapture`; backdrop click is a no-op once the user has typed or clicked inside. × button and Escape still close. |
 
 ## Working-memory findings
 
@@ -87,7 +87,7 @@ These are real, not lip service:
 
 1. **Add `prefers-reduced-motion` honoring across all four animations** *(spinner, chat cursor, toast slide-in, transitions)*. Why: WCAG 2.3.3 + autistic / vestibular users have a system-level signal that the app currently ignores. **Effort: 5 min. Trivial fix candidate.**
 
-2. **Replace single-letter parameter labels (ADSR, FM, PixelRange) with 3-char or word labels.** Why: A/D/S/R, C/M/D, a/b are the highest working-memory tax in the app. Sighted users without prior synth knowledge can't remember which letter is which. **Effort: 30 min.**
+2. **Replace single-letter parameter labels (ADSR, FM, PixelRange) with 3-char or word labels.** Why: A/D/S/R, C/M/D, a/b are the highest working-memory tax in the app. Sighted users without prior synth knowledge can't remember which letter is which. **Effort: 30 min.** **Status: Done 2026-05-10** — labels updated in ADSRNode (Att/Dec/Sus/Rel) and FmNode (Car/Mod/Dep); PixelRangeNode already used explicit `start`/`end`.
 
 3. **Add a volume slider (or default 50 % volume) for ▶ Play.** Why: today the audio plays at full 8-bit amplitude; for an autistic / startle-prone user the first Play is always a sudden onset. **Effort: 30 min.**
 
