@@ -109,6 +109,7 @@ export function busWidth(t: BusType): number {
 // edge referencing a (node.type, handle.id) pair not listed here.
 
 export const BLOCK_PORT_TYPES: Record<string, Record<string, BusType>> = {
+// @begin codegen block-port-types
   // ─── Audio sources (8 blocks, 1 source handle each) ──────────────
   oscillator:  { 'audio-out': 'audio-s8' },
   triangle:    { 'audio-out': 'audio-s8' },
@@ -117,49 +118,57 @@ export const BLOCK_PORT_TYPES: Record<string, Record<string, BusType>> = {
   wavetable:   { 'audio-out': 'audio-s8' },
   noise:       { 'audio-out': 'audio-s8' },
   constant:    { 'audio-out': 'audio-s8' },
-  fm:          { 'audio-out': 'audio-s8' },
+
+  // ─── Mixing / routing ──────────────────────────────────────────
+  mixer:       { 'in-1':    'audio-s8',
+                 'in-2':    'audio-s8',
+                 'mix-out': 'audio-s8' },
 
   // ─── Modulation / control ───────────────────────────────────────
-  gate:        { 'gate-out':  'gate-1'  },
   adsr:        { 'gate':      'gate-1',
                  'audio-in':  'audio-s8',
                  'audio-out': 'audio-s8' },
+  gate:        { 'gate-out': 'gate-1' },
+
+  // ─── Filters ────────────────────────────────────────────────────
+  lowpass:     { 'audio-in':  'audio-s8',
+                 'audio-out': 'audio-s8' },
+  highpass:    { 'audio-in':  'audio-s8',
+                 'audio-out': 'audio-s8' },
+  bandpass:    { 'audio-in':  'audio-s8',
+                 'audio-out': 'audio-s8' },
+
   samplehold:  { 'audio-in':  'audio-s8',
                  'clock':     'gate-1',
                  'audio-out': 'audio-s8' },
+  fm:          { 'audio-out': 'audio-s8' },
   multiply:    { 'in-1':      'audio-s8',
                  'in-2':      'audio-s8',
                  'audio-out': 'audio-s8' },
 
-  // ─── Filters ────────────────────────────────────────────────────
-  lowpass:     { 'audio-in': 'audio-s8', 'audio-out': 'audio-s8' },
-  highpass:    { 'audio-in': 'audio-s8', 'audio-out': 'audio-s8' },
-  bandpass:    { 'audio-in': 'audio-s8', 'audio-out': 'audio-s8' },
-
   // ─── Effects ────────────────────────────────────────────────────
-  bitcrusher:  { 'audio-in': 'audio-s8', 'audio-out': 'audio-s8' },
-  delay:       { 'audio-in': 'audio-s8', 'audio-out': 'audio-s8' },
-  distortion:  { 'audio-in': 'audio-s8', 'audio-out': 'audio-s8' },
+  bitcrusher:  { 'audio-in':  'audio-s8',
+                 'audio-out': 'audio-s8' },
+  delay:       { 'audio-in':  'audio-s8',
+                 'audio-out': 'audio-s8' },
+  distortion:  { 'audio-in':  'audio-s8',
+                 'audio-out': 'audio-s8' },
 
   // ─── Logic (boolean gates + clocked counter) ───────────────────
-  and:         { 'in-1': 'gate-1', 'in-2': 'gate-1', 'gate-out': 'gate-1' },
-  or:          { 'in-1': 'gate-1', 'in-2': 'gate-1', 'gate-out': 'gate-1' },
-  xor:         { 'in-1': 'gate-1', 'in-2': 'gate-1', 'gate-out': 'gate-1' },
-  not:         { 'gate-in': 'gate-1', 'gate-out': 'gate-1' },
-  // Counter is a logic block but exposes two outputs: a centred 8-bit
-  // signed audio sample (composes with audio-domain blocks; the original
-  // S15 shape) and a raw 4-bit unsigned address (Sprint 17, ADR-002, so
-  // the counter can drive RAM/ROM addresses without a bus-conversion
-  // chain). The audio-out is a documented semantic crossing — see
-  // KNOWN-ISSUES under "Counter outputs audio-out despite being a logic
-  // block." Intentional, not a bug.
+  and:         { 'in-1':     'gate-1',
+                 'in-2':     'gate-1',
+                 'gate-out': 'gate-1' },
+  or:          { 'in-1':     'gate-1',
+                 'in-2':     'gate-1',
+                 'gate-out': 'gate-1' },
+  xor:         { 'in-1':     'gate-1',
+                 'in-2':     'gate-1',
+                 'gate-out': 'gate-1' },
+  not:         { 'gate-in':  'gate-1',
+                 'gate-out': 'gate-1' },
   counter:     { 'clock':     'gate-1',
                  'audio-out': 'audio-s8',
                  'addr-out':  'addr-u4' },
-
-  // ─── Mixing / routing ──────────────────────────────────────────
-  mixer:       { 'in-1': 'audio-s8', 'in-2': 'audio-s8', 'mix-out': 'audio-s8' },
-  output:      { 'audio-in': 'audio-s8' },
 
   // ─── Visual ────────────────────────────────────────────────────
   vgatiming:   { 'hsync':   'gate-1',
@@ -172,35 +181,55 @@ export const BLOCK_PORT_TYPES: Record<string, Record<string, BusType>> = {
                  'r':       'gate-1',
                  'g':       'gate-1',
                  'b':       'gate-1' },
+  pixelrange:  { 'pixel':  'pixel-u10',
+                 'inside': 'gate-1' },
+  solidcolor:  { 'r': 'gate-1',
+                 'g': 'gate-1',
+                 'b': 'gate-1' },
   vgaoutput:   { 'r':     'gate-1',
                  'g':     'gate-1',
                  'b':     'gate-1',
                  'hsync': 'gate-1',
                  'vsync': 'gate-1' },
-  pixelrange:  { 'pixel':  'pixel-u10', 'inside': 'gate-1' },
-  solidcolor:  { 'r': 'gate-1', 'g': 'gate-1', 'b': 'gate-1' },
 
   // ─── Bus (cross-width composition — Sprint 16) ─────────────────
-  // v0.1 fixes the width at 8 bits; configurable widths are roadmap.
   bussplit:    { 'bus-in': 'data-u8',
-                 'bit-0':  'data-u1', 'bit-1':  'data-u1',
-                 'bit-2':  'data-u1', 'bit-3':  'data-u1',
-                 'bit-4':  'data-u1', 'bit-5':  'data-u1',
-                 'bit-6':  'data-u1', 'bit-7':  'data-u1' },
-  busjoin:     { 'bit-0':  'data-u1', 'bit-1':  'data-u1',
-                 'bit-2':  'data-u1', 'bit-3':  'data-u1',
-                 'bit-4':  'data-u1', 'bit-5':  'data-u1',
-                 'bit-6':  'data-u1', 'bit-7':  'data-u1',
+                 'bit-0':  'data-u1',
+                 'bit-1':  'data-u1',
+                 'bit-2':  'data-u1',
+                 'bit-3':  'data-u1',
+                 'bit-4':  'data-u1',
+                 'bit-5':  'data-u1',
+                 'bit-6':  'data-u1',
+                 'bit-7':  'data-u1' },
+  busjoin:     { 'bit-0':   'data-u1',
+                 'bit-1':   'data-u1',
+                 'bit-2':   'data-u1',
+                 'bit-3':   'data-u1',
+                 'bit-4':   'data-u1',
+                 'bit-5':   'data-u1',
+                 'bit-6':   'data-u1',
+                 'bit-7':   'data-u1',
                  'bus-out': 'data-u8' },
 
   // ─── Computation / CPU primitives (Sprint 17, ADR-002) ─────────
-  // 8-bit unsigned data path + 4-bit unsigned address. Adder's split
-  // sum-out/carry-out shape is documented in adder.py (deviation from
-  // the ADR's single 9-bit sum-out).
-  adder:       { 'in-a':         'data-u8',
-                 'in-b':         'data-u8',
-                 'sum-out':      'data-u8',
-                 'carry-out':    'gate-1' },
+  adder:       { 'in-a':      'data-u8',
+                 'in-b':      'data-u8',
+                 'sum-out':   'data-u8',
+                 'carry-out': 'gate-1' },
+  subtractor:  { 'in-a':       'data-u8',
+                 'in-b':       'data-u8',
+                 'diff-out':   'data-u8',
+                 'borrow-out': 'gate-1' },
+  comparator:  { 'in-a':   'data-u8',
+                 'in-b':   'data-u8',
+                 'eq-out': 'gate-1',
+                 'lt-out': 'gate-1',
+                 'gt-out': 'gate-1' },
+  mux:         { 'in-a':     'data-u8',
+                 'in-b':     'data-u8',
+                 'select':   'gate-1',
+                 'data-out': 'data-u8' },
   register:    { 'data-in':      'data-u8',
                  'write-enable': 'gate-1',
                  'data-out':     'data-u8' },
@@ -208,51 +237,21 @@ export const BLOCK_PORT_TYPES: Record<string, Record<string, BusType>> = {
                  'data-in':      'data-u8',
                  'write-enable': 'gate-1',
                  'data-out':     'data-u8' },
-  // Register File: independent read and write addresses (Sprint 20).
-  // The architectural distinction from RAM — real CPU instruction sets
-  // pick a destination register and one or two source registers from
-  // the same file in one cycle.
   registerfile:{ 'read-addr':    'addr-u4',
                  'write-addr':   'addr-u4',
                  'data-in':      'data-u8',
                  'write-enable': 'gate-1',
                  'data-out':     'data-u8' },
-  rom:         { 'addr':         'addr-u4',
-                 'data-out':     'data-u8' },
+  rom:         { 'addr':     'addr-u4',
+                 'data-out': 'data-u8' },
 
-  // ─── Computation / branching (Sprint 18) ───────────────────────
-  // Subtractor mirrors Adder's split shape (data-u8 diff + gate-1
-  // borrow). Comparator emits three flag projections of the same
-  // compare. Mux picks between two 8-bit data values per a 1-bit
-  // select. All combinational; pair Comparator + Mux for branching
-  // without a state machine.
-  subtractor:  { 'in-a':         'data-u8',
-                 'in-b':         'data-u8',
-                 'diff-out':     'data-u8',
-                 'borrow-out':   'gate-1' },
-  comparator:  { 'in-a':         'data-u8',
-                 'in-b':         'data-u8',
-                 'eq-out':       'gate-1',
-                 'lt-out':       'gate-1',
-                 'gt-out':       'gate-1' },
-  mux:         { 'in-a':         'data-u8',
-                 'in-b':         'data-u8',
-                 'select':       'gate-1',
-                 'data-out':     'data-u8' },
-  // ByteConstant — fixed 8-bit unsigned value (0..255). CPU-domain
-  // counterpart to Constant (audio-s8). Useful as a literal in CPU
-  // graphs: a single byte hard-wired into the data path.
-  byteconstant: { 'data-out':    'data-u8' },
+  reinterpret: { 'data-in':   'data-u8',
+                 'audio-out': 'audio-s8' },
 
-  // ─── Bus (Sprint 18 addition: Reinterpret) ─────────────────────
-  // The explicit data-u8 → audio-s8 bridge. Same 8 bits on the wire,
-  // different sign interpretation. The validator correctly rejects an
-  // implicit cross between sign classes (per ADR-001); this block is
-  // the user-flagged "yes, I want that bit-level reinterpretation"
-  // escape hatch, counterpart to BusSplit/BusJoin for cross-width
-  // composition.
-  reinterpret: { 'data-in':      'data-u8',
-                 'audio-out':    'audio-s8' },
+  byteconstant:{ 'data-out': 'data-u8' },
+
+  output:      { 'audio-in': 'audio-s8' },
+// @end codegen block-port-types
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,858 @@
+# ChipBlocks block manifest — single source of truth for cross-cutting
+# block metadata. Per ADR-003, this file is authored by hand and read by
+# scripts/codegen-frontend.mjs + scripts/codegen-backend.py to produce
+# the registries and tables in the cross-cutting target files.
+#
+# Order matters: it is the same order used by frontend/src/Palette.tsx's
+# PALETTE array. Codegen produces palette entries in this sequence.
+
+- type: oscillator
+  label: Oscillator
+  description: Square wave source
+  color: '#4caf50'
+  category: source
+  componentPath: frontend/src/blocks/OscillatorNode.tsx
+  backendPath: backend/blocks/oscillator.py
+  backendClass: Oscillator
+  ports:
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    freq:
+      type: int
+      min: 20
+      max: 20000
+      default: 440
+      ariaLabel: Frequency in hertz
+      unit: Hz
+      backendParam: freq_hz
+      backendNeedsSampleRate: true
+  tags: []
+
+- type: triangle
+  label: Triangle
+  description: Triangle wave source
+  color: '#ffc107'
+  category: source
+  componentPath: frontend/src/blocks/TriangleNode.tsx
+  backendPath: backend/blocks/triangle.py
+  backendClass: Triangle
+  ports:
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    freq:
+      type: int
+      min: 20
+      max: 20000
+      default: 440
+      ariaLabel: Frequency in hertz
+      unit: Hz
+      backendParam: freq_hz
+      backendNeedsSampleRate: true
+  tags: []
+
+- type: sawtooth
+  label: Sawtooth
+  description: Sawtooth wave source
+  color: '#9c27b0'
+  category: source
+  componentPath: frontend/src/blocks/SawtoothNode.tsx
+  backendPath: backend/blocks/sawtooth.py
+  backendClass: Sawtooth
+  ports:
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    freq:
+      type: int
+      min: 20
+      max: 20000
+      default: 440
+      ariaLabel: Frequency in hertz
+      unit: Hz
+      backendParam: freq_hz
+      backendNeedsSampleRate: true
+  tags: []
+
+- type: sine
+  label: Sine
+  description: Sine wave source (cleanest tone)
+  color: '#ce93d8'
+  category: source
+  componentPath: frontend/src/blocks/SineNode.tsx
+  backendPath: backend/blocks/sine.py
+  backendClass: Sine
+  ports:
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    freq:
+      type: int
+      min: 20
+      max: 20000
+      default: 440
+      ariaLabel: Frequency in hertz
+      unit: Hz
+      backendParam: freq_hz
+      backendNeedsSampleRate: true
+  tags: []
+
+- type: wavetable
+  label: Wavetable
+  description: Morphable single-cycle waveform (4 preset shapes)
+  color: '#8bc34a'
+  category: source
+  componentPath: frontend/src/blocks/WavetableNode.tsx
+  backendPath: backend/blocks/wavetable.py
+  backendClass: Wavetable
+  ports:
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    freq:
+      type: int
+      min: 20
+      max: 20000
+      default: 440
+      ariaLabel: Frequency in hertz
+      unit: Hz
+      backendParam: freq_hz
+      backendNeedsSampleRate: true
+    shape:
+      type: string
+      enum: [sine, pulse_25, ramp_up, formant]
+      default: sine
+      ariaLabel: Wavetable shape
+  cssMinWidth: 140
+  tags: []
+
+- type: noise
+  label: Noise
+  description: Pseudo-random 8-bit signed source
+  color: '#795548'
+  category: source
+  componentPath: frontend/src/blocks/NoiseNode.tsx
+  backendPath: backend/blocks/noise.py
+  backendClass: Noise
+  ports:
+    audio-out: { dir: source, bus: audio-s8 }
+  tags: []
+
+- type: constant
+  label: Constant
+  description: Fixed 8-bit signed value (-128..127)
+  color: '#9e9e9e'
+  category: source
+  componentPath: frontend/src/blocks/ConstantNode.tsx
+  backendPath: backend/blocks/constant.py
+  backendClass: Constant
+  ports:
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    value:
+      type: int
+      min: -128
+      max: 127
+      default: 0
+      ariaLabel: Constant value (-128 to 127)
+  tags: []
+
+- type: mixer
+  label: Mixer
+  description: Average two audio inputs
+  color: '#2196f3'
+  category: routing
+  componentPath: frontend/src/blocks/MixerNode.tsx
+  backendPath: backend/blocks/mixer.py
+  backendClass: Mixer
+  ports:
+    in-1:    { dir: target, bus: audio-s8 }
+    in-2:    { dir: target, bus: audio-s8 }
+    mix-out: { dir: source, bus: audio-s8 }
+  tags: []
+
+- type: adsr
+  label: ADSR
+  description: Attack/Decay/Sustain/Release envelope
+  color: '#ff9800'
+  category: modulation
+  componentPath: frontend/src/blocks/ADSRNode.tsx
+  backendPath: backend/blocks/adsr.py
+  backendClass: ADSR
+  ports:
+    gate:      { dir: target, bus: gate-1 }
+    audio-in:  { dir: target, bus: audio-s8 }
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    attack_ms:
+      type: int
+      min: 1
+      max: 5000
+      default: 10
+      label: Att
+      ariaLabel: Attack milliseconds
+      unit: ms
+      backendNeedsSampleRate: true
+    decay_ms:
+      type: int
+      min: 1
+      max: 5000
+      default: 100
+      label: Dec
+      ariaLabel: Decay milliseconds
+      unit: ms
+      backendNeedsSampleRate: true
+    sustain_level:
+      type: int
+      min: 0
+      max: 127
+      default: 80
+      label: Sus
+      ariaLabel: Sustain level (0 to 127)
+      backendNeedsSampleRate: true
+    release_ms:
+      type: int
+      min: 1
+      max: 5000
+      default: 200
+      label: Rel
+      ariaLabel: Release milliseconds
+      unit: ms
+      backendNeedsSampleRate: true
+  cssMinWidth: 150
+  tags: []
+
+- type: gate
+  label: Gate
+  description: Periodic 1-bit pulse
+  color: '#00bcd4'
+  category: modulation
+  componentPath: frontend/src/blocks/GateNode.tsx
+  backendPath: backend/blocks/gate.py
+  backendClass: Gate
+  ports:
+    gate-out: { dir: source, bus: gate-1 }
+  parameters:
+    rate_hz:
+      type: int
+      min: 1
+      max: 1000
+      default: 4
+      ariaLabel: Rate in hertz
+      unit: Hz
+      backendNeedsSampleRate: true
+    duty_pct:
+      type: int
+      min: 1
+      max: 99
+      default: 50
+      ariaLabel: Duty cycle percent
+      unit: '% duty'
+      backendNeedsSampleRate: true
+  tags: []
+
+- type: lowpass
+  label: Low-pass
+  description: 1-pole IIR low-pass filter
+  color: '#00897b'
+  category: filter
+  componentPath: frontend/src/blocks/LowPassFilterNode.tsx
+  backendPath: backend/blocks/lowpass.py
+  backendClass: LowPassFilter
+  ports:
+    audio-in:  { dir: target, bus: audio-s8 }
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    cutoff_hz:
+      type: int
+      min: 1
+      max: 22050
+      default: 800
+      ariaLabel: Cutoff frequency in hertz
+      unit: Hz cutoff
+      backendNeedsSampleRate: true
+  tags: []
+
+- type: highpass
+  label: High-pass
+  description: 1-pole IIR high-pass filter
+  color: '#006064'
+  category: filter
+  componentPath: frontend/src/blocks/HighPassFilterNode.tsx
+  backendPath: backend/blocks/highpass.py
+  backendClass: HighPassFilter
+  ports:
+    audio-in:  { dir: target, bus: audio-s8 }
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    cutoff_hz:
+      type: int
+      min: 1
+      max: 22050
+      default: 800
+      ariaLabel: Cutoff frequency in hertz
+      unit: Hz cutoff
+      backendNeedsSampleRate: true
+  tags: []
+
+- type: bandpass
+  label: Band-pass
+  description: 1-pole IIR band-pass filter (1-octave bandwidth)
+  color: '#5e35b1'
+  category: filter
+  componentPath: frontend/src/blocks/BandPassFilterNode.tsx
+  backendPath: backend/blocks/bandpass.py
+  backendClass: BandPassFilter
+  ports:
+    audio-in:  { dir: target, bus: audio-s8 }
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    center_hz:
+      type: int
+      min: 10
+      max: 22050
+      default: 1000
+      ariaLabel: Center frequency in hertz
+      unit: Hz center
+      backendNeedsSampleRate: true
+  tags: []
+
+- type: samplehold
+  label: S & H
+  description: Sample-and-Hold on clock edge
+  color: '#607d8b'
+  category: modulation
+  componentPath: frontend/src/blocks/SampleAndHoldNode.tsx
+  backendPath: backend/blocks/sample_and_hold.py
+  backendClass: SampleAndHold
+  ports:
+    audio-in:  { dir: target, bus: audio-s8 }
+    clock:     { dir: target, bus: gate-1 }
+    audio-out: { dir: source, bus: audio-s8 }
+  cssMinWidth: 130
+  tags: []
+
+- type: fm
+  label: FM
+  description: Two-operator FM voice (carrier + modulator)
+  color: '#e91e63'
+  category: modulation
+  componentPath: frontend/src/blocks/FmNode.tsx
+  backendPath: backend/blocks/fm.py
+  backendClass: Fm
+  ports:
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    carrier_freq:
+      type: int
+      min: 20
+      max: 20000
+      default: 440
+      label: Car
+      ariaLabel: Carrier frequency in hertz
+      unit: Hz
+      backendNeedsSampleRate: true
+    modulator_freq:
+      type: int
+      min: 20
+      max: 20000
+      default: 110
+      label: Mod
+      ariaLabel: Modulator frequency in hertz
+      unit: Hz
+      backendNeedsSampleRate: true
+    mod_depth:
+      type: int
+      min: 0
+      max: 127
+      default: 64
+      label: Dep
+      ariaLabel: Modulation depth (0 to 127)
+      backendNeedsSampleRate: true
+  cssMinWidth: 150
+  tags: []
+
+- type: multiply
+  label: Multiply
+  description: 'Ring modulator / VCA: (a * b) >> 7'
+  color: '#3f51b5'
+  category: modulation
+  componentPath: frontend/src/blocks/MultiplyNode.tsx
+  backendPath: backend/blocks/multiply.py
+  backendClass: Multiply
+  ports:
+    in-1:      { dir: target, bus: audio-s8 }
+    in-2:      { dir: target, bus: audio-s8 }
+    audio-out: { dir: source, bus: audio-s8 }
+  tags: []
+
+- type: bitcrusher
+  label: Bitcrusher
+  description: "Lo-fi bit-depth reduction (1–8 effective bits)"
+  color: '#5d4037'
+  category: effect
+  componentPath: frontend/src/blocks/BitcrusherNode.tsx
+  backendPath: backend/blocks/bitcrusher.py
+  backendClass: Bitcrusher
+  ports:
+    audio-in:  { dir: target, bus: audio-s8 }
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    bits:
+      type: int
+      min: 1
+      max: 8
+      default: 4
+      ariaLabel: Effective bit depth (1 to 8)
+      unit: bits
+  tags: []
+
+- type: delay
+  label: Delay
+  description: "Fixed-length delay line (1–1024 samples)"
+  color: '#7c4dff'
+  category: effect
+  componentPath: frontend/src/blocks/DelayNode.tsx
+  backendPath: backend/blocks/delay.py
+  backendClass: Delay
+  ports:
+    audio-in:  { dir: target, bus: audio-s8 }
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    delay_samples:
+      type: int
+      min: 1
+      max: 1024
+      default: 128
+      ariaLabel: Delay length in samples (1 to 1024)
+      unit: samples
+  tags: []
+
+- type: distortion
+  label: Distortion
+  description: Hard-clipping waveshaper (guitar / synth overdrive)
+  color: '#ff6f00'
+  category: effect
+  componentPath: frontend/src/blocks/DistortionNode.tsx
+  backendPath: backend/blocks/distortion.py
+  backendClass: Distortion
+  ports:
+    audio-in:  { dir: target, bus: audio-s8 }
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    threshold:
+      type: int
+      min: 1
+      max: 127
+      default: 32
+      ariaLabel: Clip threshold (1 to 127)
+      unit: threshold
+  tags: []
+
+- type: and
+  label: AND
+  description: 1-bit logical AND (a & b)
+  color: '#0277bd'
+  category: logic
+  componentPath: frontend/src/blocks/AndGateNode.tsx
+  backendPath: backend/blocks/and_gate.py
+  backendClass: AndGate
+  ports:
+    in-1:     { dir: target, bus: gate-1 }
+    in-2:     { dir: target, bus: gate-1 }
+    gate-out: { dir: source, bus: gate-1 }
+  tags: []
+
+- type: or
+  label: OR
+  description: 1-bit logical OR (a | b)
+  color: '#0288d1'
+  category: logic
+  componentPath: frontend/src/blocks/OrGateNode.tsx
+  backendPath: backend/blocks/or_gate.py
+  backendClass: OrGate
+  ports:
+    in-1:     { dir: target, bus: gate-1 }
+    in-2:     { dir: target, bus: gate-1 }
+    gate-out: { dir: source, bus: gate-1 }
+  tags: []
+
+- type: xor
+  label: XOR
+  description: 1-bit exclusive OR (a ^ b)
+  color: '#039be5'
+  category: logic
+  componentPath: frontend/src/blocks/XorGateNode.tsx
+  backendPath: backend/blocks/xor_gate.py
+  backendClass: XorGate
+  ports:
+    in-1:     { dir: target, bus: gate-1 }
+    in-2:     { dir: target, bus: gate-1 }
+    gate-out: { dir: source, bus: gate-1 }
+  tags: []
+
+- type: not
+  label: NOT
+  description: 1-bit inverter (~a)
+  color: '#03a9f4'
+  category: logic
+  componentPath: frontend/src/blocks/NotGateNode.tsx
+  backendPath: backend/blocks/not_gate.py
+  backendClass: NotGate
+  ports:
+    gate-in:  { dir: target, bus: gate-1 }
+    gate-out: { dir: source, bus: gate-1 }
+  tags: []
+
+- type: counter
+  label: Counter
+  description: Wrapping counter clocked by a 1-bit signal
+  color: '#01579b'
+  category: logic
+  componentPath: frontend/src/blocks/CounterNode.tsx
+  backendPath: backend/blocks/counter.py
+  backendClass: Counter
+  ports:
+    clock:     { dir: target, bus: gate-1 }
+    audio-out: { dir: source, bus: audio-s8 }
+    addr-out:  { dir: source, bus: addr-u4 }
+  parameters:
+    max_value:
+      type: int
+      min: 1
+      max: 127
+      default: 16
+      ariaLabel: Wrap value (1 to 127)
+      unit: max
+  cssMinWidth: 130
+  tags: []
+
+- type: vgatiming
+  label: VGA Timing
+  description: "640\xD7480 / 60 Hz VGA timing generator"
+  color: '#673ab7'
+  category: visual
+  componentPath: frontend/src/blocks/VgaTimingNode.tsx
+  backendPath: backend/blocks/vga_timing.py
+  backendClass: VgaTiming
+  ports:
+    hsync:   { dir: source, bus: gate-1 }
+    vsync:   { dir: source, bus: gate-1 }
+    visible: { dir: source, bus: gate-1 }
+    x:       { dir: source, bus: pixel-u10 }
+    y:       { dir: source, bus: pixel-u10 }
+  cssMinHeight: 180
+  cssMinWidth: 130
+  tags: []
+
+- type: colorbars
+  label: Color Bars
+  description: 8-stripe SMPTE color-bar test pattern
+  color: '#ab47bc'
+  category: visual
+  componentPath: frontend/src/blocks/ColorBarsNode.tsx
+  backendPath: backend/blocks/color_bars.py
+  backendClass: ColorBars
+  ports:
+    x:       { dir: target, bus: pixel-u10 }
+    visible: { dir: target, bus: gate-1 }
+    r:       { dir: source, bus: gate-1 }
+    g:       { dir: source, bus: gate-1 }
+    b:       { dir: source, bus: gate-1 }
+  cssMinHeight: 110
+  cssMinWidth: 130
+  tags: []
+
+- type: pixelrange
+  label: Pixel Range
+  description: "Inside-window comparator (start ≤ pixel ≤ end)"
+  color: '#7b1fa2'
+  category: visual
+  componentPath: frontend/src/blocks/PixelRangeNode.tsx
+  backendPath: backend/blocks/pixel_range.py
+  backendClass: PixelRange
+  ports:
+    pixel:  { dir: target, bus: pixel-u10 }
+    inside: { dir: source, bus: gate-1 }
+  parameters:
+    start:
+      type: int
+      min: 0
+      max: 639
+      default: 100
+      label: start
+      ariaLabel: Range start (0 to 639)
+    end:
+      type: int
+      min: 0
+      max: 639
+      default: 200
+      label: end
+      ariaLabel: Range end (0 to 639)
+  cssMinWidth: 130
+  tags: []
+
+- type: solidcolor
+  label: Solid Color
+  description: Constant 1-bit RGB source (8 named colors)
+  color: '#c2185b'
+  category: visual
+  componentPath: frontend/src/blocks/SolidColorNode.tsx
+  backendPath: backend/blocks/solid_color.py
+  backendClass: SolidColor
+  ports:
+    r: { dir: source, bus: gate-1 }
+    g: { dir: source, bus: gate-1 }
+    b: { dir: source, bus: gate-1 }
+  parameters:
+    color:
+      type: string
+      enum: [black, red, green, blue, yellow, cyan, magenta, white]
+      default: white
+      ariaLabel: Color
+  cssMinHeight: 110
+  cssMinWidth: 130
+  tags: []
+
+- type: vgaoutput
+  label: VGA Output
+  description: "Visual sink — drives a VGA monitor (iCEBreaker PMOD1B)"
+  color: '#d81b60'
+  category: visual
+  componentPath: frontend/src/blocks/VgaOutputNode.tsx
+  backendPath: backend/blocks/vga_output.py
+  backendClass: VgaOutput
+  ports:
+    r:     { dir: target, bus: gate-1 }
+    g:     { dir: target, bus: gate-1 }
+    b:     { dir: target, bus: gate-1 }
+    hsync: { dir: target, bus: gate-1 }
+    vsync: { dir: target, bus: gate-1 }
+  cssMinHeight: 180
+  cssMinWidth: 130
+  tags: []
+
+- type: bussplit
+  label: Bus Split
+  description: Fan one 8-bit bus out to 8 individual 1-bit signals
+  color: '#90a4ae'
+  category: bus
+  componentPath: frontend/src/blocks/BusSplitNode.tsx
+  backendPath: backend/blocks/bus_split.py
+  backendClass: BusSplit
+  ports:
+    bus-in: { dir: target, bus: data-u8 }
+    bit-0:  { dir: source, bus: data-u1 }
+    bit-1:  { dir: source, bus: data-u1 }
+    bit-2:  { dir: source, bus: data-u1 }
+    bit-3:  { dir: source, bus: data-u1 }
+    bit-4:  { dir: source, bus: data-u1 }
+    bit-5:  { dir: source, bus: data-u1 }
+    bit-6:  { dir: source, bus: data-u1 }
+    bit-7:  { dir: source, bus: data-u1 }
+  cssMinHeight: 270
+  cssMinWidth: 130
+  tags: []
+
+- type: busjoin
+  label: Bus Join
+  description: Concatenate 8 individual 1-bit signals into one 8-bit bus
+  color: '#78909c'
+  category: bus
+  componentPath: frontend/src/blocks/BusJoinNode.tsx
+  backendPath: backend/blocks/bus_join.py
+  backendClass: BusJoin
+  ports:
+    bit-0:   { dir: target, bus: data-u1 }
+    bit-1:   { dir: target, bus: data-u1 }
+    bit-2:   { dir: target, bus: data-u1 }
+    bit-3:   { dir: target, bus: data-u1 }
+    bit-4:   { dir: target, bus: data-u1 }
+    bit-5:   { dir: target, bus: data-u1 }
+    bit-6:   { dir: target, bus: data-u1 }
+    bit-7:   { dir: target, bus: data-u1 }
+    bus-out: { dir: source, bus: data-u8 }
+  cssMinHeight: 270
+  cssMinWidth: 130
+  tags: []
+
+- type: adder
+  label: Adder
+  description: Combinational 8-bit unsigned add with carry-out
+  color: '#1976d2'
+  category: computation
+  componentPath: frontend/src/blocks/AdderNode.tsx
+  backendPath: backend/blocks/adder.py
+  backendClass: Adder
+  ports:
+    in-a:      { dir: target, bus: data-u8 }
+    in-b:      { dir: target, bus: data-u8 }
+    sum-out:   { dir: source, bus: data-u8 }
+    carry-out: { dir: source, bus: gate-1 }
+  cssMinHeight: 110
+  cssMinWidth: 130
+  tags: []
+
+- type: subtractor
+  label: Subtractor
+  description: Combinational 8-bit unsigned subtract with borrow-out
+  color: '#1e88e5'
+  category: computation
+  componentPath: frontend/src/blocks/SubtractorNode.tsx
+  backendPath: backend/blocks/subtractor.py
+  backendClass: Subtractor
+  ports:
+    in-a:       { dir: target, bus: data-u8 }
+    in-b:       { dir: target, bus: data-u8 }
+    diff-out:   { dir: source, bus: data-u8 }
+    borrow-out: { dir: source, bus: gate-1 }
+  cssMinHeight: 110
+  cssMinWidth: 130
+  tags: []
+
+- type: comparator
+  label: Comparator
+  description: 8-bit unsigned compare; emits eq / lt / gt flags
+  color: '#3949ab'
+  category: computation
+  componentPath: frontend/src/blocks/ComparatorNode.tsx
+  backendPath: backend/blocks/comparator.py
+  backendClass: Comparator
+  ports:
+    in-a:   { dir: target, bus: data-u8 }
+    in-b:   { dir: target, bus: data-u8 }
+    eq-out: { dir: source, bus: gate-1 }
+    lt-out: { dir: source, bus: gate-1 }
+    gt-out: { dir: source, bus: gate-1 }
+  cssMinHeight: 130
+  cssMinWidth: 130
+  tags: []
+
+- type: mux
+  label: Mux
+  description: '2-to-1 multiplexer: select picks in-a or in-b'
+  color: '#5e35b1'
+  category: computation
+  componentPath: frontend/src/blocks/MuxNode.tsx
+  backendPath: backend/blocks/mux.py
+  backendClass: Mux
+  ports:
+    in-a:     { dir: target, bus: data-u8 }
+    in-b:     { dir: target, bus: data-u8 }
+    select:   { dir: target, bus: gate-1 }
+    data-out: { dir: source, bus: data-u8 }
+  cssMinHeight: 130
+  cssMinWidth: 130
+  tags: []
+
+- type: register
+  label: Register
+  description: 8-bit data register with gated write-enable
+  color: '#1565c0'
+  category: computation
+  componentPath: frontend/src/blocks/RegisterNode.tsx
+  backendPath: backend/blocks/register.py
+  backendClass: Register
+  ports:
+    data-in:      { dir: target, bus: data-u8 }
+    write-enable: { dir: target, bus: gate-1 }
+    data-out:     { dir: source, bus: data-u8 }
+  cssMinHeight: 110
+  cssMinWidth: 130
+  tags: []
+
+- type: ram
+  label: RAM
+  description: "16 \xD7 8-bit synchronous read/write memory"
+  color: '#0d47a1'
+  category: computation
+  componentPath: frontend/src/blocks/RAMNode.tsx
+  backendPath: backend/blocks/ram.py
+  backendClass: RAM
+  ports:
+    addr:         { dir: target, bus: addr-u4 }
+    data-in:      { dir: target, bus: data-u8 }
+    write-enable: { dir: target, bus: gate-1 }
+    data-out:     { dir: source, bus: data-u8 }
+  cssMinHeight: 140
+  cssMinWidth: 130
+  tags: []
+
+- type: registerfile
+  label: Reg File
+  description: "16 \xD7 8-bit register file with independent read and write addresses"
+  color: '#1455a5'
+  category: computation
+  componentPath: frontend/src/blocks/RegisterFileNode.tsx
+  backendPath: backend/blocks/register_file.py
+  backendClass: RegisterFile
+  ports:
+    read-addr:    { dir: target, bus: addr-u4 }
+    write-addr:   { dir: target, bus: addr-u4 }
+    data-in:      { dir: target, bus: data-u8 }
+    write-enable: { dir: target, bus: gate-1 }
+    data-out:     { dir: source, bus: data-u8 }
+  cssMinHeight: 170
+  cssMinWidth: 130
+  tags: []
+
+- type: rom
+  label: ROM
+  description: 16-byte combinational ROM (contents in the block)
+  color: '#283593'
+  category: computation
+  componentPath: frontend/src/blocks/ROMNode.tsx
+  backendPath: backend/blocks/rom.py
+  backendClass: ROM
+  ports:
+    addr:     { dir: target, bus: addr-u4 }
+    data-out: { dir: source, bus: data-u8 }
+  parameters:
+    contents:
+      type: intArray
+      default: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      ariaLabel: ROM contents (comma-separated bytes, 0 to 255 each)
+  cssMinWidth: 200
+  tags: []
+
+- type: reinterpret
+  label: Reinterpret
+  description: "No-op bridge: data-u8 → audio-s8 (same bits, different sign)"
+  color: '#546e7a'
+  category: bus
+  componentPath: frontend/src/blocks/ReinterpretNode.tsx
+  backendPath: backend/blocks/reinterpret.py
+  backendClass: Reinterpret
+  ports:
+    data-in:   { dir: target, bus: data-u8 }
+    audio-out: { dir: source, bus: audio-s8 }
+  cssMinWidth: 130
+  tags: []
+
+- type: byteconstant
+  label: Byte Constant
+  description: "Fixed 8-bit unsigned value (0..255) — CPU-domain Constant"
+  color: '#37474f'
+  category: computation
+  componentPath: frontend/src/blocks/ByteConstantNode.tsx
+  backendPath: backend/blocks/byte_constant.py
+  backendClass: ByteConstant
+  ports:
+    data-out: { dir: source, bus: data-u8 }
+  parameters:
+    value:
+      type: int
+      min: 0
+      max: 255
+      default: 0
+      ariaLabel: Byte constant value (0 to 255)
+  cssMinWidth: 130
+  tags: []
+
+- type: output
+  label: Output
+  description: Audio sink (where Play reads from)
+  color: '#f44336'
+  category: routing
+  componentPath: frontend/src/blocks/OutputNode.tsx
+  backendPath: backend/blocks/output.py
+  backendClass: Output
+  ports:
+    audio-in: { dir: target, bus: audio-s8 }
+  tags: []

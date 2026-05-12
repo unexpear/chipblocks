@@ -766,16 +766,9 @@
   color: #aaa;
 }
 
+/* @begin codegen block-rules */
 .block-oscillator {
   border-color: #4caf50;
-}
-
-.block-mixer {
-  border-color: #2196f3;
-}
-
-.block-output {
-  border-color: #f44336;
 }
 
 .block-triangle {
@@ -788,6 +781,23 @@
 
 .block-sine {
   border-color: #ce93d8;
+}
+
+.block-wavetable {
+  border-color: #8bc34a;
+  min-width: 140px;
+}
+
+.block-noise {
+  border-color: #795548;
+}
+
+.block-constant {
+  border-color: #9e9e9e;
+}
+
+.block-mixer {
+  border-color: #2196f3;
 }
 
 .block-adsr {
@@ -816,14 +826,6 @@
   min-width: 130px;
 }
 
-.block-noise {
-  border-color: #795548;
-}
-
-.block-constant {
-  border-color: #9e9e9e;
-}
-
 .block-fm {
   border-color: #e91e63;
   min-width: 150px;
@@ -831,11 +833,6 @@
 
 .block-multiply {
   border-color: #3f51b5;
-}
-
-.block-wavetable {
-  border-color: #8bc34a;
-  min-width: 140px;
 }
 
 .block-bitcrusher {
@@ -873,23 +870,13 @@
 
 .block-vgatiming {
   border-color: #673ab7;
-  /* Tall enough for 5 stacked output handles at 32 px spacing
-     (24, 56, 88, 120, 152 → max bottom edge ≈ 168 px). */
   min-height: 180px;
   min-width: 130px;
 }
 
 .block-colorbars {
   border-color: #ab47bc;
-  /* 3 right-side outputs at 24/56/88 + 2 left-side inputs at 24/56. */
   min-height: 110px;
-  min-width: 130px;
-}
-
-.block-vgaoutput {
-  border-color: #d81b60;
-  /* 5 stacked input handles, same shape as VGA Timing. */
-  min-height: 180px;
   min-width: 130px;
 }
 
@@ -900,101 +887,73 @@
 
 .block-solidcolor {
   border-color: #c2185b;
-  /* 3 stacked output handles at 24/56/88. */
   min-height: 110px;
+  min-width: 130px;
+}
+
+.block-vgaoutput {
+  border-color: #d81b60;
+  min-height: 180px;
   min-width: 130px;
 }
 
 .block-bussplit {
   border-color: #90a4ae;
-  /* 8 stacked output handles at 24/56/.../248 — bottom edge ≈ 264 px. */
   min-height: 270px;
   min-width: 130px;
 }
 
 .block-busjoin {
   border-color: #78909c;
-  /* 8 stacked input handles, same shape as Bus Split. */
   min-height: 270px;
   min-width: 130px;
 }
 
-/* CPU primitives (Sprint 17). Cool blue ramp so the four read as a
-   family — distinct from the audio (warm) / visual (purple) / logic
-   (deep blue) / bus (silver) groups already on the canvas. */
 .block-adder {
   border-color: #1976d2;
-  /* 2 left handles (in-a, in-b) + 2 right handles (sum-out, carry-out)
-     at 24/56 → max bottom ≈ 72. Leave headroom for the title row. */
   min-height: 110px;
   min-width: 130px;
 }
 
-.block-register {
-  border-color: #1565c0;
-  /* 2 left handles (data-in, write-enable) + 1 right handle. */
-  min-height: 110px;
-  min-width: 130px;
-}
-
-.block-ram {
-  border-color: #0d47a1;
-  /* 3 left handles (addr, data-in, write-enable) at 24/56/88 +
-     1 right handle. */
-  min-height: 140px;
-  min-width: 130px;
-}
-
-.block-registerfile {
-  border-color: #1455a5;
-  /* 4 left handles (read-addr, write-addr, data-in, write-enable) at
-     24/56/88/120 + 1 right handle. */
-  min-height: 170px;
-  min-width: 130px;
-}
-
-.block-rom {
-  border-color: #283593;
-  /* 1 left handle + 1 right + a textarea for the contents — sized
-     wider than other blocks so 16 comma-separated bytes fit on a few
-     lines without horizontal scroll. */
-  min-width: 200px;
-}
-
-/* ROM contents textarea — wider than the standard block input so the
-   16-byte array stays readable. */
-.block-input-rom {
-  width: 100%;
-  min-height: 60px;
-  resize: vertical;
-  font-family: ui-monospace, monospace;
-  font-size: 0.8rem;
-}
-
-/* Sprint 18 additions. Subtractor / Comparator / Mux extend the
-   computation family with cooler-blue / indigo hues so they read as
-   cousins of Adder; Reinterpret is the data-u8 → audio-s8 bridge and
-   sits with the Bus blocks (silver/slate) since it's a sign-class
-   rewrite, not a computation. */
 .block-subtractor {
   border-color: #1e88e5;
-  /* 2 left handles + 2 right handles at 24/56 — matches Adder. */
   min-height: 110px;
   min-width: 130px;
 }
 
 .block-comparator {
   border-color: #3949ab;
-  /* 2 left handles + 3 right handles at 24/56/88. */
   min-height: 130px;
   min-width: 130px;
 }
 
 .block-mux {
   border-color: #5e35b1;
-  /* 3 left handles (in-a, in-b, select) + 1 right handle. */
   min-height: 130px;
   min-width: 130px;
+}
+
+.block-register {
+  border-color: #1565c0;
+  min-height: 110px;
+  min-width: 130px;
+}
+
+.block-ram {
+  border-color: #0d47a1;
+  min-height: 140px;
+  min-width: 130px;
+}
+
+.block-registerfile {
+  border-color: #1455a5;
+  min-height: 170px;
+  min-width: 130px;
+}
+
+.block-rom {
+  border-color: #283593;
+  min-width: 200px;
 }
 
 .block-reinterpret {
@@ -1004,9 +963,22 @@
 
 .block-byteconstant {
   border-color: #37474f;
-  /* No inputs, single output. Single number input field — same footprint
-     as Constant but darker grey to read as "CPU-domain literal." */
   min-width: 130px;
+}
+
+.block-output {
+  border-color: #f44336;
+}
+/* @end codegen block-rules */
+
+/* ROM contents textarea — wider than the standard block input so the
+   16-byte array stays readable. */
+.block-input-rom {
+  width: 100%;
+  min-height: 60px;
+  resize: vertical;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
 }
 
 /* Multi-row parameter blocks (ADSR, Gate, future LPF, etc.) */

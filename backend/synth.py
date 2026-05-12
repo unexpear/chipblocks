@@ -43,98 +43,15 @@ DURATION_S = 2
 
 # ---------------------------------------------------------------------------
 # Parameter mapping: React Flow `node.data` fields -> block constructor kwargs.
-# Each block type has its own translation; this is the only block-type-aware
-# part of the translator. Keep additions narrow.
+# Thin stable wrapper around the generated `build_params` in
+# `backend/blocks/_params_gen.py`; the real per-block translation table is
+# produced from `blocks.yaml` via `scripts/codegen-backend.py` (ADR-003 /
+# Sprint 21). Keeping the wrapper means GraphTop's call site does not
+# change when blocks are added.
 # ---------------------------------------------------------------------------
 def _build_params(node_type: str, data: dict) -> dict:
-    params: dict = {}
-    if node_type in ("oscillator", "triangle", "sawtooth", "sine"):
-        if "freq" in data:
-            params["freq_hz"] = int(data["freq"])
-        params["sample_rate"] = SAMPLE_RATE
-    elif node_type == "adsr":
-        if "attack_ms" in data:
-            params["attack_ms"] = int(data["attack_ms"])
-        if "decay_ms" in data:
-            params["decay_ms"] = int(data["decay_ms"])
-        if "sustain_level" in data:
-            params["sustain_level"] = int(data["sustain_level"])
-        if "release_ms" in data:
-            params["release_ms"] = int(data["release_ms"])
-        params["sample_rate"] = SAMPLE_RATE
-    elif node_type == "gate":
-        if "rate_hz" in data:
-            params["rate_hz"] = int(data["rate_hz"])
-        if "duty_pct" in data:
-            params["duty_pct"] = int(data["duty_pct"])
-        params["sample_rate"] = SAMPLE_RATE
-    elif node_type == "lowpass":
-        if "cutoff_hz" in data:
-            params["cutoff_hz"] = int(data["cutoff_hz"])
-        params["sample_rate"] = SAMPLE_RATE
-    elif node_type == "highpass":
-        if "cutoff_hz" in data:
-            params["cutoff_hz"] = int(data["cutoff_hz"])
-        params["sample_rate"] = SAMPLE_RATE
-    elif node_type == "bandpass":
-        if "center_hz" in data:
-            params["center_hz"] = int(data["center_hz"])
-        params["sample_rate"] = SAMPLE_RATE
-    elif node_type == "constant":
-        if "value" in data:
-            params["value"] = int(data["value"])
-    elif node_type == "byteconstant":
-        if "value" in data:
-            params["value"] = int(data["value"])
-    elif node_type == "fm":
-        if "carrier_freq" in data:
-            params["carrier_freq"] = int(data["carrier_freq"])
-        if "modulator_freq" in data:
-            params["modulator_freq"] = int(data["modulator_freq"])
-        if "mod_depth" in data:
-            params["mod_depth"] = int(data["mod_depth"])
-        params["sample_rate"] = SAMPLE_RATE
-    elif node_type == "wavetable":
-        if "freq" in data:
-            params["freq_hz"] = int(data["freq"])
-        if "shape" in data:
-            params["shape"] = str(data["shape"])
-        params["sample_rate"] = SAMPLE_RATE
-    elif node_type == "bitcrusher":
-        if "bits" in data:
-            params["bits"] = int(data["bits"])
-    elif node_type == "delay":
-        if "delay_samples" in data:
-            params["delay_samples"] = int(data["delay_samples"])
-    elif node_type == "counter":
-        if "max_value" in data:
-            params["max_value"] = int(data["max_value"])
-    elif node_type == "distortion":
-        if "threshold" in data:
-            params["threshold"] = int(data["threshold"])
-    elif node_type == "pixelrange":
-        if "start" in data:
-            params["start"] = int(data["start"])
-        if "end" in data:
-            params["end"] = int(data["end"])
-    elif node_type == "solidcolor":
-        if "color" in data:
-            params["color"] = str(data["color"])
-    elif node_type == "rom":
-        # First block where the parameter is a list. Renderer hands us
-        # a JSON array of integers; ROM's __init__ clamps each to 0..255
-        # and pads/truncates to 16 entries, so the only job here is to
-        # coerce array-shaped data through to the constructor.
-        contents = data.get("contents", [])
-        if isinstance(contents, list):
-            params["contents"] = [int(v) for v in contents[:16]]
-        else:
-            params["contents"] = []
-    # Mixer, Output, SampleAndHold, Noise, Multiply, BusSplit, BusJoin,
-    # Adder, Register, RAM, the boolean gates (and / or / xor / not), and
-    # the Sprint 18 bridge / branching blocks (Reinterpret, Subtractor,
-    # Comparator, Mux) all have no parameters.
-    return params
+    from blocks._params_gen import build_params
+    return build_params(node_type, data)
 
 
 # ---------------------------------------------------------------------------

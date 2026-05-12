@@ -45,6 +45,216 @@ Inside the app, the user:
 
 When the canvas is rendering or building, a Cancel button appears that aborts cleanly. Status text reads "Synthesizing…" or "Building bitstream…". Errors appear as a dismissible toast bottom-left.
 
+# Block reference (auto-generated structural facts — do not edit by hand)
+
+The block table below is the machine-readable shape of every block: name + one-line description + ports + parameters. It is regenerated from \`blocks.yaml\` by \`scripts/codegen-frontend.mjs\` (ADR-003). The richer narrative under "# Block library" further down is the hand-written prose — use both: this section for "does this port exist?", that section for "what's this block for and how should I use it?".
+
+<!-- @begin codegen block-reference -->
+**oscillator** — Square wave source
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`freq\`: 20–20000 Hz (default 440)
+
+**triangle** — Triangle wave source
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`freq\`: 20–20000 Hz (default 440)
+
+**sawtooth** — Sawtooth wave source
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`freq\`: 20–20000 Hz (default 440)
+
+**sine** — Sine wave source (cleanest tone)
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`freq\`: 20–20000 Hz (default 440)
+
+**wavetable** — Morphable single-cycle waveform (4 preset shapes)
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`freq\`: 20–20000 Hz (default 440)
+- Parameter \`shape\`: (default "sine")
+
+**noise** — Pseudo-random 8-bit signed source
+- Output port \`audio-out\` (audio-s8)
+- No parameters
+
+**constant** — Fixed 8-bit signed value (-128..127)
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`value\`: -128–127 (default 0)
+
+**mixer** — Average two audio inputs
+- Input ports: \`in-1\` (audio-s8), \`in-2\` (audio-s8)
+- Output port \`mix-out\` (audio-s8)
+- No parameters
+
+**adsr** — Attack/Decay/Sustain/Release envelope
+- Input ports: \`gate\` (gate-1), \`audio-in\` (audio-s8)
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`attack_ms\`: 1–5000 ms (default 10)
+- Parameter \`decay_ms\`: 1–5000 ms (default 100)
+- Parameter \`sustain_level\`: 0–127 (default 80)
+- Parameter \`release_ms\`: 1–5000 ms (default 200)
+
+**gate** — Periodic 1-bit pulse
+- Output port \`gate-out\` (gate-1)
+- Parameter \`rate_hz\`: 1–1000 Hz (default 4)
+- Parameter \`duty_pct\`: 1–99 % duty (default 50)
+
+**lowpass** — 1-pole IIR low-pass filter
+- Input port \`audio-in\` (audio-s8)
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`cutoff_hz\`: 1–22050 Hz cutoff (default 800)
+
+**highpass** — 1-pole IIR high-pass filter
+- Input port \`audio-in\` (audio-s8)
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`cutoff_hz\`: 1–22050 Hz cutoff (default 800)
+
+**bandpass** — 1-pole IIR band-pass filter (1-octave bandwidth)
+- Input port \`audio-in\` (audio-s8)
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`center_hz\`: 10–22050 Hz center (default 1000)
+
+**samplehold** — Sample-and-Hold on clock edge
+- Input ports: \`audio-in\` (audio-s8), \`clock\` (gate-1)
+- Output port \`audio-out\` (audio-s8)
+- No parameters
+
+**fm** — Two-operator FM voice (carrier + modulator)
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`carrier_freq\`: 20–20000 Hz (default 440)
+- Parameter \`modulator_freq\`: 20–20000 Hz (default 110)
+- Parameter \`mod_depth\`: 0–127 (default 64)
+
+**multiply** — Ring modulator / VCA: (a * b) >> 7
+- Input ports: \`in-1\` (audio-s8), \`in-2\` (audio-s8)
+- Output port \`audio-out\` (audio-s8)
+- No parameters
+
+**bitcrusher** — Lo-fi bit-depth reduction (1–8 effective bits)
+- Input port \`audio-in\` (audio-s8)
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`bits\`: 1–8 bits (default 4)
+
+**delay** — Fixed-length delay line (1–1024 samples)
+- Input port \`audio-in\` (audio-s8)
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`delay_samples\`: 1–1024 samples (default 128)
+
+**distortion** — Hard-clipping waveshaper (guitar / synth overdrive)
+- Input port \`audio-in\` (audio-s8)
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`threshold\`: 1–127 threshold (default 32)
+
+**and** — 1-bit logical AND (a & b)
+- Input ports: \`in-1\` (gate-1), \`in-2\` (gate-1)
+- Output port \`gate-out\` (gate-1)
+- No parameters
+
+**or** — 1-bit logical OR (a | b)
+- Input ports: \`in-1\` (gate-1), \`in-2\` (gate-1)
+- Output port \`gate-out\` (gate-1)
+- No parameters
+
+**xor** — 1-bit exclusive OR (a ^ b)
+- Input ports: \`in-1\` (gate-1), \`in-2\` (gate-1)
+- Output port \`gate-out\` (gate-1)
+- No parameters
+
+**not** — 1-bit inverter (~a)
+- Input port \`gate-in\` (gate-1)
+- Output port \`gate-out\` (gate-1)
+- No parameters
+
+**counter** — Wrapping counter clocked by a 1-bit signal
+- Input port \`clock\` (gate-1)
+- Output ports: \`audio-out\` (audio-s8), \`addr-out\` (addr-u4)
+- Parameter \`max_value\`: 1–127 max (default 16)
+
+**vgatiming** — 640×480 / 60 Hz VGA timing generator
+- Output ports: \`hsync\` (gate-1), \`vsync\` (gate-1), \`visible\` (gate-1), \`x\` (pixel-u10), \`y\` (pixel-u10)
+- No parameters
+
+**colorbars** — 8-stripe SMPTE color-bar test pattern
+- Input ports: \`x\` (pixel-u10), \`visible\` (gate-1)
+- Output ports: \`r\` (gate-1), \`g\` (gate-1), \`b\` (gate-1)
+- No parameters
+
+**pixelrange** — Inside-window comparator (start ≤ pixel ≤ end)
+- Input port \`pixel\` (pixel-u10)
+- Output port \`inside\` (gate-1)
+- Parameter \`start\`: 0–639 (default 100)
+- Parameter \`end\`: 0–639 (default 200)
+
+**solidcolor** — Constant 1-bit RGB source (8 named colors)
+- Output ports: \`r\` (gate-1), \`g\` (gate-1), \`b\` (gate-1)
+- Parameter \`color\`: (default "white")
+
+**vgaoutput** — Visual sink — drives a VGA monitor (iCEBreaker PMOD1B)
+- Input ports: \`r\` (gate-1), \`g\` (gate-1), \`b\` (gate-1), \`hsync\` (gate-1), \`vsync\` (gate-1)
+- No parameters
+
+**bussplit** — Fan one 8-bit bus out to 8 individual 1-bit signals
+- Input port \`bus-in\` (data-u8)
+- Output ports: \`bit-0\` (data-u1), \`bit-1\` (data-u1), \`bit-2\` (data-u1), \`bit-3\` (data-u1), \`bit-4\` (data-u1), \`bit-5\` (data-u1), \`bit-6\` (data-u1), \`bit-7\` (data-u1)
+- No parameters
+
+**busjoin** — Concatenate 8 individual 1-bit signals into one 8-bit bus
+- Input ports: \`bit-0\` (data-u1), \`bit-1\` (data-u1), \`bit-2\` (data-u1), \`bit-3\` (data-u1), \`bit-4\` (data-u1), \`bit-5\` (data-u1), \`bit-6\` (data-u1), \`bit-7\` (data-u1)
+- Output port \`bus-out\` (data-u8)
+- No parameters
+
+**adder** — Combinational 8-bit unsigned add with carry-out
+- Input ports: \`in-a\` (data-u8), \`in-b\` (data-u8)
+- Output ports: \`sum-out\` (data-u8), \`carry-out\` (gate-1)
+- No parameters
+
+**subtractor** — Combinational 8-bit unsigned subtract with borrow-out
+- Input ports: \`in-a\` (data-u8), \`in-b\` (data-u8)
+- Output ports: \`diff-out\` (data-u8), \`borrow-out\` (gate-1)
+- No parameters
+
+**comparator** — 8-bit unsigned compare; emits eq / lt / gt flags
+- Input ports: \`in-a\` (data-u8), \`in-b\` (data-u8)
+- Output ports: \`eq-out\` (gate-1), \`lt-out\` (gate-1), \`gt-out\` (gate-1)
+- No parameters
+
+**mux** — 2-to-1 multiplexer: select picks in-a or in-b
+- Input ports: \`in-a\` (data-u8), \`in-b\` (data-u8), \`select\` (gate-1)
+- Output port \`data-out\` (data-u8)
+- No parameters
+
+**register** — 8-bit data register with gated write-enable
+- Input ports: \`data-in\` (data-u8), \`write-enable\` (gate-1)
+- Output port \`data-out\` (data-u8)
+- No parameters
+
+**ram** — 16 × 8-bit synchronous read/write memory
+- Input ports: \`addr\` (addr-u4), \`data-in\` (data-u8), \`write-enable\` (gate-1)
+- Output port \`data-out\` (data-u8)
+- No parameters
+
+**registerfile** — 16 × 8-bit register file with independent read and write addresses
+- Input ports: \`read-addr\` (addr-u4), \`write-addr\` (addr-u4), \`data-in\` (data-u8), \`write-enable\` (gate-1)
+- Output port \`data-out\` (data-u8)
+- No parameters
+
+**rom** — 16-byte combinational ROM (contents in the block)
+- Input port \`addr\` (addr-u4)
+- Output port \`data-out\` (data-u8)
+- Parameter \`contents\`: (default [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0])
+
+**reinterpret** — No-op bridge: data-u8 → audio-s8 (same bits, different sign)
+- Input port \`data-in\` (data-u8)
+- Output port \`audio-out\` (audio-s8)
+- No parameters
+
+**byteconstant** — Fixed 8-bit unsigned value (0..255) — CPU-domain Constant
+- Output port \`data-out\` (data-u8)
+- Parameter \`value\`: 0–255 (default 0)
+
+**output** — Audio sink (where Play reads from)
+- Input port \`audio-in\` (audio-s8)
+- No parameters
+<!-- @end codegen block-reference -->
+
 # Block library (all 42 types — these are the EXACT type strings)
 
 All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual blocks (vgatiming, colorbars, pixelrange, solidcolor, vgaoutput) drive a VGA monitor through the iCEBreaker FPGA's PMOD1B socket; ▶ Play renders audio only, so visual graphs need 🔧 Build → iCEBreaker to see anything. The four CPU primitives (adder, register, ram, rom) work on 8-bit unsigned data — Sprint 17 / ADR-002 — and don't directly feed the audio Output. Sprint 18 adds the bridge (Reinterpret) and the conditional-control trio (Subtractor, Comparator, Mux) so a CPU-domain accumulator can drive audio and small programs can branch.

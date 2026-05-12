@@ -20,53 +20,56 @@ export interface PaletteEntry {
 
 // Order matches the canvas display border colors set in App.css.
 // New block types should be appended here as they're added to BLOCK_REGISTRY.
+// @begin codegen palette-array
 export const PALETTE: PaletteEntry[] = [
-  { type: 'oscillator', label: 'Oscillator', color: '#4caf50', description: 'Square wave source' },
-  { type: 'triangle',   label: 'Triangle',   color: '#ffc107', description: 'Triangle wave source' },
-  { type: 'sawtooth',   label: 'Sawtooth',   color: '#9c27b0', description: 'Sawtooth wave source' },
-  { type: 'sine',       label: 'Sine',       color: '#ce93d8', description: 'Sine wave source (cleanest tone)' },
-  { type: 'wavetable',  label: 'Wavetable',  color: '#8bc34a', description: 'Morphable single-cycle waveform (4 preset shapes)' },
-  { type: 'noise',      label: 'Noise',      color: '#795548', description: 'Pseudo-random 8-bit signed source' },
-  { type: 'constant',   label: 'Constant',   color: '#9e9e9e', description: 'Fixed 8-bit signed value (-128..127)' },
-  { type: 'mixer',      label: 'Mixer',      color: '#2196f3', description: 'Average two audio inputs' },
-  { type: 'adsr',       label: 'ADSR',       color: '#ff9800', description: 'Attack/Decay/Sustain/Release envelope' },
-  { type: 'gate',       label: 'Gate',       color: '#00bcd4', description: 'Periodic 1-bit pulse' },
-  { type: 'lowpass',    label: 'Low-pass',   color: '#00897b', description: '1-pole IIR low-pass filter' },
-  { type: 'highpass',   label: 'High-pass',  color: '#006064', description: '1-pole IIR high-pass filter' },
-  { type: 'bandpass',   label: 'Band-pass',  color: '#5e35b1', description: '1-pole IIR band-pass filter (1-octave bandwidth)' },
-  { type: 'samplehold', label: 'S & H',      color: '#607d8b', description: 'Sample-and-Hold on clock edge' },
-  { type: 'fm',         label: 'FM',         color: '#e91e63', description: 'Two-operator FM voice (carrier + modulator)' },
-  { type: 'multiply',   label: 'Multiply',   color: '#3f51b5', description: 'Ring modulator / VCA: (a * b) >> 7' },
-  { type: 'bitcrusher', label: 'Bitcrusher', color: '#5d4037', description: 'Lo-fi bit-depth reduction (1–8 effective bits)' },
-  { type: 'delay',      label: 'Delay',      color: '#7c4dff', description: 'Fixed-length delay line (1–1024 samples)' },
-  { type: 'distortion', label: 'Distortion', color: '#ff6f00', description: 'Hard-clipping waveshaper (guitar / synth overdrive)' },
-  { type: 'and',        label: 'AND',        color: '#0277bd', description: '1-bit logical AND (a & b)' },
-  { type: 'or',         label: 'OR',         color: '#0288d1', description: '1-bit logical OR (a | b)' },
-  { type: 'xor',        label: 'XOR',        color: '#039be5', description: '1-bit exclusive OR (a ^ b)' },
-  { type: 'not',        label: 'NOT',        color: '#03a9f4', description: '1-bit inverter (~a)' },
-  { type: 'counter',    label: 'Counter',    color: '#01579b', description: 'Wrapping counter clocked by a 1-bit signal' },
-  { type: 'vgatiming',  label: 'VGA Timing', color: '#673ab7', description: '640×480 / 60 Hz VGA timing generator' },
-  { type: 'colorbars',  label: 'Color Bars', color: '#ab47bc', description: '8-stripe SMPTE color-bar test pattern' },
-  { type: 'pixelrange', label: 'Pixel Range', color: '#7b1fa2', description: 'Inside-window comparator (start ≤ pixel ≤ end)' },
-  { type: 'solidcolor', label: 'Solid Color', color: '#c2185b', description: 'Constant 1-bit RGB source (8 named colors)' },
-  { type: 'vgaoutput',  label: 'VGA Output', color: '#d81b60', description: 'Visual sink — drives a VGA monitor (iCEBreaker PMOD1B)' },
-  { type: 'bussplit',   label: 'Bus Split',  color: '#90a4ae', description: 'Fan one 8-bit bus out to 8 individual 1-bit signals' },
-  { type: 'busjoin',    label: 'Bus Join',   color: '#78909c', description: 'Concatenate 8 individual 1-bit signals into one 8-bit bus' },
-  { type: 'adder',       label: 'Adder',       color: '#1976d2', description: 'Combinational 8-bit unsigned add with carry-out' },
-  { type: 'subtractor',  label: 'Subtractor',  color: '#1e88e5', description: 'Combinational 8-bit unsigned subtract with borrow-out' },
-  { type: 'comparator',  label: 'Comparator',  color: '#3949ab', description: '8-bit unsigned compare; emits eq / lt / gt flags' },
-  { type: 'mux',         label: 'Mux',         color: '#5e35b1', description: '2-to-1 multiplexer: select picks in-a or in-b' },
-  { type: 'register',    label: 'Register',    color: '#1565c0', description: '8-bit data register with gated write-enable' },
-  { type: 'ram',         label: 'RAM',         color: '#0d47a1', description: '16 × 8-bit synchronous read/write memory' },
-  { type: 'registerfile',label: 'Reg File',    color: '#1455a5', description: '16 × 8-bit register file with independent read and write addresses' },
-  { type: 'rom',         label: 'ROM',         color: '#283593', description: '16-byte combinational ROM (contents in the block)' },
-  { type: 'reinterpret', label: 'Reinterpret', color: '#546e7a', description: 'No-op bridge: data-u8 → audio-s8 (same bits, different sign)' },
-  { type: 'byteconstant',label: 'Byte Constant', color: '#37474f', description: 'Fixed 8-bit unsigned value (0..255) — CPU-domain Constant' },
-  { type: 'output',      label: 'Output',      color: '#f44336', description: 'Audio sink (where Play reads from)' },
+  { type: 'oscillator',   label: 'Oscillator',    color: '#4caf50', description: 'Square wave source' },
+  { type: 'triangle',     label: 'Triangle',      color: '#ffc107', description: 'Triangle wave source' },
+  { type: 'sawtooth',     label: 'Sawtooth',      color: '#9c27b0', description: 'Sawtooth wave source' },
+  { type: 'sine',         label: 'Sine',          color: '#ce93d8', description: 'Sine wave source (cleanest tone)' },
+  { type: 'wavetable',    label: 'Wavetable',     color: '#8bc34a', description: 'Morphable single-cycle waveform (4 preset shapes)' },
+  { type: 'noise',        label: 'Noise',         color: '#795548', description: 'Pseudo-random 8-bit signed source' },
+  { type: 'constant',     label: 'Constant',      color: '#9e9e9e', description: 'Fixed 8-bit signed value (-128..127)' },
+  { type: 'mixer',        label: 'Mixer',         color: '#2196f3', description: 'Average two audio inputs' },
+  { type: 'adsr',         label: 'ADSR',          color: '#ff9800', description: 'Attack/Decay/Sustain/Release envelope' },
+  { type: 'gate',         label: 'Gate',          color: '#00bcd4', description: 'Periodic 1-bit pulse' },
+  { type: 'lowpass',      label: 'Low-pass',      color: '#00897b', description: '1-pole IIR low-pass filter' },
+  { type: 'highpass',     label: 'High-pass',     color: '#006064', description: '1-pole IIR high-pass filter' },
+  { type: 'bandpass',     label: 'Band-pass',     color: '#5e35b1', description: '1-pole IIR band-pass filter (1-octave bandwidth)' },
+  { type: 'samplehold',   label: 'S & H',         color: '#607d8b', description: 'Sample-and-Hold on clock edge' },
+  { type: 'fm',           label: 'FM',            color: '#e91e63', description: 'Two-operator FM voice (carrier + modulator)' },
+  { type: 'multiply',     label: 'Multiply',      color: '#3f51b5', description: 'Ring modulator / VCA: (a * b) >> 7' },
+  { type: 'bitcrusher',   label: 'Bitcrusher',    color: '#5d4037', description: 'Lo-fi bit-depth reduction (1–8 effective bits)' },
+  { type: 'delay',        label: 'Delay',         color: '#7c4dff', description: 'Fixed-length delay line (1–1024 samples)' },
+  { type: 'distortion',   label: 'Distortion',    color: '#ff6f00', description: 'Hard-clipping waveshaper (guitar / synth overdrive)' },
+  { type: 'and',          label: 'AND',           color: '#0277bd', description: '1-bit logical AND (a & b)' },
+  { type: 'or',           label: 'OR',            color: '#0288d1', description: '1-bit logical OR (a | b)' },
+  { type: 'xor',          label: 'XOR',           color: '#039be5', description: '1-bit exclusive OR (a ^ b)' },
+  { type: 'not',          label: 'NOT',           color: '#03a9f4', description: '1-bit inverter (~a)' },
+  { type: 'counter',      label: 'Counter',       color: '#01579b', description: 'Wrapping counter clocked by a 1-bit signal' },
+  { type: 'vgatiming',    label: 'VGA Timing',    color: '#673ab7', description: '640×480 / 60 Hz VGA timing generator' },
+  { type: 'colorbars',    label: 'Color Bars',    color: '#ab47bc', description: '8-stripe SMPTE color-bar test pattern' },
+  { type: 'pixelrange',   label: 'Pixel Range',   color: '#7b1fa2', description: 'Inside-window comparator (start ≤ pixel ≤ end)' },
+  { type: 'solidcolor',   label: 'Solid Color',   color: '#c2185b', description: 'Constant 1-bit RGB source (8 named colors)' },
+  { type: 'vgaoutput',    label: 'VGA Output',    color: '#d81b60', description: 'Visual sink — drives a VGA monitor (iCEBreaker PMOD1B)' },
+  { type: 'bussplit',     label: 'Bus Split',     color: '#90a4ae', description: 'Fan one 8-bit bus out to 8 individual 1-bit signals' },
+  { type: 'busjoin',      label: 'Bus Join',      color: '#78909c', description: 'Concatenate 8 individual 1-bit signals into one 8-bit bus' },
+  { type: 'adder',        label: 'Adder',         color: '#1976d2', description: 'Combinational 8-bit unsigned add with carry-out' },
+  { type: 'subtractor',   label: 'Subtractor',    color: '#1e88e5', description: 'Combinational 8-bit unsigned subtract with borrow-out' },
+  { type: 'comparator',   label: 'Comparator',    color: '#3949ab', description: '8-bit unsigned compare; emits eq / lt / gt flags' },
+  { type: 'mux',          label: 'Mux',           color: '#5e35b1', description: '2-to-1 multiplexer: select picks in-a or in-b' },
+  { type: 'register',     label: 'Register',      color: '#1565c0', description: '8-bit data register with gated write-enable' },
+  { type: 'ram',          label: 'RAM',           color: '#0d47a1', description: '16 × 8-bit synchronous read/write memory' },
+  { type: 'registerfile', label: 'Reg File',      color: '#1455a5', description: '16 × 8-bit register file with independent read and write addresses' },
+  { type: 'rom',          label: 'ROM',           color: '#283593', description: '16-byte combinational ROM (contents in the block)' },
+  { type: 'reinterpret',  label: 'Reinterpret',   color: '#546e7a', description: 'No-op bridge: data-u8 → audio-s8 (same bits, different sign)' },
+  { type: 'byteconstant', label: 'Byte Constant', color: '#37474f', description: 'Fixed 8-bit unsigned value (0..255) — CPU-domain Constant' },
+  { type: 'output',       label: 'Output',        color: '#f44336', description: 'Audio sink (where Play reads from)' },
 ]
+// @end codegen palette-array
 
 // Default `data` for a freshly-spawned node. Keep in sync with each
 // block's frontend node component default props.
+// @begin codegen default-data-for-type
 export function defaultDataForType(type: string): Record<string, unknown> {
   switch (type) {
     case 'oscillator':
@@ -74,42 +77,39 @@ export function defaultDataForType(type: string): Record<string, unknown> {
     case 'sawtooth':
     case 'sine':
       return { freq: 440 }
+    case 'wavetable':
+      return { freq: 440, shape: 'sine' }
+    case 'constant':
+    case 'byteconstant':
+      return { value: 0 }
     case 'adsr':
       return { attack_ms: 10, decay_ms: 100, sustain_level: 80, release_ms: 200 }
     case 'gate':
       return { rate_hz: 4, duty_pct: 50 }
     case 'lowpass':
-      return { cutoff_hz: 800 }
     case 'highpass':
       return { cutoff_hz: 800 }
     case 'bandpass':
       return { center_hz: 1000 }
-    case 'constant':
-      return { value: 0 }
-    case 'byteconstant':
-      return { value: 0 }
     case 'fm':
       return { carrier_freq: 440, modulator_freq: 110, mod_depth: 64 }
-    case 'wavetable':
-      return { freq: 440, shape: 'sine' }
     case 'bitcrusher':
       return { bits: 4 }
     case 'delay':
       return { delay_samples: 128 }
-    case 'counter':
-      return { max_value: 16 }
     case 'distortion':
       return { threshold: 32 }
+    case 'counter':
+      return { max_value: 16 }
     case 'pixelrange':
       return { start: 100, end: 200 }
     case 'solidcolor':
       return { color: 'white' }
     case 'rom':
       return { contents: Array(16).fill(0) }
-    case 'mixer':
-    case 'output':
-    case 'samplehold':
     case 'noise':
+    case 'mixer':
+    case 'samplehold':
     case 'multiply':
     case 'and':
     case 'or':
@@ -121,17 +121,19 @@ export function defaultDataForType(type: string): Record<string, unknown> {
     case 'bussplit':
     case 'busjoin':
     case 'adder':
+    case 'subtractor':
+    case 'comparator':
+    case 'mux':
     case 'register':
     case 'ram':
     case 'registerfile':
     case 'reinterpret':
-    case 'subtractor':
-    case 'comparator':
-    case 'mux':
+    case 'output':
     default:
       return {}
   }
 }
+// @end codegen default-data-for-type
 
 interface PaletteProps {
   collapsed: boolean
