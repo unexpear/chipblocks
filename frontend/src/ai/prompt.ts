@@ -261,9 +261,9 @@ The block table below is the machine-readable shape of every block: name + one-l
 - No parameters
 <!-- @end codegen block-reference -->
 
-# Block library (all 42 types — these are the EXACT type strings)
+# Block library (rich behavioral prose — type-string list is in # Block reference above)
 
-All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual blocks (vgatiming, colorbars, pixelrange, solidcolor, vgaoutput) drive a VGA monitor through the iCEBreaker FPGA's PMOD1B socket; ▶ Play renders audio only, so visual graphs need 🔧 Build → iCEBreaker to see anything. The four CPU primitives (adder, register, ram, rom) work on 8-bit unsigned data — Sprint 17 / ADR-002 — and don't directly feed the audio Output. Sprint 18 adds the bridge (Reinterpret) and the conditional-control trio (Subtractor, Comparator, Mux) so a CPU-domain accumulator can drive audio and small programs can branch.
+All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual blocks (vgatiming, colorbars, pixelrange, solidcolor, vgaoutput) drive a VGA monitor through the iCEBreaker FPGA's PMOD1B socket; ▶ Play renders audio only, so visual graphs need 🔧 Build → iCEBreaker to see anything. The CPU primitives (adder, subtractor, shifter, comparator, mux, register, ram, registerfile, rom, byteconstant) work on 8-bit unsigned data + 4-bit addresses — Sprint 17 / ADR-002 — and don't directly feed the audio Output. Reinterpret is the bridge (data-u8 → audio-s8, same bits, different sign-class) so a CPU-domain accumulator can drive audio. Subtractor + Comparator + Mux compose into branchable programs without a state machine.
 
 **oscillator** — square-wave source. Sharp / harmonically rich.
 - Output port \`audio-out\` (8-bit signed)
@@ -457,6 +457,11 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual b
 - Output ports: \`diff-out\` (8-bit unsigned), \`borrow-out\` (1-bit)
 - No parameters
 
+**shifter** — 8-bit unsigned logical shift by a constant amount. Reacts immediately, no clock needed. Direction is a string parameter (\`"left"\` for \`<<\`, \`"right"\` for \`>>\`); amount is 1..7 bits. Left shift truncates the high bits that fall off; right shift is logical (zero-fill, not arithmetic — no sign extension since the bus is unsigned). Use \`x << 1\` for "x times 2" without an Adder, or \`x >> 1\` for "x divided by 2" (floor). Compose with Adder for tiny multipliers (\`x + (x << 1) == x * 3\`).
+- Input port: \`data-in\` (8-bit unsigned)
+- Output port: \`data-out\` (8-bit unsigned)
+- Parameters: \`direction\` ("left" or "right", default "left"), \`amount\` (1..7, default 1)
+
 **comparator** — 8-bit unsigned compare with three flag outputs. Reacts immediately, no clock needed. One block, three outputs (eq / lt / gt) since splitting them across three blocks would clutter the canvas without adding expressive power. Pairs with Mux for branchable program control.
 - Input ports: \`in-a\` (8-bit unsigned), \`in-b\` (8-bit unsigned)
 - Output ports: \`eq-out\` (1-bit, set when in_a == in_b), \`lt-out\` (1-bit, set when in_a < in_b), \`gt-out\` (1-bit, set when in_a > in_b)
@@ -474,7 +479,7 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual b
 
 # Naming conventions
 
-- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`distortion\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`, \`vgatiming\`, \`colorbars\`, \`pixelrange\`, \`solidcolor\`, \`vgaoutput\`, \`bussplit\`, \`busjoin\`, \`adder\`, \`register\`, \`ram\`, \`registerfile\`, \`rom\`, \`subtractor\`, \`comparator\`, \`mux\`, \`reinterpret\`, \`byteconstant\`.
+- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`distortion\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`, \`vgatiming\`, \`colorbars\`, \`pixelrange\`, \`solidcolor\`, \`vgaoutput\`, \`bussplit\`, \`busjoin\`, \`adder\`, \`register\`, \`ram\`, \`registerfile\`, \`rom\`, \`subtractor\`, \`shifter\`, \`comparator\`, \`mux\`, \`reinterpret\`, \`byteconstant\`. (Authoritative list is the # Block reference section above, which is codegen'd from blocks.yaml.)
 - **Port handle ids** are kebab-case for audio/gate signals (\`audio-out\`, \`audio-in\`, \`gate-out\`, \`gate-in\`, \`mix-out\`, \`in-1\`, \`in-2\`). Control signals are unhyphenated: \`gate\` (an ADSR input), \`clock\` (a samplehold / counter input), \`select\` (a Mux input). VGA handles are short single-token names (\`r\`, \`g\`, \`b\`, \`hsync\`, \`vsync\`, \`visible\`, \`x\`, \`y\`, \`pixel\`, \`inside\`) — same convention used in every open-source VGA core. Bus blocks use \`bus-in\` / \`bus-out\` for the wide port and \`bit-0\` … \`bit-7\` for the per-bit ports. CPU primitives use \`in-a\` / \`in-b\` / \`sum-out\` / \`carry-out\` (adder); \`in-a\` / \`in-b\` / \`diff-out\` / \`borrow-out\` (subtractor); \`in-a\` / \`in-b\` / \`eq-out\` / \`lt-out\` / \`gt-out\` (comparator); \`in-a\` / \`in-b\` / \`select\` / \`data-out\` (mux); \`data-in\` / \`audio-out\` (reinterpret); \`data-in\` / \`data-out\` / \`write-enable\` (register, ram); \`addr\` (ram, rom — and the matching \`addr-out\` on counter); \`read-addr\` / \`write-addr\` / \`data-in\` / \`data-out\` / \`write-enable\` (registerfile — separate read and write address ports).
 
 # Connection rules (bus types)
@@ -484,7 +489,7 @@ Every port carries a typed bus. The renderer rejects edges with mismatched bus t
 - **gate-1**: 1-bit gate / clock / sync / pulse. Used by gate.gate-out, hsync, vsync, visible, ADSR.gate, samplehold.clock, counter.clock, AND/OR/XOR/NOT inputs and outputs, register.write-enable, ram.write-enable, adder.carry-out, subtractor.borrow-out, comparator.eq-out/lt-out/gt-out, mux.select, vgaoutput.hsync/vsync, colorbars.r/g/b, solidcolor.r/g/b, pixelrange.inside, vgaoutput.r/g/b, vgatiming.hsync/vsync/visible.
 - **audio-s8**: 8-bit signed audio sample (–128..+127). Used by every audio block's \`audio-out\` / \`audio-in\` / \`mix-out\`, the multiply block's \`in-1\` / \`in-2\`, the counter's \`audio-out\` (centred 8-bit), reinterpret.audio-out, and Output's \`audio-in\`.
 - **pixel-u10**: 10-bit unsigned VGA coordinate (0..1023). Used by vgatiming.x/y, colorbars.x, pixelrange.pixel.
-- **data-u8** / **data-u1**: generic 8-bit and 1-bit unsigned. Used by bussplit.bus-in (data-u8) → 8 × bit-N (data-u1 each); busjoin is the reverse. Also used end-to-end by the CPU primitives: adder.in-a/in-b/sum-out, subtractor.in-a/in-b/diff-out, comparator.in-a/in-b, mux.in-a/in-b/data-out, register.data-in/data-out, ram.data-in/data-out, rom.data-out, reinterpret.data-in are all data-u8.
+- **data-u8** / **data-u1**: generic 8-bit and 1-bit unsigned. Used by bussplit.bus-in (data-u8) → 8 × bit-N (data-u1 each); busjoin is the reverse. Also used end-to-end by the CPU primitives: adder.in-a/in-b/sum-out, subtractor.in-a/in-b/diff-out, shifter.data-in/data-out, comparator.in-a/in-b, mux.in-a/in-b/data-out, register.data-in/data-out, ram.data-in/data-out, rom.data-out, reinterpret.data-in are all data-u8.
 - **addr-u4**: 4-bit unsigned address bus (0..15). Used by counter.addr-out, ram.addr, rom.addr, registerfile.read-addr, registerfile.write-addr. The canonical "Counter walks ROM/RAM through 16 addresses" pattern wires Counter.addr-out → ROM.addr or → RAM.addr directly; for registerfile the two address ports are wired independently (read-addr from one source, write-addr from another, typically two separate Counters or two slices of an instruction word).
 
 Compatibility rules:
@@ -564,7 +569,7 @@ After tool calls, you'll receive \`tool_result\` content blocks with the outcome
 
 - Be concrete. Reference specific block types, parameter values, and port names.
 - Keep responses tight — a short paragraph or a short list.
-- If a goal isn't possible with the current 42 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
+- If a goal isn't possible with the current block library (listed in # Block reference above — the count there is the authoritative one) or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
 - After multi-step tool sequences, end with a short text confirmation of what you did so the user knows where things landed.`
 
 export function buildSystemBlocks(nodes: AppNode[], edges: Edge[]) {

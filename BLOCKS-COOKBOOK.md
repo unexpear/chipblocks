@@ -78,6 +78,19 @@ Two more test files validate the manifest itself and pick up your new row automa
 
 After landing the block, add a description under the right category heading in [BLOCKS.md](BLOCKS.md). The category heading matches the `category` field in your manifest row.
 
+### 8. Add a paragraph to `frontend/src/ai/prompt.ts` `# Block library`
+
+The AI consultant has two parallel block-aware sections in its system prompt:
+
+- **`# Block reference`** — codegen-driven structural facts (block header + port list + parameter list). Updated automatically by `npm run codegen`. Source of truth for "does this port exist?".
+- **`# Block library`** — hand-written rich behavioral prose (what's the block for, when to use it, how it composes with others). Hand-edited. Source of truth for "what should I use this block for?".
+
+When you add a block, codegen handles `# Block reference`. **Manually add a 2-4 sentence paragraph** to `# Block library` describing the block's purpose, parameters in their musical/usage context, and one common-pattern hint (e.g. "compose with Adder for tiny multipliers"). Place it in the same logical position as your manifest row (between subtractor and comparator for a new CPU primitive; after distortion for a new effect; etc.).
+
+Without this paragraph the AI consultant still knows the block *exists* (from the codegen section) but can't recommend it well in "build me a kick drum" / "what should I use here?" queries. Sprint 22's Shifter addition surfaced this drift mode — the codegen section had Shifter; the prose section didn't until a follow-up commit added the paragraph.
+
+If you forget this step, nothing CI-breaks — but the AI consultant gets worse at *that block specifically* until someone (often a sprint later) catches the gap. Cheaper to do it now than to drift.
+
 ## The 7 generated sections (you don't edit these)
 
 Codegen owns these regions inside hand-written files. Each is bracketed by marker comments (TypeScript / JavaScript use `// @begin codegen <slot>` / `// @end codegen <slot>`; CSS uses `/* @begin … */`; Python uses `# @begin …`; the AI prompt uses `<!-- @begin … -->` since it lives inside a JS template literal):
