@@ -15,6 +15,7 @@ The table is grouped by what each example demonstrates. Each row links to the `.
 | [`bass-lead.json`](bass-lead.json) | A 110 Hz sawtooth low-pass filtered then gated — punchy bass line. | Sawtooth + Low-pass + Gate + ADSR — classic subtractive bass-synth chain |
 | [`lofi-pad.json`](lofi-pad.json) | Two triangles a major-third apart (220 + 277 Hz), mixed and softly low-passed — sustained drone. | Mixer + Low-pass — multi-voice composition without a polyphony block |
 | [`arpeggio.json`](arpeggio.json) | A slow 4 Hz sawtooth sampled by an 8 Hz clock — sample-and-hold turns the ramp into a quantized note sequence. | Sample-and-Hold + Gate — the classic stair-stepped arpeggiator |
+| [`vibrato.json`](vibrato.json) | A 440 Hz square wave whose pitch wobbles ±15 Hz at a 20 Hz rate. | Sine LFO + VCO — demonstrates the Sprint 24 VCO block's audio-rate frequency modulation |
 
 ## Audio demos (percussion)
 

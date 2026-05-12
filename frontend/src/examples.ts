@@ -264,6 +264,20 @@ export const EXAMPLES: ExampleGraph[] = [
     ],
   },
   {
+    id: 'vibrato',
+    label: 'Vibrato (slow sine LFO modulating a VCO)',
+    description: 'The canonical use case for the Sprint 24 VCO block. A 20 Hz sine acts as a low-frequency-oscillator (LFO) driving the VCO\'s freq-in port; the VCO outputs a 440 Hz square that sweeps ±15 Hz around centre at 20 Hz. The result is a fast vibrato wobble. Lower LFO frequencies (slower wobble) would need a future "LFO block" since the sine block bottoms out at 20 Hz. Demonstrates the difference between the static `oscillator` blocks (fixed pitch via parameter) and the new `vco` (live pitch via audio-rate input).',
+    nodes: [
+      { id: 'lfo', type: 'sine',   position: { x: 60,  y: 80 }, data: { freq: 20 } },
+      { id: 'vco', type: 'vco',    position: { x: 360, y: 80 }, data: { base_freq: 440, range: 15 } },
+      { id: 'out', type: 'output', position: { x: 660, y: 80 }, data: {} },
+    ],
+    edges: [
+      { id: 'e1', source: 'lfo', target: 'vco', sourceHandle: 'audio-out', targetHandle: 'freq-in' },
+      { id: 'e2', source: 'vco', target: 'out', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+    ],
+  },
+  {
     id: 'karplus-strong',
     label: 'Karplus-Strong plucked string (1983 Stanford algorithm)',
     description: 'Implements the Karplus-Strong plucked-string synthesis algorithm published by Kevin Karplus and Alex Strong, Computer Music Journal Vol. 7 No. 2 (1983). US patents 4,649,783 + 4,622,877 (Stanford) expired 2004 / 2005; algorithm is now freely usable. A gated noise burst excites a feedback loop: delay → lowpass → mixer → delay, where the delay length sets the pitch (400 samples → 110 Hz at 44.1 kHz sample rate) and the lowpass simulates the natural string damping. The graph produces a short percussive pluck rather than the canonical ringing-string sound because our mixer averages (a+b)/2, halving the feedback-loop amplitude each cycle (decay ~60ms). A future "audio summer without averaging" block (Sprint 24+ candidate) would unlock the full ringing-string variant. The algorithm topology and per-cycle behavior is faithful to the 1983 paper.',
