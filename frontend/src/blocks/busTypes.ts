@@ -208,6 +208,15 @@ export const BLOCK_PORT_TYPES: Record<string, Record<string, BusType>> = {
                  'data-in':      'data-u8',
                  'write-enable': 'gate-1',
                  'data-out':     'data-u8' },
+  // Register File: independent read and write addresses (Sprint 20).
+  // The architectural distinction from RAM — real CPU instruction sets
+  // pick a destination register and one or two source registers from
+  // the same file in one cycle.
+  registerfile:{ 'read-addr':    'addr-u4',
+                 'write-addr':   'addr-u4',
+                 'data-in':      'data-u8',
+                 'write-enable': 'gate-1',
+                 'data-out':     'data-u8' },
   rom:         { 'addr':         'addr-u4',
                  'data-out':     'data-u8' },
 

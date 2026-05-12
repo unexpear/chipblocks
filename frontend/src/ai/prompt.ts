@@ -45,7 +45,7 @@ Inside the app, the user:
 
 When the canvas is rendering or building, a Cancel button appears that aborts cleanly. Status text reads "Synthesizing…" or "Building bitstream…". Errors appear as a dismissible toast bottom-left.
 
-# Block library (all 40 types — these are the EXACT type strings)
+# Block library (all 42 types — these are the EXACT type strings)
 
 All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual blocks (vgatiming, colorbars, pixelrange, solidcolor, vgaoutput) drive a VGA monitor through the iCEBreaker FPGA's PMOD1B socket; ▶ Play renders audio only, so visual graphs need 🔧 Build → iCEBreaker to see anything. The four CPU primitives (adder, register, ram, rom) work on 8-bit unsigned data — Sprint 17 / ADR-002 — and don't directly feed the audio Output. Sprint 18 adds the bridge (Reinterpret) and the conditional-control trio (Subtractor, Comparator, Mux) so a CPU-domain accumulator can drive audio and small programs can branch.
 
@@ -226,6 +226,11 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual b
 - Output port: \`data-out\` (8-bit unsigned)
 - No parameters
 
+**registerfile** — 16 × 8-bit register file with independent read and write addresses. Same storage shape as RAM, but reads and writes use separate address ports, so in one cycle you can read register N while writing register M. This is how real CPU instruction sets address source and destination registers — \`add R1, R2, R3\` reads R2 and R3 and writes R1, all in one cycle, decoded from three separate fields of the instruction. \`data-out\` is the cell at \`read-addr\` immediately (no clock for reads); \`data-in\` writes the cell at \`write-addr\` on the next clock edge when \`write-enable\` is high.
+- Input ports: \`read-addr\` (4-bit unsigned), \`write-addr\` (4-bit unsigned), \`data-in\` (8-bit unsigned), \`write-enable\` (1-bit gate)
+- Output port: \`data-out\` (8-bit unsigned)
+- No parameters
+
 **rom** — 16-byte read-only memory. 4-bit address selects one of 16 cells; \`data-out\` is the byte at \`addr\`, available immediately (no clock, no write port). The \`contents\` parameter is a JSON array of 0–255 integers — the only block in the library where the parameter is a list rather than a scalar. Edit the textarea in the block to change the program; missing entries are zero-padded to 16, extra entries are truncated, out-of-range entries are clamped to 0..255.
 - Input port: \`addr\` (4-bit unsigned)
 - Output port: \`data-out\` (8-bit unsigned)
@@ -253,8 +258,8 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual b
 
 # Naming conventions
 
-- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`distortion\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`, \`vgatiming\`, \`colorbars\`, \`pixelrange\`, \`solidcolor\`, \`vgaoutput\`, \`bussplit\`, \`busjoin\`, \`adder\`, \`register\`, \`ram\`, \`rom\`, \`subtractor\`, \`comparator\`, \`mux\`, \`reinterpret\`.
-- **Port handle ids** are kebab-case for audio/gate signals (\`audio-out\`, \`audio-in\`, \`gate-out\`, \`gate-in\`, \`mix-out\`, \`in-1\`, \`in-2\`). Control signals are unhyphenated: \`gate\` (an ADSR input), \`clock\` (a samplehold / counter input), \`select\` (a Mux input). VGA handles are short single-token names (\`r\`, \`g\`, \`b\`, \`hsync\`, \`vsync\`, \`visible\`, \`x\`, \`y\`, \`pixel\`, \`inside\`) — same convention used in every open-source VGA core. Bus blocks use \`bus-in\` / \`bus-out\` for the wide port and \`bit-0\` … \`bit-7\` for the per-bit ports. CPU primitives use \`in-a\` / \`in-b\` / \`sum-out\` / \`carry-out\` (adder); \`in-a\` / \`in-b\` / \`diff-out\` / \`borrow-out\` (subtractor); \`in-a\` / \`in-b\` / \`eq-out\` / \`lt-out\` / \`gt-out\` (comparator); \`in-a\` / \`in-b\` / \`select\` / \`data-out\` (mux); \`data-in\` / \`audio-out\` (reinterpret); \`data-in\` / \`data-out\` / \`write-enable\` (register, ram); \`addr\` (ram, rom — and the matching \`addr-out\` on counter).
+- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`distortion\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`, \`vgatiming\`, \`colorbars\`, \`pixelrange\`, \`solidcolor\`, \`vgaoutput\`, \`bussplit\`, \`busjoin\`, \`adder\`, \`register\`, \`ram\`, \`registerfile\`, \`rom\`, \`subtractor\`, \`comparator\`, \`mux\`, \`reinterpret\`, \`byteconstant\`.
+- **Port handle ids** are kebab-case for audio/gate signals (\`audio-out\`, \`audio-in\`, \`gate-out\`, \`gate-in\`, \`mix-out\`, \`in-1\`, \`in-2\`). Control signals are unhyphenated: \`gate\` (an ADSR input), \`clock\` (a samplehold / counter input), \`select\` (a Mux input). VGA handles are short single-token names (\`r\`, \`g\`, \`b\`, \`hsync\`, \`vsync\`, \`visible\`, \`x\`, \`y\`, \`pixel\`, \`inside\`) — same convention used in every open-source VGA core. Bus blocks use \`bus-in\` / \`bus-out\` for the wide port and \`bit-0\` … \`bit-7\` for the per-bit ports. CPU primitives use \`in-a\` / \`in-b\` / \`sum-out\` / \`carry-out\` (adder); \`in-a\` / \`in-b\` / \`diff-out\` / \`borrow-out\` (subtractor); \`in-a\` / \`in-b\` / \`eq-out\` / \`lt-out\` / \`gt-out\` (comparator); \`in-a\` / \`in-b\` / \`select\` / \`data-out\` (mux); \`data-in\` / \`audio-out\` (reinterpret); \`data-in\` / \`data-out\` / \`write-enable\` (register, ram); \`addr\` (ram, rom — and the matching \`addr-out\` on counter); \`read-addr\` / \`write-addr\` / \`data-in\` / \`data-out\` / \`write-enable\` (registerfile — separate read and write address ports).
 
 # Connection rules (bus types)
 
@@ -264,7 +269,7 @@ Every port carries a typed bus. The renderer rejects edges with mismatched bus t
 - **audio-s8**: 8-bit signed audio sample (–128..+127). Used by every audio block's \`audio-out\` / \`audio-in\` / \`mix-out\`, the multiply block's \`in-1\` / \`in-2\`, the counter's \`audio-out\` (centred 8-bit), reinterpret.audio-out, and Output's \`audio-in\`.
 - **pixel-u10**: 10-bit unsigned VGA coordinate (0..1023). Used by vgatiming.x/y, colorbars.x, pixelrange.pixel.
 - **data-u8** / **data-u1**: generic 8-bit and 1-bit unsigned. Used by bussplit.bus-in (data-u8) → 8 × bit-N (data-u1 each); busjoin is the reverse. Also used end-to-end by the CPU primitives: adder.in-a/in-b/sum-out, subtractor.in-a/in-b/diff-out, comparator.in-a/in-b, mux.in-a/in-b/data-out, register.data-in/data-out, ram.data-in/data-out, rom.data-out, reinterpret.data-in are all data-u8.
-- **addr-u4**: 4-bit unsigned address bus (0..15). Used by counter.addr-out, ram.addr, rom.addr. The canonical "Counter walks ROM/RAM through 16 addresses" pattern wires Counter.addr-out → ROM.addr or → RAM.addr directly.
+- **addr-u4**: 4-bit unsigned address bus (0..15). Used by counter.addr-out, ram.addr, rom.addr, registerfile.read-addr, registerfile.write-addr. The canonical "Counter walks ROM/RAM through 16 addresses" pattern wires Counter.addr-out → ROM.addr or → RAM.addr directly; for registerfile the two address ports are wired independently (read-addr from one source, write-addr from another, typically two separate Counters or two slices of an instruction word).
 
 Compatibility rules:
 - Same type both sides → connect.
@@ -343,7 +348,7 @@ After tool calls, you'll receive \`tool_result\` content blocks with the outcome
 
 - Be concrete. Reference specific block types, parameter values, and port names.
 - Keep responses tight — a short paragraph or a short list.
-- If a goal isn't possible with the current 40 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
+- If a goal isn't possible with the current 42 block types or the current app feature set, say so plainly. Don't invent capabilities or suggest blocks that don't exist.
 - After multi-step tool sequences, end with a short text confirmation of what you did so the user knows where things landed.`
 
 export function buildSystemBlocks(nodes: AppNode[], edges: Edge[]) {
@@ -387,10 +392,12 @@ The \`data\` field shape depends on \`type\`:
 - delay: { delay_samples: 1-1024 (default 128) }
 - distortion: { threshold: 1-127 (default 32) }
 - counter: { max_value: 1-127 (default 16) }
+- byteconstant: { value: 0-255 (default 0) }
 - pixelrange: { start: 0-639 (default 100), end: 0-639 (default 200) }
 - solidcolor: { color: one of "black" | "red" | "green" | "blue" | "yellow" | "cyan" | "magenta" | "white" (default "white") }
 - rom: { contents: array of 16 integers, each 0-255 (default [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]) }
-- mixer | output | samplehold | noise | multiply | and | or | xor | not | vgatiming | colorbars | vgaoutput | bussplit | busjoin | adder | register | ram | subtractor | comparator | mux | reinterpret: {} (no parameters)
+- byteconstant: { value: 0-255 (default 0) }
+- mixer | output | samplehold | noise | multiply | and | or | xor | not | vgatiming | colorbars | vgaoutput | bussplit | busjoin | adder | register | ram | registerfile | subtractor | comparator | mux | reinterpret: {} (no parameters)
 
 Omit \`data\` to use defaults.`,
       input_schema: {
@@ -420,7 +427,7 @@ Valid handle pairings (port handle names are kebab-case for audio/gate; short si
 - 1-bit sources (gate, and, or, xor, not) emit \`gate-out\`. Valid 1-bit targets: adsr's \`gate\` input, samplehold's / counter's \`clock\` input, the boolean gates' \`in-1\`/\`in-2\` (and/or/xor) or \`gate-in\` (not) inputs. The pixelrange block also emits a 1-bit \`inside\` output that can drive any 1-bit input (boolean gate's \`in-1\`/\`in-2\` or vgaoutput's \`r\`/\`g\`/\`b\`).
 - VGA: vgatiming emits \`hsync\`, \`vsync\`, \`visible\`, \`x\`, \`y\`. colorbars takes \`x\` + \`visible\` and emits \`r\`, \`g\`, \`b\`. pixelrange takes \`pixel\` (10-bit) and emits \`inside\` (1-bit). solidcolor has no inputs and emits \`r\`, \`g\`, \`b\`. vgaoutput takes \`r\`, \`g\`, \`b\`, \`hsync\`, \`vsync\` and is a sink.
 - Bus: bussplit takes \`bus-in\` (8-bit) and emits \`bit-0\` … \`bit-7\` (1-bit each). busjoin takes \`bit-0\` … \`bit-7\` (1-bit each) and emits \`bus-out\` (8-bit). Use these to bridge bus-width mismatches when you need to wire an 8-bit output into a 1-bit input or vice versa.
-- CPU primitives: counter emits \`addr-out\` (4-bit address) in addition to its centred \`audio-out\`. rom takes \`addr\` (4-bit) and emits \`data-out\` (8-bit). ram takes \`addr\` (4-bit), \`data-in\` (8-bit), \`write-enable\` (1-bit) and emits \`data-out\` (8-bit). register takes \`data-in\` (8-bit) and \`write-enable\` (1-bit), emits \`data-out\` (8-bit). adder takes \`in-a\` / \`in-b\` (both 8-bit) and emits \`sum-out\` (8-bit) + \`carry-out\` (1-bit). subtractor takes \`in-a\` / \`in-b\` (both 8-bit) and emits \`diff-out\` (8-bit) + \`borrow-out\` (1-bit). comparator takes \`in-a\` / \`in-b\` (both 8-bit) and emits \`eq-out\` / \`lt-out\` / \`gt-out\` (each 1-bit). mux takes \`in-a\` / \`in-b\` (both 8-bit) and \`select\` (1-bit), emits \`data-out\` (8-bit).
+- CPU primitives: counter emits \`addr-out\` (4-bit address) in addition to its centred \`audio-out\`. rom takes \`addr\` (4-bit) and emits \`data-out\` (8-bit). ram takes \`addr\` (4-bit), \`data-in\` (8-bit), \`write-enable\` (1-bit) and emits \`data-out\` (8-bit). registerfile takes \`read-addr\` (4-bit), \`write-addr\` (4-bit), \`data-in\` (8-bit), \`write-enable\` (1-bit) and emits \`data-out\` (8-bit) — same storage as RAM but independent read/write addresses. register takes \`data-in\` (8-bit) and \`write-enable\` (1-bit), emits \`data-out\` (8-bit). adder takes \`in-a\` / \`in-b\` (both 8-bit) and emits \`sum-out\` (8-bit) + \`carry-out\` (1-bit). subtractor takes \`in-a\` / \`in-b\` (both 8-bit) and emits \`diff-out\` (8-bit) + \`borrow-out\` (1-bit). comparator takes \`in-a\` / \`in-b\` (both 8-bit) and emits \`eq-out\` / \`lt-out\` / \`gt-out\` (each 1-bit). mux takes \`in-a\` / \`in-b\` (both 8-bit) and \`select\` (1-bit), emits \`data-out\` (8-bit). byteconstant has no inputs and emits a fixed \`data-out\` (8-bit) — CPU-domain literal.
 - Reinterpret bridge: reinterpret takes \`data-in\` (8-bit unsigned) and emits \`audio-out\` (8-bit signed audio). Pure no-op rename of the bus type so a CPU-domain accumulator can drive audio.
 - output has \`audio-in\` and no output handle (it is the audio sink). vgaoutput has 5 inputs and no outputs (it is the visual sink).
 
@@ -442,6 +449,7 @@ Common patterns:
 - vgatiming.hsync → vgaoutput.hsync (same for vsync)
 - counter.addr-out → rom.addr (the canonical "walk a 16-byte ROM" pattern)
 - counter.addr-out → ram.addr (same shape; pair with a Gate on ram.write-enable to log values)
+- counter.addr-out → registerfile.read-addr (sweep reads through 16 registers); a second counter or a different addr-u4 source → registerfile.write-addr to write to a different register in the same cycle
 - rom.data-out → adder.in-a (or adder.in-b)
 - adder.sum-out → register.data-in (the accumulator pattern; pair Register.data-out → adder.in-b)
 - gate.gate-out → register.write-enable (pulse the accumulator forward each cycle)
@@ -460,7 +468,7 @@ Common patterns:
           },
           target_handle: {
             type: 'string',
-            description: 'One of: audio-in, in-1, in-2, gate, gate-in, clock, x, visible, r, g, b, hsync, vsync, pixel, bus-in, bit-0, bit-1, bit-2, bit-3, bit-4, bit-5, bit-6, bit-7, in-a, in-b, select, addr, data-in, write-enable',
+            description: 'One of: audio-in, in-1, in-2, gate, gate-in, clock, x, visible, r, g, b, hsync, vsync, pixel, bus-in, bit-0, bit-1, bit-2, bit-3, bit-4, bit-5, bit-6, bit-7, in-a, in-b, select, addr, read-addr, write-addr, data-in, write-enable',
           },
         },
         required: ['source_id', 'target_id', 'source_handle', 'target_handle'],
@@ -488,7 +496,8 @@ Allowed fields per block type (same as add_node):
 - pixelrange: start, end
 - solidcolor: color (string: "black" | "red" | "green" | "blue" | "yellow" | "cyan" | "magenta" | "white")
 - rom: contents (array of 16 integers, each 0-255)
-- mixer | output | samplehold | noise | multiply | and | or | xor | not | vgatiming | colorbars | vgaoutput | bussplit | busjoin | adder | register | ram | subtractor | comparator | mux | reinterpret: (no parameters; this tool is a no-op for these types)`,
+- byteconstant: value
+- mixer | output | samplehold | noise | multiply | and | or | xor | not | vgatiming | colorbars | vgaoutput | bussplit | busjoin | adder | register | ram | registerfile | subtractor | comparator | mux | reinterpret: (no parameters; this tool is a no-op for these types)`,
       input_schema: {
         type: 'object',
         properties: {

@@ -47,6 +47,7 @@ from .bus_join import BusJoin
 from .adder import Adder
 from .register import Register
 from .ram import RAM
+from .register_file import RegisterFile
 from .rom import ROM
 from .reinterpret import Reinterpret
 from .subtractor import Subtractor
@@ -91,6 +92,7 @@ BLOCK_REGISTRY = {
     "adder": Adder,
     "register": Register,
     "ram": RAM,
+    "registerfile": RegisterFile,
     "rom": ROM,
     "reinterpret": Reinterpret,
     "subtractor": Subtractor,
@@ -135,6 +137,7 @@ __all__ = [
     "Adder",
     "Register",
     "RAM",
+    "RegisterFile",
     "ROM",
     "Reinterpret",
     "Subtractor",

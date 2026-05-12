@@ -58,6 +58,7 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'mux',         label: 'Mux',         color: '#5e35b1', description: '2-to-1 multiplexer: select picks in-a or in-b' },
   { type: 'register',    label: 'Register',    color: '#1565c0', description: '8-bit data register with gated write-enable' },
   { type: 'ram',         label: 'RAM',         color: '#0d47a1', description: '16 × 8-bit synchronous read/write memory' },
+  { type: 'registerfile',label: 'Reg File',    color: '#1455a5', description: '16 × 8-bit register file with independent read and write addresses' },
   { type: 'rom',         label: 'ROM',         color: '#283593', description: '16-byte combinational ROM (contents in the block)' },
   { type: 'reinterpret', label: 'Reinterpret', color: '#546e7a', description: 'No-op bridge: data-u8 → audio-s8 (same bits, different sign)' },
   { type: 'byteconstant',label: 'Byte Constant', color: '#37474f', description: 'Fixed 8-bit unsigned value (0..255) — CPU-domain Constant' },
@@ -122,6 +123,7 @@ export function defaultDataForType(type: string): Record<string, unknown> {
     case 'adder':
     case 'register':
     case 'ram':
+    case 'registerfile':
     case 'reinterpret':
     case 'subtractor':
     case 'comparator':

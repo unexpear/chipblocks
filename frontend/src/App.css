@@ -945,6 +945,14 @@
   min-width: 130px;
 }
 
+.block-registerfile {
+  border-color: #1455a5;
+  /* 4 left handles (read-addr, write-addr, data-in, write-enable) at
+     24/56/88/120 + 1 right handle. */
+  min-height: 170px;
+  min-width: 130px;
+}
+
 .block-rom {
   border-color: #283593;
   /* 1 left handle + 1 right + a textarea for the contents — sized

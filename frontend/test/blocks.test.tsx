@@ -61,6 +61,7 @@ import { BusJoinNode } from '../src/blocks/BusJoinNode'
 import { AdderNode } from '../src/blocks/AdderNode'
 import { RegisterNode } from '../src/blocks/RegisterNode'
 import { RAMNode } from '../src/blocks/RAMNode'
+import { RegisterFileNode } from '../src/blocks/RegisterFileNode'
 import { ROMNode } from '../src/blocks/ROMNode'
 import { ReinterpretNode } from '../src/blocks/ReinterpretNode'
 import { SubtractorNode } from '../src/blocks/SubtractorNode'
@@ -1097,6 +1098,25 @@ describe('RAM block', () => {
     const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
     const ids = Array.from(handles).map((h) => h.getAttribute('data-handleid'))
     expect(ids).toContain('addr')
+    expect(ids).toContain('data-in')
+    expect(ids).toContain('write-enable')
+    expect(ids).toContain('data-out')
+  })
+})
+
+describe('RegisterFile block', () => {
+  it('renders title with 4 inputs and 1 output, no params', () => {
+    const { container } = wrap(
+      <RegisterFileNode {...nodePropsBase('rf-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Reg File')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(4)
+    expect(countHandles(container, 'source')).toBe(1)
+    const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
+    const ids = Array.from(handles).map((h) => h.getAttribute('data-handleid'))
+    expect(ids).toContain('read-addr')
+    expect(ids).toContain('write-addr')
     expect(ids).toContain('data-in')
     expect(ids).toContain('write-enable')
     expect(ids).toContain('data-out')

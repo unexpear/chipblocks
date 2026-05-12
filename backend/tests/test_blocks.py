@@ -1362,6 +1362,80 @@ def test_ram_round_trip_at_address_5():
     )
 
 
+def test_register_file_independent_read_and_write_addresses():
+    """Write 42 to register 5 with write-enable=1, then write 99 to
+    register 10 — and while doing the second write, verify read-addr=5
+    still returns 42 (because read and write addresses are independent,
+    not shared like RAM's single addr port). Then switch read-addr to 10
+    and confirm 99 is there."""
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.register_file import RegisterFile
+
+    block = RegisterFile()
+    m = Module()
+    m.submodules.b = block
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    captured: dict[str, int] = {}
+
+    async def process(ctx):
+        # Write 42 → register 5.
+        ctx.set(block.write_addr, 5)
+        ctx.set(block.read_addr, 5)
+        ctx.set(block.data_in, 42)
+        ctx.set(block.write_enable, 1)
+        await ctx.tick()
+        await ctx.tick()
+        # Drop write-enable; confirm read-addr=5 returns 42.
+        ctx.set(block.write_enable, 0)
+        ctx.set(block.data_in, 0)
+        await ctx.tick()
+        await ctx.tick()
+        captured["reg_5_after_first_write"] = ctx.get(block.data_out)
+
+        # Now write 99 → register 10 while keeping read-addr=5. The
+        # whole point of a register file: write to one address, read
+        # from another in the same cycle.
+        ctx.set(block.write_addr, 10)
+        ctx.set(block.data_in, 99)
+        ctx.set(block.write_enable, 1)
+        await ctx.tick()
+        await ctx.tick()
+        # read-addr still on 5 — should still read 42, not echo data-in.
+        captured["reg_5_during_write_to_10"] = ctx.get(block.data_out)
+        # Drop write-enable, switch read-addr to 10 — now 99.
+        ctx.set(block.write_enable, 0)
+        ctx.set(block.data_in, 0)
+        ctx.set(block.read_addr, 10)
+        await ctx.tick()
+        await ctx.tick()
+        captured["reg_10_after_second_write"] = ctx.get(block.data_out)
+        # And a never-written register (3) must still be 0.
+        ctx.set(block.read_addr, 3)
+        await ctx.tick()
+        await ctx.tick()
+        captured["reg_3_never_written"] = ctx.get(block.data_out)
+
+    sim.add_testbench(process)
+    sim.run()
+
+    assert captured["reg_5_after_first_write"] == 42, (
+        f"RegisterFile reg 5 should be 42 after first write; got {captured['reg_5_after_first_write']}"
+    )
+    assert captured["reg_5_during_write_to_10"] == 42, (
+        f"RegisterFile reg 5 should still be 42 while writing reg 10 "
+        f"(independent ports); got {captured['reg_5_during_write_to_10']}"
+    )
+    assert captured["reg_10_after_second_write"] == 99, (
+        f"RegisterFile reg 10 should be 99 after second write; got {captured['reg_10_after_second_write']}"
+    )
+    assert captured["reg_3_never_written"] == 0, (
+        f"RegisterFile reg 3 (never written) should read 0; got {captured['reg_3_never_written']}"
+    )
+
+
 def test_rom_returns_initialised_contents_at_each_address():
     """Instantiate ROM with the first 8 Fibonacci numbers (padded with
     zeros to 16 entries). Sweep the address through all 16 entries and
@@ -1478,6 +1552,55 @@ def test_cpu_accumulator_pipeline_runs(run_synth, wav_samples):
     assert any(s != 0 for s in samples), (
         "CPU accumulator + Reinterpret should drive a non-silent audio "
         "path; got all-zero samples"
+    )
+
+
+def test_register_file_multiport_pipeline_runs(run_synth, wav_samples):
+    """End-to-end smoke: a Sprint 20 Register File wired with independent
+    read-addr and write-addr ports, sourced by two Counter blocks of
+    different sweep widths so the read sweep wraps faster than the write
+    sweep. Confirms the new block instantiates, wires correctly through
+    synth.py, and produces a non-silent audio path through Reinterpret.
+
+    Layout mirrors ``examples/cpu-multiregister.json``:
+        Gate (200 Hz) → Counter A (max=16) → RegisterFile.read-addr
+                       → Counter B (max=4)  → RegisterFile.write-addr
+                                            → ROM.addr
+        ROM (ramp 16,48,80,112 + zeros) → RegisterFile.data-in
+        Gate → RegisterFile.write-enable
+        RegisterFile.data-out → Reinterpret.data-in → Output.audio-in
+    """
+    graph = {
+        "nodes": [
+            {"id": "g", "type": "gate", "data": {"rate_hz": 200, "duty_pct": 50}},
+            {"id": "cnt_r", "type": "counter", "data": {"max_value": 16}},
+            {"id": "cnt_w", "type": "counter", "data": {"max_value": 4}},
+            {"id": "rom", "type": "rom", "data": {"contents": [16, 48, 80, 112] + [0] * 12}},
+            {"id": "rf", "type": "registerfile", "data": {}},
+            {"id": "ri", "type": "reinterpret", "data": {}},
+            _output_node(),
+        ],
+        "edges": [
+            _edge("e1", "g", "cnt_r", "gate-out", "clock"),
+            _edge("e2", "g", "cnt_w", "gate-out", "clock"),
+            _edge("e3", "cnt_w", "rom", "addr-out", "addr"),
+            _edge("e4", "cnt_r", "rf", "addr-out", "read-addr"),
+            _edge("e5", "cnt_w", "rf", "addr-out", "write-addr"),
+            _edge("e6", "rom", "rf", "data-out", "data-in"),
+            _edge("e7", "g", "rf", "gate-out", "write-enable"),
+            _edge("e8", "rf", "ri", "data-out", "data-in"),
+            _edge("e9", "ri", "out", "audio-out", "audio-in"),
+        ],
+    }
+    samples = wav_samples(run_synth(graph, duration_s=1))
+    # Read sweep walks 16 cells, write sweep walks 4 — so registers 0..3
+    # are continually refreshed with ROM[0..3]=(16,48,80,112), registers
+    # 4..15 stay zero. After the initial write fills 0..3, the read sweep
+    # produces (16, 48, 80, 112, 0, 0, ..., 0) — a ramp followed by
+    # silence repeating at the read-sweep rate. Non-silent audio.
+    assert any(s != 0 for s in samples), (
+        "Register File multi-port pipeline + Reinterpret should drive a "
+        "non-silent audio path; got all-zero samples"
     )
 
 

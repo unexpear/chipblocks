@@ -33,6 +33,7 @@ import { BusJoinNode,        type BusJoinBlock }        from './BusJoinNode'
 import { AdderNode,          type AdderBlock }          from './AdderNode'
 import { RegisterNode,       type RegisterBlock }       from './RegisterNode'
 import { RAMNode,            type RAMBlock }            from './RAMNode'
+import { RegisterFileNode,   type RegisterFileBlock }   from './RegisterFileNode'
 import { ROMNode,            type ROMBlock }            from './ROMNode'
 import { ReinterpretNode,    type ReinterpretBlock }    from './ReinterpretNode'
 import { SubtractorNode,     type SubtractorBlock }     from './SubtractorNode'
@@ -78,6 +79,7 @@ export const nodeTypes = {
   adder:       AdderNode,
   register:    RegisterNode,
   ram:         RAMNode,
+  registerfile: RegisterFileNode,
   rom:         ROMNode,
   reinterpret: ReinterpretNode,
   subtractor:  SubtractorNode,
@@ -122,6 +124,7 @@ export type AppNode =
   | AdderBlock
   | RegisterBlock
   | RAMBlock
+  | RegisterFileBlock
   | ROMBlock
   | ReinterpretBlock
   | SubtractorBlock
