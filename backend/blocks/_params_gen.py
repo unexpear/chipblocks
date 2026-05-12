@@ -13,7 +13,7 @@ SAMPLE_RATE = 44100
 
 def build_params(node_type: str, data: dict) -> dict:
     params: dict = {}
-    if node_type in ("oscillator", "triangle", "sawtooth", "sine"):
+    if node_type in ("oscillator", "triangle", "sawtooth", "sine", "hardsync"):
         if "freq" in data:
             params["freq_hz"] = int(data["freq"])
         params["sample_rate"] = SAMPLE_RATE

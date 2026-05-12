@@ -89,6 +89,11 @@ The block table below is the machine-readable shape of every block: name + one-l
 - Parameter \`base_freq\`: 20–20000 Hz (default 440)
 - Parameter \`range\`: 1–1000 Hz (default 100)
 
+**hardsync** — Slave sawtooth whose phase resets on rising zero-crossings of sync-in
+- Input port \`sync-in\` (audio-s8)
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`freq\`: 20–20000 Hz (default 660)
+
 **lfo** — Low-frequency oscillator (0.001-30 Hz, 4 shapes) for vibrato + slow gating + drone sweeps
 - Output port \`audio-out\` (audio-s8)
 - Parameter \`rate\`: 0–30 Hz (default 5)
@@ -327,6 +332,11 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual b
 - Parameter \`base_freq\`: 20–20000 Hz (default 440) — centre pitch when \`freq-in\` is silent
 - Parameter \`range\`: 1–1000 Hz (default 100) — how far the pitch sweeps for a full-scale ±128 input
 
+**hardsync** — slave sawtooth with phase-reset on rising zero-crossings of \`sync-in\`. The classic analog-synth "hard sync" trick: the slave runs free at \`freq\` (typically higher than master), but every cycle of the master signal forces the slave's phase back to zero, interrupting the natural sawtooth ramp partway through. The interaction between master-period and slave's natural period creates the harmonically-rich "sync lead" sound used in 1980s prog-rock and synthwave records. Trigger detection: \`sync-in\`'s sign-bit transitions from 1 (negative) to 0 (non-negative), which fires exactly once per cycle of any periodic master. Drive sync-in from another oscillator (square = sharpest sync edge; sine = gentler; triangle = slower zero-crossings). Canonical pairing: 440 Hz square master → HardSync at 660 Hz (perfect-fifth) for the classic sync-lead pitch, or at 880 Hz (octave) / 1100 Hz / 1320 Hz for brighter variants. Inharmonic ratios (e.g. 250 Hz master → 713 Hz slave) give metallic / bell-like spectra.
+- Input port \`sync-in\` (8-bit signed audio; rising zero-crossings trigger phase reset)
+- Output port \`audio-out\`
+- Parameter \`freq\`: 20–20000 Hz (default 660) — slave sawtooth's free-running frequency
+
 **lfo** — low-frequency oscillator (0.001-30 Hz) for sub-audio modulation. The audio oscillators all floor at 20 Hz — appropriate for audio, too fast for canonical vibrato (4-8 Hz), for the Atari Punk Console's 1-30 Hz gating sweep, or for slow drone-style filter sweeps (0.1-1 Hz). LFO has its own 32-bit phase accumulator so the rate is precise down to 1 millihertz (one cycle per 1000 seconds). The rate is split into two integer fields: \`rate\` is whole hertz (0-30) and \`rate_millihz\` adds 0-999 millihertz on top, giving the full 0.001-30 Hz range. So \`rate=0, rate_millihz=500\` = 0.5 Hz (canonical drone sweep), \`rate=5, rate_millihz=500\` = 5.5 Hz, \`rate=12, rate_millihz=0\` = 12 Hz. Four waveform shapes (sine for smooth vibrato / tremolo, triangle as a sine alternative with linear edges, square for hard on/off gating, sawtooth for ramp modulation). Output is audio-s8 like the audio oscillators, so it composes with everything: drive VCO.freq-in for vibrato, drive Multiply.in for tremolo / amplitude-modulation / gating, drive VCF.cutoff-in for slow filter sweeps.
 - Output port \`audio-out\`
 - Parameter \`rate\`: 0–30 Hz (default 5) — whole-hertz part of LFO rate; 4-8 Hz canonical vibrato, 1-3 Hz slow drift, 10-30 Hz gating, 0 for sub-Hz only
@@ -542,7 +552,7 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual b
 
 # Naming conventions
 
-- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`vco\`, \`lfo\`, \`noise\`, \`constant\`, \`mixer\`, \`audiosum\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`vcf\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`distortion\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`, \`vgatiming\`, \`colorbars\`, \`pixelrange\`, \`solidcolor\`, \`vgaoutput\`, \`bussplit\`, \`busjoin\`, \`adder\`, \`register\`, \`ram\`, \`registerfile\`, \`rom\`, \`subtractor\`, \`shifter\`, \`comparator\`, \`mux\`, \`reinterpret\`, \`byteconstant\`. (Authoritative list is the # Block reference section above, which is codegen'd from blocks.yaml.)
+- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`vco\`, \`hardsync\`, \`lfo\`, \`noise\`, \`constant\`, \`mixer\`, \`audiosum\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`vcf\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`distortion\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`, \`vgatiming\`, \`colorbars\`, \`pixelrange\`, \`solidcolor\`, \`vgaoutput\`, \`bussplit\`, \`busjoin\`, \`adder\`, \`register\`, \`ram\`, \`registerfile\`, \`rom\`, \`subtractor\`, \`shifter\`, \`comparator\`, \`mux\`, \`reinterpret\`, \`byteconstant\`. (Authoritative list is the # Block reference section above, which is codegen'd from blocks.yaml.)
 - **Port handle ids** are kebab-case for audio/gate signals (\`audio-out\`, \`audio-in\`, \`gate-out\`, \`gate-in\`, \`mix-out\`, \`in-1\`, \`in-2\`). Control signals are unhyphenated: \`gate\` (an ADSR input), \`clock\` (a samplehold / counter input), \`select\` (a Mux input). VGA handles are short single-token names (\`r\`, \`g\`, \`b\`, \`hsync\`, \`vsync\`, \`visible\`, \`x\`, \`y\`, \`pixel\`, \`inside\`) — same convention used in every open-source VGA core. Bus blocks use \`bus-in\` / \`bus-out\` for the wide port and \`bit-0\` … \`bit-7\` for the per-bit ports. CPU primitives use \`in-a\` / \`in-b\` / \`sum-out\` / \`carry-out\` (adder); \`in-a\` / \`in-b\` / \`diff-out\` / \`borrow-out\` (subtractor); \`in-a\` / \`in-b\` / \`eq-out\` / \`lt-out\` / \`gt-out\` (comparator); \`in-a\` / \`in-b\` / \`select\` / \`data-out\` (mux); \`data-in\` / \`audio-out\` (reinterpret); \`data-in\` / \`data-out\` / \`write-enable\` (register, ram); \`addr\` (ram, rom — and the matching \`addr-out\` on counter); \`read-addr\` / \`write-addr\` / \`data-in\` / \`data-out\` / \`write-enable\` (registerfile — separate read and write address ports).
 
 # Connection rules (bus types)

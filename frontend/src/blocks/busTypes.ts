@@ -117,6 +117,8 @@ export const BLOCK_PORT_TYPES: Record<string, Record<string, BusType>> = {
   sine:        { 'audio-out': 'audio-s8' },
   vco:         { 'freq-in':   'audio-s8',
                  'audio-out': 'audio-s8' },
+  hardsync:    { 'sync-in':   'audio-s8',
+                 'audio-out': 'audio-s8' },
   lfo:         { 'audio-out': 'audio-s8' },
   wavetable:   { 'audio-out': 'audio-s8' },
   noise:       { 'audio-out': 'audio-s8' },

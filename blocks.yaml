@@ -126,6 +126,30 @@
   cssMinWidth: 150
   tags: []
 
+- type: hardsync
+  label: Hard Sync
+  description: "Slave sawtooth whose phase resets on rising zero-crossings of sync-in"
+  color: '#26a69a'
+  category: source
+  componentPath: frontend/src/blocks/HardsyncNode.tsx
+  backendPath: backend/blocks/hardsync.py
+  backendClass: HardSync
+  ports:
+    sync-in:   { dir: target, bus: audio-s8 }
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    freq:
+      type: int
+      min: 20
+      max: 20000
+      default: 660
+      ariaLabel: Slave sawtooth frequency in hertz
+      unit: Hz
+      backendParam: freq_hz
+      backendNeedsSampleRate: true
+  cssMinWidth: 150
+  tags: []
+
 - type: lfo
   label: LFO
   description: "Low-frequency oscillator (0.001-30 Hz, 4 shapes) for vibrato + slow gating + drone sweeps"

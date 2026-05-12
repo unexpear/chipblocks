@@ -1,6 +1,6 @@
 # ChipBlocks block library
 
-> **Last updated:** 2026-05-12 · Reference for the 47 blocks shipping on the master branch (last released as v0.1.0-alpha.9 with 42 blocks; Shifter added in Sprint 22; VCO + LFO + Audio Sum + VCF added in Sprint 24 via the manifest workflow). The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). Cross-cutting metadata (palette entry, port types, etc.) lives in [`blocks.yaml`](blocks.yaml); see [ADR-003](ADR-003-block-manifest.md) for the manifest design and [ARCHITECTURE.md](ARCHITECTURE.md) for how the renderer talks to the backend and how to add another block.
+> **Last updated:** 2026-05-12 · Reference for the 48 blocks shipping on the master branch (last released as v0.1.0-alpha.9 with 42 blocks; Shifter added in Sprint 22; VCO + LFO + Audio Sum + VCF + HardSync added in Sprint 24 via the manifest workflow). The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). Cross-cutting metadata (palette entry, port types, etc.) lives in [`blocks.yaml`](blocks.yaml); see [ADR-003](ADR-003-block-manifest.md) for the manifest design and [ARCHITECTURE.md](ARCHITECTURE.md) for how the renderer talks to the backend and how to add another block.
 
 This document describes what each block does, what its inputs and outputs are, what its parameters mean, and roughly how it sounds (or looks). Audio blocks are 8-bit signed (–128..+127) at a 44.1 kHz sample rate. Audio handles carry signed 8-bit samples; gate / clock handles carry 1-bit signals; visual handles are short single-token names (`r`, `g`, `b`, `hsync`, `vsync`, `visible`, `x`, `y`) following the convention used in every open-source VGA core. Edges are direction-checked by React Flow at edit time.
 
@@ -15,6 +15,7 @@ A note on parameter ranges: the React Flow node components enforce **musically s
 - [Sawtooth](#sawtooth)
 - [Sine](#sine)
 - [VCO (voltage-controlled oscillator)](#vco-voltage-controlled-oscillator)
+- [Hard Sync (master-slaved sawtooth)](#hard-sync-master-slaved-sawtooth)
 - [LFO (low-frequency oscillator)](#lfo-low-frequency-oscillator)
 - [Wavetable](#wavetable)
 - [Noise](#noise)
@@ -197,7 +198,34 @@ A square-wave oscillator whose pitch is **modulated by an audio-rate input**. Un
 
 **Why a separate block from `fm`:** the `fm` block is a self-contained two-operator FM voice with both carrier and modulator built in. The VCO is just one oscillator with an exposed modulation input — pair it with ANY block as the modulator (a Sine for clean FM, a Square for harsh FM, a Triangle for bell-like sustained spectra, a Noise source for noise-modulated chaos, etc.).
 
-### LFO (low-frequency oscillator)
+### Hard Sync (master-slaved sawtooth)
+
+A slave sawtooth oscillator whose phase is reset to zero whenever its `sync-in` master signal crosses zero in the positive-going direction. The classic analog-synth "hard sync" trick: the slave runs free at its own (typically higher) frequency, but every cycle of the master forces the slave's phase back to zero. The slave's natural period gets interrupted partway through, snapping back to the start of its sawtooth ramp. The interaction between master-period and slave's natural period produces the harmonically-rich "sync lead" sound used in classic prog-rock and synthwave records (Van Halen *Jump*, The Cars *Let's Go*, The Knife *Heartbeats*, etc.).
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `sync-in` | target | signed 8-bit audio | Master signal. Positive-going zero-crossings (the sample's sign-bit transitions from 1 to 0) trigger phase reset |
+| `audio-out` | source | signed 8-bit audio | Slave sawtooth, phase-reset by master's rising zero-crossings |
+
+**Parameters**
+
+| Name | Type | Range (frontend / backend) | Default | What it does |
+|---|---|---|---|---|
+| `freq` | integer Hz | 20–20000 / 20–20000 (clamped) | 660 | Slave sawtooth's free-running frequency. 660 Hz is a perfect-fifth above the canonical 440 Hz master; classic sync-lead ratios are 1.5× (perfect fifth), 2× (octave), 2.5× (octave + major third) |
+
+**Behavior.** A 16-bit phase accumulator advances by `step = (2^16 × freq) / sample_rate` per sample, identical to a free-running sawtooth. A 1-bit `prev_sign` register holds the sample's MSB from the previous tick; the combinational `sync_pulse = prev_sign & ~sync_in[7]` is asserted when the sign transitions 1 → 0 (negative → non-negative). On `sync_pulse` the phase resets to 0 instead of advancing — the slave starts a fresh sawtooth ramp. Output is `phase[8:16] - 128`, the standard sawtooth-from-phase formula.
+
+**Common usage.**
+
+- **Classic 1980s sync lead:** Oscillator (square, 440 Hz) → HardSync (660 Hz) → Output. Master at A4, slave a perfect-fifth above. The fifth ratio gives the signature "talking" timbre — try 880 Hz (octave), 1100 Hz (octave + major third), or 1320 Hz (one-and-a-half octaves) for the canonical sync-lead range.
+- **Inharmonic bell-like timbres:** Oscillator (250 Hz) → HardSync (713 Hz). An irrational master/slave ratio (713/250 = 2.852, no small-integer harmonic) produces metallic, bell-like spectra. The brighter the slave (higher freq), the more cymbal-like.
+- **Pitch-tracked sync (modulation):** route an LFO → VCO.freq-in to make the master pitch wobble, then feed the VCO into HardSync.sync-in. The slave's reset rate now wobbles with the master pitch, giving a swept sync-lead timbre.
+- **Polyrhythmic textures:** master oscillator at sub-audio rates (use the LFO block as the master). The slave's reset pattern matches the LFO's slow period, creating rhythmic accent patterns inside the audio waveform.
+- **Talk-box / vocal effects:** drive a slow oscillator into HardSync.sync-in with an audio-rate slave — the period mismatch creates formant-like resonances.
+
+**Why a separate block:** hard sync is fundamentally a behavior of *one specific oscillator*: the slave whose phase gets clamped. You could approximate it with comparators and a Mux block, but the result would be 4-5 blocks where one stateful block does the job natively. Hard sync also doesn't compose with the other oscillator types (Sine, Triangle, etc.) — it's locked to sawtooth because that's the canonical sound. Adding `shape` parameters to it would dilute the block's purpose.
 
 A slow oscillator (0.001-30 Hz) for vibrato, tremolo, slow gating, drone sweeps, and other sub-audio modulation roles. The audio oscillator blocks (oscillator / triangle / sawtooth / sine / wavetable) all floor at 20 Hz — appropriate for audio, too fast for canonical vibrato (4-8 Hz), for sweeping the Atari Punk Console's 1-30 Hz gating range, or for slow drone-style filter sweeps (0.1-1 Hz). The LFO fills that gap with its own 32-bit phase accumulator (wider than the audio oscillators' 16-bit phase) so the per-step resolution stays musical down to 1 millihertz (one cycle per 1000 seconds).
 

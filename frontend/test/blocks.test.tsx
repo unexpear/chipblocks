@@ -49,6 +49,7 @@ import { VcoNode } from '../src/blocks/VcoNode'
 import { LfoNode } from '../src/blocks/LfoNode'
 import { AudioSumNode } from '../src/blocks/AudioSumNode'
 import { VcfNode } from '../src/blocks/VcfNode'
+import { HardsyncNode } from '../src/blocks/HardsyncNode'
 import { DelayNode } from '../src/blocks/DelayNode'
 import { AndGateNode } from '../src/blocks/AndGateNode'
 import { OrGateNode } from '../src/blocks/OrGateNode'
@@ -1288,6 +1289,34 @@ describe('VCF block', () => {
     await user.clear(baseInput)
     await user.type(baseInput, '0')
     expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/1.*22050/)
+  })
+})
+
+describe('HardSync block', () => {
+  it('renders title with 1 input (sync-in), 1 output, and freq control', () => {
+    const { container } = wrap(
+      <HardsyncNode {...nodePropsBase('hs-1')} data={{ freq: 660 }} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Hard Sync')
+    expect(countHandles(container, 'target')).toBe(1)
+    expect(countHandles(container, 'source')).toBe(1)
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')
+    expect(input?.value).toBe('660')
+    const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
+    const ids = Array.from(handles).map((h) => h.getAttribute('data-handleid'))
+    expect(ids).toContain('sync-in')
+    expect(ids).toContain('audio-out')
+  })
+
+  it('out-of-range freq (10) shows an error', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <HardsyncNode {...nodePropsBase('hs-2')} data={{ freq: 660 }} />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '10')
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/20.*20000/)
   })
 })
 

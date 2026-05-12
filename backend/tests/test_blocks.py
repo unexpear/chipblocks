@@ -2121,6 +2121,79 @@ def test_lfo_square_shape_alternates_full_range():
     )
 
 
+def test_hardsync_phase_resets_on_rising_zero_crossing():
+    """HardSync slave's phase should reset to 0 on the first tick after
+    sync-in transitions from negative to non-negative. Drive sync_in
+    with a -50/+50 step and observe audio_out: while sync_in is
+    constant negative, audio_out climbs as a normal sawtooth; on the
+    rising edge of sync_in, audio_out snaps back to -128 (= phase=0)
+    on the following tick."""
+    from amaranth import Module
+    from amaranth.sim import Simulator
+    from blocks.hardsync import HardSync
+
+    block = HardSync(freq_hz=2000, sample_rate=44100)  # fast enough to see ramp
+    m = Module()
+    m.submodules.b = block
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    pre_sync_samples: list[int] = []
+    post_sync_samples: list[int] = []
+
+    async def process(ctx):
+        # 200 ticks of constant negative sync_in: the slave should
+        # produce a free-running sawtooth (no resets).
+        ctx.set(block.sync_in, -50)
+        for _ in range(200):
+            pre_sync_samples.append(int(ctx.get(block.audio_out)))
+            await ctx.tick()
+
+        # Rising edge: flip sync_in to positive. The prev_sign register
+        # is currently 1 (from the negative phase). On the next tick,
+        # sync_pulse fires and phase resets to 0.
+        ctx.set(block.sync_in, +50)
+        # Capture the first 5 ticks after the rising edge.
+        for _ in range(5):
+            post_sync_samples.append(int(ctx.get(block.audio_out)))
+            await ctx.tick()
+
+    sim.add_testbench(process)
+    sim.run()
+
+    # Free-running phase: audio_out should sweep up over 200 ticks at
+    # 2000 Hz / 44100 Hz sample rate. step = (2^16 * 2000)//44100 ≈ 2972
+    # phase units/tick, so 200 ticks ≈ 594400 = ~9 full periods of the
+    # 16-bit phase wrap. We just check that we see a range of values
+    # (proves the sawtooth is doing something) and that the wrap-around
+    # happened (so we see both -128 and values near +127).
+    assert min(pre_sync_samples) == -128, (
+        f"Expected pre-sync sawtooth to hit min -128 at some point; "
+        f"got min {min(pre_sync_samples)}"
+    )
+    assert max(pre_sync_samples) >= 120, (
+        f"Expected pre-sync sawtooth to climb near +127; "
+        f"got max {max(pre_sync_samples)}"
+    )
+
+    # After the rising zero-crossing, the phase resets to 0 on the
+    # following sync tick. Sample 0 of post_sync_samples is the value
+    # captured AT the rising edge (before the next sync edge has had a
+    # chance to apply); samples 1+ are post-reset.
+    #
+    # The reset takes effect on the cycle after sync_pulse is asserted.
+    # sync_pulse fires when prev_sign=1 AND sync_in[7]=0. prev_sign is
+    # synced from last cycle's sync_in[7]=1 (negative), and current
+    # sync_in[7]=0 (positive +50), so sync_pulse is asserted in the
+    # cycle where we observe sample 0 of post_sync_samples; the
+    # phase.eq(0) takes effect on the next tick. So sample 1 should
+    # show audio_out = -128 (the phase=0 sawtooth value).
+    assert post_sync_samples[1] == -128, (
+        f"Expected audio_out = -128 immediately after sync reset, "
+        f"got {post_sync_samples[1]} (samples = {post_sync_samples})"
+    )
+
+
 def test_lfo_sub_hz_via_rate_millihz(run_synth, wav_samples):
     """LFO with rate=0 + rate_millihz=500 should run at 0.5 Hz: one
     full sine cycle every 2 seconds = 2 zero-crossings per 2 seconds.
