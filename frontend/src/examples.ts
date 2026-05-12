@@ -264,6 +264,24 @@ export const EXAMPLES: ExampleGraph[] = [
     ],
   },
   {
+    id: 'hihat',
+    label: 'Hi-hat (filtered noise + fast envelope)',
+    description: 'Standard subtractive-synthesis hi-hat: white noise through a narrow band-pass filter centered at 7100 Hz (the metallic "tsss" frequency range, classic TR-808-era parameter) gated by a fast-decay ADSR envelope (attack 1ms, decay 50ms, sustain 0, release 10ms). Combined with the existing kick-drum.json and snare-drum.json, this completes the kick + snare + hat trilogy — the foundation of nearly all rhythm-based music. Generic analog-modular technique predating consumer electronics; no specific authorship to credit. Not affiliated with Roland or any drum-machine manufacturer.',
+    nodes: [
+      { id: 'noise',  type: 'noise',    position: { x: 60,  y: 80  }, data: {} },
+      { id: 'filter', type: 'bandpass', position: { x: 280, y: 80  }, data: { center_hz: 7100 } },
+      { id: 'gate',   type: 'gate',     position: { x: 60,  y: 240 }, data: { rate_hz: 4, duty_pct: 5 } },
+      { id: 'env',    type: 'adsr',     position: { x: 540, y: 160 }, data: { attack_ms: 1, decay_ms: 50, sustain_level: 0, release_ms: 10 } },
+      { id: 'out',    type: 'output',   position: { x: 820, y: 160 }, data: {} },
+    ],
+    edges: [
+      { id: 'e1', source: 'noise',  target: 'filter', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+      { id: 'e2', source: 'filter', target: 'env',    sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+      { id: 'e3', source: 'gate',   target: 'env',    sourceHandle: 'gate-out',  targetHandle: 'gate'     },
+      { id: 'e4', source: 'env',    target: 'out',    sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+    ],
+  },
+  {
     id: 'fm-bell',
     label: 'FM bell (Chowning two-operator, post-1994 patent-expired)',
     description: 'Two-operator FM synthesis as published by John M. Chowning, Journal of the Audio Engineering Society Vol. 21 No. 7 (1973). US patent 4,018,121 (Stanford, exclusively licensed to Yamaha for decades) expired April 1994; algorithm is now freely usable. Carrier 440 Hz; modulator at 616 Hz (carrier × 1.4, the non-integer ratio that produces inharmonic bell-like partials); modulation depth 90 for a bright bell timbre. Gate triggers ADSR envelope (attack 1ms, decay 200ms, sustain 0, release 2000ms) — the long release is what makes a bell ring. NOT affiliated with Yamaha; the DX7 used the same patent but a different preset.',
