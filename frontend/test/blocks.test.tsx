@@ -45,6 +45,7 @@ import { MultiplyNode } from '../src/blocks/MultiplyNode'
 import { WavetableNode } from '../src/blocks/WavetableNode'
 import { BitcrusherNode } from '../src/blocks/BitcrusherNode'
 import { ShifterNode } from '../src/blocks/ShifterNode'
+import { VcoNode } from '../src/blocks/VcoNode'
 import { DelayNode } from '../src/blocks/DelayNode'
 import { AndGateNode } from '../src/blocks/AndGateNode'
 import { OrGateNode } from '../src/blocks/OrGateNode'
@@ -1253,6 +1254,36 @@ describe('Comparator block', () => {
     expect(ids).toContain('eq-out')
     expect(ids).toContain('lt-out')
     expect(ids).toContain('gt-out')
+  })
+})
+
+describe('VCO block', () => {
+  it('renders title with 1 input, 1 output, and base_freq + range fields', () => {
+    const { container } = wrap(
+      <VcoNode {...nodePropsBase('vco-1')} data={{ base_freq: 440, range: 100 }} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('VCO')
+    expect(countHandles(container, 'target')).toBe(1)
+    expect(countHandles(container, 'source')).toBe(1)
+    const inputs = container.querySelectorAll<HTMLInputElement>('input[type="number"]')
+    expect(inputs.length).toBe(2)
+    expect(inputs[0].value).toBe('440')
+    expect(inputs[1].value).toBe('100')
+    const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
+    const ids = Array.from(handles).map((h) => h.getAttribute('data-handleid'))
+    expect(ids).toContain('freq-in')
+    expect(ids).toContain('audio-out')
+  })
+
+  it('out-of-range base_freq (10) shows an error', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <VcoNode {...nodePropsBase('vco-2')} data={{ base_freq: 440, range: 100 }} />,
+    )
+    const baseFreqInput = container.querySelectorAll<HTMLInputElement>('input[type="number"]')[0]
+    await user.clear(baseFreqInput)
+    await user.type(baseFreqInput, '10')
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/20.*20000/)
   })
 })
 

@@ -83,6 +83,12 @@ The block table below is the machine-readable shape of every block: name + one-l
 - Output port \`audio-out\` (audio-s8)
 - Parameter \`freq\`: 20–20000 Hz (default 440)
 
+**vco** — Voltage-controlled square wave — pitch modulated by an audio-rate input
+- Input port \`freq-in\` (audio-s8)
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`base_freq\`: 20–20000 Hz (default 440)
+- Parameter \`range\`: 1–1000 Hz (default 100)
+
 **wavetable** — Morphable single-cycle waveform (4 preset shapes)
 - Output port \`audio-out\` (audio-s8)
 - Parameter \`freq\`: 20–20000 Hz (default 440)
@@ -298,6 +304,12 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual b
 - Output port \`audio-out\`
 - Parameter \`freq\`: 20–20000 Hz (default 440)
 
+**vco** — voltage-controlled oscillator (square wave). The key difference from the static oscillator blocks: the VCO has an INPUT port (\`freq-in\`) that modulates the pitch in real time. Every sample, the output frequency is \`base_freq + (freq_in × range / 128)\`, so wiring any audio source into \`freq-in\` sweeps the pitch live. This is the building block for vibrato (slow LFO → VCO.freq-in), audio-rate FM (fast modulator → VCO.freq-in with wide range, alternative to the dedicated \`fm\` block), pitch-bend / glide (ADSR-shaped constant → VCO.freq-in), and ROM-driven sequenced melodies (Counter → ROM → Reinterpret → VCO.freq-in). Square-wave output is the same shape as the static oscillator's; only the dynamic pitch is different.
+- Input port \`freq-in\` (8-bit signed audio sample; 0 = base freq, ±127 = ±range Hz from base)
+- Output port \`audio-out\`
+- Parameter \`base_freq\`: 20–20000 Hz (default 440) — centre pitch when \`freq-in\` is silent
+- Parameter \`range\`: 1–1000 Hz (default 100) — how far the pitch sweeps for a full-scale ±128 input
+
 **noise** — pseudo-random 8-bit signed source — emits a stream of random-sounding-but-deterministic numbers (internally a 16-bit Galois LFSR, a tiny circuit that cycles through 65535 values before repeating). Useful for snare drums, percussion textures, and noise modulation.
 - Output port \`audio-out\`
 - No parameters
@@ -496,7 +508,7 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual b
 
 # Naming conventions
 
-- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`distortion\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`, \`vgatiming\`, \`colorbars\`, \`pixelrange\`, \`solidcolor\`, \`vgaoutput\`, \`bussplit\`, \`busjoin\`, \`adder\`, \`register\`, \`ram\`, \`registerfile\`, \`rom\`, \`subtractor\`, \`shifter\`, \`comparator\`, \`mux\`, \`reinterpret\`, \`byteconstant\`. (Authoritative list is the # Block reference section above, which is codegen'd from blocks.yaml.)
+- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`vco\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`distortion\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`, \`vgatiming\`, \`colorbars\`, \`pixelrange\`, \`solidcolor\`, \`vgaoutput\`, \`bussplit\`, \`busjoin\`, \`adder\`, \`register\`, \`ram\`, \`registerfile\`, \`rom\`, \`subtractor\`, \`shifter\`, \`comparator\`, \`mux\`, \`reinterpret\`, \`byteconstant\`. (Authoritative list is the # Block reference section above, which is codegen'd from blocks.yaml.)
 - **Port handle ids** are kebab-case for audio/gate signals (\`audio-out\`, \`audio-in\`, \`gate-out\`, \`gate-in\`, \`mix-out\`, \`in-1\`, \`in-2\`). Control signals are unhyphenated: \`gate\` (an ADSR input), \`clock\` (a samplehold / counter input), \`select\` (a Mux input). VGA handles are short single-token names (\`r\`, \`g\`, \`b\`, \`hsync\`, \`vsync\`, \`visible\`, \`x\`, \`y\`, \`pixel\`, \`inside\`) — same convention used in every open-source VGA core. Bus blocks use \`bus-in\` / \`bus-out\` for the wide port and \`bit-0\` … \`bit-7\` for the per-bit ports. CPU primitives use \`in-a\` / \`in-b\` / \`sum-out\` / \`carry-out\` (adder); \`in-a\` / \`in-b\` / \`diff-out\` / \`borrow-out\` (subtractor); \`in-a\` / \`in-b\` / \`eq-out\` / \`lt-out\` / \`gt-out\` (comparator); \`in-a\` / \`in-b\` / \`select\` / \`data-out\` (mux); \`data-in\` / \`audio-out\` (reinterpret); \`data-in\` / \`data-out\` / \`write-enable\` (register, ram); \`addr\` (ram, rom — and the matching \`addr-out\` on counter); \`read-addr\` / \`write-addr\` / \`data-in\` / \`data-out\` / \`write-enable\` (registerfile — separate read and write address ports).
 
 # Connection rules (bus types)

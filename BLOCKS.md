@@ -1,6 +1,6 @@
 # ChipBlocks block library
 
-> **Last updated:** 2026-05-12 · Reference for the 43 blocks shipping on the master branch (last released as v0.1.0-alpha.9 with 42 blocks; Shifter added in Sprint 22 via the new manifest workflow). The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). Cross-cutting metadata (palette entry, port types, etc.) lives in [`blocks.yaml`](blocks.yaml); see [ADR-003](ADR-003-block-manifest.md) for the manifest design and [ARCHITECTURE.md](ARCHITECTURE.md) for how the renderer talks to the backend and how to add another block.
+> **Last updated:** 2026-05-12 · Reference for the 44 blocks shipping on the master branch (last released as v0.1.0-alpha.9 with 42 blocks; Shifter added in Sprint 22, VCO added in Sprint 24 via the manifest workflow). The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). Cross-cutting metadata (palette entry, port types, etc.) lives in [`blocks.yaml`](blocks.yaml); see [ADR-003](ADR-003-block-manifest.md) for the manifest design and [ARCHITECTURE.md](ARCHITECTURE.md) for how the renderer talks to the backend and how to add another block.
 
 This document describes what each block does, what its inputs and outputs are, what its parameters mean, and roughly how it sounds (or looks). Audio blocks are 8-bit signed (–128..+127) at a 44.1 kHz sample rate. Audio handles carry signed 8-bit samples; gate / clock handles carry 1-bit signals; visual handles are short single-token names (`r`, `g`, `b`, `hsync`, `vsync`, `visible`, `x`, `y`) following the convention used in every open-source VGA core. Edges are direction-checked by React Flow at edit time.
 
@@ -14,6 +14,7 @@ A note on parameter ranges: the React Flow node components enforce **musically s
 - [Triangle](#triangle)
 - [Sawtooth](#sawtooth)
 - [Sine](#sine)
+- [VCO (voltage-controlled oscillator)](#vco-voltage-controlled-oscillator)
 - [Wavetable](#wavetable)
 - [Noise](#noise)
 - [Constant](#constant)
@@ -161,6 +162,37 @@ Sine-wave source. The cleanest possible tone — pure fundamental, no harmonics.
 **Behavior.** 16-bit phase accumulator drives a 256-entry signed-8-bit lookup table. The table is precomputed at construction time from `math.sin`, so the hardware never runs trig at runtime — just an indexed table read. The 8-bit sample resolution audibly quantizes the sine at very low amplitudes, but at full scale it sounds clean.
 
 **Common usage.** Pair with another sine an octave or fifth apart through a Mixer for chord drones, or use as a clean LFO into a Multiply for tremolo.
+
+### VCO (voltage-controlled oscillator)
+
+A square-wave oscillator whose pitch is **modulated by an audio-rate input**. Unlike the static `oscillator` (which has a fixed `freq` parameter), the VCO computes its frequency every sample as `base_freq + (freq-in × range / 128)` — so wiring any audio signal into `freq-in` sweeps the pitch in real time.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `freq-in` | target | signed 8-bit audio | Modulation signal. 0 = base freq; ±128 full-scale shifts pitch by ±`range` Hz |
+| `audio-out` | source | signed 8-bit audio | Square wave at the dynamically-computed frequency |
+
+**Parameters**
+
+| Name | Type | Range (frontend / backend) | Default | What it does |
+|---|---|---|---|---|
+| `base_freq` | integer Hz | 20–20 000 / >= 1 | 440 | Centre pitch when `freq-in` is silent |
+| `range` | integer Hz | 1–1 000 / >= 1 | 100 | How far the pitch sweeps for a full-scale ±128 input |
+
+**Behavior.** 32-bit phase accumulator (wider than the static oscillator's 16-bit phase to give precise pitch resolution under dynamic stepping). Each sample, the accumulator advances by `step_base + freq_in × step_per_unit`, where both step values are precomputed from `base_freq`, `range`, and the audio sample rate at construction time. The accumulator's MSB is read as the square-wave output. If `freq-in` is driven so negatively that the per-sample step would go below zero, the step clamps to 1 (the pitch floors at near-DC rather than running backwards) — a safe, musical fallback.
+
+**Common usage.** The "language primitive" that unlocks 5+ classic synthesis patterns:
+
+- **Vibrato:** a slow Sine LFO at 5-10 Hz → VCO.freq-in produces a singing-pitch wobble. `range` 5-20 Hz gives subtle vibrato; 50+ Hz gives a dramatic siren effect.
+- **Audio-rate FM:** a fast modulator Oscillator → VCO.freq-in with `range` ~200-500 Hz produces classic DX7-style FM timbres. Differs from the dedicated `fm` block in that you can substitute any audio source as the modulator.
+- **Pitch bend / glide:** an ADSR-shaped Constant → VCO.freq-in produces a portamento between two pitches.
+- **Theremin / continuous-pitch instrument:** any continuously-varying audio source → VCO.freq-in.
+- **Sequenced melody:** a Counter → ROM (filled with pitch offsets) → Reinterpret → VCO.freq-in steps through a stored note sequence.
+- **Karplus-Strong with detune:** a slow Sine LFO → VCO.freq-in produces a pitch-wandering string sound.
+
+**Why a separate block from `fm`:** the `fm` block is a self-contained two-operator FM voice with both carrier and modulator built in. The VCO is just one oscillator with an exposed modulation input — pair it with ANY block as the modulator (a Sine for clean FM, a Square for harsh FM, a Triangle for bell-like sustained spectra, a Noise source for noise-modulated chaos, etc.).
 
 ### Wavetable
 

@@ -17,6 +17,12 @@ def build_params(node_type: str, data: dict) -> dict:
         if "freq" in data:
             params["freq_hz"] = int(data["freq"])
         params["sample_rate"] = SAMPLE_RATE
+    elif node_type == "vco":
+        if "base_freq" in data:
+            params["base_freq_hz"] = int(data["base_freq"])
+        if "range" in data:
+            params["range"] = int(data["range"])
+        params["sample_rate"] = SAMPLE_RATE
     elif node_type == "wavetable":
         if "freq" in data:
             params["freq_hz"] = int(data["freq"])

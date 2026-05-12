@@ -17,6 +17,7 @@ from .oscillator import Oscillator
 from .triangle import Triangle
 from .sawtooth import Sawtooth
 from .sine import Sine
+from .vco import Vco
 from .wavetable import Wavetable
 from .noise import Noise
 from .constant import Constant
@@ -65,6 +66,7 @@ BLOCK_REGISTRY = {
     "triangle": Triangle,
     "sawtooth": Sawtooth,
     "sine": Sine,
+    "vco": Vco,
     "wavetable": Wavetable,
     "noise": Noise,
     "constant": Constant,
@@ -113,6 +115,7 @@ __all__ = [
     "Triangle",
     "Sawtooth",
     "Sine",
+    "Vco",
     "Wavetable",
     "Noise",
     "Constant",

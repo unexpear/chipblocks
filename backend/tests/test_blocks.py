@@ -1912,3 +1912,85 @@ def test_shifter_left_and_right_match_python_shifts():
             f"Shifter({direction!r}, {amount}) on 0x{value_in:02x}: "
             f"got 0x{captured[0]:02x}, expected 0x{expected:02x}"
         )
+
+
+def test_vco_baseline_freq_matches_static_oscillator(run_synth, wav_samples):
+    """VCO with `freq-in` driven by Constant 0 should produce the same
+    audio frequency as a static Oscillator at the same base_freq. Zero-
+    crossing count is the canonical "is this oscillator at the right
+    pitch?" metric.
+    """
+    graph = {
+        "nodes": [
+            {"id": "ctr", "type": "constant", "data": {"value": 0}},
+            {"id": "vco", "type": "vco",
+             "data": {"base_freq": 440, "range": 100}},
+            _output_node(),
+        ],
+        "edges": [
+            _edge("e1", "ctr", "vco", "audio-out", "freq-in"),
+            _edge("e2", "vco", "out", "audio-out", "audio-in"),
+        ],
+    }
+    samples = wav_samples(run_synth(graph, duration_s=1))
+    crossings = _count_zero_crossings(samples)
+    expected = 2 * 440  # two crossings per cycle
+    assert abs(crossings - expected) < expected * 0.10, (
+        f"VCO at base_freq=440 with freq-in=0: expected ~{expected} "
+        f"zero-crossings, got {crossings}"
+    )
+
+
+def test_vco_positive_modulation_raises_pitch(run_synth, wav_samples):
+    """Driving `freq-in` with a positive Constant should shift the
+    output pitch UP by the configured range. With base_freq=440 and
+    range=100, freq-in=+127 should produce ~440 + 100*(127/128) ≈ 539
+    Hz. We tolerate ±15% to absorb integer-rounding error in the
+    32-bit phase step calculation.
+    """
+    graph = {
+        "nodes": [
+            {"id": "ctr", "type": "constant", "data": {"value": 127}},
+            {"id": "vco", "type": "vco",
+             "data": {"base_freq": 440, "range": 100}},
+            _output_node(),
+        ],
+        "edges": [
+            _edge("e1", "ctr", "vco", "audio-out", "freq-in"),
+            _edge("e2", "vco", "out", "audio-out", "audio-in"),
+        ],
+    }
+    samples = wav_samples(run_synth(graph, duration_s=1))
+    crossings = _count_zero_crossings(samples)
+    expected = 2 * 539  # ~440 + 100*(127/128) Hz pitch
+    assert abs(crossings - expected) < expected * 0.15, (
+        f"VCO at base_freq=440, range=100, freq-in=+127: expected "
+        f"~{expected} zero-crossings (≈539 Hz), got {crossings} "
+        f"({crossings/2:.0f} Hz)"
+    )
+
+
+def test_vco_negative_modulation_lowers_pitch(run_synth, wav_samples):
+    """Mirror of the positive case: freq-in=-128 should drop pitch
+    BELOW base_freq. With base_freq=440 and range=100, freq-in=-128
+    should produce ~440 - 100 = 340 Hz."""
+    graph = {
+        "nodes": [
+            {"id": "ctr", "type": "constant", "data": {"value": -128}},
+            {"id": "vco", "type": "vco",
+             "data": {"base_freq": 440, "range": 100}},
+            _output_node(),
+        ],
+        "edges": [
+            _edge("e1", "ctr", "vco", "audio-out", "freq-in"),
+            _edge("e2", "vco", "out", "audio-out", "audio-in"),
+        ],
+    }
+    samples = wav_samples(run_synth(graph, duration_s=1))
+    crossings = _count_zero_crossings(samples)
+    expected = 2 * 340  # ~440 - 100 Hz pitch
+    assert abs(crossings - expected) < expected * 0.15, (
+        f"VCO at base_freq=440, range=100, freq-in=-128: expected "
+        f"~{expected} zero-crossings (≈340 Hz), got {crossings} "
+        f"({crossings/2:.0f} Hz)"
+    )

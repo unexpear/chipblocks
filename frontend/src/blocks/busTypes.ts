@@ -115,6 +115,8 @@ export const BLOCK_PORT_TYPES: Record<string, Record<string, BusType>> = {
   triangle:    { 'audio-out': 'audio-s8' },
   sawtooth:    { 'audio-out': 'audio-s8' },
   sine:        { 'audio-out': 'audio-s8' },
+  vco:         { 'freq-in':   'audio-s8',
+                 'audio-out': 'audio-s8' },
   wavetable:   { 'audio-out': 'audio-s8' },
   noise:       { 'audio-out': 'audio-s8' },
   constant:    { 'audio-out': 'audio-s8' },

@@ -94,6 +94,38 @@
       backendNeedsSampleRate: true
   tags: []
 
+- type: vco
+  label: VCO
+  description: "Voltage-controlled square wave — pitch modulated by an audio-rate input"
+  color: '#26a69a'
+  category: source
+  componentPath: frontend/src/blocks/VcoNode.tsx
+  backendPath: backend/blocks/vco.py
+  backendClass: Vco
+  ports:
+    freq-in:   { dir: target, bus: audio-s8 }
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    base_freq:
+      type: int
+      min: 20
+      max: 20000
+      default: 440
+      ariaLabel: Center frequency in hertz
+      unit: Hz
+      backendParam: base_freq_hz
+      backendNeedsSampleRate: true
+    range:
+      type: int
+      min: 1
+      max: 1000
+      default: 100
+      ariaLabel: Frequency modulation range in hertz per full-scale input
+      unit: Hz
+  cssMinHeight: 110
+  cssMinWidth: 150
+  tags: []
+
 - type: wavetable
   label: Wavetable
   description: Morphable single-cycle waveform (4 preset shapes)
