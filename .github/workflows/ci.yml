@@ -35,6 +35,16 @@ jobs:
       - name: Vitest
         run: npm test
 
+      # Sprint 21 — ADR-003 block-manifest codegen drift check. Re-runs
+      # scripts/codegen-frontend.mjs in --check mode (default). Fails if
+      # any of the 5 generated frontend sections (index.ts / busTypes.ts
+      # / Palette.tsx / App.css / ai/prompt.ts) drifts from what
+      # blocks.yaml says it should be. The script exits non-zero with a
+      # unified diff if drift is found — actionable in the PR view.
+      - name: Codegen drift check (frontend)
+        working-directory: .
+        run: node scripts/codegen-frontend.mjs --check
+
   backend:
     name: Backend (pytest)
     runs-on: ubuntu-latest
@@ -62,3 +72,12 @@ jobs:
 
       - name: Pytest
         run: python -m pytest tests/ -v
+
+      # Sprint 21 — ADR-003 block-manifest codegen drift check (backend).
+      # Mirror of the frontend codegen-drift step: re-runs
+      # scripts/codegen-backend.py and fails if backend/blocks/__init__.py
+      # (imports + BLOCK_REGISTRY + __all__) or backend/blocks/_params_gen.py
+      # drifts from what blocks.yaml says it should be.
+      - name: Codegen drift check (backend)
+        working-directory: .
+        run: python3 scripts/codegen-backend.py
