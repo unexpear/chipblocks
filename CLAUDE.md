@@ -145,6 +145,7 @@ chipzzzd/
 - [CREDITS.md](CREDITS.md) — licensing policy + open-source attributions (permissive only; no copyleft in shipped product)
 - [BLOCKS.md](BLOCKS.md) — block library reference: per-block ports, parameters, behavior, common-usage notes for all 43 blocks (master branch; alpha.9 was 42). Covers the "Visual" section (VGA Timing / Color Bars / Pixel Range / Solid Color / VGA Output), the "Bus" section (Bus Split / Bus Join / Reinterpret), and the "Computation" section (Adder / Subtractor / Shifter / Comparator / Mux / Register / RAM / Register File / ROM / Byte Constant).
 - [BLOCKS-COOKBOOK.md](BLOCKS-COOKBOOK.md) — block authoring guide. Canonical reference for "how to add a block": the 3-files-plus-codegen workflow, the 7 generated section names, edge-case patterns (cssMinHeight, port-naming, backendNeedsSampleRate, intArray params, the tags field), CI drift-failure shapes. ARCHITECTURE.md + CONTRIBUTING.md both point here for the deep version.
+- [docs/MANUFACTURING-PROCESS.md](docs/MANUFACTURING-PROCESS.md) — technical drawing of the ChipBlocks-to-silicon pipeline. Title block (ISO 128/129 conventions), block diagram of the 7 stages (Design → HDL → Synth → P&R → Bitstream/Tape-out → Flash/Fab → Test), flowchart with input/process/tool/output per stage, cross-sections of a CMOS transistor + 5-metal-layer stack (Sky130 process) + iCE40 LUT SRAM cell + exploded view of a packaged Tiny Tapeout ASIC. Educational reference for non-technical users + manufacturing process documentation.
 
 ## Sprint cadence
 
