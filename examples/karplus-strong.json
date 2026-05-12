@@ -13,7 +13,7 @@
     {
       "id": "gate",
       "type": "gate",
-      "position": { "x": 60, "y": 320 },
+      "position": { "x": 60, "y": 360 },
       "data": { "rate_hz": 2, "duty_pct": 1 }
     },
     {
@@ -23,8 +23,8 @@
       "data": { "attack_ms": 1, "decay_ms": 5, "sustain_level": 0, "release_ms": 1 }
     },
     {
-      "id": "mixer",
-      "type": "mixer",
+      "id": "sum",
+      "type": "audiosum",
       "position": { "x": 600, "y": 200 },
       "data": {}
     },
@@ -37,8 +37,20 @@
     {
       "id": "lowpass",
       "type": "lowpass",
-      "position": { "x": 600, "y": 380 },
+      "position": { "x": 860, "y": 380 },
       "data": { "cutoff_hz": 4000 }
+    },
+    {
+      "id": "feedback_gain",
+      "type": "constant",
+      "position": { "x": 600, "y": 380 },
+      "data": { "value": 125 }
+    },
+    {
+      "id": "fb_mult",
+      "type": "multiply",
+      "position": { "x": 600, "y": 500 },
+      "data": {}
     },
     {
       "id": "out",
@@ -65,36 +77,50 @@
     {
       "id": "e3",
       "source": "pluck_env",
-      "target": "mixer",
+      "target": "sum",
       "sourceHandle": "audio-out",
       "targetHandle": "in-1"
     },
     {
       "id": "e4",
       "source": "lowpass",
-      "target": "mixer",
+      "target": "fb_mult",
+      "sourceHandle": "audio-out",
+      "targetHandle": "in-1"
+    },
+    {
+      "id": "e5",
+      "source": "feedback_gain",
+      "target": "fb_mult",
       "sourceHandle": "audio-out",
       "targetHandle": "in-2"
     },
     {
-      "id": "e5",
-      "source": "mixer",
+      "id": "e6",
+      "source": "fb_mult",
+      "target": "sum",
+      "sourceHandle": "audio-out",
+      "targetHandle": "in-2"
+    },
+    {
+      "id": "e7",
+      "source": "sum",
       "target": "delay",
-      "sourceHandle": "mix-out",
+      "sourceHandle": "audio-out",
       "targetHandle": "audio-in"
     },
     {
-      "id": "e6",
+      "id": "e8",
       "source": "delay",
       "target": "lowpass",
       "sourceHandle": "audio-out",
       "targetHandle": "audio-in"
     },
     {
-      "id": "e7",
-      "source": "mixer",
+      "id": "e9",
+      "source": "sum",
       "target": "out",
-      "sourceHandle": "mix-out",
+      "sourceHandle": "audio-out",
       "targetHandle": "audio-in"
     }
   ]
