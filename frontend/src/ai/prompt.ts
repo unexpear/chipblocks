@@ -145,6 +145,12 @@ The block table below is the machine-readable shape of every block: name + one-l
 - Output port \`audio-out\` (audio-s8)
 - Parameter \`center_hz\`: 10–22050 Hz center (default 1000)
 
+**vcf** — Voltage-controlled low-pass filter — cutoff modulated by an audio-rate input
+- Input ports: \`audio-in\` (audio-s8), \`cutoff-in\` (audio-s8)
+- Output port \`audio-out\` (audio-s8)
+- Parameter \`base_cutoff\`: 1–22050 Hz (default 1000)
+- Parameter \`range\`: 1–10000 Hz (default 2000)
+
 **samplehold** — Sample-and-Hold on clock edge
 - Input ports: \`audio-in\` (audio-s8), \`clock\` (gate-1)
 - Output port \`audio-out\` (audio-s8)
@@ -378,6 +384,12 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual b
 - Output port \`audio-out\`
 - Parameter \`center_hz\`: 10–22050 Hz (default 1000)
 
+**vcf** — voltage-controlled low-pass filter. Same 1-pole IIR shape as the static \`lowpass\`, but the cutoff frequency is modulated by an audio-rate input (\`cutoff-in\`). Per sample, the effective cutoff is \`base_cutoff + (cutoff_in × range / 128)\`. A precomputed 256-entry lookup table maps every possible cutoff_in value to its filter coefficient — the math is exact at each of the 256 bins. The filter half of the Sprint 24 audio family (VCO controls oscillator pitch, VCF controls filter cutoff). Drive cutoff-in from a slow LFO for drone-music filter sweeps, from an ADSR-shaped Constant for synth-pluck "wow" attacks, or from any audio-rate modulator for talk-box / vowel-shape effects. This is the LOW-PASS variant; high-pass and band-pass VCF variants are future work.
+- Input ports \`audio-in\` (8-bit signed) + \`cutoff-in\` (8-bit signed, 0 = base cutoff, ±127 = ±range Hz from base)
+- Output port \`audio-out\`
+- Parameter \`base_cutoff\`: 1–22050 Hz (default 1000) — centre cutoff when \`cutoff-in\` is silent
+- Parameter \`range\`: 1–10000 Hz (default 2000) — how far the cutoff sweeps for a full-scale ±128 input
+
 **samplehold** — sample-and-hold. Captures \`audio-in\` on each rising edge of \`clock\`. Holds until next edge.
 - Input ports: \`audio-in\` (8-bit signed), \`clock\` (1-bit)
 - Output port \`audio-out\`
@@ -528,7 +540,7 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual b
 
 # Naming conventions
 
-- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`vco\`, \`lfo\`, \`noise\`, \`constant\`, \`mixer\`, \`audiosum\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`distortion\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`, \`vgatiming\`, \`colorbars\`, \`pixelrange\`, \`solidcolor\`, \`vgaoutput\`, \`bussplit\`, \`busjoin\`, \`adder\`, \`register\`, \`ram\`, \`registerfile\`, \`rom\`, \`subtractor\`, \`shifter\`, \`comparator\`, \`mux\`, \`reinterpret\`, \`byteconstant\`. (Authoritative list is the # Block reference section above, which is codegen'd from blocks.yaml.)
+- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`vco\`, \`lfo\`, \`noise\`, \`constant\`, \`mixer\`, \`audiosum\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`vcf\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`distortion\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`, \`vgatiming\`, \`colorbars\`, \`pixelrange\`, \`solidcolor\`, \`vgaoutput\`, \`bussplit\`, \`busjoin\`, \`adder\`, \`register\`, \`ram\`, \`registerfile\`, \`rom\`, \`subtractor\`, \`shifter\`, \`comparator\`, \`mux\`, \`reinterpret\`, \`byteconstant\`. (Authoritative list is the # Block reference section above, which is codegen'd from blocks.yaml.)
 - **Port handle ids** are kebab-case for audio/gate signals (\`audio-out\`, \`audio-in\`, \`gate-out\`, \`gate-in\`, \`mix-out\`, \`in-1\`, \`in-2\`). Control signals are unhyphenated: \`gate\` (an ADSR input), \`clock\` (a samplehold / counter input), \`select\` (a Mux input). VGA handles are short single-token names (\`r\`, \`g\`, \`b\`, \`hsync\`, \`vsync\`, \`visible\`, \`x\`, \`y\`, \`pixel\`, \`inside\`) — same convention used in every open-source VGA core. Bus blocks use \`bus-in\` / \`bus-out\` for the wide port and \`bit-0\` … \`bit-7\` for the per-bit ports. CPU primitives use \`in-a\` / \`in-b\` / \`sum-out\` / \`carry-out\` (adder); \`in-a\` / \`in-b\` / \`diff-out\` / \`borrow-out\` (subtractor); \`in-a\` / \`in-b\` / \`eq-out\` / \`lt-out\` / \`gt-out\` (comparator); \`in-a\` / \`in-b\` / \`select\` / \`data-out\` (mux); \`data-in\` / \`audio-out\` (reinterpret); \`data-in\` / \`data-out\` / \`write-enable\` (register, ram); \`addr\` (ram, rom — and the matching \`addr-out\` on counter); \`read-addr\` / \`write-addr\` / \`data-in\` / \`data-out\` / \`write-enable\` (registerfile — separate read and write address ports).
 
 # Connection rules (bus types)

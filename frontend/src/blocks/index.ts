@@ -15,6 +15,7 @@ import { GateNode,           type GateBlock }           from './GateNode'
 import { LowPassFilterNode,  type LowPassFilterBlock }  from './LowPassFilterNode'
 import { HighPassFilterNode, type HighPassFilterBlock } from './HighPassFilterNode'
 import { BandPassFilterNode, type BandPassFilterBlock } from './BandPassFilterNode'
+import { VcfNode,            type VcfBlock }            from './VcfNode'
 import { SampleAndHoldNode,  type SampleAndHoldBlock }  from './SampleAndHoldNode'
 import { FmNode,             type FmBlock }             from './FmNode'
 import { MultiplyNode,       type MultiplyBlock }       from './MultiplyNode'
@@ -67,6 +68,7 @@ export const nodeTypes = {
   lowpass:   LowPassFilterNode,
   highpass:  HighPassFilterNode,
   bandpass:  BandPassFilterNode,
+  vcf:       VcfNode,
   samplehold:SampleAndHoldNode,
   fm:        FmNode,
   multiply:  MultiplyNode,
@@ -118,6 +120,7 @@ export type AppNode =
   | LowPassFilterBlock
   | HighPassFilterBlock
   | BandPassFilterBlock
+  | VcfBlock
   | SampleAndHoldBlock
   | FmBlock
   | MultiplyBlock

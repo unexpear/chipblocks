@@ -62,6 +62,12 @@ def build_params(node_type: str, data: dict) -> dict:
         if "center_hz" in data:
             params["center_hz"] = int(data["center_hz"])
         params["sample_rate"] = SAMPLE_RATE
+    elif node_type == "vcf":
+        if "base_cutoff" in data:
+            params["base_cutoff_hz"] = int(data["base_cutoff"])
+        if "range" in data:
+            params["range_hz"] = int(data["range"])
+        params["sample_rate"] = SAMPLE_RATE
     elif node_type == "fm":
         if "carrier_freq" in data:
             params["carrier_freq"] = int(data["carrier_freq"])

@@ -1970,6 +1970,58 @@ def test_vco_positive_modulation_raises_pitch(run_synth, wav_samples):
     )
 
 
+def test_vcf_cutoff_sweep_changes_output_amplitude(run_synth, wav_samples):
+    """Drive a 1 kHz sine through the VCF at two cutoff-in values
+    in the filter's "useful range" (avoiding the extreme low cutoffs
+    where the 1-pole IIR's rounding bias accumulates and drifts the
+    output to a rail):
+
+      - cutoff-in = -128: cutoff sweeps DOWN to base - range = 800 -
+        600 = 200 Hz. The 1 kHz sine is well above cutoff → heavily
+        attenuated (>2 octaves above cutoff on a 1-pole filter,
+        roughly -12 dB).
+      - cutoff-in = +127: cutoff sweeps UP to base + range ≈ 1394 Hz.
+        The 1 kHz sine is below cutoff → mostly passes through.
+
+    Measure peak absolute sample value and assert the "low cutoff"
+    version is at most 2/3 of the "high cutoff" peak. Permissive
+    tolerance because peak amplitude is sensitive to phase + the
+    discrete LUT bins (256 alpha values).
+    """
+    def graph_with_cutoff(c: int):
+        return {
+            "nodes": [
+                {"id": "sine", "type": "sine", "data": {"freq": 1000}},
+                {"id": "ctr", "type": "constant", "data": {"value": c}},
+                {"id": "vcf", "type": "vcf",
+                 "data": {"base_cutoff": 800, "range": 600}},
+                _output_node(),
+            ],
+            "edges": [
+                _edge("e1", "sine", "vcf", "audio-out", "audio-in"),
+                _edge("e2", "ctr", "vcf", "audio-out", "cutoff-in"),
+                _edge("e3", "vcf", "out", "audio-out", "audio-in"),
+            ],
+        }
+
+    samples_low = wav_samples(run_synth(graph_with_cutoff(-128), duration_s=1))
+    samples_high = wav_samples(run_synth(graph_with_cutoff(127), duration_s=1))
+
+    peak_low = max(abs(s) for s in samples_low)
+    peak_high = max(abs(s) for s in samples_high)
+
+    assert peak_high > peak_low, (
+        f"VCF cutoff sweep: cutoff-in=+127 should pass more signal "
+        f"than cutoff-in=-128. Got peak_high={peak_high}, "
+        f"peak_low={peak_low}."
+    )
+    assert peak_high > 100, f"VCF high-cutoff peak too small: {peak_high}"
+    assert peak_low <= peak_high * 2 // 3, (
+        f"VCF low-cutoff peak ({peak_low}) should be ≤ 2/3 of "
+        f"high-cutoff peak ({peak_high})."
+    )
+
+
 def test_audiosum_saturates_at_int8_rails():
     """AudioSum should sum two audio-s8 inputs and clamp to ±127.
     Three drive cases:

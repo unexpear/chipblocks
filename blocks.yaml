@@ -387,6 +387,41 @@
       backendNeedsSampleRate: true
   tags: []
 
+- type: vcf
+  label: VCF
+  description: "Voltage-controlled low-pass filter — cutoff modulated by an audio-rate input"
+  color: '#7e57c2'
+  category: filter
+  componentPath: frontend/src/blocks/VcfNode.tsx
+  backendPath: backend/blocks/vcf.py
+  backendClass: Vcf
+  ports:
+    audio-in:  { dir: target, bus: audio-s8 }
+    cutoff-in: { dir: target, bus: audio-s8 }
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    base_cutoff:
+      type: int
+      min: 1
+      max: 22050
+      default: 1000
+      ariaLabel: Base cutoff frequency in hertz
+      unit: Hz
+      backendParam: base_cutoff_hz
+      backendNeedsSampleRate: true
+    range:
+      type: int
+      min: 1
+      max: 10000
+      default: 2000
+      ariaLabel: Cutoff modulation range in hertz per full-scale input
+      unit: Hz
+      backendParam: range_hz
+      backendNeedsSampleRate: true
+  cssMinHeight: 110
+  cssMinWidth: 150
+  tags: []
+
 - type: samplehold
   label: S & H
   description: Sample-and-Hold on clock edge

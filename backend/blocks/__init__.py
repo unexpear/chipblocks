@@ -29,6 +29,7 @@ from .gate import Gate
 from .lowpass import LowPassFilter
 from .highpass import HighPassFilter
 from .bandpass import BandPassFilter
+from .vcf import Vcf
 from .sample_and_hold import SampleAndHold
 from .fm import Fm
 from .multiply import Multiply
@@ -80,6 +81,7 @@ BLOCK_REGISTRY = {
     "lowpass": LowPassFilter,
     "highpass": HighPassFilter,
     "bandpass": BandPassFilter,
+    "vcf": Vcf,
     "samplehold": SampleAndHold,
     "fm": Fm,
     "multiply": Multiply,
@@ -131,6 +133,7 @@ __all__ = [
     "LowPassFilter",
     "HighPassFilter",
     "BandPassFilter",
+    "Vcf",
     "SampleAndHold",
     "Fm",
     "Multiply",

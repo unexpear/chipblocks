@@ -1,6 +1,6 @@
 # ChipBlocks block library
 
-> **Last updated:** 2026-05-12 · Reference for the 46 blocks shipping on the master branch (last released as v0.1.0-alpha.9 with 42 blocks; Shifter added in Sprint 22; VCO + LFO + Audio Sum added in Sprint 24 via the manifest workflow). The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). Cross-cutting metadata (palette entry, port types, etc.) lives in [`blocks.yaml`](blocks.yaml); see [ADR-003](ADR-003-block-manifest.md) for the manifest design and [ARCHITECTURE.md](ARCHITECTURE.md) for how the renderer talks to the backend and how to add another block.
+> **Last updated:** 2026-05-12 · Reference for the 47 blocks shipping on the master branch (last released as v0.1.0-alpha.9 with 42 blocks; Shifter added in Sprint 22; VCO + LFO + Audio Sum + VCF added in Sprint 24 via the manifest workflow). The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). Cross-cutting metadata (palette entry, port types, etc.) lives in [`blocks.yaml`](blocks.yaml); see [ADR-003](ADR-003-block-manifest.md) for the manifest design and [ARCHITECTURE.md](ARCHITECTURE.md) for how the renderer talks to the backend and how to add another block.
 
 This document describes what each block does, what its inputs and outputs are, what its parameters mean, and roughly how it sounds (or looks). Audio blocks are 8-bit signed (–128..+127) at a 44.1 kHz sample rate. Audio handles carry signed 8-bit samples; gate / clock handles carry 1-bit signals; visual handles are short single-token names (`r`, `g`, `b`, `hsync`, `vsync`, `visible`, `x`, `y`) following the convention used in every open-source VGA core. Edges are direction-checked by React Flow at edit time.
 
@@ -42,6 +42,7 @@ A note on parameter ranges: the React Flow node components enforce **musically s
 - [Low-pass filter](#low-pass-filter)
 - [High-pass filter](#high-pass-filter)
 - [Band-pass filter](#band-pass-filter)
+- [VCF (voltage-controlled filter)](#vcf-voltage-controlled-filter)
 
 ### Effects
 
@@ -585,6 +586,40 @@ Lets a frequency band centered on `center_hz` through, attenuates everything els
 **Behavior.** A 1-pole high-pass at the lower edge feeding a 1-pole low-pass at the upper edge — i.e., a high-pass-then-low-pass cascade. Each stage is the same 1-pole IIR used in the Low-pass and High-pass blocks. A textbook state-variable band-pass would be tighter, but this implementation keeps the math identical to the other filters and is plenty for v0.1. The fixed 1-octave bandwidth was chosen so the block needs only one parameter — wide enough for telephone-voice / wah / formant-style sweeps without a second parameter.
 
 **Common usage.** Feed Noise through a Band-pass at 1 000–3 000 Hz for a tuned-snare or hi-hat-ish percussion source. Several Band-passes in parallel at vowel formant frequencies give vowel-pad textures.
+
+### VCF (voltage-controlled filter)
+
+A low-pass filter whose cutoff frequency is modulated by an audio-rate input. Same 1-pole-IIR shape as the static `lowpass`; the cutoff is the dynamic part. This is the filter half of the Sprint 24 audio family: where VCO gives "oscillator pitch controlled by input," VCF gives "filter cutoff controlled by input."
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `audio-in` | target | signed 8-bit audio | The signal to filter |
+| `cutoff-in` | target | signed 8-bit audio | Modulation signal driving the cutoff sweep. 0 = base cutoff; ±128 full-scale shifts cutoff by ±`range` Hz |
+| `audio-out` | source | signed 8-bit audio | Filtered output |
+
+**Parameters**
+
+| Name | Type | Range (frontend / backend) | Default | What it does |
+|---|---|---|---|---|
+| `base_cutoff` | integer Hz | 1–22 050 / 1–22 050 | 1 000 | Centre cutoff when `cutoff-in` is silent |
+| `range` | integer Hz | 1–10 000 / 1–10 000 | 2 000 | How far the cutoff sweeps for a full-scale ±128 input |
+
+**Behavior.** A precomputed 256-entry lookup table maps every possible `cutoff-in` value (signed-8 has 256 distinct values) to its filter coefficient `alpha`. At runtime, `cutoff-in` indexes the table to pick the per-sample alpha, then the same recurrence as the static `lowpass` runs: `y[n] = (alpha × x[n] + (256 - alpha) × y[n-1]) >> 8`. The lookup-table approach avoids per-sample `exp()` (impractical in hardware) while keeping the math exact at each of the 256 cutoff bins.
+
+At very low cutoffs (alpha near 1), the IIR's arithmetic-right-shift rounding bias can accumulate over many samples and drift `y_state` toward a rail — the same artefact present in the static `lowpass` at low cutoffs. Stick to base cutoffs ≥ 50 Hz for clean behavior; the artefact only surfaces at near-DC cutoffs which are rarely musically useful anyway.
+
+**Common usage.** The "language primitive" for filter modulation:
+
+- **Drone-music filter sweeps**: slow LFO (sine, 0.5-2 Hz) → VCF.cutoff-in produces the iconic "wow" / "wah" timbral motion under a sustained pad.
+- **Wow / synth-pluck attacks**: ADSR-shaped Constant → VCF.cutoff-in opens the filter on note-on and closes on note-off — classic "synth string" / "synth pluck" articulation.
+- **Talk-box / vowel-shape effects**: audio-rate modulator (Sine, Sawtooth, or another LFO) → VCF.cutoff-in produces formant-shifting effects.
+- **Auto-wah**: an envelope follower (when one ships) → VCF.cutoff-in tracks the loudness of the input.
+
+**Why a separate block from `lowpass`:** the static `lowpass` is right for "set a cutoff and forget it" use cases (mellowing a sawtooth's harmonics, removing high-frequency hiss). The VCF is right when the cutoff itself is part of the musical performance — sweeps, wahs, envelopes, modulations. Both share the underlying IIR shape; only the cutoff source differs.
+
+**Future variants:** high-pass and band-pass VCF flavors (`vchighpass`, `vcbandpass`) are planned for a future sprint. They'd follow the same lookup-table pattern with different filter math.
 
 ---
 

@@ -143,6 +143,9 @@ export const BLOCK_PORT_TYPES: Record<string, Record<string, BusType>> = {
                  'audio-out': 'audio-s8' },
   bandpass:    { 'audio-in':  'audio-s8',
                  'audio-out': 'audio-s8' },
+  vcf:         { 'audio-in':  'audio-s8',
+                 'cutoff-in': 'audio-s8',
+                 'audio-out': 'audio-s8' },
 
   samplehold:  { 'audio-in':  'audio-s8',
                  'clock':     'gate-1',

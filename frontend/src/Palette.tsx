@@ -38,6 +38,7 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'lowpass',      label: 'Low-pass',      color: '#00897b', description: '1-pole IIR low-pass filter' },
   { type: 'highpass',     label: 'High-pass',     color: '#006064', description: '1-pole IIR high-pass filter' },
   { type: 'bandpass',     label: 'Band-pass',     color: '#5e35b1', description: '1-pole IIR band-pass filter (1-octave bandwidth)' },
+  { type: 'vcf',          label: 'VCF',           color: '#7e57c2', description: 'Voltage-controlled low-pass filter — cutoff modulated by an audio-rate input' },
   { type: 'samplehold',   label: 'S & H',         color: '#607d8b', description: 'Sample-and-Hold on clock edge' },
   { type: 'fm',           label: 'FM',            color: '#e91e63', description: 'Two-operator FM voice (carrier + modulator)' },
   { type: 'multiply',     label: 'Multiply',      color: '#3f51b5', description: 'Ring modulator / VCA: (a * b) >> 7' },
@@ -99,6 +100,8 @@ export function defaultDataForType(type: string): Record<string, unknown> {
       return { cutoff_hz: 800 }
     case 'bandpass':
       return { center_hz: 1000 }
+    case 'vcf':
+      return { base_cutoff: 1000, range: 2000 }
     case 'fm':
       return { carrier_freq: 440, modulator_freq: 110, mod_depth: 64 }
     case 'bitcrusher':

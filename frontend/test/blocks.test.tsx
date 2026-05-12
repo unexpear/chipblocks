@@ -48,6 +48,7 @@ import { ShifterNode } from '../src/blocks/ShifterNode'
 import { VcoNode } from '../src/blocks/VcoNode'
 import { LfoNode } from '../src/blocks/LfoNode'
 import { AudioSumNode } from '../src/blocks/AudioSumNode'
+import { VcfNode } from '../src/blocks/VcfNode'
 import { DelayNode } from '../src/blocks/DelayNode'
 import { AndGateNode } from '../src/blocks/AndGateNode'
 import { OrGateNode } from '../src/blocks/OrGateNode'
@@ -1256,6 +1257,37 @@ describe('Comparator block', () => {
     expect(ids).toContain('eq-out')
     expect(ids).toContain('lt-out')
     expect(ids).toContain('gt-out')
+  })
+})
+
+describe('VCF block', () => {
+  it('renders title with 2 inputs (audio-in + cutoff-in), 1 output, base + range fields', () => {
+    const { container } = wrap(
+      <VcfNode {...nodePropsBase('vcf-1')} data={{ base_cutoff: 1000, range: 2000 }} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('VCF')
+    expect(countHandles(container, 'target')).toBe(2)
+    expect(countHandles(container, 'source')).toBe(1)
+    const inputs = container.querySelectorAll<HTMLInputElement>('input[type="number"]')
+    expect(inputs.length).toBe(2)
+    expect(inputs[0].value).toBe('1000')
+    expect(inputs[1].value).toBe('2000')
+    const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
+    const ids = Array.from(handles).map((h) => h.getAttribute('data-handleid'))
+    expect(ids).toContain('audio-in')
+    expect(ids).toContain('cutoff-in')
+    expect(ids).toContain('audio-out')
+  })
+
+  it('out-of-range base_cutoff (0) shows an error', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <VcfNode {...nodePropsBase('vcf-2')} data={{ base_cutoff: 1000, range: 2000 }} />,
+    )
+    const baseInput = container.querySelectorAll<HTMLInputElement>('input[type="number"]')[0]
+    await user.clear(baseInput)
+    await user.type(baseInput, '0')
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/1.*22050/)
   })
 })
 
