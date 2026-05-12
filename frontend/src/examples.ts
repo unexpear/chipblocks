@@ -265,10 +265,10 @@ export const EXAMPLES: ExampleGraph[] = [
   },
   {
     id: 'vibrato',
-    label: 'Vibrato (slow sine LFO modulating a VCO)',
-    description: 'The canonical use case for the Sprint 24 VCO block. A 20 Hz sine acts as a low-frequency-oscillator (LFO) driving the VCO\'s freq-in port; the VCO outputs a 440 Hz square that sweeps ±15 Hz around centre at 20 Hz. The result is a fast vibrato wobble. Lower LFO frequencies (slower wobble) would need a future "LFO block" since the sine block bottoms out at 20 Hz. Demonstrates the difference between the static `oscillator` blocks (fixed pitch via parameter) and the new `vco` (live pitch via audio-rate input).',
+    label: 'Vibrato (LFO modulating a VCO at canonical 6 Hz)',
+    description: 'The canonical use case for the Sprint 24 VCO block, now using the Sprint 24 LFO block at 6 Hz — the textbook vibrato rate. A 6 Hz sine LFO drives the VCO\'s freq-in port; the VCO outputs a 440 Hz square that sweeps ±15 Hz around centre 6 times per second. The result is a singing vibrato wobble. (Earlier revision used a 20 Hz sine oscillator since the audio-frequency sine block bottoms out at 20 Hz; the LFO block solves that by going as low as 1 Hz.) Demonstrates the LFO + VCO combination as the building block for all kinds of audio-rate-controlled-pitch synthesis.',
     nodes: [
-      { id: 'lfo', type: 'sine',   position: { x: 60,  y: 80 }, data: { freq: 20 } },
+      { id: 'lfo', type: 'lfo',    position: { x: 60,  y: 80 }, data: { rate: 6, shape: 'sine' } },
       { id: 'vco', type: 'vco',    position: { x: 360, y: 80 }, data: { base_freq: 440, range: 15 } },
       { id: 'out', type: 'output', position: { x: 660, y: 80 }, data: {} },
     ],
@@ -337,10 +337,10 @@ export const EXAMPLES: ExampleGraph[] = [
   {
     id: 'atari-punk-console',
     label: 'Atari Punk Console (1980 stepped-tone generator)',
-    description: 'Inspired by Forrest M. Mims III\'s 1980 "Stepped Tone Generator" from Engineer\'s Notebook: Integrated Circuit Applications (Radio Shack). Two square-wave oscillators — 220 Hz audio + 20 Hz gating — multiplied together. The slower oscillator chops the faster one into a rhythmic burble, the famous "DIY-synth-101" sound. ChipBlocks reproduces the topology only; the original is an analog 555-timer circuit. Provenance + license in CREDITS.md (555 patent US 3,652,888 expired 1988; circuit topology not copyrightable).',
+    description: 'Inspired by Forrest M. Mims III\'s 1980 "Stepped Tone Generator" from Engineer\'s Notebook: Integrated Circuit Applications (Radio Shack). A 220 Hz audio oscillator is gated by a 5 Hz LFO (square wave) — the slower waveform chops the faster one into the famous rhythmic burble, the "DIY-synth-101" sound. Now uses the Sprint 24 LFO block (1-30 Hz range) for the gating; an earlier revision used a 20 Hz oscillator at the lower bound of the audio range, which produced a faster wobble than Mims\'s pot-swept original (Mims swept 1-30 Hz on a potentiometer). ChipBlocks reproduces the topology only; the original is an analog 555-timer circuit. Provenance + license in CREDITS.md (555 patent US 3,652,888 expired 1988; circuit topology not copyrightable).',
     nodes: [
       { id: 'audio_osc', type: 'oscillator', position: { x: 60,  y: 80  }, data: { freq: 220 } },
-      { id: 'gate_osc',  type: 'oscillator', position: { x: 60,  y: 240 }, data: { freq: 20 } },
+      { id: 'gate_osc',  type: 'lfo',        position: { x: 60,  y: 240 }, data: { rate: 5, shape: 'square' } },
       { id: 'mult',      type: 'multiply',   position: { x: 340, y: 160 }, data: {} },
       { id: 'out',       type: 'output',     position: { x: 600, y: 160 }, data: {} },
     ],

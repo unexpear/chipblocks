@@ -6,9 +6,9 @@
   "nodes": [
     {
       "id": "lfo",
-      "type": "sine",
+      "type": "lfo",
       "position": { "x": 60, "y": 80 },
-      "data": { "freq": 20 }
+      "data": { "rate": 6, "shape": "sine" }
     },
     {
       "id": "vco",

@@ -12,9 +12,9 @@
     },
     {
       "id": "gate_osc",
-      "type": "oscillator",
+      "type": "lfo",
       "position": { "x": 60, "y": 240 },
-      "data": { "freq": 20 }
+      "data": { "rate": 5, "shape": "square" }
     },
     {
       "id": "mult",
