@@ -1970,6 +1970,65 @@ def test_vco_positive_modulation_raises_pitch(run_synth, wav_samples):
     )
 
 
+def test_lfo_rate_matches_configured_hz(run_synth, wav_samples):
+    """LFO at rate=5 Hz, sine shape, should produce ~10 zero-crossings
+    per second (two per cycle). The 32-bit phase accumulator gives
+    precise sub-Hz resolution down to ~0.01 Hz; we test at 5 Hz which
+    is well within representable range.
+    """
+    graph = {
+        "nodes": [
+            {"id": "lfo", "type": "lfo", "data": {"rate": 5, "shape": "sine"}},
+            _output_node(),
+        ],
+        "edges": [
+            _edge("e1", "lfo", "out", "audio-out", "audio-in"),
+        ],
+    }
+    samples = wav_samples(run_synth(graph, duration_s=1))
+    crossings = _count_zero_crossings(samples)
+    expected = 2 * 5  # 5 Hz sine, two crossings per cycle = 10 per sec
+    # Wider tolerance than the audio-rate oscillator tests because at
+    # low rates a single missed/extra crossing is a larger relative error.
+    assert abs(crossings - expected) <= 2, (
+        f"LFO at rate=5 Hz: expected ~{expected} zero-crossings, got {crossings}"
+    )
+
+
+def test_lfo_square_shape_alternates_full_range():
+    """LFO with shape=square should produce only two distinct sample
+    values (+127 and -128, the int8 extremes) — proves the table-lookup
+    delivered the right shape contents."""
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.lfo import Lfo
+
+    block = Lfo(rate_hz=10, shape="square", sample_rate=44100)
+    m = Module()
+    m.submodules.b = block
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    seen: set[int] = set()
+
+    async def process(ctx):
+        # Capture 10000 samples — at 10 Hz with sample_rate=44100, one
+        # full cycle is 4410 samples; 10000 covers a bit over 2 cycles
+        # so we definitely see both halves of the square.
+        for _ in range(10000):
+            seen.add(int(ctx.get(block.audio_out)))
+            await ctx.tick()
+
+    sim.add_testbench(process)
+    sim.run()
+
+    # Square wave should only hit two values: the table's +127 and -128.
+    # No intermediate samples (the table is hard-edged, not anti-aliased).
+    assert seen == {127, -128}, (
+        f"LFO square should only emit ±127/-128; saw {sorted(seen)}"
+    )
+
+
 def test_vco_negative_modulation_lowers_pitch(run_synth, wav_samples):
     """Mirror of the positive case: freq-in=-128 should drop pitch
     BELOW base_freq. With base_freq=440 and range=100, freq-in=-128

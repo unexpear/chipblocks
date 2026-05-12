@@ -126,6 +126,34 @@
   cssMinWidth: 150
   tags: []
 
+- type: lfo
+  label: LFO
+  description: "Low-frequency oscillator (1-30 Hz, 4 shapes) for vibrato + slow gating"
+  color: '#80cbc4'
+  category: source
+  componentPath: frontend/src/blocks/LfoNode.tsx
+  backendPath: backend/blocks/lfo.py
+  backendClass: Lfo
+  ports:
+    audio-out: { dir: source, bus: audio-s8 }
+  parameters:
+    rate:
+      type: int
+      min: 1
+      max: 30
+      default: 5
+      ariaLabel: Rate in hertz (1 to 30)
+      unit: Hz
+      backendParam: rate_hz
+      backendNeedsSampleRate: true
+    shape:
+      type: string
+      enum: [sine, triangle, square, sawtooth]
+      default: sine
+      ariaLabel: LFO waveform shape
+  cssMinWidth: 140
+  tags: []
+
 - type: wavetable
   label: Wavetable
   description: Morphable single-cycle waveform (4 preset shapes)

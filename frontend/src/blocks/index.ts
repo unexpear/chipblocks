@@ -4,6 +4,7 @@ import { TriangleNode,       type TriangleBlock }       from './TriangleNode'
 import { SawtoothNode,       type SawtoothBlock }       from './SawtoothNode'
 import { SineNode,           type SineBlock }           from './SineNode'
 import { VcoNode,            type VcoBlock }            from './VcoNode'
+import { LfoNode,            type LfoBlock }            from './LfoNode'
 import { WavetableNode,      type WavetableBlock }      from './WavetableNode'
 import { NoiseNode,          type NoiseBlock }          from './NoiseNode'
 import { ConstantNode,       type ConstantBlock }       from './ConstantNode'
@@ -54,6 +55,7 @@ export const nodeTypes = {
   sawtooth:  SawtoothNode,
   sine:      SineNode,
   vco:       VcoNode,
+  lfo:       LfoNode,
   wavetable: WavetableNode,
   noise:     NoiseNode,
   constant:  ConstantNode,
@@ -103,6 +105,7 @@ export type AppNode =
   | SawtoothBlock
   | SineBlock
   | VcoBlock
+  | LfoBlock
   | WavetableBlock
   | NoiseBlock
   | ConstantBlock

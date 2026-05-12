@@ -1,6 +1,6 @@
 # ChipBlocks block library
 
-> **Last updated:** 2026-05-12 · Reference for the 44 blocks shipping on the master branch (last released as v0.1.0-alpha.9 with 42 blocks; Shifter added in Sprint 22, VCO added in Sprint 24 via the manifest workflow). The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). Cross-cutting metadata (palette entry, port types, etc.) lives in [`blocks.yaml`](blocks.yaml); see [ADR-003](ADR-003-block-manifest.md) for the manifest design and [ARCHITECTURE.md](ARCHITECTURE.md) for how the renderer talks to the backend and how to add another block.
+> **Last updated:** 2026-05-12 · Reference for the 45 blocks shipping on the master branch (last released as v0.1.0-alpha.9 with 42 blocks; Shifter added in Sprint 22, VCO + LFO added in Sprint 24 via the manifest workflow). The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). Cross-cutting metadata (palette entry, port types, etc.) lives in [`blocks.yaml`](blocks.yaml); see [ADR-003](ADR-003-block-manifest.md) for the manifest design and [ARCHITECTURE.md](ARCHITECTURE.md) for how the renderer talks to the backend and how to add another block.
 
 This document describes what each block does, what its inputs and outputs are, what its parameters mean, and roughly how it sounds (or looks). Audio blocks are 8-bit signed (–128..+127) at a 44.1 kHz sample rate. Audio handles carry signed 8-bit samples; gate / clock handles carry 1-bit signals; visual handles are short single-token names (`r`, `g`, `b`, `hsync`, `vsync`, `visible`, `x`, `y`) following the convention used in every open-source VGA core. Edges are direction-checked by React Flow at edit time.
 
@@ -15,6 +15,7 @@ A note on parameter ranges: the React Flow node components enforce **musically s
 - [Sawtooth](#sawtooth)
 - [Sine](#sine)
 - [VCO (voltage-controlled oscillator)](#vco-voltage-controlled-oscillator)
+- [LFO (low-frequency oscillator)](#lfo-low-frequency-oscillator)
 - [Wavetable](#wavetable)
 - [Noise](#noise)
 - [Constant](#constant)
@@ -193,6 +194,35 @@ A square-wave oscillator whose pitch is **modulated by an audio-rate input**. Un
 - **Karplus-Strong with detune:** a slow Sine LFO → VCO.freq-in produces a pitch-wandering string sound.
 
 **Why a separate block from `fm`:** the `fm` block is a self-contained two-operator FM voice with both carrier and modulator built in. The VCO is just one oscillator with an exposed modulation input — pair it with ANY block as the modulator (a Sine for clean FM, a Square for harsh FM, a Triangle for bell-like sustained spectra, a Noise source for noise-modulated chaos, etc.).
+
+### LFO (low-frequency oscillator)
+
+A slow oscillator (1-30 Hz) for vibrato, tremolo, slow gating, and other sub-audio modulation roles. The audio oscillator blocks (oscillator / triangle / sawtooth / sine / wavetable) all floor at 20 Hz — appropriate for audio, too fast for canonical vibrato (4-8 Hz) or for sweeping the Atari Punk Console's 1-30 Hz gating range. The LFO fills that gap with its own 32-bit phase accumulator (wider than the audio oscillators' 16-bit phase) so the per-step resolution stays musical down to ~0.01 Hz.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `audio-out` | source | signed 8-bit audio | Waveform at the configured rate |
+
+**Parameters**
+
+| Name | Type | Range (frontend / backend) | Default | What it does |
+|---|---|---|---|---|
+| `rate` | integer Hz | 1–30 / 1–30 (clamped) | 5 | LFO rate. 4-8 Hz is canonical vibrato; 1-3 Hz is slow drift; 10-30 Hz is gating territory |
+| `shape` | enum | `sine` / `triangle` / `square` / `sawtooth` | `sine` | Waveform shape (256-entry lookup table picked at construction time) |
+
+**Behavior.** 32-bit phase accumulator advances by `step = (2^32 × rate) / sample_rate` per sample. The top 8 bits of the phase index a 256-entry signed-8-bit lookup table whose contents depend on `shape`. At `rate=1` the step is ~97 391, so one full cycle = `2^32 / 97391 ≈ 44100` samples = exactly 1.0 second — sub-Hz precision is the headline benefit over reusing a Wavetable block at low frequencies.
+
+**Common usage.**
+
+- **Canonical vibrato (4-8 Hz)**: LFO (sine, 6 Hz) → VCO.freq-in. Sub-20-Hz LFO rates that the audio oscillators couldn't reach.
+- **Tremolo (4-10 Hz amplitude wobble)**: LFO (sine, 6 Hz) → Multiply.in-1; your audio carrier → Multiply.in-2. The LFO's amplitude modulates the carrier's loudness.
+- **Slow filter sweeps**: LFO (sine, 0.5-2 Hz) → a future voltage-controlled filter input.
+- **Gating patterns / Atari Punk Console**: LFO (square or sawtooth, 1-30 Hz) → Multiply.in-2 with audio on Multiply.in-1. The square shape gives hard on/off gating; sawtooth gives a ramp-shaped modulation. Matches Mims's 1980 design where the second 555 timer was pot-swept across 1-30 Hz.
+- **Slow drone variation**: LFO (sine, 1-2 Hz) → controlling almost anything — adds gentle continuous variation to an otherwise static patch.
+
+**Why a separate block from Wavetable:** Wavetable is tuned for audio rates (20-20 000 Hz, 16-bit phase, four timbres aimed at musical waveforms — sine / pulse_25 / ramp_up / formant). The LFO is tuned for sub-audio rates (1-30 Hz, 32-bit phase, four modulation-friendly shapes — sine / triangle / square / sawtooth). Same internal pattern (phase accumulator + lookup table), different parameter regime + different shape set + finer phase resolution.
 
 ### Wavetable
 

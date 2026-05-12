@@ -46,6 +46,7 @@ import { WavetableNode } from '../src/blocks/WavetableNode'
 import { BitcrusherNode } from '../src/blocks/BitcrusherNode'
 import { ShifterNode } from '../src/blocks/ShifterNode'
 import { VcoNode } from '../src/blocks/VcoNode'
+import { LfoNode } from '../src/blocks/LfoNode'
 import { DelayNode } from '../src/blocks/DelayNode'
 import { AndGateNode } from '../src/blocks/AndGateNode'
 import { OrGateNode } from '../src/blocks/OrGateNode'
@@ -1254,6 +1255,32 @@ describe('Comparator block', () => {
     expect(ids).toContain('eq-out')
     expect(ids).toContain('lt-out')
     expect(ids).toContain('gt-out')
+  })
+})
+
+describe('LFO block', () => {
+  it('renders title with 0 inputs, 1 output, and rate + shape controls', () => {
+    const { container } = wrap(
+      <LfoNode {...nodePropsBase('lfo-1')} data={{ rate: 5, shape: 'sine' }} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('LFO')
+    expect(countHandles(container, 'target')).toBe(0)
+    expect(countHandles(container, 'source')).toBe(1)
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')
+    expect(input?.value).toBe('5')
+    const select = container.querySelector<HTMLSelectElement>('select')
+    expect(select?.value).toBe('sine')
+  })
+
+  it('out-of-range rate (50) shows an error', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <LfoNode {...nodePropsBase('lfo-2')} data={{ rate: 5, shape: 'square' }} />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '50')
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/1.*30/)
   })
 })
 

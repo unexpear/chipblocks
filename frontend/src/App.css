@@ -789,6 +789,11 @@
   min-width: 150px;
 }
 
+.block-lfo {
+  border-color: #80cbc4;
+  min-width: 140px;
+}
+
 .block-wavetable {
   border-color: #8bc34a;
   min-width: 140px;
