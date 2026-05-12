@@ -47,19 +47,24 @@ Visual examples need a 🔧 Build → iCEBreaker + flashing to the board to see 
 | [`cpu-counter-with-branch.json`](cpu-counter-with-branch.json) | A counter that resets at 7 every cycle — audible as a saw-shaped buzz. | Comparator + Mux for branching without a state machine. Refactored in Sprint 20 to use ByteConstants instead of 3 single-value ROMs (4 fewer blocks; same behavior) |
 | [`cpu-multiregister.json`](cpu-multiregister.json) | A 4-step ramp followed by 12 zero cells at ~12 Hz — the Register File's read sweep over a sparsely-written file. | Sprint 20 Register File with independent read / write addresses. Compare to `cpu-accumulator` (RAM with one shared address port) — same shape, different IP model |
 
-## Historical chip designs (Sprint 23 — pending)
+## Historical chip designs
 
 These reproduce well-known circuit topologies and synthesis algorithms from the open literature. Provenance + licensing diligence lives in [../OPEN-CHIP-LIBRARY-PROVENANCE.md](../OPEN-CHIP-LIBRARY-PROVENANCE.md); attribution lines for the historical material live in [../CREDITS.md](../CREDITS.md).
 
-> **Implementation pending.** The 5 designs below are slated for Sprint 23. The research, licensing diligence, and attribution language are all on file; the `.json` graphs themselves will land as Sprint 23 commits. This section will be updated as each one ships.
+| File | What you'll hear / see | Historical source |
+|---|---|---|
+| [`atari-punk-console.json`](atari-punk-console.json) | A rhythmic burbling tone from two interacting square-wave oscillators — the canonical DIY-synth-101 sound. | Forrest M. Mims III, *Engineer's Notebook: Integrated Circuit Applications* (Radio Shack, 1980). 555-timer topology; underlying 555 patent expired 1988. |
+
+### Pending (Sprint 23 in flight)
 
 | File (planned) | What you'll hear / see | Historical source |
 |---|---|---|
-| `atari-punk-console.json` | A rhythmic burbling tone from two interacting square-wave oscillators — the canonical DIY-synth-101 sound. | Forrest M. Mims III, *Engineer's Notebook: Integrated Circuit Applications* (Radio Shack, 1980). 555-timer topology; underlying 555 patent expired 1988. |
 | `karplus-strong.json` | A digitally-synthesized plucked-string note that genuinely sounds like a guitar. | Karplus & Strong, *Computer Music Journal* Vol. 7 No. 2 (1983). US patents 4,649,783 + 4,622,877 (Stanford) expired 2004 / 2005. |
 | `fm-bell.json` | A 1980s bell / electric-piano tone — the sound of the Yamaha DX7 era. | Chowning, *Journal of the Audio Engineering Society* Vol. 21 No. 7 (1973). US patent 4,018,121 (Stanford) expired April 1994. |
-| `divider-clock-tree.json` | A descending cascade of slower-and-slower clock ticks audible as a polyrhythmic drum line; on the VGA path, a stepped-brightness vertical column. | Standard textbook binary-ripple-counter (74HC4040 family, 1970s). |
 | `hihat.json` | A short hi-hat tick — completes the kick + snare drum kit. | Standard subtractive-synthesis technique predating consumer electronics. |
+| `divider-clock-tree.json` *(deferred)* | A descending cascade of slower-and-slower clock ticks audible as a polyrhythmic drum line. | Standard textbook binary-ripple-counter (74HC4040 family, 1970s). |
+
+> **`divider-clock-tree.json` is deferred** to a later sprint. The textbook recipe wants to peel off individual bits of a free-running counter and visualize them as independent square waves at half-rate, quarter-rate, etc. Our current blocks can't connect `counter.addr-out` (an `addr-u4` 4-bit bus) into `bussplit.bus-in` (which expects `data-u8`), and there's no `audio-to-gate` block to feed audio-rate oscillator pulses into `counter.clock`. Either widening `bussplit` to accept addr-u4 OR adding a 1-bit-comparator block unblocks this. Logged as a Sprint 24+ candidate.
 
 ## Adding your own examples
 

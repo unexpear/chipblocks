@@ -264,6 +264,22 @@ export const EXAMPLES: ExampleGraph[] = [
     ],
   },
   {
+    id: 'atari-punk-console',
+    label: 'Atari Punk Console (1980 stepped-tone generator)',
+    description: 'Inspired by Forrest M. Mims III\'s 1980 "Stepped Tone Generator" from Engineer\'s Notebook: Integrated Circuit Applications (Radio Shack). Two square-wave oscillators — 220 Hz audio + 20 Hz gating — multiplied together. The slower oscillator chops the faster one into a rhythmic burble, the famous "DIY-synth-101" sound. ChipBlocks reproduces the topology only; the original is an analog 555-timer circuit. Provenance + license in CREDITS.md (555 patent US 3,652,888 expired 1988; circuit topology not copyrightable).',
+    nodes: [
+      { id: 'audio_osc', type: 'oscillator', position: { x: 60,  y: 80  }, data: { freq: 220 } },
+      { id: 'gate_osc',  type: 'oscillator', position: { x: 60,  y: 240 }, data: { freq: 20 } },
+      { id: 'mult',      type: 'multiply',   position: { x: 340, y: 160 }, data: {} },
+      { id: 'out',       type: 'output',     position: { x: 600, y: 160 }, data: {} },
+    ],
+    edges: [
+      { id: 'e1', source: 'audio_osc', target: 'mult', sourceHandle: 'audio-out', targetHandle: 'in-1'     },
+      { id: 'e2', source: 'gate_osc',  target: 'mult', sourceHandle: 'audio-out', targetHandle: 'in-2'     },
+      { id: 'e3', source: 'mult',      target: 'out',  sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+    ],
+  },
+  {
     id: 'cpu-multiregister',
     label: 'Register File multi-port (independent read / write addresses)',
     description: 'Demonstrates the Sprint 20 Register File block — same storage shape as RAM, but read and write addresses are independent. A fast Counter (sweeping all 16 registers) drives `read-addr` while a slower Counter (sweeping the first 4) drives `write-addr`. A small ROM feeds `data-in`, so registers 0..3 get continuously refreshed with the ROM ramp (16, 48, 80, 112) while registers 4..15 stay zero. The read sweep produces a 4-step ramp followed by 12 zero cells, audible at ~12 Hz through Reinterpret. Compare with cpu-accumulator (RAM) — same wiring shape, but here read-addr and write-addr move independently. The canonical CPU register-file pattern: read one register while writing another in the same cycle.',

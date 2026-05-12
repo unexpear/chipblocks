@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "app": "ChipBlocks",
+  "savedAt": "2026-05-12T00:00:00.000Z",
+  "viewport": { "x": 0, "y": 0, "zoom": 1 },
+  "nodes": [
+    {
+      "id": "audio_osc",
+      "type": "oscillator",
+      "position": { "x": 60, "y": 80 },
+      "data": { "freq": 220 }
+    },
+    {
+      "id": "gate_osc",
+      "type": "oscillator",
+      "position": { "x": 60, "y": 240 },
+      "data": { "freq": 20 }
+    },
+    {
+      "id": "mult",
+      "type": "multiply",
+      "position": { "x": 340, "y": 160 },
+      "data": {}
+    },
+    {
+      "id": "out",
+      "type": "output",
+      "position": { "x": 600, "y": 160 },
+      "data": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "audio_osc",
+      "target": "mult",
+      "sourceHandle": "audio-out",
+      "targetHandle": "in-1"
+    },
+    {
+      "id": "e2",
+      "source": "gate_osc",
+      "target": "mult",
+      "sourceHandle": "audio-out",
+      "targetHandle": "in-2"
+    },
+    {
+      "id": "e3",
+      "source": "mult",
+      "target": "out",
+      "sourceHandle": "audio-out",
+      "targetHandle": "audio-in"
+    }
+  ]
+}
