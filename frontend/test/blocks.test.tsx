@@ -44,6 +44,7 @@ import { FmNode } from '../src/blocks/FmNode'
 import { MultiplyNode } from '../src/blocks/MultiplyNode'
 import { WavetableNode } from '../src/blocks/WavetableNode'
 import { BitcrusherNode } from '../src/blocks/BitcrusherNode'
+import { ShifterNode } from '../src/blocks/ShifterNode'
 import { DelayNode } from '../src/blocks/DelayNode'
 import { AndGateNode } from '../src/blocks/AndGateNode'
 import { OrGateNode } from '../src/blocks/OrGateNode'
@@ -1252,6 +1253,32 @@ describe('Comparator block', () => {
     expect(ids).toContain('eq-out')
     expect(ids).toContain('lt-out')
     expect(ids).toContain('gt-out')
+  })
+})
+
+describe('Shifter block', () => {
+  it('renders title with 1 input, 1 output, and direction + amount controls', () => {
+    const { container } = wrap(
+      <ShifterNode {...nodePropsBase('sh-1')} data={{ direction: 'left', amount: 1 }} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Shifter')
+    expect(countHandles(container, 'target')).toBe(1)
+    expect(countHandles(container, 'source')).toBe(1)
+    const select = container.querySelector<HTMLSelectElement>('select')
+    expect(select?.value).toBe('left')
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')
+    expect(input?.value).toBe('1')
+  })
+
+  it('out-of-range amount (9) shows an error', async () => {
+    const user = userEvent.setup()
+    const { container } = wrap(
+      <ShifterNode {...nodePropsBase('sh-2')} data={{ direction: 'right', amount: 1 }} />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
+    await user.clear(input)
+    await user.type(input, '9')
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/1.*7/)
   })
 })
 

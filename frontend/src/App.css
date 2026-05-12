@@ -921,6 +921,11 @@
   min-width: 130px;
 }
 
+.block-shifter {
+  border-color: #5c6bc0;
+  min-width: 140px;
+}
+
 .block-comparator {
   border-color: #3949ab;
   min-height: 130px;

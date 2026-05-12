@@ -55,6 +55,7 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'busjoin',      label: 'Bus Join',      color: '#78909c', description: 'Concatenate 8 individual 1-bit signals into one 8-bit bus' },
   { type: 'adder',        label: 'Adder',         color: '#1976d2', description: 'Combinational 8-bit unsigned add with carry-out' },
   { type: 'subtractor',   label: 'Subtractor',    color: '#1e88e5', description: 'Combinational 8-bit unsigned subtract with borrow-out' },
+  { type: 'shifter',      label: 'Shifter',       color: '#5c6bc0', description: 'Combinational 8-bit logical shift (left << or right >>) by 1–7 bits' },
   { type: 'comparator',   label: 'Comparator',    color: '#3949ab', description: '8-bit unsigned compare; emits eq / lt / gt flags' },
   { type: 'mux',          label: 'Mux',           color: '#5e35b1', description: '2-to-1 multiplexer: select picks in-a or in-b' },
   { type: 'register',     label: 'Register',      color: '#1565c0', description: '8-bit data register with gated write-enable' },
@@ -105,6 +106,8 @@ export function defaultDataForType(type: string): Record<string, unknown> {
       return { start: 100, end: 200 }
     case 'solidcolor':
       return { color: 'white' }
+    case 'shifter':
+      return { direction: 'left', amount: 1 }
     case 'rom':
       return { contents: Array(16).fill(0) }
     case 'noise':

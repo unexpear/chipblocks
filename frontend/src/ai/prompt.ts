@@ -211,6 +211,12 @@ The block table below is the machine-readable shape of every block: name + one-l
 - Output ports: \`diff-out\` (data-u8), \`borrow-out\` (gate-1)
 - No parameters
 
+**shifter** — Combinational 8-bit logical shift (left << or right >>) by 1–7 bits
+- Input port \`data-in\` (data-u8)
+- Output port \`data-out\` (data-u8)
+- Parameter \`direction\`: (default "left")
+- Parameter \`amount\`: 1–7 bits (default 1)
+
 **comparator** — 8-bit unsigned compare; emits eq / lt / gt flags
 - Input ports: \`in-a\` (data-u8), \`in-b\` (data-u8)
 - Output ports: \`eq-out\` (gate-1), \`lt-out\` (gate-1), \`gt-out\` (gate-1)

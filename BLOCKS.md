@@ -1,6 +1,6 @@
 # ChipBlocks block library
 
-> **Last updated:** 2026-05-10 · Reference for the 42 blocks shipping in v0.1.0-alpha. The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). For how the renderer talks to the backend and how to add another block, see [ARCHITECTURE.md](ARCHITECTURE.md).
+> **Last updated:** 2026-05-12 · Reference for the 43 blocks shipping on the master branch (last released as v0.1.0-alpha.9 with 42 blocks; Shifter added in Sprint 22 via the new manifest workflow). The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). Cross-cutting metadata (palette entry, port types, etc.) lives in [`blocks.yaml`](blocks.yaml); see [ADR-003](ADR-003-block-manifest.md) for the manifest design and [ARCHITECTURE.md](ARCHITECTURE.md) for how the renderer talks to the backend and how to add another block.
 
 This document describes what each block does, what its inputs and outputs are, what its parameters mean, and roughly how it sounds (or looks). Audio blocks are 8-bit signed (–128..+127) at a 44.1 kHz sample rate. Audio handles carry signed 8-bit samples; gate / clock handles carry 1-bit signals; visual handles are short single-token names (`r`, `g`, `b`, `hsync`, `vsync`, `visible`, `x`, `y`) following the convention used in every open-source VGA core. Edges are direction-checked by React Flow at edit time.
 
@@ -59,6 +59,7 @@ A note on parameter ranges: the React Flow node components enforce **musically s
 
 - [Adder](#adder)
 - [Subtractor](#subtractor)
+- [Shifter](#shifter)
 - [Comparator](#comparator)
 - [Mux](#mux)
 - [Register](#register)
@@ -762,6 +763,28 @@ Combinational 8-bit unsigned subtract. Mirrors Adder's split-output shape: an 8-
 **Behavior.** Pure combinational. The difference truncates to 8 bits — `20 - 50` reads as 226 (256 - 30) with borrow=1. Pair with Adder for "running difference" patterns or with Comparator for branching. Yosys collapses the `-` into the same SB_CARRY chain Adder uses, just in subtract mode.
 
 **Common usage.** Mirror of the Adder accumulator: Constant or ROM source → Subtractor.in-a; Register.data-out → Subtractor.in-b; Subtractor.diff-out → Register.data-in. Each pulse subtracts the source from the running value, useful for countdown timers or running differences.
+
+### Shifter
+
+Combinational 8-bit unsigned logical shift by a configured amount (1..7 bits). Left shift moves the bits toward the MSB and zero-fills the LSB end; right shift moves toward the LSB and zero-fills the MSB end (logical shift, not arithmetic — there's no sign extension since the bus is unsigned). The shift amount is a construction-time parameter rather than a runtime input because configurable-shift would need a 3-bit `data-u3` input that the project doesn't ship today, and most graphs hard-wire the amount anyway.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `data-in` | target | 8-bit unsigned data | Value to shift |
+| `data-out` | source | 8-bit unsigned data | `data-in << amount` or `data-in >> amount`, truncated to 8 bits |
+
+**Parameters**
+
+| Name | Type | Range | Default | What it does |
+|---|---|---|---|---|
+| `direction` | string enum | `left` / `right` | `left` | Direction of the shift |
+| `amount` | integer | 1..7 | 1 | Number of bit positions to shift by |
+
+**Behavior.** Pure combinational. Left-shift by `amount=N`: the top N bits fall off the byte (truncated, no carry out), the low N bits fill with zeros. Right-shift by `amount=N`: the low N bits fall off, the top N bits fill with zeros. Yosys collapses constant shifts into wire reorderings — zero LUT cost on iCE40.
+
+**Common usage.** `x << 1` is the canonical `x * 2`, useful for doubling running totals without an Adder. `x >> 1` is `x / 2` (floor) — pair with Reinterpret to convert a CPU accumulator into an audio sample whose amplitude is halved relative to the raw byte. Combine with Adder for tiny multipliers (`x + (x << 1) == x * 3`).
 
 ### Comparator
 

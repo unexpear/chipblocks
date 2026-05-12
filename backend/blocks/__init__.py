@@ -46,6 +46,7 @@ from .bus_split import BusSplit
 from .bus_join import BusJoin
 from .adder import Adder
 from .subtractor import Subtractor
+from .shifter import Shifter
 from .comparator import Comparator
 from .mux import Mux
 from .register import Register
@@ -93,6 +94,7 @@ BLOCK_REGISTRY = {
     "busjoin": BusJoin,
     "adder": Adder,
     "subtractor": Subtractor,
+    "shifter": Shifter,
     "comparator": Comparator,
     "mux": Mux,
     "register": Register,
@@ -140,6 +142,7 @@ __all__ = [
     "BusJoin",
     "Adder",
     "Subtractor",
+    "Shifter",
     "Comparator",
     "Mux",
     "Register",

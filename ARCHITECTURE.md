@@ -91,7 +91,7 @@ frontend/src/
 ├── blocks/
 │   ├── index.ts               nodeTypes + AppNode union
 │   ├── useValidatedNumber.ts  Shared number-input validation hook
-│   └── *Node.tsx              One file per of the 42 block types
+│   └── *Node.tsx              One file per of the 43 block types
 ├── Palette.tsx                Left-side block palette + drag-and-drop
 ├── Chat.tsx                   AI consultant sidebar + agentic loop
 ├── SettingsModal.tsx          API key + model picker
@@ -215,16 +215,16 @@ Eval script at `scripts/eval-ai.ts` runs 7 representative queries against the li
 ## Testing
 
 ```
-backend/tests/        pytest, 189 tests + 2 skipped, ~85 s
-  test_blocks.py             47 per-block property assertions (zero-crossing rate, accumulator round-trip, sign-reinterpretation pass-through, register-file independent-addr round-trip, etc.) — covers all 42 blocks (including the 5 visual blocks, the 2 bus-composition blocks plus Reinterpret, the 7 CPU primitives Adder / Subtractor / Comparator / Mux / Register / RAM / ROM, the Sprint 20 Register File, the Counter.addr-out extension, plus a mixed-logic pipeline smoke test, a CPU-primitives pipeline smoke test that exercises Reinterpret end-to-end, and a Register File multi-port pipeline smoke)
+backend/tests/        pytest, 193 tests + 2 skipped, ~110 s
+  test_blocks.py             48 per-block property assertions (zero-crossing rate, accumulator round-trip, sign-reinterpretation pass-through, register-file independent-addr round-trip, shift left/right against Python's `<<`/`>>` with 9 spot cases, etc.) — covers all 43 blocks (including the 5 visual blocks, the 2 bus-composition blocks plus Reinterpret, the 7 CPU primitives Adder / Subtractor / Comparator / Mux / Register / RAM / ROM, the Sprint 20 Register File, the Sprint 22 Shifter, the Counter.addr-out extension, plus a mixed-logic pipeline smoke test, a CPU-primitives pipeline smoke test that exercises Reinterpret end-to-end, and a Register File multi-port pipeline smoke)
   test_synth_pipeline.py     9 end-to-end tests against examples/*.json (3 exercise the visual path: friendly-error rejection on ▶ Play, .pcf carries VGA pin assignments, and an end-to-end build of the color-bars graph through Yosys + nextpnr-ice40 + icepack to a real iCEBreaker bitstream — that one is skipped when OSS CAD Suite isn't on PATH)
   test_tinytapeout.py        8 TT bundle shape + info.yaml schema tests
-  test_manifest.py           126 dynamic cases (42 blocks × 3 invariants) added in Sprint 21: backendPath file exists, backendClass importable, registered in BLOCK_REGISTRY with matching __name__
+  test_manifest.py           129 dynamic cases (43 blocks × 3 invariants) added in Sprint 21: backendPath file exists, backendClass importable, registered in BLOCK_REGISTRY with matching __name__
 
-frontend/test/        vitest, 287 tests, ~9 s
+frontend/test/        vitest, 292 tests, ~10 s
   ipc-contract.test.ts          renderer↔main IPC mock tests (synth/build/AI)
-  blocks.test.tsx               block render + parameter editing + range validation (84 tests across all 42 blocks)
-  registries-aligned.test.ts    cross-registry consistency lint — PALETTE / BLOCK_PORT_TYPES / nodeTypes / STATIC_SYSTEM all cover the same 42 blocks (catches the kind of drift that hit ByteConstant in Sprint 19; arguably redundant after Sprint 21's manifest landed, kept for now as belt-and-suspenders)
+  blocks.test.tsx               block render + parameter editing + range validation (86 tests across all 43 blocks)
+  registries-aligned.test.ts    cross-registry consistency lint — PALETTE / BLOCK_PORT_TYPES / nodeTypes / STATIC_SYSTEM all cover the same 43 blocks (catches the kind of drift that hit ByteConstant in Sprint 19; arguably redundant after Sprint 21's manifest landed, kept for now as belt-and-suspenders)
   bus-types.test.ts             bus-type compatibility helper (29 tests covering the Sprint 16 typed-bus system)
   save-load.test.tsx            save/load roundtrip + m5 rejection paths
   examples-consistency.test.ts  examples.ts ↔ examples/*.json drift check (now also covers color-bars.json)

@@ -1856,3 +1856,59 @@ def test_byte_constant_emits_configured_value():
         assert captured[0] == expected, (
             f"ByteConstant({stored}) clamped to {captured[0]}; expected {expected}"
         )
+
+
+def test_shifter_left_and_right_match_python_shifts():
+    """Shifter is the Sprint 22 acid-test block: combinational 8-bit
+    logical shift by a constant amount. Drive data-in with several
+    bit patterns and assert the output matches Python's `<<` and `>>`
+    truncated to 8 bits.
+
+    Spot-checks cover:
+      - Small shifts (amount=1) producing the canonical `x * 2` /
+        `x / 2` behavior on unsigned values.
+      - Large shifts (amount=7) showing only the LSB / MSB survives.
+      - Top-bit truncation on left shift (0xff << 1 = 0xfe, not 0x1fe).
+      - Zero-fill on right shift (0xff >> 1 = 0x7f, not 0xff with sign
+        extension — the block is logical-shift, not arithmetic-shift).
+    """
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.shifter import Shifter
+
+    cases = [
+        ("left",  1, 0x01, 0x02),
+        ("left",  1, 0x80, 0x00),   # top bit shifts out, truncated to 8
+        ("left",  1, 0xff, 0xfe),
+        ("left",  3, 0x11, 0x88),
+        ("left",  7, 0x01, 0x80),   # single bit walks to the MSB
+        ("right", 1, 0x02, 0x01),
+        ("right", 1, 0xff, 0x7f),   # logical (zero-fill), not arithmetic
+        ("right", 3, 0x88, 0x11),
+        ("right", 7, 0x80, 0x01),
+    ]
+
+    for direction, amount, value_in, expected in cases:
+        block = Shifter(direction=direction, amount=amount)
+        m = Module()
+        m.submodules.b = block
+        _anchor = Signal()
+        m.d.sync += _anchor.eq(~_anchor)
+        sim = Simulator(m)
+        sim.add_clock(1e-6)
+
+        captured: list[int] = []
+
+        async def process(ctx):
+            ctx.set(block.data_in, value_in)
+            await ctx.tick()
+            await ctx.tick()
+            captured.append(ctx.get(block.data_out))
+
+        sim.add_testbench(process)
+        sim.run()
+
+        assert captured[0] == expected, (
+            f"Shifter({direction!r}, {amount}) on 0x{value_in:02x}: "
+            f"got 0x{captured[0]:02x}, expected 0x{expected:02x}"
+        )

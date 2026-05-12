@@ -78,6 +78,11 @@ def build_params(node_type: str, data: dict) -> dict:
     elif node_type == "solidcolor":
         if "color" in data:
             params["color"] = str(data["color"])
+    elif node_type == "shifter":
+        if "direction" in data:
+            params["direction"] = str(data["direction"])
+        if "amount" in data:
+            params["amount"] = int(data["amount"])
     elif node_type == "rom":
         contents = data.get("contents", [])
         if isinstance(contents, list):

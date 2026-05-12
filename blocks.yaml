@@ -706,6 +706,33 @@
   cssMinWidth: 130
   tags: []
 
+- type: shifter
+  label: Shifter
+  description: "Combinational 8-bit logical shift (left << or right >>) by 1–7 bits"
+  color: '#5c6bc0'
+  category: computation
+  componentPath: frontend/src/blocks/ShifterNode.tsx
+  backendPath: backend/blocks/shifter.py
+  backendClass: Shifter
+  ports:
+    data-in:  { dir: target, bus: data-u8 }
+    data-out: { dir: source, bus: data-u8 }
+  parameters:
+    direction:
+      type: string
+      enum: [left, right]
+      default: left
+      ariaLabel: Shift direction
+    amount:
+      type: int
+      min: 1
+      max: 7
+      default: 1
+      ariaLabel: Shift amount in bits (1 to 7)
+      unit: bits
+  cssMinWidth: 140
+  tags: []
+
 - type: comparator
   label: Comparator
   description: 8-bit unsigned compare; emits eq / lt / gt flags

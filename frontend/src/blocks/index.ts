@@ -32,6 +32,7 @@ import { BusSplitNode,       type BusSplitBlock }       from './BusSplitNode'
 import { BusJoinNode,        type BusJoinBlock }        from './BusJoinNode'
 import { AdderNode,          type AdderBlock }          from './AdderNode'
 import { SubtractorNode,     type SubtractorBlock }     from './SubtractorNode'
+import { ShifterNode,        type ShifterBlock }        from './ShifterNode'
 import { ComparatorNode,     type ComparatorBlock }     from './ComparatorNode'
 import { MuxNode,            type MuxBlock }            from './MuxNode'
 import { RegisterNode,       type RegisterBlock }       from './RegisterNode'
@@ -80,6 +81,7 @@ export const nodeTypes = {
   busjoin:   BusJoinNode,
   adder:     AdderNode,
   subtractor:SubtractorNode,
+  shifter:   ShifterNode,
   comparator:ComparatorNode,
   mux:       MuxNode,
   register:  RegisterNode,
@@ -127,6 +129,7 @@ export type AppNode =
   | BusJoinBlock
   | AdderBlock
   | SubtractorBlock
+  | ShifterBlock
   | ComparatorBlock
   | MuxBlock
   | RegisterBlock

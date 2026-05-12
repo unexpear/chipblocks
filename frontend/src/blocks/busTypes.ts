@@ -221,6 +221,8 @@ export const BLOCK_PORT_TYPES: Record<string, Record<string, BusType>> = {
                  'in-b':       'data-u8',
                  'diff-out':   'data-u8',
                  'borrow-out': 'gate-1' },
+  shifter:     { 'data-in':  'data-u8',
+                 'data-out': 'data-u8' },
   comparator:  { 'in-a':   'data-u8',
                  'in-b':   'data-u8',
                  'eq-out': 'gate-1',
