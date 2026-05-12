@@ -196,6 +196,58 @@ The fix is always: `cd frontend && npm run codegen && git add -u`.
 - **`requirements-dev.txt` is similarly pinned.** Backend codegen dependencies (`PyYAML`, `jsonschema`) live there; add new backend deps via that file, not as bare `pip install` in the CI workflow.
 - **Bump `BLOCKS.md`'s top-line block count when you add a row.** It's not codegen'd; it's a human-readable "shipping N blocks" line near the top of the file. Catches the eye in PRs.
 
+## Contributing a bundled example
+
+The cookbook above is for adding a new *block*. Adding a new *bundled example graph* in `examples/` is a parallel but smaller workflow. Each `.json` example is a "source file" the rest of the project compiles down to a real chip (FPGA bitstream or Tiny Tapeout submission), so example graphs are first-class shipping artefacts — they're loaded into the app on every release, exercised by the [examples-consistency test](../frontend/test/examples-consistency.test.ts), and read by the AI consultant for "show me an example of X" queries.
+
+### What licences are acceptable for the underlying design
+
+If your example is based on a specific published circuit / algorithm / chip, the underlying material must be in **one** of these categories:
+
+| Category | Examples | What to check |
+|---|---|---|
+| **Permissively licensed source code** (MIT / Apache 2.0 / BSD-2/3 / ISC / CC0) | A Tiny Tapeout submission (default Apache 2.0); the SkyWater PDK; a permissively-tagged GitHub repo | Read the `LICENSE` file directly; don't trust GitHub's licence-detector heuristic |
+| **Patent-expired technique** | Chowning FM (US 4,018,121 — expired 1994); Karplus-Strong (US 4,649,783, 4,622,877 — expired 2004/2005); the 555 timer (US 3,652,888 — expired 1988) | Cite the patent number + expiry date in `CREDITS.md`. Patent text itself is public domain |
+| **Generic textbook technique** | Binary ripple-counter chains; subtractive-synthesis hi-hat; standard analog modular patches | No specific authorship to credit; flag as MEDIUM confidence in provenance research |
+| **Public-domain primary source** | Forrest Mims's 1980 Radio Shack books (topology / facts not copyrightable, only specific schematic drawings); US government publications | Cite the source; reproduce facts only, not the original artwork |
+
+**Disqualifying licences** (do NOT contribute examples derived from these — same rule as for new blocks):
+
+- GPL / LGPL / AGPL — reciprocal licences would force ChipBlocks downstream
+- CERN-OHL — "weak" copyleft variant, same incompatibility
+- CC-BY-NC / CC-BY-ND / CC-BY-SA — non-commercial, no-derivatives, or share-alike clauses all conflict with our permissive shipping
+- "Royalty-free" stock-content licences (VectorStock, Freepik free tier) — require attribution and prohibit redistribution as part of standalone products
+- Anything without an explicit licence file — default copyright is "all rights reserved"
+
+If you're not sure, ask via a draft PR before doing the work. The provenance research in [`OPEN-CHIP-LIBRARY-RESEARCH.md`](../OPEN-CHIP-LIBRARY-RESEARCH.md) and [`OPEN-CHIP-LIBRARY-PROVENANCE.md`](../OPEN-CHIP-LIBRARY-PROVENANCE.md) shows the level of citation chain expected for historical designs.
+
+### The four files you touch
+
+Adding an example graph is a **4-file change** plus one optional codegen run:
+
+1. **`examples/<design-id>.json`** — the graph itself. The fastest path: open ChipBlocks, wire the design on the canvas, hit **Save**, move the downloaded file into `examples/`. Hand-edit only to set a stable `id` and `savedAt`.
+
+2. **`frontend/src/examples.ts`** — add a new entry to the `EXAMPLES` array mirroring the JSON. The `examples-consistency` test diffs the TS entry against the JSON file on every CI run; they must agree on `nodes` and `edges` exactly. Order in the TS array matches order in the Load → Examples menu.
+
+3. **`examples/README.md`** — add a row to the category table (or a new table if the design opens a new category). Cite the historical source if applicable.
+
+4. **`CREDITS.md`** — only if the design has a specific historical source that requires (or merits) attribution. Use the existing "Starter chip designs" section as the template; one bullet per example.
+
+If the example needs a **new block** that doesn't exist yet, that's a block-cookbook contribution — follow the full 8-step walkthrough above for the block, then ship the example as a follow-on commit.
+
+### Pre-shipping checklist
+
+Before opening a PR with a new example:
+
+- [ ] Graph **plays cleanly via ▶ Play** (or builds cleanly via 🔧 Build → iCEBreaker for visual-only graphs)
+- [ ] No connections rejected by the typed-bus validator (load the file once to confirm)
+- [ ] All four files (`examples/<id>.json`, `examples.ts`, `examples/README.md`, optionally `CREDITS.md`) updated together in one commit
+- [ ] Historical sources cited in `CREDITS.md` with **explicit licence / patent-expiry / textbook rationale** — not "open" or "free" by itself
+- [ ] `cd frontend && npm test -- --run examples-consistency` passes locally
+- [ ] If the example uses any new blocks added in the same PR, the block-cookbook checklist (above) is also satisfied
+
+The bundled examples are the first thing many users see — they're effectively the project's curated demo reel — so the bar is higher than for user-side designs. Aim for one design per example, clearly named, with the historical / educational story documented up front.
+
 ## See also
 
 - [ADR-003](ADR-003-block-manifest.md) — the architectural decision that produced this workflow.

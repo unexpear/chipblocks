@@ -116,6 +116,26 @@ These were considered and rejected because they're copyleft-licensed and would c
 
 ---
 
+## Starter chip designs (`examples/`)
+
+The bundled example graphs in `examples/` reproduce well-known circuit topologies and synthesis algorithms. None of the underlying ideas are encumbered by active patent or copyright restrictions. Provenance research lives in [OPEN-CHIP-LIBRARY-PROVENANCE.md](OPEN-CHIP-LIBRARY-PROVENANCE.md). Credits where appropriate:
+
+- **`examples/atari-punk-console.json`** — inspired by the "Stepped Tone Generator" circuit originally published by Forrest M. Mims III in *Engineer's Notebook: Integrated Circuit Applications* (Radio Shack, 1980). ChipBlocks reproduces the topology only; Mims's original schematic drawing is not included. The underlying 555 timer patent (US 3,652,888) expired in 1988.
+
+- **`examples/karplus-strong.json`** — implements the Karplus-Strong plucked-string synthesis algorithm published by Kevin Karplus and Alex Strong in *Computer Music Journal*, Vol. 7, No. 2 (1983). US patents 4,649,783 and 4,622,877 (Leland Stanford Junior University) expired in March 2004 and June 2005 respectively. The algorithm is now freely usable.
+
+- **`examples/fm-bell.json`** — two-operator FM synthesis as published by John M. Chowning in the *Journal of the Audio Engineering Society* Vol. 21 No. 7 (1973). US patent 4,018,121 (Leland Stanford Junior University, exclusively licensed to Yamaha) expired in April 1994. The algorithm is now freely usable. *Not affiliated with or endorsed by Yamaha Corporation; any resemblance to the DX7 or other Yamaha FM synthesizers is coincidental and reflects shared underlying mathematics.*
+
+- **`examples/divider-clock-tree.json`** — standard binary-ripple-counter topology (textbook material; canonical commercial implementations include the 74HC4040 12-stage counter family from the 1970s). No specific authorship to credit; the technique is generic logic-design coursework.
+
+- **`examples/hihat.json`** — standard subtractive-synthesis hi-hat (filtered noise + fast envelope). No specific authorship to credit; the technique predates consumer electronics and is generic analog-modular methodology. *Not affiliated with or endorsed by Roland Corporation or any drum-machine manufacturer.*
+
+For the other 14 bundled examples (audio demos like `adsr-pulse.json`, visual demos like `color-bars.json`, CPU demos like `cpu-accumulator.json`), the graphs are ChipBlocks's own compositions of permissively-licensed primitives. No external credits required.
+
+**Why the prospective filenames here don't yet exist:** these 5 designs are slated for Sprint 23 ([SPRINT-21.md retro surfacings](SPRINT-21.md) → [OPEN-CHIP-LIBRARY-RESEARCH.md](OPEN-CHIP-LIBRARY-RESEARCH.md)). This section is intentionally pre-populated so the licensing diligence is on file before the implementation lands.
+
+---
+
 ## How attributions are surfaced in the shipped product
 
 When ChipBlocks ships a public release, this `CREDITS.md` content (or a generated equivalent) will be:
