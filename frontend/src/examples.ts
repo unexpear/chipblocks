@@ -264,6 +264,22 @@ export const EXAMPLES: ExampleGraph[] = [
     ],
   },
   {
+    id: 'fm-bell',
+    label: 'FM bell (Chowning two-operator, post-1994 patent-expired)',
+    description: 'Two-operator FM synthesis as published by John M. Chowning, Journal of the Audio Engineering Society Vol. 21 No. 7 (1973). US patent 4,018,121 (Stanford, exclusively licensed to Yamaha for decades) expired April 1994; algorithm is now freely usable. Carrier 440 Hz; modulator at 616 Hz (carrier × 1.4, the non-integer ratio that produces inharmonic bell-like partials); modulation depth 90 for a bright bell timbre. Gate triggers ADSR envelope (attack 1ms, decay 200ms, sustain 0, release 2000ms) — the long release is what makes a bell ring. NOT affiliated with Yamaha; the DX7 used the same patent but a different preset.',
+    nodes: [
+      { id: 'gate',     type: 'gate',   position: { x: 60,  y: 240 }, data: { rate_hz: 1, duty_pct: 5 } },
+      { id: 'fm_voice', type: 'fm',     position: { x: 60,  y: 80  }, data: { carrier_freq: 440, modulator_freq: 616, mod_depth: 90 } },
+      { id: 'env',      type: 'adsr',   position: { x: 380, y: 160 }, data: { attack_ms: 1, decay_ms: 200, sustain_level: 0, release_ms: 2000 } },
+      { id: 'out',      type: 'output', position: { x: 700, y: 160 }, data: {} },
+    ],
+    edges: [
+      { id: 'e1', source: 'fm_voice', target: 'env', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+      { id: 'e2', source: 'gate',     target: 'env', sourceHandle: 'gate-out',  targetHandle: 'gate'     },
+      { id: 'e3', source: 'env',      target: 'out', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+    ],
+  },
+  {
     id: 'atari-punk-console',
     label: 'Atari Punk Console (1980 stepped-tone generator)',
     description: 'Inspired by Forrest M. Mims III\'s 1980 "Stepped Tone Generator" from Engineer\'s Notebook: Integrated Circuit Applications (Radio Shack). Two square-wave oscillators — 220 Hz audio + 20 Hz gating — multiplied together. The slower oscillator chops the faster one into a rhythmic burble, the famous "DIY-synth-101" sound. ChipBlocks reproduces the topology only; the original is an analog 555-timer circuit. Provenance + license in CREDITS.md (555 patent US 3,652,888 expired 1988; circuit topology not copyrightable).',

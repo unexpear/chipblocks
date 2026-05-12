@@ -54,13 +54,13 @@ These reproduce well-known circuit topologies and synthesis algorithms from the 
 | File | What you'll hear / see | Historical source |
 |---|---|---|
 | [`atari-punk-console.json`](atari-punk-console.json) | A rhythmic burbling tone from two interacting square-wave oscillators — the canonical DIY-synth-101 sound. | Forrest M. Mims III, *Engineer's Notebook: Integrated Circuit Applications* (Radio Shack, 1980). 555-timer topology; underlying 555 patent expired 1988. |
+| [`fm-bell.json`](fm-bell.json) | A 1980s bell / electric-piano tone with a long ringing decay — the sound of the FM-synth era. | Chowning, *Journal of the Audio Engineering Society* Vol. 21 No. 7 (1973). US patent 4,018,121 (Stanford) expired April 1994. |
 
 ### Pending (Sprint 23 in flight)
 
 | File (planned) | What you'll hear / see | Historical source |
 |---|---|---|
 | `karplus-strong.json` | A digitally-synthesized plucked-string note that genuinely sounds like a guitar. | Karplus & Strong, *Computer Music Journal* Vol. 7 No. 2 (1983). US patents 4,649,783 + 4,622,877 (Stanford) expired 2004 / 2005. |
-| `fm-bell.json` | A 1980s bell / electric-piano tone — the sound of the Yamaha DX7 era. | Chowning, *Journal of the Audio Engineering Society* Vol. 21 No. 7 (1973). US patent 4,018,121 (Stanford) expired April 1994. |
 | `hihat.json` | A short hi-hat tick — completes the kick + snare drum kit. | Standard subtractive-synthesis technique predating consumer electronics. |
 | `divider-clock-tree.json` *(deferred)* | A descending cascade of slower-and-slower clock ticks audible as a polyrhythmic drum line. | Standard textbook binary-ripple-counter (74HC4040 family, 1970s). |
 
