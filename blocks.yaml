@@ -128,7 +128,7 @@
 
 - type: lfo
   label: LFO
-  description: "Low-frequency oscillator (1-30 Hz, 4 shapes) for vibrato + slow gating"
+  description: "Low-frequency oscillator (0.001-30 Hz, 4 shapes) for vibrato + slow gating + drone sweeps"
   color: '#80cbc4'
   category: source
   componentPath: frontend/src/blocks/LfoNode.tsx
@@ -139,19 +139,28 @@
   parameters:
     rate:
       type: int
-      min: 1
+      min: 0
       max: 30
       default: 5
-      ariaLabel: Rate in hertz (1 to 30)
+      ariaLabel: Rate in hertz (0 to 30)
       unit: Hz
       backendParam: rate_hz
       backendNeedsSampleRate: true
+    rate_millihz:
+      type: int
+      min: 0
+      max: 999
+      default: 0
+      ariaLabel: Rate fractional part in millihertz (0 to 999)
+      unit: mHz
+      backendParam: rate_millihz
     shape:
       type: string
       enum: [sine, triangle, square, sawtooth]
       default: sine
       ariaLabel: LFO waveform shape
-  cssMinWidth: 140
+  cssMinWidth: 160
+  cssMinHeight: 140
   tags: []
 
 - type: wavetable

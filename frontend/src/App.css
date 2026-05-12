@@ -791,7 +791,8 @@
 
 .block-lfo {
   border-color: #80cbc4;
-  min-width: 140px;
+  min-height: 140px;
+  min-width: 160px;
 }
 
 .block-wavetable {

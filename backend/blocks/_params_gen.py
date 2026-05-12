@@ -26,6 +26,8 @@ def build_params(node_type: str, data: dict) -> dict:
     elif node_type == "lfo":
         if "rate" in data:
             params["rate_hz"] = int(data["rate"])
+        if "rate_millihz" in data:
+            params["rate_millihz"] = int(data["rate_millihz"])
         if "shape" in data:
             params["shape"] = str(data["shape"])
         params["sample_rate"] = SAMPLE_RATE

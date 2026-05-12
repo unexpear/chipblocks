@@ -1309,15 +1309,17 @@ describe('AudioSum block', () => {
 })
 
 describe('LFO block', () => {
-  it('renders title with 0 inputs, 1 output, and rate + shape controls', () => {
+  it('renders title with 0 inputs, 1 output, and rate + millihz + shape controls', () => {
     const { container } = wrap(
-      <LfoNode {...nodePropsBase('lfo-1')} data={{ rate: 5, shape: 'sine' }} />,
+      <LfoNode {...nodePropsBase('lfo-1')} data={{ rate: 5, rate_millihz: 0, shape: 'sine' }} />,
     )
     expect(container.querySelector('.block-title')?.textContent).toBe('LFO')
     expect(countHandles(container, 'target')).toBe(0)
     expect(countHandles(container, 'source')).toBe(1)
-    const input = container.querySelector<HTMLInputElement>('input[type="number"]')
-    expect(input?.value).toBe('5')
+    const inputs = container.querySelectorAll<HTMLInputElement>('input[type="number"]')
+    expect(inputs.length).toBe(2)
+    expect(inputs[0].value).toBe('5')
+    expect(inputs[1].value).toBe('0')
     const select = container.querySelector<HTMLSelectElement>('select')
     expect(select?.value).toBe('sine')
   })
@@ -1325,12 +1327,21 @@ describe('LFO block', () => {
   it('out-of-range rate (50) shows an error', async () => {
     const user = userEvent.setup()
     const { container } = wrap(
-      <LfoNode {...nodePropsBase('lfo-2')} data={{ rate: 5, shape: 'square' }} />,
+      <LfoNode {...nodePropsBase('lfo-2')} data={{ rate: 5, rate_millihz: 0, shape: 'square' }} />,
     )
     const input = container.querySelector<HTMLInputElement>('input[type="number"]')!
     await user.clear(input)
     await user.type(input, '50')
-    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/1.*30/)
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/0.*30/)
+  })
+
+  it('accepts sub-Hz via rate_millihz field (rate=0, millihz=500)', () => {
+    const { container } = wrap(
+      <LfoNode {...nodePropsBase('lfo-3')} data={{ rate: 0, rate_millihz: 500, shape: 'sine' }} />,
+    )
+    const inputs = container.querySelectorAll<HTMLInputElement>('input[type="number"]')
+    expect(inputs[0].value).toBe('0')
+    expect(inputs[1].value).toBe('500')
   })
 })
 

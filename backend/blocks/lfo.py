@@ -2,11 +2,18 @@
 LFO block — low-frequency oscillator (8-bit signed) for slow modulation.
 
 Like Wavetable in shape but tuned for sub-audio rates: a 32-bit phase
-accumulator gives precise pitch resolution down to ~0.01 Hz, and the
-configured frequency range is 1-30 Hz — the canonical territory for
-vibrato (4-8 Hz wobble), tremolo (4-10 Hz amplitude wobble), and
+accumulator gives precise pitch resolution down to 0.001 Hz, and the
+configured frequency range is 0.001-30 Hz — the canonical territory
+for vibrato (4-8 Hz wobble), tremolo (4-10 Hz amplitude wobble),
 slow gating (1-30 Hz pattern triggers like the original Atari Punk
-Console's potentiometer-swept second oscillator).
+Console's potentiometer-swept second oscillator), and very slow filter
+sweeps (down to ~0.1 Hz for drone-style breathing pads).
+
+The `rate` parameter is in whole hertz (0-30) and `rate_millihz` adds
+0-999 millihertz on top. Effective rate is `rate + rate_millihz/1000`.
+At rate=0, rate_millihz=500, the LFO runs at 0.5 Hz (period = 2 sec
+at 44.1 kHz). The minimum non-zero step is 1 millihertz; if both
+fields are 0, the step is forced to 1 millihertz to avoid a stuck DC.
 
 Output: `audio-out` — `Signal(signed(8))`. Reads cyclically through a
 256-entry signed-8-bit lookup table at the configured frequency. The
@@ -69,11 +76,12 @@ def _build_table(shape: str) -> list[int]:
 
 
 class Lfo(Elaboratable):
-    """Low-frequency oscillator with 4 waveform shapes; 1-30 Hz range."""
+    """Low-frequency oscillator with 4 waveform shapes; 0.001-30 Hz range."""
 
     def __init__(
         self,
         rate_hz: int = 5,
+        rate_millihz: int = 0,
         shape: str = "sine",
         sample_rate: int = 44100,
     ):
@@ -81,7 +89,8 @@ class Lfo(Elaboratable):
             raise ValueError(
                 f"Unknown LFO shape: {shape!r}. Allowed: {SHAPES}"
             )
-        self.rate_hz = max(1, min(30, int(rate_hz)))
+        self.rate_hz = max(0, min(30, int(rate_hz)))
+        self.rate_millihz = max(0, min(999, int(rate_millihz)))
         self.shape = shape
         self.sample_rate = sample_rate
         self._table = _build_table(shape)
@@ -98,7 +107,13 @@ class Lfo(Elaboratable):
         # step is (2^32 // 44100) ≈ 97391, giving period exactly 44100
         # samples = 1.0 sec = 1 Hz. Compare to a 16-bit phase: step
         # rounds to 1 at low frequencies, giving 0.67 Hz instead of 1 Hz.
-        step = max(1, (1 << 32) * self.rate_hz // self.sample_rate)
+        #
+        # Total rate in millihertz lets the user dial down to 1 mHz
+        # (one cycle every 1000 seconds), which the 32-bit accumulator
+        # can still resolve: step at 1 mHz = (2^32 * 1) // (44100 * 1000)
+        # ≈ 97 — small but well clear of zero.
+        total_millihz = self.rate_hz * 1000 + self.rate_millihz
+        step = max(1, (1 << 32) * total_millihz // (self.sample_rate * 1000))
         phase = Signal(32)
         m.d.sync += phase.eq(phase + step)
 

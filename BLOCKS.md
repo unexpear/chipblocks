@@ -199,7 +199,7 @@ A square-wave oscillator whose pitch is **modulated by an audio-rate input**. Un
 
 ### LFO (low-frequency oscillator)
 
-A slow oscillator (1-30 Hz) for vibrato, tremolo, slow gating, and other sub-audio modulation roles. The audio oscillator blocks (oscillator / triangle / sawtooth / sine / wavetable) all floor at 20 Hz — appropriate for audio, too fast for canonical vibrato (4-8 Hz) or for sweeping the Atari Punk Console's 1-30 Hz gating range. The LFO fills that gap with its own 32-bit phase accumulator (wider than the audio oscillators' 16-bit phase) so the per-step resolution stays musical down to ~0.01 Hz.
+A slow oscillator (0.001-30 Hz) for vibrato, tremolo, slow gating, drone sweeps, and other sub-audio modulation roles. The audio oscillator blocks (oscillator / triangle / sawtooth / sine / wavetable) all floor at 20 Hz — appropriate for audio, too fast for canonical vibrato (4-8 Hz), for sweeping the Atari Punk Console's 1-30 Hz gating range, or for slow drone-style filter sweeps (0.1-1 Hz). The LFO fills that gap with its own 32-bit phase accumulator (wider than the audio oscillators' 16-bit phase) so the per-step resolution stays musical down to 1 millihertz (one cycle per 1000 seconds).
 
 **Inputs / outputs**
 
@@ -211,20 +211,22 @@ A slow oscillator (1-30 Hz) for vibrato, tremolo, slow gating, and other sub-aud
 
 | Name | Type | Range (frontend / backend) | Default | What it does |
 |---|---|---|---|---|
-| `rate` | integer Hz | 1–30 / 1–30 (clamped) | 5 | LFO rate. 4-8 Hz is canonical vibrato; 1-3 Hz is slow drift; 10-30 Hz is gating territory |
+| `rate` | integer Hz | 0–30 / 0–30 (clamped) | 5 | Whole-hertz part of LFO rate. 4-8 Hz is canonical vibrato; 1-3 Hz is slow drift; 10-30 Hz is gating territory; 0 means "sub-Hz only" (use `rate_millihz`) |
+| `rate_millihz` | integer mHz | 0–999 / 0–999 (clamped) | 0 | Millihertz part added on top of `rate`. Combined with `rate=0` lets you dial 0.001-0.999 Hz; combined with `rate≥1` adds 0.001-0.999 Hz to the whole-hertz value |
 | `shape` | enum | `sine` / `triangle` / `square` / `sawtooth` | `sine` | Waveform shape (256-entry lookup table picked at construction time) |
 
-**Behavior.** 32-bit phase accumulator advances by `step = (2^32 × rate) / sample_rate` per sample. The top 8 bits of the phase index a 256-entry signed-8-bit lookup table whose contents depend on `shape`. At `rate=1` the step is ~97 391, so one full cycle = `2^32 / 97391 ≈ 44100` samples = exactly 1.0 second — sub-Hz precision is the headline benefit over reusing a Wavetable block at low frequencies.
+**Behavior.** 32-bit phase accumulator advances by `step = (2^32 × total_millihz) / (sample_rate × 1000)` per sample, where `total_millihz = rate × 1000 + rate_millihz`. The top 8 bits of the phase index a 256-entry signed-8-bit lookup table whose contents depend on `shape`. At `rate=1, rate_millihz=0` the step is ~97 391, so one full cycle = `2^32 / 97391 ≈ 44100` samples = exactly 1.0 second; at `rate=0, rate_millihz=500` (0.5 Hz) the period doubles to 88 200 samples = 2 sec. If both `rate` and `rate_millihz` are 0, the step is forced to 1 to avoid a stuck DC output.
 
 **Common usage.**
 
 - **Canonical vibrato (4-8 Hz)**: LFO (sine, 6 Hz) → VCO.freq-in. Sub-20-Hz LFO rates that the audio oscillators couldn't reach.
 - **Tremolo (4-10 Hz amplitude wobble)**: LFO (sine, 6 Hz) → Multiply.in-1; your audio carrier → Multiply.in-2. The LFO's amplitude modulates the carrier's loudness.
-- **Slow filter sweeps**: LFO (sine, 0.5-2 Hz) → a future voltage-controlled filter input.
+- **Slow filter sweeps (drone music)**: LFO (sine, `rate=0, rate_millihz=500` = 0.5 Hz) → VCF.cutoff-in. The classic "wow" sound of subtractive synth drones, where the filter breathes in and out over a 2-second cycle.
+- **Very slow drift**: LFO (sine, `rate=0, rate_millihz=100` = 0.1 Hz) → any modulation input. 10-second period — perfect for ambient pads where the user shouldn't be able to identify the periodicity.
 - **Gating patterns / Atari Punk Console**: LFO (square or sawtooth, 1-30 Hz) → Multiply.in-2 with audio on Multiply.in-1. The square shape gives hard on/off gating; sawtooth gives a ramp-shaped modulation. Matches Mims's 1980 design where the second 555 timer was pot-swept across 1-30 Hz.
 - **Slow drone variation**: LFO (sine, 1-2 Hz) → controlling almost anything — adds gentle continuous variation to an otherwise static patch.
 
-**Why a separate block from Wavetable:** Wavetable is tuned for audio rates (20-20 000 Hz, 16-bit phase, four timbres aimed at musical waveforms — sine / pulse_25 / ramp_up / formant). The LFO is tuned for sub-audio rates (1-30 Hz, 32-bit phase, four modulation-friendly shapes — sine / triangle / square / sawtooth). Same internal pattern (phase accumulator + lookup table), different parameter regime + different shape set + finer phase resolution.
+**Why a separate block from Wavetable:** Wavetable is tuned for audio rates (20-20 000 Hz, 16-bit phase, four timbres aimed at musical waveforms — sine / pulse_25 / ramp_up / formant). The LFO is tuned for sub-audio rates (0.001-30 Hz, 32-bit phase + millihertz parameter, four modulation-friendly shapes — sine / triangle / square / sawtooth). Same internal pattern (phase accumulator + lookup table), different parameter regime + different shape set + much finer phase resolution.
 
 ### Wavetable
 

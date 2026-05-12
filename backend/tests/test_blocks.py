@@ -2121,6 +2121,30 @@ def test_lfo_square_shape_alternates_full_range():
     )
 
 
+def test_lfo_sub_hz_via_rate_millihz(run_synth, wav_samples):
+    """LFO with rate=0 + rate_millihz=500 should run at 0.5 Hz: one
+    full sine cycle every 2 seconds = 2 zero-crossings per 2 seconds.
+    This validates the millihertz fractional-Hz parameter that closes
+    the long-standing 1-Hz floor on the LFO."""
+    graph = {
+        "nodes": [
+            {"id": "lfo", "type": "lfo",
+             "data": {"rate": 0, "rate_millihz": 500, "shape": "sine"}},
+            _output_node(),
+        ],
+        "edges": [
+            _edge("e1", "lfo", "out", "audio-out", "audio-in"),
+        ],
+    }
+    samples = wav_samples(run_synth(graph, duration_s=2))
+    crossings = _count_zero_crossings(samples)
+    # 0.5 Hz over 2 sec = 1 full cycle = 2 zero-crossings. Allow ±1.
+    assert abs(crossings - 2) <= 1, (
+        f"LFO at 0.5 Hz (rate=0, rate_millihz=500): expected ~2 "
+        f"zero-crossings over 2 sec, got {crossings}"
+    )
+
+
 def test_vco_negative_modulation_lowers_pitch(run_synth, wav_samples):
     """Mirror of the positive case: freq-in=-128 should drop pitch
     BELOW base_freq. With base_freq=440 and range=100, freq-in=-128

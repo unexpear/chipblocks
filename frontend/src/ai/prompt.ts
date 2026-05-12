@@ -89,9 +89,10 @@ The block table below is the machine-readable shape of every block: name + one-l
 - Parameter \`base_freq\`: 20–20000 Hz (default 440)
 - Parameter \`range\`: 1–1000 Hz (default 100)
 
-**lfo** — Low-frequency oscillator (1-30 Hz, 4 shapes) for vibrato + slow gating
+**lfo** — Low-frequency oscillator (0.001-30 Hz, 4 shapes) for vibrato + slow gating + drone sweeps
 - Output port \`audio-out\` (audio-s8)
-- Parameter \`rate\`: 1–30 Hz (default 5)
+- Parameter \`rate\`: 0–30 Hz (default 5)
+- Parameter \`rate_millihz\`: 0–999 mHz (default 0)
 - Parameter \`shape\`: (default "sine")
 
 **wavetable** — Morphable single-cycle waveform (4 preset shapes)
@@ -326,9 +327,10 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual b
 - Parameter \`base_freq\`: 20–20000 Hz (default 440) — centre pitch when \`freq-in\` is silent
 - Parameter \`range\`: 1–1000 Hz (default 100) — how far the pitch sweeps for a full-scale ±128 input
 
-**lfo** — low-frequency oscillator (1-30 Hz) for sub-audio modulation. The audio oscillators all floor at 20 Hz — appropriate for audio, too fast for canonical vibrato (4-8 Hz) or for the Atari Punk Console's 1-30 Hz gating sweep. LFO has its own 32-bit phase accumulator so the rate is precise down to ~0.01 Hz. Four waveform shapes (sine for smooth vibrato / tremolo, triangle as a sine alternative with linear edges, square for hard on/off gating, sawtooth for ramp modulation). Output is audio-s8 like the audio oscillators, so it composes with everything: drive VCO.freq-in for vibrato, drive Multiply.in for tremolo / amplitude-modulation / gating, drive future filter-modulation inputs for slow filter sweeps.
+**lfo** — low-frequency oscillator (0.001-30 Hz) for sub-audio modulation. The audio oscillators all floor at 20 Hz — appropriate for audio, too fast for canonical vibrato (4-8 Hz), for the Atari Punk Console's 1-30 Hz gating sweep, or for slow drone-style filter sweeps (0.1-1 Hz). LFO has its own 32-bit phase accumulator so the rate is precise down to 1 millihertz (one cycle per 1000 seconds). The rate is split into two integer fields: \`rate\` is whole hertz (0-30) and \`rate_millihz\` adds 0-999 millihertz on top, giving the full 0.001-30 Hz range. So \`rate=0, rate_millihz=500\` = 0.5 Hz (canonical drone sweep), \`rate=5, rate_millihz=500\` = 5.5 Hz, \`rate=12, rate_millihz=0\` = 12 Hz. Four waveform shapes (sine for smooth vibrato / tremolo, triangle as a sine alternative with linear edges, square for hard on/off gating, sawtooth for ramp modulation). Output is audio-s8 like the audio oscillators, so it composes with everything: drive VCO.freq-in for vibrato, drive Multiply.in for tremolo / amplitude-modulation / gating, drive VCF.cutoff-in for slow filter sweeps.
 - Output port \`audio-out\`
-- Parameter \`rate\`: 1–30 Hz (default 5) — LFO rate; 4-8 Hz canonical vibrato, 1-3 Hz slow drift, 10-30 Hz gating
+- Parameter \`rate\`: 0–30 Hz (default 5) — whole-hertz part of LFO rate; 4-8 Hz canonical vibrato, 1-3 Hz slow drift, 10-30 Hz gating, 0 for sub-Hz only
+- Parameter \`rate_millihz\`: 0–999 mHz (default 0) — millihertz part added on top of \`rate\`; lets you dial sub-Hz rates like 0.5 Hz (rate=0, millihz=500) or 1.25 Hz (rate=1, millihz=250)
 - Parameter \`shape\`: one of "sine" / "triangle" / "square" / "sawtooth" (default "sine")
 
 **noise** — pseudo-random 8-bit signed source — emits a stream of random-sounding-but-deterministic numbers (internally a 16-bit Galois LFSR, a tiny circuit that cycles through 65535 values before repeating). Useful for snare drums, percussion textures, and noise modulation.
