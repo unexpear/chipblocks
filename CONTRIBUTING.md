@@ -32,7 +32,7 @@ npm run dev                   # hot-reload Electron dev mode
 
 - The high-level process model (Electron main / sandboxed renderer / WSL2 / Python backend).
 - The IPC contract surfaces (`window.chipblocks` and `window.ai`).
-- The 8-file cookbook for adding a new block.
+- The block-manifest walkthrough for adding a new block.
 - The build-target system (FPGABoard profiles for FPGA, separate `tinytapeout.py` for ASIC submission).
 - Testing layout (pytest in `backend/tests/`, vitest in `frontend/test/`).
 
@@ -67,19 +67,27 @@ CI runs both suites on every push to master; the cross-platform release pipeline
 
 ## Adding a new block
 
-The full cookbook is in [ARCHITECTURE.md](ARCHITECTURE.md). Quick sketch:
+We use a block manifest. Cross-cutting block metadata (label, color, ports, parameters, etc.) lives in a single YAML file at the repo root: see [`blocks.yaml`](blocks.yaml) and [ADR-003](ADR-003-block-manifest.md) for the design.
 
-1. `backend/blocks/<name>.py` — Amaranth Elaboratable
-2. `backend/blocks/__init__.py` — register in BLOCK_REGISTRY
-3. `backend/synth.py` — params switch case
-4. `frontend/src/blocks/<Name>Node.tsx` — React Flow node
-5. `frontend/src/blocks/index.ts` — register in nodeTypes + AppNode
-6. `frontend/src/Palette.tsx` — palette entry + defaults
-7. `frontend/src/App.css` — `.block-<name>` border
-8. `frontend/src/ai/prompt.ts` — block-library reference + tool schemas
-9. Tests: `backend/tests/test_blocks.py` + `frontend/test/blocks.test.tsx`
+To add a block, you write three files:
 
-The 8-files-per-block cost is tracked as tech-debt item A1 — when block growth slows, we'll likely refactor to a single block-manifest file. Until then, follow the existing pattern.
+1. **One row in [`blocks.yaml`](blocks.yaml)** — copy a row of similar shape and edit. The schema is in [`blocks.schema.json`](blocks.schema.json) next to it.
+2. **`frontend/src/blocks/<Name>Node.tsx`** — the React Flow node component (mirror an existing block of similar shape).
+3. **`backend/blocks/<name>.py`** — the Amaranth Elaboratable (the chip-side logic).
+
+Then run code generation:
+
+```
+cd frontend && npm run codegen
+```
+
+That regenerates the seven cross-cutting files (palette, registries, CSS rules, AI prompt, etc.) from the manifest. Commit the manifest row, your two hand-written files, and the regenerated outputs together.
+
+**Don't hand-edit the generated sections** — CI's `codegen-drift` job will reject your PR if you do. Generated regions inside the seven target files are bracketed by `// @begin codegen ...` / `// @end codegen ...` markers (Python uses `# @begin codegen ...`); anything inside those markers is rewritten on every codegen run.
+
+Tests stay hand-written. Add a property assertion in [`backend/tests/test_blocks.py`](backend/tests/test_blocks.py) and a render test in [`frontend/test/blocks.test.tsx`](frontend/test/blocks.test.tsx). Manifest-integrity checks (the manifest references real files and exported symbols) live in [`frontend/test/manifest.test.ts`](frontend/test/manifest.test.ts) and [`backend/tests/test_manifest.py`](backend/tests/test_manifest.py) — those usually pass automatically if you got the row right.
+
+After landing the block, add a section to [`BLOCKS.md`](BLOCKS.md) under the category heading that matches your manifest row's `category` field.
 
 ## Adding a new build target
 

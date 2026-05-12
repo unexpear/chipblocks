@@ -107,18 +107,81 @@ The Chat sidebar is the only large self-contained component. It owns the agentic
 
 ## Adding a new block
 
-Today it's an 8-file change (tracked as tech-debt item A1 in [ROADMAP.md](ROADMAP.md), to be refactored into a block-manifest format when block growth slows):
+Adding a block is a **3-file change** plus one command. Per [ADR-003](ADR-003-block-manifest.md), cross-cutting block metadata lives in a single manifest at the repo root, and two small scripts (Node + Python) generate the seven cross-cutting registries from it. The two per-block files that contain real logic (the React component and the Amaranth Elaboratable) stay hand-written.
 
-1. **Backend Amaranth Elaboratable**: `backend/blocks/<name>.py`. Constructor takes parameters as kwargs; `elaborate(self, platform)` returns the `Module`. Expose `input_ports` / `output_ports` dicts keyed by React Flow handle id strings.
-2. **Backend registry**: add to `backend/blocks/__init__.py`'s `BLOCK_REGISTRY` and `__all__`.
-3. **synth.py params switch**: `_build_params()` maps node `data` to constructor kwargs for any non-trivial mapping.
-4. **Frontend node component**: `frontend/src/blocks/<Name>Node.tsx`. Mirror an existing block of similar shape (Oscillator for waveform sources, Mixer for combinational two-input, ADSR for multi-row). Use `useValidatedNumber` for any number inputs.
-5. **Frontend registry**: add to `frontend/src/blocks/index.ts`'s `nodeTypes` + `AppNode` union.
-6. **Palette**: add to `frontend/src/Palette.tsx`'s `PALETTE` array + `defaultDataForType()` switch.
-7. **CSS border**: `.block-<name>` rule in `App.css`.
-8. **AI prompt**: extend the block-library section in `frontend/src/ai/prompt.ts`'s `STATIC_SYSTEM` + the param schemas in the `add_node` / `update_node_params` tool descriptions.
+### The three files you write
 
-Test it via `pytest backend/tests/test_blocks.py` (auto-discovers from `BLOCK_REGISTRY`) and `vitest test/blocks.test.tsx` (add a test case).
+1. **`blocks.yaml` row** — one entry in the repo-root manifest. Type id, label, color, category, ports (handle id → bus type), parameters, and the paths to the two hand-written files. The schema lives in [`blocks.schema.json`](blocks.schema.json) next to it; codegen validates against the schema before writing anything. Copy a row of similar shape (an existing audio block for waveform sources, an existing CPU primitive for `data-u8` shapes, etc.) and edit.
+
+2. **`frontend/src/blocks/<Name>Node.tsx`** — the React Flow node component. Mirror an existing block of similar shape: Oscillator for waveform sources, Mixer for combinational two-input, ADSR for multi-row parameter layout. Use the shared `useValidatedNumber` hook for any number inputs.
+
+3. **`backend/blocks/<name>.py`** — the Amaranth Elaboratable (the chip-side logic). Constructor takes parameters as kwargs; `elaborate(self, platform)` returns the `Module`. Expose `input_ports` / `output_ports` dicts keyed by the same handle id strings used in the manifest row.
+
+### Then run code generation
+
+```
+cd frontend
+npm run codegen
+```
+
+This runs both scripts (Node for the frontend, Python for the backend). It validates `blocks.yaml` against the schema, then rewrites the seven generated sections. If the output is byte-identical to what's already on disk, the command exits 0 and you're done. If anything changed, it prints a unified diff and exits non-zero — that diff *is* your change, and you commit it alongside the three hand-written files.
+
+The phrase "code generation" (or just "codegen") here means: a script reads `blocks.yaml` and writes structured code into seven specific places inside the seven cross-cutting files. The places are delimited by marker comments so you can see at a glance what's generated:
+
+```
+// @begin codegen blocks-registry — do not edit; generated from blocks.yaml
+... generated content ...
+// @end codegen blocks-registry
+```
+
+### The seven generated sections (you don't edit these)
+
+| File | What's generated |
+|---|---|
+| `frontend/src/blocks/index.ts` | `import` lines for each component + `nodeTypes` map + `AppNode` union |
+| `frontend/src/blocks/busTypes.ts` | `BLOCK_PORT_TYPES` dict (handle id → bus type per block) |
+| `frontend/src/Palette.tsx` | `PALETTE` array + `defaultDataForType()` switch |
+| `frontend/src/App.css` | `.block-<type>` border-color rules (plus `min-height` / `min-width` for multi-handle blocks) |
+| `frontend/src/ai/prompt.ts` | structural per-block summary in `STATIC_SYSTEM` + tool-call schema enum |
+| `backend/blocks/__init__.py` | `import` lines + `BLOCK_REGISTRY` dict + `__all__` list |
+| `backend/blocks/_params_gen.py` | `build_params(node_type, data)` body (called from a 3-line stable wrapper in `synth.py`) |
+
+The AI prompt's per-block prose (the paragraph or two that says when a block is useful) stays hand-written above the generated section — the generator only emits the structural summary and the tool-call schema.
+
+### Tests stay hand-written
+
+The manifest doesn't cover behavior, so the test suite is the place that asserts what the block actually does:
+
+- **`backend/tests/test_blocks.py`** — add a property-based assertion for your block. Most existing tests check a basic round-trip (input pattern in, expected output pattern out).
+- **`frontend/test/blocks.test.tsx`** — add a render + parameter-editing test case. The harness covers all manifest blocks via the manifest, so this is mostly per-block edge cases (e.g. ROM's textarea).
+
+A separate small test (`frontend/test/manifest.test.ts` + `backend/tests/test_manifest.py`) asserts that every block in `blocks.yaml` maps to a real `.tsx` and `.py` file on disk with the declared exported symbol — catches the "manifest references a file that doesn't exist" failure mode.
+
+### Reference doc
+
+[`BLOCKS.md`](BLOCKS.md) is the user-facing per-block reference (ports, parameters, common-usage notes). It's hand-written. After landing a new block, add a new section under the right category heading. The category heading itself matches the `category` field in your manifest row.
+
+### What CI catches
+
+A single CI job called `codegen-drift` runs both scripts on every PR and fails if the working tree diverges from what the manifest would produce. Two common failure shapes:
+
+- **You edited `blocks.yaml` and forgot `npm run codegen`.** CI fails with a diff showing the generated sections it would have written.
+- **You hand-edited inside a `@begin codegen` / `@end codegen` region.** CI fails with the same diff in reverse — your edit gets rewritten away on the next codegen run, so the PR is rejected and you're nudged to put the change in the manifest instead.
+
+A typical drift failure looks like:
+
+```
+FAIL: scripts/codegen-frontend.mjs reports drift in frontend/src/blocks/index.ts
+--- a/frontend/src/blocks/index.ts
++++ b/frontend/src/blocks/index.ts  (regenerated from blocks.yaml)
+@@ -47,6 +47,7 @@
+ import { AndNode } from './AndNode';
+ import { OrNode } from './OrNode';
+ import { XorNode } from './XorNode';
++import { ShifterNode } from './ShifterNode';
+```
+
+The fix is always: `cd frontend && npm run codegen && git add -u`.
 
 ## Adding a new build target
 
@@ -152,19 +215,21 @@ Eval script at `scripts/eval-ai.ts` runs 7 representative queries against the li
 ## Testing
 
 ```
-backend/tests/        pytest, 63 tests + 2 skipped, ~110 s
+backend/tests/        pytest, 189 tests + 2 skipped, ~85 s
   test_blocks.py             47 per-block property assertions (zero-crossing rate, accumulator round-trip, sign-reinterpretation pass-through, register-file independent-addr round-trip, etc.) — covers all 42 blocks (including the 5 visual blocks, the 2 bus-composition blocks plus Reinterpret, the 7 CPU primitives Adder / Subtractor / Comparator / Mux / Register / RAM / ROM, the Sprint 20 Register File, the Counter.addr-out extension, plus a mixed-logic pipeline smoke test, a CPU-primitives pipeline smoke test that exercises Reinterpret end-to-end, and a Register File multi-port pipeline smoke)
   test_synth_pipeline.py     9 end-to-end tests against examples/*.json (3 exercise the visual path: friendly-error rejection on ▶ Play, .pcf carries VGA pin assignments, and an end-to-end build of the color-bars graph through Yosys + nextpnr-ice40 + icepack to a real iCEBreaker bitstream — that one is skipped when OSS CAD Suite isn't on PATH)
   test_tinytapeout.py        8 TT bundle shape + info.yaml schema tests
+  test_manifest.py           126 dynamic cases (42 blocks × 3 invariants) added in Sprint 21: backendPath file exists, backendClass importable, registered in BLOCK_REGISTRY with matching __name__
 
-frontend/test/        vitest, 161 tests, ~9 s
+frontend/test/        vitest, 287 tests, ~9 s
   ipc-contract.test.ts          renderer↔main IPC mock tests (synth/build/AI)
   blocks.test.tsx               block render + parameter editing + range validation (84 tests across all 42 blocks)
-  registries-aligned.test.ts    cross-registry consistency lint — PALETTE / BLOCK_PORT_TYPES / nodeTypes / STATIC_SYSTEM all cover the same 42 blocks (catches the kind of drift that hit ByteConstant in Sprint 19)
+  registries-aligned.test.ts    cross-registry consistency lint — PALETTE / BLOCK_PORT_TYPES / nodeTypes / STATIC_SYSTEM all cover the same 42 blocks (catches the kind of drift that hit ByteConstant in Sprint 19; arguably redundant after Sprint 21's manifest landed, kept for now as belt-and-suspenders)
   bus-types.test.ts             bus-type compatibility helper (29 tests covering the Sprint 16 typed-bus system)
   save-load.test.tsx            save/load roundtrip + m5 rejection paths
   examples-consistency.test.ts  examples.ts ↔ examples/*.json drift check (now also covers color-bars.json)
   classify-backend-error.test.ts friendly-error classifier (14 cases)
+  manifest.test.ts              126 dynamic cases (42 blocks × 3 invariants) added in Sprint 21: componentPath file exists, exports ${PascalCase}Node, registered in nodeTypes
 ```
 
 CI runs both suites on every push to master. The cross-platform installer build runs on tag push; verified end-to-end via a v0.0.0-test pre-flight.

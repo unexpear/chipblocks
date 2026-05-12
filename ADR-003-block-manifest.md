@@ -1,6 +1,6 @@
 # ADR-003: Block manifest as the single source of truth for block metadata
 
-**Status:** Proposed (2026-05-11) · **Deciders:** solo dev (you) + Claude Code · **Implements:** Sprint 21 (planned; opens after this ADR is accepted)
+**Status:** Accepted (2026-05-11) · Implemented in Sprint 21 (closed 2026-05-12). · **Deciders:** solo dev (you) + Claude Code · See [SPRINT-21.md](SPRINT-21.md) for the implementation log.
 
 > Third project ADR. Builds on [ADR-001](ADR-001-multi-bit-bus-types.md) (typed bus system) and [ADR-002](ADR-002-cpu-primitives.md) (CPU primitive set). With 42 blocks shipping and three sprint retros in a row (S18 / S19 / S20) flagging the same trigger condition, the "8-files-per-block cookbook" has reached the end of its useful life. This ADR specifies the replacement: a single manifest row per block, with codegen producing the registries and tables on both sides of the wire.
 

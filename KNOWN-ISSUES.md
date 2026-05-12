@@ -32,15 +32,13 @@ Full audit + tiered remediation plan: [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESS
 
 **Action**: pick up incrementally as user-facing UI lands. None block launch.
 
-## Block-manifest auto-discovery deferred until block growth slows
+## Block-manifest auto-discovery — **RESOLVED in Sprint 21**
 
-Source: in-conversation `/engineering:system-design` review (2026-05-09) after the multi-domain expansion landed (commits `5be6d05` + `4ec6e8b` + `be0aeca`).
+Tech-debt item A1, originally surfaced in the `/engineering:system-design` review of 2026-05-09 (commits `5be6d05` + `4ec6e8b` + `be0aeca`). Three sprint retros in a row (S18 / S19 / S20) flagged the trigger condition; the deferred response landed in Sprint 21 per [ADR-003](ADR-003-block-manifest.md).
 
-Adding a block touches 8 files (the "block-addition cookbook" in [ARCHITECTURE.md](ARCHITECTURE.md) and [CONTRIBUTING.md](CONTRIBUTING.md)). At 30 blocks this is ~160 lines of mechanical boilerplate per block plus the constant tax of any cross-cutting change (a parameter rename means hunting through synth.py + Palette.tsx + prompt.ts + the Node component + tests). Tracked as tech-debt item A1 in [ROADMAP.md](ROADMAP.md)'s tech-debt workstream since 2026-05-08.
+**Outcome**: `blocks.yaml` at the repo root is now the single source of truth for cross-cutting block metadata. Two codegen scripts (Node + Python) emit seven generated sections delimited by `@begin codegen` / `@end codegen` markers; CI's `codegen-drift` job catches hand-edits. Per-block hand-edited surface dropped from 9 files (the "8-file cookbook" plus the AI prompt) to 3 files (1 manifest row + 1 `.tsx` + 1 `.py`).
 
-**Why deferred**: the right shape (per-block `BLOCK_TYPE` + `PARAM_SCHEMA` + `DESCRIPTION` constants discovered via filesystem glob; `frontend/src/blocks/index.ts` likewise auto-imports via `import.meta.glob`) only earns its keep when block-shape variance is low. Today VGA Timing has 5 outputs, Counter has clocked semantics with audio-shaped output, ADSR has multi-row UI — the manifest format would have to model all of that, and freezing the shape early forces the next 5 blocks to fit a frozen mold.
-
-**Action**: the trigger is **block #35 OR five consecutive blocks fitting the same shape, whichever comes first**. Until then, keep the cookbook. A cheaper interim step: hoist `BLOCK_REGISTRY` + `__all__` populating into a `pathlib.Path(__file__).parent.glob('*.py')` scan in `backend/blocks/__init__.py` (each module declares a module-level `BLOCK_TYPE = "and"` constant). Retires 1 file from the cookbook per block; ~30 minutes of work; no shape freeze.
+**See**: [ADR-003-block-manifest.md](ADR-003-block-manifest.md) for the design and [SPRINT-21.md](SPRINT-21.md) for the implementation log + retro.
 
 ## Multi-domain clock plumbing for mixed audio + visual graphs
 
