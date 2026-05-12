@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "app": "ChipBlocks",
+  "savedAt": "2026-05-12T00:00:00.000Z",
+  "viewport": { "x": 0, "y": 0, "zoom": 1 },
+  "nodes": [
+    {
+      "id": "noise",
+      "type": "noise",
+      "position": { "x": 60, "y": 80 },
+      "data": {}
+    },
+    {
+      "id": "gate",
+      "type": "gate",
+      "position": { "x": 60, "y": 320 },
+      "data": { "rate_hz": 2, "duty_pct": 1 }
+    },
+    {
+      "id": "pluck_env",
+      "type": "adsr",
+      "position": { "x": 320, "y": 200 },
+      "data": { "attack_ms": 1, "decay_ms": 5, "sustain_level": 0, "release_ms": 1 }
+    },
+    {
+      "id": "mixer",
+      "type": "mixer",
+      "position": { "x": 600, "y": 200 },
+      "data": {}
+    },
+    {
+      "id": "delay",
+      "type": "delay",
+      "position": { "x": 860, "y": 200 },
+      "data": { "delay_samples": 400 }
+    },
+    {
+      "id": "lowpass",
+      "type": "lowpass",
+      "position": { "x": 600, "y": 380 },
+      "data": { "cutoff_hz": 4000 }
+    },
+    {
+      "id": "out",
+      "type": "output",
+      "position": { "x": 1120, "y": 200 },
+      "data": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "noise",
+      "target": "pluck_env",
+      "sourceHandle": "audio-out",
+      "targetHandle": "audio-in"
+    },
+    {
+      "id": "e2",
+      "source": "gate",
+      "target": "pluck_env",
+      "sourceHandle": "gate-out",
+      "targetHandle": "gate"
+    },
+    {
+      "id": "e3",
+      "source": "pluck_env",
+      "target": "mixer",
+      "sourceHandle": "audio-out",
+      "targetHandle": "in-1"
+    },
+    {
+      "id": "e4",
+      "source": "lowpass",
+      "target": "mixer",
+      "sourceHandle": "audio-out",
+      "targetHandle": "in-2"
+    },
+    {
+      "id": "e5",
+      "source": "mixer",
+      "target": "delay",
+      "sourceHandle": "mix-out",
+      "targetHandle": "audio-in"
+    },
+    {
+      "id": "e6",
+      "source": "delay",
+      "target": "lowpass",
+      "sourceHandle": "audio-out",
+      "targetHandle": "audio-in"
+    },
+    {
+      "id": "e7",
+      "source": "mixer",
+      "target": "out",
+      "sourceHandle": "mix-out",
+      "targetHandle": "audio-in"
+    }
+  ]
+}
