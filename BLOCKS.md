@@ -1,6 +1,6 @@
 # ChipBlocks block library
 
-> **Last updated:** 2026-05-10 · Reference for the 40 blocks shipping in v0.1.0-alpha. The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). For how the renderer talks to the backend and how to add another block, see [ARCHITECTURE.md](ARCHITECTURE.md).
+> **Last updated:** 2026-05-10 · Reference for the 42 blocks shipping in v0.1.0-alpha. The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). For how the renderer talks to the backend and how to add another block, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 This document describes what each block does, what its inputs and outputs are, what its parameters mean, and roughly how it sounds (or looks). Audio blocks are 8-bit signed (–128..+127) at a 44.1 kHz sample rate. Audio handles carry signed 8-bit samples; gate / clock handles carry 1-bit signals; visual handles are short single-token names (`r`, `g`, `b`, `hsync`, `vsync`, `visible`, `x`, `y`) following the convention used in every open-source VGA core. Edges are direction-checked by React Flow at edit time.
 
@@ -17,6 +17,7 @@ A note on parameter ranges: the React Flow node components enforce **musically s
 - [Wavetable](#wavetable)
 - [Noise](#noise)
 - [Constant](#constant)
+- [Byte Constant](#byte-constant)
 
 ### Modulation and control
 
@@ -62,6 +63,7 @@ A note on parameter ranges: the React Flow node components enforce **musically s
 - [Mux](#mux)
 - [Register](#register)
 - [RAM](#ram)
+- [Register File](#register-file)
 - [ROM](#rom)
 
 ### Bus
@@ -836,6 +838,28 @@ Single 8-bit data register with synchronous write-enable. The store latches `dat
 **Behavior.** Backed by `amaranth.lib.memory.Memory` (the same primitive Delay uses) zero-initialized at reset. Both write and read share the address port; on iCE40 the 16 × 8-bit array maps to a single BRAM (0.4% of one 4 KB block).
 
 **Common usage.** Drive `addr` from Counter.addr-out so the RAM walks through 16 cells on a clock tick. Pair the write side with a Gate on `write-enable` to log values into successive cells; flip write-enable low and the same address sweep reads them back. The scratchpad half of the "ROM holds the program, RAM holds the working data" CPU pattern.
+
+### Register File
+
+16 × 8-bit storage with **independent read and write addresses**. Same storage shape as RAM, but reads and writes use separate address ports — in one cycle you can read register N while writing register M. This is how real CPU instruction sets address source and destination registers: `add R1, R2, R3` reads R2 and R3 and writes R1, all in one cycle, decoded from three separate fields of the instruction.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `read-addr` | target | 4-bit unsigned address | Selects which register to read (independent of write) |
+| `write-addr` | target | 4-bit unsigned address | Selects which register to write (independent of read) |
+| `data-in` | target | 8-bit unsigned data | Value to write |
+| `write-enable` | target | 1-bit gate | High = write `data-in` to cell `write-addr` on the next edge |
+| `data-out` | source | 8-bit unsigned data | Combinational read of cell `read-addr` |
+
+**Parameters.** None.
+
+**Behavior.** Backed by `amaranth.lib.memory.Memory`, 16 × 8-bit unsigned cells, zero-initialized at reset, with one combinational read port and one synchronous write port — both independently addressed. On iCE40 this maps to the same single-BRAM footprint as RAM; the extra address port costs no additional storage, only different read/write fan-out from the same memory.
+
+**Register File vs RAM.** The two blocks have the same storage shape and the same `data-in` / `write-enable` / `data-out` ports. The architectural difference is the address: RAM has one `addr` port shared between read and write (the same cycle's read and write target the same cell), while Register File has separate `read-addr` and `write-addr` ports (the cycle's read and write can target *different* cells). Pick RAM for "scratch storage that I sweep through sequentially"; pick Register File for "two operands and a destination" CPU register-file shapes.
+
+**Common usage.** Wire one source into `read-addr` (e.g. Counter.addr-out for a sweep, or a slice of an instruction word for src-register decoding) and a separate source into `write-addr` (a different counter, or another slice of the instruction for dst-register decoding). Pair `data-in` with the output of an Adder/Subtractor/Mux to commit a computed value, and gate `write-enable` per-cycle. The minimum "fetch operands from a register file, compute, write back" CPU loop wires RegisterFile.data-out → Adder.in-a, RegisterFile.data-out (a second instance, with its own `read-addr`) → Adder.in-b, Adder.sum-out → RegisterFile.data-in.
 
 ### ROM
 
