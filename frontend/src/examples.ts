@@ -264,6 +264,22 @@ export const EXAMPLES: ExampleGraph[] = [
     ],
   },
   {
+    id: 'filter-sweep',
+    label: 'Filter sweep (LFO → VCF cutoff modulation on a sawtooth)',
+    description: 'The canonical use case for the Sprint 24 VCF block: a slow 1 Hz sine LFO sweeps the cutoff of a low-pass filter from ~1 Hz up to ~2600 Hz and back, while a 110 Hz sawtooth feeds the filter. The result is the iconic "wow" / "wah" drone-music timbral motion — harmonically-rich saw open with the filter, dark and dull when the filter closes, breathing smoothly between the two. Demonstrates the VCF + LFO combination as the building block for filter modulation in drone / pad / dub-style synthesis. Drive the cutoff-in from any audio source for different effects: an ADSR-shaped Constant gives the classic synth-pluck attack (filter opens on note-on); an audio-rate modulator gives talk-box / vowel-shape effects.',
+    nodes: [
+      { id: 'saw', type: 'sawtooth', position: { x: 60,  y: 80  }, data: { freq: 110 } },
+      { id: 'lfo', type: 'lfo',      position: { x: 60,  y: 280 }, data: { rate: 1, shape: 'sine' } },
+      { id: 'vcf', type: 'vcf',      position: { x: 360, y: 180 }, data: { base_cutoff: 600, range: 2000 } },
+      { id: 'out', type: 'output',   position: { x: 660, y: 180 }, data: {} },
+    ],
+    edges: [
+      { id: 'e1', source: 'saw', target: 'vcf', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+      { id: 'e2', source: 'lfo', target: 'vcf', sourceHandle: 'audio-out', targetHandle: 'cutoff-in' },
+      { id: 'e3', source: 'vcf', target: 'out', sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+    ],
+  },
+  {
     id: 'vibrato',
     label: 'Vibrato (LFO modulating a VCO at canonical 6 Hz)',
     description: 'The canonical use case for the Sprint 24 VCO block, now using the Sprint 24 LFO block at 6 Hz — the textbook vibrato rate. A 6 Hz sine LFO drives the VCO\'s freq-in port; the VCO outputs a 440 Hz square that sweeps ±15 Hz around centre 6 times per second. The result is a singing vibrato wobble. (Earlier revision used a 20 Hz sine oscillator since the audio-frequency sine block bottoms out at 20 Hz; the LFO block solves that by going as low as 1 Hz.) Demonstrates the LFO + VCO combination as the building block for all kinds of audio-rate-controlled-pitch synthesis.',

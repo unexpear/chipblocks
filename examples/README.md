@@ -16,6 +16,7 @@ The table is grouped by what each example demonstrates. Each row links to the `.
 | [`lofi-pad.json`](lofi-pad.json) | Two triangles a major-third apart (220 + 277 Hz), mixed and softly low-passed — sustained drone. | Mixer + Low-pass — multi-voice composition without a polyphony block |
 | [`arpeggio.json`](arpeggio.json) | A slow 4 Hz sawtooth sampled by an 8 Hz clock — sample-and-hold turns the ramp into a quantized note sequence. | Sample-and-Hold + Gate — the classic stair-stepped arpeggiator |
 | [`vibrato.json`](vibrato.json) | A 440 Hz square wave whose pitch wobbles ±15 Hz at a 20 Hz rate. | Sine LFO + VCO — demonstrates the Sprint 24 VCO block's audio-rate frequency modulation |
+| [`filter-sweep.json`](filter-sweep.json) | A 110 Hz sawtooth swept through a low-pass whose cutoff breathes from ~1 Hz to ~2.6 kHz at 1 Hz — the canonical drone "wow" sound. | LFO + VCF — demonstrates the Sprint 24 VCF block's audio-rate cutoff modulation |
 
 ## Audio demos (percussion)
 
