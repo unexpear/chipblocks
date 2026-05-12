@@ -67,27 +67,17 @@ CI runs both suites on every push to master; the cross-platform release pipeline
 
 ## Adding a new block
 
-We use a block manifest. Cross-cutting block metadata (label, color, ports, parameters, etc.) lives in a single YAML file at the repo root: see [`blocks.yaml`](blocks.yaml) and [ADR-003](ADR-003-block-manifest.md) for the design.
+See [BLOCKS-COOKBOOK.md](BLOCKS-COOKBOOK.md) for the canonical walkthrough. The short version:
 
-To add a block, you write three files:
+1. Add one row to [`blocks.yaml`](blocks.yaml) — copy a row of similar shape and edit.
+2. Write `frontend/src/blocks/<Name>Node.tsx`.
+3. Write `backend/blocks/<name>.py`.
+4. `cd frontend && npm run codegen`.
+5. Commit the manifest row, your two hand-written files, and the regenerated cross-cutting files together.
 
-1. **One row in [`blocks.yaml`](blocks.yaml)** — copy a row of similar shape and edit. The schema is in [`blocks.schema.json`](blocks.schema.json) next to it.
-2. **`frontend/src/blocks/<Name>Node.tsx`** — the React Flow node component (mirror an existing block of similar shape).
-3. **`backend/blocks/<name>.py`** — the Amaranth Elaboratable (the chip-side logic).
+**Don't hand-edit the generated sections** — CI's `codegen-drift` job will reject your PR. Generated regions are bracketed by `@begin codegen <slot>` / `@end codegen <slot>` marker comments. See the cookbook for the 7 generated section names, the 5 edge-case patterns (`cssMinHeight`, port-naming, `backendNeedsSampleRate`, `intArray` parameters, the `tags` field), and the typical drift-failure shapes.
 
-Then run code generation:
-
-```
-cd frontend && npm run codegen
-```
-
-That regenerates the seven cross-cutting files (palette, registries, CSS rules, AI prompt, etc.) from the manifest. Commit the manifest row, your two hand-written files, and the regenerated outputs together.
-
-**Don't hand-edit the generated sections** — CI's `codegen-drift` job will reject your PR if you do. Generated regions inside the seven target files are bracketed by `// @begin codegen ...` / `// @end codegen ...` markers (Python uses `# @begin codegen ...`); anything inside those markers is rewritten on every codegen run.
-
-Tests stay hand-written. Add a property assertion in [`backend/tests/test_blocks.py`](backend/tests/test_blocks.py) and a render test in [`frontend/test/blocks.test.tsx`](frontend/test/blocks.test.tsx). Manifest-integrity checks (the manifest references real files and exported symbols) live in [`frontend/test/manifest.test.ts`](frontend/test/manifest.test.ts) and [`backend/tests/test_manifest.py`](backend/tests/test_manifest.py) — those usually pass automatically if you got the row right.
-
-After landing the block, add a section to [`BLOCKS.md`](BLOCKS.md) under the category heading that matches your manifest row's `category` field.
+Tests stay hand-written: property assertion in [`backend/tests/test_blocks.py`](backend/tests/test_blocks.py), render test in [`frontend/test/blocks.test.tsx`](frontend/test/blocks.test.tsx). After landing the block, add a section to [BLOCKS.md](BLOCKS.md) under the category heading.
 
 ## Adding a new build target
 
