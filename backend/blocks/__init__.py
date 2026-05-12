@@ -23,6 +23,7 @@ from .wavetable import Wavetable
 from .noise import Noise
 from .constant import Constant
 from .mixer import Mixer
+from .audiosum import AudioSum
 from .adsr import ADSR
 from .gate import Gate
 from .lowpass import LowPassFilter
@@ -73,6 +74,7 @@ BLOCK_REGISTRY = {
     "noise": Noise,
     "constant": Constant,
     "mixer": Mixer,
+    "audiosum": AudioSum,
     "adsr": ADSR,
     "gate": Gate,
     "lowpass": LowPassFilter,
@@ -123,6 +125,7 @@ __all__ = [
     "Noise",
     "Constant",
     "Mixer",
+    "AudioSum",
     "ADSR",
     "Gate",
     "LowPassFilter",

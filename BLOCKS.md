@@ -1,6 +1,6 @@
 # ChipBlocks block library
 
-> **Last updated:** 2026-05-12 · Reference for the 45 blocks shipping on the master branch (last released as v0.1.0-alpha.9 with 42 blocks; Shifter added in Sprint 22, VCO + LFO added in Sprint 24 via the manifest workflow). The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). Cross-cutting metadata (palette entry, port types, etc.) lives in [`blocks.yaml`](blocks.yaml); see [ADR-003](ADR-003-block-manifest.md) for the manifest design and [ARCHITECTURE.md](ARCHITECTURE.md) for how the renderer talks to the backend and how to add another block.
+> **Last updated:** 2026-05-12 · Reference for the 46 blocks shipping on the master branch (last released as v0.1.0-alpha.9 with 42 blocks; Shifter added in Sprint 22; VCO + LFO + Audio Sum added in Sprint 24 via the manifest workflow). The canonical implementation lives in [`backend/blocks/`](backend/blocks/) (Python + Amaranth HDL) and [`frontend/src/blocks/`](frontend/src/blocks/) (React + TypeScript node components). Cross-cutting metadata (palette entry, port types, etc.) lives in [`blocks.yaml`](blocks.yaml); see [ADR-003](ADR-003-block-manifest.md) for the manifest design and [ARCHITECTURE.md](ARCHITECTURE.md) for how the renderer talks to the backend and how to add another block.
 
 This document describes what each block does, what its inputs and outputs are, what its parameters mean, and roughly how it sounds (or looks). Audio blocks are 8-bit signed (–128..+127) at a 44.1 kHz sample rate. Audio handles carry signed 8-bit samples; gate / clock handles carry 1-bit signals; visual handles are short single-token names (`r`, `g`, `b`, `hsync`, `vsync`, `visible`, `x`, `y`) following the convention used in every open-source VGA core. Edges are direction-checked by React Flow at edit time.
 
@@ -78,6 +78,7 @@ A note on parameter ranges: the React Flow node components enforce **musically s
 ### Mixing and routing
 
 - [Mixer](#mixer)
+- [Audio Sum](#audio-sum)
 - [Output](#output)
 
 ---
@@ -1091,6 +1092,26 @@ Combines two 8-bit signed audio signals by averaging.
 **Behavior.** Combinational arithmetic right-shift on the sum keeps the result inside signed 8-bit range without clipping. (A direct sum of two int8 values would overflow into a 9-bit result; halving makes the operation lossless except for the bottom bit of each input.) For more than two sources, chain Mixers — e.g. a graph with three oscillators uses two Mixers feeding a third.
 
 **Common usage.** Two oscillators detuned a few hertz apart through a Mixer gives chorus / "fat" oscillator sounds. Audio + sub-octave sine through a Mixer gives bass weight.
+
+### Audio Sum
+
+Combines two 8-bit signed audio signals by adding them directly and clamping the result to ±127. Like Mixer except it skips the /2 averaging — useful when you need each input at full amplitude rather than half.
+
+**Inputs / outputs**
+
+| Handle id | Direction | Type | Notes |
+|---|---|---|---|
+| `in-1` | target | signed 8-bit audio | First source |
+| `in-2` | target | signed 8-bit audio | Second source |
+| `audio-out` | source | signed 8-bit audio | `clamp(in-1 + in-2, -128, +127)` |
+
+**Parameters.** None.
+
+**Behavior.** Combinational. The signed sum is computed in a 10-bit-wide intermediate, then saturated to int8 with a 3-way mux. If both inputs are at the rails simultaneously the output clamps, but for typical audio content the sum stays inside range.
+
+**Common usage.** **Karplus-Strong plucked-string feedback loops.** With Mixer in the loop, every cycle halves the feedback amplitude — the string decays in ~60 ms (a percussive click). With Audio Sum and a separate feedback-gain Multiply (× Constant 120-127, giving 0.94-0.99 per cycle), the decay stretches to hundreds of milliseconds — a recognizable guitar-like ring. The `karplus-strong.json` example uses this pattern.
+
+Beyond Karplus-Strong: any feedback design where the per-loop /2 of Mixer would over-decay the signal. Also useful for combining envelope-shaped audio sources without losing half the amplitude.
 
 ### Output
 

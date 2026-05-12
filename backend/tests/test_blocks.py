@@ -1970,6 +1970,46 @@ def test_vco_positive_modulation_raises_pitch(run_synth, wav_samples):
     )
 
 
+def test_audiosum_saturates_at_int8_rails():
+    """AudioSum should sum two audio-s8 inputs and clamp to ±127.
+    Three drive cases:
+      - 50 + 60 = 110: in range, output = 110 (no clamp)
+      - 100 + 100 = 200: overflows; clamp to +127
+      - -100 + -100 = -200: underflows; clamp to -128
+      - 127 + -128 = -1: in range, output = -1
+    """
+    from amaranth import Module, Signal
+    from amaranth.sim import Simulator
+    from blocks.audiosum import AudioSum
+
+    block = AudioSum()
+    m = Module()
+    m.submodules.b = block
+    _anchor = Signal()
+    m.d.sync += _anchor.eq(~_anchor)
+    sim = Simulator(m)
+    sim.add_clock(1e-6)
+
+    captured: list[int] = []
+
+    async def process(ctx):
+        cases = [(50, 60), (100, 100), (-100, -100), (127, -128)]
+        for a, b in cases:
+            ctx.set(block.in_1, a)
+            ctx.set(block.in_2, b)
+            await ctx.tick()
+            await ctx.tick()
+            captured.append(int(ctx.get(block.audio_out)))
+
+    sim.add_testbench(process)
+    sim.run()
+
+    assert captured == [110, 127, -128, -1], (
+        f"AudioSum cases (50+60, 100+100, -100+-100, 127+-128): "
+        f"expected [110, 127, -128, -1]; got {captured}"
+    )
+
+
 def test_lfo_rate_matches_configured_hz(run_synth, wav_samples):
     """LFO at rate=5 Hz, sine shape, should produce ~10 zero-crossings
     per second (two per cycle). The 32-bit phase accumulator gives

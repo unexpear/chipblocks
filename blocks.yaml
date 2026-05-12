@@ -227,6 +227,20 @@
     mix-out: { dir: source, bus: audio-s8 }
   tags: []
 
+- type: audiosum
+  label: Audio Sum
+  description: "Saturating sum of two audio inputs (a + b clamped to ±127, no averaging)"
+  color: '#42a5f5'
+  category: routing
+  componentPath: frontend/src/blocks/AudioSumNode.tsx
+  backendPath: backend/blocks/audiosum.py
+  backendClass: AudioSum
+  ports:
+    in-1:      { dir: target, bus: audio-s8 }
+    in-2:      { dir: target, bus: audio-s8 }
+    audio-out: { dir: source, bus: audio-s8 }
+  tags: []
+
 - type: adsr
   label: ADSR
   description: Attack/Decay/Sustain/Release envelope

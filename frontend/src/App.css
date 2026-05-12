@@ -811,6 +811,10 @@
   border-color: #2196f3;
 }
 
+.block-audiosum {
+  border-color: #42a5f5;
+}
+
 .block-adsr {
   border-color: #ff9800;
   min-width: 150px;

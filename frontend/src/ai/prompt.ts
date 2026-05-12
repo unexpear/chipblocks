@@ -112,6 +112,11 @@ The block table below is the machine-readable shape of every block: name + one-l
 - Output port \`mix-out\` (audio-s8)
 - No parameters
 
+**audiosum** — Saturating sum of two audio inputs (a + b clamped to ±127, no averaging)
+- Input ports: \`in-1\` (audio-s8), \`in-2\` (audio-s8)
+- Output port \`audio-out\` (audio-s8)
+- No parameters
+
 **adsr** — Attack/Decay/Sustain/Release envelope
 - Input ports: \`gate\` (gate-1), \`audio-in\` (audio-s8)
 - Output port \`audio-out\` (audio-s8)
@@ -334,6 +339,11 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual b
 - No parameters
 - For 3+ sources, chain Mixers (the output of one is an input to the next).
 
+**audiosum** — saturating sum of two 8-bit signed inputs: \`clamp(in-1 + in-2, -128, +127)\`. Reacts immediately, no clock needed. Like Mixer but without the /2 averaging — both inputs contribute their full amplitude, clamped to the int8 rails if they would overflow. Use this instead of Mixer in feedback loops where Mixer's halving would over-decay the loop (canonical case: Karplus-Strong plucked-string synthesis, where AudioSum + a feedback Multiply by Constant 120-127 gives a 200-500 ms ringing decay that Mixer can't reach).
+- Input ports \`in-1\`, \`in-2\`
+- Output port \`audio-out\`
+- No parameters
+
 **output** — audio sink. Whatever's wired to \`audio-in\` becomes the WAV when Play is pressed. **There must be exactly ONE output block in the graph for audio to come out.**
 - Input port \`audio-in\`
 - No parameters
@@ -518,7 +528,7 @@ All audio signals are 8-bit signed (-128 to +127) at 44100 Hz. The five visual b
 
 # Naming conventions
 
-- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`vco\`, \`lfo\`, \`noise\`, \`constant\`, \`mixer\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`distortion\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`, \`vgatiming\`, \`colorbars\`, \`pixelrange\`, \`solidcolor\`, \`vgaoutput\`, \`bussplit\`, \`busjoin\`, \`adder\`, \`register\`, \`ram\`, \`registerfile\`, \`rom\`, \`subtractor\`, \`shifter\`, \`comparator\`, \`mux\`, \`reinterpret\`, \`byteconstant\`. (Authoritative list is the # Block reference section above, which is codegen'd from blocks.yaml.)
+- **Block type strings** (used in tool calls and saved JSON) are lowercase, no hyphens or underscores: \`oscillator\`, \`triangle\`, \`sawtooth\`, \`sine\`, \`vco\`, \`lfo\`, \`noise\`, \`constant\`, \`mixer\`, \`audiosum\`, \`output\`, \`adsr\`, \`gate\`, \`lowpass\`, \`highpass\`, \`bandpass\`, \`samplehold\`, \`fm\`, \`multiply\`, \`wavetable\`, \`bitcrusher\`, \`delay\`, \`distortion\`, \`and\`, \`or\`, \`xor\`, \`not\`, \`counter\`, \`vgatiming\`, \`colorbars\`, \`pixelrange\`, \`solidcolor\`, \`vgaoutput\`, \`bussplit\`, \`busjoin\`, \`adder\`, \`register\`, \`ram\`, \`registerfile\`, \`rom\`, \`subtractor\`, \`shifter\`, \`comparator\`, \`mux\`, \`reinterpret\`, \`byteconstant\`. (Authoritative list is the # Block reference section above, which is codegen'd from blocks.yaml.)
 - **Port handle ids** are kebab-case for audio/gate signals (\`audio-out\`, \`audio-in\`, \`gate-out\`, \`gate-in\`, \`mix-out\`, \`in-1\`, \`in-2\`). Control signals are unhyphenated: \`gate\` (an ADSR input), \`clock\` (a samplehold / counter input), \`select\` (a Mux input). VGA handles are short single-token names (\`r\`, \`g\`, \`b\`, \`hsync\`, \`vsync\`, \`visible\`, \`x\`, \`y\`, \`pixel\`, \`inside\`) — same convention used in every open-source VGA core. Bus blocks use \`bus-in\` / \`bus-out\` for the wide port and \`bit-0\` … \`bit-7\` for the per-bit ports. CPU primitives use \`in-a\` / \`in-b\` / \`sum-out\` / \`carry-out\` (adder); \`in-a\` / \`in-b\` / \`diff-out\` / \`borrow-out\` (subtractor); \`in-a\` / \`in-b\` / \`eq-out\` / \`lt-out\` / \`gt-out\` (comparator); \`in-a\` / \`in-b\` / \`select\` / \`data-out\` (mux); \`data-in\` / \`audio-out\` (reinterpret); \`data-in\` / \`data-out\` / \`write-enable\` (register, ram); \`addr\` (ram, rom — and the matching \`addr-out\` on counter); \`read-addr\` / \`write-addr\` / \`data-in\` / \`data-out\` / \`write-enable\` (registerfile — separate read and write address ports).
 
 # Connection rules (bus types)

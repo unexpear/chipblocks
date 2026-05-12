@@ -126,6 +126,9 @@ export const BLOCK_PORT_TYPES: Record<string, Record<string, BusType>> = {
   mixer:       { 'in-1':    'audio-s8',
                  'in-2':    'audio-s8',
                  'mix-out': 'audio-s8' },
+  audiosum:    { 'in-1':      'audio-s8',
+                 'in-2':      'audio-s8',
+                 'audio-out': 'audio-s8' },
 
   // ─── Modulation / control ───────────────────────────────────────
   adsr:        { 'gate':      'gate-1',

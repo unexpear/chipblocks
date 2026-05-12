@@ -9,6 +9,7 @@ import { WavetableNode,      type WavetableBlock }      from './WavetableNode'
 import { NoiseNode,          type NoiseBlock }          from './NoiseNode'
 import { ConstantNode,       type ConstantBlock }       from './ConstantNode'
 import { MixerNode,          type MixerBlock }          from './MixerNode'
+import { AudioSumNode,       type AudioSumBlock }       from './AudioSumNode'
 import { ADSRNode,           type ADSRBlock }           from './ADSRNode'
 import { GateNode,           type GateBlock }           from './GateNode'
 import { LowPassFilterNode,  type LowPassFilterBlock }  from './LowPassFilterNode'
@@ -60,6 +61,7 @@ export const nodeTypes = {
   noise:     NoiseNode,
   constant:  ConstantNode,
   mixer:     MixerNode,
+  audiosum:  AudioSumNode,
   adsr:      ADSRNode,
   gate:      GateNode,
   lowpass:   LowPassFilterNode,
@@ -110,6 +112,7 @@ export type AppNode =
   | NoiseBlock
   | ConstantBlock
   | MixerBlock
+  | AudioSumBlock
   | ADSRBlock
   | GateBlock
   | LowPassFilterBlock

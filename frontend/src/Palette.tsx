@@ -32,6 +32,7 @@ export const PALETTE: PaletteEntry[] = [
   { type: 'noise',        label: 'Noise',         color: '#795548', description: 'Pseudo-random 8-bit signed source' },
   { type: 'constant',     label: 'Constant',      color: '#9e9e9e', description: 'Fixed 8-bit signed value (-128..127)' },
   { type: 'mixer',        label: 'Mixer',         color: '#2196f3', description: 'Average two audio inputs' },
+  { type: 'audiosum',     label: 'Audio Sum',     color: '#42a5f5', description: 'Saturating sum of two audio inputs (a + b clamped to ±127, no averaging)' },
   { type: 'adsr',         label: 'ADSR',          color: '#ff9800', description: 'Attack/Decay/Sustain/Release envelope' },
   { type: 'gate',         label: 'Gate',          color: '#00bcd4', description: 'Periodic 1-bit pulse' },
   { type: 'lowpass',      label: 'Low-pass',      color: '#00897b', description: '1-pole IIR low-pass filter' },
@@ -118,6 +119,7 @@ export function defaultDataForType(type: string): Record<string, unknown> {
       return { contents: Array(16).fill(0) }
     case 'noise':
     case 'mixer':
+    case 'audiosum':
     case 'samplehold':
     case 'multiply':
     case 'and':

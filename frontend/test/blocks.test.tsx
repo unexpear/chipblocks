@@ -47,6 +47,7 @@ import { BitcrusherNode } from '../src/blocks/BitcrusherNode'
 import { ShifterNode } from '../src/blocks/ShifterNode'
 import { VcoNode } from '../src/blocks/VcoNode'
 import { LfoNode } from '../src/blocks/LfoNode'
+import { AudioSumNode } from '../src/blocks/AudioSumNode'
 import { DelayNode } from '../src/blocks/DelayNode'
 import { AndGateNode } from '../src/blocks/AndGateNode'
 import { OrGateNode } from '../src/blocks/OrGateNode'
@@ -1255,6 +1256,23 @@ describe('Comparator block', () => {
     expect(ids).toContain('eq-out')
     expect(ids).toContain('lt-out')
     expect(ids).toContain('gt-out')
+  })
+})
+
+describe('AudioSum block', () => {
+  it('renders title with 2 inputs and 1 output, no params', () => {
+    const { container } = wrap(
+      <AudioSumNode {...nodePropsBase('asm-1')} data={{}} />,
+    )
+    expect(container.querySelector('.block-title')?.textContent).toBe('Audio Sum')
+    expect(container.querySelectorAll('input').length).toBe(0)
+    expect(countHandles(container, 'target')).toBe(2)
+    expect(countHandles(container, 'source')).toBe(1)
+    const handles = container.querySelectorAll<HTMLElement>('.react-flow__handle')
+    const ids = Array.from(handles).map((h) => h.getAttribute('data-handleid'))
+    expect(ids).toContain('in-1')
+    expect(ids).toContain('in-2')
+    expect(ids).toContain('audio-out')
   })
 })
 
