@@ -12,7 +12,7 @@ export type LfoShape = 'sine' | 'triangle' | 'square' | 'sawtooth'
 
 export type LfoBlockData = {
   rate: number
-  rate_millihz: number
+  rate_millihz?: number
   shape: LfoShape
 }
 
