@@ -1,17 +1,28 @@
 # ChipBlocks Roadmap
 
-> **Last reviewed:** 2026-05-09 (PM, post-multi-domain audit pass) · **Format:** Now / Next / Later · **Cadence:** revisit at the end of each sprint
+> **Last reviewed:** 2026-05-14 (mid-Sprint-24 strategic pivot) · **Format:** Now / Next / Later · **Cadence:** revisit at the end of each sprint
 >
-> This is the operational "what's next" document. The strategic vision lives in [PRD.md](PRD.md). Per-sprint plans + retrospectives live in [SPRINT-1.md](SPRINT-1.md) through [SPRINT-13.md](SPRINT-13.md), with [SPRINT-14.md](SPRINT-14.md) drafted but not yet open. When this roadmap and the PRD disagree, the roadmap is more recent — but big disagreements should trigger a PRD update rather than silently drifting.
+> This is the operational "what's next" document. The strategic vision lives in [PRD.md](PRD.md). Per-sprint plans + retrospectives live in [SPRINT-1.md](SPRINT-1.md) through [SPRINT-24.md](SPRINT-24.md) (note: SPRINT-15.md was renumbered to SPRINT-16.md; no file at the SPRINT-15 path). When this roadmap and the PRD disagree, the roadmap is more recent — but big disagreements should trigger a PRD update rather than silently drifting.
 
 ---
 
-## Snapshot — where we actually are
+## Snapshot — where we actually are (2026-05-14)
 
-- **14 sprints completed**, all closed cleanly with retrospectives. Most recent: Sprint 14 (architectural hygiene + a11y backport from the 2026-05-09 audits) on 2026-05-09.
-- **v0.1.0-alpha installer built + verified locally**: `frontend/release/0.1.0/ChipBlocks_0.1.0.exe` (~93 MB, unsigned NSIS, Windows). Cross-platform CI (`.github/workflows/release.yml`) builds Mac DMG + Linux AppImage on tag push. Backend pytest 37/37 + frontend vitest 93/93 green on every push. Fresh-install smoke test passed on the developer's machine. **Not yet tagged on GitHub.**
-- **0 external users** — the PRD's **(E) anyone-but-the-developer-using-it** metric. Capabilities + onboarding + accessibility are now genuinely launch-ready; the remaining gap is the user-action of pushing a release tag and posting the announcement drafts.
-- **42 blocks** — well above the PRD's Phase 2 "10–15 blocks" range. Adds since the 2026-05-08 snapshot: Sine, Noise, Constant, FM voice, Multiply, Wavetable (S9); Bitcrusher + Delay (S13); Highpass + Bandpass filters (S13); AND / OR / XOR / NOT / Counter logic primitives (post-S13); VGA Timing / Color Bars / VGA Output visual blocks (post-S13); Distortion + Pixel Range + Solid Color (post-S14, one per domain); Bus Split / Bus Join cross-width composition blocks (S16, gated on the typed-bus system); Adder / Register / RAM / ROM CPU primitives plus a Counter.addr-out extension (S17, ADR-002); Subtractor / Comparator / Mux conditional-control trio + Reinterpret bridge (S18, closing the Sprint 17 retro's surfacings); Register File with independent read and write address ports (S20, the canonical "fetch two operands, write one back" CPU register-file shape).
+- **23 sprints completed** + **Sprint 24 in flight at S24-11**, all closed sprints retrospected. Most recent close: Sprint 23 (historical chip-design example library) on 2026-05-12.
+- **v0.1.0-alpha.9** is the live public release on the GitHub Release page (42 blocks; cross-platform installers built via `.github/workflows/release.yml`). Master is 6 blocks ahead at 48 (Shifter from S22; VCO + LFO + Audio Sum + VCF + HardSync from S24). No release tag for the master tip yet — a Sprint 24 close-out commit may bump to alpha.10.
+- **0 external users** — the PRD's **(E) anyone-but-the-developer-using-it** metric. Capabilities are launch-ready; the gap is still user-action launch posts.
+- **48 blocks** on master, **42 on alpha.9**. Adds since the 2026-05-09 snapshot above: Bus Split / Bus Join (S16); Adder / Register / RAM / ROM (S17, ADR-002); Subtractor / Comparator / Mux + Reinterpret (S18); ByteConstant (S19); Register File (S20); Shifter (S22, manifest acid test); VCO / LFO / Audio Sum / VCF / HardSync (S24, audio-modulation family).
+- **Bundled examples: 21 in-tree** (+ 1 uncommitted: sync-lead.json). 4 historical-chip examples added in S23 (Atari Punk Console, FM bell, hi-hat, Karplus-Strong); 3 new + 3 revised in S24 (vibrato, filter-sweep, divider-clock-tree; revised Karplus-Strong + Atari Punk Console + vibrato).
+- **Tests:** backend pytest **217 + 2 skipped**, frontend vitest **321**. Both suites run on every push to master via CI.
+
+### Sprint 24 mid-sprint pivot (2026-05-14) — captured in [SPRINT-24.md](SPRINT-24.md)
+
+Two project principles introduced after S24-11, reshaping the post-S24 roadmap:
+
+1. **No fake blocks.** Every block in `blocks.yaml` must elaborate to real synthesizable Amaranth HDL. External physical devices (display panels, speakers, antennas, batteries) are chip pads / external connection points, not blocks. We build the controllers + drivers that live on our silicon (ST7789 LCD driver, PWM audio out, OOK transmitter), not the external things themselves.
+2. **Modular fab platform** (pending [ADR-005](ADR-005-modular-fab-platform.md), draft pending). Apply the ADR-003 manifest pattern to the fab target itself. Eight extension points, each manifest-driven, each addable as 1 row + 1 adapter: `shuttles.yaml`, `pdks.yaml`, `cpu-cores.yaml`, `radios.yaml`, `buses.yaml`, `memories.yaml`, `packages.yaml`, `flows.yaml`. Third-party tools (eFabless Caravel, OpenLane, SkyWater MPW) are plumbing called via adapters — swappable, not in the trust boundary.
+
+These principles fold directly into the **phone-class target** (smartwatch / 2005-feature-phone equivalent) that the post-S24 sprints work toward.
 
 ---
 
@@ -88,18 +99,19 @@ The single screenshot for the README (`docs/screenshots/starter-graph.png`) was 
 
 ---
 
-## Now — pending user-action launch gates
+## Now — Sprint 25 kickoff (ADR-005 draft + `shuttles.yaml` materialisation)
 
-These remain blocked on the user; nothing more for autonomous polish to do until they happen.
+Sprint 24 is rolling to close. The next sprint opens against the modular-fab principle — write [ADR-005](ADR-005-modular-fab-platform.md) (currently draft pending) along the 8-manifest lines captured in [SPRINT-24.md](SPRINT-24.md)'s mid-sprint pivot, then materialise the first manifest (`shuttles.yaml`) with the existing Tiny Tapeout slot (`tt-pico`) as row 1 — proving the pattern end-to-end on a target we already have, before any new shuttle tier ships.
 
 | Pri | Item | Owner | Effort | Why now |
 |---|---|---|---|---|
-| **P0** (user) | Tag + push `v0.1.0-alpha`, attach the installer to the GitHub Release, verify CI built the Mac/Linux artifacts | User | 0.5 hrs | The actual **(E)**-unblocking action. Pushing tags + creating public releases is a user-authorization step. The release pipeline is wired up + tested; just needs the tag. |
-| **P0** (user) | Post the 4 announcement drafts (r/synthdiy, r/FPGA, Hacker News, Hackaday tip line) | User | 0.5 hrs | Drafts live in [ANNOUNCEMENT-DRAFTS.md](ANNOUNCEMENT-DRAFTS.md). An untagged release nobody knows about isn't a release. |
-| **P0** (user) | Enable GitHub Discussions on the repo | User | 5 min | A free Q&A surface for the first external users. |
-| **P1** (user) | Submit the Hackaday writeup ([HACKADAY-WRITEUP.md](HACKADAY-WRITEUP.md)) | User | 15 min | PRD success metric (D) targets one feature within 90 days of launch. Cheap to send; cost of not sending is invisibility. |
+| **P0** | Draft [ADR-005 — Modular fab platform](ADR-005-modular-fab-platform.md) | Claude + user review | 0.5 sprint | Locks in the 8-manifest extension model + the socket-contract patterns. Without it, every post-S24 block adds extension-point sprawl rather than fitting into a documented slot. |
+| **P0** | Materialise `shuttles.yaml` with `tt-pico` as row 1 | Claude | 0.5 sprint | Acid-test the manifest pattern against an existing target before adding new tiers. Mirrors the Sprint 22 Shifter acid test for ADR-003. |
+| **P1** | Commit `examples/sync-lead.json` (uncommitted from S24-11 follow-on) | Claude | 5 min | Don't lose the demo example showcasing HardSync. Either lands clean-up in S24 close-out or carries into S25's first commit. |
+| **P1** (user) | Decide which radio modulation is the default for the post-S25 silicon path: OOK (lean) vs. audio-FSK (teaching companion) vs. LoRa-CSS (ambitious) | User | 5 min | Affects S31 scope. Recommendation: OOK as default, audio-FSK as a teaching companion that reuses existing blocks, LoRa-CSS deferred. |
+| **P2** (user) | Pre-existing launch-gate items still open: post announcements, enable Discussions, submit Hackaday writeup | User | 1 hr total | alpha.9 is on the GitHub Release page; the (E)-metric clock can start whenever the user wants. Not blocking anything technical. |
 
-**Sprint 14 closed 2026-05-09 (PM)** — all 6 planned items shipped in 6 commits, full retro in [SPRINT-14.md](SPRINT-14.md). No release tag; alpha.3 remains the live release because S14 was pure architectural cleanup, not user-visible features.
+**Sprint 24 still rolling at S24-11** as of this update. Close-out + retro commit pending; will bump sprint counter to 24 closed at that point.
 
 ---
 
@@ -120,17 +132,51 @@ Test counts after sprint: pytest **44 passed + 2 skipped** (was 43 + 2; +1 test 
 
 ---
 
-## Next (Sprint 15+, candidates)
+## Done — Sprint 15 through Sprint 24
 
-Once Sprint 14's hygiene is in and there's external-user signal, the highest-leverage product items. Order is not committed — pick based on whatever signal arrives first.
+Ten more sprints landed between the 2026-05-09 roadmap update and the 2026-05-14 strategic pivot. Per-sprint detail in the individual SPRINT-N.md retros. Headline summary:
 
-| Item | Effort | Reach | Confidence | Rationale |
-|---|---|---|---|---|
-| **MIDI input block + polyphony (2–4 voices)** | 1.5–2 sprints | hobbyist synth makers | High | The flagship domain is "audio/synth/retro-game chips." Without MIDI, the synth user can't play notes from a keyboard. Polyphony is what turns "interesting demo" into "actually usable instrument." Start with WebMIDI (renderer-side); defer USB-MIDI. |
-| **More DSP blocks** — already shipped {wavetable, FM, delay, highpass, bandpass, bitcrusher, multiply}; remaining candidates: {chorus, distortion, comb filter, allpass, ring modulator variants} — *not* reverb (BRAM-bounded on iCE40) | 1 sprint each | all audio users | Med-High | Each block widens the design space. Pick by user request. |
-| **More visual blocks** — already shipped {VGA Timing, Color Bars, VGA Output @ 320×240}; remaining candidates: {SB_PLL40_CORE for 640×480, sprite engine, framebuffer, character / tile generator, pixel-x/y math primitives} | 1 sprint each | retro-game chip designers | Med | Visual story is at "draw color bars" today. Sprite + framebuffer get to "draw something the user designed." |
-| **Validation telemetry / manual eval script** | 0.5 sprint | catches AI-quality regressions | Med | Hits the Anthropic API with smoke-test queries and grades against expected substrings. First step toward the 30%-failure anti-metric. Cheap and reusable; deferred from S9-P1 because there were no AI-built graphs to evaluate yet. |
-| **Code-signing certs** ($300–$700/yr) | 0.5 sprint config + ongoing | removes Win SmartScreen + Mac Gatekeeper warnings | High | The release.yml workflow already tolerates absence (`CSC_IDENTITY_AUTO_DISCOVERY: false`); adding signing is config-only once certs are acquired. Defer until a user actually complains about the warning. |
+- **S15** — renumbered into S16; no separate file at the SPRINT-15 path. [ADR-001](ADR-001-multi-bit-bus-types.md) drafted in this slot.
+- **S16** ([retro](SPRINT-16.md)) — ADR-001 implementation: typed bus system + BusSplit / BusJoin cross-width composition blocks. 5 of 7 planned items shipped; 2 deferred per mid-sprint tech-debt prioritization.
+- **S17** ([retro](SPRINT-17.md)) — [ADR-002](ADR-002-cpu-primitives.md) implementation: 4 CPU primitives (Adder / Register / RAM / ROM) + Counter.addr-out extension. Single-shot parallel-agent dispatch; all 7 tasks in one commit. Surfaced the data-u8 ↔ audio-s8 sign-class barrier as a Sprint 18 candidate.
+- **S18** ([retro](SPRINT-18.md)) — 4 new blocks: Reinterpret bridge + Subtractor + Comparator + Mux. Closes both Sprint 17 retro surfacings (audio bridge + conditional-control trio for branchable programs).
+- **S19** ([retro](SPRINT-19.md)) — LD-focused accessibility audit ([ACCESSIBILITY-AUDIT-LD-2026-05-10.md](ACCESSIBILITY-AUDIT-LD-2026-05-10.md)) + 6-item trivial-fix cluster (prefers-reduced-motion, volume slider, plain-language AI prompt section, last-build status persistence, GitHub Actions v5/v6 bumps, ByteConstant block 40 → 41).
+- **S20** ([retro](SPRINT-20.md)) — Register File block 41 → 42 with independent read/write addresses + cpu-multiregister worked example + LD audit second wave (modal backdrop guard, error-toast 6s → 12s, single-letter label rewrites). Launch drafts repointed to alpha.9.
+- **S21** ([retro](SPRINT-21.md)) — [ADR-003](ADR-003-block-manifest.md) implementation: block manifest at repo root + 2 codegen scripts. Per-block hand-edit surface 9 files → 3. +252 dynamic manifest-integrity test cases. First sprint with parallel-agent dispatch at peak (5 agents).
+- **S22** ([retro](SPRINT-22.md)) — Manifest acid test (Shifter block 42 → 43 via the new manifest path), cookbook consolidation into [BLOCKS-COOKBOOK.md](BLOCKS-COOKBOOK.md), `registries-aligned.test.ts` deletion (structurally redundant post-manifest), AI prompt scope decision option C.
+- **S23** ([retro](SPRINT-23.md)) — Historical chip-design example library: 4 new bundled examples (Atari Punk Console, FM bell, hi-hat, Karplus-Strong) with full licensing-provenance diligence ([OPEN-CHIP-LIBRARY-PROVENANCE.md](OPEN-CHIP-LIBRARY-PROVENANCE.md)) + manufacturing-process technical drawing ([`docs/MANUFACTURING-PROCESS.md`](docs/MANUFACTURING-PROCESS.md)) + AI consultant TOC entry for the open-chip library. No new blocks.
+- **S24** ([in flight, log + pivot in SPRINT-24.md](SPRINT-24.md)) — Audio-modulation block family: 5 new blocks (VCO + LFO + Audio Sum + VCF + HardSync, 43 → 48) + 3 new examples + 3 example revisions + sub-1-Hz LFO via `rate_millihz` + HardSync rising-edge phase-reset. **Mid-sprint pivot at S24-11**: introduced the "no fake blocks" principle and the "modular fab platform" direction (8 manifests pending [ADR-005](ADR-005-modular-fab-platform.md)). Phone-class roadmap (S25 → S32) queued.
+
+Block library: alpha.9 = 42 → master = 48 (+6 across S20-S24). Bundled examples: pre-S20 ≈ 12 → 21 in-tree at S24-11 (+1 uncommitted sync-lead.json). Tests: 44+2 pytest → 217+2 pytest; 98 vitest → 321 vitest.
+
+---
+
+## Next (Sprint 25-32 — phone-class roadmap)
+
+Post-S24 strategic pivot direction (captured in [SPRINT-24.md](SPRINT-24.md)'s "Mid-sprint pivot" section). Build toward a fab-able **smartwatch / 2005-feature-phone equivalent** on iCE40 + a handful of external chips (~$30 BOM). Every block synthesizable — no fakery. Fab target manifest-driven per the modular-fab principle.
+
+| Sprint | Theme | New blocks / manifests | Notes |
+|---|---|---|---|
+| **S25** | ADR-005 draft + `shuttles.yaml` materialisation | `shuttles.yaml` (row 1: `tt-pico` = existing Tiny Tapeout slot) | Acid-tests the manifest pattern against an existing fab target before any new tier ships. Mirrors Sprint 22's Shifter acid test for ADR-003. |
+| **S26** | Bus protocols (first wave of synthesizable peripherals) | SPI master, I²C master, UART, GPIO, PWM blocks | Foundation. Unlocks every external-chip driver that follows. |
+| **S27** | Display + input | ST7789 LCD driver block, button matrix scanner block, capacitive touch (FT6236) protocol block | Smartwatch-class display + tactile input path. |
+| **S28** | Audio out + haptics | PWM audio out (real silicon, not just sim), class-D driver, LED driver, vibration motor driver | Output side. |
+| **S29** | ADR-004 packaged CPU + `cpu-cores.yaml` + picorv32 | `cpu-cores.yaml` (row 1: picorv32 wrapper conforming to the CPU socket interface) | The big one. Open ADR question: package the CPU as a single block, or expose primitives + composition? Probably both, with the packaged path as default. |
+| **S30** | System glue | Interrupt controller, timer, reset/clock manager | Required to make the CPU + peripherals actually run a program. |
+| **S31** | Radio (digital part) | OOK transmitter (default), audio-FSK modem (teaching companion), optional LoRa-style CSS | Default radio choice per user decision (P1 item in "Now" section). |
+| **S32** | Toy-phone integration | Example graph wiring all of the above into one fab-able design | First Standard-tile design; first "phone-shaped" demo. |
+
+Eight sprints to a fab-able toy phone. Every block real silicon. Every fab-target row in `shuttles.yaml`.
+
+**Items deferred but not dropped** (carry forward into post-S32 sprints unless user signal pulls them back):
+
+| Item | Effort | Why deferred (not dropped) |
+|---|---|---|
+| **MIDI input block + polyphony** | 1.5-2 sprints | Was the headline post-alpha.9 next-item in the 2026-05-09 plan. Hobbyist synth-maker reach is real. Slots into the post-phone roadmap as a domain expansion once the phone target ships. |
+| **More DSP blocks** (chorus, comb filter, allpass, ring-mod variants) | 1 sprint each | Always 1 sprint apart. Pick by user request. The Sprint 24 audio-modulation family already closed VCO + LFO + AudioSum + VCF + HardSync; remaining DSP candidates fit cleanly when motivation arrives. |
+| **More visual blocks** (sprite engine, framebuffer, character generator, SB_PLL40_CORE for 640×480) | 1 sprint each | Visual story is "draw color bars" today; the phone roadmap's ST7789 LCD driver is a meaningful step. Sprite + framebuffer are bigger lifts that need a fixed display target. |
+| **Validation telemetry / `eval-ai.ts` measurement baseline** | 0.5 sprint | Same rationale as the original 2026-05-09 listing. Cheap when motivated. |
+| **Code-signing certs** | 0.5 sprint config + cost | No external complaints yet; defer until someone trips the SmartScreen warning. |
 
 ---
 
@@ -167,7 +213,19 @@ Once Sprint 14's hygiene is in and there's external-user signal, the highest-lev
 
 ---
 
-## Decision log — what changed in this update (2026-05-09 PM)
+## Decision log — what changed in this update (2026-05-14, mid-Sprint-24 pivot)
+
+Captured the strategic re-framing from Sprint 24's mid-sprint conversation. Two project principles + a phone-class roadmap + two pending ADRs.
+
+- **"No fake blocks" principle added to [CLAUDE.md](CLAUDE.md) Core Constraints + this roadmap's snapshot.** Every block must elaborate to real synthesizable Amaranth HDL. External devices (displays, speakers, antennas, batteries) are chip pads / external connection points, not blocks. The "B-tier black-box diagram" approach explored mid-conversation was rejected. The right mental model: we build controllers + drivers (ST7789 LCD driver, PWM audio out, OOK transmitter), not the external things.
+- **"Modular fab platform" direction announced.** Apply ADR-003's manifest pattern to the fab target itself. Eight extension points: `shuttles.yaml`, `pdks.yaml`, `cpu-cores.yaml`, `radios.yaml`, `buses.yaml`, `memories.yaml`, `packages.yaml`, `flows.yaml`. ADR-005 to be drafted in Sprint 25 along these lines.
+- **Phone-class roadmap (S25 → S32) replaces the prior "Sprint 15+" candidate list.** Target is a smartwatch / 2005-feature-phone equivalent — fab-able on iCE40 + a handful of external chips (~$30 BOM). 7 sprints of peripheral + system-glue work + 1 sprint of integration. NOT a 2026 smartphone — voice calls, broadband, integrated WiFi/BT/GPS, cameras, AMOLED, LPDDR are all out of scope; documented explicitly in SPRINT-24.md and the SPRINT-24 mid-sprint pivot section here.
+- **Modem replacement decided in principle:** custom on-chip radio (OOK / audio-FSK / LoRa-CSS) replaces the cellular modem we can't fab. Default leans OOK (simplest, fully fab-able, fits Pico tier); audio-FSK shipped as a teaching companion that reuses existing blocks; LoRa-CSS deferred. Final choice is a P1 user decision in the "Now" section.
+- **MIDI block + polyphony pushed from "Next" to post-phone deferred-items list.** Still real reach; just downstream of the phone-class target. Not dropped.
+- **Pre-existing launch-gate user-action items moved from "Now" P0 to "Now" P2.** alpha.9 is on the GitHub Release page; the (E)-metric clock can start whenever the user wants. These items are still real but no longer block the project's technical roadmap.
+- **Stale "0 external users" framing unchanged.** PRD anti-metric (E) is still N/A by clock; no real-time-passed measurement yet.
+
+### Earlier decision log (2026-05-09 PM)
 
 Post-multi-domain audit pass after v0.1.0-alpha.3 shipped (added 5 logic blocks + iCEBreaker + 3 visual blocks; 19 → 27 blocks, 3 → 4 silicon paths).
 

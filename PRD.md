@@ -1,6 +1,8 @@
 # Product Requirements Document: ChipBlocks
 
-> **Status:** Draft v0.1 · Working name (rename anytime) · Author: [User] · Date: 2026-05-07
+> **Status:** Draft v0.1 · Working name (rename anytime) · Author: [User] · Date: 2026-05-07 (last touch 2026-05-14 — phone-class direction + modular-fab principle annotated; strategic content unchanged)
+>
+> **2026-05-14 update note**: Sprint 24's mid-sprint strategic pivot (full statement in [SPRINT-24.md](SPRINT-24.md)) introduced two project principles — **"no fake blocks"** (every block must elaborate to real synthesizable HDL) and **"modular fab platform"** (the fab target itself is manifest-driven via 8 extension points, pending [ADR-005](ADR-005-modular-fab-platform.md)). These tighten the existing PRD scope rather than rewriting it; the strategic vision below stands. Phase 3 ("Domain expansion") is now pointed concretely at a **smartwatch / 2005-feature-phone equivalent** as the post-audio domain — see Phase 3 row of the timeline below.
 
 ---
 
@@ -213,7 +215,7 @@ The defining metric is **(E) anyone other than the developer using the tool**. W
 |---|---|---|---|
 | **1 — Proof of Concept** | 1–3 | Prove the architecture end-to-end | 8-Bit Sound Chip Demo: ~7 audio blocks, drag-drop editor, simulation → WAV, basic AI sidebar. No FPGA/ASIC yet. |
 | **2 — First External User** | 3–6 | Someone who isn't the developer makes a chip with it | Add 10–15 audio blocks, basic FPGA bitstream output (iCE40), polish UI, basic docs, ship to GitHub |
-| **3 — Domain Expansion** | 6–12 | 100+ external users, community starts contributing | Add second domain (custom MCU or sensor), more FPGA targets, ASIC tape-out, Tiny Tapeout integration |
+| **3 — Domain Expansion** | 6–12 | 100+ external users, community starts contributing | Add second domain (custom MCU or sensor), more FPGA targets, ASIC tape-out, Tiny Tapeout integration. **Per the 2026-05-14 pivot, the concrete Phase-3 target is a smartwatch / 2005-feature-phone equivalent**: SPI/I²C/UART/PWM/GPIO peripherals, ST7789 LCD driver, capacitive touch protocol, PWM audio out, button matrix scanner, LED + vibration drivers, packaged RISC-V CPU core (likely picorv32), interrupt controller, timer, and a custom on-chip radio (OOK default; LoRa-CSS optional) — all synthesizable, all fab-able on iCE40 + a handful of external chips. Voice calls, broadband data, integrated WiFi/BT/GPS, cameras, AMOLED, LPDDR remain explicitly out of scope. |
 | **4 — Polish & Reach** | 12–18 | Real chips fabricated, sustained community | Web version, classroom mode, marketplace, more domains, conference / Hackaday presence |
 | **5 — General-purpose PCB tool (future)** | 18+ | Free open-source competitor to KiCad / EasyEDA / Altium covering hobby through prosumer boards | Schematic editor, comprehensive component library, multi-layer layout + routing, DRC, Gerber + drill + BOM + pick-and-place output. Templates for common boards (Arduino shields, Pi HATs, eurorack, breakouts). Reuses the visual node-graph editor and block-library system from the chip side. Tier 1 (1–2 layer hobby) and tier 2 (4-layer prosumer) realistic for solo + AI dev. |
 | **6 — High-complexity boards (future-future)** | 30+ | Tackle motherboards, RAM modules, server-class boards, high-speed digital | DDR4 / DDR5 memory routing, PCIe Gen 4–5 lanes, advanced power-delivery networks, signal-integrity simulation, impedance control, 8–16 layer stackups. Direct competitor space to Altium / Cadence Allegro. Almost certainly multi-developer / partnership / paid-tier territory. May be split off as a sibling project under the ChipBlocks brand. |
