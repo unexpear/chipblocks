@@ -20,7 +20,7 @@
 Two project principles introduced after S24-11, reshaping the post-S24 roadmap:
 
 1. **No fake blocks.** Every block in `blocks.yaml` must elaborate to real synthesizable Amaranth HDL. External physical devices (display panels, speakers, antennas, batteries) are chip pads / external connection points, not blocks. We build the controllers + drivers that live on our silicon (ST7789 LCD driver, PWM audio out, OOK transmitter), not the external things themselves.
-2. **Modular fab platform** (pending [ADR-005](ADR-005-modular-fab-platform.md), draft pending). Apply the ADR-003 manifest pattern to the fab target itself. Eight extension points, each manifest-driven, each addable as 1 row + 1 adapter: `shuttles.yaml`, `pdks.yaml`, `cpu-cores.yaml`, `radios.yaml`, `buses.yaml`, `memories.yaml`, `packages.yaml`, `flows.yaml`. Third-party tools (eFabless Caravel, OpenLane, SkyWater MPW) are plumbing called via adapters — swappable, not in the trust boundary.
+2. **Modular fab platform** ([ADR-005](ADR-005-modular-fab-platform.md), drafted 2026-05-15; for S25 implementation). Apply the ADR-003 manifest pattern to the fab target itself. Eight extension points, each manifest-driven, each addable as 1 row + 1 adapter: `shuttles.yaml`, `pdks.yaml`, `cpu-cores.yaml`, `radios.yaml`, `buses.yaml`, `memories.yaml`, `packages.yaml`, `flows.yaml`. Third-party tools (eFabless Caravel, OpenLane, SkyWater MPW) are plumbing called via adapters — swappable, not in the trust boundary.
 
 These principles fold directly into the **phone-class target** (smartwatch / 2005-feature-phone equivalent) that the post-S24 sprints work toward.
 
@@ -105,7 +105,7 @@ Sprint 24 is rolling to close. The next sprint opens against the modular-fab pri
 
 | Pri | Item | Owner | Effort | Why now |
 |---|---|---|---|---|
-| **P0** | Draft [ADR-005 — Modular fab platform](ADR-005-modular-fab-platform.md) | Claude + user review | 0.5 sprint | Locks in the 8-manifest extension model + the socket-contract patterns. Without it, every post-S24 block adds extension-point sprawl rather than fitting into a documented slot. |
+| **P0** | [ADR-005 — Modular fab platform](ADR-005-modular-fab-platform.md) drafted (2026-05-15; commit pending). Awaiting user review on the 4 open questions in its closing section. | Claude (draft) + user (review) | 0.5 sprint draft (✅ done) + sprint of Phase-0 implementation work | Locks in the 8-manifest extension model + the socket-contract patterns. Without it, every post-S24 block adds extension-point sprawl rather than fitting into a documented slot. |
 | **P0** | Materialise `shuttles.yaml` with `tt-pico` as row 1 | Claude | 0.5 sprint | Acid-test the manifest pattern against an existing target before adding new tiers. Mirrors the Sprint 22 Shifter acid test for ADR-003. |
 | **P1** | Commit `examples/sync-lead.json` (uncommitted from S24-11 follow-on) | Claude | 5 min | Don't lose the demo example showcasing HardSync. Either lands clean-up in S24 close-out or carries into S25's first commit. |
 | **P1** (user) | Decide which radio modulation is the default for the post-S25 silicon path: OOK (lean) vs. audio-FSK (teaching companion) vs. LoRa-CSS (ambitious) | User | 5 min | Affects S31 scope. Recommendation: OOK as default, audio-FSK as a teaching companion that reuses existing blocks, LoRa-CSS deferred. |
