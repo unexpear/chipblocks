@@ -280,6 +280,20 @@ export const EXAMPLES: ExampleGraph[] = [
     ],
   },
   {
+    id: 'sync-lead',
+    label: 'Hard-sync lead (440 Hz square master → HardSync slave at 660 Hz)',
+    description: 'The canonical use case for the Sprint 24 HardSync block: a 440 Hz square-wave master drives the sync-in of a HardSync slave running at 660 Hz (a perfect-fifth above). Every cycle of the master forces the slave\'s sawtooth phase back to zero, cutting its natural ramp short and producing the harmonically-rich "sync lead" sound used in 1980s prog-rock and synthwave records (Van Halen "Jump", The Cars "Let\'s Go", The Knife "Heartbeats"). The slave\'s natural pitch (660 Hz) sets the tone\'s perceived character; the master\'s pitch (440 Hz) sets the fundamental. Try changing the slave to 880 Hz (octave), 1100 Hz (octave + major third), or 1320 Hz (octave + perfect fifth) for brighter sync-lead variants; try inharmonic ratios like 250 Hz master / 713 Hz slave for metallic / bell-like spectra.',
+    nodes: [
+      { id: 'master', type: 'oscillator', position: { x: 60,  y: 180 }, data: { freq: 440 } },
+      { id: 'slave',  type: 'hardsync',   position: { x: 360, y: 180 }, data: { freq: 660 } },
+      { id: 'out',    type: 'output',     position: { x: 660, y: 180 }, data: {} },
+    ],
+    edges: [
+      { id: 'e1', source: 'master', target: 'slave', sourceHandle: 'audio-out', targetHandle: 'sync-in' },
+      { id: 'e2', source: 'slave',  target: 'out',   sourceHandle: 'audio-out', targetHandle: 'audio-in' },
+    ],
+  },
+  {
     id: 'vibrato',
     label: 'Vibrato (LFO modulating a VCO at canonical 6 Hz)',
     description: 'The canonical use case for the Sprint 24 VCO block, now using the Sprint 24 LFO block at 6 Hz — the textbook vibrato rate. A 6 Hz sine LFO drives the VCO\'s freq-in port; the VCO outputs a 440 Hz square that sweeps ±15 Hz around centre 6 times per second. The result is a singing vibrato wobble. (Earlier revision used a 20 Hz sine oscillator since the audio-frequency sine block bottoms out at 20 Hz; the LFO block solves that by going as low as 1 Hz.) Demonstrates the LFO + VCO combination as the building block for all kinds of audio-rate-controlled-pitch synthesis.',
