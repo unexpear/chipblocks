@@ -826,6 +826,8 @@ A constant 1-bit-per-channel RGB source. Lets you wire a fixed color into VGA Ou
 
 ### VGA Output
 
+> **I/O marker, not a logic block.** Per the Sprint 24 "no fake blocks" principle (every block must elaborate to real synthesizable HDL), VGA Output is a pad declaration, not a hardware element on our silicon. Its `elaborate()` is intentionally empty; the build system reads the block's presence in the graph to generate `set_io` pin-mapping lines in the `.pcf` file. The physical VGA connector lives off-chip on the iCEBreaker's PMOD1B socket. Kept in `blocks.yaml` because the codegen pattern needs *something* to point at when the user wires up a VGA signal; conceptually it is the chip-pad-side declaration of "this 5-signal bus leaves the die here."
+
 The visual sink. Five inputs (R, G, B, HSYNC, VSYNC) routed to physical FPGA pins on the iCEBreaker's PMOD1B socket.
 
 **Inputs / outputs**
@@ -840,7 +842,7 @@ The visual sink. Five inputs (R, G, B, HSYNC, VSYNC) routed to physical FPGA pin
 
 **Parameters.** None.
 
-**Behavior.** No internal logic. The block is a marker that says "route these five 1-bit signals to the VGA pins." `build.py` looks for the presence of a VGA Output node and, when targeting the iCEBreaker, generates extra `set_io` lines in the .pcf binding each signal to its physical PMOD1B pad. The audio ▶ Play path doesn't render visuals: VGA Output blocks elaborate but contribute nothing to the WAV; a graph with VGA Output but no audio Output fails Play with a friendly "🔧 Build → iCEBreaker" hint.
+**Behavior.** No internal logic — empty `elaborate()`. The block is a marker that says "route these five 1-bit signals to the VGA pins." `build.py` looks for the presence of a VGA Output node and, when targeting the iCEBreaker, generates extra `set_io` lines in the .pcf binding each signal to its physical PMOD1B pad. The audio ▶ Play path doesn't render visuals: VGA Output blocks elaborate but contribute nothing to the WAV; a graph with VGA Output but no audio Output fails Play with a friendly "🔧 Build → iCEBreaker" hint.
 
 **Common usage.** The destination of every visual graph. Mirror the audio Output's role: the shortest possible useful visual patch is VGA Timing → Color Bars → VGA Output (with the obvious wiring on `x` / `visible` / `hsync` / `vsync`).
 
@@ -1180,6 +1182,8 @@ Beyond Karplus-Strong: any feedback design where the per-loop /2 of Mixer would 
 
 ### Output
 
+> **I/O marker, not a logic block.** Per the Sprint 24 "no fake blocks" principle (every block must elaborate to real synthesizable HDL), Output is a pad declaration, not a hardware element on our silicon. Its `elaborate()` is intentionally empty; the simulation harness reads the wired-in signal directly, and the FPGA / Tiny Tapeout build paths route it to the board's audio output pin. The physical speaker / audio jack lives off-chip. Kept in `blocks.yaml` because every audio graph needs *some* node to mark "this is the signal I want to hear."
+
 The audio sink. The simulation harness reads samples from the Output block's `audio-in` to produce the WAV that ▶ Play sends to your speakers, and the FPGA / Tiny Tapeout build paths read the same signal as the audible output of the synthesized chip.
 
 **Inputs / outputs**
@@ -1190,7 +1194,7 @@ The audio sink. The simulation harness reads samples from the Output block's `au
 
 **Parameters.** None.
 
-**Behavior.** No internal logic. The Output block is a marker that says "capture this signal as the audio output." Every working graph needs exactly one Output. Multiple Outputs in a graph aren't supported in v0.1.0-alpha — only the first one found is captured.
+**Behavior.** No internal logic — empty `elaborate()`. The Output block is a marker that says "capture this signal as the audio output." Every working graph needs exactly one Output. Multiple Outputs in a graph aren't supported in v0.1.0-alpha — only the first one found is captured.
 
 **Common usage.** The destination of every graph. The shortest possible useful patch is `Oscillator -> Output`.
 
@@ -1198,4 +1202,4 @@ The audio sink. The simulation harness reads samples from the Output block's `au
 
 ## Adding a new block
 
-This document is a reference, not a how-to. The file-by-file walkthrough for adding a 20th block lives in [ARCHITECTURE.md](ARCHITECTURE.md) under "Adding a new block" — eight files to touch, plus tests on both sides.
+This document is a reference, not a how-to. The canonical walkthrough lives in [BLOCKS-COOKBOOK.md](BLOCKS-COOKBOOK.md): 3 files to author (`blocks.yaml` row + `<Name>Node.tsx` + `<name>.py`) plus `npm run codegen` plus hand-written tests on both sides. The cookbook covers the edge cases, the codegen contract, and the verification gates (`npm test` + `npx tsc --noEmit`, both required separately before commit). ARCHITECTURE.md gives the architectural framing if you want the wider context first.

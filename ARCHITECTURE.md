@@ -91,7 +91,7 @@ frontend/src/
 ├── blocks/
 │   ├── index.ts               nodeTypes + AppNode union
 │   ├── useValidatedNumber.ts  Shared number-input validation hook
-│   └── *Node.tsx              One file per of the 43 block types
+│   └── *Node.tsx              One file per of the 48 block types
 ├── Palette.tsx                Left-side block palette + drag-and-drop
 ├── Chat.tsx                   AI consultant sidebar + agentic loop
 ├── SettingsModal.tsx          API key + model picker
@@ -155,21 +155,24 @@ Eval script at `scripts/eval-ai.ts` runs 7 representative queries against the li
 ## Testing
 
 ```
-backend/tests/        pytest, 193 tests + 2 skipped, ~110 s
-  test_blocks.py             48 per-block property assertions (zero-crossing rate, accumulator round-trip, sign-reinterpretation pass-through, register-file independent-addr round-trip, shift left/right against Python's `<<`/`>>` with 9 spot cases, etc.) — covers all 43 blocks (including the 5 visual blocks, the 2 bus-composition blocks plus Reinterpret, the 7 CPU primitives Adder / Subtractor / Comparator / Mux / Register / RAM / ROM, the Sprint 20 Register File, the Sprint 22 Shifter, the Counter.addr-out extension, plus a mixed-logic pipeline smoke test, a CPU-primitives pipeline smoke test that exercises Reinterpret end-to-end, and a Register File multi-port pipeline smoke)
+backend/tests/        pytest, 217 tests + 2 skipped, ~110 s (as of S24-11)
+  test_blocks.py             ~60 per-block property assertions (zero-crossing rate, accumulator round-trip, sign-reinterpretation pass-through, register-file independent-addr round-trip, shift left/right against Python's `<<`/`>>` with 9 spot cases, HardSync phase-reset-on-rising-zero-crossing, LFO sub-Hz rate_millihz, etc.) — covers all 48 blocks (5 visual + 3 bus-composition + 7 CPU primitives + Sprint 20 Register File + Sprint 22 Shifter + Sprint 24 audio-modulation family VCO/LFO/AudioSum/VCF/HardSync + Counter.addr-out, plus three pipeline smoke tests)
   test_synth_pipeline.py     9 end-to-end tests against examples/*.json (3 exercise the visual path: friendly-error rejection on ▶ Play, .pcf carries VGA pin assignments, and an end-to-end build of the color-bars graph through Yosys + nextpnr-ice40 + icepack to a real iCEBreaker bitstream — that one is skipped when OSS CAD Suite isn't on PATH)
   test_tinytapeout.py        8 TT bundle shape + info.yaml schema tests
-  test_manifest.py           129 dynamic cases (43 blocks × 3 invariants) added in Sprint 21: backendPath file exists, backendClass importable, registered in BLOCK_REGISTRY with matching __name__
+  test_manifest.py           144 dynamic cases (48 blocks × 3 invariants) added in Sprint 21 + auto-extended: backendPath file exists, backendClass importable, registered in BLOCK_REGISTRY with matching __name__
 
-frontend/test/        vitest, 289 tests, ~10 s
+frontend/test/        vitest, 321 tests, ~11 s (as of S24-11)
   ipc-contract.test.ts          renderer↔main IPC mock tests (synth/build/AI)
-  blocks.test.tsx               block render + parameter editing + range validation (86 tests across all 43 blocks)
+  blocks.test.tsx               block render + parameter editing + range validation (~96 tests across all 48 blocks)
   bus-types.test.ts             bus-type compatibility helper (29 tests covering the Sprint 16 typed-bus system)
   save-load.test.tsx            save/load roundtrip + m5 rejection paths
-  examples-consistency.test.ts  examples.ts ↔ examples/*.json drift check (now also covers color-bars.json)
+  examples-consistency.test.ts  examples.ts ↔ examples/*.json drift check (22 bundled graphs)
   classify-backend-error.test.ts friendly-error classifier (14 cases)
-  manifest.test.ts              126 dynamic cases (42 blocks × 3 invariants) added in Sprint 21: componentPath file exists, exports ${PascalCase}Node, registered in nodeTypes
+  ld-a11y.test.tsx              learning-disability accessibility checks
+  manifest.test.ts              144 dynamic cases (48 blocks × 3 invariants) added in Sprint 21 + auto-extended: componentPath file exists, exports ${PascalCase}Node, registered in nodeTypes
 ```
+
+**`npx tsc --noEmit` is a separate gate from `npm test`** and is REQUIRED before commit. vitest doesn't run the TypeScript compiler; CI runs both as distinct jobs. Caught in the S24-10 sub-Hz LFO commit (06474e6) which passed vitest locally but failed CI's `TypeScript check` step on a type-vs-examples mismatch. The hotfix at 8338164 + this note close the gap.
 
 CI runs both suites on every push to master. The cross-platform installer build runs on tag push; verified end-to-end via a v0.0.0-test pre-flight.
 
@@ -179,7 +182,7 @@ Permissive only. MIT for ChipBlocks itself; every shipped dependency is MIT/Apac
 
 ## Pointers for future contributors
 
-- **Sprint history**: [SPRINT-1.md](SPRINT-1.md) … [SPRINT-13.md](SPRINT-13.md). Each has a Sprint Log + Retrospective with the "what didn't work" notes that explain why the code is shaped the way it is.
+- **Sprint history**: [SPRINT-1.md](SPRINT-1.md) … [SPRINT-24.md](SPRINT-24.md) (note: no SPRINT-15.md — that slot renumbered into SPRINT-16). Each has a Sprint Log + Retrospective with the "what didn't work" notes that explain why the code is shaped the way it is.
 - **Current backlog**: [ROADMAP.md](ROADMAP.md) — Now / Next / Later, plus the a11y workstream + tech-debt workstream.
 - **Known issues**: [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — deliberately deferred items with rationale.
 - **Last accessibility audit**: [ACCESSIBILITY-AUDIT-2026-05-08.md](ACCESSIBILITY-AUDIT-2026-05-08.md) (Critical + Major tiers shipped, Minor polish tracked in ROADMAP).

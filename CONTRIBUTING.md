@@ -16,15 +16,17 @@ Requirements: Node 20+ on the host OS, WSL2 Ubuntu (on Windows) or native Linux/
 # Backend (in WSL2 on Windows; native on Linux/macOS):
 cd backend
 bash setup.sh
-python3 -m pytest tests/ -v   # ~110 s, 60 tests + 2 skipped
+python3 -m pytest tests/ -v   # ~110 s, 217 tests + 2 skipped (as of S24-11)
 
 # Frontend (host OS):
 cd frontend
 npm install
-npm test                      # ~6 s, 150 vitest tests
-npx tsc --noEmit              # clean
+npm test                      # ~11 s, 321 vitest tests (as of S24-11)
+npx tsc --noEmit              # clean — REQUIRED before commit; vitest doesn't run tsc
 npm run dev                   # hot-reload Electron dev mode
 ```
+
+The two checks (`npm test` for vitest and `npx tsc --noEmit` for TypeScript) catch different things. CI runs both as separate jobs; running only `npm test` locally will let a tsc-only failure through, which CI will catch.
 
 ## Architecture
 

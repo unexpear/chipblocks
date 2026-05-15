@@ -21,6 +21,15 @@ npm run codegen
 
 That regenerates 7 cross-cutting files from `blocks.yaml`. Commit the manifest row, your two hand-written files, and the regenerated outputs together. CI's `codegen-drift` job rejects PRs where the regenerated state diverges from what the manifest declares.
 
+**Verify before you push** — *both* gates, not just one:
+
+```bash
+npm test            # vitest — runtime behavior
+npx tsc --noEmit    # TypeScript types — separate gate from vitest
+```
+
+CI runs these as two distinct jobs; running only `npm test` will let a tsc-only failure through. See step 9 below for the failure mode + how to avoid it.
+
 ## Walkthrough
 
 ### 1. Read the schema
@@ -90,6 +99,20 @@ When you add a block, codegen handles `# Block reference`. **Manually add a 2-4 
 Without this paragraph the AI consultant still knows the block *exists* (from the codegen section) but can't recommend it well in "build me a kick drum" / "what should I use here?" queries. Sprint 22's Shifter addition surfaced this drift mode — the codegen section had Shifter; the prose section didn't until a follow-up commit added the paragraph.
 
 If you forget this step, nothing CI-breaks — but the AI consultant gets worse at *that block specifically* until someone (often a sprint later) catches the gap. Cheaper to do it now than to drift.
+
+### 9. Run both `npm test` AND `npx tsc --noEmit` before commit
+
+```bash
+cd frontend
+npm test            # vitest — block render + behavior tests
+npx tsc --noEmit    # TypeScript-only check — REQUIRED separately
+```
+
+These are **two different gates**: vitest exercises runtime behavior; `tsc --noEmit` exercises the type system. CI runs both as separate jobs. **Running only `npm test` will let a TypeScript-only failure through.**
+
+How this surfaces: if you add a new required field to a block's data type (e.g. `LfoBlockData` gains a required `rate_millihz: number`), existing entries in `examples.ts` or saved-graph fixtures that don't yet have that field become TypeScript errors. vitest doesn't read those; tsc does.
+
+If you discover you needed a backward-compatible type (e.g. existing examples must continue to work without the new field), mark the new field optional (`rate_millihz?: number`) AND have the component handle the undefined case (`data.rate_millihz ?? 0`). Caught in Sprint 24's S24-10 sub-Hz LFO commit (`06474e6`) which passed `npm test` locally but failed CI's `TypeScript check` step on a type-vs-examples mismatch; the hotfix at `8338164` made the field optional and added this cookbook step.
 
 ## The 7 generated sections (you don't edit these)
 
