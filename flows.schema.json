@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ChipBlocks flows manifest",
+  "description": "Single source of truth for end-to-end build flow toolchains. Per ADR-005, this file is authored at repo root. Shuttles reference rows here via the `flow` field. Each flow row describes a chain of tools (Yosys + nextpnr + icepack for FPGA; OpenLane + Magic for ASIC) and points at the Python adapter that orchestrates the chain.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["id", "label", "target_kind", "tools"],
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_-]*$",
+        "description": "Flow id referenced by shuttles.yaml.flow."
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1
+      },
+      "target_kind": {
+        "type": "string",
+        "enum": ["fpga-bitstream", "asic-submission-package", "verilog-only"],
+        "description": "What the flow produces. Determines which adapter contract method is called."
+      },
+      "tools": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "required": ["name", "license"],
+          "additionalProperties": false,
+          "properties": {
+            "name":         { "type": "string" },
+            "min_version":  { "type": "string" },
+            "license":      { "type": "string" },
+            "install_hint": { "type": "string" }
+          }
+        },
+        "description": "Ordered list of tools the flow invokes."
+      },
+      "install_check": {
+        "type": "string",
+        "description": "Shell command that exits 0 if the toolchain is installed; non-zero otherwise. Used by build.py's pre-flight."
+      },
+      "utilization_parser": {
+        "type": "string",
+        "description": "Path to the Python module that parses tool output for resource utilization (LCs, BRAMs, area, etc.). Per-flow because every tool has its own log format."
+      },
+      "adapter_path": {
+        "type": "string",
+        "description": "Path to the Python adapter that orchestrates this flow. Today the iCE40 path lives inside build.py; new flows get their own backend/flows/<id>.py module."
+      },
+      "pdk_compatible": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "List of PDK ids this flow works with. Empty / omitted for FPGA-bitstream flows (PDK doesn't apply)."
+      },
+      "notes": {
+        "type": "string"
+      }
+    }
+  }
+}

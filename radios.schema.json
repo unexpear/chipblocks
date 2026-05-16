@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ChipBlocks radios manifest",
+  "description": "Single source of truth for radio modulation schemes available as blocks. Per ADR-005, this file is authored at repo root. Each row is a synthesizable on-chip modulator that conforms to the versioned radio socket (chipblocks-radio-socket-vN). Phase 0 is an empty array; first rows (ook-433mhz, audio-fsk-bell-202) land in Sprint 31.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["id", "label", "modulation", "socket"],
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*$"
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1
+      },
+      "modulation": {
+        "type": "string",
+        "enum": ["on-off-keying", "fsk", "ask", "bpsk", "qpsk", "css", "ofdm"],
+        "description": "Modulation scheme. on-off-keying = OOK; fsk = frequency-shift keying; css = chirp spread spectrum (LoRa-like)."
+      },
+      "carrier_hz": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "RF carrier frequency in Hz. For audio-band modems (audio-FSK over speaker/mic) this is the audio center frequency rather than an RF carrier."
+      },
+      "bitrate_bps": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "socket": {
+        "type": "string",
+        "pattern": "^chipblocks-radio-socket-v[0-9]+$"
+      },
+      "size_estimate_luts": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "external_components": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Bill-of-materials items external to our silicon (antenna, RF transistor, balun, crystal, etc.)."
+      },
+      "bom_cost_usd": {
+        "type": "number",
+        "minimum": 0,
+        "description": "Approximate cost of the external-components total in USD."
+      },
+      "range_meters": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Approximate range in meters under typical conditions."
+      },
+      "block_path": {
+        "type": "string",
+        "description": "Path to the synthesizable Amaranth modulator block (e.g. 'backend/radios/ook_433mhz.py')."
+      },
+      "notes": {
+        "type": "string"
+      }
+    }
+  }
+}

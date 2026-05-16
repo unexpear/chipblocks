@@ -1,0 +1,15 @@
+# ChipBlocks radios manifest. See ADR-005.
+#
+# This manifest is intentionally empty in Phase 0. First rows land in
+# Sprint 31. Per the post-S24 strategic pivot the default radio for the
+# phone-class target is OOK at 433 MHz ISM band (simplest digital radio
+# that's fully fab-able; 10-100m range with a passive RF stage at
+# ~$0.30 BOM). Audio-FSK (Bell 202: 1200/2200 Hz tones over speaker /
+# mic) ships alongside as a teaching companion — reuses existing blocks
+# in a 5-block composition. LoRa-style CSS deferred to v3 unless user
+# motivation arrives sooner.
+#
+# Each new row is 1 entry here + 1 synthesizable Amaranth block at
+# backend/radios/<id>.py conforming to chipblocks-radio-socket-v1.
+
+[]

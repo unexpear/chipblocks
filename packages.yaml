@@ -1,0 +1,25 @@
+# ChipBlocks packages manifest. See ADR-005.
+#
+# One row per physical chip-carrier package. Phase 0 has just caravel-mux,
+# the wrapper Tiny Tapeout designs live inside. Future rows: QFN-32 /
+# DIP-40 / BGA-100 / bare-die for the in-house shuttle tiers once those
+# land. Each new package row is 1 line in the relevant shuttles.yaml row
+# that references it; no other code change.
+
+- id: caravel-mux
+  label: "eFabless Caravel multi-project pin-mux wrapper"
+  kind: wrapper
+  total_pins: 38
+  io_pins:
+    ui_in: 8
+    uo_out: 8
+    uio: 8
+    control: 14
+  upstream: "https://github.com/efabless/caravel"
+  license: "Apache-2.0"
+  notes: |
+    Standard wrapper for eFabless shuttle submissions. Tiny Tapeout
+    designs live inside this wrapper as one mux-selected user-project
+    tile. ui_in[0..7] = dedicated inputs; uo_out[0..7] = dedicated
+    outputs; uio[0..7] = bidirectional (each has a direction bit in the
+    Caravel io_oeb register).

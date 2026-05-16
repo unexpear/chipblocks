@@ -1,0 +1,13 @@
+# ChipBlocks buses manifest. See ADR-005.
+#
+# This manifest is intentionally empty in Phase 0. First row
+# (wishbone-classic) lands in Sprint 26 to anchor the S29 packaged-CPU
+# work — Wishbone B4 Classic is public-domain, widely supported by open
+# RISC-V cores, and the canonical simple-bus choice for our scale.
+# Future rows: apb (low-power peripheral bus), axi-lite (for forward-
+# looking compatibility), and possibly a custom minimal bus if Wishbone
+# proves heavy for tiny designs.
+#
+# Each new row is 1 entry here + master/slave adapter Elaboratables.
+
+[]
