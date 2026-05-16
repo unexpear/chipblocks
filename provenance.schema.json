@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/unexpear/chipblocks/provenance.schema.json",
+  "title": "ChipBlocks provenance fragment",
+  "description": "Shared 'value with provenance' schema fragment per ADR-007. Used by material properties (materials.yaml), device parameters (devices.yaml), and Active Variables (parameters.yaml). The same fragment shape applies everywhere a value with empirical or sourced basis lives in the system. Other schemas reference this via $ref. Required-vs-optional fields differ per origin (builtin / community / user-local / project); see ADR-007 for the full origin matrix.",
+  "type": "object",
+  "required": ["value"],
+  "additionalProperties": false,
+  "properties": {
+    "value": {
+      "description": "The actual value. May be a number (most common), a string (for enums or labels), or a boolean (for feature-flag-style values).",
+      "oneOf": [
+        { "type": "number" },
+        { "type": "string" },
+        { "type": "boolean" }
+      ]
+    },
+    "units": {
+      "type": "string",
+      "description": "SI unit string when the value is a quantity. Examples: 'V', 'A', 'ohm', 'ohm_meter', 'F', 'H', 'K', 'degC', 'N', 'W', 'W_per_mK', 'kg_per_m3', 'Hz', 'm', 'mm', 'um', 'V_per_m'. Omit for non-quantity values (strings, booleans). Conditions/tolerance use the same unit string format."
+    },
+    "source": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "reference",
+            "datasheet",
+            "pdk",
+            "community",
+            "measured",
+            "estimated",
+            "user_supplied"
+          ],
+          "description": "Kind of source, ordered roughly by trustworthiness: standard (NIST/IEC/IEEE/ISO/JEDEC/IPC) > reference (textbook, handbook) > datasheet (manufacturer) > pdk (process design kit doc) > community (curated wiki / fab design rules) > measured (user empirical) > estimated (user guess) > user_supplied (user typed it)."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable description of where this value comes from. Examples: 'Copper resistivity at 20 C', '9V alkaline battery nominal voltage'."
+        },
+        "citation": {
+          "type": "string",
+          "description": "URL, standards reference, datasheet citation, or measurement record. Required for builtin + community origins when source.type != user_supplied. Examples: 'NIST CODATA 2018', 'IEC 60721-3-3 Class 3K3', 'TI LM7805 datasheet rev. 2024', 'JLCPCB capability matrix 2026-01-15'."
+        }
+      }
+    },
+    "conditions": {
+      "type": "object",
+      "description": "Implicit assumptions baked into the value. Map of named condition (temperature, pressure, forward_current, state_of_charge, etc.) to { value, units } or a string label (e.g., 'full' for state_of_charge). The validator may use these to warn when the design operates outside documented conditions. STRONGLY ENCOURAGED for shipped values; optional for user-supplied.",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["value"],
+            "additionalProperties": false,
+            "properties": {
+              "value": { "oneOf": [{ "type": "number" }, { "type": "string" }] },
+              "units": { "type": "string" }
+            }
+          },
+          { "type": "string" }
+        ]
+      }
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low", "unknown"],
+      "description": "How trustworthy the value is at the documented conditions. high = well-defined constant / standards-based / precisely-measured (±5% under stated conditions). medium = typical datasheet value or measurement with limited validation (±10-30%). low = estimate or limited-info value. unknown = not assessed (default for user-added)."
+    },
+    "tolerance": {
+      "type": "object",
+      "description": "The actual range under stated conditions. Distinct from confidence: a high-confidence value can still have wide tolerance (e.g., a 5% resistor is precisely ±5%). Optional; omit when not meaningful.",
+      "additionalProperties": false,
+      "properties": {
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "distribution": {
+          "type": "string",
+          "enum": ["normal", "uniform", "unknown"]
+        }
+      }
+    },
+    "notes": {
+      "type": "string",
+      "description": "Freeform caveats, edge cases, or recommendations the user should know about."
+    }
+  }
+}

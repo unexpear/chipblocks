@@ -47,6 +47,85 @@ function validate(name: string): { ok: boolean; errors: unknown } {
   return { ok, errors: validator.errors }
 }
 
+describe('provenance.schema.json shared fragment', () => {
+  it('parses as valid JSON Schema draft-07', () => {
+    const schema = loadSchema('provenance')
+    const ajv = new Ajv({ allErrors: true, strict: false })
+    // ajv compile validates the schema is well-formed
+    expect(() => ajv.compile(schema)).not.toThrow()
+  })
+
+  it('accepts a minimal valid value-with-provenance object', () => {
+    const ajv = new Ajv({ allErrors: true, strict: false })
+    const validate = ajv.compile(loadSchema('provenance'))
+    const minimal = { value: 9.0, units: 'V' }
+    const ok = validate(minimal)
+    if (!ok) console.error('minimal validation errors:', validate.errors)
+    expect(ok).toBe(true)
+  })
+
+  it('accepts a fully-populated builtin-grade value', () => {
+    const ajv = new Ajv({ allErrors: true, strict: false })
+    const validate = ajv.compile(loadSchema('provenance'))
+    const full = {
+      value: 1.68e-8,
+      units: 'ohm_meter',
+      source: {
+        type: 'standard',
+        label: 'Copper resistivity at 20 C',
+        citation: 'NIST CODATA 2018; IEC 60028 annealed copper standard',
+      },
+      conditions: {
+        temperature: { value: 20, units: 'degC' },
+      },
+      confidence: 'high',
+      tolerance: { min: 1.65e-8, max: 1.72e-8, distribution: 'normal' },
+      notes: 'For high-temperature designs, derate per R(T) = R20 * (1 + alpha * (T - 20)).',
+    }
+    const ok = validate(full)
+    if (!ok) console.error('full validation errors:', validate.errors)
+    expect(ok).toBe(true)
+  })
+
+  it('rejects unknown source.type values', () => {
+    const ajv = new Ajv({ allErrors: true, strict: false })
+    const validate = ajv.compile(loadSchema('provenance'))
+    const bad = {
+      value: 1,
+      units: 'V',
+      source: { type: 'wikipedia', label: 'invalid source type' },
+    }
+    expect(validate(bad)).toBe(false)
+  })
+
+  it('rejects unknown confidence levels', () => {
+    const ajv = new Ajv({ allErrors: true, strict: false })
+    const validate = ajv.compile(loadSchema('provenance'))
+    const bad = { value: 1, units: 'V', confidence: 'very-sure' }
+    expect(validate(bad)).toBe(false)
+  })
+
+  it('accepts a string-valued condition (e.g., state_of_charge: full)', () => {
+    const ajv = new Ajv({ allErrors: true, strict: false })
+    const validate = ajv.compile(loadSchema('provenance'))
+    const stringCondition = {
+      value: 9.0,
+      units: 'V',
+      conditions: { state_of_charge: 'full' },
+    }
+    const ok = validate(stringCondition)
+    if (!ok) console.error('string-condition validation errors:', validate.errors)
+    expect(ok).toBe(true)
+  })
+
+  it('rejects extra top-level fields (additionalProperties: false)', () => {
+    const ajv = new Ajv({ allErrors: true, strict: false })
+    const validate = ajv.compile(loadSchema('provenance'))
+    const withExtra = { value: 1, units: 'V', unknown_field: 'oops' }
+    expect(validate(withExtra)).toBe(false)
+  })
+})
+
 describe('signals.yaml manifest integrity', () => {
   it('validates against signals.schema.json', () => {
     const { ok, errors } = validate('signals')
