@@ -1,13 +1,10 @@
 # Continuous-integration checks. Runs on every push and PR to master.
 #
-# ChipBlocks v2 (ground-up restart): the CI surface is intentionally
-# minimal at this stage — just TypeScript-check + npm install validity
-# on the empty shell. Backend pytest + codegen-drift checks + frontend
-# vitest will be added back as the new direction grows them in the
-# coming sprints.
-#
-# The legacy/audio-synth-direction branch retains its own (richer) CI
-# config; this file only applies to master and PRs to it.
+# ChipBlocks v2 (ground-up restart). At Sprint 2 the CI gates expand
+# from just TS check to: npm install + tsc + vitest + codegen-drift.
+# Manifest authoring + tests grow this surface back as features
+# return; the legacy/audio-synth-direction branch retains its own
+# (richer) CI config.
 
 name: CI
 
@@ -19,7 +16,7 @@ on:
 
 jobs:
   frontend:
-    name: Frontend (install + typecheck)
+    name: Frontend (install + typecheck + vitest)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -37,3 +34,10 @@ jobs:
 
       - name: TypeScript check
         run: npx tsc --noEmit
+
+      - name: Vitest
+        run: npm test
+
+      # Codegen drift check lands in Sprint 2 sub-commit S2-7 when
+      # scripts/codegen-manifests.mjs is authored. The step is added
+      # to CI in that commit.
