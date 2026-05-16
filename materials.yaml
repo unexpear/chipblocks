@@ -115,16 +115,17 @@
   visual: { color: "#666666", finish: crystalline }
   properties:
     resistivity:
-      value: 640
+      value: 2300
       units: ohm_meter
       source:
         type: reference
-        label: "Intrinsic silicon resistivity at 25 C"
-        citation: "Sze, S.M. 'Physics of Semiconductor Devices' (3rd ed., 2007)"
+        label: "Intrinsic silicon resistivity at 300 K"
+        citation: "Sze, S.M. 'Physics of Semiconductor Devices' (3rd ed., 2007); textbook value computed from ni ~ 1.0e10 /cm^3 at 300 K with mu_n=1350, mu_p=480 cm^2/V·s"
       conditions:
-        temperature: { value: 25, units: degC }
-      confidence: high
-      notes: "Strongly temperature-dependent — drops orders of magnitude with doping or temperature increase."
+        temperature: { value: 300, units: K }
+      confidence: medium
+      tolerance: { min: 640, max: 3400, distribution: uniform }
+      notes: "Intrinsic Si resistivity is extremely sensitive to assumed intrinsic carrier concentration ni and temperature. Published values span ~640-3400 ohm·m at room temperature depending on ni model (1e10 to 1.5e10 /cm^3) and exact temperature (25-35 C). Strongly temperature-dependent — drops orders of magnitude with doping. Real devices use doped silicon (n-type / p-type), which have resistivity orders of magnitude lower and will be added as separate entries when devices.yaml needs them."
     permittivity_relative:
       value: 11.7
       units: dimensionless

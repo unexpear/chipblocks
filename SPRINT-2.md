@@ -191,14 +191,16 @@ CI updated: "Codegen drift check" step re-enabled (it was deferred from S2-1). R
 
 | Manifest | Schema | YAML | Generated TS | Manifest-integrity tests |
 |---|---|---|---|---|
-| signals | 51 lines | 81 lines (8 entries) | 130 lines | 5 |
-| materials | 78 lines | 326 lines (10 entries) | 550 lines | 8 |
-| shapes | 61 lines | 79 lines (7 kinds) | 130 lines | 4 |
-| interfaces | 50 lines | 102 lines (6 kinds) | 180 lines | 5 |
-| behaviors | 56 lines | 110 lines (9 behaviors) | 180 lines | 6 |
-| parameters | 122 lines | 358 lines (26 variables) | 540 lines | 11 |
-| provenance (shared) | 84 lines | — | — | 7 |
-| **Total** | **502 lines** | **1056 lines** | **~1710 lines** | **46** |
+| signals | 48 lines | 66 lines (8 entries) | 76 lines | 5 |
+| materials | 61 lines | 508 lines (10 entries) | 794 lines | 8 |
+| shapes | 66 lines | 69 lines (7 kinds) | 154 lines | 4 |
+| interfaces | 55 lines | 107 lines (6 kinds) | 218 lines | 5 |
+| behaviors | 58 lines | 90 lines (9 behaviors) | 121 lines | 6 |
+| parameters | 135 lines | 462 lines (26 variables) | 605 lines | 11 |
+| provenance (shared) | 93 lines | — | — | 7 |
+| **Total** | **516 lines** | **1302 lines** | **1968 lines** | **46** |
+
+> Counts updated post-Sprint-2 audit cleanup (2026-05-16): the original commit's table understated actual line counts. The cleanup pass also widened silicon_intrinsic.resistivity into a range (640-3400 ohm·m) and replaced ISO 21848 with ISO 16750-2 / ISO 7637-2 for default_supply_12v, which shifted materials.yaml + parameters.yaml line counts upward by a few lines.
 
 Plus the smoke test (1 case) + the test helpers shared across all describe blocks. **47 test cases total.** All passing.
 

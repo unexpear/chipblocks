@@ -232,11 +232,11 @@ variables:
     description: "Common 12V rail (automotive, bench supplies, industrial)."
     source:
       type: standard
-      label: "Automotive 12V nominal"
-      citation: "DIN ISO 8820 / ISO 21848"
+      label: "12V automotive electrical system"
+      citation: "ISO 16750-2 (Road vehicles — Environmental conditions and testing for electrical and electronic equipment — Part 2: Electrical loads); supplemented by ISO 7637-2 (electrical transient disturbances)"
     confidence: high
     tolerance: { min: 11.0, max: 14.4 }
-    notes: "Automotive 'nominal 12V' is actually 12.6V (lead-acid full) to 14.4V (alternator charge). For battery-only contexts override to 12.6V."
+    notes: "Automotive 'nominal 12V' is actually 12.6V (lead-acid full) to 14.4V (alternator charge). For battery-only contexts override to 12.6V. ISO 16750-2 defines the normal operating voltage range; ISO 7637-2 covers transients."
     used_by: []
     validation: { status: pass, issues: [] }
 
