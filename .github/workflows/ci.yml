@@ -38,6 +38,11 @@ jobs:
       - name: Vitest
         run: npm test
 
-      # Codegen drift check lands in Sprint 2 sub-commit S2-7 when
-      # scripts/codegen-manifests.mjs is authored. The step is added
-      # to CI in that commit.
+      # S2-7 onward — manifest codegen drift check. Runs
+      # scripts/codegen-manifests.mjs in --check mode (default). Fails
+      # the PR if any generated TS registry in
+      # frontend/src/manifests/_generated/ is out of sync with its
+      # source YAML manifest at repo root. Run `npm run codegen:write`
+      # locally to regenerate after editing a manifest.
+      - name: Codegen drift check
+        run: npm run codegen
