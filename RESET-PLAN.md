@@ -1,8 +1,14 @@
 # ChipBlocks reset plan — preservation + ground-up restart
 
-> **Status:** Draft for review (2026-05-16). No code changes have been made yet. This document is the plan that gets approved BEFORE any irreversible action. Read top-to-bottom, push back, iterate. When approved, this file becomes the execution checklist.
+> **Status:** Draft for review (2026-05-16, refined 2026-05-17). This document is the plan that gets approved BEFORE any meaningful action against master. Read top-to-bottom, push back, iterate. When approved, this file becomes the execution checklist.
 >
 > **Naming note:** This is a *reset*, not a *migration*. The current direction is preserved with full integrity in a frozen branch; the new direction starts from a clean main. Nothing is mutated; nothing is deleted; nothing is lost.
+>
+> ## Core principle: no deletion of legacy work
+>
+> **Old work is preserved in branch history and release tags. The reset changes the active product direction — it does not change the value of the old work.** Anyone who wants the original audio-synth ChipBlocks can always get it: the `legacy/audio-synth-direction` branch is a literal snapshot of the alpha.9 state; the GitHub Releases page keeps every alpha.x installer downloadable; the `v0.1.0-alpha.9-final` tag is the explicit marker of the formal handoff. Nothing about this plan deletes, rewrites, or overwrites the history of the old direction. If a future contributor wants to fork the legacy branch into a `chipblocks-audio` repository and continue developing the audio-synth direction independently, the option remains open in perpetuity.
+>
+> This principle is load-bearing for the rest of the plan. Every step below respects it.
 
 ---
 
@@ -421,7 +427,7 @@ The only **destructive** action in this list is step 6 (the master reset). Befor
 - Verification confirms legacy is checkable
 - The reset is staged on a separate branch for review
 
-Even step 6 isn't truly destructive — the legacy branch is the full history; nothing is lost.
+Even step 6 isn't truly destructive — the legacy branch is the full history; nothing is lost. Per the core principle at the top of this doc: no deletion of legacy work; the reset changes the active product direction, not the value of the old work.
 
 ---
 
@@ -457,6 +463,6 @@ Everything else I have leans on. Push back where needed; otherwise I carry the l
 
 You read this. You push back. We iterate the plan until you're satisfied. Then — and only then — Sprint 1 begins with the operational mechanics above. **No code changes until this plan is approved.**
 
-The first concrete code change after approval will be `git tag v0.1.0-alpha.9-final` at the current HEAD. That single command is the point of no return for the reset — and even then, the legacy branch preserves everything so it's not truly destructive.
+The first concrete action after approval will be `git tag v0.1.0-alpha.9-final` at the current HEAD. **The freeze tag marks the formal handoff from the original audio-synth direction to the ground-up electronics direction.** It is not a destructive operation — git tags and branches preserve history rather than removing it. The genuine moment the reset takes effect is later, when new commits land on main and master stops being the active product; even then, the legacy branch + the freeze tag + the GitHub Releases page keep the old direction fully accessible forever.
 
 The estimated wall-clock time from "plan approved" to "first new-direction demo" is 2-3 months, working at the project's "fine taking time" cadence.
