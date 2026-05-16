@@ -38,8 +38,30 @@ function loadSchema(name: string): object {
   return JSON.parse(raw)
 }
 
-function validate(name: string): { ok: boolean; errors: unknown } {
+/**
+ * Build an Ajv instance with all repo-root schemas pre-registered so
+ * cross-schema $ref resolution works (e.g., materials.schema.json's
+ * properties.{id}.value uses $ref: "provenance.schema.json#").
+ */
+function makeAjv(): Ajv {
   const ajv = new Ajv({ allErrors: true, strict: false })
+  // Preload schemas that other schemas might $ref. Order matters only
+  // for clarity; addSchema accepts any order.
+  for (const name of ['provenance', 'signals', 'materials']) {
+    const schemaPath = resolve(REPO_ROOT, `${name}.schema.json`)
+    try {
+      const schema = JSON.parse(readFileSync(schemaPath, 'utf-8'))
+      ajv.addSchema(schema, `${name}.schema.json`)
+    } catch {
+      // schema may not exist yet during early Sprint 2 sub-commits;
+      // silent skip is fine
+    }
+  }
+  return ajv
+}
+
+function validate(name: string): { ok: boolean; errors: unknown } {
+  const ajv = makeAjv()
   const schema = loadSchema(name)
   const manifest = loadManifest(name)
   const validator = ajv.compile(schema)
@@ -176,5 +198,92 @@ describe('signals.yaml manifest integrity', () => {
     const manifest = loadManifest('signals') as Array<{ id: string }>
     const ids = manifest.map((row) => row.id)
     expect(new Set(ids).size).toBe(ids.length)
+  })
+})
+
+describe('materials.yaml manifest integrity', () => {
+  it('validates against materials.schema.json (incl. $ref to provenance.schema.json)', () => {
+    const { ok, errors } = validate('materials')
+    if (!ok) {
+      console.error('materials.yaml validation errors:', JSON.stringify(errors, null, 2))
+    }
+    expect(ok).toBe(true)
+  })
+
+  it('has at least 8 materials (the v2 MVP set)', () => {
+    const manifest = loadManifest('materials') as unknown[]
+    expect(Array.isArray(manifest)).toBe(true)
+    expect(manifest.length).toBeGreaterThanOrEqual(8)
+  })
+
+  it('every material has at least one property', () => {
+    const manifest = loadManifest('materials') as Array<{
+      id: string
+      properties: Record<string, unknown>
+    }>
+    for (const m of manifest) {
+      expect(Object.keys(m.properties).length).toBeGreaterThan(0)
+    }
+  })
+
+  it('every property carries source.type (per ADR-007 Sprint 2 rule for builtin)', () => {
+    const manifest = loadManifest('materials') as Array<{
+      id: string
+      properties: Record<string, { source?: { type?: string } }>
+    }>
+    for (const m of manifest) {
+      for (const [propName, prop] of Object.entries(m.properties)) {
+        expect(prop.source, `material "${m.id}" property "${propName}" missing source`).toBeDefined()
+        expect(prop.source!.type, `material "${m.id}" property "${propName}" missing source.type`).toBeDefined()
+      }
+    }
+  })
+
+  it('every property has a confidence rating (per ADR-007 Sprint 2 rule)', () => {
+    const manifest = loadManifest('materials') as Array<{
+      id: string
+      properties: Record<string, { confidence?: string }>
+    }>
+    for (const m of manifest) {
+      for (const [propName, prop] of Object.entries(m.properties)) {
+        expect(prop.confidence, `material "${m.id}" property "${propName}" missing confidence`).toBeDefined()
+      }
+    }
+  })
+
+  it('every property has a citation (label + citation for non-user-supplied sources)', () => {
+    const manifest = loadManifest('materials') as Array<{
+      id: string
+      properties: Record<
+        string,
+        { source?: { type?: string; label?: string; citation?: string } }
+      >
+    }>
+    for (const m of manifest) {
+      for (const [propName, prop] of Object.entries(m.properties)) {
+        if (prop.source && prop.source.type !== 'user_supplied') {
+          expect(prop.source.label, `material "${m.id}" prop "${propName}" missing source.label`).toBeDefined()
+          // For shipped defaults, citation is required by the Sprint 2 rule
+          expect(prop.source.citation, `material "${m.id}" prop "${propName}" missing source.citation`).toBeDefined()
+        }
+      }
+    }
+  })
+
+  it('all ids are unique + use the allowed pattern', () => {
+    const manifest = loadManifest('materials') as Array<{ id: string }>
+    const ids = manifest.map((m) => m.id)
+    expect(new Set(ids).size, 'duplicate material ids').toBe(ids.length)
+    for (const id of ids) {
+      expect(id, `material id "${id}" does not match pattern`).toMatch(/^[A-Za-z][A-Za-z0-9_-]*$/)
+    }
+  })
+
+  it('includes the canonical MVP materials (copper, silicon, FR4)', () => {
+    const manifest = loadManifest('materials') as Array<{ id: string }>
+    const ids = new Set(manifest.map((m) => m.id))
+    for (const required of ['copper', 'silicon_intrinsic', 'FR4']) {
+      expect(ids, `missing canonical material: ${required}`).toContain(required)
+    }
   })
 })
