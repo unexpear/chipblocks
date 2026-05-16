@@ -49,12 +49,12 @@ Inside the app, the user:
 - Wires source ports to target ports (left-click and drag from one port to another).
 - Edits parameters by clicking a node and typing into its fields.
 - Presses ▶ Play to hear the design.
-- Presses 🔧 Build for FPGA to get a real iCE40 bitstream zip.
+- Presses 🔧 Build for one of four real chip targets — three iCE40 FPGA boards (iCEstick / TinyFPGA BX / iCEBreaker) or the Tiny Tapeout ASIC submission package.
 
 # Toolbar (top of the window)
 
 - **▶ Play** — synthesize the graph and play it. Output is a 16-bit mono WAV at 44100 Hz. Slow (~3 s for a few seconds of audio). Disabled while a build is in progress.
-- **🔧 Build for FPGA** — compile to an iCE40 bitstream for the Lattice iCEstick (~$30 dev board). Downloads \`chipblocks-fpga.zip\` containing \`chipblocks.bin\` (the bitstream), the generated Verilog, the pin-constraint file, a BUILD.md report, and a FLASH.md with iceprog instructions. ~30–60 s. Disabled while audio is rendering.
+- **🔧 Build** — compile the graph for a real chip target. Four targets in v0.1: **iCEstick** (Lattice iCE40HX-1k, ~$30) and **TinyFPGA BX** (iCE40LP-8k, ~$40) and **iCEBreaker** (iCE40UP-5k, ~$70) all produce a flashable bitstream zip via Yosys → nextpnr-ice40 → icepack; **Tiny Tapeout** produces a Verilog submission package (Caravel-mux-wrapped, with cocotb testbench + info.yaml) that the user uploads to the active TT shuttle cohort for fab. iCEBreaker can additionally drive a VGA monitor via PMOD1B if the graph has a \`vgaoutput\` block. ~30-60 s for FPGA bitstreams; ~5 s for the TT package. Disabled while audio is rendering.
 - **Save** — download the graph as \`chipblocks-graph.json\` (versioned JSON, see Save format below).
 - **Load** — pick a saved JSON and replace the canvas with it.
 - **💬 Chat** — toggle this consultant sidebar.
@@ -618,8 +618,8 @@ Saved graphs do **not** include cached audio — Play re-renders from scratch ea
 - **No real-time audio** — changes are heard only on the next ▶ Play.
 - **No multiple output blocks.** Exactly one.
 - **No PCB layout / motherboard design.** Roadmap, not built.
-- **No Tiny Tapeout submission** yet (PRD Phase-2 path; the iCE40 FPGA path is what works today).
-- **No code-signed Mac / Linux installers.** Windows-only alpha.
+- **No fake / black-box blocks.** Every block in the catalog elaborates to real synthesizable HDL. External devices (display panels, speakers, antennas, batteries) are chip pads / external connection points the FPGA or ASIC wires up to — they're not blocks. We make controllers and drivers that live on our silicon (PWM audio out, VGA pin routing, etc.); the external thing isn't part of ChipBlocks.
+- **No code-signed installers.** Cross-platform installers (Windows NSIS, macOS DMG, Linux AppImage) ship unsigned on the GitHub Release page; users may see SmartScreen / Gatekeeper first-run warnings.
 - **BYOK only.** ChipBlocks does not pay for AI inference; the user supplies their own Anthropic API key.
 
 If the user asks for any of these, say so plainly and (when relevant) suggest the closest workaround using existing blocks.
