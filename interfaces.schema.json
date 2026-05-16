@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ChipBlocks interfaces manifest",
+  "description": "Layer 2 of the 9-layer abstraction hierarchy (per ADR-006). Interfaces are where shapes meet (contact, solder_joint, via, bond_wire) or where the design exits to the outside world (terminal, connector_pin). Each interface kind specifies the geometry it relates + any electrical / mechanical / reliability properties unique to it.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["id", "label", "kind"],
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_-]*$"
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "kind": {
+        "type": "string",
+        "enum": [
+          "terminal",
+          "contact",
+          "solder_joint",
+          "via",
+          "bond_wire",
+          "connector_pin"
+        ],
+        "description": "Interface category. Each maps to specific geometry expectations + reliability characteristics."
+      },
+      "parameters_required": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+            "units": { "type": "string" },
+            "description": { "type": "string" }
+          }
+        }
+      },
+      "default_properties": {
+        "type": "object",
+        "description": "Default property values applicable to this interface kind. Each is a provenance fragment per provenance.schema.json. Examples: contact_resistance for contacts, expected_thermal_cycles for solder_joints, lead_diameter for connector_pins.",
+        "additionalProperties": {
+          "$ref": "provenance.schema.json#"
+        }
+      },
+      "notes": { "type": "string" }
+    }
+  }
+}

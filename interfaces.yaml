@@ -1,0 +1,107 @@
+# ChipBlocks interfaces manifest. Layer 2 of the 9-layer abstraction
+# hierarchy. Where shapes meet, or where the design exits to the
+# outside world.
+
+- id: terminal
+  label: "Terminal (external connection point)"
+  kind: terminal
+  parameters_required:
+    - { name: position, description: "3D coordinate { x, y, z } in mm." }
+  notes: "External net anchor. Every L4 primitive device has at least one terminal. Terminals are NOT physical pins yet (those are connector_pin entries) — they are the abstract anchors that the netlist uses. A wire's two ends are terminals; a switch has two terminals; a battery has + and - terminals; an LED has anode + cathode terminals."
+
+- id: contact
+  label: "Contact (two shapes touching)"
+  kind: contact
+  parameters_required:
+    - { name: shape_a, description: "First shape FK." }
+    - { name: shape_b, description: "Second shape FK." }
+    - { name: area_mm2, units: mm2, description: "Contact area." }
+  default_properties:
+    contact_resistance:
+      value: 0.001
+      units: ohm
+      source:
+        type: reference
+        label: "Typical metal-to-metal contact resistance under spring pressure"
+        citation: "Holm, R. 'Electric Contacts: Theory and Application' (4th ed., 1967)"
+      conditions:
+        temperature: { value: 20, units: degC }
+      confidence: medium
+      tolerance: { min: 0.0001, max: 0.01 }
+      notes: "Highly dependent on contact area, force, surface condition, plating. Range covers gold-plated low-force contacts (~0.1 mΩ) up to corroded or low-force contacts (~10 mΩ)."
+  notes: "Two conductive regions touching with effectively-zero resistance (low mΩ in practice). The contact_resistance default is a starting estimate; real designs measure or characterize per-application. Plated contacts (gold, silver, tin) have lower + more stable resistance over time."
+
+- id: solder_joint
+  label: "Solder joint"
+  kind: solder_joint
+  parameters_required:
+    - { name: shape_a, description: "First shape (typically a wire/lead)." }
+    - { name: shape_b, description: "Second shape (typically a pad/trace)." }
+    - { name: solder_material, description: "Solder alloy FK (materials.yaml id)." }
+    - { name: volume_mm3, units: mm3, description: "Joint solder volume." }
+  default_properties:
+    contact_resistance:
+      value: 0.0001
+      units: ohm
+      source:
+        type: reference
+        label: "Typical soldered joint resistance (good wetting)"
+        citation: "IPC-A-610H acceptance criteria + industry typical"
+      conditions:
+        temperature: { value: 20, units: degC }
+      confidence: medium
+      notes: "Sub-mΩ for healthy joints. Cold joints / cracks raise this by orders of magnitude — primary failure mode flagged by EMI / intermittency symptoms."
+    expected_thermal_cycles:
+      value: 5000
+      units: cycles
+      source:
+        type: standard
+        label: "Expected thermal-cycle endurance for SAC305 joints (consumer-grade)"
+        citation: "IPC-9701B + IPC-A-610H"
+      conditions:
+        temperature_range: "0 to 100 degC"
+        cycle_dwell: "10 minutes"
+      confidence: low
+      notes: "Highly variable — pad layout, component package, joint volume, and thermal-cycle amplitude all matter. Range from ~1000 cycles (large packages, harsh cycles) to >50000 (small packages, mild cycles)."
+  notes: "The standard SMT/through-hole connection. Solder material (Sn63Pb37 vs SAC305) significantly affects reflow profile + reliability. Cracked solder joints are the leading PCB failure mode in field use; thermal cycle endurance is part of every design's reliability budget."
+
+- id: via
+  label: "Via (vertical interlayer connection)"
+  kind: via
+  parameters_required:
+    - { name: diameter_mm, units: mm, description: "Drill diameter." }
+    - { name: depth_mm, units: mm, description: "Through-hole = board thickness; blind/buried = partial." }
+    - { name: plating_thickness_um, units: um, description: "Copper plating thickness inside the via barrel." }
+    - { name: fill, description: "Plated-through | conductive-filled | non-conductive-filled | tented." }
+  notes: "PCB-specific interlayer connection. Through-via spans the entire board; blind-via terminates inside; buried-via lives entirely between inner layers. Plating thickness (typically 18-25 µm for IPC Class 2) determines current capacity + thermal cycling reliability."
+
+- id: bond_wire
+  label: "Bond wire (die-to-package internal wire)"
+  kind: bond_wire
+  parameters_required:
+    - { name: diameter_um, units: um, description: "Wire diameter (typically 25-75 µm)." }
+    - { name: length_mm, units: mm, description: "Wire length from die pad to package lead frame." }
+    - { name: material, description: "Bond wire material FK (typically gold or aluminum)." }
+  notes: "The tiny wire inside an IC connecting the silicon die to the package pin/lead frame. Limits the IC's high-frequency performance + current capacity. Gold bonds are standard for plastic packages; aluminum for some hermetic packages. Wedge vs ball bonding determines the geometry at each end."
+
+- id: connector_pin
+  label: "Connector pin (external chip/package pad)"
+  kind: connector_pin
+  parameters_required:
+    - { name: pin_number, description: "Pin number (1-based) or pin name (e.g., 'VCC', 'GND')." }
+    - { name: pad_geometry, description: "Pad shape: through-hole | smt | ball | bare-die." }
+    - { name: position, description: "3D coordinate { x, y, z } in mm on the package outline." }
+  default_properties:
+    max_current:
+      value: 0.5
+      units: A
+      source:
+        type: reference
+        label: "Typical max sustained current per pin (small-signal packages)"
+        citation: "JEDEC + manufacturer datasheets — varies widely by package family"
+      conditions:
+        temperature: { value: 25, units: degC }
+      confidence: low
+      tolerance: { min: 0.05, max: 5 }
+      notes: "Range covers TSSOP/DIP small-signal (~0.5 A) up to power-package leads (5 A+). Always cite the specific package datasheet for production designs."
+  notes: "External electrical access to a chip/package. THT pins for through-hole packages, SMT pads for surface-mount, BGA balls for ball-grid-array. The connector_pin's pad_geometry drives the PCB-side footprint design."

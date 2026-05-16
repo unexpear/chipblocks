@@ -47,7 +47,7 @@ function makeAjv(): Ajv {
   const ajv = new Ajv({ allErrors: true, strict: false })
   // Preload schemas that other schemas might $ref. Order matters only
   // for clarity; addSchema accepts any order.
-  for (const name of ['provenance', 'signals', 'materials']) {
+  for (const name of ['provenance', 'signals', 'materials', 'shapes', 'interfaces', 'behaviors']) {
     const schemaPath = resolve(REPO_ROOT, `${name}.schema.json`)
     try {
       const schema = JSON.parse(readFileSync(schemaPath, 'utf-8'))
@@ -284,6 +284,128 @@ describe('materials.yaml manifest integrity', () => {
     const ids = new Set(manifest.map((m) => m.id))
     for (const required of ['copper', 'silicon_intrinsic', 'FR4']) {
       expect(ids, `missing canonical material: ${required}`).toContain(required)
+    }
+  })
+})
+
+describe('shapes.yaml manifest integrity', () => {
+  it('validates against shapes.schema.json', () => {
+    const { ok, errors } = validate('shapes')
+    if (!ok) console.error('shapes errors:', JSON.stringify(errors, null, 2))
+    expect(ok).toBe(true)
+  })
+
+  it('has at least 5 shape kinds (the v2 MVP set)', () => {
+    const manifest = loadManifest('shapes') as unknown[]
+    expect(manifest.length).toBeGreaterThanOrEqual(5)
+  })
+
+  it('every shape has at least one required parameter', () => {
+    const manifest = loadManifest('shapes') as Array<{
+      id: string
+      parameters_required: unknown[]
+    }>
+    for (const s of manifest) {
+      expect(s.parameters_required.length, `shape "${s.id}" has no required parameters`).toBeGreaterThan(0)
+    }
+  })
+
+  it('all ids unique', () => {
+    const manifest = loadManifest('shapes') as Array<{ id: string }>
+    const ids = manifest.map((s) => s.id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+})
+
+describe('interfaces.yaml manifest integrity', () => {
+  it('validates against interfaces.schema.json (incl. $ref to provenance)', () => {
+    const { ok, errors } = validate('interfaces')
+    if (!ok) console.error('interfaces errors:', JSON.stringify(errors, null, 2))
+    expect(ok).toBe(true)
+  })
+
+  it('has at least 5 interface kinds (the v2 MVP set)', () => {
+    const manifest = loadManifest('interfaces') as unknown[]
+    expect(manifest.length).toBeGreaterThanOrEqual(5)
+  })
+
+  it('default_properties carry full provenance fragments where present', () => {
+    const manifest = loadManifest('interfaces') as Array<{
+      id: string
+      default_properties?: Record<string, { source?: { type?: string } }>
+    }>
+    for (const i of manifest) {
+      if (i.default_properties) {
+        for (const [propName, prop] of Object.entries(i.default_properties)) {
+          expect(prop.source, `interface "${i.id}" property "${propName}" missing source`).toBeDefined()
+          expect(prop.source!.type, `interface "${i.id}" property "${propName}" missing source.type`).toBeDefined()
+        }
+      }
+    }
+  })
+
+  it('all ids unique', () => {
+    const manifest = loadManifest('interfaces') as Array<{ id: string }>
+    const ids = manifest.map((i) => i.id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('includes canonical interface kinds (terminal, contact, solder_joint)', () => {
+    const manifest = loadManifest('interfaces') as Array<{ id: string }>
+    const ids = new Set(manifest.map((i) => i.id))
+    for (const required of ['terminal', 'contact', 'solder_joint']) {
+      expect(ids).toContain(required)
+    }
+  })
+})
+
+describe('behaviors.yaml manifest integrity', () => {
+  it('validates against behaviors.schema.json', () => {
+    const { ok, errors } = validate('behaviors')
+    if (!ok) console.error('behaviors errors:', JSON.stringify(errors, null, 2))
+    expect(ok).toBe(true)
+  })
+
+  it('has at least 7 behaviors (the v2 MVP set)', () => {
+    const manifest = loadManifest('behaviors') as unknown[]
+    expect(manifest.length).toBeGreaterThanOrEqual(7)
+  })
+
+  it('every behavior has an `evaluates` equation', () => {
+    const manifest = loadManifest('behaviors') as Array<{
+      id: string
+      evaluates: string
+    }>
+    for (const b of manifest) {
+      expect(b.evaluates, `behavior "${b.id}" missing evaluates`).toBeTruthy()
+      expect(b.evaluates.length, `behavior "${b.id}" has empty evaluates`).toBeGreaterThan(0)
+    }
+  })
+
+  it('consequences (when present) reference existing behavior ids', () => {
+    const manifest = loadManifest('behaviors') as Array<{
+      id: string
+      consequences?: string[]
+    }>
+    const validIds = new Set(manifest.map((b) => b.id))
+    for (const b of manifest) {
+      for (const conseqId of b.consequences ?? []) {
+        expect(validIds, `behavior "${b.id}" consequences reference unknown behavior "${conseqId}"`).toContain(conseqId)
+      }
+    }
+  })
+
+  it('all ids unique', () => {
+    const manifest = loadManifest('behaviors') as Array<{ id: string }>
+    const ids = manifest.map((b) => b.id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('includes the canonical MVP behaviors', () => {
+    const manifest = loadManifest('behaviors') as Array<{ id: string }>
+    const ids = new Set(manifest.map((b) => b.id))
+    for (const required of ['conducts', 'resists', 'stores_charge', 'switches', 'heats', 'supplies_voltage', 'led_emits_light']) {
+      expect(ids).toContain(required)
     }
   })
 })

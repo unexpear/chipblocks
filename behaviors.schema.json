@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ChipBlocks behaviors manifest",
+  "description": "Layer 3 of the 9-layer abstraction hierarchy (per ADR-006). Behaviors are abstract physical laws — composable rules a primitive device adopts. A resistor adopts {conducts, resists, heats}. A capacitor adopts {stores_charge, insulates}. Each behavior names a physical law + the parameters a device must provide + the symbolic equation the validator evaluates + any consequences (other behaviors implicitly triggered).",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["id", "label", "law", "evaluates"],
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_-]*$"
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "law": {
+        "type": "string",
+        "enum": [
+          "ohm",
+          "joule",
+          "capacitance",
+          "inductance",
+          "switch-state-machine",
+          "insulation-breakdown",
+          "thermal-input",
+          "supplies-voltage",
+          "supplies-current",
+          "diode-equation",
+          "led-emission"
+        ],
+        "description": "The named physical law this behavior implements."
+      },
+      "parameters_required": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Parameter names a device must provide when adopting this behavior. Example: 'conducts' requires ['resistance']; 'capacitance' requires ['capacitance']."
+      },
+      "evaluates": {
+        "type": "string",
+        "description": "Plain-text or symbolic equation the validator evaluates. Examples: 'V = I * R', 'P_heat = I^2 * R', 'Q = C * V; I = C * dV/dt'."
+      },
+      "consequences": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Other behavior ids implicitly triggered. E.g., 'resists' has consequences ['heats'] — a resistor that dissipates power generates heat as a follow-on physical effect."
+      },
+      "steady_state_behavior": {
+        "type": "string",
+        "description": "How the behavior responds in DC steady-state. E.g., 'stores_charge' has steady-state 'no DC current'; 'stores_magnetic_energy' has steady-state 'no voltage drop'."
+      },
+      "notes": { "type": "string" }
+    }
+  }
+}

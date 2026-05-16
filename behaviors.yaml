@@ -1,0 +1,90 @@
+# ChipBlocks behaviors manifest. Layer 3 of the 9-layer abstraction
+# hierarchy. Abstract physical laws — composable rules a primitive
+# device adopts.
+#
+# A resistor adopts {conducts, resists, heats}.
+# A capacitor adopts {stores_charge, insulates}.
+# An LED adopts {conducts, insulates (reverse-bias), emits_light, heats}.
+# A switch adopts {switches}.
+# A battery adopts {supplies_voltage}.
+
+- id: conducts
+  label: "Conducts (Ohm's law)"
+  law: ohm
+  parameters_required: [resistance]
+  evaluates: "V = I * R; I = V / R; P = V * I"
+  consequences: []
+  steady_state_behavior: "Current flows in proportion to voltage; resistance is constant."
+  notes: "Fundamental conducting behavior. Wires, resistors, contacts, and the conducting state of switches all adopt this. The resistance parameter is in ohms; voltage and current are in volts and amperes."
+
+- id: resists
+  label: "Resists (Joule heating)"
+  law: joule
+  parameters_required: [resistance]
+  evaluates: "P_heat = I^2 * R = V^2 / R"
+  consequences: [heats]
+  steady_state_behavior: "Energy dissipates as heat in proportion to current squared."
+  notes: "Pair with 'conducts' for resistor-like behavior. The 'resists' behavior triggers 'heats' as a downstream consequence — every device that dissipates electrical power generates heat."
+
+- id: stores_charge
+  label: "Stores charge (capacitance)"
+  law: capacitance
+  parameters_required: [capacitance]
+  evaluates: "Q = C * V; I = C * dV/dt; E_stored = 0.5 * C * V^2"
+  consequences: []
+  steady_state_behavior: "No DC current — capacitor blocks DC at steady state. Acts as open circuit in DC analysis."
+  notes: "Adopted by capacitors. The capacitance parameter is in farads (typically F, mF, uF, nF, pF — SI base unit is F)."
+
+- id: stores_magnetic_energy
+  label: "Stores magnetic energy (inductance)"
+  law: inductance
+  parameters_required: [inductance]
+  evaluates: "V = L * dI/dt; E_stored = 0.5 * L * I^2"
+  consequences: []
+  steady_state_behavior: "No voltage drop at steady-state DC current. Acts as short circuit (just the wire resistance) in DC analysis."
+  notes: "Adopted by inductors. The inductance parameter is in henries (typically H, mH, uH, nH)."
+
+- id: switches
+  label: "Switches (state machine)"
+  law: switch-state-machine
+  parameters_required: []
+  evaluates: "open: R = infinity; closed: R = contact_resistance (typically ~10 mOhm)"
+  consequences: []
+  steady_state_behavior: "Two discrete states (open / closed) controlled by external input."
+  notes: "Adopted by switches, relays, and the logical 'switch' element. The state is controlled externally — the user (for manual switches), a digital signal (for relays/MOSFETs), or thermal/optical input (for thermal switches/photoswitches). In open state, no current flows; in closed state, behaves like a low-resistance conductor."
+
+- id: insulates
+  label: "Insulates (no current below breakdown)"
+  law: insulation-breakdown
+  parameters_required: [breakdown_voltage]
+  evaluates: "I = 0 for |V| < breakdown_voltage; catastrophic for |V| > breakdown_voltage"
+  consequences: []
+  steady_state_behavior: "Acts as open circuit until breakdown_voltage exceeded."
+  notes: "Adopted by capacitor dielectrics, reverse-biased diodes, PCB substrate at low voltage. Below the breakdown_voltage parameter, no current flows. Above it, the material fails catastrophically (irreversibly for most insulators; reversibly for varistors / TVS diodes which have a different breakdown mode)."
+
+- id: heats
+  label: "Heats (thermal input)"
+  law: thermal-input
+  parameters_required: []
+  evaluates: "Temperature rise = (P_in - P_dissipated) / thermal_capacity"
+  consequences: []
+  steady_state_behavior: "Steady-state temperature = ambient + (P * thermal_resistance_to_ambient)."
+  notes: "Implicit consequence of 'resists' and 'led_emits_light' (some power becomes heat instead of light). The validator computes steady-state temperature from dissipated power + the design's thermal_resistance_to_ambient (a top-level parameter or per-component thermal pad). Triggers temperature-derating warnings."
+
+- id: supplies_voltage
+  label: "Supplies voltage (source)"
+  law: supplies-voltage
+  parameters_required: [voltage]
+  evaluates: "V = voltage (regardless of current draw, up to internal_resistance limit)"
+  consequences: []
+  steady_state_behavior: "Maintains the specified voltage across its terminals."
+  notes: "Adopted by batteries, regulated power supplies, AC adapters. The voltage parameter is in volts. Real sources also have an internal_resistance parameter (mΩ for batteries, sub-mΩ for regulated supplies) that the validator uses for current-loading checks."
+
+- id: led_emits_light
+  label: "Emits light (LED forward bias)"
+  law: led-emission
+  parameters_required: [forward_voltage, max_forward_current, wavelength]
+  evaluates: "If V_forward >= V_threshold: P_optical = (I_forward * V_forward * efficiency); else I = 0"
+  consequences: [heats]
+  steady_state_behavior: "Above forward_voltage threshold (typically 2-3.5 V depending on color), current flows and light is emitted; remaining power becomes heat (the 'heats' consequence)."
+  notes: "Adopted by LEDs. The forward_voltage parameter is the threshold for conduction (~2.0 V red, ~3.2 V blue/white). The max_forward_current parameter (typically 20-30 mA for through-hole LEDs) gates the safe operating point. Wavelength determines optical signal properties. Real LEDs have ~5-30% wall-plug efficiency; the rest becomes heat."
