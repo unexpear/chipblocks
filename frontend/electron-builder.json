@@ -6,50 +6,17 @@
   "directories": {
     "output": "release/${version}"
   },
-  "files": [
-    "dist-electron",
-    "dist"
-  ],
-  "extraResources": [
-    { "from": "../backend/synth.py", "to": "backend/synth.py" },
-    { "from": "../backend/build.py", "to": "backend/build.py" },
-    { "from": "../backend/tinytapeout.py", "to": "backend/tinytapeout.py" },
-    { "from": "../backend/setup.sh", "to": "backend/setup.sh" },
-    { "from": "../backend/scripts/wsl-build-wrapper.sh", "to": "backend/scripts/wsl-build-wrapper.sh" },
-    { "from": "../backend/README.md", "to": "backend/README.md" },
-    {
-      "from": "../backend/blocks",
-      "to": "backend/blocks",
-      "filter": ["**/*.py"]
-    }
-  ],
+  "files": ["dist-electron", "dist"],
   "mac": {
     "artifactName": "${productName}_${version}.${ext}",
-    "target": [
-      "dmg",
-      "zip"
-    ]
+    "target": ["dmg", "zip"]
   },
   "win": {
-    "target": [
-      {
-        "target": "nsis",
-        "arch": [
-          "x64"
-        ]
-      }
-    ],
+    "target": [{ "target": "nsis", "arch": ["x64"] }],
     "artifactName": "${productName}_${version}.${ext}"
   },
   "linux": {
-    "target": [
-      {
-        "target": "AppImage",
-        "arch": [
-          "x64"
-        ]
-      }
-    ],
+    "target": [{ "target": "AppImage", "arch": ["x64"] }],
     "category": "Development",
     "artifactName": "${productName}_${version}.${ext}"
   },

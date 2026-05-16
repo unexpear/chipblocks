@@ -1,19 +1,12 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* ChipBlocks v2 minimal styling. Will be replaced as the canvas
+   and inspector lands; this is just enough to make the empty shell
+   look intentional, not janky. */
 
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
   line-height: 1.5;
-  font-weight: 400;
-  color-scheme: dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
 }
 
 html,
@@ -22,22 +15,90 @@ body,
   margin: 0;
   padding: 0;
   height: 100%;
-  width: 100%;
 }
 
-button {
-  border-radius: 6px;
-  border: 1px solid #555;
-  padding: 0.4em 0.8em;
-  font-size: 0.9em;
-  font-family: inherit;
-  background-color: #2a2a2a;
-  color: inherit;
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+body {
+  background: #fafafa;
+  color: #1a1a1a;
 }
 
-button:hover {
-  border-color: #646cff;
-  background-color: #333;
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #1a1a1a;
+    color: #eaeaea;
+  }
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 2rem;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.app-shell header h1 {
+  font-size: 2rem;
+  margin: 0 0 0.25rem 0;
+}
+
+.app-shell header .subtitle {
+  margin: 0 0 2rem 0;
+  color: #666;
+}
+
+@media (prefers-color-scheme: dark) {
+  .app-shell header .subtitle {
+    color: #aaa;
+  }
+}
+
+.status-card {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .status-card {
+    background: #2a2a2a;
+    border-color: #3a3a3a;
+  }
+}
+
+.status-card h2 {
+  margin: 0 0 1rem 0;
+  font-size: 1.25rem;
+}
+
+.status-card p {
+  margin: 0 0 0.75rem 0;
+}
+
+.status-card code {
+  background: #f0f0f0;
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.2rem;
+  font-size: 0.875rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .status-card code {
+    background: #3a3a3a;
+  }
+}
+
+footer {
+  margin-top: auto;
+  padding-top: 2rem;
+  color: #888;
+}
+
+@media (prefers-color-scheme: dark) {
+  footer {
+    color: #888;
+  }
 }

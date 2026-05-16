@@ -1,7 +1,13 @@
-# Continuous-integration checks: TypeScript build, frontend tests,
-# backend tests. Runs on every push and PR to master. Fast (~3 min),
-# Linux-only — the cross-platform installer build lives in release.yml
-# and only fires on tag push.
+# Continuous-integration checks. Runs on every push and PR to master.
+#
+# ChipBlocks v2 (ground-up restart): the CI surface is intentionally
+# minimal at this stage — just TypeScript-check + npm install validity
+# on the empty shell. Backend pytest + codegen-drift checks + frontend
+# vitest will be added back as the new direction grows them in the
+# coming sprints.
+#
+# The legacy/audio-synth-direction branch retains its own (richer) CI
+# config; this file only applies to master and PRs to it.
 
 name: CI
 
@@ -13,7 +19,7 @@ on:
 
 jobs:
   frontend:
-    name: Frontend (TS + vitest)
+    name: Frontend (install + typecheck)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -31,63 +37,3 @@ jobs:
 
       - name: TypeScript check
         run: npx tsc --noEmit
-
-      - name: Vitest
-        run: npm test
-
-      # Sprint 21 — ADR-003 block-manifest codegen drift check. Re-runs
-      # scripts/codegen-frontend.mjs in --check mode (default). Fails if
-      # any of the 5 generated frontend sections (index.ts / busTypes.ts
-      # / Palette.tsx / App.css / ai/prompt.ts) drifts from what
-      # blocks.yaml says it should be. The script exits non-zero with a
-      # unified diff if drift is found — actionable in the PR view.
-      - name: Codegen drift check (frontend)
-        working-directory: .
-        run: node scripts/codegen-frontend.mjs --check
-
-  backend:
-    name: Backend (pytest)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: backend/requirements-dev.txt
-
-      - name: Install runtime + dev dependencies
-        run: |
-          pip install --upgrade pip
-          # amaranth-yosys is the PyPI Yosys fallback used by
-          # amaranth.back.verilog.convert() when no system yosys is
-          # on PATH. Required for test_tinytapeout.py's bundle-shape
-          # tests which invoke the full Verilog emit path.
-          pip install amaranth==0.5.8 amaranth-yosys pyyaml==6.0.2
-          pip install -r requirements-dev.txt
-
-      - name: Pytest
-        run: python -m pytest tests/ -v
-
-      # Sprint 21 — ADR-003 block-manifest codegen drift check (backend).
-      # Mirror of the frontend codegen-drift step: re-runs
-      # scripts/codegen-backend.py and fails if backend/blocks/__init__.py
-      # (imports + BLOCK_REGISTRY + __all__) or backend/blocks/_params_gen.py
-      # drifts from what blocks.yaml says it should be.
-      - name: Codegen drift check (backend)
-        working-directory: .
-        run: python3 scripts/codegen-backend.py
-
-      # Sprint 25 (ADR-005 Phase 0) — fab-platform codegen drift check.
-      # Re-runs scripts/codegen-shuttles-backend.py and fails if
-      # backend/shuttles/_registry_gen.py drifts from what shuttles.yaml
-      # + pdks.yaml + packages.yaml + flows.yaml say it should be.
-      # Note: only the backend codegen exists today; frontend codegen
-      # for the fab manifests lands in S25-2b.
-      - name: Codegen drift check (shuttles)
-        working-directory: .
-        run: python3 scripts/codegen-shuttles-backend.py

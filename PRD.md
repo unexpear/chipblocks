@@ -1,229 +1,202 @@
-# Product Requirements Document: ChipBlocks
+# Product Requirements Document: ChipBlocks (v2)
 
-> **Status:** Draft v0.1 · Working name (rename anytime) · Author: [User] · Date: 2026-05-07 (last touch 2026-05-14 — phone-class direction + modular-fab principle annotated; strategic content unchanged)
->
-> **2026-05-14 update note**: Sprint 24's mid-sprint strategic pivot (full statement in [SPRINT-24.md](SPRINT-24.md)) introduced two project principles — **"no fake blocks"** (every block must elaborate to real synthesizable HDL) and **"modular fab platform"** (the fab target itself is manifest-driven via 8 extension points, pending [ADR-005](ADR-005-modular-fab-platform.md)). These tighten the existing PRD scope rather than rewriting it; the strategic vision below stands. Phase 3 ("Domain expansion") is now pointed concretely at a **smartwatch / 2005-feature-phone equivalent** as the post-audio domain — see Phase 3 row of the timeline below.
-
----
+> **Status:** Draft v2.0 (post-reset; supersedes the v1 PRD which lives on `legacy/audio-synth-direction`) · Date: 2026-05-16 · Author: User + Claude Code
 
 ## Problem Statement
 
-Designing a custom chip — even a simple one — is currently locked behind years of engineering training and tens of thousands of dollars in tools. Off-the-shelf microcontrollers and FPGAs cover many use cases, but a long tail of inventors, makers, artists, educators, and small hardware startups have specific needs that don't fit standard parts: a custom synth chip, a specialized sensor pre-processor, a retro-game video chip, or a glue-logic part for a product.
+Electronics design — from simple circuits to PCBs to integrated circuits — is locked behind expensive, complex, fragmented tools. Cadence and Synopsys cost $50K-$1M per seat. KiCad and FreeCAD are powerful but assume you know what you're doing. Hobbyist tools (Tinkercad, Fritzing, Cirkit Designer) only cover Arduino-style projects and never go below the module level. Tools that claim "AI-powered chip design" (ChipFoundry, ChipInventor) wrap existing flows behind paywalls.
 
-These users currently have only three options:
-1. Bend their product around an off-the-shelf part (compromised design, often 100× more silicon area and power than needed)
-2. Hire a chip-design consultancy ($50K–$2M+, months to years)
-3. Give up and build something simpler
+**There is no free, open-source tool that lets someone build any electronic thing — circuit, PCB, chip, full device — from real physical primitives, with every block traceable down to materials and physics.**
 
-The bottleneck **isn't manufacturing** — fabs at mature nodes (130nm+) and FPGA dev boards have plenty of capacity. The bottleneck is the design tools and the skills required to use them. Cadence and Synopsys cost $50K–$1M per seat and require an engineering team. Free academic alternatives (Verilator, Yosys, LiteX, OpenLane) are powerful but assume the user is already a chip engineer.
+The closest analogies don't exist yet:
+- KiCad is a PCB tool, not a chip tool, and the parts are opaque ICs.
+- Cadence is a chip tool, costs five figures per seat, and the standard cells are vendor-provided black boxes.
+- Cirkit Designer drags Arduinos around but never tells you what's inside.
 
-**There is no tool that lets a non-technical person turn "I need a chip that does X" into a fabricable design.** That gap is what ChipBlocks addresses.
+ChipBlocks fills the gap: real blocks built from materials and geometry, composable up to full systems, with deterministic physics validation and AI-assisted documentation, free forever.
 
 ## Goals
 
-1. **Make chip design accessible to non-engineers.** A user with no Verilog knowledge can produce a working chip design (ready for FPGA, ASIC tape-out, or fab handoff) by describing what they want and assembling visual blocks.
-2. **Be free or near-free.** Core tool is open-source; an optional desktop bundle costs at most $5 one-time. No subscriptions, no AI-cost liability for the developer (BYOK model).
-3. **Cover the full non-physical chip-design flow** — architecture, RTL, verification, simulation — in one workspace. Physical design integrates with existing open-source flows (OpenLane, LibreLane, F4PGA).
-4. **Build trust through validation.** Non-technical users need confidence the chip will actually work. The validator (lint + simulation + formal checks) catches problems before users waste money on fabrication or burn time on broken designs.
-5. **Keep advanced users productive.** Pro engineers using ChipBlocks should be at least as fast as a traditional flow — never slower. Full underlying access is always available.
-6. **Apply pressure to the manufacturing side of chips at mature nodes** by lowering the design barrier, expanding the population of people who can produce custom silicon.
+1. **Democratize electronics design end-to-end** — make designing a circuit, PCB, chip, or full electronic system accessible to someone who has never used EDA tools, by letting them work at any abstraction level (transistors, gates, components, modules, boards) and descend or ascend as their understanding allows.
 
-## Non-Goals
+2. **No fakery.** Every block in the catalog is physically defined. Every validation is grounded in real physics or empirical anomaly patterns. Every manufacturing artifact is generated by deterministic tooling. Users can trust that what ChipBlocks says works, will work.
 
-1. **Cutting-edge nodes (5nm, 3nm, 2nm).** Fab-capacity-bound, not design-tool-bound. Also enterprise-only PDKs under heavy NDA. Out of scope.
-2. **Physical-design tools (place-and-route, layout, DRC).** Existing open-source flows handle this. ChipBlocks integrates with them, doesn't replicate them.
-3. **Enterprise EDA replacement.** Not "Cadence killer." Production teams designing flagship SoCs at advanced nodes will keep using enterprise tools. ChipBlocks serves the long tail those tools don't.
-4. **Manufacturing or fulfillment.** ChipBlocks outputs files. The user takes them to a fab, FPGA programmer, or service like Tiny Tapeout. We never ship physical chips. Avoids inventory, NDA, and liability headaches.
-5. **Real-time multi-user collaborative editing.** Single-user, file-based, version-controllable via git. Collaboration happens through GitHub, not in-app.
-6. **Hosting paid AI inference.** Users bring their own API key (Claude, GPT, local Llama via Ollama). Project never pays AI bills on behalf of users.
-7. **All HDL languages on day one.** Internal generation uses one HDL backbone (LiteX → Verilog) initially. Chisel, Amaranth, SpinalHDL support are designed-for but added later.
-8. **Copyleft licensed code in the shipped product.** ChipBlocks ships only permissively-licensed code (MIT / Apache 2.0 / BSD / ISC / PSF). No GPL, AGPL, LGPL, MPL, or EUPL components are bundled in the distributed application, even transitively. This keeps the door open for future monetization (paid desktop bundle, Pro tier, hosted SaaS) without re-licensing surprises. We may **invoke** copyleft tools as separately-installed user binaries (e.g., the user's own GTKWave install), but we never redistribute them. Full licensing policy and dependency list in [CREDITS.md](CREDITS.md).
+3. **Free forever, no paid tiers.** MIT license, permissive dependencies only, BYOK AI. No subscription business model is ever introduced.
 
-## Target Users / Personas
+4. **AI assists, ChipBlocks validates, user approves.** AI helps users — it doesn't replace them or the engine. The deterministic side owns correctness; AI owns convenience.
+
+5. **Two deliverables.** Every project produces both an editable source-form file/folder (for the creator) and a manufacturing-ready ZIP (for the fab / assembler / builder). Both work together; either can be regenerated from the other half if needed.
+
+6. **Apply pressure on the manufacturing-side of electronics by lowering the design barrier.** Expanding the number of people who can produce custom hardware (PCBs, chips) is a force multiplier for the whole industry.
+
+## Non-goals
+
+1. **Cutting-edge process nodes (5nm/3nm/2nm).** Fab-capacity-bound, NDA-locked PDKs, out of scope.
+2. **Replacing professional EDA.** Cadence and Synopsys serve different users than ChipBlocks does. We don't compete with them; we serve the long tail they don't.
+3. **Manufacturing or fulfillment.** ChipBlocks outputs files; the user takes them to a fab, assembler, or service. Never inventory.
+4. **Real-time multi-user collaborative editing.** Single-user, file-based, version-controllable via git.
+5. **Hosting paid AI inference.** Strictly BYOK.
+6. **Copyleft licensed code in the shipped product.** Permissive only.
+
+## Target users
 
 | Persona | Priority | Description |
 |---|---|---|
-| **Non-technical maker / inventor** | Primary | Has a product idea or hobby project. Knows what their chip should do but can't write Verilog. Off-the-shelf parts don't fit; currently has no path to a custom chip. |
-| **Curious learner / student** | Primary | Wants to understand chip design by doing. Visual-first, with optional dive-deeper into the underlying code as they learn. |
-| **Hobbyist engineer** | Secondary | Some technical background (Arduino, FPGA tinkering) but not a pro chip designer. Wants to make custom synths, retro chips, specialty sensors without a full EDA toolchain. |
-| **Indie hardware founder** | Secondary | Small product company, can't afford a chip-design consultancy. Wants to prototype custom silicon. |
-| **Educator / classroom user** | Secondary | Teaching chip design or digital logic. Wants visual, accessible, free tools for students. |
-| **Pro engineer power user** | Tertiary | Already knows EDA. Uses ChipBlocks for fast prototyping or to access open-source flows in a friendlier UI. |
+| **Hacker / hobbyist designer** | Primary | Wants to build a custom electronic thing (synth, controller, sensor module, custom chip) and understand what it's doing at every level. ChipBlocks lets them work at the level they're comfortable with and descend when they want to learn more. |
+| **Curious learner / student** | Primary | Wants to understand electronics by doing. Drops a battery + LED + resistor on the canvas, sees what happens, descends into the resistor and learns what's actually inside. |
+| **Indie hardware founder** | Secondary | Small product company; can't afford a chip-design consultancy. Uses ChipBlocks to prototype custom silicon for their product. |
+| **Educator / classroom user** | Secondary | Teaching electronics; needs a visual, accessible, free tool. ChipBlocks works without an API key, runs locally, has multi-level abstraction so the same tool serves first-day learners and final-year project students. |
+| **Maker / inventor** | Secondary | Has a product idea and a soldering iron. Needs the PCB + occasional custom chip to make their thing work. ChipBlocks compiles the design to manufacturing-ready files. |
+| **Pro engineer** | Tertiary | Already knows EDA. Uses ChipBlocks for fast prototyping, or to see open-source standard cell libraries in a friendlier UI. Full underlying access always available (raw HDL, raw netlist, raw layout). |
 
-## User Stories
+## User stories
 
-### Non-Technical Maker
-- As a non-technical maker, I want to describe my problem in plain English so that the AI can suggest a starting template I can customize.
-- As a non-technical maker, I want to drag pre-built blocks onto a canvas and wire them together so that I don't have to write code.
-- As a non-technical maker, I want the validator to tell me clearly what's broken (in plain English) so that I can fix it without learning HDL.
-- As a non-technical maker, I want to test my chip in simulation so that I don't waste money on a dead chip.
-- As a non-technical maker, I want a zip of all manufacturing files so I can hand them off to a fab service or FPGA programmer.
+### Hacker / hobbyist
+- I want to design a custom electronic thing without having to learn Verilog or KiCad first.
+- I want to start with simple parts (battery, resistor, LED, switch) and grow into more complex designs over time.
+- I want to descend into any block to see what it's actually made of — and edit it if I want.
+- I want to save my design and share it as a single project file.
+- I want a manufacturing ZIP I can email to a fab or assembler.
 
-### Curious Learner
-- As a learner, I want to see the underlying RTL code my visual design generates so that I start understanding HDL.
-- As a learner, I want the AI to explain what each block does and why it's needed so that I'm building intuition while I work.
-- As a learner, I want to fork starter projects so that I can copy patterns from real designs.
+### Curious learner
+- I want to drop a battery, resistor, and LED on the canvas, see what happens, and learn from the result.
+- I want to descend into the resistor and see it's actually a resistive material in a shape with two terminals.
+- I want the AI to explain what's happening without doing the thinking for me.
+- I want to design something that compiles to a real chip or board someday, even if I don't yet know how.
 
-### Hobbyist Engineer
-- As a hobbyist, I want to design a 4-voice 8-bit synth chip and hear it in simulation so that I can iterate before flashing to my FPGA.
-- As a hobbyist, I want to load my design onto an iCE40 / ECP5 / Xilinx / Intel FPGA dev board so that I can use it in a real project.
-- As a hobbyist, I want the app to remember my settings, projects, and preferred dev boards so that I'm not re-configuring constantly.
-
-### Indie Hardware Founder
-- As a founder, I want to take a working FPGA prototype and convert it to an ASIC tape-out package (Tiny Tapeout, SkyWater MPW, IHP) so that I can produce real silicon when my product takes off.
-- As a founder, I want my designs portable — exportable as Verilog/IP-XACT/SystemC — so that I'm not locked into ChipBlocks.
+### Indie hardware founder
+- I want to design a custom chip and submit it to a real fab (Tiny Tapeout, eFabless ChipIgnite, SkyWater MPW) without learning a $50K toolchain.
+- I want the manufacturing ZIP to be correct enough to send directly; mistakes cost real money.
+- I want my designs portable — exportable to standard formats so I'm not locked in.
 
 ### Educator
-- As an educator, I want a curriculum-friendly version with starter projects, lesson templates, and progress tracking so that I can use it in a classroom.
+- I want a curriculum-friendly tool with starter projects, layered explanations, and a clear path from first-circuit to first-chip.
+- I want students to be able to work without configuring API keys (no-AI mode required).
+- I want the tool to run on classroom hardware (modest laptops) without performance issues.
 
-### Pro Engineer
-- As a pro engineer, I want to bypass the visual editor and edit RTL directly when needed so that I can do things the visual editor doesn't support.
-- As a pro engineer, I want to see all underlying tool outputs (Yosys logs, Verilator warnings, OpenLane reports) so that I can debug at depth.
+### Pro engineer
+- I want to bypass the visual editor when needed and edit HDL or layout directly.
+- I want to see all the underlying tool outputs (Yosys logs, ngspice waveforms, OpenLane reports).
+- I want to drop my own community-shared block groups into a design.
 
 ## Requirements
 
-### P0 — Must Have for Full Product
+### P0 — Must Have for v1
 
-**Core Editor**
-- Visual node-graph editor with drag-and-drop blocks, port-to-port wiring, zoom/pan, save/load
-- Block library covering at least 3 domains by full release: audio/synth/retro (flagship), custom MCU, sensor/signal-conditioning
-- Block parameter editing (frequency, voices, addresses, etc.)
-- Project file format: JSON, version-controllable, human-readable
+**Editor**
+- Visual canvas with drag-and-drop blocks, port-to-port wiring, zoom/pan, save/load
+- Real units everywhere (volts, ohms, amps, watts, kelvin) with dimensional analysis
+- Property inspector for the selected block
+- Multi-select + group/ungroup
+- Undo/redo at every action
+- Hierarchical block expansion: place a block group as a single canvas node; descend with double-click to edit its internals
 
-**AI Consultant**
-- Chat sidebar that knows the block library and current canvas state
-- BYOK — supports Claude, GPT, and at least one local model option (Ollama/Llama)
-- Capabilities: answer "what block do I need for X?", explain block functions, suggest starter templates from a problem description, read simulation results, walk users through assembling a design step by step
+**Block model**
+- The universal object model (id / layer / type / parent / ports / parameters / internal / behavior / validation status / notes)
+- A 9-layer abstraction stack from materials to systems
+- Manifest-driven block library (one row per block, codegen-validated)
+
+**Block library at v1**
+- Layer 0 materials (10-15 entries)
+- Layer 1 shapes (5+ kinds)
+- Layer 2 interfaces (5+ kinds)
+- Layer 3 behaviors (7+ behaviors)
+- Layer 4 primitive devices (wire, resistor, capacitor, inductor, diode, LED, switch, power source)
+- Higher layers (circuits, assemblies, boards) come later as community libraries
 
 **Validator**
-- Static lint (Verilator `--lint-only`, Yosys check, Verible)
-- Simulation (Verilator + auto-generated testbench from block metadata)
-- Formal checks where applicable (SymbiYosys for combinational/sequential properties)
-- **Plain-English error explanations**: every error gets translated by the AI into a beginner-friendly description with a suggested fix
+- Steady-state KCL/KVL/Ohm solver
+- Switch state machine
+- Failure-mode evaluation per block (e.g., LED current exceeds rating → flag)
+- Click-back-to-warning UX
 
-**Output Engine**
-- Generate Verilog RTL from the visual graph (via LiteX or equivalent)
-- Run simulation and produce viewable results (waveforms via a permissively-licensed viewer — built-in or future TBD; **we drop GTKWave (GPL-2.0) and Surfer (EUPL-1.2)** from plans per the licensing policy below). For audio chips, also a playable WAV file.
-- Generate FPGA bitstream for at least 3 popular dev boards: one iCE40 board (fully open flow), one ECP5 board, one Xilinx 7-Series board
-- Generate Tiny Tapeout submission package
-- Generate ASIC GDSII via OpenLane / LibreLane integration
-- Output zip with all files, README, and a generated design document
+**AI**
+- BYOK multi-provider (No-AI required, Anthropic + OpenAI at v1)
+- Agentic tool-call loop with deterministic-validator gating
+- AI never modifies design without user approval
 
-**Power-User Mode**
-- Direct RTL editing
-- Full tool log access (Yosys, Verilator, OpenLane outputs)
-- Ability to import existing Verilog modules as new blocks
+**Output**
+- Editable project file format (`MyProject.chipblocks/` folder)
+- Manufacturing release ZIP skeleton (BOM, schematic, README, validation report)
+- Generated artifacts in `exports/`; versioned releases in `releases/`
 
-**Cross-Platform**
-- Mac, Windows, Linux desktop builds
+**Cross-platform**
+- Mac, Windows, Linux desktop builds (cross-platform release CI inherited from v1)
 - Project files portable between platforms
 
 ### P1 — Nice to Have
 
-- Web-based version (browser-only, cloud workers for heavy synthesis)
-- Real-time collaborative editing (à la Figma)
-- Block marketplace where users contribute new blocks
-- In-app waveform viewer built with permissive components (no copyleft viewers like GTKWave or Surfer)
-- Templates beyond the flagship domain (sensor chips, custom MCUs, video chips)
-- Mobile/tablet read-only viewer
-- Curriculum/classroom mode with progress tracking
-- Additional HDL backends (Chisel, Amaranth, SpinalHDL)
+- Anomaly database (ground bounce, EMI, ESD, thermal runaway patterns) with trigger-condition mapping
+- More physics solvers (discrete-time transient, eventually ngspice integration for continuous-time)
+- More fab targets (FPGA bitstreams, Tiny Tapeout, eFabless shuttle tiers, KiCad PCB export)
+- Community library marketplace (`chipblocks-audio`, `chipblocks-peripherals`, `chipblocks-cpus`, `chipblocks-radios`, `chipblocks-video`)
+- Web-based version (browser-only)
+- Classroom mode
+- Curriculum / starter projects
 
 ### P2 — Future Considerations (Designed-For-But-Not-Built)
 
-- Direct foundry submission ("send to wafer.space / ChipFoundry" button)
-- Real-silicon test framework (after fabrication, plug your chip in, run your tests on it)
-- Hardware-software co-design (write firmware that runs on your chip in the same project)
-- Mixed-signal design (analog blocks alongside digital)
-- AI fully designs chip from English specification (architecture should not preclude, but unreliable in 2026)
-- Closed-PDK support for advanced nodes (when more foundries open PDKs)
-- Internationalization (multi-language UI and AI consultant)
-- **Full general-purpose PCB / board design** — covers everything from hobby PCBs through motherboards, RAM modules (DIMMs / SODIMMs), expansion cards, server boards, and complex multi-layer boards. Schematic capture, comprehensive component library (passives, ICs, connectors, modules, MCUs, RAM, sockets), multi-layer layout + routing, design-rule checks (DRC), impedance control, Gerber + drill + BOM + pick-and-place output. **Goal: a free open-source competitor to KiCad / EasyEDA / Altium**, covering tier-1 (hobby) through tier-3 (prosumer/enterprise) board complexity. The visual node-graph + block-library architecture extends naturally to schematic capture; multi-layer routing is a much harder problem and may require a separate engine (or integration with an existing OSS router like FreeRouting). Possible "chip → product" flow as a special case: design a chip in ChipBlocks, drop it onto a PCB in the same app.
-- **Beginner-friendly board views** — drag-and-drop breadboard view (Fritzing-style) for early prototyping before committing to a PCB layout. Useful for non-technical users learning electronics. Templates for common starter projects: Arduino shields, Raspberry Pi HATs, eurorack synth panels, sensor breakouts, custom carrier boards.
+- Direct foundry submission
+- Mixed-signal design with full RF/analog support
+- Real-silicon test framework
+- Mechanical CAD integration (FreeCAD for cases / mounts / 3D models)
+- Multi-language UI
 
-## Success Metrics
+## Success metrics
 
-The defining metric is **(E) anyone other than the developer using the tool**. Without that, none of the rest matters.
+The defining metric: **anyone other than the developer completes a design end-to-end with ChipBlocks and is happy with the result.**
 
-### Leading Indicators (weeks)
+### Leading indicators (weeks)
 
-**(B) Open-source traction**
-- GitHub stars: 500 in 90 days, 2,000 by 6 months
-- Forks: 50 by 6 months
-- Contributors merging at least one PR: 10 by 6 months
-- Discord / community channel: 200 members by 6 months
+- GitHub stars: from the existing baseline (post-reset) to 1000 in 6 months
+- Designs completed by external users: ≥1 in 3 months, ≥10 in 6 months
+- Manufacturing packages exported: ≥1 in 6 months
+- Community-contributed block group libraries: ≥1 published in 6 months
+- ≥1 third-party tutorial / blog post / video in 6 months
 
-**(C) Real user activity**
-- Downloads / active installs: 1,000 by 3 months, 5,000 by 6 months
-- **Designs completed by users (not the developer)**: 10 by 30 days, 100 by 90 days, 500 by 6 months
-- Manufacturing packages exported: 50 by 90 days
+### Lagging indicators (months to years)
 
-**(D) Education / community**
-- ≥1 third-party YouTube tutorial within 90 days
-- ≥1 classroom or workshop adoption by 6 months
-- ≥1 Hackaday / Hackster.io feature article by 6 months
+- ≥5 user-designed circuits/PCBs/chips successfully built or fabricated in 12 months
+- ≥1 external maintainer accepting PRs in 12 months
+- ≥1 university course adopting it in 18 months
+- Project becomes community-owned (developer is not top contributor) in 18-24 months
 
-**(E) Anyone-but-me-using-it — single most important metric**
-- ≥1 person who is not the developer completes a chip design end-to-end within 30 days of public launch
-- ≥10 people other than the developer have completed at least one design by 90 days
-- The "is anyone using this" graph trends up, not flat
+### Anti-metrics
 
-### Lagging Indicators (months to years)
+- Validator produces designs that fail to fabricate → bar must be very low (≤5% failure rate)
+- AI consultant produces wrong design suggestions that the validator misses → indicates AI authority slipping; immediately fix
+- Average time-to-first-working-design > 1 hour → onboarding has failed
+- 6 months in, no community contributions → the open-source / community-libraries model isn't taking; rethink
 
-- **Real chips in the wild**: ≥5 user-designed chips successfully fabricated (Tiny Tapeout, MPW shuttle, or FPGA in production) within 18 months
-- **Community blocks**: ≥20 user-contributed blocks accepted into the library within 12 months
-- **Educational adoption**: ≥5 universities, schools, or formal workshops by 18 months
-- **Sustained engagement**: developer is no longer top contributor by month 12 — i.e., the project becomes genuinely community-owned
+## Open questions
 
-### Anti-Metrics (signs of failure)
+These were decided in the run-up to the reset and are locked unless something forces a reconsideration:
 
-- AI consultant produces designs that fail validation more than ~30% of the time → AI is being asked to do too much; rein in scope
-- Average time-to-first-working-chip for a new user > 4 hours → onboarding/UX has failed
-- Issue tracker dominated by "I can't figure out X" with no clear pattern → docs/UX need work, not more features
-- Six months in, all designs in the wild are still by the developer → the (E) metric has failed; product needs rethinking
+- ~~Floor: standard cells, gates, or transistors?~~ **Floor is materials** (Layer 0), with all layers above traceable down.
+- ~~Visual style: playful (Scratch-like) or pro-tool (Figma-like)?~~ Lean **professional but accessible** — KiCad-style canvas density with clear iconography. Decided in Sprint 4.
+- ~~How does AI handle disagreement with the user?~~ **AI never overrides the user.** AI suggests; user approves.
+- ~~License?~~ **MIT.**
+- ~~Monetization?~~ **Free forever**, no paid tier.
 
-## Open Questions
+Still open:
 
-**Product / Design**
-- Final product name? Working title is **ChipBlocks** — placeholder. [user]
-- Visual style — playful (Scratch-like) or pro-tool (Figma-like)? Likely a blend, but lean direction? [user/design]
-- How does the AI consultant handle disagreement with the user? ("I think you're wrong" vs. "Sure, let me help") [user/design]
+- Will we eventually integrate a real SPICE simulator (ngspice) or stay with the in-app deterministic engine? (My lean: eventually integrate ngspice for transient analysis when users push beyond steady-state needs.)
+- How granular should the anomaly database be at v1? (My lean: framework + 0 entries at v1; populate as community contributions land.)
+- When does PCB layout integration land — KiCad export for v1.x or full in-app PCB later? (My lean: KiCad export at v1.x; full in-app PCB is a v2+ ambition.)
 
-**Technical**
-- Node-graph library: React Flow vs. alternatives? Lock in early so block/port format aligns. [eng]
-- Backend host: pure Electron + Node.js, or Electron + Python child process? Affects bundling complexity. [eng]
-- Block authoring format: Python/LiteX directly, or higher-level metadata that compiles to LiteX? [eng]
-- Cloud workers needed at all for v1, or can everything run locally? [eng]
-- AI key management UX — how to make BYOK painless for non-technical users? [eng + design]
+## Timeline considerations
 
-**Strategic / Business**
-- ~~License: MIT, Apache 2.0, or AGPL?~~ **DECIDED 2026-05-07: MIT.** Permissive, monetization-friendly, the natural fit for the "free no strings" policy. See [LICENSE](LICENSE).
-- Monetization: free forever, $5 desktop bundle, donate-ware (Patreon / GitHub Sponsors)? [user]
-- Anonymous telemetry to understand usage? Privacy + open-source-ethic implications. [user]
+**Hard deadlines / dependencies:** none. "Fine taking time" applies. Realistic timeline per RESET-PLAN.md:
 
-**Legal**
-- Export-control restrictions (EAR Cat 3 chip-design tools)? Almost certainly N/A at this scale, but worth confirming. [legal]
-- IP attribution for blocks sourced from open-source projects (LiteX, OpenCores) — license review. [legal]
+| Phase | Months | Goal |
+|---|---|---|
+| **Phase 1 — Reset + first slice** | 2-3 | Empty shell → first end-to-end (battery + switch + resistor + LED + validate + release ZIP). |
+| **Phase 2 — Expand foundation** | 3-6 | Layer 5 (circuits) + community library scaffolding + multi-provider AI + first real fab path (KiCad PCB export). |
+| **Phase 3 — Chip side** | 6-12 | Layer 6 (assemblies / ICs) + chip primitives + chip fab path (Tiny Tapeout/SkyWater MPW restored as a `shuttles.yaml` row). |
+| **Phase 4 — System side** | 12-24 | Layer 7 (boards) + Layer 8 (full devices). Real chips fabricated, real PCBs assembled. Sustained community. |
 
-## Timeline Considerations
-
-**Hard deadlines / dependencies**: None. User has stated this is a "fine taking time" project.
-
-**Suggested phasing** (solo + AI dev tools, ~6–18 months):
-
-| Phase | Months | Goal | Deliverable |
-|---|---|---|---|
-| **1 — Proof of Concept** | 1–3 | Prove the architecture end-to-end | 8-Bit Sound Chip Demo: ~7 audio blocks, drag-drop editor, simulation → WAV, basic AI sidebar. No FPGA/ASIC yet. |
-| **2 — First External User** | 3–6 | Someone who isn't the developer makes a chip with it | Add 10–15 audio blocks, basic FPGA bitstream output (iCE40), polish UI, basic docs, ship to GitHub |
-| **3 — Domain Expansion** | 6–12 | 100+ external users, community starts contributing | Add second domain (custom MCU or sensor), more FPGA targets, ASIC tape-out, Tiny Tapeout integration. **Per the 2026-05-14 pivot, the concrete Phase-3 target is a smartwatch / 2005-feature-phone equivalent**: SPI/I²C/UART/PWM/GPIO peripherals, ST7789 LCD driver, capacitive touch protocol, PWM audio out, button matrix scanner, LED + vibration drivers, packaged RISC-V CPU core (likely picorv32), interrupt controller, timer, and a custom on-chip radio (OOK default; LoRa-CSS optional) — all synthesizable, all fab-able on iCE40 + a handful of external chips. Voice calls, broadband data, integrated WiFi/BT/GPS, cameras, AMOLED, LPDDR remain explicitly out of scope. |
-| **4 — Polish & Reach** | 12–18 | Real chips fabricated, sustained community | Web version, classroom mode, marketplace, more domains, conference / Hackaday presence |
-| **5 — General-purpose PCB tool (future)** | 18+ | Free open-source competitor to KiCad / EasyEDA / Altium covering hobby through prosumer boards | Schematic editor, comprehensive component library, multi-layer layout + routing, DRC, Gerber + drill + BOM + pick-and-place output. Templates for common boards (Arduino shields, Pi HATs, eurorack, breakouts). Reuses the visual node-graph editor and block-library system from the chip side. Tier 1 (1–2 layer hobby) and tier 2 (4-layer prosumer) realistic for solo + AI dev. |
-| **6 — High-complexity boards (future-future)** | 30+ | Tackle motherboards, RAM modules, server-class boards, high-speed digital | DDR4 / DDR5 memory routing, PCIe Gen 4–5 lanes, advanced power-delivery networks, signal-integrity simulation, impedance control, 8–16 layer stackups. Direct competitor space to Altium / Cadence Allegro. Almost certainly multi-developer / partnership / paid-tier territory. May be split off as a sibling project under the ChipBlocks brand. |
-
-**Schedule risks**:
-- Block library quality is the biggest single risk; one bad block breaks every user using it
-- ASIC PnR runtime (hours per build) means Phase 3 needs an async UX or cloud workers
-- Solo + non-technical means Claude Code reliability matters; Anthropic API outages or capability changes could slow specific weeks
-- **Burnout** — solo 18-month projects often die at month 9 when the early excitement fades. Plan for sustainability: regular breaks, public progress posts, community engagement before you need it
-- **Phase 5 (PCB) is essentially a second full product** — schematic capture, multi-layer layout, routing, and Gerber output is a fundamentally different workflow from chip RTL. Worth treating as a separate workstream when we get there, possibly a sibling project under the ChipBlocks brand. Don't let it bleed into Phases 1–4 timelines.
-- **Phase 6 (motherboards / RAM / server-class boards) is genuinely hard** — DDR4/5 routing, PCIe high-speed lanes, multi-layer impedance control, signal integrity, and power-delivery networks require expertise that even Altium / Cadence Allegro users spend years acquiring. A free open-source tool replacing them at the cutting edge is extremely ambitious. Realistic plan: nail tier-1 (hobby) and tier-2 (4-layer prosumer) PCBs first; tier-3 (motherboards / RAM / DDR5) is multi-year, may need partnerships, possibly a paid tier, and the explicit option to never fully replace pro tools at the bleeding edge.
+**Schedule risks:**
+- The visual editor is the make-or-break problem. KiCad has decades of polish; we have one solo dev + AI. Get the canvas right or nothing else matters.
+- Physics correctness is research-grade work. We stop at DC steady-state at v1; ngspice integration is a multi-sprint future investment.
+- Solo + non-technical means Claude Code reliability matters; Anthropic API outages or capability changes could slow specific weeks. The multi-provider AI architecture mitigates lock-in.
+- **Burnout** — solo 12+ month projects often die at month 9 when the early excitement fades. Plan for sustainability: regular breaks, public progress posts, community engagement before it's needed.

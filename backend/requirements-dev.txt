@@ -1,8 +1,0 @@
-pytest>=7
-# Sprint 21 — block manifest codegen (ADR-003). scripts/codegen-backend.py
-# reads blocks.yaml (PyYAML) and validates against blocks.schema.json
-# (jsonschema). Both MIT-licensed. The manifest-integrity test
-# (backend/tests/test_manifest.py) needs the same two deps to load the
-# manifest at test time.
-PyYAML>=6
-jsonschema>=4
