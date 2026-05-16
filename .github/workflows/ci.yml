@@ -81,3 +81,13 @@ jobs:
       - name: Codegen drift check (backend)
         working-directory: .
         run: python3 scripts/codegen-backend.py
+
+      # Sprint 25 (ADR-005 Phase 0) — fab-platform codegen drift check.
+      # Re-runs scripts/codegen-shuttles-backend.py and fails if
+      # backend/shuttles/_registry_gen.py drifts from what shuttles.yaml
+      # + pdks.yaml + packages.yaml + flows.yaml say it should be.
+      # Note: only the backend codegen exists today; frontend codegen
+      # for the fab manifests lands in S25-2b.
+      - name: Codegen drift check (shuttles)
+        working-directory: .
+        run: python3 scripts/codegen-shuttles-backend.py

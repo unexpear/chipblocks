@@ -21,7 +21,8 @@
     "build": "tsc && vite build && electron-builder --publish=never",
     "preview": "vite preview",
     "test": "vitest run",
-    "codegen": "node ../scripts/codegen-frontend.mjs && python3 ../scripts/codegen-backend.py"
+    "codegen": "node ../scripts/codegen-frontend.mjs && python3 ../scripts/codegen-backend.py && python3 ../scripts/codegen-shuttles-backend.py",
+    "codegen:write": "node ../scripts/codegen-frontend.mjs --write && python3 ../scripts/codegen-backend.py --write && python3 ../scripts/codegen-shuttles-backend.py --write"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.1",
