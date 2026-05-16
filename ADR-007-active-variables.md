@@ -497,6 +497,138 @@ The AI can *suggest* variable extraction via tool calls. The user approves. That
 
 ---
 
+## Defaults must be real-life-accurate (extension of the "real blocks all the way down" principle)
+
+The same standard that ADR-006 holds for materials, behaviors, and devices applies to default Active Variable values: **every shipped default must be defensible against expert review, citably sourced, and at the level of accuracy required for the design decisions users actually make.**
+
+A `default_supply_5v = 5.0 V` isn't an arbitrary round number; it's the USB 2.0 nominal supply voltage per the USB-IF specification. A `default_pcb_copper_weight_oz_per_ft2 = 1.0` matches IPC-2152 reference geometry. A `default_ambient_temperature = 25 degC` matches IEC 60721 "office" environment classification. Defaults are not magic numbers; defaults are documented engineering choices.
+
+This makes the user's customizability concrete: when the user overrides a default, they're making an explicit engineering decision against a known reference. Without accurate defaults, "customize" is meaningless — you'd be customizing relative to a made-up baseline.
+
+### What "as accurate as possible/needed" means concretely
+
+Not infinite precision. The right calibration:
+
+- **3-5 significant figures** for physical constants (NIST gives more; electronics design rarely needs more than 4)
+- **Most-representative point** when a range exists (e.g., "common LED max forward current" → 20 mA, not "5 to 50 mA")
+- **Citably sourced** — every shipped default has a `source:` field pointing at a verifiable reference (NIST, IPC, JEDEC, IEEE, USB-IF, ISO, ANSI/IEC standards documents, or named manufacturer datasheets for component-specific values)
+- **Defensible against expert review** — a chip designer or electrical engineer reading the default + source should agree the choice is reasonable. If they'd quibble, document the reasoning in the variable's `description` field.
+
+### What sources count as citable
+
+In rough order of preference:
+
+1. **National/international standards bodies**: NIST (physical constants, units), IEC (electrical engineering, environmental classification), ISO (general engineering), ANSI, JEDEC (semiconductors), IEEE (electrical), IPC (PCBs), USB-IF (USB)
+2. **PDK reference documents**: SkyWater sky130 PDK, GlobalFoundries gf180mcu PDK — for chip-side defaults
+3. **Major manufacturer datasheets**: TI, ON Semi, Analog Devices, STMicro, Lattice (for FPGAs), etc. — for component-class defaults
+4. **Authoritative textbooks**: cited only when there's no formal standard (e.g., "common engineering practice for derating" → Mil-Hdbk-217F or Sedra/Smith's *Microelectronic Circuits*)
+5. **Community / fab consensus**: e.g., "JLCPCB minimum trace width 0.15 mm" — direct from the fab's design rules; cite the URL + retrieval date
+
+What's *not* allowed:
+- Random Stack Overflow answers, blog posts without authoritative backing
+- "I think this is roughly right" — if the value can't be sourced, don't ship it as a default; let the user choose at first use
+- AI-generated defaults — the AI may *propose* default values (with sources) for the user to review, but cannot directly write them into the shipped defaults
+
+### Source field on variables
+
+The variable schema in `parameters.yaml` gains an optional `source:` field on shipped defaults:
+
+```yaml
+variables:
+  ambient_temperature:
+    type: quantity
+    domain: thermal
+    value: 25
+    units: degC
+    scope: simulation
+    active: true
+    description: "Standard office/lab ambient temperature for thermal checks."
+    source: "IEC 60721-3-3 Class 3K3 (controlled climate)"
+    used_by: []
+    validation: { status: pass, issues: [] }
+```
+
+When the user creates a new variable manually, `source` defaults to `"user-supplied"`. When the user *overrides* a shipped default (changes the value from the shipped one), the original `source` is preserved as `previous_source` so the audit trail is intact:
+
+```yaml
+variables:
+  ambient_temperature:
+    type: quantity
+    value: 60                                  # user-overridden
+    units: degC
+    source: "user-supplied"
+    previous_source: "IEC 60721-3-3 Class 3K3 (controlled climate)"
+    previous_value: 25
+    description: "Stress-test temperature for outdoor enclosure."
+```
+
+This preserves the citable basis of the default while letting the user customize freely.
+
+### Canonical initial default set (Sprint 2 authoring target)
+
+The following defaults ship with v2 when a new project is created. Each has a real-world basis. Sprint 2 authors `parameters.yaml` with this set as the project template; users can override or delete any entry per project.
+
+#### Environmental & physical constants
+
+| Variable | Value | Units | Source |
+|---|---|---|---|
+| `ambient_temperature` | 25 | °C | IEC 60721-3-3 Class 3K3 controlled climate; matches standard datasheet conditions |
+| `gravity_acceleration` | 9.80665 | m/s² | NIST: standard gravity (g₀); CODATA 2018 |
+| `sea_level_pressure` | 101325 | Pa | ISO 2533 standard atmosphere |
+| `relative_humidity_default` | 50 | % | Common indoor / IEC 60721-3-3 default |
+| `vacuum_permittivity` | 8.8541878128e-12 | F/m | NIST: ε₀; CODATA 2018 |
+| `vacuum_permeability` | 1.25663706212e-6 | H/m | NIST: μ₀; CODATA 2018 |
+| `boltzmann_constant` | 1.380649e-23 | J/K | NIST: k_B; SI-defining constant since 2019 |
+| `elementary_charge` | 1.602176634e-19 | C | NIST: e; SI-defining constant since 2019 |
+
+#### Common electrical defaults
+
+| Variable | Value | Units | Source |
+|---|---|---|---|
+| `default_supply_5v` | 5.0 | V | USB 2.0 nominal Vbus per USB-IF specification |
+| `default_supply_3v3` | 3.3 | V | JEDEC JESD8C low-voltage TTL logic standard |
+| `default_supply_1v8` | 1.8 | V | JEDEC JESD8-7A LVCMOS / common LPDDR rail |
+| `default_supply_9v` | 9.0 | V | ANSI/IEC 60086 nominal alkaline 9 V (E-block / PP3) |
+| `default_supply_12v` | 12.0 | V | Automotive / DIN ISO 8820; common bench supply |
+| `ground_potential` | 0.0 | V | By definition; the reference |
+| `target_max_led_current` | 20 | mA | Typical 5 mm THT LED rating per common datasheets (Cree, Kingbright, OSRAM) |
+| `safety_derating_factor` | 0.8 | (dimensionless) | Mil-Hdbk-217F + common industry practice; 80% of rated max as headroom |
+
+#### Common PCB / board defaults (used when PCB work resumes in Phase 3)
+
+| Variable | Value | Units | Source |
+|---|---|---|---|
+| `default_pcb_substrate` | FR4 | enum | IPC-4101/126 standard substrate for general electronics |
+| `default_copper_weight_oz_per_ft2` | 1.0 | oz/ft² | IPC-2152 reference geometry; ~35 µm thickness |
+| `default_pcb_layer_count` | 2 | (int) | Common hobbyist / prototype default |
+| `default_trace_width_min_mm` | 0.15 | mm | JLCPCB / OSHPark public design rules for 2-layer board |
+| `default_via_drill_min_mm` | 0.3 | mm | JLCPCB / OSHPark public design rules |
+| `default_dielectric_strength_FR4` | 20 | kV/mm | IPC-TM-650 typical for FR4 substrate |
+
+#### Solder / assembly defaults
+
+| Variable | Value | Units | Source |
+|---|---|---|---|
+| `default_solder_alloy` | "Sn63Pb37" | string | IEC 61190-1-3 (eutectic Sn-Pb); user typically overrides to SAC305 for RoHS |
+| `default_solder_melting_point` | 183 | °C | NIST + IEC 61190 (Sn63Pb37 eutectic) |
+| `default_reflow_peak_temp` | 215 | °C | IPC J-STD-020 (leaded process, Class 2) |
+
+#### Feature flags
+
+| Variable | Value | Type | Source / rationale |
+|---|---|---|---|
+| `enable_thermal_derating` | true | bool | Default on; conservative engineering practice |
+| `enable_eos_warnings` | true | bool | Default on; electrical-overstress detection should be visible |
+| `treat_unconfirmed_components_as_warning` | true | bool | Conservative: a component without a confirmed datasheet flags a warning, not a pass |
+
+These shipping defaults are the Sprint 2 authoring target. **Sprint 2's parameters.yaml ships with this exact set; the source citations land alongside.** The user can override any value; the original source travels with the variable's history.
+
+### When a default is wrong, fix it via PR
+
+If a contributor finds a default that's incorrect (e.g., outdated standard, deprecated source, factual error), the fix is a PR against `parameters.yaml`. The standard manifest-integrity test verifies sources are non-empty + parseable URLs/standard names. A future Sprint may add a "stale-citation check" that asserts URLs still resolve, but at v1 a periodic human audit is fine.
+
+---
+
 ## What this ADR does NOT lock
 
 - **Specific UI styling.** The Active Variables Bar's visual design is for Sprint 4's canvas implementation.

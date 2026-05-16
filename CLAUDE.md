@@ -18,7 +18,7 @@ Read [README.md](README.md) for the public-facing identity. Read [PRD.md](PRD.md
    - **User** approves at every checkpoint that matters.
    - The manufacturing ZIP is **never** AI-generated. Wrong Gerbers cost real money; AI can be confidently wrong.
 
-2. **Real blocks all the way down.** Every block in the catalog has a physical definition. No black-box placeholders, no `pass` Elaboratables, no "icon with no implementation." If a block can't be physically defined, it isn't in the catalog yet. External devices (display panels, speakers, antennas, batteries-as-objects) are chip pads / external connection points, not blocks — we make the controllers that drive them.
+2. **Real blocks all the way down.** Every block in the catalog has a physical definition. No black-box placeholders, no `pass` Elaboratables, no "icon with no implementation." If a block can't be physically defined, it isn't in the catalog yet. External devices (display panels, speakers, antennas, batteries-as-objects) are chip pads / external connection points, not blocks — we make the controllers that drive them. **The same standard applies to default Active Variable values** (per [ADR-007](ADR-007-active-variables.md)): every shipped default is real-life-accurate, citably sourced (NIST / IEC / JEDEC / IPC / JEDEC standards, PDK references, named manufacturer datasheets, or community fab consensus), and at the level of precision actually needed for engineering decisions. No made-up numbers ship as defaults. Users can override any default, but the original `source:` travels with the variable's history so the override is an explicit engineering decision against a known reference.
 
 3. **Free and open-source, no paid tier.**
    - MIT-licensed.
