@@ -32,7 +32,7 @@
 
 | Sprint | Theme | New artifacts | Estimated duration |
 |---|---|---|---|
-| **S2** | Layer 0-3 manifests | `materials.yaml` + schema (~10 materials); `shapes.yaml` + schema; `interfaces.yaml` + schema; `behaviors.yaml` + schema. All with codegen + validation tests. | 1 week |
+| **S2** | Layer 0-3 manifests + Active Variables data shape | `materials.yaml` + schema (~10 materials); `shapes.yaml` + schema; `interfaces.yaml` + schema; `behaviors.yaml` + schema; `signals.yaml` + schema (8 signal types); `parameters.yaml` + schema covering the `variables` section per [ADR-007](ADR-007-active-variables.md). All with codegen + validation tests. | 1 week |
 | **S3** | Layer 4 devices + universal object model + project file format | `devices.yaml` + schema (~8 devices); universal object model spec; `MyProject.chipblocks/` folder format spec; save/load roundtrip test | 1 week |
 | **S4** | Canvas v1 | Palette listing the 8 devices; drag-drop to canvas; wire-drawing between terminals; property inspector; undo/redo; save/load. **5 essentials enforced:** smooth drag, clean wires, undo/redo, inspector, click-back-to-warning (deferred to S5 if needed). | 2 weeks |
 | **S5** | Steady-state validator | KCL/KVL solver; Ohm; Joule; LED forward-voltage check; switch state machine; failure-mode evaluator; bottom-panel warning list with click-to-locate | 1 week |

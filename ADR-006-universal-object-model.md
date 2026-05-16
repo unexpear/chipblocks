@@ -202,7 +202,7 @@ Map of port id → port descriptor. Every block has zero or more ports. A port h
 - **`units`**: the SI unit. Carries through validation; mismatched units fail (e.g., connecting a Volts port to an Amperes port).
 
 #### `parameters`
-Map of parameter id → value. Each parameter has units + tolerance + source (was it user-set, default, or derived from other parameters / geometry / physics).
+Map of parameter id → value. Each parameter is either a **literal** (`{ value, units, tolerance, source }`) or a **reference to an active variable** (`{ ref: <variable-name> }`); the two forms are mutually exclusive. The reference form was added in [ADR-007](ADR-007-active-variables.md), which extends this universal object model with named, typed, project-scoped variables that any block parameter can target. Schema enforces the mutual exclusion; the deterministic engine resolves `ref:` against `parameters.yaml` via scope-chain lookup. See ADR-007 for the full semantics.
 
 #### `internal`
 The composition. If null, this block is primitive at its layer. Otherwise:
