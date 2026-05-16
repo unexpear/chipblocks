@@ -627,6 +627,245 @@ These shipping defaults are the Sprint 2 authoring target. **Sprint 2's paramete
 
 If a contributor finds a default that's incorrect (e.g., outdated standard, deprecated source, factual error), the fix is a PR against `parameters.yaml`. The standard manifest-integrity test verifies sources are non-empty + parseable URLs/standard names. A future Sprint may add a "stale-citation check" that asserts URLs still resolve, but at v1 a periodic human audit is fine.
 
+### Provenance schema (shared by materials, variables, device parameters)
+
+The shipped `source:` field outlined above is too thin. Real values are **conditional** — copper resistivity depends on temperature, a 9 V battery's voltage depends on chemistry + state of charge, an LED's forward voltage depends on current + color + temperature + specific part. A flat `source: "..."` string can't capture that.
+
+This section locks the **shared provenance fragment** used by:
+
+- **Material properties** in `materials.yaml` (per ADR-006 — copper's resistivity, FR4's dielectric strength, etc.)
+- **Device parameters** in `devices.yaml` (per ADR-006 — LED's forward voltage, resistor's tolerance, capacitor's ESR)
+- **Default Active Variables** in `parameters.yaml` (this ADR's primary scope)
+- **User-added Active Variables** (with most fields optional)
+
+One schema fragment, used everywhere a value with empirical or sourced basis lives.
+
+#### The fragment
+
+```yaml
+# A value with provenance — applies to material properties, device
+# parameters, and Active Variables alike.
+value: <number | string | bool>             # the actual value
+units: <SI unit string>                     # required when value is a quantity
+
+source:                                     # where this value came from
+  type: standard | reference | datasheet | pdk | community | measured | estimated | user_supplied
+  label: <human-readable description>       # e.g., "Copper resistivity at 20 C"
+  citation: <URL | standards reference | datasheet ref>   # required when type != user_supplied
+
+conditions:                                 # the assumptions the value makes
+  <named_condition>: { value: <n>, units: <SI> }
+  # examples:
+  #   temperature: { value: 20, units: degC }
+  #   pressure: { value: 101325, units: Pa }
+  #   state_of_charge: full        # or { value: 100, units: pct }
+  #   forward_current: { value: 20, units: mA }   # for LED Vf
+  #   relative_humidity: { value: 50, units: pct }
+  #   bias_voltage: { value: 1.8, units: V }
+
+confidence: high | medium | low | unknown   # how trustworthy
+
+tolerance:                                  # the actual range under stated conditions
+  min: <number>
+  max: <number>
+  distribution: normal | uniform | unknown  # optional; default unknown
+
+notes: <freeform text>                      # any caveats, edge cases, recommendations
+```
+
+#### Field semantics
+
+**`source.type`** — what KIND of source. Discrete enum, ordered roughly by trustworthiness:
+
+| Value | Meaning |
+|---|---|
+| `standard` | Formal standards body (NIST, IEC, IEEE, ISO, ANSI, JEDEC, IPC, USB-IF). Highest authority. |
+| `reference` | Authoritative reference (textbook, materials handbook, encyclopedic resource). |
+| `datasheet` | A specific manufacturer's datasheet (TI, ON Semi, Cree, etc.). |
+| `pdk` | A process design kit (sky130, gf180mcu, ihp-sg13g2). |
+| `community` | Community-curated knowledge (fab design rules with documented URL, OSS hardware projects). |
+| `measured` | Empirically determined by the user; the user has the equipment to verify. |
+| `estimated` | The user's best guess based on prior experience or rough calculation. |
+| `user_supplied` | User typed a number without citing anything; default for new user variables. |
+
+**`confidence`** — how trustworthy the value is at the documented conditions. Orthogonal to `source.type`:
+
+| Value | Meaning |
+|---|---|
+| `high` | Well-defined physical constant, standards-based, or precisely-measured value. The value is correct ±5% under stated conditions. |
+| `medium` | Typical-part value from datasheets, or measurement with limited validation. Real parts may vary ±10-30%. |
+| `low` | Estimate; specific to a use case or based on incomplete information. Real-world deviation could be significant. |
+| `unknown` | Confidence not assessed (default when the user hasn't filled it in). |
+
+The two are independent: a `standard`-source value is usually `high` confidence, but a `datasheet`-source value could be `medium` (typical part across a family) or `high` (a specific part you have on hand). A `measured` value can be `high` (well-validated measurement) or `low` (a rough one-off check).
+
+**`conditions`** — the implicit assumptions baked into the value. Critical for "real values all the way down" because a value without conditions is incomplete information. Conditions are a free-form map; each entry is named (`temperature`, `state_of_charge`, `forward_current`, etc.) and has `{ value, units }`. The validator may use conditions to:
+
+- Warn if the user's design operates outside documented conditions (e.g., "you're operating at 60 °C; `copper_resistivity` is documented at 20 °C — consider using the temperature-corrected value")
+- Eventually: automatically derate or interpolate when temperature/voltage/current functions are provided
+
+**`tolerance`** — the actual range under stated conditions. Distinct from `confidence`. A high-confidence value can still have wide tolerance (e.g., a 5% resistor: `value: 470`, `tolerance: { min: 446.5, max: 493.5 }`, `confidence: high` — we know precisely that the part is ±5% under standard conditions).
+
+**`notes`** — freeform. Useful for "this value assumes X" type caveats that don't fit elsewhere.
+
+#### Required vs optional per origin
+
+| Field | Builtin / shipped | Community library | User-local | Project |
+|---|---|---|---|---|
+| `value` | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** |
+| `units` (for quantity) | **REQUIRED** | **REQUIRED** | **REQUIRED** | **REQUIRED** |
+| `source.type` | **REQUIRED** | **REQUIRED** | Optional (defaults to `user_supplied`) | Optional (defaults to `user_supplied`) |
+| `source.label` | **REQUIRED** | **REQUIRED** | Optional | Optional |
+| `source.citation` | **REQUIRED** (when source.type != user_supplied) | **REQUIRED** | Optional | Optional |
+| `conditions` | **STRONGLY ENCOURAGED** where applicable (omit only for pure constants like gravity, Boltzmann) | Strongly encouraged | Optional | Optional |
+| `confidence` | **REQUIRED** | **REQUIRED** | Optional (defaults to `unknown`) | Optional (defaults to `unknown`) |
+| `tolerance` | Where applicable | Where applicable | Optional | Optional |
+| `notes` | Optional | Optional | Optional | Optional |
+
+The **Sprint 2 rule** (locked here): *Built-in defaults must be useful, cited, and condition-aware. User/project values can be rough, but must be typed and unit-valid.*
+
+This is the cleanest expression of the trust hierarchy: shipped content has full provenance; user content is unitchecked + typechecked but doesn't carry the full provenance burden.
+
+#### Examples
+
+**A shipped material property** (in `materials.yaml`):
+
+```yaml
+- id: copper
+  properties:
+    resistivity:
+      value: 1.68e-8
+      units: ohm_meter
+      source:
+        type: standard
+        label: "Copper resistivity at 20 C"
+        citation: "NIST CODATA 2018; matches IEC 60028 annealed copper standard"
+      conditions:
+        temperature: { value: 20, units: degC }
+      confidence: high
+      tolerance:
+        min: 1.65e-8
+        max: 1.72e-8
+        distribution: normal
+      notes: "For high-temperature designs, use temperature-corrected value or derive from R(T) = R20 * (1 + alpha * (T - 20)) with alpha = 0.00393 / K."
+```
+
+**A shipped Active Variable default** (in `parameters.yaml`):
+
+```yaml
+variables:
+  default_supply_9v:
+    type: quantity
+    domain: electrical
+    value: 9.0
+    units: V
+    scope: project
+    active: true
+    description: "Nominal 9 V alkaline battery (PP3 / E-block) supply voltage."
+    source:
+      type: standard
+      label: "9 V alkaline battery nominal voltage"
+      citation: "ANSI/IEC 60086 nominal; PP3 / E-block form factor"
+    conditions:
+      state_of_charge: full
+      load_current: { value: 0, units: mA }     # open-circuit
+      temperature: { value: 20, units: degC }
+    confidence: high
+    tolerance:
+      min: 8.4        # discharged-end-of-life threshold per spec
+      max: 9.6        # fresh battery max
+      distribution: uniform
+    notes: "Open-circuit nominal. Real voltage drops to ~7.5 V at 50% state-of-charge under typical 50 mA load. For drained-battery checks, use 7.5 V as the worst-case design point."
+    used_by: []
+    validation: { status: pass, issues: [] }
+```
+
+**A shipped device parameter** (in `devices.yaml`, referencing the same fragment):
+
+```yaml
+- id: led
+  composition: [...]
+  parameters:
+    forward_voltage:
+      value: 2.0
+      units: V
+      source:
+        type: datasheet
+        label: "Typical Vf for red AlGaInP LED at 20 mA"
+        citation: "Cree LR series datasheet rev. 2024; Kingbright L-7113 family typical"
+      conditions:
+        forward_current: { value: 20, units: mA }
+        temperature: { value: 25, units: degC }
+        color: "red (630 nm)"
+      confidence: medium
+      tolerance:
+        min: 1.85
+        max: 2.15
+        distribution: normal
+      notes: "Vf rises ~2.5 mV/K with temperature. For blue/white LEDs (450/450+phosphor), use 3.2 V default with same provenance shape."
+```
+
+**A user-supplied variable** (in a project's `parameters.yaml`):
+
+```yaml
+variables:
+  prototype_iteration:
+    type: string
+    domain: meta
+    value: "rev_C"
+    scope: project
+    active: true
+    description: "Current hardware revision letter."
+    source:
+      type: user_supplied
+    confidence: unknown
+    notes: ""
+    used_by: []
+    validation: { status: pass, issues: [] }
+```
+
+**A user-measured override** (the user actually measured their battery):
+
+```yaml
+variables:
+  my_actual_battery_voltage:
+    type: quantity
+    domain: electrical
+    value: 8.7
+    units: V
+    scope: project
+    active: true
+    description: "Measured Vbat under typical load on the workbench."
+    source:
+      type: measured
+      label: "Bench measurement, multimeter Fluke 87V, 2026-05-16, room temp"
+    conditions:
+      load_current: { value: 18, units: mA }
+      state_of_charge: "approx 80%"
+      temperature: { value: 23, units: degC }
+    confidence: medium
+    tolerance:
+      min: 8.5
+      max: 8.9
+    notes: "Replaces default_supply_9v for this project; battery is mid-life."
+    used_by: [power_source_1.voltage]
+    validation: { status: pass, issues: [] }
+```
+
+#### Materials, variables, and device parameters share the same schema fragment
+
+This is intentional. The fragment is the universal "value with provenance" shape; all three contexts use it the same way:
+
+- A material property is `<material>.properties.<property-name>` with the fragment
+- A device parameter is `<device>.parameters.<parameter-name>` with the fragment
+- An Active Variable is `<variable-name>` with the fragment
+
+The schema deduplicates via JSON Schema `$ref` — `materials.schema.json`, `devices.schema.json`, and `parameters.schema.json` all reference a shared `provenance.schema.json` fragment. The codegen produces matching TypeScript + Python types.
+
+This means a future "what's the provenance of this value?" UI query works the same regardless of whether the user clicked on a material, a device parameter, or an Active Variable.
+
+---
+
 ### User-added variables are first-class (not just overrides)
 
 The shipped default set covers common cases; **users add entirely new variables freely.** A variable doesn't need to be one of the ~28 built-in defaults to be valid. The user creates a variable for any value they want to parameterize — `motor_max_rpm`, `enclosure_max_depth_mm`, `target_battery_life_hours`, `wifi_ssid_default`, anything.

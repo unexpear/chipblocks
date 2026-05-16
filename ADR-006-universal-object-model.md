@@ -41,7 +41,7 @@ The user composes designs at any layer. They can drag a `power_source` (Layer 4)
 The bottom. The atoms.
 
 - **What lives here**: copper, aluminum, silicon (intrinsic, n-doped, p-doped), FR4, polyimide, ceramic (alumina), solder (Sn63Pb37, lead-free SAC), air, water, ferrite, air gap, photoresist.
-- **Required fields per row**: `id`, `resistivity_ohm_m`, `permittivity_relative`, `permeability_relative`, `thermal_conductivity_W_mK`, `density_kg_m3`, `melting_point_K`, `dielectric_strength_V_m` (where applicable), `visual: { color, finish }`, `source` (citable reference: NIST, PDK doc, datasheet).
+- **Required fields per row**: `id`, `visual: { color, finish }`, plus a `properties` map holding `resistivity`, `permittivity_relative`, `permeability_relative`, `thermal_conductivity`, `density`, `melting_point`, `dielectric_strength` (where applicable). **Each property carries the full provenance fragment defined in [ADR-007](ADR-007-active-variables.md)** — `value`, `units`, `source { type, label, citation }`, `conditions` (where applicable; e.g., copper resistivity is temperature-dependent), `confidence`, `tolerance` (where applicable), `notes`. Material properties are first-class examples of "value with provenance"; they are not bare floats.
 - **What's NOT at this layer**: any concept of "where" or "how big." A material is a substance, not a thing.
 - **Manifest**: `materials.yaml` + `materials.schema.json` at repo root, codegen-generated, sourced from NIST + open PDKs (sky130, gf180).
 - **First-sprint commitment**: 10-15 materials covering the LED-resistor-switch-power-source MVP plus the most common adjacent materials. Community will add more.
@@ -78,7 +78,7 @@ Abstract physical laws. Composable rules a primitive device adopts.
 The smallest functional unit the user explicitly names and reasons about. Composed from L0-L3.
 
 - **What lives here**: `wire`, `resistor`, `capacitor`, `inductor`, `diode`, `led`, `transistor` (NMOS, PMOS, BJT), `switch`, `power_source`, `ground`. Eventually: photodiode, thermistor, varistor, fuse.
-- **Required fields per row**: `id`, `composition` (the L0-L3 references that define it — a `resistor` is "resistive material + cylinder shape + 2 terminals + adopts {conducts, resists, heats}"), `parameters` (user-tunable values like `resistance_ohm`, `tolerance_pct`, `power_rating_W`), `failure_modes` (trigger conditions + effects).
+- **Required fields per row**: `id`, `composition` (the L0-L3 references that define it — a `resistor` is "resistive material + cylinder shape + 2 terminals + adopts {conducts, resists, heats}"), `parameters` (user-tunable values like `resistance_ohm`, `tolerance_pct`, `power_rating_W` — **each carries the [ADR-007 provenance fragment](ADR-007-active-variables.md)**: value, units, source, conditions, confidence, tolerance, notes), `failure_modes` (trigger conditions + effects).
 - **Why this is where users start**: the MVP palette shows these. A "resistor" is one block; the user doesn't have to think about its composition unless they descend.
 - **First-sprint commitment**: 8 devices (wire, resistor, capacitor, inductor, diode, led, switch, power_source). Plus a `ground` terminal. Other devices added per community contribution.
 
