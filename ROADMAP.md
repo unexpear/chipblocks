@@ -21,7 +21,7 @@
 |---|---|---|---|---|
 | **P0** | Verify legacy branch preserves alpha.9 cleanly. `git checkout legacy/audio-synth-direction && npm run dev` reproduces the v1 audio-synth tool. | Manual / Claude | 30 min | The "preservation" half of the reset must be verified, not assumed |
 | **P0** | Verify new main launches: `npm install && npm run dev` opens the empty shell window | Manual | 10 min | The reset is incomplete until the shell launches without errors |
-| **P0** | Draft `ADR-006-universal-object-model.md` at repo root: the 9-layer hierarchy + the universal object model spec + the AI authority split | Claude | 1 day | Locks in the design before Sprint 2's manifest authoring |
+| **P0** ✅ | [ADR-006](ADR-006-universal-object-model.md) drafted — the 9-layer hierarchy + the universal object model spec + the AI authority split + project file format + signal types. Awaiting user review. | Claude | done | Locks in the design before Sprint 2's manifest authoring |
 | **P0** | Verify CI green on the new minimal master | Claude | 5 min | Don't proceed if CI is broken on the reset commit |
 
 **Done criteria:** legacy verified, new shell launches, ADR-006 drafted, CI green.

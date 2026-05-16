@@ -141,6 +141,7 @@ CI is intentionally minimal at the reset; it grows as the project grows.
 - [ROADMAP.md](ROADMAP.md) — Now/Next/Later
 - [RESET-PLAN.md](RESET-PLAN.md) — full reset history + sprint 1 mechanics
 - [FINAL-STATE-VISION.md](FINAL-STATE-VISION.md) — what the finished ChipBlocks looks like
+- [ADR-006-universal-object-model.md](ADR-006-universal-object-model.md) — the architectural foundation: 9-layer hierarchy + universal object model + AI authority split. **Status: drafted 2026-05-16; for Sprint 2 implementation.** First ADR of the v2 series; ADRs 001-005 live on `legacy/audio-synth-direction`.
 - [LICENSE](LICENSE) — MIT
 
 ## What's in scope vs. not
