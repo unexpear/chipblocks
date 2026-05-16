@@ -47,7 +47,7 @@ function makeAjv(): Ajv {
   const ajv = new Ajv({ allErrors: true, strict: false })
   // Preload schemas that other schemas might $ref. Order matters only
   // for clarity; addSchema accepts any order.
-  for (const name of ['provenance', 'signals', 'materials', 'shapes', 'interfaces', 'behaviors']) {
+  for (const name of ['provenance', 'signals', 'materials', 'shapes', 'interfaces', 'behaviors', 'parameters']) {
     const schemaPath = resolve(REPO_ROOT, `${name}.schema.json`)
     try {
       const schema = JSON.parse(readFileSync(schemaPath, 'utf-8'))
@@ -406,6 +406,120 @@ describe('behaviors.yaml manifest integrity', () => {
     const ids = new Set(manifest.map((b) => b.id))
     for (const required of ['conducts', 'resists', 'stores_charge', 'switches', 'heats', 'supplies_voltage', 'led_emits_light']) {
       expect(ids).toContain(required)
+    }
+  })
+})
+
+describe('parameters.yaml manifest integrity (default Active Variables)', () => {
+  it('validates against parameters.schema.json', () => {
+    const { ok, errors } = validate('parameters')
+    if (!ok) console.error('parameters errors:', JSON.stringify(errors, null, 2))
+    expect(ok).toBe(true)
+  })
+
+  it('has at least 20 default Active Variables (the canonical set)', () => {
+    const manifest = loadManifest('parameters') as { variables: Record<string, unknown> }
+    expect(Object.keys(manifest.variables).length).toBeGreaterThanOrEqual(20)
+  })
+
+  it('every variable has type + value + scope (the required fields)', () => {
+    const manifest = loadManifest('parameters') as {
+      variables: Record<string, { type: string; value: unknown; scope: string }>
+    }
+    for (const [name, v] of Object.entries(manifest.variables)) {
+      expect(v.type, `variable "${name}" missing type`).toBeDefined()
+      expect(v.value, `variable "${name}" missing value`).toBeDefined()
+      expect(v.scope, `variable "${name}" missing scope`).toBeDefined()
+    }
+  })
+
+  it('every type=quantity variable has units (the Sprint 2 rule)', () => {
+    const manifest = loadManifest('parameters') as {
+      variables: Record<string, { type: string; units?: string }>
+    }
+    for (const [name, v] of Object.entries(manifest.variables)) {
+      if (v.type === 'quantity') {
+        expect(v.units, `quantity variable "${name}" missing units`).toBeDefined()
+      }
+    }
+  })
+
+  it('every type=enum variable has allowed list with at least 1 value', () => {
+    const manifest = loadManifest('parameters') as {
+      variables: Record<string, { type: string; allowed?: string[]; value?: unknown }>
+    }
+    for (const [name, v] of Object.entries(manifest.variables)) {
+      if (v.type === 'enum') {
+        expect(v.allowed, `enum variable "${name}" missing allowed list`).toBeDefined()
+        expect(v.allowed!.length, `enum variable "${name}" has empty allowed list`).toBeGreaterThan(0)
+        expect(v.allowed, `enum variable "${name}" value not in allowed list`).toContain(v.value as string)
+      }
+    }
+  })
+
+  it('every shipped variable has a source (per ADR-007 Sprint 2 rule)', () => {
+    const manifest = loadManifest('parameters') as {
+      variables: Record<string, { source?: { type?: string; label?: string } }>
+    }
+    for (const [name, v] of Object.entries(manifest.variables)) {
+      expect(v.source, `shipped variable "${name}" missing source`).toBeDefined()
+      expect(v.source!.type, `shipped variable "${name}" missing source.type`).toBeDefined()
+    }
+  })
+
+  it('every non-user-supplied source has a label + citation', () => {
+    const manifest = loadManifest('parameters') as {
+      variables: Record<
+        string,
+        { source?: { type?: string; label?: string; citation?: string } }
+      >
+    }
+    for (const [name, v] of Object.entries(manifest.variables)) {
+      if (v.source && v.source.type !== 'user_supplied') {
+        expect(v.source.label, `variable "${name}" non-user source missing label`).toBeDefined()
+        expect(v.source.citation, `variable "${name}" non-user source missing citation`).toBeDefined()
+      }
+    }
+  })
+
+  it('every variable has a confidence rating', () => {
+    const manifest = loadManifest('parameters') as {
+      variables: Record<string, { confidence?: string }>
+    }
+    for (const [name, v] of Object.entries(manifest.variables)) {
+      expect(v.confidence, `variable "${name}" missing confidence`).toBeDefined()
+    }
+  })
+
+  it('all variable names match snake_case pattern', () => {
+    const manifest = loadManifest('parameters') as { variables: Record<string, unknown> }
+    for (const name of Object.keys(manifest.variables)) {
+      expect(name, `variable name "${name}" does not match snake_case`).toMatch(/^[a-z][a-z0-9_]*$/)
+    }
+  })
+
+  it('includes the canonical defaults (ambient_temperature, default_supply_5v, target_max_led_current)', () => {
+    const manifest = loadManifest('parameters') as { variables: Record<string, unknown> }
+    const names = new Set(Object.keys(manifest.variables))
+    for (const required of [
+      'ambient_temperature',
+      'default_supply_5v',
+      'default_supply_3v3',
+      'default_supply_9v',
+      'target_max_led_current',
+      'safety_derating_factor',
+    ]) {
+      expect(names, `missing canonical variable: ${required}`).toContain(required)
+    }
+  })
+
+  it('scope values are within the 4-scope enum', () => {
+    const manifest = loadManifest('parameters') as {
+      variables: Record<string, { scope: string }>
+    }
+    const allowed = new Set(['project', 'block', 'release', 'simulation'])
+    for (const [name, v] of Object.entries(manifest.variables)) {
+      expect(allowed, `variable "${name}" has invalid scope "${v.scope}"`).toContain(v.scope)
     }
   })
 })

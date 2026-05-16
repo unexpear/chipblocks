@@ -1,0 +1,135 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ChipBlocks parameters manifest (default Active Variables)",
+  "description": "Per ADR-007. Active Variables are typed, scoped, project-level named values that any block parameter can reference instead of carrying a literal. This file ships the default set (~28 builtin variables) that every new project starts with: physical constants, common electrical defaults, PCB defaults, solder/assembly defaults, feature flags. Each entry extends the provenance fragment with variable-specific fields (type, domain, scope, active, used_by). Users can override defaults (preserving previous_source / previous_value as audit trail) and add their own variables (which use the same shape with most provenance fields optional).",
+  "type": "object",
+  "required": ["variables"],
+  "additionalProperties": false,
+  "properties": {
+    "variables": {
+      "type": "object",
+      "description": "Map of variable name -> variable entry. Variable names match ^[a-z][a-z0-9_]*$ (lowercase snake_case).",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type", "value", "scope"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["quantity", "string", "enum", "bool"],
+            "description": "Variable type. quantity = number with units; string = freeform text; enum = constrained string from `allowed` list; bool = boolean."
+          },
+          "domain": {
+            "type": "string",
+            "enum": ["electrical", "thermal", "mechanical", "optical", "mechanical-positional", "manufacturing", "regulatory", "meta"],
+            "description": "Engineering domain. Used by the validator + UI to group variables and apply domain-specific checks."
+          },
+          "value": {
+            "description": "The variable's current value. Number for quantity, string for string/enum, boolean for bool.",
+            "oneOf": [
+              { "type": "number" },
+              { "type": "string" },
+              { "type": "boolean" }
+            ]
+          },
+          "units": {
+            "type": "string",
+            "description": "SI unit string (V, A, ohm, degC, etc.). Required for type=quantity."
+          },
+          "allowed": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Allowed values for type=enum. Required for enum; ignored otherwise."
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["project", "block", "release", "simulation"],
+            "description": "Resolution scope per ADR-007. project = applies everywhere; block = scoped to a composite block; release = active when a specific release profile is selected; simulation = active when a specific verification scenario runs."
+          },
+          "active": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether this variable participates in the resolution chain. false = defined but inert (useful for A/B testing or documenting alternatives)."
+          },
+          "description": {
+            "type": "string",
+            "description": "User-facing description of what this variable represents and when to use it."
+          },
+          "source": {
+            "type": "object",
+            "required": ["type"],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["standard", "reference", "datasheet", "pdk", "community", "measured", "estimated", "user_supplied"]
+              },
+              "label": { "type": "string" },
+              "citation": { "type": "string" }
+            }
+          },
+          "conditions": {
+            "type": "object",
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["value"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "value": { "oneOf": [{ "type": "number" }, { "type": "string" }] },
+                    "units": { "type": "string" }
+                  }
+                },
+                { "type": "string" }
+              ]
+            }
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low", "unknown"]
+          },
+          "tolerance": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "min": { "type": "number" },
+              "max": { "type": "number" },
+              "distribution": {
+                "type": "string",
+                "enum": ["normal", "uniform", "unknown"]
+              }
+            }
+          },
+          "previous_source": {
+            "type": "object",
+            "description": "Preserved when the user overrides a shipped default (audit trail). Original source.type + label + citation.",
+            "additionalProperties": true
+          },
+          "previous_value": {
+            "description": "Preserved when the user overrides a shipped default (audit trail).",
+            "oneOf": [
+              { "type": "number" },
+              { "type": "string" },
+              { "type": "boolean" }
+            ]
+          },
+          "used_by": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Populated by the validator on each run. Dotted paths into the block graph (block_id.parameter_id). Not user-editable; regenerated automatically."
+          },
+          "validation": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "status": { "type": "string", "enum": ["unknown", "pass", "warning", "fail"] },
+              "issues": { "type": "array" }
+            }
+          },
+          "notes": { "type": "string" }
+        }
+      }
+    }
+  }
+}
