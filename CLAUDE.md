@@ -20,14 +20,16 @@ Read [README.md](README.md) for the public-facing identity. Read [PRD.md](PRD.md
 
 2. **Real blocks all the way down.** Every block in the catalog has a physical definition. No black-box placeholders, no `pass` Elaboratables, no "icon with no implementation." If a block can't be physically defined, it isn't in the catalog yet. External devices (display panels, speakers, antennas, batteries-as-objects) are chip pads / external connection points, not blocks — we make the controllers that drive them. **The same standard applies to default Active Variable values** (per [ADR-007](ADR-007-active-variables.md)): every shipped default is real-life-accurate, citably sourced (NIST / IEC / JEDEC / IPC / JEDEC standards, PDK references, named manufacturer datasheets, or community fab consensus), and at the level of precision actually needed for engineering decisions. No made-up numbers ship as defaults. Users can override any default, but the original `source:` travels with the variable's history so the override is an explicit engineering decision against a known reference.
 
-3. **Free and open-source, no paid tier.**
+3. **Users can customize everything and add entirely new things.** Both blocks and Active Variables are first-class extensible. Four origins for each (per [ADR-006](ADR-006-universal-object-model.md) for blocks and [ADR-007](ADR-007-active-variables.md) for variables): `builtin` (ships in the app), `community` (installed libraries like `chipblocks-audio`, `chipblocks-peripherals`), `user-local` (`~/.chipblocks/` for cross-project personal use), `project` (`MyProject.chipblocks/` for one-project-only). Resolution walks project → user-local → community → builtin; innermost wins; shadowed entries surface a UI warning. The same schema validates a shipped resistor and a user's custom 4-input mux. The validator treats user-authored content identically to shipped content. **There is no privileged tier** — once a block or variable is registered in any origin, it behaves like any other.
+
+4. **Free and open-source, no paid tier.**
    - MIT-licensed.
    - Permissive dependencies only (MIT / Apache 2.0 / BSD / ISC / CC0). Never GPL/AGPL in the shipped product.
    - BYOK AI (user's own API key) — the project never pays for inference on behalf of users.
    - A **No-AI mode** is required so the app is fully usable without any AI configured.
    - Multi-provider AI (Anthropic, OpenAI, possibly Gemini/Ollama later) — never locked to one vendor.
 
-4. **"Fine taking time."** No rushed shortcuts. Sprint pace is dictated by what's actually correct, not by external deadlines.
+5. **"Fine taking time."** No rushed shortcuts. Sprint pace is dictated by what's actually correct, not by external deadlines.
 
 ## Hierarchy of abstraction (the 9 layers)
 

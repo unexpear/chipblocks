@@ -627,6 +627,27 @@ These shipping defaults are the Sprint 2 authoring target. **Sprint 2's paramete
 
 If a contributor finds a default that's incorrect (e.g., outdated standard, deprecated source, factual error), the fix is a PR against `parameters.yaml`. The standard manifest-integrity test verifies sources are non-empty + parseable URLs/standard names. A future Sprint may add a "stale-citation check" that asserts URLs still resolve, but at v1 a periodic human audit is fine.
 
+### User-added variables are first-class (not just overrides)
+
+The shipped default set covers common cases; **users add entirely new variables freely.** A variable doesn't need to be one of the ~28 built-in defaults to be valid. The user creates a variable for any value they want to parameterize — `motor_max_rpm`, `enclosure_max_depth_mm`, `target_battery_life_hours`, `wifi_ssid_default`, anything.
+
+User-added variables follow the same rules as shipped defaults *except* the `source:` field is optional. When a user creates a variable manually, `source` defaults to `"user-supplied"` and the validator doesn't require a citation. Citations are still encouraged — a `description:` field documenting "this value came from datasheet X" is the user's audit trail — but no schema-level check forces a citation on user-created variables.
+
+The four origins for variables mirror the block-type origins in [ADR-006](ADR-006-universal-object-model.md):
+
+| Origin | Where it lives | Examples |
+|---|---|---|
+| **`builtin`** | Inside the ChipBlocks app bundle (the ~28 default variables in the canonical table above). | `ambient_temperature`, `default_supply_5v`, `target_max_led_current` |
+| **`community`** | Installed library may ship its own variables (`chipblocks-audio/parameters.yaml`, etc.). When the library is installed, its variables join the project's resolution chain. Anticipated for Phase 2+. | A `chipblocks-audio` library might define `default_sample_rate_hz: 44100` (CD-quality, citably sourced from CDDA spec). |
+| **`user-local`** | `~/.chipblocks/parameters.yaml`. The user's own variables across all their projects. Useful for personal preferences. | `my_default_pcb_fab: oshpark_2_layer` (the user's preferred fab). |
+| **`project`** | Inside the project file at `parameters.yaml`. Travels with the project. The default destination for "+ Add Variable" in the UI. | Project-specific knobs like `prototype_iteration: rev_C` or `customer_brand_color: "#ff6600"`. |
+
+Origin resolution at runtime walks: project → user-local → community → builtin (innermost wins, same shape as block-type origin resolution per ADR-006).
+
+When the user uses the UI's "+ Add Variable" button, the default origin is `project` (the variable travels with the project). A "save as user-local" toggle in the dialog lets the user save it to `~/.chipblocks/parameters.yaml` instead for cross-project availability.
+
+The validator treats user-added variables identically to shipped defaults. The same `used_by` tracking applies. The same scope resolution applies. The same authority split (AI proposes, user approves, ChipBlocks validates) applies. **There is no functional difference between a builtin variable and a user-added one once they're both in the resolution chain** — only their origin tag + their citation requirements differ.
+
 ---
 
 ## What this ADR does NOT lock

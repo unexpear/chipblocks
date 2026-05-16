@@ -483,6 +483,77 @@ Every block has `validation: { status, issues[] }` in its data shape. Three reas
 
 ---
 
+## Block-type extensibility — user-defined blocks are first-class
+
+The universal object model and the 9-layer hierarchy do not restrict who authors block types. The user can drop entirely new block types into a project — not just compose graphs from the shipped library, but **define new block types that behave like every other block in the catalog**.
+
+This works because every block type is a manifest row + a composition tree, regardless of who authored it. The same schema validates a shipped resistor and a user's custom 4-input mux. The same UI renders both. The validator treats both identically.
+
+### Four origins for block types
+
+| Origin | Where it lives | Lifecycle |
+|---|---|---|
+| **`builtin`** | Inside the ChipBlocks app bundle. Standard cells (L0-L2), foundational behaviors (L3), the small set of primitive devices (L4: wire, resistor, capacitor, etc.). Ships with every install. | Updated when ChipBlocks releases new versions; user cannot edit without forking the project. |
+| **`community`** | Installed packages: `~/.chipblocks/libraries/<library-id>/`. Examples: `chipblocks-audio` (the inaugural starter library), `chipblocks-peripherals` (SPI/I²C/UART/...), `chipblocks-cpus`, `chipblocks-radios`. Each library is a GitHub repo the user clones / installs. | User installs and uninstalls libraries from a per-user catalog. Library updates are versioned; saved-graph references pin specific versions. |
+| **`user-local`** | `~/.chipblocks/blocks/` on the user's machine. Custom block types the user authors and wants available across all their projects (e.g., "my favorite 8-bit-decoder layout"). | User-curated. Survives across project reloads + ChipBlocks updates. |
+| **`project`** | `MyProject.chipblocks/blocks/` — custom block types defined inside one project, shipping with the project file. | Travels with the project; shared by `.chipblocks` zip / fork. Examples: project-specific subassemblies that don't make sense to publish broadly. |
+
+Origin resolution at runtime walks: project → user-local → community → builtin (innermost wins, same shape as Active Variable scopes in ADR-007). A block type with the same `id` in multiple origins is resolved by the innermost origin; the user gets a "shadowing" warning so they know.
+
+### Authoring a custom block type
+
+Three workflows the user-facing UX supports:
+
+1. **"Save selection as block group"** — the user draws a subgraph on the canvas, right-clicks selected nodes + connecting nets, picks "Save as block group." A dialog asks for: name + layer + origin (project / user-local) + external ports (auto-detected from the selection's boundary, user can rename/reorder). The block group is added to the relevant manifest + appears in the palette.
+
+2. **"Author manifest row directly"** — power users edit a `blocks.yaml` (or per-origin equivalent) by hand, write the composition graph, run codegen. Same cookbook discipline as v1's ADR-003 block-authoring flow.
+
+3. **"Import from library"** — install a community library; its block types appear in the palette under their library name. No authoring needed; the library's curator did the work.
+
+All three paths produce identical-shape block types. The universal object model has no `origin: builtin` vs `origin: user-local` discriminator at the data layer; the discriminator lives at the manifest-loading layer.
+
+### Constraints on user-authored block types
+
+The same rules that apply to shipped blocks apply to user-authored ones:
+
+- **Layer discipline**: a user-authored block at Layer N composes only from blocks at layers 0..(N-1). Schema enforces.
+- **Real composition**: the composition must reference real lower-layer blocks. No black-box user blocks (the "no fake blocks" rule applies to user contributions too).
+- **Named ports**: external ports must have names, signal types, and units. The block participates in net validation like any other block.
+- **Sourced (when shipped)**: a user-local or project-scope block doesn't need a `source:` citation. A community library block intended for wider distribution does (per the "Defaults must be real-life-accurate" extension to ADR-007).
+- **Validation propagates**: the validator treats user-authored blocks identically — their `validation: { status, issues }` field is populated by the same engine that handles shipped blocks.
+
+### Discoverability
+
+The palette UI groups blocks by origin so the user can find them:
+
+```
+Project blocks       (this project's custom blocks)
+User-local blocks    (your blocks across all projects)
+chipblocks-audio     (community library; if installed)
+chipblocks-peripherals (community library; if installed)
+Standard cells       (builtin; sky130_fd_sc_hd etc.)
+Primitive devices    (builtin; wire / resistor / capacitor / ...)
+```
+
+Sections are collapsible. The user can favorite individual blocks; favorites appear in a "Quick access" section at the top.
+
+### Versioning user-authored blocks
+
+A custom block group has a `version:` field in its manifest row (default `0.1.0`). Saved-graph references to the block group pin a specific version (`type: my-mux@0.1.0`). If the user later edits the block group, the manifest version increments and saved graphs that referenced the old version load the old definition (preserved as a snapshot). This prevents the "I edited my custom block and now my old project is broken" failure mode.
+
+For project-scope blocks, the version is also stored in the project file so the project is self-contained.
+
+### Sprint phasing for extensibility
+
+- **Sprint 2** (Layer 0-3 manifests): The infrastructure pattern is already in place — every manifest is `<name>.yaml` + `<name>.schema.json` + codegen. User-authored blocks reuse this pattern; nothing new at the schema-engine layer.
+- **Sprint 3** (Layer 4 devices + universal object model): The save format includes both project-scope blocks (inline) and references to user-local / community / builtin blocks (by name + version). Save/load roundtrip test covers all four origins.
+- **Sprint 4** (Canvas v1): The palette UI groups by origin. The "Save selection as block group" workflow is implemented for project-scope (Sprint 4's MVP); user-local + community origins are functional but UX-light at v1.
+- **Sprint 5+** (validator, AI, etc.): Treat user-authored blocks identically to shipped blocks. No special cases.
+
+This extensibility is the same architectural commitment that makes ADR-007's Active Variables a clean fit: the data model doesn't care who authored a thing, only that the thing conforms to the schema.
+
+---
+
 ## Net / port / signal model
 
 Carried forward as the v1 ADR-001 lesson: every connection between blocks is typed. Mismatched types fail at edit time, not at compile time.
