@@ -138,6 +138,58 @@ Soft (hint-only, not blocker): `parameters.required[i].name` MAY match a default
 
 ---
 
+## Canonical end-to-end demo (target enabled by Sprint 3)
+
+Sprint 3 doesn't ship the demo — Sprint 5's validator + Sprint 6's canvas do. But every device row authored in this sprint is written with this circuit in mind, because it's the load-bearing test case for the entire 9-layer stack:
+
+```
+[battery 5V] ── [switch] ── [resistor R] ── [LED] ── back to battery
+```
+
+The textbook current-limiting calculation the Sprint 5 validator will run, derived from KVL (`V_source = V_R + V_forward`) and Ohm (`V_R = I × R`):
+
+```
+R = (V_source - V_forward) / I
+```
+
+### Every term already has a home in the manifests
+
+| Symbol | Source in ChipBlocks |
+|---|---|
+| `V_source` | `power_source.voltage` parameter (declared in S3-5) ← can ref Active Variable `default_supply_5v` (cited to USB-IF 2.0 §7.2.4) |
+| `V_forward` | `LED.forward_voltage` parameter required by [`led_emits_light`](behaviors.yaml) behavior (declared in S3-6) |
+| `I` | Active Variable `target_max_led_current = 20 mA` (already in [parameters.yaml](parameters.yaml), cited to Cree/Kingbright/OSRAM 5mm THT LED datasheets) |
+| `R` | `resistor.resistance` parameter required by [`conducts`](behaviors.yaml) behavior (declared in S3-3) |
+
+### Concrete number with shipped defaults
+
+- `V_source = 5.0 V` (USB rail, cited)
+- `V_forward = 2.0 V` (typical red LED, cited datasheet entered in S3-6)
+- `I = 0.020 A` (20 mA, cited)
+- **`R = (5.0 − 2.0) / 0.020 = 150 Ω`**
+
+### What the Sprint 5 validator should do with this circuit
+
+1. Compute `R_recommended = 150 Ω`
+2. Flag any user-placed `R < ~120 Ω` as **"current exceeds LED max — failure mode"** (red error)
+3. Flag any user-placed `R > ~300 Ω` as **"current below visible threshold — warning"** (yellow warn)
+4. Show the cross-FK chain resolving end-to-end: `power_source → switch → resistor → LED`, each device's behaviors firing, each parameter typed and cited
+
+### Why this matters for Sprint 3 specifically
+
+Every device authored this sprint must declare the right behaviors, parameters, and FK references for the demo to compute. If the Sprint 5 validator can't reach R = 150 Ω end-to-end from real shipped data using only the Sprint 3 device rows, something in the manifests is wrong. The cross-FK validator at S3-1 catches *name resolution* bugs; this canonical demo is what catches *semantic composition* bugs.
+
+Devices in Sprint 3 that this demo depends on (in author order):
+- `wire` (S3-2) — terminals + `conducts` behavior; closes the loop
+- `resistor` (S3-3) — `conducts` + `resists` behaviors, `resistance` + `power_rating` parameters
+- `switch` (S3-4) — `switches` + `conducts` (closed) + `insulates` (open) behaviors
+- `power_source` (S3-5) — `supplies_voltage` behavior, `voltage` parameter
+- `LED` (S3-6) — `led_emits_light` + `conducts` + `insulates` + `heats` behaviors, `forward_voltage` + `max_forward_current` + `wavelength` parameters
+
+`capacitor` (S3-7) isn't in the demo — it's rounding out the seed set for completeness.
+
+---
+
 ## Risks
 
 | Risk | Mitigation |
