@@ -145,6 +145,7 @@ CI is intentionally minimal at the reset; it grows as the project grows.
 - [FINAL-STATE-VISION.md](FINAL-STATE-VISION.md) — what the finished ChipBlocks looks like
 - [ADR-006-universal-object-model.md](ADR-006-universal-object-model.md) — the architectural foundation: 9-layer hierarchy + universal object model + AI authority split. **Status: drafted 2026-05-16; for Sprint 2 implementation.** First ADR of the v2 series; ADRs 001-005 live on `legacy/audio-synth-direction`.
 - [ADR-007-active-variables.md](ADR-007-active-variables.md) — Active Variables: typed, scoped, project-level named values that any block parameter can reference. Extends ADR-006's universal object model with a `ref:` form on parameters. Four scopes (project / block / release / simulation), four types (quantity / string / enum / bool). The AI may *propose* extracting hardcoded values into variables; only the user can mutate variable values. **Status: drafted 2026-05-16; data shape lands Sprint 2; UI lands Sprint 4+.**
+- [TOOLING-RESEARCH-2026-05.md](TOOLING-RESEARCH-2026-05.md) — research notes (not a decision doc) capturing the May 2026 sweep of modern software-engineering practices: frontend toolchain (Biome / TS strict flags / pnpm), Python toolchain (uv / ruff / pyright), CI / supply chain (Renovate / npm provenance / Lefthook), and Electron specifics. Includes a verification pass against canonical official sources noting which agent claims held up vs were overstated. Decisions will land as separate ADRs when adopted.
 - [LICENSE](LICENSE) — MIT
 
 ## What's in scope vs. not
