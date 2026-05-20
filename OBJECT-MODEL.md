@@ -12,6 +12,89 @@ The whole rest of this document is mechanism in service of this single rule.
 
 ---
 
+## Design priority
+
+ChipBlocks prioritizes correctness and depth before immediate usability.
+
+The foundation may be harder to use at first if that is required to keep the model physically honest. However, the model must not ignore usability entirely. Some choices become expensive to change later, especially object identity, definition/instance separation, provenance, units, parameter references, layering, and override rules.
+
+The rule:
+
+> **Design for correctness now, but preserve a path to usability later.**
+
+This means:
+
+- no fake simplifications just to make the UI easy
+- no hidden magic values
+- no unsupported physics marked as passing
+- no schema shortcuts that block future visual editing
+- no object shapes that only make sense to experts
+- no field names that are mathematically correct but unreadable to users unless there is a user-facing label/description layer
+
+### Priority order
+
+```
+1. Physical correctness
+2. Depth / extensibility
+3. Explicit unsupported status
+4. Future usability hooks
+5. Polished usability
+```
+
+Not the reverse:
+
+```
+1. Easy UI
+2. Fake simplified model
+3. Patch correctness later   ← exactly the path we're avoiding
+```
+
+### Usability hooks to preserve from day one
+
+These are not UI polish. They are future-usability infrastructure. Leaving them out now makes the later usability pass painful or impossible.
+
+- `name` (human-readable label) on every definition
+- `description` (one-to-three sentence prose) on every definition
+- units on every quantity
+- conditions on every condition-bound value
+- provenance on every builtin/community physical value
+- support status (model_status × solver_status) on every object that gets solved
+- cited `default:` values on definition parameter slots where real
+- `ref:` on instance parameter values for cross-instance reuse
+- extension rules (overridable, user_extensible, allowed_origins)
+- worked examples in this document and (eventually) `CONTRIBUTING.md`
+
+### Do not weaken these for usability
+
+These are structural. If they're wrong, future usability is fake usability.
+
+- definition vs instance
+- capabilities vs behaviors
+- origin rules
+- provenance for builtins / community
+- real units
+- condition-bound values
+- support status enum
+- anti-placeholder rules
+
+### Can wait for a future usability pass
+
+These sit above the model. They should not reshape the foundation too early.
+
+- canvas layout and visual editing
+- beginner-friendly block names and grouping
+- guided questions and AI-driven explanations
+- beginner mode and progressive disclosure
+- automatic simplification of complex models
+- tutorial examples and onboarding flows
+- manufacturing wizards
+
+### In one sentence
+
+**Correctness-first, usability-aware.** ChipBlocks starts by modeling reality honestly, even when that makes the early system harder to use. Usability is still a design constraint: foundational choices must preserve a future path to a clear visual editor, beginner-friendly explanations, and safe project workflows.
+
+---
+
 ## 1. Status and scope
 
 This document is the canonical specification for ChipBlocks's universal object model. It describes the shape every "thing" in ChipBlocks takes — material, shape, interface, behavior, device, circuit, board, chip, system — and the rules that govern how those things are authored, validated, and composed.
