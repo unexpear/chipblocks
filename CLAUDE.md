@@ -107,6 +107,9 @@ Things that will be added by later sprints:
 - TypeScript for frontend, Python 3.10+ for backend when it arrives.
 - No premature abstraction. Three concrete uses before extracting a helper.
 - No half-finished implementations or TODO comments left in shipping code.
+- **Avoid deep nesting** — prefer early-return / guard clauses. The happy path stays flat; failure cases bail at the top. Pyramids of `if { if { if {...} } }` hide the real logic; invert the conditions instead.
+- **Avoid duplication** — if the same block (cache-check / DB-fetch / cache-write, response-writing boilerplate, FK-resolution, schema-walk) appears in two places, extract it. One place to fix bugs, one place to change behavior.
+- **No cryptic naming** — `temperature_celsius` beats `t`; `totalCost` beats `tc`; `resolveForeignKey` beats `rfk`. Spell things out. Convention: `snake_case` for YAML schema keys and data; `camelCase` for TypeScript variables and functions; `snake_case` for Python identifiers when the backend lands.
 
 ## Communication style
 
