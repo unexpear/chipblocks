@@ -480,6 +480,8 @@ If a builtin or community definition references a project-scoped variable, the d
 
 ## 14. Examples
 
+> **Example-data note:** The examples below use real cited values so the object shape is shown honestly, not with fake placeholders. These examples are illustrative. They are not the canonical material/device database. When `materials.yaml`, `devices.yaml`, or other authored registries exist, those files are authoritative for shipped values. If a future registry entry differs from an example here, the registry wins and this document should be updated or simplified to avoid drift.
+
 ### Example A — A material definition (no instance side)
 
 ```yaml
