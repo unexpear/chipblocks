@@ -31,6 +31,8 @@ Read [README.md](README.md) for the public-facing identity. Read [PRD.md](PRD.md
 
 5. **"Fine taking time."** No rushed shortcuts. Sprint pace is dictated by what's actually correct, not by external deadlines.
 
+6. **Correctness-first, usability-aware.** Correctness and depth come before immediate usability, but the foundation must preserve a path to usability later. See [OBJECT-MODEL.md](OBJECT-MODEL.md) → Design priority.
+
 ## Hierarchy of abstraction (the 9 layers)
 
 ```
