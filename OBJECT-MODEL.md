@@ -183,13 +183,24 @@ Two YAML shapes, validated by two schemas with shared fragments. The shared frag
 
 Every object — definition or instance — carries these identity fields:
 
-| Field | Required | What it is |
-|---|:---:|---|
-| `id` | ✓ | Unique within origin scope. `snake_case`. Stable across edits. |
-| `name` | ✓ | Human-readable label. Free-form. |
-| `description` | ✓ | One-to-three sentence prose summary. |
-| `kind` (definitions) / `kind_ref` (instances) | ✓ | What kind of thing this is. Enum (see Section 4). |
-| `origin` | ✓ | Where this object came from. Enum: `builtin / community / user_local / project`. |
+| Field | Definitions | Instances | What it is |
+|---|:---:|:---:|---|
+| `id` | ✓ required | ✓ required | Unique within origin scope. `snake_case`. Stable across edits. |
+| `name` | ✓ required | optional | Human-readable label. Free-form. |
+| `description` | ✓ required | optional | One-to-three sentence prose summary. |
+| `kind` (definitions) / `kind_ref` (instances) | ✓ required | ✓ required | What kind of thing this is. Enum (see Section 4). |
+| `origin` | ✓ required | ✓ required | Where this object came from. Enum: `builtin / community / user_local / project`. |
+
+### Why name and description are asymmetric
+
+Definitions **require** `name` and `description` — they are the load-bearing human-readable usability hooks (per the Design priority section). A material or device definition that ships without a human label or summary is anti-usability.
+
+Instances **default** rather than require:
+
+- `instance.name` defaults to `"<definition.name> #<n>"` (e.g., `"Copper wire #1"` for the first `copper_wire` instance)
+- `instance.description` defaults to the definition's `description`
+
+This preserves usability without forcing the user to hand-label hundreds of project instances. An instance may override either field when a specific human label adds value (e.g., naming a wire `"VCC rail to MCU pin 13"`).
 
 Identity fields **do not require provenance** — they're the object's self-identification, not citable physical claims.
 
@@ -698,6 +709,7 @@ Surfaced now so they can't accidentally be answered by side effect later.
 | **Multi-version definitions.** When a community pack publishes copper_wire@1.2.0 and a project depends on @1.1.0, version resolution is its own problem. | Sprint 7+ |
 | **Cross-pack dependency declarations.** A `chipblocks-power` pack uses things from `chipblocks-passive`; how is the dependency expressed and enforced? | Sprint 8+ |
 | **Schema migration story.** When this very model changes (it will), how do old project files keep loading? | After v3 Sprint 2 |
+| **v3 Usability Review.** A dedicated future pass to evaluate the foundation against real user tasks: visual-editor candidacy, terminology audit, beginner-friendly explanations, progressive-disclosure design, default-value rationalization, accessibility (keyboard nav, screen-reader support, status-by-text-not-color-only), and safe workflow design. Naming it now preserves the commitment that usability gets deliberate review after the foundation is deep enough to evaluate. | Future v3 sprint |
 
 These deferrals are explicit. They do not get answered by code accident in the meantime.
 
