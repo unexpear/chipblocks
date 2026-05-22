@@ -125,20 +125,32 @@ The single most load-bearing distinction in the entire model.
 ### Example pair
 
 ```yaml
-# Definition — copper_wire (lives in manifest)
+# Definition — wire (lives in a manifest; generic, no material baked in)
 kind: primitive_device
-id: copper_wire
+id: wire
 origin: builtin
 layer: primitive_device
-name: Copper wire
-description: A length of copper drawn into a path with two terminals.
+name: Wire
+description: A conductive physical path connecting two or more electrical interfaces.
 composition:
-  uses: [copper, path, terminal]
+  requires:                              # role-based, not exact (see Section 6)
+    conductor_material: { kind: material, must_enable: [electrical_conduction] }
+    geometry: { kind: shape, must_enable: [path_role] }
+    endpoints: { kind: interface, min_count: 2 }
 behaviors:
   - conducts_current
   - has_resistance
   - produces_joule_heat
 parameters:
+  conductor_material:
+    type: material_ref
+    satisfies_role: conductor_material   # fills the requires role; see Section 6
+    required: true
+  geometry:
+    type: shape_ref
+    satisfies_role: geometry
+    required: true
+    default: { value: path }             # explicit role fill, not implied by dimensions
   length:
     type: quantity
     units: m
@@ -158,20 +170,26 @@ extensions:
 ```
 
 ```yaml
-# Instance — wire_001 (lives in a project file)
+# Instance — wire_001 (lives in a project file; a specific copper wire)
 kind_ref: primitive_device
-definition: copper_wire
+definition: wire
 id: wire_001
 origin: project
 parameters:
+  conductor_material:
+    value: copper                        # material_ref → id of a material definition
+  geometry:
+    value: path                          # shape_ref → explicit geometry, not implied by dimensions
   length:
     value: { kind: scalar, amount: 0.2, unit: m }
   cross_section_area:
-    ref: project_default_wire_area   # legal here; forbidden on definitions
+    ref: project_default_wire_area       # `ref:` legal here; forbidden on definitions
 connects:
   - { net: net_5, terminal: terminal_a, of: resistor_3 }
   - { net: net_5, terminal: terminal_b, of: led_1 }
 ```
+
+"Copper wire" is therefore an *instance* (or, later, a named preset) that picks `conductor_material: copper` — never a baked-in device definition. The same `wire` definition serves copper, aluminum, nichrome, or any material that enables electrical conduction.
 
 ### The two halves of the schema
 
@@ -245,6 +263,19 @@ The `kind` field on a definition (or `kind_ref` on an instance) is one of:
 
 The schema enforces: behaviors and property_definitions cannot have instances.
 
+### Geometry and mechanical scope
+
+ChipBlocks is **not a 3D CAD tool.** The geometry model is **layered 2D / 2.5D electronics geometry**: it understands physical stack order, layer thickness, package/body dimensions, component height, clearances, pad/footprint dimensions, via depth, and fit constraints — but only where those facts affect electronics, manufacturability, thermal behavior, or reliability.
+
+**The `shape` layer means primitive electronics-relevant geometry only:** path, region, plate, film, gap, hole, layer, junction, surface, cross-section. It is not a CAD canvas. CAD-like freeform custom-shape authoring is deferred and belongs to higher-level tooling above the foundation — if it ever arrives at all.
+
+**Mechanical is support data, not a primary domain.** Model mechanical facts only when they affect electronics behavior, manufacturability, fit, reliability, safety, or thermal behavior.
+
+- In scope: dimensions, clearances, stackup, package sizes, bend radius, vibration/environment conditions, solder-joint reliability warnings.
+- Out of scope: full mechanical stress/strain, FEA, gears, hinges, bearings, robot mechanisms, enclosure CAD, fluid dynamics, moving mechanisms.
+
+**Construction is a device/structure concern, not a shape-layer concern.** A wire's construction (`solid_core`, `stranded`, `braided`, `litz`, `ribbon`) is an option/property of the wire *device* or preset — it does not turn the bottom `shape` layer into CAD. Exact representation deferred.
+
 ---
 
 ## 5. Origins
@@ -298,6 +329,72 @@ This makes the model:
 - **Bounded** — the validator only checks behaviors the device explicitly carries
 
 When derivation becomes a feature, the schema will gain a `derived_behaviors:` field separate from the explicit `behaviors:` list; explicit adoption stays as the floor.
+
+### Composition: `uses` vs `requires`
+
+A definition declares what it is built from in one of two forms:
+
+**`uses`** — exact dependency on specific lower-layer objects by id. Used when composition is genuinely fixed:
+
+```yaml
+composition:
+  uses: [specific_object_a, specific_object_b]
+```
+
+**`requires`** — role-based dependency by kind + capability. Used for reusable, configurable definitions:
+
+```yaml
+composition:
+  requires:
+    conductor_material:
+      kind: material
+      must_enable: [electrical_conduction]
+    geometry:
+      kind: shape
+      must_enable: [path_role]
+    endpoints:
+      kind: interface
+      min_count: 2
+```
+
+| Form | Meaning |
+|---|---|
+| `uses` | Exact lower-layer dependency — this object is made of exactly these things |
+| `requires` | Role-based dependency by kind/capability — this object needs *a* conductor, *a* path, *2+* endpoints |
+
+`requires` is what lets a `wire` definition stay generic while still grounded in real material/shape/interface requirements: it requires *a* conductor material (any material that enables electrical conduction), not one specific material. `must_enable` ties directly to the capabilities (the `enables` field) declared by materials, shapes, and interfaces above. The actual material is chosen at instance time via a `material_ref` parameter.
+
+### Roles and the parameters that fill them
+
+`composition.requires` declares required composition *roles*. `parameters` declares user-settable *values*. These are different concerns — but they describe the same thing when the required lower-layer object is **user-selectable**.
+
+The rule: **a role in `composition.requires` may be satisfied by a parameter slot when the required lower-layer object is user-selectable. In that case, the parameter must declare `satisfies_role: <role_id>`.** The role defines *what kind of object is acceptable*; the parameter defines *how the instance supplies the choice*.
+
+```yaml
+composition:
+  requires:
+    conductor_material:
+      kind: material
+      must_enable: [electrical_conduction]
+
+parameters:
+  conductor_material:
+    type: material_ref
+    satisfies_role: conductor_material   # ← links the parameter to the role
+    required: true
+```
+
+This is not duplication — it is *role* (the constraint) plus *fill mechanism* (how the instance chooses). The validator uses the role to check that whatever the instance picks actually satisfies the constraint (see §15, role-satisfaction validation).
+
+Not every required role is filled by a parameter. User-selectable roles use `satisfies_role` parameters; structural roles may be satisfied by other object sections. For example, a wire's `endpoints` role is satisfied by the future net/connectivity model (see §15, net model), not by a normal parameter.
+
+Optional roles (e.g., a wire's `insulation_material`, which is not a required role) — whether they appear in `requires` marked optional, or only as plain parameters — is deferred to v3 Sprint 2.
+
+### Materials are a reusable database, not trapped in device IDs
+
+Materials must stay reusable across many objects — wire, PCB trace, via plating, pad, connector contact, bond wire, busbar, coil winding, shielding, heat spreader, and more. A material is defined once (e.g., `copper`) and referenced by role wherever a conductor is needed.
+
+**Do not trap material choices inside device IDs.** `copper_wire` as a *base device definition* is the anti-pattern this rule corrects — it bakes a material into a device. The correct shape is a generic `wire` device that `requires` a conductor material, plus instances (or presets) that pick `conductor_material: copper`. Device definitions refer to material *roles* or material *references*, never hardcoded material-specific names — unless the object truly is material-specific.
 
 ---
 
@@ -543,6 +640,8 @@ parameters:
 
 A definition may carry a cited default value for any parameter slot. Instances accept it by omission, override it with their own value, or override it with a `ref:`.
 
+`required: true` with a `default:` means the parameter must resolve to a value, but an instance may omit it and accept the definition's cited default.
+
 ```yaml
 # Definition
 parameters:
@@ -632,21 +731,40 @@ extensions:
 
 ### Example B — A device definition + a matching instance
 
+The device is a *generic* `wire` — it does not bake in a specific conductor. Composition uses the role-based `requires` form (Section 6); the material is chosen at instance time via a `material_ref` parameter.
+
 ```yaml
-# DEFINITION
+# DEFINITION — generic wire (no material baked in)
 kind: primitive_device
-id: copper_wire
+id: wire
 origin: builtin
 layer: primitive_device
-name: Copper wire
-description: A length of copper drawn into a path with two terminals.
+name: Wire
+description: A conductive physical path connecting two or more electrical interfaces.
 composition:
-  uses: [copper, path, terminal]
-behaviors:
-  - conducts_current
-  - has_resistance
-  - produces_joule_heat
+  requires:
+    conductor_material:
+      kind: material
+      must_enable: [electrical_conduction]
+    geometry:
+      kind: shape
+      must_enable: [path_role]
+    endpoints:
+      kind: interface
+      min_count: 2
 parameters:
+  conductor_material:
+    type: material_ref            # exact value shape + resolution deferred to v3 Sprint 2
+    satisfies_role: conductor_material
+    required: true
+    # deliberately no default — the instance picks the material, which avoids
+    # baking weak-source default data into the spec example
+  geometry:
+    type: shape_ref
+    satisfies_role: geometry      # explicit role fill; geometry is NOT implied by dimensions
+    required: true
+    default:
+      value: path
   length:
     type: quantity
     units: m
@@ -657,16 +775,17 @@ parameters:
     units: m2
     required: true
     description: Conductive cross-section.
-  temperature:
-    type: quantity
-    units: degC
+  construction:                   # device/structure-level, not shape-layer geometry
+    type: enum
     required: false
-    default:
-      value: { kind: scalar, amount: 20, unit: degC }
-      provenance:
-        source_type: standard
-        citation: "Standard ambient assumption per IEC 60721-3-3 Class 3K3"
-        confidence: high
+    allowed: [solid_core, stranded, braided, litz, ribbon]
+  insulation_material:            # optional add-on, not a requires role (Section 6)
+    type: material_ref
+    required: false
+behaviors:
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
 support:
   model_status: defined
   solver_status: builtin_simple
@@ -677,21 +796,28 @@ extensions:
 ```
 
 ```yaml
-# INSTANCE (in a project file)
+# INSTANCE (in a project file) — a specific copper wire
 kind_ref: primitive_device
-definition: copper_wire
+definition: wire
 id: wire_001
 origin: project
 parameters:
+  conductor_material:
+    value: copper                 # material_ref → id of a material definition
+  geometry:
+    value: path                   # shape_ref → explicit geometry, not implied by dimensions
   length:
     value: { kind: scalar, amount: 0.2, unit: m }
   cross_section_area:
     value: { kind: scalar, amount: 1.0e-7, unit: m2 }
-  # temperature omitted → accepts the definition's cited default
+  construction:
+    value: stranded
 connects:
   - { net: net_signal, terminal: terminal_a, of: resistor_3 }
   - { net: net_signal, terminal: terminal_b, of: led_1 }
 ```
+
+The same `wire` definition serves any conductor: an aluminum-wire instance differs only by `conductor_material: aluminum`. "Copper wire" is an instance or preset, never a base definition.
 
 ---
 
@@ -710,6 +836,11 @@ Surfaced now so they can't accidentally be answered by side effect later.
 | **Cross-pack dependency declarations.** A `chipblocks-power` pack uses things from `chipblocks-passive`; how is the dependency expressed and enforced? | Sprint 8+ |
 | **Schema migration story.** When this very model changes (it will), how do old project files keep loading? | After v3 Sprint 2 |
 | **v3 Usability Review.** A dedicated future pass to evaluate the foundation against real user tasks: visual-editor candidacy, terminology audit, beginner-friendly explanations, progressive-disclosure design, default-value rationalization, accessibility (keyboard nav, screen-reader support, status-by-text-not-color-only), and safe workflow design. Naming it now preserves the commitment that usability gets deliberate review after the foundation is deep enough to evaluate. | Future v3 sprint |
+| **`material_ref` parameter type + full parameter taxonomy.** Definitions declare slots like `conductor_material: { type: material_ref }`; instances fill them with a material id (`copper`). The full parameter-type set (quantity / string / enum / bool / material_ref / object_ref / …) and the exact value shape + resolution rules for `material_ref` are reserved here but not designed yet. | v3 Sprint 2 |
+| **Wire (and general) construction representation.** Construction options (`solid_core`, `stranded`, `braided`, `litz`, `ribbon`) are device/structure-level choices, not shape-layer geometry. Exact representation (enum parameter? sub-structure object?) deferred. | v3 Sprint 2+ |
+| **CAD-like shape authoring.** Freeform custom-shape geometry is out of foundation scope. The `shape` layer stays primitive electronics geometry (path, region, plate, film, gap, hole, layer, junction, surface, cross-section). If freeform geometry ever arrives, it belongs to higher-level tooling above the `shape` layer. | Deferred / possibly never |
+| **Preset/template model.** A preset is neither a pure definition nor a concrete instance: it is a partially configured definition, such as "22 AWG stranded copper wire," that fixes some parameters while leaving others open. The model must decide whether presets are definitions, templates, or a separate kind. | v3 Sprint 2+ |
+| **Role-satisfaction validation.** When an instance fills a `composition.requires` role through a parameter (via `satisfies_role`), the validator must prove the selected object satisfies the role constraints — e.g., `copper` actually enables `electrical_conduction`. This is stricter than simple foreign-key existence. | v3 Sprint 2 |
 
 These deferrals are explicit. They do not get answered by code accident in the meantime.
 
