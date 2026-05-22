@@ -1,5 +1,7 @@
 # Sprint Plan: Sprint 2 — Layer 0-3 manifests + Active Variables data shape + codegen + drift CI
 
+> **Status:** HISTORICAL. Superseded by OBJECT-MODEL.md (2026-05-20) for active planning. Preserved as project history.
+
 > **Solo dev + Claude Code** · Opened + closed 2026-05-16 (continuous session following Sprint 1 close). The Sprint 1 retro shipped Sprint 1's done criteria; Sprint 2 picks up the Sprint 1 surfacings + the ADR-006/007 action items #2-#10. Closed in 7 sub-commits + this retro.
 >
 > **Status: CLOSED 2026-05-16.** 8 commits total (S2-1 through S2-8 including this retro). 47/47 tests green. CI green at every push. The architectural foundation is on disk and validated.

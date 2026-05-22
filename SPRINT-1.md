@@ -1,5 +1,7 @@
 # Sprint Plan: Sprint 1 — Reset + new direction's foundation
 
+> **Status:** HISTORICAL. Superseded by OBJECT-MODEL.md (2026-05-20) for active planning. Preserved as project history.
+
 > **Solo dev + Claude Code** · Opened + closed 2026-05-16 (single intense session — the reset itself + the ADR foundation + verification). The first sprint of the v2 ground-up direction. Successor to v1's [SPRINT-24.md on legacy/audio-synth-direction](https://github.com/unexpear/chipblocks/blob/legacy/audio-synth-direction/SPRINT-24.md).
 >
 > **Status: CLOSED 2026-05-16.** 5 commits, all green on CI. The audio-synth direction is formally handed off; the new direction has master, an ADR, and a working empty Electron shell.

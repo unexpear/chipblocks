@@ -1,5 +1,7 @@
 # ChipBlocks — final-state vision after all proposed changes land
 
+> **Status:** HISTORICAL. Superseded by OBJECT-MODEL.md (2026-05-20) for active planning. Preserved as project history.
+
 > **Status:** Draft for direction review (2026-05-16). Not a commitment. Captures what ChipBlocks looks like *if* the post-Sprint-24 strategic pivot, ADR-005 (modular fab platform), and the new ADR-006 + ADR-007 (hierarchical block model + core-vs-community split) all land. Sits alongside [PRD.md](PRD.md) as a forward-looking complement.
 >
 > Read this top-to-bottom to validate direction. The "Verified current state" section is real; the "Final-state" sections are aspirational. The journey-from-here-to-there section ties them together.

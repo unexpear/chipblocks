@@ -1,5 +1,7 @@
 # ChipBlocks Roadmap (v2)
 
+> **Status:** HISTORICAL. Superseded by OBJECT-MODEL.md (2026-05-20) for active planning. Preserved as project history.
+
 > **Last reviewed:** 2026-05-16 (post-reset) · **Format:** Now / Next / Later · **Cadence:** revisit at the end of each sprint.
 >
 > This is the operational "what's next" document for the ground-up restart. The strategic vision lives in [PRD.md](PRD.md); the full reset history lives in [RESET-PLAN.md](RESET-PLAN.md); the destination lives in [FINAL-STATE-VISION.md](FINAL-STATE-VISION.md). Per-sprint plans + retrospectives will live in `SPRINT-N.md` files as those sprints land.

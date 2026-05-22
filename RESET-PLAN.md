@@ -1,5 +1,7 @@
 # ChipBlocks reset plan — preservation + ground-up restart
 
+> **Status:** HISTORICAL. Superseded by OBJECT-MODEL.md (2026-05-20) for active planning. Preserved as project history.
+
 > **Status:** Draft for review (2026-05-16, refined 2026-05-17). This document is the plan that gets approved BEFORE any meaningful action against master. Read top-to-bottom, push back, iterate. When approved, this file becomes the execution checklist.
 >
 > **Naming note:** This is a *reset*, not a *migration*. The current direction is preserved with full integrity in a frozen branch; the new direction starts from a clean main. Nothing is mutated; nothing is deleted; nothing is lost.

@@ -1,5 +1,7 @@
 # Sprint Plan: Sprint 3 — Primitive devices + cross-FK validator
 
+> **Status:** HISTORICAL. Superseded by OBJECT-MODEL.md (2026-05-20) for active planning. Preserved as project history.
+
 > Opened 2026-05-16, immediately after the Sprint 2 audit-cleanup commit (`4600f01`). This is the plan-only opening of Sprint 3; implementation has not started.
 >
 > **Scope intentionally narrowed** from the Sprint 2 retro's surfacing #1, which bundled `devices.yaml` + universal object model spec + project file format spec + save/load roundtrip. Sprint 3 now keeps **devices + cross-FK validator only**. Object model + project format defer (see Deferred section).

@@ -1,5 +1,7 @@
 # ADR-006: Universal object model + 9-layer hierarchy + AI authority split
 
+> **Status:** HISTORICAL. Superseded by OBJECT-MODEL.md (2026-05-20) for active planning. Preserved as project history.
+
 **Status:** Draft (2026-05-16) · For Sprint 2 implementation · **Deciders:** solo dev + Claude Code · The first ADR of the v2 ground-up direction; numbering continues from the v1 series (ADR-001 through ADR-005 live on `legacy/audio-synth-direction`).
 
 > **Reading order.** This ADR locks the architectural foundation of the new direction: how a "block" is represented in code, how the 9 layers of abstraction relate, and where the line sits between the deterministic engine, the AI consultant, and the user. Subsequent ADRs cover specific manifests (materials, shapes, behaviors, devices), the AI provider adapter, the validator architecture, and the manufacturing-package compiler. None of those make sense without this one. Read RESET-PLAN.md + FINAL-STATE-VISION.md first if context is needed.

@@ -1,5 +1,7 @@
 # ADR-007: Active Variables — typed project-scoped values blocks reference
 
+> **Status:** HISTORICAL. Superseded by OBJECT-MODEL.md (2026-05-20) for active planning. Preserved as project history.
+
 **Status:** Draft (2026-05-16) · For Sprint 2-3 implementation · **Deciders:** solo dev + Claude Code · Second ADR of the v2 ground-up direction; extends ADR-006's universal object model with a named-reference mechanism for block parameters.
 
 > **Read order.** ADR-006 first (the universal object model + 9-layer hierarchy + AI authority split). This ADR adds one concept on top: any block parameter can be either a literal value or a reference to a project-scoped named variable. Everything else follows from that.
