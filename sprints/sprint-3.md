@@ -131,10 +131,10 @@ Master tip when opened: `49758b0`. Sprint 2's 6 schemas + 8 fixtures + test runn
 |---|---|
 | `00d2231` | Sprint plan opened |
 | `b1cba97` | S3-v3-1: behavior.schema.json — registry shape for named physical laws |
-| (commit) | S3-v3-2: first 3 behavior registry entries (conducts_current, has_resistance, produces_joule_heat) + test runner extension |
+| `1c52254` | S3-v3-2: first 3 behavior registry entries (conducts_current, has_resistance, produces_joule_heat) + test runner extension |
 | `f988e1f` | S3-v3-3: cross-FK validator skeleton (unknown-reference, kind-mismatch, unknown-behavior) |
 | `0f85fdc` | S3-v3-4: role-satisfaction check (the role-unsatisfied error code) |
-| (commit) | S3-v3-5: valid world fixture (added shape-path) + first cross-FK test (zero errors on valid world) |
+| `0193e48` | S3-v3-5: valid world fixture (added shape-path) + first cross-FK test (zero errors on valid world) |
 | `7f8f484` | S3-v3-6: invalid world tests — all four CrossFkError codes fire |
 | (this) | S3-v3-7: retro — Sprint 3 closes |
 
