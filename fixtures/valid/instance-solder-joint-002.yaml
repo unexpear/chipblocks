@@ -1,0 +1,18 @@
+# Valid fixture: a specific solder joint instance that OVERRIDES the project default
+# solder alloy. Demonstrates the per-joint override pattern from OBJECT-MODEL.md §15:
+# drop the ref: in favor of an explicit value: on this single joint, leaving every
+# other joint in the project still inheriting through the AV.
+#
+# Use case: an aerospace-exempted board where RoHS does not apply and the design
+# specifies leaded eutectic solder (Sn63Pb37) on this specific joint while the
+# rest of the project defaults to SAC305.
+#
+# MUST validate against instance.schema.json. Schema's oneOf rule enforces that
+# parameters use either value OR ref but never both.
+kind_ref: interface
+definition: solder_joint
+id: solder_joint_002
+origin: project
+parameters:
+  solder_material:
+    value: solder_sn63pb37

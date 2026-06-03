@@ -1,12 +1,15 @@
-# Valid fixture: a specific solder joint instance using SAC305 lead-free solder.
-# Demonstrates the snap-created-joint pattern from OBJECT-MODEL.md §15 in its
-# simplest form — an explicit material choice on the instance (no Active Variable
-# ref: yet, that lands in Sprint 5).
-# MUST validate against instance.schema.json.
+# Valid fixture: a specific solder joint instance that INHERITS the project default
+# solder alloy through the default_solder_alloy Active Variable (S5-v3-3).
+# Demonstrates the snap-created-joint pattern from OBJECT-MODEL.md §15 in its mature
+# form — the joint references the project AV and resolves through it to whatever
+# alloy the project has chosen. Changing default_solder_alloy migrates every
+# ref-using joint to the new alloy in one edit.
+# MUST validate against instance.schema.json. After S5-v3-5, cross-FK resolves the
+# ref through to solder_sac305 and verifies the role-satisfaction chain end-to-end.
 kind_ref: interface
 definition: solder_joint
 id: solder_joint_001
 origin: project
 parameters:
   solder_material:
-    value: solder_sac305
+    ref: default_solder_alloy
