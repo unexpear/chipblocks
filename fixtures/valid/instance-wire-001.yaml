@@ -1,0 +1,30 @@
+# Valid fixture: a specific copper-wire instance in a project.
+# Mirrors OBJECT-MODEL.md §14 Example B (instance half). MUST validate against instance.schema.json.
+kind_ref: primitive_device
+definition: wire
+id: wire_001
+origin: project
+parameters:
+  conductor_material:
+    value: copper
+  geometry:
+    value: path
+  length:
+    value:
+      kind: scalar
+      amount: 0.2
+      unit: m
+  cross_section_area:
+    value:
+      kind: scalar
+      amount: 1.0e-7
+      unit: m2
+  construction:
+    value: stranded
+connects:
+  - net: net_signal
+    terminal: terminal_a
+    of: resistor_3
+  - net: net_signal
+    terminal: terminal_b
+    of: led_1

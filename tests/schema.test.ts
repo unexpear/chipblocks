@@ -1,0 +1,66 @@
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import AjvModule from 'ajv/dist/2020.js'
+import addFormatsModule from 'ajv-formats'
+import { describe, expect, test } from 'vitest'
+import { parse as parseYAML } from 'yaml'
+
+// Ajv 8.x ships as CJS; the ESM default import gives us the module object.
+// Unwrap .default to get the constructor / function.
+// biome-ignore lint/suspicious/noExplicitAny: CJS interop for Ajv default export
+const Ajv = (AjvModule as any).default ?? AjvModule
+// biome-ignore lint/suspicious/noExplicitAny: CJS interop for ajv-formats default export
+const addFormats = (addFormatsModule as any).default ?? addFormatsModule
+
+const SCHEMA_DIR = 'schemas'
+const FIXTURE_DIR = 'fixtures'
+
+const ajv = new Ajv({ allErrors: true, strict: false })
+addFormats(ajv)
+
+// Preload shared fragments so cross-schema $refs resolve.
+for (const name of ['identity', 'provenance', 'quantity', 'support-status']) {
+  const path = join(SCHEMA_DIR, `${name}.schema.json`)
+  ajv.addSchema(JSON.parse(readFileSync(path, 'utf-8')))
+}
+
+const validateDefinition = ajv.compile(
+  JSON.parse(readFileSync(join(SCHEMA_DIR, 'definition.schema.json'), 'utf-8')),
+)
+const validateInstance = ajv.compile(
+  JSON.parse(readFileSync(join(SCHEMA_DIR, 'instance.schema.json'), 'utf-8')),
+)
+
+function pickValidator(data: unknown) {
+  if (data !== null && typeof data === 'object') {
+    if ('kind' in data) return { kind: 'definition' as const, validator: validateDefinition }
+    if ('kind_ref' in data) return { kind: 'instance' as const, validator: validateInstance }
+  }
+  return null
+}
+
+describe('valid fixtures', () => {
+  const validDir = join(FIXTURE_DIR, 'valid')
+  const files = readdirSync(validDir).filter((f) => f.endsWith('.yaml'))
+
+  for (const file of files) {
+    test(`${file} validates against the right schema`, () => {
+      const raw = readFileSync(join(validDir, file), 'utf-8')
+      const data = parseYAML(raw) as unknown
+      const picked = pickValidator(data)
+
+      if (!picked) {
+        throw new Error(
+          `${file}: fixture has neither 'kind' (definition) nor 'kind_ref' (instance)`,
+        )
+      }
+
+      const ok = picked.validator(data)
+      if (!ok) {
+        const errors = JSON.stringify(picked.validator.errors, null, 2)
+        throw new Error(`${file} did NOT validate against ${picked.kind} schema:\n${errors}`)
+      }
+      expect(ok).toBe(true)
+    })
+  }
+})

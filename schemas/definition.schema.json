@@ -190,7 +190,6 @@
               "^[a-z][a-z0-9_]*$": {
                 "properties": {
                   "default": {
-                    "required": ["value", "provenance"],
                     "properties": {
                       "value": { "$ref": "quantity.schema.json#/$defs/param_value_strict" }
                     }

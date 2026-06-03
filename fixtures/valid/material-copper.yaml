@@ -1,0 +1,55 @@
+# Valid fixture: material definition for copper.
+# Mirrors OBJECT-MODEL.md §14 Example A. MUST validate against definition.schema.json.
+kind: material
+id: copper
+origin: builtin
+layer: material
+name: Copper (Cu)
+description: Electrically and thermally conductive metallic element. Standard conductor for wires, traces, contacts.
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+  - thermal_conduction
+properties:
+  resistivity:
+    value:
+      kind: condition_bound
+      amount: 1.68e-8
+      unit: ohm_meter
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+    provenance:
+      source_type: standard
+      title: Copper resistivity, annealed, at 20 C
+      citation: "NIST CODATA 2018; IEC 60028 international annealed copper standard"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 8960
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Copper density at 20 C
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]

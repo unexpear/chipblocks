@@ -1,0 +1,59 @@
+# Valid fixture: generic wire device definition.
+# Mirrors OBJECT-MODEL.md §14 Example B (definition half). MUST validate against definition.schema.json.
+# Note: 'copper wire' is NOT a definition — it's an instance choice (see instance-wire-001.yaml).
+kind: primitive_device
+id: wire
+origin: builtin
+layer: primitive_device
+name: Wire
+description: A conductive physical path connecting two or more electrical interfaces.
+composition:
+  requires:
+    conductor_material:
+      kind: material
+      must_enable: [electrical_conduction]
+    geometry:
+      kind: shape
+      must_enable: [path_role]
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  conductor_material:
+    type: material_ref
+    satisfies_role: conductor_material
+    required: true
+  geometry:
+    type: shape_ref
+    satisfies_role: geometry
+    required: true
+    default:
+      value: path
+  length:
+    type: quantity
+    units: m
+    required: true
+    description: Path length end-to-end.
+  cross_section_area:
+    type: quantity
+    units: m2
+    required: true
+    description: Conductive cross-section.
+  construction:
+    type: enum
+    required: false
+    allowed: [solid_core, stranded, braided, litz, ribbon]
+  insulation_material:
+    type: material_ref
+    required: false
+behaviors:
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
