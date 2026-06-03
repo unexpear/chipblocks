@@ -1,0 +1,29 @@
+# Valid fixture: a specific 100 ohm 5 W wirewound resistor instance using nichrome.
+# Higher-power wirewound resistors are the natural use case for nichrome; lower-power
+# 1/4 W or 1/8 W resistors in real product use are typically carbon-film or metal-film
+# (those material types arrive in later sprints).
+# MUST validate against instance.schema.json.
+kind_ref: primitive_device
+definition: resistor
+id: resistor_001
+origin: project
+parameters:
+  resistive_material:
+    value: nichrome
+  geometry:
+    value: path
+  resistance:
+    value:
+      kind: scalar
+      amount: 100
+      unit: ohm
+  tolerance_percent:
+    value:
+      kind: scalar
+      amount: 5
+      unit: percent
+  power_rating:
+    value:
+      kind: scalar
+      amount: 5
+      unit: watt

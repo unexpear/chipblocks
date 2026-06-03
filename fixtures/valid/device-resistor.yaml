@@ -1,0 +1,72 @@
+# Valid fixture: generic resistor primitive device.
+# A two-terminal passive device with a controlled, specified resistance value.
+# Implemented in many physical forms (carbon film, metal film, wirewound nichrome,
+# thick-film, thin-film, ruthenium oxide) — all reduce to the same electrical model:
+# a current-limiting / voltage-dropping element governed by Ohm's law (V = I·R) with
+# Joule heating dissipated through the body and leads.
+# Resistance can be DECLARED directly (1 kΩ) or DERIVED from resistivity × length /
+# cross-section. This definition supports the declared form; the derived form is a
+# Sprint 4+ design question — see retro for the behavior-derives-value discussion.
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: resistor
+origin: builtin
+layer: primitive_device
+name: Resistor
+description: A two-terminal passive device with a specified resistance. Used to limit current, drop voltage, divide voltage, set bias points, terminate transmission lines, and convert current to voltage (across a sense resistor). Implementations vary widely (carbon film, metal film, wirewound, thick-film, thin-film), but all reduce to the same electrical model — Ohm's law and Joule heating.
+composition:
+  requires:
+    resistive_material:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    geometry:
+      kind: shape
+      must_enable:
+        - path_role
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  resistive_material:
+    type: material_ref
+    satisfies_role: resistive_material
+    required: true
+    description: The resistive material that determines the resistor's electrical and thermal properties.
+  geometry:
+    type: shape_ref
+    satisfies_role: geometry
+    required: true
+    default:
+      value: path
+  resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: The declared resistance value of this resistor.
+  tolerance_percent:
+    type: quantity
+    units: percent
+    required: false
+    description: Resistance tolerance as a percent of nominal (e.g., 1%, 5%).
+  power_rating:
+    type: quantity
+    units: watt
+    required: false
+    description: Maximum continuous power dissipation under specified ambient conditions.
+  temperature_coefficient:
+    type: quantity
+    units: per_kelvin
+    required: false
+    description: Fractional change in resistance per unit temperature change near the operating point.
+behaviors:
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
