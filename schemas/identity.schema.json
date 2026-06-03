@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chipblocks.example/schemas/identity.schema.json",
+  "title": "Identity",
+  "description": "Shared identity fields used by both definitions and instances. The host schemas (definition.schema, instance.schema) enforce per-half required-ness; this file defines the field types.",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "minLength": 1,
+      "description": "Unique within origin scope. snake_case. Stable across edits."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable label. Required on definitions; optional on instances (defaults to '<definition.name> #<n>')."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One-to-three sentence prose summary. Required on definitions; optional on instances (defaults to definition's description)."
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "material",
+        "shape",
+        "interface",
+        "behavior",
+        "property_definition",
+        "primitive_device",
+        "circuit",
+        "assembly",
+        "board_or_chip",
+        "system"
+      ],
+      "description": "What kind of thing this is. Per OBJECT-MODEL.md §4 kind taxonomy. Appears on definitions."
+    },
+    "kind_ref": {
+      "$ref": "#/$defs/kind",
+      "description": "Same enum as 'kind' but appears on instances, indicating the kind of the definition the instance points at."
+    },
+    "origin": {
+      "type": "string",
+      "enum": ["builtin", "community", "user_local", "project"],
+      "description": "Where this object came from. Per OBJECT-MODEL.md §5."
+    }
+  }
+}

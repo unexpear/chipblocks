@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chipblocks.example/schemas/provenance.schema.json",
+  "title": "Provenance",
+  "description": "Provenance fragment per OBJECT-MODEL.md §9. Required on builtin and community physical values; recommended on user_local and project. Host schemas enforce origin-conditional requirement.",
+  "type": "object",
+  "properties": {
+    "source_type": {
+      "type": "string",
+      "enum": ["standard", "reference", "datasheet", "community", "user_supplied"],
+      "description": "Category of the source. 'standard' = official body (NIST, IEC, IPC). 'reference' = textbook / handbook. 'datasheet' = manufacturer datasheet. 'community' = community pack. 'user_supplied' = user typed it."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Short label describing what this value is. E.g., 'Copper resistivity, annealed, at 20 C'."
+    },
+    "citation": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The specific citation. May include multiple sources separated by semicolons (transitional convention; array form is a future schema enhancement)."
+    },
+    "url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Optional URL to the source."
+    },
+    "date_accessed": {
+      "type": "string",
+      "format": "date",
+      "description": "Optional ISO 8601 date the source was last verified. Recommended for live web sources."
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low", "unknown"],
+      "description": "How confident the author is in the value. Drops a tier when only one source exists; drops further when sources disagree."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Optional human notes — e.g., conditions, caveats, comparison to other sources."
+    }
+  },
+  "required": ["source_type", "title", "citation", "confidence"],
+  "additionalProperties": false
+}

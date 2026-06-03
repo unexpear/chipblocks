@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chipblocks.example/schemas/quantity.schema.json",
+  "title": "Quantity values",
+  "description": "Polymorphic value shape discriminated by 'kind'. Per OBJECT-MODEL.md §7. Two top-level entry points: 'value' (any kind including unknown_user_supplied) and 'value_strict' (excludes unknown_user_supplied, for builtin/community origins per anti-placeholder Rule 2).",
+  "$defs": {
+    "scalar": {
+      "type": "object",
+      "description": "A single numeric value with a unit.",
+      "properties": {
+        "kind": { "const": "scalar" },
+        "amount": { "type": "number" },
+        "unit": { "type": "string", "minLength": 1 }
+      },
+      "required": ["kind", "amount", "unit"],
+      "additionalProperties": false
+    },
+    "range": {
+      "type": "object",
+      "description": "A min/max range with optional typical and distribution.",
+      "properties": {
+        "kind": { "const": "range" },
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "typical": { "type": "number" },
+        "unit": { "type": "string", "minLength": 1 },
+        "distribution": {
+          "type": "string",
+          "enum": ["normal", "uniform"]
+        }
+      },
+      "required": ["kind", "min", "max", "unit"],
+      "additionalProperties": false
+    },
+    "condition_bound": {
+      "type": "object",
+      "description": "A value that holds under specific conditions (temperature, frequency, etc.). Conditions block is required and non-empty.",
+      "properties": {
+        "kind": { "const": "condition_bound" },
+        "amount": { "type": "number" },
+        "unit": { "type": "string", "minLength": 1 },
+        "conditions": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": true
+        }
+      },
+      "required": ["kind", "amount", "unit", "conditions"],
+      "additionalProperties": false
+    },
+    "equation": {
+      "type": "object",
+      "description": "A closed-form expression with named inputs and an output unit.",
+      "properties": {
+        "kind": { "const": "equation" },
+        "expression": { "type": "string", "minLength": 1 },
+        "inputs": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": true
+        },
+        "output_unit": { "type": "string", "minLength": 1 }
+      },
+      "required": ["kind", "expression", "inputs", "output_unit"],
+      "additionalProperties": false
+    },
+    "curve": {
+      "type": "object",
+      "description": "A parameterized function shape (Arrhenius, Caughey-Thomas, etc.).",
+      "properties": {
+        "kind": { "const": "curve" },
+        "curve_type": { "type": "string", "minLength": 1 },
+        "parameters": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": true
+        },
+        "unit": { "type": "string", "minLength": 1 }
+      },
+      "required": ["kind", "curve_type", "parameters", "unit"],
+      "additionalProperties": false
+    },
+    "lookup_table": {
+      "type": "object",
+      "description": "Discrete data points with an interpolation rule.",
+      "properties": {
+        "kind": { "const": "lookup_table" },
+        "interpolation": {
+          "type": "string",
+          "enum": ["linear", "step", "spline"]
+        },
+        "points": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "object" }
+        },
+        "unit": { "type": "string", "minLength": 1 }
+      },
+      "required": ["kind", "interpolation", "points", "unit"],
+      "additionalProperties": false
+    },
+    "unknown_user_supplied": {
+      "type": "object",
+      "description": "User-typed value with no provenance. RESTRICTED: allowed only at user_local and project origins. Builtin and community schemas use 'value_strict' which excludes this kind.",
+      "properties": {
+        "kind": { "const": "unknown_user_supplied" },
+        "amount": { "type": "number" },
+        "unit": { "type": "string", "minLength": 1 },
+        "note": { "type": "string" }
+      },
+      "required": ["kind", "amount", "unit"],
+      "additionalProperties": false
+    },
+    "value": {
+      "description": "A polymorphic value — discriminated by 'kind'. Use this where any kind is allowed (user_local, project).",
+      "oneOf": [
+        { "$ref": "#/$defs/scalar" },
+        { "$ref": "#/$defs/range" },
+        { "$ref": "#/$defs/condition_bound" },
+        { "$ref": "#/$defs/equation" },
+        { "$ref": "#/$defs/curve" },
+        { "$ref": "#/$defs/lookup_table" },
+        { "$ref": "#/$defs/unknown_user_supplied" }
+      ]
+    },
+    "value_strict": {
+      "description": "Like 'value' but excludes unknown_user_supplied. Use for builtin and community origins per anti-placeholder Rule 2.",
+      "oneOf": [
+        { "$ref": "#/$defs/scalar" },
+        { "$ref": "#/$defs/range" },
+        { "$ref": "#/$defs/condition_bound" },
+        { "$ref": "#/$defs/equation" },
+        { "$ref": "#/$defs/curve" },
+        { "$ref": "#/$defs/lookup_table" }
+      ]
+    }
+  }
+}

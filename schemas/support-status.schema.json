@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chipblocks.example/schemas/support-status.schema.json",
+  "title": "Support status",
+  "description": "Two orthogonal axes — model_status and solver_status — per OBJECT-MODEL.md §10. Anti-placeholder Rule 4 forbids 'pass by absence': every behavior must carry a solver_status; missing or absent is not a valid state.",
+  "type": "object",
+  "properties": {
+    "model_status": {
+      "type": "string",
+      "enum": ["defined", "partial_but_real", "needs_more_sources", "deprecated"],
+      "description": "Completeness of the entry itself. 'defined' = all required fields + provenance. 'partial_but_real' = some honest absences. 'needs_more_sources' = single citation; cross-reference pending. 'deprecated' = superseded."
+    },
+    "solver_status": {
+      "type": "string",
+      "enum": [
+        "not_applicable",
+        "defined_not_solved",
+        "builtin_simple",
+        "builtin_approximation",
+        "warning_only",
+        "external_solver",
+        "research_future"
+      ],
+      "description": "What the validator can do with this. 'not_applicable' = not a solvable thing (materials, shapes). 'defined_not_solved' = the honesty mechanism — known phenomenon, no solver yet. 'builtin_simple' = direct compute. 'builtin_approximation' = rule-of-thumb. 'warning_only' = detect + warn, no compute. 'external_solver' = route to ngspice/Yosys. 'research_future' = known, not implemented at any level."
+    }
+  },
+  "required": ["model_status", "solver_status"],
+  "additionalProperties": false
+}
