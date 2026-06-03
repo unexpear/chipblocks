@@ -1,0 +1,28 @@
+# Valid fixture: project-scope Active Variable for the default solder alloy.
+# Resolved through by every solder_joint instance that uses
+# parameters.solder_material.ref: default_solder_alloy. Per-joint overrides drop
+# the ref: in favor of an explicit value:.
+# Demonstrates a material_ref-typed AV — value is a bare string id pointing at
+# a material definition.
+# MUST validate against active-variable.schema.json.
+kind: active_variable
+id: default_solder_alloy
+origin: project
+layer: cross_layer
+name: Default solder alloy
+description: The project-wide default solder alloy used by every solder joint that has not been individually overridden. Changing this one variable migrates every snap-created joint in the project to the new alloy.
+parameter_type: material_ref
+value: solder_sac305
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [project, user_local]
+notes: |
+  Default chosen as SAC305 (lead-free) to align with RoHS expectations for new
+  consumer-electronics designs. Projects with aerospace/military RoHS exemptions
+  or legacy repair work can change this once to solder_sn63pb37 (leaded eutectic)
+  and every joint follows. Per-joint overrides remain possible for mixed-alloy
+  designs (e.g., heat-sensitive components soldered with low-temp bismuth alloy).

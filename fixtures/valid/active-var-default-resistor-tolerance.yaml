@@ -1,0 +1,28 @@
+# Valid fixture: project-scope Active Variable for the default resistor tolerance.
+# Demonstrates a quantity-typed AV — value is a full quantity (kind: scalar with
+# amount + unit). When a resistor instance uses parameters.tolerance_percent.ref:
+# default_resistor_tolerance, the validator resolves through this AV to 5 percent.
+# MUST validate against active-variable.schema.json.
+kind: active_variable
+id: default_resistor_tolerance
+origin: project
+layer: cross_layer
+name: Default resistor tolerance
+description: The project-wide default tolerance percent for resistors. A resistor instance that has not specified its own tolerance_percent value inherits this value through ref. Tight-tolerance precision parts use explicit value overrides on the relevant instances.
+parameter_type: quantity
+value:
+  kind: scalar
+  amount: 5
+  unit: percent
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [project, user_local]
+notes: |
+  5 percent is the conventional default for general-purpose carbon-film and
+  metal-film resistors (E24 series). Projects targeting precision analog work
+  (filter design, instrumentation, voltage references) typically override
+  individual instances to 1 percent or tighter (E96 / E192 series).
