@@ -1,0 +1,24 @@
+# Valid fixture: shape definition for a generic 2D plate.
+# A flat region with an area and a thickness. Used as electrode surfaces for capacitors,
+# ground planes on PCBs, heat-spreader fins, and anywhere a 2D conductive/dielectric
+# surface dominates the geometry.
+# Required by the capacitor primitive (S4-v3-7) which needs two plates to satisfy
+# its 'bonded_surfaces' role.
+# MUST validate against definition.schema.json.
+kind: shape
+id: plate
+origin: builtin
+layer: shape
+name: Plate
+description: A 2D flat surface with an area and a thickness. Used for capacitor electrodes, ground planes, heat-spreader surfaces, package leadframes, and any geometry where a flat conductive or dielectric region dominates over edge/curvature effects.
+composition:
+  uses: []
+enables:
+  - plate_role
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]

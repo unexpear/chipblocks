@@ -1,0 +1,34 @@
+# Valid fixture: behavior registry entry for electromotive-force provision.
+# Captures the device-level capability of a power source — providing EMF that drives
+# current through an external circuit, with the terminal voltage equal to the EMF
+# minus the voltage drop across the source's own internal resistance.
+# MUST validate against behavior.schema.json.
+kind: behavior
+id: provides_emf
+origin: builtin
+layer: behavior
+name: "Provides electromotive force"
+description: "A power source provides electromotive force (EMF) — the open-circuit voltage that drives current through an external circuit. Under load, the terminal voltage equals the EMF minus the voltage drop across the source's internal resistance. EMF is the source-level potential; terminal voltage is the externally observable quantity."
+parameters_required:
+  - name: emf
+    type: quantity
+    units: volt
+    description: The source's electromotive force (open-circuit voltage).
+  - name: internal_resistance
+    type: quantity
+    units: ohm
+    description: The source's internal series resistance.
+  - name: current
+    type: quantity
+    units: ampere
+    description: The current drawn by the external circuit.
+evaluates: "V_terminal = EMF - I * r_internal"
+consequences: []
+law: kirchhoff_voltage_source
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]

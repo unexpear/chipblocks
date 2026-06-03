@@ -1,0 +1,28 @@
+# Valid fixture: behavior registry entry for electrostatic energy storage.
+# The energy-side consequence of has_capacitance.
+# MUST validate against behavior.schema.json.
+kind: behavior
+id: stores_charge
+origin: builtin
+layer: behavior
+name: "Stores charge (electrostatic energy storage)"
+description: "An object that accumulates electric charge separates positive and negative carriers across a dielectric or junction, storing energy in the resulting electric field. The stored energy is recoverable when the object discharges through a load. E = (1/2) * C * V^2 is the canonical relationship for an ideal capacitive store."
+parameters_required:
+  - name: capacitance
+    type: quantity
+    units: farad
+    description: Capacitance of the energy-storing object.
+  - name: voltage
+    type: quantity
+    units: volt
+    description: Voltage at which the energy is stored.
+evaluates: "E_stored = (1/2) * C * V^2"
+consequences: []
+law: electrostatic_energy_storage
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]

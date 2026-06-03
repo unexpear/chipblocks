@@ -1,0 +1,30 @@
+# Valid fixture: behavior registry entry for capacitance — the device-level capability
+# of accumulating charge in response to applied voltage.
+# Cascades into stores_charge (energy-storage consequence).
+# MUST validate against behavior.schema.json.
+kind: behavior
+id: has_capacitance
+origin: builtin
+layer: behavior
+name: "Has capacitance (charge-voltage relationship)"
+description: "An object with non-zero capacitance accumulates electric charge proportional to the voltage applied across its electrodes. Q = C * V is the defining relationship. The cascading consequence (stores_charge) covers the energy-storage side of the behavior."
+parameters_required:
+  - name: capacitance
+    type: quantity
+    units: farad
+    description: The capacitance of the device.
+  - name: voltage
+    type: quantity
+    units: volt
+    description: Voltage across the device's electrodes.
+evaluates: "Q = C * V"
+consequences:
+  - stores_charge
+law: capacitance_definition
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
