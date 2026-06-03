@@ -1,0 +1,36 @@
+# Valid fixture: behavior registry entry for circuit-switching.
+# A device with this behavior can make or break a conductive path based on its
+# current state. The state itself lives on the device's state_machine (declared
+# in the device definition); this behavior captures the EFFECT of being in each
+# state — closed -> conduct, open -> insulate.
+# Used by switches today; relays, MOSFETs, latches, and other stateful devices
+# will inherit the same behavior with different state machines driving it.
+# MUST validate against behavior.schema.json.
+kind: behavior
+id: switches_circuit
+origin: builtin
+layer: behavior
+name: "Switches circuit (state-dependent connection)"
+description: "A device with this behavior can make or break a conductive path between its terminals based on its current state. When closed (or equivalent conducting state) the device behaves like a near-zero-resistance conductor; when open (or equivalent isolating state) the device behaves like a near-infinite-resistance insulator. The transition between states is governed by the device's declared state_machine."
+parameters_required:
+  - name: state
+    type: enum
+    allowed: [open, closed]
+    description: The device's current state. Maps to one of the states declared in the device's state_machine. (Runtime tracking of 'current state' is a canvas/simulator concern; this parameter documents the linkage.)
+evaluates: "if state == closed: R_effective ~ 0 (conductor); if state == open: R_effective ~ infinity (insulator). Formal state -> value derivation lands when the behavior-derives-value pattern is implemented (§15 deferred)."
+consequences: []
+law: state_dependent_conductance
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Sprint 6 keeps the parameter's allowed list at [open, closed] — the simple
+  two-state case for SPST switches. When SPDT lands (Sprint 7+), additional
+  state names (position_1, position_2) become valid. Relays may use the same
+  open/closed pair driven by coil energization. MOSFETs use cutoff/triode/
+  saturation, which warrants a richer allowed list or per-device override of
+  the behavior's parameter shape.
