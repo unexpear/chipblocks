@@ -142,3 +142,69 @@ The project's discipline ("always check, never assume") applied to this sprint:
 ## Sprint 2 opens here
 
 Master tip when opened: `094ac48`. The [OBJECT-MODEL.md](../OBJECT-MODEL.md) spec at that commit is the contract this sprint implements. **If the schema can't enforce something the doc claims, the doc is wrong and gets edited — not the schema.** The schema is the executable verification of the spec.
+
+---
+
+## Sprint 2 retro (closed 2026-05-20)
+
+### What landed
+
+| Sub-commit | What |
+|---|---|
+| `f3540dd` | Sprint plan opened |
+| `da241b4` | S2-v3-1: Node project shell + locked toolchain (Ajv 8, Vitest, Biome, TypeScript 6, yaml; npm, not pnpm) |
+| `b47edce` | S2-v3-2: four shared schema fragments (identity, provenance, quantity, support-status) |
+| `10a06ce` | S2-v3-3: definition.schema.json with anti-placeholder Rule 1+2 enforcement via if/then on origin |
+| `bd005fa` | S2-v3-4: instance.schema.json with §13 value/ref mutual exclusion |
+| `ac7e3fa` | S2-v3-4b: param_value polymorphism refinement — supports bare-string ids for material_ref / shape_ref / object_ref / enum |
+| `dbf9fe9` | S2-v3-5: 3 valid fixtures + Vitest test runner — first green test run |
+| (this) | S2-v3-6: 5 invalid fixtures + must-fail tests — anti-placeholder rules now ENFORCED |
+| (this) | S2-v3-7: this retro — Sprint 2 closes |
+
+### Done criteria — all met
+
+- [x] All 6 schema files exist, well-formed JSON, reference each other correctly via `$ref`
+- [x] All 8 fixture files exist (3 valid + 5 invalid), well-formed YAML
+- [x] `npm install` runs cleanly (56 packages, 0 vulnerabilities, ~8s)
+- [x] `npm test` passes (8/8 tests: 3 valid validate, 5 invalid fail)
+- [x] `npx biome check .` passes (clean)
+- [x] `npx tsc --noEmit` passes (TS 6 strict flags happy)
+- [x] OBJECT-MODEL.md axiom + anti-placeholder rules enforced (proven by must-fail fixtures)
+- [x] Sprint retro written
+
+### Lessons surfaced
+
+1. **`param_value` polymorphism was missed in the initial schema draft.** First version of `definition.schema.json` typed parameter defaults as quantity-only, but OBJECT-MODEL.md §14 has `default.value: path` (a bare-string shape_ref) for the wire's geometry parameter. Caught when fixtures wouldn't validate. Added `param_value` and `param_value_strict` $defs in quantity.schema.json (S2-v3-4b). **General lesson:** parameter values are polymorphic by type (quantity / string for refs / number / bool); test fixtures surface this if the schema assumed quantity-only.
+
+2. **Rule 1 was over-enforced initially.** First draft required provenance on parameter defaults at builtin origin. Spec actually says Rule 1 applies to `properties.*` (physical material properties), not `parameters.*.default`. A ref-typed default like `geometry: { default: { value: path } }` is structural, not a citable physical claim. Schema relaxed in S2-v3-5. **General lesson:** read the rule's scope carefully before enforcing — over-enforcement masquerades as strictness but actually contradicts the spec.
+
+3. **YAML parsing gotcha: `ref:` inside an unquoted description.** Fixture `ref-in-definition-default.yaml` had `description: Demonstrates §13 violation — ref: in a definition's parameter default.` — YAML parser interpreted `ref:` mid-string as a new key. Fixed by quoting the description. **General lesson:** any YAML scalar value containing a colon-followed-by-space pattern needs quotes.
+
+4. **Corepack `enable` requires admin on Windows.** Plan said pnpm; environment blocked it (EPERM on Program Files). Pivoted to npm in S2-v3-1 with a note in the sprint plan. **General lesson:** verify the environment supports a locked tool before committing the rest of the plan to it. Pragmatic substitution is fine when the rationale is documented.
+
+5. **TypeScript strict + CJS interop friction.** Ajv 8 ships as CJS; the ESM default import in TS-strict mode forced `as any` with biome-ignore comments. Acceptable workaround; would be cleaner if Ajv published proper ESM. **General lesson:** TS strict can be friction at the library-interop layer; document the workaround in-line so future maintainers know why the `any` is there.
+
+6. **`additionalProperties: false` is load-bearing.** Several anti-placeholder enforcements piggyback on `additionalProperties: false` (e.g., `ref:` rejection on definition defaults). **General lesson:** the closed-property-set pattern catches a lot of typos and rule violations for free; default to `additionalProperties: false` on every closed object.
+
+### Unresolved questions (still deferred per OBJECT-MODEL.md §15)
+
+- Behavior registry shape — where do behaviors like `conducts_current` actually live?
+- `property_definition` registry shape
+- Cross-FK / role-satisfaction validation — needs a separate validator pass beyond JSON Schema
+- Net model — `connects:` is still ad-hoc per §2 example
+- Project file format
+- `material_ref` / `shape_ref` exact resolution rules
+- Schema migration story
+- Visual symbol library (per SCHEMATIC-SYMBOLS.md, deferred to canvas sprint)
+
+### What this unblocks
+
+After Sprint 2 close:
+- The object model is no longer just prose — it's executable spec. Any future material/device entry can be checked against the schema mechanically.
+- The anti-placeholder rules are real. A future contributor who tries to ship a builtin material without provenance gets a hard error at test time.
+- The test runner is in place. v3 Sprint 3+ can extend tests/ with cross-FK validators and physics-engine tests as they land.
+- The toolchain (Ajv, Vitest, Biome, TypeScript strict) is locked and proven. Future sprints inherit.
+
+### Sprint 2 closed
+
+All sub-commits land cleanly on master. All gates green. Foundation is now machine-checkable.
