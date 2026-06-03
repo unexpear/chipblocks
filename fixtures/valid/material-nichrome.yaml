@@ -1,0 +1,130 @@
+# Valid fixture: material definition for Nichrome 80/20 (Ni 80% / Cr 20% resistive alloy).
+# The canonical resistive-heating alloy. High resistivity, oxidation-resistant up to high
+# temperatures, very low temperature coefficient of resistance — used for heating elements,
+# precision metal-film resistors, and thick-film resistor pastes.
+#
+# Alloy composition (80% Ni, 20% Cr by weight) is described in this fixture's notes/description
+# rather than a structured field. Composition-by-weight as a schema field is a §15
+# deferred question — see OBJECT-MODEL.md §15.
+#
+# MUST validate against definition.schema.json.
+kind: material
+id: nichrome
+origin: builtin
+layer: material
+name: Nichrome 80/20 (Ni 80% / Cr 20% resistive alloy)
+description: Nickel-chromium alloy, nominally 80% nickel and 20% chromium by weight (designated Type A per ASTM B344). The canonical material for resistive heating elements (toasters, kilns, hairdryers) and precision wire-wound resistors. High resistivity, very low temperature coefficient of resistance, and oxidation resistance up to about 1150 C.
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+  - thermal_conduction
+properties:
+  resistivity:
+    value:
+      kind: condition_bound
+      amount: 1.10e-6
+      unit: ohm_meter
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+        alloy_designation:
+          value: astm_b344_type_a
+    provenance:
+      source_type: standard
+      title: Nichrome 80/20 resistivity at 20 C
+      citation: "ASTM B344 (Type A Ni-Cr resistance heating wire); CRC Handbook of Chemistry and Physics, 102nd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  temperature_coefficient_of_resistance:
+    value:
+      kind: condition_bound
+      amount: 4.0e-4
+      unit: per_kelvin
+      conditions:
+        temperature_reference:
+          amount: 20
+          unit: degC
+    provenance:
+      source_type: standard
+      title: Nichrome 80/20 temperature coefficient of resistance near 20 C
+      citation: "ASTM B344; resistor industry handbooks (Vishay Bulk Metal Foil technical notes contrast)"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 8400
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Nichrome 80/20 density at 20 C
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed.; ASM Metals Handbook Vol. 2"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  melting_point:
+    value:
+      kind: scalar
+      amount: 1400
+      unit: degC
+    provenance:
+      source_type: standard
+      title: Nichrome 80/20 melting point (approximate liquidus)
+      citation: "ASTM B344; ASM Metals Handbook Vol. 2"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  max_operating_temperature:
+    value:
+      kind: scalar
+      amount: 1150
+      unit: degC
+    provenance:
+      source_type: standard
+      title: Nichrome 80/20 maximum continuous operating temperature in air
+      citation: "ASTM B344 (Type A continuous-service rating)"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 11.3
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Nichrome 80/20 thermal conductivity at 20 C
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed."
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Nichrome's resistive-heating utility derives from the combination of high resistivity
+  (~65x copper), low temperature coefficient, and oxidation resistance — not from any
+  single capability. Specific behaviors (heats_when_current_flows, etc.) attach to the
+  resistor primitive device in S4-v3-6, not to the material itself.

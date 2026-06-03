@@ -1,0 +1,115 @@
+# Valid fixture: material definition for intrinsic silicon.
+# Foundational semiconductor — undoped. Doped Si (n-type / p-type) is a separate concern
+# that lands when transistors/diodes arrive (Sprint 5+).
+#
+# Intrinsic silicon does NOT enable electrical_conduction — its room-temperature resistivity
+# is ~11 orders of magnitude higher than copper. It conducts negligibly without doping.
+# When doping arrives, doped-silicon variants will be separate material definitions that
+# DO enable electrical_conduction.
+#
+# MUST validate against definition.schema.json.
+kind: material
+id: silicon
+origin: builtin
+layer: material
+name: Silicon (Si, intrinsic)
+description: Group IV semiconductor element. The foundational material of modern integrated circuits. This entry is intrinsic (undoped) silicon — essentially insulating at room temperature. Doped variants (n-type, p-type) arrive when transistors and diodes are introduced.
+composition:
+  uses: []
+enables:
+  - thermal_conduction
+properties:
+  intrinsic_resistivity:
+    value:
+      kind: condition_bound
+      amount: 2.3e3
+      unit: ohm_meter
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+        doping:
+          value: intrinsic_undoped
+    provenance:
+      source_type: reference
+      title: Intrinsic silicon resistivity at 300 K
+      citation: "Ioffe NSM Archive (Si — Electrical properties); Sze, Physics of Semiconductor Devices, 3rd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  bandgap_energy:
+    value:
+      kind: condition_bound
+      amount: 1.12
+      unit: electronvolt
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+    provenance:
+      source_type: reference
+      title: Silicon bandgap at 300 K
+      citation: "Ioffe NSM Archive (Si — Basic Parameters); Sze, Physics of Semiconductor Devices, 3rd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 2329
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Silicon density at 25 C
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed.; Ioffe NSM Archive"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  melting_point:
+    value:
+      kind: scalar
+      amount: 1414
+      unit: degC
+    provenance:
+      source_type: standard
+      title: Silicon melting point
+      citation: "NIST WebBook; CRC Handbook 102nd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 149
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Silicon thermal conductivity at 25 C
+      citation: "Ioffe NSM Archive (Si — Thermal properties); CRC Handbook 102nd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Doped silicon (n-type, p-type) gets separate material definitions when transistors/diodes
+  land in Sprint 5+. The 'semiconductor' capability is not yet introduced because no device
+  consumes it; it will be added together with the first transistor/diode definition.

@@ -1,0 +1,147 @@
+# Valid fixture: material definition for FR4 (flame-retardant glass-epoxy laminate).
+# The dominant PCB substrate. Composite of woven E-glass fabric impregnated with epoxy resin.
+# FR4 values vary materially by manufacturer and grade. Confidence dropped one tier per
+# MATERIAL-SOURCES.md (multi-source agreement principle) — values cited here are
+# IPC-4101/126 standard grade at 1 MHz; specific datasheets must be consulted for
+# specialty grades, high-frequency variants (low-Dk), and high-Tg variants.
+# MUST validate against definition.schema.json.
+kind: material
+id: fr4
+origin: builtin
+layer: material
+name: FR4 (woven-glass epoxy laminate)
+description: Flame-retardant composite laminate — woven E-glass fiber fabric impregnated with brominated epoxy resin, cured under heat and pressure. The dominant PCB substrate material. Used as the structural and dielectric layer in nearly all consumer-grade printed circuit boards.
+composition:
+  uses: []
+enables:
+  - electrical_insulation
+  - dielectric_insulation
+properties:
+  relative_permittivity:
+    value:
+      kind: condition_bound
+      amount: 4.4
+      unit: dimensionless
+      conditions:
+        frequency:
+          amount: 1
+          unit: megahertz
+        temperature:
+          amount: 25
+          unit: degC
+        grade:
+          value: ipc_4101_126
+    provenance:
+      source_type: standard
+      title: FR4 relative permittivity at 1 MHz, 25 C, IPC-4101/126 grade
+      citation: "IPC-4101/126 spec; cross-referenced against Isola 370HR, Rogers RO4350B context, and ITEQ IT-180A datasheets for the standard FR4 baseline"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  dissipation_factor:
+    value:
+      kind: condition_bound
+      amount: 0.020
+      unit: dimensionless
+      conditions:
+        frequency:
+          amount: 1
+          unit: megahertz
+        temperature:
+          amount: 25
+          unit: degC
+        grade:
+          value: ipc_4101_126
+    provenance:
+      source_type: standard
+      title: FR4 dissipation factor (loss tangent) at 1 MHz
+      citation: "IPC-4101/126 spec; typical value across major laminators"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  glass_transition_temperature:
+    value:
+      kind: range
+      min: 130
+      max: 180
+      typical: 140
+      unit: degC
+      distribution: uniform
+    provenance:
+      source_type: standard
+      title: FR4 glass transition temperature range across IPC-4101 grades
+      citation: "IPC-4101: standard FR4 ~130 C (Tg); high-Tg variants ~170-180 C (FR-4 High-Tg per IPC-4101/126 vs. /128)"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  volume_resistivity:
+    value:
+      kind: condition_bound
+      amount: 1.0e14
+      unit: ohm_meter
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+        humidity:
+          value: dry_conditioned_per_ipc_tm_650
+    provenance:
+      source_type: standard
+      title: FR4 volume resistivity (DC) at 25 C, conditioned dry
+      citation: "IPC-TM-650 (test methods); IPC-4101 grade spec"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 1850
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+    provenance:
+      source_type: reference
+      title: FR4 typical density at 25 C
+      citation: "Manufacturer datasheets (Isola, ITEQ) — typical for standard FR4 laminate"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 0.3
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+        direction:
+          value: through_plane
+    provenance:
+      source_type: reference
+      title: FR4 thermal conductivity, through-plane, at 25 C
+      citation: "IPC-TM-650; manufacturer datasheets (Isola 370HR, ITEQ IT-180A) — values 0.25-0.40 W/m-K typical"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  FR4 values vary significantly by grade. This entry is the IPC-4101/126 baseline.
+  High-Tg variants (170-180 C Tg), low-Dk RF variants (Rogers RO4350B at Dk 3.48),
+  and specialty halogen-free variants each warrant their own material definitions.
+  No board uses FR4 yet in Sprint 4 — when board-level definitions arrive, the stackup
+  model will reference specific FR4 grades.

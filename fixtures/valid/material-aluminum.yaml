@@ -1,0 +1,89 @@
+# Valid fixture: material definition for aluminum.
+# Common conductor for PCB heat sinks, ground planes, package leads, and IC interconnect on legacy nodes.
+# About 61% the conductivity of copper (IACS reference), about 30% the density.
+# MUST validate against definition.schema.json.
+kind: material
+id: aluminum
+origin: builtin
+layer: material
+name: Aluminum (Al)
+description: Lightweight, corrosion-resistant metallic element. Used for PCB ground planes, heat sinks, IC interconnect on legacy nodes, and chassis. Lower conductivity than copper but much lower density and lower cost.
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+  - thermal_conduction
+properties:
+  resistivity:
+    value:
+      kind: condition_bound
+      amount: 2.65e-8
+      unit: ohm_meter
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+        purity:
+          value: pure_annealed
+    provenance:
+      source_type: standard
+      title: Aluminum resistivity at 20 C (pure, annealed)
+      citation: "NIST WebBook; CRC Handbook of Chemistry and Physics, 102nd ed. (section 12-41); ASM Metals Handbook Vol. 2"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 2700
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Aluminum density at 20 C
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  melting_point:
+    value:
+      kind: scalar
+      amount: 660.32
+      unit: degC
+    provenance:
+      source_type: standard
+      title: Aluminum melting point
+      citation: "NIST WebBook; CRC Handbook of Chemistry and Physics, 102nd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 237
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Aluminum thermal conductivity at 25 C
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed.; ASM Metals Handbook Vol. 2"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]

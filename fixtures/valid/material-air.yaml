@@ -1,0 +1,125 @@
+# Valid fixture: material definition for air (standard dry atmospheric).
+# The default gaseous dielectric — used as the dielectric layer in parallel-plate capacitors
+# (textbook canonical example), as the insulating medium in air-gap switches/relays, and
+# as the working fluid in many cooling paths.
+#
+# This is the FIRST shipped material with a dimensionless property (relative permittivity).
+# 'unit: dimensionless' is the convention; the schema accepts any unit string of min length 1
+# so no schema change is required.
+#
+# MUST validate against definition.schema.json.
+kind: material
+id: air
+origin: builtin
+layer: material
+name: Air (standard dry atmospheric)
+description: Gaseous mixture of approximately 78% nitrogen, 21% oxygen, and trace gases (argon, CO2, water vapor in humid conditions). Standard dry air at sea-level pressure is the default dielectric and insulating medium in open-air electronics, air-gap capacitors, and switch/relay contact gaps. Values reported here are for dry air at the conditions noted; humidity raises both relative permittivity and breakdown-voltage threshold variability.
+composition:
+  uses: []
+enables:
+  - electrical_insulation
+  - dielectric_insulation
+  - thermal_conduction
+properties:
+  relative_permittivity:
+    value:
+      kind: condition_bound
+      amount: 1.00059
+      unit: dimensionless
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+        pressure:
+          amount: 101.325
+          unit: kilopascal
+        humidity:
+          value: dry
+    provenance:
+      source_type: standard
+      title: Relative permittivity of dry air at 20 C, 1 atm
+      citation: "NIST WebBook (Thermophysical Properties of Gases); CRC Handbook 102nd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  dielectric_strength:
+    value:
+      kind: condition_bound
+      amount: 3.0
+      unit: kilovolt_per_millimeter
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+        pressure:
+          amount: 101.325
+          unit: kilopascal
+        humidity:
+          value: dry
+        electrode_geometry:
+          value: uniform_field_idealization
+    provenance:
+      source_type: reference
+      title: Approximate dielectric strength of air at standard conditions
+      citation: "IEEE textbooks (Kuffel/Zaengl, High Voltage Engineering, 2nd ed.); CRC Handbook 102nd ed. — note: real-world value depends strongly on electrode geometry and gap distance (Paschen's law)"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 1.225
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 15
+          unit: degC
+        pressure:
+          amount: 101.325
+          unit: kilopascal
+        humidity:
+          value: dry
+    provenance:
+      source_type: standard
+      title: Air density at International Standard Atmosphere sea-level conditions
+      citation: "ICAO Standard Atmosphere (ISO 2533); NIST WebBook"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 0.0262
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+        pressure:
+          amount: 101.325
+          unit: kilopascal
+    provenance:
+      source_type: standard
+      title: Thermal conductivity of dry air at 20 C, 1 atm
+      citation: "NIST WebBook (Thermophysical Properties of Gases)"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  First material with a dimensionless property (relative permittivity ε_r ≈ 1.00059).
+  The schema's `unit` field is a free string with minLength: 1, so `unit: dimensionless`
+  validates without any schema change. This sets the convention for unitless ratios
+  (permittivity, dissipation factor, transmission ratio, etc.).
+  Real-world dielectric strength deviates significantly from the uniform-field idealization
+  per Paschen's law — gap distance, electrode geometry, and humidity all matter.
