@@ -1,0 +1,134 @@
+# Valid fixture: material definition for Sn63Pb37 eutectic tin-lead solder.
+# The traditional leaded electronics solder. Eutectic composition (63% tin, 37% lead by weight)
+# gives a single sharp melting point at 183 C — there is no slushy two-phase range, the alloy
+# transitions directly between solid and liquid.
+#
+# NOT RoHS compliant — contains lead. Permitted under specific RoHS exemptions
+# (military, aerospace, high-reliability medical) and remains common in hobbyist/repair use
+# for its lower melting point, better wetting, and forgiving handling.
+#
+# Alloy composition (63% Sn, 37% Pb by weight) lives in description/notes per the
+# §15 deferred question on composition-by-weight as a structured field.
+#
+# MUST validate against definition.schema.json.
+kind: material
+id: solder_sn63pb37
+origin: builtin
+layer: material
+name: Sn63Pb37 (eutectic tin-lead solder)
+description: Eutectic tin-lead solder alloy, 63% tin and 37% lead by weight. The traditional electronics-assembly solder. Sharp eutectic melt at 183 C (no two-phase slushy range). Excellent wetting and forgiving thermal handling make it the long-standing choice for hand-soldering and rework. Banned in most consumer electronics under RoHS; remains in use under aerospace/military/medical exemptions and in hobbyist/repair settings.
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+  - thermal_conduction
+properties:
+  melting_point:
+    value:
+      kind: scalar
+      amount: 183
+      unit: degC
+    provenance:
+      source_type: standard
+      title: Sn63Pb37 eutectic melting point
+      citation: "IPC J-STD-006 (Standard for Electronic Grade Solder Alloys); IEC 61190-1-3; ASM Handbook Vol. 6 (Welding/Brazing/Soldering)"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  resistivity:
+    value:
+      kind: condition_bound
+      amount: 1.45e-7
+      unit: ohm_meter
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+        state:
+          value: solid_cured
+    provenance:
+      source_type: reference
+      title: Sn63Pb37 bulk electrical resistivity at 20 C
+      citation: "ASM Handbook Vol. 6; manufacturer datasheets (AIM, Indium Corporation, Kester)"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 8400
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+        state:
+          value: solid_cured
+    provenance:
+      source_type: reference
+      title: Sn63Pb37 density at 20 C
+      citation: "ASM Handbook Vol. 6; CRC Handbook 102nd ed. (alloy density tables)"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 50
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+        state:
+          value: solid_cured
+    provenance:
+      source_type: reference
+      title: Sn63Pb37 thermal conductivity at 20 C
+      citation: "ASM Handbook Vol. 6; manufacturer datasheets (AIM, Indium Corporation)"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  tensile_strength:
+    value:
+      kind: condition_bound
+      amount: 52
+      unit: megapascal
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+        state:
+          value: bulk_solid_as_cast
+    provenance:
+      source_type: reference
+      title: Sn63Pb37 bulk tensile strength at 20 C (as-cast)
+      citation: "ASM Handbook Vol. 6; IPC J-STD-006 reference values"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Composition by weight: 63% Sn, 37% Pb (eutectic). Structured composition-by-weight
+  schema field is a §15 deferred question — current description/notes capture is the
+  workaround.
+
+  Regulatory status: NOT RoHS-compliant (contains lead). Permitted under specific RoHS
+  exemptions for aerospace, military, and high-reliability medical applications. Regulatory
+  tags (RoHS, REACH, REACH SVHC) belong in a future regulatory schema field, not in
+  properties — captured here in notes pending that schema work.
+
+  Joint-level concerns (solder paste behavior, reflow temperature profile, wetting
+  characteristics) attach to the solder_joint interface kind (S4-v3-5) and to the
+  default_reflow_peak_temp Active Variable (Sprint 5), not to this material entry.
