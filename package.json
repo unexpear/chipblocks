@@ -1,0 +1,27 @@
+{
+  "name": "chipblocks-schemas",
+  "version": "0.0.0",
+  "private": true,
+  "description": "v3 Sprint 2: JSON Schemas + validation fixtures for the ChipBlocks object model. See sprints/sprint-2.md.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.16",
+    "@types/node": "^25.9.1",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8",
+    "yaml": "^2.9.0"
+  }
+}
