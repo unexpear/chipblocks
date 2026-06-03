@@ -133,6 +133,64 @@
       },
       "additionalProperties": false
     },
+    "state_machine": {
+      "type": "object",
+      "description": "Optional declarative description of the device's internal state machine. Per OBJECT-MODEL.md §6.5. Sprint 6+: descriptive only — the validator checks internal consistency (transitions reference declared states; initial_state is declared); runtime state tracking and FSM evaluation are future canvas/simulator concerns. Only stateful devices (switches, relays, MOSFETs, latches) declare a state_machine; static devices (resistor, capacitor, wire, power_source) do not.",
+      "properties": {
+        "initial_state": {
+          "$ref": "identity.schema.json#/$defs/id",
+          "description": "Id of the state the device starts in. Must reference a key declared in 'states'."
+        },
+        "states": {
+          "type": "object",
+          "description": "Discrete states the device can occupy, keyed by state id. At least 2 states required (a single-state machine is not a machine).",
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "type": "object",
+              "properties": {
+                "description": { "type": "string", "minLength": 1 }
+              },
+              "required": ["description"],
+              "additionalProperties": false
+            }
+          },
+          "minProperties": 2,
+          "additionalProperties": false
+        },
+        "transitions": {
+          "type": "array",
+          "description": "Allowed transitions between states. Sprint 6 leaves 'trigger' as a free string; formal trigger taxonomy is deferred until 3+ stateful device types exist.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "$ref": "identity.schema.json#/$defs/id",
+                "description": "State id the transition leaves. Cross-FK validates this references a declared state."
+              },
+              "to": {
+                "$ref": "identity.schema.json#/$defs/id",
+                "description": "State id the transition enters. Cross-FK validates this references a declared state."
+              },
+              "trigger": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Free-string description of what causes this transition. Examples today: 'actuated' (toggle), 'actuated_while_held' (momentary), 'released', 'current_through_coil' (relay), 'gate_voltage_above_threshold' (MOSFET). Enum hardens in a future sprint."
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Optional human-readable description of the transition."
+              }
+            },
+            "required": ["from", "to", "trigger"],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        }
+      },
+      "required": ["initial_state", "states", "transitions"],
+      "additionalProperties": false
+    },
     "support": { "$ref": "support-status.schema.json" },
     "extensions": {
       "type": "object",

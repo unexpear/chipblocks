@@ -398,6 +398,66 @@ Materials must stay reusable across many objects — wire, PCB trace, via platin
 
 ---
 
+## 6.5 State machines as declarative description
+
+Some devices are inherently stateful — a switch is open or closed; a relay's coil is energized or de-energized; a MOSFET conducts or not depending on gate state; a flip-flop holds a 0 or 1. These states are neither physics laws (those are §6 behaviors) nor latent capabilities (those are §6 capabilities). They are **discrete configurations** the device can be in, with rules for transitioning between them.
+
+The model captures these as **declarative state machines** on device definitions. A state machine describes:
+
+- Which **states** the device can occupy (e.g., `open`, `closed`)
+- Which state the device **starts in** (`initial_state`)
+- Which **transitions** are allowed, and what **triggers** each
+
+### Descriptive, not evaluative
+
+State machines are described in the schema, **not simulated**. The model says "here's the FSM"; nothing tracks "this specific switch is currently closed." That's a canvas/simulator concern, the same way Ohm's law lives in the behavior registry but is not actually solved by the validator. Both follow the same honesty rule: declare what's true without faking solving.
+
+### Example: SPST toggle switch
+
+```yaml
+state_machine:
+  initial_state: open
+  states:
+    open:
+      description: Contacts separated; no current flows.
+    closed:
+      description: Contacts touching; current flows freely.
+  transitions:
+    - from: open
+      to: closed
+      trigger: actuated
+      description: User flips the switch; contacts make.
+    - from: closed
+      to: open
+      trigger: actuated
+      description: User flips the switch again; contacts break.
+```
+
+### Internal consistency
+
+The cross-FK validator enforces:
+
+- Every transition's `from:` and `to:` must reference a state declared in `states`.
+- `initial_state` must reference a declared state.
+
+These checks fire as the `state-machine-invalid-transition` error code introduced in v3 Sprint 6.
+
+### When devices need a state machine
+
+Add `state_machine` only when the device has **discrete states** that matter to its behavior. Resistor, capacitor, power_source, and wire do NOT have state machines — their behavior is fully captured by parameters and behaviors. Switches, relays, MOSFETs, latches, flip-flops, and multiplexers DO.
+
+### Trigger taxonomy
+
+Sprint 6 leaves `trigger:` as a free string with examples (`actuated`, `actuated_while_held`, `released`, `current_through_coil`, `gate_voltage_above_threshold`, `external_event`). The formal enum is deferred until 3-4 stateful device types exist in the catalog and the actual set of trigger types is knowable.
+
+### Out of scope for the foundation
+
+- **Runtime state tracking** (which state is *this* switch in *right now*) — canvas/simulator concern.
+- **State-dependent property values** (a switch's resistance is ∞ when open, ~0 when closed) — needs the behavior-derives-value pattern first; §15 deferred.
+- **Multi-pole switches with state-dependent connection topology** (SPDT routes signal through different terminals per state) — Sprint 7+.
+
+---
+
 ## 7. Property value kinds
 
 Property values are polymorphic from day one. A property carries a `value` block whose shape depends on its `kind`.
