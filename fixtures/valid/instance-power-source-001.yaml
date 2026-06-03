@@ -1,0 +1,37 @@
+# Valid fixture: a specific 9 V alkaline battery instance (the PP3 / 6LR61 form factor).
+# Values from ANSI/IEC 60086 (primary battery standard) + manufacturer datasheets
+# (Duracell MN1604, Energizer 522). Stored in instance notes — instance parameter
+# values do not currently carry per-value provenance (provenance lives on definitions).
+# When the preset/template model lands, this instance's spec can promote to a
+# 'battery_9v_alkaline' preset definition with full property-level provenance.
+# MUST validate against instance.schema.json.
+kind_ref: primitive_device
+definition: power_source
+id: battery_9v_001
+origin: project
+parameters:
+  nominal_voltage:
+    value:
+      kind: scalar
+      amount: 9.0
+      unit: volt
+  internal_resistance:
+    value:
+      kind: scalar
+      amount: 1.0
+      unit: ohm
+  capacity:
+    value:
+      kind: scalar
+      amount: 0.55
+      unit: ampere_hour
+  chemistry_or_type:
+    value: alkaline_zinc_manganese
+notes: |
+  Values cited from ANSI/IEC 60086-2 (primary battery designation 6LR61);
+  Duracell MN1604 (Procell) and Energizer 522 datasheets agree.
+  - Nominal voltage: 9.0 V (chemistry-defined, fresh cell at light load)
+  - Internal resistance: ~1.0 ohm fresh; rises with discharge to several ohms
+  - Capacity: ~0.55 Ah typical premium brand; varies 0.40-0.60 Ah by manufacturer
+  When the preset/template model (§15 deferred) lands, this fixture's values move
+  up to a battery_9v_alkaline preset definition with full per-property provenance.

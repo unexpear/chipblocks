@@ -1,0 +1,85 @@
+# Valid fixture: generic power source primitive device.
+# A two-terminal active device that provides electromotive force (EMF) to drive current
+# through an external circuit. Models the Thevenin equivalent of any DC voltage source:
+# an ideal EMF in series with an internal resistance.
+#
+# Generic in scope — specific battery types (9V alkaline, AA NiMH, CR2032 lithium coin,
+# etc.) become PRESETS once the preset/template model lands (§15 deferred). Today
+# instances fill in the specific values directly. The convention this definition sets:
+# variable-value devices use parameters without builtin-origin defaults; cited fixed
+# values are reserved for presets.
+#
+# Behaviors: [provides_emf, has_resistance, produces_joule_heat]. Internal resistance
+# dissipates real heat under load (batteries getting warm during high-current draw is a
+# real, observable effect — not just an abstraction).
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: power_source
+origin: builtin
+layer: primitive_device
+name: Power source
+description: "A two-terminal active device that provides electromotive force (EMF) to drive current through an external circuit. Models any DC voltage source — batteries, regulated power supplies, solar cells, super-capacitor banks — at the Thevenin lumped-element level: an EMF in series with an internal resistance. The terminal voltage seen by an external load equals EMF minus the drop across the internal resistance times the drawn current."
+composition:
+  requires:
+    enclosure_material:
+      kind: material
+      must_enable:
+        - electrical_insulation
+    terminals:
+      kind: interface
+      min_count: 2
+parameters:
+  enclosure_material:
+    type: material_ref
+    satisfies_role: enclosure_material
+    required: false
+    description: The outer enclosure material (battery casing, supply housing). Must electrically insulate the source's internals from its surroundings.
+  nominal_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: The source's nominal EMF — open-circuit terminal voltage. For batteries, this is the chemistry-defined nominal per ANSI/IEC 60086 (primary) or IEC 61960 (secondary). For regulated supplies, the set-point voltage.
+  internal_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: Effective series resistance of the source. Causes terminal voltage to droop under load and dissipates heat as I^2 * r_internal.
+  capacity:
+    type: quantity
+    units: ampere_hour
+    required: false
+    description: For batteries — total charge available before discharge cutoff. For supplies — typically not meaningful (continuous-source assumption).
+  chemistry_or_type:
+    type: enum
+    required: false
+    allowed:
+      - alkaline_zinc_manganese
+      - lithium_ion
+      - lithium_polymer
+      - lithium_primary
+      - nickel_metal_hydride
+      - lead_acid
+      - zinc_carbon
+      - silver_oxide
+      - regulated_supply
+      - solar_pv
+      - super_capacitor
+    description: Source type — affects internal resistance, discharge curve shape, temperature sensitivity, and life cycle (for rechargeables).
+behaviors:
+  - provides_emf
+  - has_resistance
+  - produces_joule_heat
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  No builtin-origin defaults on nominal_voltage or internal_resistance — there is no
+  canonical "default power source EMF" since values depend entirely on chemistry/topology.
+  Concrete pre-configured power-source types (9V alkaline, CR2032 lithium primary, AA NiMH)
+  become PRESETS once the preset/template model lands (§15 deferred). Until then, project
+  instances fill in the specific values directly.
