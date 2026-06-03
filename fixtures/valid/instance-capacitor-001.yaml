@@ -1,0 +1,30 @@
+# Valid fixture: a specific 10 pF air-gap parallel-plate capacitor instance.
+# The textbook canonical capacitor: two conductive plates with air as the dielectric.
+# Realistic value for small air-variable tuning capacitors (radio circuits, RF tuned
+# circuits). Air's dimensionless relative permittivity (ε_r ≈ 1.00059) is exercised
+# here via the dielectric role's role-satisfaction check.
+# MUST validate against instance.schema.json.
+kind_ref: primitive_device
+definition: capacitor
+id: capacitor_001
+origin: project
+parameters:
+  plates:
+    value: plate
+  dielectric:
+    value: air
+  capacitance:
+    value:
+      kind: scalar
+      amount: 10.0e-12
+      unit: farad
+  voltage_rating:
+    value:
+      kind: scalar
+      amount: 100
+      unit: volt
+  tolerance_percent:
+    value:
+      kind: scalar
+      amount: 10
+      unit: percent
