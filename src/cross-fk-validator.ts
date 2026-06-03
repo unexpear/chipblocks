@@ -264,6 +264,51 @@ export function validateWorld(world: World): CrossFkError[] {
         }
       }
     }
+
+    // Role-satisfaction check.
+    //
+    // When a composition.requires role is filled by a parameter (via
+    // satisfies_role), the chosen object must actually enable every capability
+    // listed in must_enable. JSON Schema can verify that the parameter holds a
+    // string id; only this lookup can verify the chosen object actually
+    // satisfies the role's constraints. Per OBJECT-MODEL.md §15.
+    //
+    // Default resolution is deferred: only explicit instance parameter values
+    // are checked here. When an instance omits a parameter and the definition
+    // supplies a default, that default's compatibility check lands when the
+    // default-resolution path is wired (later sprint).
+    if (def.composition?.requires && def.parameters && inst.parameters) {
+      for (const [roleId, role] of Object.entries(def.composition.requires)) {
+        const satisfyingEntry = Object.entries(def.parameters).find(
+          ([, slot]) => slot.satisfies_role === roleId,
+        )
+        if (satisfyingEntry === undefined) continue
+        const [paramName] = satisfyingEntry
+
+        const instParam = inst.parameters[paramName]
+        if (instParam === undefined) continue
+        if (instParam.value === undefined) continue
+        if (typeof instParam.value !== 'string') continue
+
+        const chosen = world.definitions.get(instParam.value)
+        if (chosen === undefined) continue // unknown-reference already emitted above
+
+        if (role.must_enable !== undefined && role.must_enable.length > 0) {
+          const actual = chosen.enables ?? []
+          const missing = role.must_enable.filter((cap) => !actual.includes(cap))
+          if (missing.length > 0) {
+            errors.push({
+              code: 'role-unsatisfied',
+              source: inst.id,
+              role: roleId,
+              chosen: instParam.value,
+              required: role.must_enable,
+              actual,
+            })
+          }
+        }
+      }
+    }
   }
 
   return errors
