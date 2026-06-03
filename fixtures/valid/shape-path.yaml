@@ -1,0 +1,21 @@
+# Valid fixture: shape definition for a generic 1D conductive route.
+# Required to complete the "valid world" — the wire instance references
+# geometry: path, and that path must resolve to a shape that enables path_role.
+# MUST validate against definition.schema.json.
+kind: shape
+id: path
+origin: builtin
+layer: shape
+name: Path
+description: A 1D conductive route with a length and a cross-section. Used by wires, PCB traces, bond wires, and anywhere current follows a defined linear route through space.
+composition:
+  uses: []
+enables:
+  - path_role
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
