@@ -1,0 +1,132 @@
+# Valid fixture: material definition for p-doped AlGaInP — the p-side counterpart
+# to material-aluminum-gallium-indium-phosphide-n-type.
+#
+# p-type doping uses zinc or magnesium acceptors that take electrons from the
+# valence band, leaving mobile holes as the majority charge carrier. Combined
+# with the n-type variant in a PN junction, p-AlGaInP forms the device for
+# radiative recombination — when forward-biased current drives electrons from
+# the n-side into the p-side, electrons and holes recombine and emit photons
+# at energy E_g ~ 1.9 eV (red light around 650 nm).
+#
+# Hole mobility in AlGaInP is significantly lower than electron mobility (a
+# typical III-V trait), so p-type resistivity is higher than n-type at
+# comparable doping.
+#
+# MUST validate against definition.schema.json.
+kind: material
+id: aluminum_gallium_indium_phosphide_p_type
+origin: builtin
+layer: material
+name: "AlGaInP, p-type ((Al,Ga)InP doped p-type)"
+description: "Quaternary III-V compound semiconductor doped p-type. Same base composition as the n-type variant ((Al_x Ga_{1-x})_0.5 In_0.5 P with x targeting ~1.9 eV bandgap for red LEDs), but doped p-type via zinc or magnesium acceptors. Holes are the majority charge carrier. The canonical p-side material for red, orange, and yellow LEDs."
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+  - thermal_conduction
+  - semiconductor
+  - p_type_semiconductor
+  - direct_bandgap
+properties:
+  bandgap_energy:
+    value:
+      kind: condition_bound
+      amount: 1.9
+      unit: electronvolt
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        composition:
+          value: red_led_targeted_al_fraction
+    provenance:
+      source_type: reference
+      title: AlGaInP bandgap, red-LED composition, 300 K
+      citation: "Ioffe NSM Archive (AlGaInP system); Sze, Physics of Semiconductor Devices, 3rd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  resistivity:
+    value:
+      kind: range
+      min: 5.0e-3
+      max: 5.0e-2
+      typical: 1.5e-2
+      unit: ohm_meter
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: AlGaInP p-type resistivity at typical LED doping levels
+      citation: "Ioffe NSM Archive (AlGaInP electrical properties); p-type resistivity in III-V phosphides is typically 5-10x n-type at comparable doping due to lower hole mobility"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 4470
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+    provenance:
+      source_type: reference
+      title: AlGaInP density (red-LED composition)
+      citation: "Ioffe NSM Archive; same base composition as n-type, doping does not materially affect density"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 7.5
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+    provenance:
+      source_type: reference
+      title: AlGaInP thermal conductivity at 300 K
+      citation: "Ioffe NSM Archive; same as n-type — phonon-mediated, doping does not materially affect"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  hole_mobility:
+    value:
+      kind: condition_bound
+      amount: 0.015
+      unit: m2_per_volt_second
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        doping_level:
+          value: typical_led_grade_1e18_per_cm3
+    provenance:
+      source_type: reference
+      title: AlGaInP p-type hole mobility, LED-grade doping, 300 K
+      citation: "Ioffe NSM Archive (carrier transport in AlGaInP); ~150 cm^2/V-s typical -> 0.015 m^2/V-s in SI. Lower than electron mobility by ~13x — a typical III-V phosphide trait."
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Doping: nominal acceptor concentration 1e17 to 5e18 per cubic centimeter via
+  zinc or magnesium acceptors. Zinc is most common in production AlGaInP LEDs;
+  magnesium is used in some processes for tighter activation control.
+  Hole mobility is substantially lower than electron mobility (typical III-V
+  phosphide characteristic), which is why p-type AlGaInP has higher resistivity
+  than n-type at the same doping concentration.

@@ -1,0 +1,137 @@
+# Valid fixture: material definition for n-doped AlGaInP (aluminum gallium indium
+# phosphide), the canonical material system for red/orange/yellow LEDs.
+#
+# AlGaInP is a quaternary III-V compound semiconductor with composition
+# (Al_x Ga_{1-x})_0.5 In_0.5 P. Lattice-matched to GaAs substrates, with direct
+# bandgap making it suitable for radiative recombination (LED light emission).
+#
+# This entry is the n-type variant — silicon or tellurium dopants donate
+# extra electrons. The 'intrinsic AlGaInP' (undoped) is the baseline; n-type
+# doping shifts the Fermi level toward the conduction band and drops resistivity
+# substantially.
+#
+# Bandgap ~1.9 eV gives an emission wavelength around 650 nm (red). Tuning the
+# Al fraction shifts the bandgap (more Al -> shorter wavelength, up to ~2.3 eV
+# for orange/yellow before crossing to indirect bandgap).
+#
+# MUST validate against definition.schema.json. First compound-semiconductor in
+# the catalog; first material with explicit 'semiconductor' and
+# 'n_type_semiconductor' capabilities.
+kind: material
+id: aluminum_gallium_indium_phosphide_n_type
+origin: builtin
+layer: material
+name: "AlGaInP, n-type ((Al,Ga)InP doped n-type)"
+description: "Quaternary III-V compound semiconductor doped n-type. Composition is nominally (Al_x Ga_{1-x})_0.5 In_0.5 P with x chosen for the desired bandgap; the red-LED-targeted composition (x ~ 0.0 to 0.3) yields a direct bandgap around 1.9 eV. n-type doping via silicon or tellurium donors. The canonical n-side material for red, orange, and yellow LEDs."
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+  - thermal_conduction
+  - semiconductor
+  - n_type_semiconductor
+  - direct_bandgap
+properties:
+  bandgap_energy:
+    value:
+      kind: condition_bound
+      amount: 1.9
+      unit: electronvolt
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        composition:
+          value: red_led_targeted_al_fraction
+    provenance:
+      source_type: reference
+      title: AlGaInP bandgap, red-LED composition, 300 K
+      citation: "Ioffe NSM Archive (AlGaInP system); Sze, Physics of Semiconductor Devices, 3rd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  resistivity:
+    value:
+      kind: range
+      min: 1.0e-3
+      max: 1.0e-2
+      typical: 3.0e-3
+      unit: ohm_meter
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: AlGaInP n-type resistivity at typical LED doping levels (1e17 to 5e18 per cubic centimeter)
+      citation: "Ioffe NSM Archive (AlGaInP electrical properties); manufacturer process documentation (Lumileds, Osram) for LED-grade epitaxy"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 4470
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+    provenance:
+      source_type: reference
+      title: AlGaInP density (red-LED composition)
+      citation: "Ioffe NSM Archive; weighted average of constituent III-V phosphide densities"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 7.5
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+    provenance:
+      source_type: reference
+      title: AlGaInP thermal conductivity at 300 K
+      citation: "Ioffe NSM Archive (AlGaInP thermal properties); typical for ternary/quaternary phosphides"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  electron_mobility:
+    value:
+      kind: condition_bound
+      amount: 0.20
+      unit: m2_per_volt_second
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        doping_level:
+          value: typical_led_grade_1e18_per_cm3
+    provenance:
+      source_type: reference
+      title: AlGaInP n-type electron mobility, LED-grade doping, 300 K
+      citation: "Ioffe NSM Archive (carrier transport in AlGaInP); ~2000 cm^2/V-s typical -> 0.20 m^2/V-s in SI"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Doping: nominal carrier concentration 1e17 to 5e18 per cubic centimeter via
+  silicon or tellurium donors. Specific epitaxial doping profiles depend on the
+  LED manufacturer's process (MOCVD growth conditions, dopant species).
+  Composition tunability: Al fraction x shifts the bandgap. x ~ 0 yields red
+  (~650 nm); higher x shifts toward orange (~610 nm) and yellow (~590 nm)
+  before crossing to indirect bandgap (no longer LED-suitable) around x ~ 0.5.
+  Lattice-matched to GaAs substrate at indium fraction y ~ 0.5.
