@@ -20,7 +20,9 @@ The three load-bearing principles:
 
 ## Visual approach (eventual canvas)
 
-When the canvas exists, ChipBlocks will use **standard schematic shorthand** — the symbols people already draw on paper and that KiCad uses. Standardized in **IEC 60617** (international graphical symbols for diagrams) and **IEEE 315** (the US convention KiCad's defaults derive from). Custom icons would be anti-usability for an audience that already reads zigzag = resistor, triangle + bar = diode, two parallel lines = capacitor. The exact mechanism — likely an optional `symbol:` field on device definitions pointing at a standard symbol id — is deferred until canvas work begins; see [OBJECT-MODEL.md](OBJECT-MODEL.md) §15 for the deferred design question.
+When the canvas exists, ChipBlocks will use **standard schematic shorthand** — the symbols people already draw on paper and that KiCad uses. Standardized in **IEC 60617** (international graphical symbols for diagrams) and **IEEE 315** (the US convention KiCad's defaults derive from). Custom icons would be anti-usability for an audience that already reads zigzag = resistor, triangle + bar = diode, two parallel lines = capacitor.
+
+See [SCHEMATIC-SYMBOLS.md](SCHEMATIC-SYMBOLS.md) for the symbol inventory and the IEC vs IEEE differences. The exact mechanism — likely an optional `symbol:` field on device definitions pointing at a standard symbol id — is deferred until canvas work begins; see [OBJECT-MODEL.md](OBJECT-MODEL.md) §15 for the deferred design question.
 
 ## Previous direction (audio-synth chip designer)
 

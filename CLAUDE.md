@@ -146,6 +146,7 @@ Variable-length sprints; pace dictated by correctness, not deadlines. The v2 `SP
 - [PHYSICS-COVERAGE-MAP.md](PHYSICS-COVERAGE-MAP.md) — long-horizon physics-coverage roadmap (16 phenomenon classes, tier + `solver_level` tagging).
 - [OPEN-HARDWARE-ECOSYSTEM.md](OPEN-HARDWARE-ECOSYSTEM.md) — open-hardware ecosystem notes (open RISC-V cores, chiplet specs, license posture). Last verified 2026-05-20.
 - [TOOLING-RESEARCH-2026-05.md](TOOLING-RESEARCH-2026-05.md) — modern-toolchain research notes (Biome, pnpm, uv/ruff/pyright), verified against canonical sources.
+- [SCHEMATIC-SYMBOLS.md](SCHEMATIC-SYMBOLS.md) — research notes on standard schematic shorthand for the eventual canvas. Inventory of common symbols (resistor, capacitor, diode, LED, switch, battery, etc.), IEC 60617 vs IEEE 315 differences, KiCad symbol library as de facto reference. Locks the commitment to use standard symbols, not invented icons. Last verified 2026-05-20.
 - [LICENSE](LICENSE) — MIT
 
 **Historical / reference only — NOT active planning inputs.** These describe the superseded v2 reset/sprint path; each carries a HISTORICAL banner and is kept for project history, not current planning:
