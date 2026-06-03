@@ -56,6 +56,15 @@ function loadWorld(dir: string): World {
   return { definitions, instances, behaviors }
 }
 
+/** Get a known entity from a Map or throw a descriptive error. */
+function getOrThrow<V>(m: Map<string, V>, k: string, what: string): V {
+  const v = m.get(k)
+  if (v === undefined) {
+    throw new Error(`${what}: expected '${k}' in the base world but it was missing`)
+  }
+  return v
+}
+
 describe('cross-FK validator', () => {
   test('valid world reports zero cross-FK errors', () => {
     const world = loadWorld(join(FIXTURE_DIR, 'valid'))
@@ -67,5 +76,85 @@ describe('cross-FK validator', () => {
       )
     }
     expect(errors).toEqual([])
+  })
+})
+
+describe('cross-FK validator — invalid worlds (one per error code MUST fire)', () => {
+  test('unknown-reference: instance picks a material id that does not exist', () => {
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    const wire001 = getOrThrow(world.instances, 'wire_001', 'unknown-reference test')
+    wire001.parameters = {
+      ...wire001.parameters,
+      conductor_material: { value: 'nonexistent_material' },
+    }
+    const errors = validateWorld(world)
+    const hit = errors.find(
+      (e) =>
+        e.code === 'unknown-reference' &&
+        e.source === 'wire_001' &&
+        e.ref === 'nonexistent_material',
+    )
+    expect(hit).toBeDefined()
+  })
+
+  test('kind-mismatch: instance points at an object of the wrong kind', () => {
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    const wire001 = getOrThrow(world.instances, 'wire_001', 'kind-mismatch test')
+    // 'wire' exists as a primitive_device definition; expected here is a material.
+    wire001.parameters = {
+      ...wire001.parameters,
+      conductor_material: { value: 'wire' },
+    }
+    const errors = validateWorld(world)
+    const hit = errors.find(
+      (e) =>
+        e.code === 'kind-mismatch' &&
+        e.source === 'wire_001' &&
+        e.ref === 'wire' &&
+        e.expected_kind === 'material' &&
+        e.actual_kind === 'primitive_device',
+    )
+    expect(hit).toBeDefined()
+  })
+
+  test('unknown-behavior: device claims a behavior id not in the registry', () => {
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    const wireDef = getOrThrow(world.definitions, 'wire', 'unknown-behavior test')
+    wireDef.behaviors = ['nonexistent_behavior']
+    const errors = validateWorld(world)
+    const hit = errors.find(
+      (e) =>
+        e.code === 'unknown-behavior' &&
+        e.source === 'wire' &&
+        e.behavior === 'nonexistent_behavior',
+    )
+    expect(hit).toBeDefined()
+  })
+
+  test('role-unsatisfied: chosen material does not enable the required capability', () => {
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    // Add an insulator: exists as a material, kind matches, but doesn't enable
+    // electrical_conduction. role-satisfaction must catch this.
+    world.definitions.set('rubber_insulator', {
+      id: 'rubber_insulator',
+      kind: 'material',
+      layer: 'material',
+      enables: ['electrical_insulation'],
+    } satisfies Definition)
+    const wire001 = getOrThrow(world.instances, 'wire_001', 'role-unsatisfied test')
+    wire001.parameters = {
+      ...wire001.parameters,
+      conductor_material: { value: 'rubber_insulator' },
+    }
+    const errors = validateWorld(world)
+    const hit = errors.find(
+      (e) =>
+        e.code === 'role-unsatisfied' &&
+        e.source === 'wire_001' &&
+        e.role === 'conductor_material' &&
+        e.chosen === 'rubber_insulator' &&
+        e.required.includes('electrical_conduction'),
+    )
+    expect(hit).toBeDefined()
   })
 })
