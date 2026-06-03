@@ -1,0 +1,43 @@
+# Valid fixture: a specific 5mm through-hole red LED instance.
+# Realistic values for a typical hobbyist-store part (Kingbright WP7113SRD-D,
+# Lite-On LTL-4223, Vishay TLHR series): forward voltage ~2.0 V at 20 mA, peak
+# emission ~640 nm, max forward current 20 mA, 30-degree viewing angle, ~25
+# percent external quantum efficiency.
+# Cross-FK confirms zero errors: the LED definition's composition.uses both
+# AlGaInP variants which exist as builtin materials with the right enables.
+# MUST validate against instance.schema.json.
+kind_ref: primitive_device
+definition: led_red_algainp
+id: led_001
+origin: project
+parameters:
+  forward_voltage:
+    value:
+      kind: scalar
+      amount: 2.0
+      unit: volt
+  peak_wavelength:
+    value:
+      kind: scalar
+      amount: 640
+      unit: nanometer
+  max_forward_current:
+    value:
+      kind: scalar
+      amount: 0.020
+      unit: ampere
+  reverse_breakdown_voltage:
+    value:
+      kind: scalar
+      amount: 5
+      unit: volt
+  external_quantum_efficiency:
+    value:
+      kind: scalar
+      amount: 0.25
+      unit: dimensionless
+  viewing_angle:
+    value:
+      kind: scalar
+      amount: 30
+      unit: degree
