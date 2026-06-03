@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { parse as parseYAML } from 'yaml'
 import {
+  type ActiveVariableEntry,
   type BehaviorEntry,
   type Definition,
   type Instance,
@@ -32,6 +33,7 @@ function loadWorld(dir: string): World {
   const definitions = new Map<string, Definition>()
   const instances = new Map<string, Instance>()
   const behaviors = new Map<string, BehaviorEntry>()
+  const activeVariables = new Map<string, ActiveVariableEntry>()
 
   const files = readdirSync(dir).filter((f) => f.endsWith('.yaml'))
   for (const file of files) {
@@ -44,6 +46,8 @@ function loadWorld(dir: string): World {
 
     if (data.kind === 'behavior') {
       behaviors.set(id, data as unknown as BehaviorEntry)
+    } else if (data.kind === 'active_variable') {
+      activeVariables.set(id, data as unknown as ActiveVariableEntry)
     } else if ('kind' in data) {
       definitions.set(id, data as unknown as Definition)
     } else if ('kind_ref' in data) {
@@ -53,7 +57,7 @@ function loadWorld(dir: string): World {
     }
   }
 
-  return { definitions, instances, behaviors }
+  return { definitions, instances, behaviors, activeVariables }
 }
 
 /** Get a known entity from a Map or throw a descriptive error. */

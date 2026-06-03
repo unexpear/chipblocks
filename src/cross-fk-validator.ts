@@ -68,6 +68,13 @@ export type BehaviorEntry = {
   consequences?: string[]
 }
 
+export type ActiveVariableEntry = {
+  id: string
+  kind: 'active_variable'
+  parameter_type: string
+  value: unknown
+}
+
 // ---------------------------------------------------------------------------
 // World
 // ---------------------------------------------------------------------------
@@ -76,6 +83,7 @@ export type World = {
   definitions: Map<string, Definition>
   instances: Map<string, Instance>
   behaviors: Map<string, BehaviorEntry>
+  activeVariables: Map<string, ActiveVariableEntry>
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +119,20 @@ export type CrossFkError =
       required: string[]
       actual: string[]
     }
+  | {
+      code: 'unknown-active-variable'
+      source: string
+      ref: string
+      where: string
+    }
+  | {
+      code: 'active-variable-type-mismatch'
+      source: string
+      av: string
+      av_type: string
+      expected_type: string
+      where: string
+    }
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -127,6 +149,8 @@ function lookup(world: World, id: string): { kind: string } | null {
   if (inst !== undefined) return { kind: inst.kind_ref }
   const beh = world.behaviors.get(id)
   if (beh !== undefined) return { kind: 'behavior' }
+  const av = world.activeVariables.get(id)
+  if (av !== undefined) return { kind: 'active_variable' }
   return null
 }
 
@@ -234,32 +258,82 @@ export function validateWorld(world: World): CrossFkError[] {
     }
 
     // Parameter values of ref types (material_ref / shape_ref) must resolve to
-    // an existing object of the right kind.
+    // an existing object of the right kind. Parameters using ref: resolve
+    // through the AV registry: missing AVs fire unknown-active-variable,
+    // type-incompatible AVs fire active-variable-type-mismatch, and AVs that
+    // hold a string id get the same kind-check as value-using parameters
+    // (one extra hop: parameters.<x>.ref → <av>.value → resolved object).
     if (inst.parameters && def.parameters) {
       for (const [paramName, paramValue] of Object.entries(inst.parameters)) {
-        if (paramValue.value === undefined) continue
         const slot = def.parameters[paramName]
         if (slot === undefined) continue
 
-        const expectedKind = paramKindFromType(slot.type)
-        if (expectedKind !== null && typeof paramValue.value === 'string') {
-          const target = lookup(world, paramValue.value)
-          if (target === null) {
+        if (paramValue.value !== undefined) {
+          const expectedKind = paramKindFromType(slot.type)
+          if (expectedKind !== null && typeof paramValue.value === 'string') {
+            const target = lookup(world, paramValue.value)
+            if (target === null) {
+              errors.push({
+                code: 'unknown-reference',
+                source: inst.id,
+                ref: paramValue.value,
+                where: `parameters.${paramName}.value`,
+              })
+            } else if (target.kind !== expectedKind) {
+              errors.push({
+                code: 'kind-mismatch',
+                source: inst.id,
+                ref: paramValue.value,
+                expected_kind: expectedKind,
+                actual_kind: target.kind,
+                where: `parameters.${paramName}.value`,
+              })
+            }
+          }
+        } else if (paramValue.ref !== undefined) {
+          const av = world.activeVariables.get(paramValue.ref)
+          if (av === undefined) {
             errors.push({
-              code: 'unknown-reference',
+              code: 'unknown-active-variable',
               source: inst.id,
-              ref: paramValue.value,
-              where: `parameters.${paramName}.value`,
+              ref: paramValue.ref,
+              where: `parameters.${paramName}.ref`,
             })
-          } else if (target.kind !== expectedKind) {
+            continue
+          }
+
+          if (av.parameter_type !== slot.type) {
             errors.push({
-              code: 'kind-mismatch',
+              code: 'active-variable-type-mismatch',
               source: inst.id,
-              ref: paramValue.value,
-              expected_kind: expectedKind,
-              actual_kind: target.kind,
-              where: `parameters.${paramName}.value`,
+              av: paramValue.ref,
+              av_type: av.parameter_type,
+              expected_type: slot.type,
+              where: `parameters.${paramName}.ref`,
             })
+            continue
+          }
+
+          const expectedKind = paramKindFromType(slot.type)
+          if (expectedKind !== null && typeof av.value === 'string') {
+            const target = lookup(world, av.value)
+            if (target === null) {
+              errors.push({
+                code: 'unknown-reference',
+                source: inst.id,
+                ref: av.value,
+                where: `parameters.${paramName}.ref -> ${paramValue.ref}.value`,
+              })
+            } else if (target.kind !== expectedKind) {
+              errors.push({
+                code: 'kind-mismatch',
+                source: inst.id,
+                ref: av.value,
+                expected_kind: expectedKind,
+                actual_kind: target.kind,
+                where: `parameters.${paramName}.ref -> ${paramValue.ref}.value`,
+              })
+            }
           }
         }
       }
@@ -287,10 +361,22 @@ export function validateWorld(world: World): CrossFkError[] {
 
         const instParam = inst.parameters[paramName]
         if (instParam === undefined) continue
-        if (instParam.value === undefined) continue
-        if (typeof instParam.value !== 'string') continue
 
-        const chosen = world.definitions.get(instParam.value)
+        // Resolve the chosen id whether the parameter used value: (direct) or
+        // ref: (via AV). For ref:, we additionally need the AV to exist and
+        // hold a string value (material_ref / shape_ref AVs do).
+        let chosenId: string | undefined
+        if (typeof instParam.value === 'string') {
+          chosenId = instParam.value
+        } else if (instParam.ref !== undefined) {
+          const av = world.activeVariables.get(instParam.ref)
+          if (av !== undefined && typeof av.value === 'string') {
+            chosenId = av.value
+          }
+        }
+        if (chosenId === undefined) continue
+
+        const chosen = world.definitions.get(chosenId)
         if (chosen === undefined) continue // unknown-reference already emitted above
 
         if (role.must_enable !== undefined && role.must_enable.length > 0) {
@@ -301,7 +387,7 @@ export function validateWorld(world: World): CrossFkError[] {
               code: 'role-unsatisfied',
               source: inst.id,
               role: roleId,
-              chosen: instParam.value,
+              chosen: chosenId,
               required: role.must_enable,
               actual,
             })
