@@ -1,0 +1,45 @@
+# Valid fixture: interface definition for a solder joint.
+# First new interface kind since the foundation existed (wire's endpoints role used
+# a generic 'kind: interface' constraint but no specific interface definition).
+# A material-bonded join between two or more conductive surfaces realized by depositing
+# molten solder that wets the contacting surfaces and solidifies into a metallic bridge.
+# MUST validate against definition.schema.json.
+kind: interface
+id: solder_joint
+origin: builtin
+layer: interface
+name: Solder joint
+description: A material-bonded electrical and mechanical join between two or more conductive surfaces. Realized by depositing molten solder (hand iron, reflow oven, wave soldering, or selective soldering) that wets the surfaces and solidifies into a continuous metallic bridge. Provides electrical connection, thermal connection, and mechanical retention.
+composition:
+  requires:
+    solder_material:
+      kind: material
+      must_enable:
+        - electrical_conduction
+        - thermal_conduction
+    bonded_surfaces:
+      kind: shape
+      min_count: 2
+parameters:
+  solder_material:
+    type: material_ref
+    satisfies_role: solder_material
+    required: true
+    description: Which solder alloy realizes this joint. Project-wide defaults are typically set via the future default_solder_alloy Active Variable (Sprint 5+). Per-joint overrides replace the ref with an explicit value on that joint only.
+enables:
+  - electrical_connection
+  - mechanical_join
+  - thermal_connection
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  bonded_surfaces is a structural role with min_count: 2 and no satisfies_role
+  parameter — the cross-FK validator skips it (per the wire-endpoints pattern from
+  Sprint 3). When the formal net model lands (§15 deferred), bonded_surfaces will
+  be satisfied by net topology, and the validator can prove the join's surfaces
+  are real shapes attached to real conductive paths.

@@ -1,0 +1,12 @@
+# Valid fixture: a specific solder joint instance using SAC305 lead-free solder.
+# Demonstrates the snap-created-joint pattern from OBJECT-MODEL.md §15 in its
+# simplest form — an explicit material choice on the instance (no Active Variable
+# ref: yet, that lands in Sprint 5).
+# MUST validate against instance.schema.json.
+kind_ref: interface
+definition: solder_joint
+id: solder_joint_001
+origin: project
+parameters:
+  solder_material:
+    value: solder_sac305
