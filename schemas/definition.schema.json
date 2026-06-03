@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chipblocks.example/schemas/definition.schema.json",
+  "title": "Definition",
+  "description": "Schema for a definition — reusable truth. Composes identity/provenance/quantity/support-status fragments and adds definition-only fields (composition, parameters with default:, behaviors/enables, properties, support, extensions). Enforces anti-placeholder Rules 1 and 2 conditionally on origin.",
+  "type": "object",
+  "properties": {
+    "id": { "$ref": "identity.schema.json#/$defs/id" },
+    "name": { "$ref": "identity.schema.json#/$defs/name" },
+    "description": { "$ref": "identity.schema.json#/$defs/description" },
+    "kind": { "$ref": "identity.schema.json#/$defs/kind" },
+    "origin": { "$ref": "identity.schema.json#/$defs/origin" },
+    "layer": {
+      "type": "string",
+      "enum": [
+        "material",
+        "shape",
+        "interface",
+        "behavior",
+        "primitive_device",
+        "circuit",
+        "assembly",
+        "board_or_chip",
+        "system",
+        "cross_layer"
+      ],
+      "description": "Which layer this definition lives at. See OBJECT-MODEL.md §4."
+    },
+    "composition": {
+      "type": "object",
+      "description": "What this object is built from. At least one of 'uses' (exact) or 'requires' (role-based) must be present. See OBJECT-MODEL.md §6.",
+      "properties": {
+        "uses": {
+          "type": "array",
+          "items": { "$ref": "identity.schema.json#/$defs/id" },
+          "description": "Exact dependencies by id."
+        },
+        "requires": {
+          "type": "object",
+          "description": "Role-based dependencies. Each key is a role id; each value declares kind + capability requirements.",
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "type": "object",
+              "properties": {
+                "kind": { "$ref": "identity.schema.json#/$defs/kind" },
+                "must_enable": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 },
+                  "uniqueItems": true
+                },
+                "min_count": { "type": "integer", "minimum": 1 }
+              },
+              "required": ["kind"],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "anyOf": [{ "required": ["uses"] }, { "required": ["requires"] }],
+      "additionalProperties": false
+    },
+    "enables": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Latent capabilities for material/shape/interface kinds. Per OBJECT-MODEL.md §6."
+    },
+    "behaviors": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Behaviors this object adopts. For primitive_device and up per OBJECT-MODEL.md §6."
+    },
+    "parameters": {
+      "type": "object",
+      "description": "Parameter slot declarations. Each slot has a type, optional default, optional satisfies_role linking to a composition role. Per OBJECT-MODEL.md §13.",
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "quantity",
+                "enum",
+                "bool",
+                "string",
+                "material_ref",
+                "shape_ref",
+                "object_ref"
+              ]
+            },
+            "required": { "type": "boolean" },
+            "units": { "type": "string", "minLength": 1 },
+            "allowed": { "type": "array", "minItems": 1 },
+            "satisfies_role": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Links this parameter to a composition.requires role with the same id."
+            },
+            "description": { "type": "string" },
+            "default": {
+              "type": "object",
+              "description": "Optional cited default. Allowed on definitions; forbidden on instances.",
+              "properties": {
+                "value": { "$ref": "quantity.schema.json#/$defs/value" },
+                "provenance": { "$ref": "provenance.schema.json" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": ["type"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "properties": {
+      "type": "object",
+      "description": "Physical-property values (resistivity, density, etc.). Each property carries a value, optional provenance, optional support. Anti-placeholder Rule 1: provenance is required on builtin/community origins (enforced conditionally below).",
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {
+          "type": "object",
+          "properties": {
+            "value": { "$ref": "quantity.schema.json#/$defs/value" },
+            "provenance": { "$ref": "provenance.schema.json" },
+            "support": { "$ref": "support-status.schema.json" }
+          },
+          "required": ["value"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "support": { "$ref": "support-status.schema.json" },
+    "extensions": {
+      "type": "object",
+      "description": "Per-object extensibility rules. Per OBJECT-MODEL.md §11.",
+      "properties": {
+        "overridable": { "type": "boolean" },
+        "user_extensible": { "type": "boolean" },
+        "allowed_origins": {
+          "type": "array",
+          "items": { "$ref": "identity.schema.json#/$defs/origin" },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      },
+      "required": ["overridable", "user_extensible", "allowed_origins"],
+      "additionalProperties": false
+    },
+    "notes": { "type": "string" }
+  },
+  "required": [
+    "id",
+    "name",
+    "description",
+    "kind",
+    "origin",
+    "layer",
+    "composition",
+    "support",
+    "extensions"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "description": "Anti-placeholder Rule 1 + Rule 2: at builtin and community origins, properties must have provenance, parameter defaults must have provenance, and all values use value_strict (which excludes unknown_user_supplied). Per OBJECT-MODEL.md §12.",
+      "if": {
+        "properties": {
+          "origin": { "enum": ["builtin", "community"] }
+        },
+        "required": ["origin"]
+      },
+      "then": {
+        "properties": {
+          "properties": {
+            "patternProperties": {
+              "^[a-z][a-z0-9_]*$": {
+                "required": ["value", "provenance"],
+                "properties": {
+                  "value": { "$ref": "quantity.schema.json#/$defs/value_strict" }
+                }
+              }
+            }
+          },
+          "parameters": {
+            "patternProperties": {
+              "^[a-z][a-z0-9_]*$": {
+                "properties": {
+                  "default": {
+                    "required": ["value", "provenance"],
+                    "properties": {
+                      "value": { "$ref": "quantity.schema.json#/$defs/value_strict" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
