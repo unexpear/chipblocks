@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chipblocks.example/schemas/behavior.schema.json",
+  "title": "Behavior",
+  "description": "Schema for a behavior registry entry — a named physical law (e.g., conducts_current, has_resistance, produces_joule_heat). Per OBJECT-MODEL.md §6 + §15 deferred 'behavior registry shape'. Behaviors are registry-only (not instantiable) — they are referenced by devices' 'behaviors:' lists and by other behaviors' 'consequences:'. Behaviors have NO composition (they are abstract laws, not composed from lower-layer objects).",
+  "type": "object",
+  "properties": {
+    "id": { "$ref": "identity.schema.json#/$defs/id" },
+    "name": { "$ref": "identity.schema.json#/$defs/name" },
+    "description": { "$ref": "identity.schema.json#/$defs/description" },
+    "kind": {
+      "const": "behavior",
+      "description": "Behaviors validate against this schema only — kind must be exactly 'behavior'."
+    },
+    "origin": { "$ref": "identity.schema.json#/$defs/origin" },
+    "layer": {
+      "const": "behavior",
+      "description": "Behaviors live at the behavior layer."
+    },
+    "parameters_required": {
+      "type": "array",
+      "description": "Named slots the behavior needs from the object that adopts it. Each slot has a name, type, units (for quantity), allowed (for enum), and optional description. Empty array allowed for behaviors with no parameter inputs.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "$ref": "identity.schema.json#/$defs/id" },
+          "type": {
+            "type": "string",
+            "enum": [
+              "quantity",
+              "enum",
+              "bool",
+              "string",
+              "material_ref",
+              "shape_ref",
+              "object_ref"
+            ]
+          },
+          "units": { "type": "string", "minLength": 1 },
+          "allowed": { "type": "array", "minItems": 1 },
+          "description": { "type": "string" }
+        },
+        "required": ["name", "type"],
+        "additionalProperties": false
+      }
+    },
+    "evaluates": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Symbolic equation in human-readable math notation. The math at the meaning level — the validator engine reads this for documentation, and a future code registry (keyed by 'law') implements the actual evaluation. Optional: behaviors with solver_status of defined_not_solved or research_future may omit evaluates."
+    },
+    "consequences": {
+      "type": "array",
+      "description": "Behavior ids triggered as cascading consequences. For example: has_resistance produces produces_joule_heat. Empty array is legal (most behaviors have no cascading consequences).",
+      "items": { "$ref": "identity.schema.json#/$defs/id" },
+      "uniqueItems": true
+    },
+    "law": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Foreign key into a future code-implementation registry (e.g., 'ohm', 'joule', 'led_emission'). The validator engine in a later sprint will look up the implementation by this id. Optional: behaviors with solver_status of defined_not_solved or research_future may omit law."
+    },
+    "support": { "$ref": "support-status.schema.json" },
+    "extensions": {
+      "type": "object",
+      "description": "Per-object extensibility rules. Per OBJECT-MODEL.md §11.",
+      "properties": {
+        "overridable": { "type": "boolean" },
+        "user_extensible": { "type": "boolean" },
+        "allowed_origins": {
+          "type": "array",
+          "items": { "$ref": "identity.schema.json#/$defs/origin" },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      },
+      "required": ["overridable", "user_extensible", "allowed_origins"],
+      "additionalProperties": false
+    },
+    "notes": { "type": "string" }
+  },
+  "required": [
+    "id",
+    "name",
+    "description",
+    "kind",
+    "origin",
+    "layer",
+    "parameters_required",
+    "consequences",
+    "support",
+    "extensions"
+  ],
+  "additionalProperties": false
+}
