@@ -104,7 +104,7 @@
               "type": "object",
               "description": "Optional cited default. Allowed on definitions; forbidden on instances.",
               "properties": {
-                "value": { "$ref": "quantity.schema.json#/$defs/value" },
+                "value": { "$ref": "quantity.schema.json#/$defs/param_value" },
                 "provenance": { "$ref": "provenance.schema.json" }
               },
               "additionalProperties": false
@@ -192,7 +192,7 @@
                   "default": {
                     "required": ["value", "provenance"],
                     "properties": {
-                      "value": { "$ref": "quantity.schema.json#/$defs/value_strict" }
+                      "value": { "$ref": "quantity.schema.json#/$defs/param_value_strict" }
                     }
                   }
                 }

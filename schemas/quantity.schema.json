@@ -133,6 +133,24 @@
         { "$ref": "#/$defs/curve" },
         { "$ref": "#/$defs/lookup_table" }
       ]
+    },
+    "param_value": {
+      "description": "Polymorphic parameter value. For quantity-typed parameters: a quantity 'value'. For material_ref / shape_ref / object_ref / enum / string types: a bare string id. For numeric scalars expressed bare: a number. For bool: a boolean. Use this for instance parameter values and definition parameter defaults at user_local/project origins.",
+      "oneOf": [
+        { "$ref": "#/$defs/value" },
+        { "type": "string", "minLength": 1 },
+        { "type": "number" },
+        { "type": "boolean" }
+      ]
+    },
+    "param_value_strict": {
+      "description": "Like 'param_value' but uses 'value_strict' (excludes unknown_user_supplied). Use for definition parameter defaults at builtin/community origins per anti-placeholder Rule 2.",
+      "oneOf": [
+        { "$ref": "#/$defs/value_strict" },
+        { "type": "string", "minLength": 1 },
+        { "type": "number" },
+        { "type": "boolean" }
+      ]
     }
   }
 }

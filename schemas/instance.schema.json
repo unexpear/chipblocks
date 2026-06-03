@@ -34,13 +34,7 @@
           "type": "object",
           "properties": {
             "value": {
-              "description": "Concrete value. For quantity-typed params: a quantity value (any kind, including unknown_user_supplied since instances are project origin). For material_ref / shape_ref / object_ref / enum / string: a bare string id. For bool: a boolean. For numeric scalars expressed bare: a number.",
-              "oneOf": [
-                { "$ref": "quantity.schema.json#/$defs/value" },
-                { "type": "string", "minLength": 1 },
-                { "type": "number" },
-                { "type": "boolean" }
-              ]
+              "$ref": "quantity.schema.json#/$defs/param_value"
             },
             "ref": {
               "$ref": "identity.schema.json#/$defs/id",
