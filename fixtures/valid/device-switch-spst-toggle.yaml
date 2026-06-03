@@ -1,0 +1,84 @@
+# Valid fixture: SPST toggle switch primitive device.
+# First stateful device in the catalog. Single pole (one independent switching
+# element), single throw (one closed position, one open position) — the canonical
+# two-state on/off switch. State machine: open <-> closed via 'actuated' trigger.
+#
+# Naming chosen as switch_spst_toggle (not generic 'switch') because the state
+# machine is part of the definition, and SPDT/DPDT/rotary switches will need
+# distinct definitions with their own state machines. Future variants:
+# switch_spst_momentary, switch_spdt, switch_dpdt, switch_rotary, switch_slide.
+#
+# MUST validate against definition.schema.json. Cross-FK confirms zero errors
+# when contact_material is a real material that enables electrical_conduction
+# and when all state_machine transitions reference declared states.
+kind: primitive_device
+id: switch_spst_toggle
+origin: builtin
+layer: primitive_device
+name: "SPST toggle switch (single pole, single throw)"
+description: "A two-terminal mechanical switch with one independent switching element and a single closed position. The canonical on/off switch — light switches, toggle switches on equipment fronts, snap-action microswitches in detents. When closed, the contacts touch and the device behaves like a very-low-resistance conductor; when open, the contacts separate and the device behaves like a high-resistance insulator. Actuation toggles between the two states."
+composition:
+  requires:
+    contact_material:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  contact_material:
+    type: material_ref
+    satisfies_role: contact_material
+    required: true
+    description: The conductive material the switch contacts are made of. Determines closed-state contact resistance, current-carrying capacity, and contact wear/oxidation behavior. Common choices include silver-plated copper (low resistance, good for low-current signal switching), nickel or gold-plated (corrosion resistance for harsh environments), and tungsten or silver-cadmium-oxide (arc resistance for higher-power AC switching).
+  contact_resistance_closed:
+    type: quantity
+    units: ohm
+    required: false
+    description: Effective resistance between terminals in the closed state. Typically very small (milliohms) but non-zero — accounts for contact area, plating, oxidation, and contact force.
+  max_current:
+    type: quantity
+    units: ampere
+    required: false
+    description: Maximum continuous current the contacts can carry without damage. Exceeded values lead to contact welding, arc damage, or premature wear.
+  rated_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Maximum voltage across the open contacts before dielectric breakdown across the gap.
+behaviors:
+  - switches_circuit
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+state_machine:
+  initial_state: open
+  states:
+    open:
+      description: Contacts physically separated by the actuator. No conductive path between terminals; the air or vacuum gap behaves as an insulator (subject to the rated_voltage breakdown limit).
+    closed:
+      description: Contacts touching under spring or actuator force. A continuous conductive path exists between terminals with very low resistance (the contact_resistance_closed parameter).
+  transitions:
+    - from: open
+      to: closed
+      trigger: actuated
+      description: External mechanical actuation (user flipping a lever, snap-action of an actuator pin, solenoid pull on the actuator mechanism) drives the contacts together.
+    - from: closed
+      to: open
+      trigger: actuated
+      description: The same actuation source toggles the contacts back apart. (For toggle switches, the actuation alternates between making and breaking on each event; for momentary switches the open->closed and closed->open triggers would be separate — 'actuated_while_held' and 'released'.)
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  conducts_current, has_resistance, produces_joule_heat are listed alongside
+  switches_circuit to describe what the switch IS when closed (a low-resistance
+  conductor). State-dependent gating of these behaviors (so they only apply when
+  state == closed) requires the behavior-derives-value pattern (§15 deferred).
+  Until then the four behaviors coexist as honest claims; the simulator will
+  eventually use the state_machine to gate which ones fire at any given moment.
