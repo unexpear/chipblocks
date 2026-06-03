@@ -1,0 +1,15 @@
+# INVALID — §13 hard rule violation: parameter must have exactly one of
+# value: or ref:, not both.
+# An instance parameter has both. Schema enforces this via oneOf
+# [{required: [value]}, {required: [ref]}] — having both satisfies both
+# branches, which fails oneOf (must match exactly one).
+# MUST fail validation.
+kind_ref: primitive_device
+definition: wire
+id: bad_wire_value_and_ref
+origin: project
+parameters:
+  conductor_material:
+    value: copper
+    ref: project_default_conductor
+    # ↑ FORBIDDEN — exactly one of value/ref per §13 mutual exclusion.

@@ -64,3 +64,33 @@ describe('valid fixtures', () => {
     })
   }
 })
+
+describe('invalid fixtures (anti-placeholder + §13 rule violations MUST fail)', () => {
+  const invalidDir = join(FIXTURE_DIR, 'invalid')
+  const files = readdirSync(invalidDir).filter((f) => f.endsWith('.yaml'))
+
+  for (const file of files) {
+    test(`${file} MUST fail validation`, () => {
+      const raw = readFileSync(join(invalidDir, file), 'utf-8')
+      const data = parseYAML(raw) as unknown
+      const picked = pickValidator(data)
+
+      if (!picked) {
+        throw new Error(
+          `${file}: fixture has neither 'kind' (definition) nor 'kind_ref' (instance)`,
+        )
+      }
+
+      const ok = picked.validator(data)
+      // If a fixture marked INVALID passes validation, the schema is too
+      // permissive — the rule the fixture violates is not actually enforced.
+      // The test fails loudly so the gap is obvious.
+      if (ok) {
+        throw new Error(
+          `${file} unexpectedly PASSED ${picked.kind} validation. The rule it claims to violate is not enforced by the schema. Add the rule or move the fixture to fixtures/valid/.`,
+        )
+      }
+      expect(ok).toBe(false)
+    })
+  }
+})

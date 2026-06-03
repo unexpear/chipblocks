@@ -1,0 +1,32 @@
+# INVALID — anti-placeholder Rule 2 violation.
+# A builtin-origin material has a property whose value.kind is unknown_user_supplied.
+# Schema enforces value_strict at builtin/community origins, which excludes
+# unknown_user_supplied. MUST fail validation.
+kind: material
+id: bad_copper_rule2
+origin: builtin
+layer: material
+name: Bad Copper (Rule 2 demo)
+description: Demonstrates Rule 2 violation — unknown_user_supplied at builtin origin.
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+properties:
+  resistivity:
+    value:
+      kind: unknown_user_supplied
+      amount: 1.68e-8
+      unit: ohm_meter
+    provenance:
+      source_type: user_supplied
+      title: Should not be allowed at builtin
+      citation: "no real source"
+      confidence: low
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]

@@ -1,0 +1,30 @@
+# INVALID — anti-placeholder Rule 4 violation ('no pass by absence').
+# A device definition claims behaviors but omits the 'support' block, so it
+# never declares a solver_status. The validator can't tell whether the
+# behaviors are computed, approximated, warning-only, or routed to an external
+# solver. Schema's top-level required: [..., support, ...] rejects this.
+# MUST fail validation.
+kind: primitive_device
+id: bad_wire_rule4
+origin: builtin
+layer: primitive_device
+name: Bad Wire (Rule 4 demo)
+description: Demonstrates Rule 4 violation — claims behaviors with no solver_status.
+composition:
+  requires:
+    conductor_material:
+      kind: material
+      must_enable: [electrical_conduction]
+parameters:
+  conductor_material:
+    type: material_ref
+    required: true
+behaviors:
+  - conducts_current
+  - has_resistance
+# support block INTENTIONALLY OMITTED — Rule 4: every behavior-claiming object
+# must declare a solver_status via support.
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]

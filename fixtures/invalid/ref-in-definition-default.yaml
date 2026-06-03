@@ -1,0 +1,37 @@
+# INVALID — §13 hard rule violation: ref: is forbidden on definitions.
+# A definition's parameter default uses 'ref:' instead of 'value:'. Definitions
+# are self-contained and portable across projects; ref: would tie them to a
+# project-scoped Active Variable, breaking portability. Schema's
+# default.additionalProperties=false catches this — only value and provenance
+# are allowed inside a default block. MUST fail validation.
+kind: primitive_device
+id: bad_wire_ref_in_def
+origin: builtin
+layer: primitive_device
+name: Bad Wire (§13 ref-in-definition demo)
+description: "Demonstrates §13 violation — ref: in a definition's parameter default."
+composition:
+  requires:
+    conductor_material:
+      kind: material
+      must_enable: [electrical_conduction]
+parameters:
+  conductor_material:
+    type: material_ref
+    required: true
+  voltage:
+    type: quantity
+    units: V
+    default:
+      ref: some_project_var
+      # ↑ FORBIDDEN — definitions must be self-contained.
+      #   Allowed keys here are value and provenance only.
+behaviors:
+  - conducts_current
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]

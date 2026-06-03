@@ -1,0 +1,31 @@
+# INVALID — anti-placeholder Rule 1 violation.
+# A builtin-origin material has a property with a value but no provenance.
+# The if/then conditional on origin=builtin requires every property to carry
+# 'provenance'. MUST fail validation.
+kind: material
+id: bad_copper_rule1
+origin: builtin
+layer: material
+name: Bad Copper (Rule 1 demo)
+description: Demonstrates Rule 1 violation — missing provenance at builtin.
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+properties:
+  resistivity:
+    value:
+      kind: scalar
+      amount: 1.68e-8
+      unit: ohm_meter
+    # provenance INTENTIONALLY OMITTED — Rule 1 says builtin requires it
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
