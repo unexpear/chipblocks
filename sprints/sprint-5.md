@@ -137,3 +137,94 @@ Potentially surfaced by Sprint 5:
 ## Sprint 5 opens here
 
 Master tip when opened: `8a08d6f`. Sprint 4's catalog (8 materials, 2 shapes, 6 behaviors, 1 interface kind, 4 primitive devices, 5 instances) is the content Sprint 5 builds AVs ON TOP OF. Every new entry and every modified instance runs through schema validation + cross-FK before landing. Any gap surfaced is either fixed in-sprint with a new sub-commit, or recorded as a §15 deferred question with a documented fallback.
+
+---
+
+## Sprint 5 retro (closed 2026-06-03)
+
+### What landed
+
+| Sub-commit | What |
+|---|---|
+| `5569b3f` | S5-v3-1: Sprint 5 plan opened |
+| `e90c130` | S5-v3-2: active-variable.schema.json + identity kind enum extension |
+| `2230aaf` | S5-v3-3: 2 valid AV fixtures (material_ref + quantity types) |
+| `ed411a6` | S5-v3-4: solder_joint_001 switches to ref: + new solder_joint_002 overrides |
+| `9731e9e` | S5-v3-5: Cross-FK validator extension — resolve refs through AVs |
+| `aae1329` | S5-v3-6: 2 must-fail tests for the new AV error codes |
+| (this) | S5-v3-7: retro — Sprint 5 closes |
+
+### Done criteria — all met
+
+- [x] `active-variable.schema.json` exists, compiles in Ajv, validates the 2 new AV fixtures
+- [x] `identity.schema.json` kind enum includes `active_variable`
+- [x] 2 valid AV fixtures (material_ref + quantity types) validate cleanly
+- [x] `instance-solder-joint-001.yaml` uses `ref: default_solder_alloy` and the cross-FK validator confirms the chain end-to-end (AV → solder_sac305 → role-satisfaction passes)
+- [x] `instance-solder-joint-002.yaml` demonstrates explicit value override; cross-FK confirms zero errors
+- [x] 2 must-fail tests fire the two new error codes (unknown-active-variable, active-variable-type-mismatch). Implemented via programmatic mutation rather than separate YAML fixtures — per Sprint 3 retro lesson #4 (cleaner than parallel fixture sets).
+- [x] `npm test` shows 41 tests passing (34 schema + 7 cross-FK, up from 36)
+- [x] `npx tsc --noEmit` clean
+- [x] `npx biome check .` clean
+- [x] Sprint retro written
+
+### Catalog after Sprint 5
+
+| Layer | Count | Entries |
+|---|---|---|
+| Material | 8 | (unchanged from Sprint 4) |
+| Shape | 2 | (unchanged) |
+| Behavior | 6 | (unchanged) |
+| Interface kind | 1 | (unchanged) |
+| Primitive device | 4 | (unchanged) |
+| Instances | 6 | wire_001, resistor_001, capacitor_001, battery_9v_001, solder_joint_001 (now via ref), solder_joint_002 (new — explicit value override) |
+| **Active Variables** | **2** | default_solder_alloy (material_ref → solder_sac305), default_resistor_tolerance (quantity → 5 percent) |
+
+### Lessons surfaced
+
+1. **The schema-validator-test triple scales cleanly.** Adding a new kind (`active_variable`) required: a new schema (active-variable.schema.json), a new validator branch in tests/schema.test.ts pickValidator, a new map in the World type, a new branch in loadWorld, two new CrossFkError codes, and two new must-fail tests. Every step had a clear precedent — behaviors did the same dance in Sprint 3. The pattern is reproducible. **General lesson:** when adding a new kind to the model, the recipe is clear enough that future kinds should follow without surprise.
+
+2. **The "invalid fixtures" entry in the plan deliverables wasn't honored literally — and that's fine.** The plan listed `fixtures/invalid/instance-ref-to-nonexistent-av.yaml` and `fixtures/invalid/av-type-mismatch.yaml`. They never got created. The programmatic-mutation pattern from Sprint 3 retro covered the same intent more cleanly. **General lesson:** plan deliverables are intent, not contract. When a better path emerges in execution, take it — the retro records the deviation honestly.
+
+3. **AV → AV chains stayed forbidden cleanly.** No Sprint 5 fixture needed them. The validator's flat resolution (one hop: instance → AV → resolved object) was enough. **Added §15 row** to capture the rule explicitly for future readers. If pain surfaces (e.g., wanting `default_pcb_substrate: { ref: default_substrate_for_consumer_grade }`), chain resolution + cycle detection lands in its own sprint.
+
+4. **`lookup()` returning `kind: 'active_variable'` is quietly correct.** When someone writes `parameters.solder_material.value: default_solder_alloy` (using value: where ref: was intended), the validator now reports `kind-mismatch` with `expected_kind: 'material'`, `actual_kind: 'active_variable'`. That's exactly the right error message — it tells the user they probably meant `ref:` instead of `value:`. **No special-case handling needed** — the existing kind-mismatch machinery does the right thing.
+
+5. **The chain `instance → ref → AV → value → resolved object` is honest about its hops.** The `where:` field in the validator errors reports `parameters.solder_material.ref -> default_solder_alloy.value` when the AV's value points at a nonexistent material. This is more readable than burying the chain in opaque error messages — debugging a broken chain shows exactly where it broke.
+
+6. **One YAML colon-in-description gotcha STILL re-surfacing risk.** Sprint 4 retro flagged this; Sprint 5 didn't trigger it again, but the AV fixtures came close (the description fields didn't happen to contain colons). The cumulative pattern — Sprint 2's ref-in-default fixture, Sprint 4's Thevenin description — strongly suggests this belongs in CLAUDE.md or contributor docs when those exist. Worth documenting as a permanent fixture-authoring rule.
+
+### New §15 row added in this retro
+
+One new deferred row added to OBJECT-MODEL.md §15 alongside this retro:
+
+- **AV → AV chains and cycle detection.** Sprint 5 forbids `ref:` inside an AV's value (chains of `ref: → AV → ref: → AV → value`). Lands when a real use case demands chains; brings cycle detection + depth limits with it.
+
+### Unresolved questions (still deferred per OBJECT-MODEL.md §15)
+
+Carried forward from earlier sprints:
+
+- Default-resolution path — when an instance omits a parameter, role-satisfaction should still check the default. AVs don't change this.
+- Net model — `connects:` stays ad-hoc.
+- `property_definition` registry shape.
+- Multi-version definitions, cross-pack dependencies, schema migration story.
+- Stackup model.
+- Preset/template model.
+- Visual symbol library, auto-created interface UX pattern (canvas sprint).
+- Switch / stateful devices, LED + semiconductor physics (Sprint 6+).
+- Alloy composition-by-weight schema field.
+- Behavior-derives-value pattern.
+- `min_count` enforcement in cross-FK.
+- **NEW: AV → AV chains and cycle detection.**
+
+### What this unblocks
+
+After Sprint 5 close:
+
+- **The auto-solder UX pattern from OBJECT-MODEL.md §15 is no longer just a description.** It has real, schema-validated, cross-FK-verified data primitives. When the canvas sprint lands, snap-create + project-default + right-click-override can be built on top of working ref/value mechanics rather than requiring schema work alongside UI work.
+- **Project-level configuration is first-class.** Any project parameter that's "set once, applies everywhere" (default solder, default trace width, default RoHS posture, default reflow profile, default impedance, default chassis material) now has a home — a 1-file AV at `MyProject.chipblocks/active-variables/<name>.yaml`.
+- **Errors point at the broken hop.** Validator's where: strings name the exact link in the chain — useful for debugging when a project's default has drifted away from its consumers' expectations.
+- **The kind taxonomy grew by one without disruption.** active_variable is the 11th kind. The pattern was clear enough that no existing code or fixture broke. Future kinds (when they arrive — possibly `preset`, `derivation`, or whatever §15 surfaces) follow the same recipe.
+
+### Sprint 5 closed
+
+All sub-commits land cleanly on master. 41 tests pass (34 schema + 7 cross-FK, more than doubled from Sprint 3 close's 17). The foundation is now strong enough to support real project configuration on top of real definitions — what was a wish in Sprint 4's §15 row is operational machinery in Sprint 5's close.
