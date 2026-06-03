@@ -1,0 +1,59 @@
+# Valid fixture: behavior registry entry for light emission via radiative
+# recombination. The FIRST non-electrical behavior in the registry — previous
+# behaviors (conducts_current, has_resistance, produces_joule_heat,
+# has_capacitance, stores_charge, provides_emf, switches_circuit, acts_as_diode)
+# all describe electrical or electrostatic phenomena. Light emission introduces
+# optical/photonic physics into the model.
+#
+# Forward-biased current through a direct-bandgap PN junction causes electrons
+# to recombine with holes, releasing photons at a wavelength determined by the
+# junction's bandgap energy. The full LED physics requires the bandgap to be
+# 'direct' (not 'indirect' like silicon) — indirect-bandgap recombination is
+# predominantly non-radiative (phonons) and produces heat rather than light.
+#
+# Used by: led_red_algainp (S7-v3-4). Future LEDs of different colors (blue
+# InGaN, green InGaN, IR GaAs, UV AlGaN) and laser diodes will reuse this
+# behavior with different bandgap energies driving different wavelengths.
+# MUST validate against behavior.schema.json.
+kind: behavior
+id: emits_light
+origin: builtin
+layer: behavior
+name: "Emits light (radiative recombination at direct-bandgap PN junction)"
+description: "When forward-biased current flows through a direct-bandgap PN junction, electrons crossing from the n-side recombine with holes on the p-side. The energy released is carried by photons whose wavelength is determined by the junction's bandgap energy: wavelength = h*c / E_g. Only direct-bandgap semiconductors (GaAs, GaN, InP, AlGaInP, etc.) emit light efficiently; indirect-bandgap materials (silicon, germanium) release the energy primarily as phonons (heat) instead."
+parameters_required:
+  - name: forward_current
+    type: quantity
+    units: ampere
+    description: Current flowing through the junction in the forward direction. Photon flux is proportional to this.
+  - name: bandgap_energy
+    type: quantity
+    units: electronvolt
+    description: Energy of the PN junction's direct bandgap. Determines emission wavelength via Planck's relation E = h*c/lambda.
+  - name: external_quantum_efficiency
+    type: quantity
+    units: dimensionless
+    description: Fraction of injected electrons that result in photons escaping the device (accounts for non-radiative recombination losses + light extraction efficiency from the chip). Typically 0.10 to 0.40 for modern AlGaInP red LEDs.
+evaluates: "wavelength = h * c / E_g where h = 6.626e-34 J-s, c = 3.0e8 m/s, E_g in joules (1 eV = 1.602e-19 J). Photon flux = external_quantum_efficiency * forward_current / e. Optical output power = photon_flux * E_g."
+consequences: []
+law: radiative_recombination
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  First NON-ELECTRICAL behavior in the registry. Behaviors are abstract enough
+  to describe any physics, so no schema change was needed to introduce optical
+  physics — emits_light validates against behavior.schema.json identically to
+  the eight prior behaviors.
+  Sources: Sze, 'Physics of Semiconductor Devices' 3rd ed.; Schubert,
+  'Light-Emitting Diodes' 2nd ed. (Cambridge University Press).
+  Future related behaviors: absorbs_light (photodiodes, solar cells) — Sprint
+  9+ when photodiode/solar cell devices land. emits_light + absorbs_light
+  together represent the two halves of the photon-electron interaction.
+  Beam pattern, viewing angle, color temperature, and spectral linewidth are
+  packaging-level concerns not modeled at the behavior level — those attach
+  to the LED package/lens fixture, not the photon emission physics itself.

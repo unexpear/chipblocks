@@ -1,0 +1,47 @@
+# Valid fixture: behavior registry entry for diode action — one-way conduction.
+# A device with this behavior conducts current readily in the forward bias
+# direction (anode positive relative to cathode by more than the forward
+# threshold voltage), and blocks current in the reverse bias direction up to
+# the reverse breakdown voltage.
+# Used by the LED primitive (S7-v3-4) and will be reused by future diode
+# devices (silicon, Schottky, Zener) — Sprint 8+.
+# MUST validate against behavior.schema.json.
+kind: behavior
+id: acts_as_diode
+origin: builtin
+layer: behavior
+name: "Acts as diode (one-way conduction)"
+description: "A device with this behavior conducts current in the forward bias direction (anode-to-cathode current when V_anode > V_cathode + V_forward_threshold) and blocks current in the reverse direction up to the reverse breakdown voltage. Forward conduction follows the Shockley diode equation. Reverse conduction below breakdown is negligible (saturation current scale)."
+parameters_required:
+  - name: forward_voltage
+    type: quantity
+    units: volt
+    description: Voltage across the diode in the forward direction (anode positive relative to cathode).
+  - name: saturation_current
+    type: quantity
+    units: ampere
+    description: Reverse saturation current — the current that flows when reverse-biased below breakdown.
+  - name: thermal_voltage
+    type: quantity
+    units: volt
+    description: kT/q at operating temperature — typically 0.026 V at room temperature.
+evaluates: "Forward bias: I = I_s * (exp(V_forward / V_T) - 1) (Shockley diode equation). Reverse bias below breakdown: I ~ -I_s (saturation current, negligible). Reverse bias above |V_breakdown|: I rises rapidly (avalanche or Zener breakdown)."
+consequences: []
+law: shockley_diode
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Shockley diode equation per Sze, 'Physics of Semiconductor Devices' 3rd ed.
+  Real diodes deviate from the ideal model via the diode ideality factor n
+  (typically 1.0-2.0 for silicon, ~1.0-1.5 for III-V LEDs) — Sprint 7 omits
+  this refinement; future enhancements may add it as an optional parameter.
+  Used by: led_red_algainp (S7-v3-4) today. Future diode devices (silicon
+  rectifier, Schottky, Zener, varactor) will reuse this behavior with
+  different parameter values and breakdown characteristics.
+  State-dependent gating (different I-V curve in forward vs reverse) is part
+  of the §15 deferred 'state-dependent behavior gating' row from Sprint 6.
