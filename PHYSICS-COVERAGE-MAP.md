@@ -4,6 +4,8 @@
 >
 > **Status:** research-derived roadmap doc, not a sprint task. Last reviewed 2026-05-18.
 >
+> **Current-state note (2026-05-20):** "Already in `behaviors.yaml` / `materials.yaml`" references below reflect the v2 state before the second reset. As of 2026-05-20, `materials.yaml`, `behaviors.yaml`, and the corresponding `*.schema.json` files don't exist on master — they return in v3 Sprint 2+. The architectural claims (tier tagging, the `solver_level` enum, the completeness checklist) still hold; only the "already in X" phrasing is forward-looking.
+>
 > **Why this exists:** the project's ambition ceiling is "ground-up electronics design from materials to full systems." That covers ~16 phenomenon classes, hundreds of named behaviors, and multiple physics regimes (DC, AC, semiconductor device physics, transmission lines, reliability). Without an explicit coverage map, the validator's scope drifts implicitly and the project either over-extends ("simulate everything") or under-extends ("only model what's convenient"). This doc draws the line.
 
 ---

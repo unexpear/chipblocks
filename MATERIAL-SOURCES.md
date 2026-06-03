@@ -4,6 +4,8 @@
 >
 > **Status:** living document. **Last verified 2026-05-18.** PDK landscape in particular is volatile (two major open PDKs got archived in April 2026); cite the verification date when leaning on an entry below.
 >
+> **Current-state note (2026-05-20):** `materials.yaml`, `provenance.schema.json`, and the per-material `*.schema.json` files don't currently exist on master — they were wiped in the second reset and return in v3 Sprint 2+. The phrasing below describes how the registry works *when populated*; the canonical-source guidance still applies. ADR-007 (referenced below) is marked HISTORICAL; its provenance-fragment shape is now described in [OBJECT-MODEL.md](OBJECT-MODEL.md) §9.
+>
 > **Why this exists:** every value in [materials.yaml](materials.yaml) carries the provenance fragment per [ADR-007](ADR-007-active-variables.md) — value + units + source + conditions + confidence + tolerance + notes. This doc says *which sources count as canonical* for each material category, and how to combine multiple sources so the shipped value is honest.
 
 ---

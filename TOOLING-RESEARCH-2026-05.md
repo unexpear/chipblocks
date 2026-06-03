@@ -73,7 +73,7 @@ The `strict: true` of 2020 is the floor, not the ceiling. The modern flags add:
 
 Verified at [typescriptlang.org/tsconfig](https://www.typescriptlang.org/tsconfig). Current TypeScript version referenced in docs: 5.7 (one agent claimed 5.9; the version number wasn't verifiable, but the flags exist regardless).
 
-**For ChipBlocks specifically:** the manifest schemas in `frontend/src/manifests/_generated/` are exactly the surface where `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` catch real bugs that `strict: true` alone misses. Cheap to flip now, expensive to retrofit later.
+**For ChipBlocks specifically:** the manifest schemas (when the codegen output returns in v3 Sprint 2+) are exactly the surface where `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` catch real bugs that `strict: true` alone misses. Cheap to flip when frontend code returns, expensive to retrofit later.
 
 ### 3. Supply chain became a real thing
 
