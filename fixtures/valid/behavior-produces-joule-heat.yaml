@@ -1,0 +1,24 @@
+# Valid fixture: behavior registry entry for thermal emission.
+# Consequence of has_resistance. solver_status=warning_only: the model knows
+# heat is produced but full thermal-flow simulation is deferred.
+# MUST validate against behavior.schema.json.
+kind: behavior
+id: produces_joule_heat
+origin: builtin
+layer: behavior
+name: "Produces Joule heat (thermal emission)"
+description: "Power dissipated through resistance becomes thermal energy emitted to the surrounding environment. Marks heat-producing objects so thermal-aware validators can detect overheating risks."
+parameters_required:
+  - name: power_dissipated
+    type: quantity
+    units: watt
+evaluates: "Q_dot = P_heat"
+consequences: []
+law: thermal_emission
+support:
+  model_status: defined
+  solver_status: warning_only
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]

@@ -1,0 +1,23 @@
+# Valid fixture: behavior registry entry for Ohm's law.
+# Per OBJECT-MODEL.md §6. MUST validate against behavior.schema.json.
+kind: behavior
+id: conducts_current
+origin: builtin
+layer: behavior
+name: "Conducts current (Ohm's law)"
+description: "A conductive object carries electric current proportional to the voltage across it and inversely to its resistance."
+parameters_required:
+  - name: resistance
+    type: quantity
+    units: ohm
+    description: The resistance of the conducting path.
+evaluates: "V = I * R; I = V / R; P = V * I"
+consequences: []
+law: ohm
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]

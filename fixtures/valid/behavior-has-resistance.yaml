@@ -1,0 +1,26 @@
+# Valid fixture: behavior registry entry for resistive heating.
+# Cascades into produces_joule_heat. MUST validate against behavior.schema.json.
+kind: behavior
+id: has_resistance
+origin: builtin
+layer: behavior
+name: "Has resistance (Joule heating)"
+description: "A current-carrying object with non-zero resistance dissipates electrical energy as heat proportional to the square of current times resistance."
+parameters_required:
+  - name: resistance
+    type: quantity
+    units: ohm
+  - name: current
+    type: quantity
+    units: ampere
+evaluates: "P_heat = I^2 * R"
+consequences:
+  - produces_joule_heat
+law: joule
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]

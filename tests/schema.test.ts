@@ -30,10 +30,19 @@ const validateDefinition = ajv.compile(
 const validateInstance = ajv.compile(
   JSON.parse(readFileSync(join(SCHEMA_DIR, 'instance.schema.json'), 'utf-8')),
 )
+const validateBehavior = ajv.compile(
+  JSON.parse(readFileSync(join(SCHEMA_DIR, 'behavior.schema.json'), 'utf-8')),
+)
 
 function pickValidator(data: unknown) {
   if (data !== null && typeof data === 'object') {
-    if ('kind' in data) return { kind: 'definition' as const, validator: validateDefinition }
+    if ('kind' in data) {
+      // Behaviors validate against a separate schema; other kinds use definition.
+      if ((data as Record<string, unknown>).kind === 'behavior') {
+        return { kind: 'behavior' as const, validator: validateBehavior }
+      }
+      return { kind: 'definition' as const, validator: validateDefinition }
+    }
     if ('kind_ref' in data) return { kind: 'instance' as const, validator: validateInstance }
   }
   return null
