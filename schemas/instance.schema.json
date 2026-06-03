@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chipblocks.example/schemas/instance.schema.json",
+  "title": "Instance",
+  "description": "Schema for an instance — project-specific use of a definition. Per OBJECT-MODEL.md §2. Always origin=project. Parameter values are either value: or ref: (mutually exclusive). default: is forbidden on instances.",
+  "type": "object",
+  "properties": {
+    "kind_ref": {
+      "$ref": "identity.schema.json#/$defs/kind_ref"
+    },
+    "definition": {
+      "$ref": "identity.schema.json#/$defs/id",
+      "description": "id of the definition this instance points at."
+    },
+    "id": {
+      "$ref": "identity.schema.json#/$defs/id"
+    },
+    "origin": {
+      "type": "string",
+      "const": "project",
+      "description": "Instances live only in projects. Always 'project'."
+    },
+    "name": {
+      "$ref": "identity.schema.json#/$defs/name"
+    },
+    "description": {
+      "$ref": "identity.schema.json#/$defs/description"
+    },
+    "parameters": {
+      "type": "object",
+      "description": "Concrete parameter values. Each entry has 'value' or 'ref' but not both. Omission is also valid (accepts the definition's default).",
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "description": "Concrete value. For quantity-typed params: a quantity value (any kind, including unknown_user_supplied since instances are project origin). For material_ref / shape_ref / object_ref / enum / string: a bare string id. For bool: a boolean. For numeric scalars expressed bare: a number.",
+              "oneOf": [
+                { "$ref": "quantity.schema.json#/$defs/value" },
+                { "type": "string", "minLength": 1 },
+                { "type": "number" },
+                { "type": "boolean" }
+              ]
+            },
+            "ref": {
+              "$ref": "identity.schema.json#/$defs/id",
+              "description": "Reference to a project-scoped Active Variable. Forbidden on definitions; legal here."
+            }
+          },
+          "oneOf": [{ "required": ["value"] }, { "required": ["ref"] }],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "connects": {
+      "type": "array",
+      "description": "Net / terminal / device connections. Ad-hoc shape per OBJECT-MODEL.md §2 example; formal net model deferred per §15.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "net": { "$ref": "identity.schema.json#/$defs/id" },
+          "terminal": { "$ref": "identity.schema.json#/$defs/id" },
+          "of": { "$ref": "identity.schema.json#/$defs/id" }
+        },
+        "required": ["net", "terminal", "of"],
+        "additionalProperties": false
+      }
+    },
+    "notes": { "type": "string" }
+  },
+  "required": ["kind_ref", "definition", "id", "origin"],
+  "additionalProperties": false
+}
