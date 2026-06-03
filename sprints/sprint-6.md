@@ -123,3 +123,92 @@ Plus all carried-forward §15 rows (default-resolution, net model, preset/templa
 ## Sprint 6 opens here
 
 Master tip when opened: `03e7f40`. Sprint 5's Active Variables work (the schema-validator-test triple for a new kind) is the immediate precedent — Sprint 6 follows the same recipe but extends an existing schema (definition) rather than adding a new kind. The state_machine block is optional on definitions; existing static devices stay unchanged. Any gap surfaced is either fixed in-sprint or recorded as a §15 deferred question.
+
+---
+
+## Sprint 6 retro (closed 2026-06-03)
+
+### What landed
+
+| Sub-commit | What |
+|---|---|
+| `738f2e9` | S6-v3-1: Sprint 6 plan opened |
+| `1922c94` | S6-v3-2: state_machine schema field on definition.schema.json + OBJECT-MODEL.md §6.5 |
+| `424483a` | S6-v3-3: switches_circuit behavior registry entry |
+| `9fef17e` | S6-v3-4: switch_spst_toggle device — first stateful primitive (renamed from generic 'switch') |
+| `3d2c291` | S6-v3-5: switch_001 instance — panel-mount SPST toggle with copper contacts |
+| `b1276b7` | S6-v3-6: Cross-FK extension — state-machine-invalid-transition error code + must-fail test |
+| (this) | S6-v3-7: retro — Sprint 6 closes |
+
+### Done criteria — all met
+
+- [x] `definition.schema.json` accepts an optional `state_machine` block; existing devices without state machines still validate (resistor, capacitor, power_source, wire — all confirmed by the 36-fixture schema suite)
+- [x] OBJECT-MODEL.md §6.5 describes the state-machine pattern and how it differs from capabilities + behaviors
+- [x] `behavior-switches-circuit.yaml` validates against behavior.schema.json
+- [x] `device-switch-spst-toggle.yaml` validates against definition.schema.json with state_machine populated (initial_state: open; states: open + closed; one transition each direction triggered by 'actuated')
+- [x] `instance-switch-001.yaml` validates; cross-FK confirms zero errors (copper enables electrical_conduction → contact_material role satisfied)
+- [x] Cross-FK validator emits `state-machine-invalid-transition` when a transition references an undeclared state; programmatic must-fail test fires correctly
+- [x] `npm test` shows 45 tests passing (37 schema + 8 cross-FK, up from 41 at Sprint 5 close)
+- [x] `npx tsc --noEmit` clean
+- [x] `npx biome check .` clean
+- [x] Sprint retro written
+
+### Catalog after Sprint 6
+
+| Layer | Count | Entries |
+|---|---|---|
+| Material | 8 | (unchanged) |
+| Shape | 2 | (unchanged) |
+| Behavior | **7** | + switches_circuit |
+| Interface kind | 1 | (unchanged) |
+| Primitive device | **5** | + switch_spst_toggle |
+| Instances | **7** | + switch_001 |
+| Active Variables | 2 | (unchanged) |
+| **Cross-FK error codes** | **7** | + state-machine-invalid-transition |
+
+### Lessons surfaced
+
+1. **The schema-validator-test triple is fully reproducible.** Sprint 6 added a new schema FIELD (rather than a new kind, which Sprint 5 did) but the pattern was identical: extend schema → add cross-FK validation → add device using the field → add must-fail test → retro. Six sub-commits, no surprises, all gates green throughout. **General lesson:** the recipe scales whether you're adding a kind or extending an existing schema.
+
+2. **State machines as declarative descriptions felt right.** The schema captures the FSM; the validator checks internal consistency (transitions reference declared states); future simulators read it for evaluation. Same honesty rule as behaviors (declare the law, don't evaluate). The pattern is consistent and the schema doesn't claim more than it can prove. **General lesson:** when adding new model concepts, follow the existing declare-don't-evaluate pattern.
+
+3. **Naming refined from plan-to-execution.** Plan said `device-switch.yaml` for `id: switch`. Execution landed `device-switch-spst-toggle.yaml` for `id: switch_spst_toggle` — because the state_machine IS part of the definition, and SPDT will need its own definition with its own state machine. Generic `switch` was the wrong abstraction. **General lesson:** when a definition has identity-defining content (state machine, fixed parameters, fixed structure), the id should name the specific variant, not a generic class.
+
+4. **Listing 4 behaviors alongside switches_circuit is the honest minimum.** switch_spst_toggle's behaviors are [switches_circuit, conducts_current, has_resistance, produces_joule_heat]. The switch IS a conductor when closed, with measurable resistance and Joule heating — those behaviors are legitimately present. The state-dependent gating (only fire when state=closed) is the future work — captured in a new §15 row below.
+
+5. **The state-machine pattern WILL extend cleanly to relays/MOSFETs/flip-flops.** Relays add one extra state (coil energized vs de-energized driving the contacts), MOSFETs add gate-voltage triggers, latches add edge-triggered transitions. None of these need a different schema shape — just different states + transitions populated. **General lesson:** Sprint 6's pattern is the contract; Sprint 7+ instantiate it.
+
+6. **YAML colon gotcha did NOT re-surface.** Sprint 4 retro flagged it; Sprint 5 didn't trigger it; Sprint 6 also clean. The defensive habit (quote descriptions with colons) is being followed. **Worth documenting** in CLAUDE.md or contributor docs when those exist.
+
+### New §15 rows added in this retro
+
+Three deferred questions surfaced during Sprint 6, all added to OBJECT-MODEL.md §15 alongside this retro:
+
+- **Trigger taxonomy as enum.** Sprint 6 left `trigger:` as a free string. Hardens to an enum once 3-4 stateful device types exist (likely after Sprint 7's relay and Sprint 8+'s MOSFET land).
+- **Multi-pole switches (SPDT, DPDT, 4PDT).** Need state-dependent connection topology — which terminal pairs are connected per state. Sprint 7+ explores whether the existing state_machine + composition shape can express this or needs an extension.
+- **State-dependent behavior gating.** Stateful devices list behaviors that may only fire in certain states. switch_spst_toggle's conducts_current/has_resistance/produces_joule_heat ought to gate on state=closed. Today the model has no formal linkage between FSM states and active behaviors. Future work: extend behaviors with optional state predicates, or extend state_machine to declare which behaviors fire per state.
+
+### Unresolved questions (still deferred per OBJECT-MODEL.md §15)
+
+Carried forward from earlier sprints + Sprint 6 additions:
+
+- Default-resolution path, net model, `property_definition` registry shape, multi-version definitions, cross-pack dependencies, schema migration story
+- Stackup model, preset/template model, visual symbol library, auto-created interface UX pattern (canvas)
+- Alloy composition-by-weight schema field, behavior-derives-value pattern, `min_count` enforcement, AV → AV chains
+- LED + semiconductor physics (Sprint 7+)
+- **NEW: Trigger taxonomy as enum** (Sprint 7+)
+- **NEW: Multi-pole switches (SPDT/DPDT/4PDT)** (Sprint 7+)
+- **NEW: State-dependent behavior gating** (paired with behavior-derives-value, lands when simulator engine needs it)
+
+### What this unblocks
+
+After Sprint 6 close:
+
+- **The state-machine pattern is a contract that future stateful devices inherit.** Relay, MOSFET, latch, flip-flop, multiplexer — all use the same declarative `state_machine` block with their own states + transitions. The schema is the contract; the cross-FK validator is the enforcer.
+- **The educational anchor circuit (battery → wire → switch → resistor → LED → wire → battery_terminal) is now ~80% buildable.** Only LED is missing. Once LED lands in Sprint 7, the foundation can model the first-circuit-everyone-builds with real cited values from materials all the way up.
+- **Cross-FK error codes total 8.** unknown-reference, kind-mismatch, unknown-behavior, role-unsatisfied, unknown-active-variable, active-variable-type-mismatch, state-machine-invalid-transition. Every code has a programmatic must-fail test proving it fires.
+- **The honest-declaration discipline is durable.** Sprint 6 added a state_machine field knowing the simulator that uses it doesn't exist. That's fine — the model declares; future sprints solve. Same as how Sprint 3 added the behavior registry before any solver could evaluate Ohm's law.
+
+### Sprint 6 closed
+
+All sub-commits land cleanly on master. 45 tests pass (37 schema + 8 cross-FK, more than 2.5× Sprint 3's close). The first stateful primitive joins the catalog without disturbing the static ones. Sprint 7's natural pick is LED + semiconductor physics — the last piece for the canonical first-circuit.
