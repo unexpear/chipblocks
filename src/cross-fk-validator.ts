@@ -43,6 +43,16 @@ export type Definition = {
   enables?: string[]
   behaviors?: string[]
   parameters?: Record<string, ParamSlot>
+  state_machine?: {
+    initial_state: string
+    states: Record<string, { description: string }>
+    transitions: Array<{
+      from: string
+      to: string
+      trigger: string
+      description?: string
+    }>
+  }
 }
 
 export type ParamSlot = {
@@ -133,6 +143,13 @@ export type CrossFkError =
       expected_type: string
       where: string
     }
+  | {
+      code: 'state-machine-invalid-transition'
+      source: string
+      invalid_ref: string
+      where: string
+      declared_states: string[]
+    }
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -209,6 +226,45 @@ export function validateWorld(world: World): CrossFkError[] {
             source: def.id,
             behavior: behId,
             where: 'behaviors',
+          })
+        }
+      }
+    }
+
+    // State machine internal consistency. Per OBJECT-MODEL.md §6.5:
+    // every transition's 'from' and 'to' must reference a declared state,
+    // and 'initial_state' must reference a declared state.
+    if (def.state_machine) {
+      const declaredStates = Object.keys(def.state_machine.states)
+      const initial = def.state_machine.initial_state
+      if (!declaredStates.includes(initial)) {
+        errors.push({
+          code: 'state-machine-invalid-transition',
+          source: def.id,
+          invalid_ref: initial,
+          where: 'state_machine.initial_state',
+          declared_states: declaredStates,
+        })
+      }
+      for (let i = 0; i < def.state_machine.transitions.length; i++) {
+        const t = def.state_machine.transitions[i]
+        if (t === undefined) continue
+        if (!declaredStates.includes(t.from)) {
+          errors.push({
+            code: 'state-machine-invalid-transition',
+            source: def.id,
+            invalid_ref: t.from,
+            where: `state_machine.transitions[${i}].from`,
+            declared_states: declaredStates,
+          })
+        }
+        if (!declaredStates.includes(t.to)) {
+          errors.push({
+            code: 'state-machine-invalid-transition',
+            source: def.id,
+            invalid_ref: t.to,
+            where: `state_machine.transitions[${i}].to`,
+            declared_states: declaredStates,
           })
         }
       }

@@ -204,4 +204,32 @@ describe('cross-FK validator — invalid worlds (one per error code MUST fire)',
     )
     expect(hit).toBeDefined()
   })
+
+  test('state-machine-invalid-transition: transition references undeclared state', () => {
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    const switchDef = getOrThrow(
+      world.definitions,
+      'switch_spst_toggle',
+      'state-machine-invalid-transition test',
+    )
+    // Mutate the first transition's 'from' to a state that doesn't exist
+    // in the device's declared states (open, closed).
+    if (switchDef.state_machine !== undefined) {
+      const firstTransition = switchDef.state_machine.transitions[0]
+      if (firstTransition !== undefined) {
+        firstTransition.from = 'nonexistent_state'
+      }
+    }
+    const errors = validateWorld(world)
+    const hit = errors.find(
+      (e) =>
+        e.code === 'state-machine-invalid-transition' &&
+        e.source === 'switch_spst_toggle' &&
+        e.invalid_ref === 'nonexistent_state' &&
+        e.where === 'state_machine.transitions[0].from' &&
+        e.declared_states.includes('open') &&
+        e.declared_states.includes('closed'),
+    )
+    expect(hit).toBeDefined()
+  })
 })
