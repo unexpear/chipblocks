@@ -161,4 +161,47 @@ describe('cross-FK validator — invalid worlds (one per error code MUST fire)',
     )
     expect(hit).toBeDefined()
   })
+
+  test('unknown-active-variable: instance uses ref: pointing at a missing AV', () => {
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    const joint001 = getOrThrow(world.instances, 'solder_joint_001', 'unknown-active-variable test')
+    joint001.parameters = {
+      ...joint001.parameters,
+      solder_material: { ref: 'nonexistent_av' },
+    }
+    const errors = validateWorld(world)
+    const hit = errors.find(
+      (e) =>
+        e.code === 'unknown-active-variable' &&
+        e.source === 'solder_joint_001' &&
+        e.ref === 'nonexistent_av',
+    )
+    expect(hit).toBeDefined()
+  })
+
+  test('active-variable-type-mismatch: AV.parameter_type does not match slot.type', () => {
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    // default_resistor_tolerance is parameter_type: quantity.
+    // solder_joint_001's solder_material slot is type: material_ref.
+    // Pointing the joint's material role at the quantity AV must fire mismatch.
+    const joint001 = getOrThrow(
+      world.instances,
+      'solder_joint_001',
+      'active-variable-type-mismatch test',
+    )
+    joint001.parameters = {
+      ...joint001.parameters,
+      solder_material: { ref: 'default_resistor_tolerance' },
+    }
+    const errors = validateWorld(world)
+    const hit = errors.find(
+      (e) =>
+        e.code === 'active-variable-type-mismatch' &&
+        e.source === 'solder_joint_001' &&
+        e.av === 'default_resistor_tolerance' &&
+        e.av_type === 'quantity' &&
+        e.expected_type === 'material_ref',
+    )
+    expect(hit).toBeDefined()
+  })
 })
