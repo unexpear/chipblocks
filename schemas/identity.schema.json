@@ -32,9 +32,10 @@
         "circuit",
         "assembly",
         "board_or_chip",
-        "system"
+        "system",
+        "active_variable"
       ],
-      "description": "What kind of thing this is. Per OBJECT-MODEL.md §4 kind taxonomy. Appears on definitions."
+      "description": "What kind of thing this is. Per OBJECT-MODEL.md §4 kind taxonomy + active_variable (per §13). Appears on definitions and AV registry entries."
     },
     "kind_ref": {
       "$ref": "#/$defs/kind",

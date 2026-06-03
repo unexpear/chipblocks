@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chipblocks.example/schemas/active-variable.schema.json",
+  "title": "Active Variable",
+  "description": "Schema for an Active Variable (AV) — a project-scope (or user_local) variable that instances reference via 'ref:'. Per OBJECT-MODEL.md §13. AVs are NOT definitions (no reusable physical truth) and NOT instances (don't fill a definition's parameters); they are a separate kind that holds a typed value the cross-FK validator resolves through when an instance parameter uses 'ref:' instead of 'value:'.",
+  "type": "object",
+  "properties": {
+    "id": { "$ref": "identity.schema.json#/$defs/id" },
+    "name": { "$ref": "identity.schema.json#/$defs/name" },
+    "description": { "$ref": "identity.schema.json#/$defs/description" },
+    "kind": {
+      "const": "active_variable",
+      "description": "AVs validate against this schema only — kind must be exactly 'active_variable'."
+    },
+    "origin": {
+      "type": "string",
+      "enum": ["project", "user_local"],
+      "description": "AVs live in projects (one-project scope) or user_local (cross-project personal defaults). Never builtin or community. Per OBJECT-MODEL.md §13."
+    },
+    "layer": {
+      "const": "cross_layer",
+      "description": "AVs cross layers — they configure devices, materials, behaviors, anything. Per OBJECT-MODEL.md §4 cross_layer designation."
+    },
+    "parameter_type": {
+      "type": "string",
+      "enum": ["quantity", "enum", "bool", "string", "material_ref", "shape_ref", "object_ref"],
+      "description": "What type of value this AV holds. Matches the consuming parameter's 'type' field on definitions. Cross-FK validator checks that the AV's parameter_type matches the consuming parameter's type."
+    },
+    "value": {
+      "$ref": "quantity.schema.json#/$defs/param_value",
+      "description": "The actual value of this AV. For quantity AVs: a quantity value (scalar, range, condition_bound, equation, curve, lookup_table, or unknown_user_supplied at project/user_local). For ref-type AVs (material_ref / shape_ref / object_ref): a bare string id pointing at a definition. For enum AVs: a bare string. For bool AVs: a boolean. For numeric AVs: a number."
+    },
+    "provenance": {
+      "$ref": "provenance.schema.json",
+      "description": "Optional. Project-origin AVs can be user-set without provenance per the anti-placeholder rules (unknown_user_supplied is permitted at project/user_local). When provenance is supplied (e.g., a user cites IPC J-STD-020 for their default reflow temperature), it follows the same fragment shape used elsewhere."
+    },
+    "support": { "$ref": "support-status.schema.json" },
+    "extensions": {
+      "type": "object",
+      "description": "Per-object extensibility rules. Per OBJECT-MODEL.md §11.",
+      "properties": {
+        "overridable": { "type": "boolean" },
+        "user_extensible": { "type": "boolean" },
+        "allowed_origins": {
+          "type": "array",
+          "items": { "$ref": "identity.schema.json#/$defs/origin" },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      },
+      "required": ["overridable", "user_extensible", "allowed_origins"],
+      "additionalProperties": false
+    },
+    "notes": { "type": "string" }
+  },
+  "required": [
+    "id",
+    "name",
+    "description",
+    "kind",
+    "origin",
+    "layer",
+    "parameter_type",
+    "value",
+    "support",
+    "extensions"
+  ],
+  "additionalProperties": false
+}
