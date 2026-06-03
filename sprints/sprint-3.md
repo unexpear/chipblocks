@@ -120,3 +120,70 @@ tests/
 ## Sprint 3 opens here
 
 Master tip when opened: `49758b0`. Sprint 2's 6 schemas + 8 fixtures + test runner are the contract Sprint 3 builds on. The cross-FK validator runs *after* schema validation; both layers must pass for a world to be considered well-formed.
+
+---
+
+## Sprint 3 retro (closed 2026-05-20)
+
+### What landed
+
+| Sub-commit | What |
+|---|---|
+| `00d2231` | Sprint plan opened |
+| `b1cba97` | S3-v3-1: behavior.schema.json — registry shape for named physical laws |
+| (commit) | S3-v3-2: first 3 behavior registry entries (conducts_current, has_resistance, produces_joule_heat) + test runner extension |
+| `f988e1f` | S3-v3-3: cross-FK validator skeleton (unknown-reference, kind-mismatch, unknown-behavior) |
+| `0f85fdc` | S3-v3-4: role-satisfaction check (the role-unsatisfied error code) |
+| (commit) | S3-v3-5: valid world fixture (added shape-path) + first cross-FK test (zero errors on valid world) |
+| `7f8f484` | S3-v3-6: invalid world tests — all four CrossFkError codes fire |
+| (this) | S3-v3-7: retro — Sprint 3 closes |
+
+### Done criteria — all met
+
+- [x] `behavior.schema.json` exists, compiles in Ajv, validates the 3 new behavior fixtures
+- [x] Three behavior registry entries (conducts_current, has_resistance, produces_joule_heat) are well-formed YAML and validate
+- [x] `src/cross-fk-validator.ts` exports a function that loads a world and returns a structured error list
+- [x] Valid world fixture passes cross-FK validation (zero errors)
+- [x] 4 invalid world tests fail with specific, identifiable errors (one per error code)
+- [x] `npm test` shows 17 tests passing (12 schema + 5 cross-FK)
+- [x] `npx tsc --noEmit` clean
+- [x] `npx biome check .` clean
+- [x] Sprint retro written
+
+### Lessons surfaced
+
+1. **The wire example surfaced a real fixture dependency.** The wire instance references `geometry: path`, but no path shape existed in `fixtures/valid/`. Cross-FK would have unknown-reference'd it. Added `shape-path.yaml` to complete the valid world. **General lesson:** when a definition declares a `composition.requires` role and a parameter satisfies it with a ref-type, the *referenced object's definition* must also be in the world. Cross-FK exposes these missing pieces — that's the point.
+
+2. **`composition.requires` without a `satisfies_role` parameter is OK.** The wire's `endpoints` role has no parameter pointing at it (interface roles are satisfied by the future net model). The role-satisfaction check correctly skips it. **General lesson:** not every required role needs a parameter; structural roles (like endpoints satisfied by `connects:`) are legitimately skipped by parameter-driven validation. The net model is the future home for that check.
+
+3. **Discriminated-union error codes made tests precise.** Each must-fail test asserts a specific code AND specific field values (not just "validation failed"). This is what catches *schema drift*: if a future change accidentally relaxes a rule, the test that depended on the strict version fails AND points at the exact constraint that stopped firing. **General lesson:** structured errors beat string-matching for testing validators.
+
+4. **Programmatic world mutation beat fixture directories.** Sprint plan considered separate fixture directories for each invalid case. Switched to programmatic mutation in the test (load valid world → tweak one thing → run validator → assert specific error). Cleaner, less duplication, easier to maintain. **General lesson:** when testing "what happens when one thing is wrong," it's often cleaner to mutate from a known-good baseline than to maintain N parallel fixture sets.
+
+5. **Biome's `useLiteralKeys` interacts with `noUncheckedIndexedAccess`.** Auto-fix marked "unsafe" because both index forms are equivalent under strict, but the lint still prefers dot notation. Applied manually. **General lesson:** TS strict's index-access discipline and Biome's dot-notation preference are compatible but the auto-fix is conservative about them.
+
+6. **Default-resolution path is deferred — explicit only for now.** Role-satisfaction only checks parameters where the instance supplied an explicit value. If the instance omits a parameter and the definition's `default.value` is used, that default isn't checked yet. **General lesson:** Sprint 3's role-satisfaction is a real check on explicit choices; default-resolution validation needs the default-resolution path to be wired first.
+
+### Unresolved questions (still deferred per OBJECT-MODEL.md §15)
+
+- Default-resolution path — when an instance omits a parameter, the definition's default kicks in; role-satisfaction should still check the default. Currently skipped.
+- Net model — `connects:` syntax stays ad-hoc; the cross-FK validator doesn't traverse net topology yet.
+- `property_definition` registry shape — same as the behavior registry but for property concepts.
+- Multi-version definitions (Sprint 7+).
+- Cross-pack dependency declarations (Sprint 8+).
+- Schema migration story.
+- Visual symbol library (canvas sprint).
+- Stackup model (board/chip-level concern).
+- Preset/template model (packaged components like `0603 resistor`).
+
+### What this unblocks
+
+After Sprint 3 close:
+- **Cross-references are honest.** A wire instance that picks an insulator material gets `role-unsatisfied` at validation time. The model can't lie by accident.
+- **Behavior registry is real.** When a future device claims `behaviors: [conducts_current]`, the validator confirms `conducts_current` exists with its parameter_required list and solver_status declared.
+- **Real content authoring becomes possible.** v3 Sprint 4 (whatever its scope) can start filling out `fixtures/valid/` or a `data/` directory with real materials/devices/behaviors without invented values — every entry runs through schema + cross-FK.
+- **The validator's vocabulary is locked.** Four error codes (`unknown-reference` / `kind-mismatch` / `unknown-behavior` / `role-unsatisfied`) cover the load-bearing relationship checks. Future checks (default-satisfaction, net-topology, behavior-input-compatibility) get added as new codes alongside, not as breaking changes.
+
+### Sprint 3 closed
+
+All sub-commits land cleanly on master. 17 tests pass. The object model now has both shape-validation AND relationship-validation; the gap between "schema says it's well-formed" and "cross-FK says it actually means what it claims" is closed.
