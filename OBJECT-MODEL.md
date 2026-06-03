@@ -113,7 +113,7 @@ The single most load-bearing distinction in the entire model.
 
 | Aspect | Definition | Instance |
 |---|---|---|
-| **What it is** | Reusable truth ("what a copper wire is") | Project-specific use ("this 20cm copper wire connecting resistor_3 to led_1") |
+| **What it is** | Reusable truth ("what a wire is") | Project-specific use ("this 20cm copper wire connecting resistor_3 to led_1") |
 | **Lives in** | Manifests (YAML files at any origin) | Project files (`project` origin only) |
 | **Authored by** | Library or pack authors | Project users |
 | **Allowed origins** | builtin / community / user_local / project | project only |
@@ -215,7 +215,7 @@ Definitions **require** `name` and `description` — they are the load-bearing h
 
 Instances **default** rather than require:
 
-- `instance.name` defaults to `"<definition.name> #<n>"` (e.g., `"Copper wire #1"` for the first `copper_wire` instance)
+- `instance.name` defaults to `"<definition.name> #<n>"` (e.g., `"Wire #1"` for the first `wire` instance)
 - `instance.description` defaults to the definition's `description`
 
 This preserves usability without forcing the user to hand-label hundreds of project instances. An instance may override either field when a specific human label adds value (e.g., naming a wire `"VCC rail to MCU pin 13"`).
@@ -317,7 +317,7 @@ The emergence rule. Materials, shapes, and interfaces have **capabilities** — 
 | shape | `enables` | path enables `path_role` (cross-section integration) |
 | interface | `enables` | terminal enables `external_connection` |
 | behavior | n/a | the behavior itself |
-| device and up | `behaviors` | copper_wire has behaviors `conducts_current`, `has_resistance`, `produces_joule_heat` |
+| device and up | `behaviors` | wire has behaviors `conducts_current`, `has_resistance`, `produces_joule_heat` |
 
 ### The emergence rule (current form)
 
@@ -832,16 +832,17 @@ Surfaced now so they can't accidentally be answered by side effect later.
 | **Project file format.** What does a `MyProject.chipblocks/` folder actually contain? Schema for project files lives separately from object-model schemas. | v3 Sprint 2 or 3 |
 | **`property_definition` registry shape.** The cross-layer registry of property concepts (what "resistance" means, what units, what behaviors produce it) needs its own concrete schema. | v3 Sprint 2 |
 | **`behavior` registry shape.** Same — the registry of named physics laws (`conducts_current`, `joule_heating`, etc.) with their parameter requirements and emergence preconditions. | v3 Sprint 2 |
-| **Multi-version definitions.** When a community pack publishes copper_wire@1.2.0 and a project depends on @1.1.0, version resolution is its own problem. | Sprint 7+ |
+| **Multi-version definitions.** When a community pack publishes wire@1.2.0 and a project depends on @1.1.0, version resolution is its own problem. | Sprint 7+ |
 | **Cross-pack dependency declarations.** A `chipblocks-power` pack uses things from `chipblocks-passive`; how is the dependency expressed and enforced? | Sprint 8+ |
 | **Schema migration story.** When this very model changes (it will), how do old project files keep loading? | After v3 Sprint 2 |
 | **v3 Usability Review.** A dedicated future pass to evaluate the foundation against real user tasks: visual-editor candidacy, terminology audit, beginner-friendly explanations, progressive-disclosure design, default-value rationalization, accessibility (keyboard nav, screen-reader support, status-by-text-not-color-only), and safe workflow design. Naming it now preserves the commitment that usability gets deliberate review after the foundation is deep enough to evaluate. | Future v3 sprint |
-| **`material_ref` parameter type + full parameter taxonomy.** Definitions declare slots like `conductor_material: { type: material_ref }`; instances fill them with a material id (`copper`). The full parameter-type set (quantity / string / enum / bool / material_ref / object_ref / …) and the exact value shape + resolution rules for `material_ref` are reserved here but not designed yet. | v3 Sprint 2 |
+| **`material_ref` / `shape_ref` parameter types + full parameter taxonomy.** Definitions declare slots like `conductor_material: { type: material_ref }` or `geometry: { type: shape_ref }`; instances fill them with a material or shape id (`copper`, `path`). The full parameter-type set (quantity / string / enum / bool / material_ref / shape_ref / object_ref / …) and the exact value shape + resolution rules are reserved here but not designed yet. | v3 Sprint 2 |
 | **Wire (and general) construction representation.** Construction options (`solid_core`, `stranded`, `braided`, `litz`, `ribbon`) are device/structure-level choices, not shape-layer geometry. Exact representation (enum parameter? sub-structure object?) deferred. | v3 Sprint 2+ |
 | **CAD-like shape authoring.** Freeform custom-shape geometry is out of foundation scope. The `shape` layer stays primitive electronics geometry (path, region, plate, film, gap, hole, layer, junction, surface, cross-section). If freeform geometry ever arrives, it belongs to higher-level tooling above the `shape` layer. | Deferred / possibly never |
 | **Preset/template model.** A preset is neither a pure definition nor a concrete instance: it is a partially configured definition, such as "22 AWG stranded copper wire," that fixes some parameters while leaving others open. The model must decide whether presets are definitions, templates, or a separate kind. It must also cover packaged components such as `0603 resistor`, `QFN-32`, and `SOT-23 MOSFET`, where a reusable electrical/device definition is paired with physical package dimensions, pad layout, and default parameters. | v3 Sprint 2+ |
 | **Role-satisfaction validation.** When an instance fills a `composition.requires` role through a parameter (via `satisfies_role`), the validator must prove the selected object satisfies the role constraints — e.g., `copper` actually enables `electrical_conduction`. This is stricter than simple foreign-key existence. | v3 Sprint 2 |
 | **Stackup model.** Boards and chips need ordered physical layer stacks: material, thickness, vertical order, and role. The model must later decide whether stackup is a structured property of a `board_or_chip`, its own definition kind, or a composition pattern using shape/material entries. | Future board/chip modeling |
+| **Visual symbol library.** When the canvas eventually renders devices, the visual layer should use standard schematic shorthand — **IEC 60617** (international graphical symbols for diagrams) and/or **IEEE 315** (the US convention KiCad uses) — not invented icons. Standard symbols are what electrical engineers already read at a glance (zigzag = resistor, triangle+bar = diode, etc.). Devices may carry an optional `symbol:` field referencing a standard symbol identifier (e.g., `iec_60617:resistor`); exact schema deferred until canvas work begins. | v3 canvas sprint |
 
 These deferrals are explicit. They do not get answered by code accident in the meantime.
 
