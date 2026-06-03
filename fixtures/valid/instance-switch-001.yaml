@@ -1,0 +1,30 @@
+# Valid fixture: a specific panel-mount SPST toggle switch instance.
+# Realistic values for a small 1/2 inch panel toggle (the kind you flip with a
+# finger to turn equipment on/off): copper contacts, ~20 mohm closed resistance,
+# 6 A continuous, 125 VAC rated. Real parts in this class include the
+# C&K 7101 and NKK S-series families.
+# Cross-FK confirms zero errors: copper enables electrical_conduction so the
+# contact_material role is satisfied.
+# MUST validate against instance.schema.json.
+kind_ref: primitive_device
+definition: switch_spst_toggle
+id: switch_001
+origin: project
+parameters:
+  contact_material:
+    value: copper
+  contact_resistance_closed:
+    value:
+      kind: scalar
+      amount: 0.020
+      unit: ohm
+  max_current:
+    value:
+      kind: scalar
+      amount: 6
+      unit: ampere
+  rated_voltage:
+    value:
+      kind: scalar
+      amount: 125
+      unit: volt
