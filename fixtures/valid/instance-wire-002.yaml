@@ -1,0 +1,36 @@
+# Valid fixture: a specific copper-wire instance — the return path in the
+# educational anchor circuit. Closes the loop from the LED's cathode back to
+# the battery's negative terminal. Identical physical specs to wire_001 (same
+# copper, same gauge, same construction) — distinguished only by its place
+# in the circuit.
+# S7-v3-6: lands as part of the educational anchor circuit (battery -> wire_001
+# -> switch -> resistor -> LED -> wire_002 -> battery negative).
+# MUST validate against instance.schema.json.
+kind_ref: primitive_device
+definition: wire
+id: wire_002
+origin: project
+parameters:
+  conductor_material:
+    value: copper
+  geometry:
+    value: path
+  length:
+    value:
+      kind: scalar
+      amount: 0.2
+      unit: m
+  cross_section_area:
+    value:
+      kind: scalar
+      amount: 1.0e-7
+      unit: m2
+  construction:
+    value: stranded
+connects:
+  - net: net_led_wire2
+    terminal: terminal_a
+    of: wire_002
+  - net: net_battery_neg
+    terminal: terminal_b
+    of: wire_002

@@ -2,6 +2,13 @@
 # Higher-power wirewound resistors are the natural use case for nichrome; lower-power
 # 1/4 W or 1/8 W resistors in real product use are typically carbon-film or metal-film
 # (those material types arrive in later sprints).
+# S7-v3-6: connects: wires this resistor into the educational anchor circuit
+# between switch_001 (input from switch's output) and led_001 (output to LED's
+# anode). At 9 V supply, 2.0 V LED drop, leaves ~7 V across this resistor.
+# I = (9 - 2) / 100 = 70 mA — too high for a 20 mA LED. A realistic circuit
+# would use ~350 ohm here; the 100 ohm value is preserved from Sprint 4 for
+# fixture stability. Selecting the right resistance for an LED is exactly the
+# kind of calculation a future solver will do automatically.
 # MUST validate against instance.schema.json.
 kind_ref: primitive_device
 definition: resistor
@@ -27,3 +34,10 @@ parameters:
       kind: scalar
       amount: 5
       unit: watt
+connects:
+  - net: net_switch_resistor
+    terminal: terminal_a
+    of: resistor_001
+  - net: net_resistor_led
+    terminal: terminal_b
+    of: resistor_001

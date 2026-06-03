@@ -5,6 +5,9 @@
 # percent external quantum efficiency.
 # Cross-FK confirms zero errors: the LED definition's composition.uses both
 # AlGaInP variants which exist as builtin materials with the right enables.
+# S7-v3-6: connects: wires this LED as the final active element in the
+# educational anchor circuit. Anode receives current from resistor_001;
+# cathode passes it to wire_002 for the return path to the battery.
 # MUST validate against instance.schema.json.
 kind_ref: primitive_device
 definition: led_red_algainp
@@ -41,3 +44,10 @@ parameters:
       kind: scalar
       amount: 30
       unit: degree
+connects:
+  - net: net_resistor_led
+    terminal: anode
+    of: led_001
+  - net: net_led_wire2
+    terminal: cathode
+    of: led_001

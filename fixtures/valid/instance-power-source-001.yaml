@@ -4,6 +4,10 @@
 # values do not currently carry per-value provenance (provenance lives on definitions).
 # When the preset/template model lands, this instance's spec can promote to a
 # 'battery_9v_alkaline' preset definition with full property-level provenance.
+#
+# S7-v3-6: connects: block wires this battery into the educational anchor circuit.
+# Positive terminal -> wire_001 -> switch_001 -> resistor_001 -> led_001 ->
+# wire_002 -> back to negative terminal.
 # MUST validate against instance.schema.json.
 kind_ref: primitive_device
 definition: power_source
@@ -27,6 +31,13 @@ parameters:
       unit: ampere_hour
   chemistry_or_type:
     value: alkaline_zinc_manganese
+connects:
+  - net: net_battery_pos
+    terminal: terminal_positive
+    of: battery_9v_001
+  - net: net_battery_neg
+    terminal: terminal_negative
+    of: battery_9v_001
 notes: |
   Values cited from ANSI/IEC 60086-2 (primary battery designation 6LR61);
   Duracell MN1604 (Procell) and Energizer 522 datasheets agree.

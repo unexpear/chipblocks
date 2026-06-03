@@ -5,6 +5,8 @@
 # C&K 7101 and NKK S-series families.
 # Cross-FK confirms zero errors: copper enables electrical_conduction so the
 # contact_material role is satisfied.
+# S7-v3-6: connects: wires this switch into the educational anchor circuit
+# between wire_001 (input from battery) and resistor_001 (output to LED).
 # MUST validate against instance.schema.json.
 kind_ref: primitive_device
 definition: switch_spst_toggle
@@ -28,3 +30,10 @@ parameters:
       kind: scalar
       amount: 125
       unit: volt
+connects:
+  - net: net_wire1_switch
+    terminal: terminal_in
+    of: switch_001
+  - net: net_switch_resistor
+    terminal: terminal_out
+    of: switch_001

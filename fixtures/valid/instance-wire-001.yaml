@@ -1,5 +1,8 @@
 # Valid fixture: a specific copper-wire instance in a project.
 # Mirrors OBJECT-MODEL.md §14 Example B (instance half). MUST validate against instance.schema.json.
+# S7-v3-6: connects: updated from Sprint 2's placeholder ids (resistor_3, led_1
+# which don't exist) to the real educational anchor circuit. This wire carries
+# current from the battery's positive terminal to the switch's input.
 kind_ref: primitive_device
 definition: wire
 id: wire_001
@@ -22,9 +25,9 @@ parameters:
   construction:
     value: stranded
 connects:
-  - net: net_signal
+  - net: net_battery_pos
     terminal: terminal_a
-    of: resistor_3
-  - net: net_signal
+    of: wire_001
+  - net: net_wire1_switch
     terminal: terminal_b
-    of: led_1
+    of: wire_001
