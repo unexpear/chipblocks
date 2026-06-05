@@ -973,6 +973,8 @@ Each `inputs.<name>` entry is one of three shapes, discriminated by `kind`:
   T: { kind: input_variable, unit: kelvin }
   ```
 
+**Dimensionless inputs.** Properties whose values are dimensionless (relative permittivity, refractive index, external quantum efficiency, doping fraction, etc.) declare `unit: ''` — equivalently `'1'` or `'dimensionless'`. The evaluator binds them as bare numbers, and mathjs's unit arithmetic handles `number × Unit → Unit` correctly.
+
 ### 16.4 Physical constants
 
 The evaluator binds these by name, sourced from NIST CODATA 2022 (verified at physics.nist.gov 2026-06-05). Declaring them in `constants_used: [...]` makes the dependency explicit.
