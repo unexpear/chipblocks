@@ -36,18 +36,25 @@ const validateBehavior = ajv.compile(
 const validateActiveVariable = ajv.compile(
   JSON.parse(readFileSync(join(SCHEMA_DIR, 'active-variable.schema.json'), 'utf-8')),
 )
+const validateNet = ajv.compile(
+  JSON.parse(readFileSync(join(SCHEMA_DIR, 'net.schema.json'), 'utf-8')),
+)
 
 function pickValidator(data: unknown) {
   if (data !== null && typeof data === 'object') {
     if ('kind' in data) {
       const kindValue = (data as Record<string, unknown>).kind
-      // Behaviors and active variables validate against their own schemas;
-      // other kinds use the definition schema.
+      // Behaviors, active variables, and nets each validate against their
+      // own schemas; other kinds (material / shape / primitive_device / etc.)
+      // use the definition schema.
       if (kindValue === 'behavior') {
         return { kind: 'behavior' as const, validator: validateBehavior }
       }
       if (kindValue === 'active_variable') {
         return { kind: 'active_variable' as const, validator: validateActiveVariable }
+      }
+      if (kindValue === 'net') {
+        return { kind: 'net' as const, validator: validateNet }
       }
       return { kind: 'definition' as const, validator: validateDefinition }
     }

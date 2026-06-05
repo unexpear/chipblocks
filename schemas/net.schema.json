@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chipblocks.example/schemas/net.schema.json",
+  "title": "Net",
+  "description": "Schema for a net — a first-class connectivity object. Per OBJECT-MODEL.md §17. Composes identity (id, kind, origin) and adds members + optional type / description / extensions. Adopted in v3 Sprint 13.",
+  "type": "object",
+  "properties": {
+    "id": { "$ref": "identity.schema.json#/$defs/id" },
+    "kind": { "const": "net" },
+    "origin": { "$ref": "identity.schema.json#/$defs/origin" },
+    "description": {
+      "type": "string",
+      "description": "Human-readable note about the net's role in the circuit."
+    },
+    "type": {
+      "type": "string",
+      "enum": ["signal", "power", "ground", "analog", "digital"],
+      "description": "Net classification per OBJECT-MODEL.md §17.3. Optional — defaults to unspecified. Specialized classes (mixed-signal, differential, clock, high-speed) are deferred until real fixtures demand them."
+    },
+    "members": {
+      "type": "array",
+      "description": "Instances connected to this net. Each member is {instance, terminal}. Minimum 2 — a net with 0 or 1 members can't form a circuit. Cross-FK provides a defense-in-depth net-underpopulated check at world-load time. Per OBJECT-MODEL.md §17.4.",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "properties": {
+          "instance": { "$ref": "identity.schema.json#/$defs/id" },
+          "terminal": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Free string identifying the instance's terminal/pin connected to this net (e.g., 'anode', 'cathode', 'positive_terminal', 'in', 'out'). Sprint 13 does NOT validate terminal names — terminal-name validation is deferred to a future sprint when devices declare their named terminal taxonomy."
+          }
+        },
+        "required": ["instance", "terminal"],
+        "additionalProperties": false
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Per-object extensibility rules. Per OBJECT-MODEL.md §11.",
+      "properties": {
+        "overridable": { "type": "boolean" },
+        "user_extensible": { "type": "boolean" },
+        "allowed_origins": {
+          "type": "array",
+          "items": { "$ref": "identity.schema.json#/$defs/origin" },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      },
+      "required": ["overridable", "user_extensible", "allowed_origins"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["id", "kind", "origin", "members"],
+  "additionalProperties": false
+}
