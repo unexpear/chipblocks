@@ -161,12 +161,14 @@ None bundled at v3 Sprint 11 close. Projects referenced as design inspiration, f
 
 - **TypeScript** — Apache 2.0
 - **Vitest** — MIT
-- **Biome** — MIT + Apache 2.0
-- **Ajv** — MIT
+- **Biome** — MIT OR Apache-2.0 (dual)
+- **Ajv** + **ajv-formats** — MIT
 - **yaml** (npm package) — ISC
+- **@types/node** — MIT (DefinitelyTyped)
+- **mathjs** — Apache-2.0 (added Sprint 12; NOTICE preserved at project root)
 - **Node.js** — MIT-based
 
-All development dependencies pass the project's permissive-license-only rule. License verification was done during Sprint 2 toolchain selection ([TOOLING-RESEARCH-2026-05.md](TOOLING-RESEARCH-2026-05.md)).
+All development dependencies pass the project's permissive-license-only rule (CLAUDE.md principle 4: MIT / Apache-2.0 / BSD / ISC / CC0 / MPL-2.0). Per-package license verification done during Sprint 2 toolchain selection ([TOOLING-RESEARCH-2026-05.md](TOOLING-RESEARCH-2026-05.md)) and during Sprint 12 mathjs install. Full attribution + NOTICE compliance scaffolding lives in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) and [NOTICE](NOTICE).
 
 ---
 

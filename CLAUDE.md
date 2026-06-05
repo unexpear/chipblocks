@@ -94,7 +94,7 @@ Everything else — frontend, schemas, manifests, codegen, tests, CI — was rem
 
 - **Run Python tooling in WSL2**, not Windows-side Python. Same convention as v1.
 - **Prefer existing OSS over building from scratch.** Standard targets: React Flow, the open-source SPICE family (ngspice), Magic for layout, etc.
-- **Every new dependency** needs a license check. Note the license in the commit message.
+- **Every new dependency** needs a license check + NOTICE-file check. Verify the license is on the whitelist (MIT / Apache-2.0 / BSD / ISC / CC0 / MPL-2.0). Run `ls node_modules/<pkg>/NOTICE*` after install — if a NOTICE file is present, append its content to the project-root [NOTICE](NOTICE) file per Apache-2.0 §4(d). Add an entry to [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md). Note the license in the commit message.
 - **Small, single-purpose commits.** One feature or fix per commit.
 - **Always check, never assume.** Don't claim something works without verifying — run tsc, run tests, look at CI status before declaring done.
 
