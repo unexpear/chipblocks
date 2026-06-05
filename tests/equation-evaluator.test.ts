@@ -395,9 +395,12 @@ describe('end-to-end: device-led.yaml equation', () => {
 
     // AlGaInP red LED — n_side bandgap ~1.9 eV.
     // λ = hc / E_g = (6.62607015e-34 × 2.99792458e8) / (1.9 × 1.602176634e-19)
-    //   = 1.98644586e-25 / 3.0441456e-19 ≈ 6.5255e-7 m = 652.5 nm
+    //   = 1.98644586e-25 / 3.0441456e-19 ≈ 6.525484e-7 m ≈ 652.5484 nm
     //   (red — matches AlGaInP red ~625-650 nm range from the
-    //   parameters.peak_wavelength description)
+    //   parameters.peak_wavelength description). Asserting the
+    //   actual computed value to 4 decimal places (precision 3 →
+    //   ±0.0005 nm tolerance) — well clear of any mathjs precision
+    //   noise.
     const result = evaluateEquation(spec, {
       propertyRefs: {
         'n_side.bandgap_energy': { amount: 1.9, unit: 'eV' },
@@ -407,7 +410,7 @@ describe('end-to-end: device-led.yaml equation', () => {
     expect(result.status).toBe('evaluated')
     if (result.status === 'evaluated') {
       expect(result.unit).toBe('nm')
-      expect(result.amount).toBeCloseTo(652.5, 1) // ~653 nm red
+      expect(result.amount).toBeCloseTo(652.5484, 3) // ~653 nm red
     }
   })
 
@@ -418,6 +421,7 @@ describe('end-to-end: device-led.yaml equation', () => {
     const spec = device.properties.peak_wavelength.value as EquationValue
 
     // Same equation, AlGaN-like bandgap of 3.4 eV → ~365 nm UV.
+    // λ = hc / (3.4 × 1.602176634e-19) ≈ 364.6594 nm.
     const result = evaluateEquation(spec, {
       propertyRefs: {
         'n_side.bandgap_energy': { amount: 3.4, unit: 'eV' },
@@ -426,7 +430,7 @@ describe('end-to-end: device-led.yaml equation', () => {
 
     expect(result.status).toBe('evaluated')
     if (result.status === 'evaluated') {
-      expect(result.amount).toBeCloseTo(364.7, 1) // ~365 nm UV-A
+      expect(result.amount).toBeCloseTo(364.6594, 3) // ~365 nm UV-A
     }
   })
 })
