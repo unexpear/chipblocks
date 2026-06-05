@@ -161,3 +161,109 @@ Background-knowledge claims still flagged for verification (carried from Sprint 
 Master tip when opened: `92d4703` (post-Sprint-12 audit with mathjs NOTICE verbatim match). The 120 tests from Sprint 12 close are the floor; expect ~140-160 when Sprint 13 closes (~6 net-fixture schema tests + ~6 net-schema invalid-shape tests + 3 cross-FK net tests + likely some new equation-evaluator-net interaction edge tests if they surface).
 
 Trigger to begin: user approval of this plan (already received: 2026-06-05 — "no you were right go ahead").
+
+---
+
+## Sprint 13 retro (closed 2026-06-05)
+
+### What landed
+
+| Sub-commit | What |
+|---|---|
+| `0983bee` | S13-v3-1: Sprint 13 plan opened |
+| `660f243` | S13-v3-2: OBJECT-MODEL.md §17 — net model formalized + §15 "Net model" row closed |
+| `fd20b79` | S13-v3-3: `schemas/net.schema.json` + 17-case `tests/net-schema.test.ts` + `schema.test.ts` routing update so net fixtures validate automatically |
+| `b5b5ed8` | S13-v3-4: 6 explicit net fixtures for the educational anchor circuit + §17.8 first-cases table corrected to use real instance ids (was placeholder names) |
+| `9a71b16` | S13-v3-5: cross-FK net validation — 3 new error codes (`unknown-net`, `net-underpopulated`, `net-membership-mismatch`) + dedup discipline + 3 mutation-pattern tests |
+| (this) | S13-v3-6: retro + 4 new §15 rows — Sprint 13 closes |
+
+### Done criteria — all met
+
+- [x] OBJECT-MODEL.md §17 lands with the full net model spec (10 subsections: Purpose / Schema / Type taxonomy / Members and terminals / Bidirectional consistency / Anti-placeholder compatibility / Cross-FK invariants / First concrete cases / Constraints / Relation to §15)
+- [x] §15 "Net model" deferred row marked ✅ CLOSED with §17 pointer
+- [x] `schemas/net.schema.json` accepts valid net shapes; rejects required-field violations + min-2-members violations + additionalProperties violations + type-enum violations + empty-string terminal
+- [x] 6 net fixtures (battery_pos / wire1_switch / switch_resistor / resistor_led / led_wire2 / battery_neg) validate against `net.schema.json` via `schema.test.ts`'s pickValidator routing
+- [x] Cross-FK validator catches `unknown-net`, `net-underpopulated`, `net-membership-mismatch` — each with a documented error structure and a mutation-pattern test
+- [x] World loader recognizes net fixtures and populates `world.nets` map
+- [x] All tests pass — 146 (up from 120 at Sprint 12 close, ~22% growth this sprint)
+- [x] `npx tsc --noEmit` clean
+- [x] `npx biome check .` clean (after one auto-format pass on `cross-fk.test.ts` collapsing a multi-line `&&` chain)
+- [x] Sprint retro written
+- [x] 4 new §15 rows added: terminal-name validation; bus / hierarchical / sub-net model; net-level Active Variables; net behaviors / physics (Sprint 14)
+
+### Catalog after Sprint 13
+
+| | Sprint 12 close | Sprint 13 close |
+|---|---|---|
+| Material | 18 | (unchanged) |
+| Shape | 2 | (unchanged) |
+| Behavior | 10 | (unchanged) |
+| Interface kind | 2 | (unchanged) |
+| Primitive device | 10 | (unchanged) |
+| Instances | 16 | (unchanged) |
+| Active Variables | 2 | (unchanged) |
+| **Nets** | 0 (implicit string refs) | **6 explicit fixtures** (the educational anchor circuit) |
+| **Schemas** | 7 | **8** (+ `net.schema.json`) |
+| **Object kinds with own schema** | 4 (definition / instance / behavior / active_variable) | **5** (+ `net`) |
+| **Cross-FK error codes** | 8 | **11** (+ `unknown-net` / `net-underpopulated` / `net-membership-mismatch`) |
+| **Tests** | 120 | **146** (~22% growth) |
+
+### Lessons surfaced
+
+1. **The mid-Sprint bidirectional check was valuable.** Before writing cross-FK code in S13-v3-5, the user asked for a "check" and I ran a node script that loaded every net's `members` and every instance's `connects:` into (net, instance, terminal) triple sets — symmetric difference was empty (12 endpoints, perfect match). Knowing the valid world was internally consistent BEFORE writing the validator meant S13-v3-5's "valid world reports zero errors" test passed on first run with no fixture corrections needed. Same discipline as Sprint 12's mid-pass (which caught path-syntax drift and LED precision fragility).
+
+2. **Dedup discipline matters for clear error messages.** When an instance references an unknown net, the bidirectional check would naturally fire BOTH `unknown-net` AND `net-membership-mismatch` (the instance lists net X but X isn't in the net-side set). Suppressing the implied mismatch when the root cause already surfaced makes the error report clearer — one error per real issue, not a cascade.
+
+3. **Following EDA tradition beats inventing.** Net schema design — `{instance, terminal}` member shape, signal/power/ground/analog/digital type taxonomy — mirrors KiCad's existing conventions. No originality means anyone familiar with EDA can read ChipBlocks nets immediately; no design effort wasted re-deciding settled conventions.
+
+4. **Loader extension pattern slotted cleanly.** `loadWorld` had a sequence of `if data.kind === 'X'` branches followed by generic `if 'kind' in data → definitions` fallback. Adding `else if data.kind === 'net'` BEFORE the fallback (matching the `behavior` / `active_variable` precedent) was a 3-line change. The catch-all-definitions fallback means new object kinds extend cleanly without restructuring the loader.
+
+5. **`pickValidator` routing in `schema.test.ts` is the right pattern.** Same routing change in S13-v3-3 meant that as soon as the 6 net fixtures landed in S13-v3-4, they auto-validated via the existing world-walk in `tests/schema.test.ts`. Test count moved from 137 → 143 without any test-file change in S13-v3-4 — exactly the right shape for "fixtures auto-validate by their kind."
+
+6. **Documentation examples should mirror real fixtures (Sprint 12 lesson, applied early this sprint).** The S13-v3-2 §17.8 first-cases table initially used placeholder names like "power_source_001 / positive_terminal" — but the actual instance id is `battery_9v_001` and the terminal is `terminal_positive` (not `positive_terminal`). Sprint 13 caught this WHEN writing fixtures (S13-v3-4) rather than after the fact — the §17.8 update was bundled into S13-v3-4 cleanly. Sprint 12's lesson about mirroring fixtures held; the pattern carried forward.
+
+7. **Sprint 13 was smoother than Sprint 12.** No major pivots, no documentation drift requiring side commits, no fragile test precision, no compliance scaffolding to bolt on. The catalog of patterns from Sprint 12 (scan-before-build, mid-Sprint check, dedup discipline, real-fixture examples) seemed to prevent the same issues from surfacing again. The Sprint 12 lessons were load-bearing.
+
+### New §15 rows added in this retro
+
+Four new deferred questions added to OBJECT-MODEL.md §15 alongside this retro:
+
+- **Terminal-name validation.** Today `connects[].terminal` and `members[].terminal` are free strings. For cross-FK to verify that `terminal: 'anode'` is a real terminal name on the referenced instance's device, every device definition would need to declare its named terminals (LED has `[anode, cathode]`; transistor has `[collector, base, emitter]` or `[drain, gate, source]`; op-amp has 5+ pins including supply). That's a schema change touching every device fixture plus design questions (polarity-aware terminals? multi-die packages?). Promoted from Sprint 13's non-goal to its own §15 row; lands as its own sprint with the right design discussion.
+- **Bus / hierarchical / sub-net model.** A bus is a named group of nets that travel together (8-bit data bus = 8 signal nets bundled). Hierarchical nets matter when a module's internal nets connect to external pins. Both add real expressiveness but also real complexity (naming rules, scoping rules, expansion semantics). Sprint 13's flat single-net-per-name model handles the educational anchor circuit fine; bus / hierarchy lands when a real fixture demands it.
+- **Net-level Active Variables.** Net-level defaults ("default impedance budget per power net," "default termination scheme per signal net") only matter at larger design scales — real boards with dozens of nets and routing constraints. Today's 5-instance circuits have no diversity to abstract over. Lands when a community pack or larger fixture catalog provides empirical pressure.
+- **Net behaviors / physics (KVL / KCL / electrical consistency).** Sum-of-voltages-around-a-loop and sum-of-currents-at-a-node are *what the DC solver computes*, not invariants the validator can check structurally. Lands with Stage 3 of the simulation arc — Sprint 14's DC solver — which consumes the Sprint 13 net model as its primary input.
+
+### Unresolved questions (still deferred per OBJECT-MODEL.md §15)
+
+Carried forward from prior sprints + 4 new from Sprint 13 retro:
+
+- Default-resolution path, `property_definition` registry, multi-version definitions, cross-pack dependencies, schema migration
+- Stackup model, preset/template model, visual symbol library, auto-created interface UX, right-click parameter override UX, keybindings settings page
+- Alloy composition-by-weight, `min_count` enforcement (composition-role version), AV chains
+- Trigger taxonomy enum, multi-pole switches, state-dependent behavior gating
+- Schottky junction promotion
+- White LED, heterostructure / QW active-layer modeling, laser diodes
+- Parametric equation evaluation (`input_variable`), device-level defaults-vs-rating check, geometry properties on shape definitions (Sprint 12 retro)
+- **NEW: Terminal-name validation** — devices declare named terminals; enables FK validation of `connects[].terminal` and `members[].terminal`
+- **NEW: Bus / hierarchical / sub-net model** — when a fixture demands it
+- **NEW: Net-level Active Variables** — when larger fixture catalogs apply pressure
+- **NEW: Net behaviors / physics (KVL, KCL, electrical consistency)** — lands with Sprint 14's DC solver
+
+Background-knowledge claims still flagged for verification (carried from Sprint 10/11):
+- IEC 62471 risk-group classifications
+- SPICE LED diode-model specifics
+- KiCad single-LED-symbol count
+
+### What this unblocks
+
+After Sprint 13 close:
+
+- **Stage 1 of the simulation+visualization arc is done.** Nets are first-class objects with schema-validated shape, validated cross-references, and validated bidirectional consistency. The educational anchor circuit is fully represented at the connectivity layer with the same rigor it's been represented at the composition layer.
+- **Stage 3 (DC solver, Sprint 14) has its primary input.** The solver walks `world.nets` to build the system of node-voltage and branch-current equations. Each net is one node (KCL constraint); each instance with two terminals is one branch (Ohm's law or device-specific equation). The §16 equation-evaluator (Sprint 12) provides the device-specific equations; Sprint 13's net model provides the topology connecting them. The solver doesn't need to invent connectivity — it consumes the explicit structure.
+- **Future canvas has rendering targets.** Each net becomes a renderable wire on the canvas, color-coded by type per standard EDA conventions (green for ground, red/orange for power, signal nets gray). The canvas sprint can read `world.nets` directly; no shape inference needed.
+- **Terminal-name validation has a clear landing path.** The new §15 row points at the natural next step: when devices declare their named terminal taxonomy (an instance-level extension to the device schema), `connects[].terminal` and `members[].terminal` become FK-validated against real terminal definitions. Sprint 13's free-string terminals are forward-compatible — no instance fixture rewrite needed when the validation lands.
+- **Bus / hierarchical nets land cleanly when needed.** Sprint 13's single-net-per-id model is the simple case; bus models are conventionally an envelope around N nets (e.g., `bus_data_bus = [net_data_0, net_data_1, ...]`). Adding a `bus.schema.json` later doesn't require rewriting any existing net fixtures.
+
+### Sprint 13 closed
+
+All sub-commits land cleanly on master. 146 tests pass (71 schema + 12 baseline + 3 net-mutation cross-FK + 17 net-schema + 23 equation-schema + 20 equation-evaluator). The net model is formalized, schema-enforced, cross-FK-validated, and end-to-end consistent with the existing 6-instance circuit. Sprint 14 (DC solver — Stage 3 of the simulation arc) is the natural successor; the user can pick that or a different §15 row at the Sprint 13+1 planning conversation.
