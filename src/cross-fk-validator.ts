@@ -751,25 +751,25 @@ export function validateWorld(world: World): CrossFkError[] {
 
   // Bidirectional membership consistency.
   // Build (net_id, instance_id, terminal) triple sets from both sides
-  // using a ` `-separated key (no real id should contain a NUL).
+  // using a `::`-separated key (snake_case ids per §3 can't contain `::`).
   const fromNets = new Set<string>()
   const fromInstances = new Set<string>()
 
   for (const net of world.nets.values()) {
     for (const m of net.members) {
-      fromNets.add(`${net.id} ${m.instance} ${m.terminal}`)
+      fromNets.add(`${net.id}::${m.instance}::${m.terminal}`)
     }
   }
   for (const inst of world.instances.values()) {
     if (!inst.connects) continue
     for (const c of inst.connects) {
-      fromInstances.add(`${c.net} ${inst.id} ${c.terminal}`)
+      fromInstances.add(`${c.net}::${inst.id}::${c.terminal}`)
     }
   }
 
   for (const key of fromNets) {
     if (fromInstances.has(key)) continue
-    const [netId, instanceId, terminal] = key.split(' ')
+    const [netId, instanceId, terminal] = key.split('::')
     if (netId === undefined || instanceId === undefined || terminal === undefined) {
       continue
     }
@@ -783,7 +783,7 @@ export function validateWorld(world: World): CrossFkError[] {
   }
   for (const key of fromInstances) {
     if (fromNets.has(key)) continue
-    const [netId, instanceId, terminal] = key.split(' ')
+    const [netId, instanceId, terminal] = key.split('::')
     if (netId === undefined || instanceId === undefined || terminal === undefined) {
       continue
     }
