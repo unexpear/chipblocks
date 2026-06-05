@@ -1,0 +1,66 @@
+# Valid fixture: behavior registry entry for Zener-mode voltage regulation.
+# When a Zener diode is reverse-biased above its breakdown voltage, the diode
+# conducts current while clamping the voltage drop at the breakdown voltage
+# (the 'zener_voltage'). This regulation behavior is the OPERATING MODE of a
+# Zener diode — distinct from acts_as_diode (which describes forward-bias
+# conduction and reverse-bias blocking up to breakdown). Together they describe
+# the Zener's full I-V characteristic.
+#
+# Two physical mechanisms produce the breakdown:
+# - Zener breakdown (band-to-band tunneling) dominates below ~5 V
+# - Avalanche breakdown (impact ionization) dominates above ~6 V
+# Both produce essentially the same observable behavior at the device terminals,
+# so a single behavior covers both. The temperature coefficient differs
+# (Zener: negative; avalanche: positive), but that's a refinement deferred to
+# future detailed device modeling.
+#
+# Used by: diode_zener_silicon (S8-v3-6). Future devices using this behavior:
+# voltage references (TL431-class shunt regulators), TVS diodes (transient
+# voltage suppressors), gas-discharge tubes (in their breakdown mode).
+# MUST validate against behavior.schema.json.
+kind: behavior
+id: regulates_reverse_voltage
+origin: builtin
+layer: behavior
+name: "Regulates reverse voltage (Zener/avalanche breakdown clamp)"
+description: "When a diode is reverse-biased above its breakdown voltage (the 'zener_voltage'), the junction breaks down via Zener tunneling (below ~5 V) or avalanche multiplication (above ~6 V). In this breakdown region the diode conducts current while clamping the terminal voltage at V_zener — making it useful as a voltage reference, voltage limiter, or shunt regulator. Without an external current-limiting resistor, the breakdown current can rise high enough to destroy the diode through thermal runaway."
+parameters_required:
+  - name: zener_voltage
+    type: quantity
+    units: volt
+    description: The breakdown voltage at which the diode clamps. For Zener diodes this is the OPERATING voltage (deliberately chosen by the manufacturer); for regular rectifier diodes it is a maximum-reverse rating not intended for sustained operation.
+  - name: reverse_current
+    type: quantity
+    units: ampere
+    description: Current flowing through the diode in the reverse direction during regulation. Must be limited by an external series resistance to keep the diode below its max_zener_current rating; otherwise thermal runaway destroys the part.
+  - name: thermal_voltage
+    type: quantity
+    units: volt
+    description: kT/q at operating temperature — appears in the rounded knee region near V_zener.
+evaluates: "V_terminal = V_zener (constant clamp, with a soft knee at I_knee). I_reverse = (V_source - V_zener) / R_external — set by the external circuit, not the diode."
+consequences: []
+law: avalanche_or_zener_breakdown
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Sources: Sze, 'Physics of Semiconductor Devices' 3rd ed. (Chapter 4 on diodes
+  including breakdown mechanisms); standard semiconductor-physics references on
+  Zener vs avalanche breakdown.
+  The two breakdown mechanisms produce nearly identical device-level behavior
+  (a sharp current rise above V_zener with a relatively flat clamping
+  characteristic), so a single behavior captures both. Their distinguishing
+  refinement is the temperature coefficient of V_zener:
+    - Zener-dominated parts (V_zener < ~5 V): negative TC
+    - Avalanche-dominated parts (V_zener > ~6 V): positive TC
+    - The 5-6 V crossover produces parts with near-zero TC — useful for voltage
+      references
+  Sprint 8 omits the temperature-coefficient refinement; future detailed
+  device modeling can add it as an optional parameter or as a separate behavior.
+  Knee current and Zener impedance (the small AC resistance of the breakdown
+  region) are also omitted in Sprint 8; the regulator-circuit refinements
+  belong to a future sprint focused on voltage references and shunt regulators.
