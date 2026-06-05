@@ -1,0 +1,150 @@
+# Valid fixture: UV LED primitive device built on the AlGaN material system.
+# SEPARATE DEVICE from the generic `led` (which has red AlGaInP defaults)
+# because UV LEDs carry several wavelength-dependent caveats that the visible
+# LED context doesn't share:
+#
+#  1. Substantially shorter L70 lifetime (1,000-10,000 hours typical for UV
+#     LEDs at standard operating conditions, vs 50,000-100,000+ hours for
+#     visible InGaN/AlGaInP LEDs). The mechanism: AlGaN active-layer crystal
+#     defects propagate faster under high current density, and p-AlGaN's
+#     deep Mg acceptor problem makes injection efficiency degrade over time.
+#
+#  2. Eye-safety classification per IEC 62471 photobiological safety standard
+#     (risk groups Exempt / RG1 / RG2 / RG3). UV-A (~365 nm) is typically
+#     RG1-RG2 at typical operating power; UV-B and UV-C (sterilization
+#     wavelengths) are typically RG3 — direct exposure causes eye and skin
+#     damage. Visible LEDs are usually Exempt or RG1.
+#
+#  3. Al-fraction-dependent efficiency cliff: external quantum efficiency
+#     drops sharply at shorter wavelengths due to the p-AlGaN doping problem
+#     (Mg acceptor activation collapses at high Al fractions). UV-A LEDs
+#     achieve 30-50 percent EQE; UV-B drops to ~10 percent; deep-UV (UV-C
+#     at 280 nm and below) typically stays at 5-10 percent.
+#
+#  4. Different application context: sterilization, water/air treatment,
+#     surface curing, counterfeit detection, forensic illumination, UV-LED
+#     spectroscopy. NOT general lighting (white LEDs use blue InGaN + phosphor
+#     down-conversion instead).
+#
+# Same behaviors as generic `led` (acts_as_diode, emits_light, conducts_current,
+# has_resistance, produces_joule_heat) — physics doesn't change, just the
+# parameter regime and the metadata that matters.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: led_uv_algan
+origin: builtin
+layer: primitive_device
+name: "UV LED (AlGaN, 210-365 nm range)"
+description: "A two-terminal semiconductor diode that emits ultraviolet light when forward-biased. Built on the AlGaN material system (Al_x Ga_{1-x} N), the emission wavelength tunes between 365 nm (near-UV / UV-A at low Al fraction) and 210 nm (deep UV at pure AlN). Used for sterilization, water/air treatment, surface curing, counterfeit detection, forensic illumination, and UV-LED spectroscopy. Carries lifetime, eye-safety, and efficiency caveats that the visible-LED context doesn't share — modeled as a separate device rather than as instances of the generic `led`."
+composition:
+  uses:
+    - pn_junction
+  requires:
+    n_side:
+      kind: material
+      must_enable:
+        - n_type_semiconductor
+        - direct_bandgap
+    p_side:
+      kind: material
+      must_enable:
+        - p_type_semiconductor
+        - direct_bandgap
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  n_side:
+    type: material_ref
+    satisfies_role: n_side
+    required: true
+    default:
+      value: aluminum_gallium_nitride_n_type
+    description: The n-doped semiconductor on the n-side of the PN junction. Default is AlGaN n-type covering UV-A through deep-UV; alloyed compositions with higher Al fraction yield shorter wavelengths.
+  p_side:
+    type: material_ref
+    satisfies_role: p_side
+    required: true
+    default:
+      value: aluminum_gallium_nitride_p_type
+    description: The p-doped semiconductor on the p-side. Practical compositions skew toward lower Al fractions due to the p-AlGaN deep Mg acceptor problem.
+  forward_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: Voltage drop at rated operating current. Set by AlGaN bandgap; UV-A LEDs ~3.6-4.0 V; UV-B ~4.5-5.0 V; deep UV (UV-C) ~5.5-7.0 V. Higher than visible LEDs (1.4-3.6 V) because UV photons have more energy.
+  peak_wavelength:
+    type: quantity
+    units: nanometer
+    required: true
+    description: Peak emission wavelength. UV-A 315-400 nm (most common LED range; ~365 nm typical); UV-B 280-315 nm (some sterilization); UV-C 100-280 nm (deep UV; high-end sterilization at ~265-280 nm).
+  max_forward_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: Maximum continuous forward current. UV LEDs are often higher-power than visible (300 mA to 5 A) because applications like sterilization need high optical output, despite the lower wall-plug efficiency. Pulsed operation can push higher peak currents.
+  reverse_breakdown_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Reverse voltage at which the diode breaks down. UV LEDs are not designed for sustained reverse operation; typical rating 5-10 V.
+  external_quantum_efficiency:
+    type: quantity
+    units: dimensionless
+    required: false
+    description: "Fraction of forward-current electrons producing photons that escape the device. UV-A: 30-50 percent typical for modern AlGaN UV-A LEDs. UV-B: ~10 percent. Deep UV (UV-C): 5-10 percent (worse than visible LEDs by a factor of 5-10). The dropoff with shorter wavelength is the Al-fraction efficiency cliff."
+  viewing_angle:
+    type: quantity
+    units: degree
+    required: false
+    description: Cone half-angle for emitted-light intensity. UV LEDs are often narrow-beam (10-30 degrees) for directional applications like sterilization wand or curing point-source; some wide-angle (120 degrees) for area sterilization.
+  l70_lifetime_hours:
+    type: quantity
+    units: hour
+    required: false
+    description: "Industry-standard L70 lifetime metric (hours of operation until output drops to 70 percent of initial). Verified against Wikipedia Lumen Maintenance article (2026-06-05). UV LEDs typically achieve 1,000-10,000 hours L70 — substantially less than visible LEDs (50,000-100,000+) due to faster AlGaN active-layer defect propagation and p-AlGaN injection degradation. Datasheet values typically condition on rated current at 25 C ambient with adequate heat-sinking."
+  uv_safety_class:
+    type: enum
+    required: false
+    allowed:
+      - exempt
+      - rg1_low_risk
+      - rg2_moderate_risk
+      - rg3_high_risk
+    description: "Photobiological safety risk group per IEC 62471. Exempt = no photobiological hazard under reasonably foreseeable use; RG1 (low) = no hazard under normal behavioral aversion responses; RG2 (moderate) = hazard mitigated by aversion response (typical for UV-A at moderate power); RG3 (high) = direct exposure hazard (typical for UV-B/UV-C sterilization). Manufacturer datasheet should cite the specific test version (IEC 62471:2006 or revision). Background-knowledge claim — direct WebFetch verification of IEC 62471 risk groups failed in Sprint 10 zero-trust pass (multiple Wikipedia URLs returned 404); flagged for confirmation when manufacturer-spec integration becomes a real feature."
+behaviors:
+  - acts_as_diode
+  - emits_light
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Separate device rationale (not an instance of generic `led`):
+  - Different parameter regime (forward voltage 3.6-7 V vs 1.4-3.2 V for visible)
+  - Different lifetime regime (1k-10k hours vs 50k+ hours for visible)
+  - Different safety classification (RG2-RG3 vs Exempt-RG1 for visible)
+  - Different efficiency regime (5-50 percent vs 15-70 percent for visible)
+  - Different applications (sterilization, curing, detection vs general lighting/indicators)
+  Same physics (PN junction radiative recombination governed by acts_as_diode +
+  emits_light behaviors); the device-level distinction captures the wavelength-
+  band-specific design considerations rather than re-modeling the physics.
+  Wavelength tuning: Al fraction in the AlGaN active layer determines peak
+  wavelength. UV-A (~365 nm) uses low Al; UV-B (~280-310 nm) uses moderate Al;
+  UV-C (~200-280 nm) uses high Al. The efficiency cliff at higher Al stems
+  from p-AlGaN's Mg-activation collapse (see material-aluminum-gallium-nitride-
+  p-type.yaml notes for the underlying physics).
+  Future UV variants: instances at different Al fractions for specific
+  wavelengths (365, 310, 280, 265 nm common application targets). Deep UV
+  spectroscopy applications occasionally use AlN-only (210 nm) where
+  efficiency drops below 1 percent.
+  Eye-safety practice: assume UV LEDs need protective eyewear and beam-path
+  controls unless datasheet explicitly certifies otherwise. Operators must
+  consult IEC 62471 risk classifications for the specific part.
