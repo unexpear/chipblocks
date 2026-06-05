@@ -12,9 +12,12 @@
  * type: ground net returns status 'no-ground' without attempting to solve.
  *
  * S14-v3-3 scaffold: types + ground identification + node-index assignment
- * + resistor stamps + lusolve smoke test. Voltage sources, LED fixed-V_F,
- * wire treatment, switch handling, and branch-current extraction land in
- * S14-v3-4 through S14-v3-6.
+ * + resistor stamps + lusolve smoke test.
+ * S14-v3-4 voltage source: pre-pass counts voltage sources, matrix grows
+ * to (N + S) × (N + S), each source extends the system with one auxiliary
+ * current variable per §18.4's modified-nodal stamp pattern.
+ * LED fixed-V_F, wire treatment, switch handling, and branch-current
+ * extraction land in S14-v3-5 and S14-v3-6.
  */
 
 import { all, create } from 'mathjs'
@@ -91,14 +94,25 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     }
   }
 
-  // Build the MNA matrix. S14-v3-3 stamps resistors only; everything else is
-  // either passed through (no-op for now) or surfaced as a warning so the
-  // user knows what didn't contribute. Voltage sources and the auxiliary
-  // current variables land in S14-v3-4.
+  // Pre-pass: count voltage sources so the matrix can be allocated at the
+  // correct (N + S) × (N + S) size BEFORE stamping. Each voltage source
+  // extends the MNA system with one auxiliary current variable; auxiliary
+  // index assignment is order-stable so tests can predict the matrix layout.
+  // S14-v3-4: only power_source is a voltage source. LED fixed-V_F joins
+  // the pre-pass in S14-v3-5.
+  const voltageSourceInstances: Instance[] = []
+  for (const inst of world.instances.values()) {
+    if (inst.definition === 'power_source') voltageSourceInstances.push(inst)
+  }
+  const S = voltageSourceInstances.length
+
+  // Build the MNA matrix. S14-v3-4 stamps resistors + voltage sources.
+  // Other element kinds (led, switch, wire) are silently skipped — they
+  // land in S14-v3-5.
   // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
-  const M: any = math.zeros(N, N)
+  const M: any = math.zeros(N + S, N + S)
   // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
-  const b: any = math.zeros(N, 1)
+  const b: any = math.zeros(N + S, 1)
 
   for (const inst of world.instances.values()) {
     if (inst.definition === 'resistor') {
@@ -106,10 +120,17 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       if (!ok)
         warnings.push(`Skipped resistor stamp for instance '${inst.id}' (missing R or connects)`)
     }
-    // Sprint 14 will progressively add stamps for: power_source (S14-v3-4),
-    // led + switch_spst_toggle + wire (S14-v3-5). For S14-v3-3 they're
-    // silently skipped — the solver returns a trivial / partial result. Tests
-    // in this sub-commit don't depend on full-circuit solving yet.
+  }
+
+  for (let s = 0; s < voltageSourceInstances.length; s++) {
+    // biome-ignore lint/style/noNonNullAssertion: s is bound by the array length
+    const inst = voltageSourceInstances[s]!
+    const auxIdx = N + s
+    const ok = stampVoltageSource(inst, nodeIndex, auxIdx, M, b)
+    if (!ok)
+      warnings.push(
+        `Skipped voltage source stamp for instance '${inst.id}' (missing V or terminal connects)`,
+      )
   }
 
   // Solve M x = b
@@ -236,6 +257,65 @@ export function stampResistor(
     M.set([i_a, i_b], (M.get([i_a, i_b]) ?? 0) - G)
     M.set([i_b, i_a], (M.get([i_b, i_a]) ?? 0) - G)
   }
+
+  return true
+}
+
+/**
+ * Apply a voltage source's contribution to the MNA matrix M + source vector b,
+ * using an auxiliary current variable at index `auxIdx` (where auxIdx ≥ N,
+ * positioned after all node indices).
+ *
+ * Per §18.4, the stamp pattern is:
+ *   M[A][aux] = +1, M[B][aux] = -1   (current contribution to KCL rows)
+ *   M[aux][A] = +1, M[aux][B] = -1   (constraint: V_A - V_B = V_src)
+ *   b[aux]    = V_src
+ * where A is the positive terminal's net and B is the negative terminal's.
+ * Rows/columns for the ground net are omitted (the node index map excludes ground).
+ *
+ * Sprint 14's terminal-polarity convention for power_source: the connects
+ * entry with `terminal === 'terminal_positive'` is the positive terminal;
+ * `terminal === 'terminal_negative'` is the negative. (Terminal-name
+ * validation as a §15 row will eventually generalize this; for now the
+ * convention is hard-coded per device kind.)
+ *
+ * Returns true if the stamp was applied; false if the source's voltage,
+ * connects, or terminal-polarity convention can't be resolved.
+ */
+export function stampVoltageSource(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  auxIdx: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
+  const V = readScalarParam(inst, 'nominal_voltage')
+  if (V === undefined) return false
+
+  if (inst.connects?.length !== 2) return false
+
+  const posConnect = inst.connects.find((c) => c.terminal === 'terminal_positive')
+  const negConnect = inst.connects.find((c) => c.terminal === 'terminal_negative')
+  if (posConnect === undefined || negConnect === undefined) return false
+
+  // i_pos / i_neg are undefined when the corresponding net is ground
+  // (excluded from the node index per the MNA convention).
+  const i_pos = nodeIndex.get(posConnect.net)
+  const i_neg = nodeIndex.get(negConnect.net)
+
+  if (i_pos !== undefined) {
+    M.set([i_pos, auxIdx], (M.get([i_pos, auxIdx]) ?? 0) + 1)
+    M.set([auxIdx, i_pos], (M.get([auxIdx, i_pos]) ?? 0) + 1)
+  }
+  if (i_neg !== undefined) {
+    M.set([i_neg, auxIdx], (M.get([i_neg, auxIdx]) ?? 0) - 1)
+    M.set([auxIdx, i_neg], (M.get([auxIdx, i_neg]) ?? 0) - 1)
+  }
+
+  // Constraint: V_pos - V_neg = V_src
+  b.set([auxIdx, 0], V)
 
   return true
 }

@@ -34,6 +34,7 @@ import {
   mathInstance as math,
   solveDC,
   stampResistor,
+  stampVoltageSource,
 } from '../src/dc-solver.ts'
 
 // Helper: build a minimal World with just the maps the solver reads.
@@ -326,6 +327,134 @@ describe('stampResistor', () => {
 })
 
 // ===========================================================================
+// 4b. Voltage source stamps (S14-v3-4)
+// ===========================================================================
+
+describe('stampVoltageSource', () => {
+  test('stamps the MNA pattern for a source between two non-ground nets', () => {
+    // 2 nets (idx 0 and 1) + 1 voltage source = matrix size 3×3.
+    const nodeIndex = new Map<string, number>([
+      ['net_a', 0],
+      ['net_b', 1],
+    ])
+    const M = math.zeros(3, 3)
+    const b = math.zeros(3, 1)
+    const auxIdx = 2
+
+    const inst: Instance = {
+      id: 'v1',
+      kind_ref: 'primitive_device',
+      definition: 'power_source',
+      parameters: {
+        nominal_voltage: { value: { kind: 'scalar', amount: 9, unit: 'volt' } },
+      },
+      connects: [
+        { net: 'net_a', terminal: 'terminal_positive', of: 'v1' },
+        { net: 'net_b', terminal: 'terminal_negative', of: 'v1' },
+      ],
+    }
+
+    const ok = stampVoltageSource(inst, nodeIndex, auxIdx, M, b)
+    expect(ok).toBe(true)
+
+    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix get is polymorphic
+    const m: any = M
+    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix get is polymorphic
+    const bv: any = b
+
+    // Current contribution to KCL rows:
+    // M[A][aux] = +1, M[B][aux] = -1
+    expect(m.get([0, 2])).toBe(1)
+    expect(m.get([1, 2])).toBe(-1)
+    // Constraint row: M[aux][A] = +1, M[aux][B] = -1
+    expect(m.get([2, 0])).toBe(1)
+    expect(m.get([2, 1])).toBe(-1)
+    // Source vector: b[aux] = V_src
+    expect(bv.get([2, 0])).toBe(9)
+  })
+
+  test('omits ground-side rows/cols when the negative terminal is on ground', () => {
+    // 1 non-ground net (net_a, idx 0) + 1 source = matrix size 2×2.
+    const nodeIndex = new Map<string, number>([['net_a', 0]])
+    const M = math.zeros(2, 2)
+    const b = math.zeros(2, 1)
+    const auxIdx = 1
+
+    const inst: Instance = {
+      id: 'v1',
+      kind_ref: 'primitive_device',
+      definition: 'power_source',
+      parameters: {
+        nominal_voltage: { value: { kind: 'scalar', amount: 9, unit: 'volt' } },
+      },
+      connects: [
+        { net: 'net_a', terminal: 'terminal_positive', of: 'v1' },
+        { net: 'net_gnd', terminal: 'terminal_negative', of: 'v1' }, // ground
+      ],
+    }
+
+    const ok = stampVoltageSource(inst, nodeIndex, auxIdx, M, b)
+    expect(ok).toBe(true)
+
+    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix get is polymorphic
+    const m: any = M
+    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix get is polymorphic
+    const bv: any = b
+
+    // Only positive-terminal contributions land; ground rows/cols are
+    // absent from the matrix entirely.
+    expect(m.get([0, 1])).toBe(1) // M[net_a][aux]
+    expect(m.get([1, 0])).toBe(1) // M[aux][net_a]
+    expect(bv.get([1, 0])).toBe(9)
+  })
+
+  test('returns false when nominal_voltage is missing', () => {
+    const nodeIndex = new Map<string, number>([
+      ['net_a', 0],
+      ['net_b', 1],
+    ])
+    const M = math.zeros(3, 3)
+    const b = math.zeros(3, 1)
+    const inst: Instance = {
+      id: 'v1',
+      kind_ref: 'primitive_device',
+      definition: 'power_source',
+      // no nominal_voltage
+      connects: [
+        { net: 'net_a', terminal: 'terminal_positive', of: 'v1' },
+        { net: 'net_b', terminal: 'terminal_negative', of: 'v1' },
+      ],
+    }
+    const ok = stampVoltageSource(inst, nodeIndex, 2, M, b)
+    expect(ok).toBe(false)
+  })
+
+  test('returns false when terminal-polarity convention is not satisfied', () => {
+    const nodeIndex = new Map<string, number>([
+      ['net_a', 0],
+      ['net_b', 1],
+    ])
+    const M = math.zeros(3, 3)
+    const b = math.zeros(3, 1)
+    const inst: Instance = {
+      id: 'v1',
+      kind_ref: 'primitive_device',
+      definition: 'power_source',
+      parameters: {
+        nominal_voltage: { value: { kind: 'scalar', amount: 9, unit: 'volt' } },
+      },
+      // Terminals not named with the Sprint 14 polarity convention.
+      connects: [
+        { net: 'net_a', terminal: 'pin_1', of: 'v1' },
+        { net: 'net_b', terminal: 'pin_2', of: 'v1' },
+      ],
+    }
+    const ok = stampVoltageSource(inst, nodeIndex, 2, M, b)
+    expect(ok).toBe(false)
+  })
+})
+
+// ===========================================================================
 // 5. solveDC end-to-end (partial — S14-v3-3 has no voltage source yet)
 // ===========================================================================
 
@@ -394,5 +523,152 @@ describe('solveDC (S14-v3-3 partial)', () => {
     expect(sol.nodes.get('net_gnd')).toBe(0)
     // net_a sits at 0 V too — no driving force in the system.
     expect(sol.nodes.get('net_a')).toBeCloseTo(0, 9)
+  })
+
+  test('S14-v3-4: battery + resistor — 9 V supply across 100 Ω drives expected node voltage', () => {
+    // The minimum useful Sprint-14 circuit: one battery, one resistor,
+    // both between the supply node and ground. By-hand math: net_a sits
+    // at +9 V (set by the battery); the resistor sees 9 V across 100 Ω
+    // and conducts 90 mA from net_a to ground. Branch currents land in
+    // S14-v3-6; this test asserts the node-voltage answer only.
+    const world = emptyWorld()
+    world.nets.set('net_a', {
+      id: 'net_a',
+      kind: 'net',
+      type: 'power',
+      members: [
+        { instance: 'bat', terminal: 'terminal_positive' },
+        { instance: 'r1', terminal: 'terminal_a' },
+      ],
+    })
+    world.nets.set('net_gnd', {
+      id: 'net_gnd',
+      kind: 'net',
+      type: 'ground',
+      members: [
+        { instance: 'bat', terminal: 'terminal_negative' },
+        { instance: 'r1', terminal: 'terminal_b' },
+      ],
+    })
+    world.instances.set('bat', {
+      id: 'bat',
+      kind_ref: 'primitive_device',
+      definition: 'power_source',
+      parameters: {
+        nominal_voltage: { value: { kind: 'scalar', amount: 9, unit: 'volt' } },
+      },
+      connects: [
+        { net: 'net_a', terminal: 'terminal_positive', of: 'bat' },
+        { net: 'net_gnd', terminal: 'terminal_negative', of: 'bat' },
+      ],
+    })
+    world.instances.set('r1', {
+      id: 'r1',
+      kind_ref: 'primitive_device',
+      definition: 'resistor',
+      parameters: { resistance: { value: { kind: 'scalar', amount: 100, unit: 'ohm' } } },
+      connects: [
+        { net: 'net_a', terminal: 'terminal_a', of: 'r1' },
+        { net: 'net_gnd', terminal: 'terminal_b', of: 'r1' },
+      ],
+    })
+
+    const sol = solveDC(world)
+    expect(sol.status).toBe('solved')
+    expect(sol.ground).toBe('net_gnd')
+    expect(sol.nodes.get('net_gnd')).toBe(0)
+    expect(sol.nodes.get('net_a')).toBeCloseTo(9, 9)
+    expect(sol.warnings).toEqual([])
+  })
+
+  test('S14-v3-4: voltage source between two non-grounded nets resolves both', () => {
+    // net_a — [+]V[−] — net_b — [R]R[/] — net_gnd
+    //   • net_a sits at 9 V above net_b (the source enforces V_a − V_b = 9)
+    //   • net_b sits at 0 V above ground because the only path from net_b
+    //     to ground is through the 100 Ω resistor, but with no other current
+    //     loop, the current through the resistor is zero and V_b = 0
+    //     (current returns through the source's auxiliary current variable
+    //     and effectively closes back through net_a — but with no resistor
+    //     between net_a and ground, the only steady-state solution is
+    //     V_a = 9, V_b = 0, I_source = 0).
+    // This exercises the two-non-grounded-net voltage-source stamp.
+    const world = emptyWorld()
+    world.nets.set('net_a', {
+      id: 'net_a',
+      kind: 'net',
+      members: [
+        { instance: 'bat', terminal: 'terminal_positive' },
+        { instance: 'r1', terminal: 'terminal_b' },
+      ],
+    })
+    world.nets.set('net_b', {
+      id: 'net_b',
+      kind: 'net',
+      members: [
+        { instance: 'bat', terminal: 'terminal_negative' },
+        { instance: 'r1', terminal: 'terminal_a' },
+      ],
+    })
+    world.nets.set('net_gnd', {
+      id: 'net_gnd',
+      kind: 'net',
+      type: 'ground',
+      members: [
+        { instance: 'r2', terminal: 'terminal_a' },
+        { instance: 'r2', terminal: 'terminal_b' }, // self-loop ground anchor (dummy)
+      ],
+    })
+    // Anchor net_b to ground via a large resistor so the system is non-singular.
+    // (Without this, lusolve sees a singular matrix — net_b would be floating.)
+    world.nets.set('net_b_to_gnd', {
+      id: 'net_b_to_gnd',
+      kind: 'net',
+      members: [
+        { instance: 'r_anchor', terminal: 'terminal_a' },
+        { instance: 'r_anchor', terminal: 'terminal_b' },
+      ],
+    })
+    world.instances.set('bat', {
+      id: 'bat',
+      kind_ref: 'primitive_device',
+      definition: 'power_source',
+      parameters: {
+        nominal_voltage: { value: { kind: 'scalar', amount: 9, unit: 'volt' } },
+      },
+      connects: [
+        { net: 'net_a', terminal: 'terminal_positive', of: 'bat' },
+        { net: 'net_b', terminal: 'terminal_negative', of: 'bat' },
+      ],
+    })
+    world.instances.set('r1', {
+      id: 'r1',
+      kind_ref: 'primitive_device',
+      definition: 'resistor',
+      parameters: { resistance: { value: { kind: 'scalar', amount: 100, unit: 'ohm' } } },
+      connects: [
+        { net: 'net_a', terminal: 'terminal_b', of: 'r1' },
+        { net: 'net_b', terminal: 'terminal_a', of: 'r1' },
+      ],
+    })
+    world.instances.set('r_anchor', {
+      id: 'r_anchor',
+      kind_ref: 'primitive_device',
+      definition: 'resistor',
+      parameters: { resistance: { value: { kind: 'scalar', amount: 1, unit: 'ohm' } } },
+      connects: [
+        { net: 'net_b', terminal: 'terminal_a', of: 'r_anchor' },
+        { net: 'net_gnd', terminal: 'terminal_b', of: 'r_anchor' },
+      ],
+    })
+
+    const sol = solveDC(world)
+    expect(sol.status).toBe('solved')
+    expect(sol.nodes.get('net_gnd')).toBe(0)
+    // net_b ≈ 0 V (only the source pushes current; via the 100 Ω in the
+    // bat-r1 loop the current must equal the current through r_anchor;
+    // in steady-state with zero current through the loop, V_b = 0).
+    // net_a = V_b + 9 = 9 V.
+    expect(sol.nodes.get('net_b')).toBeCloseTo(0, 6)
+    expect(sol.nodes.get('net_a')).toBeCloseTo(9, 6)
   })
 })
