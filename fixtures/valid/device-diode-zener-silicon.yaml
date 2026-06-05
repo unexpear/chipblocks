@@ -1,0 +1,101 @@
+# Valid fixture: silicon Zener diode — a PN junction designed for controlled
+# reverse-breakdown operation as a voltage reference or shunt regulator.
+#
+# Structurally identical to diode_silicon_rectifier (same composition.uses
+# [silicon_n_type, silicon_p_type]), but with the doping profile and breakdown
+# physics deliberately tuned so the reverse breakdown voltage is a useful
+# operating point — typically 2.4 V to 200 V depending on the part. Below ~5 V
+# the breakdown is dominated by Zener tunneling (negative temperature
+# coefficient); above ~6 V it is dominated by avalanche multiplication
+# (positive temperature coefficient); the 5-6 V crossover gives near-zero
+# temperature coefficient — useful for precision voltage references.
+#
+# Standard applications: voltage regulation in low-current circuits (shunt
+# regulator with series resistor), voltage references for ADCs and DACs,
+# overvoltage clamping/protection, voltage shifting in signal paths.
+#
+# Forward-biased Zeners behave like ordinary silicon PN diodes (~0.7 V drop) —
+# they're rarely used in forward bias intentionally, but the behavior is
+# captured here for completeness.
+#
+# Specific variant naming captures the material system; future Zener variants
+# at different breakdown voltages (e.g., diode_zener_silicon_5v1,
+# diode_zener_silicon_12v) become preset variants if needed, or all Zeners
+# share this single definition and instances pick the breakdown voltage.
+# Sprint 8 chooses the latter — one definition, instances specify V_zener.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: diode_zener_silicon
+origin: builtin
+layer: primitive_device
+name: "Silicon Zener diode"
+description: "A silicon PN-junction diode whose reverse breakdown voltage is precise enough to be used as a voltage reference or shunt regulator. When reverse-biased above V_zener, the diode conducts and clamps the voltage at V_zener (via Zener tunneling below ~5 V or avalanche multiplication above ~6 V). When reverse-biased below V_zener, the diode blocks like a normal rectifier. When forward-biased, it behaves like a normal silicon PN diode (~0.7 V drop). The defining feature is the deliberately-engineered, manufacturer-specified breakdown voltage that turns reverse breakdown from a failure mode into a useful operating mode."
+composition:
+  uses:
+    - silicon_n_type
+    - silicon_p_type
+  requires:
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  zener_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: "The deliberately-engineered reverse breakdown voltage at which the diode regulates. Standard 1N47xxA Zener voltages: 2.4, 2.7, 3.0, 3.3, 3.6, 3.9, 4.3, 4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 8.2, 9.1, 10, 11, 12, 13, 15, 16, 18, 20, 22, 24, 27, 30, 33, 36, 39, 43, 47, 51, 56, 62, 68, 75, 82, 91, 100 V (E24-series voltages from 2.4 V upward)."
+  max_zener_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: Maximum continuous current through the diode in reverse breakdown mode. Determined by the part's power dissipation rating (P_max / V_zener). Exceeded values cause thermal runaway and destroy the part.
+  knee_current:
+    type: quantity
+    units: ampere
+    required: false
+    description: Minimum reverse current needed to drive the diode firmly into breakdown. Below knee, the voltage drops below V_zener and regulation is poor. Typical knee current for small Zeners is 1-5 mA.
+  forward_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Forward voltage drop when biased forward (anode positive). Behaves as a normal silicon PN diode — about 0.7 V. Rarely used intentionally but specified for completeness.
+  power_dissipation_max:
+    type: quantity
+    units: watt
+    required: false
+    description: Maximum continuous power dissipation. Common Zener power ratings are 0.4 W (1N47xxA glass-package), 1 W (1N47xxA-1 family), 5 W (high-power), and up to 50 W (heat-sinked stud-mount). Max_zener_current is power_dissipation_max divided by zener_voltage.
+  temperature_coefficient:
+    type: quantity
+    units: volt_per_kelvin
+    required: false
+    description: dV_zener/dT near room temperature. Negative for V_zener under 5 V (Zener-dominated), positive for V_zener above 6 V (avalanche-dominated), near zero at 5.6 V (Vishay TC reference parts cross at this voltage).
+behaviors:
+  - acts_as_diode
+  - regulates_reverse_voltage
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  FIRST device with regulates_reverse_voltage behavior. The full I-V
+  characteristic of the Zener is covered by acts_as_diode (forward conduction
+  + reverse blocking below V_zener) plus regulates_reverse_voltage (reverse
+  conduction at V_zener clamp). Future devices using regulates_reverse_voltage
+  will be TVS (transient voltage suppressors), voltage references like the
+  TL431, and gas-discharge tubes.
+  Implicit PN junction (composition.uses both silicon doped variants). The Zener
+  is the THIRD device using the [silicon_n_type, silicon_p_type] +
+  [n-AlGaInP, p-AlGaInP] PN pattern. Sprint 8 retro will recommend whether
+  to promote pn_junction to a first-class interface kind in Sprint 9.
+  State-dependent gating: a Zener has THREE operating modes (forward
+  conducting, reverse blocking below V_zener, reverse regulating above V_zener).
+  Today all three behaviors are listed honestly-but-ungated. The state-
+  dependent behavior gating row in §15 (carried since Sprint 6) becomes
+  particularly relevant for Zeners.

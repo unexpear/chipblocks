@@ -1,0 +1,44 @@
+# Valid fixture: a specific 1N4733A-class 5.1 V Zener diode.
+# 5.1 V is near the Zener / avalanche crossover (~5.6 V) — temperature
+# coefficient is small and slightly negative. The 1N4733A is a 1 W Zener
+# (max_zener_current ~ 1 W / 5.1 V = 196 mA, derated to 178 mA in the datasheet).
+# Knee current ~5 mA.
+# Common use: 5 V voltage reference, ADC reference, shunt regulator for low-
+# current loads, overvoltage clamp on 3.3 V or 5 V rails.
+# Source: Vishay / ON Semi 1N4733A datasheet.
+# MUST validate against instance.schema.json.
+kind_ref: primitive_device
+definition: diode_zener_silicon
+id: diode_003
+origin: project
+parameters:
+  zener_voltage:
+    value:
+      kind: scalar
+      amount: 5.1
+      unit: volt
+  max_zener_current:
+    value:
+      kind: scalar
+      amount: 0.178
+      unit: ampere
+  knee_current:
+    value:
+      kind: scalar
+      amount: 5.0e-3
+      unit: ampere
+  forward_voltage:
+    value:
+      kind: scalar
+      amount: 0.7
+      unit: volt
+  power_dissipation_max:
+    value:
+      kind: scalar
+      amount: 1.0
+      unit: watt
+  temperature_coefficient:
+    value:
+      kind: scalar
+      amount: -2.0e-4
+      unit: volt_per_kelvin
