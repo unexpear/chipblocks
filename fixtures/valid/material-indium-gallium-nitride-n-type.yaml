@@ -1,0 +1,147 @@
+# Valid fixture: material definition for n-doped Indium Gallium Nitride (InGaN),
+# the dominant material system for blue and green LEDs.
+#
+# Composition is nominally In_x Ga_{1-x} N where x is tuned for the desired
+# bandgap / emission wavelength:
+#   - x ~ 0.10-0.20 -> bandgap ~2.7 eV -> blue (~460 nm)
+#   - x ~ 0.25-0.35 -> bandgap ~2.4 eV -> green (~520 nm)
+# At the SPICE/EDA circuit-modeling layer (verified against Wikipedia LED
+# article 2026-06-05), InGaN is treated as ONE material system spanning these
+# compositions; specific In fraction is captured at the LED-instance level via
+# wavelength + forward voltage parameter overrides rather than separate material
+# entries per color.
+#
+# n-type doping via silicon donors (highly activated — n-InGaN is well-behaved
+# electrically). Carrier mobility is much lower than GaAs because of phonon
+# scattering and alloy scattering inherent to the nitride lattice, but
+# sufficient for LED operation.
+#
+# Used by: future LED instances overriding the generic `led` device's
+# n_side / p_side defaults to switch from red AlGaInP to blue/green InGaN.
+# Sprint 10 lands the material; instances + UV-LED separate device come in a
+# subsequent sprint plan.
+#
+# MUST validate against definition.schema.json.
+kind: material
+id: indium_gallium_nitride_n_type
+origin: builtin
+layer: material
+name: "InGaN, n-type (In_x Ga_{1-x} N doped n-type)"
+description: "Wide-bandgap III-nitride compound semiconductor doped n-type with silicon donors. Direct bandgap tunable between ~2.0 eV (high In, longer wavelengths) and ~3.4 eV (pure GaN, UV) depending on indium fraction x. The blue-to-green LED working range (x ~ 0.10-0.35) gives bandgaps ~2.4-2.7 eV and emission ~460-520 nm. The dominant material system for blue, green, and white LEDs (white via blue InGaN + phosphor)."
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+  - thermal_conduction
+  - semiconductor
+  - n_type_semiconductor
+  - direct_bandgap
+properties:
+  bandgap_energy:
+    value:
+      kind: range
+      min: 2.4
+      max: 2.7
+      typical: 2.55
+      unit: electronvolt
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: "InGaN bandgap range, blue-to-green LED-targeted compositions (In fraction 0.10-0.35), 300 K"
+      citation: "Ioffe NSM Archive (InGaN — Basic parameters); Schubert, Light-Emitting Diodes 2nd ed., Chapter on III-Nitride materials"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  resistivity:
+    value:
+      kind: range
+      min: 1.0e-4
+      max: 1.0e-2
+      typical: 1.0e-3
+      unit: ohm_meter
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: "InGaN n-type resistivity, Si-doped LED-grade epitaxy (1e18 to 5e18 per cubic centimeter)"
+      citation: "Ioffe NSM Archive; manufacturer process documentation (Cree XLamp, Lumileds Luxeon, Osram Ostar)"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 6150
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+        composition:
+          value: blue_led_targeted_in_fraction
+    provenance:
+      source_type: reference
+      title: "InGaN density at blue-LED-targeted composition (In_0.15 Ga_0.85 N), 25 C"
+      citation: "Ioffe NSM Archive; weighted from GaN (6.15 g/cm^3) and InN (6.81 g/cm^3) by mole fraction"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 80
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        film_type:
+          value: thin_film_typical_led_epitaxy
+    provenance:
+      source_type: reference
+      title: "InGaN thermal conductivity, thin-film LED-grade epitaxy at 300 K"
+      citation: "Ioffe NSM Archive (InGaN — Thermal properties); thin-film values lower than bulk GaN (~130 W/m-K) due to alloy phonon scattering"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  electron_mobility:
+    value:
+      kind: condition_bound
+      amount: 0.015
+      unit: m2_per_volt_second
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        doping_level:
+          value: typical_led_grade_3e18_per_cm3
+    provenance:
+      source_type: reference
+      title: "InGaN n-type electron mobility, LED-grade Si doping, 300 K"
+      citation: "Ioffe NSM Archive (InGaN carrier transport); ~150 cm^2/V-s typical at LED-grade doping -> 0.015 m^2/V-s in SI. Lower than GaAs (~8500 cm^2/V-s) due to phonon + alloy scattering."
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Composition tunability: In fraction x in In_x Ga_{1-x} N determines bandgap
+  and emission wavelength. Industry uses ONE material system at SPICE/EDA
+  layer (this entry); the LED instance's peak_wavelength + forward_voltage
+  parameters capture the In-fraction variation. When heterostructure / QW
+  active-layer modeling lands (§15 deferred), the LED structure becomes
+  explicit (n-GaN cladding + InGaN MQW active + p-GaN cladding) and specific
+  In fractions move into the active-layer material definitions.
+  Real LED epitaxy: typically n-GaN buffer + InGaN multi-quantum-well (MQW)
+  active layer + p-GaN cladding, grown on sapphire (most common) or SiC
+  substrate. The simple PN-junction model used here glosses over the active
+  layer; verified industry-standard at the circuit modeling layer.

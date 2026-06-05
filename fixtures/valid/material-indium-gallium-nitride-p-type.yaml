@@ -1,0 +1,138 @@
+# Valid fixture: material definition for p-doped Indium Gallium Nitride (InGaN).
+# The p-side counterpart to material-indium-gallium-nitride-n-type.
+#
+# p-type doping via magnesium acceptors. The famous challenge of the
+# III-nitride material system: Mg acceptors are deep (~170 meV above the
+# valence band), so activation efficiency is very low — even with very high
+# Mg doping (1e19 to 1e20 per cm^3), the free hole concentration stays around
+# 1e17 to 1e18 per cm^3. Result: p-InGaN resistivity is 10-100x higher than
+# comparable n-InGaN at similar dopant concentration. This is a hard, well-
+# documented industry limitation (the Mg-H activation breakthrough by Akasaki/
+# Amano/Nakamura was Nobel-worthy because of it — 2014 Nobel Prize in Physics).
+#
+# Used by: future LED instances using blue/green InGaN as p_side material.
+# MUST validate against definition.schema.json.
+kind: material
+id: indium_gallium_nitride_p_type
+origin: builtin
+layer: material
+name: "InGaN, p-type (In_x Ga_{1-x} N doped p-type)"
+description: "Wide-bandgap III-nitride compound semiconductor doped p-type with magnesium acceptors. Same In-fraction-tunable direct bandgap as the n-type variant (~2.4-2.7 eV in the blue-to-green LED-working range). Holes are the majority carrier, but the deep Mg acceptor level keeps activation efficiency low — resistivity is 10-100x higher than n-type at comparable dopant concentration. Standard p-side material for blue and green InGaN LEDs."
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+  - thermal_conduction
+  - semiconductor
+  - p_type_semiconductor
+  - direct_bandgap
+properties:
+  bandgap_energy:
+    value:
+      kind: range
+      min: 2.4
+      max: 2.7
+      typical: 2.55
+      unit: electronvolt
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: "InGaN bandgap, blue-to-green LED-targeted compositions, 300 K"
+      citation: "Ioffe NSM Archive; Schubert 2nd ed. Same as n-type — doping does not shift bandgap."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  resistivity:
+    value:
+      kind: range
+      min: 1.0e-2
+      max: 1.0
+      typical: 1.0e-1
+      unit: ohm_meter
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: "InGaN p-type resistivity, Mg-doped LED-grade epitaxy"
+      citation: "Ioffe NSM Archive (InGaN p-type carrier transport); manufacturer process documentation. p-InGaN resistivity is 10-100x higher than n-type at comparable Mg doping due to deep Mg acceptor level."
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 6150
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+        composition:
+          value: blue_led_targeted_in_fraction
+    provenance:
+      source_type: reference
+      title: "InGaN density (same composition as n-type)"
+      citation: "Ioffe NSM Archive; Mg doping at typical concentration does not measurably change density"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 80
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        film_type:
+          value: thin_film_typical_led_epitaxy
+    provenance:
+      source_type: reference
+      title: "InGaN thermal conductivity, thin-film LED-grade epitaxy"
+      citation: "Ioffe NSM Archive; same as n-type — phonon-mediated, doping does not materially affect"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  hole_mobility:
+    value:
+      kind: condition_bound
+      amount: 0.001
+      unit: m2_per_volt_second
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        doping_level:
+          value: typical_led_grade_1e19_per_cm3_mg_acceptors
+    provenance:
+      source_type: reference
+      title: "InGaN p-type hole mobility, Mg-doped LED-grade, 300 K"
+      citation: "Ioffe NSM Archive (InGaN p-type carrier transport); ~10 cm^2/V-s typical -> 0.001 m^2/V-s in SI. Substantially lower than electron mobility (15x lower) due to heavy hole effective mass + Mg compensation effects."
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  p-type doping in the III-nitride system was the breakthrough that enabled
+  practical blue LEDs and earned the 2014 Nobel Prize in Physics (Akasaki,
+  Amano, Nakamura). Mg acceptors are deep (~170 meV above the valence band)
+  so activation is poor — even with high Mg doping the free hole concentration
+  stays low. This is why p-InGaN resistivity is 10-100x higher than n-type
+  at comparable dopant concentration, and why InGaN LEDs are inherently
+  asymmetric (carriers inject more easily from n-side than p-side).
+  Activation step: post-growth thermal annealing at ~700 C is required to
+  break Mg-H bonds and activate the acceptors. Modern MOCVD processes have
+  refined this substantially since the original 1989-1992 breakthroughs.
+  When heterostructure modeling lands (§15 deferred), p-InGaN's specific role
+  as the p-side cladding above the InGaN active layer becomes explicit.
