@@ -888,7 +888,7 @@ Surfaced now so they can't accidentally be answered by side effect later.
 | Deferred question | Likely owner |
 |---|---|
 | **Capability → behavior emergence rule.** Today devices explicitly adopt behaviors. A future feature may derive behaviors from material × shape × interface composition. | v3 Sprint 5+ |
-| **Net model.** Instances above currently use ad-hoc `connects:` syntax. EDA tradition has explicit *nets* as first-class objects spanning N terminals. The full net model needs its own design pass. | v3 Sprint 3 |
+| ~~**Net model.** Instances above currently use ad-hoc `connects:` syntax. EDA tradition has explicit *nets* as first-class objects spanning N terminals. The full net model needs its own design pass.~~ ✅ **CLOSED in Sprint 13** — see §17 below. Nets are a first-class object kind (`kind: net`) with their own schema (`schemas/net.schema.json`), member list, type taxonomy (signal / power / ground / analog / digital), and three cross-FK invariants (existence, ≥2 members, bidirectional membership consistency). | ✅ Closed Sprint 13 |
 | **Project file format.** What does a `MyProject.chipblocks/` folder actually contain? Schema for project files lives separately from object-model schemas. | v3 Sprint 2 or 3 |
 | **`property_definition` registry shape.** The cross-layer registry of property concepts (what "resistance" means, what units, what behaviors produce it) needs its own concrete schema. | v3 Sprint 2 |
 | **`behavior` registry shape.** Same — the registry of named physics laws (`conducts_current`, `joule_heating`, etc.) with their parameter requirements and emergence preconditions. | v3 Sprint 2 |
@@ -1091,6 +1091,120 @@ Three first cases ship with Sprint 12, each fully specified per the above:
 This section closes the §15 deferred row "Behavior-derives-value pattern." That row anticipated two design directions ((a) richer `evaluates:` parsing on behaviors, or (b) a separate `derives:` field on parameters); §16 takes a cleaner third path that already fits §7's value-kind polymorphism: equation kind, attached to a property's value, evaluated per-instance, dimensionally checked, with rating-conflict detection on top.
 
 The §15 row is marked ✅ CLOSED with a pointer here.
+
+---
+
+## 17. Net model: first-class objects
+
+> Adopted in v3 Sprint 13. Promotes the ad-hoc `connects:` syntax to a first-class object kind. Closes the §15 "Net model" deferred row.
+
+### 17.1 Purpose
+
+Before this section, instances declared connectivity via `connects: [{net: 'net_x', terminal: 'y', of: 'inst_z'}]` — but `net_x` was just an ad-hoc string with no schema, no registry, no consistency check. The validator couldn't tell whether two instances thought they were on the same net, whether a referenced net existed anywhere, or whether a net had fewer than two members (a net with one terminal can't form a circuit).
+
+**Nets become first-class objects.** Each net is its own fixture file with its own id, its own schema-validated shape, and its own member list. The catalog now describes "what's connected to what" with the same rigor it already describes "what's made of what" via composition.
+
+This is the foundation Stage 3 (DC solver, Sprint 14) consumes to know which currents flow where.
+
+### 17.2 The net block — full schema
+
+A net is declared as:
+
+| Field | Required | Type | Purpose |
+|---|---|---|---|
+| `id` | ✓ | string | Per identity (§3) — globally unique |
+| `kind` | ✓ | string `"net"` | Net kind discriminator |
+| `origin` | ✓ | string | Per origin (§5) — `builtin` / `community` / `user_local` / `project` |
+| `members` | ✓ | array of `{instance, terminal}` | Minimum 2 entries (§17.4) |
+| `type` | optional | enum | Net taxonomy (§17.3); defaults to unspecified |
+| `description` | optional | string | Human note |
+| `extensions` | optional | extensions block (§11) | Standard overridable / user_extensible / allowed_origins fields |
+
+Nets do NOT carry properties or behaviors. They are pure connectivity objects — a net is "the same conductive medium" the connected terminals share. Physical attributes attached to that medium (impedance, trace width, layer assignment) are board-level concerns that lay later than Sprint 13.
+
+### 17.3 Net type taxonomy
+
+The initial enum for `type:` mirrors standard EDA conventions (verified against KiCad's net classes):
+
+| Type | Meaning |
+|---|---|
+| `signal` | Information-carrying net at logic-level voltage swing |
+| `power` | Power-supply net (Vcc, Vdd, +3V3, etc.) — typically held at a steady DC voltage |
+| `ground` | Reference / return net (GND, AGND, DGND) — defines 0 V reference |
+| `analog` | Analog signal net — continuous, low-noise, often has stricter routing rules |
+| `digital` | Digital signal net — discrete logic levels |
+
+Specialized classes (mixed-signal, differential pair, clock, high-speed) are deferred — added when real fixtures need them. `type:` is optional in Sprint 13; unspecified means the net's role is generic / not yet classified.
+
+### 17.4 Members and terminals
+
+Each member is a `{instance, terminal}` pair:
+
+```yaml
+members:
+  - instance: led_001
+    terminal: anode
+  - instance: resistor_001
+    terminal: out
+```
+
+- `instance` references an instance id (cross-FK validates the id resolves).
+- `terminal` is a **free string** identifying which terminal/pin on that instance is connected. Sprint 13 does NOT validate terminal names — terminals stay free strings until devices declare their named terminal taxonomy (deferred to a §15 row).
+
+**Minimum 2 members.** A net with 0 or 1 members can't form a circuit. The schema enforces `minItems: 2` on the array, and cross-FK surfaces `net-underpopulated` as a backup check at world-load time.
+
+### 17.5 Bidirectional consistency
+
+Instances still declare their `connects:` entries (forward-compatible with future canvas where each instance can display its own pin connections), AND nets declare their `members:` entries. **These two views must agree:**
+
+- If `net.members` lists `{instance: led_001, terminal: anode}`, then `led_001.connects` must include `{net: <this net's id>, terminal: anode, of: led_001}`.
+- If `led_001.connects` references net `net_resistor_led`, then `net_resistor_led.members` must include led_001.
+
+Cross-FK fires `net-membership-mismatch` when either direction is missing. This invariant prevents drift — a maintainer who edits one side and forgets the other gets a clear error rather than a silent incorrect circuit.
+
+### 17.6 Anti-placeholder compatibility (§12)
+
+§12 Rule 1 requires builtin physical values to have structured value + provenance blocks. **Nets don't carry physical values**, so Rule 1 doesn't bind them. Rules 2-5 apply normally: nets at `user_local` or `project` origin can include free-form description; built-in/community nets follow the same schema discipline as any other catalog object.
+
+### 17.7 Cross-FK invariants (the three new error codes)
+
+The cross-FK validator enforces three invariants:
+
+| Error code | Triggers when |
+|---|---|
+| `unknown-net` | An instance's `connects[].net` references a net id that doesn't exist in the world |
+| `net-underpopulated` | A net's `members:` list has fewer than 2 entries (schema's `minItems: 2` is the primary check; cross-FK provides defense in depth and a clearer error message at world-load time) |
+| `net-membership-mismatch` | A net lists an instance/terminal pair but the instance's `connects:` doesn't reference the net (or vice versa) — bidirectional consistency violation per §17.5 |
+
+A `members.instance` referencing a nonexistent instance id surfaces as `unknown-reference` (existing code), not a new net-specific error.
+
+### 17.8 First concrete cases — the educational anchor circuit
+
+Sprint 13 converts the six implicit nets in the existing battery → switch → resistor → LED → return path circuit to explicit net fixtures:
+
+| Net id | Type | Members (instance / terminal) |
+|---|---|---|
+| `net_battery_pos` | power | power_source_001 / positive_terminal, wire_001 / in |
+| `net_wire1_switch` | signal | wire_001 / out, switch_001 / in |
+| `net_switch_resistor` | signal | switch_001 / out, resistor_001 / in |
+| `net_resistor_led` | signal | resistor_001 / out, led_001 / anode |
+| `net_led_wire2` | signal | led_001 / cathode, wire_002 / in |
+| `net_battery_neg` | ground | wire_002 / out, power_source_001 / negative_terminal |
+
+Each net validates against `net.schema.json`. Each is bidirectionally consistent with its instances' `connects:` entries. Cross-FK reports zero net errors on the resulting world.
+
+### 17.9 Constraints
+
+1. **Nets are not derivative.** Unlike materials or devices, nets aren't composed from lower-layer building blocks. They're conductive groupings, not physical objects with internal structure.
+2. **No nested nets.** A net member is always `{instance, terminal}` — never another net. Hierarchical nets / buses / sub-nets are deferred (§15).
+3. **No net-level Active Variables in Sprint 13.** Net-level defaults (impedance budget per power net, termination scheme per signal net) await empirical pressure from larger fixtures.
+4. **Catalog-shipped or project-authored.** Both `builtin` / `community` nets (rare — net definitions are usually project-scope) and `user_local` / `project` nets (typical) are supported. The educational anchor circuit's nets ship at `project` origin.
+
+### 17.10 Relation to §15
+
+This section closes the §15 "Net model" deferred row. Sprint 13's design choice — first-class object kind with its own schema rather than inlining members into instances — matches EDA tradition (KiCad, SPICE, Spectre netlists) and keeps the net concept cleanly separable from instance physics.
+
+The §15 row is marked ✅ CLOSED with a pointer here. A new §15 row is added in Sprint 13's retro: terminal-name validation (devices declare their named terminals, enabling FK validation of `connects[].terminal` and `members[].terminal` strings).
 
 ---
 
