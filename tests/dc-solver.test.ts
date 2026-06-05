@@ -19,14 +19,18 @@
  * land in S14-v3-4 through S14-v3-6; corresponding tests come with each.
  */
 
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import type {
-  ActiveVariableEntry,
-  BehaviorEntry,
-  Definition,
-  Instance,
-  Net,
-  World,
+import { parse as parseYAML } from 'yaml'
+import {
+  type ActiveVariableEntry,
+  type BehaviorEntry,
+  type Definition,
+  type Instance,
+  type Net,
+  validateWorld,
+  type World,
 } from '../src/cross-fk-validator.ts'
 import {
   assignNodeIndices,
@@ -40,6 +44,41 @@ import {
   stampVoltageSource,
   stampWireAsShort,
 } from '../src/dc-solver.ts'
+
+// Helper: load every *.yaml in `dir` into a World, sorting by kind.
+// (Same shape as the loader in cross-fk.test.ts — inlined here so this
+// suite stays self-contained.)
+function loadWorld(dir: string): World {
+  const definitions = new Map<string, Definition>()
+  const instances = new Map<string, Instance>()
+  const behaviors = new Map<string, BehaviorEntry>()
+  const activeVariables = new Map<string, ActiveVariableEntry>()
+  const nets = new Map<string, Net>()
+
+  const files = readdirSync(dir).filter((f) => f.endsWith('.yaml'))
+  for (const file of files) {
+    const raw = readFileSync(join(dir, file), 'utf-8')
+    const data = parseYAML(raw) as Record<string, unknown>
+    const id = typeof data.id === 'string' ? data.id : undefined
+    if (id === undefined) throw new Error(`${file}: missing or non-string 'id' field`)
+
+    if (data.kind === 'behavior') {
+      behaviors.set(id, data as unknown as BehaviorEntry)
+    } else if (data.kind === 'active_variable') {
+      activeVariables.set(id, data as unknown as ActiveVariableEntry)
+    } else if (data.kind === 'net') {
+      nets.set(id, data as unknown as Net)
+    } else if ('kind' in data) {
+      definitions.set(id, data as unknown as Definition)
+    } else if ('kind_ref' in data) {
+      instances.set(id, data as unknown as Instance)
+    } else {
+      throw new Error(`${file}: fixture has neither 'kind' nor 'kind_ref'`)
+    }
+  }
+
+  return { definitions, instances, behaviors, activeVariables, nets }
+}
 
 // Helper: build a minimal World with just the maps the solver reads.
 function emptyWorld(): World {
@@ -964,5 +1003,95 @@ describe('computeResistorCurrent', () => {
       ],
     }
     expect(computeResistorCurrent(inst, nodes)).toBeUndefined()
+  })
+})
+
+// ===========================================================================
+// 7. End-to-end on the educational anchor circuit (S14-v3-7)
+// ===========================================================================
+
+describe('solveDC end-to-end: educational anchor circuit', () => {
+  test('YAML on disk → cross-FK clean → solveDC produces the load-bearing 70 mA result', () => {
+    // The full pipeline: load all valid fixtures, verify cross-FK reports
+    // zero errors (the Sprint 13 invariants hold), then run the DC solver
+    // on the resulting world.
+    //
+    // The circuit: 9 V battery → wire_001 → switch_001 (closed) →
+    // resistor_001 (100 Ω) → led_001 (V_F = 2 V) → wire_002 → ground.
+    //
+    // Expected node voltages (relative to net_battery_neg = 0 V):
+    //   net_battery_pos      = 9.0  (battery sets)
+    //   net_wire1_switch     = 9.0  (wire is ideal short)
+    //   net_switch_resistor  = 9.0  (closed switch is ideal short)
+    //   net_resistor_led     = 2.0  (LED V_F holds anode 2 V above cathode)
+    //   net_led_wire2        = 0.0  (wire is ideal short to ground)
+    //   net_battery_neg      = 0.0  (ground reference)
+    //
+    // Expected branch currents (all 70 mA = (9 - 2) / 100):
+    //   battery_9v_001 = -0.070  (sourcing — exits + terminal externally)
+    //   wire_001       = +0.070  (a → b flow)
+    //   switch_001     = +0.070  (in → out flow)
+    //   resistor_001   = +0.070  (a → b flow, V_a > V_b)
+    //   led_001        = +0.070  (forward bias — enters anode)
+    //   wire_002       = +0.070  (a → b flow)
+    const world = loadWorld('fixtures/valid')
+
+    // Pre-flight: cross-FK must be clean on the valid world (re-verified
+    // here so a regression in another sprint surfaces clearly in this test
+    // before it tries to solve a broken world).
+    const fkErrors = validateWorld(world)
+    if (fkErrors.length > 0) {
+      throw new Error(
+        `Cross-FK should report zero errors on the valid world; got ${fkErrors.length}:\n` +
+          fkErrors.map((e) => JSON.stringify(e)).join('\n'),
+      )
+    }
+
+    const sol = solveDC(world)
+    expect(sol.status).toBe('solved')
+    expect(sol.ground).toBe('net_battery_neg')
+    expect(sol.warnings).toEqual([])
+
+    // Node voltages
+    expect(sol.nodes.get('net_battery_pos')).toBeCloseTo(9, 9)
+    expect(sol.nodes.get('net_wire1_switch')).toBeCloseTo(9, 9)
+    expect(sol.nodes.get('net_switch_resistor')).toBeCloseTo(9, 9)
+    expect(sol.nodes.get('net_resistor_led')).toBeCloseTo(2, 9)
+    expect(sol.nodes.get('net_led_wire2')).toBeCloseTo(0, 9)
+    expect(sol.nodes.get('net_battery_neg')).toBe(0)
+
+    // Branch currents — the 70 mA result
+    expect(sol.branches.get('battery_9v_001')).toBeCloseTo(-0.07, 9)
+    expect(sol.branches.get('wire_001')).toBeCloseTo(0.07, 9)
+    expect(sol.branches.get('switch_001')).toBeCloseTo(0.07, 9)
+    expect(sol.branches.get('resistor_001')).toBeCloseTo(0.07, 9)
+    expect(sol.branches.get('led_001')).toBeCloseTo(0.07, 9)
+    expect(sol.branches.get('wire_002')).toBeCloseTo(0.07, 9)
+  })
+
+  test('the 70 mA LED current is 3.5× the LED max_forward_current rating (sets up Sprint 15)', () => {
+    // Sprint 14 faithfully reports the computed current; Sprint 15's
+    // failure-mode check will fire led-overloaded on this same circuit.
+    // This test documents the deliberate ratings overshoot in the
+    // fixture so the cross-sprint chain has a real triggering case.
+    const world = loadWorld('fixtures/valid')
+    const sol = solveDC(world)
+
+    const I_led = sol.branches.get('led_001')
+    expect(I_led).toBeDefined()
+    if (I_led === undefined) return
+
+    // Pull the LED's declared max_forward_current from the instance directly.
+    const led = world.instances.get('led_001')
+    expect(led).toBeDefined()
+    if (led === undefined) return
+
+    // biome-ignore lint/suspicious/noExplicitAny: instance.parameters value is unknown by design
+    const maxParam = (led.parameters?.max_forward_current?.value as any)?.amount
+    expect(typeof maxParam).toBe('number')
+
+    // The actual current (70 mA absolute value) exceeds the rated max (20 mA).
+    expect(Math.abs(I_led)).toBeGreaterThan(maxParam)
+    expect(Math.abs(I_led) / maxParam).toBeCloseTo(3.5, 1)
   })
 })

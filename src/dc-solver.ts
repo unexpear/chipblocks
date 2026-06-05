@@ -118,6 +118,13 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   type VsLikeKind = 'power_source' | 'led' | 'switch' | 'wire'
   const voltageSourceLike: Array<{ inst: Instance; kind: VsLikeKind }> = []
   for (const inst of world.instances.values()) {
+    // Skip isolated instances (no connects or malformed connects). They
+    // don't participate in any circuit, so they shouldn't contribute an
+    // auxiliary current variable to the matrix. Catalog-example fixtures
+    // (e.g., led_002..led_005) sit in the world without connects and are
+    // correctly invisible to the solver.
+    if (inst.connects?.length !== 2) continue
+
     if (inst.definition === 'power_source') {
       voltageSourceLike.push({ inst, kind: 'power_source' })
     } else if (inst.definition === 'led' || inst.definition === 'led_uv_algan') {
