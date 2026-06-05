@@ -104,6 +104,15 @@ export type ActiveVariableEntry = {
   value: unknown
 }
 
+export type Net = {
+  id: string
+  kind: 'net'
+  origin?: string
+  type?: string
+  description?: string
+  members: Array<{ instance: string; terminal: string }>
+}
+
 // ---------------------------------------------------------------------------
 // World
 // ---------------------------------------------------------------------------
@@ -113,6 +122,7 @@ export type World = {
   instances: Map<string, Instance>
   behaviors: Map<string, BehaviorEntry>
   activeVariables: Map<string, ActiveVariableEntry>
+  nets: Map<string, Net>
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +189,24 @@ export type CrossFkError =
       declared_unit: string
       relative_difference: number
       tolerance: number
+    }
+  | {
+      code: 'unknown-net'
+      source: string
+      ref: string
+      where: string
+    }
+  | {
+      code: 'net-underpopulated'
+      source: string
+      member_count: number
+    }
+  | {
+      code: 'net-membership-mismatch'
+      net: string
+      instance: string
+      terminal: string
+      missing_from: 'net.members' | 'instance.connects'
     }
 
 // ---------------------------------------------------------------------------
@@ -674,6 +702,101 @@ export function validateWorld(world: World): CrossFkError[] {
         }
       }
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Net checks (S13-v3-5 — per OBJECT-MODEL.md §17.7).
+  //
+  // Three invariants:
+  //   1. unknown-net: instance's connects[].net references a nonexistent net id
+  //   2. net-underpopulated: a net has fewer than 2 members (schema's minItems
+  //      is the primary check; this is defense-in-depth + clearer error at
+  //      world-load time)
+  //   3. net-membership-mismatch: net.members and instance.connects disagree
+  //      bidirectionally. A (net, instance, terminal) triple must appear in
+  //      both views.
+  //
+  // Dedup discipline: when an instance references an unknown net, fire only
+  // unknown-net (skip the otherwise-implied net-members-side mismatch — the
+  // user already sees the root cause). Net-side mismatches against missing
+  // instances are still fired (the user can't tell from unknown-reference
+  // alone that the missing instance was also expected on a net).
+  // -------------------------------------------------------------------------
+
+  for (const net of world.nets.values()) {
+    if (net.members.length < 2) {
+      errors.push({
+        code: 'net-underpopulated',
+        source: net.id,
+        member_count: net.members.length,
+      })
+    }
+  }
+
+  for (const inst of world.instances.values()) {
+    if (!inst.connects) continue
+    for (let i = 0; i < inst.connects.length; i++) {
+      const c = inst.connects[i]
+      if (c === undefined) continue
+      if (!world.nets.has(c.net)) {
+        errors.push({
+          code: 'unknown-net',
+          source: inst.id,
+          ref: c.net,
+          where: `connects[${i}].net`,
+        })
+      }
+    }
+  }
+
+  // Bidirectional membership consistency.
+  // Build (net_id, instance_id, terminal) triple sets from both sides
+  // using a ` `-separated key (no real id should contain a NUL).
+  const fromNets = new Set<string>()
+  const fromInstances = new Set<string>()
+
+  for (const net of world.nets.values()) {
+    for (const m of net.members) {
+      fromNets.add(`${net.id} ${m.instance} ${m.terminal}`)
+    }
+  }
+  for (const inst of world.instances.values()) {
+    if (!inst.connects) continue
+    for (const c of inst.connects) {
+      fromInstances.add(`${c.net} ${inst.id} ${c.terminal}`)
+    }
+  }
+
+  for (const key of fromNets) {
+    if (fromInstances.has(key)) continue
+    const [netId, instanceId, terminal] = key.split(' ')
+    if (netId === undefined || instanceId === undefined || terminal === undefined) {
+      continue
+    }
+    errors.push({
+      code: 'net-membership-mismatch',
+      net: netId,
+      instance: instanceId,
+      terminal,
+      missing_from: 'instance.connects',
+    })
+  }
+  for (const key of fromInstances) {
+    if (fromNets.has(key)) continue
+    const [netId, instanceId, terminal] = key.split(' ')
+    if (netId === undefined || instanceId === undefined || terminal === undefined) {
+      continue
+    }
+    // Dedup: if the net doesn't exist at all, unknown-net already fired —
+    // skip the membership mismatch so the user sees one clear error, not two.
+    if (!world.nets.has(netId)) continue
+    errors.push({
+      code: 'net-membership-mismatch',
+      net: netId,
+      instance: instanceId,
+      terminal,
+      missing_from: 'net.members',
+    })
   }
 
   return errors

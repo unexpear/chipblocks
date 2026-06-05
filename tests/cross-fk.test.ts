@@ -19,6 +19,7 @@ import {
   type BehaviorEntry,
   type Definition,
   type Instance,
+  type Net,
   validateWorld,
   type World,
 } from '../src/cross-fk-validator.ts'
@@ -34,6 +35,7 @@ function loadWorld(dir: string): World {
   const instances = new Map<string, Instance>()
   const behaviors = new Map<string, BehaviorEntry>()
   const activeVariables = new Map<string, ActiveVariableEntry>()
+  const nets = new Map<string, Net>()
 
   const files = readdirSync(dir).filter((f) => f.endsWith('.yaml'))
   for (const file of files) {
@@ -48,6 +50,8 @@ function loadWorld(dir: string): World {
       behaviors.set(id, data as unknown as BehaviorEntry)
     } else if (data.kind === 'active_variable') {
       activeVariables.set(id, data as unknown as ActiveVariableEntry)
+    } else if (data.kind === 'net') {
+      nets.set(id, data as unknown as Net)
     } else if ('kind' in data) {
       definitions.set(id, data as unknown as Definition)
     } else if ('kind_ref' in data) {
@@ -57,7 +61,7 @@ function loadWorld(dir: string): World {
     }
   }
 
-  return { definitions, instances, behaviors, activeVariables }
+  return { definitions, instances, behaviors, activeVariables, nets }
 }
 
 /** Get a known entity from a Map or throw a descriptive error. */
@@ -306,6 +310,68 @@ describe('cross-FK validator — invalid worlds (one per error code MUST fire)',
       (e) => e.code === 'derives-violates-rating' && e.source === 'resistor_001',
     )
     expect(resistorDerivesErrors).toEqual([])
+  })
+
+  test('unknown-net: instance connects[].net references a nonexistent net id', () => {
+    // S13-v3-5 — per OBJECT-MODEL.md §17.7.
+    // Mutate led_001's first connects entry to reference a net that doesn't
+    // exist in the world. The check fires unknown-net with the source +
+    // ref pointing at the mutation locus.
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    const led001 = getOrThrow(world.instances, 'led_001', 'unknown-net test')
+    if (led001.connects?.[0] !== undefined) {
+      led001.connects[0].net = 'net_nonexistent'
+    }
+    const errors = validateWorld(world)
+    const hit = errors.find(
+      (e) =>
+        e.code === 'unknown-net' &&
+        e.source === 'led_001' &&
+        e.ref === 'net_nonexistent' &&
+        e.where === 'connects[0].net',
+    )
+    expect(hit).toBeDefined()
+  })
+
+  test('net-underpopulated: a net has fewer than 2 members', () => {
+    // S13-v3-5 — per OBJECT-MODEL.md §17.7.
+    // Schema enforces minItems: 2 at load time; this in-memory mutation
+    // shows that cross-FK is the defense-in-depth check (and provides a
+    // clearer error code when the issue surfaces post-load — e.g., after
+    // a future world-mutation operation).
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    const net = getOrThrow(world.nets, 'net_battery_pos', 'net-underpopulated test')
+    net.members = net.members.slice(0, 1) // leave only 1 member
+    const errors = validateWorld(world)
+    const hit = errors.find(
+      (e) =>
+        e.code === 'net-underpopulated' && e.source === 'net_battery_pos' && e.member_count === 1,
+    )
+    expect(hit).toBeDefined()
+  })
+
+  test('net-membership-mismatch: instance lists net+terminal that net does not list back', () => {
+    // S13-v3-5 — per OBJECT-MODEL.md §17.5 / §17.7.
+    // Add a connects entry on battery_9v_001 that references the existing
+    // net net_battery_pos but with a terminal (terminal_fake) the net's
+    // members[] doesn't list. The bidirectional check fires
+    // net-membership-mismatch with missing_from: 'net.members'.
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    const battery = getOrThrow(world.instances, 'battery_9v_001', 'membership-mismatch test')
+    battery.connects = [
+      ...(battery.connects ?? []),
+      { net: 'net_battery_pos', terminal: 'terminal_fake', of: 'battery_9v_001' },
+    ]
+    const errors = validateWorld(world)
+    const hit = errors.find(
+      (e) =>
+        e.code === 'net-membership-mismatch' &&
+        e.net === 'net_battery_pos' &&
+        e.instance === 'battery_9v_001' &&
+        e.terminal === 'terminal_fake' &&
+        e.missing_from === 'net.members',
+    )
+    expect(hit).toBeDefined()
   })
 
   test('role-unsatisfied (Sprint 9): LED picks copper for n_side — not a semiconductor', () => {
