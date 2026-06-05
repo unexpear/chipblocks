@@ -1,0 +1,37 @@
+# Valid fixture: a specific 1N5817-class Schottky diode.
+# Standard ratings: 1 A continuous, 20 V PIV, ~0.32 V forward at 1 A,
+# ~10 ns reverse recovery. The general-purpose hobbyist Schottky — used in
+# small switching-regulator buck converters, low-loss bypass diodes, and
+# polarity protection in 3.3-5 V circuits.
+# Source: Vishay 1N5817 datasheet + ON Semi / Diodes Inc. 1N581x family datasheets.
+# MUST validate against instance.schema.json.
+kind_ref: primitive_device
+definition: diode_schottky_al_si
+id: diode_002
+origin: project
+parameters:
+  forward_voltage:
+    value:
+      kind: scalar
+      amount: 0.32
+      unit: volt
+  max_forward_current:
+    value:
+      kind: scalar
+      amount: 1.0
+      unit: ampere
+  peak_inverse_voltage:
+    value:
+      kind: scalar
+      amount: 20
+      unit: volt
+  reverse_recovery_time:
+    value:
+      kind: scalar
+      amount: 1.0e-8
+      unit: second
+  reverse_leakage_current:
+    value:
+      kind: scalar
+      amount: 1.0e-6
+      unit: ampere

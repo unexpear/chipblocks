@@ -1,0 +1,97 @@
+# Valid fixture: Schottky diode built on an aluminum / n-type-silicon junction.
+# FIRST DEVICE composing a metal + a semiconductor (rather than two doped
+# semiconductors like the LED and the PN rectifier). The metal-semiconductor
+# (Schottky) barrier produces a different I-V characteristic than a PN
+# junction: lower forward voltage drop (~0.3 V vs ~0.7 V for silicon PN) and
+# much faster reverse recovery (~10 ns vs hundreds of ns to several us for
+# silicon PN — Schottky has no minority carriers to clear out).
+#
+# Schottky physics: when a metal contacts a lightly-doped n-type semiconductor,
+# a depletion region forms in the semiconductor (NOT a PN junction; there is
+# no p-region). Forward bias (metal positive relative to n-Si) lowers the
+# barrier and allows electron flow majority-carrier-only. Reverse bias widens
+# the barrier and blocks current — but Schottky reverse leakage is higher than
+# PN and reverse breakdown voltages are lower (~20-100 V typical vs hundreds
+# to thousands of V for silicon PN rectifiers).
+#
+# Specific variant naming captures both the metal and semiconductor: aluminum
+# is the canonical metal in CMOS-compatible Schottky processes; silicon n-type
+# is the semiconductor side. Other Schottky metals (platinum, palladium,
+# titanium silicide) yield different barrier heights and forward voltages —
+# future device variants follow this naming pattern.
+#
+# Standard applications: high-frequency rectification (switching power
+# supplies, RF detectors), reverse-polarity protection in low-voltage
+# circuits, clamping diodes in high-speed logic, low-loss bypass diodes
+# in solar panels.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: diode_schottky_al_si
+origin: builtin
+layer: primitive_device
+name: "Schottky diode (aluminum / n-type silicon junction)"
+description: "A two-terminal Schottky-barrier diode formed by a metal-semiconductor junction (aluminum + n-type silicon). Forward voltage drop is lower than a silicon PN diode (~0.3 V vs ~0.7 V) because the barrier height is set by the metal-semiconductor work-function difference rather than the silicon bandgap. Reverse recovery is much faster (~10 ns vs ~us) because there are no minority carriers to clear from a stored-charge region. Trade-offs: higher reverse leakage current, lower peak inverse voltage rating (~20-100 V typical), more temperature-sensitive forward voltage."
+composition:
+  uses:
+    - aluminum
+    - silicon_n_type
+  requires:
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  forward_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: Forward voltage drop at rated current. Set by the Al/n-Si Schottky barrier height (~0.7-0.8 eV theoretical) and the operating current. Typical 0.3-0.5 V at 1 A for aluminum on lightly-doped silicon.
+  max_forward_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: Maximum continuous forward current at specified ambient. Schottky parts are typically rated 1-30 A; large heat-sinked devices reach 100+ A.
+  peak_inverse_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: Peak repetitive reverse voltage. Schottky parts have lower PIV than silicon PN — typically 20-100 V for general-purpose parts, special-construction parts reach 200-300 V but compromise forward voltage.
+  reverse_recovery_time:
+    type: quantity
+    units: second
+    required: false
+    description: Time to stop conducting reverse current after polarity reversal. Schottky's killer feature — typically under 10 ns vs hundreds of ns to several us for silicon PN. The reason Schottky is preferred in switching power supplies operating at hundreds of kHz to several MHz.
+  reverse_leakage_current:
+    type: quantity
+    units: ampere
+    required: false
+    description: Steady-state reverse current at rated PIV. Schottky leakage is much higher than silicon PN (~uA vs nA) and rises exponentially with temperature. A real consideration in thermal design and standby-power budgets.
+behaviors:
+  - acts_as_diode
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  FIRST device with metal + semiconductor composition. composition.uses lists
+  aluminum (a metal) and silicon_n_type (a semiconductor) directly. The metal
+  vs semiconductor distinction is NOT formally captured by cross-FK in
+  Sprint 8 — both materials simply exist and enable electrical_conduction.
+  When schottky_junction promotes to a first-class interface kind (§15
+  deferred row from Sprint 8 retro likely), it can carry composition.requires
+  for distinct metal_side and semiconductor_side roles with appropriate
+  must_enable constraints.
+  Behaviors are identical to diode_silicon_rectifier — same acts_as_diode
+  pattern; only the parameter values differ. The Schottky's distinct physics
+  manifests in the parameter values (lower V_F, faster trr, higher leakage,
+  lower PIV) rather than in new behaviors.
+  Future Schottky variants follow the same naming pattern: diode_schottky_pt_si
+  (platinum-silicon, different barrier height), diode_schottky_pd_si
+  (palladium-silicon), diode_schottky_metal_gan (GaN-based for high-voltage
+  applications).
