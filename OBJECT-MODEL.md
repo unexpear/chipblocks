@@ -925,7 +925,7 @@ Surfaced now so they can't accidentally be answered by side effect later.
 | **Terminal-name validation.** Sprint 13's net model (§17) leaves `connects[].terminal` and `members[].terminal` as free strings. For cross-FK to verify a terminal name like `'anode'` is real, every device definition would declare its named terminal taxonomy — LED has `[anode, cathode]`; transistor has `[collector, base, emitter]` or `[drain, gate, source]`; op-amp has 5+ pins including supply. Schema change touches every device fixture plus design questions (polarity-aware terminals on diodes? multi-die packages with shared signals?). Sprint 13's free strings are forward-compatible — adding terminal-FK validation later doesn't require rewriting existing instance fixtures. | When devices declare their named terminal taxonomy (a future sprint) |
 | **Bus / hierarchical / sub-net model.** A bus is a named group of nets that travel together (8-bit data bus = 8 individual signal nets bundled). Hierarchical nets matter when a module's internal nets connect to external pins (op-amp's internal node that's an external pin). Sprint 13's single-net-per-id flat model handles the educational anchor circuit fine; bus / hierarchy adds complexity (naming rules, scoping rules, expansion semantics) without empirical pressure today. Lands when a real fixture demands it — typically a CPU bus, peripheral interface, or hierarchical module. | When a fixture demands grouped or hierarchical nets |
 | **Net-level Active Variables.** Net-level defaults ("default impedance budget per power net," "default termination scheme per signal net") only matter at larger design scales — real boards with dozens of nets and routing constraints. Today's 5-instance circuits have no diversity to abstract over. Lands when a community pack or larger fixture catalog applies empirical pressure for the abstraction. | When larger fixture catalogs apply pressure |
-| **Net behaviors / physics (KVL, KCL, electrical consistency).** Sum-of-voltages-around-a-loop and sum-of-currents-at-a-node are *what the DC solver computes* — not invariants a structural validator can check. Lands with Stage 3 of the simulation arc (Sprint 14's DC solver), which consumes the Sprint 13 net model as its primary input: each net is one node (KCL constraint); each instance with two terminals is one branch (Ohm's law or device-specific equation, sourced from the §16 equation-evaluator). | Sprint 14 — DC solver lands |
+| ~~**Net behaviors / physics (KVL, KCL, electrical consistency).** Sum-of-voltages-around-a-loop and sum-of-currents-at-a-node are *what the DC solver computes* — not invariants a structural validator can check.~~ ✅ **CLOSED (linear case) in Sprint 14** — see §18 below. The linear DC operating-point computation lands via Modified Nodal Analysis + mathjs's `lusolve`, handling resistors / voltage sources / wires / LEDs (fixed-V_F approximation) / switches (fixed-state). Nonlinear iterative solving (Shockley diode equation + Newton-Raphson + pnjlim) is migrated to its own §15 row below. | ✅ Closed Sprint 14 (linear case) |
 
 These deferrals are explicit. They do not get answered by code accident in the meantime.
 
@@ -1209,6 +1209,176 @@ Each net validates against `net.schema.json`. Each is bidirectionally consistent
 This section closes the §15 "Net model" deferred row. Sprint 13's design choice — first-class object kind with its own schema rather than inlining members into instances — matches EDA tradition (KiCad, SPICE, Spectre netlists) and keeps the net concept cleanly separable from instance physics.
 
 The §15 row is marked ✅ CLOSED with a pointer here. A new §15 row is added in Sprint 13's retro: terminal-name validation (devices declare their named terminals, enabling FK validation of `connects[].terminal` and `members[].terminal` strings).
+
+---
+
+## 18. DC solver model (Sprint 14 MVP — linear case)
+
+> Adopted in v3 Sprint 14. Computes the DC operating point — voltage at each net and current through each component — using Modified Nodal Analysis. Partially closes the §15 "Net behaviors / physics" deferred row (linear case only; nonlinear Newton-Raphson + Shockley equation migrate to a new §15 row).
+
+### 18.1 Purpose
+
+Sprint 13 made the circuit's connectivity explicit (nets). §16 made device behaviors derivable (equations). §18 puts these together: given a valid circuit (instances + nets, with cross-FK passing), the DC solver computes what the circuit *does* — node voltages and branch currents.
+
+This is the first time ChipBlocks answers a "what does this circuit do?" question. Previous sprints answered "is this circuit valid?" — necessary but not sufficient. After Sprint 14, ChipBlocks can compute the DC operating point of a valid linear circuit (including the fixed-V_F approximation for LEDs and diodes).
+
+### 18.2 Ground reference convention
+
+Every DC circuit needs a 0 V reference (ground); all other voltages are measured relative to it.
+
+ChipBlocks's convention:
+
+- **Default**: the net with `type: ground` per §17.3 is the ground reference. The educational anchor circuit's `net_battery_neg` is the canonical example.
+- **Multiple ground nets**: if more than one net is `type: ground`, the first in deterministic iteration order is chosen. A warning surfaces.
+- **No ground**: if no net has `type: ground`, the solver returns `status: 'no-ground'` and doesn't attempt to solve. (Cross-FK doesn't catch this — it's a solver-time precondition.)
+- **Override**: `SolveOptions.ground: 'net_id'` lets the caller pick a specific net by id, overriding the auto-detection.
+
+### 18.3 MNA matrix construction
+
+The solver uses **Modified Nodal Analysis** — the standard SPICE-family approach. Pure nodal analysis (KCL at every non-ground node, solve `V = G⁻¹ × I`) breaks on voltage sources because their conductance is infinite. MNA fixes this by extending the system with one auxiliary current variable per voltage source.
+
+The assembled system:
+
+> `M × x = b`
+
+where:
+
+- `x` = `[node voltages (N-1), voltage-source currents (S)]` — N is the total net count; the ground net is excluded; S is the number of voltage-source-like elements (batteries, fixed-V_F LEDs, ideal closed switches when treated as 0 V sources)
+- `M` = the MNA matrix (size (N-1+S) × (N-1+S))
+- `b` = the source vector (length N-1+S)
+
+Solving `x` via mathjs's `lusolve(M, b)` gives node voltages and source currents in one shot.
+
+### 18.4 Per-element stamps
+
+The MNA matrix is built by walking `world.instances` and "stamping" each element's contribution. Stamps are the canonical SPICE-family patterns (Ho/Ruehli/Brennan 1975; Qucs technical docs; IEEE EMC Society "How SPICE Works").
+
+#### Resistor — between nets A and B, resistance R
+
+| Matrix cell | Add |
+|---|---|
+| `M[A][A]` | `+1/R` |
+| `M[B][B]` | `+1/R` |
+| `M[A][B]` | `−1/R` |
+| `M[B][A]` | `−1/R` |
+
+No source contribution. (If A or B is the ground net, those rows/columns are omitted.)
+
+#### Voltage source — between net A (positive) and net B (negative), value V_src
+
+Extends the system with one auxiliary current variable `I_src`:
+
+| Matrix cell | Set |
+|---|---|
+| `M[A][I_src]` | `+1` |
+| `M[B][I_src]` | `−1` |
+| `M[I_src][A]` | `+1` |
+| `M[I_src][B]` | `−1` |
+| `b[I_src]` | `V_src` |
+
+#### Wire — between nets A and B
+
+Two options:
+
+- **Small-resistor treatment**: stamp as a resistor with R computed from the wire's material resistivity × length / cross-section area (via the §16 equation evaluator). For typical 10 cm hookup wire, R ≈ 5 mΩ — small but nonzero, keeps the matrix non-singular.
+- **Net-merging treatment**: when R is below a threshold or the wire's geometry isn't resolvable, treat A and B as the same node (merge before stamping). Avoids numerical conditioning issues from very-small resistances.
+
+Sprint 14 defaults to small-resistor when geometry resolves; net-merging when not.
+
+#### LED / diode (fixed-V_F approximation) — between net A (anode) and net B (cathode), forward voltage V_F
+
+When forward-biased (assumed for Sprint 14 — see §18.7):
+
+- Stamps identically to a **voltage source** with `V_src = V_F` between A and B.
+
+When reverse-biased:
+
+- No stamp — open circuit between A and B. (Detection of reverse-bias is out of Sprint 14 scope; the anchor circuit's LED is unambiguously forward-biased.)
+
+#### Switch (SPST, fixed state) — between nets A and B
+
+- **Closed**: same stamp as a wire with R ≈ 0 (net-merge).
+- **Open**: no stamp — open circuit between A and B.
+
+Sprint 14 uses each switch's `initial_state` from the device definition. State-machine integration is a §15 row.
+
+### 18.5 Solve mechanism
+
+After all stamps are applied:
+
+1. Call `mathjs.lusolve(M, b)` to get `x`.
+2. Extract node voltages from `x[0..N-2]` and map them back to net ids.
+3. Extract voltage-source-like currents from `x[N-1..N-1+S-1]`.
+4. Compute resistor branch currents: `I = (V_A − V_B) / R` for each resistor between nets A and B.
+5. For wire branch currents: same formula with `R_wire`.
+6. For switches: closed switches inherit the current from elements they're chained through (in a single-loop circuit, the same current flows everywhere).
+
+### 18.6 Solution shape
+
+```typescript
+type Solution = {
+  status: 'solved' | 'no-ground' | 'singular-matrix' | 'unsupported-element' | 'numerical-error'
+  nodes: Map<string, number>     // net id → voltage in volts (relative to ground)
+  branches: Map<string, number>  // instance id → current in amperes
+                                  // (sign: positive flows from terminal_positive / anode /
+                                  // terminal_a toward terminal_negative / cathode / terminal_b)
+  ground: string                  // the net id chosen as ground reference
+  warnings: string[]              // non-fatal observations (e.g., "multiple ground nets;
+                                  // chose net_battery_neg")
+}
+```
+
+### 18.7 Scope: linear case only (Sprint 14)
+
+Sprint 14 handles **linear elements + voltage sources + fixed-V_F approximations**. The full nonlinear case — where LED current is governed by the Shockley equation `I = I_s × (exp(V/V_T) − 1)` — needs iterative Newton-Raphson solving with convergence aids (the pnjlim algorithm to prevent diode voltage from oscillating across the exponential's steep region).
+
+The fixed-V_F approximation is justified because:
+
+- It matches the back-of-envelope analysis hobbyists do by hand. Real LED V_F varies only ~10% over typical operating current ranges; the constant approximation is "good enough" for many practical cases.
+- It avoids Newton-Raphson + convergence-aid complexity, halving Sprint 14's risk.
+- It unblocks Sprint 15's failure-mode detection: comparing computed currents to max ratings works regardless of whether the current came from a fixed-V_F or exponential model.
+
+**Forward-bias assumption.** Sprint 14 assumes LEDs are forward-biased. The educational anchor circuit's single-source, single-loop topology guarantees this. More general circuits could violate the assumption (back-EMF from inductors, reverse-biased configurations, etc.). When that case appears, the Shockley + Newton-Raphson sprint handles both forward and reverse correctly via the actual diode equation.
+
+### 18.8 Anti-placeholder compatibility (§12)
+
+The solver computes derived quantities; it doesn't ship "values" in the same sense the catalog does. Rule 1 (cited values + provenance) doesn't apply to computed solver outputs.
+
+What DOES apply: the SOLVER ITSELF must be physically honest. Sprint 14's solver does linear DC analysis correctly — no faked passes, no silent skips of unsupported elements. If an element kind doesn't have a stamp (transistors, capacitors with non-DC behavior, etc.), the solver surfaces `status: 'unsupported-element'` rather than silently producing wrong results.
+
+### 18.9 First concrete case — the educational anchor circuit expected result
+
+Loading the existing 6-instance / 6-net world and running `solveDC(world)`:
+
+**Node voltages** (relative to `net_battery_neg = 0 V`):
+
+| Net | Type | Voltage |
+|---|---|---|
+| `net_battery_pos` | power | 9.0 V |
+| `net_wire1_switch` | signal | ≈ 9.0 V (wire IR drop negligible at low R) |
+| `net_switch_resistor` | signal | ≈ 9.0 V (closed switch is a wire) |
+| `net_resistor_led` | signal | 2.0 V (above ground = LED V_F) |
+| `net_led_wire2` | signal | ≈ 0 V (just above ground; wire IR drop) |
+| `net_battery_neg` | ground | 0.0 V |
+
+**Branch currents** (all 70 mA; series circuit):
+
+| Instance | Current |
+|---|---|
+| `battery_9v_001` | −0.070 A (current LEAVES the positive terminal at this sign convention) |
+| `wire_001` | +0.070 A |
+| `switch_001` | +0.070 A |
+| `resistor_001` | +0.070 A |
+| `led_001` | +0.070 A |
+| `wire_002` | +0.070 A |
+
+**By-hand calc:** I = (V_supply − V_F) / R = (9 V − 2 V) / 100 Ω = **70 mA**.
+
+> **Important observation.** 70 mA is **3.5× the LED's `max_forward_current: 0.020 A` rating**. Sprint 14's solver reports the 70 mA faithfully; Sprint 15's failure-mode check will consume the Solution, detect the rating violation, and surface a `led-overloaded` error. The fixture is deliberately undersized so the cross-stage chain (solve → check ratings → flag) has a real triggering case.
+
+### 18.10 Relation to §15
+
+This section partially closes the §15 deferred row "Net behaviors / physics (KVL, KCL, electrical consistency)" added in Sprint 13's retro. The **linear DC case** lands here in §18. The nonlinear iterative case migrates to a new §15 row pointing at Sprint 15 (Shockley diode + Newton-Raphson + pnjlim). The §15 row is marked ✅ CLOSED (linear case) with a pointer here; the nonlinear row is added in Sprint 14's retro.
 
 ---
 
