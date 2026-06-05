@@ -233,6 +233,81 @@ describe('cross-FK validator — invalid worlds (one per error code MUST fire)',
     expect(hit).toBeDefined()
   })
 
+  test('derives-violates-rating: declared peak_wavelength conflicts with material bandgap', () => {
+    // device-led.yaml ships properties.peak_wavelength as kind: equation
+    // (λ = hc/E_g, sourcing E_g from n_side.bandgap_energy). led_001 defaults
+    // its n_side to aluminum_gallium_indium_phosphide_n_type, whose bandgap
+    // is 1.9 eV → derived λ ≈ 652.5 nm.
+    //
+    // Mutate the instance to claim its peak_wavelength is 470 nm (blue). The
+    // physics doesn't square with the chosen material: relative_difference is
+    // |652.5 - 470| / 470 ≈ 38.8% > 20% default tolerance. The check must fire.
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    const led001 = getOrThrow(world.instances, 'led_001', 'derives-violates-rating fire test')
+    led001.parameters = {
+      ...led001.parameters,
+      peak_wavelength: { value: { kind: 'scalar', amount: 470, unit: 'nanometer' } },
+    }
+    const errors = validateWorld(world)
+    const hit = errors.find(
+      (e) =>
+        e.code === 'derives-violates-rating' &&
+        e.source === 'led_001' &&
+        e.property === 'peak_wavelength',
+    )
+    expect(hit).toBeDefined()
+    if (hit !== undefined && hit.code === 'derives-violates-rating') {
+      expect(hit.relative_difference).toBeGreaterThan(0.2)
+      expect(hit.tolerance).toBe(0.2)
+      expect(hit.declared_amount).toBe(470)
+      expect(hit.declared_unit).toBe('nanometer')
+      expect(hit.derived_unit).toBe('nm')
+      // Derived ≈ 652.5 nm — sanity check the equation actually evaluated
+      expect(hit.derived_amount).toBeCloseTo(652.5484, 3)
+    }
+  })
+
+  test('derives-violates-rating does NOT fire when declared agrees with derived (led_001 unmodified)', () => {
+    // Unmodified led_001: parameters.peak_wavelength = 640 nm, derived = 652.5 nm.
+    // Diff 12.5 / 640 = 1.95% — well within 20% tolerance. Implicitly covered by
+    // the valid-world zero-errors test above, but called out explicitly to lock
+    // the no-false-positive contract for the new check.
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    const errors = validateWorld(world)
+    const derivesErrors = errors.filter((e) => e.code === 'derives-violates-rating')
+    expect(derivesErrors).toEqual([])
+  })
+
+  test('derives-violates-rating skips silently when inputs cannot be resolved (resistor geometry)', () => {
+    // device-resistor.yaml ships properties.resistance as R = rho * L / A with
+    // inputs resistive_material.resistivity (resolvable from material property),
+    // geometry.length (NOT resolvable — the path shape definition doesn't carry
+    // a length property; length lives per-instance), geometry.cross_section_area
+    // (same — not on the shape definition). buildRatingCheckContext returns null
+    // for this case, the check skips, and no error fires — confirming the
+    // best-effort posture from §16.7.
+    //
+    // Verifying this even by inducing a deliberate mismatch: mutating
+    // resistor_001.parameters.resistance to a wildly different value must NOT
+    // produce a derives-violates-rating error (because the equation can't be
+    // evaluated from world data to begin with).
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    const resistor001 = getOrThrow(
+      world.instances,
+      'resistor_001',
+      'derives-violates-rating resistor-skip test',
+    )
+    resistor001.parameters = {
+      ...resistor001.parameters,
+      resistance: { value: { kind: 'scalar', amount: 1e9, unit: 'ohm' } }, // way off
+    }
+    const errors = validateWorld(world)
+    const resistorDerivesErrors = errors.filter(
+      (e) => e.code === 'derives-violates-rating' && e.source === 'resistor_001',
+    )
+    expect(resistorDerivesErrors).toEqual([])
+  })
+
   test('role-unsatisfied (Sprint 9): LED picks copper for n_side — not a semiconductor', () => {
     // Sprint 9 refactored led to compose pn_junction with n_side / p_side
     // material roles. The roles require n_type_semiconductor / p_type_semiconductor.

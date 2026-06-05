@@ -18,10 +18,28 @@
  * lands in S3-v3-4; this skeleton (S3-v3-3) covers ref resolution + kind matching +
  * unknown-behavior detection.
  *
+ * Sprint 12 v3-7: derives-violates-rating — per OBJECT-MODEL.md §16.7. When an
+ * instance's definition has a property declared as kind: equation AND the instance
+ * has a same-name parameter declaring a value, evaluate the equation using the
+ * instance's resolved composition (material/shape) and compare. Mismatches beyond a
+ * default 20% relative tolerance surface the new error code. Inputs that can't be
+ * resolved from world data (e.g., geometry properties that live at instance level
+ * rather than on a shape definition) cause the check to skip silently — the
+ * derives-violates-rating check is best-effort and only fires when every input
+ * resolves.
+ *
  * Per the "real all the way down" principle: this validator does not fake a green
  * light by absence. Every check either confirms a constraint holds with a real lookup,
  * or emits a structured error explaining why. There is no implicit pass.
  */
+
+import {
+  type ConcreteValue,
+  type EquationValue,
+  type EvaluationContext,
+  evaluateEquation,
+  mathInstance,
+} from './equation-evaluator.ts'
 
 // ---------------------------------------------------------------------------
 // Object shapes (minimal — only the fields cross-FK needs)
@@ -43,6 +61,7 @@ export type Definition = {
   enables?: string[]
   behaviors?: string[]
   parameters?: Record<string, ParamSlot>
+  properties?: Record<string, { value?: unknown; provenance?: unknown; support?: unknown }>
   state_machine?: {
     initial_state: string
     states: Record<string, { description: string }>
@@ -150,6 +169,17 @@ export type CrossFkError =
       where: string
       declared_states: string[]
     }
+  | {
+      code: 'derives-violates-rating'
+      source: string
+      property: string
+      derived_amount: number
+      derived_unit: string
+      declared_amount: number
+      declared_unit: string
+      relative_difference: number
+      tolerance: number
+    }
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -186,6 +216,135 @@ function paramKindFromType(type: string): string | null {
       return null
     default:
       return null
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers for derives-violates-rating (S12-v3-7)
+// ---------------------------------------------------------------------------
+
+const DEFAULT_RATING_TOLERANCE = 0.2 // 20% relative difference — §16.7
+
+/** Type guard for the equation value kind (per OBJECT-MODEL.md §16). */
+function isEquationValue(v: unknown): v is EquationValue {
+  if (typeof v !== 'object' || v === null) return false
+  return (v as Record<string, unknown>).kind === 'equation'
+}
+
+/**
+ * Resolve a composition role name to the id of the material / shape that fills it.
+ *
+ * Walks: role name → satisfies_role parameter on def → instance value, AV ref, or
+ * definition default. Returns undefined when any link in the chain is missing.
+ */
+function resolveRoleId(
+  inst: Instance,
+  def: Definition,
+  world: World,
+  roleName: string,
+): string | undefined {
+  const satisfyingEntry = Object.entries(def.parameters ?? {}).find(
+    ([, slot]) => slot.satisfies_role === roleName,
+  )
+  if (satisfyingEntry === undefined) return undefined
+  const [paramName, slot] = satisfyingEntry
+
+  const instParam = inst.parameters?.[paramName]
+  if (typeof instParam?.value === 'string') return instParam.value
+  if (instParam?.ref !== undefined) {
+    const av = world.activeVariables.get(instParam.ref)
+    if (av !== undefined && typeof av.value === 'string') return av.value
+  }
+  if (typeof slot.default?.value === 'string') return slot.default.value
+  return undefined
+}
+
+/**
+ * Read a property entry's value as a concrete { amount, unit } pair.
+ *
+ * Returns null when the property's value isn't a directly-evaluable scalar or
+ * condition_bound (range, equation, curve, lookup_table, etc. take more work
+ * to reduce to a single point — deferred to later sprints).
+ */
+function readScalarOrConditionBound(prop: unknown): ConcreteValue | null {
+  if (typeof prop !== 'object' || prop === null) return null
+  const value = (prop as Record<string, unknown>).value
+  if (typeof value !== 'object' || value === null) return null
+  const v = value as Record<string, unknown>
+  const kind = v.kind
+  if (
+    (kind === 'scalar' || kind === 'condition_bound') &&
+    typeof v.amount === 'number' &&
+    typeof v.unit === 'string'
+  ) {
+    return { amount: v.amount, unit: v.unit }
+  }
+  return null
+}
+
+/**
+ * Build an EvaluationContext for `spec` by walking the instance's composition.
+ *
+ * Each `property_ref` input's path of the form `<role>.<property>` resolves to
+ * the property value declared on the role-filling material / shape definition.
+ * Returns null if ANY property_ref input can't resolve (the rating check then
+ * skips silently — best-effort, per §16.7).
+ */
+function buildRatingCheckContext(
+  inst: Instance,
+  def: Definition,
+  world: World,
+  spec: EquationValue,
+): EvaluationContext | null {
+  const propertyRefs: Record<string, ConcreteValue> = {}
+
+  for (const inputSpec of Object.values(spec.inputs)) {
+    if (inputSpec.kind !== 'property_ref') continue
+
+    const path = inputSpec.path
+    const dotIndex = path.indexOf('.')
+    if (dotIndex < 0) return null
+
+    const roleName = path.substring(0, dotIndex)
+    const propName = path.substring(dotIndex + 1)
+
+    const chosenId = resolveRoleId(inst, def, world, roleName)
+    if (chosenId === undefined) return null
+
+    const chosen = world.definitions.get(chosenId)
+    if (chosen === undefined) return null
+    if (chosen.properties === undefined) return null
+
+    const concrete = readScalarOrConditionBound(chosen.properties[propName])
+    if (concrete === null) return null
+
+    propertyRefs[path] = concrete
+  }
+  return { propertyRefs }
+}
+
+/**
+ * Compare two unit-bearing amounts using mathjs's unit algebra to convert
+ * `declared` into `derived`'s unit before computing relative difference.
+ * Returns null when the units are dimensionally incompatible or mathjs can't
+ * parse either unit string.
+ */
+function compareDerivedVsDeclared(
+  derivedAmount: number,
+  derivedUnit: string,
+  declaredAmount: number,
+  declaredUnit: string,
+): { declared_in_derived_unit: number; relative_difference: number } | null {
+  try {
+    const derived = mathInstance.unit(derivedAmount, derivedUnit)
+    const declared = mathInstance.unit(declaredAmount, declaredUnit)
+    if (!derived.equalBase(declared)) return null
+    const declaredConverted = declared.toNumber(derivedUnit)
+    const diff = Math.abs(derivedAmount - declaredConverted)
+    const relativeDifference = declaredConverted === 0 ? diff : diff / Math.abs(declaredConverted)
+    return { declared_in_derived_unit: declaredConverted, relative_difference: relativeDifference }
+  } catch {
+    return null
   }
 }
 
@@ -391,6 +550,70 @@ export function validateWorld(world: World): CrossFkError[] {
               })
             }
           }
+        }
+      }
+    }
+
+    // Derives-violates-rating check (S12-v3-7 — per OBJECT-MODEL.md §16.7).
+    //
+    // When a definition declares property X as kind: equation AND the instance
+    // supplies a same-name parameter as a scalar, evaluate the equation against
+    // the instance's resolved composition and compare. Beyond a default 20%
+    // relative tolerance, surface derives-violates-rating.
+    //
+    // Best-effort: when any property_ref input can't be resolved from world data
+    // (typical for geometry properties that live per-instance rather than on a
+    // shape definition), the equation evaluation skips silently — no false
+    // positives, no error.
+    if (def.properties !== undefined) {
+      for (const [propName, propEntry] of Object.entries(def.properties)) {
+        const propValue = propEntry.value
+        if (!isEquationValue(propValue)) continue
+
+        const context = buildRatingCheckContext(inst, def, world, propValue)
+        if (context === null) continue
+
+        let evalResult: ReturnType<typeof evaluateEquation>
+        try {
+          evalResult = evaluateEquation(propValue, context)
+        } catch {
+          continue // Evaluation errored; that's not a rating-violation issue.
+        }
+        if (evalResult.status !== 'evaluated') continue
+
+        const declaredParam = inst.parameters?.[propName]
+        if (declaredParam === undefined) continue
+        const declaredValue = declaredParam.value as
+          | { kind?: unknown; amount?: unknown; unit?: unknown }
+          | undefined
+        if (
+          declaredValue?.kind !== 'scalar' ||
+          typeof declaredValue.amount !== 'number' ||
+          typeof declaredValue.unit !== 'string'
+        ) {
+          continue
+        }
+
+        const comparison = compareDerivedVsDeclared(
+          evalResult.amount,
+          evalResult.unit,
+          declaredValue.amount,
+          declaredValue.unit,
+        )
+        if (comparison === null) continue
+
+        if (comparison.relative_difference > DEFAULT_RATING_TOLERANCE) {
+          errors.push({
+            code: 'derives-violates-rating',
+            source: inst.id,
+            property: propName,
+            derived_amount: evalResult.amount,
+            derived_unit: evalResult.unit,
+            declared_amount: declaredValue.amount,
+            declared_unit: declaredValue.unit,
+            relative_difference: comparison.relative_difference,
+            tolerance: DEFAULT_RATING_TOLERANCE,
+          })
         }
       }
     }
