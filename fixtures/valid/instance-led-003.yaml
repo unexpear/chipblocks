@@ -1,0 +1,71 @@
+# Valid fixture: a specific green InGaN LED instance (~525 nm).
+# Same material system as blue InGaN (led_002) but tuned for green emission —
+# in real devices via higher indium fraction in the InGaN active layer
+# (x ~ 0.30 vs ~0.15 for blue). Our simplified one-InGaN-material model
+# captures this at the instance level via the peak_wavelength parameter
+# (525 nm here vs 470 nm for blue) rather than as a separate material.
+#
+# Key physical phenomenon captured: external quantum efficiency is notably
+# LOWER for green InGaN (~15 percent) than for blue InGaN (~55 percent).
+# This is "the green gap" — a well-documented industry challenge. Higher In
+# fractions in InGaN active layers cause increased dislocation density,
+# carrier localization in the active region, and polarization-field-induced
+# quantum-confined Stark effect (QCSE) — all of which degrade radiative
+# recombination efficiency around 525-555 nm. The green gap is the reason
+# green LEDs in white-LED color-mixing schemes are typically the limiting
+# component for system efficacy.
+#
+# Real-world parts in this class: Cree XLamp XQ-E series Green, Lumileds
+# LUXEON Z Color Green, Osram OSLON SSL 80 True Green.
+# MUST validate against instance.schema.json.
+kind_ref: primitive_device
+definition: led
+id: led_003
+origin: project
+parameters:
+  n_side:
+    value: indium_gallium_nitride_n_type
+  p_side:
+    value: indium_gallium_nitride_p_type
+  forward_voltage:
+    value:
+      kind: scalar
+      amount: 3.2
+      unit: volt
+  peak_wavelength:
+    value:
+      kind: scalar
+      amount: 525
+      unit: nanometer
+  max_forward_current:
+    value:
+      kind: scalar
+      amount: 0.020
+      unit: ampere
+  reverse_breakdown_voltage:
+    value:
+      kind: scalar
+      amount: 5
+      unit: volt
+  external_quantum_efficiency:
+    value:
+      kind: scalar
+      amount: 0.15
+      unit: dimensionless
+  viewing_angle:
+    value:
+      kind: scalar
+      amount: 30
+      unit: degree
+notes: |
+  Green-gap phenomenon: EQE of 15 percent here is realistic for modern
+  InGaN green LEDs but is substantially lower than the 55 percent typical
+  for InGaN blue (led_002) at otherwise-similar device structure.
+  The gap arises from physical limitations of InGaN at higher In fractions:
+  (1) lattice mismatch with GaN cladding generates dislocations,
+  (2) compositional fluctuation in the active layer localizes carriers,
+  (3) polarization-induced internal electric fields (QCSE) separate
+  electrons and holes spatially. All three reduce radiative recombination
+  in the green wavelength region. The "green gap" affects display color
+  gamut, RGB color-mixing LEDs, and white LEDs that use direct green
+  emission rather than phosphor-converted approaches.

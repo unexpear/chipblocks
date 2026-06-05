@@ -1,0 +1,50 @@
+# Valid fixture: a specific blue InGaN LED instance (~470 nm).
+# Overrides the generic `led` device's red-AlGaInP defaults to point n_side
+# and p_side at indium_gallium_nitride n+p materials. Other parameters set
+# to realistic blue-LED values (forward voltage ~3.2 V, peak wavelength
+# 470 nm, max forward current 20 mA, EQE 55 percent — InGaN blue is one of
+# the highest-EQE LED material/color combinations in modern lighting).
+# Real-world parts in this class: Cree XLamp XQ-E series, Lumileds LUXEON Z
+# Color, Osram OSLON SSL 80 Royal Blue.
+# Cross-FK confirms InGaN n+p enable n_type_semiconductor + p_type_semiconductor
+# + direct_bandgap, satisfying the LED's role constraints.
+# MUST validate against instance.schema.json.
+kind_ref: primitive_device
+definition: led
+id: led_002
+origin: project
+parameters:
+  n_side:
+    value: indium_gallium_nitride_n_type
+  p_side:
+    value: indium_gallium_nitride_p_type
+  forward_voltage:
+    value:
+      kind: scalar
+      amount: 3.2
+      unit: volt
+  peak_wavelength:
+    value:
+      kind: scalar
+      amount: 470
+      unit: nanometer
+  max_forward_current:
+    value:
+      kind: scalar
+      amount: 0.020
+      unit: ampere
+  reverse_breakdown_voltage:
+    value:
+      kind: scalar
+      amount: 5
+      unit: volt
+  external_quantum_efficiency:
+    value:
+      kind: scalar
+      amount: 0.55
+      unit: dimensionless
+  viewing_angle:
+    value:
+      kind: scalar
+      amount: 30
+      unit: degree

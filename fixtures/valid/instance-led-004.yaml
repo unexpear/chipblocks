@@ -1,0 +1,75 @@
+# Valid fixture: a specific near-IR GaAs LED instance (~880 nm).
+# Overrides the generic `led` device's defaults to point n_side and p_side
+# at gallium_arsenide n+p materials. Near-IR emission (invisible to the human
+# eye but well within the spectral response of silicon photodiodes) makes
+# GaAs LEDs the workhorse of optoelectronic sensing and short-range optical
+# communication.
+#
+# Forward voltage (~1.4 V) is set by GaAs's bandgap (1.42 eV) — substantially
+# lower than visible LEDs (~2-3 V) because the emitted photons have less
+# energy. Max forward current can be higher than visible LEDs (100 mA typical
+# for IR LED) because IR LEDs are often driven hard for applications like
+# IR illumination, range-finding, and remote-control signaling.
+#
+# Real-world parts in this class: Vishay TSAL6200 (940 nm), Osram SFH 4546
+# (850 nm), Lite-On LTE-302 (875 nm). Specific wavelengths depend on the
+# AlGaAs alloy fraction (pure GaAs is 870-880 nm; with Al fraction, shifts
+# to 850 nm or shorter — AlGaAs is not yet in the catalog, so this fixture
+# uses pure GaAs).
+# MUST validate against instance.schema.json.
+kind_ref: primitive_device
+definition: led
+id: led_004
+origin: project
+parameters:
+  n_side:
+    value: gallium_arsenide_n_type
+  p_side:
+    value: gallium_arsenide_p_type
+  forward_voltage:
+    value:
+      kind: scalar
+      amount: 1.4
+      unit: volt
+  peak_wavelength:
+    value:
+      kind: scalar
+      amount: 880
+      unit: nanometer
+  max_forward_current:
+    value:
+      kind: scalar
+      amount: 0.100
+      unit: ampere
+  reverse_breakdown_voltage:
+    value:
+      kind: scalar
+      amount: 5
+      unit: volt
+  external_quantum_efficiency:
+    value:
+      kind: scalar
+      amount: 0.30
+      unit: dimensionless
+  viewing_angle:
+    value:
+      kind: scalar
+      amount: 20
+      unit: degree
+notes: |
+  Forward voltage ~1.4 V (corresponds to GaAs bandgap 1.42 eV) is the
+  defining electrical signature of IR LEDs — substantially lower than
+  visible LEDs. Designers using GaAs IR LEDs in series with current-limit
+  resistors size them differently than for visible LEDs because of this
+  reduced voltage drop.
+  IR illumination uses: TV remote controls (~38 kHz pulse-coded; the LED
+  often runs at higher peak current via pulsed drive than DC max would
+  suggest), proximity sensors, range-finders (LiDAR-like time-of-flight),
+  optical encoders, fiber-optic short-haul (850 nm with AlGaAs, not pure
+  GaAs).
+  Spectral note: pure GaAs emits closer to 870-880 nm; alloying with Al
+  (AlGaAs) shifts emission shorter, down to ~750 nm. AlGaAs is not yet in
+  the ChipBlocks catalog; future addition for short-IR / red-band LEDs.
+  Viewing angle 20 degrees is typical for IR LED 5mm packages designed for
+  directional applications (TV remote, IR illumination); wider-angle SMD
+  versions exist at 120+ degrees.
