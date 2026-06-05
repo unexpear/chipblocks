@@ -1,0 +1,161 @@
+# Valid fixture: material definition for n-doped Gallium Arsenide (GaAs),
+# the canonical material system for near-IR LEDs (~870 nm) and high-frequency
+# electronics. GaAs is the second-most-used semiconductor after silicon for
+# III-V applications.
+#
+# Bandgap is 1.42 eV (direct) — making it LED-suitable (unlike silicon at
+# 1.12 eV indirect). Emission wavelength of pure GaAs LEDs is around 870-940 nm
+# (near-infrared, invisible to humans but used in TV remotes, optocouplers, IR
+# illuminators for night vision, fiber-optic short-haul, proximity sensors).
+#
+# n-type doping via silicon donors (most common) or tellurium. GaAs's standout
+# property is its extraordinarily high electron mobility (~8500 cm^2/V-s at low
+# doping) — far higher than silicon (~1350) or InGaN (~150). This makes GaAs
+# the material of choice for high-frequency transistors (MESFETs, HEMTs) and
+# microwave electronics, even when LED applications aren't the goal.
+#
+# Used by: future IR LED instances overriding the generic `led` device's
+# defaults. Also future Schottky variant (Sprint 8's diode_schottky_al_si has
+# silicon; GaAs Schottky has even faster recovery and is common in RF / high-
+# voltage applications). Future high-frequency transistors (HEMTs).
+#
+# MUST validate against definition.schema.json.
+kind: material
+id: gallium_arsenide_n_type
+origin: builtin
+layer: material
+name: "GaAs, n-type (Gallium Arsenide doped n-type)"
+description: "Group III-V direct-bandgap compound semiconductor doped n-type with silicon or tellurium donors. Bandgap 1.42 eV gives an emission wavelength around 870-940 nm (near-IR). The standard material for near-IR LEDs (TV remotes, optocouplers, IR illuminators, fiber-optic short-haul) and a foundation for high-frequency electronics (MESFETs, HEMTs) because of its extraordinarily high electron mobility — ~6x silicon's and ~50x InGaN's."
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+  - thermal_conduction
+  - semiconductor
+  - n_type_semiconductor
+  - direct_bandgap
+properties:
+  bandgap_energy:
+    value:
+      kind: condition_bound
+      amount: 1.42
+      unit: electronvolt
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        bandgap_type:
+          value: direct
+    provenance:
+      source_type: reference
+      title: "GaAs direct bandgap at 300 K"
+      citation: "Ioffe NSM Archive (GaAs — Basic Parameters); Sze, Physics of Semiconductor Devices, 3rd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  resistivity:
+    value:
+      kind: range
+      min: 1.0e-5
+      max: 1.0e-2
+      typical: 1.0e-3
+      unit: ohm_meter
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: "GaAs n-type resistivity, typical LED/electronics-grade Si/Te doping (1e17 to 1e19 per cm^3)"
+      citation: "Ioffe NSM Archive (GaAs electrical properties); manufacturer process documentation"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 5318
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+    provenance:
+      source_type: reference
+      title: "GaAs density at 25 C"
+      citation: "Ioffe NSM Archive (GaAs basic parameters); CRC Handbook 102nd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  melting_point:
+    value:
+      kind: scalar
+      amount: 1238
+      unit: degC
+    provenance:
+      source_type: reference
+      title: "GaAs melting point"
+      citation: "Ioffe NSM Archive; CRC Handbook 102nd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 55
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+    provenance:
+      source_type: reference
+      title: "GaAs thermal conductivity at 300 K"
+      citation: "Ioffe NSM Archive (GaAs thermal properties); lower than silicon (~149) due to alloy phonon scattering"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  electron_mobility:
+    value:
+      kind: condition_bound
+      amount: 0.85
+      unit: m2_per_volt_second
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        doping_level:
+          value: lightly_doped_intrinsic_limit
+    provenance:
+      source_type: reference
+      title: "GaAs n-type electron mobility, lightly-doped (1e15 per cm^3) at 300 K"
+      citation: "Ioffe NSM Archive (GaAs carrier transport); ~8500 cm^2/V-s typical at light doping -> 0.85 m^2/V-s in SI. Drops to ~3000-5000 cm^2/V-s at moderate doping (1e17-1e18). About 6x higher than silicon and 50x higher than InGaN — the reason GaAs dominates high-frequency electronics."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  GaAs is the canonical near-IR LED material. Pure GaAs LEDs emit ~870-940 nm
+  (invisible to human eye but well within the response range of silicon
+  photodetectors, which is why GaAs IR LEDs + silicon photodiodes pair well in
+  optocouplers and remote-control sensors).
+  Beyond LEDs, GaAs is foundational for high-frequency electronics (HEMTs,
+  pHEMTs in mobile phones, satellite communications), solar cells (multi-junction
+  GaAs cells reach ~40% efficiency under concentrated sunlight), and laser
+  diodes (telecom 850 nm short-haul fiber).
+  AlGaAs (Aluminum Gallium Arsenide) is a related material that adjusts the
+  bandgap upward via Al fraction — used for red LEDs (early generations), red
+  laser diodes (DVD players), and heterostructure cladding around GaAs active
+  layers. AlGaAs is not yet in the catalog; future addition.
+  Substrate: GaAs is typically grown on GaAs wafers (lattice-matched, lowest
+  defect density) but can also be grown heteroepitaxially on Ge or Si substrates
+  for cost/scale reasons (with lattice-mismatch dislocations).

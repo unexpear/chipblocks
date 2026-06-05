@@ -1,0 +1,144 @@
+# Valid fixture: material definition for p-doped Gallium Arsenide (GaAs).
+# The p-side counterpart to material-gallium-arsenide-n-type.
+#
+# p-type doping via zinc (most common) or beryllium acceptors. Unlike InGaN,
+# GaAs p-type doping is straightforward — Zn acceptors are shallow and well-
+# activated. p-GaAs resistivity is comparable to n-GaAs at similar doping
+# (within ~3-5x), unlike the 10-100x ratio in p-InGaN.
+#
+# Used by: future IR LED instances. Also future PNP / NPN transistors on GaAs
+# substrates (BJT, HBT — heterojunction bipolar transistors).
+# MUST validate against definition.schema.json.
+kind: material
+id: gallium_arsenide_p_type
+origin: builtin
+layer: material
+name: "GaAs, p-type (Gallium Arsenide doped p-type)"
+description: "Group III-V direct-bandgap compound semiconductor doped p-type with zinc or beryllium acceptors. Holes are the majority carrier. Same direct 1.42 eV bandgap as n-type GaAs and intrinsic GaAs. Unlike p-InGaN, p-type doping in GaAs is well-behaved electrically: shallow Zn/Be acceptors give good activation, so p-GaAs resistivity stays close to n-GaAs at comparable doping. The standard p-side material for GaAs IR LEDs, HBT base regions, and GaAs solar cell emitters."
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+  - thermal_conduction
+  - semiconductor
+  - p_type_semiconductor
+  - direct_bandgap
+properties:
+  bandgap_energy:
+    value:
+      kind: condition_bound
+      amount: 1.42
+      unit: electronvolt
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        bandgap_type:
+          value: direct
+    provenance:
+      source_type: reference
+      title: "GaAs direct bandgap at 300 K"
+      citation: "Ioffe NSM Archive; Sze 3rd ed. Doping does not shift the bandgap."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  resistivity:
+    value:
+      kind: range
+      min: 1.0e-4
+      max: 5.0e-2
+      typical: 5.0e-3
+      unit: ohm_meter
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: "GaAs p-type resistivity, Zn-doped LED/electronics-grade (1e17 to 1e19 per cm^3)"
+      citation: "Ioffe NSM Archive; ~3-5x higher than n-type at comparable doping due to lower hole mobility, but vastly better than p-InGaN due to shallow Zn acceptors"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 5318
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+    provenance:
+      source_type: reference
+      title: "GaAs density (same as n-type)"
+      citation: "Ioffe NSM Archive; CRC Handbook 102nd ed. Zn/Be doping does not measurably change density."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  melting_point:
+    value:
+      kind: scalar
+      amount: 1238
+      unit: degC
+    provenance:
+      source_type: reference
+      title: "GaAs melting point"
+      citation: "Ioffe NSM Archive; CRC Handbook 102nd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 55
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+    provenance:
+      source_type: reference
+      title: "GaAs thermal conductivity at 300 K"
+      citation: "Ioffe NSM Archive; same as n-type — phonon-mediated"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  hole_mobility:
+    value:
+      kind: condition_bound
+      amount: 0.04
+      unit: m2_per_volt_second
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        doping_level:
+          value: lightly_doped_intrinsic_limit
+    provenance:
+      source_type: reference
+      title: "GaAs p-type hole mobility, lightly-doped (1e15 per cm^3) at 300 K"
+      citation: "Ioffe NSM Archive (GaAs carrier transport); ~400 cm^2/V-s at light doping -> 0.04 m^2/V-s in SI. About 20x lower than n-type electron mobility (typical III-V trait), but much higher than p-InGaN's ~10 cm^2/V-s."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Doping: Zn is the dominant p-type dopant for GaAs (shallow acceptor, well-
+  activated, easy to incorporate during MOCVD growth). Be is sometimes used in
+  MBE-grown structures (avoids Zn diffusion issues at narrow junctions). Carbon
+  is used in HBT emitter caps (very shallow, ultra-high concentrations possible).
+  p-type GaAs is electrically well-behaved — unlike the p-InGaN case where deep
+  Mg acceptors limit activation. This is why GaAs-based devices (HBTs, IR LEDs,
+  solar cells) achieved commercial maturity decades before InGaN-based devices.
+  Hole mobility is ~20x lower than electron mobility in GaAs (typical III-V
+  trait: heavy hole effective mass), but still 4-5x higher than p-InGaN.
