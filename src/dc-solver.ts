@@ -28,7 +28,12 @@
  *     Sprint 14's purposes). Material+geometry-based resistance modeling
  *     is straightforward via the §16 evaluator but deferred until a
  *     fixture genuinely needs it.
- * Branch-current extraction lands in S14-v3-6.
+ * S14-v3-6 extracts branch currents into the Solution.branches map. The
+ * sign convention is fixed by the MNA stamp pattern: positive current
+ * flows from positive terminal (anode / terminal_positive / terminal_a /
+ * terminal_in) toward the negative terminal. For resistors compute
+ * I = (V_pos - V_neg) / R; for voltage-source-like elements the
+ * auxiliary current variable x[N+s] is already in this convention.
  */
 
 import { all, create } from 'mathjs'
@@ -185,10 +190,32 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     if (typeof v === 'number') nodes.set(netId, v)
   }
 
+  // Branch currents per §18.6 sign convention: positive flows from positive
+  // terminal (anode / terminal_positive / terminal_a / terminal_in) toward
+  // negative terminal. For resistors compute V_diff / R; for voltage-source-
+  // like elements x[N+s] is already in this convention by the stamp design.
+  const branches = new Map<string, number>()
+
+  for (const inst of world.instances.values()) {
+    if (inst.definition === 'resistor') {
+      const I = computeResistorCurrent(inst, nodes)
+      if (I !== undefined) branches.set(inst.id, I)
+    }
+  }
+
+  for (let s = 0; s < voltageSourceLike.length; s++) {
+    // biome-ignore lint/style/noNonNullAssertion: s is bound by the array length
+    const entry = voltageSourceLike[s]!
+    const auxRow = xArr[N + s]
+    if (!auxRow) continue
+    const I_aux = auxRow[0]
+    if (typeof I_aux === 'number') branches.set(entry.inst.id, I_aux)
+  }
+
   return {
     status: 'solved',
     nodes,
-    branches: new Map(), // S14-v3-6 fills this in
+    branches,
     ground,
     warnings,
   }
@@ -437,6 +464,34 @@ function findAndStampVoltageSource(
   b.set([auxIdx, 0], voltageValue)
 
   return true
+}
+
+/**
+ * Compute a resistor's branch current from solved node voltages.
+ * Per §18.6: positive = current from terminal_a toward terminal_b.
+ * I = (V_a - V_b) / R.
+ *
+ * Returns undefined if R is missing/non-positive, connects are malformed,
+ * or either terminal's net voltage isn't resolved (shouldn't happen after
+ * a successful solve, but defensive).
+ */
+export function computeResistorCurrent(
+  inst: Instance,
+  nodes: Map<string, number>,
+): number | undefined {
+  const R = readScalarParam(inst, 'resistance')
+  if (R === undefined || R <= 0) return undefined
+
+  if (inst.connects?.length !== 2) return undefined
+  const aConnect = inst.connects.find((c) => c.terminal === 'terminal_a')
+  const bConnect = inst.connects.find((c) => c.terminal === 'terminal_b')
+  if (aConnect === undefined || bConnect === undefined) return undefined
+
+  const V_a = nodes.get(aConnect.net)
+  const V_b = nodes.get(bConnect.net)
+  if (V_a === undefined || V_b === undefined) return undefined
+
+  return (V_a - V_b) / R
 }
 
 /**

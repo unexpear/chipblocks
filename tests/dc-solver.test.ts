@@ -30,6 +30,7 @@ import type {
 } from '../src/cross-fk-validator.ts'
 import {
   assignNodeIndices,
+  computeResistorCurrent,
   identifyGround,
   mathInstance as math,
   solveDC,
@@ -715,6 +716,15 @@ describe('solveDC (S14-v3-3 partial)', () => {
     expect(sol.nodes.get('net_gnd')).toBe(0)
     expect(sol.nodes.get('net_a')).toBeCloseTo(9, 9)
     expect(sol.warnings).toEqual([])
+
+    // S14-v3-6: branch currents reported
+    // I_resistor = (V_a - V_b) / R = (9 - 0) / 100 = 90 mA, positive sign
+    // (current flows from terminal_a on net_a toward terminal_b on net_gnd).
+    expect(sol.branches.get('r1')).toBeCloseTo(0.09, 9)
+    // I_battery: per §18.6 convention, positive = current entering positive
+    // terminal. The battery is sourcing power — current exits + terminal
+    // into the external circuit — so I_battery is negative: -90 mA.
+    expect(sol.branches.get('bat')).toBeCloseTo(-0.09, 9)
   })
 
   test('S14-v3-4: voltage source between two non-grounded nets resolves both', () => {
@@ -884,5 +894,75 @@ describe('solveDC (S14-v3-3 partial)', () => {
     expect(sol.nodes.get('net_a')).toBeCloseTo(9, 9)
     expect(sol.nodes.get('net_b')).toBeCloseTo(2, 9)
     expect(sol.warnings).toEqual([])
+
+    // S14-v3-6: the load-bearing 70 mA result.
+    // I_resistor = (9 - 2) / 100 = 70 mA, positive (a → b flow).
+    expect(sol.branches.get('r1')).toBeCloseTo(0.07, 9)
+    // I_LED = +70 mA (current enters anode = forward bias, conducting).
+    expect(sol.branches.get('led_1')).toBeCloseTo(0.07, 9)
+    // I_battery = -70 mA (sourcing — current exits + terminal externally).
+    expect(sol.branches.get('bat')).toBeCloseTo(-0.07, 9)
+  })
+})
+
+// ===========================================================================
+// 6. Branch current helpers (S14-v3-6)
+// ===========================================================================
+
+describe('computeResistorCurrent', () => {
+  test('I = (V_a - V_b) / R from solved node voltages', () => {
+    const nodes = new Map<string, number>([
+      ['net_x', 5],
+      ['net_y', 2],
+    ])
+    const inst: Instance = {
+      id: 'r1',
+      kind_ref: 'primitive_device',
+      definition: 'resistor',
+      parameters: { resistance: { value: { kind: 'scalar', amount: 100, unit: 'ohm' } } },
+      connects: [
+        { net: 'net_x', terminal: 'terminal_a', of: 'r1' },
+        { net: 'net_y', terminal: 'terminal_b', of: 'r1' },
+      ],
+    }
+    // (5 - 2) / 100 = 0.03 A = 30 mA
+    expect(computeResistorCurrent(inst, nodes)).toBeCloseTo(0.03, 9)
+  })
+
+  test('negative when V_a < V_b (current flows b → a through the resistor)', () => {
+    const nodes = new Map<string, number>([
+      ['net_x', 2],
+      ['net_y', 5],
+    ])
+    const inst: Instance = {
+      id: 'r1',
+      kind_ref: 'primitive_device',
+      definition: 'resistor',
+      parameters: { resistance: { value: { kind: 'scalar', amount: 100, unit: 'ohm' } } },
+      connects: [
+        { net: 'net_x', terminal: 'terminal_a', of: 'r1' },
+        { net: 'net_y', terminal: 'terminal_b', of: 'r1' },
+      ],
+    }
+    // (2 - 5) / 100 = -0.03 A
+    expect(computeResistorCurrent(inst, nodes)).toBeCloseTo(-0.03, 9)
+  })
+
+  test('returns undefined when terminals are not the a/b convention', () => {
+    const nodes = new Map<string, number>([
+      ['net_x', 5],
+      ['net_y', 2],
+    ])
+    const inst: Instance = {
+      id: 'r1',
+      kind_ref: 'primitive_device',
+      definition: 'resistor',
+      parameters: { resistance: { value: { kind: 'scalar', amount: 100, unit: 'ohm' } } },
+      connects: [
+        { net: 'net_x', terminal: 'pin_1', of: 'r1' },
+        { net: 'net_y', terminal: 'pin_2', of: 'r1' },
+      ],
+    }
+    expect(computeResistorCurrent(inst, nodes)).toBeUndefined()
   })
 })
