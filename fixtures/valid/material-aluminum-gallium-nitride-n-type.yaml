@@ -1,0 +1,146 @@
+# Valid fixture: material definition for n-doped Aluminum Gallium Nitride (AlGaN),
+# the material system for UV LEDs spanning near-UV (~365 nm) to deep-UV (~210 nm)
+# depending on Al fraction.
+#
+# Composition is Al_x Ga_{1-x} N where x is tuned for the desired bandgap /
+# emission wavelength:
+#   - x = 0 (pure GaN) -> bandgap 3.4 eV -> UV-A (~365 nm)
+#   - x ~ 0.4-0.5 -> bandgap ~4.5 eV -> UV-B/UV-C (~280-310 nm, sterilization)
+#   - x = 1 (pure AlN) -> bandgap 6.0 eV -> deep UV (~210 nm)
+#
+# n-type doping via silicon donors works reasonably well across the composition
+# range, though carrier concentration drops at high Al fractions due to
+# increasing donor activation energy. AlGaN's wide direct bandgap and modest
+# (but useful) electron mobility make it the dominant material for UV LED
+# applications.
+#
+# Used by: future UV LED instances. UV LEDs deserve their own device
+# definition (`led_uv_algan`) rather than being instances of the generic `led`
+# because of lifetime, eye-safety, and wavelength-dependent caveats. Sprint 10
+# lands the material; the UV-LED device + instance come in a subsequent sprint
+# plan.
+#
+# MUST validate against definition.schema.json.
+kind: material
+id: aluminum_gallium_nitride_n_type
+origin: builtin
+layer: material
+name: "AlGaN, n-type (Al_x Ga_{1-x} N doped n-type)"
+description: "Wide-bandgap III-nitride compound semiconductor doped n-type with silicon donors. Direct bandgap tunable between 3.4 eV (pure GaN at x = 0, UV-A near 365 nm) and 6.0 eV (pure AlN at x = 1, deep UV near 210 nm) depending on aluminum fraction x. The dominant material system for UV LEDs across the near-UV, UV-B, and UV-C ranges — used in sterilization, water treatment, surface curing, fluorescence detection, and counterfeit-currency verification."
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+  - thermal_conduction
+  - semiconductor
+  - n_type_semiconductor
+  - direct_bandgap
+properties:
+  bandgap_energy:
+    value:
+      kind: range
+      min: 3.4
+      max: 6.0
+      typical: 4.5
+      unit: electronvolt
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: "AlGaN bandgap range, full UV-A to deep-UV composition span (Al fraction 0 to 1), 300 K"
+      citation: "Ioffe NSM Archive (AlGaN — Basic Parameters); Schubert, Light-Emitting Diodes 2nd ed., Chapter on III-Nitride materials"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  resistivity:
+    value:
+      kind: range
+      min: 1.0e-4
+      max: 1.0e-1
+      typical: 1.0e-2
+      unit: ohm_meter
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: "AlGaN n-type resistivity, Si-doped LED-grade epitaxy, ranges across Al fraction"
+      citation: "Ioffe NSM Archive (AlGaN electrical properties); manufacturer process documentation. Resistivity rises substantially at high Al fractions due to deeper Si donor level (40 meV in pure GaN -> ~200 meV in pure AlN)."
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: range
+      min: 3260
+      max: 6150
+      typical: 4700
+      unit: kg_per_m3
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: "AlGaN density range, full composition span"
+      citation: "Ioffe NSM Archive; weighted between AlN (3260 kg/m^3) and GaN (6150 kg/m^3) by mole fraction"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: range
+      min: 80
+      max: 285
+      typical: 130
+      unit: watt_per_meter_kelvin
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: "AlGaN thermal conductivity range, full composition span"
+      citation: "Ioffe NSM Archive (AlGaN thermal properties); pure AlN ~285 W/m-K (very high — better than copper for thermal management), pure GaN ~130 W/m-K, alloys lower due to phonon scattering"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  electron_mobility:
+    value:
+      kind: condition_bound
+      amount: 0.010
+      unit: m2_per_volt_second
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        doping_level:
+          value: typical_led_grade_1e18_per_cm3
+        composition:
+          value: moderate_al_fraction_uv_b_targeted
+    provenance:
+      source_type: reference
+      title: "AlGaN n-type electron mobility, UV-LED-grade, 300 K, moderate Al fraction"
+      citation: "Ioffe NSM Archive (AlGaN carrier transport); ~100 cm^2/V-s typical at LED-grade doping for ~UV-B compositions -> 0.010 m^2/V-s in SI. Decreases sharply at higher Al fractions."
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+notes: |
+  Composition tunability: Al fraction x determines bandgap and emission
+  wavelength. Higher Al gives shorter wavelengths but also poorer carrier
+  transport and dimmer LEDs (the "deep-UV efficiency cliff"). This is one
+  reason UV LEDs deserve their own device definition (`led_uv_algan` in a
+  future sprint) — the trade-offs are wavelength-dependent in a way that
+  visible LEDs don't share.
+  Substrate: AlGaN is typically grown on sapphire (most common) or AlN
+  templates. Lattice mismatch with sapphire generates threading dislocations
+  that limit lifetime. AlN-on-sapphire templates reduce defects substantially
+  but at higher cost.
+  Doping notes: Si donors have an activation energy of ~40 meV in pure GaN
+  but rise to ~200 meV in pure AlN. At high Al fractions (deep UV), the
+  ionized donor concentration becomes much lower than the dopant concentration,
+  driving resistivity up rapidly. This is the equivalent of the well-known
+  p-InGaN activation problem but for n-type AlGaN.
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]

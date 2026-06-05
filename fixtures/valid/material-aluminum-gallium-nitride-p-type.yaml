@@ -1,0 +1,144 @@
+# Valid fixture: material definition for p-doped Aluminum Gallium Nitride (AlGaN).
+# The p-side counterpart to material-aluminum-gallium-nitride-n-type.
+#
+# p-type doping via magnesium acceptors. AlGaN inherits the InGaN/GaN
+# p-doping problem and makes it WORSE at high Al fractions. The Mg acceptor
+# level deepens from ~170 meV in pure GaN to ~500-600 meV in pure AlN,
+# rendering p-type doping essentially non-functional at deep-UV compositions.
+# Practical p-AlGaN is limited to moderate Al fractions (x <= ~0.3) for
+# functional devices.
+#
+# This is THE central manufacturing challenge for high-efficiency deep-UV
+# LEDs. Modern research uses tricks like polarization-induced doping,
+# AlGaN/GaN superlattices, or Mg-delta doping to work around the deep-acceptor
+# limitation, but quantum efficiency at deep UV stays below ~10 percent.
+#
+# Used by: future UV LED p_side. The `led_uv_algan` separate device will
+# carry lifetime + eye-safety + Al-fraction parameters that reflect these
+# constraints.
+# MUST validate against definition.schema.json.
+kind: material
+id: aluminum_gallium_nitride_p_type
+origin: builtin
+layer: material
+name: "AlGaN, p-type (Al_x Ga_{1-x} N doped p-type)"
+description: "Wide-bandgap III-nitride compound semiconductor doped p-type with magnesium acceptors. Same Al-fraction-tunable direct bandgap as the n-type variant (3.4 eV pure GaN to 6.0 eV pure AlN). Holes are the majority carrier in principle, but Mg acceptor activation collapses at high Al fractions — practical p-AlGaN devices are limited to Al fractions below ~0.3, which restricts the wavelengths reachable to UV-A and the longer-wavelength end of UV-B. This is the fundamental reason deep-UV LED efficiency stays low."
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+  - thermal_conduction
+  - semiconductor
+  - p_type_semiconductor
+  - direct_bandgap
+properties:
+  bandgap_energy:
+    value:
+      kind: range
+      min: 3.4
+      max: 6.0
+      typical: 4.0
+      unit: electronvolt
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: "AlGaN bandgap range (typical p-side compositions skew lower-Al for activation reasons)"
+      citation: "Ioffe NSM Archive; Schubert 2nd ed. Same fundamental range as n-type — doping does not shift bandgap — but practical p-AlGaN compositions stay closer to the low-Al end."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  resistivity:
+    value:
+      kind: range
+      min: 1.0
+      max: 100.0
+      typical: 10.0
+      unit: ohm_meter
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: "AlGaN p-type resistivity, Mg-doped LED-grade epitaxy"
+      citation: "Ioffe NSM Archive; manufacturer process documentation. 100-10000x higher than n-type at comparable Mg doping due to deep Mg acceptor level — already-deep in pure GaN (170 meV), much deeper at high Al fractions (500-600 meV in pure AlN). The central reason deep-UV LED efficiency is limited."
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: range
+      min: 3260
+      max: 6150
+      typical: 5500
+      unit: kg_per_m3
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: "AlGaN density range (typical p-side compositions trend toward lower Al / higher GaN-like density)"
+      citation: "Ioffe NSM Archive; Mg doping does not measurably change density"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: range
+      min: 80
+      max: 130
+      typical: 110
+      unit: watt_per_meter_kelvin
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: "AlGaN thermal conductivity (typical practical p-side compositions)"
+      citation: "Ioffe NSM Archive; phonon-mediated, doping does not materially affect"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  hole_mobility:
+    value:
+      kind: condition_bound
+      amount: 0.0005
+      unit: m2_per_volt_second
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        doping_level:
+          value: typical_led_grade_1e19_per_cm3_mg_acceptors
+        composition:
+          value: low_al_fraction_uv_a_targeted
+    provenance:
+      source_type: reference
+      title: "AlGaN p-type hole mobility, LED-grade Mg doping, low Al fraction, 300 K"
+      citation: "Ioffe NSM Archive (AlGaN p-type transport); ~5 cm^2/V-s typical -> 0.0005 m^2/V-s in SI. About 20x lower than n-type electron mobility and 2x lower than p-InGaN due to compounding Mg-deep-level + heavy-hole effects."
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+notes: |
+  p-AlGaN is the hardest of the III-nitride p-type problems. The Mg acceptor
+  level deepens roughly linearly with Al fraction: ~170 meV at x = 0 (pure
+  GaN), ~500-600 meV at x = 1 (pure AlN). Above x ~ 0.5 the material is
+  effectively a wide-bandgap insulator regardless of Mg dopant concentration.
+  Industry workarounds for deep-UV LED p-contacts:
+  - Polarization-induced doping (using AlGaN composition grading to generate
+    free holes via fixed-charge polarization fields)
+  - AlGaN/GaN superlattices (alternating thin AlGaN + GaN layers tunneling-
+    couple Mg activation across the AlGaN cladding)
+  - Mg delta-doping in thin layers
+  - p-GaN contact layer on AlGaN active region (asymmetric structure)
+  These tricks improve but do not solve the fundamental problem. Modern deep-
+  UV LEDs (e.g., 280 nm sterilization wavelength) achieve EQE around 5-10
+  percent compared to >50 percent for blue InGaN.
+  Lifetime: deep-UV LED lifetime (L70) is typically 1,000-10,000 hours,
+  compared to 50,000+ hours for blue InGaN — a real reliability gap that the
+  led_uv_algan device's parameters will reflect when it lands.
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
