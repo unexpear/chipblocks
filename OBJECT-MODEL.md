@@ -961,13 +961,20 @@ Each `inputs.<name>` entry is one of three shapes, discriminated by `kind`:
   rho_ref: { kind: constant, amount: 1.68e-8, unit: ohm_meter }
   ```
 
-- **property_ref** — pull from a property elsewhere in the same instance, its material, its geometry, or another role in its composition. Path syntax is dotted, resolved against the instance's composition graph.
+- **property_ref** — pull from a property elsewhere in the same instance: its material, its geometry, or another role in its composition. Path syntax is dotted, resolved against the instance's composition graph.
   ```yaml
-  rho: { kind: property_ref, path: "material.resistivity" }
+  rho: { kind: property_ref, path: "resistive_material.resistivity" }
   L:   { kind: property_ref, path: "geometry.length" }
   A:   { kind: property_ref, path: "geometry.cross_section_area" }
   ```
-  Common path roots: `material.*`, `geometry.*`, `parameters.*`, `composition.<role>.*`.
+  **Path-root convention: the bare name of any `composition.requires.<role>` role, resolved per the instance's filled-in role.** Examples from real catalog fixtures:
+  - `resistive_material.resistivity` (resistor's `resistive_material` role)
+  - `dielectric.relative_permittivity` and `dielectric.thickness` (capacitor's `dielectric` role)
+  - `plates.area` (capacitor's `plates` role)
+  - `n_side.bandgap_energy` (LED's `n_side` role)
+  - `geometry.length`, `geometry.cross_section_area` (any device whose role is literally named `geometry`)
+
+  `parameters.<name>` references another parameter on the same device. `composition.<role>.<property>` is the long-form equivalent of the bare-name root when explicit disambiguation is needed.
 
 - **input_variable** — supplied by a caller at evaluation time. Used for parametric values like ρ(T). Recognized in the schema; **evaluation is deferred to a later sprint** (Sprint 14+ when the DC solver provides callers that can pass T, frequency, etc.).
   ```yaml
@@ -1014,9 +1021,9 @@ properties:
       kind: equation
       expression: "rho * L / A"
       inputs:
-        rho: { kind: property_ref, path: "material.resistivity" }       # ohm·m
-        L:   { kind: property_ref, path: "geometry.length" }              # m
-        A:   { kind: property_ref, path: "geometry.cross_section_area" } # m²
+        rho: { kind: property_ref, path: "resistive_material.resistivity" } # ohm·m
+        L:   { kind: property_ref, path: "geometry.length" }                # m
+        A:   { kind: property_ref, path: "geometry.cross_section_area" }    # m²
       output_unit: "ohm"
     provenance:
       source_type: reference
