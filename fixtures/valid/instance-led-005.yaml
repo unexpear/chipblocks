@@ -1,0 +1,82 @@
+# Valid fixture: a specific 365 nm near-UV AlGaN LED instance (~1 W class).
+# Standard UV-A LED for applications like counterfeit-currency detection,
+# forensic illumination, UV-cured adhesives, biological fluorescence imaging,
+# black-light entertainment lighting.
+#
+# Typical specs for the 1 W UV-A LED class:
+#   forward_voltage ~3.6 V (corresponds to AlGaN bandgap at low Al fraction)
+#   max_forward_current ~350 mA continuous (~1.26 W input; ~750 mW heat
+#                                            + ~500 mW UV output at 40% EQE)
+#   peak_wavelength 365 nm (UV-A near-UV; well within visible-violet range
+#                            for human perception at high power — but the
+#                            emission is mostly above eye-detectable range)
+#   l70_lifetime_hours ~5000 (mid-range for UV-A — better than deep-UV,
+#                              substantially less than visible LEDs)
+#   uv_safety_class RG2 (moderate risk — eye protection recommended for
+#                         continuous direct viewing; aversion response
+#                         relied upon for incidental exposure per
+#                         IEC 62471 risk-group definition)
+#
+# Real-world parts in this class: Bolb BS-1-365-T, Stanley QBHP684-UV,
+# Nichia NCSU033C, LG Innotek LEUVA66B70HL00. Specifications vary by
+# manufacturer; this fixture uses nominal mid-range values.
+# MUST validate against instance.schema.json.
+kind_ref: primitive_device
+definition: led_uv_algan
+id: led_005
+origin: project
+parameters:
+  forward_voltage:
+    value:
+      kind: scalar
+      amount: 3.6
+      unit: volt
+  peak_wavelength:
+    value:
+      kind: scalar
+      amount: 365
+      unit: nanometer
+  max_forward_current:
+    value:
+      kind: scalar
+      amount: 0.350
+      unit: ampere
+  reverse_breakdown_voltage:
+    value:
+      kind: scalar
+      amount: 5
+      unit: volt
+  external_quantum_efficiency:
+    value:
+      kind: scalar
+      amount: 0.40
+      unit: dimensionless
+  viewing_angle:
+    value:
+      kind: scalar
+      amount: 120
+      unit: degree
+  l70_lifetime_hours:
+    value:
+      kind: scalar
+      amount: 5000
+      unit: hour
+  uv_safety_class:
+    value: rg2_moderate_risk
+notes: |
+  Inherits AlGaN n+p material defaults from led_uv_algan definition (Sprint
+  10 materials at the low-Al / UV-A end of the AlGaN composition range).
+  At 365 nm the human eye can sometimes faintly perceive the emission as
+  violet at high power because the human cone response extends slightly
+  below 400 nm. Genuinely invisible UV operation requires shorter
+  wavelengths (UV-B 280-315 nm or UV-C below 280 nm). For black-light
+  applications (fluorescence excitation), 365 nm is preferred over shorter
+  wavelengths because the longer wavelength penetrates further into
+  fluorescent substrates with less surface absorption.
+  Eye-safety RG2 designation: the 1 W power at 120-degree viewing angle
+  spreads the irradiance enough that brief incidental exposure relies on
+  natural blink reflex; sustained direct viewing (or focused beam) requires
+  UV-blocking eyewear (e.g., ANSI Z87.1 spectacles with UV rating).
+  Lifetime 5000 hours is mid-range for UV-A; high-end industrial UV-A LEDs
+  reach 10,000 hours, while cheaper consumer-grade UV-A drops to 1000-2000
+  hours. Operating at lower current and good heat-sinking extends lifetime.
