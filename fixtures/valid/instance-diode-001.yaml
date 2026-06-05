@@ -1,0 +1,38 @@
+# Valid fixture: a specific 1N4001-class silicon rectifier diode.
+# The most common general-purpose rectifier in the hobbyist parts drawer.
+# Standard ratings: 1 A continuous forward current, 50 V peak inverse voltage,
+# ~0.7 V forward drop at 1 A. Reverse recovery is unspecified for 1N4001
+# (slow part — typical 2 us) — for fast-switching applications, use 1N4148
+# (small signal) or Schottky (e.g. 1N5817).
+# Source: Vishay / ON Semi / Diodes Inc. datasheets for the 1N400x series.
+# MUST validate against instance.schema.json.
+kind_ref: primitive_device
+definition: diode_silicon_rectifier
+id: diode_001
+origin: project
+parameters:
+  forward_voltage:
+    value:
+      kind: scalar
+      amount: 0.7
+      unit: volt
+  max_forward_current:
+    value:
+      kind: scalar
+      amount: 1.0
+      unit: ampere
+  peak_inverse_voltage:
+    value:
+      kind: scalar
+      amount: 50
+      unit: volt
+  reverse_recovery_time:
+    value:
+      kind: scalar
+      amount: 2.0e-6
+      unit: second
+  forward_saturation_current:
+    value:
+      kind: scalar
+      amount: 5.0e-9
+      unit: ampere

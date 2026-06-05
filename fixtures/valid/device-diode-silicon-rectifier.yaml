@@ -1,0 +1,83 @@
+# Valid fixture: silicon PN-junction rectifier diode.
+# The general-purpose workhorse diode of electronics. PN junction made from
+# n-type and p-type silicon — different bandgap (1.12 eV indirect) than
+# Sprint 7's LED (1.9 eV direct AlGaInP). Forward voltage drop is ~0.7 V at
+# rated current; reverse blocking up to the peak inverse voltage; reverse
+# recovery time is ~hundreds of ns to several microseconds (substantial vs
+# Schottky's ~10 ns range — significant in switching applications).
+#
+# Standard applications: AC-to-DC rectification (single, half-bridge, full-
+# bridge), reverse-polarity protection, freewheeling diodes across inductive
+# loads, voltage doublers/multipliers, signal clamping at low frequencies.
+#
+# Specific variant naming (per Sprint 6 lesson): the device is named after its
+# material system (silicon) and function (rectifier) since junction materials
+# are part of the definition's identity.
+#
+# MUST validate against definition.schema.json. Cross-FK confirms both silicon
+# variants exist and enable the required semiconductor capabilities.
+kind: primitive_device
+id: diode_silicon_rectifier
+origin: builtin
+layer: primitive_device
+name: "Silicon PN rectifier diode"
+description: "A two-terminal silicon PN-junction diode for general-purpose rectification and signal-direction control. Forward-biased: conducts with ~0.7 V drop. Reverse-biased: blocks current up to the peak inverse voltage rating, above which the junction breaks down (potentially destructively for non-Zener diodes). The standard part for AC-to-DC conversion, reverse-polarity protection, freewheeling across inductive loads, and signal clamping at low frequencies."
+composition:
+  uses:
+    - silicon_n_type
+    - silicon_p_type
+  requires:
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  forward_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: Voltage drop across the diode at rated forward current. Determined by silicon's bandgap (~0.7 V at 1 A typical). Slightly increases with current and slightly decreases with temperature (+2 mV/C reduction near 25 C is typical).
+  max_forward_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: Maximum continuous forward current the diode can sustain without thermal damage at specified ambient temperature. Typical small rectifiers (1N4001 series) are 1 A; high-power rectifiers go to tens of amperes with appropriate heat-sinking.
+  peak_inverse_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: Maximum repetitive reverse voltage the diode can block without breakdown. Exceeded values lead to avalanche conduction; sustained operation above PIV destroys the diode (unlike a Zener, which is designed for breakdown operation).
+  reverse_recovery_time:
+    type: quantity
+    units: second
+    required: false
+    description: Time the diode takes to stop conducting reverse current after a sudden polarity reversal. Slow for silicon PN (hundreds of ns to several microseconds) due to minority-carrier injection that must recombine. Schottky diodes are much faster (~10 ns) because they lack minority carriers.
+  forward_saturation_current:
+    type: quantity
+    units: ampere
+    required: false
+    description: Reverse saturation current I_s in the Shockley diode equation. Typical 1-100 nA for silicon at 25 C; doubles every ~10 C temperature increase.
+behaviors:
+  - acts_as_diode
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  acts_as_diode handles forward-bias conduction and reverse-bias blocking via
+  the Shockley diode equation; conducts_current + has_resistance +
+  produces_joule_heat describe the forward-bias conducting state. State-
+  dependent gating (forward vs reverse) is the §15 deferred row from Sprint 6 —
+  until it lands, all four behaviors are honest-but-ungated.
+  No regulates_reverse_voltage behavior — rectifier diodes are NOT designed for
+  sustained operation in reverse breakdown. The diode_zener_silicon (S8-v3-6)
+  variant uses regulates_reverse_voltage; the rectifier variant intentionally
+  does not.
+  Implicit PN junction (composition.uses both doped variants). PN-junction-as-
+  separate-interface-kind is the §15 deferred row from Sprint 7 — Sprint 8
+  confirms whether it's needed across multiple devices.
