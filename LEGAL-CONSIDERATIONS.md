@@ -245,6 +245,46 @@ ChipBlocks at v3 Sprint 11 close has no application, no user accounts, no teleme
 
 ---
 
+## Section 8.5 — Commercial-use posture and the two-deliverables model
+
+The project's commercial-use principle is **simpler than it first appears** because [PRD.md](PRD.md) §3 principle 5 already establishes the **two-deliverables model**. Every project authored in ChipBlocks produces:
+
+- An editable source-form folder (`MyProject.chipblocks/`) — owned by the user
+- A manufacturing-ready ZIP (BOM, schematic, README, validation report) — owned by the user
+
+Both deliverables are the **user's intellectual property** — created by the user using ChipBlocks as a tool. The same legal relationship as Microsoft Word and the documents users author with it.
+
+### What this means
+
+| Activity | Allowed |
+|---|---|
+| Selling **the ChipBlocks app** (or a rebranded fork) for money | **NO** — violates the project's intent + trademark (see §3) |
+| Charging users for access to ChipBlocks | **NO** — violates the "no paid tier" principle |
+| Users selling **the files they create with ChipBlocks** (designs, manufacturing ZIPs, custom blocks, packs) | **YES** — fully permitted, no restrictions, no royalty owed |
+| Users using ChipBlocks-created designs in commercial products | **YES** — fully permitted |
+| Users sending manufacturing ZIPs to fabs/assemblers commercially | **YES** — entire workflow is designed for this |
+| Forking the ChipBlocks **code** under MIT and modifying for personal/community use | **YES** — MIT permits |
+| Forking the ChipBlocks **code** and selling it under a different name | Technically yes under MIT, but trademark prevents using "ChipBlocks" as the brand. See §3. |
+
+### How this is enforced
+
+The legal mechanisms work together:
+
+1. **MIT license** keeps source code free and forkable forever.
+2. **Trademark "ChipBlocks"** (when filed — see §3 action items) prevents third parties from selling a fork under the official name.
+3. **Project explicit stance** in [README.md](README.md), [PRD.md](PRD.md), [CLAUDE.md](CLAUDE.md), and [CREDITS.md](CREDITS.md) documents the principle so community norms reinforce the license + trademark combination.
+
+This is the **Firefox / Mozilla model**: the code is free (MIT/MPL family), but the name "Firefox" is trademarked so commercial forks have to rebrand (e.g., IceWeasel historically). It's a well-established open-source posture.
+
+### Action items
+
+1. **Trademark "ChipBlocks"** — see §3. The indirect search on 2026-06-05 found no Class 9 conflicts; manual TESS verification + filing recommended before launch.
+2. **Strengthen the principle in [README.md](README.md)** — the current README mentions "no paid tier" but doesn't explicitly say "you can sell the files you create." Adding this would clarify intent for new users.
+3. **NO marketplace plumbing needed** — the two-deliverables model already supports users selling their files. They produce a `.chipblocks/` folder and a manufacturing ZIP; both leave the app intact as the user's files. No payment processing, no broker, no commission infrastructure required from ChipBlocks itself.
+4. **Community-library system (PRD.md §10 Later)** is OPTIONAL future work — when added, it should treat each published pack's licensing as up to the pack author, not brokered by ChipBlocks.
+
+---
+
 ## Section 9 — Summary of risk by category
 
 | Category | Current state | Risk level (pre-launch) | Recommended action |

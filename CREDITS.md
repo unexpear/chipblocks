@@ -16,6 +16,44 @@ Future contributors will be listed here after their first merged contribution. P
 
 ---
 
+## Commercial-use posture
+
+The principle:
+
+1. **The ChipBlocks app itself is free and open-source — forever.** Per [README.md](README.md) and [CLAUDE.md](CLAUDE.md) Core principle 4, no paid tier exists or will exist. The MIT license ([LICENSE](LICENSE)) keeps the source available for forking, study, modification, and personal use.
+
+2. **Users own the files they create with ChipBlocks.** Per [PRD.md](PRD.md) §3 principle 5, every project produces **two deliverables**:
+   - An editable source-form folder (`MyProject.chipblocks/`)
+   - A manufacturing-ready ZIP (BOM, schematic, README, validation report) suitable for sending to a fab or assembler
+   
+   Both deliverables are the **user's intellectual property**. The user authored the design; ChipBlocks was a tool that helped them author it. The relationship is the same as a word processor producing a document or a CAD tool producing a model — the output belongs to the human creator.
+
+3. **What users can do with their files:**
+   - Keep them private
+   - Share them freely
+   - **Sell them** (designs, schematics, manufacturing-ready ZIPs, custom component packs they author, anything they create)
+   - Use them in commercial products
+   - Send to fabs, assemblers, or manufacturers
+   - License them however the user chooses
+   - Anything else the law permits
+
+4. **What ChipBlocks (the project) does NOT do:**
+   - **Does not** charge users for using the app
+   - **Does not** take a cut of files users sell
+   - **Does not** restrict users' commercial activity with files they create
+   - **Does not** claim ownership of user-created content (per MIT, the output of the tool is not derivative of the tool's code)
+   - **Does not** require attribution to ChipBlocks in user-created designs (good practice but not required)
+
+5. **What the project may eventually offer (optional, future):**
+   - A community-library / community-pack system where users can publish reusable blocks (analogous to npm packages or KiCad libraries). This is referenced in PRD.md §10 as a Later/maybe item. **NOT a marketplace** — a sharing infrastructure where the licensing of each pack is up to its author. Some may be permissively licensed; some may be commercial. The project itself wouldn't broker the transactions.
+
+6. **About third parties selling forks of the APP:**
+   - MIT permits this technically. Anyone can fork the code and try to charge money for their fork.
+   - The **project name "ChipBlocks" is a trademark concern** — see [LEGAL-CONSIDERATIONS.md](LEGAL-CONSIDERATIONS.md) §3. The expected enforcement model: code is open-source forkable; the name "ChipBlocks" is reserved for the official project (Firefox / Mozilla model). A commercial fork would have to use a different name.
+   - Trademark filing is recommended before significant launch — see LEGAL-CONSIDERATIONS.md action items.
+
+---
+
 ## AI assistance disclosure
 
 This project's development uses AI assistance, transparently and per the project's load-bearing principle:
