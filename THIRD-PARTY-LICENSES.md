@@ -16,7 +16,8 @@ ChipBlocks depends on third-party software. This file lists each direct dependen
 - **Copyright:** Microsoft Corporation
 - **Source:** <https://github.com/microsoft/TypeScript>
 - **License text:** `node_modules/typescript/LICENSE.txt` after `npm install`
-- **NOTICE file:** none (LICENSE.txt only)
+- **Third-party notices:** `node_modules/typescript/ThirdPartyNoticeText.txt` — 193 lines documenting third-party code TypeScript itself incorporates (DefinitelyTyped, Unicode, WebGL). **Not §4(d)-binding on ChipBlocks** because TypeScript is a dev-time-only tool: the compiler runs at build time and only its compiled JavaScript output would ship in the eventual Electron binary; TypeScript itself is never redistributed in ChipBlocks's product. Acknowledged here for audit honesty.
+- **Usage tier:** dev-time only (build-time compiler; no runtime presence in shipped artifacts)
 
 #### Vitest
 - **Package:** `vitest` ^4.1.8
@@ -97,6 +98,17 @@ All transitive LICENSE files available at `node_modules/<pkg>/LICENSE` after `np
 ## Other notable transitive deps (carried in pre-Sprint-12 audit)
 
 The pre-mathjs full transitive audit (deep-research 2026-06-05) found `lightningcss` (MPL-2.0) as a deeper transitive via Vite → Vitest. MPL-2.0 is file-level copyleft and is on the permissive whitelist (CLAUDE.md principle 4). See [LEGAL-CONSIDERATIONS.md](LEGAL-CONSIDERATIONS.md) §1 for the rationale.
+
+---
+
+## Dev-time vs runtime distinction
+
+Apache-2.0 §4(d) obligations on ChipBlocks attach only to deps that travel with the shipped product. The audit distinguishes:
+
+- **Dev-time-only deps** (TypeScript compiler, Biome linter, Vitest runner, Ajv schema-validator-at-test-time, etc.) — used during development and CI. None of these ship inside the eventual Electron binary; only their *output* (compiled JS, lint-clean source, passing tests) does. Apache-2.0 §4(d) doesn't bind ChipBlocks to surface their NOTICE content in the shipped product.
+- **Runtime deps** (mathjs as of Sprint 12, plus any future deps required for the app's runtime behavior) — ship inside the binary. Their LICENSE + NOTICE content MUST travel with the distribution per §4(d).
+
+Today every dep is in `devDependencies` per the schema-validator-at-dev-time pattern. Once an Electron runtime appears, deps split into actual `dependencies` (runtime) vs `devDependencies` (dev-time), and this section becomes the source of truth for which NOTICE content the shipped binary must surface.
 
 ---
 
