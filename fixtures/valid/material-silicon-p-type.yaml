@@ -1,0 +1,151 @@
+# Valid fixture: material definition for p-doped silicon — the p-side material
+# of silicon PN junctions.
+#
+# Same base material as the Sprint 4 intrinsic silicon entry, doped p-type via
+# boron acceptor atoms. The most common p-side material in general-purpose
+# silicon diodes (PN rectifiers, Zeners), BJT p-regions (emitter or collector
+# depending on NPN/PNP), and MOSFET p-channels / substrates / wells.
+#
+# Hole mobility in silicon is about 1/3 of electron mobility (typical
+# semiconductor trait), so p-type silicon has higher resistivity than n-type
+# at the same doping concentration.
+#
+# Used by: diode_silicon_rectifier (S8-v3-4), diode_zener_silicon (S8-v3-6).
+# Not used by Schottky — Schottky junctions are metal-semiconductor, not PN.
+# Future devices using silicon p-type: BJT p-regions, PMOSFET sources/drains,
+# CMOS p-wells, silicon-controlled rectifiers (SCRs).
+#
+# MUST validate against definition.schema.json.
+kind: material
+id: silicon_p_type
+origin: builtin
+layer: material
+name: "Silicon, p-type (Si doped with boron acceptors)"
+description: "Group IV semiconductor element doped p-type via boron acceptor atoms. Holes are the majority charge carrier. Same indirect 1.12 eV bandgap as intrinsic and n-type silicon — doping does not change the bandgap, only the Fermi level position and the majority-carrier type. The standard p-side material for silicon diodes, BJT p-regions, and MOSFET substrates."
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+  - thermal_conduction
+  - semiconductor
+  - p_type_semiconductor
+properties:
+  bandgap_energy:
+    value:
+      kind: condition_bound
+      amount: 1.12
+      unit: electronvolt
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        bandgap_type:
+          value: indirect
+    provenance:
+      source_type: reference
+      title: Silicon bandgap at 300 K (indirect)
+      citation: "Ioffe NSM Archive; Sze 3rd ed. Doping does not shift the bandgap."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  resistivity:
+    value:
+      kind: range
+      min: 3.0e-5
+      max: 3.0e-2
+      typical: 3.0e-3
+      unit: ohm_meter
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: Silicon p-type resistivity, typical diode-grade doping (1e16 to 1e19 per cubic centimeter)
+      citation: "Ioffe NSM Archive (Si electrical properties); resistivity ~3x n-type at comparable doping due to ~3x lower hole mobility"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 2329
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Silicon density at 25 C
+      citation: "CRC Handbook 102nd ed.; Ioffe NSM Archive. Boron doping at typical concentrations does not change density measurably."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  melting_point:
+    value:
+      kind: scalar
+      amount: 1414
+      unit: degC
+    provenance:
+      source_type: standard
+      title: Silicon melting point
+      citation: "NIST WebBook; CRC Handbook 102nd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 149
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Silicon thermal conductivity at 25 C
+      citation: "Ioffe NSM Archive; CRC Handbook 102nd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  hole_mobility:
+    value:
+      kind: condition_bound
+      amount: 0.045
+      unit: m2_per_volt_second
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        doping_level:
+          value: typical_diode_grade_1e16_per_cm3
+    provenance:
+      source_type: reference
+      title: Silicon p-type hole mobility, lightly-doped, 300 K
+      citation: "Ioffe NSM Archive (Si carrier transport); ~450 cm^2/V-s at light doping -> 0.045 m^2/V-s in SI. ~3x lower than electron mobility — typical semiconductor trait."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Doping: nominal acceptor concentration 1e16 to 1e19 per cubic centimeter via
+  boron. Aluminum and gallium are alternative p-type dopants for silicon but
+  boron is dominant in mainstream silicon processes (better diffusion control,
+  shallower junctions, lower segregation coefficient).
+  Hole mobility is approximately 3x lower than electron mobility in silicon —
+  a typical Group IV semiconductor trait. This is why p-type resistivity is
+  higher than n-type at the same doping concentration, and one reason PMOS
+  transistors are slower than NMOS at the same channel geometry.
+  No direct_bandgap capability — silicon's indirect bandgap is unchanged by
+  doping type.

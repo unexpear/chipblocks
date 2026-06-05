@@ -1,0 +1,153 @@
+# Valid fixture: material definition for n-doped silicon — the n-side material
+# of silicon PN junctions and the semiconductor side of silicon Schottky diodes.
+#
+# Same base material as the Sprint 4 intrinsic silicon entry, but with n-type
+# dopants (phosphorus or arsenic donors) deliberately introduced. Doping drops
+# resistivity by ~6-9 orders of magnitude relative to intrinsic depending on
+# concentration, and shifts the Fermi level toward the conduction band.
+#
+# Silicon's bandgap is INDIRECT (1.12 eV) — radiative recombination is
+# inefficient (phonon-assisted), which is why silicon LEDs don't work well.
+# This entry therefore does NOT enable direct_bandgap, distinguishing it from
+# the AlGaInP variants used in red LEDs (Sprint 7).
+#
+# Used by: diode_silicon_rectifier (S8-v3-4), diode_schottky_al_si (S8-v3-5),
+# diode_zener_silicon (S8-v3-6). Future devices using silicon n-type: BJTs
+# (collector + base + emitter), MOSFETs (channel + drain + source), CMOS ICs.
+#
+# MUST validate against definition.schema.json.
+kind: material
+id: silicon_n_type
+origin: builtin
+layer: material
+name: "Silicon, n-type (Si doped with phosphorus or arsenic donors)"
+description: "Group IV semiconductor element doped n-type via phosphorus (most common) or arsenic donor atoms. The dominant material for general-purpose silicon diodes, BJT n-regions, MOSFET n-channels, and the vast majority of integrated circuit silicon. Bandgap is 1.12 eV indirect at room temperature — same as intrinsic silicon — but doping drops resistivity by many orders of magnitude depending on concentration."
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+  - thermal_conduction
+  - semiconductor
+  - n_type_semiconductor
+properties:
+  bandgap_energy:
+    value:
+      kind: condition_bound
+      amount: 1.12
+      unit: electronvolt
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        bandgap_type:
+          value: indirect
+    provenance:
+      source_type: reference
+      title: Silicon bandgap at 300 K (indirect)
+      citation: "Ioffe NSM Archive (Si — Basic Parameters); Sze, Physics of Semiconductor Devices, 3rd ed. Same as the intrinsic silicon entry — doping does not shift the bandgap."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  resistivity:
+    value:
+      kind: range
+      min: 1.0e-5
+      max: 1.0e-2
+      typical: 1.0e-3
+      unit: ohm_meter
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: Silicon n-type resistivity, typical diode-grade doping (1e16 to 1e19 per cubic centimeter)
+      citation: "Ioffe NSM Archive (Si electrical properties); manufacturer process documentation (ON Semi, ST Micro, Vishay) for typical diode-grade n-Si epitaxy"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 2329
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Silicon density at 25 C (doping does not materially change)
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed.; Ioffe NSM Archive"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  melting_point:
+    value:
+      kind: scalar
+      amount: 1414
+      unit: degC
+    provenance:
+      source_type: standard
+      title: Silicon melting point
+      citation: "NIST WebBook; CRC Handbook 102nd ed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 149
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Silicon thermal conductivity at 25 C
+      citation: "Ioffe NSM Archive (Si — Thermal properties); CRC Handbook 102nd ed. Doping does not materially affect."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  electron_mobility:
+    value:
+      kind: condition_bound
+      amount: 0.135
+      unit: m2_per_volt_second
+      conditions:
+        temperature:
+          amount: 300
+          unit: kelvin
+        doping_level:
+          value: typical_diode_grade_1e16_per_cm3
+    provenance:
+      source_type: reference
+      title: Silicon n-type electron mobility, lightly-doped, 300 K
+      citation: "Ioffe NSM Archive (Si carrier transport); ~1350 cm^2/V-s at light doping -> 0.135 m^2/V-s in SI. Drops to ~100 cm^2/V-s at heavy doping (1e19/cm3)."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Doping: nominal donor concentration 1e16 to 1e19 per cubic centimeter via
+  phosphorus or arsenic. Specific doping profiles depend on the device:
+  rectifier base region uses lighter doping (better reverse blocking);
+  Zener cathode + Schottky n-region use moderate-to-heavy doping.
+  No direct_bandgap capability — silicon's indirect bandgap means radiative
+  recombination is phonon-assisted and inefficient. This is the physical reason
+  silicon is not used for visible LEDs; the AlGaInP system from Sprint 7 is
+  preferred for that application.
+  Future related materials: doped silicon variants of different concentration
+  (silicon_n_type_heavy, silicon_n_type_light) may land when integrated-circuit
+  manufacturing layers need finer distinction. Sprint 8 keeps a single n-type
+  variant covering the typical-diode range.
