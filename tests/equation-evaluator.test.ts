@@ -332,6 +332,106 @@ describe('end-to-end: device-resistor.yaml equation', () => {
 })
 
 // ===========================================================================
+// 4b. End-to-end: device-capacitor.yaml's catalog-shipped equation evaluates
+// ===========================================================================
+
+describe('end-to-end: device-capacitor.yaml equation', () => {
+  test('loaded equation has the expected shape', () => {
+    const yamlText = readFileSync(join('fixtures', 'valid', 'device-capacitor.yaml'), 'utf-8')
+    // biome-ignore lint/suspicious/noExplicitAny: YAML parse result is polymorphic
+    const device = parseYAML(yamlText) as any
+
+    expect(device.properties.capacitance.value.kind).toBe('equation')
+    expect(device.properties.capacitance.value.expression).toBe('epsilon_0 * eps_r * A / d')
+    expect(device.properties.capacitance.value.output_unit).toBe('farad')
+    expect(device.properties.capacitance.value.constants_used).toEqual(['epsilon_0'])
+  })
+
+  test('evaluates to ~0.885 pF for the 1 cm² × 1 mm air-dielectric case', () => {
+    const yamlText = readFileSync(join('fixtures', 'valid', 'device-capacitor.yaml'), 'utf-8')
+    // biome-ignore lint/suspicious/noExplicitAny: YAML parse result is polymorphic
+    const device = parseYAML(yamlText) as any
+    const spec = device.properties.capacitance.value as EquationValue
+
+    // Air dielectric (ε_r ≈ 1, dimensionless), 1 cm² plate area, 1 mm separation.
+    // C = 8.854e-12 × 1 × 1e-4 / 1e-3 ≈ 0.885 pF.
+    const result = evaluateEquation(spec, {
+      propertyRefs: {
+        'dielectric.relative_permittivity': { amount: 1.0, unit: '1' },
+        'plates.area': { amount: 1e-4, unit: 'm^2' },
+        'dielectric.thickness': { amount: 1e-3, unit: 'm' },
+      },
+    })
+
+    expect(result.status).toBe('evaluated')
+    if (result.status === 'evaluated') {
+      expect(result.unit).toBe('farad')
+      expect(result.amount).toBeCloseTo(8.854e-13, 16)
+    }
+  })
+})
+
+// ===========================================================================
+// 4c. End-to-end: device-led.yaml's catalog-shipped equation evaluates
+// ===========================================================================
+
+describe('end-to-end: device-led.yaml equation', () => {
+  test('loaded equation has the expected shape', () => {
+    const yamlText = readFileSync(join('fixtures', 'valid', 'device-led.yaml'), 'utf-8')
+    // biome-ignore lint/suspicious/noExplicitAny: YAML parse result is polymorphic
+    const device = parseYAML(yamlText) as any
+
+    expect(device.properties.peak_wavelength.value.kind).toBe('equation')
+    expect(device.properties.peak_wavelength.value.expression).toBe('h * c / E_g')
+    expect(device.properties.peak_wavelength.value.output_unit).toBe('nm')
+    expect(device.properties.peak_wavelength.value.constants_used).toEqual(['h', 'c'])
+  })
+
+  test('evaluates to ~653 nm (red) for AlGaInP bandgap of 1.9 eV', () => {
+    const yamlText = readFileSync(join('fixtures', 'valid', 'device-led.yaml'), 'utf-8')
+    // biome-ignore lint/suspicious/noExplicitAny: YAML parse result is polymorphic
+    const device = parseYAML(yamlText) as any
+    const spec = device.properties.peak_wavelength.value as EquationValue
+
+    // AlGaInP red LED — n_side bandgap ~1.9 eV.
+    // λ = hc / E_g = (6.62607015e-34 × 2.99792458e8) / (1.9 × 1.602176634e-19)
+    //   = 1.98644586e-25 / 3.0441456e-19 ≈ 6.5255e-7 m = 652.5 nm
+    //   (red — matches AlGaInP red ~625-650 nm range from the
+    //   parameters.peak_wavelength description)
+    const result = evaluateEquation(spec, {
+      propertyRefs: {
+        'n_side.bandgap_energy': { amount: 1.9, unit: 'eV' },
+      },
+    })
+
+    expect(result.status).toBe('evaluated')
+    if (result.status === 'evaluated') {
+      expect(result.unit).toBe('nm')
+      expect(result.amount).toBeCloseTo(652.5, 1) // ~653 nm red
+    }
+  })
+
+  test('evaluates to ~365 nm (UV) for AlGaN bandgap of 3.4 eV', () => {
+    const yamlText = readFileSync(join('fixtures', 'valid', 'device-led.yaml'), 'utf-8')
+    // biome-ignore lint/suspicious/noExplicitAny: YAML parse result is polymorphic
+    const device = parseYAML(yamlText) as any
+    const spec = device.properties.peak_wavelength.value as EquationValue
+
+    // Same equation, AlGaN-like bandgap of 3.4 eV → ~365 nm UV.
+    const result = evaluateEquation(spec, {
+      propertyRefs: {
+        'n_side.bandgap_energy': { amount: 3.4, unit: 'eV' },
+      },
+    })
+
+    expect(result.status).toBe('evaluated')
+    if (result.status === 'evaluated') {
+      expect(result.amount).toBeCloseTo(364.7, 1) // ~365 nm UV-A
+    }
+  })
+})
+
+// ===========================================================================
 // 5. input_variable defers evaluation (Sprint 12 scope)
 // ===========================================================================
 

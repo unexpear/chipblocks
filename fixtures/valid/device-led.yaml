@@ -91,6 +91,25 @@ parameters:
     units: degree
     required: false
     description: Cone half-angle within which emitted light intensity remains above 50 percent of peak. Determined by package optics (lens, encapsulant), not the chip. Typical 5 mm packages 15-30 degrees; SMD often 120 degrees or wider.
+properties:
+  peak_wavelength:
+    value:
+      kind: equation
+      expression: "h * c / E_g"
+      inputs:
+        E_g:
+          kind: property_ref
+          path: n_side.bandgap_energy
+      constants_used:
+        - h
+        - c
+      output_unit: nm
+      notes: "Derived form of peak_wavelength via the Planck-Einstein relation. The instance's n_side material provides E_g (bandgap energy in eV); mathjs handles the eV→J conversion automatically. h (Planck) and c (speed of light) are bound from NIST CODATA 2022. This is the simple PN-junction model: a heterostructure or quantum-well active layer would override with the active-region bandgap, not the n_side bulk bandgap (heterostructure modeling is a §15 deferred row). The declared form via parameters.peak_wavelength is also supported; instances pick one path. Per OBJECT-MODEL.md §16."
+    provenance:
+      source_type: reference
+      title: "Planck-Einstein relation λ = hc/E"
+      citation: "Schubert, Light-Emitting Diodes, 2nd ed., ISBN 978-0-521-86538-8, §1.2; Sze and Ng, Physics of Semiconductor Devices, 3rd ed., chapter on optoelectronic devices"
+      confidence: high
 behaviors:
   - acts_as_diode
   - emits_light
@@ -119,6 +138,8 @@ notes: |
   top — silicon materials (indirect bandgap) correctly fail role-satisfaction
   when used as LED n_side or p_side. This is the model's honest physical truth:
   silicon LEDs don't work efficiently because silicon is indirect-bandgap.
-  forward_voltage + peak_wavelength + external_quantum_efficiency stay as
-  declared parameters; derivation from junction materials/bandgap lands with
-  behavior-derives-value (§15 — user said 'check before' so post-Sprint-10).
+  Sprint 12 lands the derived form for peak_wavelength via properties.peak_wavelength
+  with kind: equation (λ = h × c / E_g, sourcing E_g from n_side.bandgap_energy).
+  forward_voltage and external_quantum_efficiency stay as declared parameters for
+  now; their derivation lands when the physics for V_F (E_g/e + ideality + series
+  resistance) and EQE (the green-gap phenomenon) gets richer treatment.

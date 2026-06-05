@@ -2,11 +2,14 @@
 # A two-terminal passive device storing electric energy in the electrostatic field between
 # two conductive plates separated by a dielectric. Realized in many physical forms (ceramic,
 # electrolytic, film, tantalum, supercapacitor) — all reduce to the parallel-plate lumped
-# model: C = ε * A / d.
+# model: C = ε₀ × ε_r × A / d.
 # First device to exercise composition.requires.<role>.min_count: 2 (the plates role) and
 # the first device to use a dielectric-material role with must_enable: [dielectric_insulation].
-# Capacitance can be DECLARED directly (as in this Sprint 4 model) or DERIVED from
-# permittivity × area / separation — the derivation pattern is a Sprint 4 open question.
+# Capacitance can be DECLARED (parameters.capacitance — typical for buying a part) or
+# DERIVED (properties.capacitance — kind: equation, evaluated per-instance from the
+# dielectric's relative permittivity + plates' area + dielectric's thickness). Both paths
+# land in v3 Sprint 12 per OBJECT-MODEL.md §16. The dielectric layer's thickness IS the
+# plate separation in this lumped parallel-plate model.
 # MUST validate against definition.schema.json.
 kind: primitive_device
 id: capacitor
@@ -56,6 +59,30 @@ parameters:
     units: percent
     required: false
     description: Capacitance tolerance as a percent of nominal.
+properties:
+  capacitance:
+    value:
+      kind: equation
+      expression: "epsilon_0 * eps_r * A / d"
+      inputs:
+        eps_r:
+          kind: property_ref
+          path: dielectric.relative_permittivity
+        A:
+          kind: property_ref
+          path: plates.area
+        d:
+          kind: property_ref
+          path: dielectric.thickness
+      constants_used:
+        - epsilon_0
+      output_unit: farad
+      notes: "Derived form of C. The instance's dielectric provides ε_r (relative permittivity) and d (layer thickness, which is the plate separation in the parallel-plate model); the instance's plates role provides the plate area A. epsilon_0 is bound from NIST CODATA 2022. The declared form via parameters.capacitance is also supported; instances pick one path. Per OBJECT-MODEL.md §16."
+    provenance:
+      source_type: reference
+      title: "Standard parallel-plate capacitor C = ε₀ε_rA/d"
+      citation: "Sze and Ng, Physics of Semiconductor Devices, 3rd ed., ISBN 978-0-471-14323-9, §1.4; CRC Handbook of Chemistry and Physics, 102nd ed., standard electrical engineering formulas"
+      confidence: high
 behaviors:
   - has_capacitance
   - stores_charge
