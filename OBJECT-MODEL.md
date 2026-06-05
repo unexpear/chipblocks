@@ -948,8 +948,9 @@ A value of `kind: equation` carries:
 | `output_unit` | ✓ | string | Declared output unit (mathjs unit name) |
 | `constants_used` | optional | string[] | Named physical constants the expression binds (§16.4) |
 | `conditions` | optional | conditions block | Under what assumptions the formula holds (§8) |
-| `provenance` | ✓ | provenance block | Cite the formula's source (§9) |
 | `notes` | optional | string | Human explanation |
+
+**Provenance for the formula lives at the property level**, not inside the equation block — same pattern as scalar/range/etc. values. The property holding an equation-valued `value:` carries a sibling `provenance:` field citing the formula's source (textbook, standard, etc.). This keeps the value-block schema consistent across all kinds; see §16.8 for the anti-placeholder Rule 1 implications.
 
 ### 16.3 Input specifications
 
@@ -973,7 +974,7 @@ Each `inputs.<name>` entry is one of three shapes, discriminated by `kind`:
   T: { kind: input_variable, unit: kelvin }
   ```
 
-**Dimensionless inputs.** Properties whose values are dimensionless (relative permittivity, refractive index, external quantum efficiency, doping fraction, etc.) declare `unit: ''` — equivalently `'1'` or `'dimensionless'`. The evaluator binds them as bare numbers, and mathjs's unit arithmetic handles `number × Unit → Unit` correctly.
+**Dimensionless inputs.** Properties whose values are dimensionless (relative permittivity, refractive index, external quantum efficiency, doping fraction, etc.) declare `unit: '1'` or `unit: 'dimensionless'` — the schema requires `minLength: 1` on unit strings, so the empty string is not a valid catalog form. The evaluator additionally accepts `''`, `'1'`, and `'dimensionless'` interchangeably at runtime (defensive against catalog inconsistency), binding all three as bare numbers; mathjs's unit arithmetic handles `number × Unit → Unit` correctly.
 
 ### 16.4 Physical constants
 
@@ -1017,10 +1018,11 @@ properties:
         L:   { kind: property_ref, path: "geometry.length" }              # m
         A:   { kind: property_ref, path: "geometry.cross_section_area" } # m²
       output_unit: "ohm"
-      provenance:
-        - type: textbook
-          label: "Sze and Ng, Physics of Semiconductor Devices, 3rd ed."
-          citation: "ISBN 978-0-471-14323-9"
+    provenance:
+      source_type: reference
+      title: "Standard resistor equation R = ρL/A"
+      citation: "Sze and Ng, Physics of Semiconductor Devices, 3rd ed., ISBN 978-0-471-14323-9, §1.6"
+      confidence: high
 ```
 
 mathjs computes `ohm·m × m / m² = ohm`. Matches `output_unit: "ohm"`. ✓
@@ -1042,9 +1044,9 @@ When an instance has property X declared as `kind: equation` AND a rating declar
 
 ### 16.8 Anti-placeholder compatibility (§12)
 
-§12 Rule 1 requires builtin physical values have a structured `value` block AND a `provenance` block. Equation kind satisfies both: `kind: equation` is in §7's permitted set, and a non-empty `provenance` block cites the formula's source.
+§12 Rule 1 requires builtin physical values have a structured `value` block AND a `provenance` block. Equation kind satisfies both at the property level — `kind: equation` is in §7's permitted set, and the **sibling `provenance:` field** on the same property cites the formula's source.
 
-**Formulas CAN be derived; the formula's citation cannot.** Every equation-valued property must cite the source of its formula (Sze textbook, IEC standard, NIST CODATA for constants, etc.) the same way every scalar value cites its measurement.
+**Formulas CAN be derived; the formula's citation cannot.** Every equation-valued property must cite the source of its formula (Sze textbook, IEC standard, NIST CODATA for constants, etc.) the same way every scalar value cites its measurement. The provenance sits next to `value:`, not inside it — same pattern as every other value kind.
 
 ### 16.9 Constraints
 

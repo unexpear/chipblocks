@@ -48,18 +48,66 @@
       "required": ["kind", "amount", "unit", "conditions"],
       "additionalProperties": false
     },
+    "equation_input": {
+      "description": "An input spec for an equation. Discriminated by 'kind'. Per OBJECT-MODEL.md §16.3 — Sprint 12 v3.",
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "A literal value baked into the formula. Rarely used; a real catalog property is usually the right source.",
+          "properties": {
+            "kind": { "const": "constant" },
+            "amount": { "type": "number" },
+            "unit": { "type": "string", "minLength": 1 }
+          },
+          "required": ["kind", "amount", "unit"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "Pull from a property elsewhere on the instance — dotted path from instance root. Common roots: material.*, geometry.*, parameters.*, composition.<role>.*.",
+          "properties": {
+            "kind": { "const": "property_ref" },
+            "path": { "type": "string", "minLength": 1 }
+          },
+          "required": ["kind", "path"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "A runtime variable supplied by a caller (temperature, frequency, etc.). Sprint 12 defers evaluation — the validator marks the value 'deferred-evaluation' and does not throw.",
+          "properties": {
+            "kind": { "const": "input_variable" },
+            "unit": { "type": "string", "minLength": 1 },
+            "default": { "type": "number" }
+          },
+          "required": ["kind", "unit"],
+          "additionalProperties": false
+        }
+      ]
+    },
     "equation": {
       "type": "object",
-      "description": "A closed-form expression with named inputs and an output unit.",
+      "description": "A closed-form expression with named inputs and an output unit. Per OBJECT-MODEL.md §16 — Sprint 12 v3.",
       "properties": {
         "kind": { "const": "equation" },
         "expression": { "type": "string", "minLength": 1 },
         "inputs": {
           "type": "object",
           "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/equation_input" }
+        },
+        "output_unit": { "type": "string", "minLength": 1 },
+        "constants_used": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "conditions": {
+          "type": "object",
+          "minProperties": 1,
           "additionalProperties": true
         },
-        "output_unit": { "type": "string", "minLength": 1 }
+        "notes": { "type": "string" }
       },
       "required": ["kind", "expression", "inputs", "output_unit"],
       "additionalProperties": false
