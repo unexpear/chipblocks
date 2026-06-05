@@ -232,4 +232,29 @@ describe('cross-FK validator — invalid worlds (one per error code MUST fire)',
     )
     expect(hit).toBeDefined()
   })
+
+  test('role-unsatisfied (Sprint 9): LED picks copper for n_side — not a semiconductor', () => {
+    // Sprint 9 refactored led to compose pn_junction with n_side / p_side
+    // material roles. The roles require n_type_semiconductor / p_type_semiconductor.
+    // Choosing copper (which only enables electrical_conduction + thermal_conduction)
+    // for n_side must fire role-unsatisfied. This is the new check the
+    // pn_junction promotion + role-based composition unlocks — the old
+    // composition.uses pattern couldn't catch this.
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    const led001 = getOrThrow(world.instances, 'led_001', 'Sprint 9 LED role test')
+    led001.parameters = {
+      ...led001.parameters,
+      n_side: { value: 'copper' },
+    }
+    const errors = validateWorld(world)
+    const hit = errors.find(
+      (e) =>
+        e.code === 'role-unsatisfied' &&
+        e.source === 'led_001' &&
+        e.role === 'n_side' &&
+        e.chosen === 'copper' &&
+        e.required.includes('n_type_semiconductor'),
+    )
+    expect(hit).toBeDefined()
+  })
 })
