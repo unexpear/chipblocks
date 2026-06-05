@@ -13,7 +13,10 @@
  *      a deferred-evaluation status rather than evaluating parametric forms).
  */
 
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
+import { parse as parseYAML } from 'yaml'
 import {
   EquationEvalError,
   type EquationValue,
@@ -265,7 +268,71 @@ describe('evaluateEquation — error paths', () => {
 })
 
 // ===========================================================================
-// 4. input_variable defers evaluation (Sprint 12 scope)
+// 4. End-to-end: device-resistor.yaml's catalog-shipped equation evaluates
+// ===========================================================================
+
+describe('end-to-end: device-resistor.yaml equation', () => {
+  test('loaded equation has the expected shape', () => {
+    const yamlText = readFileSync(join('fixtures', 'valid', 'device-resistor.yaml'), 'utf-8')
+    // biome-ignore lint/suspicious/noExplicitAny: YAML parse result is polymorphic; the schema validates the full shape elsewhere
+    const device = parseYAML(yamlText) as any
+
+    expect(device.properties).toBeDefined()
+    expect(device.properties.resistance).toBeDefined()
+    expect(device.properties.resistance.value.kind).toBe('equation')
+    expect(device.properties.resistance.value.expression).toBe('rho * L / A')
+    expect(device.properties.resistance.value.output_unit).toBe('ohm')
+    expect(device.properties.resistance.provenance.source_type).toBe('reference')
+  })
+
+  test('evaluates to 1.68 mΩ for the canonical 10 cm × 1 mm² copper case', () => {
+    const yamlText = readFileSync(join('fixtures', 'valid', 'device-resistor.yaml'), 'utf-8')
+    // biome-ignore lint/suspicious/noExplicitAny: YAML parse result is polymorphic
+    const device = parseYAML(yamlText) as any
+    const spec = device.properties.resistance.value as EquationValue
+
+    // Build the evaluation context as if an instance had filled the roles
+    // with copper + a 10 cm × 1 mm² path. Resistivity from NIST CODATA via
+    // material-copper.yaml; geometry chosen to land at a familiar magnitude.
+    const result = evaluateEquation(spec, {
+      propertyRefs: {
+        'resistive_material.resistivity': { amount: 1.68e-8, unit: 'ohm m' },
+        'geometry.length': { amount: 0.1, unit: 'm' },
+        'geometry.cross_section_area': { amount: 1e-6, unit: 'm^2' },
+      },
+    })
+
+    expect(result.status).toBe('evaluated')
+    if (result.status === 'evaluated') {
+      expect(result.unit).toBe('ohm')
+      expect(result.amount).toBeCloseTo(1.68e-3, 7)
+    }
+  })
+
+  test('reusing the same equation with different geometry recomputes per-instance', () => {
+    const yamlText = readFileSync(join('fixtures', 'valid', 'device-resistor.yaml'), 'utf-8')
+    // biome-ignore lint/suspicious/noExplicitAny: YAML parse result is polymorphic
+    const device = parseYAML(yamlText) as any
+    const spec = device.properties.resistance.value as EquationValue
+
+    // 1 m of the same copper at the same area → 10× the previous resistance.
+    const result = evaluateEquation(spec, {
+      propertyRefs: {
+        'resistive_material.resistivity': { amount: 1.68e-8, unit: 'ohm m' },
+        'geometry.length': { amount: 1.0, unit: 'm' },
+        'geometry.cross_section_area': { amount: 1e-6, unit: 'm^2' },
+      },
+    })
+
+    expect(result.status).toBe('evaluated')
+    if (result.status === 'evaluated') {
+      expect(result.amount).toBeCloseTo(1.68e-2, 7) // 16.8 mΩ
+    }
+  })
+})
+
+// ===========================================================================
+// 5. input_variable defers evaluation (Sprint 12 scope)
 // ===========================================================================
 
 describe('evaluateEquation — input_variable defers evaluation', () => {

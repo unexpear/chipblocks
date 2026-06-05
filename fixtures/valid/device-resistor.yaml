@@ -4,9 +4,11 @@
 # thick-film, thin-film, ruthenium oxide) — all reduce to the same electrical model:
 # a current-limiting / voltage-dropping element governed by Ohm's law (V = I·R) with
 # Joule heating dissipated through the body and leads.
-# Resistance can be DECLARED directly (1 kΩ) or DERIVED from resistivity × length /
-# cross-section. This definition supports the declared form; the derived form is a
-# Sprint 4+ design question — see retro for the behavior-derives-value discussion.
+# Resistance can be DECLARED (parameters.resistance — typical for buying a 1 kΩ part)
+# or DERIVED (properties.resistance — the R = ρL/A formula evaluated per-instance
+# from the resistive_material's resistivity + geometry's length + cross-section
+# area). Both paths land in v3 Sprint 12; the equation value kind formalizes the
+# derived path. See OBJECT-MODEL.md §16.
 # MUST validate against definition.schema.json.
 kind: primitive_device
 id: resistor
@@ -59,6 +61,28 @@ parameters:
     units: per_kelvin
     required: false
     description: Fractional change in resistance per unit temperature change near the operating point.
+properties:
+  resistance:
+    value:
+      kind: equation
+      expression: "rho * L / A"
+      inputs:
+        rho:
+          kind: property_ref
+          path: resistive_material.resistivity
+        L:
+          kind: property_ref
+          path: geometry.length
+        A:
+          kind: property_ref
+          path: geometry.cross_section_area
+      output_unit: ohm
+      notes: "Derived form of R. The instance's resistive_material role provides ρ (resistivity); the instance's geometry role provides L (length) and A (cross-section area). The declared form via parameters.resistance is also supported; instances pick one path. Per OBJECT-MODEL.md §16."
+    provenance:
+      source_type: reference
+      title: "Standard resistor equation R = ρL/A"
+      citation: "Sze and Ng, Physics of Semiconductor Devices, 3rd ed., ISBN 978-0-471-14323-9, §1.6; CRC Handbook of Chemistry and Physics, 102nd ed., standard electrical engineering formulas"
+      confidence: high
 behaviors:
   - conducts_current
   - has_resistance
