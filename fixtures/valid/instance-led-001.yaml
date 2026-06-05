@@ -10,7 +10,7 @@
 # cathode passes it to wire_002 for the return path to the battery.
 # MUST validate against instance.schema.json.
 kind_ref: primitive_device
-definition: led_red_algainp
+definition: led
 id: led_001
 origin: project
 parameters:

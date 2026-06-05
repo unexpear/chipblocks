@@ -1,0 +1,124 @@
+# Valid fixture: generic LED (light-emitting diode) primitive device.
+# Sprint 9 promotion: was led_red_algainp (Sprint 7 specific variant). Now the
+# device is generic, with red AlGaInP set as the n_side / p_side parameter
+# defaults. Multi-color variants (Sprint 10) come from parameter OVERRIDES at
+# the instance level — instances pick InGaN (blue/green), GaAs (IR), AlGaN
+# (UV), etc. No need for per-color device definitions.
+#
+# Composition shape post-promotion:
+# - composition.uses [pn_junction] documents the structural concept (Sprint 9's
+#   newly-promoted interface kind from S9-v3-2)
+# - composition.requires.n_side / p_side roles carry the actual capability
+#   constraints; must_enable [n_type_semiconductor + direct_bandgap] on n_side
+#   and [p_type_semiconductor + direct_bandgap] on p_side
+# - Parameters n_side / p_side bound to roles via satisfies_role with defaults
+#   pointing at AlGaInP variants (red)
+#
+# Cross-FK validates that ANY material chosen for n_side or p_side enables the
+# required doping type + direct_bandgap. Silicon materials (indirect bandgap)
+# correctly fail the role-satisfaction check — you can't make a useful visible
+# LED out of silicon.
+#
+# Behaviors unchanged from Sprint 7's led_red_algainp: acts_as_diode +
+# emits_light + conducts_current + has_resistance + produces_joule_heat.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: led
+origin: builtin
+layer: primitive_device
+name: "LED (light-emitting diode)"
+description: "A two-terminal semiconductor diode that emits light when forward-biased. Forward-biased current through the PN junction produces photons via radiative recombination; the wavelength is determined by the junction's bandgap energy. The default composition (red AlGaInP, ~640 nm) is set via parameter defaults; multi-color variants override n_side/p_side at the instance level to InGaN (blue/green), GaAs (IR), AlGaN (UV), or other direct-bandgap material systems."
+composition:
+  uses:
+    - pn_junction
+  requires:
+    n_side:
+      kind: material
+      must_enable:
+        - n_type_semiconductor
+        - direct_bandgap
+    p_side:
+      kind: material
+      must_enable:
+        - p_type_semiconductor
+        - direct_bandgap
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  n_side:
+    type: material_ref
+    satisfies_role: n_side
+    required: true
+    default:
+      value: aluminum_gallium_indium_phosphide_n_type
+    description: The n-doped semiconductor on the n-side of the PN junction. Determines (with p_side) the emitted wavelength via the junction's bandgap energy. Default is AlGaInP n-type for red emission.
+  p_side:
+    type: material_ref
+    satisfies_role: p_side
+    required: true
+    default:
+      value: aluminum_gallium_indium_phosphide_p_type
+    description: The p-doped semiconductor on the p-side of the PN junction. Should be from the same (or compatible) material system as n_side for a useful junction. Default is AlGaInP p-type for red emission.
+  forward_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: Voltage drop across the LED at rated operating current. Determined by the junction's bandgap (V_F ~ E_g / e for ideal LEDs); real LEDs deviate due to series resistance and ideality factor. Typical AlGaInP red 1.9-2.2 V; InGaN blue/green 3.0-3.4 V; GaAs IR ~1.4 V; AlGaN UV 3.6-4.0 V.
+  peak_wavelength:
+    type: quantity
+    units: nanometer
+    required: true
+    description: Wavelength of peak photon emission. Determined by junction bandgap via wavelength = h*c/E_g. AlGaInP red 625-650 nm; InGaN green 510-540 nm; InGaN blue 450-470 nm; GaAs IR 850-940 nm; AlGaN UV 280-365 nm.
+  max_forward_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: Absolute maximum continuous DC current. Typical 5 mm through-hole LEDs 20 mA; higher-power LEDs (1 W, 3 W, 5 W) reach hundreds of mA or more with appropriate heat-sinking.
+  reverse_breakdown_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Reverse voltage at which the diode breaks down and may be damaged. Typical for indicator LEDs is 5 V; LEDs are not designed for sustained reverse operation.
+  external_quantum_efficiency:
+    type: quantity
+    units: dimensionless
+    required: false
+    description: Fraction of forward-current electrons that result in photons escaping the device. Modern AlGaInP red 10-40 percent; InGaN blue 40-70 percent (very high); InGaN green only 10-20 percent (the green gap phenomenon).
+  viewing_angle:
+    type: quantity
+    units: degree
+    required: false
+    description: Cone half-angle within which emitted light intensity remains above 50 percent of peak. Determined by package optics (lens, encapsulant), not the chip. Typical 5 mm packages 15-30 degrees; SMD often 120 degrees or wider.
+behaviors:
+  - acts_as_diode
+  - emits_light
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Sprint 9 promotion from Sprint 7's led_red_algainp (specific variant) to
+  generic `led` (this entry) with red AlGaInP as parameter defaults. Variant
+  identity (red, blue, green, IR, UV, white) now lives in parameter values
+  rather than the device id.
+  Sprint 10 multi-color expansion: adds new direct-bandgap material variants
+  (InGaN n/p, GaAs n/p, AlGaN n/p, etc.) + LED instances overriding the
+  red-AlGaInP defaults to those new materials.
+  composition.uses [pn_junction] documents the structural concept; the LED's
+  n_side / p_side roles in composition.requires carry the capability constraints
+  (doping type + direct_bandgap). pn_junction's own roles (Sprint 9 S9-v3-2)
+  carry the BASELINE doping-type constraint; the LED adds direct_bandgap on
+  top — silicon materials (indirect bandgap) correctly fail role-satisfaction
+  when used as LED n_side or p_side. This is the model's honest physical truth:
+  silicon LEDs don't work efficiently because silicon is indirect-bandgap.
+  forward_voltage + peak_wavelength + external_quantum_efficiency stay as
+  declared parameters; derivation from junction materials/bandgap lands with
+  behavior-derives-value (§15 — user said 'check before' so post-Sprint-10).
