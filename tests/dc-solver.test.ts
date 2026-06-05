@@ -33,8 +33,11 @@ import {
   identifyGround,
   mathInstance as math,
   solveDC,
+  stampClosedSwitch,
+  stampLED,
   stampResistor,
   stampVoltageSource,
+  stampWireAsShort,
 } from '../src/dc-solver.ts'
 
 // Helper: build a minimal World with just the maps the solver reads.
@@ -455,6 +458,139 @@ describe('stampVoltageSource', () => {
 })
 
 // ===========================================================================
+// 4c. LED, switch, wire stamps (S14-v3-5) — all voltage-source-like
+// ===========================================================================
+
+describe('stampLED', () => {
+  test('stamps as voltage source with V = forward_voltage between anode and cathode', () => {
+    const nodeIndex = new Map<string, number>([
+      ['net_anode', 0],
+      ['net_cathode', 1],
+    ])
+    const M = math.zeros(3, 3)
+    const b = math.zeros(3, 1)
+    const auxIdx = 2
+
+    const inst: Instance = {
+      id: 'led_001',
+      kind_ref: 'primitive_device',
+      definition: 'led',
+      parameters: {
+        forward_voltage: { value: { kind: 'scalar', amount: 2.0, unit: 'volt' } },
+      },
+      connects: [
+        { net: 'net_anode', terminal: 'anode', of: 'led_001' },
+        { net: 'net_cathode', terminal: 'cathode', of: 'led_001' },
+      ],
+    }
+
+    const ok = stampLED(inst, nodeIndex, auxIdx, M, b)
+    expect(ok).toBe(true)
+
+    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+    const m: any = M
+    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+    const bv: any = b
+    expect(m.get([0, 2])).toBe(1)
+    expect(m.get([1, 2])).toBe(-1)
+    expect(m.get([2, 0])).toBe(1)
+    expect(m.get([2, 1])).toBe(-1)
+    expect(bv.get([2, 0])).toBe(2.0)
+  })
+
+  test('returns false when forward_voltage is missing', () => {
+    const nodeIndex = new Map<string, number>([
+      ['net_anode', 0],
+      ['net_cathode', 1],
+    ])
+    const inst: Instance = {
+      id: 'led_001',
+      kind_ref: 'primitive_device',
+      definition: 'led',
+      connects: [
+        { net: 'net_anode', terminal: 'anode', of: 'led_001' },
+        { net: 'net_cathode', terminal: 'cathode', of: 'led_001' },
+      ],
+    }
+    const ok = stampLED(inst, new Map(), 2, math.zeros(3, 3), math.zeros(3, 1))
+    expect(ok).toBe(false)
+    // nodeIndex unused in the no-V_F early-return path
+    expect(nodeIndex.size).toBe(2)
+  })
+})
+
+describe('stampClosedSwitch', () => {
+  test('stamps as 0 V ideal source between terminal_in and terminal_out', () => {
+    const nodeIndex = new Map<string, number>([
+      ['net_in', 0],
+      ['net_out', 1],
+    ])
+    const M = math.zeros(3, 3)
+    const b = math.zeros(3, 1)
+    const auxIdx = 2
+
+    const inst: Instance = {
+      id: 'sw1',
+      kind_ref: 'primitive_device',
+      definition: 'switch_spst_toggle',
+      connects: [
+        { net: 'net_in', terminal: 'terminal_in', of: 'sw1' },
+        { net: 'net_out', terminal: 'terminal_out', of: 'sw1' },
+      ],
+    }
+
+    const ok = stampClosedSwitch(inst, nodeIndex, auxIdx, M, b)
+    expect(ok).toBe(true)
+
+    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+    const m: any = M
+    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+    const bv: any = b
+    expect(m.get([0, 2])).toBe(1)
+    expect(m.get([1, 2])).toBe(-1)
+    expect(m.get([2, 0])).toBe(1)
+    expect(m.get([2, 1])).toBe(-1)
+    // V_src = 0 for an ideal closed switch — constraint V_in = V_out
+    expect(bv.get([2, 0])).toBe(0)
+  })
+})
+
+describe('stampWireAsShort', () => {
+  test('stamps as 0 V ideal source between terminal_a and terminal_b', () => {
+    const nodeIndex = new Map<string, number>([
+      ['net_a', 0],
+      ['net_b', 1],
+    ])
+    const M = math.zeros(3, 3)
+    const b = math.zeros(3, 1)
+    const auxIdx = 2
+
+    const inst: Instance = {
+      id: 'w1',
+      kind_ref: 'primitive_device',
+      definition: 'wire',
+      connects: [
+        { net: 'net_a', terminal: 'terminal_a', of: 'w1' },
+        { net: 'net_b', terminal: 'terminal_b', of: 'w1' },
+      ],
+    }
+
+    const ok = stampWireAsShort(inst, nodeIndex, auxIdx, M, b)
+    expect(ok).toBe(true)
+
+    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+    const m: any = M
+    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+    const bv: any = b
+    expect(m.get([0, 2])).toBe(1)
+    expect(m.get([1, 2])).toBe(-1)
+    expect(m.get([2, 0])).toBe(1)
+    expect(m.get([2, 1])).toBe(-1)
+    expect(bv.get([2, 0])).toBe(0)
+  })
+})
+
+// ===========================================================================
 // 5. solveDC end-to-end (partial — S14-v3-3 has no voltage source yet)
 // ===========================================================================
 
@@ -670,5 +806,83 @@ describe('solveDC (S14-v3-3 partial)', () => {
     // net_a = V_b + 9 = 9 V.
     expect(sol.nodes.get('net_b')).toBeCloseTo(0, 6)
     expect(sol.nodes.get('net_a')).toBeCloseTo(9, 6)
+  })
+
+  test('S14-v3-5: 9 V battery + 100 Ω resistor + LED (V_F = 2 V) — three-node loop', () => {
+    // Single-loop circuit with all S14-v3-5 element types:
+    //   net_a = battery+ — [bat 9V] — net_gnd (ground via battery-)
+    //   net_a — [r1 100Ω] — net_b
+    //   net_b — [led V_F=2V] — net_gnd
+    // The LED's fixed-V_F constraint forces V_b - V_gnd = 2 V, so net_b = 2 V.
+    // The battery forces V_a = 9 V (relative to ground).
+    // The current (computed in S14-v3-6) would be (9 - 2) / 100 = 70 mA.
+    const world = emptyWorld()
+    world.nets.set('net_a', {
+      id: 'net_a',
+      kind: 'net',
+      members: [
+        { instance: 'bat', terminal: 'terminal_positive' },
+        { instance: 'r1', terminal: 'terminal_a' },
+      ],
+    })
+    world.nets.set('net_b', {
+      id: 'net_b',
+      kind: 'net',
+      members: [
+        { instance: 'r1', terminal: 'terminal_b' },
+        { instance: 'led_1', terminal: 'anode' },
+      ],
+    })
+    world.nets.set('net_gnd', {
+      id: 'net_gnd',
+      kind: 'net',
+      type: 'ground',
+      members: [
+        { instance: 'bat', terminal: 'terminal_negative' },
+        { instance: 'led_1', terminal: 'cathode' },
+      ],
+    })
+    world.instances.set('bat', {
+      id: 'bat',
+      kind_ref: 'primitive_device',
+      definition: 'power_source',
+      parameters: {
+        nominal_voltage: { value: { kind: 'scalar', amount: 9, unit: 'volt' } },
+      },
+      connects: [
+        { net: 'net_a', terminal: 'terminal_positive', of: 'bat' },
+        { net: 'net_gnd', terminal: 'terminal_negative', of: 'bat' },
+      ],
+    })
+    world.instances.set('r1', {
+      id: 'r1',
+      kind_ref: 'primitive_device',
+      definition: 'resistor',
+      parameters: { resistance: { value: { kind: 'scalar', amount: 100, unit: 'ohm' } } },
+      connects: [
+        { net: 'net_a', terminal: 'terminal_a', of: 'r1' },
+        { net: 'net_b', terminal: 'terminal_b', of: 'r1' },
+      ],
+    })
+    world.instances.set('led_1', {
+      id: 'led_1',
+      kind_ref: 'primitive_device',
+      definition: 'led',
+      parameters: {
+        forward_voltage: { value: { kind: 'scalar', amount: 2.0, unit: 'volt' } },
+      },
+      connects: [
+        { net: 'net_b', terminal: 'anode', of: 'led_1' },
+        { net: 'net_gnd', terminal: 'cathode', of: 'led_1' },
+      ],
+    })
+
+    const sol = solveDC(world)
+    expect(sol.status).toBe('solved')
+    expect(sol.ground).toBe('net_gnd')
+    expect(sol.nodes.get('net_gnd')).toBe(0)
+    expect(sol.nodes.get('net_a')).toBeCloseTo(9, 9)
+    expect(sol.nodes.get('net_b')).toBeCloseTo(2, 9)
+    expect(sol.warnings).toEqual([])
   })
 })

@@ -16,8 +16,19 @@
  * S14-v3-4 voltage source: pre-pass counts voltage sources, matrix grows
  * to (N + S) × (N + S), each source extends the system with one auxiliary
  * current variable per §18.4's modified-nodal stamp pattern.
- * LED fixed-V_F, wire treatment, switch handling, and branch-current
- * extraction land in S14-v3-5 and S14-v3-6.
+ * S14-v3-5 adds three more voltage-source-like elements sharing the same
+ * MNA stamp pattern:
+ *   - LED (fixed-V_F approximation): stamps as voltage source with
+ *     V = forward_voltage between anode (+) and cathode (-).
+ *   - Switch (SPST, fixed-state): Sprint 14 hardcodes closed; stamps as
+ *     ideal 0 V source between terminal_in and terminal_out. State-machine
+ *     integration is a §15 deferred row.
+ *   - Wire: stamps as ideal 0 V source between terminal_a and terminal_b
+ *     (the IR drop on hookup wire at 70 mA is ~350 μV — negligible for
+ *     Sprint 14's purposes). Material+geometry-based resistance modeling
+ *     is straightforward via the §16 evaluator but deferred until a
+ *     fixture genuinely needs it.
+ * Branch-current extraction lands in S14-v3-6.
  */
 
 import { all, create } from 'mathjs'
@@ -94,21 +105,29 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     }
   }
 
-  // Pre-pass: count voltage sources so the matrix can be allocated at the
-  // correct (N + S) × (N + S) size BEFORE stamping. Each voltage source
-  // extends the MNA system with one auxiliary current variable; auxiliary
-  // index assignment is order-stable so tests can predict the matrix layout.
-  // S14-v3-4: only power_source is a voltage source. LED fixed-V_F joins
-  // the pre-pass in S14-v3-5.
-  const voltageSourceInstances: Instance[] = []
+  // Pre-pass: identify voltage-source-like instances so the matrix can be
+  // allocated at the correct (N + S) × (N + S) size BEFORE stamping. Each
+  // such instance extends the MNA system with one auxiliary current
+  // variable. Auxiliary index assignment is order-stable so tests can
+  // predict the matrix layout.
+  type VsLikeKind = 'power_source' | 'led' | 'switch' | 'wire'
+  const voltageSourceLike: Array<{ inst: Instance; kind: VsLikeKind }> = []
   for (const inst of world.instances.values()) {
-    if (inst.definition === 'power_source') voltageSourceInstances.push(inst)
+    if (inst.definition === 'power_source') {
+      voltageSourceLike.push({ inst, kind: 'power_source' })
+    } else if (inst.definition === 'led' || inst.definition === 'led_uv_algan') {
+      voltageSourceLike.push({ inst, kind: 'led' })
+    } else if (inst.definition === 'switch_spst_toggle') {
+      // Sprint 14 hardcodes SPST switches as closed; state-machine
+      // integration is a §15 row.
+      voltageSourceLike.push({ inst, kind: 'switch' })
+    } else if (inst.definition === 'wire') {
+      voltageSourceLike.push({ inst, kind: 'wire' })
+    }
   }
-  const S = voltageSourceInstances.length
+  const S = voltageSourceLike.length
 
-  // Build the MNA matrix. S14-v3-4 stamps resistors + voltage sources.
-  // Other element kinds (led, switch, wire) are silently skipped — they
-  // land in S14-v3-5.
+  // Build the MNA matrix.
   // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
   const M: any = math.zeros(N + S, N + S)
   // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
@@ -122,14 +141,19 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     }
   }
 
-  for (let s = 0; s < voltageSourceInstances.length; s++) {
+  for (let s = 0; s < voltageSourceLike.length; s++) {
     // biome-ignore lint/style/noNonNullAssertion: s is bound by the array length
-    const inst = voltageSourceInstances[s]!
+    const entry = voltageSourceLike[s]!
+    const { inst, kind } = entry
     const auxIdx = N + s
-    const ok = stampVoltageSource(inst, nodeIndex, auxIdx, M, b)
+    let ok = false
+    if (kind === 'power_source') ok = stampVoltageSource(inst, nodeIndex, auxIdx, M, b)
+    else if (kind === 'led') ok = stampLED(inst, nodeIndex, auxIdx, M, b)
+    else if (kind === 'switch') ok = stampClosedSwitch(inst, nodeIndex, auxIdx, M, b)
+    else if (kind === 'wire') ok = stampWireAsShort(inst, nodeIndex, auxIdx, M, b)
     if (!ok)
       warnings.push(
-        `Skipped voltage source stamp for instance '${inst.id}' (missing V or terminal connects)`,
+        `Skipped ${kind} stamp for instance '${inst.id}' (missing V or terminal connects)`,
       )
   }
 
@@ -293,11 +317,106 @@ export function stampVoltageSource(
 ): boolean {
   const V = readScalarParam(inst, 'nominal_voltage')
   if (V === undefined) return false
+  return findAndStampVoltageSource(
+    inst,
+    nodeIndex,
+    auxIdx,
+    V,
+    'terminal_positive',
+    'terminal_negative',
+    M,
+    b,
+  )
+}
 
+/**
+ * Apply an LED's contribution using the fixed-V_F approximation (§18.4 / §18.7).
+ * Stamps identically to a voltage source with V_src = forward_voltage, between
+ * the LED's anode (positive) and cathode (negative) terminals.
+ *
+ * Returns true if the stamp landed; false if forward_voltage is missing or the
+ * connects don't follow the anode/cathode convention.
+ */
+export function stampLED(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  auxIdx: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
+  const V_F = readScalarParam(inst, 'forward_voltage')
+  if (V_F === undefined) return false
+  return findAndStampVoltageSource(inst, nodeIndex, auxIdx, V_F, 'anode', 'cathode', M, b)
+}
+
+/**
+ * Apply a closed switch's contribution. Sprint 14 hardcodes all SPST switches
+ * as closed (state-machine integration is a §15 row). Stamps identically to
+ * an ideal 0 V voltage source between terminal_in (treated as positive) and
+ * terminal_out (treated as negative), enforcing V_in = V_out — the
+ * short-circuit / net-merge equivalent via the MNA mechanism.
+ *
+ * Returns true if the stamp landed; false if connects don't follow the
+ * terminal_in / terminal_out convention.
+ */
+export function stampClosedSwitch(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  auxIdx: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
+  return findAndStampVoltageSource(inst, nodeIndex, auxIdx, 0, 'terminal_in', 'terminal_out', M, b)
+}
+
+/**
+ * Apply a wire's contribution as an ideal short (0 V voltage source). The IR
+ * drop on hookup wire at typical hobby currents (≤100 mA) is sub-mV —
+ * negligible for Sprint 14's DC operating point. Material+geometry-based
+ * resistance modeling via the §16 evaluator is straightforward but deferred
+ * until a fixture demands it (high-current PCB traces, long inductive runs,
+ * etc.).
+ *
+ * Returns true if the stamp landed; false if connects don't follow the
+ * terminal_a / terminal_b convention.
+ */
+export function stampWireAsShort(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  auxIdx: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
+  return findAndStampVoltageSource(inst, nodeIndex, auxIdx, 0, 'terminal_a', 'terminal_b', M, b)
+}
+
+/**
+ * Shared MNA-stamp helper for all voltage-source-like elements. Finds the
+ * positive and negative connects by terminal-name convention and stamps
+ * §18.4's pattern.
+ */
+function findAndStampVoltageSource(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  auxIdx: number,
+  voltageValue: number,
+  positiveTerminal: string,
+  negativeTerminal: string,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
   if (inst.connects?.length !== 2) return false
 
-  const posConnect = inst.connects.find((c) => c.terminal === 'terminal_positive')
-  const negConnect = inst.connects.find((c) => c.terminal === 'terminal_negative')
+  const posConnect = inst.connects.find((c) => c.terminal === positiveTerminal)
+  const negConnect = inst.connects.find((c) => c.terminal === negativeTerminal)
   if (posConnect === undefined || negConnect === undefined) return false
 
   // i_pos / i_neg are undefined when the corresponding net is ground
@@ -315,7 +434,7 @@ export function stampVoltageSource(
   }
 
   // Constraint: V_pos - V_neg = V_src
-  b.set([auxIdx, 0], V)
+  b.set([auxIdx, 0], voltageValue)
 
   return true
 }
