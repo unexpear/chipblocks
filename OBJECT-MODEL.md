@@ -905,7 +905,7 @@ Surfaced now so they can't accidentally be answered by side effect later.
 | **Visual symbol library.** When the canvas eventually renders devices, the visual layer should use standard schematic shorthand — **IEC 60617** (international graphical symbols for diagrams) and/or **IEEE 315** (the US convention KiCad uses) — not invented icons. Standard symbols are what electrical engineers already read at a glance (zigzag = resistor, triangle+bar = diode, etc.). Devices may carry an optional `symbol:` field referencing a standard symbol identifier (e.g., `iec_60617:resistor`); exact schema deferred until canvas work begins. See [SCHEMATIC-SYMBOLS.md](SCHEMATIC-SYMBOLS.md) for the symbol inventory and IEC vs IEEE differences. | v3 canvas sprint |
 | **Auto-created interface UX pattern.** Solder joints, bond wires, vias, and similar connection interfaces are auto-instantiated when two terminals snap together. The chosen material defaults to a project-scope Active Variable (e.g., `solder_material: { ref: default_solder_alloy }`) so a one-line project setting governs every joint. Right-click on a joint opens an edit menu for per-instance overrides (replace `ref:` with an explicit `value:` for that joint only — alloy choice, parameters, provenance view, delete). **Lock is opt-in** (right-click → Lock), position-only by default; freezing parameters is a separate, later option. **Canvas-only state** (position, lock flag, color hints, group membership) lives in a separate `canvas/layout.yaml`, NOT on the instance — toggling it must not trigger physics revalidation, and the same instance data must remain portable across canvas backends. A visual hint should distinguish joints whose alloy diverges from the project default. | v3 canvas sprint |
 | **Alloy composition-by-weight as a structured field.** Solder alloys (Sn63Pb37 = 63% Sn / 37% Pb, SAC305 = 96.5% Sn / 3.0% Ag / 0.5% Cu) and resistive alloys (Nichrome 80/20 = 80% Ni / 20% Cr) currently carry composition in `description` + `notes` only. A structured representation (e.g., `alloy_composition: { tin: 0.63, lead: 0.37 }` summing to 1.0 with validator check) would let consumers query composition programmatically and let regulatory pipelines (RoHS/REACH compliance) inspect ratios. Surfaced in Sprint 4 retro; no fixture needed it for behavior calculation, so the current workaround held. Lands when a downstream consumer (regulatory check, fab-tool integration, materials cross-reference UI) actually needs composition data. | Sprint 5+ or when first composition-consumer lands |
-| **Behavior-derives-value pattern.** Resistor's resistance and capacitor's capacitance can be DECLARED (parameter value) or DERIVED from geometry (R = ρ × L / A; C = ε × A / d). Sprint 4 used declared values only — the educational depth target ("here's WHY this nichrome at this length gives this resistance") needs richer behavior modeling. Two design directions: (a) richer `evaluates:` parsing on behaviors that walks input parameters and produces a value, or (b) a new schema field on parameters linking them to a derivation rule (e.g., `derives: { from_behavior: ohmic_geometry, inputs: [resistivity, length, area] }`). Decision deferred until the validator engine actually needs to solve derived values rather than just declare them. | When the validator engine evaluates derived values |
+| ~~**Behavior-derives-value pattern.** Resistor's resistance and capacitor's capacitance can be DECLARED (parameter value) or DERIVED from geometry (R = ρ × L / A; C = ε × A / d).~~ ✅ **CLOSED in Sprint 12** — see §16 below. Third path taken: neither (a) `evaluates:` on behaviors nor (b) a separate `derives:` field, but rather full specification of §7's existing `kind: equation` value-polymorphism. Inputs reference properties via dotted paths; mathjs handles dimensional checking; per-instance evaluation lets the cross-FK validator compare against declared ratings (`max_X`, `min_X`, `nominal_X`). The §16 spec is the canonical reference. | ✅ Closed Sprint 12 |
 | **`min_count` enforcement in cross-FK.** Schema declares `composition.requires.<role>.min_count: 2` (e.g., capacitor's two plates), but the cross-FK validator's role-satisfaction loop only checks `must_enable` — it does not count the structural satisfiers. This is honest absence: the constraint is declared but not yet enforced. Full count enforcement requires net-model awareness (an interface with min_count: 2 needs the net topology to show at least 2 distinct shapes attached). Lands together with the net model. | v3 net-model sprint |
 | **AV → AV chains and cycle detection.** Sprint 5 forbids `ref:` inside an Active Variable's value — AVs hold direct values (or string ids for ref types) only. The validator's resolution is flat: one hop from `instance.parameters.<x>.ref → AV → resolved object`. Chains of `ref: → AV → ref: → AV → value` could let a user express "the default_pcb_substrate for consumer-grade designs" pointing at "the default substrate" pointing at FR4. Allowing chains brings cycle detection (A points at B points at A) + depth limits (don't follow indefinite chains) as required complexity. Lands when a real use case demands chains. | Sprint 6+ when a chain use case lands |
 | **Trigger taxonomy as enum.** Sprint 6's `state_machine.transitions[].trigger` is a free string with documented examples (`actuated`, `actuated_while_held`, `released`, `current_through_coil`, `gate_voltage_above_threshold`, `external_event`). The formal enum is deferred until 3-4 stateful device types exist in the catalog (likely after relay + MOSFET + flip-flop sprints), so the actual set of triggers is knowable from real data rather than guessed up front. Until then, free strings let new device types describe their triggers without schema changes. | Sprint 8+ once 3-4 stateful device types are catalogued |
@@ -921,6 +921,162 @@ Surfaced now so they can't accidentally be answered by side effect later.
 | **Keybindings settings page.** A settings UI for customizing keyboard shortcuts. Save user preferences; restore defaults; per-OS preset suggestions (Windows / Mac / Linux conventions); export/import for sharing between machines. Need this when the canvas accumulates enough shortcuts (place component, rotate, connect, zoom, pan, snap toggle, etc.) that users want to remap. Lands when canvas + general UI infrastructure exists. | v3 canvas sprint or shortly after |
 
 These deferrals are explicit. They do not get answered by code accident in the meantime.
+
+---
+
+## 16. Equation value kind: full specification
+
+> Adopted in v3 Sprint 12. Formalizes the `kind: equation` value introduced as one of §7's value kinds — schema, evaluation semantics, dimensional checking, conflict-detection rule. Closes the §15 "behavior-derives-value pattern" deferred row.
+
+### 16.1 Purpose
+
+A property's value can be either a number you write down (with a citation) or a formula that computes the number from other inputs. The classic case — a resistor's resistance R isn't an arbitrary number; it's:
+
+> R = ρ × L / A
+
+where ρ is the conductor material's resistivity, L is the conductor's length, and A is its cross-section area. The catalog ships the formula; the validator evaluates it per-instance using the instance's actual material and geometry.
+
+### 16.2 The equation block — full schema
+
+A value of `kind: equation` carries:
+
+| Field | Required | Type | Purpose |
+|---|---|---|---|
+| `kind` | ✓ | string `"equation"` | Value-kind discriminator (§7) |
+| `expression` | ✓ | string | Math expression in mathjs syntax |
+| `inputs` | ✓ | object | Map of `input-name → input-spec` (§16.3) |
+| `output_unit` | ✓ | string | Declared output unit (mathjs unit name) |
+| `constants_used` | optional | string[] | Named physical constants the expression binds (§16.4) |
+| `conditions` | optional | conditions block | Under what assumptions the formula holds (§8) |
+| `provenance` | ✓ | provenance block | Cite the formula's source (§9) |
+| `notes` | optional | string | Human explanation |
+
+### 16.3 Input specifications
+
+Each `inputs.<name>` entry is one of three shapes, discriminated by `kind`:
+
+- **constant** — value baked into the formula. Rarely used; usually a real catalog property is the right source.
+  ```yaml
+  rho_ref: { kind: constant, amount: 1.68e-8, unit: ohm_meter }
+  ```
+
+- **property_ref** — pull from a property elsewhere in the same instance, its material, its geometry, or another role in its composition. Path syntax is dotted, resolved against the instance's composition graph.
+  ```yaml
+  rho: { kind: property_ref, path: "material.resistivity" }
+  L:   { kind: property_ref, path: "geometry.length" }
+  A:   { kind: property_ref, path: "geometry.cross_section_area" }
+  ```
+  Common path roots: `material.*`, `geometry.*`, `parameters.*`, `composition.<role>.*`.
+
+- **input_variable** — supplied by a caller at evaluation time. Used for parametric values like ρ(T). Recognized in the schema; **evaluation is deferred to a later sprint** (Sprint 14+ when the DC solver provides callers that can pass T, frequency, etc.).
+  ```yaml
+  T: { kind: input_variable, unit: kelvin }
+  ```
+
+### 16.4 Physical constants
+
+The evaluator binds these by name, sourced from NIST CODATA 2022 (verified at physics.nist.gov 2026-06-05). Declaring them in `constants_used: [...]` makes the dependency explicit.
+
+| Name | Value | Units | Notes |
+|---|---|---|---|
+| `h` | 6.62607015 × 10⁻³⁴ | J·s | Planck constant, exact |
+| `c` | 2.99792458 × 10⁸ | m/s | Speed of light in vacuum, exact |
+| `e` | 1.602176634 × 10⁻¹⁹ | C | Elementary charge, exact |
+| `k_B` | 1.380649 × 10⁻²³ | J/K | Boltzmann constant, exact |
+| `epsilon_0` | 8.8541878128 × 10⁻¹² | F/m | Vacuum permittivity |
+| `mu_0` | 1.25663706212 × 10⁻⁶ | H/m | Vacuum permeability |
+| `N_A` | 6.02214076 × 10²³ | /mol | Avogadro constant, exact |
+
+Sprint 12 binds at minimum `h`, `c`, `epsilon_0` (the three first concrete cases need them). Additional constants land as catalog formulas demand.
+
+### 16.5 Evaluation semantics
+
+When the validator loads an instance with an equation-valued property:
+
+1. Resolve every `inputs.*.path` against the instance's composition graph. Each input must reduce to a concrete `{ amount, unit }`. An `input_variable` input causes Sprint 12 to skip evaluation and mark the property as "deferred-evaluation" (without erroring).
+2. Substitute resolved values + their units into the expression.
+3. Evaluate with mathjs's unit-aware arithmetic.
+4. Compare the result's units to `output_unit`. Mismatch surfaces error code `derives-unit-mismatch`.
+5. The resulting `{ amount, unit }` is the property's evaluated value for that instance, available to downstream consumers (rating checks now, simulation later).
+
+**Per-instance.** Equations evaluate against the instance's actual property values, not the device's defaults. Different instances with different geometry get different computed values.
+
+### 16.6 Dimensional analysis — worked example
+
+```yaml
+# device-resistor.yaml (excerpt)
+properties:
+  resistance:
+    value:
+      kind: equation
+      expression: "rho * L / A"
+      inputs:
+        rho: { kind: property_ref, path: "material.resistivity" }       # ohm·m
+        L:   { kind: property_ref, path: "geometry.length" }              # m
+        A:   { kind: property_ref, path: "geometry.cross_section_area" } # m²
+      output_unit: "ohm"
+      provenance:
+        - type: textbook
+          label: "Sze and Ng, Physics of Semiconductor Devices, 3rd ed."
+          citation: "ISBN 978-0-471-14323-9"
+```
+
+mathjs computes `ohm·m × m / m² = ohm`. Matches `output_unit: "ohm"`. ✓
+
+If the formula were mistakenly `rho * L * A`, mathjs would produce `ohm·m × m × m² = ohm·m⁴` — mismatch against declared `output_unit: "ohm"`. Validation fails with `derives-unit-mismatch` and the maintainer fixes the formula before bad spec ships.
+
+### 16.7 Conflict detection: equation value vs declared rating
+
+When an instance has property X declared as `kind: equation` AND a rating declared on the same property name (`max_X`, `min_X`, `nominal_X`), the cross-FK validator:
+
+1. Evaluates the equation to get `computed_X`.
+2. Compares to the declared rating(s):
+   - `computed_X > max_X` → violation
+   - `computed_X < min_X` → violation
+   - `|computed_X − nominal_X| / nominal_X > tolerance` (default 20%) → warning
+3. Violations surface error code `derives-violates-rating`.
+
+**Per-instance scope.** The check uses the instance's actual resolved property values. Device-level "what would the device's defaults compute vs the rating" check is deferred — useful only when device defaults are guaranteed meaningful, which is not universally true today.
+
+### 16.8 Anti-placeholder compatibility (§12)
+
+§12 Rule 1 requires builtin physical values have a structured `value` block AND a `provenance` block. Equation kind satisfies both: `kind: equation` is in §7's permitted set, and a non-empty `provenance` block cites the formula's source.
+
+**Formulas CAN be derived; the formula's citation cannot.** Every equation-valued property must cite the source of its formula (Sze textbook, IEC standard, NIST CODATA for constants, etc.) the same way every scalar value cites its measurement.
+
+### 16.9 Constraints
+
+1. **Catalog-shipped only.** Equation values live at `origin: builtin` or `community`. End users do not author formulas; user-authored properties stay `kind: scalar` or `kind: unknown_user_supplied`. The schema enforces this via origin gating.
+2. **No circular references.** An equation's inputs cannot transitively reference the property the equation is computing. The validator detects cycles and rejects.
+3. **No cross-instance dependencies in Sprint 12.** Inputs resolve within the instance's own context. Cross-instance computation (e.g., "this LED's brightness depends on the previous component's output current") needs the net model + DC solver and is deferred to Sprint 13/14+.
+4. **No bulk replacement.** Adding `kind: equation` to a property is a deliberate choice per device, not a sweeping migration. Most catalog properties remain `kind: scalar` until the physics is captured for them.
+
+### 16.10 First concrete cases (v3 Sprint 12)
+
+Three first cases ship with Sprint 12, each fully specified per the above:
+
+**Resistor: R = ρ × L / A**
+- inputs: `material.resistivity` (ohm·m) + `geometry.length` (m) + `geometry.cross_section_area` (m²)
+- output_unit: ohm
+- Source: Sze (Physics of Semiconductor Devices) + CRC Handbook
+
+**LED peak wavelength: λ = h × c / E_g**
+- constants_used: [h, c]
+- inputs: `composition.<active-material>.bandgap_energy` (eV; mathjs handles eV ↔ J conversion)
+- output_unit: m (downstream conversion to nm for display)
+- Source: Planck-Einstein relation; Schubert, *Light-Emitting Diodes* §1.2
+
+**Capacitor: C = ε₀ × ε_r × A / d**
+- constants_used: [epsilon_0]
+- inputs: `composition.dielectric.relative_permittivity` (dimensionless) + `geometry.plate_area` (m²) + `geometry.plate_separation` (m)
+- output_unit: F
+- Source: Standard parallel-plate capacitor; Sze textbook + CRC Handbook
+
+### 16.11 Relation to §15
+
+This section closes the §15 deferred row "Behavior-derives-value pattern." That row anticipated two design directions ((a) richer `evaluates:` parsing on behaviors, or (b) a separate `derives:` field on parameters); §16 takes a cleaner third path that already fits §7's value-kind polymorphism: equation kind, attached to a property's value, evaluated per-instance, dimensionally checked, with rating-conflict detection on top.
+
+The §15 row is marked ✅ CLOSED with a pointer here.
 
 ---
 
