@@ -80,24 +80,51 @@ Strong. The project's discipline of citing values per-fixture with sources, plus
 
 ### The name "ChipBlocks"
 
-**The project name "ChipBlocks" has NOT been verified as available for trademark use.**
+**Indirect public-search verification performed 2026-06-05** via WebSearch (multiple angles) + GitHub repo search. **Direct USPTO TESS search was NOT performed** — the TESS interface requires interactive use and returned HTTP 403 to automated WebFetch attempts.
 
-- WebFetch of USPTO TESS (US trademark database) failed in this review pass (the page requires interactive search; not WebFetch-able).
-- A manual search at [tmsearch.uspto.gov](https://tmsearch.uspto.gov/) for "chipblocks" + close variants ("chip blocks", "chip-blocks") would establish whether the name is available, registered, or contested in the US.
-- Similar checks should be done at other major registries (EUIPO for EU, UK IPO for UK, JPO for Japan if any market presence is planned).
+#### Findings (2026-06-05)
+
+| Search angle | Result |
+|---|---|
+| WebSearch: `"ChipBlocks" trademark USPTO registration` | No direct trademark hit; only general USPTO procedural pages returned |
+| WebSearch: `"Chip Blocks" trademark electronics software` | No specific trademark; general Class 9 trademark guidance only |
+| WebSearch: `"chipblocks" software product app` | No software/electronics product found by that exact name |
+| WebSearch: `"chipblocks" company OR brand` | Closest hits in different industries: Block A Chip LLC (paint protection film, Ohio), Chip Block (wooden pallet feet by TT Plywood / Fushi Wood Group) |
+| WebSearch: `"ChipBlocks"` (broad) | Industrial pallets, football terminology, King of the Hill character "Chip Block", Potato Chip Block quilting pattern — all clearly different from electronics/software class |
+| WebSearch: `site:tmsearch.uspto.gov chipblocks` | Returned only the TESS landing pages, no specific marks (suggesting Google has not indexed any matching mark on USPTO TESS) |
+| GitHub repo search `chipblocks` | **Only one repo: `unexpear/chipblocks`** (the project's own repo; 0 stars). No other GitHub project uses the name. |
+
+#### Closest possible conflicts identified
+
+- **Block A Chip, LLC** — automotive paint protection film installer (Ohio). Different industry (Class 41 services / Class 12 automotive accessories vs Class 9 software). Different word order ("Block A Chip" vs "ChipBlocks"). Phonetic similarity exists but classes of goods/services are disjoint. **Low conflict risk.**
+- **"Chip Block" (singular)** — wooden pallet feet (common-noun descriptive use in the packaging/lumber industry). Not a registered electronics-software trademark; descriptive use in a different class. **Low conflict risk.**
+- No other significant conflicts identified across all search angles.
+
+#### Verdict
+
+**Indirect public-search verification finds NO conflicts in Class 9 (electronics/software).** The mark "ChipBlocks" applied to electronics-design software appears available based on this verification round.
+
+#### Important caveats
+
+1. **Direct USPTO TESS search was NOT performed.** WebFetch to tmsearch.uspto.gov + trademarkia.com both returned HTTP 403 (interactive-only).
+2. **Absence of evidence ≠ evidence of absence.** "Intent to use" applications, dead marks, abandoned applications, and marks-in-examination may not surface in WebSearch indexing.
+3. **Phonetic / visually similar marks** may exist that this search did not surface. Real TESS searches use phonetic-similarity algorithms.
+4. **Other jurisdictions** (EU, UK, Japan, China) — not searched. If international presence is planned, those registries must be checked separately.
+5. **This verification is NOT legal advice.** A trademark attorney's professional search is the definitive answer for any commercial-launch decision.
 
 ### Risk if "ChipBlocks" turns out to be trademark-protected
 
-- Pre-launch (current state): low risk. Foundation-spec phase has no marketing, no commercial offering, low likelihood of trademark-holder enforcement.
-- Post-launch: real risk. A trademark holder could send cease-and-desist letters, force a rename, or seek damages depending on usage scope and similarity.
+- Pre-launch (current state): **low risk** confirmed by indirect search. Foundation-spec phase has no marketing, no commercial offering.
+- Post-launch: real risk. A trademark holder could send cease-and-desist letters, force a rename, or seek damages depending on usage scope and similarity. The indirect search reduces but does not eliminate this.
 
-### Recommendations
+### Action items if commercial launch is planned
 
-1. **Before any launch / marketing / commercial activity:** do a thorough trademark search at TESS + EUIPO at minimum. Consider hiring a trademark attorney for this if commercial intent is real.
-2. **Document the search results** in this file when done.
-3. **If "ChipBlocks" is unavailable:** plan a rename early rather than after building brand identity.
-4. **If "ChipBlocks" appears available:** consider filing your own trademark application to lock it down for ChipBlocks's use. Trademark protection is jurisdictional; multiple filings may be needed for international scope.
-5. **Watch for similar marks:** "ChipBlock" (no s), "ChipsBlocks", etc. — close enough to potentially cause confusion. The trademark search should cover variants.
+1. **Perform the direct TESS search manually at [tmsearch.uspto.gov](https://tmsearch.uspto.gov/)** — search "chipblocks", "chip blocks", "chip-blocks", "chipblock" (singular), and phonetic variants. The new TESS UI at [tmsearch.uspto.gov/v1/search?q=chipblocks](https://tmsearch.uspto.gov/v1/search?q=chipblocks) accepts query parameters.
+2. **Document the manual search results** with screenshots and date in this section.
+3. **If clear:** file a USPTO application for "ChipBlocks" in Class 9 (computer software). Typical cost: ~$250-$350 per class via TEAS Plus, ~$350-$500 via TEAS Standard. Consider a trademark attorney for prosecution.
+4. **If similar marks surface in the manual search:** consult a trademark attorney to assess likelihood-of-confusion against any close matches.
+5. **Watch for similar marks during use:** "ChipBlock" (singular), "ChipsBlocks", "Chip-Blocks" — set up a watch service or periodic re-search to catch new filings.
+6. **For international expansion:** repeat the search at EUIPO ([euipo.europa.eu](https://www.euipo.europa.eu/)), UK IPO, JPO, WIPO Madrid System.
 
 ---
 
