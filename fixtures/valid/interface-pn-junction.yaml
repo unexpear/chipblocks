@@ -1,0 +1,64 @@
+# Valid fixture: pn_junction interface kind — the canonical semiconductor
+# junction formed by bonding n-type and p-type doped semiconductors of the
+# same (or compatible) material system.
+#
+# Second interface kind in the catalog (solder_joint was the first, Sprint 4).
+# The pn_junction is the structural element underneath every PN-junction-bearing
+# device: diodes (rectifier, LED, Zener), BJTs (which have 2 PN junctions),
+# JFETs, photodiodes, solar cells, thyristors, SCRs.
+#
+# Sprint 9 promotes pn_junction from an implicit pattern (composition.uses both
+# doped semiconductors per-device, repeated across LED + rectifier + Zener) to
+# a first-class interface kind that devices reference structurally via
+# composition.uses + composition.requires with material roles.
+#
+# Composition shape:
+# - composition.requires.n_side: a material that enables n_type_semiconductor
+# - composition.requires.p_side: a material that enables p_type_semiconductor
+#
+# Cross-FK validates the role-satisfaction chain: when a device's parameters
+# specify n_side and p_side materials (via satisfies_role linkage), the validator
+# confirms the chosen materials enable the required doping-type capabilities.
+#
+# Enables: diode_action (the capability that all PN-junction devices have —
+# forward conduction, reverse blocking, Shockley-equation-governed I-V curve).
+# Devices that want to claim diode_action structurally compose pn_junction.
+#
+# MUST validate against definition.schema.json.
+kind: interface
+id: pn_junction
+origin: builtin
+layer: interface
+name: "PN junction (semiconductor diode junction)"
+description: "A semiconductor junction formed by bonding n-type and p-type doped semiconductors. The basic structural element underneath diodes (rectifier, LED, Zener), BJTs, JFETs, photodiodes, solar cells, and SCRs. Forward bias (p-side positive relative to n-side, by more than the forward threshold voltage) drives current via carrier injection; reverse bias depletes the junction and blocks current until the breakdown voltage. When the bonded materials are direct-bandgap, radiative recombination of injected carriers releases photons — the physical basis of LEDs."
+composition:
+  requires:
+    n_side:
+      kind: material
+      must_enable:
+        - n_type_semiconductor
+    p_side:
+      kind: material
+      must_enable:
+        - p_type_semiconductor
+enables:
+  - diode_action
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  composition.requires uses min_count implicitly = 1 for each role (exactly
+  one n_side material, exactly one p_side material). Future heterojunction
+  modeling (e.g., quantum-well LEDs with multiple thin layers, GaN buffer
+  layers between substrate and active layer) may motivate richer composition
+  structure, but Sprint 9 keeps it minimal.
+  schottky_junction (metal-semiconductor) is its own §15 deferred row — distinct
+  physics, lands when 2+ Schottky variants exist.
+  Devices using pn_junction (after Sprint 9 refactor): led, diode_silicon_rectifier,
+  diode_zener_silicon. Future devices that will compose it: BJTs (2 junctions),
+  JFETs (1 junction), photodiodes (1 junction, reverse-biased), solar cells (1
+  junction, photo-generated current), SCRs (4-layer p-n-p-n).
