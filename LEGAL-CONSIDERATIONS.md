@@ -24,7 +24,7 @@ The MIT license itself provides strong baseline protection. The CLA is well-stru
 ### Current state
 
 - Primary license: **MIT** ([LICENSE](LICENSE)). Strong, well-understood, provides "AS IS" + no warranty + no liability. Copyright 2026 unexpear.
-- Bundling rule (per [CLAUDE.md](CLAUDE.md) Core principle 4): only MIT / Apache 2.0 / BSD / ISC / CC0 licenses can be bundled in the shipped product. NEVER GPL / AGPL bundled. GPL tools can be invoked as separate user-installed processes (the KLayout/ngspice/openEMS posture).
+- Bundling rule (per [CLAUDE.md](CLAUDE.md) Core principle 4): only MIT / Apache 2.0 / BSD / ISC / CC0 / MPL-2.0 licenses can be bundled in the shipped product. NEVER GPL / AGPL bundled. GPL tools can be invoked as separate user-installed processes (the KLayout/ngspice/openEMS posture). MPL-2.0 (Mozilla Public License) is **file-level copyleft** — its obligations attach only to MPL-licensed source files and do not propagate to surrounding permissive code; FSF and OSI both classify it as compatible with MIT/Apache combinations. This whitelist update was made 2026-06-05 after a transitive dep audit found `lightningcss` (MPL-2.0) pulled in via Vite → Vitest. No code modification or redistribution beyond what npm preserves automatically; obligation satisfied by default.
 - Contributor licensing: [CLA.md](CLA.md). Grants Maintainer perpetual + worldwide + irrevocable copyright AND patent licenses. Patent-litigation termination clause protects the project from contributor-led patent attacks.
 
 ### Verdict
@@ -200,6 +200,58 @@ Patents typically cover **specific implementations** or **novel methods**, not g
 
 ---
 
+## Section 6.5 — Errata and corrections
+
+### The reality
+
+ChipBlocks's catalog cites real sources (NIST, IEC, IEEE, IPC, Sze, Schubert, Ioffe NSM Archive, manufacturer datasheets, etc.). But **transcription errors, datasheet errata, condition-dependent value variation, and stale citations are inevitable** in any project at this scale. Every canonical engineering reference publishes errata too — NIST itself updates CODATA values periodically; IEC issues amendments to its standards; manufacturers correct datasheets.
+
+### How major open-source EDA handles this
+
+**KiCad** (the leading FOSS EDA project) — verified 2026-06-05 against the project's component library practices:
+
+- Library content licensed permissively (CC-BY-SA 4.0 + KiCad library exception so user designs are not derivative works of the libraries)
+- Warranty disclaimed via CC-BY-SA 4.0 §5 ("Disclaimer of Warranties and Limitation of Liability") for the library data; KiCad's *application code* is separately GPL-3.0 with its own §15-§16 disclaimer
+- Public issue tracker + PR workflow as the canonical correction path
+- Community trusted to find and fix errors over time
+- No promise that values are correct, no liability if a user's design fails
+
+This is the industry baseline for open-source electronics data.
+
+### How ChipBlocks adopts the same model
+
+| Mechanism | Where |
+|---|---|
+| Warranty disclaimed | [LICENSE](LICENSE) — MIT "AS IS", no warranty, no liability (materially equivalent to KiCad's CC-BY-SA 4.0 §5 library disclaimer + GPL §15-§16 application disclaimer; all three use the same UCC §2-316 conspicuous-disclaimer mechanism) |
+| Per-fixture source citation | YAML `provenance:` block on every property value (see OBJECT-MODEL.md §11) |
+| Plain-language errata acknowledgment | [DISCLAIMER.md](DISCLAIMER.md) and [README.md](README.md) explicitly say errors may exist |
+| Public correction path | GitHub issues + PRs at <https://github.com/unexpear/chipblocks> |
+| Verification discipline | Zero-trust verification rounds (Sprints 5, 6, 8, 10, 11 + deep-research workflows) have caught several AI-surfaced errors before merge — visible in commit history |
+
+### What this means in practice
+
+| Question | Answer |
+|---|---|
+| Is every value in the catalog guaranteed correct? | **No.** Cited from real sources, but transcription errors and datasheet errata happen. |
+| If I find a wrong value, can I fix it? | **Yes** — open an issue or submit a PR with the corrected value and a source citation. |
+| If I rely on a wrong value and my project fails, can I sue ChipBlocks? | **No** — the MIT license disclaims all warranties and liability (Section 6 above + §15-§16 equivalent). |
+| Who is responsible for verification? | **The user** — per Core principle 1 ("AI assists. ChipBlocks validates. **The user approves.**") and the explicit user-verification statement in [DISCLAIMER.md](DISCLAIMER.md). |
+
+### Recommended practice for users
+
+1. **Cross-check values against the cited source** for any component you're relying on for a real project. The per-fixture `provenance:` block makes this fast.
+2. **For safety-critical work**, get a credentialed engineer's review. Do not rely on ChipBlocks alone (per [DISCLAIMER.md](DISCLAIMER.md) recommended-use table).
+3. **Report errors you find.** PRs welcome. Even an issue without a fix is useful — it flags the problem for someone else to address.
+
+### Recommendations for the project
+
+1. Maintain the per-fixture `provenance:` discipline. Already in practice.
+2. When the canvas and simulation arrive, in-app indicators showing data-source confidence (high / medium / low / unknown) will help users assess what they're seeing — the confidence field already exists in the schema.
+3. Consider tagging errata-fix commits with a recognizable convention (e.g., `errata:` prefix) so users can audit what changed in their projects after pulling updates.
+4. Continue zero-trust verification rounds. The Sprint 5/6/8/10/11 + deep-research record shows the pattern works.
+
+---
+
 ## Section 7 — Export control awareness
 
 ### The concern
@@ -289,7 +341,7 @@ This is the **Firefox / Mozilla model**: the code is free (MIT/MPL family), but 
 
 | Category | Current state | Risk level (pre-launch) | Recommended action |
 |---|---|---|---|
-| License compatibility (bundling) | Verified MIT/Apache/BSD/ISC/CC0 only | Low | Continue per-tool verification |
+| License compatibility (bundling) | Verified MIT/Apache/BSD/ISC/CC0/MPL-2.0 only | Low | Continue per-tool verification |
 | Copyright of cited values | Per-fixture provenance discipline | Low | Continue, avoid verbatim quotation |
 | Copyright of graphics (symbols) | Explicit "original drawings, not copies" rule | Low | Confirm when canvas lands |
 | Trademark "ChipBlocks" | Not verified at USPTO TESS | Medium pre-launch, HIGH post-launch | Manual TESS search before any launch |

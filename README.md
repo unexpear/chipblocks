@@ -3,6 +3,8 @@
 A free, open-source, ground-up electronics builder. Real physical blocks all the way down — materials, geometry, electrical behavior — composing into devices, circuits, chips, boards, and full electronic systems. Every block can be traced down to first principles.
 
 > ⚠️ **Important disclaimer.** I'm not an electrical engineer. I built this because the problem space is interesting. ChipBlocks's validation is best-effort built on cited references (NIST, IEC, IEEE, IPC, Sze, Schubert, etc.) and structural cross-checks — but I could have missed things, and AI (Claude) + iterative "vibe coding" did much of the drafting. **Don't put full trust in the output.** Good for learning, hobbyist projects, and design starting points; **NOT for safety-critical work** (medical, automotive, aerospace, etc. — see [DISCLAIMER.md](DISCLAIMER.md) for the full picture). The app is free forever; files you create with it are yours to keep, share, or sell (see [CREDITS.md](CREDITS.md) commercial-use posture).
+>
+> **Errors may exist.** Cited values can have transcription errors, datasheet errata, or condition-dependent variation. Found something wrong? Open an issue or submit a PR with the corrected value and a source citation — community-curated errata is how data quality improves over time (same model KiCad uses).
 
 **Status:** Foundation-spec + foundation-code phase. Master has the canonical object model spec, six JSON schemas (definition, instance, behavior, active-variable, identity/provenance/quantity/support fragments), a TypeScript cross-FK validator, and 74 passing tests across 18 materials + 10 behaviors + 10 primitive devices + 16 instances (full red/blue/green/IR/UV LED catalog, three diode variants, switch, resistor, capacitor, power source, solder joints). **No UI / canvas / Electron app yet** — that's the next major direction. The shape of the work: spec the foundation → write schemas → build the validator → build the canvas → ship the first working slice. We're at step 3 going on 4.
 
@@ -65,4 +67,4 @@ ChipBlocks is in active foundation-spec work. Issues and discussions on the cano
 
 ## License
 
-[MIT](LICENSE). Every dependency must be permissively licensed (MIT, Apache 2.0, BSD, ISC, CC0). No GPL or AGPL in the shipped product.
+[MIT](LICENSE). Every dependency must be permissively licensed (MIT, Apache 2.0, BSD, ISC, CC0, MPL-2.0). No GPL or AGPL bundled in the shipped product. MPL-2.0 is file-level copyleft (Mozilla's license) — its obligations stay scoped to MPL-licensed files themselves, so it's safe alongside permissive code.

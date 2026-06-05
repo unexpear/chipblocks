@@ -24,7 +24,7 @@ Read [OBJECT-MODEL.md](OBJECT-MODEL.md) for the canonical foundation spec — th
 
 4. **Free and open-source, no paid tier.**
    - MIT-licensed.
-   - Permissive dependencies only (MIT / Apache 2.0 / BSD / ISC / CC0). Never GPL/AGPL in the shipped product.
+   - Permissive (and file-level-permissive) dependencies only: MIT / Apache 2.0 / BSD / ISC / CC0 / MPL-2.0. Never GPL/AGPL bundled in the shipped product. MPL-2.0 is file-level copyleft (Mozilla's license) and only obligates MPL files themselves — safe to include for build-time tooling like lightningcss (transitive via Vite → Vitest).
    - BYOK AI (user's own API key) — the project never pays for inference on behalf of users.
    - A **No-AI mode** is required so the app is fully usable without any AI configured.
    - Multi-provider AI (Anthropic, OpenAI, possibly Gemini/Ollama later) — never locked to one vendor.
@@ -177,7 +177,7 @@ Variable-length sprints; pace dictated by correctness, not deadlines. The v2 `SP
 - ❌ Cutting-edge ASIC nodes (5nm / 3nm / 2nm)
 - ❌ Manufacturing or fulfillment (software outputs files; user takes them to a fab)
 - ❌ Hosting paid AI inference (strictly BYOK)
-- ❌ Copyleft (GPL/AGPL) dependencies in shipped product
+- ❌ Viral copyleft (GPL/AGPL) dependencies in shipped product — MPL-2.0 (file-level copyleft) is OK
 
 ## Important risk-handling rules (from v1)
 

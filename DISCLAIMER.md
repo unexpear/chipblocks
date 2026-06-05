@@ -19,6 +19,8 @@ The catalog is built from cited references (NIST, IEC, IEEE, IPC, ASTM, Sze text
 - Citations point at authoritative sources, but human transcription errors happen.
 - Some claims I made about industry standards were caught and corrected during zero-trust verification rounds. There are probably more I didn't catch.
 
+This is how every major open-source electronics design project works — **KiCad's component libraries** explicitly disclaim warranty on the values they ship and rely on community-curated PR-based errata fixes. ChipBlocks adopts the same posture. Cited values may contain transcription errors, datasheet errata, or condition-dependent inaccuracies; the community-curated errata model (see [Reporting issues](#reporting-issues) below) is how data quality improves over time.
+
 **AI did a lot of the work — and that's disclosed.**
 
 I built ChipBlocks using **Claude Opus** (Anthropic) extensively for drafting documentation, authoring YAML fixtures, writing the TypeScript validator + tests, and running deep-research verification rounds. Per-commit `Co-Authored-By:` trailers in the git log show specifically what AI was used. The arrangement: AI surfaces options and drafts content; I direct decisions and approve nothing without reading it. That's the project's load-bearing principle 1 from [CLAUDE.md](CLAUDE.md): *"AI assists. ChipBlocks validates. The user approves."*
