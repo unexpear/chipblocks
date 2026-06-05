@@ -1,0 +1,19 @@
+# Valid fixture: explicit net between switch_001's output and resistor_001's input.
+# Third leg of the educational anchor circuit (S7-v3-6).
+# When the switch is closed this net sits at approximately net_battery_pos's
+# voltage; current flows downstream into resistor_001. When open, no current
+# flows and this net floats (only the resistor side defines its potential
+# through the rest of the circuit to ground).
+# Type: signal.
+# Adopted in v3 Sprint 13 per OBJECT-MODEL.md §17.
+# MUST validate against net.schema.json.
+kind: net
+id: net_switch_resistor
+origin: project
+type: signal
+description: Carries current from the switch's output to the resistor's input. Switch state determines whether the net actively drives the resistor.
+members:
+  - instance: switch_001
+    terminal: terminal_out
+  - instance: resistor_001
+    terminal: terminal_a

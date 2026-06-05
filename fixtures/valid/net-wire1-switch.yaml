@@ -1,0 +1,20 @@
+# Valid fixture: explicit net between wire_001's output and switch_001's input.
+# Second leg of the educational anchor circuit (S7-v3-6).
+# When the switch is closed this net continues at the battery's positive
+# voltage (minus a tiny wire IR drop); when open the net is at +9V but no
+# current flows downstream. DC solver (Sprint 14) handles the actual
+# state-dependent computation.
+# Type: signal — carries the controlled current from the battery side toward
+# the resistor/LED stage.
+# Adopted in v3 Sprint 13 per OBJECT-MODEL.md §17.
+# MUST validate against net.schema.json.
+kind: net
+id: net_wire1_switch
+origin: project
+type: signal
+description: Carries current from wire_001's far end to the switch's input. Same potential as net_battery_pos when wire IR drop is negligible.
+members:
+  - instance: wire_001
+    terminal: terminal_b
+  - instance: switch_001
+    terminal: terminal_in

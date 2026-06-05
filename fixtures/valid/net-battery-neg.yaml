@@ -1,0 +1,20 @@
+# Valid fixture: explicit net for the battery's negative rail / circuit ground.
+# Sixth and final leg of the educational anchor circuit (S7-v3-6). Closes
+# the loop: wire_002's far end carries the current back to the battery's
+# negative terminal.
+# By convention, this net is the 0 V reference for the rest of the circuit.
+# DC solver (Sprint 14) will use this convention when computing node voltages.
+# Type: ground — the explicit circuit reference. Not just a return path but
+# THE return path defining the 0 V baseline.
+# Adopted in v3 Sprint 13 per OBJECT-MODEL.md §17.
+# MUST validate against net.schema.json.
+kind: net
+id: net_battery_neg
+origin: project
+type: ground
+description: Negative supply rail / circuit ground. Connects wire_002's far end to the battery's negative terminal. By convention, the 0 V reference for the rest of the circuit.
+members:
+  - instance: wire_002
+    terminal: terminal_b
+  - instance: battery_9v_001
+    terminal: terminal_negative

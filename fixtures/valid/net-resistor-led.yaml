@@ -1,0 +1,18 @@
+# Valid fixture: explicit net between resistor_001's output and led_001's anode.
+# Fourth leg of the educational anchor circuit (S7-v3-6). This is the
+# current-limiting handoff: the resistor drops ~7 V (at 9 V supply, 2 V LED
+# drop) so the LED sees only its rated forward voltage. Without this resistor
+# the LED would draw destructive current and fail open.
+# Type: signal.
+# Adopted in v3 Sprint 13 per OBJECT-MODEL.md §17.
+# MUST validate against net.schema.json.
+kind: net
+id: net_resistor_led
+origin: project
+type: signal
+description: Carries the current-limited drive from the resistor's output to the LED's anode. Voltage here is approximately net_battery_pos minus the resistor's IR drop — i.e., the LED's forward voltage above net_battery_neg.
+members:
+  - instance: resistor_001
+    terminal: terminal_b
+  - instance: led_001
+    terminal: anode

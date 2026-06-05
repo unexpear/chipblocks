@@ -1184,12 +1184,12 @@ Sprint 13 converts the six implicit nets in the existing battery → switch → 
 
 | Net id | Type | Members (instance / terminal) |
 |---|---|---|
-| `net_battery_pos` | power | power_source_001 / positive_terminal, wire_001 / in |
-| `net_wire1_switch` | signal | wire_001 / out, switch_001 / in |
-| `net_switch_resistor` | signal | switch_001 / out, resistor_001 / in |
-| `net_resistor_led` | signal | resistor_001 / out, led_001 / anode |
-| `net_led_wire2` | signal | led_001 / cathode, wire_002 / in |
-| `net_battery_neg` | ground | wire_002 / out, power_source_001 / negative_terminal |
+| `net_battery_pos` | power | battery_9v_001 / terminal_positive, wire_001 / terminal_a |
+| `net_wire1_switch` | signal | wire_001 / terminal_b, switch_001 / terminal_in |
+| `net_switch_resistor` | signal | switch_001 / terminal_out, resistor_001 / terminal_a |
+| `net_resistor_led` | signal | resistor_001 / terminal_b, led_001 / anode |
+| `net_led_wire2` | signal | led_001 / cathode, wire_002 / terminal_a |
+| `net_battery_neg` | ground | wire_002 / terminal_b, battery_9v_001 / terminal_negative |
 
 Each net validates against `net.schema.json`. Each is bidirectionally consistent with its instances' `connects:` entries. Cross-FK reports zero net errors on the resulting world.
 

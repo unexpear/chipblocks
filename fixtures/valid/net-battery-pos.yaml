@@ -1,0 +1,21 @@
+# Valid fixture: explicit net for the battery's positive rail.
+# First leg of the educational anchor circuit (S7-v3-6): the 9V battery's
+# positive terminal is connected to wire_001's first end. Wire_001 then
+# carries this voltage forward to the switch.
+# At 9V supply, this net sits at ~9V relative to net_battery_neg (the 0V
+# reference) when the battery is at rest. Under load, it sags slightly per
+# the battery's internal resistance — the DC solver (Sprint 14) will compute
+# the actual operating voltage.
+# Type: power — this net carries the positive supply rail.
+# Adopted in v3 Sprint 13 per OBJECT-MODEL.md §17.
+# MUST validate against net.schema.json.
+kind: net
+id: net_battery_pos
+origin: project
+type: power
+description: Positive supply rail from the 9 V battery to wire_001's input end. Holds at +9 V nominal relative to net_battery_neg under no-load conditions.
+members:
+  - instance: battery_9v_001
+    terminal: terminal_positive
+  - instance: wire_001
+    terminal: terminal_a

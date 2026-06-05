@@ -1,0 +1,20 @@
+# Valid fixture: explicit net between led_001's cathode and wire_002's input.
+# Fifth leg of the educational anchor circuit (S7-v3-6). The LED's cathode
+# passes the (now-limited) current onto the return wire toward the battery's
+# negative terminal.
+# This net sits at approximately the LED's forward voltage above
+# net_battery_neg — i.e., near 0 V when net_battery_neg is the 0 V reference.
+# Type: signal — even though the absolute voltage is close to ground, this is
+# part of the active current path, not the ground reference itself.
+# Adopted in v3 Sprint 13 per OBJECT-MODEL.md §17.
+# MUST validate against net.schema.json.
+kind: net
+id: net_led_wire2
+origin: project
+type: signal
+description: Return path from the LED's cathode into wire_002. Just above ground potential — the LED's forward voltage is dropped between this net and net_resistor_led.
+members:
+  - instance: led_001
+    terminal: cathode
+  - instance: wire_002
+    terminal: terminal_a
