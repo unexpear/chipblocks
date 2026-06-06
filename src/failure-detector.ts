@@ -19,7 +19,8 @@
  * S15-v3-3 scaffold: Failure type + detectFailures entry point + LED
  * forward-overload check.
  * S15-v3-4 adds resistor-overpower (I²R > power_rating).
- * led-reverse-breakdown lands in S15-v3-5.
+ * S15-v3-5 adds led-reverse-breakdown (V_cathode - V_anode >
+ * reverse_breakdown_voltage) — the sign-dependent, node-voltage-based check.
  */
 
 import type { Instance, World } from './cross-fk-validator.ts'
@@ -75,6 +76,8 @@ export function detectFailures(world: World, solution: Solution): Failure[] {
     if (LED_DEFINITIONS.has(inst.definition)) {
       const overload = checkLedForwardOverload(inst, solution)
       if (overload !== null) failures.push(overload)
+      const reverse = checkLedReverseBreakdown(inst, solution)
+      if (reverse !== null) failures.push(reverse)
     } else if (inst.definition === 'resistor') {
       const overpower = checkResistorOverpower(inst, solution)
       if (overpower !== null) failures.push(overpower)
@@ -114,6 +117,47 @@ export function checkLedForwardOverload(inst: Instance, solution: Solution): Fai
     rated: maxForwardCurrent,
     ratio: magnitude / maxForwardCurrent,
     units: 'ampere',
+    severity: 'error',
+  }
+}
+
+/**
+ * LED reverse-breakdown check (§19.3 / §19.6).
+ * Fires led-reverse-breakdown when the reverse voltage across the LED
+ * (V_cathode − V_anode) exceeds reverse_breakdown_voltage.
+ *
+ * Sign-dependent (§19.6): when forward-biased (V_anode > V_cathode) the
+ * difference is negative and the check can't fire. The rating is a positive
+ * number (e.g., 5 V); the check fires only when the reverse voltage grows
+ * beyond it.
+ *
+ * Returns the Failure, or null when the check doesn't fire OR the inputs
+ * can't be resolved (missing rating, missing anode/cathode connect, or
+ * either net voltage unresolved).
+ */
+export function checkLedReverseBreakdown(inst: Instance, solution: Solution): Failure | null {
+  const reverseBreakdown = readScalarParam(inst, 'reverse_breakdown_voltage')
+  if (reverseBreakdown === undefined || reverseBreakdown <= 0) return null
+
+  const anodeConnect = inst.connects?.find((c) => c.terminal === 'anode')
+  const cathodeConnect = inst.connects?.find((c) => c.terminal === 'cathode')
+  if (anodeConnect === undefined || cathodeConnect === undefined) return null
+
+  const V_anode = solution.nodes.get(anodeConnect.net)
+  const V_cathode = solution.nodes.get(cathodeConnect.net)
+  if (V_anode === undefined || V_cathode === undefined) return null
+
+  const reverseVoltage = V_cathode - V_anode
+  if (reverseVoltage <= reverseBreakdown) return null
+
+  return {
+    code: 'led-reverse-breakdown',
+    source: inst.id,
+    kind: 'reverse_breakdown_voltage',
+    measured: reverseVoltage,
+    rated: reverseBreakdown,
+    ratio: reverseVoltage / reverseBreakdown,
+    units: 'volt',
     severity: 'error',
   }
 }

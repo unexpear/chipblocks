@@ -29,6 +29,7 @@ import {
 import { solveDC } from '../src/dc-solver.ts'
 import {
   checkLedForwardOverload,
+  checkLedReverseBreakdown,
   checkResistorOverpower,
   detectFailures,
 } from '../src/failure-detector.ts'
@@ -84,6 +85,23 @@ function ledInstance(id: string, maxForwardCurrent: number): Instance {
     connects: [
       { net: 'net_a', terminal: 'anode', of: id },
       { net: 'net_gnd', terminal: 'cathode', of: id },
+    ],
+  }
+}
+
+function ledWithReverseRating(id: string, reverseBreakdownVolts: number): Instance {
+  return {
+    id,
+    kind_ref: 'primitive_device',
+    definition: 'led',
+    parameters: {
+      reverse_breakdown_voltage: {
+        value: { kind: 'scalar', amount: reverseBreakdownVolts, unit: 'volt' },
+      },
+    },
+    connects: [
+      { net: 'net_anode', terminal: 'anode', of: id },
+      { net: 'net_cathode', terminal: 'cathode', of: id },
     ],
   }
 }
@@ -235,6 +253,72 @@ describe('checkResistorOverpower', () => {
 })
 
 // ===========================================================================
+// 1c. checkLedReverseBreakdown unit cases (S15-v3-5)
+// ===========================================================================
+
+describe('checkLedReverseBreakdown', () => {
+  test('fires when reverse voltage (V_cathode - V_anode) exceeds the rating', () => {
+    // LED reverse-biased: cathode at +8 V, anode at 0 V → reverse voltage 8 V.
+    // In a 5 V breakdown-rated LED → over by 1.6×.
+    const inst = ledWithReverseRating('led_x', 5)
+    const sol = solutionWith({}, { net_anode: 0, net_cathode: 8 })
+    const failure = checkLedReverseBreakdown(inst, sol)
+    expect(failure).not.toBeNull()
+    if (failure === null) return
+    expect(failure.code).toBe('led-reverse-breakdown')
+    expect(failure.source).toBe('led_x')
+    expect(failure.kind).toBe('reverse_breakdown_voltage')
+    expect(failure.measured).toBeCloseTo(8, 9)
+    expect(failure.rated).toBeCloseTo(5, 9)
+    expect(failure.ratio).toBeCloseTo(1.6, 9)
+    expect(failure.units).toBe('volt')
+    expect(failure.severity).toBe('error')
+  })
+
+  test('silent when forward-biased — the anchor-circuit case', () => {
+    // Forward-biased: anode at +2 V, cathode at 0 V → reverse voltage = -2 V,
+    // which can't exceed the +5 V positive breakdown rating.
+    const inst = ledWithReverseRating('led_x', 5)
+    const sol = solutionWith({}, { net_anode: 2, net_cathode: 0 })
+    expect(checkLedReverseBreakdown(inst, sol)).toBeNull()
+  })
+
+  test('silent when reverse voltage is within the rating', () => {
+    // Reverse-biased but only 3 V, under the 5 V rating.
+    const inst = ledWithReverseRating('led_x', 5)
+    const sol = solutionWith({}, { net_anode: 0, net_cathode: 3 })
+    expect(checkLedReverseBreakdown(inst, sol)).toBeNull()
+  })
+
+  test('silent at exactly the rating (boundary is not a violation)', () => {
+    const inst = ledWithReverseRating('led_x', 5)
+    const sol = solutionWith({}, { net_anode: 0, net_cathode: 5 }) // exactly 5 V reverse
+    expect(checkLedReverseBreakdown(inst, sol)).toBeNull()
+  })
+
+  test('silent when reverse_breakdown_voltage is missing (rating unknown)', () => {
+    const inst: Instance = {
+      id: 'led_x',
+      kind_ref: 'primitive_device',
+      definition: 'led',
+      // no reverse_breakdown_voltage
+      connects: [
+        { net: 'net_anode', terminal: 'anode', of: 'led_x' },
+        { net: 'net_cathode', terminal: 'cathode', of: 'led_x' },
+      ],
+    }
+    const sol = solutionWith({}, { net_anode: 0, net_cathode: 100 })
+    expect(checkLedReverseBreakdown(inst, sol)).toBeNull()
+  })
+
+  test('silent when an anode/cathode net voltage is unresolved', () => {
+    const inst = ledWithReverseRating('led_x', 5)
+    const sol = solutionWith({}, { net_anode: 0 }) // net_cathode missing
+    expect(checkLedReverseBreakdown(inst, sol)).toBeNull()
+  })
+})
+
+// ===========================================================================
 // 2. detectFailures — minimal world + status guard
 // ===========================================================================
 
@@ -328,5 +412,19 @@ describe('detectFailures end-to-end: educational anchor circuit', () => {
     // The whole anchor circuit fires exactly ONE failure — led-overloaded.
     expect(failures.length).toBe(1)
     expect(failures[0]?.code).toBe('led-overloaded')
+  })
+
+  test('led_001 does NOT reverse-breakdown — it is forward-biased', () => {
+    // The §19.10 corrected result, third check: led_001's anode net
+    // (net_resistor_led = 2 V) is above its cathode net (net_led_wire2 ≈ 0 V),
+    // so the LED is forward-biased. Reverse voltage = 0 - 2 = -2 V, nowhere
+    // near the +5 V reverse_breakdown_voltage rating. The detector correctly
+    // stays silent.
+    const world = loadWorld('fixtures/valid')
+    const sol = solveDC(world)
+    const reverseFailures = detectFailures(world, sol).filter(
+      (f) => f.code === 'led-reverse-breakdown',
+    )
+    expect(reverseFailures).toEqual([])
   })
 })
