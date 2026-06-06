@@ -69,6 +69,8 @@ function solutionWith(branches: Record<string, number>, nodes: Record<string, nu
     branches: new Map(Object.entries(branches)),
     ground: 'net_gnd',
     warnings: [],
+    iterations: 1,
+    converged: true,
   }
 }
 
@@ -337,6 +339,8 @@ describe('detectFailures (basic)', () => {
       branches: new Map<string, number>([['led_x', 0.07]]),
       ground: undefined,
       warnings: [],
+      iterations: 0,
+      converged: false,
     }
     expect(detectFailures(world, noGround)).toEqual([])
   })
@@ -361,7 +365,7 @@ describe('detectFailures (basic)', () => {
 // ===========================================================================
 
 describe('detectFailures end-to-end: educational anchor circuit', () => {
-  test('the full pipeline fires led-overloaded with the 3.5× numbers', () => {
+  test('the full pipeline fires led-overloaded with the Shockley 3.47× numbers', () => {
     // load → cross-FK (clean) → solveDC (70 mA) → detectFailures → led-overloaded.
     // This is the contract that's been alive since Sprint 12: the deliberately-
     // undersized 100 Ω resistor + 9 V supply + 2 V LED produces 70 mA, which
@@ -379,9 +383,10 @@ describe('detectFailures end-to-end: educational anchor circuit', () => {
     const ledOverload = failures.find((f) => f.code === 'led-overloaded' && f.source === 'led_001')
     expect(ledOverload).toBeDefined()
     if (ledOverload === undefined) return
-    expect(ledOverload.measured).toBeCloseTo(0.07, 6)
+    // Sprint 16 Shockley result: 69.36 mA (was 70.00 mA under fixed-V_F).
+    expect(ledOverload.measured).toBeCloseTo(0.069357, 6)
     expect(ledOverload.rated).toBeCloseTo(0.02, 9)
-    expect(ledOverload.ratio).toBeCloseTo(3.5, 4)
+    expect(ledOverload.ratio).toBeCloseTo(3.468, 3)
     expect(ledOverload.units).toBe('ampere')
     expect(ledOverload.severity).toBe('error')
   })
@@ -456,9 +461,10 @@ describe('detectFailures: the consolidated cross-sprint contract (S15-v3-6)', ()
     expect(f.code).toBe('led-overloaded')
     expect(f.source).toBe('led_001')
     expect(f.kind).toBe('max_forward_current')
-    expect(f.measured).toBeCloseTo(0.07, 6)
+    // Sprint 16 Shockley result: 69.36 mA / 3.47× (was 70.00 mA / 3.50×).
+    expect(f.measured).toBeCloseTo(0.069357, 6)
     expect(f.rated).toBe(0.02)
-    expect(f.ratio).toBeCloseTo(3.5, 4)
+    expect(f.ratio).toBeCloseTo(3.468, 3)
     expect(f.units).toBe('ampere')
     expect(f.severity).toBe('error')
   })
@@ -468,9 +474,10 @@ describe('detectFailures: the consolidated cross-sprint contract (S15-v3-6)', ()
     // and its current-limit resistor are over rating at once. Proves the
     // detector accumulates all violations rather than stopping at the first.
     //   9 V battery → net_a — [r1 10Ω, 1/8 W] — net_b — [led V_F=2V] — gnd
-    //   current = (9 - 2) / 10 = 700 mA
-    //   • LED: 700 mA vs 20 mA rating → led-overloaded (35×)
-    //   • Resistor: 0.7² × 10 = 4.9 W vs 0.125 W rating → resistor-overpower
+    //   Shockley solve: current ≈ 681.75 mA (the LED settles above 2 V at
+    //   this high current). Both ratings are still grossly exceeded:
+    //   • LED: 681.75 mA vs 20 mA rating → led-overloaded (34×)
+    //   • Resistor: 0.68² × 10 ≈ 4.648 W vs 0.125 W rating → resistor-overpower
     const world: World = {
       definitions: new Map(),
       instances: new Map(),
@@ -548,9 +555,9 @@ describe('detectFailures: the consolidated cross-sprint contract (S15-v3-6)', ()
     expect(codes).toEqual(['led-overloaded', 'resistor-overpower'])
 
     const ledF = failures.find((f) => f.code === 'led-overloaded')
-    expect(ledF?.measured).toBeCloseTo(0.7, 6) // 700 mA
+    expect(ledF?.measured).toBeCloseTo(0.68175, 4) // ~681.75 mA (Shockley)
     const rF = failures.find((f) => f.code === 'resistor-overpower')
-    expect(rF?.measured).toBeCloseTo(4.9, 6) // 4.9 W
+    expect(rF?.measured).toBeCloseTo(4.648, 3) // ~4.648 W
   })
 
   test('an empty world produces no failures', () => {

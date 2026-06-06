@@ -1011,7 +1011,7 @@ describe('computeResistorCurrent', () => {
 // ===========================================================================
 
 describe('solveDC end-to-end: educational anchor circuit', () => {
-  test('YAML on disk → cross-FK clean → solveDC produces the load-bearing 70 mA result', () => {
+  test('YAML on disk → cross-FK clean → solveDC produces the Shockley 69.36 mA result', () => {
     // The full pipeline: load all valid fixtures, verify cross-FK reports
     // zero errors (the Sprint 13 invariants hold), then run the DC solver
     // on the resulting world.
@@ -1019,21 +1019,22 @@ describe('solveDC end-to-end: educational anchor circuit', () => {
     // The circuit: 9 V battery → wire_001 → switch_001 (closed) →
     // resistor_001 (100 Ω) → led_001 (V_F = 2 V) → wire_002 → ground.
     //
-    // Expected node voltages (relative to net_battery_neg = 0 V):
-    //   net_battery_pos      = 9.0  (battery sets)
-    //   net_wire1_switch     = 9.0  (wire is ideal short)
-    //   net_switch_resistor  = 9.0  (closed switch is ideal short)
-    //   net_resistor_led     = 2.0  (LED V_F holds anode 2 V above cathode)
-    //   net_led_wire2        = 0.0  (wire is ideal short to ground)
-    //   net_battery_neg      = 0.0  (ground reference)
+    // Expected node voltages (relative to net_battery_neg = 0 V). Sprint 16
+    // switched led_001 to the Shockley model (it has forward_voltage +
+    // max_forward_current, the calibration point), so the LED settles at
+    // 2.064 V — not exactly 2.0 V — at the operating current of 69.36 mA:
+    //   net_battery_pos      = 9.0    (battery sets)
+    //   net_wire1_switch     = 9.0    (wire is ideal short)
+    //   net_switch_resistor  = 9.0    (closed switch is ideal short)
+    //   net_resistor_led     = 2.064  (Shockley LED voltage at 69.36 mA)
+    //   net_led_wire2        = 0.0    (wire is ideal short to ground)
+    //   net_battery_neg      = 0.0    (ground reference)
     //
-    // Expected branch currents (all 70 mA = (9 - 2) / 100):
-    //   battery_9v_001 = -0.070  (sourcing — exits + terminal externally)
-    //   wire_001       = +0.070  (a → b flow)
-    //   switch_001     = +0.070  (in → out flow)
-    //   resistor_001   = +0.070  (a → b flow, V_a > V_b)
-    //   led_001        = +0.070  (forward bias — enters anode)
-    //   wire_002       = +0.070  (a → b flow)
+    // Expected branch currents (all 69.36 mA = (9 - 2.064) / 100):
+    //   battery_9v_001 = -0.06936  (sourcing — exits + terminal externally)
+    //   the rest       = +0.06936  (series circuit)
+    // This is the §20.10 accuracy upgrade: fixed-V_F gave 70.00 mA; Shockley
+    // gives 69.36 mA. The difference is ~0.9% — validating §19.7.
     const world = loadWorld('fixtures/valid')
 
     // Pre-flight: cross-FK must be clean on the valid world (re-verified
@@ -1051,25 +1052,29 @@ describe('solveDC end-to-end: educational anchor circuit', () => {
     expect(sol.status).toBe('solved')
     expect(sol.ground).toBe('net_battery_neg')
     expect(sol.warnings).toEqual([])
+    // Nonlinear solve: converged in a handful of Newton-Raphson iterations.
+    expect(sol.converged).toBe(true)
+    expect(sol.iterations).toBeGreaterThan(1)
+    expect(sol.iterations).toBeLessThan(100)
 
     // Node voltages
     expect(sol.nodes.get('net_battery_pos')).toBeCloseTo(9, 9)
     expect(sol.nodes.get('net_wire1_switch')).toBeCloseTo(9, 9)
     expect(sol.nodes.get('net_switch_resistor')).toBeCloseTo(9, 9)
-    expect(sol.nodes.get('net_resistor_led')).toBeCloseTo(2, 9)
+    expect(sol.nodes.get('net_resistor_led')).toBeCloseTo(2.0643, 3)
     expect(sol.nodes.get('net_led_wire2')).toBeCloseTo(0, 9)
     expect(sol.nodes.get('net_battery_neg')).toBe(0)
 
-    // Branch currents — the 70 mA result
-    expect(sol.branches.get('battery_9v_001')).toBeCloseTo(-0.07, 9)
-    expect(sol.branches.get('wire_001')).toBeCloseTo(0.07, 9)
-    expect(sol.branches.get('switch_001')).toBeCloseTo(0.07, 9)
-    expect(sol.branches.get('resistor_001')).toBeCloseTo(0.07, 9)
-    expect(sol.branches.get('led_001')).toBeCloseTo(0.07, 9)
-    expect(sol.branches.get('wire_002')).toBeCloseTo(0.07, 9)
+    // Branch currents — the Shockley 69.36 mA result
+    expect(sol.branches.get('battery_9v_001')).toBeCloseTo(-0.069357, 6)
+    expect(sol.branches.get('wire_001')).toBeCloseTo(0.069357, 6)
+    expect(sol.branches.get('switch_001')).toBeCloseTo(0.069357, 6)
+    expect(sol.branches.get('resistor_001')).toBeCloseTo(0.069357, 6)
+    expect(sol.branches.get('led_001')).toBeCloseTo(0.069357, 6)
+    expect(sol.branches.get('wire_002')).toBeCloseTo(0.069357, 6)
   })
 
-  test('the 70 mA LED current is 3.5× the LED max_forward_current rating (sets up Sprint 15)', () => {
+  test('the LED current is ~3.47× the max_forward_current rating (Shockley; sets up Sprint 15)', () => {
     // Sprint 14 faithfully reports the computed current; Sprint 15's
     // failure-mode check will fire led-overloaded on this same circuit.
     // This test documents the deliberate ratings overshoot in the
@@ -1090,8 +1095,121 @@ describe('solveDC end-to-end: educational anchor circuit', () => {
     const maxParam = (led.parameters?.max_forward_current?.value as any)?.amount
     expect(typeof maxParam).toBe('number')
 
-    // The actual current (70 mA absolute value) exceeds the rated max (20 mA).
+    // The Shockley current (~69.36 mA) exceeds the rated max (20 mA) at ~3.47×.
     expect(Math.abs(I_led)).toBeGreaterThan(maxParam)
-    expect(Math.abs(I_led) / maxParam).toBeCloseTo(3.5, 1)
+    expect(Math.abs(I_led) / maxParam).toBeCloseTo(3.468, 2)
+  })
+})
+
+// ===========================================================================
+// 8. Newton-Raphson nonlinear solve (S16-v3-4)
+// ===========================================================================
+
+describe('solveDC — Shockley / Newton-Raphson', () => {
+  // A minimal 5 V battery + 100 Ω + Shockley LED (calibrated at V_F=2 V @
+  // 20 mA, n=2) in isolation. By-hand: solving 5 = 100·I + V_LED(I) gives
+  // I ≈ 29.79 mA with the LED at ≈2.021 V.
+  function minimalDiodeCircuit(): World {
+    const w: World = {
+      definitions: new Map(),
+      instances: new Map(),
+      behaviors: new Map(),
+      activeVariables: new Map(),
+      nets: new Map(),
+    }
+    w.nets.set('na', {
+      id: 'na',
+      kind: 'net',
+      members: [
+        { instance: 'b', terminal: 'terminal_positive' },
+        { instance: 'r', terminal: 'terminal_a' },
+      ],
+    })
+    w.nets.set('nb', {
+      id: 'nb',
+      kind: 'net',
+      members: [
+        { instance: 'r', terminal: 'terminal_b' },
+        { instance: 'd', terminal: 'anode' },
+      ],
+    })
+    w.nets.set('gnd', {
+      id: 'gnd',
+      kind: 'net',
+      type: 'ground',
+      members: [
+        { instance: 'b', terminal: 'terminal_negative' },
+        { instance: 'd', terminal: 'cathode' },
+      ],
+    })
+    w.instances.set('b', {
+      id: 'b',
+      kind_ref: 'primitive_device',
+      definition: 'power_source',
+      parameters: { nominal_voltage: { value: { kind: 'scalar', amount: 5, unit: 'volt' } } },
+      connects: [
+        { net: 'na', terminal: 'terminal_positive', of: 'b' },
+        { net: 'gnd', terminal: 'terminal_negative', of: 'b' },
+      ],
+    })
+    w.instances.set('r', {
+      id: 'r',
+      kind_ref: 'primitive_device',
+      definition: 'resistor',
+      parameters: { resistance: { value: { kind: 'scalar', amount: 100, unit: 'ohm' } } },
+      connects: [
+        { net: 'na', terminal: 'terminal_a', of: 'r' },
+        { net: 'nb', terminal: 'terminal_b', of: 'r' },
+      ],
+    })
+    w.instances.set('d', {
+      id: 'd',
+      kind_ref: 'primitive_device',
+      definition: 'led',
+      parameters: {
+        forward_voltage: { value: { kind: 'scalar', amount: 2, unit: 'volt' } },
+        max_forward_current: { value: { kind: 'scalar', amount: 0.02, unit: 'ampere' } },
+      },
+      connects: [
+        { net: 'nb', terminal: 'anode', of: 'd' },
+        { net: 'gnd', terminal: 'cathode', of: 'd' },
+      ],
+    })
+    return w
+  }
+
+  test('converges to the hand-computed operating point (29.79 mA, 2.021 V)', () => {
+    const sol = solveDC(minimalDiodeCircuit())
+    expect(sol.status).toBe('solved')
+    expect(sol.converged).toBe(true)
+    expect(sol.iterations).toBeGreaterThan(1)
+    expect(sol.branches.get('d')).toBeCloseTo(0.029794, 5)
+    expect(sol.nodes.get('nb')).toBeCloseTo(2.0206, 3)
+  })
+
+  test('did-not-converge: capping maxIterations below what the circuit needs', () => {
+    // The circuit needs ~4 iterations; cap at 2 → honest did-not-converge,
+    // not a wrong answer.
+    const sol = solveDC(minimalDiodeCircuit(), { maxIterations: 2 })
+    expect(sol.status).toBe('did-not-converge')
+    expect(sol.converged).toBe(false)
+    expect(sol.iterations).toBe(2)
+    expect(sol.branches.size).toBe(0) // no branch currents reported on failure
+  })
+
+  test('an LED with forward_voltage but no max_forward_current uses the fixed-V_F fallback', () => {
+    // No calibration current → can't derive I_s → the LED stays a fixed-V_F
+    // voltage source (linear), so the solve is a single-shot linear solve.
+    const w = minimalDiodeCircuit()
+    const led = w.instances.get('d')
+    if (led?.parameters) delete led.parameters.max_forward_current
+    const sol = solveDC(w)
+    expect(sol.status).toBe('solved')
+    // Linear fast-path: exactly one "iteration", converged trivially.
+    expect(sol.iterations).toBe(1)
+    expect(sol.converged).toBe(true)
+    // Fixed-V_F holds the LED at exactly 2.0 V → I = (5 − 2) / 100 = 30 mA.
+    expect(sol.nodes.get('nb')).toBeCloseTo(2.0, 9)
+    expect(sol.branches.get('d')).toBeCloseTo(0.03, 9)
   })
 })

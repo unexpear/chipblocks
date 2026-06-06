@@ -38,7 +38,20 @@
 
 import { all, create } from 'mathjs'
 import type { Instance, Net, World } from './cross-fk-validator.ts'
+import {
+  companionModel,
+  criticalVoltage,
+  deriveSaturationCurrent,
+  diodeCurrent,
+  pnjlim,
+  thermalVoltage,
+} from './diode-model.ts'
 import { readScalarParam } from './instance-params.ts'
+
+/** Newton-Raphson controls (§20.6). */
+const NR_MAX_ITERATIONS = 100
+const NR_VOLTAGE_TOLERANCE = 1e-6 // volts
+const DEFAULT_IDEALITY_FACTOR = 2.0 // LEDs (§20.2); optional per-instance override
 
 // biome-ignore lint/style/noNonNullAssertion: mathjs `all` is always defined at runtime
 const math = create(all!)
@@ -53,6 +66,9 @@ export const mathInstance = math
 export type SolveOptions = {
   /** Explicit ground net id; overrides type: ground auto-detection. */
   ground?: string
+  /** Newton-Raphson iteration cap (default 100). Lower values let tests
+   *  exercise the did-not-converge path deterministically. */
+  maxIterations?: number
 }
 
 export type SolutionStatus =
@@ -61,6 +77,7 @@ export type SolutionStatus =
   | 'singular-matrix'
   | 'unsupported-element'
   | 'numerical-error'
+  | 'did-not-converge'
 
 export type Solution = {
   status: SolutionStatus
@@ -69,32 +86,44 @@ export type Solution = {
   /**
    * Instance id → current through that branch, in amperes.
    * Sign convention: positive flows from terminal_positive / anode / terminal_a
-   * toward terminal_negative / cathode / terminal_b. Empty for S14-v3-3
-   * (branch currents land in S14-v3-6).
+   * toward terminal_negative / cathode / terminal_b.
    */
   branches: Map<string, number>
   /** The net id chosen as ground reference; undefined when status === 'no-ground'. */
   ground: string | undefined
   /** Non-fatal observations (multiple grounds, unsupported elements skipped, etc.). */
   warnings: string[]
+  /** Newton-Raphson iteration count (§20.6). 1 for the linear fast-path. */
+  iterations: number
+  /** Whether the nonlinear solve converged. Always true for linear circuits. */
+  converged: boolean
 }
 
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
+/**
+ * An LED resolved to the Shockley nonlinear model (§20). Only LEDs with both
+ * forward_voltage and max_forward_current (the I_s calibration point) qualify;
+ * LEDs with forward_voltage only fall back to the fixed-V_F linear stamp.
+ */
+type ShockleyLed = {
+  inst: Instance
+  anodeNet: string
+  cathodeNet: string
+  saturationCurrent: number
+  idealityFactor: number
+  /** Current Newton-Raphson voltage guess (anode − cathode). */
+  vGuess: number
+}
+
 export function solveDC(world: World, options?: SolveOptions): Solution {
   const warnings: string[] = []
 
   const ground = identifyGround(world, options, warnings)
   if (ground === undefined) {
-    return {
-      status: 'no-ground',
-      nodes: new Map(),
-      branches: new Map(),
-      ground: undefined,
-      warnings,
-    }
+    return emptyResult('no-ground', undefined, warnings)
   }
 
   const nodeIndex = assignNodeIndices(world.nets, ground)
@@ -108,124 +137,251 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       branches: new Map(),
       ground,
       warnings,
+      iterations: 1,
+      converged: true,
     }
   }
 
-  // Pre-pass: identify voltage-source-like instances so the matrix can be
-  // allocated at the correct (N + S) × (N + S) size BEFORE stamping. Each
-  // such instance extends the MNA system with one auxiliary current
-  // variable. Auxiliary index assignment is order-stable so tests can
-  // predict the matrix layout.
+  const thermalV = thermalVoltage()
+
+  // Pre-pass: classify instances.
+  //  - linearVoltageSources get an auxiliary current variable (power source,
+  //    switch, wire, and fixed-V_F LEDs that lack calibration data).
+  //  - shockleyLeds are nonlinear companion-model elements (no aux variable);
+  //    they need the Newton-Raphson loop.
   type VsLikeKind = 'power_source' | 'led' | 'switch' | 'wire'
-  const voltageSourceLike: Array<{ inst: Instance; kind: VsLikeKind }> = []
+  const linearVoltageSources: Array<{ inst: Instance; kind: VsLikeKind }> = []
+  const shockleyLeds: ShockleyLed[] = []
+
   for (const inst of world.instances.values()) {
-    // Skip isolated instances (no connects or malformed connects). They
-    // don't participate in any circuit, so they shouldn't contribute an
-    // auxiliary current variable to the matrix. Catalog-example fixtures
-    // (e.g., led_002..led_005) sit in the world without connects and are
-    // correctly invisible to the solver.
     if (inst.connects?.length !== 2) continue
 
     if (inst.definition === 'power_source') {
-      voltageSourceLike.push({ inst, kind: 'power_source' })
+      linearVoltageSources.push({ inst, kind: 'power_source' })
     } else if (inst.definition === 'led' || inst.definition === 'led_uv_algan') {
-      voltageSourceLike.push({ inst, kind: 'led' })
+      const led = resolveShockleyLed(inst, thermalV)
+      if (led !== null) shockleyLeds.push(led)
+      else linearVoltageSources.push({ inst, kind: 'led' }) // fixed-V_F fallback
     } else if (inst.definition === 'switch_spst_toggle') {
-      // Sprint 14 hardcodes SPST switches as closed; state-machine
-      // integration is a §15 row.
-      voltageSourceLike.push({ inst, kind: 'switch' })
+      linearVoltageSources.push({ inst, kind: 'switch' })
     } else if (inst.definition === 'wire') {
-      voltageSourceLike.push({ inst, kind: 'wire' })
+      linearVoltageSources.push({ inst, kind: 'wire' })
     }
   }
-  const S = voltageSourceLike.length
+  const S = linearVoltageSources.length
 
-  // Build the MNA matrix.
-  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
-  const M: any = math.zeros(N + S, N + S)
-  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
-  const b: any = math.zeros(N + S, 1)
+  // buildAndSolve stamps resistors + linear voltage sources + (optionally) the
+  // Shockley companion models at their current guesses, then solves. Returns
+  // the node-voltage map + the raw solution array (for aux currents), or null
+  // on a singular matrix.
+  const buildAndSolve = (): { nodes: Map<string, number>; xArr: number[][] } | null => {
+    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+    const M: any = math.zeros(N + S, N + S)
+    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+    const b: any = math.zeros(N + S, 1)
 
-  for (const inst of world.instances.values()) {
-    if (inst.definition === 'resistor') {
-      const ok = stampResistor(inst, nodeIndex, M)
+    for (const inst of world.instances.values()) {
+      if (inst.definition === 'resistor') {
+        const ok = stampResistor(inst, nodeIndex, M)
+        if (!ok)
+          warnings.push(`Skipped resistor stamp for instance '${inst.id}' (missing R or connects)`)
+      }
+    }
+    for (let s = 0; s < linearVoltageSources.length; s++) {
+      // biome-ignore lint/style/noNonNullAssertion: s is bound by the array length
+      const { inst, kind } = linearVoltageSources[s]!
+      const auxIdx = N + s
+      let ok = false
+      if (kind === 'power_source') ok = stampVoltageSource(inst, nodeIndex, auxIdx, M, b)
+      else if (kind === 'led') ok = stampLED(inst, nodeIndex, auxIdx, M, b)
+      else if (kind === 'switch') ok = stampClosedSwitch(inst, nodeIndex, auxIdx, M, b)
+      else if (kind === 'wire') ok = stampWireAsShort(inst, nodeIndex, auxIdx, M, b)
       if (!ok)
-        warnings.push(`Skipped resistor stamp for instance '${inst.id}' (missing R or connects)`)
+        warnings.push(
+          `Skipped ${kind} stamp for instance '${inst.id}' (missing V or terminal connects)`,
+        )
+    }
+    for (const led of shockleyLeds) {
+      stampLedCompanion(led, nodeIndex, thermalV, M, b)
+    }
+
+    // biome-ignore lint/suspicious/noExplicitAny: mathjs lusolve return is polymorphic
+    let x: any
+    try {
+      x = math.lusolve(M, b)
+    } catch {
+      return null
+    }
+    const xArr = x.toArray() as number[][]
+    const nodes = new Map<string, number>()
+    nodes.set(ground, 0)
+    for (const [netId, idx] of nodeIndex) {
+      const v = xArr[idx]?.[0]
+      if (typeof v === 'number') nodes.set(netId, v)
+    }
+    return { nodes, xArr }
+  }
+
+  // Linear fast-path: no Shockley LEDs → a single solve (Sprint 14 behavior).
+  // Newton-Raphson path: iterate the companion-model linearization to convergence.
+  let solved: { nodes: Map<string, number>; xArr: number[][] } | null
+  let iterations = 1
+  let converged = true
+
+  if (shockleyLeds.length === 0) {
+    solved = buildAndSolve()
+    if (solved === null) return emptyResult('singular-matrix', ground, warnings)
+  } else {
+    converged = false
+    const maxIter = options?.maxIterations ?? NR_MAX_ITERATIONS
+    let last: { nodes: Map<string, number>; xArr: number[][] } | null = null
+    for (iterations = 1; iterations <= maxIter; iterations++) {
+      last = buildAndSolve()
+      if (last === null) return emptyResult('singular-matrix', ground, warnings)
+
+      let maxDelta = 0
+      let anyLimited = false
+      for (const led of shockleyLeds) {
+        const vAnode = led.anodeNet === ground ? 0 : (last.nodes.get(led.anodeNet) ?? 0)
+        const vCathode = led.cathodeNet === ground ? 0 : (last.nodes.get(led.cathodeNet) ?? 0)
+        const vRaw = vAnode - vCathode
+        const nVT = led.idealityFactor * thermalV
+        const vcrit = criticalVoltage(led.saturationCurrent, led.idealityFactor, thermalV)
+        const limit = pnjlim(vRaw, led.vGuess, nVT, vcrit)
+        maxDelta = Math.max(maxDelta, Math.abs(limit.voltage - led.vGuess))
+        if (limit.limited) anyLimited = true
+        led.vGuess = limit.voltage
+      }
+      if (maxDelta < NR_VOLTAGE_TOLERANCE && !anyLimited) {
+        converged = true
+        break
+      }
+    }
+    solved = last
+    if (solved === null) return emptyResult('singular-matrix', ground, warnings)
+    if (!converged) {
+      return {
+        status: 'did-not-converge',
+        nodes: solved.nodes,
+        branches: new Map(),
+        ground,
+        warnings,
+        iterations: iterations - 1,
+        converged: false,
+      }
     }
   }
 
-  for (let s = 0; s < voltageSourceLike.length; s++) {
-    // biome-ignore lint/style/noNonNullAssertion: s is bound by the array length
-    const entry = voltageSourceLike[s]!
-    const { inst, kind } = entry
-    const auxIdx = N + s
-    let ok = false
-    if (kind === 'power_source') ok = stampVoltageSource(inst, nodeIndex, auxIdx, M, b)
-    else if (kind === 'led') ok = stampLED(inst, nodeIndex, auxIdx, M, b)
-    else if (kind === 'switch') ok = stampClosedSwitch(inst, nodeIndex, auxIdx, M, b)
-    else if (kind === 'wire') ok = stampWireAsShort(inst, nodeIndex, auxIdx, M, b)
-    if (!ok)
-      warnings.push(
-        `Skipped ${kind} stamp for instance '${inst.id}' (missing V or terminal connects)`,
-      )
-  }
+  const { nodes, xArr } = solved
 
-  // Solve M x = b
-  // biome-ignore lint/suspicious/noExplicitAny: mathjs lusolve return is polymorphic
-  let x: any
-  try {
-    x = math.lusolve(M, b)
-  } catch (err) {
-    return {
-      status: 'singular-matrix',
-      nodes: new Map(),
-      branches: new Map(),
-      ground,
-      warnings: [
-        ...warnings,
-        `lusolve failed: ${err instanceof Error ? err.message : String(err)}`,
-      ],
-    }
-  }
-
-  const nodes = new Map<string, number>()
-  nodes.set(ground, 0)
-  const xArr = x.toArray() as number[][]
-  for (const [netId, idx] of nodeIndex) {
-    const row = xArr[idx]
-    if (!row) continue
-    const v = row[0]
-    if (typeof v === 'number') nodes.set(netId, v)
-  }
-
-  // Branch currents per §18.6 sign convention: positive flows from positive
-  // terminal (anode / terminal_positive / terminal_a / terminal_in) toward
-  // negative terminal. For resistors compute V_diff / R; for voltage-source-
-  // like elements x[N+s] is already in this convention by the stamp design.
+  // Branch currents (§18.6 sign convention).
   const branches = new Map<string, number>()
-
   for (const inst of world.instances.values()) {
     if (inst.definition === 'resistor') {
       const I = computeResistorCurrent(inst, nodes)
       if (I !== undefined) branches.set(inst.id, I)
     }
   }
-
-  for (let s = 0; s < voltageSourceLike.length; s++) {
+  for (let s = 0; s < linearVoltageSources.length; s++) {
     // biome-ignore lint/style/noNonNullAssertion: s is bound by the array length
-    const entry = voltageSourceLike[s]!
-    const auxRow = xArr[N + s]
-    if (!auxRow) continue
-    const I_aux = auxRow[0]
-    if (typeof I_aux === 'number') branches.set(entry.inst.id, I_aux)
+    const { inst } = linearVoltageSources[s]!
+    const I_aux = xArr[N + s]?.[0]
+    if (typeof I_aux === 'number') branches.set(inst.id, I_aux)
+  }
+  // Shockley LED current from the diode equation at the converged voltage.
+  for (const led of shockleyLeds) {
+    branches.set(
+      led.inst.id,
+      diodeCurrent(led.vGuess, led.saturationCurrent, led.idealityFactor, thermalV),
+    )
   }
 
+  return { status: 'solved', nodes, branches, ground, warnings, iterations, converged }
+}
+
+/** Shorthand for the no-result early returns. */
+function emptyResult(
+  status: SolutionStatus,
+  ground: string | undefined,
+  warnings: string[],
+): Solution {
   return {
-    status: 'solved',
-    nodes,
-    branches,
+    status,
+    nodes: new Map(),
+    branches: new Map(),
     ground,
     warnings,
+    iterations: 0,
+    converged: false,
+  }
+}
+
+/**
+ * Resolve an LED to the Shockley model, or null if it lacks calibration data
+ * (forward_voltage + max_forward_current) and should fall back to fixed-V_F.
+ */
+function resolveShockleyLed(inst: Instance, thermalV: number): ShockleyLed | null {
+  const forwardVoltage = readScalarParam(inst, 'forward_voltage')
+  const forwardCurrent = readScalarParam(inst, 'max_forward_current')
+  if (forwardVoltage === undefined || forwardCurrent === undefined) return null
+  if (forwardVoltage <= 0 || forwardCurrent <= 0) return null
+
+  const anodeConnect = inst.connects?.find((c) => c.terminal === 'anode')
+  const cathodeConnect = inst.connects?.find((c) => c.terminal === 'cathode')
+  if (anodeConnect === undefined || cathodeConnect === undefined) return null
+
+  const idealityFactor = readScalarParam(inst, 'ideality_factor') ?? DEFAULT_IDEALITY_FACTOR
+  const saturationCurrent = deriveSaturationCurrent(
+    forwardVoltage,
+    forwardCurrent,
+    idealityFactor,
+    thermalV,
+  )
+
+  return {
+    inst,
+    anodeNet: anodeConnect.net,
+    cathodeNet: cathodeConnect.net,
+    saturationCurrent,
+    idealityFactor,
+    vGuess: forwardVoltage, // warm start at the rated forward voltage
+  }
+}
+
+/**
+ * Stamp an LED's Newton-Raphson companion model (§20.4 / §20.7) at its current
+ * voltage guess: a conductance G_eq between anode and cathode plus a current
+ * source I_eq. Ground-side rows/cols are omitted.
+ */
+function stampLedCompanion(
+  led: ShockleyLed,
+  nodeIndex: Map<string, number>,
+  thermalV: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const { conductance: G, currentSource: Ieq } = companionModel(
+    led.vGuess,
+    led.saturationCurrent,
+    led.idealityFactor,
+    thermalV,
+  )
+  const a = nodeIndex.get(led.anodeNet)
+  const c = nodeIndex.get(led.cathodeNet)
+
+  if (a !== undefined) {
+    M.set([a, a], (M.get([a, a]) ?? 0) + G)
+    b.set([a, 0], (b.get([a, 0]) ?? 0) - Ieq)
+  }
+  if (c !== undefined) {
+    M.set([c, c], (M.get([c, c]) ?? 0) + G)
+    b.set([c, 0], (b.get([c, 0]) ?? 0) + Ieq)
+  }
+  if (a !== undefined && c !== undefined) {
+    M.set([a, c], (M.get([a, c]) ?? 0) - G)
+    M.set([c, a], (M.get([c, a]) ?? 0) - G)
   }
 }
 
