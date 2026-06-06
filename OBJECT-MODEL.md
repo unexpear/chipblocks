@@ -1386,6 +1386,157 @@ This section partially closes the §15 deferred row "Net behaviors / physics (KV
 
 ---
 
+## 19. Failure-mode detection (Sprint 15)
+
+> Adopted in v3 Sprint 15. Consumes the Solution from §18 and compares the computed branch currents and node voltages against per-instance rating parameters. Fires structured Failure errors when ratings are exceeded.
+
+### 19.1 Purpose
+
+§18 makes ChipBlocks answer "**what does this circuit do?**" — 70 mA flows through the LED.
+
+§19 makes ChipBlocks answer "**is what it's doing safe?**" — 70 mA is 3.5× the LED's 20 mA rating; the LED would be destroyed.
+
+These two questions are the headline value of an electronics design tool: tell me what's happening, and tell me when something's wrong. §18 + §19 together close the cross-sprint contract that's been alive since Sprint 12 — the 70 mA / 20 mA case in the educational anchor circuit fires `led-overloaded` after Sprint 15 ships.
+
+### 19.2 The Failure shape
+
+Each detected violation surfaces a structured `Failure` object:
+
+| Field | Type | Purpose |
+|---|---|---|
+| `code` | string enum | One of the failure codes in §19.3 |
+| `source` | string | Instance id where the violation occurs |
+| `kind` | string | Human-readable description of the rating violated (e.g., "max_forward_current") |
+| `measured` | number | The actual computed value from the Solution |
+| `rated` | number | The rating-parameter limit from the instance |
+| `ratio` | number | `measured / rated` (when applicable; sign-positive magnitude) |
+| `units` | string | Unit string for measured + rated (e.g., 'ampere') |
+| `severity` | enum `'error'` | Sprint 15 reports all violations as errors; severity classification (warning vs. error vs. info) is a §15 row |
+
+The structured shape lets downstream consumers (in-app UI, CLI output, future canvas overlays) render failures uniformly with the exact numbers that triggered them.
+
+### 19.3 Failure codes (Sprint 15)
+
+Three failure codes ship with Sprint 15:
+
+| Code | Triggers when | Rating parameter | Severity |
+|---|---|---|---|
+| `led-overloaded` | `\|I_led\| > max_forward_current` | LED's `max_forward_current` | error |
+| `led-reverse-breakdown` | `V_cathode − V_anode > reverse_breakdown_voltage` | LED's `reverse_breakdown_voltage` | error |
+| `resistor-overpower` | `I² × R > power_rating` | Resistor's `power_rating` | error |
+
+Future sprints add: battery overcurrent, wire ampacity, switch contact ratings, transient peak ratings, thermal failure modes (Stage 7), EMI failure modes (Stage 8) — each as a new §15 row in the Sprint 15 retro.
+
+### 19.4 Detection mechanism
+
+```typescript
+function detectFailures(world: World, solution: Solution): Failure[]
+```
+
+The detector walks `world.instances`, reads the corresponding entry in `solution.branches` (or `solution.nodes` for voltage-based checks), reads the relevant rating parameter from the instance, and pushes a Failure when the comparison fires.
+
+Per-instance check logic (pseudocode):
+
+```
+for instance in world.instances:
+  if instance.definition is led-like:
+    I = |solution.branches[instance.id]|
+    max_I = readScalarParam(instance, 'max_forward_current')
+    if max_I and I > max_I:
+      fire led-overloaded(measured=I, rated=max_I, ratio=I/max_I)
+
+    V_a = solution.nodes[anode_net]
+    V_c = solution.nodes[cathode_net]
+    V_rev = readScalarParam(instance, 'reverse_breakdown_voltage')
+    if V_rev and (V_c - V_a) > V_rev:
+      fire led-reverse-breakdown(measured=V_c-V_a, rated=V_rev)
+
+  if instance.definition is resistor:
+    I = solution.branches[instance.id]
+    R = readScalarParam(instance, 'resistance')
+    P_rating = readScalarParam(instance, 'power_rating')
+    if R and P_rating and (I * I * R) > P_rating:
+      fire resistor-overpower(measured=I*I*R, rated=P_rating)
+```
+
+### 19.5 Rating-parameter conventions
+
+Sprint 15 hardcodes the canonical parameter names used in lookups:
+
+- LED forward-current rating: `max_forward_current` (amperes)
+- LED reverse-breakdown rating: `reverse_breakdown_voltage` (volts, positive number)
+- Resistor power rating: `power_rating` (watts)
+
+A future "incomplete-rating" validator could enforce that fixtures carry these canonical names; Sprint 15 itself doesn't validate the rating discipline — it silently skips checks when the parameter is absent. **Missing ratings are not failures**; they're "we don't have enough information to check."
+
+### 19.6 Sign conventions for ratings
+
+Branch currents have explicit signs per §18.6 (positive = enters positive terminal). Ratings comparisons apply as follows:
+
+- **`led-overloaded`** compares `|I_led|` against `max_forward_current`. The LED is overloaded whether the current flows + or − through it (though for the fixed-V_F model the LED current is always in the positive direction when forward-biased).
+- **`resistor-overpower`** computes `I² × R` which is sign-independent.
+- **`led-reverse-breakdown`** compares `V_cathode − V_anode` against `reverse_breakdown_voltage`. The sign matters: when V_a > V_c (forward-biased), the difference is negative and the check doesn't fire. When V_c > V_a (reverse-biased), the difference is positive; the rating is exceeded when it grows beyond the (positive) `reverse_breakdown_voltage` value.
+
+### 19.7 Linear vs. nonlinear accuracy
+
+Sprint 14's solver uses the fixed-V_F approximation for LEDs. The real Shockley I-V relationship gives slightly different currents at high overload (e.g., ~65 mA instead of 70 mA for the anchor circuit, because V_F rises somewhat above 2 V at 70 mA). The accuracy question for Sprint 15 is: **does the linear-vs.-nonlinear difference move the result across the rating threshold?**
+
+For the anchor circuit (3.5× overshoot), the answer is no — both models give "way over 20 mA" and `led-overloaded` fires either way.
+
+For borderline cases (e.g., a circuit where the linear model gives 1.05× over rating but Shockley would give 0.98× under), the answer can disagree. When such cases arise, the Shockley + Newton-Raphson sprint (still deferred in §15) closes the accuracy gap. Sprint 15's safety judgment is honest about the limitation: it reports failures based on the solver's actual output, and the §15 row tracking nonlinear iterative solving stays open.
+
+### 19.8 Anti-placeholder compatibility (§12)
+
+The failure detector computes derived judgments — it doesn't ship "values" in the catalog sense. §12 Rule 1 (cited values + provenance) doesn't apply to detector outputs.
+
+What does apply: the DETECTOR ITSELF must be physically honest. Sprint 15's checks fire based on actual computed values vs. actual declared ratings — no faked passes, no silent skipping of supported-but-misconfigured cases. Missing ratings cause checks to skip *silently* (the rating is "unknown," not "infinite"); this matches the anti-placeholder principle (don't pretend to know what we don't know).
+
+### 19.9 Scope: Sprint 15 vs. later
+
+Sprint 15 ships **electrical** failure detection for three element types. Out of scope:
+
+- **Thermal failure modes** ("resistor gets hot enough to discolor"): needs a thermal model — Stage 7 of the simulation arc, multi-sprint arc when it lands.
+- **EMI / RF failure modes** ("this trace radiates"): needs an EM solver — Stage 8.
+- **Wire ampacity, battery overcurrent, switch contact ratings**: straightforward extensions of the same pattern; added when fixtures move into those regimes.
+- **Transient peak ratings**: a DC solver only computes the operating point, so only DC ratings can be checked. Transient peak ratings (e.g., 100 ms surge current) need transient simulation.
+- **Severity classification** (`warning` for 80% of rating, `error` for over): useful but needs its own design pass — a §15 row in the Sprint 15 retro.
+- **Automatic fix suggestion** ("use a 470 Ω resistor instead"): inverse-problem solving, separate sprint.
+
+### 19.10 First concrete case — the educational anchor circuit
+
+After Sprint 15 ships, running the full pipeline on `fixtures/valid/`:
+
+```
+load fixtures → cross-FK validateWorld (0 errors)
+             → solveDC (70 mA through every series element, node voltages as §18.9)
+             → detectFailures
+                → [
+                    {
+                      code: 'led-overloaded',
+                      source: 'led_001',
+                      kind: 'max_forward_current',
+                      measured: 0.07,    // A
+                      rated: 0.02,       // A (from led_001.parameters.max_forward_current)
+                      ratio: 3.5,
+                      units: 'ampere',
+                      severity: 'error',
+                    },
+                    // and possibly 'resistor-overpower' on resistor_001
+                    // if the fixture declares power_rating (likely 1/4 W = 0.25 W,
+                    // computed dissipation 0.49 W → 1.96× over rating)
+                  ]
+```
+
+This is the cross-sprint contract from Sprint 12 closing: the deliberately-undersized 100 Ω current-limit resistor + 9 V supply + 2 V LED produces the load-bearing 70 mA result, which violates the LED's 20 mA rating by 3.5×, which fires `led-overloaded` with the exact numbers. Four sprints of foundational work compose into one structured "your LED would die" error.
+
+### 19.11 Relation to §15
+
+This section partially acknowledges the §15 row "Nonlinear iterative DC solver (Shockley + Newton-Raphson + pnjlim)" added in Sprint 14's retro. Sprint 15's safety judgment doesn't require the nonlinear case — the linear approximation's accuracy is sufficient for the rating-comparison decision at meaningful overshoots. When borderline cases (1.05× linear / 0.98× Shockley) appear, the nonlinear sprint is the right closing move; until then, the §15 row stays open and Sprint 15's failures are honestly reported with their accuracy caveat (§19.7).
+
+The nonlinear row is NOT closed by §19 — Sprint 15 documents the relationship but doesn't replace the deferred work.
+
+---
+
 ## How this doc evolves
 
 This is a v3 Sprint 1 deliverable. Two outcomes are possible:
