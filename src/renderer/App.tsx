@@ -1,16 +1,62 @@
-import { Background, Controls, ReactFlow } from '@xyflow/react'
+import { Background, Controls, type Edge, type Node, ReactFlow } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import { useMemo } from 'react'
+import { loadCatalogWorld } from './catalog-loader.ts'
+import { worldToFlow } from './world-to-flow.ts'
 
 /**
- * The canvas page. Sprint 18 S18-v3-2: an empty React Flow canvas with a
- * background grid + controls — the "hello canvas" smoke that proves React 19
- * + React Flow 12 + Electron 42 mount together. The anchor-circuit render
- * lands in S18-v3-4.
+ * The canvas page. Sprint 18:
+ *  - S18-v3-2: empty React Flow canvas (shell smoke).
+ *  - S18-v3-4 (here): load the catalog + render the educational anchor circuit
+ *    as labeled nodes + net edges. Labeled boxes are an honest scaffold —
+ *    standard schematic symbols replace them in S18-v3-5.
  */
 export function App() {
+  const { nodes, edges } = useMemo(() => {
+    const flow = worldToFlow(loadCatalogWorld())
+    const nodes: Node[] = flow.nodes.map((n) => ({
+      id: n.id,
+      position: n.position,
+      data: { label: `${n.data.definition}\n${n.id}` },
+      style: {
+        background: '#2a2a2a',
+        color: '#e0e0e0',
+        border: '1px solid #555',
+        borderRadius: 6,
+        fontSize: 11,
+        whiteSpace: 'pre-line',
+        width: 150,
+      },
+    }))
+    const edges: Edge[] = flow.edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      label: e.label,
+      style: { stroke: '#888' },
+      labelStyle: { fill: '#aaa', fontSize: 9 },
+    }))
+    return { nodes, edges }
+  }, [])
+
   return (
-    <div style={{ width: '100vw', height: '100vh' }}>
-      <ReactFlow nodes={[]} edges={[]} fitView proOptions={{ hideAttribution: true }}>
+    <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
+      <div
+        style={{
+          position: 'absolute',
+          top: 12,
+          left: 12,
+          zIndex: 10,
+          color: '#ccc',
+          fontSize: 13,
+          fontFamily: 'system-ui, sans-serif',
+          pointerEvents: 'none',
+        }}
+      >
+        ChipBlocks — educational anchor circuit ({nodes.length} components, {edges.length} net
+        connections)
+      </div>
+      <ReactFlow nodes={nodes} edges={edges} fitView proOptions={{ hideAttribution: true }}>
         <Background color="#333" gap={16} />
         <Controls />
       </ReactFlow>
