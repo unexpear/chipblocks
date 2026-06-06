@@ -179,9 +179,29 @@ export function DeviceNode({ id, data }: NodeProps) {
       <div
         style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation}deg)` }}
       >
-        <Handle type="target" position={Position.Left} style={{ background: '#888', top: MID }} />
+        {definition === 'ground' ? (
+          // Ground is a single-terminal reference: one connection at the top (the
+          // stem), not a left/right pass-through. Both types overlap so a wire can
+          // attach either way.
+          <>
+            <Handle type="target" position={Position.Top} style={{ background: '#888' }} />
+            <Handle type="source" position={Position.Top} style={{ background: '#888' }} />
+          </>
+        ) : (
+          <>
+            <Handle
+              type="target"
+              position={Position.Left}
+              style={{ background: '#888', top: MID }}
+            />
+            <Handle
+              type="source"
+              position={Position.Right}
+              style={{ background: '#888', top: MID }}
+            />
+          </>
+        )}
         <DeviceGlyph definition={definition} />
-        <Handle type="source" position={Position.Right} style={{ background: '#888', top: MID }} />
       </div>
       <div
         style={{
