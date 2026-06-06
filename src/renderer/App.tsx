@@ -162,6 +162,20 @@ function Canvas() {
       return edgeList.map((edge) => {
         const d = edge.data
         if (!d || typeof d.kind !== 'string') return edge // user-drawn wire — no physics yet
+        const physics = edgePhysics(
+          {
+            kind: d.kind === 'wire' ? 'wire' : 'net',
+            ref: String(d.ref),
+            sourceOnPositiveSide: Boolean(d.sourceOnPositiveSide),
+            source: edge.source,
+            target: edge.target,
+          },
+          world,
+          solution,
+          positions,
+        )
+        // Preserve any manual routing (waypoints) across a re-solve.
+        const waypoints = Array.isArray(d.waypoints) ? d.waypoints : undefined
         return {
           id: edge.id,
           source: edge.source,
@@ -169,18 +183,8 @@ function Canvas() {
           type: 'net',
           deletable: false,
           label: edge.label,
-          ...edgePhysics(
-            {
-              kind: d.kind === 'wire' ? 'wire' : 'net',
-              ref: String(d.ref),
-              sourceOnPositiveSide: Boolean(d.sourceOnPositiveSide),
-              source: edge.source,
-              target: edge.target,
-            },
-            world,
-            solution,
-            positions,
-          ),
+          ...physics,
+          data: { ...physics.data, ...(waypoints ? { waypoints } : {}) },
         }
       })
     },
@@ -303,6 +307,7 @@ function Canvas() {
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           nodesDraggable={tool === 'select'}
+          zoomOnDoubleClick={false}
           fitView
           proOptions={{ hideAttribution: true }}
         >
