@@ -77,8 +77,6 @@ function nearestSegment(points: Point[], p: Point): number {
 
 export function NetEdge({
   id,
-  source,
-  target,
   sourceX,
   sourceY,
   targetX,
@@ -107,17 +105,20 @@ export function NetEdge({
     labelY = mid?.y ?? sourceY
   } else {
     // Auto component-avoidance (S19-v3-18): if the straight route crosses any
-    // other part's box, hop over the top / under the bottom (whichever detour is
+    // part's box, hop over the top / under the bottom (whichever detour is
     // shorter); otherwise the plain orthogonal route. The user can switch to
     // hand-routing by double-clicking to drop corners.
-    const obstacles: Box[] = nodes
-      .filter((n) => n.id !== source && n.id !== target)
-      .map((n) => ({
-        x: n.position.x,
-        y: n.position.y,
-        w: n.measured?.width ?? 80,
-        h: n.measured?.height ?? 44,
-      }))
+    //
+    // Endpoints are INCLUDED (S19-v3-19): when a wire connects terminals that
+    // face away (e.g. switch's right terminal to a resistor sitting to its left),
+    // the straight route cuts back through both bodies — including them makes the
+    // wire route around its own parts instead of through them.
+    const obstacles: Box[] = nodes.map((n) => ({
+      x: n.position.x,
+      y: n.position.y,
+      w: n.measured?.width ?? 80,
+      h: n.measured?.height ?? 44,
+    }))
     const crossed = obstacles.filter((b) => crossesBox(sourceX, sourceY, targetX, targetY, b))
     if (crossed.length > 0) {
       const midY = (sourceY + targetY) / 2
