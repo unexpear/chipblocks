@@ -14,13 +14,15 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { type DragEvent, useCallback, useMemo, useRef } from 'react'
+import { type DragEvent, useCallback, useMemo, useRef, useState } from 'react'
 import { solveDC } from '../dc-solver.ts'
 import { loadCatalogWorld } from './catalog-loader.ts'
+import { DockablePanel, type DockEdge } from './dockable-panel.tsx'
 import { edgeFlow, wireFlow } from './edge-currents.ts'
 import { edgeTypes } from './net-edge.tsx'
-import { DEFINITION_MIME, Palette } from './palette.tsx'
+import { DEFINITION_MIME, PaletteItems } from './palette.tsx'
 import { nodeTypes } from './symbols.tsx'
+import { type Tool, ToolbarItems } from './toolbar.tsx'
 import { lengthFromDrawn, wireResistance } from './wire-length.ts'
 import { worldToFlow } from './world-to-flow.ts'
 
@@ -101,6 +103,12 @@ function Canvas() {
   const { screenToFlowPosition } = useReactFlow()
   const dropCount = useRef(0)
 
+  // Movable menus (S19-v3-10): each docks to a window edge; the user drags them.
+  const [paletteEdge, setPaletteEdge] = useState<DockEdge>('left')
+  const [toolbarEdge, setToolbarEdge] = useState<DockEdge>('top')
+  // Active tool: 'select' (move parts) or 'wire' (parts locked; drag draws wires).
+  const [tool, setTool] = useState<Tool>('select')
+
   const onDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
@@ -144,40 +152,50 @@ function Canvas() {
   )
 
   return (
-    <div style={{ width: '100vw', height: '100vh', display: 'flex' }}>
-      <Palette />
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: the canvas is a drag-and-drop drop target for palette parts; keyboard-accessible placement is future work */}
-      <div style={{ flex: 1, position: 'relative' }} onDragOver={onDragOver} onDrop={onDrop}>
-        <div
-          style={{
-            position: 'absolute',
-            top: 12,
-            left: 12,
-            zIndex: 10,
-            color: '#ccc',
-            fontSize: 13,
-            fontFamily: 'system-ui, sans-serif',
-            pointerEvents: 'none',
-          }}
-        >
-          ChipBlocks — {nodes.length} components, {edges.length} wires · drag a part from the panel
-          · move parts · draw wires between the dots
-        </div>
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          onReconnect={onReconnect}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          fitView
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background color="#333" gap={16} />
-          <Controls />
-        </ReactFlow>
+    // biome-ignore lint/a11y/noStaticElementInteractions: full-window canvas is the drop target for palette parts; keyboard-accessible placement is future work
+    <div
+      style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden' }}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        onReconnect={onReconnect}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        nodesDraggable={tool === 'select'}
+        fitView
+        proOptions={{ hideAttribution: true }}
+      >
+        <Background color="#333" gap={16} />
+        <Controls />
+      </ReactFlow>
+
+      <DockablePanel edge={paletteEdge} onEdgeChange={setPaletteEdge} title="Parts">
+        <PaletteItems />
+      </DockablePanel>
+      <DockablePanel edge={toolbarEdge} onEdgeChange={setToolbarEdge} title="Tools">
+        <ToolbarItems tool={tool} onTool={setTool} />
+      </DockablePanel>
+
+      <div
+        style={{
+          position: 'absolute',
+          bottom: 8,
+          right: 12,
+          zIndex: 10,
+          color: '#667',
+          fontSize: 11,
+          fontFamily: 'system-ui, sans-serif',
+          pointerEvents: 'none',
+        }}
+      >
+        ChipBlocks — {nodes.length} components, {edges.length} wires
+        {tool === 'wire' ? ' · wire tool: parts locked, drag between dots' : ''}
       </div>
     </div>
   )
