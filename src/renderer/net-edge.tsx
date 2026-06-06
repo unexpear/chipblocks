@@ -1,4 +1,5 @@
 import { BaseEdge, EdgeLabelRenderer, type EdgeProps, getBezierPath } from '@xyflow/react'
+import { formatCurrent } from './edge-currents.ts'
 
 /**
  * Net edge (Sprint 18 polish). A bezier wire plus an optional net-id chip that
@@ -24,6 +25,9 @@ export function NetEdge({
   targetPosition,
   label,
   style,
+  markerStart,
+  markerEnd,
+  data,
 }: EdgeProps) {
   const [path, labelX, labelY] = getBezierPath({
     sourceX,
@@ -33,9 +37,18 @@ export function NetEdge({
     sourcePosition,
     targetPosition,
   })
+  // The arrowhead (markerStart/markerEnd) points in the real current direction;
+  // data.amps is the solved magnitude (S19-v3-5). Both come from edgeFlow.
+  const amps = typeof data?.amps === 'number' ? data.amps : null
   return (
     <>
-      <BaseEdge id={id} path={path} style={style} />
+      <BaseEdge
+        id={id}
+        path={path}
+        style={style}
+        {...(markerStart ? { markerStart } : {})}
+        {...(markerEnd ? { markerEnd } : {})}
+      />
       {label ? (
         <EdgeLabelRenderer>
           <div
@@ -52,9 +65,15 @@ export function NetEdge({
               color: '#cdd6e0',
               pointerEvents: 'none',
               whiteSpace: 'nowrap',
+              textAlign: 'center',
             }}
           >
-            {label}
+            <div>{label}</div>
+            {amps !== null ? (
+              <div style={{ color: '#7ab8ff', fontSize: 8, marginTop: 1 }}>
+                {formatCurrent(amps)}
+              </div>
+            ) : null}
           </div>
         </EdgeLabelRenderer>
       ) : null}

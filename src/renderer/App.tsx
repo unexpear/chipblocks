@@ -2,6 +2,7 @@ import {
   Background,
   Controls,
   type Edge,
+  MarkerType,
   type Node,
   ReactFlow,
   useEdgesState,
@@ -9,10 +10,15 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useMemo } from 'react'
+import { solveDC } from '../dc-solver.ts'
 import { loadCatalogWorld } from './catalog-loader.ts'
+import { edgeFlow } from './edge-currents.ts'
 import { edgeTypes } from './net-edge.tsx'
 import { nodeTypes } from './symbols.tsx'
 import { worldToFlow } from './world-to-flow.ts'
+
+const CURRENT = '#7ab8ff' // a live wire carrying current
+const IDLE = '#555' // a tap / no-current wire
 
 /**
  * The canvas page. Sprint 18:
@@ -23,21 +29,38 @@ import { worldToFlow } from './world-to-flow.ts'
  */
 export function App() {
   const initial = useMemo(() => {
-    const flow = worldToFlow(loadCatalogWorld())
+    const world = loadCatalogWorld()
+    const solution = solveDC(world)
+    const flow = worldToFlow(world)
     const nodes: Node[] = flow.nodes.map((n) => ({
       id: n.id,
       type: 'device',
       position: n.position,
       data: { definition: n.data.definition, label: n.id },
     }))
-    const edges: Edge[] = flow.edges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      target: e.target,
-      type: 'net',
-      label: e.showLabel ? e.label : undefined,
-      style: { stroke: '#888' },
-    }))
+    const edges: Edge[] = flow.edges.map((e) => {
+      // Arrowhead direction + magnitude are the real solver current (S19-v3-5):
+      // markerEnd when current runs source→target, markerStart when it reverses.
+      const wireCurrent = edgeFlow(world, solution, e.label, e.source, e.target)
+      const marker = { type: MarkerType.ArrowClosed, width: 16, height: 16, color: CURRENT }
+      const arrowAtTarget = wireCurrent.carries && wireCurrent.sourceToTarget
+      const arrowAtSource = wireCurrent.carries && !wireCurrent.sourceToTarget
+      return {
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        type: 'net',
+        label: e.showLabel ? e.label : undefined,
+        data: { amps: wireCurrent.carries ? wireCurrent.amps : null },
+        style: {
+          stroke: wireCurrent.carries ? CURRENT : IDLE,
+          strokeWidth: wireCurrent.carries ? 1.6 : 1,
+        },
+        // Omit (not undefined) when absent — exactOptionalPropertyTypes.
+        ...(arrowAtTarget ? { markerEnd: marker } : {}),
+        ...(arrowAtSource ? { markerStart: marker } : {}),
+      }
+    })
     return { nodes, edges }
   }, [])
 
