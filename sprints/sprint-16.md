@@ -55,6 +55,7 @@ The diode stamps as G_eq (into the conductance matrix, like a resistor) in paral
 5. **Solution gains `iterations` + `converged` fields** (informational — how many NR iterations the solve took). New status value `did-not-converge`.
 6. **OBJECT-MODEL.md §20** — nonlinear DC solver spec. Closes the §15 "Nonlinear iterative DC solver" row.
 7. **The anchor-circuit result updates** from 70.00 mA to 69.36 mA across the affected Sprint 14 + Sprint 15 end-to-end tests — the accuracy upgrade made visible. `led-overloaded` still fires (3.47×).
+8. **Ground reference port** — an explicit ground marker you place and wire to a net to designate it as the 0 V reference, using the standard schematic ground symbol (IEC 60617 / IEEE 315). Makes ground designation explicit and EDA-authentic (like dropping a GND symbol in KiCad) instead of relying on the abstract net `type: ground` tag. **Honest framing per the anti-placeholder rules:** ground is NOT a physical component (in real hardware it's a net — a copper pour/plane or chosen reference node), so the ground port is modeled as a **reference / connection-point marker**, not a fake primitive device with invented material properties. This fits CLAUDE.md's "external connection point, not a block" framing. The solver's ground detection (§18.2) gains a new precedence: a ground port's net wins; `type: ground` stays a backward-compatible fallback.
 
 ---
 
@@ -81,22 +82,28 @@ Node 24 + npm + JSON Schema 2020-12 + Ajv 8 + Vitest + Biome 2 + TypeScript 6 st
 ```
 OBJECT-MODEL.md
 ├── §20 NEW — Nonlinear DC solver               spec; placed after §19
+├── §18.2 amendment — ground-detection          ground-port precedence + type:ground fallback
+│    precedence
 └── §15 deferred row "Nonlinear iterative        ✅ CLOSED — pointer to §20
      DC solver"
 
-schemas/
-└── definition.schema.json (or led fixtures)    ideality_factor optional parameter
-
 src/
 ├── diode-model.ts                              NEW — Shockley + companion model + pnjlim
-└── dc-solver.ts                                EXTENDED — Newton-Raphson loop + LED companion stamp
+├── dc-solver.ts                                EXTENDED — Newton-Raphson loop + LED companion
+│                                               stamp + ground-port detection
+└── cross-fk-validator.ts                       EXTENDED — recognize ground port kind (if needed)
 
 tests/
 ├── diode-model.test.ts                         NEW — physics unit tests (verified by hand)
-└── dc-solver.test.ts                           EXTENDED — NR convergence + anchor-circuit 69.36 mA
+├── dc-solver.test.ts                           EXTENDED — NR convergence + anchor-circuit 69.36 mA
+│                                               + ground-port detection precedence
+└── (schema/cross-fk tests)                     EXTENDED — ground port fixture validates
 
 fixtures/valid/
-└── device-led.yaml                             ideality_factor parameter declared (optional, default 2.0)
+├── device-led.yaml                             ideality_factor parameter declared (optional)
+├── device-ground.yaml                          NEW — ground reference port (connection-point marker)
+├── instance-ground-001.yaml                    NEW — ground port wired to net_battery_neg
+└── net-battery-neg.yaml                        UPDATED — membership gains the ground port
 ```
 
 ---
@@ -110,7 +117,8 @@ fixtures/valid/
 | **S16-v3-3** | `src/diode-model.ts` + physics unit tests | Pure functions: thermalVoltage, deriveSaturationCurrent, diodeCurrent, diodeConductance, companionModel, pnjlim. Each unit-tested with by-hand-computed expected values (V_T = 25.852 mV; I_s ≈ 3.18e-19 A for led_001's calibration; companion model at a known voltage). pnjlim tested for the overflow-prevention case (a large voltage jump gets limited). |
 | **S16-v3-4** | Newton-Raphson loop in dc-solver | Wrap the linear MNA solve in an NR iteration. Pre-pass detects nonlinear elements (LEDs); if none, linear fast-path (Sprint 14 behavior preserved exactly). If present, NR loop: init diode voltages (warm start at forward_voltage) → stamp companion models → solve → update voltages with pnjlim → check convergence → repeat to convergence or max-iter. New Solution fields: iterations, converged; new status did-not-converge. Synthetic test: a simple diode+resistor circuit converges to the hand-computed operating point. |
 | **S16-v3-5** | LED companion stamp + branch current + anchor-circuit update | Replace the fixed-V_F LED stamp with the companion-model stamp (conductance + current source, no aux variable). Recompute LED branch current from the diode equation at the converged voltage. **Update the affected end-to-end tests:** dc-solver anchor-circuit test 70.00 → 69.36 mA, LED node 2.0 → 2.064 V; failure-detector anchor-circuit test measured ≈ 0.0694, ratio ≈ 3.47 (still fires led-overloaded). Add `ideality_factor` to device-led.yaml. |
-| **S16-v3-6** | Sprint 16 retro + §15 closure | Sub-commit log, lessons, formal closure of the §15 "Nonlinear iterative DC solver" row (→ §20), new §15 rows (transistor nonlinear models, temperature-dependent V_T, GMIN/source stepping, dedicated rated-current parameter for I_s calibration). |
+| **S16-v3-6** | Ground reference port + §18.2 amendment | New `ground` reference marker — a one-terminal connection-point object (NOT a fake physical primitive device — see honest framing in deliverable 8) that designates its connected net as the 0 V reference, carrying the standard schematic ground symbol id. OBJECT-MODEL.md §18.2 amended: ground-detection precedence becomes (1) `SolveOptions.ground` override → (2) net connected to a ground port → (3) net with `type: ground` (backward-compat fallback) → (4) no-ground. Add a ground port to the educational anchor circuit (connected to net_battery_neg, which already has `type: ground` — the two agree). Update net_battery_neg membership + the ground port's connects (bidirectional consistency holds). Solver + cross-FK tests for the new precedence. SCHEMATIC-SYMBOLS.md note on the ground symbol. |
+| **S16-v3-7** | Sprint 16 retro + §15 closure | Sub-commit log, lessons, formal closure of the §15 "Nonlinear iterative DC solver" row (→ §20), new §15 rows (transistor nonlinear models, temperature-dependent V_T, GMIN/source stepping, dedicated rated-current parameter for I_s calibration, power-port family beyond ground — Vcc/Vdd rails). |
 
 ---
 
