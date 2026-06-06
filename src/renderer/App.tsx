@@ -152,28 +152,65 @@ function Canvas() {
   )
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: full-window canvas is the drop target for palette parts; keyboard-accessible placement is future work
+    // biome-ignore lint/a11y/noStaticElementInteractions: the dock-grid is the drop target for palette parts; keyboard-accessible placement is future work
     <div
-      style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden' }}
+      style={{
+        width: '100vw',
+        height: '100vh',
+        overflow: 'hidden',
+        display: 'grid',
+        // Dock-grid: top/bottom bars span all columns; left/right panels fill the
+        // middle row; the canvas takes the center cell. Empty edges collapse, so
+        // docked panels never overlap and everything adjusts around them.
+        gridTemplateRows: 'auto 1fr auto',
+        gridTemplateColumns: 'auto 1fr auto',
+        gridTemplateAreas: '"top top top" "left center right" "bottom bottom bottom"',
+      }}
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        onReconnect={onReconnect}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        nodesDraggable={tool === 'select'}
-        fitView
-        proOptions={{ hideAttribution: true }}
+      <div
+        style={{
+          gridArea: 'center',
+          position: 'relative',
+          minWidth: 0,
+          minHeight: 0,
+          overflow: 'hidden',
+        }}
       >
-        <Background color="#333" gap={16} />
-        <Controls />
-      </ReactFlow>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          onReconnect={onReconnect}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          nodesDraggable={tool === 'select'}
+          fitView
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background color="#333" gap={16} />
+          <Controls />
+        </ReactFlow>
+
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 8,
+            right: 12,
+            zIndex: 10,
+            color: '#667',
+            fontSize: 11,
+            fontFamily: 'system-ui, sans-serif',
+            pointerEvents: 'none',
+          }}
+        >
+          ChipBlocks — {nodes.length} components, {edges.length} wires
+          {tool === 'wire' ? ' · wire tool: parts locked, drag between dots' : ''}
+        </div>
+      </div>
 
       <DockablePanel edge={paletteEdge} onEdgeChange={setPaletteEdge} title="Parts">
         <PaletteItems />
@@ -181,22 +218,6 @@ function Canvas() {
       <DockablePanel edge={toolbarEdge} onEdgeChange={setToolbarEdge} title="Tools">
         <ToolbarItems tool={tool} onTool={setTool} />
       </DockablePanel>
-
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 8,
-          right: 12,
-          zIndex: 10,
-          color: '#667',
-          fontSize: 11,
-          fontFamily: 'system-ui, sans-serif',
-          pointerEvents: 'none',
-        }}
-      >
-        ChipBlocks — {nodes.length} components, {edges.length} wires
-        {tool === 'wire' ? ' · wire tool: parts locked, drag between dots' : ''}
-      </div>
     </div>
   )
 }

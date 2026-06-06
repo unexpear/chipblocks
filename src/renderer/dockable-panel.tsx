@@ -6,10 +6,12 @@ import {
 } from 'react'
 
 /**
- * Dockable panel (Sprint 19 S19-v3-10). A floating menu the user grabs by its
- * grip and drags; on release it snaps to the nearest window edge (left / right /
- * top / bottom). Left/right docks lay their contents in a column, top/bottom in
- * a row, so the same panel reads naturally on any edge.
+ * Dockable panel (Sprint 19 S19-v3-10; dock-grid in S19-v3-12). A menu the user
+ * grabs by its grip and drags; on release it snaps to the nearest window edge
+ * (left / right / top / bottom). Docked, the panel is a cell of App's dock-grid,
+ * so panels never overlap — the canvas and the other panels auto-adjust around
+ * it. Left/right docks lay their contents in a column, top/bottom in a row, so
+ * the same panel reads naturally on any edge.
  *
  * Used for both the parts palette and the tools toolbar.
  */
@@ -26,19 +28,6 @@ function nearestEdge(x: number, y: number): DockEdge {
   ]
   candidates.sort((a, b) => a[1] - b[1])
   return candidates[0]?.[0] ?? 'left'
-}
-
-function edgePosition(edge: DockEdge): CSSProperties {
-  switch (edge) {
-    case 'left':
-      return { left: 0, top: 0, bottom: 0 }
-    case 'right':
-      return { right: 0, top: 0, bottom: 0 }
-    case 'top':
-      return { top: 0, left: 0, right: 0 }
-    case 'bottom':
-      return { bottom: 0, left: 0, right: 0 }
-  }
 }
 
 export function DockablePanel({
@@ -69,15 +58,15 @@ export function DockablePanel({
   }
 
   const horizontal = edge === 'top' || edge === 'bottom'
-  const position: CSSProperties = floatAt
-    ? { left: floatAt.x - 24, top: floatAt.y - 12 }
-    : edgePosition(edge)
+  // Docked = a cell of App's dock-grid (gridArea) so panels never overlap and the
+  // layout auto-adjusts; while dragging, the panel floats free at the cursor.
+  const placement: CSSProperties = floatAt
+    ? { position: 'fixed', left: floatAt.x - 24, top: floatAt.y - 12, zIndex: 30 }
+    : { gridArea: edge, position: 'relative', zIndex: 20 }
 
   return (
     <div
       style={{
-        position: 'absolute',
-        zIndex: 20,
         display: 'flex',
         flexDirection: horizontal ? 'row' : 'column',
         alignItems: 'stretch',
@@ -85,7 +74,7 @@ export function DockablePanel({
         border: '1px solid #2a2a2f',
         boxShadow: floatAt ? '0 6px 20px rgba(0,0,0,0.5)' : 'none',
         opacity: floatAt ? 0.9 : 1,
-        ...position,
+        ...placement,
       }}
     >
       <div
