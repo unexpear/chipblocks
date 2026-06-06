@@ -312,6 +312,73 @@ describe('cross-FK validator — invalid worlds (one per error code MUST fire)',
     expect(resistorDerivesErrors).toEqual([])
   })
 
+  test('unknown-terminal: instance connects[].terminal not declared on its device', () => {
+    // S17-v3-5 — per OBJECT-MODEL.md §21.4.
+    // led_001 (definition: led) has terminals [anode, cathode]. Mutate its
+    // first connects entry to a typo'd terminal; the check fires.
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    const led001 = getOrThrow(world.instances, 'led_001', 'unknown-terminal connects test')
+    if (led001.connects?.[0] !== undefined) {
+      led001.connects[0].terminal = 'anodee' // typo
+    }
+    const errors = validateWorld(world)
+    const hit = errors.find(
+      (e) =>
+        e.code === 'unknown-terminal' &&
+        e.source === 'led_001' &&
+        e.terminal === 'anodee' &&
+        e.definition === 'led' &&
+        e.declared.includes('anode') &&
+        e.declared.includes('cathode') &&
+        e.where === 'connects[0].terminal',
+    )
+    expect(hit).toBeDefined()
+  })
+
+  test('unknown-terminal: net members[].terminal not declared on the referenced device', () => {
+    // S17-v3-5 — per OBJECT-MODEL.md §21.4, the members-side direction.
+    // net_resistor_led lists resistor_001/terminal_b. Mutate that member's
+    // terminal to a name the resistor doesn't declare; the check fires.
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    const net = getOrThrow(world.nets, 'net_resistor_led', 'unknown-terminal members test')
+    const member = net.members.find((m) => m.instance === 'resistor_001')
+    if (member !== undefined) member.terminal = 'pin_3' // resistor has terminal_a/terminal_b
+    const errors = validateWorld(world)
+    const hit = errors.find(
+      (e) =>
+        e.code === 'unknown-terminal' &&
+        e.source === 'net_resistor_led' &&
+        e.terminal === 'pin_3' &&
+        e.definition === 'resistor' &&
+        e.where.includes("instance 'resistor_001'"),
+    )
+    expect(hit).toBeDefined()
+  })
+
+  test('unknown-terminal skips when the device declares no terminals', () => {
+    // A device without a terminals: block causes the check to skip (§21.4
+    // honest absence). Synthesize a terminal-less device + an instance that
+    // wires a made-up terminal; no unknown-terminal should fire.
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    world.definitions.set('widget', {
+      id: 'widget',
+      kind: 'primitive_device',
+      layer: 'primitive_device',
+      // no terminals declared
+    } satisfies Definition)
+    world.instances.set('widget_001', {
+      id: 'widget_001',
+      kind_ref: 'primitive_device',
+      definition: 'widget',
+      connects: [{ net: 'net_battery_pos', terminal: 'whatever', of: 'widget_001' }],
+    })
+    const errors = validateWorld(world)
+    const terminalErrors = errors.filter(
+      (e) => e.code === 'unknown-terminal' && e.source === 'widget_001',
+    )
+    expect(terminalErrors).toEqual([])
+  })
+
   test('unknown-net: instance connects[].net references a nonexistent net id', () => {
     // S13-v3-5 — per OBJECT-MODEL.md §17.7.
     // Mutate led_001's first connects entry to reference a net that doesn't

@@ -61,6 +61,8 @@ export type Definition = {
   enables?: string[]
   behaviors?: string[]
   parameters?: Record<string, ParamSlot>
+  /** Named terminals (pins) per OBJECT-MODEL.md §21. Keyed by terminal name. */
+  terminals?: Record<string, { description?: string }>
   properties?: Record<string, { value?: unknown; provenance?: unknown; support?: unknown }>
   state_machine?: {
     initial_state: string
@@ -207,6 +209,14 @@ export type CrossFkError =
       instance: string
       terminal: string
       missing_from: 'net.members' | 'instance.connects'
+    }
+  | {
+      code: 'unknown-terminal'
+      source: string
+      terminal: string
+      definition: string
+      declared: string[]
+      where: string
     }
 
 // ---------------------------------------------------------------------------
@@ -797,6 +807,67 @@ export function validateWorld(world: World): CrossFkError[] {
       terminal,
       missing_from: 'net.members',
     })
+  }
+
+  // -------------------------------------------------------------------------
+  // Terminal-name checks (S17-v3-5 — per OBJECT-MODEL.md §21).
+  //
+  // Every connection's terminal must be a declared terminal on the relevant
+  // device. Checked in both directions:
+  //   - instance connects[].terminal → the instance's own device
+  //   - net members[].terminal       → the referenced instance's device
+  //
+  // Skip rule (§21.4): a device that declares no terminals causes the check
+  // to skip — Sprint 17 doesn't force every device to declare terminals.
+  // A connection to a missing instance/definition surfaces as
+  // unknown-reference elsewhere, not here.
+  // -------------------------------------------------------------------------
+
+  /** Resolve the declared terminal names for an instance's device, or null. */
+  const declaredTerminalsFor = (inst: Instance): string[] | null => {
+    const def = world.definitions.get(inst.definition)
+    if (def?.terminals === undefined) return null
+    return Object.keys(def.terminals)
+  }
+
+  for (const inst of world.instances.values()) {
+    const declared = declaredTerminalsFor(inst)
+    if (declared === null || !inst.connects) continue
+    for (let i = 0; i < inst.connects.length; i++) {
+      const c = inst.connects[i]
+      if (c === undefined) continue
+      if (!declared.includes(c.terminal)) {
+        errors.push({
+          code: 'unknown-terminal',
+          source: inst.id,
+          terminal: c.terminal,
+          definition: inst.definition,
+          declared,
+          where: `connects[${i}].terminal`,
+        })
+      }
+    }
+  }
+
+  for (const net of world.nets.values()) {
+    for (let i = 0; i < net.members.length; i++) {
+      const m = net.members[i]
+      if (m === undefined) continue
+      const inst = world.instances.get(m.instance)
+      if (inst === undefined) continue // unknown-reference territory, not ours
+      const declared = declaredTerminalsFor(inst)
+      if (declared === null) continue
+      if (!declared.includes(m.terminal)) {
+        errors.push({
+          code: 'unknown-terminal',
+          source: net.id,
+          terminal: m.terminal,
+          definition: inst.definition,
+          declared,
+          where: `members[${i}].terminal (instance '${m.instance}')`,
+        })
+      }
+    }
   }
 
   return errors
