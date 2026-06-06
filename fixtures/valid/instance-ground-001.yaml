@@ -1,0 +1,19 @@
+# Valid fixture: a ground reference port wired into the educational anchor
+# circuit. Attaches to net_battery_neg, designating it as the 0 V reference.
+#
+# net_battery_neg already carries type: ground, so this port AGREES with the
+# existing designation — it just makes it explicit and EDA-authentic (the
+# schematic ground symbol you'd place in KiCad). The DC solver's §18.2
+# precedence picks the port's net first; since it's the same net, the solve
+# is unchanged (69.36 mA through the LED, net_battery_neg at 0 V).
+#
+# One terminal (reference_terminal) per the ground device definition.
+# MUST validate against instance.schema.json.
+kind_ref: primitive_device
+definition: ground
+id: ground_001
+origin: project
+connects:
+  - net: net_battery_neg
+    terminal: reference_terminal
+    of: ground_001

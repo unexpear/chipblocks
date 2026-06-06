@@ -18,3 +18,5 @@ members:
     terminal: terminal_b
   - instance: battery_9v_001
     terminal: terminal_negative
+  - instance: ground_001
+    terminal: reference_terminal

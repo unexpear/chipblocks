@@ -88,6 +88,12 @@ symbol:
 
 Exact field shape deferred. The principle is: definitions name standard-symbol IDs from a known library; the canvas renders accordingly; export to KiCad becomes a matter of mapping the named symbol.
 
+### Ground port — the first symbol-bearing object to land (Sprint 16)
+
+The **ground reference port** (`device-ground.yaml`) is the first object whose entire purpose is to carry a standard schematic symbol — the **Ground (earth)** symbol from the inventory above (stack of horizontal lines decreasing downward; IEC 60617 and IEEE 315 agree on it). It's a reference / connection-point marker, not a physical component: in real hardware ground is a net (a copper pour/plane or chosen reference node), so the port designates which net is the 0 V reference rather than modeling a part. The DC solver's ground-detection precedence (OBJECT-MODEL.md §18.2) consults it first, ahead of the `type: ground` net property.
+
+When the `symbol:` field formalizes (above), the ground device will name the standard ground symbol id; until the canvas lands, the port's *role* (designate the reference net) is what's live, and the symbol is documented intent.
+
 ---
 
 ## Why support both IEC and IEEE styles, not pick one

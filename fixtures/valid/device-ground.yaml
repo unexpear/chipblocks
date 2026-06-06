@@ -1,0 +1,52 @@
+# Valid fixture: ground reference port.
+#
+# HONEST FRAMING (anti-placeholder rules, CLAUDE.md core principle 2):
+# Ground is NOT a physical component. In real hardware it's a NET — a copper
+# pour / plane, a chassis bond, or simply the chosen 0 V reference node. A
+# literal "ground device" with material properties would be a fake physical
+# block, which the catalog forbids. So this is modeled as a REFERENCE /
+# CONNECTION-POINT MARKER: it carries the standard schematic ground symbol
+# (IEC 60617 / IEEE 315) and its only job is to designate the net it attaches
+# to as the 0 V reference. This fits the "external connection point, not a
+# block" concept CLAUDE.md already recognizes (display panels, antennas,
+# batteries-as-objects are connection points, not blocks).
+#
+# Electrically it does nothing — no conduction, no resistance, no behaviors.
+# solver_status: not_applicable says exactly that: it's not a solvable circuit
+# element. The DC solver (§18.2) consults it ONLY to pick the ground reference:
+# the net a ground port connects to wins over the type: ground net property.
+#
+# It has one terminal (reference_terminal) — the point that attaches to a net.
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: ground
+origin: builtin
+layer: primitive_device
+name: Ground reference
+description: A reference marker that designates its connected net as the circuit's 0 V reference. Not a physical component — it carries the standard schematic ground symbol and exists so ground designation is explicit and EDA-authentic (like dropping a GND symbol in KiCad) rather than an abstract net property. Electrically inert.
+composition:
+  requires:
+    reference_terminal:
+      kind: interface
+      min_count: 1
+behaviors: []
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Ground-detection precedence in the DC solver (§18.2):
+    1. SolveOptions.ground override (explicit caller choice)
+    2. the net connected to a ground port  ← this object, primary
+    3. a net with type: ground             ← backward-compat fallback
+    4. no-ground status
+  When a ground port and a type: ground net agree (as in the educational
+  anchor circuit, where the port attaches to net_battery_neg), the result is
+  identical — the port just makes the designation explicit.
+
+  A power-port FAMILY beyond ground (Vcc / Vdd / named rails) is a §15
+  deferred row: the same reference-marker pattern, designating supply nets
+  rather than the 0 V reference.

@@ -138,6 +138,98 @@ describe('mathjs lusolve smoke', () => {
 // ===========================================================================
 
 describe('identifyGround', () => {
+  // Helper: a ground port instance attached to `net`.
+  const groundPort = (id: string, net: string): Instance => ({
+    id,
+    kind_ref: 'primitive_device',
+    definition: 'ground',
+    connects: [{ net, terminal: 'reference_terminal', of: id }],
+  })
+
+  test('S16-v3-6: a ground port designates its net (no type: ground needed)', () => {
+    const world = emptyWorld()
+    world.nets.set('net_a', {
+      id: 'net_a',
+      kind: 'net',
+      members: [
+        { instance: 'gp', terminal: 'reference_terminal' },
+        { instance: 'x', terminal: 't' },
+      ],
+    })
+    world.instances.set('gp', groundPort('gp', 'net_a'))
+    const warnings: string[] = []
+    expect(identifyGround(world, undefined, warnings)).toBe('net_a')
+    expect(warnings).toEqual([])
+  })
+
+  test('S16-v3-6: ground port takes PRECEDENCE over a type: ground net', () => {
+    // net_typed has type: ground; net_port has a ground port. The port wins.
+    const world = emptyWorld()
+    world.nets.set('net_typed', {
+      id: 'net_typed',
+      kind: 'net',
+      type: 'ground',
+      members: [
+        { instance: 'a', terminal: 't' },
+        { instance: 'b', terminal: 't' },
+      ],
+    })
+    world.nets.set('net_port', {
+      id: 'net_port',
+      kind: 'net',
+      members: [
+        { instance: 'gp', terminal: 'reference_terminal' },
+        { instance: 'c', terminal: 't' },
+      ],
+    })
+    world.instances.set('gp', groundPort('gp', 'net_port'))
+    const warnings: string[] = []
+    expect(identifyGround(world, undefined, warnings)).toBe('net_port')
+  })
+
+  test('S16-v3-6: SolveOptions.ground still overrides a ground port', () => {
+    const world = emptyWorld()
+    world.nets.set('net_a', {
+      id: 'net_a',
+      kind: 'net',
+      members: [
+        { instance: 'x', terminal: 't' },
+        { instance: 'y', terminal: 't' },
+      ],
+    })
+    world.nets.set('net_port', {
+      id: 'net_port',
+      kind: 'net',
+      members: [
+        { instance: 'gp', terminal: 'reference_terminal' },
+        { instance: 'c', terminal: 't' },
+      ],
+    })
+    world.instances.set('gp', groundPort('gp', 'net_port'))
+    const warnings: string[] = []
+    expect(identifyGround(world, { ground: 'net_a' }, warnings)).toBe('net_a')
+  })
+
+  test('S16-v3-6: multiple ground ports warn and pick the first', () => {
+    const world = emptyWorld()
+    for (const n of ['net_p1', 'net_p2']) {
+      world.nets.set(n, {
+        id: n,
+        kind: 'net',
+        members: [
+          { instance: `gp_${n}`, terminal: 'reference_terminal' },
+          { instance: 'x', terminal: 't' },
+        ],
+      })
+      world.instances.set(`gp_${n}`, groundPort(`gp_${n}`, n))
+    }
+    const warnings: string[] = []
+    const g = identifyGround(world, undefined, warnings)
+    expect(g === 'net_p1' || g === 'net_p2').toBe(true)
+    expect(warnings.length).toBe(1)
+    expect(warnings[0]).toContain('Multiple ground ports')
+  })
+
   test('auto-detects the single type: ground net', () => {
     const world = emptyWorld()
     world.nets.set('net_a', {

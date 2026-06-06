@@ -1234,12 +1234,14 @@ This is the first time ChipBlocks answers a "what does this circuit do?" questio
 
 Every DC circuit needs a 0 V reference (ground); all other voltages are measured relative to it.
 
-ChipBlocks's convention:
+ChipBlocks's ground-detection **precedence** (amended in Sprint 16 to add the ground port):
 
-- **Default**: the net with `type: ground` per §17.3 is the ground reference. The educational anchor circuit's `net_battery_neg` is the canonical example.
-- **Multiple ground nets**: if more than one net is `type: ground`, the first in deterministic iteration order is chosen. A warning surfaces.
-- **No ground**: if no net has `type: ground`, the solver returns `status: 'no-ground'` and doesn't attempt to solve. (Cross-FK doesn't catch this — it's a solver-time precondition.)
-- **Override**: `SolveOptions.ground: 'net_id'` lets the caller pick a specific net by id, overriding the auto-detection.
+1. **Explicit override**: `SolveOptions.ground: 'net_id'` lets the caller pick a specific net by id, overriding everything below.
+2. **Ground port** (Sprint 16): the net a **ground reference port** attaches to. A ground port is the standard schematic ground symbol you place and wire to a net — the explicit, EDA-authentic way to designate the 0 V reference (like dropping a GND symbol in KiCad). It is **not a physical component** (ground is conventionally a net — a copper pour/plane or chosen reference node); it's modeled as a reference / connection-point marker with `solver_status: not_applicable`. See the `ground` device fixture. Multiple ground ports → the first deterministically, with a warning.
+3. **`type: ground` net property** (backward-compat fallback): the first net with `type: ground` per §17.3. Multiple → the first deterministically, with a warning. The educational anchor circuit's `net_battery_neg` carries both a ground port AND `type: ground` — they agree, so the result is identical; the port just makes the designation explicit.
+4. **No ground**: if none of the above resolves, the solver returns `status: 'no-ground'` and doesn't attempt to solve. (Cross-FK doesn't catch this — it's a solver-time precondition.)
+
+A power-port **family** beyond ground (Vcc / Vdd / named supply rails) is a §15 deferred row — the same reference-marker pattern applied to supply nets.
 
 ### 18.3 MNA matrix construction
 

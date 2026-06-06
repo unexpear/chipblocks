@@ -390,12 +390,15 @@ function stampLedCompanion(
 // ---------------------------------------------------------------------------
 
 /**
- * Find the net to use as ground. Priority:
+ * Find the net to use as ground (§18.2 precedence, Sprint 16):
  *   1. options.ground if provided (must reference an existing net)
- *   2. The first net with type: 'ground' (deterministic iteration order)
- *   3. undefined → caller returns 'no-ground' status
+ *   2. The net connected to a ground port (definition: 'ground') — the
+ *      explicit, EDA-authentic designation
+ *   3. The first net with type: 'ground' (backward-compat fallback)
+ *   4. undefined → caller returns 'no-ground' status
  *
- * Multiple type: 'ground' nets produces a warning + uses the first one.
+ * Multiple ground ports / multiple type: ground nets each produce a warning
+ * and use the first one deterministically.
  */
 export function identifyGround(
   world: World,
@@ -410,6 +413,24 @@ export function identifyGround(
     return options.ground
   }
 
+  // (2) Ground ports — the net a ground reference marker attaches to.
+  const portNets: string[] = []
+  for (const inst of world.instances.values()) {
+    if (inst.definition !== 'ground') continue
+    const net = inst.connects?.[0]?.net
+    if (net !== undefined && world.nets.has(net)) portNets.push(net)
+  }
+  if (portNets.length > 0) {
+    if (portNets.length > 1) {
+      warnings.push(
+        `Multiple ground ports found (nets ${portNets.join(', ')}); using '${portNets[0]}' (deterministic first).`,
+      )
+    }
+    // biome-ignore lint/style/noNonNullAssertion: length checked above
+    return portNets[0]!
+  }
+
+  // (3) type: ground net property — backward-compatible fallback.
   const groundNets: string[] = []
   for (const net of world.nets.values()) {
     if (net.type === 'ground') groundNets.push(net.id)
