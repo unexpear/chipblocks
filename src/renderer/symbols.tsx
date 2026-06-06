@@ -1,4 +1,5 @@
-import { Handle, type NodeProps, Position } from '@xyflow/react'
+import { Handle, type NodeProps, Position, useUpdateNodeInternals } from '@xyflow/react'
+import { useEffect } from 'react'
 
 /**
  * Standard schematic symbols (Sprint 18 S18-v3-5) — IEC 60617 / IEEE 315
@@ -127,7 +128,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   wire: WireGlyph,
 }
 
-export type DeviceNodeData = { definition: string; label: string }
+export type DeviceNodeData = { definition: string; label: string; rotation?: number }
 
 /**
  * The bare schematic symbol for a device definition (or a labeled fallback box
@@ -161,17 +162,27 @@ export function DeviceGlyph({ definition }: { definition: string }) {
  * a labeled fallback box for kinds without a symbol yet) + left/right handles
  * + the instance id.
  */
-export function DeviceNode({ data }: NodeProps) {
-  const { definition, label } = data as DeviceNodeData
+export function DeviceNode({ id, data }: NodeProps) {
+  const { definition, label, rotation = 0 } = data as DeviceNodeData
+  const updateNodeInternals = useUpdateNodeInternals()
+  // After a rotation, re-measure the handles so wires follow the rotated terminals.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `rotation` is an intentional re-run trigger — the effect must re-measure when the node rotates, though it isn't read in the body
+  useEffect(() => {
+    updateNodeInternals(id)
+  }, [id, rotation, updateNodeInternals])
   // The node box IS the glyph (W×H); handles sit on the glyph's lead line
   // (left/right ends at the vertical midline), so a wire connects at the symbol's
-  // own drawn terminal — not at an offset box edge. The id label floats below the
-  // glyph (absolute) so it never widens the box and pushes the handles off.
+  // own drawn terminal — not at an offset box edge. The glyph + handles rotate
+  // together; the id label stays upright below the box (never rotates/widens it).
   return (
     <div style={{ position: 'relative', width: W, height: H, fontFamily: 'system-ui, sans-serif' }}>
-      <Handle type="target" position={Position.Left} style={{ background: '#888', top: MID }} />
-      <DeviceGlyph definition={definition} />
-      <Handle type="source" position={Position.Right} style={{ background: '#888', top: MID }} />
+      <div
+        style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation}deg)` }}
+      >
+        <Handle type="target" position={Position.Left} style={{ background: '#888', top: MID }} />
+        <DeviceGlyph definition={definition} />
+        <Handle type="source" position={Position.Right} style={{ background: '#888', top: MID }} />
+      </div>
       <div
         style={{
           position: 'absolute',

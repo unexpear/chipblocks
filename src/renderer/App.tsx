@@ -198,6 +198,32 @@ function Canvas() {
     setEdges((current) => resolve(nodes, current))
   }, [alwaysOn, nodes, resolve, setEdges])
 
+  // Press R to rotate the selected component(s) by 90° (S19-v3-15). DeviceNode
+  // re-measures its handles so wires follow the rotated terminals.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'r' && event.key !== 'R') return
+      if (event.metaKey || event.ctrlKey || event.altKey) return
+      const target = event.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+      setNodes((current) =>
+        current.map((node) =>
+          node.selected
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  rotation: (((node.data?.rotation as number) ?? 0) + 90) % 360,
+                },
+              }
+            : node,
+        ),
+      )
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [setNodes])
+
   const onDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
@@ -296,7 +322,7 @@ function Canvas() {
             pointerEvents: 'none',
           }}
         >
-          ChipBlocks — {nodes.length} components, {edges.length} wires
+          ChipBlocks — {nodes.length} components, {edges.length} wires · select a part, R to rotate
           {tool === 'wire' ? ' · wire tool: parts locked, drag between dots' : ''}
           {alwaysOn ? '' : ' · physics paused — hit Solve'}
         </div>
