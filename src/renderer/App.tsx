@@ -8,6 +8,7 @@ import {
   type Node,
   ReactFlow,
   ReactFlowProvider,
+  reconnectEdge,
   useEdgesState,
   useNodesState,
   useReactFlow,
@@ -129,6 +130,15 @@ function Canvas() {
     [setEdges],
   )
 
+  // Reconnect: drag a wire's endpoint to a different dot (wire-as-connector
+  // model — disconnect/reconnect, never delete). Dropping in empty space does
+  // nothing, so a wire is never lost.
+  const onReconnect = useCallback(
+    (oldEdge: Edge, newConnection: Connection) =>
+      setEdges((current) => reconnectEdge(oldEdge, newConnection, current)),
+    [setEdges],
+  )
+
   return (
     <div style={{ width: '100vw', height: '100vh', display: 'flex' }}>
       <Palette />
@@ -155,6 +165,7 @@ function Canvas() {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onReconnect={onReconnect}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView
