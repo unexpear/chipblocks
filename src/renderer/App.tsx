@@ -2,6 +2,7 @@ import { Background, Controls, type Edge, type Node, ReactFlow } from '@xyflow/r
 import '@xyflow/react/dist/style.css'
 import { useMemo } from 'react'
 import { loadCatalogWorld } from './catalog-loader.ts'
+import { nodeTypes } from './symbols.tsx'
 import { worldToFlow } from './world-to-flow.ts'
 
 /**
@@ -16,17 +17,9 @@ export function App() {
     const flow = worldToFlow(loadCatalogWorld())
     const nodes: Node[] = flow.nodes.map((n) => ({
       id: n.id,
+      type: 'device',
       position: n.position,
-      data: { label: `${n.data.definition}\n${n.id}` },
-      style: {
-        background: '#2a2a2a',
-        color: '#e0e0e0',
-        border: '1px solid #555',
-        borderRadius: 6,
-        fontSize: 11,
-        whiteSpace: 'pre-line',
-        width: 150,
-      },
+      data: { definition: n.data.definition, label: n.id },
     }))
     const edges: Edge[] = flow.edges.map((e) => ({
       id: e.id,
@@ -56,7 +49,13 @@ export function App() {
         ChipBlocks — educational anchor circuit ({nodes.length} components, {edges.length} net
         connections)
       </div>
-      <ReactFlow nodes={nodes} edges={edges} fitView proOptions={{ hideAttribution: true }}>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        fitView
+        proOptions={{ hideAttribution: true }}
+      >
         <Background color="#333" gap={16} />
         <Controls />
       </ReactFlow>
