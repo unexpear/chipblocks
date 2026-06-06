@@ -1,4 +1,4 @@
-import { BaseEdge, EdgeLabelRenderer, type EdgeProps, getBezierPath } from '@xyflow/react'
+import { BaseEdge, EdgeLabelRenderer, type EdgeProps, getSmoothStepPath } from '@xyflow/react'
 import { formatCurrent } from './edge-currents.ts'
 import { formatLength, formatResistance } from './wire-length.ts'
 
@@ -30,13 +30,16 @@ export function NetEdge({
   markerEnd,
   data,
 }: EdgeProps) {
-  const [path, labelX, labelY] = getBezierPath({
+  // Orthogonal routing: straight runs + right-angle corners (borderRadius 0), the
+  // schematic convention — wires move only in corners and straight lines.
+  const [path, labelX, labelY] = getSmoothStepPath({
     sourceX,
     sourceY,
     targetX,
     targetY,
     sourcePosition,
     targetPosition,
+    borderRadius: 0,
   })
   // The arrowhead (markerStart/markerEnd) points in the real current direction;
   // data.amps is the solved magnitude (S19-v3-5). data.lengthM / data.ohms are
