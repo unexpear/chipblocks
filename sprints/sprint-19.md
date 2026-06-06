@@ -49,6 +49,19 @@ gap makes it the highest-value canvas work.
 4. **Ground / branch taps** — a tap (ground) sticks out from its net's corner, like
    the drawing.
 
+**C. Drag-and-drop (project lead ask).** Grab a component and move it; it stays
+where dropped. React Flow node state (`useNodesState`/`onNodesChange`) — in-session
+only this sprint; persisting moved positions to `canvas/layout.yaml` is a later sprint.
+
+**D. Physics-driven directional arrows (project lead ask: "wire in the physics").**
+The arrows are NOT a topological guess at flow direction — they show the *real*
+current the DC solver computes. Run `solveDC` (§18/§20), then for each wire orient
+the arrowhead by the sign of the computed branch current (the solver's documented
+convention: positive flows anode/positive/terminal_a/terminal_in → the negative
+side), label it with the magnitude (e.g. `≈14.9 mA`), and show **no arrow when the
+current is ~0** (switch open / no path) — honest, not decorative. This is the first
+slice of the solver overlay: current is now visible on the canvas.
+
 ## Non-goals (this sprint)
 
 - **General multi-loop / branchy auto-routing.** The rectangle is clean for a
@@ -59,8 +72,10 @@ gap makes it the highest-value canvas work.
   edges (top/bottom) so symbols stay upright; rotated side-components are a polish
   follow-on.
 - **Drag-to-rearrange / manual layout persistence.** Still the interactivity sprint.
-- **Solver overlay (voltages/red LED).** Still queued as the next canvas sprint
-  after this; a clean layout is the canvas it paints onto.
+- **Full solver overlay (node voltages on every net, the overloaded LED painted
+  red).** The directional arrows (scope D) bring *current* onto the canvas — the
+  first slice — but the full voltage map + failure highlighting is still its own
+  later sprint, painting onto this cleaner layout.
 
 ## Done when
 
@@ -75,9 +90,11 @@ gap makes it the highest-value canvas work.
 ## Sub-commits (planned)
 
 - **S19-v3-1** — this plan.
-- **S19-v3-2** — label readability (de-dup + legible lifted chips). [coded, verified]
-- **S19-v3-3** — pure loop-order recovery + tests.
-- **S19-v3-4** — rectangle placement + orthogonal wiring, wired into the canvas,
-  screenshot-verified.
-- **S19-v3-5** — ground / branch tap placement.
-- **S19-v3-6** — retro.
+- **S19-v3-2** — label readability (de-dup + legible lifted chips). [done]
+- **S19-v3-3** — drag-and-drop (React Flow node state; parts stay where dropped). [done]
+- **S19-v3-4** — pure loop-order recovery + tests (foundation for layout + arrow ref).
+- **S19-v3-5** — physics-driven directional arrows: run solveDC, orient each wire's
+  arrowhead by the real current sign, label the magnitude, hide when no current.
+- **S19-v3-6** — rectangle placement + orthogonal wiring, screenshot-verified.
+- **S19-v3-7** — ground / branch tap placement.
+- **S19-v3-8** — retro.
