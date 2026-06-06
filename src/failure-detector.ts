@@ -24,6 +24,7 @@
 
 import type { Instance, World } from './cross-fk-validator.ts'
 import type { Solution } from './dc-solver.ts'
+import { readScalarParam } from './instance-params.ts'
 
 // ---------------------------------------------------------------------------
 // Public API types
@@ -149,24 +150,4 @@ export function checkResistorOverpower(inst: Instance, solution: Solution): Fail
     units: 'watt',
     severity: 'error',
   }
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Read a scalar parameter's amount from an instance.
- * Returns undefined if the parameter is missing, not a scalar value, or
- * has a non-numeric amount.
- */
-function readScalarParam(inst: Instance, name: string): number | undefined {
-  const param = inst.parameters?.[name]
-  if (param === undefined) return undefined
-  const value = param.value
-  if (value === null || typeof value !== 'object') return undefined
-  const v = value as Record<string, unknown>
-  if (v.kind !== 'scalar') return undefined
-  if (typeof v.amount !== 'number') return undefined
-  return v.amount
 }

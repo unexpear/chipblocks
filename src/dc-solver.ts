@@ -38,6 +38,7 @@
 
 import { all, create } from 'mathjs'
 import type { Instance, Net, World } from './cross-fk-validator.ts'
+import { readScalarParam } from './instance-params.ts'
 
 // biome-ignore lint/style/noNonNullAssertion: mathjs `all` is always defined at runtime
 const math = create(all!)
@@ -499,20 +500,4 @@ export function computeResistorCurrent(
   if (V_a === undefined || V_b === undefined) return undefined
 
   return (V_a - V_b) / R
-}
-
-/**
- * Read a scalar parameter's amount from an instance.
- * Returns undefined if the parameter is missing, not a scalar value, or
- * has a non-numeric amount.
- */
-function readScalarParam(inst: Instance, name: string): number | undefined {
-  const param = inst.parameters?.[name]
-  if (param === undefined) return undefined
-  const value = param.value
-  if (value === null || typeof value !== 'object') return undefined
-  const v = value as Record<string, unknown>
-  if (v.kind !== 'scalar') return undefined
-  if (typeof v.amount !== 'number') return undefined
-  return v.amount
 }
