@@ -3,6 +3,7 @@ import {
   EdgeLabelRenderer,
   type EdgeProps,
   getSmoothStepPath,
+  useNodes,
   useReactFlow,
 } from '@xyflow/react'
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
@@ -43,6 +44,20 @@ function distanceToSegment(p: Point, a: Point, b: Point): number {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
 }
 
+type Box = { x: number; y: number; w: number; h: number }
+
+/** Does the straight segment a→b pass through the box? (sampled — endpoints excluded). */
+function crossesBox(ax: number, ay: number, bx: number, by: number, box: Box): boolean {
+  const steps = 24
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps
+    const x = ax + (bx - ax) * t
+    const y = ay + (by - ay) * t
+    if (x > box.x && x < box.x + box.w && y > box.y && y < box.y + box.h) return true
+  }
+  return false
+}
+
 /** Index in the waypoint list to insert a new point so it lands on the nearest segment. */
 function nearestSegment(points: Point[], p: Point): number {
   let best = 0
@@ -62,6 +77,8 @@ function nearestSegment(points: Point[], p: Point): number {
 
 export function NetEdge({
   id,
+  source,
+  target,
   sourceX,
   sourceY,
   targetX,
@@ -75,30 +92,60 @@ export function NetEdge({
   data,
 }: EdgeProps) {
   const { setEdges, screenToFlowPosition } = useReactFlow()
+  const nodes = useNodes()
   const waypoints = readWaypoints(data)
 
   let path: string
   let labelX: number
   let labelY: number
   if (waypoints.length > 0) {
+    // Manual: the user's hand-routed path through the corner points.
     const points: Point[] = [{ x: sourceX, y: sourceY }, ...waypoints, { x: targetX, y: targetY }]
     path = pathThrough(points)
     const mid = points[Math.floor(points.length / 2)] ?? points[0]
     labelX = mid?.x ?? sourceX
     labelY = mid?.y ?? sourceY
   } else {
-    const [autoPath, autoX, autoY] = getSmoothStepPath({
-      sourceX,
-      sourceY,
-      targetX,
-      targetY,
-      sourcePosition,
-      targetPosition,
-      borderRadius: 0,
-    })
-    path = autoPath
-    labelX = autoX
-    labelY = autoY
+    // Auto component-avoidance (S19-v3-18): if the straight route crosses any
+    // other part's box, hop over the top / under the bottom (whichever detour is
+    // shorter); otherwise the plain orthogonal route. The user can switch to
+    // hand-routing by double-clicking to drop corners.
+    const obstacles: Box[] = nodes
+      .filter((n) => n.id !== source && n.id !== target)
+      .map((n) => ({
+        x: n.position.x,
+        y: n.position.y,
+        w: n.measured?.width ?? 80,
+        h: n.measured?.height ?? 44,
+      }))
+    const crossed = obstacles.filter((b) => crossesBox(sourceX, sourceY, targetX, targetY, b))
+    if (crossed.length > 0) {
+      const midY = (sourceY + targetY) / 2
+      const overY = Math.min(...crossed.map((b) => b.y)) - 22
+      const underY = Math.max(...crossed.map((b) => b.y + b.h)) + 22
+      const clearY = Math.abs(overY - midY) <= Math.abs(underY - midY) ? overY : underY
+      path = pathThrough([
+        { x: sourceX, y: sourceY },
+        { x: sourceX, y: clearY },
+        { x: targetX, y: clearY },
+        { x: targetX, y: targetY },
+      ])
+      labelX = (sourceX + targetX) / 2
+      labelY = clearY
+    } else {
+      const [autoPath, autoX, autoY] = getSmoothStepPath({
+        sourceX,
+        sourceY,
+        targetX,
+        targetY,
+        sourcePosition,
+        targetPosition,
+        borderRadius: 0,
+      })
+      path = autoPath
+      labelX = autoX
+      labelY = autoY
+    }
   }
 
   const amps = typeof data?.amps === 'number' ? data.amps : null
