@@ -1,5 +1,6 @@
 import { BaseEdge, EdgeLabelRenderer, type EdgeProps, getBezierPath } from '@xyflow/react'
 import { formatCurrent } from './edge-currents.ts'
+import { formatLength, formatResistance } from './wire-length.ts'
 
 /**
  * Net edge (Sprint 18 polish). A bezier wire plus an optional net-id chip that
@@ -38,8 +39,11 @@ export function NetEdge({
     targetPosition,
   })
   // The arrowhead (markerStart/markerEnd) points in the real current direction;
-  // data.amps is the solved magnitude (S19-v3-5). Both come from edgeFlow.
+  // data.amps is the solved magnitude (S19-v3-5). data.lengthM / data.ohms are
+  // the wire's real length + resistance from how it's drawn (S19-v3-7).
   const amps = typeof data?.amps === 'number' ? data.amps : null
+  const lengthM = typeof data?.lengthM === 'number' ? data.lengthM : null
+  const ohms = typeof data?.ohms === 'number' ? data.ohms : null
   return (
     <>
       <BaseEdge
@@ -72,6 +76,11 @@ export function NetEdge({
             {amps !== null ? (
               <div style={{ color: '#7ab8ff', fontSize: 8, marginTop: 1 }}>
                 {formatCurrent(amps)}
+              </div>
+            ) : null}
+            {lengthM !== null && ohms !== null ? (
+              <div style={{ color: '#8a93a0', fontSize: 8, marginTop: 1 }}>
+                {formatLength(lengthM)} · {formatResistance(ohms)}
               </div>
             ) : null}
           </div>

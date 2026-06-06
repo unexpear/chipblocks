@@ -20,6 +20,7 @@ import { edgeFlow } from './edge-currents.ts'
 import { edgeTypes } from './net-edge.tsx'
 import { DEFINITION_MIME, Palette } from './palette.tsx'
 import { nodeTypes } from './symbols.tsx'
+import { lengthFromDrawn, wireResistance } from './wire-length.ts'
 import { worldToFlow } from './world-to-flow.ts'
 
 const CURRENT = '#7ab8ff' // a live wire carrying current (solved)
@@ -52,10 +53,17 @@ function Canvas() {
       position: n.position,
       data: { definition: n.data.definition, label: n.id },
     }))
+    const positions = new Map(flow.nodes.map((n) => [n.id, n.position]))
     const edges: Edge[] = flow.edges.map((e) => {
       // Arrowhead direction + magnitude are the real solver current (S19-v3-5):
       // markerEnd when current runs source→target, markerStart when it reverses.
       const wireCurrent = edgeFlow(world, solution, e.label, e.source, e.target)
+      // Wire length from how it's drawn → real length → resistance (S19-v3-7).
+      const from = positions.get(e.source)
+      const to = positions.get(e.target)
+      const drawnPixels = from && to ? Math.hypot(to.x - from.x, to.y - from.y) : 0
+      const lengthM = lengthFromDrawn(drawnPixels)
+      const ohms = wireResistance(lengthM)
       const marker = { type: MarkerType.ArrowClosed, width: 16, height: 16, color: CURRENT }
       const arrowAtTarget = wireCurrent.carries && wireCurrent.sourceToTarget
       const arrowAtSource = wireCurrent.carries && !wireCurrent.sourceToTarget
@@ -68,7 +76,7 @@ function Canvas() {
         // its endpoints instead (wire-as-connector model).
         deletable: false,
         label: e.showLabel ? e.label : undefined,
-        data: { amps: wireCurrent.carries ? wireCurrent.amps : null },
+        data: { amps: wireCurrent.carries ? wireCurrent.amps : null, lengthM, ohms },
         style: {
           stroke: wireCurrent.carries ? CURRENT : IDLE,
           strokeWidth: wireCurrent.carries ? 1.6 : 1,
