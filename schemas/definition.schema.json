@@ -133,6 +133,20 @@
       },
       "additionalProperties": false
     },
+    "terminals": {
+      "type": "object",
+      "description": "Named connection points (pins) on a connectable device. Per OBJECT-MODEL.md §21. Keyed by terminal name; what instance 'connects[].terminal' and net 'members[].terminal' reference. Optional — only connectable primitive devices declare terminals (materials / shapes / behaviors do not). Complementary to composition interface roles: the role is the structural requirement, the terminals name the connection points.",
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {
+          "type": "object",
+          "properties": {
+            "description": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "state_machine": {
       "type": "object",
       "description": "Optional declarative description of the device's internal state machine. Per OBJECT-MODEL.md §6.5. Sprint 6+: descriptive only — the validator checks internal consistency (transitions reference declared states; initial_state is declared); runtime state tracking and FSM evaluation are future canvas/simulator concerns. Only stateful devices (switches, relays, MOSFETs, latches) declare a state_machine; static devices (resistor, capacitor, wire, power_source) do not.",

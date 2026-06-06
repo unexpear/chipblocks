@@ -118,3 +118,73 @@ describe('invalid fixtures (anti-placeholder + §13 rule violations MUST fail)',
     })
   }
 })
+
+// ===========================================================================
+// terminals: field on definitions (S17-v3-3, §21)
+// ===========================================================================
+
+describe('terminals field (§21)', () => {
+  // A minimal valid primitive_device to attach terminal variations onto.
+  const baseDevice = () => ({
+    id: 'test_device',
+    name: 'Test device',
+    description: 'A device for testing the terminals field.',
+    kind: 'primitive_device',
+    origin: 'project',
+    layer: 'primitive_device',
+    composition: { requires: { endpoints: { kind: 'interface', min_count: 2 } } },
+    support: { model_status: 'defined', solver_status: 'builtin_simple' },
+    extensions: {
+      overridable: true,
+      user_extensible: true,
+      allowed_origins: ['builtin', 'community', 'user_local', 'project'],
+    },
+  })
+
+  test('accepts a terminals block with named terminals + descriptions', () => {
+    const ok = validateDefinition({
+      ...baseDevice(),
+      terminals: {
+        terminal_a: { description: 'One end.' },
+        terminal_b: { description: 'The other end.' },
+      },
+    })
+    expect(ok).toBe(true)
+  })
+
+  test('accepts a terminal with no description (description is optional)', () => {
+    const ok = validateDefinition({
+      ...baseDevice(),
+      terminals: { reference_terminal: {} },
+    })
+    expect(ok).toBe(true)
+  })
+
+  test('a definition with no terminals field is still valid (optional)', () => {
+    expect(validateDefinition(baseDevice())).toBe(true)
+  })
+
+  test('rejects a terminal name that is not snake_case', () => {
+    const ok = validateDefinition({
+      ...baseDevice(),
+      terminals: { TerminalA: { description: 'bad name' } },
+    })
+    expect(ok).toBe(false)
+  })
+
+  test('rejects an unknown property inside a terminal entry', () => {
+    const ok = validateDefinition({
+      ...baseDevice(),
+      terminals: { terminal_a: { description: 'ok', polarity: 'positive' } },
+    })
+    expect(ok).toBe(false)
+  })
+
+  test('rejects a non-object terminal entry', () => {
+    const ok = validateDefinition({
+      ...baseDevice(),
+      terminals: { terminal_a: 'just a string' },
+    })
+    expect(ok).toBe(false)
+  })
+})
