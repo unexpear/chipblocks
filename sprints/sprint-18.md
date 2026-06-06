@@ -2,7 +2,9 @@
 
 > **Status:** Sprint plan, opened 2026-06-06 against master tip `8393294`.
 > **Predecessor:** Sprint 17 closed terminal-name validation. 236 tests, 21 spec sections, 5 source modules — a deep logic/data foundation (schemas + cross-FK validator + DC solver + nonlinear solver + failure detector) with **no frontend**. Sprint 18 is the big pivot: the project gets an actual canvas.
-> **Scope:** Stand up the frontend toolchain (Vite + React + TypeScript + React Flow), load the existing catalog fixtures into the browser, and **render the educational anchor circuit** as a schematic — first as labeled nodes, then with standard schematic symbols (per SCHEMATIC-SYMBOLS.md's commitment). Static render only: no interactivity, no solver overlay, no lenses (those are later canvas sprints).
+> **Scope:** Stand up the **Electron + React + TypeScript** frontend (per CLAUDE.md's documented stack — user-confirmed Electron-from-start, 2026-06-06) with React Flow as the canvas engine and electron-vite as the build integration. Load the existing catalog fixtures, and **render the educational anchor circuit** as a schematic — first as labeled nodes, then with standard schematic symbols (per SCHEMATIC-SYMBOLS.md's commitment). Static render only: no interactivity, no solver overlay, no lenses (those are later canvas sprints).
+>
+> **Shell decision (2026-06-06):** the user chose Electron-from-start over a browser-first MVP, matching CLAUDE.md's stated stack. The renderer is still React + React Flow + Vite; Electron wraps it via electron-vite (main + preload + renderer processes).
 
 ---
 
@@ -28,7 +30,7 @@ This is the first slice of Stage 5 of the simulation+visualization arc. It delib
 
 ## Non-goals (explicit, with reasons)
 
-- **No Electron yet.** CLAUDE.md's eventual target is Electron + React, but the MVP is a browser app (Vite + React). It's simpler to stand up, trivial to run + screenshot for verification, and the canvas logic is identical either way. Electron wrapping is a later, mechanical sprint. **New §15 row.**
+- **Electron IS in scope (user choice 2026-06-06).** The shell is Electron-from-start per CLAUDE.md's documented stack — main process + preload + renderer, wired via electron-vite. Packaging into a distributable installer (electron-builder) is NOT in scope; the MVP runs via `npm run dev` (electron-vite dev) and builds the renderer + main. Packaging is a later sprint.
 - **No interactivity.** No drag-to-move, no place-component, no draw-a-wire, no right-click menus. The MVP renders the anchor circuit statically from the fixtures. Interactivity is the next canvas sprint — it needs the auto-created-interface UX + right-click-override §15 rows.
 - **No solver overlay.** The canvas does NOT yet show node voltages, branch currents, or the red overloaded LED. That's the killer feature, but it's the *next* sprint (Sprint 19): the static render must be solid first. The solver (`solveDC`) + failure detector (`detectFailures`) are ready to consume when it lands.
 - **No visualization lenses.** Voltage maps, current-flow animation, thermal hotspots — Stage 6, well after the canvas basics.
@@ -42,33 +44,39 @@ This is the first slice of Stage 5 of the simulation+visualization arc. It delib
 
 | Dep | Version | License | Role |
 |---|---|---|---|
-| `react` | 19.2.x | MIT | UI framework |
+| `electron` | 42.x | MIT | the desktop shell (main process + Chromium renderer) |
+| `electron-vite` | 5.x | MIT | build integration — main / preload / renderer with Vite, dev + build |
+| `react` | 19.2.x | MIT | UI framework (renderer) |
 | `react-dom` | 19.2.x | MIT | DOM renderer |
 | `@xyflow/react` (React Flow) | 12.11.x | MIT | the canvas engine |
-| `vite` | 8.0.x | MIT | frontend dev server + bundler (already a transitive dep via Vitest; now a direct dev dep) |
-| `@vitejs/plugin-react` | latest | MIT | React fast-refresh + JSX transform for Vite |
+| `vite` | 8.0.x | MIT | bundler under electron-vite (already a transitive dep via Vitest; now direct) |
+| `@vitejs/plugin-react` | latest | MIT | React fast-refresh + JSX transform |
 | `@types/react`, `@types/react-dom` | latest | MIT | types |
 
-React Flow 12 supports React 18+; React 19 compatibility verified during S18-v3-2. No new license *categories* — all MIT, on the permissive whitelist. NOTICE/THIRD-PARTY updates handled in S18-v3-2.
+React Flow 12 supports React 18+; React 19 + Electron 42 compatibility verified during S18-v3-2 (the empty-canvas smoke). All MIT, on the permissive whitelist. NOTICE/THIRD-PARTY updates handled in S18-v3-2. electron-builder (packaging) is NOT added this sprint.
 
 ---
 
 ## Deliverables
 
 ```
-package.json                                react / react-dom / @xyflow/react / vite /
-                                            @vitejs/plugin-react / @types/react(-dom);
-                                            scripts: dev, build, preview
-index.html                                  NEW — Vite entry
-vite.config.ts                              NEW — Vite + React plugin
-tsconfig.app.json (+ tsconfig refs)         NEW — DOM + JSX config for the frontend
-                                            (the existing Node tsconfig stays for src/ logic)
+package.json                                electron / electron-vite / react / react-dom /
+                                            @xyflow/react / vite / @vitejs/plugin-react /
+                                            @types/react(-dom); scripts: dev, build
+electron.vite.config.ts                     NEW — electron-vite config (main / preload / renderer)
+tsconfig.node.json / tsconfig.web.json      NEW — split configs: Node (main/preload/logic)
+  (+ root tsconfig refs)                     vs DOM+JSX (renderer); existing Node config kept
 
-src/canvas/
+electron/
+├── main.ts                                 NEW — Electron main process; creates the window
+└── preload.ts                              NEW — preload (contextBridge; minimal for the MVP)
+
+src/renderer/
+├── index.html                              NEW — renderer entry
 ├── main.tsx                                NEW — React entry, mounts the app
 ├── App.tsx                                 NEW — the canvas page
-├── catalog-loader.ts                       NEW — load fixture YAML → World (browser)
-├── world-to-flow.ts                        NEW — World → React Flow nodes + edges
+├── catalog-loader.ts                       NEW — load fixture YAML → World (Vite import)
+├── world-to-flow.ts                        NEW — World → React Flow nodes + edges (PURE)
 └── symbols/                                NEW — standard schematic symbol components
     ├── BatterySymbol.tsx
     ├── ResistorSymbol.tsx
@@ -89,8 +97,8 @@ tests/
 | # | Commit | Scope |
 |---|---|---|
 | **S18-v3-1** | `sprints/sprint-18.md` | This plan. |
-| **S18-v3-2** | Frontend toolchain + "hello canvas" | Add react / react-dom / @xyflow/react / vite / @vitejs/plugin-react / types. `index.html`, `vite.config.ts`, `tsconfig.app.json` (+ project refs so the existing Node tsc gate stays green). `src/canvas/main.tsx` + `App.tsx` render an empty React Flow canvas with a background grid. `npm run build` succeeds; verify by building + screenshotting. THIRD-PARTY-LICENSES.md + NOTICE updated for the new deps (license + NOTICE-file check per CLAUDE.md). New `build` gate. |
-| **S18-v3-3** | Catalog → World loader (browser) + World → Flow mapping | `catalog-loader.ts` imports the fixture YAML (Vite `?raw` / glob) and builds the same `World` shape the tests use. `world-to-flow.ts` is a PURE function: World → `{ nodes, edges }` (device instances → nodes; nets → edges between the instances they connect). Unit-tested in `world-to-flow.test.ts` (pure, runs under vitest — no DOM). |
+| **S18-v3-2** | Electron + React + electron-vite shell + "hello canvas" | Add electron / electron-vite / react / react-dom / @xyflow/react / vite / @vitejs/plugin-react / types. `electron.vite.config.ts`, split tsconfigs (Node for main/preload/logic, DOM+JSX for renderer; existing Node tsc gate stays green via refs). `electron/main.ts` creates a BrowserWindow loading the renderer; `electron/preload.ts` minimal contextBridge. `src/renderer/` renders an empty React Flow canvas with a background grid. `npm run dev` launches the Electron app; `npm run build` compiles main+renderer. Verify: launch + screenshot the empty canvas; confirm React 19 + React Flow 12 + Electron 42 mount together. THIRD-PARTY-LICENSES.md + NOTICE updated (license + NOTICE-file check per CLAUDE.md). New `build` gate. |
+| **S18-v3-3** | Catalog → World loader + World → Flow mapping | `catalog-loader.ts` imports the fixture YAML (Vite `import.meta.glob` / `?raw`) and builds the same `World` shape the tests use. `world-to-flow.ts` is a PURE function: World → `{ nodes, edges }` (device instances → nodes; nets → edges between the instances they connect). Unit-tested in `world-to-flow.test.ts` (pure, runs under vitest — no DOM). |
 | **S18-v3-4** | Render the anchor circuit (labeled nodes) | `App.tsx` loads the world, maps to flow, renders the 6 anchor-circuit instances as labeled React Flow nodes + the 6 nets as edges, with a simple deterministic layout. Each node shows its device kind + instance id. Verify: build + run + screenshot shows the connected circuit. (Labeled nodes are an honest scaffold — the standard symbols land in S18-v3-5, same sprint.) |
 | **S18-v3-5** | Standard schematic symbols | Replace the labeled-box nodes with standard schematic symbols (SVG React components) for the anchor circuit's kinds: battery (long/short lines), resistor (IEC rectangle or IEEE zigzag), LED (triangle + bar + emission arrows), switch (hinged contact), ground (stacked decreasing lines). Wires stay edges. Per SCHEMATIC-SYMBOLS.md — standard conventions, not invented icons. Verify: screenshot shows a recognizable schematic. |
 | **S18-v3-6** | Sprint 18 retro + §15 rows | Sub-commit log, lessons, new §15 rows (Electron wrapping; canvas interactivity; solver overlay as the next sprint; symbol library expansion). |
@@ -111,8 +119,8 @@ tests/
 
 ## Done criteria
 
-- [ ] `npm run dev` serves the canvas; `npm run build` produces a bundle (both succeed)
-- [ ] React Flow renders an empty canvas (S18-v3-2), then the anchor circuit (S18-v3-4)
+- [ ] `npm run dev` launches the Electron app showing the canvas; `npm run build` compiles main + renderer (both succeed)
+- [ ] React Flow renders an empty canvas inside the Electron window (S18-v3-2), then the anchor circuit (S18-v3-4)
 - [ ] The catalog→World→Flow pipeline loads the real fixtures in the browser
 - [ ] `world-to-flow.ts` is pure + unit-tested
 - [ ] The 6 anchor-circuit instances + 6 nets render as a connected schematic
@@ -129,10 +137,10 @@ tests/
 
 ## Risks called out
 
-1. **Standing up a frontend in a Node-only repo is the real work.** The existing `tsconfig.json` targets Node (no DOM, no JSX). Adding React needs a DOM+JSX config without breaking the existing `tsc --noEmit` gate over `src/` logic. Mitigation: project references — a `tsconfig.app.json` (DOM+JSX, covers `src/canvas/`) alongside the existing Node config; the root `tsc -b` checks both. Verified in S18-v3-2 before going further.
-2. **React 19 + React Flow 12 compatibility.** React Flow 12 supports React 18+; React 19 is recent. Mitigation: the empty-canvas smoke (S18-v3-2) confirms they mount together before building on them. If incompatible, pin React 18.
-3. **Loading YAML in the browser.** The tests read fixtures from disk via `node:fs`; the browser can't. Mitigation: Vite's `import.meta.glob` / `?raw` imports the fixture files at build time; the `yaml` package (already a dep) parses them. The loader is browser-specific but produces the identical `World` shape.
-4. **Verification needs a running browser.** Confirming the render requires serving the app + screenshotting. Mitigation: run `vite dev`/`preview` in the background + use the preview/browser tooling to screenshot. If screenshotting isn't available, fall back to a DOM-snapshot test (render to a string + assert structure) — but a real screenshot is the goal.
+1. **Standing up Electron + React in a Node-only repo is the real work.** The existing `tsconfig.json` targets Node (no DOM, no JSX). The Electron split is three contexts: main (Node), preload (Node-ish), renderer (DOM+JSX). Mitigation: electron-vite handles the three-context build; split tsconfigs (Node for main/preload/logic, DOM+JSX for renderer) keep the existing `tsc --noEmit` gate green via project refs. Verified in S18-v3-2 before going further.
+2. **React 19 + React Flow 12 + Electron 42 compatibility.** All recent. Mitigation: the empty-canvas smoke (S18-v3-2) confirms they mount together before building on them. If incompatible, pin React 18.
+3. **Loading YAML in the renderer.** The tests read fixtures from disk via `node:fs`; the renderer is a sandboxed Chromium page. Mitigation: Vite's `import.meta.glob` / `?raw` imports the fixture files at build time (they're bundled into the renderer); the `yaml` package (already a dep) parses them. The loader produces the identical `World` shape. (No need for IPC-to-main file reads for the MVP — the fixtures bundle.)
+4. **Verifying an Electron render is harder than a browser one.** The renderer is still a web page, so its content (React Flow canvas) can be verified by pointing the dev server at a browser + the preview tooling. The Electron shell wrapping is verified by launching the app (`npm run dev`) on the user's Windows desktop and screenshotting via computer-use. Both paths used: renderer content via browser preview, shell via desktop screenshot.
 5. **Scope creep toward interactivity.** A canvas invites "just add drag." Mitigation: the non-goals are explicit — static render only. Interactivity is a whole sprint with its own UX §15 rows.
 6. **The "standard symbols not invented icons" commitment.** Labeled boxes (S18-v3-4) risk reading as invented icons. Mitigation: they're an explicit, same-sprint scaffold; S18-v3-5 replaces them with standard schematic symbols. The retro confirms the commitment is honored.
 
@@ -143,7 +151,7 @@ tests/
 Carried forward from Sprint 17 close + new from Sprint 18 design:
 
 - (all prior open §15 rows)
-- **NEW from Sprint 18 design:** Electron wrapping (browser app → desktop app); canvas interactivity (drag / place / wire / right-click override — pairs with the auto-created-interface + right-click-override §15 rows); solver overlay on the canvas (node voltages, branch currents, red overloaded LED — the next canvas sprint, consuming solveDC + detectFailures); full schematic symbol library (beyond the anchor circuit's kinds); canvas-only state persistence (`canvas/layout.yaml` for positions/lock/color).
+- **NEW from Sprint 18 design:** Electron packaging into a distributable installer (electron-builder — the shell runs this sprint, packaging is later); canvas interactivity (drag / place / wire / right-click override — pairs with the auto-created-interface + right-click-override §15 rows); solver overlay on the canvas (node voltages, branch currents, red overloaded LED — the next canvas sprint, consuming solveDC + detectFailures); full schematic symbol library (beyond the anchor circuit's kinds); canvas-only state persistence (`canvas/layout.yaml` for positions/lock/color).
 
 ---
 
