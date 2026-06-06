@@ -1521,13 +1521,16 @@ load fixtures → cross-FK validateWorld (0 errors)
                       units: 'ampere',
                       severity: 'error',
                     },
-                    // and possibly 'resistor-overpower' on resistor_001
-                    // if the fixture declares power_rating (likely 1/4 W = 0.25 W,
-                    // computed dissipation 0.49 W → 1.96× over rating)
                   ]
 ```
 
-This is the cross-sprint contract from Sprint 12 closing: the deliberately-undersized 100 Ω current-limit resistor + 9 V supply + 2 V LED produces the load-bearing 70 mA result, which violates the LED's 20 mA rating by 3.5×, which fires `led-overloaded` with the exact numbers. Four sprints of foundational work compose into one structured "your LED would die" error.
+**Exactly one failure fires** on the anchor circuit, and that's the right answer:
+
+- **`led-overloaded` fires** — 70 mA through a 20 mA LED is the headline failure. ✓
+- **`resistor-overpower` does NOT fire** — `resistor_001` dissipates `I²R = 0.07² × 100 = 0.49 W`, well under its declared `power_rating: 5 W` (10.2× headroom). The resistor is fine; only the LED is in trouble. (The check still *runs* — `power_rating` is declared — it just doesn't trip.)
+- **`led-reverse-breakdown` does NOT fire** — the LED is forward-biased in this circuit (V_anode = 2 V > V_cathode = 0 V), so `V_cathode − V_anode = −2 V`, nowhere near the +5 V `reverse_breakdown_voltage` threshold.
+
+This is the cross-sprint contract from Sprint 12 closing: the deliberately-undersized 100 Ω current-limit resistor + 9 V supply + 2 V LED produces the load-bearing 70 mA result, which violates the LED's 20 mA rating by 3.5×, which fires `led-overloaded` with the exact numbers. Four sprints of foundational work compose into one structured "your LED would die" error — and the detector correctly stays silent about the resistor, which is operating safely. The `resistor-overpower` and `led-reverse-breakdown` checks get their triggering cases from synthetic test fixtures instead.
 
 ### 19.11 Relation to §15
 
