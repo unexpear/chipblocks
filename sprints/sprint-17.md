@@ -146,3 +146,80 @@ Master tip when opened: `b14d4ac` (post-Sprint-16 + the §15 accuracy correction
 **Why this sprint matters:** it's a contained, high-value backstop after the heavy nonlinear-solver sprint. The terminal names the solver depends on become declared and validated, closing a real bug class (typo'd terminal → silent solve failure) with structural validation that runs before the solver. It also lays the groundwork for the solver to eventually read terminals instead of hardcoding them.
 
 Trigger to begin: user approval of this plan.
+
+---
+
+## Sprint 17 retro (closed 2026-06-06)
+
+### What landed
+
+| Sub-commit | What |
+|---|---|
+| `27318d8` | S17-v3-1: Sprint 17 plan opened |
+| `fa83341` | S17-v3-2: OBJECT-MODEL.md §21 spec + §15 "Terminal-name validation" row closed |
+| `ae46ac9` | S17-v3-3: `terminals:` field in definition.schema.json + 6 schema tests |
+| `152df43` | S17-v3-4: terminals declared on all 11 connectable devices |
+| `ecd223d` | S17-v3-5: cross-FK `unknown-terminal` check (both directions) + 3 tests |
+| (this) | S17-v3-6: retro + follow-on §15 row — Sprint 17 closes |
+
+### Done criteria — all met
+
+- [x] OBJECT-MODEL.md §21 lands with the terminal-taxonomy spec
+- [x] §15 "Terminal-name validation" row marked ✅ CLOSED with §21 pointer
+- [x] `definition.schema.json` accepts the `terminals:` field; rejects malformed terminal shapes (non-snake_case name, unknown sub-property, non-object entry)
+- [x] All 11 connectable devices declare their terminals; the valid world still validates
+- [x] Cross-FK `unknown-terminal` fires for a bad `connects[].terminal` and a bad net `members[].terminal`
+- [x] Devices without declared terminals skip the check (no false positive — tested)
+- [x] The valid-world cross-FK test still reports zero errors
+- [x] All tests pass — **236** (up from 227 at Sprint 16 close)
+- [x] `npx tsc --noEmit` clean
+- [x] `npx biome check .` clean
+- [x] Sprint retro written
+- [x] New §15 row added (solver reads declared terminals + polarity hint)
+
+### Catalog after Sprint 17
+
+| | Sprint 16 close | Sprint 17 close |
+|---|---|---|
+| Primitive devices | 11 | 11 (all 11 now declare terminals) |
+| **Cross-FK error codes** | 11 | **12** (+ `unknown-terminal`) |
+| **Catalog spec sections** | 20 | **21** (+ §21 terminal taxonomy) |
+| **Schema fields on definitions** | — | + `terminals:` |
+| **Tests** | 227 | **236** (16 diode-model + 17 net-schema + 23 equation-schema + 79 schema + 20 equation-evaluator + 37 dc-solver + 26 failure-detector + 18 cross-FK = 236) |
+| **Terminal names** | convention in solver code only | **declared + validated** in the catalog |
+
+### Lessons surfaced
+
+1. **The audit found the work before the sprint did.** Sprint 17 exists because the Sprint 16 placeholder/deferred audit surfaced terminal-name validation as the highest-value now-fillable row — and the same audit confirmed the terminal names already in use matched the conventions, so the sprint was low-risk before it started. **General lesson:** a periodic "what did we defer that's now cheap?" pass turns the deferred-questions list from a graveyard into a backlog.
+
+2. **Forward-compatible design paid off two sprints later.** Sprint 13 deliberately left terminals as free strings "forward-compatible — adding terminal-FK validation later doesn't require rewriting existing fixtures." Sprint 17 added the validation with zero instance/net rewrites, exactly as promised. **General lesson:** when deferring, design the deferral so the future fill-in is additive, not a migration.
+
+3. **Pre-flight verification made the cross-FK check a formality.** Before writing the `unknown-terminal` check, a script confirmed every terminal in use was declared on the right device (zero mismatches). So when the check landed, the valid-world test passed on the first run — the check had nothing to falsely flag. **General lesson:** verify the data matches the rule before writing the rule's enforcement; the enforcement then can't surprise you.
+
+4. **A contained sprint after a heavy one is healthy cadence.** Sprint 16 (nonlinear solver) was the hardest single piece the project has built. Sprint 17 is a focused, low-risk backstop — declare terminals, validate them, done. The alternating heavy/light rhythm keeps momentum without burning out the discipline. **General lesson:** not every sprint needs to be a tentpole; closing a real bug class cleanly is its own kind of progress.
+
+### New §15 row added in this retro
+
+One new deferred question:
+
+- **Solver reads declared terminals + polarity hint.** Sprint 17 declares terminals and validates them, but the DC solver still hardcodes terminal-name conventions in its stamp functions (`stampResistor` looks for `terminal_a`/`terminal_b`, `stampVoltageSource` for `terminal_positive`/`terminal_negative`, etc.). The natural follow-on: add an optional polarity / semantic-role hint to each terminal (`role: anode`, `polarity: positive`) and have the solver read the declared terminals + roles instead of hardcoding them. This removes the duplication between the catalog's terminal names and the solver's hardcoded strings, and makes adding a new device's terminals a pure-data change. Lands when the duplication becomes a maintenance cost (a new connectable device with non-standard terminal names would force it).
+
+### Unresolved questions (still deferred per OBJECT-MODEL.md §15)
+
+Carried forward from Sprint 16 close (minus the two corrected-as-already-done rows + terminal validation now closed) + 1 new from Sprint 17:
+
+- (all prior open §15 rows)
+- **NEW from Sprint 17 retro:** solver reads declared terminals + polarity hint (remove the hardcoded stamp-function conventions)
+
+### What this unblocks
+
+After Sprint 17 close:
+
+- **A real bug class is closed.** A typo'd terminal (`termnal_a`, `anodee`) now fails cross-FK with a clear `unknown-terminal` error pointing at the exact instance and the device's actual terminals — instead of silently breaking the DC solve.
+- **The solver can eventually stop hardcoding terminals.** With terminals declared + validated, the follow-on (§15 row) to have the solver *read* them is straightforward — the data is now authoritative.
+- **New connectable devices get a clear contract.** Adding a device means declaring its terminals; cross-FK then enforces that instances + nets wire to real pins. The convention is no longer tribal knowledge in the solver code.
+- **The canvas has terminal anchors.** When the canvas lands, a device's declared terminals are the connection points it renders + lets the user wire to. Sprint 17 makes the pin list a first-class, validated part of each device.
+
+### Sprint 17 closed
+
+All sub-commits land cleanly on master. 236 tests pass. Terminal names — the convention the DC solver has depended on since Sprint 14 — are now a declared, schema-valid, cross-FK-validated part of the catalog. The `unknown-terminal` check catches typo'd terminals before the solver runs, in both the instance-connects and net-members directions. The §15 "Terminal-name validation" row is closed; a focused follow-on (solver reads terminals) is queued. The next direction — the canvas, transistors, temperature/thermal, or another §15 row — is the user's call at the Sprint 17+1 planning conversation.
