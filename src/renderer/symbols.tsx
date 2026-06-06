@@ -130,35 +130,43 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
 export type DeviceNodeData = { definition: string; label: string }
 
 /**
+ * The bare schematic symbol for a device definition (or a labeled fallback box
+ * for kinds without a symbol yet), with no handles — shared by the canvas node
+ * and the parts palette so both draw a part the same way.
+ */
+export function DeviceGlyph({ definition }: { definition: string }) {
+  const Glyph = GLYPHS[definition]
+  if (Glyph) return <Glyph />
+  return (
+    <div
+      style={{
+        width: W,
+        height: H,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        border: '1px solid #555',
+        borderRadius: 4,
+        color: STROKE,
+        fontSize: 10,
+      }}
+    >
+      {definition}
+    </div>
+  )
+}
+
+/**
  * React Flow custom node: renders the standard symbol for the device kind (or
  * a labeled fallback box for kinds without a symbol yet) + left/right handles
  * + the instance id.
  */
 export function DeviceNode({ data }: NodeProps) {
   const { definition, label } = data as DeviceNodeData
-  const Glyph = GLYPHS[definition]
   return (
     <div style={{ textAlign: 'center', fontFamily: 'system-ui, sans-serif' }}>
       <Handle type="target" position={Position.Left} style={{ background: '#888' }} />
-      {Glyph ? (
-        <Glyph />
-      ) : (
-        <div
-          style={{
-            width: W,
-            height: H,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            border: '1px solid #555',
-            borderRadius: 4,
-            color: STROKE,
-            fontSize: 10,
-          }}
-        >
-          {definition}
-        </div>
-      )}
+      <DeviceGlyph definition={definition} />
       <div style={{ color: '#999', fontSize: 9, marginTop: 2 }}>{label}</div>
       <Handle type="source" position={Position.Right} style={{ background: '#888' }} />
     </div>

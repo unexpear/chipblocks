@@ -1,33 +1,47 @@
 import {
+  addEdge,
   Background,
+  type Connection,
   Controls,
   type Edge,
   MarkerType,
   type Node,
   ReactFlow,
+  ReactFlowProvider,
   useEdgesState,
   useNodesState,
+  useReactFlow,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useMemo } from 'react'
+import { type DragEvent, useCallback, useMemo, useRef } from 'react'
 import { solveDC } from '../dc-solver.ts'
 import { loadCatalogWorld } from './catalog-loader.ts'
 import { edgeFlow } from './edge-currents.ts'
 import { edgeTypes } from './net-edge.tsx'
+import { DEFINITION_MIME, Palette } from './palette.tsx'
 import { nodeTypes } from './symbols.tsx'
 import { worldToFlow } from './world-to-flow.ts'
 
-const CURRENT = '#7ab8ff' // a live wire carrying current
+const CURRENT = '#7ab8ff' // a live wire carrying current (solved)
 const IDLE = '#555' // a tap / no-current wire
+const DRAWN = '#8a93a0' // a user-drawn wire, not yet solved
 
 /**
- * The canvas page. Sprint 18:
- *  - S18-v3-2: empty React Flow canvas (shell smoke).
- *  - S18-v3-4 (here): load the catalog + render the educational anchor circuit
- *    as labeled nodes + net edges. Labeled boxes are an honest scaffold —
- *    standard schematic symbols replace them in S18-v3-5.
+ * The canvas page. Sprint 18 rendered the loaded circuit; Sprint 19 makes it
+ * interactive — drag a part from the palette to place it (S19-v3-6), drag to
+ * rearrange (S19-v3-3), draw wires between handles, with physics-driven current
+ * arrows on the solved circuit (S19-v3-5). useReactFlow needs a provider, so the
+ * page splits into App (provider) + Canvas (content).
  */
 export function App() {
+  return (
+    <ReactFlowProvider>
+      <Canvas />
+    </ReactFlowProvider>
+  )
+}
+
+function Canvas() {
   const initial = useMemo(() => {
     const world = loadCatalogWorld()
     const solution = solveDC(world)
@@ -50,6 +64,9 @@ export function App() {
         source: e.source,
         target: e.target,
         type: 'net',
+        // A wire is a connection, not a deletable block — the user reconnects
+        // its endpoints instead (wire-as-connector model).
+        deletable: false,
         label: e.showLabel ? e.label : undefined,
         data: { amps: wireCurrent.carries ? wireCurrent.amps : null },
         style: {
@@ -64,42 +81,81 @@ export function App() {
     return { nodes, edges }
   }, [])
 
-  // Live React Flow state — makes the nodes draggable (S19-v3-3): onNodesChange
-  // applies drag moves so a part stays where the user drops it (in-session;
-  // persisting positions to canvas/layout.yaml is a later sprint).
-  const [nodes, , onNodesChange] = useNodesState(initial.nodes)
-  const [edges, , onEdgesChange] = useEdgesState(initial.edges)
+  // Live React Flow state — nodes are draggable (S19-v3-3); setNodes/setEdges
+  // also let the palette drop new parts and the user draw new wires.
+  const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes)
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges)
+  const { screenToFlowPosition } = useReactFlow()
+  const dropCount = useRef(0)
+
+  const onDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+  }, [])
+
+  // Drop a part from the palette → a new node at the drop point (S19-v3-6).
+  const onDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      event.preventDefault()
+      const definition = event.dataTransfer.getData(DEFINITION_MIME)
+      if (!definition) return
+      const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      dropCount.current += 1
+      const id = `${definition}_${dropCount.current}`
+      setNodes((current) =>
+        current.concat({ id, type: 'device', position, data: { definition, label: id } }),
+      )
+    },
+    [screenToFlowPosition, setNodes],
+  )
+
+  // Draw a wire between two handles → a new (not-yet-solved) net edge.
+  const onConnect = useCallback(
+    (connection: Connection) =>
+      setEdges((current) =>
+        addEdge(
+          { ...connection, type: 'net', deletable: false, style: { stroke: DRAWN } },
+          current,
+        ),
+      ),
+    [setEdges],
+  )
 
   return (
-    <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
-      <div
-        style={{
-          position: 'absolute',
-          top: 12,
-          left: 12,
-          zIndex: 10,
-          color: '#ccc',
-          fontSize: 13,
-          fontFamily: 'system-ui, sans-serif',
-          pointerEvents: 'none',
-        }}
-      >
-        ChipBlocks — educational anchor circuit ({nodes.length} components, {edges.length} net
-        connections) · drag to rearrange
+    <div style={{ width: '100vw', height: '100vh', display: 'flex' }}>
+      <Palette />
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: the canvas is a drag-and-drop drop target for palette parts; keyboard-accessible placement is future work */}
+      <div style={{ flex: 1, position: 'relative' }} onDragOver={onDragOver} onDrop={onDrop}>
+        <div
+          style={{
+            position: 'absolute',
+            top: 12,
+            left: 12,
+            zIndex: 10,
+            color: '#ccc',
+            fontSize: 13,
+            fontFamily: 'system-ui, sans-serif',
+            pointerEvents: 'none',
+          }}
+        >
+          ChipBlocks — {nodes.length} components, {edges.length} wires · drag a part from the panel
+          · move parts · draw wires between the dots
+        </div>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          fitView
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background color="#333" gap={16} />
+          <Controls />
+        </ReactFlow>
       </div>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        fitView
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background color="#333" gap={16} />
-        <Controls />
-      </ReactFlow>
     </div>
   )
 }
