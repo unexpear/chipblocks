@@ -119,6 +119,11 @@ behaviors:
   - conducts_current
   - has_resistance
   - produces_joule_heat
+terminals:
+  anode:
+    description: Positive terminal (P-side); current enters here when forward-biased.
+  cathode:
+    description: Negative terminal (N-side); current exits here.
 support:
   model_status: defined
   solver_status: builtin_simple

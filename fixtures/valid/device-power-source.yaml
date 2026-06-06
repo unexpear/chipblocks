@@ -70,6 +70,11 @@ behaviors:
   - provides_emf
   - has_resistance
   - produces_joule_heat
+terminals:
+  terminal_positive:
+    description: Positive terminal; current exits here into the external circuit.
+  terminal_negative:
+    description: Negative terminal; current returns here.
 support:
   model_status: defined
   solver_status: builtin_simple

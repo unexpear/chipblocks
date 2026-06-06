@@ -71,6 +71,11 @@ behaviors:
   - conducts_current
   - has_resistance
   - produces_joule_heat
+terminals:
+  anode:
+    description: Metal-side terminal; current enters here when forward-biased.
+  cathode:
+    description: Semiconductor-side terminal; current exits here.
 support:
   model_status: defined
   solver_status: builtin_simple

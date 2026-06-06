@@ -86,6 +86,11 @@ properties:
 behaviors:
   - has_capacitance
   - stores_charge
+terminals:
+  terminal_a:
+    description: One plate connection.
+  terminal_b:
+    description: The other plate connection.
 support:
   model_status: defined
   solver_status: builtin_simple

@@ -50,6 +50,11 @@ behaviors:
   - conducts_current
   - has_resistance
   - produces_joule_heat
+terminals:
+  terminal_a:
+    description: One end of the wire.
+  terminal_b:
+    description: The other end of the wire.
 support:
   model_status: defined
   solver_status: builtin_simple

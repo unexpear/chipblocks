@@ -68,6 +68,11 @@ state_machine:
       to: open
       trigger: actuated
       description: The same actuation source toggles the contacts back apart. (For toggle switches, the actuation alternates between making and breaking on each event; for momentary switches the open->closed and closed->open triggers would be separate — 'actuated_while_held' and 'released'.)
+terminals:
+  terminal_in:
+    description: One pole of the switch contact.
+  terminal_out:
+    description: The other pole of the switch contact.
 support:
   model_status: defined
   solver_status: builtin_simple

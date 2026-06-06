@@ -30,6 +30,9 @@ composition:
       kind: interface
       min_count: 1
 behaviors: []
+terminals:
+  reference_terminal:
+    description: The single connection point that attaches to the net designated as the 0 V reference.
 support:
   model_status: defined
   solver_status: not_applicable
