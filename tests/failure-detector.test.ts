@@ -428,3 +428,140 @@ describe('detectFailures end-to-end: educational anchor circuit', () => {
     expect(reverseFailures).toEqual([])
   })
 })
+
+// ===========================================================================
+// 4. S15-v3-6 — the cross-sprint contract, consolidated + edge cases
+// ===========================================================================
+
+describe('detectFailures: the consolidated cross-sprint contract (S15-v3-6)', () => {
+  test('the anchor circuit produces exactly one Failure, with the complete §19.10 field set', () => {
+    // This is the authoritative documentation of the contract that's been
+    // alive since Sprint 12. Four sprints compose:
+    //   §16 equation values → §17 nets → §18 DC solver → §19 failure detection
+    // The deliberately-undersized circuit (9 V, 100 Ω, LED V_F=2 V) produces
+    // 70 mA, 3.5× the LED's 20 mA rating, and exactly one failure fires with
+    // every field populated as the spec's §19.10 example shows.
+    const world = loadWorld('fixtures/valid')
+    expect(validateWorld(world)).toEqual([])
+
+    const sol = solveDC(world)
+    expect(sol.status).toBe('solved')
+
+    const failures = detectFailures(world, sol)
+    expect(failures.length).toBe(1)
+
+    const f = failures[0]
+    expect(f).toBeDefined()
+    if (f === undefined) return
+    expect(f.code).toBe('led-overloaded')
+    expect(f.source).toBe('led_001')
+    expect(f.kind).toBe('max_forward_current')
+    expect(f.measured).toBeCloseTo(0.07, 6)
+    expect(f.rated).toBe(0.02)
+    expect(f.ratio).toBeCloseTo(3.5, 4)
+    expect(f.units).toBe('ampere')
+    expect(f.severity).toBe('error')
+  })
+
+  test('collects multiple failures when a synthetic circuit violates more than one rating', () => {
+    // A synthetic single-loop circuit deliberately overdriven so BOTH an LED
+    // and its current-limit resistor are over rating at once. Proves the
+    // detector accumulates all violations rather than stopping at the first.
+    //   9 V battery → net_a — [r1 10Ω, 1/8 W] — net_b — [led V_F=2V] — gnd
+    //   current = (9 - 2) / 10 = 700 mA
+    //   • LED: 700 mA vs 20 mA rating → led-overloaded (35×)
+    //   • Resistor: 0.7² × 10 = 4.9 W vs 0.125 W rating → resistor-overpower
+    const world: World = {
+      definitions: new Map(),
+      instances: new Map(),
+      behaviors: new Map(),
+      activeVariables: new Map(),
+      nets: new Map(),
+    }
+    world.nets.set('net_a', {
+      id: 'net_a',
+      kind: 'net',
+      members: [
+        { instance: 'bat', terminal: 'terminal_positive' },
+        { instance: 'r1', terminal: 'terminal_a' },
+      ],
+    })
+    world.nets.set('net_b', {
+      id: 'net_b',
+      kind: 'net',
+      members: [
+        { instance: 'r1', terminal: 'terminal_b' },
+        { instance: 'led_1', terminal: 'anode' },
+      ],
+    })
+    world.nets.set('net_gnd', {
+      id: 'net_gnd',
+      kind: 'net',
+      type: 'ground',
+      members: [
+        { instance: 'bat', terminal: 'terminal_negative' },
+        { instance: 'led_1', terminal: 'cathode' },
+      ],
+    })
+    world.instances.set('bat', {
+      id: 'bat',
+      kind_ref: 'primitive_device',
+      definition: 'power_source',
+      parameters: { nominal_voltage: { value: { kind: 'scalar', amount: 9, unit: 'volt' } } },
+      connects: [
+        { net: 'net_a', terminal: 'terminal_positive', of: 'bat' },
+        { net: 'net_gnd', terminal: 'terminal_negative', of: 'bat' },
+      ],
+    })
+    world.instances.set('r1', {
+      id: 'r1',
+      kind_ref: 'primitive_device',
+      definition: 'resistor',
+      parameters: {
+        resistance: { value: { kind: 'scalar', amount: 10, unit: 'ohm' } },
+        power_rating: { value: { kind: 'scalar', amount: 0.125, unit: 'watt' } },
+      },
+      connects: [
+        { net: 'net_a', terminal: 'terminal_a', of: 'r1' },
+        { net: 'net_b', terminal: 'terminal_b', of: 'r1' },
+      ],
+    })
+    world.instances.set('led_1', {
+      id: 'led_1',
+      kind_ref: 'primitive_device',
+      definition: 'led',
+      parameters: {
+        forward_voltage: { value: { kind: 'scalar', amount: 2, unit: 'volt' } },
+        max_forward_current: { value: { kind: 'scalar', amount: 0.02, unit: 'ampere' } },
+      },
+      connects: [
+        { net: 'net_b', terminal: 'anode', of: 'led_1' },
+        { net: 'net_gnd', terminal: 'cathode', of: 'led_1' },
+      ],
+    })
+
+    const sol = solveDC(world)
+    expect(sol.status).toBe('solved')
+
+    const failures = detectFailures(world, sol)
+    const codes = failures.map((f) => f.code).sort()
+    expect(codes).toEqual(['led-overloaded', 'resistor-overpower'])
+
+    const ledF = failures.find((f) => f.code === 'led-overloaded')
+    expect(ledF?.measured).toBeCloseTo(0.7, 6) // 700 mA
+    const rF = failures.find((f) => f.code === 'resistor-overpower')
+    expect(rF?.measured).toBeCloseTo(4.9, 6) // 4.9 W
+  })
+
+  test('an empty world produces no failures', () => {
+    const world: World = {
+      definitions: new Map(),
+      instances: new Map(),
+      behaviors: new Map(),
+      activeVariables: new Map(),
+      nets: new Map(),
+    }
+    const sol = solveDC(world)
+    expect(detectFailures(world, sol)).toEqual([])
+  })
+})
