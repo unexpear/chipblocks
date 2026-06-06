@@ -2,6 +2,7 @@ import { Background, Controls, type Edge, type Node, ReactFlow } from '@xyflow/r
 import '@xyflow/react/dist/style.css'
 import { useMemo } from 'react'
 import { loadCatalogWorld } from './catalog-loader.ts'
+import { edgeTypes } from './net-edge.tsx'
 import { nodeTypes } from './symbols.tsx'
 import { worldToFlow } from './world-to-flow.ts'
 
@@ -25,9 +26,9 @@ export function App() {
       id: e.id,
       source: e.source,
       target: e.target,
-      label: e.label,
+      type: 'net',
+      label: e.showLabel ? e.label : undefined,
       style: { stroke: '#888' },
-      labelStyle: { fill: '#aaa', fontSize: 9 },
     }))
     return { nodes, edges }
   }, [])
@@ -53,6 +54,7 @@ export function App() {
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         fitView
         proOptions={{ hideAttribution: true }}
       >

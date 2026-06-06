@@ -20,6 +20,14 @@ export type FlowEdge = {
   source: string
   target: string
   label: string
+  /**
+   * Render the net-id label on this edge? A net's star produces N-1 edges that
+   * all carry the same `label` (the net id, kept for identity/testing), but the
+   * canvas shows it on only the first — otherwise a 3+ member net repeats its
+   * name on every spoke (the `net_battery_neg` ×2 clutter). True on the first
+   * drawn edge of each net, false on the rest.
+   */
+  showLabel: boolean
 }
 
 /** Instances that participate in the circuit (have at least one connection). */
@@ -61,6 +69,7 @@ export function worldToFlow(world: World): { nodes: FlowNode[]; edges: FlowEdge[
     if (net.members.length < 2) continue
     const first = net.members[0]
     if (first === undefined || !present.has(first.instance)) continue
+    let labelShown = false
     for (let i = 1; i < net.members.length; i++) {
       const m = net.members[i]
       if (m === undefined || !present.has(m.instance)) continue
@@ -69,7 +78,9 @@ export function worldToFlow(world: World): { nodes: FlowNode[]; edges: FlowEdge[
         source: first.instance,
         target: m.instance,
         label: net.id,
+        showLabel: !labelShown,
       })
+      labelShown = true
     }
   }
 

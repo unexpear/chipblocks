@@ -107,6 +107,32 @@ describe('worldToFlow', () => {
     expect(n3.every((e) => e.source === 'a')).toBe(true)
   })
 
+  test('a multi-spoke net shows its label on exactly one edge (no duplicate clutter)', () => {
+    const world = emptyWorld()
+    for (const id of ['a', 'b', 'c']) {
+      world.instances.set(id, {
+        id,
+        kind_ref: 'primitive_device',
+        definition: 'wire',
+        connects: [{ net: 'n', terminal: 'terminal_a', of: id }],
+      })
+    }
+    world.nets.set('n3', {
+      id: 'n3',
+      kind: 'net',
+      members: [
+        { instance: 'a', terminal: 'terminal_a' },
+        { instance: 'b', terminal: 'terminal_a' },
+        { instance: 'c', terminal: 'terminal_a' },
+      ],
+    })
+    const { edges } = worldToFlow(world)
+    const n3 = edges.filter((e) => e.label === 'n3')
+    // every spoke still carries the net id (identity), but only one renders it
+    expect(n3.length).toBe(2)
+    expect(n3.filter((e) => e.showLabel).length).toBe(1)
+  })
+
   test('node positions are deterministic (stable across runs)', () => {
     const world = emptyWorld()
     world.instances.set('x', {
