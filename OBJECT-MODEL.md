@@ -922,7 +922,7 @@ Surfaced now so they can't accidentally be answered by side effect later.
 | **Parametric equation evaluation (`input_variable`).** §16 recognizes `input_variable` as a third input-spec kind on equation-valued properties (parametric forms like ρ(T) where the caller supplies T at evaluation time). Sprint 12 evaluates all-concrete-input equations only and returns `status: 'deferred-evaluation'` when any `input_variable` input is present. Full evaluation lands when a caller exists that can supply the variable — most naturally the DC solver (Sprint 14+) with its own temperature-dependence model. | Sprint 14+ when the DC solver supplies callers |
 | **Device-level `defaults-vs-rating` check.** Sprint 12's `derives-violates-rating` runs at the INSTANCE level, using the instance's actual material + geometry. A complementary device-level check ("what would the device's *defaults* compute, vs the device-level rating?") would catch catalog-level inconsistencies without needing an instance. Deferred until device defaults are guaranteed meaningful for derived-value evaluation; some defaults today are placeholders that would produce nonsense computed values. | When device defaults are uniformly meaningful for derived computation |
 | **Geometry properties on shape definitions.** Equations like R = ρL/A reference `geometry.length` and `geometry.cross_section_area` — but the path shape definition doesn't carry these as properties (length and area live per-instance, not on the shape definition). This means the cross-FK `derives-violates-rating` check SKIPS silently for resistor R because half the inputs don't resolve from world data. Promoting common geometry attributes (length, cross-section area, plate area, plate separation) to shape-definition-level properties would unlock cross-FK evaluation of geometry-dependent equations. Pairs with the stackup model row above. | When the stackup model + richer per-shape property model land |
-| **Terminal-name validation.** Sprint 13's net model (§17) leaves `connects[].terminal` and `members[].terminal` as free strings. For cross-FK to verify a terminal name like `'anode'` is real, every device definition would declare its named terminal taxonomy — LED has `[anode, cathode]`; transistor has `[collector, base, emitter]` or `[drain, gate, source]`; op-amp has 5+ pins including supply. Schema change touches every device fixture plus design questions (polarity-aware terminals on diodes? multi-die packages with shared signals?). Sprint 13's free strings are forward-compatible — adding terminal-FK validation later doesn't require rewriting existing instance fixtures. | When devices declare their named terminal taxonomy (a future sprint) |
+| ~~**Terminal-name validation.** Sprint 13's net model (§17) leaves `connects[].terminal` and `members[].terminal` as free strings. For cross-FK to verify a terminal name like `'anode'` is real, every device definition would declare its named terminal taxonomy.~~ ✅ **CLOSED in Sprint 17** — see §21 below. Devices declare a `terminals:` block; cross-FK fires `unknown-terminal` when an instance `connects:` or net `members:` references a terminal the device doesn't declare. All 11 connectable devices declare their terminals. Polarity-aware terminals + solver-reads-terminals split into a new row below. | ✅ Closed Sprint 17 |
 | **Bus / hierarchical / sub-net model.** A bus is a named group of nets that travel together (8-bit data bus = 8 individual signal nets bundled). Hierarchical nets matter when a module's internal nets connect to external pins (op-amp's internal node that's an external pin). Sprint 13's single-net-per-id flat model handles the educational anchor circuit fine; bus / hierarchy adds complexity (naming rules, scoping rules, expansion semantics) without empirical pressure today. Lands when a real fixture demands it — typically a CPU bus, peripheral interface, or hierarchical module. | When a fixture demands grouped or hierarchical nets |
 | **Net-level Active Variables.** Net-level defaults ("default impedance budget per power net," "default termination scheme per signal net") only matter at larger design scales — real boards with dozens of nets and routing constraints. Today's 5-instance circuits have no diversity to abstract over. Lands when a community pack or larger fixture catalog applies empirical pressure for the abstraction. | When larger fixture catalogs apply pressure |
 | ~~**Net behaviors / physics (KVL, KCL, electrical consistency).** Sum-of-voltages-around-a-loop and sum-of-currents-at-a-node are *what the DC solver computes* — not invariants a structural validator can check.~~ ✅ **CLOSED (linear case) in Sprint 14** — see §18 below. The linear DC operating-point computation lands via Modified Nodal Analysis + mathjs's `lusolve`, handling resistors / voltage sources / wires / LEDs (fixed-V_F approximation) / switches (fixed-state). Nonlinear iterative solving (Shockley diode equation + Newton-Raphson + pnjlim) is migrated to its own §15 row below. | ✅ Closed Sprint 14 (linear case) |
@@ -1675,6 +1675,77 @@ All physics in §20 was verified against canonical sources on 2026-06-06 (zero-t
 - **V_crit formula** `vte · log(vte / (√2 · I_sat))`: verified from ngspice `diotemp.c` (`DIOtVcrit = vte * log(vte/(CONSTroot2*DIOtSatCur))`).
 
 This matches CLAUDE.md's prior 2026-06-05 verification of the overall MNA + Newton-Raphson + pnjlim approach against IEEE EMC Society "How SPICE Works" + Qucs technical docs; §20 re-verifies the specific formulas it implements.
+
+---
+
+## 21. Terminal taxonomy (Sprint 17)
+
+> Adopted in v3 Sprint 17. Devices declare their named terminals; the cross-FK validator verifies that every connection (instance `connects:` and net `members:`) references a real terminal. Closes the §15 "Terminal-name validation" row.
+
+### 21.1 Purpose
+
+The DC solver (§18, §20) addresses terminals by name: `stampResistor` looks for `terminal_a` / `terminal_b`, `stampLED` for `anode` / `cathode`, the ground port for `reference_terminal`, and so on. But those names were a *convention used by the solver code* — declared nowhere in the catalog. A typo'd terminal in a fixture (`termnal_a`) silently broke the solve: the stamp function wouldn't find the terminal, and the circuit solved wrong or singular with no clear error.
+
+§21 makes terminals a declared, validated part of each device. The cross-FK validator catches a bad terminal name **before** the solver runs, surfacing a clear `unknown-terminal` error pointing at the exact instance and bad name. This is the structural backstop the solver's terminal conventions have needed since Sprint 14.
+
+### 21.2 The `terminals:` field
+
+A device definition declares its terminals as an object keyed by terminal name (mirroring the `parameters:` style):
+
+```yaml
+# device-resistor.yaml
+terminals:
+  terminal_a:
+    description: One end of the resistive element.
+  terminal_b:
+    description: The other end.
+```
+
+- Keys are terminal names (`^[a-z][a-z0-9_]*$`), each with an optional `description`.
+- The field is **optional**. Materials, shapes, behaviors, and other non-connectable objects don't declare terminals. Connectable primitive devices do.
+
+### 21.3 Terminals vs. composition interface roles
+
+A device can have **both** an interface role in `composition.requires` (e.g., a resistor's `endpoints: { kind: interface, min_count: 2 }`) **and** a `terminals:` block. They are complementary:
+
+- The **interface role** is the *structural requirement*: "this device needs 2 connection interfaces." It participates in role-satisfaction (§6) and the future `min_count` enforcement.
+- The **terminals** *name those connection points*: "they're called `terminal_a` and `terminal_b`." They're what `connects:` and `members:` reference.
+
+§21 does not cross-check "number of declared terminals == interface role `min_count`" — that pairing is the separate `min_count` enforcement §15 row.
+
+### 21.4 Cross-FK invariant — `unknown-terminal`
+
+The validator enforces, in **both** directions:
+
+| Source | Rule |
+|---|---|
+| Instance `connects[].terminal` | must be a declared terminal on the instance's device (its `definition`) |
+| Net `members[].terminal` | must be a declared terminal on the referenced instance's device |
+
+When the terminal name isn't among the device's declared terminals, cross-FK fires `unknown-terminal` with the source, the offending terminal, and the device.
+
+**Skip rule (honest absence).** If a device doesn't declare `terminals:` at all, the check skips for connections to it — Sprint 17 doesn't force every device to declare terminals in one pass (all 11 connectable ones do, but the check degrades gracefully). A connection to an instance whose definition is missing surfaces as `unknown-reference` (existing code), not a terminal error.
+
+### 21.5 The connectable-device terminal taxonomy (Sprint 17)
+
+| Device(s) | Terminals |
+|---|---|
+| `resistor`, `capacitor`, `wire` | `terminal_a`, `terminal_b` |
+| `led`, `led_uv_algan`, `diode_schottky_al_si`, `diode_silicon_rectifier`, `diode_zener_silicon` | `anode`, `cathode` |
+| `power_source` | `terminal_positive`, `terminal_negative` |
+| `switch_spst_toggle` | `terminal_in`, `terminal_out` |
+| `ground` | `reference_terminal` |
+
+These are exactly the names already in use across the catalog's instance `connects:` and net `members:` (verified before declaring them), so adding the declarations + the check produces zero new errors on the valid world.
+
+### 21.6 What's NOT enforced (Sprint 17)
+
+- **No required-terminal / full-connectivity check.** A declared terminal that isn't connected (a floating pin) is legal. Enforcing "every terminal must be wired" is a net-completeness concern, separate.
+- **No polarity / semantic role.** A terminal declares a name + description, not `role: anode` or `polarity: positive`. The solver still hardcodes which terminal is which. Letting the solver *read* a polarity hint (and drop the hardcoded stamp-function conventions) is the natural follow-on — a §15 deferred row added in Sprint 17's retro.
+
+### 21.7 Relation to §15
+
+This section closes the §15 "Terminal-name validation" row added in Sprint 13's retro. Sprint 13's free-string terminals were explicitly designed forward-compatible — adding the `terminals:` declaration + the `unknown-terminal` check doesn't require rewriting any existing `connects:` / `members:` strings. The §15 row is marked ✅ CLOSED with a pointer here; a new row (solver reads declared terminals + polarity) is added in the Sprint 17 retro.
 
 ---
 
