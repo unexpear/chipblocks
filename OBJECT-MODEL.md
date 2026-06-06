@@ -926,7 +926,7 @@ Surfaced now so they can't accidentally be answered by side effect later.
 | **Bus / hierarchical / sub-net model.** A bus is a named group of nets that travel together (8-bit data bus = 8 individual signal nets bundled). Hierarchical nets matter when a module's internal nets connect to external pins (op-amp's internal node that's an external pin). Sprint 13's single-net-per-id flat model handles the educational anchor circuit fine; bus / hierarchy adds complexity (naming rules, scoping rules, expansion semantics) without empirical pressure today. Lands when a real fixture demands it — typically a CPU bus, peripheral interface, or hierarchical module. | When a fixture demands grouped or hierarchical nets |
 | **Net-level Active Variables.** Net-level defaults ("default impedance budget per power net," "default termination scheme per signal net") only matter at larger design scales — real boards with dozens of nets and routing constraints. Today's 5-instance circuits have no diversity to abstract over. Lands when a community pack or larger fixture catalog applies empirical pressure for the abstraction. | When larger fixture catalogs apply pressure |
 | ~~**Net behaviors / physics (KVL, KCL, electrical consistency).** Sum-of-voltages-around-a-loop and sum-of-currents-at-a-node are *what the DC solver computes* — not invariants a structural validator can check.~~ ✅ **CLOSED (linear case) in Sprint 14** — see §18 below. The linear DC operating-point computation lands via Modified Nodal Analysis + mathjs's `lusolve`, handling resistors / voltage sources / wires / LEDs (fixed-V_F approximation) / switches (fixed-state). Nonlinear iterative solving (Shockley diode equation + Newton-Raphson + pnjlim) is migrated to its own §15 row below. | ✅ Closed Sprint 14 (linear case) |
-| **Nonlinear iterative DC solver (Shockley + Newton-Raphson + pnjlim).** Sprint 14's LED uses a fixed-V_F approximation. The real diode I-V relationship is exponential per the Shockley equation `I = I_s × (exp(V/V_T) − 1)`, which requires linearizing around an operating point and iterating with Newton-Raphson. The **pnjlim** convergence aid prevents diode voltage from oscillating across the exponential's steep region (overflow on `exp(V/V_T)` for V much larger than V_T). Lands together with Sprint 15's failure-mode detection — both consume the per-instance current value, so accuracy upgrades and safety checks ship in the same sprint. | Sprint 15 — failure-mode detection (Stage 4 of the sim arc) |
+| ~~**Nonlinear iterative DC solver (Shockley + Newton-Raphson + pnjlim).** Sprint 14's LED uses a fixed-V_F approximation. The real diode I-V relationship is exponential per the Shockley equation `I = I_s × (exp(V/V_T) − 1)`, which requires linearizing around an operating point and iterating with Newton-Raphson.~~ ✅ **CLOSED in Sprint 16** — see §20 below. The Shockley equation, Newton-Raphson companion model, and the exact ngspice pnjlim convergence aid land in §20, all verified against canonical sources (Wikipedia + ngspice source). The anchor circuit's LED current refines from the fixed-V_F 70.00 mA to the accurate 69.36 mA; `led-overloaded` still fires (3.47×), confirming §19.7. | ✅ Closed Sprint 16 |
 | **Switch state-machine integration.** Sprint 14 hardcodes all SPST switches as closed. The §6.5 state machine declares an `initial_state` (often `open` for safety) and per-state behavior; future state-aware solving would consult each switch's state and produce a stamp accordingly (closed = 0 V source / merge; open = no stamp). Pairs with the trigger-taxonomy and multi-pole-switch §15 rows from earlier sprints. | When state-aware solving becomes load-bearing |
 | **Transient simulation.** Sprint 14 is DC operating point only. Capacitors act as open circuits at DC, inductors as short circuits; the solver currently doesn't model time-dependent behavior. Real transient simulation (the "what happens at the moment you flip the switch?" question) needs ODE integration, time-stepping, capacitor/inductor charge/flux models, and numerical-stiffness handling. Stage 5 of the simulation arc; probably its own multi-sprint arc when it lands. | Stage 5 (far out) |
 | **Wire resistance modeling.** Sprint 14 treats wires as ideal shorts (0 V sources). The §16 equation evaluator can compute R = ρ × L / A from material + geometry, but the IR drop on hookup wire at typical hobby currents (≤100 mA) is sub-mV. Modeling it gains accuracy only when fixtures move to higher currents (PCB power traces at 1 A+, long cable runs) or when high-frequency parasitic considerations become load-bearing. Lands when a fixture genuinely demands it. | When fixtures demand wire-as-real-resistor accuracy |
@@ -1541,6 +1541,133 @@ This is the cross-sprint contract from Sprint 12 closing: the deliberately-under
 This section partially acknowledges the §15 row "Nonlinear iterative DC solver (Shockley + Newton-Raphson + pnjlim)" added in Sprint 14's retro. Sprint 15's safety judgment doesn't require the nonlinear case — the linear approximation's accuracy is sufficient for the rating-comparison decision at meaningful overshoots. When borderline cases (1.05× linear / 0.98× Shockley) appear, the nonlinear sprint is the right closing move; until then, the §15 row stays open and Sprint 15's failures are honestly reported with their accuracy caveat (§19.7).
 
 The nonlinear row is NOT closed by §19 — Sprint 15 documents the relationship but doesn't replace the deferred work.
+
+---
+
+## 20. Nonlinear DC solver (Sprint 16 — Shockley + Newton-Raphson + pnjlim)
+
+> Adopted in v3 Sprint 16. Replaces the fixed-V_F LED approximation (§18.4) with the real Shockley exponential diode equation, solved via Newton-Raphson iteration with the pnjlim convergence aid. Closes the §15 "Nonlinear iterative DC solver" row. **All physics in this section is verified against canonical sources — see §20.12.**
+
+### 20.1 Purpose
+
+§18's DC solver treats an LED as a fixed voltage drop (e.g., 2.0 V) regardless of current. Real LEDs follow an exponential I-V curve: the voltage rises slowly as current increases. §20 implements the real curve.
+
+The concrete result: the educational anchor circuit's LED current moves from the fixed-V_F approximation's **70.00 mA** to the physically-accurate **69.36 mA** — the LED settles at 2.064 V, not exactly 2.0 V, at that current. The ~0.9% difference is why Sprint 15's safety judgment was robust (§19.7): the `led-overloaded` failure fires at 3.47× either way. §20 makes ChipBlocks **right for the right reason** — and correctly handles the borderline cases where linear-vs-exponential disagreement would flip a safety verdict.
+
+### 20.2 The Shockley diode equation
+
+> **I = I_s × (exp(V / (n · V_T)) − 1)**
+
+- `I` — current through the diode (anode → cathode positive)
+- `V` — voltage across the diode (V_anode − V_cathode)
+- `I_s` — reverse saturation current (derived per-LED, §20.3)
+- `n` — ideality factor. Typically 1–2; LEDs sit near the top of that range (~2) due to wide-bandgap recombination. New optional parameter `ideality_factor`, default 2.0.
+- `V_T` — thermal voltage = kT/q = **25.852 mV at 300 K** (k = 1.380649 × 10⁻²³ J/K and q = 1.602176634 × 10⁻¹⁹ C, both NIST CODATA exact; T = 300 K)
+
+### 20.3 Deriving I_s from existing parameters
+
+Real LED datasheets give a forward voltage at a rated current, not I_s. ChipBlocks derives I_s from the LED's existing `forward_voltage` (V_F) + `max_forward_current` (I_F) as the calibration point, plus the ideality factor:
+
+> **I_s = I_F / (exp(V_F / (n · V_T)) − 1)**
+
+For led_001 (V_F = 2.0 V, I_F = 0.020 A, n = 2): I_s ≈ **3.18 × 10⁻¹⁹ A** — physically reasonable for an LED.
+
+**Calibration-point caveat.** This assumes V_F is specified *at* max_forward_current. For led_001 (a 5 mm red LED, V_F = 2.0 V typically @ 20 mA) this holds, but it's not universally true. A dedicated "rated current at which V_F is specified" parameter would decouple the two; that's a §15 deferred row. The small error this introduces doesn't change the qualitative result.
+
+### 20.4 Newton-Raphson companion model
+
+The exponential can't be stamped directly into the linear MNA matrix. At each iteration, the diode is linearized around its current guess voltage V_k into an equivalent conductance + current source (the "companion model"):
+
+> **G_eq = dI/dV = (I_s / (n · V_T)) × exp(V_k / (n · V_T))**
+> **I_eq = I(V_k) − G_eq × V_k**
+
+where I(V_k) is the Shockley current at V_k. The diode stamps as G_eq into the conductance matrix (like a resistor between anode and cathode) in parallel with I_eq into the source vector (like a current source). The linear system then solves, producing new node voltages → new V_k → repeat.
+
+### 20.5 The pnjlim convergence aid
+
+Without limiting, V_k can jump far enough between iterations that exp(V/(n·V_T)) overflows to Infinity. The SPICE **pnjlim** algorithm caps the per-iteration voltage change in the diode's steep region. **The exact algorithm is reproduced from ngspice `DEVpnjlim` (devsup.c), verified 2026-06-06 (§20.12):**
+
+First, the critical voltage (the onset of the steep region):
+
+> **V_crit = (n · V_T) × ln( (n · V_T) / (√2 · I_s) )**
+
+(verified from ngspice `diotemp.c`: `DIOtVcrit = vte * log(vte/(CONSTroot2*DIOtSatCur))`). For led_001, V_crit ≈ 2.03 V.
+
+Then, given a new Newton guess `vnew`, the previous `vold`, and `vt = n·V_T`:
+
+```
+if (vnew > V_crit) and (|vnew − vold| > 2·vt):
+    if vold > 0:
+        arg = (vnew − vold) / vt
+        if arg > 0:  vnew = vold + vt·(2 + ln(arg − 2))
+        else:        vnew = vold − vt·(2 + ln(2 − arg))
+    else:
+        vnew = vt · ln(vnew / vt)
+# (reverse-bias branch limits large negative swings; see §20.12 source)
+return vnew
+```
+
+This keeps the diode voltage advancing toward the solution without overflowing the exponential.
+
+### 20.6 The Newton-Raphson loop
+
+```
+initialize each diode's V_k (warm start at forward_voltage)
+repeat (up to max_iterations, e.g. 100):
+    for each diode: compute companion model (G_eq, I_eq) at V_k
+    assemble + solve the linear MNA system (the §18 machinery)
+    for each diode: V_k_new = pnjlim(node-derived V, V_k, n·V_T, V_crit)
+    if every |V_k_new − V_k| < vntol (e.g. 1e-6 V): converged
+    V_k ← V_k_new
+on convergence: return Solution (status 'solved', with iterations + converged)
+on max-iterations without convergence: return status 'did-not-converge'
+```
+
+The Solution gains informational fields `iterations` (count) and `converged` (bool). A new status value `did-not-converge` is returned honestly rather than a wrong answer when the loop can't settle.
+
+### 20.7 The LED stamp change
+
+Sprint 14 stamped LEDs as fixed-V_F voltage sources (with an auxiliary current variable, §18.4). Sprint 16 replaces that: an LED stamps as its companion model — a conductance G_eq between anode and cathode plus a current source I_eq — exactly like a resistor-with-a-current-injection. **LEDs no longer consume an auxiliary current variable.** The LED's branch current is recomputed from the Shockley equation at the converged voltage, not read from an aux variable.
+
+Power sources stay real voltage sources (with aux variables). Wires and closed switches stay ideal 0 V sources. Only diodes/LEDs become nonlinear companion-model elements.
+
+### 20.8 Linear fast-path
+
+Circuits with **no** nonlinear elements skip the Newton-Raphson loop entirely and do a single linear solve — identical to Sprint 14. This preserves every non-LED Sprint 14 test exactly and avoids iteration overhead where it's not needed. The loop engages only when at least one diode/LED is present.
+
+### 20.9 Anti-placeholder compatibility (§12)
+
+The solver computes derived quantities; Rule 1 (cited values + provenance) doesn't apply to computed outputs. What applies: the solver must be physically honest. §20's nonlinear solve uses the real Shockley physics with canonically-verified algorithms (§20.12) — no faked convergence, no silent wrong answers. A non-converging circuit returns `did-not-converge`, not a plausible-looking fabrication.
+
+### 20.10 First concrete case — the educational anchor circuit
+
+Running the full pipeline on `fixtures/valid/` after Sprint 16:
+
+| Quantity | Fixed-V_F (Sprint 14) | Shockley (Sprint 16) |
+|---|---|---|
+| LED current | 70.00 mA | **69.36 mA** |
+| V across LED (net_resistor_led) | 2.000 V | **2.064 V** |
+| `led-overloaded` ratio | 3.50× | **3.47×** |
+| `led-overloaded` fires? | yes | **yes** |
+
+The by-hand operating point (Newton's method on 9 = 100·I + n·V_T·ln(I/I_s + 1) with the led_001 calibration) gives 69.36 mA / 2.064 V; the solver must match within tolerance. This is the concrete validation of §19.7's claim that the linear approximation was good enough for the safety verdict.
+
+### 20.11 Relation to §15
+
+This section **closes** the §15 deferred row "Nonlinear iterative DC solver (Shockley + Newton-Raphson + pnjlim)" added in Sprint 14's retro and acknowledged in §19.11. The nonlinear iterative case now lands in §20. The §15 row is marked ✅ CLOSED with a pointer here.
+
+New §15 rows are added in Sprint 16's retro: transistor nonlinear models (BJT Ebers-Moll, MOSFET — reuse the companion-model machinery), temperature-dependent V_T (pairs with the thermal solver), GMIN / source stepping (hard-convergence aids beyond pnjlim), and a dedicated rated-current parameter for I_s calibration.
+
+### 20.12 Verification provenance
+
+All physics in §20 was verified against canonical sources on 2026-06-06 (zero-trust, before any code):
+
+- **Shockley equation** `I = I_s(exp(V/nV_T) − 1)`, **thermal voltage** V_T = 25.852 mV at 300 K, **ideality factor** n = 1–2: verified at [Wikipedia: Shockley diode equation](https://en.wikipedia.org/wiki/Shockley_diode_equation).
+- **Companion model** (small-signal conductance g_D = dI/dV + current source for nodal stamping): verified at [Wikipedia: Diode modelling](https://en.wikipedia.org/wiki/Diode_modelling).
+- **pnjlim algorithm** (exact branch logic): verified verbatim from ngspice `DEVpnjlim` in `src/spicelib/devices/devsup.c` ([imr/ngspice](https://github.com/imr/ngspice)).
+- **V_crit formula** `vte · log(vte / (√2 · I_sat))`: verified from ngspice `diotemp.c` (`DIOtVcrit = vte * log(vte/(CONSTroot2*DIOtSatCur))`).
+
+This matches CLAUDE.md's prior 2026-06-05 verification of the overall MNA + Newton-Raphson + pnjlim approach against IEEE EMC Society "How SPICE Works" + Qucs technical docs; §20 re-verifies the specific formulas it implements.
 
 ---
 
