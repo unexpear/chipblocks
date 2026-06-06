@@ -69,6 +69,27 @@ export function edgeFlow(
   }
 }
 
+/**
+ * Conventional-current flow for a wire-EDGE (a collapsed `wire` instance),
+ * read from that instance's own branch current (S19-v3-9). Positive branch
+ * flows from the wire's terminal_a (positive) side toward terminal_b; if the
+ * edge's source sits on the positive side, current runs source→target when the
+ * branch is positive.
+ */
+export function wireFlow(
+  solution: Solution,
+  wireInstance: string,
+  sourceOnPositiveSide: boolean,
+): EdgeFlow {
+  const branch = solution.branches.get(wireInstance) ?? 0
+  const sourceToTarget = sourceOnPositiveSide ? branch >= 0 : branch < 0
+  return {
+    amps: Math.abs(branch),
+    sourceToTarget,
+    carries: Math.abs(branch) > FLOOR_AMPS,
+  }
+}
+
 /** Human-readable current, unit-scaled (A / mA / µA / nA). */
 export function formatCurrent(amps: number): string {
   const magnitude = Math.abs(amps)

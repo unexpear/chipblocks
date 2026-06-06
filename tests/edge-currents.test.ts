@@ -21,7 +21,7 @@ import type {
   World,
 } from '../src/cross-fk-validator.ts'
 import { solveDC } from '../src/dc-solver.ts'
-import { edgeFlow, formatCurrent } from '../src/renderer/edge-currents.ts'
+import { edgeFlow, formatCurrent, wireFlow } from '../src/renderer/edge-currents.ts'
 
 function loadWorld(dir: string): World {
   const definitions = new Map<string, Definition>()
@@ -80,6 +80,27 @@ describe('edgeFlow — arrows driven by the real solver', () => {
 
   test('the ground tap carries no series current (no arrow)', () => {
     const f = edgeFlow(world, solution, 'net_battery_neg', 'wire_002', 'ground_001')
+    expect(f.carries).toBe(false)
+    expect(f.amps).toBe(0)
+  })
+})
+
+describe('wireFlow — a collapsed wire-edge reads its own branch current', () => {
+  const world = loadWorld('fixtures/valid')
+  const solution = solveDC(world)
+  const LOOP_AMPS = 0.069357
+
+  test('current runs source→target when the source is on the positive side', () => {
+    const f = wireFlow(solution, 'wire_001', true)
+    expect(f.carries).toBe(true)
+    expect(f.sourceToTarget).toBe(true)
+    expect(f.amps).toBeCloseTo(LOOP_AMPS, 6)
+  })
+  test('reverses when the source is on the negative side', () => {
+    expect(wireFlow(solution, 'wire_001', false).sourceToTarget).toBe(false)
+  })
+  test('an unknown wire carries nothing', () => {
+    const f = wireFlow(solution, 'not_a_wire', true)
     expect(f.carries).toBe(false)
     expect(f.amps).toBe(0)
   })
