@@ -17,8 +17,9 @@
  * fire based on actual computed values vs. actual declared ratings.
  *
  * S15-v3-3 scaffold: Failure type + detectFailures entry point + LED
- * forward-overload check. resistor-overpower lands in S15-v3-4;
- * led-reverse-breakdown in S15-v3-5.
+ * forward-overload check.
+ * S15-v3-4 adds resistor-overpower (I²R > power_rating).
+ * led-reverse-breakdown lands in S15-v3-5.
  */
 
 import type { Instance, World } from './cross-fk-validator.ts'
@@ -73,6 +74,9 @@ export function detectFailures(world: World, solution: Solution): Failure[] {
     if (LED_DEFINITIONS.has(inst.definition)) {
       const overload = checkLedForwardOverload(inst, solution)
       if (overload !== null) failures.push(overload)
+    } else if (inst.definition === 'resistor') {
+      const overpower = checkResistorOverpower(inst, solution)
+      if (overpower !== null) failures.push(overpower)
     }
   }
 
@@ -109,6 +113,40 @@ export function checkLedForwardOverload(inst: Instance, solution: Solution): Fai
     rated: maxForwardCurrent,
     ratio: magnitude / maxForwardCurrent,
     units: 'ampere',
+    severity: 'error',
+  }
+}
+
+/**
+ * Resistor overpower check (§19.3 / §19.6).
+ * Fires resistor-overpower when the dissipated power I²R exceeds power_rating.
+ * I²R is sign-independent, so the branch current's sign doesn't matter.
+ *
+ * Returns the Failure, or null when the check doesn't fire OR the inputs
+ * can't be resolved (missing resistance, missing power_rating, or missing
+ * branch current — the rating is "unknown," not a failure).
+ */
+export function checkResistorOverpower(inst: Instance, solution: Solution): Failure | null {
+  const resistance = readScalarParam(inst, 'resistance')
+  if (resistance === undefined || resistance <= 0) return null
+
+  const powerRating = readScalarParam(inst, 'power_rating')
+  if (powerRating === undefined || powerRating <= 0) return null
+
+  const current = solution.branches.get(inst.id)
+  if (current === undefined) return null
+
+  const dissipated = current * current * resistance
+  if (dissipated <= powerRating) return null
+
+  return {
+    code: 'resistor-overpower',
+    source: inst.id,
+    kind: 'power_rating',
+    measured: dissipated,
+    rated: powerRating,
+    ratio: dissipated / powerRating,
+    units: 'watt',
     severity: 'error',
   }
 }
