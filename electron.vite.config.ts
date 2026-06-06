@@ -1,7 +1,7 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 
-// electron-vite three-context build (OBJECT-MODEL.md §22 — Sprint 18).
+// electron-vite three-context build (Sprint 18 — sprints/sprint-18.md).
 // main + preload are Node/Electron (deps kept external); renderer is the
 // React + React Flow web app.
 export default defineConfig({

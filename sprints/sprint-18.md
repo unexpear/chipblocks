@@ -162,3 +162,77 @@ Master tip when opened: `8393294` (post-Sprint-17). The 236 tests from Sprint 17
 **Why this sprint matters:** it's the pivot from an invisible foundation to a visible tool. Everything the project has built becomes something you can *see*. It deliberately scopes to the minimum that proves the toolchain + the catalog→canvas pipeline, so the high-value follow-ons (the solver overlay that paints the overloaded LED red; interactivity) build on a solid, tested base rather than a rushed one.
 
 Trigger to begin: user approval of this plan.
+
+---
+
+## Sprint 18 retro (closed 2026-06-06)
+
+### What landed
+
+| Sub-commit | What |
+|---|---|
+| `a993aad` | S18-v3-1: Sprint 18 plan opened (browser-first) |
+| `f841de5` | S18-v3-1 amend: Electron-from-start (user choice) |
+| `bf74b8f` | S18-v3-2: Electron + React + electron-vite shell — empty canvas renders (screenshot-verified) |
+| `a999974` | S18-v3-3: catalog → World → Flow pipeline (pure mapping + browser loader) + 4 tests |
+| `1ca3a6e` | S18-v3-4: render the anchor circuit (labeled nodes + net edges) — screenshot-verified |
+| `f1ee793` | S18-v3-5: standard schematic symbols (IEC 60617 / IEEE 315) — screenshot-verified |
+| (this) | S18-v3-6: retro + new §15 rows — Sprint 18 closes |
+
+### Done criteria — all met
+
+- [x] `npm run dev` launches the Electron app; `npm run build` compiles main + renderer (both succeed)
+- [x] React Flow renders an empty canvas (S18-v3-2), then the anchor circuit (S18-v3-4) — both screenshot-verified
+- [x] The catalog→World→Flow pipeline loads the real fixtures (bundled via Vite `import.meta.glob`)
+- [x] `world-to-flow.ts` is pure + unit-tested (4 tests)
+- [x] The 7 connected anchor-circuit instances + 6 nets render as a schematic
+- [x] Standard schematic symbols for the device kinds (S18-v3-5)
+- [x] Screenshots verify the render at S18-v3-2 / v3-4 / v3-5
+- [x] Existing gates stay green: `npx tsc --noEmit`, `vitest`, `npx biome check .`
+- [x] New `build` gate passes
+- [x] New deps in THIRD-PARTY-LICENSES.md (all MIT, no NOTICE files)
+- [x] All tests pass — 240 (up from 236; +4 world-to-flow)
+- [x] Sprint retro written
+- [x] New §15 rows (Electron packaging; interactivity; solver overlay; symbol expansion; layout)
+
+### Project state after Sprint 18
+
+| | Sprint 17 close | Sprint 18 close |
+|---|---|---|
+| **Frontend** | none (Node-only logic repo) | **Electron + React + React Flow** desktop app |
+| **Runtime deps** | 0 (pure toolchain) | 3 (react, react-dom, @xyflow/react) |
+| Source areas | logic (`src/*.ts`) | + `electron/` (shell) + `src/renderer/` (canvas) |
+| Gates | tsc + vitest + biome | + **`build`** (electron-vite) |
+| Tests | 236 | **240** (+4 world-to-flow) |
+| **What you can do** | run tests, read YAML | **see the anchor circuit on a canvas** |
+
+### Lessons surfaced
+
+1. **The dependency version dance was the first real friction.** Vitest 4 pulled Vite 8 transitively; electron-vite 5 wants Vite ≤7; @vitejs/plugin-react 6 wants Vite 8. The resolution: pin Vite 7 (the common version all three accept) + plugin-react 5. **General lesson:** in a JS frontend toolchain, peer-dep version windows are the real constraint — find the intersection before installing, not after three ERESOLVE failures.
+2. **Screenshot verification caught nothing wrong — and that's the point.** Every render sub-commit was verified by an actual screenshot, not just "it builds." Builds succeeded AND the canvas rendered correctly each time. The discipline cost little and would have caught a blank-screen or error-overlay immediately. **General lesson:** for UI, "compiles" and "renders correctly" are different gates; the screenshot is the second one.
+3. **Keeping the load-bearing transform pure paid off.** `world-to-flow.ts` (World → nodes/edges) has no React/DOM/Vite — so it's unit-tested under vitest like any other logic, and the React layer is a thin shell. The catalog→canvas mapping — the part most likely to have a bug — is tested without a DOM harness. **General lesson:** push the testable logic out of the framework layer; render is a thin presentation over a pure transform.
+4. **The honest scaffold held its promise.** S18-v3-4's labeled boxes were explicitly a same-sprint scaffold; S18-v3-5 replaced them with standard symbols. The "standard symbols, not invented icons" commitment from SCHEMATIC-SYMBOLS.md was honored within the sprint, not deferred. **General lesson:** a scaffold is fine if it's explicitly temporary AND superseded before the sprint closes — not left as the final state.
+5. **The pivot was smaller than feared.** Standing up Electron + React in a Node-only repo sounded like a tentpole effort. In practice: electron-vite handled the three-context build, one permissive tsconfig kept the typecheck gate as one command, and the catalog loader reused the existing World shape. The accumulated discipline (reuse-don't-fork, pure-transform, screenshot-verify) made a new *kind* of work go smoothly. **General lesson:** good foundations make even cross-paradigm work (logic → UI) incremental.
+
+### New §15 rows added in this retro
+
+Five new deferred questions added to OBJECT-MODEL.md §15:
+
+- **Electron packaging (electron-builder).** Sprint 18's shell runs via `npm run dev`. Packaging into a distributable installer (electron-builder, MIT) — with Electron's `LICENSES.chromium.html` traveling per its redistribution terms — is a later sprint. Pairs with the two-deliverables / manufacturing-ZIP work eventually.
+- **Canvas interactivity.** The MVP is a static render. Drag-to-move, place-component, draw-a-wire, right-click parameter override — these are the next big canvas effort, pairing with the auto-created-interface UX + right-click-override §15 rows. Needs canvas-only state persistence (`canvas/layout.yaml`) so user-moved positions survive.
+- **Solver overlay on the canvas (the next canvas sprint).** The killer feature: run `solveDC` + `detectFailures` and paint the result onto the schematic — node voltages on nets, branch currents on wires, the overloaded LED highlighted red with "69.4 mA — 3.5× over rating". Everything it needs is built (the solver + detector are ready); it's a presentation layer over their output.
+- **Full schematic symbol library.** Sprint 18 drew symbols for the anchor circuit's kinds. The rest of IEC 60617 / IEEE 315 (capacitor, diodes, transistors, op-amps, etc.) lands as devices need them — plus terminal-accurate handle placement (anode vs cathode, +/−) reading the §21 declared terminals.
+- **Circuit-aware canvas layout.** The MVP uses a deterministic grid; edges cross. A real schematic layout (or auto-router, or saved manual positions via `canvas/layout.yaml`) makes the render readable. Pairs with interactivity.
+
+### What this unblocks
+
+After Sprint 18 close:
+
+- **Everything built across Sprints 12–17 is now visible.** The materials, the nets, the solved circuit — rendered on a real canvas with standard symbols. The project crossed from "invisible foundation" to "tool you can see."
+- **The solver overlay is the obvious, high-value next sprint.** `solveDC` + `detectFailures` already produce node voltages, branch currents, and the `led-overloaded` failure. Painting them onto the canvas — the overloaded LED glowing red — is a presentation layer over ready data. This is where the foundation's payoff becomes vivid.
+- **Interactivity has a base to build on.** Static render + the pure World→Flow transform + the device symbols are the substrate for drag/place/wire. The §15 rows (auto-created-interface, right-click-override, layout persistence) describe the path.
+- **The two-deliverables model has a UI home.** When export (the manufacturing ZIP) lands, it's a canvas action — and the Electron main process (preload contextBridge) is the place to wire the file-system + export services.
+
+### Sprint 18 closed
+
+All sub-commits land cleanly on master. 240 tests pass + the new `build` gate. The project has a frontend: an Electron + React + React Flow desktop app that loads the catalog and renders the educational anchor circuit with standard schematic symbols, verified by screenshot at every render step. The catalog→canvas pipeline is a pure, tested transform with a thin React shell. The big pivot — from invisible logic to a visible tool — is done. The solver overlay (paint the overloaded LED red) is the natural, high-value next sprint; interactivity follows. The user picks the next direction at the Sprint 18+1 planning conversation.
