@@ -1197,6 +1197,36 @@ describe('solveDC — Shockley / Newton-Raphson', () => {
     expect(sol.branches.size).toBe(0) // no branch currents reported on failure
   })
 
+  test('ideality_factor is read from the instance; default matches explicit n=2', () => {
+    // The solver defaults to n=2 when the instance doesn't declare
+    // ideality_factor. An explicit n=2 must match the default; a different
+    // n (1.5) must produce a different operating current — proving the
+    // parameter is actually read, not ignored.
+    const setIdeality = (w: World, n: number) => {
+      const led = w.instances.get('d')
+      if (led?.parameters) {
+        led.parameters.ideality_factor = {
+          value: { kind: 'scalar', amount: n, unit: 'dimensionless' },
+        }
+      }
+      return w
+    }
+
+    const iDefault = solveDC(minimalDiodeCircuit()).branches.get('d')
+    const iExplicit2 = solveDC(setIdeality(minimalDiodeCircuit(), 2)).branches.get('d')
+    const iN15 = solveDC(setIdeality(minimalDiodeCircuit(), 1.5)).branches.get('d')
+
+    expect(iDefault).toBeDefined()
+    expect(iExplicit2).toBeDefined()
+    expect(iN15).toBeDefined()
+    if (iDefault === undefined || iExplicit2 === undefined || iN15 === undefined) return
+
+    // Explicit n=2 == the default.
+    expect(iExplicit2).toBeCloseTo(iDefault, 9)
+    // n=1.5 shifts the operating point measurably.
+    expect(Math.abs(iN15 - iDefault)).toBeGreaterThan(1e-5)
+  })
+
   test('an LED with forward_voltage but no max_forward_current uses the fixed-V_F fallback', () => {
     // No calibration current → can't derive I_s → the LED stays a fixed-V_F
     // voltage source (linear), so the solve is a single-shot linear solve.

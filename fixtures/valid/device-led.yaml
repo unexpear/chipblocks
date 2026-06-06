@@ -91,6 +91,18 @@ parameters:
     units: degree
     required: false
     description: Cone half-angle within which emitted light intensity remains above 50 percent of peak. Determined by package optics (lens, encapsulant), not the chip. Typical 5 mm packages 15-30 degrees; SMD often 120 degrees or wider.
+  ideality_factor:
+    type: quantity
+    units: dimensionless
+    required: false
+    description: "Shockley diode ideality factor n in I = I_s(exp(V/(n*V_T)) - 1). Typically 1-2; LEDs sit near the top of the range (~2) due to wide-bandgap carrier recombination. Used by the §20 nonlinear DC solver to derive the diode I-V curve from forward_voltage + max_forward_current. Per-instance override; the solver falls back to 2.0 when unset."
+    default:
+      value: 2.0
+      provenance:
+        source_type: reference
+        title: "LED diode ideality factor (typical range 1-2, LEDs near 2)"
+        citation: "Wikipedia, Shockley diode equation (ideality factor 1-2, recombination-dominated); Schubert, Light-Emitting Diodes, 2nd ed., §4 on the diode equation for LEDs"
+        confidence: medium
 properties:
   peak_wavelength:
     value:
