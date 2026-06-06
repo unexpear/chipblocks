@@ -163,12 +163,29 @@ export function DeviceGlyph({ definition }: { definition: string }) {
  */
 export function DeviceNode({ data }: NodeProps) {
   const { definition, label } = data as DeviceNodeData
+  // The node box IS the glyph (W×H); handles sit on the glyph's lead line
+  // (left/right ends at the vertical midline), so a wire connects at the symbol's
+  // own drawn terminal — not at an offset box edge. The id label floats below the
+  // glyph (absolute) so it never widens the box and pushes the handles off.
   return (
-    <div style={{ textAlign: 'center', fontFamily: 'system-ui, sans-serif' }}>
-      <Handle type="target" position={Position.Left} style={{ background: '#888' }} />
+    <div style={{ position: 'relative', width: W, height: H, fontFamily: 'system-ui, sans-serif' }}>
+      <Handle type="target" position={Position.Left} style={{ background: '#888', top: MID }} />
       <DeviceGlyph definition={definition} />
-      <div style={{ color: '#999', fontSize: 9, marginTop: 2 }}>{label}</div>
-      <Handle type="source" position={Position.Right} style={{ background: '#888' }} />
+      <Handle type="source" position={Position.Right} style={{ background: '#888', top: MID }} />
+      <div
+        style={{
+          position: 'absolute',
+          top: '100%',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          color: '#999',
+          fontSize: 9,
+          whiteSpace: 'nowrap',
+          pointerEvents: 'none',
+        }}
+      >
+        {label}
+      </div>
     </div>
   )
 }
