@@ -1,5 +1,6 @@
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from '@xyflow/react'
 import { useEffect } from 'react'
+import { type Parameters, primaryValue } from './part-defaults.ts'
 
 /**
  * Standard schematic symbols (Sprint 18 S18-v3-5) — IEC 60617 / IEEE 315
@@ -128,7 +129,12 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   wire: WireGlyph,
 }
 
-export type DeviceNodeData = { definition: string; label: string; rotation?: number }
+export type DeviceNodeData = {
+  definition: string
+  label: string
+  rotation?: number
+  parameters?: Parameters
+}
 
 /**
  * The bare schematic symbol for a device definition (or a labeled fallback box
@@ -163,7 +169,8 @@ export function DeviceGlyph({ definition }: { definition: string }) {
  * + the instance id.
  */
 export function DeviceNode({ id, data }: NodeProps) {
-  const { definition, label, rotation = 0 } = data as DeviceNodeData
+  const { definition, label, rotation = 0, parameters } = data as DeviceNodeData
+  const value = primaryValue(definition, parameters)
   const updateNodeInternals = useUpdateNodeInternals()
   // After a rotation, re-measure the handles so wires follow the rotated terminals.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `rotation` is an intentional re-run trigger — the effect must re-measure when the node rotates, though it isn't read in the body
@@ -216,6 +223,7 @@ export function DeviceNode({ id, data }: NodeProps) {
         }}
       >
         {label}
+        {value ? <span style={{ color: '#7ab8ff', marginLeft: 5 }}>{value}</span> : null}
       </div>
     </div>
   )

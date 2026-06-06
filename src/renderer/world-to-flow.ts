@@ -17,7 +17,7 @@ import type { Instance, World } from '../cross-fk-validator.ts'
 export type FlowNode = {
   id: string
   position: { x: number; y: number }
-  data: { label: string; definition: string }
+  data: { label: string; definition: string; parameters?: Instance['parameters'] }
 }
 
 export type FlowEdge = {
@@ -69,7 +69,7 @@ export function worldToFlow(world: World): { nodes: FlowNode[]; edges: FlowEdge[
   const nodes: FlowNode[] = components.map((inst, i) => ({
     id: inst.id,
     position: { x: (i % COLUMNS) * X_GAP, y: Math.floor(i / COLUMNS) * Y_GAP },
-    data: { label: inst.id, definition: inst.definition },
+    data: { label: inst.id, definition: inst.definition, parameters: inst.parameters },
   }))
 
   /** Component members of a net, preferring non-ground (ground is a tap, not a path end). */

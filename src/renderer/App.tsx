@@ -22,6 +22,7 @@ import { DockablePanel, type DockEdge } from './dockable-panel.tsx'
 import { edgeFlow, wireFlow } from './edge-currents.ts'
 import { edgeTypes } from './net-edge.tsx'
 import { DEFINITION_MIME, PaletteItems } from './palette.tsx'
+import { defaultParameters } from './part-defaults.ts'
 import { nodeTypes } from './symbols.tsx'
 import { type Tool, ToolbarItems } from './toolbar.tsx'
 import { lengthFromDrawn, wireResistance } from './wire-length.ts'
@@ -108,7 +109,7 @@ function Canvas() {
       id: n.id,
       type: 'device',
       position: n.position,
-      data: { definition: n.data.definition, label: n.id },
+      data: { definition: n.data.definition, label: n.id, parameters: n.data.parameters },
     }))
     const positions = new Map(flow.nodes.map((n) => [n.id, n.position]))
     const edges: Edge[] = flow.edges.map((e) => ({
@@ -242,8 +243,15 @@ function Canvas() {
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
       dropCount.current += 1
       const id = `${definition}_${dropCount.current}`
+      // A dropped part gets real, cited default values (S19-v3-20) so it is a
+      // real part, not an empty symbol — editable, and read by the solver.
       setNodes((current) =>
-        current.concat({ id, type: 'device', position, data: { definition, label: id } }),
+        current.concat({
+          id,
+          type: 'device',
+          position,
+          data: { definition, label: id, parameters: defaultParameters(definition) },
+        }),
       )
     },
     [screenToFlowPosition, setNodes],
