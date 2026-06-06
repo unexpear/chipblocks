@@ -73,6 +73,23 @@ ChipBlocks depends on third-party software. This file lists each direct dependen
 - **NOTICE text:** `node_modules/mathjs/NOTICE` (also reproduced in project-root NOTICE)
 - **Used for:** expression parsing + dimensional unit checking in `src/equation-evaluator.ts` (per OBJECT-MODEL.md §16)
 
+### Frontend / canvas (Sprint 18+)
+
+All MIT; none ship a NOTICE file (verified 2026-06-06 via `ls node_modules/<pkg>/NOTICE*`). Runtime (`dependencies`): react, react-dom, @xyflow/react. Build/dev (`devDependencies`): electron, electron-vite, vite, @vitejs/plugin-react, @types/react, @types/react-dom.
+
+| Package | Version | License | Role | Source |
+|---|---|---|---|---|
+| `react` | ^19.2 | MIT | UI framework (renderer) | <https://github.com/facebook/react> |
+| `react-dom` | ^19.2 | MIT | DOM renderer | <https://github.com/facebook/react> |
+| `@xyflow/react` (React Flow) | ^12.11 | MIT | canvas engine | <https://github.com/xyflow/xyflow> |
+| `electron` | ^42.3 | MIT | desktop shell | <https://github.com/electron/electron> |
+| `electron-vite` | ^5.0 | MIT | Electron + Vite build integration | <https://github.com/alex8088/electron-vite> |
+| `vite` | ^7.3 | MIT | renderer bundler (pinned to 7 for electron-vite compat) | <https://github.com/vitejs/vite> |
+| `@vitejs/plugin-react` | ^5.2 | MIT | React JSX + fast-refresh | <https://github.com/vitejs/vite-plugin-react> |
+| `@types/react`, `@types/react-dom` | ^19 | MIT | types (DefinitelyTyped) | <https://github.com/DefinitelyTyped/DefinitelyTyped> |
+
+**Electron's bundled components.** Electron itself is MIT, but it bundles Chromium (BSD-3-Clause + many sub-licenses) and Node.js (MIT). Electron ships a `LICENSES.chromium.html` enumerating all bundled third-party licenses; when ChipBlocks is packaged into a distributable (electron-builder, a later sprint), that file travels with the app per Electron's redistribution terms. No GPL/AGPL in the bundled set — Chromium and Node are permissive. This is a ship-time obligation handled at packaging; the Sprint 18 MVP runs via `npm run dev` and doesn't redistribute.
+
 ---
 
 ## Transitive dependencies introduced by mathjs

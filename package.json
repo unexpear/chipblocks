@@ -2,9 +2,10 @@
   "name": "chipblocks-schemas",
   "version": "0.0.0",
   "private": true,
-  "description": "v3 Sprint 2: JSON Schemas + validation fixtures for the ChipBlocks object model. See sprints/sprint-2.md.",
+  "description": "ChipBlocks — ground-up electronics design system. Object-model schemas + cross-FK validator + DC/nonlinear solver + failure detector + Electron canvas.",
   "type": "module",
   "license": "MIT",
+  "main": "./out/main/main.js",
   "engines": {
     "node": ">=22"
   },
@@ -13,16 +14,30 @@
     "test:watch": "vitest",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
     "@types/node": "^25.9.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
+    "electron": "^42.3.3",
+    "electron-vite": "^5.0.0",
     "mathjs": "^15.2.0",
     "typescript": "^6.0.3",
+    "vite": "^7.3.5",
     "vitest": "^4.1.8",
     "yaml": "^2.9.0"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.11.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   }
 }
