@@ -195,3 +195,112 @@ Master tip when opened: `5ee8989` (post-Sprint-15 close + verification). The 201
 **Why this sprint matters:** Sprint 14 made the solver compute circuit behavior with a useful approximation; Sprint 16 makes it *physically accurate*. The LED I-V curve is the first real nonlinearity ChipBlocks models, and the companion-model + Newton-Raphson + pnjlim machinery is the foundation every future nonlinear device (transistors, more diode types) will reuse. It also closes the loop on Sprint 15's honesty: the linear approximation was good enough for the safety verdict, and now we can prove it.
 
 Trigger to begin: user approval of this plan.
+
+---
+
+## Sprint 16 retro (closed 2026-06-06)
+
+### What landed
+
+| Sub-commit | What |
+|---|---|
+| `e4a362e` | S16-v3-1: Sprint 16 plan opened |
+| `212845a` | S16-v3-1 amend: ground reference port folded into scope (user request) |
+| `2aba54c` | S16-v3-2: OBJECT-MODEL.md §20 spec + **canonical physics verification** (Shockley + companion model + pnjlim, the last pulled verbatim from ngspice source) |
+| `4295c8f` | S16-v3-3: `src/diode-model.ts` — pure physics functions, by-hand verified; the pnjlim overflow-prevention test |
+| `ab51091` | S16-v3-4: Newton-Raphson loop in dc-solver — **the anchor circuit goes Shockley** (70.00 → 69.36 mA); two-tier LED handling; did-not-converge; 4 affected tests updated |
+| `8d6b75a` | S16-v3-5: `ideality_factor` declared on device-led.yaml + instance-override test |
+| `8dbf467` | S16-v3-6: ground reference port — honest reference-marker framing + §18.2 precedence |
+| (this) | S16-v3-7: retro + §15 closure — Sprint 16 closes |
+
+### Done criteria — all met
+
+- [x] OBJECT-MODEL.md §20 lands with the full nonlinear-solver spec + canonically-verified physics (§20.12)
+- [x] §15 "Nonlinear iterative DC solver" row marked ✅ CLOSED with §20 pointer
+- [x] `src/diode-model.ts` exports Shockley + companion-model + pnjlim functions, each unit-tested against by-hand values
+- [x] `dc-solver.ts` runs Newton-Raphson for circuits with Shockley LEDs; linear fast-path for circuits without
+- [x] pnjlim prevents exp() overflow (tested directly — a 50 V jump that gives Infinity unlimited is limited to 2.46 V)
+- [x] The anchor circuit converges to 69.36 mA / 2.064 V (matching by-hand math, in 4 iterations)
+- [x] `led-overloaded` still fires on the anchor circuit at 3.47× (failure detector unchanged; end-to-end test updated)
+- [x] Sprint 14's non-LED tests unchanged (linear fast-path preserved); the synthetic fixed-V_F LED test stays at exactly 2.0 V via the fallback
+- [x] `did-not-converge` status returned honestly (maxIterations cap exercises it deterministically)
+- [x] All tests pass — **227** (up from 201 at Sprint 15 close, ~13% growth)
+- [x] `npx tsc --noEmit` clean
+- [x] `npx biome check .` clean
+- [x] Sprint retro written
+- [x] New §15 rows added (transistor models, temperature-dependent V_T, GMIN/source stepping, rated-current calibration parameter, power-port family) + the ground port's bonus deliverable
+
+### Catalog after Sprint 16
+
+| | Sprint 15 close | Sprint 16 close |
+|---|---|---|
+| Material / Shape / Behavior / Interface | (unchanged) | (unchanged) |
+| **Primitive devices** | 10 | **11** (+ `ground` reference port) |
+| **Instances** | 16 | **17** (+ ground_001) |
+| Nets | 6 | 6 (net_battery_neg gains the ground port as a 3rd member) |
+| Schemas | 8 | (unchanged — no schema changes) |
+| **Source modules** | 4 | **5** (+ `diode-model`) |
+| **Catalog spec sections** | 19 | **20** (+ §20 nonlinear solver; §18.2 amended for the ground port) |
+| **Tests** | 201 | **227** (~13% growth) |
+| **LED model** | fixed-V_F (linear approximation) | **Shockley exponential** (Newton-Raphson + pnjlim) when calibration data exists; fixed-V_F fallback otherwise |
+| **Anchor-circuit LED current** | 70.00 mA (approximate) | **69.36 mA** (physically accurate) |
+| **Ground designation** | net `type: ground` property | **ground port** (explicit, EDA-authentic) + type: ground fallback |
+
+### Lessons surfaced
+
+1. **The pnjlim verification was the headline, and pulling it from source mattered.** I initially recalled the SPICE3 pnjlim formula (`vnew = vold + vt·log(1 + (vnew−vold)/vt)`). The actual ngspice `DEVpnjlim` uses a *different* formula (`vnew = vold + vt·(2 + log(arg−2))`). Had I implemented from memory, the limiter would have been subtly wrong — plausible-looking but with different convergence behavior. Fetching the verbatim source caught the discrepancy. **General lesson:** for a precise numerical algorithm, "I remember how this works" is not verification — get the canonical source. This is the strongest vindication yet of the zero-trust discipline.
+
+2. **The accuracy upgrade made the §19.7 claim concrete.** Sprint 15 *asserted* the linear approximation was good enough for the safety verdict. Sprint 16 *proved* it: 70.00 → 69.36 mA, led-overloaded still fires at 3.47×. The cross-sprint claim wasn't just plausible — it's now demonstrated with the real numbers. **General lesson:** when an earlier sprint makes an accuracy-tradeoff claim, a later sprint that closes the gap should explicitly validate the claim, not just supersede it.
+
+3. **Two-tier LED handling kept backward compat clean.** The decision to route LEDs-with-calibration-data to Shockley and LEDs-with-only-V_F to the fixed-V_F fallback meant the synthetic fixed-V_F tests stayed green while the real anchor circuit upgraded. The alternative (Shockley-or-bust) would have forced every synthetic LED test to grow a max_forward_current. **General lesson:** a model upgrade that degrades gracefully to the old behavior when inputs are incomplete is less disruptive than an all-or-nothing switch.
+
+4. **maxIterations gave a deterministic did-not-converge test.** Constructing a genuinely non-converging circuit (to test the did-not-converge path) is hard and fragile — pnjlim makes most circuits converge. Adding a `maxIterations` option and capping it below what a known circuit needs exercises the path deterministically. **General lesson:** when a failure path is hard to trigger naturally, a test seam (a controllable bound) is cleaner than a contrived input that might behave differently across environments.
+
+5. **The ground port surfaced a real principle tension, resolved by honest framing.** "Add a ground device" collides with "real blocks all the way down" — ground isn't a physical component. Rather than build a fake device with invented material properties, the honest resolution was a reference / connection-point marker (`solver_status: not_applicable`) carrying the standard ground symbol. **General lesson:** when a feature request conflicts with a load-bearing principle, the answer is usually a reframing that honors both — here, modeling ground as what it actually is (a reference designation) rather than what it superficially looks like (a placed part).
+
+6. **Sprint 16 was the most physics-heavy sprint and stayed clean.** Nonlinear iterative solving is genuinely the hardest thing the project has built. Yet the accumulated discipline held: scan before building (caught the §7 equation-kind reuse in Sprint 12; here, checking the schema's required fields before designing the ground device), verify physics canonically before coding, mid-implementation by-hand math, graceful test updates. No major pivots, no NUL-byte cruft, no fragile assertions. **General lesson:** the compounding-discipline observation from Sprint 14's retro held through the hardest sprint — the practices that prevent mistakes scale to harder problems.
+
+### New §15 rows added in this retro
+
+Five new deferred questions added to OBJECT-MODEL.md §15:
+
+- **Transistor nonlinear models (BJT Ebers-Moll, MOSFET).** Transistors are the next nonlinear devices. The companion-model + Newton-Raphson + pnjlim machinery built in §20 is the foundation they reuse — a BJT is (roughly) two coupled diode junctions; a MOSFET has its own I-V law. Each needs its model equations + companion linearization. Major content+solver effort; its own multi-sprint arc.
+- **Temperature-dependent V_T.** §20 fixes the thermal voltage at 300 K (25.852 mV). Real circuits run hot; V_T = kT/q rises with temperature, shifting diode curves. `thermalVoltage(T)` already takes T as a parameter — the hook exists. Lands with self-heating, which pairs with the thermal solver (Stage 7). The §16 `input_variable` mechanism is the natural way to thread temperature through.
+- **GMIN / source stepping (hard-convergence aids beyond pnjlim).** pnjlim handles the diode steep-region overflow, covering the anchor circuit and typical hobby circuits. Stiffer circuits (many diodes, tight feedback) can still fail to converge; SPICE's standard escalation is GMIN stepping (add a tiny parallel conductance, ramp it down) and source stepping (ramp sources up from zero). Sprint 16 returns honest did-not-converge instead; these aids land when a real circuit needs them.
+- **Dedicated rated-current parameter for I_s calibration.** §20.3 derives I_s assuming `forward_voltage` is specified at `max_forward_current`. That holds for led_001 but isn't universal — many datasheets give V_F at a typical current below max. A dedicated "rated current at which V_F is specified" parameter would decouple the two and improve I_s accuracy.
+- **Power-port family beyond ground (Vcc / Vdd / named rails).** The Sprint 16 ground port is the reference-marker pattern for the 0 V net. The same pattern extends to supply rails: a Vcc/Vdd/+3V3 port that designates a net as a named supply, carrying the standard power-port symbol. Lands when multi-rail circuits appear.
+
+### Unresolved questions (still deferred per OBJECT-MODEL.md §15)
+
+Carried forward from Sprint 15 close + 5 new from Sprint 16 retro:
+
+- Default-resolution path (now also relevant: the solver hardcodes the ideality_factor default rather than reading the device's declared default), `property_definition` registry, multi-version definitions, cross-pack dependencies, schema migration
+- Stackup model, preset/template model, visual symbol library, auto-created interface UX, right-click parameter override UX, keybindings settings page
+- Alloy composition-by-weight, `min_count` enforcement, AV chains
+- Trigger taxonomy enum, multi-pole switches, state-dependent behavior gating
+- Schottky junction promotion
+- White LED, heterostructure / QW active-layer modeling, laser diodes
+- Parametric equation evaluation (`input_variable`), device-level defaults-vs-rating check, geometry properties on shape definitions
+- Terminal-name validation, bus / hierarchical / sub-net model, net-level Active Variables
+- Switch state-machine integration, transient simulation, wire resistance modeling
+- Failure severity classification, automatic fix suggestion, additional electrical failure modes, transient peak ratings
+- **NEW from Sprint 16 retro:** transistor nonlinear models; temperature-dependent V_T; GMIN / source stepping; dedicated rated-current calibration parameter; power-port family (Vcc/Vdd)
+
+Background-knowledge claims still flagged for verification:
+- IEC 62471 risk-group classifications
+- SPICE LED diode-model specifics — ✅ **verified in Sprint 16** (Shockley + companion model + pnjlim, against Wikipedia + ngspice source)
+- KiCad single-LED-symbol count
+
+### What this unblocks
+
+After Sprint 16 close:
+
+- **The DC solver is physically accurate, not approximate.** The first real nonlinearity (the LED I-V curve) is modeled with the actual Shockley physics. ChipBlocks computes circuit behavior the way a real SPICE-family simulator does, at the DC operating point.
+- **Transistors have their foundation.** The companion-model + Newton-Raphson + pnjlim machinery is exactly what BJT and MOSFET models need. Adding transistors becomes "write the device equations + companion linearization," not "build a nonlinear solver."
+- **Temperature dependence has a clean hook.** `thermalVoltage(T)` is parameterized; the §16 `input_variable` mechanism threads runtime variables. When the thermal solver (Stage 7) lands, self-heating feeds back into the diode curves through these existing seams.
+- **The ground port is the first placeable reference marker** — the pattern for power ports, net labels, and other schematic annotations. When the canvas lands, it has a real symbol-bearing object to render.
+- **Sprint 15's safety judgment is vindicated and future-proofed.** The accuracy upgrade flows into the failure detector unchanged (it consumes branch currents either way). Borderline safety cases that the linear model couldn't resolve are now handled correctly, and the failure detector didn't need a single change.
+
+### Sprint 16 closed
+
+All sub-commits land cleanly on master. 227 tests pass (71 schema + 15 cross-FK + 17 net-schema + 23 equation-schema + 20 equation-evaluator + 16 diode-model + 33 dc-solver + 26 failure-detector + 6 net-schema... = 227). The nonlinear DC solver — the hardest single piece the project has built — is formalized (§20), implemented (diode-model + the Newton-Raphson loop), canonically verified (Shockley + companion model + the exact ngspice pnjlim), and integrated end-to-end with the catalog. The educational anchor circuit now solves with real Shockley physics; the §15 nonlinear-solver row is closed. The user's ground-port request landed honestly as a reference marker. The next direction — transistors, the canvas, temperature/thermal, or a different §15 row — is the user's call at the Sprint 16+1 planning conversation.
