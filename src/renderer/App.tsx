@@ -34,6 +34,7 @@ import { edgeTypes } from './net-edge.tsx'
 import { DEFINITION_MIME, PaletteItems } from './palette.tsx'
 import { defaultParameters, toggledSwitch } from './part-defaults.ts'
 import { PartInspector, type SelectedPart } from './part-inspector.tsx'
+import { type PartReading, partReadings } from './part-readings.ts'
 import { type DeviceNodeData, nodeTypes } from './symbols.tsx'
 import { type Tool, ToolbarItems } from './toolbar.tsx'
 import { lengthFromDrawn, wireResistance } from './wire-length.ts'
@@ -120,7 +121,7 @@ function edgePhysics(
 function solveCanvas(
   nodeList: Node[],
   edgeList: Edge[],
-): { edges: Edge[]; health: Map<string, NodeHealth> } {
+): { edges: Edge[]; health: Map<string, NodeHealth>; readings: Map<string, PartReading> } {
   const world = canvasToWorld(nodeList.map(toCanvasNode), edgeList.map(toCanvasEdge))
   const solution = solveDC(world)
   const positions = new Map<string, NodePosition>(nodeList.map((n) => [n.id, n.position]))
@@ -141,7 +142,7 @@ function solveCanvas(
       data: { ...physics.data, ...(waypoints ? { waypoints } : {}) },
     }
   })
-  return { edges, health: canvasHealth(world, solution) }
+  return { edges, health: canvasHealth(world, solution), readings: partReadings(world, solution) }
 }
 
 /**
@@ -182,8 +183,19 @@ function Canvas() {
       deletable: false,
       label: e.showLabel ? e.label : undefined,
     }))
+    // Catalog material ids for the Properties panel's material dropdown.
+    const materials = [...world.definitions.values()]
+      .filter((d) => (d as { kind?: string }).kind === 'material')
+      .map((d) => d.id)
+      .sort()
     const solved = solveCanvas(nodes, baseEdges)
-    return { nodes, edges: solved.edges, health: solved.health }
+    return {
+      nodes,
+      edges: solved.edges,
+      health: solved.health,
+      readings: solved.readings,
+      materials,
+    }
   }, [])
 
   // Live React Flow state — nodes are draggable (S19-v3-3); setNodes/setEdges
@@ -192,6 +204,7 @@ function Canvas() {
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges)
   // Per-part health (lit / overstressed) — drives the success/failure animations.
   const [health, setHealth] = useState(initial.health)
+  const [readings, setReadings] = useState(initial.readings)
   // Latest edges for the re-solve effect WITHOUT depending on edge data (a re-solve
   // rewrites edge data, which would loop); structural edits trigger it via
   // `topology`, node moves via `nodes`.
@@ -219,6 +232,7 @@ function Canvas() {
       const solved = solveCanvas(nodeList, edgeList)
       setEdges(solved.edges)
       setHealth(solved.health)
+      setReadings(solved.readings)
     },
     [setEdges],
   )
@@ -487,6 +501,8 @@ function Canvas() {
       <DockablePanel edge={propsEdge} onEdgeChange={setPropsEdge} title="Properties">
         <PartInspector
           selected={selectedPart}
+          reading={selectedPart ? readings.get(selectedPart.id) : undefined}
+          materials={initial.materials}
           onParam={(key, amount) => {
             if (selectedPart) onEditParam(selectedPart.id, key, amount)
           }}

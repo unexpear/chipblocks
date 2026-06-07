@@ -57,6 +57,44 @@ const DEFAULTS: Record<string, Parameters> = {
   },
 }
 
+/**
+ * Where each default value comes from — the cited source behind the DEFAULTS
+ * above (Properties-panel provenance: the "real all the way down" identity made
+ * visible). Shown only while a part's value still equals its default; once the
+ * user edits it, the value is theirs, so no source is claimed.
+ */
+const PROVENANCE: Record<string, Record<string, string>> = {
+  resistor: {
+    resistance: 'E12 standard value (470 Ω safe for a 9 V LED)',
+    tolerance_percent: 'E12 / E24 ±5% band',
+    power_rating: 'carbon-film 1/4 W class',
+  },
+  power_source: {
+    nominal_voltage: 'ANSI/IEC 60086-2 — 9 V 6LR61 (PP3)',
+    internal_resistance: '~1 Ω fresh 9 V alkaline (Duracell MN1604)',
+  },
+  led: {
+    forward_voltage: 'Kingbright WP7113SRD-D (5 mm red)',
+    max_forward_current: '5 mm indicator LED standard (20 mA)',
+    peak_wavelength: 'AlGaInP red ~640 nm',
+  },
+  led_uv_algan: {
+    forward_voltage: 'AlGaN UV LED (~3.4 V at 20 mA)',
+    max_forward_current: '20 mA',
+    peak_wavelength: 'AlGaN UV ~340 nm',
+  },
+  switch_spst_toggle: {
+    contact_resistance_closed: 'C&K 7101 class (~20 mΩ closed)',
+    max_current: 'C&K 7101 (6 A)',
+    rated_voltage: 'C&K 7101 (125 V)',
+  },
+}
+
+/** The cited source for a default parameter value, if known. */
+export function defaultProvenance(definition: string, key: string): string | undefined {
+  return PROVENANCE[definition]?.[key]
+}
+
 /** A real, cited default parameter set for a freshly-dropped part (a fresh copy; editable). */
 export function defaultParameters(definition: string): Parameters {
   const preset = DEFAULTS[definition]

@@ -1,13 +1,16 @@
 import type { CSSProperties } from 'react'
-import type { Parameters } from './part-defaults.ts'
+import { formatCurrent } from './edge-currents.ts'
+import { defaultParameters, defaultProvenance, type Parameters } from './part-defaults.ts'
+import type { PartReading } from './part-readings.ts'
 
 /**
- * Properties inspector (Sprint 19) — the selected part's editable values. This is
- * the "let users enter their own values instead of the defaults" surface: a
- * scalar parameter becomes a number field (edit → live re-solve), a switch's
- * state is a dropdown, and material / shape refs show read-only (a picker is
- * future work). Editing routes back to App, which updates the node's parameters
- * and the canvas re-solves.
+ * Properties inspector (Sprint 19). For the selected part it shows:
+ *  - LIVE READINGS — current through / voltage across / power, each against its
+ *    rating where one applies (e.g. "14.9 mA · 74% of 20 mA"). Real solved data.
+ *  - EDITABLE VALUES — scalar params as number fields (edit → live re-solve), a
+ *    switch's state as a dropdown, an LED color picker, and material refs as a
+ *    dropdown of catalog materials.
+ *  - PROVENANCE — the cited source behind a value, shown while it's the default.
  */
 
 type ScalarValue = { kind: 'scalar'; amount: number; unit: string }
@@ -19,8 +22,56 @@ function asScalar(value: unknown): ScalarValue | null {
   return { kind: 'scalar', amount: v.amount, unit: v.unit }
 }
 
+const amountOf = (parameters: Parameters | undefined, key: string): number | undefined =>
+  asScalar(parameters?.[key]?.value)?.amount
+
 const humanize = (key: string): string =>
   key.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
+
+const LED_DEFINITIONS = new Set(['led', 'led_uv_algan'])
+const MATERIAL_REF_KEYS = new Set(['resistive_material', 'n_side', 'p_side', 'contact_material'])
+
+/** LED emission-color presets → peak_wavelength (nm). */
+const LED_COLORS: { label: string; nm: number; css: string }[] = [
+  { label: 'Red', nm: 640, css: 'rgb(255, 40, 0)' },
+  { label: 'Green', nm: 530, css: 'rgb(70, 220, 0)' },
+  { label: 'Blue', nm: 470, css: 'rgb(0, 140, 255)' },
+  { label: 'UV', nm: 340, css: 'rgb(120, 70, 210)' },
+]
+
+/** The reading quantity that carries a rating, and its limit — for headroom. */
+function ratingFor(
+  definition: string,
+  parameters: Parameters | undefined,
+): { quantity: 'current' | 'power'; limit: number } | null {
+  if (LED_DEFINITIONS.has(definition)) {
+    const limit = amountOf(parameters, 'max_forward_current')
+    return limit ? { quantity: 'current', limit } : null
+  }
+  if (definition === 'resistor') {
+    const limit = amountOf(parameters, 'power_rating')
+    return limit ? { quantity: 'power', limit } : null
+  }
+  if (definition === 'switch_spst_toggle') {
+    const limit = amountOf(parameters, 'max_current')
+    return limit ? { quantity: 'current', limit } : null
+  }
+  return null
+}
+
+const formatVolts = (v: number): string =>
+  v >= 1 ? `${v.toFixed(2)} V` : `${(v * 1000).toFixed(0)} mV`
+const formatWatts = (w: number): string =>
+  w >= 1
+    ? `${w.toFixed(2)} W`
+    : w >= 1e-3
+      ? `${(w * 1000).toFixed(1)} mW`
+      : `${(w * 1e6).toFixed(0)} µW`
+
+function isDefaultValue(definition: string, key: string, scalar: ScalarValue): boolean {
+  const def = asScalar(defaultParameters(definition)[key]?.value)
+  return def !== null && def.amount === scalar.amount && def.unit === scalar.unit
+}
 
 export type SelectedPart = {
   id: string
@@ -30,6 +81,8 @@ export type SelectedPart = {
 
 export type PartInspectorProps = {
   selected: SelectedPart | null
+  reading: PartReading | undefined
+  materials: string[]
   onParam: (key: string, amount: number) => void
   onEnum: (key: string, value: string) => void
 }
@@ -50,43 +103,100 @@ const field: CSSProperties = {
   padding: '2px 4px',
   fontSize: 11,
 }
+const sectionLabel: CSSProperties = {
+  fontSize: 9,
+  textTransform: 'uppercase',
+  letterSpacing: 0.5,
+  color: '#667',
+  marginTop: 8,
+  marginBottom: 2,
+}
+const sourceNote: CSSProperties = {
+  fontSize: 9,
+  color: '#667',
+  margin: '-2px 0 4px',
+  fontStyle: 'italic',
+}
 
-export function PartInspector({ selected, onParam, onEnum }: PartInspectorProps) {
+export function PartInspector({
+  selected,
+  reading,
+  materials,
+  onParam,
+  onEnum,
+}: PartInspectorProps) {
   if (selected === null) {
     return (
-      <div style={{ width: 160, fontSize: 11, color: '#8089a0' }}>
-        Select a part to edit its values.
+      <div style={{ width: 170, fontSize: 11, color: '#8089a0' }}>
+        Select a part to inspect + edit it.
       </div>
     )
   }
   const entries = Object.entries(selected.parameters ?? {})
+  const rating = ratingFor(selected.definition, selected.parameters)
+
+  const headroom = (quantity: 'current' | 'power', value: number) => {
+    if (rating === null || rating.quantity !== quantity) return null
+    const pct = Math.round((value / rating.limit) * 100)
+    const limitText =
+      quantity === 'current' ? formatCurrent(rating.limit) : formatWatts(rating.limit)
+    return { text: `${pct}% of ${limitText}`, over: value >= rating.limit }
+  }
+
   return (
-    <div style={{ width: 178, fontFamily: 'system-ui, sans-serif' }}>
+    <div style={{ width: 190, fontFamily: 'system-ui, sans-serif' }}>
       <div style={{ fontSize: 12, color: '#cdd6e0' }}>{selected.id}</div>
-      <div style={{ fontSize: 10, color: '#778', marginBottom: 6 }}>{selected.definition}</div>
+      <div style={{ fontSize: 10, color: '#778' }}>{selected.definition}</div>
+
+      {reading ? (
+        <>
+          <div style={sectionLabel}>Readings</div>
+          {reading.current !== undefined
+            ? readingRow(
+                'Current',
+                formatCurrent(reading.current),
+                headroom('current', reading.current),
+              )
+            : null}
+          {reading.voltage !== undefined
+            ? readingRow('Voltage', formatVolts(reading.voltage), null)
+            : null}
+          {reading.power !== undefined
+            ? readingRow('Power', formatWatts(reading.power), headroom('power', reading.power))
+            : null}
+        </>
+      ) : null}
+
+      <div style={sectionLabel}>Values</div>
       {entries.length === 0 ? (
         <div style={{ fontSize: 11, color: '#8089a0' }}>No editable values.</div>
       ) : (
         entries.map(([key, param]) => {
           const scalar = asScalar(param.value)
           if (scalar !== null) {
+            const source = isDefaultValue(selected.definition, key, scalar)
+              ? defaultProvenance(selected.definition, key)
+              : undefined
             return (
-              <label key={`${selected.id}:${key}`} style={row}>
-                <span style={{ color: '#aab' }}>{humanize(key)}</span>
-                <span style={{ whiteSpace: 'nowrap' }}>
-                  <input
-                    type="number"
-                    defaultValue={scalar.amount}
-                    onChange={(event) => {
-                      const next = event.target.valueAsNumber
-                      if (Number.isFinite(next)) onParam(key, next)
-                    }}
-                    className="nodrag"
-                    style={{ ...field, width: 58, marginRight: 4 }}
-                  />
-                  <span style={{ color: '#778', fontSize: 10 }}>{scalar.unit}</span>
-                </span>
-              </label>
+              <div key={`${selected.id}:${key}`}>
+                <label style={row}>
+                  <span style={{ color: '#aab' }}>{humanize(key)}</span>
+                  <span style={{ whiteSpace: 'nowrap' }}>
+                    <input
+                      type="number"
+                      defaultValue={scalar.amount}
+                      onChange={(event) => {
+                        const next = event.target.valueAsNumber
+                        if (Number.isFinite(next)) onParam(key, next)
+                      }}
+                      className="nodrag"
+                      style={{ ...field, width: 58, marginRight: 4 }}
+                    />
+                    <span style={{ color: '#778', fontSize: 10 }}>{scalar.unit}</span>
+                  </span>
+                </label>
+                {source ? <div style={sourceNote}>{source}</div> : null}
+              </div>
             )
           }
           if (key === 'state' && typeof param.value === 'string') {
@@ -95,7 +205,7 @@ export function PartInspector({ selected, onParam, onEnum }: PartInspectorProps)
                 <span style={{ color: '#aab' }}>{humanize(key)}</span>
                 <select
                   value={param.value}
-                  onChange={(event) => onEnum(key, event.target.value)}
+                  onChange={(e) => onEnum(key, e.target.value)}
                   className="nodrag"
                   style={field}
                 >
@@ -105,7 +215,27 @@ export function PartInspector({ selected, onParam, onEnum }: PartInspectorProps)
               </label>
             )
           }
-          // material / shape ref — read-only for now (a picker comes later)
+          if (MATERIAL_REF_KEYS.has(key) && typeof param.value === 'string') {
+            const current = param.value
+            const options = materials.includes(current) ? materials : [current, ...materials]
+            return (
+              <label key={`${selected.id}:${key}`} style={row}>
+                <span style={{ color: '#aab' }}>{humanize(key)}</span>
+                <select
+                  value={current}
+                  onChange={(e) => onEnum(key, e.target.value)}
+                  className="nodrag"
+                  style={{ ...field, maxWidth: 112 }}
+                >
+                  {options.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )
+          }
           return (
             <div key={`${selected.id}:${key}`} style={row}>
               <span style={{ color: '#aab' }}>{humanize(key)}</span>
@@ -114,6 +244,49 @@ export function PartInspector({ selected, onParam, onEnum }: PartInspectorProps)
           )
         })
       )}
+
+      {LED_DEFINITIONS.has(selected.definition) ? (
+        <div style={row}>
+          <span style={{ color: '#aab' }}>Color</span>
+          <span style={{ display: 'flex', gap: 4 }}>
+            {LED_COLORS.map((c) => (
+              <button
+                key={c.nm}
+                type="button"
+                title={`${c.label} (${c.nm} nm)`}
+                onClick={() => onParam('peak_wavelength', c.nm)}
+                className="nodrag"
+                style={{
+                  width: 16,
+                  height: 16,
+                  borderRadius: '50%',
+                  background: c.css,
+                  border: '1px solid #3a3a3f',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+              />
+            ))}
+          </span>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/** One Readings row: a value, optionally annotated with rating headroom (green/red). */
+function readingRow(label: string, text: string, hr: { text: string; over: boolean } | null) {
+  return (
+    <div style={row}>
+      <span style={{ color: '#aab' }}>{label}</span>
+      <span style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+        <span style={{ color: '#cdd6e0' }}>{text}</span>
+        {hr ? (
+          <span style={{ color: hr.over ? '#ff6a52' : '#6ec06e', fontSize: 9, marginLeft: 5 }}>
+            {hr.text}
+          </span>
+        ) : null}
+      </span>
     </div>
   )
 }

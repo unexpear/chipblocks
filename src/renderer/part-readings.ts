@@ -1,0 +1,43 @@
+import type { World } from '../cross-fk-validator.ts'
+import type { Solution } from '../dc-solver.ts'
+
+/**
+ * Per-part electrical readings from a solved circuit (Sprint 19) — what the
+ * Properties panel shows for the selected part: the current THROUGH it, the
+ * voltage ACROSS it, and the power it handles. Every simulator (Falstad,
+ * EveryCircuit) leads with these; we already solve them, this just collects them.
+ *
+ *  - current = |branch current| (the solver's per-part branch).
+ *  - voltage = |V(terminal_a net) − V(terminal_b net)| (a part with two connects).
+ *  - power   = current × voltage (dissipated for a resistor/LED; delivered for a
+ *    source — the sign/direction is implied by the part).
+ */
+export type PartReading = { current?: number; voltage?: number; power?: number }
+
+export function partReadings(world: World, solution: Solution): Map<string, PartReading> {
+  const readings = new Map<string, PartReading>()
+  if (solution.status !== 'solved') return readings
+
+  for (const inst of world.instances.values()) {
+    const reading: PartReading = {}
+
+    const branch = solution.branches.get(inst.id)
+    if (branch !== undefined) reading.current = Math.abs(branch)
+
+    const connects = inst.connects ?? []
+    if (connects.length === 2) {
+      const va = solution.nodes.get(connects[0]?.net ?? '') ?? 0
+      const vb = solution.nodes.get(connects[1]?.net ?? '') ?? 0
+      reading.voltage = Math.abs(va - vb)
+    }
+
+    if (reading.current !== undefined && reading.voltage !== undefined) {
+      reading.power = reading.current * reading.voltage
+    }
+
+    if (reading.current !== undefined || reading.voltage !== undefined) {
+      readings.set(inst.id, reading)
+    }
+  }
+  return readings
+}
