@@ -282,19 +282,24 @@ describe('cross-FK validator — invalid worlds (one per error code MUST fire)',
     expect(derivesErrors).toEqual([])
   })
 
-  test('derives-violates-rating FIRES when declared resistance contradicts the geometry (resistor_001)', () => {
-    // resistor_001 now carries per-instance geometry (length 1.0 m, cross-section
-    // 1.1e-8 m^2), so the resistor definition's R = rho * L / A evaluates against
-    // nichrome (1.10e-6 ohm_meter) to 100 ohm — matching the declared 100 ohm (no
-    // error; covered by the valid-world test). Mutating the declared value to a
-    // physically-impossible 1 GΩ must now be CAUGHT: that material + geometry
-    // cannot produce that resistance. This is the derived ρL/A path going live.
+  test('derives-violates-rating FIRES when a part is given geometry that contradicts the declared value (opt-in)', () => {
+    // The cross-check is opt-in: a resistor ships no geometry and simply trusts
+    // its declared value. But when an instance is DELIBERATELY given per-instance
+    // geometry, R = rho * L / A evaluates and the declared value is checked.
+    // Here: nichrome (1.10e-6 ohm_meter) at 1.0 m / 1.1e-8 m^2 derives to 100 ohm,
+    // so a declared 1 GΩ is physically impossible and must be CAUGHT.
     const world = loadWorld(join(FIXTURE_DIR, 'valid'))
     const resistor001 = getOrThrow(
       world.instances,
       'resistor_001',
       'derives-violates-rating resistor-fire test',
     )
+    resistor001.properties = {
+      'geometry.length': { value: { kind: 'scalar', amount: 1.0, unit: 'metre' } },
+      'geometry.cross_section_area': {
+        value: { kind: 'scalar', amount: 1.1e-8, unit: 'square_metre' },
+      },
+    }
     resistor001.parameters = {
       ...resistor001.parameters,
       resistance: { value: { kind: 'scalar', amount: 1e9, unit: 'ohm' } }, // impossible for nichrome at this geometry
@@ -316,22 +321,20 @@ describe('cross-FK validator — invalid worlds (one per error code MUST fire)',
     }
   })
 
-  test('derives-violates-rating skips silently when geometry is unresolvable (no per-instance dimensions)', () => {
-    // The best-effort posture (§16.7): with NO per-instance geometry, the
+  test('derives-violates-rating skips silently when a part has no geometry (trusts the declared value)', () => {
+    // Opt-in posture (§16.7): the resistor ships no per-instance geometry, so the
     // geometry.length / geometry.cross_section_area inputs can't resolve from the
-    // shared `path` shape definition, buildRatingCheckContext returns null, and
-    // the check skips — no false positive, even with a wildly wrong declared
-    // value. (Strip resistor_001's geometry to recreate the pre-dimensions case.)
+    // shared `path` shape, buildRatingCheckContext returns null, and the check
+    // skips — the declared value is trusted, no false positive even when it's off.
     const world = loadWorld(join(FIXTURE_DIR, 'valid'))
     const resistor001 = getOrThrow(
       world.instances,
       'resistor_001',
       'derives-violates-rating resistor-skip test',
     )
-    resistor001.properties = {} // remove per-instance geometry → inputs unresolvable
     resistor001.parameters = {
       ...resistor001.parameters,
-      resistance: { value: { kind: 'scalar', amount: 1e9, unit: 'ohm' } }, // way off, but unverifiable
+      resistance: { value: { kind: 'scalar', amount: 1e9, unit: 'ohm' } }, // way off, but unverifiable without geometry
     }
     const errors = validateWorld(world)
     const resistorDerivesErrors = errors.filter(

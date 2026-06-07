@@ -34,22 +34,11 @@ parameters:
       kind: scalar
       amount: 5
       unit: watt
-properties:
-  # Per-instance geometry so the resistor definition's derived R = rho*L/A can be
-  # cross-checked against the declared 100 ohm above. Nichrome rho = 1.10e-6
-  # ohm_meter, so 1.0 m of 1.1e-8 m^2 wire (~0.118 mm dia) gives exactly 100 ohm.
-  # Illustrative dimensions chosen to match the declared value (a real 5 W
-  # wirewound coils roughly this length of fine nichrome wire).
-  geometry.length:
-    value:
-      kind: scalar
-      amount: 1.0
-      unit: metre
-  geometry.cross_section_area:
-    value:
-      kind: scalar
-      amount: 1.1e-8
-      unit: square_metre
+# No per-instance geometry: this resistor TRUSTS its declared 100 ohm. The
+# derived R = rho*L/A cross-check (resistor definition) is opt-in — it only fires
+# if an instance is deliberately given geometry.length + geometry.cross_section_area
+# (see the cross-fk "FIRES when given geometry" test). Without them it skips, and
+# the declared value stands.
 connects:
   - net: net_switch_resistor
     terminal: terminal_a
