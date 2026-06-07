@@ -71,8 +71,8 @@ describe('diodeCurrent', () => {
   test('rises exponentially — higher V gives much more current', () => {
     const i1 = diodeCurrent(2.0, IS, N, VT)
     const i2 = diodeCurrent(2.064, IS, N, VT)
-    // ~64 mV above the calibration point should land near the anchor-circuit
-    // operating current (~69 mA).
+    // ~64 mV above the 2.0 V / 20 mA calibration point lands near 69 mA on the
+    // Shockley curve — an LED driven hard (e.g. an undersized limiting resistor).
     expect(i2).toBeGreaterThan(i1)
     expect(i2).toBeCloseTo(0.0694, 3)
   })

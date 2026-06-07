@@ -1103,29 +1103,29 @@ describe('computeResistorCurrent', () => {
 // ===========================================================================
 
 describe('solveDC end-to-end: educational anchor circuit', () => {
-  test('YAML on disk → cross-FK clean → solveDC produces the Shockley 68.68 mA result', () => {
+  test('YAML on disk → cross-FK clean → solveDC produces the Shockley 14.9 mA result', () => {
     // The full pipeline: load all valid fixtures, verify cross-FK reports
     // zero errors (the Sprint 13 invariants hold), then run the DC solver
     // on the resulting world.
     //
     // The circuit: 9 V battery → wire_001 → switch_001 (closed) →
-    // resistor_001 (100 Ω) → led_001 (V_F = 2 V) → wire_002 → ground.
+    // resistor_001 (470 Ω) → led_001 (V_F ≈ 2 V) → wire_002 → ground. 470 Ω is the
+    // real, safe textbook current-limiting value for a 9 V red LED.
     //
     // Expected node voltages (relative to net_battery_neg = 0 V). led_001 uses the
-    // Shockley model, and the battery now models its 1 Ω internal resistance, so
-    // its terminal droops to 8.931 V under the 68.68 mA load:
-    //   net_battery_pos      = 8.931  (9 V EMF − 68.68 mA × 1 Ω internal)
-    //   net_wire1_switch     = 8.931  (wire is ideal short)
-    //   net_switch_resistor  = 8.931  (closed switch is ideal short)
-    //   net_resistor_led     = 2.064  (Shockley LED voltage at 68.68 mA)
+    // Shockley model, and the battery models its 1 Ω internal resistance, so the
+    // terminal droops slightly to 8.985 V under the 14.9 mA load:
+    //   net_battery_pos      = 8.985  (9 V EMF − 14.9 mA × 1 Ω internal)
+    //   net_wire1_switch     = 8.985  (wire is ideal short)
+    //   net_switch_resistor  = 8.985  (closed switch is ideal short)
+    //   net_resistor_led     = 1.985  (Shockley LED voltage at 14.9 mA)
     //   net_led_wire2        = 0.0    (wire is ideal short to ground)
     //   net_battery_neg      = 0.0    (ground reference)
     //
-    // Expected branch currents (all 68.68 mA = (9 − 2.064) / (100 + 1)):
-    //   battery_9v_001 = -0.068675  (sourcing — exits + terminal externally)
-    //   the rest       = +0.068675  (series circuit)
-    // The 1 Ω internal resistance drops the loop ~1% below the ideal-source
-    // 69.36 mA — the battery finally droops under load (§19).
+    // Expected branch currents (all ~14.9 mA = (9 − 1.985) / (470 + 1)):
+    //   battery_9v_001 = -0.014894  (sourcing — exits + terminal externally)
+    //   the rest       = +0.014894  (series circuit)
+    // ~14.9 mA is comfortably under the LED's 20 mA rating — a safe, lit circuit.
     const world = loadWorld('fixtures/valid')
 
     // Pre-flight: cross-FK must be clean on the valid world (re-verified
@@ -1148,28 +1148,27 @@ describe('solveDC end-to-end: educational anchor circuit', () => {
     expect(sol.iterations).toBeGreaterThan(1)
     expect(sol.iterations).toBeLessThan(100)
 
-    // Node voltages — the battery terminal droops to 8.931 V under load now.
-    expect(sol.nodes.get('net_battery_pos')).toBeCloseTo(8.9313, 3)
-    expect(sol.nodes.get('net_wire1_switch')).toBeCloseTo(8.9313, 3)
-    expect(sol.nodes.get('net_switch_resistor')).toBeCloseTo(8.9313, 3)
-    expect(sol.nodes.get('net_resistor_led')).toBeCloseTo(2.0638, 3)
+    // Node voltages — the battery terminal droops slightly to 8.985 V under load.
+    expect(sol.nodes.get('net_battery_pos')).toBeCloseTo(8.9851, 3)
+    expect(sol.nodes.get('net_wire1_switch')).toBeCloseTo(8.9851, 3)
+    expect(sol.nodes.get('net_switch_resistor')).toBeCloseTo(8.9851, 3)
+    expect(sol.nodes.get('net_resistor_led')).toBeCloseTo(1.9847, 3)
     expect(sol.nodes.get('net_led_wire2')).toBeCloseTo(0, 9)
     expect(sol.nodes.get('net_battery_neg')).toBe(0)
 
-    // Branch currents — the Shockley 68.68 mA result (1 Ω internal R drops it ~1%).
-    expect(sol.branches.get('battery_9v_001')).toBeCloseTo(-0.0686754, 6)
-    expect(sol.branches.get('wire_001')).toBeCloseTo(0.0686754, 6)
-    expect(sol.branches.get('switch_001')).toBeCloseTo(0.0686754, 6)
-    expect(sol.branches.get('resistor_001')).toBeCloseTo(0.0686754, 6)
-    expect(sol.branches.get('led_001')).toBeCloseTo(0.0686754, 6)
-    expect(sol.branches.get('wire_002')).toBeCloseTo(0.0686754, 6)
+    // Branch currents — the Shockley ~14.9 mA result through the 470 Ω limiter.
+    expect(sol.branches.get('battery_9v_001')).toBeCloseTo(-0.0148944, 6)
+    expect(sol.branches.get('wire_001')).toBeCloseTo(0.0148944, 6)
+    expect(sol.branches.get('switch_001')).toBeCloseTo(0.0148944, 6)
+    expect(sol.branches.get('resistor_001')).toBeCloseTo(0.0148944, 6)
+    expect(sol.branches.get('led_001')).toBeCloseTo(0.0148944, 6)
+    expect(sol.branches.get('wire_002')).toBeCloseTo(0.0148944, 6)
   })
 
-  test('the LED current is ~3.43× the max_forward_current rating (Shockley; sets up Sprint 15)', () => {
-    // Sprint 14 faithfully reports the computed current; Sprint 15's
-    // failure-mode check will fire led-overloaded on this same circuit.
-    // This test documents the deliberate ratings overshoot in the
-    // fixture so the cross-sprint chain has a real triggering case.
+  test('the LED runs safely within its max_forward_current rating (Shockley)', () => {
+    // The 470 Ω limiting resistor holds the LED at ~14.9 mA, comfortably under its
+    // 20 mA rating — the real, safe textbook design. (Undersizing the resistor to
+    // trigger an overload is exercised by the failure-detector tests.)
     const world = loadWorld('fixtures/valid')
     const sol = solveDC(world)
 
@@ -1186,9 +1185,9 @@ describe('solveDC end-to-end: educational anchor circuit', () => {
     const maxParam = (led.parameters?.max_forward_current?.value as any)?.amount
     expect(typeof maxParam).toBe('number')
 
-    // The Shockley current (~68.68 mA) exceeds the rated max (20 mA) at ~3.43×.
-    expect(Math.abs(I_led)).toBeGreaterThan(maxParam)
-    expect(Math.abs(I_led) / maxParam).toBeCloseTo(3.434, 2)
+    // ~14.9 mA is ~0.74× the 20 mA rating — within spec, so the LED lights.
+    expect(Math.abs(I_led)).toBeLessThan(maxParam)
+    expect(Math.abs(I_led) / maxParam).toBeCloseTo(0.745, 2)
   })
 })
 

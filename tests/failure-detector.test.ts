@@ -364,13 +364,24 @@ describe('detectFailures (basic)', () => {
 // 3. End-to-end on the educational anchor circuit (THE cross-sprint contract)
 // ===========================================================================
 
+/** Undersize the anchor's limiting resistor (470 → 100 Ω) to recreate the classic LED overload. */
+function undersizeResistor(world: World): void {
+  const r = world.instances.get('resistor_001')
+  if (r) {
+    r.parameters = {
+      ...r.parameters,
+      resistance: { value: { kind: 'scalar', amount: 100, unit: 'ohm' } },
+    }
+  }
+}
+
 describe('detectFailures end-to-end: educational anchor circuit', () => {
-  test('the full pipeline fires led-overloaded with the Shockley 3.43× numbers', () => {
-    // load → cross-FK (clean) → solveDC (68.68 mA) → detectFailures → led-overloaded.
-    // This is the contract that's been alive since Sprint 12: the deliberately-
-    // undersized 100 Ω resistor + 9 V supply + 2 V LED overdrives the 20 mA LED to
-    // ~68.68 mA (≈3.43×) with the Shockley model + the battery's 1 Ω internal R.
+  test('an undersized resistor overdrives the LED → led-overloaded fires (e2e)', () => {
+    // The default anchor (470 Ω) is safe; UNDERSIZE the limiting resistor to 100 Ω
+    // and the 9 V supply drives the 20 mA LED to ~68.68 mA (≈3.43×) with the
+    // Shockley model + the battery's 1 Ω internal R. load → cross-FK → solve → detect.
     const world = loadWorld('fixtures/valid')
+    undersizeResistor(world)
 
     const fkErrors = validateWorld(world)
     expect(fkErrors).toEqual([])
@@ -383,7 +394,6 @@ describe('detectFailures end-to-end: educational anchor circuit', () => {
     const ledOverload = failures.find((f) => f.code === 'led-overloaded' && f.source === 'led_001')
     expect(ledOverload).toBeDefined()
     if (ledOverload === undefined) return
-    // Shockley result with the battery's 1 Ω internal resistance: 68.68 mA.
     expect(ledOverload.measured).toBeCloseTo(0.0686754, 6)
     expect(ledOverload.rated).toBeCloseTo(0.02, 9)
     expect(ledOverload.ratio).toBeCloseTo(3.4338, 3)
@@ -391,32 +401,25 @@ describe('detectFailures end-to-end: educational anchor circuit', () => {
     expect(ledOverload.severity).toBe('error')
   })
 
-  test('only led_001 overloads — the idle catalog LEDs (led_002..005) do not fire', () => {
-    // led_002..led_005 are catalog examples without connects: — they have no
-    // branch current in the solution, so the detector correctly stays silent
-    // about them (no current = nothing to overload).
+  test('only the wired LED overloads — idle catalog LEDs (led_002..005) do not fire', () => {
+    // With the resistor undersized so led_001 overloads, the idle catalog LEDs
+    // (led_002..005, no connects: → no branch current) correctly stay silent —
+    // no current = nothing to overload.
     const world = loadWorld('fixtures/valid')
+    undersizeResistor(world)
     const sol = solveDC(world)
     const ledOverloads = detectFailures(world, sol).filter((f) => f.code === 'led-overloaded')
     expect(ledOverloads.length).toBe(1)
     expect(ledOverloads[0]?.source).toBe('led_001')
   })
 
-  test('resistor_001 does NOT overpower — 0.49 W in a 5 W part (10.2× headroom)', () => {
-    // The §19.10 corrected result: exactly one failure fires on the anchor
-    // circuit. resistor_001 dissipates 0.07² × 100 = 0.49 W against its
-    // declared power_rating: 5 W. The detector correctly stays silent about
-    // the safely-operating resistor.
+  test('the safe default anchor (470 Ω) produces no failures at all', () => {
+    // The real, safe circuit: the LED runs at ~14.9 mA (< 20 mA) and the resistor
+    // dissipates 0.0149² × 470 ≈ 0.10 W (≪ its 5 W rating). Nothing exceeds a
+    // rating, so the detector fires zero failures — a clean working circuit.
     const world = loadWorld('fixtures/valid')
     const sol = solveDC(world)
-    const failures = detectFailures(world, sol)
-
-    const resistorFailures = failures.filter((f) => f.code === 'resistor-overpower')
-    expect(resistorFailures).toEqual([])
-
-    // The whole anchor circuit fires exactly ONE failure — led-overloaded.
-    expect(failures.length).toBe(1)
-    expect(failures[0]?.code).toBe('led-overloaded')
+    expect(detectFailures(world, sol)).toEqual([])
   })
 
   test('led_001 does NOT reverse-breakdown — it is forward-biased', () => {
@@ -439,14 +442,14 @@ describe('detectFailures end-to-end: educational anchor circuit', () => {
 // ===========================================================================
 
 describe('detectFailures: the consolidated cross-sprint contract (S15-v3-6)', () => {
-  test('the anchor circuit produces exactly one Failure, with the complete §19.10 field set', () => {
-    // This is the authoritative documentation of the contract that's been
-    // alive since Sprint 12. Four sprints compose:
+  test('an overloaded LED produces exactly one Failure with the complete §19.10 field set', () => {
+    // Undersize the anchor's resistor (470 → 100 Ω) so the LED overloads, then
+    // verify the four sprints compose end-to-end:
     //   §16 equation values → §17 nets → §18 DC solver → §19 failure detection
-    // The deliberately-undersized circuit (9 V, 100 Ω, LED V_F=2 V) produces
-    // 70 mA, 3.5× the LED's 20 mA rating, and exactly one failure fires with
-    // every field populated as the spec's §19.10 example shows.
+    // 9 V, 100 Ω, LED V_F≈2 V → ~68.68 mA (3.43× the 20 mA rating), and exactly
+    // one failure fires with every field populated as the spec's §19.10 shows.
     const world = loadWorld('fixtures/valid')
+    undersizeResistor(world)
     expect(validateWorld(world)).toEqual([])
 
     const sol = solveDC(world)
@@ -461,7 +464,6 @@ describe('detectFailures: the consolidated cross-sprint contract (S15-v3-6)', ()
     expect(f.code).toBe('led-overloaded')
     expect(f.source).toBe('led_001')
     expect(f.kind).toBe('max_forward_current')
-    // Shockley result with the battery's 1 Ω internal resistance: 68.68 mA / 3.43×.
     expect(f.measured).toBeCloseTo(0.0686754, 6)
     expect(f.rated).toBe(0.02)
     expect(f.ratio).toBeCloseTo(3.4338, 3)

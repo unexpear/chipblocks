@@ -1,14 +1,13 @@
-# Valid fixture: a specific 100 ohm 5 W wirewound resistor instance using nichrome.
-# Higher-power wirewound resistors are the natural use case for nichrome; lower-power
-# 1/4 W or 1/8 W resistors in real product use are typically carbon-film or metal-film
-# (those material types arrive in later sprints).
-# S7-v3-6: connects: wires this resistor into the educational anchor circuit
-# between switch_001 (input from switch's output) and led_001 (output to LED's
-# anode). At 9 V supply, 2.0 V LED drop, leaves ~7 V across this resistor.
-# I = (9 - 2) / 100 = 70 mA — too high for a 20 mA LED. A realistic circuit
-# would use ~350 ohm here; the 100 ohm value is preserved from Sprint 4 for
-# fixture stability. Selecting the right resistance for an LED is exactly the
-# kind of calculation a future solver will do automatically.
+# Valid fixture: a 470 ohm 5 W wirewound resistor instance using nichrome — the
+# LED current-limiting resistor for the educational anchor circuit.
+# S7-v3-6: connects: wires this resistor between switch_001 (input from the
+# switch's output) and led_001 (output to the LED's anode). At 9 V supply with a
+# ~2.0 V red LED drop, ~7 V is left across the resistor:
+#   I = (9 - 2) / 470 ≈ 15 mA — a safe, textbook value for a 20 mA LED. The
+# standard 9 V LED-resistor result is ~350 ohm; 470 ohm is the next conservative
+# E12 value (~15 mA), so the LED runs well within its rating and lights normally.
+# (Wirewound 5 W is over-spec for this ~0.1 W load but a valid real part; nichrome
+# is the catalog's only resistive material for now.)
 # MUST validate against instance.schema.json.
 kind_ref: primitive_device
 definition: resistor
@@ -22,7 +21,7 @@ parameters:
   resistance:
     value:
       kind: scalar
-      amount: 100
+      amount: 470
       unit: ohm
   tolerance_percent:
     value:
