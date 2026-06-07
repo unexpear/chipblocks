@@ -6,7 +6,11 @@ import {
   useNodes,
   useReactFlow,
 } from '@xyflow/react'
-import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
+import {
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  useState,
+} from 'react'
 import { formatCurrent } from './edge-currents.ts'
 import { formatLength, formatResistance } from './wire-length.ts'
 
@@ -92,6 +96,10 @@ export function NetEdge({
   const { setEdges, screenToFlowPosition } = useReactFlow()
   const nodes = useNodes()
   const waypoints = readWaypoints(data)
+  // The detail chip (net id · current · length · resistance) only pops up while
+  // the wire is hovered — keeps the schematic clean; the current arrows on the
+  // wire itself stay visible always.
+  const [hovered, setHovered] = useState(false)
 
   let path: string
   let labelX: number
@@ -205,8 +213,8 @@ export function NetEdge({
         {...(markerStart ? { markerStart } : {})}
         {...(markerEnd ? { markerEnd } : {})}
       />
-      {/* Invisible wide hit area: double-click adds a corner where you clicked. */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: the wire is a pointer routing surface (double-click adds a corner); keyboard routing is future work */}
+      {/* Invisible wide hit area: hover shows the chip; double-click adds a corner. */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: the wire is a pointer routing surface (hover reveals detail, double-click adds a corner); keyboard routing is future work */}
       <path
         d={path}
         fill="none"
@@ -214,9 +222,11 @@ export function NetEdge({
         strokeWidth={14}
         style={{ pointerEvents: 'stroke', cursor: 'copy' }}
         onDoubleClick={addWaypoint}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
       />
       <EdgeLabelRenderer>
-        {label ? (
+        {hovered && label ? (
           <div
             className="nodrag nopan"
             style={{

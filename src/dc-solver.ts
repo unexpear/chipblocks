@@ -2,7 +2,7 @@
  * DC solver — Modified Nodal Analysis for linear circuits.
  *
  * Per OBJECT-MODEL.md §18. Sprint 14 MVP scope: resistors + voltage sources
- * + wires + LEDs (fixed-V_F approximation) + switches (fixed-state). Single
+ * + wires + LEDs (fixed-V_F approximation) + switches (open/closed state). Single
  * deterministic linear solve via mathjs's lusolve. Nonlinear iterative
  * solving (Shockley + Newton-Raphson + pnjlim) lands in Sprint 15.
  *
@@ -20,9 +20,9 @@
  * MNA stamp pattern:
  *   - LED (fixed-V_F approximation): stamps as voltage source with
  *     V = forward_voltage between anode (+) and cathode (-).
- *   - Switch (SPST, fixed-state): Sprint 14 hardcodes closed; stamps as
- *     ideal 0 V source between terminal_in and terminal_out. State-machine
- *     integration is a §15 deferred row.
+ *   - Switch (SPST): reads its open/closed state (S19). A closed switch stamps
+ *     as an ideal 0 V source between terminal_in and terminal_out; an open
+ *     switch is omitted entirely, leaving a real open circuit (no current).
  *   - Wire: stamps as ideal 0 V source between terminal_a and terminal_b
  *     (the IR drop on hookup wire at 70 mA is ~350 μV — negligible for
  *     Sprint 14's purposes). Material+geometry-based resistance modeling
@@ -46,7 +46,18 @@ import {
   pnjlim,
   thermalVoltage,
 } from './diode-model.ts'
-import { readScalarParam } from './instance-params.ts'
+import { readEnumParam, readScalarParam } from './instance-params.ts'
+
+/**
+ * A switch conducts only when closed. State lives on the instance as
+ * `state: open|closed` (a runtime/canvas concern per the switches_circuit
+ * behavior); absent state defaults to closed, so existing fixtures + the loaded
+ * anchor circuit keep conducting. An OPEN switch is simply not stamped — its two
+ * terminals stay on separate nets, i.e. a real open circuit.
+ */
+function switchIsClosed(inst: Instance): boolean {
+  return readEnumParam(inst, 'state') !== 'open'
+}
 
 /** Newton-Raphson controls (§20.6). */
 const NR_MAX_ITERATIONS = 100
@@ -163,7 +174,9 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       if (led !== null) shockleyLeds.push(led)
       else linearVoltageSources.push({ inst, kind: 'led' }) // fixed-V_F fallback
     } else if (inst.definition === 'switch_spst_toggle') {
-      linearVoltageSources.push({ inst, kind: 'switch' })
+      // Closed → stamps as a short (below). Open → omitted entirely, leaving its
+      // terminals on separate nets: a real open circuit, not a hardcoded short.
+      if (switchIsClosed(inst)) linearVoltageSources.push({ inst, kind: 'switch' })
     } else if (inst.definition === 'wire') {
       linearVoltageSources.push({ inst, kind: 'wire' })
     }
@@ -529,6 +542,10 @@ export function stampVoltageSource(
 ): boolean {
   const V = readScalarParam(inst, 'nominal_voltage')
   if (V === undefined) return false
+  // A real source has series internal resistance: the terminal voltage droops
+  // under load and a short is current-limited (V / r_internal, not infinite).
+  // Absent / 0 → an ideal source.
+  const internalResistance = readScalarParam(inst, 'internal_resistance') ?? 0
   return findAndStampVoltageSource(
     inst,
     nodeIndex,
@@ -538,6 +555,7 @@ export function stampVoltageSource(
     'terminal_negative',
     M,
     b,
+    internalResistance,
   )
 }
 
@@ -564,8 +582,8 @@ export function stampLED(
 }
 
 /**
- * Apply a closed switch's contribution. Sprint 14 hardcodes all SPST switches
- * as closed (state-machine integration is a §15 row). Stamps identically to
+ * Apply a closed switch's contribution. Only closed switches reach here (the
+ * pre-pass omits open ones, leaving an open circuit). Stamps identically to
  * an ideal 0 V voltage source between terminal_in (treated as positive) and
  * terminal_out (treated as negative), enforcing V_in = V_out — the
  * short-circuit / net-merge equivalent via the MNA mechanism.
@@ -624,6 +642,7 @@ function findAndStampVoltageSource(
   M: any,
   // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
   b: any,
+  seriesResistance = 0,
 ): boolean {
   if (inst.connects?.length !== 2) return false
 
@@ -645,7 +664,14 @@ function findAndStampVoltageSource(
     M.set([auxIdx, i_neg], (M.get([auxIdx, i_neg]) ?? 0) - 1)
   }
 
-  // Constraint: V_pos - V_neg = V_src
+  // Constraint: V_pos - V_neg = V_src - I·R_series. With no series resistance
+  // this is the ideal source V_pos - V_neg = V_src. The branch current I (the aux
+  // variable) reads negative when the source delivers, so a series internal
+  // resistance droops the terminal under load via a -R_series term on the aux
+  // diagonal (sign verified against the solved anchor circuit).
+  if (seriesResistance !== 0) {
+    M.set([auxIdx, auxIdx], (M.get([auxIdx, auxIdx]) ?? 0) - seriesResistance)
+  }
   b.set([auxIdx, 0], voltageValue)
 
   return true

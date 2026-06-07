@@ -72,7 +72,7 @@ describe('diodeCurrent', () => {
     const i1 = diodeCurrent(2.0, IS, N, VT)
     const i2 = diodeCurrent(2.064, IS, N, VT)
     // ~64 mV above the calibration point should land near the anchor-circuit
-    // 69.36 mA operating current.
+    // operating current (~69 mA).
     expect(i2).toBeGreaterThan(i1)
     expect(i2).toBeCloseTo(0.0694, 3)
   })

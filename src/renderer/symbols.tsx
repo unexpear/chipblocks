@@ -1,6 +1,8 @@
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from '@xyflow/react'
-import { useEffect } from 'react'
-import { type Parameters, primaryValue } from './part-defaults.ts'
+import { useContext, useEffect } from 'react'
+import './canvas-animations.css'
+import { HealthContext } from './health.ts'
+import { type Parameters, primaryValue, switchClosed } from './part-defaults.ts'
 
 /**
  * Standard schematic symbols (Sprint 18 S18-v3-5) — IEC 60617 / IEEE 315
@@ -81,15 +83,22 @@ function LedGlyph() {
   )
 }
 
-/** SPST switch — a hinged contact with a break. */
-function SwitchGlyph() {
+/** SPST switch — a hinged blade: closed rests on the far contact, open lifts away. */
+function SwitchGlyph({ closed }: { closed: boolean }) {
   return (
     <svg width={W} height={H}>
-      <title>SPST switch</title>
+      <title>{closed ? 'SPST switch (closed)' : 'SPST switch (open)'}</title>
       {lead(0, 26)}
       <circle cx={28} cy={MID} r={2.5} fill="none" stroke={STROKE} />
-      {/* open hinged blade */}
-      <line x1={28} y1={MID} x2={50} y2={10} stroke={STROKE} strokeWidth={1.5} />
+      {/* blade: down onto the far contact when closed, lifted with a gap when open */}
+      <line
+        x1={28}
+        y1={MID}
+        x2={closed ? 52 : 50}
+        y2={closed ? MID : 10}
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
       <circle cx={52} cy={MID} r={2.5} fill="none" stroke={STROKE} />
       {lead(54, W)}
     </svg>
@@ -119,12 +128,13 @@ function WireGlyph() {
   )
 }
 
+// switch_spst_toggle is intentionally absent — DeviceGlyph renders it specially
+// (it needs the open/closed state, unlike these stateless one-shot glyphs).
 const GLYPHS: Record<string, () => React.JSX.Element> = {
   resistor: ResistorGlyph,
   power_source: BatteryGlyph,
   led: LedGlyph,
   led_uv_algan: LedGlyph,
-  switch_spst_toggle: SwitchGlyph,
   ground: GroundGlyph,
   wire: WireGlyph,
 }
@@ -172,7 +182,15 @@ export type DeviceNodeData = {
  * for kinds without a symbol yet), with no handles — shared by the canvas node
  * and the parts palette so both draw a part the same way.
  */
-export function DeviceGlyph({ definition }: { definition: string }) {
+export function DeviceGlyph({
+  definition,
+  parameters,
+}: {
+  definition: string
+  parameters?: Parameters
+}) {
+  // The switch is state-dependent: render its blade open or closed.
+  if (definition === 'switch_spst_toggle') return <SwitchGlyph closed={switchClosed(parameters)} />
   const Glyph = GLYPHS[definition]
   if (Glyph) return <Glyph />
   return (
@@ -202,6 +220,7 @@ export function DeviceGlyph({ definition }: { definition: string }) {
 export function DeviceNode({ id, data }: NodeProps) {
   const { definition, label, rotation = 0, parameters } = data as DeviceNodeData
   const value = primaryValue(definition, parameters)
+  const health = useContext(HealthContext).get(id)
   const updateNodeInternals = useUpdateNodeInternals()
   // After a rotation, re-measure the handles so wires follow the rotated terminals.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `rotation` is an intentional re-run trigger — the effect must re-measure when the node rotates, though it isn't read in the body
@@ -213,7 +232,20 @@ export function DeviceNode({ id, data }: NodeProps) {
   // own drawn terminal — not at an offset box edge. The glyph + handles rotate
   // together; the id label stays upright below the box (never rotates/widens it).
   return (
-    <div style={{ position: 'relative', width: W, height: H, fontFamily: 'system-ui, sans-serif' }}>
+    <div
+      className={health?.failed ? 'cb-shake' : undefined}
+      style={{ position: 'relative', width: W, height: H, fontFamily: 'system-ui, sans-serif' }}
+    >
+      {/* Success / failure feedback (health.ts): a lit LED glows warm; an
+          overstressed part bursts once + keeps a danger ring. Behind the symbol
+          so it stays legible. */}
+      {health?.lit ? <div className="cb-glow" /> : null}
+      {health?.failed ? (
+        <>
+          <div className="cb-danger" />
+          <div className="cb-burst" />
+        </>
+      ) : null}
       <div
         style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation}deg)` }}
       >
@@ -233,7 +265,7 @@ export function DeviceNode({ id, data }: NodeProps) {
             }}
           />
         ))}
-        <DeviceGlyph definition={definition} />
+        <DeviceGlyph definition={definition} {...(parameters ? { parameters } : {})} />
       </div>
       <div
         style={{
@@ -249,6 +281,11 @@ export function DeviceNode({ id, data }: NodeProps) {
       >
         {label}
         {value ? <span style={{ color: '#7ab8ff', marginLeft: 5 }}>{value}</span> : null}
+        {health?.failed ? (
+          <span title={health.note} style={{ marginLeft: 5 }}>
+            💥
+          </span>
+        ) : null}
       </div>
     </div>
   )

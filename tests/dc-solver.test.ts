@@ -1103,7 +1103,7 @@ describe('computeResistorCurrent', () => {
 // ===========================================================================
 
 describe('solveDC end-to-end: educational anchor circuit', () => {
-  test('YAML on disk → cross-FK clean → solveDC produces the Shockley 69.36 mA result', () => {
+  test('YAML on disk → cross-FK clean → solveDC produces the Shockley 68.68 mA result', () => {
     // The full pipeline: load all valid fixtures, verify cross-FK reports
     // zero errors (the Sprint 13 invariants hold), then run the DC solver
     // on the resulting world.
@@ -1111,22 +1111,21 @@ describe('solveDC end-to-end: educational anchor circuit', () => {
     // The circuit: 9 V battery → wire_001 → switch_001 (closed) →
     // resistor_001 (100 Ω) → led_001 (V_F = 2 V) → wire_002 → ground.
     //
-    // Expected node voltages (relative to net_battery_neg = 0 V). Sprint 16
-    // switched led_001 to the Shockley model (it has forward_voltage +
-    // max_forward_current, the calibration point), so the LED settles at
-    // 2.064 V — not exactly 2.0 V — at the operating current of 69.36 mA:
-    //   net_battery_pos      = 9.0    (battery sets)
-    //   net_wire1_switch     = 9.0    (wire is ideal short)
-    //   net_switch_resistor  = 9.0    (closed switch is ideal short)
-    //   net_resistor_led     = 2.064  (Shockley LED voltage at 69.36 mA)
+    // Expected node voltages (relative to net_battery_neg = 0 V). led_001 uses the
+    // Shockley model, and the battery now models its 1 Ω internal resistance, so
+    // its terminal droops to 8.931 V under the 68.68 mA load:
+    //   net_battery_pos      = 8.931  (9 V EMF − 68.68 mA × 1 Ω internal)
+    //   net_wire1_switch     = 8.931  (wire is ideal short)
+    //   net_switch_resistor  = 8.931  (closed switch is ideal short)
+    //   net_resistor_led     = 2.064  (Shockley LED voltage at 68.68 mA)
     //   net_led_wire2        = 0.0    (wire is ideal short to ground)
     //   net_battery_neg      = 0.0    (ground reference)
     //
-    // Expected branch currents (all 69.36 mA = (9 - 2.064) / 100):
-    //   battery_9v_001 = -0.06936  (sourcing — exits + terminal externally)
-    //   the rest       = +0.06936  (series circuit)
-    // This is the §20.10 accuracy upgrade: fixed-V_F gave 70.00 mA; Shockley
-    // gives 69.36 mA. The difference is ~0.9% — validating §19.7.
+    // Expected branch currents (all 68.68 mA = (9 − 2.064) / (100 + 1)):
+    //   battery_9v_001 = -0.068675  (sourcing — exits + terminal externally)
+    //   the rest       = +0.068675  (series circuit)
+    // The 1 Ω internal resistance drops the loop ~1% below the ideal-source
+    // 69.36 mA — the battery finally droops under load (§19).
     const world = loadWorld('fixtures/valid')
 
     // Pre-flight: cross-FK must be clean on the valid world (re-verified
@@ -1149,24 +1148,24 @@ describe('solveDC end-to-end: educational anchor circuit', () => {
     expect(sol.iterations).toBeGreaterThan(1)
     expect(sol.iterations).toBeLessThan(100)
 
-    // Node voltages
-    expect(sol.nodes.get('net_battery_pos')).toBeCloseTo(9, 9)
-    expect(sol.nodes.get('net_wire1_switch')).toBeCloseTo(9, 9)
-    expect(sol.nodes.get('net_switch_resistor')).toBeCloseTo(9, 9)
-    expect(sol.nodes.get('net_resistor_led')).toBeCloseTo(2.0643, 3)
+    // Node voltages — the battery terminal droops to 8.931 V under load now.
+    expect(sol.nodes.get('net_battery_pos')).toBeCloseTo(8.9313, 3)
+    expect(sol.nodes.get('net_wire1_switch')).toBeCloseTo(8.9313, 3)
+    expect(sol.nodes.get('net_switch_resistor')).toBeCloseTo(8.9313, 3)
+    expect(sol.nodes.get('net_resistor_led')).toBeCloseTo(2.0638, 3)
     expect(sol.nodes.get('net_led_wire2')).toBeCloseTo(0, 9)
     expect(sol.nodes.get('net_battery_neg')).toBe(0)
 
-    // Branch currents — the Shockley 69.36 mA result
-    expect(sol.branches.get('battery_9v_001')).toBeCloseTo(-0.069357, 6)
-    expect(sol.branches.get('wire_001')).toBeCloseTo(0.069357, 6)
-    expect(sol.branches.get('switch_001')).toBeCloseTo(0.069357, 6)
-    expect(sol.branches.get('resistor_001')).toBeCloseTo(0.069357, 6)
-    expect(sol.branches.get('led_001')).toBeCloseTo(0.069357, 6)
-    expect(sol.branches.get('wire_002')).toBeCloseTo(0.069357, 6)
+    // Branch currents — the Shockley 68.68 mA result (1 Ω internal R drops it ~1%).
+    expect(sol.branches.get('battery_9v_001')).toBeCloseTo(-0.0686754, 6)
+    expect(sol.branches.get('wire_001')).toBeCloseTo(0.0686754, 6)
+    expect(sol.branches.get('switch_001')).toBeCloseTo(0.0686754, 6)
+    expect(sol.branches.get('resistor_001')).toBeCloseTo(0.0686754, 6)
+    expect(sol.branches.get('led_001')).toBeCloseTo(0.0686754, 6)
+    expect(sol.branches.get('wire_002')).toBeCloseTo(0.0686754, 6)
   })
 
-  test('the LED current is ~3.47× the max_forward_current rating (Shockley; sets up Sprint 15)', () => {
+  test('the LED current is ~3.43× the max_forward_current rating (Shockley; sets up Sprint 15)', () => {
     // Sprint 14 faithfully reports the computed current; Sprint 15's
     // failure-mode check will fire led-overloaded on this same circuit.
     // This test documents the deliberate ratings overshoot in the
@@ -1187,9 +1186,9 @@ describe('solveDC end-to-end: educational anchor circuit', () => {
     const maxParam = (led.parameters?.max_forward_current?.value as any)?.amount
     expect(typeof maxParam).toBe('number')
 
-    // The Shockley current (~69.36 mA) exceeds the rated max (20 mA) at ~3.47×.
+    // The Shockley current (~68.68 mA) exceeds the rated max (20 mA) at ~3.43×.
     expect(Math.abs(I_led)).toBeGreaterThan(maxParam)
-    expect(Math.abs(I_led) / maxParam).toBeCloseTo(3.468, 2)
+    expect(Math.abs(I_led) / maxParam).toBeCloseTo(3.434, 2)
   })
 })
 

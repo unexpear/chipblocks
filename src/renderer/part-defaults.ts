@@ -1,5 +1,5 @@
 import type { Instance } from '../cross-fk-validator.ts'
-import { readScalarParam } from '../instance-params.ts'
+import { readEnumParam, readScalarParam } from '../instance-params.ts'
 
 /**
  * Part parameter defaults + display (Sprint 19 S19-v3-20).
@@ -20,8 +20,10 @@ const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amo
 
 const DEFAULTS: Record<string, Parameters> = {
   resistor: {
-    // 220 Ω — E12 standard value, the classic LED current-limiting resistor.
-    resistance: scalar(220, 'ohm'),
+    // 470 Ω — E12 standard, sized so the 9 V default battery drives the 2 V
+    // default LED at ~15 mA: safely under its 20 mA rating, so a dropped
+    // battery→resistor→LED loop lights up rather than burning the LED out.
+    resistance: scalar(470, 'ohm'),
     tolerance_percent: scalar(5, 'percent'),
     power_rating: scalar(0.25, 'watt'),
   },
@@ -40,6 +42,16 @@ const DEFAULTS: Record<string, Parameters> = {
     forward_voltage: scalar(3.4, 'volt'),
     max_forward_current: scalar(0.02, 'ampere'),
   },
+  switch_spst_toggle: {
+    // Panel-mount SPST toggle (C&K 7101 class, matching the anchor switch
+    // fixture): copper contacts, ~20 mΩ closed, 6 A, 125 V. Starts closed
+    // (conducting) — double-click flips it open. `state` is a runtime enum.
+    state: { value: 'closed' },
+    contact_material: { value: 'copper' },
+    contact_resistance_closed: scalar(0.02, 'ohm'),
+    max_current: scalar(6, 'ampere'),
+    rated_voltage: scalar(125, 'volt'),
+  },
 }
 
 /** A real, cited default parameter set for a freshly-dropped part (a fresh copy; editable). */
@@ -52,6 +64,19 @@ export function defaultParameters(definition: string): Parameters {
 // so wrap them — readScalarParam only touches `.parameters`.
 const amountOf = (parameters: Parameters | undefined, name: string): number | undefined =>
   parameters ? readScalarParam({ parameters } as unknown as Instance, name) : undefined
+
+const stringOf = (parameters: Parameters | undefined, name: string): string | undefined =>
+  parameters ? readEnumParam({ parameters } as unknown as Instance, name) : undefined
+
+/** Is a switch closed (conducting)? Absent state defaults to closed — matches the solver. */
+export function switchClosed(parameters: Parameters | undefined): boolean {
+  return stringOf(parameters, 'state') !== 'open'
+}
+
+/** The opposite state's parameters — flips a switch open↔closed for double-click toggle. */
+export function toggledSwitch(parameters: Parameters | undefined): Parameters {
+  return { ...parameters, state: { value: switchClosed(parameters) ? 'open' : 'closed' } }
+}
 
 /** Component resistance formatted Ω / kΩ / MΩ (distinct from a wire's mΩ scale). */
 export function formatComponentOhms(ohms: number): string {
@@ -76,6 +101,9 @@ export function primaryValue(
   if (definition === 'led' || definition === 'led_uv_algan') {
     const v = amountOf(parameters, 'forward_voltage')
     return v === undefined ? null : `${v} V`
+  }
+  if (definition === 'switch_spst_toggle') {
+    return switchClosed(parameters) ? 'closed' : 'open'
   }
   return null
 }

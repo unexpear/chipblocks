@@ -46,7 +46,7 @@ function loadWorld(dir: string): World {
 describe('edgeFlow — arrows driven by the real solver', () => {
   const world = loadWorld('fixtures/valid')
   const solution = solveDC(world)
-  const LOOP_AMPS = 0.069357
+  const LOOP_AMPS = 0.0686754 // anchor loop current, incl. the battery's 1 Ω internal R
 
   test('the solver actually solved the anchor circuit', () => {
     expect(solution.status).toBe('solved')
@@ -88,7 +88,7 @@ describe('edgeFlow — arrows driven by the real solver', () => {
 describe('wireFlow — a collapsed wire-edge reads its own branch current', () => {
   const world = loadWorld('fixtures/valid')
   const solution = solveDC(world)
-  const LOOP_AMPS = 0.069357
+  const LOOP_AMPS = 0.0686754 // anchor loop current, incl. the battery's 1 Ω internal R
 
   test('current runs source→target when the source is on the positive side', () => {
     const f = wireFlow(solution, 'wire_001', true)

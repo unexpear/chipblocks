@@ -25,3 +25,14 @@ export function readScalarParam(inst: Instance, name: string): number | undefine
   if (typeof v.amount !== 'number') return undefined
   return v.amount
 }
+
+/**
+ * Read an enum / bare-string parameter (e.g. a switch's `state: open|closed`, or
+ * a `contact_material` ref). Returns undefined if missing or not a plain string.
+ * Mirrors the `value: <string>` shape the cross-FK validator already resolves for
+ * material refs.
+ */
+export function readEnumParam(inst: Instance, name: string): string | undefined {
+  const value = inst.parameters?.[name]?.value
+  return typeof value === 'string' ? value : undefined
+}

@@ -365,11 +365,11 @@ describe('detectFailures (basic)', () => {
 // ===========================================================================
 
 describe('detectFailures end-to-end: educational anchor circuit', () => {
-  test('the full pipeline fires led-overloaded with the Shockley 3.47× numbers', () => {
-    // load → cross-FK (clean) → solveDC (70 mA) → detectFailures → led-overloaded.
+  test('the full pipeline fires led-overloaded with the Shockley 3.43× numbers', () => {
+    // load → cross-FK (clean) → solveDC (68.68 mA) → detectFailures → led-overloaded.
     // This is the contract that's been alive since Sprint 12: the deliberately-
-    // undersized 100 Ω resistor + 9 V supply + 2 V LED produces 70 mA, which
-    // is 3.5× the LED's 20 mA rating.
+    // undersized 100 Ω resistor + 9 V supply + 2 V LED overdrives the 20 mA LED to
+    // ~68.68 mA (≈3.43×) with the Shockley model + the battery's 1 Ω internal R.
     const world = loadWorld('fixtures/valid')
 
     const fkErrors = validateWorld(world)
@@ -383,10 +383,10 @@ describe('detectFailures end-to-end: educational anchor circuit', () => {
     const ledOverload = failures.find((f) => f.code === 'led-overloaded' && f.source === 'led_001')
     expect(ledOverload).toBeDefined()
     if (ledOverload === undefined) return
-    // Sprint 16 Shockley result: 69.36 mA (was 70.00 mA under fixed-V_F).
-    expect(ledOverload.measured).toBeCloseTo(0.069357, 6)
+    // Shockley result with the battery's 1 Ω internal resistance: 68.68 mA.
+    expect(ledOverload.measured).toBeCloseTo(0.0686754, 6)
     expect(ledOverload.rated).toBeCloseTo(0.02, 9)
-    expect(ledOverload.ratio).toBeCloseTo(3.468, 3)
+    expect(ledOverload.ratio).toBeCloseTo(3.4338, 3)
     expect(ledOverload.units).toBe('ampere')
     expect(ledOverload.severity).toBe('error')
   })
@@ -461,10 +461,10 @@ describe('detectFailures: the consolidated cross-sprint contract (S15-v3-6)', ()
     expect(f.code).toBe('led-overloaded')
     expect(f.source).toBe('led_001')
     expect(f.kind).toBe('max_forward_current')
-    // Sprint 16 Shockley result: 69.36 mA / 3.47× (was 70.00 mA / 3.50×).
-    expect(f.measured).toBeCloseTo(0.069357, 6)
+    // Shockley result with the battery's 1 Ω internal resistance: 68.68 mA / 3.43×.
+    expect(f.measured).toBeCloseTo(0.0686754, 6)
     expect(f.rated).toBe(0.02)
-    expect(f.ratio).toBeCloseTo(3.468, 3)
+    expect(f.ratio).toBeCloseTo(3.4338, 3)
     expect(f.units).toBe('ampere')
     expect(f.severity).toBe('error')
   })
