@@ -31,12 +31,49 @@ const humanize = (key: string): string =>
 const LED_DEFINITIONS = new Set(['led', 'led_uv_algan'])
 const MATERIAL_REF_KEYS = new Set(['resistive_material', 'n_side', 'p_side', 'contact_material'])
 
-/** LED emission-color presets → peak_wavelength (nm). */
-const LED_COLORS: { label: string; nm: number; css: string }[] = [
-  { label: 'Red', nm: 640, css: 'rgb(255, 40, 0)' },
-  { label: 'Green', nm: 530, css: 'rgb(70, 220, 0)' },
-  { label: 'Blue', nm: 470, css: 'rgb(0, 140, 255)' },
-  { label: 'UV', nm: 340, css: 'rgb(120, 70, 210)' },
+/**
+ * LED emission-color presets. Picking one sets a CONSISTENT real LED — the
+ * peak_wavelength (glow color), the semiconductor it would actually be made of,
+ * AND that material's typical forward voltage — so the chemistry backs the color
+ * (a blue LED is InGaN at ~3 V, not red AlGaInP at 2 V). Forward-voltage ranges
+ * from the LED definition (AlGaInP red ~2 V; InGaN green/blue ~3.0–3.2 V; AlGaN
+ * UV ~3.4 V). `material` is the base id; n_side/p_side append _n_type/_p_type.
+ */
+const LED_COLORS: {
+  label: string
+  nm: number
+  css: string
+  forwardVoltage: number
+  material: string
+}[] = [
+  {
+    label: 'Red',
+    nm: 640,
+    css: 'rgb(255, 40, 0)',
+    forwardVoltage: 2.0,
+    material: 'aluminum_gallium_indium_phosphide',
+  },
+  {
+    label: 'Green',
+    nm: 530,
+    css: 'rgb(70, 220, 0)',
+    forwardVoltage: 3.2,
+    material: 'indium_gallium_nitride',
+  },
+  {
+    label: 'Blue',
+    nm: 470,
+    css: 'rgb(0, 140, 255)',
+    forwardVoltage: 3.0,
+    material: 'indium_gallium_nitride',
+  },
+  {
+    label: 'UV',
+    nm: 340,
+    css: 'rgb(120, 70, 210)',
+    forwardVoltage: 3.4,
+    material: 'aluminum_gallium_nitride',
+  },
 ]
 
 /** The reading quantity that carries a rating, and its limit — for headroom. */
@@ -253,8 +290,14 @@ export function PartInspector({
               <button
                 key={c.nm}
                 type="button"
-                title={`${c.label} (${c.nm} nm)`}
-                onClick={() => onParam('peak_wavelength', c.nm)}
+                title={`${c.label} — ${c.nm} nm, ${c.forwardVoltage} V (${c.material.replace(/_/g, ' ')})`}
+                onClick={() => {
+                  // Set a consistent real LED: color + semiconductor + its V_F.
+                  onParam('peak_wavelength', c.nm)
+                  onParam('forward_voltage', c.forwardVoltage)
+                  onEnum('n_side', `${c.material}_n_type`)
+                  onEnum('p_side', `${c.material}_p_type`)
+                }}
                 className="nodrag"
                 style={{
                   width: 16,
