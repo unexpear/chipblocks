@@ -33,6 +33,7 @@ import { canvasHealth, HealthContext, type NodeHealth } from './health.ts'
 import { edgeTypes } from './net-edge.tsx'
 import { DEFINITION_MIME, PaletteItems } from './palette.tsx'
 import { defaultParameters, toggledSwitch } from './part-defaults.ts'
+import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { type DeviceNodeData, nodeTypes } from './symbols.tsx'
 import { type Tool, ToolbarItems } from './toolbar.tsx'
 import { lengthFromDrawn, wireResistance } from './wire-length.ts'
@@ -202,6 +203,7 @@ function Canvas() {
   // Movable menus (S19-v3-10): each docks to a window edge; the user drags them.
   const [paletteEdge, setPaletteEdge] = useState<DockEdge>('left')
   const [toolbarEdge, setToolbarEdge] = useState<DockEdge>('top')
+  const [propsEdge, setPropsEdge] = useState<DockEdge>('right')
   // Active tool: 'select' (move parts) or 'wire' (parts locked; drag draws wires).
   const [tool, setTool] = useState<Tool>('select')
   // Active physics (S19-v3-14): re-solve + refresh every wire's current/length/
@@ -343,6 +345,64 @@ function Canvas() {
     [setNodes],
   )
 
+  // Edit a part's scalar value (resistance, voltage, ...) → live re-solve. The
+  // value lives in the node's parameters, so updating it triggers the always-on
+  // re-solve, exactly like the switch toggle.
+  const onEditParam = useCallback(
+    (nodeId: string, key: string, amount: number) => {
+      setNodes((current) =>
+        current.map((n) => {
+          if (n.id !== nodeId) return n
+          const params = (n.data as DeviceNodeData).parameters ?? {}
+          const value = params[key]?.value
+          if (
+            typeof value !== 'object' ||
+            value === null ||
+            (value as { kind?: unknown }).kind !== 'scalar'
+          ) {
+            return n
+          }
+          const scalar = value as { kind: string; amount: number; unit: string }
+          return {
+            ...n,
+            data: { ...n.data, parameters: { ...params, [key]: { value: { ...scalar, amount } } } },
+          }
+        }),
+      )
+    },
+    [setNodes],
+  )
+
+  // Edit a part's enum value (a switch's open/closed state) → live re-solve.
+  const onEditEnum = useCallback(
+    (nodeId: string, key: string, value: string) => {
+      setNodes((current) =>
+        current.map((n) =>
+          n.id === nodeId
+            ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  parameters: { ...(n.data as DeviceNodeData).parameters, [key]: { value } },
+                },
+              }
+            : n,
+        ),
+      )
+    },
+    [setNodes],
+  )
+
+  // The selected part feeds the Properties inspector (single selection).
+  const selectedNode = nodes.find((n) => n.selected)
+  const selectedPart: SelectedPart | null = selectedNode
+    ? {
+        id: selectedNode.id,
+        definition: (selectedNode.data as DeviceNodeData).definition,
+        parameters: (selectedNode.data as DeviceNodeData).parameters,
+      }
+    : null
+
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: the dock-grid is the drop target for palette parts; keyboard-accessible placement is future work
     <div
@@ -405,8 +465,8 @@ function Canvas() {
             pointerEvents: 'none',
           }}
         >
-          ChipBlocks — {nodes.length} components, {edges.length} wires · select a part, R to rotate,
-          Delete to remove, double-click a switch to flip
+          ChipBlocks — {nodes.length} components, {edges.length} wires · select a part to edit it, R
+          to rotate, Delete to remove, double-click a switch to flip
           {tool === 'wire' ? ' · wire tool: parts locked, drag between dots' : ''}
           {alwaysOn ? '' : ' · physics paused — hit Solve'}
         </div>
@@ -422,6 +482,17 @@ function Canvas() {
           alwaysOn={alwaysOn}
           onAlwaysOn={setAlwaysOn}
           onSolve={handleSolve}
+        />
+      </DockablePanel>
+      <DockablePanel edge={propsEdge} onEdgeChange={setPropsEdge} title="Properties">
+        <PartInspector
+          selected={selectedPart}
+          onParam={(key, amount) => {
+            if (selectedPart) onEditParam(selectedPart.id, key, amount)
+          }}
+          onEnum={(key, value) => {
+            if (selectedPart) onEditEnum(selectedPart.id, key, value)
+          }}
         />
       </DockablePanel>
     </div>
