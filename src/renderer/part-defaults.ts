@@ -33,14 +33,17 @@ const DEFAULTS: Record<string, Parameters> = {
     internal_resistance: scalar(1, 'ohm'),
   },
   led: {
-    // Typical 5 mm red LED (Kingbright WP7113SRD-D class): 2.0 V at 20 mA max.
+    // Typical 5 mm red LED (Kingbright WP7113SRD-D class): 2.0 V at 20 mA max,
+    // ~640 nm red emission — sets the on-canvas glow color.
     forward_voltage: scalar(2.0, 'volt'),
     max_forward_current: scalar(0.02, 'ampere'),
+    peak_wavelength: scalar(640, 'nanometer'),
   },
   led_uv_algan: {
-    // AlGaN UV LED: higher forward voltage (~3.4 V) at 20 mA.
+    // AlGaN UV LED: ~3.4 V at 20 mA, ~340 nm (invisible UV → a faint violet glow).
     forward_voltage: scalar(3.4, 'volt'),
     max_forward_current: scalar(0.02, 'ampere'),
+    peak_wavelength: scalar(340, 'nanometer'),
   },
   switch_spst_toggle: {
     // Panel-mount SPST toggle (C&K 7101 class, matching the anchor switch

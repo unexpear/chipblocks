@@ -239,7 +239,14 @@ export function DeviceNode({ id, data }: NodeProps) {
       {/* Success / failure feedback (health.ts): a lit LED glows warm; an
           overstressed part bursts once + keeps a danger ring. Behind the symbol
           so it stays legible. */}
-      {health?.lit ? <div className="cb-glow" /> : null}
+      {health?.lit ? (
+        <div
+          className="cb-glow"
+          style={{
+            background: `radial-gradient(circle, ${health.glow ?? 'rgb(255, 211, 92)'} 0%, transparent 72%)`,
+          }}
+        />
+      ) : null}
       {health?.failed ? (
         <>
           <div className="cb-danger" />

@@ -10,7 +10,7 @@
 import { describe, expect, test } from 'vitest'
 import { solveDC } from '../src/dc-solver.ts'
 import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
-import { canvasHealth } from '../src/renderer/health.ts'
+import { canvasHealth, wavelengthToColor } from '../src/renderer/health.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
 
@@ -26,7 +26,7 @@ const EDGES = [
   },
 ]
 
-const nodes = (ohms: number): CanvasNode[] => [
+const nodes = (ohms: number, ledNm?: number): CanvasNode[] => [
   { id: 'bat', definition: 'power_source', parameters: { nominal_voltage: scalar(9, 'volt') } },
   {
     id: 'r1',
@@ -36,7 +36,11 @@ const nodes = (ohms: number): CanvasNode[] => [
   {
     id: 'led',
     definition: 'led',
-    parameters: { forward_voltage: scalar(2, 'volt'), max_forward_current: scalar(0.02, 'ampere') },
+    parameters: {
+      forward_voltage: scalar(2, 'volt'),
+      max_forward_current: scalar(0.02, 'ampere'),
+      ...(ledNm !== undefined ? { peak_wavelength: scalar(ledNm, 'nanometer') } : {}),
+    },
   },
   { id: 'gnd', definition: 'ground' },
 ]
@@ -47,7 +51,16 @@ describe('canvasHealth', () => {
     const health = canvasHealth(world, solveDC(world))
     expect(health.get('led')?.lit).toBe(true)
     expect(health.get('led')?.failed).toBeFalsy()
+    // No declared wavelength → default 640 nm red glow.
+    expect(health.get('led')?.glow).toBe('rgb(255, 20, 0)')
     expect(health.get('r1')?.failed).toBeFalsy() // ~0.1 W < 0.25 W
+  })
+
+  test('a lit LED glows in its real emission color (from peak_wavelength)', () => {
+    const world = canvasToWorld(nodes(470, 470), EDGES) // 470 nm blue LED, safe current
+    const health = canvasHealth(world, solveDC(world))
+    expect(health.get('led')?.lit).toBe(true)
+    expect(health.get('led')?.glow).toBe('rgb(0, 153, 255)') // 470 nm → blue
   })
 
   test('an overdriven LED fails (bursts), not lit — and the small resistor pops too', () => {
@@ -63,5 +76,17 @@ describe('canvasHealth', () => {
     const health = canvasHealth(world, solveDC(world))
     expect(health.has('bat')).toBe(false)
     expect(health.has('gnd')).toBe(false)
+  })
+})
+
+describe('wavelengthToColor', () => {
+  test('maps visible wavelengths to their colors', () => {
+    expect(wavelengthToColor(640)).toBe('rgb(255, 20, 0)') // red
+    expect(wavelengthToColor(530)).toBe('rgb(73, 255, 0)') // green
+    expect(wavelengthToColor(470)).toBe('rgb(0, 153, 255)') // blue
+  })
+  test('invisible UV / IR read as a dim stand-in, not a bright color', () => {
+    expect(wavelengthToColor(340)).toBe('rgb(64, 0, 102)') // UV — faint violet
+    expect(wavelengthToColor(940)).toBe('rgb(38, 0, 0)') // IR — near-black
   })
 })
