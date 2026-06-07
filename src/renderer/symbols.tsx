@@ -129,6 +129,37 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   wire: WireGlyph,
 }
 
+/**
+ * Connection terminals per device — a handle's id IS the terminal name, so a
+ * wire the user draws carries which terminals it joins (read by canvas→World for
+ * the live re-solve). Names match the catalog fixtures + what the solver looks
+ * up (battery terminal_positive/negative, LED anode/cathode, switch in/out).
+ * All handles are `source`; App uses connectionMode="loose" so any terminal can
+ * wire to any terminal.
+ */
+const TWO = (a: string, b: string) => [
+  { id: a, position: Position.Left },
+  { id: b, position: Position.Right },
+]
+const TERMINALS: Record<string, { id: string; position: Position }[]> = {
+  resistor: TWO('terminal_a', 'terminal_b'),
+  capacitor: TWO('terminal_a', 'terminal_b'),
+  power_source: TWO('terminal_positive', 'terminal_negative'),
+  led: TWO('anode', 'cathode'),
+  led_uv_algan: TWO('anode', 'cathode'),
+  diode_silicon_rectifier: TWO('anode', 'cathode'),
+  diode_schottky_al_si: TWO('anode', 'cathode'),
+  diode_zener_silicon: TWO('anode', 'cathode'),
+  switch_spst_toggle: TWO('terminal_in', 'terminal_out'),
+  ground: [{ id: 'reference_terminal', position: Position.Top }],
+}
+const FALLBACK_TERMINALS = TWO('terminal_a', 'terminal_b')
+
+/** The terminals (handle id + side) for a device definition. */
+export function terminalsOf(definition: string): { id: string; position: Position }[] {
+  return TERMINALS[definition] ?? FALLBACK_TERMINALS
+}
+
 export type DeviceNodeData = {
   definition: string
   label: string
@@ -186,28 +217,22 @@ export function DeviceNode({ id, data }: NodeProps) {
       <div
         style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation}deg)` }}
       >
-        {definition === 'ground' ? (
-          // Ground is a single-terminal reference: one connection at the top (the
-          // stem), not a left/right pass-through. Both types overlap so a wire can
-          // attach either way.
-          <>
-            <Handle type="target" position={Position.Top} style={{ background: '#888' }} />
-            <Handle type="source" position={Position.Top} style={{ background: '#888' }} />
-          </>
-        ) : (
-          <>
-            <Handle
-              type="target"
-              position={Position.Left}
-              style={{ background: '#888', top: MID }}
-            />
-            <Handle
-              type="source"
-              position={Position.Right}
-              style={{ background: '#888', top: MID }}
-            />
-          </>
-        )}
+        {/* One handle per terminal; id = terminal name. connectionMode="loose"
+            (App) lets any terminal wire to any terminal. Ground = one top stem. */}
+        {terminalsOf(definition).map((t) => (
+          <Handle
+            key={t.id}
+            id={t.id}
+            type="source"
+            position={t.position}
+            style={{
+              background: '#888',
+              ...(t.position === Position.Left || t.position === Position.Right
+                ? { top: MID }
+                : {}),
+            }}
+          />
+        ))}
         <DeviceGlyph definition={definition} />
       </div>
       <div

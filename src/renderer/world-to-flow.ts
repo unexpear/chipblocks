@@ -37,6 +37,9 @@ export type FlowEdge = {
   ref: string
   /** Wire-edge only: is `source` on the wire's positive (terminal_a) side? */
   sourceOnPositiveSide: boolean
+  /** Terminal (handle id) at each end — for rendering + the canvas→World re-solve. */
+  sourceHandle: string
+  targetHandle: string
 }
 
 /** Terminal names on the positive / current-entry side (matches dc-solver). */
@@ -72,12 +75,12 @@ export function worldToFlow(world: World): { nodes: FlowNode[]; edges: FlowEdge[
     data: { label: inst.id, definition: inst.definition, parameters: inst.parameters },
   }))
 
-  /** Component members of a net, preferring non-ground (ground is a tap, not a path end). */
-  const componentEndpoint = (netId: string): string | undefined => {
+  /** Component endpoint (instance + terminal) of a net, preferring non-ground. */
+  const componentEndpoint = (netId: string): { instance: string; terminal: string } | undefined => {
     const members = world.nets.get(netId)?.members ?? []
     const comps = members.filter((m) => componentIds.has(m.instance))
-    const nonGround = comps.find((m) => !isGround(world.instances.get(m.instance)))
-    return (nonGround ?? comps[0])?.instance
+    const chosen = comps.find((m) => !isGround(world.instances.get(m.instance))) ?? comps[0]
+    return chosen ? { instance: chosen.instance, terminal: chosen.terminal } : undefined
   }
 
   const edges: FlowEdge[] = []
@@ -90,11 +93,13 @@ export function worldToFlow(world: World): { nodes: FlowNode[]; edges: FlowEdge[
     if (!positive || !negative) continue
     const source = componentEndpoint(positive.net)
     const target = componentEndpoint(negative.net)
-    if (!source || !target || source === target) continue
+    if (!source || !target || source.instance === target.instance) continue
     edges.push({
       id: `wire-${wire.id}`,
-      source,
-      target,
+      source: source.instance,
+      target: target.instance,
+      sourceHandle: source.terminal,
+      targetHandle: target.terminal,
       label: wire.id,
       showLabel: true,
       kind: 'wire',
@@ -117,6 +122,8 @@ export function worldToFlow(world: World): { nodes: FlowNode[]; edges: FlowEdge[
         id: `net-${net.id}-${i}`,
         source: first.instance,
         target: m.instance,
+        sourceHandle: first.terminal,
+        targetHandle: m.terminal,
         label: net.id,
         showLabel: !labelShown,
         kind: 'net',

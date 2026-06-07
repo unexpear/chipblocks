@@ -2,6 +2,7 @@ import {
   addEdge,
   Background,
   type Connection,
+  ConnectionMode,
   Controls,
   type Edge,
   MarkerType,
@@ -116,6 +117,8 @@ function Canvas() {
       id: e.id,
       source: e.source,
       target: e.target,
+      sourceHandle: e.sourceHandle,
+      targetHandle: e.targetHandle,
       type: 'net',
       // A wire is a connection, not a deletable block — the user reconnects its
       // endpoints instead (wire-as-connector model).
@@ -181,6 +184,8 @@ function Canvas() {
           id: edge.id,
           source: edge.source,
           target: edge.target,
+          sourceHandle: edge.sourceHandle ?? null,
+          targetHandle: edge.targetHandle ?? null,
           type: 'net',
           deletable: false,
           label: edge.label,
@@ -315,6 +320,7 @@ function Canvas() {
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           nodesDraggable={tool === 'select'}
+          connectionMode={ConnectionMode.Loose}
           zoomOnDoubleClick={false}
           fitView
           proOptions={{ hideAttribution: true }}
