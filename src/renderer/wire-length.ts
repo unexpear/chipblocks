@@ -2,14 +2,15 @@
  * Wire length → real length + resistance (Sprint 19 S19-v3-7).
  *
  * Wire-as-connector model + hybrid scaling, decided with the project lead
- * (2026-06-06): a wire is a drawn connection whose LENGTH feeds the physics.
- *  - The MATH runs on the real length, full precision, no cap — R = ρ·L/A.
- *  - The drawn on-canvas length SEEDS the real length (hybrid): pixels → metres
- *    via a base scale; editable afterwards.
+ * (2026-06-06; scale band set 2026-06-07): a wire is a drawn connection whose
+ * LENGTH feeds the physics.
+ *  - Real lengths run on a fixed scale band: 0.01 inch to 3 feet. The drawn
+ *    on-canvas length SEEDS the real length (pixels → metres), clamped to that
+ *    band; editable afterwards. R = ρ·L/A runs on the real length at full
+ *    precision.
  *  - The VISUAL length (when we later render by length) is a soft, monotonic
- *    mapping that stays in a reasonable on-screen range with NO hard clamp — so
- *    a very long wire still looks longer, just compressed. That keeps rendering
- *    cheap; the precision is spent on the math, not the pixels.
+ *    mapping that stays in a reasonable on-screen range — a longer wire still
+ *    looks longer, just compressed. Precision is spent on the math, not pixels.
  *
  * This module is the computational core (pure, unit-tested). Displaying it on
  * the canvas and feeding it back into the node-voltage solve come on top.
@@ -18,13 +19,26 @@
 /**
  * Base seed scale: one canvas pixel ≈ this many metres of real wire. Chosen so
  * a normally-drawn wire (~150–250 px) seeds a sensible bench length (~15–25 cm).
- * Linear and uncapped — drawing longer simply seeds a longer real wire.
  */
 export const METRES_PER_PIXEL = 0.001 // 1 px = 1 mm
 
-/** Hybrid seed: a drawn on-canvas length (pixels) → a real length (metres). */
+const INCH_M = 0.0254
+const FOOT_M = 0.3048
+/**
+ * Scale band (project lead, 2026-06-07): wire lengths run from 0.01 inch to
+ * 3 feet. The seeded length is clamped to this band — a tiny connection keeps a
+ * real minimum, and an over-long drag tops out at 3 ft.
+ */
+export const MIN_LENGTH_M = 0.01 * INCH_M // 0.01 in = 0.254 mm
+export const MAX_LENGTH_M = 3 * FOOT_M // 3 ft = 0.9144 m
+
+/**
+ * Hybrid seed: a drawn on-canvas length (pixels) → a real length (metres),
+ * clamped to the [0.01 in, 3 ft] scale band.
+ */
 export function lengthFromDrawn(pixels: number): number {
-  return Math.max(0, pixels) * METRES_PER_PIXEL
+  const seeded = Math.max(0, pixels) * METRES_PER_PIXEL
+  return Math.min(MAX_LENGTH_M, Math.max(MIN_LENGTH_M, seeded))
 }
 
 /**
@@ -58,12 +72,11 @@ export function wireResistance(
   return (resistivityOhmM * Math.max(0, metres)) / areaM2
 }
 
-/** Human-readable length, unit-scaled (m / cm / mm). */
+/** Human-readable length in imperial — inches under a foot, feet at/above one. */
 export function formatLength(metres: number): string {
-  const m = Math.max(0, metres)
-  if (m >= 1) return `${m.toFixed(2)} m`
-  if (m >= 0.01) return `${(m * 100).toFixed(1)} cm`
-  return `${(m * 1000).toFixed(1)} mm`
+  const inches = Math.max(0, metres) / INCH_M
+  if (inches >= 12) return `${(inches / 12).toFixed(2)} ft`
+  return `${inches.toFixed(2)} in`
 }
 
 /** Human-readable resistance, unit-scaled (Ω / mΩ / µΩ). */
