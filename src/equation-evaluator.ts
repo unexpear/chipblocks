@@ -206,7 +206,7 @@ export function evaluateEquation(
   }
 
   // Convert the result to the declared units for the returned amount
-  const amount = result.toNumber(spec.output_unit)
+  const amount = result.toNumber(toMathjsUnit(spec.output_unit))
   if (spec.conditions !== undefined) {
     return {
       status: 'evaluated',
@@ -223,6 +223,41 @@ export function evaluateEquation(
 }
 
 /**
+ * The catalog writes units in readable snake_case (`ohm_meter`, `square_metre`,
+ * `per_kelvin`); mathjs needs its own syntax (`ohm m`, `m^2`, `1/K`). Translate
+ * at the evaluation boundary so the catalog stays readable AND real fixture
+ * values evaluate. Anything not in this map is passed to mathjs unchanged, so
+ * native mathjs unit strings (`ohm m`, `m^2`, `eV`, `nm`, `J s`) keep working.
+ */
+const UNIT_ALIASES: Record<string, string> = {
+  ohm_meter: 'ohm m',
+  metre: 'm',
+  meter: 'm',
+  square_metre: 'm^2',
+  square_meter: 'm^2',
+  cubic_metre: 'm^3',
+  cubic_meter: 'm^3',
+  per_kelvin: '1/K',
+  volt: 'V',
+  ampere: 'A',
+  watt: 'W',
+  farad: 'F',
+  joule: 'J',
+  coulomb: 'C',
+  hertz: 'Hz',
+  henry: 'H',
+  kelvin: 'K',
+  second: 's',
+  kg_per_m3: 'kg/m^3',
+  watt_per_meter_kelvin: 'W/(m K)',
+}
+
+/** Translate a catalog unit string to mathjs syntax (pass-through if not aliased). */
+function toMathjsUnit(unit: string): string {
+  return UNIT_ALIASES[unit] ?? unit
+}
+
+/**
  * Wrap math.unit() to convert mathjs's "unknown unit" errors into our
  * structured EquationEvalError shape with a clear locus. Dimensionless
  * values (relative permittivity, refractive index, EQE, etc.) are passed
@@ -236,7 +271,7 @@ function safeUnit(amount: number, unit: string, locus: string): any {
     return amount
   }
   try {
-    return math.unit(amount, unit)
+    return math.unit(amount, toMathjsUnit(unit))
   } catch (err) {
     throw new EquationEvalError(
       'unknown-unit',

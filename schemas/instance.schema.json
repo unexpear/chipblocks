@@ -47,6 +47,21 @@
       },
       "additionalProperties": false
     },
+    "properties": {
+      "type": "object",
+      "description": "Per-instance concrete values for composed-part properties, keyed by '<role>.<property>' (e.g. 'geometry.length'). Gives this instance's geometry/material real dimensions so a derived equation like R = rho*L/A evaluates per-instance against this part, not the shared shape definition. Per OBJECT-MODEL.md §16.",
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$": {
+          "type": "object",
+          "properties": {
+            "value": { "$ref": "quantity.schema.json#/$defs/value" }
+          },
+          "required": ["value"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "connects": {
       "type": "array",
       "description": "Net / terminal / device connections. Ad-hoc shape per OBJECT-MODEL.md §2 example; formal net model deferred per §15.",

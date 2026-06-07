@@ -160,6 +160,39 @@ describe('evaluateEquation — first concrete cases', () => {
 })
 
 // ===========================================================================
+// 2b. Catalog snake_case units evaluate (unit aliasing)
+// ===========================================================================
+
+describe('catalog snake_case units evaluate (unit aliasing)', () => {
+  test('R = ρL/A with ohm_meter / metre / square_metre (the real catalog units)', () => {
+    const spec: EquationValue = {
+      kind: 'equation',
+      expression: 'rho * L / A',
+      inputs: {
+        rho: { kind: 'property_ref', path: 'resistive_material.resistivity' },
+        L: { kind: 'property_ref', path: 'geometry.length' },
+        A: { kind: 'property_ref', path: 'geometry.cross_section_area' },
+      },
+      output_unit: 'ohm',
+    }
+    // nichrome (1.1e-6 ohm·m) at the geometry that yields 100 Ω, written in the
+    // catalog's snake_case unit strings — these must normalize to mathjs syntax.
+    const result = evaluateEquation(spec, {
+      propertyRefs: {
+        'resistive_material.resistivity': { amount: 1.1e-6, unit: 'ohm_meter' },
+        'geometry.length': { amount: 1.0, unit: 'metre' },
+        'geometry.cross_section_area': { amount: 1.1e-8, unit: 'square_metre' },
+      },
+    })
+    expect(result.status).toBe('evaluated')
+    if (result.status === 'evaluated') {
+      expect(result.unit).toBe('ohm')
+      expect(result.amount).toBeCloseTo(100, 6) // 1.1e-6 × 1.0 / 1.1e-8 = 100 Ω
+    }
+  })
+})
+
+// ===========================================================================
 // 3. Error paths
 // ===========================================================================
 

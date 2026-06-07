@@ -282,28 +282,56 @@ describe('cross-FK validator — invalid worlds (one per error code MUST fire)',
     expect(derivesErrors).toEqual([])
   })
 
-  test('derives-violates-rating skips silently when inputs cannot be resolved (resistor geometry)', () => {
-    // device-resistor.yaml ships properties.resistance as R = rho * L / A with
-    // inputs resistive_material.resistivity (resolvable from material property),
-    // geometry.length (NOT resolvable — the path shape definition doesn't carry
-    // a length property; length lives per-instance), geometry.cross_section_area
-    // (same — not on the shape definition). buildRatingCheckContext returns null
-    // for this case, the check skips, and no error fires — confirming the
-    // best-effort posture from §16.7.
-    //
-    // Verifying this even by inducing a deliberate mismatch: mutating
-    // resistor_001.parameters.resistance to a wildly different value must NOT
-    // produce a derives-violates-rating error (because the equation can't be
-    // evaluated from world data to begin with).
+  test('derives-violates-rating FIRES when declared resistance contradicts the geometry (resistor_001)', () => {
+    // resistor_001 now carries per-instance geometry (length 1.0 m, cross-section
+    // 1.1e-8 m^2), so the resistor definition's R = rho * L / A evaluates against
+    // nichrome (1.10e-6 ohm_meter) to 100 ohm — matching the declared 100 ohm (no
+    // error; covered by the valid-world test). Mutating the declared value to a
+    // physically-impossible 1 GΩ must now be CAUGHT: that material + geometry
+    // cannot produce that resistance. This is the derived ρL/A path going live.
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    const resistor001 = getOrThrow(
+      world.instances,
+      'resistor_001',
+      'derives-violates-rating resistor-fire test',
+    )
+    resistor001.parameters = {
+      ...resistor001.parameters,
+      resistance: { value: { kind: 'scalar', amount: 1e9, unit: 'ohm' } }, // impossible for nichrome at this geometry
+    }
+    const errors = validateWorld(world)
+    const hit = errors.find(
+      (e) =>
+        e.code === 'derives-violates-rating' &&
+        e.source === 'resistor_001' &&
+        e.property === 'resistance',
+    )
+    expect(hit).toBeDefined()
+    if (hit !== undefined && hit.code === 'derives-violates-rating') {
+      expect(hit.relative_difference).toBeGreaterThan(0.2)
+      expect(hit.declared_amount).toBe(1e9)
+      expect(hit.derived_unit).toBe('ohm')
+      // Derived ≈ 100 ohm — the equation actually evaluated from material + geometry.
+      expect(hit.derived_amount).toBeCloseTo(100, 6)
+    }
+  })
+
+  test('derives-violates-rating skips silently when geometry is unresolvable (no per-instance dimensions)', () => {
+    // The best-effort posture (§16.7): with NO per-instance geometry, the
+    // geometry.length / geometry.cross_section_area inputs can't resolve from the
+    // shared `path` shape definition, buildRatingCheckContext returns null, and
+    // the check skips — no false positive, even with a wildly wrong declared
+    // value. (Strip resistor_001's geometry to recreate the pre-dimensions case.)
     const world = loadWorld(join(FIXTURE_DIR, 'valid'))
     const resistor001 = getOrThrow(
       world.instances,
       'resistor_001',
       'derives-violates-rating resistor-skip test',
     )
+    resistor001.properties = {} // remove per-instance geometry → inputs unresolvable
     resistor001.parameters = {
       ...resistor001.parameters,
-      resistance: { value: { kind: 'scalar', amount: 1e9, unit: 'ohm' } }, // way off
+      resistance: { value: { kind: 'scalar', amount: 1e9, unit: 'ohm' } }, // way off, but unverifiable
     }
     const errors = validateWorld(world)
     const resistorDerivesErrors = errors.filter(

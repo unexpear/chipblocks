@@ -34,6 +34,22 @@ parameters:
       kind: scalar
       amount: 5
       unit: watt
+properties:
+  # Per-instance geometry so the resistor definition's derived R = rho*L/A can be
+  # cross-checked against the declared 100 ohm above. Nichrome rho = 1.10e-6
+  # ohm_meter, so 1.0 m of 1.1e-8 m^2 wire (~0.118 mm dia) gives exactly 100 ohm.
+  # Illustrative dimensions chosen to match the declared value (a real 5 W
+  # wirewound coils roughly this length of fine nichrome wire).
+  geometry.length:
+    value:
+      kind: scalar
+      amount: 1.0
+      unit: metre
+  geometry.cross_section_area:
+    value:
+      kind: scalar
+      amount: 1.1e-8
+      unit: square_metre
 connects:
   - net: net_switch_resistor
     terminal: terminal_a

@@ -90,6 +90,13 @@ export type Instance = {
   definition: string
   origin?: string
   parameters?: Record<string, { value?: unknown; ref?: string }>
+  /**
+   * Per-instance concrete values for composed-part properties, keyed by
+   * `<role>.<property>` (e.g. `geometry.length`). Lets an instance give its
+   * geometry/material real dimensions so a derived equation (R = ρL/A) evaluates
+   * against THIS part, not the shared shape definition.
+   */
+  properties?: Record<string, { value?: unknown }>
   connects?: Array<{ net: string; terminal: string; of: string }>
 }
 
@@ -340,6 +347,17 @@ function buildRatingCheckContext(
     if (inputSpec.kind !== 'property_ref') continue
 
     const path = inputSpec.path
+
+    // Per-instance value first: an instance can supply a composed-part property
+    // (e.g. its geometry's length / cross-section) keyed by the full
+    // `<role>.<property>` path. This is what lets each resistor carry its own
+    // dimensions, so R = ρL/A is computed for THIS part — not the shared shape.
+    const perInstance = readScalarOrConditionBound(inst.properties?.[path])
+    if (perInstance !== null) {
+      propertyRefs[path] = perInstance
+      continue
+    }
+
     const dotIndex = path.indexOf('.')
     if (dotIndex < 0) return null
 
