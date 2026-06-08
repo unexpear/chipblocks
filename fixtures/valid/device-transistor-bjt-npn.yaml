@@ -1,0 +1,119 @@
+# Valid fixture: NPN bipolar junction transistor (BJT).
+# The workhorse active device: two back-to-back PN junctions sharing a thin
+# p-type base between an n-type collector and an n-type emitter. A small
+# base-emitter current controls a much larger collector current
+# (I_C ~ beta * I_B in the active region) — amplification; driven hard it
+# saturates (switch ON) or cuts off (switch OFF).
+#
+# Solved by the DC engine via the Ebers-Moll transport model (bjt-model.ts +
+# dc-solver.ts: companion stamp + Newton-Raphson), the same way the LED uses the
+# Shockley equation. Increment 1 = the model, increment 2 = solver wiring,
+# increment 3 (this file) = the catalog definition.
+#
+# beta and I_S are part-specific (a 2N3904 differs from a BC547 or a power BJT),
+# so per the device-power-source convention this definition carries NO builtin
+# numeric defaults on them — only the n/p/n material-region defaults. The cited
+# canvas drop defaults live in part-defaults.ts (2N3904 class), and per-instance
+# values override.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: transistor_bjt_npn
+origin: builtin
+layer: primitive_device
+name: "NPN bipolar junction transistor"
+description: "A three-terminal amplifying / switching device: two PN junctions sharing a thin p-type base between an n-type collector and an n-type emitter. A small base-emitter current controls a much larger collector current (I_C is approximately beta times I_B in the forward-active region). Modeled by the Ebers-Moll transport equations. The standard active device for amplifiers, current sources, and logic-level switching."
+composition:
+  uses:
+    - pn_junction
+  requires:
+    collector_region:
+      kind: material
+      must_enable:
+        - n_type_semiconductor
+    base_region:
+      kind: material
+      must_enable:
+        - p_type_semiconductor
+    emitter_region:
+      kind: material
+      must_enable:
+        - n_type_semiconductor
+    endpoints:
+      kind: interface
+      min_count: 3
+parameters:
+  collector_region:
+    type: material_ref
+    satisfies_role: collector_region
+    required: true
+    default:
+      value: silicon_n_type
+    description: The n-type semiconductor forming the collector region.
+  base_region:
+    type: material_ref
+    satisfies_role: base_region
+    required: true
+    default:
+      value: silicon_p_type
+    description: The thin p-type semiconductor forming the base, sandwiched between collector and emitter.
+  emitter_region:
+    type: material_ref
+    satisfies_role: emitter_region
+    required: true
+    default:
+      value: silicon_n_type
+    description: The heavily n-doped semiconductor forming the emitter region (the symbol's arrow terminal).
+  saturation_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: Ebers-Moll transport saturation current I_S — scales both junction currents. Typical small-signal NPN ~1e-14 A; roughly doubles every ~10 C.
+  forward_current_gain:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: Forward common-emitter current gain beta_F (hFE) — the collector/base current ratio in the active region. Part-specific (~50-800) and rises with temperature; no builtin default (set per instance / canvas default).
+  reverse_current_gain:
+    type: quantity
+    units: dimensionless
+    required: false
+    description: Reverse current gain beta_R — small for a normal NPN (often <10); governs behavior when collector and emitter roles swap (saturation / inverse mode).
+  max_collector_current:
+    type: quantity
+    units: ampere
+    required: false
+    description: Maximum continuous collector current before thermal damage. Part-specific (e.g. 2N3904 ~ 200 mA).
+  collector_emitter_breakdown_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Collector-emitter breakdown voltage with the base open (V_CEO). Exceeding it drives avalanche breakdown (e.g. 2N3904 ~ 40 V).
+behaviors:
+  - acts_as_transistor
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  collector:
+    description: N-type collector terminal; collects the carriers swept across the base (conventional current enters here for an NPN in the active region).
+  base:
+    description: P-type base terminal; the small controlling current/voltage here governs the collector current.
+  emitter:
+    description: N-type emitter terminal; emits carriers into the base (conventional current exits here for an NPN). The schematic arrow is on this terminal.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Two PN junctions sharing the base (base-emitter, base-collector); NPN = n-collector /
+  p-base / n-emitter. Solved by the DC engine via the Ebers-Moll transport model
+  (bjt-model.ts + dc-solver.ts). Per the device-power-source convention, no builtin
+  numeric defaults on beta / I_S (part-specific) — the canvas drop defaults (part-defaults.ts,
+  2N3904 class, cited) and per-instance values fill them in; the n/p/n material regions DO
+  default to silicon. PNP is the same model with reversed polarities (future variant).
+  Gummel-Poon (Early effect, high-level injection, charge storage) is the higher-fidelity
+  successor — deferred. Ratings (max_collector_current, V_CEO) are present for future
+  failure-mode checks; the active solver reads saturation_current + forward/reverse gain.

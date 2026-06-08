@@ -1,0 +1,55 @@
+# Valid fixture: behavior registry entry for transistor action — a small
+# controlling current/voltage at one junction governs a much larger current
+# through the device. The defining behavior of a bipolar junction transistor.
+#
+# A device with this behavior has two PN junctions sharing a thin base region
+# (base-emitter and base-collector). In the forward-active region the collector
+# current is approximately beta_F times the base current (amplification); driven
+# hard the device saturates (switch ON) or cuts off (switch OFF). Modeled by the
+# Ebers-Moll transport equations.
+#
+# Used by transistor_bjt_npn (S19-v3-39); reusable by future BJT variants (PNP,
+# power, RF) with different parameter values.
+# MUST validate against behavior.schema.json.
+kind: behavior
+id: acts_as_transistor
+origin: builtin
+layer: behavior
+name: "Acts as transistor (current amplification / switching)"
+description: "A three-terminal device whose base-emitter junction current controls a much larger collector-emitter current. In the forward-active region the collector current is approximately beta_F times the base current (amplification); driven hard the device saturates (switch on) or cuts off (switch off). Modeled by the Ebers-Moll transport equations across the two PN junctions (base-emitter and base-collector)."
+parameters_required:
+  - name: saturation_current
+    type: quantity
+    units: ampere
+    description: Ebers-Moll transport saturation current I_S — scales both junction currents.
+  - name: forward_current_gain
+    type: quantity
+    units: dimensionless
+    description: Forward common-emitter current gain beta_F (hFE) — collector/base current ratio in the active region.
+  - name: reverse_current_gain
+    type: quantity
+    units: dimensionless
+    description: Reverse current gain beta_R — small for a normal transistor; governs behavior when the junction roles swap (saturation / inverse mode).
+  - name: thermal_voltage
+    type: quantity
+    units: volt
+    description: kT/q at operating temperature — typically 0.026 V at room temperature; sets the exponential junction scale.
+evaluates: "Forward active: I_C = I_S*(exp(V_BE/V_T) - 1), I_B = I_C/beta_F, so I_C = beta_F*I_B. Full Ebers-Moll: I_C = I_S*(exp(V_BE/V_T) - 1) - I_S*(1 + 1/beta_R)*(exp(V_BC/V_T) - 1); I_B = (I_S/beta_F)*(exp(V_BE/V_T) - 1) + (I_S/beta_R)*(exp(V_BC/V_T) - 1); I_E = -(I_C + I_B)."
+consequences: []
+law: ebers_moll
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Ebers-Moll transport model per Ebers & Moll (1954); Sedra & Smith, "Microelectronic
+  Circuits". Gummel-Poon is the higher-fidelity successor (adds Early effect, high-level
+  injection, junction-charge storage) — deferred. The DC engine implements this via
+  bjt-model.ts (Ebers-Moll currents + Newton-Raphson companion stamp) wired into
+  dc-solver.ts, the same way acts_as_diode is implemented via the Shockley equation.
+  NPN today; PNP is the same model with reversed junction polarities — a future variant.
+  consequences left empty (matches acts_as_diode); the adopting device lists
+  conducts_current and produces_joule_heat directly in its behaviors.
