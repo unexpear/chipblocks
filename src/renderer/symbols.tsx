@@ -1,5 +1,5 @@
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from '@xyflow/react'
-import { useContext, useEffect } from 'react'
+import { Fragment, useContext, useEffect } from 'react'
 import './canvas-animations.css'
 import { HealthContext } from './health.ts'
 import { type Parameters, primaryValue, switchClosed } from './part-defaults.ts'
@@ -165,6 +165,19 @@ const TERMINALS: Record<string, { id: string; position: Position }[]> = {
 }
 const FALLBACK_TERMINALS = TWO('terminal_a', 'terminal_b')
 
+/**
+ * Polarity marker drawn at a terminal's handle, so a polarized part's + / − (or
+ * an LED/diode's anode/cathode, where anode is the + side) is obvious when
+ * wiring — otherwise both handles are identical dots and the loop is easy to wire
+ * backwards or leave open.
+ */
+const TERMINAL_POLARITY: Record<string, '+' | '−'> = {
+  terminal_positive: '+',
+  anode: '+',
+  terminal_negative: '−',
+  cathode: '−',
+}
+
 /** The terminals (handle id + side) for a device definition. */
 export function terminalsOf(definition: string): { id: string; position: Position }[] {
   return TERMINALS[definition] ?? FALLBACK_TERMINALS
@@ -258,20 +271,41 @@ export function DeviceNode({ id, data }: NodeProps) {
       >
         {/* One handle per terminal; id = terminal name. connectionMode="loose"
             (App) lets any terminal wire to any terminal. Ground = one top stem. */}
-        {terminalsOf(definition).map((t) => (
-          <Handle
-            key={t.id}
-            id={t.id}
-            type="source"
-            position={t.position}
-            style={{
-              background: '#888',
-              ...(t.position === Position.Left || t.position === Position.Right
-                ? { top: MID }
-                : {}),
-            }}
-          />
-        ))}
+        {terminalsOf(definition).map((t) => {
+          const polarity = TERMINAL_POLARITY[t.id]
+          const onSide = t.position === Position.Left || t.position === Position.Right
+          return (
+            <Fragment key={t.id}>
+              <Handle
+                id={t.id}
+                type="source"
+                position={t.position}
+                style={{
+                  background: polarity === '+' ? '#e0594f' : polarity === '−' ? '#5a86d8' : '#888',
+                  width: polarity ? 9 : undefined,
+                  height: polarity ? 9 : undefined,
+                  ...(onSide ? { top: MID } : {}),
+                }}
+              />
+              {polarity ? (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: MID - 14,
+                    ...(t.position === Position.Left ? { left: 2 } : { right: 2 }),
+                    fontSize: 12,
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    color: polarity === '+' ? '#ef6a55' : '#7fa6e6',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  {polarity}
+                </div>
+              ) : null}
+            </Fragment>
+          )
+        })}
         <DeviceGlyph definition={definition} {...(parameters ? { parameters } : {})} />
       </div>
       <div
