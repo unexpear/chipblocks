@@ -38,6 +38,7 @@
  */
 
 import { all, create } from 'mathjs'
+import { type BjtParams, bjtCompanion, bjtCurrents } from './bjt-model.ts'
 import type { Instance, Net, World } from './cross-fk-validator.ts'
 import {
   companionModel,
@@ -164,8 +165,14 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   type VsLikeKind = 'power_source' | 'led' | 'switch' | 'wire'
   const linearVoltageSources: Array<{ inst: Instance; kind: VsLikeKind }> = []
   const shockleyLeds: ShockleyLed[] = []
+  const bjts: BjtElement[] = []
 
   for (const inst of world.instances.values()) {
+    if (inst.definition === 'transistor_bjt_npn') {
+      const bjt = resolveBjt(inst)
+      if (bjt !== null) bjts.push(bjt)
+      continue
+    }
     if (inst.connects?.length !== 2) continue
 
     if (inst.definition === 'power_source') {
@@ -218,6 +225,9 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     for (const led of shockleyLeds) {
       stampLedCompanion(led, nodeIndex, thermalV, M, b)
     }
+    for (const bjt of bjts) {
+      stampBjtCompanion(bjt, nodeIndex, thermalV, M, b)
+    }
 
     // biome-ignore lint/suspicious/noExplicitAny: mathjs lusolve return is polymorphic
     let x: any
@@ -242,7 +252,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   let iterations = 1
   let converged = true
 
-  if (shockleyLeds.length === 0) {
+  if (shockleyLeds.length === 0 && bjts.length === 0) {
     solved = buildAndSolve()
     if (solved === null) return emptyResult('singular-matrix', ground, warnings)
   } else {
@@ -265,6 +275,22 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         maxDelta = Math.max(maxDelta, Math.abs(limit.voltage - led.vGuess))
         if (limit.limited) anyLimited = true
         led.vGuess = limit.voltage
+      }
+      for (const bjt of bjts) {
+        const vB = bjt.baseNet === ground ? 0 : (last.nodes.get(bjt.baseNet) ?? 0)
+        const vC = bjt.collectorNet === ground ? 0 : (last.nodes.get(bjt.collectorNet) ?? 0)
+        const vE = bjt.emitterNet === ground ? 0 : (last.nodes.get(bjt.emitterNet) ?? 0)
+        const vcrit = criticalVoltage(bjt.params.saturationCurrent, 1, thermalV)
+        const limBE = pnjlim(vB - vE, bjt.vBE, thermalV, vcrit)
+        const limBC = pnjlim(vB - vC, bjt.vBC, thermalV, vcrit)
+        maxDelta = Math.max(
+          maxDelta,
+          Math.abs(limBE.voltage - bjt.vBE),
+          Math.abs(limBC.voltage - bjt.vBC),
+        )
+        if (limBE.limited || limBC.limited) anyLimited = true
+        bjt.vBE = limBE.voltage
+        bjt.vBC = limBC.voltage
       }
       if (maxDelta < NR_VOLTAGE_TOLERANCE && !anyLimited) {
         converged = true
@@ -308,6 +334,10 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       led.inst.id,
       diodeCurrent(led.vGuess, led.saturationCurrent, led.idealityFactor, thermalV),
     )
+  }
+  // BJT: the collector current is the branch current we report.
+  for (const bjt of bjts) {
+    branches.set(bjt.inst.id, bjtCurrents(bjt.vBE, bjt.vBC, bjt.params, thermalV).iC)
   }
 
   return { status: 'solved', nodes, branches, ground, warnings, iterations, converged }
@@ -396,6 +426,102 @@ function stampLedCompanion(
   if (a !== undefined && c !== undefined) {
     M.set([a, c], (M.get([a, c]) ?? 0) - G)
     M.set([c, a], (M.get([c, a]) ?? 0) - G)
+  }
+}
+
+/**
+ * A BJT resolved for the Newton-Raphson solve (S19-v3-36): its three terminal
+ * nets + Ebers-Moll parameters + the current junction-voltage guesses.
+ */
+type BjtElement = {
+  inst: Instance
+  collectorNet: string
+  baseNet: string
+  emitterNet: string
+  params: BjtParams
+  /** Current NR guesses: V_BE (base−emitter) and V_BC (base−collector). */
+  vBE: number
+  vBC: number
+}
+
+/**
+ * Resolve an NPN BJT to the Ebers-Moll model, or null if it lacks the parameters
+ * (saturation_current + forward_current_gain) or the collector/base/emitter
+ * connects. Warm-started in the forward-active region.
+ */
+function resolveBjt(inst: Instance): BjtElement | null {
+  const saturationCurrent = readScalarParam(inst, 'saturation_current')
+  const betaForward = readScalarParam(inst, 'forward_current_gain')
+  if (saturationCurrent === undefined || betaForward === undefined) return null
+  if (saturationCurrent <= 0 || betaForward <= 0) return null
+  const betaReverse = readScalarParam(inst, 'reverse_current_gain') ?? 1
+
+  const collector = inst.connects?.find((c) => c.terminal === 'collector')
+  const base = inst.connects?.find((c) => c.terminal === 'base')
+  const emitter = inst.connects?.find((c) => c.terminal === 'emitter')
+  if (collector === undefined || base === undefined || emitter === undefined) return null
+
+  return {
+    inst,
+    collectorNet: collector.net,
+    baseNet: base.net,
+    emitterNet: emitter.net,
+    params: { saturationCurrent, betaForward, betaReverse },
+    vBE: 0.65,
+    vBC: -0.65,
+  }
+}
+
+/**
+ * Stamp a BJT's Newton-Raphson companion (3-terminal): the 3×3 conductance block
+ * ∂(I_C,I_B,I_E)/∂(V_C,V_B,V_E) plus equivalent current sources, across the
+ * collector/base/emitter nodes (ground rows/cols omitted).
+ *
+ * Node-voltage partials come from the junction partials via V_BE = V_B−V_E and
+ * V_BC = V_B−V_C; the per-terminal current source reduces to
+ * I_X − (∂I_X/∂V_BE·V_BE + ∂I_X/∂V_BC·V_BC), depending only on the junction
+ * voltages — the same Norton form the diode companion uses.
+ */
+function stampBjtCompanion(
+  bjt: BjtElement,
+  nodeIndex: Map<string, number>,
+  thermalV: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const { vBE, vBC, params } = bjt
+  const j = bjtCompanion(vBE, vBC, params, thermalV)
+
+  const g = {
+    C: { C: -j.dIC_dVBC, B: j.dIC_dVBE + j.dIC_dVBC, E: -j.dIC_dVBE },
+    B: { C: -j.dIB_dVBC, B: j.dIB_dVBE + j.dIB_dVBC, E: -j.dIB_dVBE },
+    E: { C: 0, B: 0, E: 0 },
+  }
+  g.E.C = -(g.C.C + g.B.C)
+  g.E.B = -(g.C.B + g.B.B)
+  g.E.E = -(g.C.E + g.B.E)
+
+  const ieqC = j.iC - (j.dIC_dVBE * vBE + j.dIC_dVBC * vBC)
+  const ieqB = j.iB - (j.dIB_dVBE * vBE + j.dIB_dVBC * vBC)
+  const ieq = { C: ieqC, B: ieqB, E: -(ieqC + ieqB) }
+
+  const idx = {
+    C: nodeIndex.get(bjt.collectorNet),
+    B: nodeIndex.get(bjt.baseNet),
+    E: nodeIndex.get(bjt.emitterNet),
+  }
+  const terminals = ['C', 'B', 'E'] as const
+  for (const x of terminals) {
+    const ix = idx[x]
+    if (ix === undefined) continue
+    b.set([ix, 0], (b.get([ix, 0]) ?? 0) - ieq[x])
+    for (const y of terminals) {
+      const iy = idx[y]
+      if (iy === undefined) continue
+      M.set([ix, iy], (M.get([ix, iy]) ?? 0) + g[x][y])
+    }
   }
 }
 
