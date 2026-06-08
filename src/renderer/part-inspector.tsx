@@ -120,8 +120,21 @@ export type PartInspectorProps = {
   selected: SelectedPart | null
   reading: PartReading | undefined
   materials: string[]
+  /**
+   * Valid material ids per role key (e.g. n_side → direct-bandgap semiconductors).
+   * A dropdown falls back to all `materials` when its role isn't listed.
+   */
+  validMaterials: Record<string, string[]>
   onParam: (key: string, amount: number) => void
   onEnum: (key: string, value: string) => void
+  /**
+   * Change a material ref. Distinct from onEnum so the App can react physically —
+   * e.g. an LED's n_side re-derives its color + forward voltage from the chosen
+   * semiconductor's bandgap. The curated color picker stays on onEnum.
+   */
+  onMaterial: (key: string, value: string) => void
+  /** Recompute a resistor's R = ρL/A from its material + geometry (the "Derive R" button). */
+  onDeriveResistance: () => void
 }
 
 const row: CSSProperties = {
@@ -154,13 +167,27 @@ const sourceNote: CSSProperties = {
   margin: '-2px 0 4px',
   fontStyle: 'italic',
 }
+const deriveButton: CSSProperties = {
+  marginTop: 6,
+  width: '100%',
+  background: '#1a1a1e',
+  border: '1px solid #3a3a3f',
+  color: '#9fb0c0',
+  borderRadius: 3,
+  padding: '3px 4px',
+  fontSize: 10,
+  cursor: 'pointer',
+}
 
 export function PartInspector({
   selected,
   reading,
   materials,
+  validMaterials,
   onParam,
   onEnum,
+  onMaterial,
+  onDeriveResistance,
 }: PartInspectorProps) {
   if (selected === null) {
     return (
@@ -171,6 +198,12 @@ export function PartInspector({
   }
   const entries = Object.entries(selected.parameters ?? {})
   const rating = ratingFor(selected.definition, selected.parameters)
+  // A resistor carrying a material + geometry can derive R = ρL/A on demand.
+  const canDeriveResistance =
+    selected.definition === 'resistor' &&
+    selected.parameters?.resistive_material !== undefined &&
+    selected.parameters?.length !== undefined &&
+    selected.parameters?.cross_section_area !== undefined
 
   const headroom = (quantity: 'current' | 'power', value: number) => {
     if (rating === null || rating.quantity !== quantity) return null
@@ -254,13 +287,17 @@ export function PartInspector({
           }
           if (MATERIAL_REF_KEYS.has(key) && typeof param.value === 'string') {
             const current = param.value
-            const options = materials.includes(current) ? materials : [current, ...materials]
+            // Offer only materials valid for this role (e.g. n_side → direct-bandgap
+            // semiconductors); fall back to all materials when the role isn't listed.
+            const allowed = validMaterials[key]
+            const base = allowed && allowed.length > 0 ? allowed : materials
+            const options = base.includes(current) ? base : [current, ...base]
             return (
               <label key={`${selected.id}:${key}`} style={row}>
                 <span style={{ color: '#aab' }}>{humanize(key)}</span>
                 <select
                   value={current}
-                  onChange={(e) => onEnum(key, e.target.value)}
+                  onChange={(e) => onMaterial(key, e.target.value)}
                   className="nodrag"
                   style={{ ...field, maxWidth: 112 }}
                 >
@@ -281,6 +318,18 @@ export function PartInspector({
           )
         })
       )}
+
+      {canDeriveResistance ? (
+        <button
+          type="button"
+          onClick={onDeriveResistance}
+          className="nodrag"
+          style={deriveButton}
+          title="Recompute resistance from ρ·L/A — the material's resistivity × the geometry"
+        >
+          ⟳ Derive R = ρL/A
+        </button>
+      ) : null}
 
       {LED_DEFINITIONS.has(selected.definition) ? (
         <div style={row}>

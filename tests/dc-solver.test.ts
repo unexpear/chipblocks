@@ -42,7 +42,7 @@ import {
   stampLED,
   stampResistor,
   stampVoltageSource,
-  stampWireAsShort,
+  stampWire,
 } from '../src/dc-solver.ts'
 
 // Helper: load every *.yaml in `dir` into a World, sorting by kind.
@@ -687,8 +687,8 @@ describe('stampClosedSwitch', () => {
   })
 })
 
-describe('stampWireAsShort', () => {
-  test('stamps as 0 V ideal source between terminal_a and terminal_b', () => {
+describe('stampWire', () => {
+  test('a wire with no resistance stamps as a 0 V ideal short (V_a = V_b)', () => {
     const nodeIndex = new Map<string, number>([
       ['net_a', 0],
       ['net_b', 1],
@@ -707,7 +707,7 @@ describe('stampWireAsShort', () => {
       ],
     }
 
-    const ok = stampWireAsShort(inst, nodeIndex, auxIdx, M, b)
+    const ok = stampWire(inst, nodeIndex, auxIdx, M, b)
     expect(ok).toBe(true)
 
     // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
@@ -719,6 +719,114 @@ describe('stampWireAsShort', () => {
     expect(m.get([2, 0])).toBe(1)
     expect(m.get([2, 1])).toBe(-1)
     expect(bv.get([2, 0])).toBe(0)
+    // No series resistance ⇒ no −R term on the aux diagonal: a perfect short.
+    expect(m.get([2, 2])).toBe(0)
+  })
+
+  test('a wire WITH resistance puts −R on the aux diagonal (so it drops I·R)', () => {
+    const nodeIndex = new Map<string, number>([
+      ['net_a', 0],
+      ['net_b', 1],
+    ])
+    const M = math.zeros(3, 3)
+    const b = math.zeros(3, 1)
+    const auxIdx = 2
+
+    const inst: Instance = {
+      id: 'w1',
+      kind_ref: 'primitive_device',
+      definition: 'wire',
+      parameters: { resistance: { value: { kind: 'scalar', amount: 0.5, unit: 'ohm' } } },
+      connects: [
+        { net: 'net_a', terminal: 'terminal_a', of: 'w1' },
+        { net: 'net_b', terminal: 'terminal_b', of: 'w1' },
+      ],
+    }
+
+    const ok = stampWire(inst, nodeIndex, auxIdx, M, b)
+    expect(ok).toBe(true)
+
+    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+    const m: any = M
+    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+    const bv: any = b
+    // Same MNA coupling as the ideal short...
+    expect(m.get([0, 2])).toBe(1)
+    expect(m.get([1, 2])).toBe(-1)
+    expect(m.get([2, 0])).toBe(1)
+    expect(m.get([2, 1])).toBe(-1)
+    expect(bv.get([2, 0])).toBe(0)
+    // ...plus the −R series term: the constraint becomes V_a − V_b = 0.5·I.
+    expect(m.get([2, 2])).toBeCloseTo(-0.5, 12)
+  })
+
+  test('a resistive wire actually drops voltage end-to-end (9 V, 100 Ω, 2 Ω wire)', () => {
+    // bat(+) → r1(100 Ω) → wire(2 Ω) → ground, all in series. The 2 Ω wire and
+    // the 100 Ω resistor split 9 V: I = 9 / 102 ≈ 88.2 mA, and the wire drops
+    // I·2 ≈ 0.176 V — a real, solved end-to-end voltage drop, not an annotation.
+    const world = emptyWorld()
+    world.nets.set('net_a', {
+      id: 'net_a',
+      kind: 'net',
+      members: [
+        { instance: 'bat', terminal: 'terminal_positive' },
+        { instance: 'r1', terminal: 'terminal_a' },
+      ],
+    })
+    world.nets.set('net_mid', {
+      id: 'net_mid',
+      kind: 'net',
+      members: [
+        { instance: 'r1', terminal: 'terminal_b' },
+        { instance: 'w1', terminal: 'terminal_a' },
+      ],
+    })
+    world.nets.set('net_gnd', {
+      id: 'net_gnd',
+      kind: 'net',
+      type: 'ground',
+      members: [
+        { instance: 'bat', terminal: 'terminal_negative' },
+        { instance: 'w1', terminal: 'terminal_b' },
+      ],
+    })
+    world.instances.set('bat', {
+      id: 'bat',
+      kind_ref: 'primitive_device',
+      definition: 'power_source',
+      parameters: { nominal_voltage: { value: { kind: 'scalar', amount: 9, unit: 'volt' } } },
+      connects: [
+        { net: 'net_a', terminal: 'terminal_positive', of: 'bat' },
+        { net: 'net_gnd', terminal: 'terminal_negative', of: 'bat' },
+      ],
+    })
+    world.instances.set('r1', {
+      id: 'r1',
+      kind_ref: 'primitive_device',
+      definition: 'resistor',
+      parameters: { resistance: { value: { kind: 'scalar', amount: 100, unit: 'ohm' } } },
+      connects: [
+        { net: 'net_a', terminal: 'terminal_a', of: 'r1' },
+        { net: 'net_mid', terminal: 'terminal_b', of: 'r1' },
+      ],
+    })
+    world.instances.set('w1', {
+      id: 'w1',
+      kind_ref: 'primitive_device',
+      definition: 'wire',
+      parameters: { resistance: { value: { kind: 'scalar', amount: 2, unit: 'ohm' } } },
+      connects: [
+        { net: 'net_mid', terminal: 'terminal_a', of: 'w1' },
+        { net: 'net_gnd', terminal: 'terminal_b', of: 'w1' },
+      ],
+    })
+
+    const sol = solveDC(world)
+    expect(sol.status).toBe('solved')
+    // I = 9 / (100 + 2) = 88.24 mA through the whole series loop.
+    expect(Math.abs(sol.branches.get('w1') ?? 0)).toBeCloseTo(9 / 102, 6)
+    // The wire's end (net_mid) sits at I·2 ≈ 0.1765 V above ground — the real drop.
+    expect(sol.nodes.get('net_mid')).toBeCloseTo((9 / 102) * 2, 5)
   })
 })
 

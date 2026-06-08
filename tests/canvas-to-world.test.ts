@@ -9,7 +9,7 @@
 import { describe, expect, test } from 'vitest'
 import { solveDC } from '../src/dc-solver.ts'
 import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
-import { canvasEdgeFlow } from '../src/renderer/edge-currents.ts'
+import { wireFlow } from '../src/renderer/edge-currents.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
 
@@ -46,13 +46,16 @@ describe('canvasToWorld', () => {
     ]
 
     const world = canvasToWorld(nodes, edges)
-    expect(world.instances.size).toBe(3)
-    expect(world.nets.size).toBe(2) // {bat+,r1.a} and {r1.b, bat-, gnd}
+    // 3 components + 3 wires — each edge is now a real 2-terminal wire element.
+    expect(world.instances.size).toBe(6)
+    // One net per connection point; bat− is shared by the return + ground wires.
+    expect(world.nets.size).toBe(5)
 
     const solution = solveDC(world)
     expect(solution.status).toBe('solved')
     expect(solution.ground).toBeDefined()
-    // 9 V across 100 Ω + the battery's 1 Ω internal resistance → ~89.1 mA
+    // Bare edges carry no resistance → ideal wires → identical physics: 9 V across
+    // 100 Ω + the battery's 1 Ω internal resistance → ~89.1 mA.
     expect(Math.abs(solution.branches.get('r1') ?? -1)).toBeCloseTo(0.0891, 4)
   })
 
@@ -125,21 +128,26 @@ describe('canvasToWorld', () => {
     expect(Math.abs(at1000)).toBeCloseTo(0.009, 6) // 10× resistance → 1/10 current
   })
 
-  test('wires sharing a terminal merge into one net (a 3-way junction)', () => {
+  test('wires sharing a terminal meet at that terminal’s net (a junction)', () => {
     const nodes: CanvasNode[] = [
       { id: 'a', definition: 'resistor' },
       { id: 'b', definition: 'resistor' },
       { id: 'c', definition: 'resistor' },
     ]
-    // a.b ↔ b.a, and b.a ↔ c.a — all three share one electrical node
+    // a.b → b.a, and b.a → c.a: both wires attach to b.terminal_a — the junction.
     const edges = [
       { source: 'a', sourceHandle: 'terminal_b', target: 'b', targetHandle: 'terminal_a' },
       { source: 'b', sourceHandle: 'terminal_a', target: 'c', targetHandle: 'terminal_a' },
     ]
     const world = canvasToWorld(nodes, edges)
-    expect(world.nets.size).toBe(1)
-    const net = [...world.nets.values()][0]
-    expect(net?.members.length).toBe(3)
+    // 3 connection points (a.b, b.a, c.a) → 3 nets; 2 wires bridge them.
+    expect(world.nets.size).toBe(3)
+    expect([...world.instances.values()].filter((i) => i.definition === 'wire')).toHaveLength(2)
+    // The shared b.terminal_a net holds b's terminal plus both wires' ends.
+    const junction = [...world.nets.values()].find((n) =>
+      n.members.some((m) => m.instance === 'b' && m.terminal === 'terminal_a'),
+    )
+    expect(junction?.members).toHaveLength(3)
   })
 
   test('an unwired part still becomes an instance (floating, no nets)', () => {
@@ -185,12 +193,13 @@ describe('canvasToWorld', () => {
     expect(Math.abs(open.branches.get('r1') ?? 0)).toBeCloseTo(0, 6) // open → no current
   })
 
-  test('canvasEdgeFlow reads per-wire current: loop wires carry, the ground tap does not', () => {
+  test('each wire carries its own solved current: loop wires carry, the ground tap does not', () => {
     const nodes: CanvasNode[] = [
       { id: 'bat', definition: 'power_source', parameters: { nominal_voltage: scalar(9, 'volt') } },
       { id: 'r1', definition: 'resistor', parameters: { resistance: scalar(100, 'ohm') } },
       { id: 'gnd', definition: 'ground' },
     ]
+    // wire_1 = bat→r1, wire_2 = r1→bat, wire_3 = gnd→bat (named by edge order).
     const edges = [
       {
         source: 'bat',
@@ -213,20 +222,22 @@ describe('canvasToWorld', () => {
     ]
     const solution = solveDC(canvasToWorld(nodes, edges))
 
-    // Both loop wires carry 90 mA (9 V / 100 Ω), flowing source → target.
-    const supply = canvasEdgeFlow(solution, 'bat', 'terminal_positive', 'terminal_a')
+    // Both loop wires carry 90 mA (9 V / 100 Ω), flowing source → target. The
+    // source endpoint is wired to the wire's terminal_a, so sourceOnPositiveSide.
+    const supply = wireFlow(solution, 'wire_1', true)
     expect(supply.carries).toBe(true)
     expect(supply.amps).toBeCloseTo(0.09, 6)
     expect(supply.sourceToTarget).toBe(true) // battery → resistor
 
-    const ret = canvasEdgeFlow(solution, 'r1', 'terminal_b', 'terminal_negative')
+    const ret = wireFlow(solution, 'wire_2', true)
     expect(ret.carries).toBe(true)
     expect(ret.amps).toBeCloseTo(0.09, 6)
     expect(ret.sourceToTarget).toBe(true) // resistor → battery
 
-    // The ground stem is a reference tap — no series current, no arrow.
-    const tap = canvasEdgeFlow(solution, 'gnd', 'reference_terminal', 'terminal_negative')
+    // The ground stem is a reference tap — no series current, no arrow. This now
+    // falls out of the physics (its wire's branch current is 0), not a special case.
+    const tap = wireFlow(solution, 'wire_3', true)
     expect(tap.carries).toBe(false)
-    expect(tap.amps).toBe(0)
+    expect(tap.amps).toBeCloseTo(0, 9)
   })
 })

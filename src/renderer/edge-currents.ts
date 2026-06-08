@@ -90,40 +90,6 @@ export function wireFlow(
   }
 }
 
-/**
- * Conventional-current flow for a CANVAS edge (S19-v3-23) — read from a solution
- * produced by `canvasToWorld`, where wires are edges (no wire instances) and nets
- * are synthetic. The current is the source part's solved branch current, signed
- * by its terminal's polarity (same convention as `edgeFlow`). Only the SOURCE
- * endpoint carries the reading; `targetHandle` is needed solely to spot a wire
- * into a reference terminal (the target instance itself isn't used).
- *
- * An edge touching a reference terminal (ground's `reference_terminal`) carries no
- * series current — it's a tap, so `carries: false`. This is what makes the live
- * re-solve's per-wire arrows match the loaded circuit's: the ground stem stays
- * grey while the loop wires light up.
- */
-export function canvasEdgeFlow(
-  solution: Solution,
-  source: string,
-  sourceHandle: string | undefined,
-  targetHandle: string | undefined,
-): EdgeFlow {
-  const sourceSide = terminalSide(sourceHandle)
-  if (sourceSide === 0 || terminalSide(targetHandle) === 0) {
-    return { amps: 0, sourceToTarget: true, carries: false }
-  }
-  const branch = solution.branches.get(source)
-  if (branch === undefined) return { amps: 0, sourceToTarget: true, carries: false }
-
-  const flowFromSource = sourceSide < 0 ? branch : -branch
-  return {
-    amps: Math.abs(flowFromSource),
-    sourceToTarget: flowFromSource >= 0,
-    carries: Math.abs(flowFromSource) > FLOOR_AMPS,
-  }
-}
-
 /** Human-readable current, unit-scaled (A / mA / µA / nA). */
 export function formatCurrent(amps: number): string {
   const magnitude = Math.abs(amps)

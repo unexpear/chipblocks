@@ -9,10 +9,16 @@ import {
 import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  useRef,
   useState,
 } from 'react'
 import { formatCurrent } from './edge-currents.ts'
-import { formatLength, formatResistance } from './wire-length.ts'
+import {
+  formatLength,
+  formatPotential,
+  formatResistance,
+  formatVoltageDrop,
+} from './wire-length.ts'
 
 /**
  * Net edge — a wire. Two routing modes (Sprint 19):
@@ -100,6 +106,15 @@ export function NetEdge({
   // the wire is hovered — keeps the schematic clean; the current arrows on the
   // wire itself stay visible always.
   const [hovered, setHovered] = useState(false)
+  // Live voltage probe: as the cursor rides along the wire, read the real
+  // potential at that point + how much has dropped from the wire's entry end.
+  const hitPathRef = useRef<SVGPathElement>(null)
+  const [probe, setProbe] = useState<{
+    x: number
+    y: number
+    vHere: number
+    delta: number
+  } | null>(null)
 
   let path: string
   let labelX: number
@@ -160,6 +175,11 @@ export function NetEdge({
   const amps = typeof data?.amps === 'number' ? data.amps : null
   const lengthM = typeof data?.lengthM === 'number' ? data.lengthM : null
   const ohms = typeof data?.ohms === 'number' ? data.ohms : null
+  // Real solved I·R drop across this wire (it's a real element in the solve now).
+  const drop = typeof data?.drop === 'number' ? data.drop : null
+  // The wire's two end potentials (volts) — for the point-by-point probe below.
+  const vSource = typeof data?.vSource === 'number' ? data.vSource : null
+  const vTarget = typeof data?.vTarget === 'number' ? data.vTarget : null
 
   const addWaypoint = (event: ReactMouseEvent) => {
     event.stopPropagation()
@@ -204,6 +224,35 @@ export function NetEdge({
     window.addEventListener('pointerup', up)
   }
 
+  // Project the cursor onto the wire and read the interpolated potential there.
+  // Voltage varies linearly along a uniform wire, so V(t) = vSource + t·(vTarget −
+  // vSource) for the fractional arc-length t nearest the cursor; the readout snaps
+  // to the wire at that point and rides along with the mouse.
+  const moveProbe = (event: ReactMouseEvent) => {
+    const pathEl = hitPathRef.current
+    if (pathEl === null || vSource === null || vTarget === null) return
+    const total = pathEl.getTotalLength()
+    if (total === 0) return
+    const cursor = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+    let bestT = 0
+    let bestDistance = Number.POSITIVE_INFINITY
+    let bestX = sourceX
+    let bestY = sourceY
+    const STEPS = 64
+    for (let i = 0; i <= STEPS; i++) {
+      const point = pathEl.getPointAtLength((i / STEPS) * total)
+      const distance = Math.hypot(point.x - cursor.x, point.y - cursor.y)
+      if (distance < bestDistance) {
+        bestDistance = distance
+        bestT = i / STEPS
+        bestX = point.x
+        bestY = point.y
+      }
+    }
+    const vHere = vSource + bestT * (vTarget - vSource)
+    setProbe({ x: bestX, y: bestY, vHere, delta: vHere - vSource })
+  }
+
   return (
     <>
       <BaseEdge
@@ -216,6 +265,7 @@ export function NetEdge({
       {/* Invisible wide hit area: hover shows the chip; double-click adds a corner. */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: the wire is a pointer routing surface (hover reveals detail, double-click adds a corner); keyboard routing is future work */}
       <path
+        ref={hitPathRef}
         d={path}
         fill="none"
         stroke="transparent"
@@ -223,7 +273,11 @@ export function NetEdge({
         style={{ pointerEvents: 'stroke', cursor: 'copy' }}
         onDoubleClick={addWaypoint}
         onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
+        onMouseMove={moveProbe}
+        onMouseLeave={() => {
+          setHovered(false)
+          setProbe(null)
+        }}
       />
       <EdgeLabelRenderer>
         {hovered && label ? (
@@ -255,7 +309,51 @@ export function NetEdge({
                 {formatLength(lengthM)} · {formatResistance(ohms)}
               </div>
             ) : null}
+            {drop !== null ? (
+              <div style={{ color: '#e0b070', fontSize: 8, marginTop: 1 }}>
+                drop {formatVoltageDrop(drop)}
+              </div>
+            ) : null}
           </div>
+        ) : null}
+        {probe ? (
+          <>
+            <div
+              className="nodrag nopan"
+              style={{
+                position: 'absolute',
+                transform: `translate(-50%, -50%) translate(${probe.x}px, ${probe.y}px)`,
+                width: 7,
+                height: 7,
+                borderRadius: '50%',
+                background: '#e0b070',
+                border: '1px solid #0c0c0e',
+                pointerEvents: 'none',
+              }}
+            />
+            <div
+              className="nodrag nopan"
+              style={{
+                position: 'absolute',
+                transform: `translate(-50%, -50%) translate(${probe.x}px, ${probe.y - 18}px)`,
+                background: '#0c0c0e',
+                border: '1px solid #e0b070',
+                borderRadius: 3,
+                padding: '2px 5px',
+                fontSize: 9,
+                fontFamily: 'system-ui, sans-serif',
+                color: '#e7c890',
+                pointerEvents: 'none',
+                whiteSpace: 'nowrap',
+                textAlign: 'center',
+              }}
+            >
+              <div>{`${probe.delta <= 0 ? 'drop' : 'rise'} ${formatVoltageDrop(Math.abs(probe.delta))}`}</div>
+              <div style={{ fontSize: 8, color: '#b58a4a', marginTop: 1 }}>
+                {formatPotential(probe.vHere)} here
+              </div>
+            </div>
+          </>
         ) : null}
         {waypoints.map((w, i) => (
           <div

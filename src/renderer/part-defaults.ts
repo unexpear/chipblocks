@@ -26,6 +26,13 @@ const DEFAULTS: Record<string, Parameters> = {
     resistance: scalar(470, 'ohm'),
     tolerance_percent: scalar(5, 'percent'),
     power_rating: scalar(0.25, 'watt'),
+    // The declared 470 Ω is trusted by default. resistive_material + geometry give
+    // the alternative DERIVED path R = ρL/A (device-resistor.yaml): a 0.1 mm
+    // nichrome wire 3.356 m long, sized so ρL/A ≈ 470 Ω. "Derive R" in the panel
+    // recomputes R from these for a custom / heating-element resistor.
+    resistive_material: { value: 'nichrome' },
+    length: scalar(3.356, 'metre'),
+    cross_section_area: scalar(7.854e-9, 'square_metre'),
   },
   power_source: {
     // 9 V alkaline (6LR61), per ANSI/IEC 60086-2 — same family as the anchor battery.
@@ -34,16 +41,22 @@ const DEFAULTS: Record<string, Parameters> = {
   },
   led: {
     // Typical 5 mm red LED (Kingbright WP7113SRD-D class): 2.0 V at 20 mA max,
-    // ~640 nm red emission — sets the on-canvas glow color.
+    // ~640 nm red emission — sets the on-canvas glow color. n_side/p_side are the
+    // real semiconductor (red AlGaInP, the device-led default): changing n_side
+    // re-derives the color + forward voltage from that material's bandgap.
     forward_voltage: scalar(2.0, 'volt'),
     max_forward_current: scalar(0.02, 'ampere'),
     peak_wavelength: scalar(640, 'nanometer'),
+    n_side: { value: 'aluminum_gallium_indium_phosphide_n_type' },
+    p_side: { value: 'aluminum_gallium_indium_phosphide_p_type' },
   },
   led_uv_algan: {
     // AlGaN UV LED: ~3.4 V at 20 mA, ~340 nm (invisible UV → a faint violet glow).
     forward_voltage: scalar(3.4, 'volt'),
     max_forward_current: scalar(0.02, 'ampere'),
     peak_wavelength: scalar(340, 'nanometer'),
+    n_side: { value: 'aluminum_gallium_nitride_n_type' },
+    p_side: { value: 'aluminum_gallium_nitride_p_type' },
   },
   switch_spst_toggle: {
     // Panel-mount SPST toggle (C&K 7101 class, matching the anchor switch
@@ -68,6 +81,8 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     resistance: 'E12 standard value (470 Ω safe for a 9 V LED)',
     tolerance_percent: 'E12 / E24 ±5% band',
     power_rating: 'carbon-film 1/4 W class',
+    length: 'nichrome wirewound geometry (≈470 Ω at 0.1 mm dia)',
+    cross_section_area: '0.1 mm diameter wire (π/4·d²)',
   },
   power_source: {
     nominal_voltage: 'ANSI/IEC 60086-2 — 9 V 6LR61 (PP3)',

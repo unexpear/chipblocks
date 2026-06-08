@@ -23,11 +23,12 @@
  *   - Switch (SPST): reads its open/closed state (S19). A closed switch stamps
  *     as an ideal 0 V source between terminal_in and terminal_out; an open
  *     switch is omitted entirely, leaving a real open circuit (no current).
- *   - Wire: stamps as ideal 0 V source between terminal_a and terminal_b
- *     (the IR drop on hookup wire at 70 mA is ~350 μV — negligible for
- *     Sprint 14's purposes). Material+geometry-based resistance modeling
- *     is straightforward via the §16 evaluator but deferred until a
- *     fixture genuinely needs it.
+ *   - Wire (S19-v3-32): stamps as a 0 V source carrying its real series
+ *     resistance (R = ρL/A) between terminal_a and terminal_b, so the wire
+ *     drops a real I·R voltage. Absent resistance falls back to an ideal 0 V
+ *     short (the fixtures' ideal hookup wires); the canvas supplies each drawn
+ *     wire's resistance from its length + conductor, so long/thin/loaded wires
+ *     droop measurably.
  * S14-v3-6 extracts branch currents into the Solution.branches map. The
  * sign convention is fixed by the MNA stamp pattern: positive current
  * flows from positive terminal (anode / terminal_positive / terminal_a /
@@ -208,7 +209,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       if (kind === 'power_source') ok = stampVoltageSource(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'led') ok = stampLED(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'switch') ok = stampClosedSwitch(inst, nodeIndex, auxIdx, M, b)
-      else if (kind === 'wire') ok = stampWireAsShort(inst, nodeIndex, auxIdx, M, b)
+      else if (kind === 'wire') ok = stampWire(inst, nodeIndex, auxIdx, M, b)
       if (!ok)
         warnings.push(
           `Skipped ${kind} stamp for instance '${inst.id}' (missing V or terminal connects)`,
@@ -604,17 +605,21 @@ export function stampClosedSwitch(
 }
 
 /**
- * Apply a wire's contribution as an ideal short (0 V voltage source). The IR
- * drop on hookup wire at typical hobby currents (≤100 mA) is sub-mV —
- * negligible for Sprint 14's DC operating point. Material+geometry-based
- * resistance modeling via the §16 evaluator is straightforward but deferred
- * until a fixture demands it (high-current PCB traces, long inductive runs,
- * etc.).
+ * Apply a wire's contribution: a 0 V source carrying its real series resistance
+ * between terminal_a and terminal_b, so the wire drops a real I·R voltage like
+ * any conductor (R = ρL/A, supplied per-instance from how the wire is drawn).
+ * A long, thin, or heavily-loaded wire droops measurably; a short one drops
+ * microvolts. Absent resistance ⇒ an ideal 0 Ω short (V_a = V_b) — the same
+ * stamp the fixtures' ideal hookup wires use.
+ *
+ * Modeling the wire as a 0 V source + series R (rather than a bare conductance)
+ * keeps the matrix well-conditioned even for sub-milliohm wires and surfaces the
+ * wire's own branch current as the auxiliary variable.
  *
  * Returns true if the stamp landed; false if connects don't follow the
  * terminal_a / terminal_b convention.
  */
-export function stampWireAsShort(
+export function stampWire(
   inst: Instance,
   nodeIndex: Map<string, number>,
   auxIdx: number,
@@ -623,7 +628,18 @@ export function stampWireAsShort(
   // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
   b: any,
 ): boolean {
-  return findAndStampVoltageSource(inst, nodeIndex, auxIdx, 0, 'terminal_a', 'terminal_b', M, b)
+  const seriesResistance = readScalarParam(inst, 'resistance') ?? 0
+  return findAndStampVoltageSource(
+    inst,
+    nodeIndex,
+    auxIdx,
+    0,
+    'terminal_a',
+    'terminal_b',
+    M,
+    b,
+    seriesResistance,
+  )
 }
 
 /**

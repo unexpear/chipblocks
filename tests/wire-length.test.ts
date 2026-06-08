@@ -9,7 +9,9 @@
 import { describe, expect, test } from 'vitest'
 import {
   formatLength,
+  formatPotential,
   formatResistance,
+  formatVoltageDrop,
   lengthFromDrawn,
   MAX_LENGTH_M,
   METRES_PER_PIXEL,
@@ -82,5 +84,16 @@ describe('formatters', () => {
     expect(formatResistance(1.5)).toBe('1.50 Ω')
     expect(formatResistance(0.0077419)).toBe('7.7 mΩ')
     expect(formatResistance(5e-6)).toBe('5.0 µΩ')
+  })
+  test('voltage drop unit-scales (magnitude)', () => {
+    expect(formatVoltageDrop(1.5)).toBe('1.50 V')
+    expect(formatVoltageDrop(0.012)).toBe('12.0 mV')
+    expect(formatVoltageDrop(7.4e-6)).toBe('7 µV')
+  })
+  test('potential keeps sign and scales (the on-wire probe readout)', () => {
+    expect(formatPotential(8.9851)).toBe('8.9851 V')
+    expect(formatPotential(-1.985)).toBe('-1.9850 V')
+    expect(formatPotential(0)).toBe('0 V')
+    expect(formatPotential(0.0123)).toBe('12.30 mV')
   })
 })

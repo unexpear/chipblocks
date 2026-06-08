@@ -28,13 +28,16 @@ import { type Solution, solveDC } from '../dc-solver.ts'
 import { type CanvasEdge, type CanvasNode, canvasToWorld } from './canvas-to-world.ts'
 import { loadCatalogWorld } from './catalog-loader.ts'
 import { DockablePanel, type DockEdge } from './dockable-panel.tsx'
-import { canvasEdgeFlow } from './edge-currents.ts'
+import { wireFlow } from './edge-currents.ts'
 import { canvasHealth, HealthContext, type NodeHealth } from './health.ts'
+import { bandgapEv, deriveLedOptics } from './led-optics.ts'
+import { materialCapabilities, validMaterialsByRole } from './material-roles.ts'
 import { edgeTypes } from './net-edge.tsx'
 import { DEFINITION_MIME, PaletteItems } from './palette.tsx'
 import { defaultParameters, toggledSwitch } from './part-defaults.ts'
 import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { type PartReading, partReadings } from './part-readings.ts'
+import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
 import { type DeviceNodeData, nodeTypes } from './symbols.tsx'
 import { type Tool, ToolbarItems } from './toolbar.tsx'
 import { lengthFromDrawn, wireResistance } from './wire-length.ts'
@@ -56,49 +59,53 @@ function toCanvasNode(node: Node): CanvasNode {
   }
 }
 
-/** A React Flow edge → a canvas wire: the two terminals it joins. */
-function toCanvasEdge(edge: Edge): CanvasEdge {
-  return {
-    source: edge.source,
-    target: edge.target,
-    sourceHandle: edge.sourceHandle ?? null,
-    targetHandle: edge.targetHandle ?? null,
-  }
-}
-
-/**
- * Physics-derived React Flow edge fields for one wire: the current arrow +
- * magnitude (from the solver) and the length + resistance (from how it is drawn).
- * The current comes from `canvasEdgeFlow` — the source part's solved branch
- * current, signed by the terminals this wire joins — so it needs only the edge's
- * own endpoints, not the original World→Flow edge.
- */
-function edgePhysics(
-  edge: {
-    source: string
-    sourceHandle?: string | null
-    target: string
-    targetHandle?: string | null
-  },
-  solution: Solution,
+/** A wire's real length + resistance from how it is drawn (pixels → metres → R = ρL/A). */
+function drawnWire(
+  edge: { source: string; target: string },
   positions: Map<string, NodePosition>,
-) {
-  const flow = canvasEdgeFlow(
-    solution,
-    edge.source,
-    edge.sourceHandle ?? undefined,
-    edge.targetHandle ?? undefined,
-  )
+): { lengthM: number; ohms: number } {
   const from = positions.get(edge.source)
   const to = positions.get(edge.target)
   const drawnPixels = from && to ? Math.hypot(to.x - from.x, to.y - from.y) : 0
   const lengthM = lengthFromDrawn(drawnPixels)
-  const ohms = wireResistance(lengthM)
+  return { lengthM, ohms: wireResistance(lengthM) }
+}
+
+/**
+ * Physics-derived React Flow edge fields for one wire: the current arrow +
+ * magnitude, its length + resistance, and the real I·R voltage drop — all read
+ * from the wire's OWN solved branch (each canvas wire is now a real `wire_<edgeId>`
+ * element in the solve, not an ideal merge), so a long / thin / loaded wire shows
+ * a measurable drop.
+ */
+function edgePhysics(
+  edge: Edge,
+  world: ReturnType<typeof canvasToWorld>,
+  solution: Solution,
+  lengthM: number,
+  ohms: number,
+) {
+  const flow = wireFlow(solution, `wire_${edge.id}`, true)
+  // The wire's two end potentials, so the on-wire probe can read the interpolated
+  // voltage (and accumulated drop) at any point the cursor rides to.
+  const wireInst = world.instances.get(`wire_${edge.id}`)
+  const netA = wireInst?.connects?.find((c) => c.terminal === 'terminal_a')?.net
+  const netB = wireInst?.connects?.find((c) => c.terminal === 'terminal_b')?.net
+  const vSource = netA !== undefined ? (solution.nodes.get(netA) ?? null) : null
+  const vTarget = netB !== undefined ? (solution.nodes.get(netB) ?? null) : null
   const marker = { type: MarkerType.ArrowClosed, width: 16, height: 16, color: CURRENT }
   const arrowAtTarget = flow.carries && flow.sourceToTarget
   const arrowAtSource = flow.carries && !flow.sourceToTarget
   return {
-    data: { amps: flow.carries ? flow.amps : null, lengthM, ohms },
+    data: {
+      amps: flow.carries ? flow.amps : null,
+      lengthM,
+      ohms,
+      // Real solved drop across the wire (I·R); null when no current flows.
+      drop: flow.carries ? flow.amps * ohms : null,
+      vSource,
+      vTarget,
+    },
     style: {
       stroke: flow.carries ? CURRENT : IDLE,
       strokeWidth: flow.carries ? 1.6 : 1,
@@ -122,11 +129,25 @@ function solveCanvas(
   nodeList: Node[],
   edgeList: Edge[],
 ): { edges: Edge[]; health: Map<string, NodeHealth>; readings: Map<string, PartReading> } {
-  const world = canvasToWorld(nodeList.map(toCanvasNode), edgeList.map(toCanvasEdge))
-  const solution = solveDC(world)
   const positions = new Map<string, NodePosition>(nodeList.map((n) => [n.id, n.position]))
+  // Each wire's real resistance feeds BOTH the solve (so it drops real voltage)
+  // and the on-wire readout — computed once here from how the wire is drawn.
+  const drawn = new Map<string, { lengthM: number; ohms: number }>(
+    edgeList.map((e) => [e.id, drawnWire(e, positions)]),
+  )
+  const canvasEdges: CanvasEdge[] = edgeList.map((e) => ({
+    id: e.id,
+    source: e.source,
+    target: e.target,
+    sourceHandle: e.sourceHandle ?? null,
+    targetHandle: e.targetHandle ?? null,
+    resistanceOhms: drawn.get(e.id)?.ohms ?? 0,
+  }))
+  const world = canvasToWorld(nodeList.map(toCanvasNode), canvasEdges)
+  const solution = solveDC(world)
   const edges = edgeList.map((edge) => {
-    const physics = edgePhysics(edge, solution, positions)
+    const wire = drawn.get(edge.id) ?? { lengthM: 0, ohms: 0 }
+    const physics = edgePhysics(edge, world, solution, wire.lengthM, wire.ohms)
     const existing = edge.data?.waypoints
     const waypoints = Array.isArray(existing) ? existing : undefined
     return {
@@ -188,6 +209,26 @@ function Canvas() {
       .filter((d) => (d as { kind?: string }).kind === 'material')
       .map((d) => d.id)
       .sort()
+    // Material id → representative bandgap (eV) + resistivity (Ω·m): changing an
+    // LED's semiconductor re-derives its color/voltage, and a resistor can derive
+    // R = ρL/A from its material + geometry.
+    const materialBandgaps = new Map<string, number>()
+    const materialResistivity = new Map<string, number>()
+    for (const def of world.definitions.values()) {
+      if ((def as { kind?: string }).kind !== 'material') continue
+      const props = (def as { properties?: Record<string, { value?: unknown }> }).properties
+      const bg = bandgapEv(props?.bandgap_energy?.value)
+      if (bg !== null) materialBandgaps.set(def.id, bg)
+      const rho = resistivityOhmM(props?.resistivity?.value)
+      if (rho !== null) materialResistivity.set(def.id, rho)
+    }
+    // Per-device valid materials by role (from composition.requires.must_enable),
+    // so each material dropdown offers only materials that satisfy that role.
+    const caps = materialCapabilities(world.definitions.values())
+    const validMaterialsByDef = new Map<string, Record<string, string[]>>()
+    for (const def of world.definitions.values()) {
+      validMaterialsByDef.set(def.id, validMaterialsByRole(def, caps))
+    }
     const solved = solveCanvas(nodes, baseEdges)
     return {
       nodes,
@@ -195,6 +236,9 @@ function Canvas() {
       health: solved.health,
       readings: solved.readings,
       materials,
+      materialBandgaps,
+      materialResistivity,
+      validMaterialsByDef,
     }
   }, [])
 
@@ -503,11 +547,37 @@ function Canvas() {
           selected={selectedPart}
           reading={selectedPart ? readings.get(selectedPart.id) : undefined}
           materials={initial.materials}
+          validMaterials={
+            selectedPart ? (initial.validMaterialsByDef.get(selectedPart.definition) ?? {}) : {}
+          }
           onParam={(key, amount) => {
             if (selectedPart) onEditParam(selectedPart.id, key, amount)
           }}
           onEnum={(key, value) => {
             if (selectedPart) onEditEnum(selectedPart.id, key, value)
+          }}
+          onMaterial={(key, value) => {
+            if (!selectedPart) return
+            onEditEnum(selectedPart.id, key, value)
+            // An LED's n_side semiconductor sets its emission color + forward
+            // voltage (λ = h·c/E_g; V_F ≈ E_g/q) — re-derive both from the chosen
+            // material's real bandgap, so the material edit is real, not cosmetic.
+            const isLed =
+              selectedPart.definition === 'led' || selectedPart.definition === 'led_uv_algan'
+            if (isLed && key === 'n_side') {
+              const bandgap = initial.materialBandgaps.get(value)
+              const optics = bandgap !== undefined ? deriveLedOptics(bandgap) : null
+              if (optics) {
+                onEditParam(selectedPart.id, 'peak_wavelength', optics.peakWavelengthNm)
+                onEditParam(selectedPart.id, 'forward_voltage', optics.forwardVoltageV)
+              }
+            }
+          }}
+          onDeriveResistance={() => {
+            if (!selectedPart) return
+            if (selectedPart.definition !== 'resistor') return
+            const ohms = deriveResistorOhms(selectedPart.parameters, initial.materialResistivity)
+            if (ohms !== null) onEditParam(selectedPart.id, 'resistance', ohms)
           }}
         />
       </DockablePanel>
