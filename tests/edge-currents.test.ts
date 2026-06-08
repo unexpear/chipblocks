@@ -21,7 +21,7 @@ import type {
   World,
 } from '../src/cross-fk-validator.ts'
 import { solveDC } from '../src/dc-solver.ts'
-import { edgeFlow, formatCurrent, wireFlow } from '../src/renderer/edge-currents.ts'
+import { edgeFlow, wireFlow } from '../src/renderer/edge-currents.ts'
 
 function loadWorld(dir: string): World {
   const definitions = new Map<string, Definition>()
@@ -103,14 +103,5 @@ describe('wireFlow — a collapsed wire-edge reads its own branch current', () =
     const f = wireFlow(solution, 'not_a_wire', true)
     expect(f.carries).toBe(false)
     expect(f.amps).toBe(0)
-  })
-})
-
-describe('formatCurrent', () => {
-  test('scales the unit to the magnitude', () => {
-    expect(formatCurrent(0.069357)).toBe('69.4 mA')
-    expect(formatCurrent(1.5)).toBe('1.50 A')
-    expect(formatCurrent(0.0000123)).toBe('12.3 µA')
-    expect(formatCurrent(0)).toBe('0 A')
   })
 })

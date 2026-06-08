@@ -1,6 +1,7 @@
 import {
   addEdge,
   Background,
+  BackgroundVariant,
   type Connection,
   ConnectionMode,
   Controls,
@@ -42,6 +43,19 @@ import { type DeviceNodeData, nodeTypes } from './symbols.tsx'
 import { type Tool, ToolbarItems } from './toolbar.tsx'
 import { lengthFromDrawn, wireResistance } from './wire-length.ts'
 import { worldToFlow } from './world-to-flow.ts'
+
+// The preload bridge (electron/preload.ts): the native Settings menu pushes
+// appearance changes (theme, grid color) into the renderer over IPC.
+declare global {
+  interface Window {
+    chipblocks?: {
+      version: string
+      onTheme: (callback: (theme: 'light' | 'dark') => void) => void
+      onGridColor: (callback: (color: string) => void) => void
+      onGridColorCustom: (callback: () => void) => void
+    }
+  }
+}
 
 const CURRENT = '#7ab8ff' // a live wire carrying current (solved)
 const IDLE = '#555' // a tap / no-current wire
@@ -268,6 +282,20 @@ function Canvas() {
   // default); turn it off and hit Solve to batch big edits without the PC
   // recomputing on every small move.
   const [alwaysOn, setAlwaysOn] = useState(true)
+  // Appearance (S19-v3-37/38): light/dark theme + grid-line color, driven by the
+  // native Settings menu over IPC; the menu's Custom… opens an in-canvas picker.
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  const [gridColor, setGridColor] = useState('#31363f')
+  const [showGridColorPicker, setShowGridColorPicker] = useState(false)
+  const light = theme === 'light'
+  // The native Settings menu (electron/main.ts) pushes appearance over IPC.
+  useEffect(() => {
+    const bridge = window.chipblocks
+    if (bridge === undefined) return
+    bridge.onTheme((next) => setTheme(next))
+    bridge.onGridColor((next) => setGridColor(next))
+    bridge.onGridColorCustom(() => setShowGridColorPicker(true))
+  }, [])
 
   // The live re-solve: rebuild + solve the canvas, then push the new wire currents
   // AND the new part health. Stable identity (only setters in deps).
@@ -467,13 +495,14 @@ function Canvas() {
       style={{
         width: '100vw',
         height: '100vh',
+        background: light ? '#eef0f3' : '#0c0c0e',
         overflow: 'hidden',
         display: 'grid',
         // Dock-grid: top/bottom bars span all columns; left/right panels fill the
         // middle row; the canvas takes the center cell. Empty edges collapse, so
         // docked panels never overlap and everything adjusts around them.
-        gridTemplateRows: 'auto 1fr auto',
-        gridTemplateColumns: 'auto 1fr auto',
+        gridTemplateRows: 'auto minmax(0, 1fr) auto',
+        gridTemplateColumns: 'auto minmax(0, 1fr) auto',
         gridTemplateAreas: '"top top top" "left center right" "bottom bottom bottom"',
       }}
       onDragOver={onDragOver}
@@ -490,6 +519,7 @@ function Canvas() {
       >
         <HealthContext.Provider value={health}>
           <ReactFlow
+            colorMode={theme}
             nodes={nodes}
             edges={edges}
             onNodesChange={onNodesChange}
@@ -506,7 +536,21 @@ function Canvas() {
             fitView
             proOptions={{ hideAttribution: true }}
           >
-            <Background color="#333" gap={16} />
+            {/* Graph-paper grid: fine minor lines, with a bolder major line every 5th. */}
+            <Background
+              id="grid-minor"
+              variant={BackgroundVariant.Lines}
+              gap={4}
+              lineWidth={0.5}
+              color={`${gridColor}55`}
+            />
+            <Background
+              id="grid-major"
+              variant={BackgroundVariant.Lines}
+              gap={20}
+              lineWidth={1}
+              color={gridColor}
+            />
             <Controls />
           </ReactFlow>
         </HealthContext.Provider>
@@ -528,12 +572,69 @@ function Canvas() {
           {tool === 'wire' ? ' · wire tool: parts locked, drag between dots' : ''}
           {alwaysOn ? '' : ' · physics paused — hit Solve'}
         </div>
+
+        {/* Grid color · Custom… (Settings menu) → an in-canvas full color picker. */}
+        {showGridColorPicker ? (
+          <div
+            className="nodrag"
+            style={{
+              position: 'absolute',
+              top: 10,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 40,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 10px',
+              background: light ? '#e8eaed' : '#141417',
+              border: light ? '1px solid #c4c8ce' : '1px solid #2a2a2f',
+              borderRadius: 6,
+              boxShadow: '0 6px 20px rgba(0,0,0,0.45)',
+              fontFamily: 'system-ui, sans-serif',
+              fontSize: 11,
+              color: light ? '#444' : '#aab',
+            }}
+          >
+            Grid color
+            <input
+              type="color"
+              value={gridColor}
+              onChange={(e) => setGridColor(e.target.value)}
+              className="nodrag"
+              style={{
+                width: 28,
+                height: 22,
+                padding: 0,
+                border: 'none',
+                background: 'none',
+                cursor: 'pointer',
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowGridColorPicker(false)}
+              className="nodrag"
+              style={{
+                background: 'none',
+                border: light ? '1px solid #c4c8ce' : '1px solid #3a3a3f',
+                color: light ? '#444' : '#9fb0c0',
+                borderRadius: 3,
+                padding: '2px 8px',
+                fontSize: 11,
+                cursor: 'pointer',
+              }}
+            >
+              Done
+            </button>
+          </div>
+        ) : null}
       </div>
 
-      <DockablePanel edge={paletteEdge} onEdgeChange={setPaletteEdge} title="Parts">
+      <DockablePanel edge={paletteEdge} onEdgeChange={setPaletteEdge} light={light} title="Parts">
         <PaletteItems />
       </DockablePanel>
-      <DockablePanel edge={toolbarEdge} onEdgeChange={setToolbarEdge} title="Tools">
+      <DockablePanel edge={toolbarEdge} onEdgeChange={setToolbarEdge} light={light} title="Tools">
         <ToolbarItems
           tool={tool}
           onTool={setTool}
@@ -542,7 +643,7 @@ function Canvas() {
           onSolve={handleSolve}
         />
       </DockablePanel>
-      <DockablePanel edge={propsEdge} onEdgeChange={setPropsEdge} title="Properties">
+      <DockablePanel edge={propsEdge} onEdgeChange={setPropsEdge} light={light} title="Properties">
         <PartInspector
           selected={selectedPart}
           reading={selectedPart ? readings.get(selectedPart.id) : undefined}

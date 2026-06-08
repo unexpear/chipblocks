@@ -89,13 +89,3 @@ export function wireFlow(
     carries: Math.abs(branch) > FLOOR_AMPS,
   }
 }
-
-/** Human-readable current, unit-scaled (A / mA / µA / nA). */
-export function formatCurrent(amps: number): string {
-  const magnitude = Math.abs(amps)
-  if (magnitude >= 1) return `${magnitude.toFixed(2)} A`
-  if (magnitude >= 1e-3) return `${(magnitude * 1e3).toFixed(1)} mA`
-  if (magnitude >= 1e-6) return `${(magnitude * 1e6).toFixed(1)} µA`
-  if (magnitude >= 1e-9) return `${(magnitude * 1e9).toFixed(1)} nA`
-  return '0 A'
-}

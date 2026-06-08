@@ -46,7 +46,7 @@ function ResistorGlyph() {
 function BatteryGlyph() {
   return (
     <svg width={W} height={H}>
-      <title>battery</title>
+      <title>DC source</title>
       {lead(0, 26)}
       {/* long plate (+) */}
       <line x1={30} y1={10} x2={30} y2={34} stroke={STROKE} strokeWidth={1.5} />
@@ -128,6 +128,27 @@ function WireGlyph() {
   )
 }
 
+/** NPN BJT — IEEE 315: base bar, collector up, emitter down with the out-pointing
+ * arrow (NPN: "Not Pointing iN"), enclosed in a circle. Base in from the left. */
+function BjtNpnGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>NPN transistor</title>
+      <circle cx={37} cy={MID} r={15} fill="none" stroke={STROKE} strokeWidth={1} />
+      {/* base lead + the vertical base bar */}
+      <line x1={0} y1={MID} x2={32} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={32} y1={13} x2={32} y2={31} stroke={STROKE} strokeWidth={2} />
+      {/* collector: bar → up to the top-center handle */}
+      <line x1={32} y1={18} x2={40} y2={8} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={8} x2={40} y2={0} stroke={STROKE} strokeWidth={1.5} />
+      {/* emitter: bar → down to the bottom-center handle, arrow pointing out (NPN) */}
+      <line x1={32} y1={26} x2={40} y2={36} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={36} x2={40} y2={44} stroke={STROKE} strokeWidth={1.5} />
+      <polygon points="40,36 34.5,34 37.5,30" fill={STROKE} stroke={STROKE} strokeWidth={0.5} />
+    </svg>
+  )
+}
+
 // switch_spst_toggle is intentionally absent — DeviceGlyph renders it specially
 // (it needs the open/closed state, unlike these stateless one-shot glyphs).
 const GLYPHS: Record<string, () => React.JSX.Element> = {
@@ -137,6 +158,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   led_uv_algan: LedGlyph,
   ground: GroundGlyph,
   wire: WireGlyph,
+  transistor_bjt_npn: BjtNpnGlyph,
 }
 
 /**
@@ -161,6 +183,11 @@ const TERMINALS: Record<string, { id: string; position: Position }[]> = {
   diode_schottky_al_si: TWO('anode', 'cathode'),
   diode_zener_silicon: TWO('anode', 'cathode'),
   switch_spst_toggle: TWO('terminal_in', 'terminal_out'),
+  transistor_bjt_npn: [
+    { id: 'base', position: Position.Left },
+    { id: 'collector', position: Position.Top },
+    { id: 'emitter', position: Position.Bottom },
+  ],
   ground: [{ id: 'reference_terminal', position: Position.Top }],
 }
 const FALLBACK_TERMINALS = TWO('terminal_a', 'terminal_b')

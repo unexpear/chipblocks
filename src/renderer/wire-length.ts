@@ -78,31 +78,3 @@ export function formatLength(metres: number): string {
   if (inches >= 12) return `${(inches / 12).toFixed(2)} ft`
   return `${inches.toFixed(2)} in`
 }
-
-/** Human-readable resistance, unit-scaled (Ω / mΩ / µΩ). */
-export function formatResistance(ohms: number): string {
-  const r = Math.abs(ohms)
-  if (r >= 1) return `${r.toFixed(2)} Ω`
-  if (r >= 1e-3) return `${(r * 1e3).toFixed(1)} mΩ`
-  return `${(r * 1e6).toFixed(1)} µΩ`
-}
-
-/** Human-readable voltage drop across a wire, unit-scaled (V / mV / µV). */
-export function formatVoltageDrop(volts: number): string {
-  const v = Math.abs(volts)
-  if (v >= 1) return `${v.toFixed(2)} V`
-  if (v >= 1e-3) return `${(v * 1e3).toFixed(1)} mV`
-  return `${(v * 1e6).toFixed(0)} µV`
-}
-
-/**
- * Human-readable absolute potential at a point (keeps sign), unit-scaled. Used by
- * the on-wire probe — 4 dp on volts so a millivolt-scale drop is legible as the
- * cursor rides along; microvolt-scale changes read on the drop line instead.
- */
-export function formatPotential(volts: number): string {
-  if (volts === 0) return '0 V'
-  if (Math.abs(volts) >= 1) return `${volts.toFixed(4)} V`
-  if (Math.abs(volts) >= 1e-3) return `${(volts * 1e3).toFixed(2)} mV`
-  return `${(volts * 1e6).toFixed(0)} µV`
-}

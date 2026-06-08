@@ -1,5 +1,6 @@
 import type { Instance } from '../cross-fk-validator.ts'
 import { readEnumParam, readScalarParam } from '../instance-params.ts'
+import { formatEng } from './units.ts'
 
 /**
  * Part parameter defaults + display (Sprint 19 S19-v3-20).
@@ -68,6 +69,16 @@ const DEFAULTS: Record<string, Parameters> = {
     max_current: scalar(6, 'ampere'),
     rated_voltage: scalar(125, 'volt'),
   },
+  transistor_bjt_npn: {
+    // 2N3904 (onsemi) — the classic jellybean small-signal NPN. beta + I_S are
+    // part-specific, so the device definition carries no builtin numeric default
+    // (device-power-source convention); these are the cited canvas drop defaults.
+    saturation_current: scalar(1e-14, 'ampere'),
+    forward_current_gain: scalar(100, 'dimensionless'),
+    reverse_current_gain: scalar(2, 'dimensionless'),
+    max_collector_current: scalar(0.2, 'ampere'),
+    collector_emitter_breakdown_voltage: scalar(40, 'volt'),
+  },
 }
 
 /**
@@ -103,6 +114,13 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     max_current: 'C&K 7101 (6 A)',
     rated_voltage: 'C&K 7101 (125 V)',
   },
+  transistor_bjt_npn: {
+    saturation_current: 'small-signal NPN transport I_S ~1e-14 A (2N3904 SPICE IS ~6.7 fA)',
+    forward_current_gain: '2N3904 hFE ≥ 100 at I_C = 10 mA (onsemi datasheet)',
+    reverse_current_gain: 'reverse β small for an NPN; 2N3904 SPICE BR ~0.74, rounded to 2',
+    max_collector_current: '2N3904 I_C(max) 200 mA (onsemi datasheet)',
+    collector_emitter_breakdown_voltage: '2N3904 V_CEO 40 V (onsemi datasheet)',
+  },
 }
 
 /** The cited source for a default parameter value, if known. */
@@ -134,13 +152,6 @@ export function toggledSwitch(parameters: Parameters | undefined): Parameters {
   return { ...parameters, state: { value: switchClosed(parameters) ? 'open' : 'closed' } }
 }
 
-/** Component resistance formatted Ω / kΩ / MΩ (distinct from a wire's mΩ scale). */
-export function formatComponentOhms(ohms: number): string {
-  if (ohms >= 1e6) return `${(ohms / 1e6).toFixed(2)} MΩ`
-  if (ohms >= 1e3) return `${(ohms / 1e3).toFixed(2)} kΩ`
-  return `${ohms} Ω`
-}
-
 /** The headline value to show on a part (resistance / supply voltage / forward voltage). */
 export function primaryValue(
   definition: string,
@@ -148,7 +159,7 @@ export function primaryValue(
 ): string | null {
   if (definition === 'resistor') {
     const r = amountOf(parameters, 'resistance')
-    return r === undefined ? null : formatComponentOhms(r)
+    return r === undefined ? null : formatEng(r, 'Ω')
   }
   if (definition === 'power_source') {
     const v = amountOf(parameters, 'nominal_voltage')
@@ -160,6 +171,10 @@ export function primaryValue(
   }
   if (definition === 'switch_spst_toggle') {
     return switchClosed(parameters) ? 'closed' : 'open'
+  }
+  if (definition === 'transistor_bjt_npn') {
+    const beta = amountOf(parameters, 'forward_current_gain')
+    return beta === undefined ? null : `β ${beta}`
   }
   return null
 }

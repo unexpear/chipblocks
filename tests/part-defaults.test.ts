@@ -8,7 +8,6 @@
 import { describe, expect, test } from 'vitest'
 import {
   defaultParameters,
-  formatComponentOhms,
   primaryValue,
   switchClosed,
   toggledSwitch,
@@ -90,13 +89,5 @@ describe('switch state', () => {
     expect(opened.state?.value).toBe('open')
     expect(opened.contact_material?.value).toBe('copper') // other params preserved
     expect(toggledSwitch(opened).state?.value).toBe('closed') // flips back
-  })
-})
-
-describe('formatComponentOhms', () => {
-  test('scales Ω / kΩ / MΩ', () => {
-    expect(formatComponentOhms(220)).toBe('220 Ω')
-    expect(formatComponentOhms(4700)).toBe('4.70 kΩ')
-    expect(formatComponentOhms(1_000_000)).toBe('1.00 MΩ')
   })
 })

@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
-import { formatCurrent } from './edge-currents.ts'
 import { defaultParameters, defaultProvenance, type Parameters } from './part-defaults.ts'
 import type { PartReading } from './part-readings.ts'
+import { formatEng } from './units.ts'
 
 /**
  * Properties inspector (Sprint 19). For the selected part it shows:
@@ -76,6 +76,57 @@ const LED_COLORS: {
   },
 ]
 
+/**
+ * Source-type presets (S19-v3-38). A Source is the circuit's push; picking a type
+ * sets a CONSISTENT, real DC source — its nominal voltage AND its internal
+ * resistance (why a coin cell sags under load while a 9 V block barely does). All
+ * are DC: a battery, or a wall adapter that has already rectified the mains to DC
+ * (raw AC mains is the later transient sim). One cited spec per type.
+ */
+const SOURCE_TYPES: {
+  label: string
+  voltage: number
+  internalResistance: number
+  source: string
+}[] = [
+  {
+    label: '9 V battery',
+    voltage: 9,
+    internalResistance: 1,
+    source: 'ANSI/IEC 60086-2 — 9 V 6LR61 (PP3); ~1 Ω fresh',
+  },
+  {
+    label: 'AA battery (1.5 V)',
+    voltage: 1.5,
+    internalResistance: 0.15,
+    source: 'IEC LR6 AA alkaline; ~0.15 Ω fresh',
+  },
+  {
+    label: 'Coin cell (3 V)',
+    voltage: 3,
+    internalResistance: 10,
+    source: 'CR2032 Li coin; ~10 Ω (high internal R)',
+  },
+  {
+    label: 'USB adapter (5 V)',
+    voltage: 5,
+    internalResistance: 0.5,
+    source: 'USB 5 V wall adapter (DC out); ~0.5 Ω w/ cable',
+  },
+  {
+    label: '12 V adapter',
+    voltage: 12,
+    internalResistance: 0.5,
+    source: '12 V DC barrel-jack adapter; ~0.5 Ω regulated',
+  },
+]
+
+/** The source-type preset whose nominal voltage matches the current value (else null = Custom). */
+function currentSourceType(parameters: Parameters | undefined) {
+  const v = amountOf(parameters, 'nominal_voltage')
+  return SOURCE_TYPES.find((t) => t.voltage === v) ?? null
+}
+
 /** The reading quantity that carries a rating, and its limit — for headroom. */
 function ratingFor(
   definition: string,
@@ -95,15 +146,6 @@ function ratingFor(
   }
   return null
 }
-
-const formatVolts = (v: number): string =>
-  v >= 1 ? `${v.toFixed(2)} V` : `${(v * 1000).toFixed(0)} mV`
-const formatWatts = (w: number): string =>
-  w >= 1
-    ? `${w.toFixed(2)} W`
-    : w >= 1e-3
-      ? `${(w * 1000).toFixed(1)} mW`
-      : `${(w * 1e6).toFixed(0)} µW`
 
 function isDefaultValue(definition: string, key: string, scalar: ScalarValue): boolean {
   const def = asScalar(defaultParameters(definition)[key]?.value)
@@ -198,6 +240,10 @@ export function PartInspector({
   }
   const entries = Object.entries(selected.parameters ?? {})
   const rating = ratingFor(selected.definition, selected.parameters)
+  // A Source (power_source) gets a type picker that sets a consistent real DC
+  // source; the matched preset (by nominal voltage) drives the dropdown + citation.
+  const sourceType =
+    selected.definition === 'power_source' ? currentSourceType(selected.parameters) : null
   // A resistor carrying a material + geometry can derive R = ρL/A on demand.
   const canDeriveResistance =
     selected.definition === 'resistor' &&
@@ -209,7 +255,7 @@ export function PartInspector({
     if (rating === null || rating.quantity !== quantity) return null
     const pct = Math.round((value / rating.limit) * 100)
     const limitText =
-      quantity === 'current' ? formatCurrent(rating.limit) : formatWatts(rating.limit)
+      quantity === 'current' ? formatEng(rating.limit, 'A') : formatEng(rating.limit, 'W')
     return { text: `${pct}% of ${limitText}`, over: value >= rating.limit }
   }
 
@@ -224,20 +270,47 @@ export function PartInspector({
           {reading.current !== undefined
             ? readingRow(
                 'Current',
-                formatCurrent(reading.current),
+                formatEng(reading.current, 'A'),
                 headroom('current', reading.current),
               )
             : null}
           {reading.voltage !== undefined
-            ? readingRow('Voltage', formatVolts(reading.voltage), null)
+            ? readingRow('Voltage', formatEng(reading.voltage, 'V'), null)
             : null}
           {reading.power !== undefined
-            ? readingRow('Power', formatWatts(reading.power), headroom('power', reading.power))
+            ? readingRow('Power', formatEng(reading.power, 'W'), headroom('power', reading.power))
             : null}
         </>
       ) : null}
 
       <div style={sectionLabel}>Values</div>
+      {selected.definition === 'power_source' ? (
+        <div>
+          <label style={row}>
+            <span style={{ color: '#aab' }}>Source type</span>
+            <select
+              value={sourceType ? sourceType.label : 'custom'}
+              onChange={(e) => {
+                const picked = SOURCE_TYPES.find((s) => s.label === e.target.value)
+                if (picked === undefined) return
+                // Set a consistent real DC source: nominal voltage + internal resistance.
+                onParam('nominal_voltage', picked.voltage)
+                onParam('internal_resistance', picked.internalResistance)
+              }}
+              className="nodrag"
+              style={{ ...field, maxWidth: 130 }}
+            >
+              {sourceType === null ? <option value="custom">Custom</option> : null}
+              {SOURCE_TYPES.map((t) => (
+                <option key={t.label} value={t.label}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {sourceType ? <div style={sourceNote}>{sourceType.source}</div> : null}
+        </div>
+      ) : null}
       {entries.length === 0 ? (
         <div style={{ fontSize: 11, color: '#8089a0' }}>No editable values.</div>
       ) : (

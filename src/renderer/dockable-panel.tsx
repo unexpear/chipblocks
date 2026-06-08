@@ -35,12 +35,15 @@ export function DockablePanel({
   onEdgeChange,
   title,
   children,
+  light = false,
 }: {
   edge: DockEdge
   onEdgeChange: (edge: DockEdge) => void
   title: string
   children: ReactNode
+  light?: boolean
 }) {
+  const panelBorder = light ? '1px solid #c4c8ce' : '1px solid #2a2a2f'
   const [floatAt, setFloatAt] = useState<{ x: number; y: number } | null>(null)
 
   const startDrag = (down: ReactPointerEvent) => {
@@ -70,8 +73,12 @@ export function DockablePanel({
         display: 'flex',
         flexDirection: horizontal ? 'row' : 'column',
         alignItems: 'stretch',
-        background: '#141417',
-        border: '1px solid #2a2a2f',
+        // Bound to the dock cell (min-height/width: 0 lets the grid track shrink)
+        // so an overflowing panel scrolls its content instead of spilling.
+        minHeight: 0,
+        minWidth: 0,
+        background: light ? '#e8eaed' : '#141417',
+        border: panelBorder,
         boxShadow: floatAt ? '0 6px 20px rgba(0,0,0,0.5)' : 'none',
         opacity: floatAt ? 0.9 : 1,
         ...placement,
@@ -82,17 +89,18 @@ export function DockablePanel({
         title="Drag to move — snaps to a window edge"
         style={{
           cursor: 'grab',
-          color: '#8a93a0',
+          color: light ? '#555' : '#8a93a0',
           fontSize: 11,
           fontWeight: 600,
           fontFamily: 'system-ui, sans-serif',
           userSelect: 'none',
+          flexShrink: 0,
           display: 'flex',
           alignItems: 'center',
           gap: 5,
           padding: horizontal ? '0 10px' : '8px 6px',
-          borderRight: horizontal ? '1px solid #2a2a2f' : undefined,
-          borderBottom: horizontal ? undefined : '1px solid #2a2a2f',
+          borderRight: horizontal ? panelBorder : undefined,
+          borderBottom: horizontal ? undefined : panelBorder,
         }}
       >
         <span aria-hidden style={{ letterSpacing: -1 }}>
@@ -104,6 +112,11 @@ export function DockablePanel({
         style={{
           display: 'flex',
           flexDirection: horizontal ? 'row' : 'column',
+          // Fill the space left by the grip and scroll when content overflows the
+          // dock cell (min-0 lets this flex child shrink below its content size).
+          flex: 1,
+          minHeight: 0,
+          minWidth: 0,
           gap: 8,
           padding: 8,
           alignItems: 'center',

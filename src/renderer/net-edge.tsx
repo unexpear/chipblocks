@@ -12,13 +12,8 @@ import {
   useRef,
   useState,
 } from 'react'
-import { formatCurrent } from './edge-currents.ts'
-import {
-  formatLength,
-  formatPotential,
-  formatResistance,
-  formatVoltageDrop,
-} from './wire-length.ts'
+import { formatEng } from './units.ts'
+import { formatLength } from './wire-length.ts'
 
 /**
  * Net edge — a wire. Two routing modes (Sprint 19):
@@ -301,17 +296,17 @@ export function NetEdge({
             <div>{label}</div>
             {amps !== null ? (
               <div style={{ color: '#7ab8ff', fontSize: 8, marginTop: 1 }}>
-                {formatCurrent(amps)}
+                {formatEng(amps, 'A')}
               </div>
             ) : null}
             {lengthM !== null && ohms !== null ? (
               <div style={{ color: '#8a93a0', fontSize: 8, marginTop: 1 }}>
-                {formatLength(lengthM)} · {formatResistance(ohms)}
+                {formatLength(lengthM)} · {formatEng(ohms, 'Ω')}
               </div>
             ) : null}
             {drop !== null ? (
               <div style={{ color: '#e0b070', fontSize: 8, marginTop: 1 }}>
-                drop {formatVoltageDrop(drop)}
+                drop {formatEng(drop, 'V')}
               </div>
             ) : null}
           </div>
@@ -348,9 +343,9 @@ export function NetEdge({
                 textAlign: 'center',
               }}
             >
-              <div>{`${probe.delta <= 0 ? 'drop' : 'rise'} ${formatVoltageDrop(Math.abs(probe.delta))}`}</div>
+              <div>{`${probe.delta <= 0 ? 'drop' : 'rise'} ${formatEng(Math.abs(probe.delta), 'V')}`}</div>
               <div style={{ fontSize: 8, color: '#b58a4a', marginTop: 1 }}>
-                {formatPotential(probe.vHere)} here
+                {formatEng(probe.vHere, 'V', { signed: true })} here
               </div>
             </div>
           </>
