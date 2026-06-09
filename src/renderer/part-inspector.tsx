@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react'
+import { type CSSProperties, useEffect, useRef } from 'react'
 import { defaultParameters, defaultProvenance, type Parameters } from './part-defaults.ts'
 import type { PartReading } from './part-readings.ts'
 import { formatEng } from './units.ts'
@@ -221,6 +221,45 @@ const deriveButton: CSSProperties = {
   cursor: 'pointer',
 }
 
+/**
+ * A scalar value field. Uncontrolled so the user can type freely (a controlled
+ * number input fights mid-edit states like "0." or an emptied field), but an
+ * effect refreshes the shown value when it changes from OUTSIDE this field — a
+ * Source-type pick, an LED color preset, the Derive-R button — by writing the DOM
+ * value only while the field is NOT focused, so it never overrides live typing.
+ */
+function ScalarField({
+  value,
+  unit,
+  onCommit,
+}: {
+  value: number
+  unit: string
+  onCommit: (next: number) => void
+}) {
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (el !== null && document.activeElement !== el) el.value = String(value)
+  }, [value])
+  return (
+    <span style={{ whiteSpace: 'nowrap' }}>
+      <input
+        ref={ref}
+        type="number"
+        defaultValue={value}
+        onChange={(event) => {
+          const next = event.target.valueAsNumber
+          if (Number.isFinite(next)) onCommit(next)
+        }}
+        className="nodrag"
+        style={{ ...field, width: 58, marginRight: 4 }}
+      />
+      <span style={{ color: '#778', fontSize: 10 }}>{unit}</span>
+    </span>
+  )
+}
+
 export function PartInspector({
   selected,
   reading,
@@ -322,22 +361,14 @@ export function PartInspector({
               : undefined
             return (
               <div key={`${selected.id}:${key}`}>
-                <label style={row}>
+                <div style={row}>
                   <span style={{ color: '#aab' }}>{humanize(key)}</span>
-                  <span style={{ whiteSpace: 'nowrap' }}>
-                    <input
-                      type="number"
-                      defaultValue={scalar.amount}
-                      onChange={(event) => {
-                        const next = event.target.valueAsNumber
-                        if (Number.isFinite(next)) onParam(key, next)
-                      }}
-                      className="nodrag"
-                      style={{ ...field, width: 58, marginRight: 4 }}
-                    />
-                    <span style={{ color: '#778', fontSize: 10 }}>{scalar.unit}</span>
-                  </span>
-                </label>
+                  <ScalarField
+                    value={scalar.amount}
+                    unit={scalar.unit}
+                    onCommit={(next) => onParam(key, next)}
+                  />
+                </div>
                 {source ? <div style={sourceNote}>{source}</div> : null}
               </div>
             )
