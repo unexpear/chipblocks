@@ -22,12 +22,14 @@ export function ToolbarItems({
   alwaysOn,
   onAlwaysOn,
   onSolve,
+  onScope,
 }: {
   tool: Tool
   onTool: (tool: Tool) => void
   alwaysOn: boolean
   onAlwaysOn: (on: boolean) => void
   onSolve: () => void
+  onScope: () => void
 }) {
   const wireActive = tool === 'wire'
   return (
@@ -76,6 +78,18 @@ export function ToolbarItems({
           Always on
         </label>
       </div>
+
+      <button
+        type="button"
+        onClick={onScope}
+        title="Scope — run the circuit through time and plot every node voltage as a waveform"
+        style={{ ...toolButton(false), flexDirection: 'row', gap: 6, padding: '8px 12px' }}
+      >
+        <span aria-hidden style={{ color: '#6ec06e', fontSize: 13 }}>
+          ∿
+        </span>
+        <span style={{ fontSize: 11 }}>Scope</span>
+      </button>
     </>
   )
 }

@@ -21,6 +21,8 @@ export const DEFINITION_MIME = 'application/chipblocks-definition'
 const PARTS: { definition: string; label: string }[] = [
   { definition: 'power_source', label: 'Source' },
   { definition: 'resistor', label: 'Resistor' },
+  { definition: 'capacitor', label: 'Capacitor' },
+  { definition: 'inductor', label: 'Inductor' },
   { definition: 'led', label: 'LED' },
   { definition: 'transistor_bjt_npn', label: 'Transistor' },
   { definition: 'switch_spst_toggle', label: 'Switch' },

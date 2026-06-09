@@ -40,6 +40,19 @@ const DEFAULTS: Record<string, Parameters> = {
     nominal_voltage: scalar(9, 'volt'),
     internal_resistance: scalar(1, 'ohm'),
   },
+  capacitor: {
+    // 100 µF aluminum electrolytic, 16 V class — a standard E12 value. With the
+    // default 470 Ω resistor, τ = R·C ≈ 47 ms: a charging curve the Scope shows well.
+    capacitance: scalar(100e-6, 'farad'),
+    voltage_rating: scalar(16, 'volt'),
+  },
+  inductor: {
+    // 10 mH radial-lead ferrite choke class (Bourns RLB0914 family): real small
+    // inductors of this value carry tens of ohms of winding DCR and ~60 mA rating.
+    inductance: scalar(0.01, 'henry'),
+    winding_resistance: scalar(25, 'ohm'),
+    current_rating: scalar(0.06, 'ampere'),
+  },
   led: {
     // Typical 5 mm red LED (Kingbright WP7113SRD-D class): 2.0 V at 20 mA max,
     // ~640 nm red emission — sets the on-canvas glow color. n_side/p_side are the
@@ -98,6 +111,15 @@ const PROVENANCE: Record<string, Record<string, string>> = {
   power_source: {
     nominal_voltage: 'ANSI/IEC 60086-2 — 9 V 6LR61 (PP3)',
     internal_resistance: '~1 Ω fresh 9 V alkaline (Duracell MN1604)',
+  },
+  capacitor: {
+    capacitance: 'E12 standard — 100 µF aluminum electrolytic',
+    voltage_rating: '16 V electrolytic voltage class',
+  },
+  inductor: {
+    inductance: '10 mH radial ferrite choke class (Bourns RLB0914 family)',
+    winding_resistance: 'winding DCR, tens of Ω typical at 10 mH (RLB0914 class)',
+    current_rating: '~60 mA rated current (RLB0914 class)',
   },
   led: {
     forward_voltage: 'Kingbright WP7113SRD-D (5 mm red)',
@@ -175,6 +197,14 @@ export function primaryValue(
   if (definition === 'transistor_bjt_npn') {
     const beta = amountOf(parameters, 'forward_current_gain')
     return beta === undefined ? null : `β ${beta}`
+  }
+  if (definition === 'capacitor') {
+    const c = amountOf(parameters, 'capacitance')
+    return c === undefined ? null : formatEng(c, 'F')
+  }
+  if (definition === 'inductor') {
+    const l = amountOf(parameters, 'inductance')
+    return l === undefined ? null : formatEng(l, 'H')
   }
   return null
 }

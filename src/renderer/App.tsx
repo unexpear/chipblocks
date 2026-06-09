@@ -25,7 +25,9 @@ import {
   useRef,
   useState,
 } from 'react'
+import type { World } from '../cross-fk-validator.ts'
 import { type Solution, solveDC } from '../dc-solver.ts'
+import { solveTransient, type TransientResult } from '../transient-solver.ts'
 import { type CanvasEdge, type CanvasNode, canvasToWorld } from './canvas-to-world.ts'
 import { loadCatalogWorld } from './catalog-loader.ts'
 import { DockablePanel, type DockEdge } from './dockable-panel.tsx'
@@ -38,6 +40,7 @@ import { defaultParameters, toggledSwitch } from './part-defaults.ts'
 import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { type PartReading, partReadings } from './part-readings.ts'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
+import { ScopePlot, scopeWindow } from './scope.tsx'
 import { type DeviceNodeData, nodeTypes } from './symbols.tsx'
 import { type Tool, ToolbarItems } from './toolbar.tsx'
 import { lengthFromDrawn, wireResistance } from './wire-length.ts'
@@ -142,21 +145,7 @@ function solveCanvas(
   nodeList: Node[],
   edgeList: Edge[],
 ): { edges: Edge[]; health: Map<string, NodeHealth>; readings: Map<string, PartReading> } {
-  const positions = new Map<string, NodePosition>(nodeList.map((n) => [n.id, n.position]))
-  // Each wire's real resistance feeds BOTH the solve (so it drops real voltage)
-  // and the on-wire readout — computed once here from how the wire is drawn.
-  const drawn = new Map<string, { lengthM: number; ohms: number }>(
-    edgeList.map((e) => [e.id, drawnWire(e, positions)]),
-  )
-  const canvasEdges: CanvasEdge[] = edgeList.map((e) => ({
-    id: e.id,
-    source: e.source,
-    target: e.target,
-    sourceHandle: e.sourceHandle ?? null,
-    targetHandle: e.targetHandle ?? null,
-    resistanceOhms: drawn.get(e.id)?.ohms ?? 0,
-  }))
-  const world = canvasToWorld(nodeList.map(toCanvasNode), canvasEdges)
+  const { world, drawn } = canvasWorld(nodeList, edgeList)
   const solution = solveDC(world)
   const edges = edgeList.map((edge) => {
     const wire = drawn.get(edge.id) ?? { lengthM: 0, ohms: 0 }
@@ -177,6 +166,33 @@ function solveCanvas(
     }
   })
   return { edges, health: canvasHealth(world, solution), readings: partReadings(world, solution) }
+}
+
+/**
+ * The World for the current canvas (nodes + drawn wires carrying their real
+ * resistance), plus each wire's drawn length/resistance for the readouts. Shared
+ * by the DC re-solve (solveCanvas) and the Scope's transient run — one source of
+ * truth for "what circuit is on the canvas."
+ */
+function canvasWorld(
+  nodeList: Node[],
+  edgeList: Edge[],
+): { world: World; drawn: Map<string, { lengthM: number; ohms: number }> } {
+  const positions = new Map<string, NodePosition>(nodeList.map((n) => [n.id, n.position]))
+  // Each wire's real resistance feeds BOTH the solve (so it drops real voltage)
+  // and the on-wire readout — computed once here from how the wire is drawn.
+  const drawn = new Map<string, { lengthM: number; ohms: number }>(
+    edgeList.map((e) => [e.id, drawnWire(e, positions)]),
+  )
+  const canvasEdges: CanvasEdge[] = edgeList.map((e) => ({
+    id: e.id,
+    source: e.source,
+    target: e.target,
+    sourceHandle: e.sourceHandle ?? null,
+    targetHandle: e.targetHandle ?? null,
+    resistanceOhms: drawn.get(e.id)?.ohms ?? 0,
+  }))
+  return { world: canvasToWorld(nodeList.map(toCanvasNode), canvasEdges), drawn }
 }
 
 /**
@@ -304,6 +320,15 @@ function Canvas() {
   )
 
   const handleSolve = useCallback(() => reSolve(nodes, edges), [reSolve, nodes, edges])
+
+  // Scope (time-domain view): run the canvas circuit through solveTransient over
+  // an auto-picked window and show every node voltage as a waveform.
+  const [scopeResult, setScopeResult] = useState<TransientResult | null>(null)
+  const [scopeEdge, setScopeEdge] = useState<DockEdge>('bottom')
+  const runScope = useCallback(() => {
+    const { world } = canvasWorld(nodes, edges)
+    setScopeResult(solveTransient(world, scopeWindow(world)))
+  }, [nodes, edges])
 
   // A structural signature of the wiring — changes when a wire is added, removed,
   // or reconnected, but NOT when only its solved data (current/length) updates. So
@@ -635,6 +660,7 @@ function Canvas() {
           alwaysOn={alwaysOn}
           onAlwaysOn={setAlwaysOn}
           onSolve={handleSolve}
+          onScope={runScope}
         />
       </DockablePanel>
       <DockablePanel edge={propsEdge} onEdgeChange={setPropsEdge} light={light} title="Properties">
@@ -662,6 +688,27 @@ function Canvas() {
           }}
         />
       </DockablePanel>
+      {scopeResult ? (
+        <DockablePanel edge={scopeEdge} onEdgeChange={setScopeEdge} light={light} title="Scope">
+          <ScopePlot result={scopeResult} light={light} />
+          <button
+            type="button"
+            onClick={() => setScopeResult(null)}
+            className="nodrag"
+            style={{
+              background: 'none',
+              border: light ? '1px solid #c4c8ce' : '1px solid #3a3a3f',
+              color: light ? '#444' : '#9fb0c0',
+              borderRadius: 3,
+              padding: '2px 8px',
+              fontSize: 11,
+              cursor: 'pointer',
+            }}
+          >
+            Close
+          </button>
+        </DockablePanel>
+      ) : null}
     </div>
   )
 }

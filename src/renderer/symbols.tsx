@@ -105,6 +105,36 @@ function SwitchGlyph({ closed }: { closed: boolean }) {
   )
 }
 
+/** Inductor — IEEE 315: a row of winding humps. */
+function InductorGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>inductor</title>
+      {lead(0, 18)}
+      <path
+        d="M18 22 A5.5 5.5 0 0 1 29 22 A5.5 5.5 0 0 1 40 22 A5.5 5.5 0 0 1 51 22 A5.5 5.5 0 0 1 62 22"
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      {lead(62, W)}
+    </svg>
+  )
+}
+
+/** Capacitor — IEC 60617: two parallel plates with a gap. */
+function CapacitorGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>capacitor</title>
+      {lead(0, 36)}
+      <line x1={36} y1={12} x2={36} y2={32} stroke={STROKE} strokeWidth={2} />
+      <line x1={44} y1={12} x2={44} y2={32} stroke={STROKE} strokeWidth={2} />
+      {lead(44, W)}
+    </svg>
+  )
+}
+
 /** Ground — stacked horizontal lines decreasing downward. */
 function GroundGlyph() {
   return (
@@ -153,6 +183,8 @@ function BjtNpnGlyph() {
 // (it needs the open/closed state, unlike these stateless one-shot glyphs).
 const GLYPHS: Record<string, () => React.JSX.Element> = {
   resistor: ResistorGlyph,
+  capacitor: CapacitorGlyph,
+  inductor: InductorGlyph,
   power_source: BatteryGlyph,
   led: LedGlyph,
   led_uv_algan: LedGlyph,
@@ -176,6 +208,7 @@ const TWO = (a: string, b: string) => [
 const TERMINALS: Record<string, { id: string; position: Position }[]> = {
   resistor: TWO('terminal_a', 'terminal_b'),
   capacitor: TWO('terminal_a', 'terminal_b'),
+  inductor: TWO('terminal_a', 'terminal_b'),
   power_source: TWO('terminal_positive', 'terminal_negative'),
   led: TWO('anode', 'cathode'),
   led_uv_algan: TWO('anode', 'cathode'),
