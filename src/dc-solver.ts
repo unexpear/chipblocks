@@ -162,7 +162,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   //    switch, wire, and fixed-V_F LEDs that lack calibration data).
   //  - shockleyLeds are nonlinear companion-model elements (no aux variable);
   //    they need the Newton-Raphson loop.
-  type VsLikeKind = 'power_source' | 'led' | 'switch' | 'wire'
+  type VsLikeKind = 'power_source' | 'led' | 'switch' | 'wire' | 'inductor'
   const linearVoltageSources: Array<{ inst: Instance; kind: VsLikeKind }> = []
   const shockleyLeds: ShockleyLed[] = []
   const bjts: BjtElement[] = []
@@ -187,6 +187,10 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       if (switchIsClosed(inst)) linearVoltageSources.push({ inst, kind: 'switch' })
     } else if (inst.definition === 'wire') {
       linearVoltageSources.push({ inst, kind: 'wire' })
+    } else if (inst.definition === 'inductor') {
+      // DC steady state of v = L·di/dt is 0 V across the ideal inductance —
+      // an inductor conducts DC, dropping only its winding resistance.
+      linearVoltageSources.push({ inst, kind: 'inductor' })
     }
   }
   const S = linearVoltageSources.length
@@ -217,6 +221,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       else if (kind === 'led') ok = stampLED(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'switch') ok = stampClosedSwitch(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'wire') ok = stampWire(inst, nodeIndex, auxIdx, M, b)
+      else if (kind === 'inductor') ok = stampInductorDC(inst, nodeIndex, auxIdx, M, b)
       if (!ok)
         warnings.push(
           `Skipped ${kind} stamp for instance '${inst.id}' (missing V or terminal connects)`,
@@ -432,8 +437,10 @@ function stampLedCompanion(
 /**
  * A BJT resolved for the Newton-Raphson solve (S19-v3-36): its three terminal
  * nets + Ebers-Moll parameters + the current junction-voltage guesses.
+ * Exported for the transient solver, which runs the same companion model
+ * inside its per-time-step Newton-Raphson loop.
  */
-type BjtElement = {
+export type BjtElement = {
   inst: Instance
   collectorNet: string
   baseNet: string
@@ -449,7 +456,7 @@ type BjtElement = {
  * (saturation_current + forward_current_gain) or the collector/base/emitter
  * connects. Warm-started in the forward-active region.
  */
-function resolveBjt(inst: Instance): BjtElement | null {
+export function resolveBjt(inst: Instance): BjtElement | null {
   const saturationCurrent = readScalarParam(inst, 'saturation_current')
   const betaForward = readScalarParam(inst, 'forward_current_gain')
   if (saturationCurrent === undefined || betaForward === undefined) return null
@@ -482,7 +489,7 @@ function resolveBjt(inst: Instance): BjtElement | null {
  * I_X − (∂I_X/∂V_BE·V_BE + ∂I_X/∂V_BC·V_BC), depending only on the junction
  * voltages — the same Norton form the diode companion uses.
  */
-function stampBjtCompanion(
+export function stampBjtCompanion(
   bjt: BjtElement,
   nodeIndex: Map<string, number>,
   thermalV: number,
@@ -765,6 +772,40 @@ export function stampWire(
     M,
     b,
     seriesResistance,
+  )
+}
+
+/**
+ * Apply an inductor's DC steady-state contribution. At DC, di/dt = 0 so the
+ * ideal inductance drops nothing (v = L·di/dt = 0) — what remains is the
+ * winding's real series resistance (the coiled wire's R = ρL/A). Stamps as a
+ * 0 V source carrying winding_resistance between terminal_a and terminal_b,
+ * the same pattern as a wire. Time-varying behavior lives in the transient
+ * solver's backward-Euler companion.
+ *
+ * Returns true if the stamp landed; false if connects don't follow the
+ * terminal_a / terminal_b convention.
+ */
+export function stampInductorDC(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  auxIdx: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
+  const windingResistance = readScalarParam(inst, 'winding_resistance') ?? 0
+  return findAndStampVoltageSource(
+    inst,
+    nodeIndex,
+    auxIdx,
+    0,
+    'terminal_a',
+    'terminal_b',
+    M,
+    b,
+    windingResistance,
   )
 }
 
