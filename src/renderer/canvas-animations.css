@@ -90,3 +90,16 @@
     transform: translateX(-2px);
   }
 }
+
+/* Flow lens (S19-v3-50): marching dashes along a wire showing the real solved
+   current — direction via animation-direction, speed via animation-duration. */
+.cb-flow-dash {
+  animation-name: cb-flow-march;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+@keyframes cb-flow-march {
+  to {
+    stroke-dashoffset: -24;
+  }
+}

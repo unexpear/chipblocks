@@ -2,7 +2,9 @@ import { Handle, type NodeProps, Position, useUpdateNodeInternals } from '@xyflo
 import { Fragment, useContext, useEffect } from 'react'
 import './canvas-animations.css'
 import { HealthContext } from './health.ts'
-import { type Parameters, primaryValue, switchClosed } from './part-defaults.ts'
+import { LensContext, powerColor } from './lens.ts'
+import { type Parameters, primaryValue, sourceIsAc, switchClosed } from './part-defaults.ts'
+import { formatEng } from './units.ts'
 
 /**
  * Standard schematic symbols (Sprint 18 S18-v3-5) — IEC 60617 / IEEE 315
@@ -59,6 +61,19 @@ function BatteryGlyph() {
       <text x={28} y={8} fill={STROKE} fontSize={9}>
         +
       </text>
+    </svg>
+  )
+}
+
+/** AC source — IEC 60617: a circle with one sine period inside. */
+function AcSourceGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>AC source</title>
+      {lead(0, 26)}
+      <circle cx={40} cy={MID} r={14} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <path d="M31 22 q4.5 -9 9 0 q4.5 9 9 0" fill="none" stroke={STROKE} strokeWidth={1.3} />
+      {lead(54, W)}
     </svg>
   )
 }
@@ -122,6 +137,67 @@ function InductorGlyph() {
   )
 }
 
+/** Transformer — two facing winding columns with core lines between (IEC). */
+function TransformerGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>transformer</title>
+      {/* primary leads (left, top + bottom rows) */}
+      <line x1={0} y1={10} x2={33} y2={10} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={0} y1={34} x2={33} y2={34} stroke={STROKE} strokeWidth={1.5} />
+      {/* primary winding: humps bulging left */}
+      <path
+        d="M33 10 A6 6 0 0 0 33 22 A6 6 0 0 0 33 34"
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      {/* core */}
+      <line x1={38} y1={8} x2={38} y2={36} stroke={STROKE} strokeWidth={1.2} />
+      <line x1={42} y1={8} x2={42} y2={36} stroke={STROKE} strokeWidth={1.2} />
+      {/* secondary winding: humps bulging right */}
+      <path
+        d="M47 10 A6 6 0 0 1 47 22 A6 6 0 0 1 47 34"
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      {/* secondary leads (right, top + bottom rows) */}
+      <line x1={47} y1={10} x2={W} y2={10} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={47} y1={34} x2={W} y2={34} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
+/** Center-tapped transformer — the two-winding symbol plus a midpoint tap lead. */
+function CtTransformerGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>center-tapped transformer</title>
+      <line x1={0} y1={10} x2={33} y2={10} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={0} y1={34} x2={33} y2={34} stroke={STROKE} strokeWidth={1.5} />
+      {/* center tap: out of the primary winding's midpoint */}
+      <line x1={0} y1={22} x2={28} y2={22} stroke={STROKE} strokeWidth={1.5} />
+      <path
+        d="M33 10 A6 6 0 0 0 33 22 A6 6 0 0 0 33 34"
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <line x1={38} y1={8} x2={38} y2={36} stroke={STROKE} strokeWidth={1.2} />
+      <line x1={42} y1={8} x2={42} y2={36} stroke={STROKE} strokeWidth={1.2} />
+      <path
+        d="M47 10 A6 6 0 0 1 47 22 A6 6 0 0 1 47 34"
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <line x1={47} y1={10} x2={W} y2={10} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={47} y1={34} x2={W} y2={34} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
 /** Capacitor — IEC 60617: two parallel plates with a gap. */
 function CapacitorGlyph() {
   return (
@@ -179,6 +255,26 @@ function BjtNpnGlyph() {
   )
 }
 
+/** PNP BJT — IEEE 315: same shape as the NPN, but the emitter arrow Points iN
+ * Permanently (toward the base bar). Base in from the left. */
+function BjtPnpGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>PNP transistor</title>
+      <circle cx={37} cy={MID} r={15} fill="none" stroke={STROKE} strokeWidth={1} />
+      <line x1={0} y1={MID} x2={32} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={32} y1={13} x2={32} y2={31} stroke={STROKE} strokeWidth={2} />
+      {/* collector: bar → up to the top-center handle */}
+      <line x1={32} y1={18} x2={40} y2={8} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={8} x2={40} y2={0} stroke={STROKE} strokeWidth={1.5} />
+      {/* emitter: bar → down to the bottom-center handle, arrow pointing IN (PNP) */}
+      <line x1={32} y1={26} x2={40} y2={36} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={36} x2={40} y2={44} stroke={STROKE} strokeWidth={1.5} />
+      <polygon points="32,26 37.5,28 34.5,32" fill={STROKE} stroke={STROKE} strokeWidth={0.5} />
+    </svg>
+  )
+}
+
 // switch_spst_toggle is intentionally absent — DeviceGlyph renders it specially
 // (it needs the open/closed state, unlike these stateless one-shot glyphs).
 const GLYPHS: Record<string, () => React.JSX.Element> = {
@@ -191,6 +287,9 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   ground: GroundGlyph,
   wire: WireGlyph,
   transistor_bjt_npn: BjtNpnGlyph,
+  transistor_bjt_pnp: BjtPnpGlyph,
+  transformer: TransformerGlyph,
+  transformer_center_tapped: CtTransformerGlyph,
 }
 
 /**
@@ -205,7 +304,8 @@ const TWO = (a: string, b: string) => [
   { id: a, position: Position.Left },
   { id: b, position: Position.Right },
 ]
-const TERMINALS: Record<string, { id: string; position: Position }[]> = {
+/** `offset` = vertical px for a side handle (default MID) — multi-winding parts. */
+const TERMINALS: Record<string, { id: string; position: Position; offset?: number }[]> = {
   resistor: TWO('terminal_a', 'terminal_b'),
   capacitor: TWO('terminal_a', 'terminal_b'),
   inductor: TWO('terminal_a', 'terminal_b'),
@@ -220,6 +320,24 @@ const TERMINALS: Record<string, { id: string; position: Position }[]> = {
     { id: 'base', position: Position.Left },
     { id: 'collector', position: Position.Top },
     { id: 'emitter', position: Position.Bottom },
+  ],
+  transistor_bjt_pnp: [
+    { id: 'base', position: Position.Left },
+    { id: 'collector', position: Position.Top },
+    { id: 'emitter', position: Position.Bottom },
+  ],
+  transformer: [
+    { id: 'primary_a', position: Position.Left, offset: 10 },
+    { id: 'primary_b', position: Position.Left, offset: 34 },
+    { id: 'secondary_a', position: Position.Right, offset: 10 },
+    { id: 'secondary_b', position: Position.Right, offset: 34 },
+  ],
+  transformer_center_tapped: [
+    { id: 'primary_a', position: Position.Left, offset: 10 },
+    { id: 'primary_ct', position: Position.Left, offset: 22 },
+    { id: 'primary_b', position: Position.Left, offset: 34 },
+    { id: 'secondary_a', position: Position.Right, offset: 10 },
+    { id: 'secondary_b', position: Position.Right, offset: 34 },
   ],
   ground: [{ id: 'reference_terminal', position: Position.Top }],
 }
@@ -238,8 +356,25 @@ const TERMINAL_POLARITY: Record<string, '+' | '−'> = {
   cathode: '−',
 }
 
-/** The terminals (handle id + side) for a device definition. */
-export function terminalsOf(definition: string): { id: string; position: Position }[] {
+/**
+ * Polarity for a terminal on a specific device. The global map covers terminals
+ * whose NAME carries polarity (anode, terminal_positive, …); the capacitor is
+ * polarized per-device — the canvas part is a real aluminum electrolytic, whose
+ * terminal_a is the + lead and terminal_b the − (reversing one is a real failure
+ * mode, checked by the failure detector).
+ */
+function polarityOf(definition: string, terminalId: string): '+' | '−' | undefined {
+  if (definition === 'capacitor') {
+    if (terminalId === 'terminal_a') return '+'
+    if (terminalId === 'terminal_b') return '−'
+  }
+  return TERMINAL_POLARITY[terminalId]
+}
+
+/** The terminals (handle id + side + optional vertical offset) for a device definition. */
+export function terminalsOf(
+  definition: string,
+): { id: string; position: Position; offset?: number }[] {
   return TERMINALS[definition] ?? FALLBACK_TERMINALS
 }
 
@@ -264,6 +399,8 @@ export function DeviceGlyph({
 }) {
   // The switch is state-dependent: render its blade open or closed.
   if (definition === 'switch_spst_toggle') return <SwitchGlyph closed={switchClosed(parameters)} />
+  // A source with an AC component renders the IEC circle-sine, not battery plates.
+  if (definition === 'power_source' && sourceIsAc(parameters)) return <AcSourceGlyph />
   const Glyph = GLYPHS[definition]
   if (Glyph) return <Glyph />
   return (
@@ -294,6 +431,12 @@ export function DeviceNode({ id, data }: NodeProps) {
   const { definition, label, rotation = 0, parameters } = data as DeviceNodeData
   const value = primaryValue(definition, parameters)
   const health = useContext(HealthContext).get(id)
+  const lensState = useContext(LensContext)
+  // Power lens: halo each part by its REAL dissipated watts (heat-colored
+  // against the circuit's hottest part) + show the number under the label.
+  const watts = lensState.power.get(id)
+  const heat =
+    lensState.lens === 'power' && watts !== undefined ? powerColor(watts, lensState.pMax) : null
   const updateNodeInternals = useUpdateNodeInternals()
   // After a rotation, re-measure the handles so wires follow the rotated terminals.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `rotation` is an intentional re-run trigger — the effect must re-measure when the node rotates, though it isn't read in the body
@@ -326,25 +469,40 @@ export function DeviceNode({ id, data }: NodeProps) {
           <div className="cb-burst" />
         </>
       ) : null}
+      {heat ? (
+        <div
+          style={{
+            position: 'absolute',
+            inset: -5,
+            borderRadius: 8,
+            background: heat,
+            pointerEvents: 'none',
+          }}
+        />
+      ) : null}
       <div
         style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation}deg)` }}
       >
         {/* One handle per terminal; id = terminal name. connectionMode="loose"
             (App) lets any terminal wire to any terminal. Ground = one top stem. */}
         {terminalsOf(definition).map((t) => {
-          const polarity = TERMINAL_POLARITY[t.id]
+          const polarity = polarityOf(definition, t.id)
           const onSide = t.position === Position.Left || t.position === Position.Right
+          // Hover any terminal dot to see which spot it is (like the wire probe):
+          // the terminal's name, plus its polarity where one applies.
+          const hoverLabel = t.id.replace(/_/g, ' ') + (polarity ? ` (${polarity})` : '')
           return (
             <Fragment key={t.id}>
               <Handle
                 id={t.id}
                 type="source"
                 position={t.position}
+                title={hoverLabel}
                 style={{
                   background: polarity === '+' ? '#e0594f' : polarity === '−' ? '#5a86d8' : '#888',
                   width: polarity ? 9 : undefined,
                   height: polarity ? 9 : undefined,
-                  ...(onSide ? { top: MID } : {}),
+                  ...(onSide ? { top: t.offset ?? MID } : {}),
                 }}
               />
               {polarity ? (
@@ -382,6 +540,9 @@ export function DeviceNode({ id, data }: NodeProps) {
       >
         {label}
         {value ? <span style={{ color: '#7ab8ff', marginLeft: 5 }}>{value}</span> : null}
+        {lensState.lens === 'power' && watts !== undefined && watts > 0 ? (
+          <span style={{ color: '#e0a050', marginLeft: 5 }}>{formatEng(watts, 'W')}</span>
+        ) : null}
         {health?.failed ? (
           <span title={health.note} style={{ marginLeft: 5 }}>
             💥

@@ -9,9 +9,11 @@ import {
 import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  useContext,
   useRef,
   useState,
 } from 'react'
+import { flowDuration, LensContext, voltageColor } from './lens.ts'
 import { formatEng } from './units.ts'
 import { formatLength } from './wire-length.ts'
 
@@ -96,6 +98,7 @@ export function NetEdge({
 }: EdgeProps) {
   const { setEdges, screenToFlowPosition } = useReactFlow()
   const nodes = useNodes()
+  const lensState = useContext(LensContext)
   const waypoints = readWaypoints(data)
   // The detail chip (net id · current · length · resistance) only pops up while
   // the wire is hovered — keeps the schematic clean; the current arrows on the
@@ -248,15 +251,45 @@ export function NetEdge({
     setProbe({ x: bestX, y: bestY, vHere, delta: vHere - vSource })
   }
 
+  // Voltage lens: recolor the wire by its solved potential (the average of its
+  // two end potentials — a wire's drop is tiny on this scale) within the
+  // circuit's [vMin, vMax]. Flow lens: marching dashes, direction from the
+  // solved current's sign (the same sign that places the arrowheads), speed
+  // from its magnitude.
+  const voltageStroke =
+    lensState.lens === 'voltage' && vSource !== null && vTarget !== null
+      ? voltageColor((vSource + vTarget) / 2, lensState.vMin, lensState.vMax)
+      : null
+  const edgeStyle = voltageStroke ? { ...style, stroke: voltageStroke, strokeWidth: 2.4 } : style
+  const flowSeconds = lensState.flow && amps !== null ? flowDuration(amps) : null
+
   return (
     <>
       <BaseEdge
         id={id}
         path={path}
-        style={style}
+        style={edgeStyle}
         {...(markerStart ? { markerStart } : {})}
         {...(markerEnd ? { markerEnd } : {})}
       />
+      {flowSeconds !== null ? (
+        <path
+          d={path}
+          fill="none"
+          className="cb-flow-dash"
+          stroke={voltageStroke ?? '#9fd0ff'}
+          strokeWidth={voltageStroke ? 2.4 : 1.8}
+          strokeDasharray="7 5"
+          strokeLinecap="round"
+          style={{
+            animationDuration: `${flowSeconds}s`,
+            // Dashes march toward the path's end; when the solved current flows
+            // the other way (the arrow sits at the source), march in reverse.
+            ...(markerStart ? { animationDirection: 'reverse' } : {}),
+            pointerEvents: 'none',
+          }}
+        />
+      ) : null}
       {/* Invisible wide hit area: hover shows the chip; double-click adds a corner. */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: the wire is a pointer routing surface (hover reveals detail, double-click adds a corner); keyboard routing is future work */}
       <path

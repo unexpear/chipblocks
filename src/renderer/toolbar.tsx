@@ -1,3 +1,4 @@
+import type { LensMode } from './lens.ts'
 import { DeviceGlyph } from './symbols.tsx'
 
 /**
@@ -23,6 +24,10 @@ export function ToolbarItems({
   onAlwaysOn,
   onSolve,
   onScope,
+  lens,
+  onLens,
+  flow,
+  onFlow,
 }: {
   tool: Tool
   onTool: (tool: Tool) => void
@@ -30,6 +35,10 @@ export function ToolbarItems({
   onAlwaysOn: (on: boolean) => void
   onSolve: () => void
   onScope: () => void
+  lens: LensMode
+  onLens: (lens: LensMode) => void
+  flow: boolean
+  onFlow: (flow: boolean) => void
 }) {
   const wireActive = tool === 'wire'
   return (
@@ -89,6 +98,53 @@ export function ToolbarItems({
           ∿
         </span>
         <span style={{ fontSize: 11 }}>Scope</span>
+      </button>
+
+      {/* Lenses (S19-v3-50): overlay the solved physics on the schematic. Voltage
+          and Power are exclusive color lenses (click again to turn off); Flow is
+          an independent current-animation toggle. */}
+      <button
+        type="button"
+        onClick={() => onLens(lens === 'voltage' ? 'none' : 'voltage')}
+        title="Voltage lens — color every wire by its solved potential (blue = lowest, red = highest)"
+        style={{
+          ...toolButton(lens === 'voltage'),
+          flexDirection: 'row',
+          gap: 6,
+          padding: '8px 10px',
+        }}
+      >
+        <span aria-hidden style={{ color: '#d6a23c', fontSize: 13 }}>
+          ◧
+        </span>
+        <span style={{ fontSize: 11 }}>Voltage</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => onLens(lens === 'power' ? 'none' : 'power')}
+        title="Power lens — heat-color every part by its real dissipated watts (the hot spots)"
+        style={{
+          ...toolButton(lens === 'power'),
+          flexDirection: 'row',
+          gap: 6,
+          padding: '8px 10px',
+        }}
+      >
+        <span aria-hidden style={{ color: '#e0594f', fontSize: 13 }}>
+          ♨
+        </span>
+        <span style={{ fontSize: 11 }}>Power</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => onFlow(!flow)}
+        title="Flow animation — march dashes along each wire in the solved current's direction, speed from its size"
+        style={{ ...toolButton(flow), flexDirection: 'row', gap: 6, padding: '8px 10px' }}
+      >
+        <span aria-hidden style={{ color: '#9fd0ff', fontSize: 13 }}>
+          ≫
+        </span>
+        <span style={{ fontSize: 11 }}>Flow</span>
       </button>
     </>
   )

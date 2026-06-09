@@ -33,6 +33,7 @@ import { loadCatalogWorld } from './catalog-loader.ts'
 import { DockablePanel, type DockEdge } from './dockable-panel.tsx'
 import { wireFlow } from './edge-currents.ts'
 import { canvasHealth, HealthContext, type NodeHealth } from './health.ts'
+import { LensContext, type LensMode } from './lens.ts'
 import { materialCapabilities, validMaterialsByRole } from './material-roles.ts'
 import { edgeTypes } from './net-edge.tsx'
 import { DEFINITION_MIME, PaletteItems } from './palette.tsx'
@@ -325,6 +326,37 @@ function Canvas() {
   // an auto-picked window and show every node voltage as a waveform.
   const [scopeResult, setScopeResult] = useState<TransientResult | null>(null)
   const [scopeEdge, setScopeEdge] = useState<DockEdge>('bottom')
+
+  // Lenses (S19-v3-50): overlay the solved physics on the schematic. The context
+  // carries the solved voltage range (for the wire color ramp) + each part's real
+  // dissipated watts (for the heat halos) down to the edges/nodes.
+  const [lens, setLens] = useState<LensMode>('none')
+  const [flow, setFlow] = useState(false)
+  const lensState = useMemo(() => {
+    let vMin = Number.POSITIVE_INFINITY
+    let vMax = Number.NEGATIVE_INFINITY
+    for (const e of edges) {
+      for (const v of [e.data?.vSource, e.data?.vTarget]) {
+        if (typeof v === 'number') {
+          if (v < vMin) vMin = v
+          if (v > vMax) vMax = v
+        }
+      }
+    }
+    if (!(vMax >= vMin)) {
+      vMin = 0
+      vMax = 0
+    }
+    const power = new Map<string, number>()
+    let pMax = 0
+    for (const [id, r] of readings) {
+      if (typeof r.power === 'number' && r.power > 0) {
+        power.set(id, r.power)
+        if (r.power > pMax) pMax = r.power
+      }
+    }
+    return { lens, flow, vMin, vMax, power, pMax }
+  }, [edges, readings, lens, flow])
   const runScope = useCallback(() => {
     const { world } = canvasWorld(nodes, edges)
     setScopeResult(solveTransient(world, scopeWindow(world)))
@@ -537,41 +569,43 @@ function Canvas() {
         }}
       >
         <HealthContext.Provider value={health}>
-          <ReactFlow
-            colorMode={theme}
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onReconnect={onReconnect}
-            onNodeDoubleClick={onNodeDoubleClick}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            nodesDraggable={tool === 'select'}
-            connectionMode={ConnectionMode.Loose}
-            deleteKeyCode={['Delete', 'Backspace']}
-            zoomOnDoubleClick={false}
-            fitView
-            proOptions={{ hideAttribution: true }}
-          >
-            {/* Graph-paper grid: fine minor lines, with a bolder major line every 5th. */}
-            <Background
-              id="grid-minor"
-              variant={BackgroundVariant.Lines}
-              gap={4}
-              lineWidth={0.5}
-              color={`${gridColor}55`}
-            />
-            <Background
-              id="grid-major"
-              variant={BackgroundVariant.Lines}
-              gap={20}
-              lineWidth={1}
-              color={gridColor}
-            />
-            <Controls />
-          </ReactFlow>
+          <LensContext.Provider value={lensState}>
+            <ReactFlow
+              colorMode={theme}
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onReconnect={onReconnect}
+              onNodeDoubleClick={onNodeDoubleClick}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              nodesDraggable={tool === 'select'}
+              connectionMode={ConnectionMode.Loose}
+              deleteKeyCode={['Delete', 'Backspace']}
+              zoomOnDoubleClick={false}
+              fitView
+              proOptions={{ hideAttribution: true }}
+            >
+              {/* Graph-paper grid: fine minor lines, with a bolder major line every 5th. */}
+              <Background
+                id="grid-minor"
+                variant={BackgroundVariant.Lines}
+                gap={4}
+                lineWidth={0.5}
+                color={`${gridColor}55`}
+              />
+              <Background
+                id="grid-major"
+                variant={BackgroundVariant.Lines}
+                gap={20}
+                lineWidth={1}
+                color={gridColor}
+              />
+              <Controls />
+            </ReactFlow>
+          </LensContext.Provider>
         </HealthContext.Provider>
 
         <div
@@ -661,6 +695,10 @@ function Canvas() {
           onAlwaysOn={setAlwaysOn}
           onSolve={handleSolve}
           onScope={runScope}
+          lens={lens}
+          onLens={setLens}
+          flow={flow}
+          onFlow={setFlow}
         />
       </DockablePanel>
       <DockablePanel edge={propsEdge} onEdgeChange={setPropsEdge} light={light} title="Properties">
