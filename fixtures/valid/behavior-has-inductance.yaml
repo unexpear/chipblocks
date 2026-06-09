@@ -1,0 +1,40 @@
+# Valid fixture: behavior registry entry for inductance — the device-level
+# capability of opposing changes in current through a magnetic field.
+# The time-domain dual of has_capacitance: a capacitor resists voltage change
+# (i = C·dv/dt), an inductor resists current change (v = L·di/dt). At DC steady
+# state an ideal inductor is a short (di/dt = 0 → v = 0); only its winding
+# resistance drops voltage.
+# Used by the inductor primitive (S19-v3-46).
+# MUST validate against behavior.schema.json.
+kind: behavior
+id: has_inductance
+origin: builtin
+layer: behavior
+name: "Has inductance (voltage-current-change relationship)"
+description: "An object with non-zero inductance develops a voltage proportional to the rate of change of current through it: v = L * di/dt. Current through an inductor cannot jump instantaneously. At DC steady state (di/dt = 0) an ideal inductor drops no voltage — it conducts like a wire, limited only by its winding resistance. Energy is stored in the magnetic field (E = L*I^2/2)."
+parameters_required:
+  - name: inductance
+    type: quantity
+    units: henry
+    description: The inductance of the device.
+  - name: current
+    type: quantity
+    units: ampere
+    description: Current through the device.
+evaluates: "v = L * di/dt; stored energy E = (1/2) * L * I^2"
+consequences: []
+law: inductance_definition
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved by both engines: the DC solver stamps an inductor as a 0 V source in
+  series with its winding resistance (the exact DC steady state of v = L*di/dt);
+  the transient solver uses the backward-Euler companion i_n = G_eq*v_n + I_hist
+  with G_eq = dt/(L + R_w*dt). A stores_magnetic_energy consequence behavior (the
+  dual of stores_charge) is future work — consequences stays empty rather than
+  pointing at a behavior that does not exist yet.

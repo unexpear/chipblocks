@@ -1,0 +1,87 @@
+# Valid fixture: generic inductor primitive device.
+# A two-terminal passive device storing energy in the magnetic field of a wound
+# conductor. The time-domain dual of the capacitor: v = L·di/dt — it opposes
+# CHANGES in current the way a capacitor opposes changes in voltage. At DC steady
+# state an ideal inductor is a short; the real part conducts through its winding
+# resistance (it is, physically, a long coiled wire — so it carries the wire's
+# R = ρL/A as winding_resistance).
+#
+# Inductance can be DECLARED (parameters.inductance — typical for buying a part).
+# The DERIVED solenoid path (L = µ₀·µ_r·N²·A/l from a core material + turns +
+# geometry) is future work — it needs a magnetic-core material role + a turns
+# parameter, noted below rather than faked.
+#
+# Per the device-power-source convention, no builtin numeric default on
+# inductance (part-specific); the cited canvas drop defaults live in
+# part-defaults.ts (10 mH radial ferrite choke class).
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: inductor
+origin: builtin
+layer: primitive_device
+name: Inductor
+description: "A two-terminal passive device with a controlled inductance. A coiled conductor stores energy in its magnetic field and develops a voltage proportional to how fast its current changes (v = L * di/dt) — so it opposes changes in current, passes DC freely (limited only by its winding resistance), and impedes AC increasingly with frequency. Used for filtering, chokes, energy conversion (boost/buck), tuning, and EMI suppression."
+composition:
+  requires:
+    winding:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  winding:
+    type: material_ref
+    satisfies_role: winding
+    required: true
+    default:
+      value: copper
+    description: The conductor the coil is wound from. Must conduct; copper is the standard winding material.
+  inductance:
+    type: quantity
+    units: henry
+    required: true
+    description: The declared inductance value of this inductor.
+  winding_resistance:
+    type: quantity
+    units: ohm
+    required: false
+    description: DC resistance of the winding (DCR) — the coiled wire's real R = ρL/A. Drops real voltage at DC and dissipates I²R heat; 0 / absent models an ideal inductor.
+  current_rating:
+    type: quantity
+    units: ampere
+    required: false
+    description: Maximum continuous current before saturation or thermal damage (datasheet I_rated).
+  tolerance_percent:
+    type: quantity
+    units: percent
+    required: false
+    description: Inductance tolerance as a percent of nominal.
+behaviors:
+  - has_inductance
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+terminals:
+  terminal_a:
+    description: One end of the winding.
+  terminal_b:
+    description: The other end of the winding.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved by both engines (S19-v3-46): the DC solver stamps the inductor as a 0 V
+  source in series with winding_resistance (the exact steady state of v = L·di/dt
+  — di/dt = 0); the transient solver uses the backward-Euler companion
+  G_eq = dt/(L + R_w·dt), I_hist = L·i_prev/(L + R_w·dt), so current ramps on the
+  real L/R exponential and cannot jump. The derived-solenoid inductance path
+  (core material role + turns + geometry → L = µ₀µ_rN²A/l) is future work;
+  declared inductance is the supported path today, matching how the capacitor
+  shipped declared-first.
