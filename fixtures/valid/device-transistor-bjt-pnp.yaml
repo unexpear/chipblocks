@@ -1,0 +1,119 @@
+# Valid fixture: PNP bipolar junction transistor (BJT).
+# The complement of the NPN: two back-to-back PN junctions sharing a thin n-type
+# base between a p-type collector and a p-type emitter. Operates with everything
+# reversed relative to the NPN — the emitter sits at the HIGHER potential, a
+# small current pulled OUT of the base controls a much larger current flowing
+# emitter → collector (I_C ~ beta * I_B in the active region). The standard
+# partner device for push-pull stages, high-side switches, and complementary
+# pairs (e.g. 2N3904/2N3906, MJ3055/MJ2955).
+#
+# Solved by both engines as the same Ebers-Moll model with both junction
+# polarities flipped (dc-solver.ts stores PNP junction voltages in the forward
+# frame and flips the physical current signs) — no separate physics, the same
+# verified equations mirrored.
+#
+# Per the device-power-source convention, beta and I_S carry NO builtin numeric
+# defaults (part-specific); the cited canvas drop defaults live in
+# part-defaults.ts (2N3906 class).
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: transistor_bjt_pnp
+origin: builtin
+layer: primitive_device
+name: "PNP bipolar junction transistor"
+description: "A three-terminal amplifying / switching device, the polarity complement of the NPN: two PN junctions sharing a thin n-type base between a p-type collector and a p-type emitter. The emitter sits at the higher potential; a small base current (flowing out of the base) controls a much larger emitter-to-collector current (I_C is approximately beta times I_B in the forward-active region). Modeled by the Ebers-Moll transport equations with both junctions reversed. The standard device for high-side switching and complementary (push-pull) stages."
+composition:
+  uses:
+    - pn_junction
+  requires:
+    collector_region:
+      kind: material
+      must_enable:
+        - p_type_semiconductor
+    base_region:
+      kind: material
+      must_enable:
+        - n_type_semiconductor
+    emitter_region:
+      kind: material
+      must_enable:
+        - p_type_semiconductor
+    endpoints:
+      kind: interface
+      min_count: 3
+parameters:
+  collector_region:
+    type: material_ref
+    satisfies_role: collector_region
+    required: true
+    default:
+      value: silicon_p_type
+    description: The p-type semiconductor forming the collector region.
+  base_region:
+    type: material_ref
+    satisfies_role: base_region
+    required: true
+    default:
+      value: silicon_n_type
+    description: The thin n-type semiconductor forming the base, sandwiched between collector and emitter.
+  emitter_region:
+    type: material_ref
+    satisfies_role: emitter_region
+    required: true
+    default:
+      value: silicon_p_type
+    description: The heavily p-doped semiconductor forming the emitter region (the symbol's arrow terminal, pointing IN for a PNP).
+  saturation_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: Ebers-Moll transport saturation current I_S — scales both junction currents. Typical small-signal PNP ~1e-14 A; roughly doubles every ~10 C.
+  forward_current_gain:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: Forward common-emitter current gain beta_F (hFE) — the collector/base current ratio in the active region. Part-specific (~50-800); no builtin default (set per instance / canvas default).
+  reverse_current_gain:
+    type: quantity
+    units: dimensionless
+    required: false
+    description: Reverse current gain beta_R — small for a normal PNP (often <10); governs behavior when collector and emitter roles swap (saturation / inverse mode).
+  max_collector_current:
+    type: quantity
+    units: ampere
+    required: false
+    description: Maximum continuous collector current before thermal damage. Part-specific (e.g. 2N3906 ~ 200 mA).
+  collector_emitter_breakdown_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Collector-emitter breakdown voltage magnitude with the base open (V_CEO). Exceeding it drives avalanche breakdown (e.g. 2N3906 ~ 40 V).
+behaviors:
+  - acts_as_transistor
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  collector:
+    description: P-type collector terminal; conventional current exits here for a PNP in the active region.
+  base:
+    description: N-type base terminal; the small controlling current pulled out of it governs the collector current.
+  emitter:
+    description: P-type emitter terminal at the higher potential; conventional current enters here. The schematic arrow points IN on this terminal.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  The polarity complement of transistor_bjt_npn — same Ebers-Moll transport model
+  with both junctions reversed; both solvers implement it by storing the junction
+  voltages in the forward frame and flipping the physical current signs (the
+  conductance stamps are identical). Reuses the acts_as_transistor behavior. Per
+  the device-power-source convention, no builtin numeric defaults on beta / I_S —
+  the canvas drop defaults (part-defaults.ts, 2N3906 class, cited) and
+  per-instance values fill them in; the p/n/p material regions DO default to
+  silicon. Power PNP variants (MJ2955 class, for push-pull inverters) differ only
+  in parameter values.

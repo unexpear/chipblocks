@@ -1,0 +1,102 @@
+# Valid fixture: two-winding transformer primitive device.
+# Two coiled conductors (primary + secondary) sharing a magnetic core: a changing
+# primary current induces a secondary voltage via mutual inductance, scaled by
+# the turns ratio ~ sqrt(L2/L1). Transforms AC voltages up or down; passes no
+# steady DC (di/dt = 0 → no coupling) — only each winding's resistance is seen
+# at DC. The key part for inverters, power supplies, and isolation.
+#
+# A center-tapped variant (the push-pull inverter's 3-terminal primary) is a
+# future addition — noted, not faked. Per the device-power-source convention,
+# no builtin numeric inductance defaults (winding-specific); the cited canvas
+# drop defaults live in part-defaults.ts (small EI power transformer class).
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: transformer
+origin: builtin
+layer: primitive_device
+name: Transformer
+description: "A four-terminal device: two windings (primary and secondary) magnetically coupled through a shared core. A changing current in the primary induces a voltage in the secondary scaled by roughly the turns ratio (sqrt of the inductance ratio), letting AC be stepped up or down and circuits be galvanically isolated. Steady DC does not couple — at DC each winding is just its winding resistance. Used in power conversion (inverters, adapters), isolation, and impedance matching."
+composition:
+  requires:
+    primary_winding:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    secondary_winding:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 4
+parameters:
+  primary_winding:
+    type: material_ref
+    satisfies_role: primary_winding
+    required: true
+    default:
+      value: copper
+    description: The conductor the primary is wound from; copper is standard.
+  secondary_winding:
+    type: material_ref
+    satisfies_role: secondary_winding
+    required: true
+    default:
+      value: copper
+    description: The conductor the secondary is wound from; copper is standard.
+  primary_inductance:
+    type: quantity
+    units: henry
+    required: true
+    description: Self-inductance of the primary winding, L1.
+  secondary_inductance:
+    type: quantity
+    units: henry
+    required: true
+    description: Self-inductance of the secondary winding, L2. The open-circuit voltage ratio approaches k*sqrt(L2/L1).
+  coupling_coefficient:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: k, strictly between 0 and 1 — field linkage between the windings. Iron-core transformers reach 0.95-0.998; k = 1 (a perfectly ideal transformer) is unphysical and rejected by the solver.
+  primary_resistance:
+    type: quantity
+    units: ohm
+    required: false
+    description: DC resistance of the primary winding (its wire's real R = ρL/A). 0 / absent models an ideal winding.
+  secondary_resistance:
+    type: quantity
+    units: ohm
+    required: false
+    description: DC resistance of the secondary winding. 0 / absent models an ideal winding.
+behaviors:
+  - couples_magnetically
+  - has_inductance
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+terminals:
+  primary_a:
+    description: One end of the primary winding (the dotted end — voltage reference polarity).
+  primary_b:
+    description: The other end of the primary winding.
+  secondary_a:
+    description: One end of the secondary winding (the dotted end — same instantaneous polarity as primary_a).
+  secondary_b:
+    description: The other end of the secondary winding.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved by both engines (S19-v3-47): the transient solver inverts the 2x2
+  inductance matrix [[L1, M], [M, L2]] per backward-Euler step (well-posed for
+  k < 1) so AC transforms and DC decays away; the DC solver stamps each winding
+  as a 0 V source in series with its winding resistance (the exact steady state).
+  Magnetizing current, core saturation, and core (iron) losses are not modeled —
+  honest omissions for the lumped two-winding model. Center-tapped windings
+  (push-pull inverter primaries) are a future variant.

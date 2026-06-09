@@ -1,0 +1,110 @@
+# Valid fixture: center-tapped transformer primitive device.
+# A transformer whose primary winding has a third connection at its midpoint
+# (the center tap, CT). Electrically this is THREE coupled windings on one core:
+# two identical primary halves (primary_a→primary_ct, primary_ct→primary_b) plus
+# the secondary. Since inductance scales with turns squared (L ∝ N²), each
+# primary half carries ONE QUARTER of the end-to-end primary inductance, and the
+# halves couple to each other and to the secondary through the shared core.
+#
+# The key part for push-pull circuits: an inverter grounds the CT and drives the
+# two ends alternately (12-0-12), so each half conducts on alternate half-cycles
+# and the secondary sees a stepped-up AC waveform — exactly the classic
+# 12 V battery → 120/230 V inverter topology.
+#
+# Per the device-power-source convention, no builtin numeric inductance defaults
+# (winding-specific); the cited canvas drop defaults live in part-defaults.ts
+# (push-pull inverter transformer class).
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: transformer_center_tapped
+origin: builtin
+layer: primitive_device
+name: "Center-tapped transformer"
+description: "A five-terminal transformer: the primary winding has a midpoint connection (center tap) splitting it into two identical, magnetically-coupled halves, plus a separate secondary winding — three coupled windings on one core. Each primary half carries a quarter of the end-to-end primary inductance (L scales with turns squared). Used for push-pull inverters and amplifiers (ground the tap, drive the ends alternately) and dual-rail rectifier supplies (on the secondary side of mains transformers)."
+composition:
+  requires:
+    primary_winding:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    secondary_winding:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 5
+parameters:
+  primary_winding:
+    type: material_ref
+    satisfies_role: primary_winding
+    required: true
+    default:
+      value: copper
+    description: The conductor the (tapped) primary is wound from; copper is standard.
+  secondary_winding:
+    type: material_ref
+    satisfies_role: secondary_winding
+    required: true
+    default:
+      value: copper
+    description: The conductor the secondary is wound from; copper is standard.
+  primary_inductance:
+    type: quantity
+    units: henry
+    required: true
+    description: END-TO-END self-inductance of the full primary (primary_a to primary_b). Each half is a quarter of this (L ∝ N²).
+  secondary_inductance:
+    type: quantity
+    units: henry
+    required: true
+    description: Self-inductance of the secondary winding. The full-primary voltage ratio approaches k·√(L2/L1); each half drives k·√(L2/(L1/4)) — twice that.
+  coupling_coefficient:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: k, strictly between 0 and 1 — field linkage between all windings on the shared core. Iron-core transformers reach 0.95-0.998; k = 1 is unphysical and rejected by the solver.
+  primary_resistance:
+    type: quantity
+    units: ohm
+    required: false
+    description: END-TO-END DC resistance of the full primary winding; each half carries half of it. 0 / absent models ideal windings.
+  secondary_resistance:
+    type: quantity
+    units: ohm
+    required: false
+    description: DC resistance of the secondary winding. 0 / absent models an ideal winding.
+behaviors:
+  - couples_magnetically
+  - has_inductance
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+terminals:
+  primary_a:
+    description: One end of the primary winding (the dotted end).
+  primary_ct:
+    description: The center tap — the primary winding's midpoint. Grounded in push-pull use.
+  primary_b:
+    description: The other end of the primary winding.
+  secondary_a:
+    description: One end of the secondary winding (the dotted end).
+  secondary_b:
+    description: The other end of the secondary winding.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved by both engines (S19-v3-49): the transient solver inverts the 3×3
+  inductance matrix [[Lh, Mpp, Mps], [Mpp, Lh, Mps], [Mps, Mps, L2]] per
+  backward-Euler step, where Lh = L1/4, Mpp = k·Lh (half-to-half) and
+  Mps = k·√(Lh·L2) (half-to-secondary) — positive-definite exactly when k < 1.
+  The DC solver stamps each of the three windings as a 0 V source through its
+  share of winding resistance (each half gets primary_resistance/2). Magnetizing
+  current, saturation, and core losses are not modeled — same honest omissions
+  as the two-winding transformer.

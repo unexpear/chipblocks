@@ -37,8 +37,12 @@ const DEFAULTS: Record<string, Parameters> = {
   },
   power_source: {
     // 9 V alkaline (6LR61), per ANSI/IEC 60086-2 — same family as the anchor battery.
+    // ac_amplitude / frequency 0 = a pure DC source (a battery has no AC component);
+    // the AC presets in the Properties panel set them, V(t) = DC + A·sin(2πft).
     nominal_voltage: scalar(9, 'volt'),
     internal_resistance: scalar(1, 'ohm'),
+    ac_amplitude: scalar(0, 'volt'),
+    frequency: scalar(0, 'hertz'),
   },
   capacitor: {
     // 100 µF aluminum electrolytic, 16 V class — a standard E12 value. With the
@@ -52,6 +56,24 @@ const DEFAULTS: Record<string, Parameters> = {
     inductance: scalar(0.01, 'henry'),
     winding_resistance: scalar(25, 'ohm'),
     current_rating: scalar(0.06, 'ampere'),
+  },
+  transformer: {
+    // Small EI mains transformer class, ~1:10 step-up from the low-voltage winding
+    // (turns ratio ≈ √(L2/L1)); k 0.98 iron core; winding DCRs scale with turns.
+    primary_inductance: scalar(0.1, 'henry'),
+    secondary_inductance: scalar(10, 'henry'),
+    coupling_coefficient: scalar(0.98, 'dimensionless'),
+    primary_resistance: scalar(0.5, 'ohm'),
+    secondary_resistance: scalar(50, 'ohm'),
+  },
+  transformer_center_tapped: {
+    // Push-pull inverter transformer class (12-0-12 : mains): each primary half is
+    // L1/4, so a 12 V half-swing steps up by k·√(L2/(L1/4)) ≈ 19.6 → ~230 V AC.
+    primary_inductance: scalar(0.1, 'henry'),
+    secondary_inductance: scalar(10, 'henry'),
+    coupling_coefficient: scalar(0.98, 'dimensionless'),
+    primary_resistance: scalar(1, 'ohm'),
+    secondary_resistance: scalar(50, 'ohm'),
   },
   led: {
     // Typical 5 mm red LED (Kingbright WP7113SRD-D class): 2.0 V at 20 mA max,
@@ -92,6 +114,14 @@ const DEFAULTS: Record<string, Parameters> = {
     max_collector_current: scalar(0.2, 'ampere'),
     collector_emitter_breakdown_voltage: scalar(40, 'volt'),
   },
+  transistor_bjt_pnp: {
+    // 2N3906 (onsemi) — the 2N3904's standard PNP complement; same class numbers.
+    saturation_current: scalar(1e-14, 'ampere'),
+    forward_current_gain: scalar(100, 'dimensionless'),
+    reverse_current_gain: scalar(2, 'dimensionless'),
+    max_collector_current: scalar(0.2, 'ampere'),
+    collector_emitter_breakdown_voltage: scalar(40, 'volt'),
+  },
 }
 
 /**
@@ -111,6 +141,8 @@ const PROVENANCE: Record<string, Record<string, string>> = {
   power_source: {
     nominal_voltage: 'ANSI/IEC 60086-2 — 9 V 6LR61 (PP3)',
     internal_resistance: '~1 Ω fresh 9 V alkaline (Duracell MN1604)',
+    ac_amplitude: '0 = pure DC (a battery has no AC component)',
+    frequency: '0 = pure DC; set by the AC source types',
   },
   capacitor: {
     capacitance: 'E12 standard — 100 µF aluminum electrolytic',
@@ -120,6 +152,20 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     inductance: '10 mH radial ferrite choke class (Bourns RLB0914 family)',
     winding_resistance: 'winding DCR, tens of Ω typical at 10 mH (RLB0914 class)',
     current_rating: '~60 mA rated current (RLB0914 class)',
+  },
+  transformer: {
+    primary_inductance: 'small EI mains transformer class, low-voltage winding',
+    secondary_inductance: '≈1:10 turns ratio (√(L2/L1)) — step-up secondary',
+    coupling_coefficient: 'iron-core k ≈ 0.95–0.998; 0.98 typical',
+    primary_resistance: 'low-voltage winding DCR (few turns of thick wire)',
+    secondary_resistance: 'high-voltage winding DCR (many turns of thin wire)',
+  },
+  transformer_center_tapped: {
+    primary_inductance: 'push-pull inverter class — 12-0-12 end-to-end',
+    secondary_inductance: 'each half steps up ≈ k·√(L2/(L1/4)) → ~230 V from 12 V',
+    coupling_coefficient: 'iron-core k ≈ 0.95–0.998; 0.98 typical',
+    primary_resistance: 'end-to-end DCR; each half carries half of it',
+    secondary_resistance: 'high-voltage winding DCR (many turns of thin wire)',
   },
   led: {
     forward_voltage: 'Kingbright WP7113SRD-D (5 mm red)',
@@ -143,6 +189,13 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     max_collector_current: '2N3904 I_C(max) 200 mA (onsemi datasheet)',
     collector_emitter_breakdown_voltage: '2N3904 V_CEO 40 V (onsemi datasheet)',
   },
+  transistor_bjt_pnp: {
+    saturation_current: 'small-signal PNP transport I_S ~1e-14 A (2N3906 class)',
+    forward_current_gain: '2N3906 hFE ≥ 100 at I_C = 10 mA (onsemi datasheet)',
+    reverse_current_gain: 'reverse β small for a PNP; 2N3906 class, rounded to 2',
+    max_collector_current: '2N3906 I_C(max) 200 mA (onsemi datasheet)',
+    collector_emitter_breakdown_voltage: '2N3906 V_CEO 40 V (onsemi datasheet)',
+  },
 }
 
 /** The cited source for a default parameter value, if known. */
@@ -164,6 +217,11 @@ const amountOf = (parameters: Parameters | undefined, name: string): number | un
 const stringOf = (parameters: Parameters | undefined, name: string): string | undefined =>
   parameters ? readEnumParam({ parameters } as unknown as Instance, name) : undefined
 
+/** Does a source carry an AC component (ac_amplitude > 0)? Drives the AC glyph. */
+export function sourceIsAc(parameters: Parameters | undefined): boolean {
+  return (amountOf(parameters, 'ac_amplitude') ?? 0) > 0
+}
+
 /** Is a switch closed (conducting)? Absent state defaults to closed — matches the solver. */
 export function switchClosed(parameters: Parameters | undefined): boolean {
   return stringOf(parameters, 'state') !== 'open'
@@ -184,6 +242,10 @@ export function primaryValue(
     return r === undefined ? null : formatEng(r, 'Ω')
   }
   if (definition === 'power_source') {
+    // An AC source headlines its swing + frequency; a DC source its voltage.
+    const ac = amountOf(parameters, 'ac_amplitude') ?? 0
+    const f = amountOf(parameters, 'frequency') ?? 0
+    if (ac > 0 && f > 0) return `${formatEng(ac, 'V')}~ ${formatEng(f, 'Hz')}`
     const v = amountOf(parameters, 'nominal_voltage')
     return v === undefined ? null : `${v} V`
   }
@@ -194,7 +256,7 @@ export function primaryValue(
   if (definition === 'switch_spst_toggle') {
     return switchClosed(parameters) ? 'closed' : 'open'
   }
-  if (definition === 'transistor_bjt_npn') {
+  if (definition === 'transistor_bjt_npn' || definition === 'transistor_bjt_pnp') {
     const beta = amountOf(parameters, 'forward_current_gain')
     return beta === undefined ? null : `β ${beta}`
   }
@@ -205,6 +267,15 @@ export function primaryValue(
   if (definition === 'inductor') {
     const l = amountOf(parameters, 'inductance')
     return l === undefined ? null : formatEng(l, 'H')
+  }
+  if (definition === 'transformer' || definition === 'transformer_center_tapped') {
+    // Headline the turns ratio n ≈ √(L2/L1), e.g. "1:10" for a step-up.
+    const l1 = amountOf(parameters, 'primary_inductance')
+    const l2 = amountOf(parameters, 'secondary_inductance')
+    if (l1 === undefined || l2 === undefined || l1 <= 0 || l2 <= 0) return null
+    const n = Math.sqrt(l2 / l1)
+    const round = (x: number) => Math.round(x * 10) / 10
+    return n >= 1 ? `1:${round(n)}` : `${round(1 / n)}:1`
   }
   return null
 }

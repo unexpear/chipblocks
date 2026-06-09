@@ -77,54 +77,87 @@ const LED_COLORS: {
 ]
 
 /**
- * Source-type presets (S19-v3-38). A Source is the circuit's push; picking a type
- * sets a CONSISTENT, real DC source — its nominal voltage AND its internal
- * resistance (why a coin cell sags under load while a 9 V block barely does). All
- * are DC: a battery, or a wall adapter that has already rectified the mains to DC
- * (raw AC mains is the later transient sim). One cited spec per type.
+ * Source-type presets (S19-v3-38; AC types S19-v3-45). A Source is the circuit's
+ * push; picking a type sets a CONSISTENT, real source — nominal (DC) voltage,
+ * internal resistance, AND the AC component V(t) = DC + A·sin(2πft). The battery
+ * / adapter types are pure DC (amplitude 0); the AC types drive the transient
+ * solver (a signal generator, or a microphone modeled the standard way — as a
+ * small AC source behind its capsule impedance). One cited spec per type.
  */
 const SOURCE_TYPES: {
   label: string
   voltage: number
   internalResistance: number
+  acAmplitude: number
+  frequency: number
   source: string
 }[] = [
   {
     label: '9 V battery',
     voltage: 9,
     internalResistance: 1,
+    acAmplitude: 0,
+    frequency: 0,
     source: 'ANSI/IEC 60086-2 — 9 V 6LR61 (PP3); ~1 Ω fresh',
   },
   {
     label: 'AA battery (1.5 V)',
     voltage: 1.5,
     internalResistance: 0.15,
+    acAmplitude: 0,
+    frequency: 0,
     source: 'IEC LR6 AA alkaline; ~0.15 Ω fresh',
   },
   {
     label: 'Coin cell (3 V)',
     voltage: 3,
     internalResistance: 10,
+    acAmplitude: 0,
+    frequency: 0,
     source: 'CR2032 Li coin; ~10 Ω (high internal R)',
   },
   {
     label: 'USB adapter (5 V)',
     voltage: 5,
     internalResistance: 0.5,
+    acAmplitude: 0,
+    frequency: 0,
     source: 'USB 5 V wall adapter (DC out); ~0.5 Ω w/ cable',
   },
   {
     label: '12 V adapter',
     voltage: 12,
     internalResistance: 0.5,
+    acAmplitude: 0,
+    frequency: 0,
     source: '12 V DC barrel-jack adapter; ~0.5 Ω regulated',
+  },
+  {
+    label: 'AC signal (1 kHz)',
+    voltage: 0,
+    internalResistance: 50,
+    acAmplitude: 5,
+    frequency: 1000,
+    source: 'function-generator class: 5 V peak sine at 1 kHz, 50 Ω output',
+  },
+  {
+    label: 'Mic signal',
+    voltage: 0,
+    internalResistance: 2200,
+    acAmplitude: 0.01,
+    frequency: 1000,
+    source: 'electret capsule class: ~10 mV peak at 1 kHz, ~2.2 kΩ source impedance',
   },
 ]
 
-/** The source-type preset whose nominal voltage matches the current value (else null = Custom). */
+/** The preset matching the current DC + AC values (else null = Custom). */
 function currentSourceType(parameters: Parameters | undefined) {
   const v = amountOf(parameters, 'nominal_voltage')
-  return SOURCE_TYPES.find((t) => t.voltage === v) ?? null
+  const ac = amountOf(parameters, 'ac_amplitude') ?? 0
+  const f = amountOf(parameters, 'frequency') ?? 0
+  return (
+    SOURCE_TYPES.find((t) => t.voltage === v && t.acAmplitude === ac && t.frequency === f) ?? null
+  )
 }
 
 /** The reading quantity that carries a rating, and its limit — for headroom. */
@@ -338,9 +371,13 @@ export function PartInspector({
               onChange={(e) => {
                 const picked = SOURCE_TYPES.find((s) => s.label === e.target.value)
                 if (picked === undefined) return
-                // Set a consistent real DC source: nominal voltage + internal resistance.
+                // Set a consistent real source: DC voltage, internal resistance,
+                // and the AC component (0/0 for the pure-DC battery types, so
+                // switching AC → battery turns the wiggle off).
                 onParam('nominal_voltage', picked.voltage)
                 onParam('internal_resistance', picked.internalResistance)
+                onParam('ac_amplitude', picked.acAmplitude)
+                onParam('frequency', picked.frequency)
               }}
               className="nodrag"
               style={{ ...field, maxWidth: 130 }}

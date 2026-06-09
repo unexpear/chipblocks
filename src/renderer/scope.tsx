@@ -33,6 +33,11 @@ export function scopeWindow(world: World): { timeStep: number; duration: number 
       maxFarads = Math.max(maxFarads, readScalarParam(inst, 'capacitance') ?? 0)
     } else if (inst.definition === 'inductor') {
       maxHenry = Math.max(maxHenry, readScalarParam(inst, 'inductance') ?? 0)
+    } else if (
+      inst.definition === 'transformer' ||
+      inst.definition === 'transformer_center_tapped'
+    ) {
+      maxHenry = Math.max(maxHenry, readScalarParam(inst, 'primary_inductance') ?? 0)
     }
   }
   let duration: number

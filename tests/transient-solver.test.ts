@@ -614,6 +614,276 @@ describe('solveTransient — R-L (inductor, backward-Euler)', () => {
   })
 })
 
+describe('solveTransient — transformer (coupled windings)', () => {
+  /**
+   * source — [seriesOhms] — primary; secondary → load resistor → ground.
+   * Small-EI-class transformer: L1 0.1 H, L2 10 H (≈1:10), k 0.98, real DCRs.
+   */
+  function transformerCircuit(opts: {
+    dc: number
+    ac?: { amplitude: number; frequency: number }
+    seriesOhms?: number
+    loadOhms: number
+  }): World {
+    const world: World = {
+      definitions: new Map(),
+      instances: new Map(),
+      behaviors: new Map(),
+      activeVariables: new Map(),
+      nets: new Map(),
+    }
+    const series = opts.seriesOhms ?? 0
+    const pFeed = series > 0 ? 'p_in' : 'in'
+    world.nets.set('in', { id: 'in', kind: 'net', members: [] })
+    if (series > 0) world.nets.set('p_in', { id: 'p_in', kind: 'net', members: [] })
+    world.nets.set('out', { id: 'out', kind: 'net', members: [] })
+    world.nets.set('gnd', { id: 'gnd', kind: 'net', type: 'ground', members: [] })
+    world.instances.set('src', {
+      id: 'src',
+      kind_ref: 'primitive_device',
+      definition: 'power_source',
+      parameters: {
+        nominal_voltage: scalar(opts.dc, 'volt'),
+        ...(opts.ac
+          ? {
+              ac_amplitude: scalar(opts.ac.amplitude, 'volt'),
+              frequency: scalar(opts.ac.frequency, 'hertz'),
+            }
+          : {}),
+      },
+      connects: [
+        { net: 'in', terminal: 'terminal_positive', of: 'src' },
+        { net: 'gnd', terminal: 'terminal_negative', of: 'src' },
+      ],
+    })
+    if (series > 0) {
+      world.instances.set('rs', {
+        id: 'rs',
+        kind_ref: 'primitive_device',
+        definition: 'resistor',
+        parameters: { resistance: scalar(series, 'ohm') },
+        connects: [
+          { net: 'in', terminal: 'terminal_a', of: 'rs' },
+          { net: 'p_in', terminal: 'terminal_b', of: 'rs' },
+        ],
+      })
+    }
+    world.instances.set('t1', {
+      id: 't1',
+      kind_ref: 'primitive_device',
+      definition: 'transformer',
+      parameters: {
+        primary_inductance: scalar(0.1, 'henry'),
+        secondary_inductance: scalar(10, 'henry'),
+        coupling_coefficient: scalar(0.98, 'dimensionless'),
+        primary_resistance: scalar(0.5, 'ohm'),
+        secondary_resistance: scalar(50, 'ohm'),
+      },
+      connects: [
+        { net: pFeed, terminal: 'primary_a', of: 't1' },
+        { net: 'gnd', terminal: 'primary_b', of: 't1' },
+        { net: 'out', terminal: 'secondary_a', of: 't1' },
+        { net: 'gnd', terminal: 'secondary_b', of: 't1' },
+      ],
+    })
+    world.instances.set('rl', {
+      id: 'rl',
+      kind_ref: 'primitive_device',
+      definition: 'resistor',
+      parameters: { resistance: scalar(opts.loadOhms, 'ohm') },
+      connects: [
+        { net: 'out', terminal: 'terminal_a', of: 'rl' },
+        { net: 'gnd', terminal: 'terminal_b', of: 'rl' },
+      ],
+    })
+    return world
+  }
+
+  test('AC steps up by ≈ the turns ratio k·√(L2/L1) ≈ 9.8', () => {
+    const f = 60
+    const T = 1 / f
+    const res = solveTransient(
+      transformerCircuit({ dc: 0, ac: { amplitude: 1, frequency: f }, loadOhms: 10000 }),
+      { timeStep: T / 200, duration: 3 * T },
+    )
+    expect(res.status).toBe('solved')
+    const lastPeriod = res.series.filter((p) => p.time >= 2 * T)
+    const swing = (net: string) => {
+      const v = lastPeriod.map((p) => p.nodes.get(net) ?? 0)
+      return Math.max(...v) - Math.min(...v)
+    }
+    const ratio = swing('out') / swing('in')
+    expect(ratio).toBeGreaterThan(8.5)
+    expect(ratio).toBeLessThan(10)
+  })
+
+  test('steady DC does not pass — only the switch-on kick couples, then it decays', () => {
+    // τ = L1/(r1 + series) = 0.1/5 = 20 ms; simulate 15τ.
+    const res = solveTransient(transformerCircuit({ dc: 5, seriesOhms: 4.5, loadOhms: 10000 }), {
+      timeStep: 0.002,
+      duration: 0.3,
+    })
+    expect(res.status).toBe('solved')
+    const vOutEarly = vNodeAt(res.series, 'out', 0.002) // the dΦ/dt inrush kick
+    const vOutEnd = vNodeAt(res.series, 'out', 0.3) // steady DC: di/dt → 0
+    expect(Math.abs(vOutEarly)).toBeGreaterThan(3) // transformer coupled the change
+    expect(Math.abs(vOutEnd)).toBeLessThan(0.1) // …but blocks steady DC
+  })
+
+  test('the DC solver agrees: windings conduct through their DCR, nothing couples', () => {
+    const dc = solveDC(transformerCircuit({ dc: 5, seriesOhms: 4.5, loadOhms: 10000 }))
+    expect(dc.status).toBe('solved')
+    // Primary loop: 5 V across 4.5 Ω + 0.5 Ω winding → 1 A; node after Rs at 0.5 V.
+    expect(dc.nodes.get('p_in')).toBeCloseTo(0.5, 6)
+    expect(dc.branches.get('t1')).toBeCloseTo(1, 6) // primary winding current
+    expect(dc.nodes.get('out')).toBeCloseTo(0, 9) // no DC transformation
+  })
+})
+
+describe('solveTransient — center-tapped transformer (three coupled windings)', () => {
+  /**
+   * Inverter-class CT transformer: L1 (end-to-end) 0.1 H → each half 0.025 H,
+   * L2 10 H, k 0.98. 'half' drive = source on primary_a with the tap grounded
+   * (push-pull style, primary_b floats); 'full' drive = source across the whole
+   * primary (tap floats). Secondary feeds a load to ground.
+   */
+  function ctCircuit(opts: {
+    drive: 'half' | 'full'
+    dc: number
+    ac?: { amplitude: number; frequency: number }
+    seriesOhms?: number
+    loadOhms: number
+  }): World {
+    const world: World = {
+      definitions: new Map(),
+      instances: new Map(),
+      behaviors: new Map(),
+      activeVariables: new Map(),
+      nets: new Map(),
+    }
+    const series = opts.seriesOhms ?? 0
+    const feed = series > 0 ? 'p_in' : 'in'
+    for (const id of ['in', 'p_in', 'float', 'out']) {
+      world.nets.set(id, { id, kind: 'net', members: [] })
+    }
+    world.nets.set('gnd', { id: 'gnd', kind: 'net', type: 'ground', members: [] })
+    world.instances.set('src', {
+      id: 'src',
+      kind_ref: 'primitive_device',
+      definition: 'power_source',
+      parameters: {
+        nominal_voltage: scalar(opts.dc, 'volt'),
+        ...(opts.ac
+          ? {
+              ac_amplitude: scalar(opts.ac.amplitude, 'volt'),
+              frequency: scalar(opts.ac.frequency, 'hertz'),
+            }
+          : {}),
+      },
+      connects: [
+        { net: 'in', terminal: 'terminal_positive', of: 'src' },
+        { net: 'gnd', terminal: 'terminal_negative', of: 'src' },
+      ],
+    })
+    if (series > 0) {
+      world.instances.set('rs', {
+        id: 'rs',
+        kind_ref: 'primitive_device',
+        definition: 'resistor',
+        parameters: { resistance: scalar(series, 'ohm') },
+        connects: [
+          { net: 'in', terminal: 'terminal_a', of: 'rs' },
+          { net: 'p_in', terminal: 'terminal_b', of: 'rs' },
+        ],
+      })
+    }
+    // half: feed → primary_a, tap → gnd, primary_b floats.
+    // full: feed → primary_a, primary_b → gnd, tap floats.
+    const ctNet = opts.drive === 'half' ? 'gnd' : 'float'
+    const pbNet = opts.drive === 'half' ? 'float' : 'gnd'
+    world.instances.set('t1', {
+      id: 't1',
+      kind_ref: 'primitive_device',
+      definition: 'transformer_center_tapped',
+      parameters: {
+        primary_inductance: scalar(0.1, 'henry'),
+        secondary_inductance: scalar(10, 'henry'),
+        coupling_coefficient: scalar(0.98, 'dimensionless'),
+        primary_resistance: scalar(1, 'ohm'),
+        secondary_resistance: scalar(50, 'ohm'),
+      },
+      connects: [
+        { net: feed, terminal: 'primary_a', of: 't1' },
+        { net: ctNet, terminal: 'primary_ct', of: 't1' },
+        { net: pbNet, terminal: 'primary_b', of: 't1' },
+        { net: 'out', terminal: 'secondary_a', of: 't1' },
+        { net: 'gnd', terminal: 'secondary_b', of: 't1' },
+      ],
+    })
+    world.instances.set('rl', {
+      id: 'rl',
+      kind_ref: 'primitive_device',
+      definition: 'resistor',
+      parameters: { resistance: scalar(opts.loadOhms, 'ohm') },
+      connects: [
+        { net: 'out', terminal: 'terminal_a', of: 'rl' },
+        { net: 'gnd', terminal: 'terminal_b', of: 'rl' },
+      ],
+    })
+    return world
+  }
+
+  test('half drive (push-pull style): one 12 V half steps up to mains-class AC', () => {
+    const f = 60
+    const T = 1 / f
+    const res = solveTransient(
+      ctCircuit({ drive: 'half', dc: 0, ac: { amplitude: 12, frequency: f }, loadOhms: 100000 }),
+      { timeStep: T / 200, duration: 3 * T },
+    )
+    expect(res.status).toBe('solved')
+    const lastPeriod = res.series.filter((p) => p.time >= 2 * T)
+    const swing = (net: string) => {
+      const v = lastPeriod.map((p) => p.nodes.get(net) ?? 0)
+      return Math.max(...v) - Math.min(...v)
+    }
+    // Each half is L1/4 → per-half ratio ≈ k·√(L2/(L1/4)) = 0.98·20 = 19.6:
+    // 12 V peak in → ~230 V peak out, the 12 V → mains inverter transformation.
+    const ratio = swing('out') / swing('in')
+    expect(ratio).toBeGreaterThan(17)
+    expect(ratio).toBeLessThan(20)
+    expect(swing('out')).toBeGreaterThan(2 * 200) // ≳ 200 V peak — mains class
+  })
+
+  test('full-winding drive matches the plain transformer ratio (validates L/4 halving)', () => {
+    const f = 60
+    const T = 1 / f
+    const res = solveTransient(
+      ctCircuit({ drive: 'full', dc: 0, ac: { amplitude: 1, frequency: f }, loadOhms: 100000 }),
+      { timeStep: T / 200, duration: 3 * T },
+    )
+    expect(res.status).toBe('solved')
+    const lastPeriod = res.series.filter((p) => p.time >= 2 * T)
+    const swing = (net: string) => {
+      const v = lastPeriod.map((p) => p.nodes.get(net) ?? 0)
+      return Math.max(...v) - Math.min(...v)
+    }
+    // End-to-end the two halves total 2·Lh·(1+k) ≈ L1, so the full-primary ratio
+    // lands at ≈ k·√(L2/L1) ≈ 9.8 — the same as the two-winding transformer.
+    const ratio = swing('out') / swing('in')
+    expect(ratio).toBeGreaterThan(8.5)
+    expect(ratio).toBeLessThan(10.5)
+  })
+
+  test('the DC solver sees three winding-resistance shorts; nothing couples', () => {
+    const dc = solveDC(ctCircuit({ drive: 'half', dc: 5, seriesOhms: 4.5, loadOhms: 100000 }))
+    expect(dc.status).toBe('solved')
+    // Half-a's DCR is primary_resistance/2 = 0.5 Ω → 5 V across 4.5 + 0.5 → 1 A.
+    expect(dc.nodes.get('p_in')).toBeCloseTo(0.5, 6)
+    expect(dc.branches.get('t1')).toBeCloseTo(1, 6)
+    expect(dc.nodes.get('out')).toBeCloseTo(0, 9)
+  })
+})
+
 describe('solveTransient — wires + switches (canvas circuits run through time)', () => {
   /** 5 V — switch — wire(1 Ω) — mid — resistor(4 Ω) — ground. */
   function wireSwitchCircuit(switchState: 'open' | 'closed'): World {

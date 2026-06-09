@@ -23,8 +23,11 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'resistor', label: 'Resistor' },
   { definition: 'capacitor', label: 'Capacitor' },
   { definition: 'inductor', label: 'Inductor' },
+  { definition: 'transformer', label: 'Transformer' },
+  { definition: 'transformer_center_tapped', label: 'CT Transformer' },
   { definition: 'led', label: 'LED' },
-  { definition: 'transistor_bjt_npn', label: 'Transistor' },
+  { definition: 'transistor_bjt_npn', label: 'NPN' },
+  { definition: 'transistor_bjt_pnp', label: 'PNP' },
   { definition: 'switch_spst_toggle', label: 'Switch' },
   { definition: 'ground', label: 'Ground' },
 ]

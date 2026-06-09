@@ -1,0 +1,41 @@
+# Valid fixture: behavior registry entry for magnetic coupling — two windings
+# sharing a magnetic field, so a changing current in one induces a voltage in the
+# other (mutual inductance M). The defining behavior of a transformer.
+# Used by the transformer primitive (S19-v3-47).
+# MUST validate against behavior.schema.json.
+kind: behavior
+id: couples_magnetically
+origin: builtin
+layer: behavior
+name: "Couples magnetically (mutual inductance)"
+description: "Two windings share a magnetic field: a changing current in either induces a voltage in both, via the mutual inductance M = k * sqrt(L1 * L2) where k (0 < k < 1) is the coupling coefficient. v1 = L1*di1/dt + M*di2/dt and v2 = M*di1/dt + L2*di2/dt. With steady DC (di/dt = 0) nothing couples — a transformer passes only CHANGING current, which is why it transforms AC and blocks DC. The open-circuit voltage ratio approaches k * sqrt(L2/L1), the turns ratio."
+parameters_required:
+  - name: primary_inductance
+    type: quantity
+    units: henry
+    description: Self-inductance of the primary winding, L1.
+  - name: secondary_inductance
+    type: quantity
+    units: henry
+    description: Self-inductance of the secondary winding, L2.
+  - name: coupling_coefficient
+    type: quantity
+    units: dimensionless
+    description: k, between 0 and 1 (exclusive) — how much of the field links both windings. Real iron-core transformers reach 0.95-0.998.
+evaluates: "v1 = L1*di1/dt + M*di2/dt; v2 = M*di1/dt + L2*di2/dt; M = k*sqrt(L1*L2)"
+consequences: []
+law: mutual_inductance
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved by both engines: the transient solver inverts the 2x2 inductance matrix
+  per backward-Euler step (a coupled companion model — well-posed exactly when
+  k < 1, since M^2 < L1*L2); the DC solver stamps each winding as a 0 V source in
+  series with its winding resistance (steady DC: di/dt = 0, no coupling). An
+  ideal k = 1 transformer would make the matrix singular; the solver requires
+  k < 1, which is also physically true of every real transformer.

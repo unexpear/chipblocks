@@ -139,6 +139,45 @@ type InductorElement = {
   iPrev: number // current through (netA → netB) at the previous step
 }
 
+/** A transformer (two magnetically-coupled windings) resolved for the time loop. */
+type TransformerElement = {
+  pA: string
+  pB: string
+  sA: string
+  sB: string
+  iPA: number | undefined
+  iPB: number | undefined
+  iSA: number | undefined
+  iSB: number | undefined
+  l1: number // primary self-inductance (H)
+  l2: number // secondary self-inductance (H)
+  m: number // mutual inductance k·√(L1·L2)
+  r1: number // primary winding resistance (Ω)
+  r2: number // secondary winding resistance (Ω)
+  i1Prev: number // primary current (pA → pB) at the previous step
+  i2Prev: number // secondary current (sA → sB) at the previous step
+}
+
+/**
+ * A center-tapped transformer: THREE coupled windings on one core — two primary
+ * halves (primary_a→primary_ct, primary_ct→primary_b) + the secondary. Each half
+ * carries a quarter of the end-to-end primary inductance (L ∝ N²).
+ */
+type CtTransformerElement = {
+  /** Winding terminal nets, [from, to] × 3: P-half-1, P-half-2, secondary. */
+  nets: [[string, string], [string, string], [string, string]]
+  idx: [
+    [number | undefined, number | undefined],
+    [number | undefined, number | undefined],
+    [number | undefined, number | undefined],
+  ]
+  /** 3×3 inductance matrix [[Lh, Mpp, Mps], [Mpp, Lh, Mps], [Mps, Mps, L2]]. */
+  lMatrix: number[][]
+  /** Per-winding series resistance (each half gets primary_resistance/2). */
+  r: [number, number, number]
+  iPrev: [number, number, number]
+}
+
 /** A diode-family element resolved for the per-step Newton-Raphson loop. */
 type DiodeElement = {
   anodeNet: string
@@ -229,6 +268,148 @@ function resolveInductor(inst: Instance, nodeIndex: Map<string, number>): Induct
     windingOhms: readScalarParam(inst, 'winding_resistance') ?? 0,
     iPrev: readScalarParam(inst, 'initial_current') ?? 0,
   }
+}
+
+function resolveTransformer(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  warnings: string[],
+): TransformerElement | null {
+  const l1 = readScalarParam(inst, 'primary_inductance')
+  const l2 = readScalarParam(inst, 'secondary_inductance')
+  const k = readScalarParam(inst, 'coupling_coefficient')
+  if (l1 === undefined || l2 === undefined || k === undefined || l1 <= 0 || l2 <= 0) {
+    warnings.push(`Skipped transformer '${inst.id}' (missing/invalid inductances or coupling)`)
+    return null
+  }
+  if (k <= 0 || k >= 1) {
+    // k = 1 (a perfectly ideal transformer) makes the inductance matrix singular —
+    // and is unphysical; every real transformer has k < 1. Skip rather than fake.
+    warnings.push(`Skipped transformer '${inst.id}' (coupling_coefficient must be 0 < k < 1)`)
+    return null
+  }
+  const net = (terminal: string) => inst.connects?.find((c) => c.terminal === terminal)?.net
+  const pA = net('primary_a')
+  const pB = net('primary_b')
+  const sA = net('secondary_a')
+  const sB = net('secondary_b')
+  if (pA === undefined || pB === undefined || sA === undefined || sB === undefined) {
+    warnings.push(`Skipped transformer '${inst.id}' (missing winding terminal connects)`)
+    return null
+  }
+  return {
+    pA,
+    pB,
+    sA,
+    sB,
+    iPA: nodeIndex.get(pA),
+    iPB: nodeIndex.get(pB),
+    iSA: nodeIndex.get(sA),
+    iSB: nodeIndex.get(sB),
+    l1,
+    l2,
+    m: k * Math.sqrt(l1 * l2),
+    r1: readScalarParam(inst, 'primary_resistance') ?? 0,
+    r2: readScalarParam(inst, 'secondary_resistance') ?? 0,
+    i1Prev: 0,
+    i2Prev: 0,
+  }
+}
+
+function resolveCtTransformer(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  warnings: string[],
+): CtTransformerElement | null {
+  const l1 = readScalarParam(inst, 'primary_inductance')
+  const l2 = readScalarParam(inst, 'secondary_inductance')
+  const k = readScalarParam(inst, 'coupling_coefficient')
+  if (l1 === undefined || l2 === undefined || k === undefined || l1 <= 0 || l2 <= 0) {
+    warnings.push(`Skipped CT transformer '${inst.id}' (missing/invalid inductances or coupling)`)
+    return null
+  }
+  if (k <= 0 || k >= 1) {
+    warnings.push(`Skipped CT transformer '${inst.id}' (coupling_coefficient must be 0 < k < 1)`)
+    return null
+  }
+  const net = (terminal: string) => inst.connects?.find((c) => c.terminal === terminal)?.net
+  const pA = net('primary_a')
+  const ct = net('primary_ct')
+  const pB = net('primary_b')
+  const sA = net('secondary_a')
+  const sB = net('secondary_b')
+  if (
+    pA === undefined ||
+    ct === undefined ||
+    pB === undefined ||
+    sA === undefined ||
+    sB === undefined
+  ) {
+    warnings.push(`Skipped CT transformer '${inst.id}' (missing winding terminal connects)`)
+    return null
+  }
+  // Each half has a quarter of the end-to-end inductance (half the turns, L ∝ N²);
+  // halves couple to each other (Mpp) and to the secondary (Mps) through the core.
+  const lHalf = l1 / 4
+  const mPP = k * lHalf
+  const mPS = k * Math.sqrt(lHalf * l2)
+  const rHalf = (readScalarParam(inst, 'primary_resistance') ?? 0) / 2
+  return {
+    nets: [
+      [pA, ct],
+      [ct, pB],
+      [sA, sB],
+    ],
+    idx: [
+      [nodeIndex.get(pA), nodeIndex.get(ct)],
+      [nodeIndex.get(ct), nodeIndex.get(pB)],
+      [nodeIndex.get(sA), nodeIndex.get(sB)],
+    ],
+    lMatrix: [
+      [lHalf, mPP, mPS],
+      [mPP, lHalf, mPS],
+      [mPS, mPS, l2],
+    ],
+    r: [rHalf, rHalf, readScalarParam(inst, 'secondary_resistance') ?? 0],
+    iPrev: [0, 0, 0],
+  }
+}
+
+/**
+ * The CT transformer's backward-Euler companion for one step: with three coupled
+ * windings, invert A = diag(r) + L/Δt so the winding currents are i = G·v + I_h
+ * (G = A⁻¹, history from the previous currents). Positive-definite for k < 1.
+ */
+function ctTransformerStep(tr: CtTransformerElement, dt: number): { G: number[][]; ih: number[] } {
+  const A = tr.lMatrix.map((row, w) =>
+    row.map((l, v) => l / dt + (w === v ? (tr.r[w as 0 | 1 | 2] ?? 0) : 0)),
+  )
+  const G = math.inv(A) as number[][]
+  const h = tr.lMatrix.map((row) =>
+    row.reduce((acc, l, v) => acc + (l / dt) * (tr.iPrev[v as 0 | 1 | 2] ?? 0), 0),
+  )
+  const ih = G.map((row) => row.reduce((acc, g, v) => acc + g * (h[v] ?? 0), 0))
+  return { G, ih }
+}
+
+/**
+ * The transformer's backward-Euler companion coefficients for one step: invert
+ * the 2×2 [[r1 + L1/Δt, M/Δt], [M/Δt, r2 + L2/Δt]] so each winding current is
+ *   i1 = g11·v1 + g12·v2 + ih1,   i2 = g12·v1 + g22·v2 + ih2
+ * (v = the winding's terminal voltage; history from the previous currents).
+ * The determinant is positive exactly when k < 1 (M² < L1·L2).
+ */
+function transformerStep(tr: TransformerElement, dt: number) {
+  const a11 = tr.r1 + tr.l1 / dt
+  const a22 = tr.r2 + tr.l2 / dt
+  const a12 = tr.m / dt
+  const det = a11 * a22 - a12 * a12
+  const g11 = a22 / det
+  const g22 = a11 / det
+  const g12 = -a12 / det
+  const h1 = (tr.l1 * tr.i1Prev + tr.m * tr.i2Prev) / dt
+  const h2 = (tr.m * tr.i1Prev + tr.l2 * tr.i2Prev) / dt
+  return { g11, g12, g22, ih1: g11 * h1 + g12 * h2, ih2: g12 * h1 + g22 * h2 }
 }
 
 /**
@@ -374,6 +555,87 @@ function stampInductorCompanion(
 }
 
 /**
+ * Stamp a transformer's coupled backward-Euler companion: a 2×2 conductance block
+ * across (primary, secondary) winding voltages plus per-winding history sources.
+ */
+function stampTransformerCompanion(
+  tr: TransformerElement,
+  dt: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const { g11, g12, g22, ih1, ih2 } = transformerStep(tr, dt)
+  const add = (i: number | undefined, j: number | undefined, val: number) => {
+    if (i !== undefined && j !== undefined) M.set([i, j], (M.get([i, j]) ?? 0) + val)
+  }
+  const addB = (i: number | undefined, val: number) => {
+    if (i !== undefined) b.set([i, 0], (b.get([i, 0]) ?? 0) + val)
+  }
+  // Each winding current contributes to its own two nodes' KCL rows, with
+  // conductance terms on BOTH windings' voltages (the magnetic coupling).
+  const ports: Array<{
+    a: number | undefined
+    b: number | undefined
+    gSelf: number
+    gOther: number
+    oA: number | undefined
+    oB: number | undefined
+    ih: number
+  }> = [
+    { a: tr.iPA, b: tr.iPB, gSelf: g11, gOther: g12, oA: tr.iSA, oB: tr.iSB, ih: ih1 },
+    { a: tr.iSA, b: tr.iSB, gSelf: g22, gOther: g12, oA: tr.iPA, oB: tr.iPB, ih: ih2 },
+  ]
+  for (const p of ports) {
+    add(p.a, p.a, p.gSelf)
+    add(p.a, p.b, -p.gSelf)
+    add(p.b, p.b, p.gSelf)
+    add(p.b, p.a, -p.gSelf)
+    add(p.a, p.oA, p.gOther)
+    add(p.a, p.oB, -p.gOther)
+    add(p.b, p.oA, -p.gOther)
+    add(p.b, p.oB, p.gOther)
+    addB(p.a, -p.ih)
+    addB(p.b, p.ih)
+  }
+}
+
+/**
+ * Stamp a CT transformer's coupled companion: a 3×3 conductance block across the
+ * three winding voltages plus per-winding history sources.
+ */
+function stampCtTransformerCompanion(
+  tr: CtTransformerElement,
+  dt: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const { G, ih } = ctTransformerStep(tr, dt)
+  const add = (i: number | undefined, j: number | undefined, val: number) => {
+    if (i !== undefined && j !== undefined) M.set([i, j], (M.get([i, j]) ?? 0) + val)
+  }
+  const addB = (i: number | undefined, val: number) => {
+    if (i !== undefined) b.set([i, 0], (b.get([i, 0]) ?? 0) + val)
+  }
+  for (let w = 0; w < 3; w++) {
+    const [aW, bW] = tr.idx[w as 0 | 1 | 2]
+    for (let v = 0; v < 3; v++) {
+      const g = G[w]?.[v] ?? 0
+      const [aV, bV] = tr.idx[v as 0 | 1 | 2]
+      add(aW, aV, g)
+      add(aW, bV, -g)
+      add(bW, aV, -g)
+      add(bW, bV, g)
+    }
+    addB(aW, -(ih[w] ?? 0))
+    addB(bW, ih[w] ?? 0)
+  }
+}
+
+/**
  * Stamp a fixed current source of `amps` flowing netA → netB — the t = 0 hold for
  * an inductor (current through it cannot jump; 0 A is an instantaneous open).
  */
@@ -443,6 +705,8 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   const sources: TimedSource[] = []
   const caps: CapElement[] = []
   const inductors: InductorElement[] = []
+  const transformers: TransformerElement[] = []
+  const ctTransformers: CtTransformerElement[] = []
   const diodes: DiodeElement[] = []
   const bjts: BjtElement[] = []
   for (const inst of world.instances.values()) {
@@ -458,11 +722,20 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const ind = resolveInductor(inst, nodeIndex)
       if (ind !== null) inductors.push(ind)
       else warnings.push(`Skipped inductor '${inst.id}' (missing inductance or connects)`)
+    } else if (inst.definition === 'transformer') {
+      const tr = resolveTransformer(inst, nodeIndex, warnings)
+      if (tr !== null) transformers.push(tr)
+    } else if (inst.definition === 'transformer_center_tapped') {
+      const tr = resolveCtTransformer(inst, nodeIndex, warnings)
+      if (tr !== null) ctTransformers.push(tr)
     } else if (DIODE_DEFINITIONS.has(inst.definition)) {
       const d = resolveDiode(inst, nodeIndex, vT)
       if (d !== null) diodes.push(d)
       else warnings.push(`Skipped diode '${inst.id}' (missing calibration or anode/cathode)`)
-    } else if (inst.definition === 'transistor_bjt_npn') {
+    } else if (
+      inst.definition === 'transistor_bjt_npn' ||
+      inst.definition === 'transistor_bjt_pnp'
+    ) {
       const bjt = resolveBjt(inst)
       if (bjt !== null) bjts.push(bjt)
       else warnings.push(`Skipped transistor '${inst.id}' (missing parameters or terminals)`)
@@ -518,9 +791,21 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         stampFixedVoltage(cap.iA, cap.iB, cap.vPrev, N + S + j, M, b)
       }
       for (const ind of inductors) stampFixedCurrent(ind.iA, ind.iB, ind.iPrev, b)
+      for (const tr of transformers) {
+        stampFixedCurrent(tr.iPA, tr.iPB, tr.i1Prev, b)
+        stampFixedCurrent(tr.iSA, tr.iSB, tr.i2Prev, b)
+      }
+      for (const tr of ctTransformers) {
+        for (let w = 0; w < 3; w++) {
+          const [a, b2] = tr.idx[w as 0 | 1 | 2]
+          stampFixedCurrent(a, b2, tr.iPrev[w as 0 | 1 | 2] ?? 0, b)
+        }
+      }
     } else {
       for (const cap of caps) stampCapacitorCompanion(cap, dt, M, b)
       for (const ind of inductors) stampInductorCompanion(ind, dt, M, b)
+      for (const tr of transformers) stampTransformerCompanion(tr, dt, M, b)
+      for (const tr of ctTransformers) stampCtTransformerCompanion(tr, dt, M, b)
     }
     for (const d of diodes) stampDiodeCompanion(d, vT, M, b)
     for (const bjt of bjts) stampBjtCompanion(bjt, nodeIndex, vT, M, b)
@@ -568,9 +853,11 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         const vB = bjt.baseNet === ground ? 0 : (nodes.get(bjt.baseNet) ?? 0)
         const vC = bjt.collectorNet === ground ? 0 : (nodes.get(bjt.collectorNet) ?? 0)
         const vE = bjt.emitterNet === ground ? 0 : (nodes.get(bjt.emitterNet) ?? 0)
+        // PNP junction guesses live in the forward frame (negated physical).
+        const sign = bjt.polarity === 'pnp' ? -1 : 1
         const vcrit = criticalVoltage(bjt.params.saturationCurrent, 1, vT)
-        const limBE = pnjlim(vB - vE, bjt.vBE, vT, vcrit)
-        const limBC = pnjlim(vB - vC, bjt.vBC, vT, vcrit)
+        const limBE = pnjlim(sign * (vB - vE), bjt.vBE, vT, vcrit)
+        const limBC = pnjlim(sign * (vB - vC), bjt.vBC, vT, vcrit)
         maxDelta = Math.max(
           maxDelta,
           Math.abs(limBE.voltage - bjt.vBE),
@@ -617,6 +904,21 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const v = (nodes.get(ind.netA) ?? 0) - (nodes.get(ind.netB) ?? 0)
       const denominator = ind.inductance + ind.windingOhms * dt
       ind.iPrev = (dt * v + ind.inductance * ind.iPrev) / denominator
+    }
+    for (const tr of transformers) {
+      // Same: this step's winding currents from the companion at the OLD history.
+      const { g11, g12, g22, ih1, ih2 } = transformerStep(tr, dt)
+      const v1 = (nodes.get(tr.pA) ?? 0) - (nodes.get(tr.pB) ?? 0)
+      const v2 = (nodes.get(tr.sA) ?? 0) - (nodes.get(tr.sB) ?? 0)
+      tr.i1Prev = g11 * v1 + g12 * v2 + ih1
+      tr.i2Prev = g12 * v1 + g22 * v2 + ih2
+    }
+    for (const tr of ctTransformers) {
+      const { G, ih } = ctTransformerStep(tr, dt) // OLD history
+      const v = tr.nets.map(([from, to]) => (nodes.get(from) ?? 0) - (nodes.get(to) ?? 0))
+      tr.iPrev = [0, 1, 2].map(
+        (w) => (G[w] ?? []).reduce((acc, g, j) => acc + g * (v[j] ?? 0), 0) + (ih[w] ?? 0),
+      ) as [number, number, number]
     }
     series.push({ time: t, nodes })
   }

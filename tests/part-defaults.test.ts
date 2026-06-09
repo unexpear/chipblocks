@@ -9,11 +9,30 @@ import { describe, expect, test } from 'vitest'
 import {
   defaultParameters,
   primaryValue,
+  sourceIsAc,
   switchClosed,
   toggledSwitch,
 } from '../src/renderer/part-defaults.ts'
 
 const param = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
+
+describe('AC source (S19-v3-45)', () => {
+  test('a dropped source defaults to pure DC (zero AC amplitude + frequency)', () => {
+    const p = defaultParameters('power_source')
+    expect(p.ac_amplitude?.value).toEqual({ kind: 'scalar', amount: 0, unit: 'volt' })
+    expect(p.frequency?.value).toEqual({ kind: 'scalar', amount: 0, unit: 'hertz' })
+    expect(sourceIsAc(p)).toBe(false)
+  })
+  test('an AC source headlines its swing + frequency in engineering units', () => {
+    const p = {
+      nominal_voltage: param(0, 'volt'),
+      ac_amplitude: param(0.01, 'volt'),
+      frequency: param(1000, 'hertz'),
+    }
+    expect(sourceIsAc(p)).toBe(true)
+    expect(primaryValue('power_source', p)).toBe('10.0 mV~ 1.00 kHz')
+  })
+})
 
 describe('defaultParameters', () => {
   test('a dropped resistor gets a real 470 Ω default', () => {

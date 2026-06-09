@@ -162,15 +162,44 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   //    switch, wire, and fixed-V_F LEDs that lack calibration data).
   //  - shockleyLeds are nonlinear companion-model elements (no aux variable);
   //    they need the Newton-Raphson loop.
-  type VsLikeKind = 'power_source' | 'led' | 'switch' | 'wire' | 'inductor'
+  type VsLikeKind =
+    | 'power_source'
+    | 'led'
+    | 'switch'
+    | 'wire'
+    | 'inductor'
+    | 'transformer_primary'
+    | 'transformer_secondary'
+    | 'transformer_ct_half_a'
+    | 'transformer_ct_half_b'
   const linearVoltageSources: Array<{ inst: Instance; kind: VsLikeKind }> = []
   const shockleyLeds: ShockleyLed[] = []
   const bjts: BjtElement[] = []
 
   for (const inst of world.instances.values()) {
-    if (inst.definition === 'transistor_bjt_npn') {
+    if (inst.definition === 'transistor_bjt_npn' || inst.definition === 'transistor_bjt_pnp') {
       const bjt = resolveBjt(inst)
       if (bjt !== null) bjts.push(bjt)
+      continue
+    }
+    if (inst.definition === 'transformer') {
+      // At steady DC nothing couples (di/dt = 0) — each winding is a 0 V source
+      // through its winding resistance. Secondary pushed first so the primary's
+      // aux current is the one reported as the instance's branch current.
+      if (inst.connects?.length === 4) {
+        linearVoltageSources.push({ inst, kind: 'transformer_secondary' })
+        linearVoltageSources.push({ inst, kind: 'transformer_primary' })
+      }
+      continue
+    }
+    if (inst.definition === 'transformer_center_tapped') {
+      // Three windings (two primary halves + secondary), each a 0 V source
+      // through its share of winding resistance. Half-a pushed last → reported.
+      if (inst.connects?.length === 5) {
+        linearVoltageSources.push({ inst, kind: 'transformer_secondary' })
+        linearVoltageSources.push({ inst, kind: 'transformer_ct_half_b' })
+        linearVoltageSources.push({ inst, kind: 'transformer_ct_half_a' })
+      }
       continue
     }
     if (inst.connects?.length !== 2) continue
@@ -222,6 +251,14 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       else if (kind === 'switch') ok = stampClosedSwitch(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'wire') ok = stampWire(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'inductor') ok = stampInductorDC(inst, nodeIndex, auxIdx, M, b)
+      else if (kind === 'transformer_primary')
+        ok = stampTransformerWindingDC(inst, nodeIndex, auxIdx, 'primary', M, b)
+      else if (kind === 'transformer_secondary')
+        ok = stampTransformerWindingDC(inst, nodeIndex, auxIdx, 'secondary', M, b)
+      else if (kind === 'transformer_ct_half_a')
+        ok = stampCtHalfDC(inst, nodeIndex, auxIdx, 'a', M, b)
+      else if (kind === 'transformer_ct_half_b')
+        ok = stampCtHalfDC(inst, nodeIndex, auxIdx, 'b', M, b)
       if (!ok)
         warnings.push(
           `Skipped ${kind} stamp for instance '${inst.id}' (missing V or terminal connects)`,
@@ -285,9 +322,10 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         const vB = bjt.baseNet === ground ? 0 : (last.nodes.get(bjt.baseNet) ?? 0)
         const vC = bjt.collectorNet === ground ? 0 : (last.nodes.get(bjt.collectorNet) ?? 0)
         const vE = bjt.emitterNet === ground ? 0 : (last.nodes.get(bjt.emitterNet) ?? 0)
+        const sign = bjt.polarity === 'pnp' ? -1 : 1
         const vcrit = criticalVoltage(bjt.params.saturationCurrent, 1, thermalV)
-        const limBE = pnjlim(vB - vE, bjt.vBE, thermalV, vcrit)
-        const limBC = pnjlim(vB - vC, bjt.vBC, thermalV, vcrit)
+        const limBE = pnjlim(sign * (vB - vE), bjt.vBE, thermalV, vcrit)
+        const limBC = pnjlim(sign * (vB - vC), bjt.vBC, thermalV, vcrit)
         maxDelta = Math.max(
           maxDelta,
           Math.abs(limBE.voltage - bjt.vBE),
@@ -340,9 +378,11 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       diodeCurrent(led.vGuess, led.saturationCurrent, led.idealityFactor, thermalV),
     )
   }
-  // BJT: the collector current is the branch current we report.
+  // BJT: the collector current is the branch current we report (physical sign —
+  // a PNP's conventional collector current flows out of the collector).
   for (const bjt of bjts) {
-    branches.set(bjt.inst.id, bjtCurrents(bjt.vBE, bjt.vBC, bjt.params, thermalV).iC)
+    const sign = bjt.polarity === 'pnp' ? -1 : 1
+    branches.set(bjt.inst.id, sign * bjtCurrents(bjt.vBE, bjt.vBC, bjt.params, thermalV).iC)
   }
 
   return { status: 'solved', nodes, branches, ground, warnings, iterations, converged }
@@ -446,7 +486,13 @@ export type BjtElement = {
   baseNet: string
   emitterNet: string
   params: BjtParams
-  /** Current NR guesses: V_BE (base−emitter) and V_BC (base−collector). */
+  /** 'pnp' is the same Ebers-Moll model with both junctions reversed. */
+  polarity: 'npn' | 'pnp'
+  /**
+   * Current NR guesses in the FORWARD frame: for NPN these are the physical
+   * V_BE / V_BC; for PNP they are the negated physical values (so the conducting
+   * junction is positive either way and pnjlim's limiting applies unchanged).
+   */
   vBE: number
   vBC: number
 }
@@ -474,6 +520,7 @@ export function resolveBjt(inst: Instance): BjtElement | null {
     baseNet: base.net,
     emitterNet: emitter.net,
     params: { saturationCurrent, betaForward, betaReverse },
+    polarity: inst.definition === 'transistor_bjt_pnp' ? 'pnp' : 'npn',
     vBE: 0.65,
     vBC: -0.65,
   }
@@ -500,6 +547,10 @@ export function stampBjtCompanion(
 ): void {
   const { vBE, vBC, params } = bjt
   const j = bjtCompanion(vBE, vBC, params, thermalV)
+  // PNP: junction voltages are stored in the forward frame (negated physical),
+  // which leaves every conductance entry identical to the NPN case — only the
+  // physical currents (and so the equivalent current sources) flip sign.
+  const sign = bjt.polarity === 'pnp' ? -1 : 1
 
   const g = {
     C: { C: -j.dIC_dVBC, B: j.dIC_dVBE + j.dIC_dVBC, E: -j.dIC_dVBE },
@@ -510,8 +561,8 @@ export function stampBjtCompanion(
   g.E.B = -(g.C.B + g.B.B)
   g.E.E = -(g.C.E + g.B.E)
 
-  const ieqC = j.iC - (j.dIC_dVBE * vBE + j.dIC_dVBC * vBC)
-  const ieqB = j.iB - (j.dIB_dVBE * vBE + j.dIB_dVBC * vBC)
+  const ieqC = sign * (j.iC - (j.dIC_dVBE * vBE + j.dIC_dVBC * vBC))
+  const ieqB = sign * (j.iB - (j.dIB_dVBE * vBE + j.dIB_dVBC * vBC))
   const ieq = { C: ieqC, B: ieqB, E: -(ieqC + ieqB) }
 
   const idx = {
@@ -810,9 +861,70 @@ export function stampInductorDC(
 }
 
 /**
+ * Apply one transformer winding's DC steady-state contribution: at steady DC
+ * nothing couples (di/dt = 0), so each winding is independently a 0 V source in
+ * series with its own winding resistance. The transient solver carries the
+ * mutual-inductance coupling.
+ */
+export function stampTransformerWindingDC(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  auxIdx: number,
+  winding: 'primary' | 'secondary',
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
+  const resistance = readScalarParam(inst, `${winding}_resistance`) ?? 0
+  return findAndStampVoltageSource(
+    inst,
+    nodeIndex,
+    auxIdx,
+    0,
+    `${winding}_a`,
+    `${winding}_b`,
+    M,
+    b,
+    resistance,
+  )
+}
+
+/**
+ * Apply one half of a center-tapped primary at DC: a 0 V source through HALF the
+ * end-to-end primary resistance (each half is half the winding). Half 'a' spans
+ * primary_a → primary_ct; half 'b' spans primary_ct → primary_b.
+ */
+export function stampCtHalfDC(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  auxIdx: number,
+  half: 'a' | 'b',
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
+  const halfResistance = (readScalarParam(inst, 'primary_resistance') ?? 0) / 2
+  const [from, to] = half === 'a' ? ['primary_a', 'primary_ct'] : ['primary_ct', 'primary_b']
+  return findAndStampVoltageSource(
+    inst,
+    nodeIndex,
+    auxIdx,
+    0,
+    from as string,
+    to as string,
+    M,
+    b,
+    halfResistance,
+  )
+}
+
+/**
  * Shared MNA-stamp helper for all voltage-source-like elements. Finds the
  * positive and negative connects by terminal-name convention and stamps
- * §18.4's pattern.
+ * §18.4's pattern. Terminal lookup is by name, so multi-winding devices
+ * (a transformer's 4 connects) stamp one named pair at a time.
  */
 function findAndStampVoltageSource(
   inst: Instance,
@@ -827,7 +939,7 @@ function findAndStampVoltageSource(
   b: any,
   seriesResistance = 0,
 ): boolean {
-  if (inst.connects?.length !== 2) return false
+  if (inst.connects === undefined) return false
 
   const posConnect = inst.connects.find((c) => c.terminal === positiveTerminal)
   const negConnect = inst.connects.find((c) => c.terminal === negativeTerminal)
