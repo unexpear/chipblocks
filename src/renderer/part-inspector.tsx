@@ -277,7 +277,13 @@ export function PartInspector({
       </div>
     )
   }
-  const entries = Object.entries(selected.parameters ?? {})
+  // n_side / p_side aren't shown as editable rows on an LED — its color (and so
+  // its real semiconductor) is set by the Color picker below, which keeps both in
+  // step. So the LED panel offers Color, not raw material dropdowns.
+  const hideMaterialRefs = LED_DEFINITIONS.has(selected.definition)
+  const entries = Object.entries(selected.parameters ?? {}).filter(
+    ([key]) => !(hideMaterialRefs && (key === 'n_side' || key === 'p_side')),
+  )
   const rating = ratingFor(selected.definition, selected.parameters)
   // A Source (power_source) gets a type picker that sets a consistent real DC
   // source; the matched preset (by nominal voltage) drives the dropdown + citation.

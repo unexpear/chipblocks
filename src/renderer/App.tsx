@@ -31,7 +31,6 @@ import { loadCatalogWorld } from './catalog-loader.ts'
 import { DockablePanel, type DockEdge } from './dockable-panel.tsx'
 import { wireFlow } from './edge-currents.ts'
 import { canvasHealth, HealthContext, type NodeHealth } from './health.ts'
-import { bandgapEv, deriveLedOptics } from './led-optics.ts'
 import { materialCapabilities, validMaterialsByRole } from './material-roles.ts'
 import { edgeTypes } from './net-edge.tsx'
 import { DEFINITION_MIME, PaletteItems } from './palette.tsx'
@@ -223,16 +222,12 @@ function Canvas() {
       .filter((d) => (d as { kind?: string }).kind === 'material')
       .map((d) => d.id)
       .sort()
-    // Material id → representative bandgap (eV) + resistivity (Ω·m): changing an
-    // LED's semiconductor re-derives its color/voltage, and a resistor can derive
-    // R = ρL/A from its material + geometry.
-    const materialBandgaps = new Map<string, number>()
+    // Material id → resistivity (Ω·m), so a resistor can derive R = ρL/A from its
+    // material + geometry.
     const materialResistivity = new Map<string, number>()
     for (const def of world.definitions.values()) {
       if ((def as { kind?: string }).kind !== 'material') continue
       const props = (def as { properties?: Record<string, { value?: unknown }> }).properties
-      const bg = bandgapEv(props?.bandgap_energy?.value)
-      if (bg !== null) materialBandgaps.set(def.id, bg)
       const rho = resistivityOhmM(props?.resistivity?.value)
       if (rho !== null) materialResistivity.set(def.id, rho)
     }
@@ -250,7 +245,6 @@ function Canvas() {
       health: solved.health,
       readings: solved.readings,
       materials,
-      materialBandgaps,
       materialResistivity,
       validMaterialsByDef,
     }
@@ -658,21 +652,7 @@ function Canvas() {
             if (selectedPart) onEditEnum(selectedPart.id, key, value)
           }}
           onMaterial={(key, value) => {
-            if (!selectedPart) return
-            onEditEnum(selectedPart.id, key, value)
-            // An LED's n_side semiconductor sets its emission color + forward
-            // voltage (λ = h·c/E_g; V_F ≈ E_g/q) — re-derive both from the chosen
-            // material's real bandgap, so the material edit is real, not cosmetic.
-            const isLed =
-              selectedPart.definition === 'led' || selectedPart.definition === 'led_uv_algan'
-            if (isLed && key === 'n_side') {
-              const bandgap = initial.materialBandgaps.get(value)
-              const optics = bandgap !== undefined ? deriveLedOptics(bandgap) : null
-              if (optics) {
-                onEditParam(selectedPart.id, 'peak_wavelength', optics.peakWavelengthNm)
-                onEditParam(selectedPart.id, 'forward_voltage', optics.forwardVoltageV)
-              }
-            }
+            if (selectedPart) onEditEnum(selectedPart.id, key, value)
           }}
           onDeriveResistance={() => {
             if (!selectedPart) return

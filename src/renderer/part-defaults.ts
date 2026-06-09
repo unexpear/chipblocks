@@ -43,8 +43,8 @@ const DEFAULTS: Record<string, Parameters> = {
   led: {
     // Typical 5 mm red LED (Kingbright WP7113SRD-D class): 2.0 V at 20 mA max,
     // ~640 nm red emission — sets the on-canvas glow color. n_side/p_side are the
-    // real semiconductor (red AlGaInP, the device-led default): changing n_side
-    // re-derives the color + forward voltage from that material's bandgap.
+    // real semiconductor (red AlGaInP, the device-led default); the Color picker
+    // sets the material together with the matching wavelength + forward voltage.
     forward_voltage: scalar(2.0, 'volt'),
     max_forward_current: scalar(0.02, 'ampere'),
     peak_wavelength: scalar(640, 'nanometer'),
