@@ -28,6 +28,8 @@ import {
 } from '../src/cross-fk-validator.ts'
 import { solveDC } from '../src/dc-solver.ts'
 import {
+  checkCapacitorOvervoltage,
+  checkCapacitorReversePolarity,
   checkLedForwardOverload,
   checkLedReverseBreakdown,
   checkResistorOverpower,
@@ -572,5 +574,60 @@ describe('detectFailures: the consolidated cross-sprint contract (S15-v3-6)', ()
     }
     const sol = solveDC(world)
     expect(detectFailures(world, sol)).toEqual([])
+  })
+})
+
+describe('capacitor polarity + voltage checks (S19-v3-48)', () => {
+  const cap = (withRating: boolean) =>
+    ({
+      id: 'c1',
+      kind_ref: 'primitive_device',
+      definition: 'capacitor',
+      parameters: withRating
+        ? { voltage_rating: { value: { kind: 'scalar', amount: 16, unit: 'volt' } } }
+        : {},
+      connects: [
+        { net: 'a', terminal: 'terminal_a', of: 'c1' },
+        { net: 'b', terminal: 'terminal_b', of: 'c1' },
+      ],
+      // biome-ignore lint/suspicious/noExplicitAny: minimal test fixture
+    }) as any
+
+  const solvedAt = (vA: number, vB: number) =>
+    ({
+      status: 'solved',
+      nodes: new Map([
+        ['a', vA],
+        ['b', vB],
+      ]),
+      branches: new Map(),
+      ground: 'gnd',
+      warnings: [],
+      iterations: 1,
+      converged: true,
+      // biome-ignore lint/suspicious/noExplicitAny: minimal test fixture
+    }) as any
+
+  test('reverse polarity beyond ~1 V fires (backwards electrolytic)', () => {
+    const f = checkCapacitorReversePolarity(cap(false), solvedAt(0, 5))
+    expect(f?.code).toBe('capacitor-reverse-polarity')
+    expect(f?.measured).toBeCloseTo(5, 9)
+    expect(f?.ratio).toBeCloseTo(5, 9)
+  })
+
+  test('correct polarity (or small reverse) does not fire', () => {
+    expect(checkCapacitorReversePolarity(cap(false), solvedAt(9, 0))).toBeNull()
+    expect(checkCapacitorReversePolarity(cap(false), solvedAt(0, 0.5))).toBeNull()
+  })
+
+  test('forward voltage beyond the 16 V rating fires overvoltage', () => {
+    const f = checkCapacitorOvervoltage(cap(true), solvedAt(24, 0))
+    expect(f?.code).toBe('capacitor-overvoltage')
+    expect(f?.ratio).toBeCloseTo(1.5, 9)
+    expect(checkCapacitorOvervoltage(cap(true), solvedAt(9, 0))).toBeNull()
+  })
+
+  test('missing voltage_rating skips honestly (unknown, not infinite)', () => {
+    expect(checkCapacitorOvervoltage(cap(false), solvedAt(100, 0))).toBeNull()
   })
 })

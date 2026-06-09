@@ -31,7 +31,12 @@ import { readScalarParam } from './instance-params.ts'
 // Public API types
 // ---------------------------------------------------------------------------
 
-export type FailureCode = 'led-overloaded' | 'led-reverse-breakdown' | 'resistor-overpower'
+export type FailureCode =
+  | 'led-overloaded'
+  | 'led-reverse-breakdown'
+  | 'resistor-overpower'
+  | 'capacitor-reverse-polarity'
+  | 'capacitor-overvoltage'
 
 export type FailureSeverity = 'error'
 
@@ -81,6 +86,11 @@ export function detectFailures(world: World, solution: Solution): Failure[] {
     } else if (inst.definition === 'resistor') {
       const overpower = checkResistorOverpower(inst, solution)
       if (overpower !== null) failures.push(overpower)
+    } else if (inst.definition === 'capacitor') {
+      const reversed = checkCapacitorReversePolarity(inst, solution)
+      if (reversed !== null) failures.push(reversed)
+      const overvolt = checkCapacitorOvervoltage(inst, solution)
+      if (overvolt !== null) failures.push(overvolt)
     }
   }
 
@@ -157,6 +167,73 @@ export function checkLedReverseBreakdown(inst: Instance, solution: Solution): Fa
     measured: reverseVoltage,
     rated: reverseBreakdown,
     ratio: reverseVoltage / reverseBreakdown,
+    units: 'volt',
+    severity: 'error',
+  }
+}
+
+/**
+ * A polarized (aluminum electrolytic) capacitor tolerates only ~1–1.5 V of
+ * reverse voltage before the oxide layer degrades (gassing / venting / failure)
+ * — the classic backwards-electrolytic mistake. terminal_a is the + lead.
+ */
+const CAPACITOR_REVERSE_TOLERANCE_V = 1
+
+/**
+ * Capacitor reverse-polarity check: fires when V(terminal_a) − V(terminal_b)
+ * is more negative than the ~1 V an electrolytic's oxide layer tolerates.
+ * Sign-dependent like the LED reverse-breakdown check.
+ */
+export function checkCapacitorReversePolarity(inst: Instance, solution: Solution): Failure | null {
+  const aConnect = inst.connects?.find((c) => c.terminal === 'terminal_a')
+  const bConnect = inst.connects?.find((c) => c.terminal === 'terminal_b')
+  if (aConnect === undefined || bConnect === undefined) return null
+
+  const vA = solution.nodes.get(aConnect.net)
+  const vB = solution.nodes.get(bConnect.net)
+  if (vA === undefined || vB === undefined) return null
+
+  const reverseVoltage = vB - vA // positive when the − lead sits above the + lead
+  if (reverseVoltage <= CAPACITOR_REVERSE_TOLERANCE_V) return null
+
+  return {
+    code: 'capacitor-reverse-polarity',
+    source: inst.id,
+    kind: 'reverse_polarity',
+    measured: reverseVoltage,
+    rated: CAPACITOR_REVERSE_TOLERANCE_V,
+    ratio: reverseVoltage / CAPACITOR_REVERSE_TOLERANCE_V,
+    units: 'volt',
+    severity: 'error',
+  }
+}
+
+/**
+ * Capacitor overvoltage check: fires when the forward voltage across the
+ * capacitor exceeds its declared voltage_rating (dielectric breakdown).
+ */
+export function checkCapacitorOvervoltage(inst: Instance, solution: Solution): Failure | null {
+  const voltageRating = readScalarParam(inst, 'voltage_rating')
+  if (voltageRating === undefined || voltageRating <= 0) return null
+
+  const aConnect = inst.connects?.find((c) => c.terminal === 'terminal_a')
+  const bConnect = inst.connects?.find((c) => c.terminal === 'terminal_b')
+  if (aConnect === undefined || bConnect === undefined) return null
+
+  const vA = solution.nodes.get(aConnect.net)
+  const vB = solution.nodes.get(bConnect.net)
+  if (vA === undefined || vB === undefined) return null
+
+  const forwardVoltage = vA - vB
+  if (forwardVoltage <= voltageRating) return null
+
+  return {
+    code: 'capacitor-overvoltage',
+    source: inst.id,
+    kind: 'voltage_rating',
+    measured: forwardVoltage,
+    rated: voltageRating,
+    ratio: forwardVoltage / voltageRating,
     units: 'volt',
     severity: 'error',
   }
