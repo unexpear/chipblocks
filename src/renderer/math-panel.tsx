@@ -92,9 +92,15 @@ export function MathPanel({
       ))}
 
       {view.nets.length > 0 ? (
-        <div style={{ fontWeight: 700, color: dimColor, margin: '12px 0 4px' }}>
-          Kirchhoff’s current law at every net — currents in = currents out
-        </div>
+        <>
+          <div style={{ fontWeight: 700, color: dimColor, margin: '12px 0 2px' }}>
+            Kirchhoff’s current law — the proof, net by net
+          </div>
+          <div style={{ color: dimColor, fontSize: 11, marginBottom: 4 }}>
+            Whatever current flows INTO a junction must flow OUT — charge can’t pile up at a point.
+            Below, every current at every net is re-added; the sum must come out zero.
+          </div>
+        </>
       ) : null}
       {view.nets.map((net) => (
         <div key={net.id} style={{ padding: '2px 0' }}>
@@ -114,6 +120,19 @@ export function MathPanel({
           )}
         </div>
       ))}
+
+      {view.unitsKey.length > 0 ? (
+        <>
+          <div style={{ fontWeight: 700, color: dimColor, margin: '12px 0 4px' }}>
+            Key — every unit used above, written out
+          </div>
+          {view.unitsKey.map((entry) => (
+            <div key={entry} style={{ padding: '1px 0' }}>
+              {entry}
+            </div>
+          ))}
+        </>
+      ) : null}
     </div>
   )
 }

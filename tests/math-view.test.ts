@@ -129,6 +129,31 @@ describe('buildMathView', () => {
     }
   })
 
+  test('the units key writes out exactly the units the board used — no more, no less', () => {
+    const world = ohmLawCircuit()
+    const view = buildMathView(world, solveDC(world))
+    const key = view.unitsKey.join(' ')
+    // The Ohm's-law circuit talks in volts, amps, ohms, watts — and milliamps.
+    expect(key).toContain('V — volt')
+    expect(key).toContain('A — amp')
+    expect(key).toContain('Ω — ohm')
+    expect(key).toContain('W — watt')
+    expect(key).toContain('mA — a milli-amp: one thousandth of an amp')
+    // Nothing above used farads or hertz, so the key must not invent them.
+    expect(key).not.toContain('farad')
+    expect(key).not.toContain('hertz')
+  })
+
+  test('the explanations read like a teacher: laws stated in plain words before the numbers', () => {
+    const world = ohmLawCircuit()
+    const view = buildMathView(world, solveDC(world))
+    const all = view.parts.flatMap((p) => p.lines).join(' ')
+    expect(all).toContain('the voltage used up equals the current times the resistance')
+    expect(all).toContain('why batteries sag under load')
+    expect(all).toContain('zero mark on the ruler')
+    expect(view.solver.join(' ')).toContain('current in = current out')
+  })
+
   test('an unsolved circuit reports honestly instead of showing stale math', () => {
     const world = ohmLawCircuit()
     world.nets.delete(

@@ -24,7 +24,13 @@ export type MathNetRow = {
   sumAmps: number | null
   note?: string
 }
-export type MathView = { solver: string[]; parts: MathPartCard[]; nets: MathNetRow[] }
+export type MathView = {
+  solver: string[]
+  parts: MathPartCard[]
+  nets: MathNetRow[]
+  /** Every unit symbol used above, written out — built from what ACTUALLY appears. */
+  unitsKey: string[]
+}
 
 /** Per the solver's sign convention: positive branch current flows A-side → B-side. */
 const A_SIDE = new Set(['terminal_positive', 'anode', 'terminal_a', 'terminal_in'])
@@ -36,6 +42,61 @@ const DEFAULT_IDEALITY_FACTOR = 2.0
 const fmtV = (v: number) => formatEng(v, 'V', { signed: true })
 const fmtA = (a: number) => formatEng(a, 'A')
 
+/** The class key: every unit written out, in plain words. */
+const UNIT_NAMES: Record<string, { name: string; meaning: string }> = {
+  V: { name: 'volt', meaning: 'the electrical push (voltage)' },
+  A: { name: 'amp', meaning: 'the flow of charge (current)' },
+  Ω: { name: 'ohm', meaning: 'resistance — how hard it is to push current through' },
+  W: { name: 'watt', meaning: 'power — energy used per second' },
+  F: { name: 'farad', meaning: 'capacitance — how much charge is stored per volt' },
+  C: { name: 'coulomb', meaning: 'an amount of electric charge' },
+  Hz: { name: 'hertz', meaning: 'frequency — cycles per second' },
+  s: { name: 'second', meaning: 'time' },
+}
+const PREFIX_NAMES: Record<string, { name: string; meaning: string }> = {
+  p: { name: 'pico', meaning: 'one trillionth' },
+  n: { name: 'nano', meaning: 'one billionth' },
+  µ: { name: 'micro', meaning: 'one millionth' },
+  m: { name: 'milli', meaning: 'one thousandth' },
+  k: { name: 'kilo', meaning: 'a thousand' },
+  M: { name: 'mega', meaning: 'a million' },
+  G: { name: 'giga', meaning: 'a billion' },
+}
+
+/**
+ * Scan the finished lines for the unit symbols that ACTUALLY appear (with
+ * their engineering prefixes) and write each one out — so the key always
+ * matches the board, never lists units nothing above used.
+ */
+export function unitsKeyFor(lines: string[]): string[] {
+  const text = lines.join('  ')
+  const baseUnits = new Set<string>()
+  const combos = new Set<string>()
+  const pattern = /\d(?:\.\d+)?\s?([pnµmkMG]?)(Hz|V|A|Ω|W|F|C|s)(?![a-zA-Z])/g
+  for (const match of text.matchAll(pattern)) {
+    const prefix = match[1] ?? ''
+    const unit = match[2] ?? ''
+    if (!(unit in UNIT_NAMES)) continue
+    baseUnits.add(unit)
+    if (prefix !== '') combos.add(`${prefix}${unit}`)
+  }
+  const key: string[] = []
+  for (const [symbol, { name, meaning }] of Object.entries(UNIT_NAMES)) {
+    if (baseUnits.has(symbol)) key.push(`${symbol} — ${name}: ${meaning}.`)
+  }
+  for (const combo of combos) {
+    const prefix = combo.slice(0, combo.length - (combo.endsWith('Hz') ? 2 : 1))
+    const unit = combo.slice(prefix.length)
+    const p = PREFIX_NAMES[prefix]
+    const u = UNIT_NAMES[unit]
+    if (p && u) {
+      const article = /^[aeiou]/.test(u.name) ? 'an' : 'a'
+      key.push(`${combo} — a ${p.name}-${u.name}: ${p.meaning} of ${article} ${u.name}.`)
+    }
+  }
+  return key
+}
+
 export function buildMathView(world: World, solution: Solution): MathView {
   if (solution.status !== 'solved') {
     return {
@@ -45,14 +106,15 @@ export function buildMathView(world: World, solution: Solution): MathView {
       ],
       parts: [],
       nets: [],
+      unitsKey: [],
     }
   }
 
   const netCount = solution.nodes.size
   const solver: string[] = [
-    'Method: Modified Nodal Analysis — Kirchhoff’s current law written at every net, solved as one linear system; nonlinear parts (diodes, LEDs, transistors) re-linearized by Newton–Raphson until the answer stops moving.',
-    `Unknowns: ${Math.max(0, netCount - 1)} node voltages (ground net '${solution.ground}' is the 0 V reference) plus one branch current per source / ideal short.`,
-    `Newton–Raphson iterations this solve: ${solution.iterations} (converged: ${solution.converged ? 'yes' : 'NO'}).`,
+    'Step 1 — at every junction in the circuit, write down “current in = current out” (Kirchhoff’s current law). Charge can’t pile up at a point, so these must balance.',
+    `Step 2 — solve ALL those balance equations at once, as one big system. That technique is called Modified Nodal Analysis. Here it has ${Math.max(0, netCount - 1)} unknown voltages to find (the ground net '${solution.ground}' is pinned at 0 V — the zero mark on the ruler), plus one unknown current per source or ideal short.`,
+    `Step 3 — parts whose law is a curve, not a line (diodes, LEDs, transistors), can’t be solved in one shot. So the solver guesses, replaces each curve with the straight line that touches it at the guess, solves, and repeats until the answer stops moving. That loop is Newton–Raphson — this solve took ${solution.iterations} round${solution.iterations === 1 ? '' : 's'} (converged: ${solution.converged ? 'yes' : 'NO'}).`,
   ]
   if (solution.warnings.length > 0) {
     solver.push(`Solver warnings (${solution.warnings.length}): ${solution.warnings.join(' · ')}`)
@@ -113,7 +175,12 @@ export function buildMathView(world: World, solution: Solution): MathView {
     })
   }
 
-  return { solver, parts, nets }
+  const unitsKey = unitsKeyFor([
+    ...solver,
+    ...parts.flatMap((p) => p.lines),
+    ...nets.flatMap((n) => n.terms),
+  ])
+  return { solver, parts, nets, unitsKey }
 }
 
 function partCard(
@@ -129,7 +196,9 @@ function partCard(
     return {
       id: inst.id,
       title: 'Ground — the reference',
-      lines: ['V ≡ 0 V here by definition; every other voltage is measured against this point.'],
+      lines: [
+        'This is the zero mark on the ruler: V ≡ 0 V here by definition. Every other voltage in the circuit is measured FROM this point.',
+      ],
     }
   }
   if (def === 'power_source') {
@@ -137,43 +206,45 @@ function partCard(
     const internal = readScalarParam(inst, 'internal_resistance') ?? 0
     const amplitude = readScalarParam(inst, 'ac_amplitude') ?? 0
     lines.push(
-      `Thévenin source: EMF = ${fmtV(emf)} behind r_internal = ${formatEng(internal, 'Ω')}.`,
+      `A real source is a perfect pusher (the EMF, ${fmtV(emf)}) with a little resistance of its own inside (${formatEng(internal, 'Ω')}). That inner resistance is why batteries sag under load.`,
     )
     if (current !== undefined) {
       const terminal = emf - Math.abs(current) * internal
       lines.push(
-        `V_terminal = EMF − I·r = ${fmtV(emf)} − ${fmtA(Math.abs(current))} × ${formatEng(internal, 'Ω')} = ${fmtV(terminal)}.`,
+        `So the terminals show a bit less than the EMF: V_terminal = EMF − I·r = ${fmtV(emf)} − ${fmtA(Math.abs(current))} × ${formatEng(internal, 'Ω')} = ${fmtV(terminal)}.`,
       )
       lines.push(
-        `P_internal = I²·r = ${formatEng(current * current * internal, 'W')} (heat inside the source).`,
+        `The lost part becomes heat inside the source: P = I²·r = ${formatEng(current * current * internal, 'W')}.`,
       )
     }
     if (amplitude > 0) {
       const f = readScalarParam(inst, 'frequency') ?? 0
       lines.push(
-        `Time-varying: V(t) = ${fmtV(emf)} ${inst.parameters?.waveform?.value === 'square' ? `± ${formatEng(amplitude, 'V')} (square, 50 % duty)` : `+ ${formatEng(amplitude, 'V')}·sin(2π·${formatEng(f, 'Hz')}·t)`} — the DC view here uses the offset; see the Scope for the waveform.`,
+        `This one also changes over time: V(t) = ${fmtV(emf)} ${inst.parameters?.waveform?.value === 'square' ? `± ${formatEng(amplitude, 'V')} as a square wave (half the time up, half down)` : `+ ${formatEng(amplitude, 'V')}·sin(2π·${formatEng(f, 'Hz')}·t), a smooth sine`}. This page shows the steady part; the Scope shows the wiggle.`,
       )
     }
-    return { id: inst.id, title: 'Source — Thévenin model', lines }
+    return { id: inst.id, title: 'Source — a pusher with internal resistance', lines }
   }
   if (def === 'resistor' || def === 'wire') {
     const ohms = readScalarParam(inst, 'resistance')
-    const title = def === 'wire' ? 'Wire — R = ρ·L/A' : 'Resistor — Ohm’s law'
+    const title = def === 'wire' ? 'Wire — even wire resists a little' : 'Resistor — Ohm’s law'
     if (def === 'wire') {
       lines.push(
         ohms !== undefined
-          ? `Real series resistance from its drawn length: R = ρ·L/A = ${formatEng(ohms, 'Ω')} (annealed copper ρ, 22 AWG area).`
-          : 'Ideal short (no resistance assigned).',
+          ? `R = ρ·L/A: resistance grows with length (L) and shrinks with thickness (A); ρ is the material’s own resistivity (copper here). This wire, at its drawn length: ${formatEng(ohms, 'Ω')}.`
+          : 'Treated as an ideal short (no resistance assigned).',
       )
     } else if (ohms !== undefined) {
-      lines.push(`R = ${formatEng(ohms, 'Ω')}.`)
+      lines.push(
+        `Ohm’s law: the voltage used up equals the current times the resistance. This one is R = ${formatEng(ohms, 'Ω')}.`,
+      )
     }
     if (current !== undefined && ohms !== undefined) {
       lines.push(
-        `V = I·R = ${fmtA(Math.abs(current))} × ${formatEng(ohms, 'Ω')} = ${formatEng(Math.abs(current) * ohms, 'V')}.`,
+        `Plug in the solved current: V = I·R = ${fmtA(Math.abs(current))} × ${formatEng(ohms, 'Ω')} = ${formatEng(Math.abs(current) * ohms, 'V')}.`,
       )
       lines.push(
-        `P = I²·R = ${formatEng(current * current * ohms, 'W')} dissipated as heat (Joule’s law).`,
+        `That energy has to go somewhere — it leaves as heat: P = I²·R = ${formatEng(current * current * ohms, 'W')} (Joule’s law).`,
       )
     } else if (current !== undefined) {
       lines.push(`Carrying I = ${fmtA(Math.abs(current))}.`)
@@ -184,8 +255,8 @@ function partCard(
     const open = inst.parameters?.state?.value === 'open'
     lines.push(
       open
-        ? 'Open: no conducting path — the branch carries no current at all.'
-        : 'Closed: an ideal short (0 V across it); the solver carries its current as a branch unknown.',
+        ? 'Open: the metal path is broken, so NO current can flow through this branch — and that stops the whole loop it belongs to.'
+        : 'Closed: a continuous metal path — current passes through and essentially no voltage is lost across it.',
     )
     if (!open && current !== undefined) lines.push(`Carrying I = ${fmtA(Math.abs(current))}.`)
     return { id: inst.id, title: `Switch — ${open ? 'open' : 'closed'}`, lines }
@@ -195,35 +266,43 @@ function partCard(
     const iF = readScalarParam(inst, 'max_forward_current')
     const n = readScalarParam(inst, 'ideality_factor') ?? DEFAULT_IDEALITY_FACTOR
     const vT = thermalVoltage()
-    lines.push(`Shockley diode law: I = I_S·(e^(V/(n·V_T)) − 1).`)
+    lines.push(
+      'A diode does NOT follow Ohm’s law — below its turn-on voltage almost nothing flows, then current grows explosively. The curve is the Shockley equation: I = I_S·(e^(V/(n·V_T)) − 1).',
+    )
     if (vF !== undefined && iF !== undefined) {
       const iS = deriveSaturationCurrent(vF, iF, n, vT)
       lines.push(
-        `I_S = ${formatEng(iS, 'A')} — calibrated so the curve passes through the rated point (${fmtV(vF)} at ${fmtA(iF)}).`,
+        `I_S = ${formatEng(iS, 'A')} — a tiny “leakage” constant, chosen so the curve passes exactly through this part’s rated point (${fmtV(vF)} at ${fmtA(iF)}).`,
       )
     }
-    lines.push(`n = ${n} (ideality), V_T = kT/q = ${formatEng(vT, 'V')} at 300 K.`)
+    lines.push(
+      `n = ${n} is the ideality factor (how textbook-perfect the junction is); V_T = kT/q = ${formatEng(vT, 'V')} comes from temperature itself (300 K here).`,
+    )
     if (acrossV !== undefined && current !== undefined) {
-      lines.push(`Solved operating point: V = ${fmtV(acrossV)} → I = ${fmtA(Math.abs(current))}.`)
+      lines.push(
+        `Where the circuit and the curve agree — the operating point: V = ${fmtV(acrossV)}, I = ${fmtA(Math.abs(current))}.`,
+      )
     }
-    return { id: inst.id, title: 'Diode / LED — Shockley equation', lines }
+    return { id: inst.id, title: 'Diode / LED — the Shockley curve', lines }
   }
   if (def === 'capacitor') {
     const farads = readScalarParam(inst, 'capacitance')
-    lines.push('At steady DC: I = C·dV/dt = 0 — a charged capacitor passes no current (open).')
+    lines.push(
+      'Once fully charged, a capacitor passes no steady current — I = C·dV/dt, and dV/dt (the rate the voltage changes) is zero when nothing changes. At steady DC it acts like a gap in the wire.',
+    )
     if (farads !== undefined && acrossV !== undefined) {
       lines.push(
-        `C = ${formatEng(farads, 'F')}; holding V = ${fmtV(acrossV)} → stored charge Q = C·V = ${formatEng(farads * Math.abs(acrossV), 'C')}.`,
+        `It still holds charge: Q = C·V = ${formatEng(farads, 'F')} × ${formatEng(Math.abs(acrossV), 'V')} = ${formatEng(farads * Math.abs(acrossV), 'C')}.`,
       )
     }
-    return { id: inst.id, title: 'Capacitor — open at steady DC', lines }
+    return { id: inst.id, title: 'Capacitor — full, so no current', lines }
   }
   if (def === 'inductor') {
     lines.push(
-      'At steady DC: V = L·di/dt = 0 — a settled inductor is a short through its winding resistance. The Scope shows the real current ramp.',
+      'An inductor only pushes back when the current CHANGES (V = L·di/dt). Once everything settles, di/dt = 0, so it behaves like plain wire. The Scope shows the ramp while it settles.',
     )
     if (current !== undefined) lines.push(`Carrying I = ${fmtA(Math.abs(current))}.`)
-    return { id: inst.id, title: 'Inductor — short at steady DC', lines }
+    return { id: inst.id, title: 'Inductor — settled, so plain wire', lines }
   }
   if (def === 'transistor_bjt_npn' || def === 'transistor_bjt_pnp') {
     const beta = readScalarParam(inst, 'forward_current_gain')
@@ -231,22 +310,24 @@ function partCard(
     const vCollector = solution.nodes.get(netOfTerminal(inst, 'collector') ?? '')
     const vEmitter = solution.nodes.get(netOfTerminal(inst, 'emitter') ?? '')
     lines.push(
-      `Ebers–Moll model (two coupled junctions), solved by Newton–Raphson${beta !== undefined ? ` with β_F = ${beta}` : ''}.`,
+      `A transistor lets a SMALL base current control a BIG collector current${beta !== undefined ? ` — here up to β = ${beta} times bigger` : ''}. The solver models it as two diode junctions back-to-back (the Ebers–Moll equations), solved by the same Newton–Raphson loop.`,
     )
     if (vBase !== undefined && vEmitter !== undefined) {
-      lines.push(`V_BE = ${fmtV(vBase - vEmitter)}.`)
+      lines.push(`V_BE (base to emitter, the “control knob”): ${fmtV(vBase - vEmitter)}.`)
     }
     if (vCollector !== undefined && vEmitter !== undefined) {
-      lines.push(`V_CE = ${fmtV(vCollector - vEmitter)}.`)
+      lines.push(
+        `V_CE (collector to emitter, the “controlled path”): ${fmtV(vCollector - vEmitter)}.`,
+      )
     }
     if (current !== undefined) lines.push(`I_C = ${fmtA(Math.abs(current))} (collector current).`)
-    return { id: inst.id, title: 'Transistor — Ebers–Moll', lines }
+    return { id: inst.id, title: 'Transistor — small current steers big current', lines }
   }
   if (def === 'transformer' || def === 'transformer_center_tapped') {
     lines.push(
-      'At steady DC each winding is only its winding resistance — magnetic coupling needs a CHANGING current (v = M·di/dt). The Scope shows the coupled behavior.',
+      'A transformer couples its windings through a shared magnetic field — but the field only transfers energy when the current CHANGES (v = M·di/dt). At steady DC each winding is just its own wire resistance. Drive it with AC and watch the Scope.',
     )
-    return { id: inst.id, title: 'Transformer — coupling lives in the time domain', lines }
+    return { id: inst.id, title: 'Transformer — needs changing current to couple', lines }
   }
   return null
 }
