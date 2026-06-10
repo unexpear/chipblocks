@@ -4,6 +4,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   useState,
 } from 'react'
+import './canvas-animations.css'
 
 /**
  * Dockable panel (Sprint 19 S19-v3-10; dock-grid in S19-v3-12). A menu the user
@@ -109,11 +110,14 @@ export function DockablePanel({
         {title}
       </div>
       <div
+        className="cb-scroll-hidden"
         style={{
           display: 'flex',
           flexDirection: horizontal ? 'row' : 'column',
           // Fill the space left by the grip and scroll when content overflows the
           // dock cell (min-0 lets this flex child shrink below its content size).
+          // Wheel / trackpad scrolling works; the bar itself is hidden (the
+          // cb-scroll-hidden class) so panels read as clean toolbars.
           flex: 1,
           minHeight: 0,
           minWidth: 0,
