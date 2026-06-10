@@ -31,6 +31,18 @@ import type { World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
 import { solveElectroThermal } from '../electro-thermal.ts'
 import { solveTransient, type TransientResult } from '../transient-solver.ts'
+import { BlockViewer } from './block-viewer.tsx'
+import {
+  type BlockData,
+  type CanvasEdgeLike as BlockEdgeLike,
+  type CanvasNodeLike as BlockNodeLike,
+  blockPortAliases,
+  bubbleBlockHealth,
+  cloneBlockData,
+  flattenBlocks,
+  groupSelection,
+  ungroupBlock,
+} from './blocks.ts'
 import {
   type CanvasEdge,
   type CanvasNode,
@@ -59,7 +71,7 @@ import {
   terminalVoltages,
 } from './meter.tsx'
 import { edgeTypes } from './net-edge.tsx'
-import { DEFINITION_MIME, PaletteItems } from './palette.tsx'
+import { BLOCK_MIME, BlockPaletteItems, DEFINITION_MIME, PaletteItems } from './palette.tsx'
 import { defaultParameters, toggledSwitch } from './part-defaults.ts'
 import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { type PartReading, partReadings } from './part-readings.ts'
@@ -307,12 +319,21 @@ function solveCanvas(
       data: { ...physics.data, ...(waypoints ? { waypoints } : {}) },
     }
   })
+  // An internal part's failure also marks its block node (validation bubbles
+  // up the hierarchy, per the object model).
+  const health = bubbleBlockHealth(canvasHealth(world, solution))
+  // Probing a block's PORT reads the real internal terminal it stands for.
+  const terminalVolts = terminalVoltages(world, solution)
+  for (const alias of blockPortAliases(nodeList as unknown as BlockNodeLike[])) {
+    const inner = terminalVolts.get(alias.inner)
+    if (inner !== undefined) terminalVolts.set(alias.outer, inner)
+  }
   return {
     edges,
-    health: canvasHealth(world, solution),
+    health,
     readings: partReadings(world, solution),
     // Every wired terminal's live voltage — what the multimeter probes read.
-    terminalVolts: terminalVoltages(world, solution),
+    terminalVolts,
     // The solved circuit itself — the meter's Ω mode re-solves it powered-off,
     // and the Math panel shows the equations behind this exact solution.
     world,
@@ -330,13 +351,22 @@ function canvasWorld(
   nodeList: Node[],
   edgeList: Edge[],
 ): { world: World; drawn: Map<string, { lengthM: number; ohms: number }> } {
-  const positions = new Map<string, NodePosition>(nodeList.map((n) => [n.id, n.position]))
+  // Blocks are pure structure: expand every block back into its REAL parts
+  // (namespaced ids, ports routed to the real internal terminals) before
+  // anything physical is computed. The solver never sees a block.
+  const flat = flattenBlocks(
+    nodeList as unknown as BlockNodeLike[],
+    edgeList as unknown as BlockEdgeLike[],
+  )
+  const flatNodes = flat.nodes as unknown as Node[]
+  const flatEdges = flat.edges as unknown as Edge[]
+  const positions = new Map<string, NodePosition>(flatNodes.map((n) => [n.id, n.position]))
   // Each wire's real resistance feeds BOTH the solve (so it drops real voltage)
   // and the on-wire readout — computed once here from how the wire is drawn.
   const drawn = new Map<string, { lengthM: number; ohms: number }>(
-    edgeList.map((e) => [e.id, drawnWire(e, positions)]),
+    flatEdges.map((e) => [e.id, drawnWire(e, positions)]),
   )
-  const canvasEdges: CanvasEdge[] = edgeList.map((e) => ({
+  const canvasEdges: CanvasEdge[] = flatEdges.map((e) => ({
     id: e.id,
     source: e.source,
     target: e.target,
@@ -344,7 +374,7 @@ function canvasWorld(
     targetHandle: e.targetHandle ?? null,
     resistanceOhms: drawn.get(e.id)?.ohms ?? 0,
   }))
-  return { world: canvasToWorld(nodeList.map(toCanvasNode), canvasEdges), drawn }
+  return { world: canvasToWorld(flatNodes.map(toCanvasNode), canvasEdges), drawn }
 }
 
 /**
@@ -468,13 +498,19 @@ function Canvas() {
       setNodes(
         result.file.nodes.map((n) => ({
           id: n.id,
-          type: n.definition === 'junction' ? 'junction' : 'device',
+          type:
+            n.definition === 'block'
+              ? 'block'
+              : n.definition === 'junction'
+                ? 'junction'
+                : 'device',
           position: { x: n.x, y: n.y },
           data: {
             definition: n.definition,
-            label: n.id,
+            label: n.block?.name ?? n.id,
             ...(n.rotation ? { rotation: n.rotation } : {}),
             ...(n.parameters ? { parameters: n.parameters } : {}),
+            ...(n.block ? { block: n.block } : {}),
           },
         })),
       )
@@ -558,6 +594,54 @@ function Canvas() {
     () => (showMath ? buildMathView(solvedWorld, solution) : null),
     [showMath, solvedWorld, solution],
   )
+
+  // Circuit blocks (S19-v3-67): group the selection into ONE reusable block.
+  // The prompt collects the block's name; the viewer (double-click a block)
+  // shows the real parts inside; Ungroup explodes it back for editing.
+  const [groupPrompt, setGroupPrompt] = useState<{ name: string; error: string | null } | null>(
+    null,
+  )
+  const [viewBlockId, setViewBlockId] = useState<string | null>(null)
+  const selectedCount = nodes.filter((n) => n.selected).length
+  const confirmGroup = useCallback(() => {
+    if (groupPrompt === null) return
+    const name = groupPrompt.name.trim() || 'block'
+    const selectedIds = new Set(nodes.filter((n) => n.selected).map((n) => n.id))
+    dropCount.current += 1
+    const result = groupSelection(
+      nodes as unknown as BlockNodeLike[],
+      edges as unknown as BlockEdgeLike[],
+      selectedIds,
+      `block_${dropCount.current}`,
+      name,
+    )
+    if ('reason' in result) {
+      setGroupPrompt({ name, error: result.reason })
+      return
+    }
+    setNodes(result.nodes as unknown as Node[])
+    setEdges(result.edges as unknown as Edge[])
+    setGroupPrompt(null)
+  }, [groupPrompt, nodes, edges, setNodes, setEdges])
+  const handleUngroup = useCallback(
+    (blockNodeId: string) => {
+      const result = ungroupBlock(
+        nodes as unknown as BlockNodeLike[],
+        edges as unknown as BlockEdgeLike[],
+        blockNodeId,
+      )
+      if ('reason' in result) return
+      setNodes(result.nodes as unknown as Node[])
+      setEdges(result.edges as unknown as Edge[])
+      setViewBlockId(null)
+    },
+    [nodes, edges, setNodes, setEdges],
+  )
+  const viewedBlock: BlockData | null =
+    viewBlockId !== null
+      ? (((nodes.find((n) => n.id === viewBlockId)?.data as { block?: BlockData }) ?? {}).block ??
+        null)
+      : null
 
   // Lenses (S19-v3-50): overlay the solved physics on the schematic. The context
   // carries the solved voltage range (for the wire color ramp) + each part's real
@@ -686,8 +770,16 @@ function Canvas() {
     },
     [tool, redProbe, blackProbe],
   )
-  // Each wired terminal's net — what the Ω probes hand to the powered-off solve.
-  const probeNets = useMemo(() => terminalNets(solvedWorld), [solvedWorld])
+  // Each wired terminal's net — what the Ω probes hand to the powered-off
+  // solve. Block PORTS alias to the real internal terminal they stand for.
+  const probeNets = useMemo(() => {
+    const nets = terminalNets(solvedWorld)
+    for (const alias of blockPortAliases(nodes as unknown as BlockNodeLike[])) {
+      const inner = nets.get(alias.inner)
+      if (inner !== undefined) nets.set(alias.outer, inner)
+    }
+    return nets
+  }, [solvedWorld, nodes])
   // The meter's display — live solved values; unwired points say so. The clamp
   // (when set) wins regardless of the dial: it reads amps, not the dial quantity.
   const meterReadout = useMemo(() => {
@@ -860,6 +952,11 @@ function Canvas() {
         setShowShortcuts(true)
         return
       }
+      if (eventMatchesBinding(event, keybinds.selectAll)) {
+        event.preventDefault()
+        setNodes((current) => current.map((n) => ({ ...n, selected: true })))
+        return
+      }
       if (eventMatchesBinding(event, keybinds.rotate)) {
         setNodes((current) =>
           current.map((node) =>
@@ -896,9 +993,30 @@ function Canvas() {
   }, [])
 
   // Drop a part from the palette → a new node at the drop point (S19-v3-6).
+  // Dropping a BLOCK places an independent copy: internals cloned with fresh
+  // ids, parameters deep-copied so each copy is editable on its own.
   const onDrop = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
       event.preventDefault()
+      const blockSourceId = event.dataTransfer.getData(BLOCK_MIME)
+      if (blockSourceId) {
+        const source = nodes.find((n) => n.id === blockSourceId)
+        const block = (source?.data as { block?: BlockData } | undefined)?.block
+        if (!block) return
+        const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+        dropCount.current += 1
+        const id = `block_${dropCount.current}`
+        const clone = cloneBlockData(block, String(dropCount.current))
+        setNodes((current) =>
+          current.concat({
+            id,
+            type: 'block',
+            position,
+            data: { definition: 'block', label: clone.name, block: clone },
+          }),
+        )
+        return
+      }
       const definition = event.dataTransfer.getData(DEFINITION_MIME)
       if (!definition) return
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
@@ -915,7 +1033,7 @@ function Canvas() {
         }),
       )
     },
-    [screenToFlowPosition, setNodes],
+    [screenToFlowPosition, setNodes, nodes],
   )
 
   // Draw a wire between two terminals → a new edge. The topology effect re-solves
@@ -1074,6 +1192,11 @@ function Canvas() {
   // current). Other parts ignore the double-click.
   const onNodeDoubleClick = useCallback(
     (_event: ReactMouseEvent, node: Node) => {
+      // Double-click a block → descend into it (see the real circuit inside).
+      if ((node.data as DeviceNodeData).definition === 'block') {
+        setViewBlockId(node.id)
+        return
+      }
       if ((node.data as DeviceNodeData).definition !== 'switch_spst_toggle') return
       setNodes((current) =>
         current.map((n) =>
@@ -1214,6 +1337,9 @@ function Canvas() {
               // double-create — and it once let meter probes draw real wires.
               connectOnClick={false}
               connectionMode={ConnectionMode.Loose}
+              // Windows-friendly multi-select: Ctrl+click (React Flow's default
+              // is the Meta key); Shift+drag box-select is the built-in default.
+              multiSelectionKeyCode={['Meta', 'Control']}
               // Deletion is OUR keybind now (editable, supports combos) — see
               // the keyboard-shortcuts effect above.
               deleteKeyCode={null}
@@ -1361,6 +1487,79 @@ function Canvas() {
           </div>
         ) : null}
 
+        {/* Group-into-block naming prompt. */}
+        {groupPrompt !== null ? (
+          <div
+            className="nodrag nopan"
+            style={{
+              position: 'absolute',
+              top: 60,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 62,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+              padding: '10px 14px',
+              background: light ? '#f2f3f5' : '#141417',
+              border: light ? '1px solid #c4c8ce' : '1px solid #2a2a2f',
+              borderRadius: 8,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+              fontFamily: 'system-ui, sans-serif',
+              fontSize: 12,
+              color: light ? '#333' : '#cdd6e0',
+            }}
+          >
+            <div style={{ fontWeight: 700 }}>
+              Group {selectedCount} parts into a block — name it:
+            </div>
+            <input
+              // biome-ignore lint/a11y/noAutofocus: the dialog exists to type a name
+              autoFocus
+              value={groupPrompt.name}
+              onChange={(e) => setGroupPrompt({ name: e.target.value, error: null })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') confirmGroup()
+                if (e.key === 'Escape') setGroupPrompt(null)
+              }}
+              placeholder="e.g. NOT gate"
+              style={{
+                padding: '4px 8px',
+                borderRadius: 4,
+                border: light ? '1px solid #c4c8ce' : '1px solid #2a2a2f',
+                background: light ? '#fff' : '#1b1b1f',
+                color: light ? '#333' : '#dde4ec',
+                fontSize: 12,
+              }}
+            />
+            {groupPrompt.error !== null ? (
+              <div style={{ color: '#e0594f', fontSize: 11 }}>{groupPrompt.error}</div>
+            ) : null}
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setGroupPrompt(null)}
+                style={meterDialStyle(false, light)}
+              >
+                Cancel
+              </button>
+              <button type="button" onClick={confirmGroup} style={meterDialStyle(true, light)}>
+                Group
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Descend view — the real circuit inside a block. */}
+        {viewedBlock !== null && viewBlockId !== null ? (
+          <BlockViewer
+            block={viewedBlock}
+            onUngroup={() => handleUngroup(viewBlockId)}
+            onClose={() => setViewBlockId(null)}
+            light={light}
+          />
+        ) : null}
+
         {/* Math panel — the equations behind the current solution. */}
         {mathView !== null ? (
           <MathPanel view={mathView} onClose={() => setShowMath(false)} light={light} />
@@ -1471,6 +1670,14 @@ function Canvas() {
 
       <DockablePanel edge={paletteEdge} onEdgeChange={setPaletteEdge} light={light} title="Parts">
         <PaletteItems />
+        <BlockPaletteItems
+          blocks={nodes
+            .filter((n) => (n.data as { definition?: string }).definition === 'block')
+            .map((n) => ({
+              id: n.id,
+              name: ((n.data as { block?: BlockData }).block?.name ?? n.id) as string,
+            }))}
+        />
       </DockablePanel>
       <DockablePanel edge={toolbarEdge} onEdgeChange={setToolbarEdge} light={light} title="Tools">
         <ToolbarItems
@@ -1483,6 +1690,8 @@ function Canvas() {
           onSolve={handleSolve}
           onScope={runScope}
           onMath={() => setShowMath((open) => !open)}
+          onGroup={() => setGroupPrompt({ name: '', error: null })}
+          canGroup={selectedCount >= 2}
           lens={lens}
           onLens={setLens}
           flow={flow}

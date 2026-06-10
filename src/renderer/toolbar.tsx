@@ -28,6 +28,8 @@ export function ToolbarItems({
   onSolve,
   onScope,
   onMath,
+  onGroup,
+  canGroup,
   lens,
   onLens,
   flow,
@@ -42,6 +44,8 @@ export function ToolbarItems({
   onSolve: () => void
   onScope: () => void
   onMath: () => void
+  onGroup: () => void
+  canGroup: boolean
   lens: LensMode
   onLens: (lens: LensMode) => void
   flow: boolean
@@ -154,6 +158,26 @@ export function ToolbarItems({
           ∿
         </span>
         <span style={{ fontSize: 11 }}>Scope</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={onGroup}
+        disabled={!canGroup}
+        title="Group — turn the selected parts into ONE reusable block with terminals. Wires crossing the selection become the block's ports. The block is pure structure: the solver always computes the real parts inside (double-click the block to see them; Ungroup to edit)."
+        style={{
+          ...toolButton(false),
+          flexDirection: 'row',
+          gap: 6,
+          padding: '8px 12px',
+          opacity: canGroup ? 1 : 0.45,
+          cursor: canGroup ? 'pointer' : 'default',
+        }}
+      >
+        <span aria-hidden style={{ color: '#a06ad8', fontSize: 13 }}>
+          ⧉
+        </span>
+        <span style={{ fontSize: 11 }}>Group</span>
       </button>
 
       <button

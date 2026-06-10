@@ -1,3 +1,4 @@
+import type { BlockData } from './blocks.ts'
 import type { Parameters } from './part-defaults.ts'
 
 /**
@@ -25,6 +26,8 @@ export type SavedNode = {
   y: number
   rotation?: number
   parameters?: Parameters
+  /** A circuit block carries its real internals (S19-v3-67). */
+  block?: BlockData
 }
 
 export type SavedWire = {
@@ -49,7 +52,7 @@ export type CircuitFile = {
 type CanvasNodeLike = {
   id: string
   position: { x: number; y: number }
-  data: { definition: string; rotation?: number; parameters?: Parameters }
+  data: { definition: string; rotation?: number; parameters?: Parameters; block?: BlockData }
 }
 type CanvasEdgeLike = {
   id: string
@@ -72,6 +75,7 @@ export function serializeCircuit(nodes: CanvasNodeLike[], edges: CanvasEdgeLike[
       y: n.position.y,
       ...(n.data.rotation ? { rotation: n.data.rotation } : {}),
       ...(n.data.parameters ? { parameters: n.data.parameters } : {}),
+      ...(n.data.block ? { block: n.data.block } : {}),
     })),
     wires: edges.map((e) => {
       const waypoints = Array.isArray(e.data?.waypoints)

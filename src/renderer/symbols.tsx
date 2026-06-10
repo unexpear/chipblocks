@@ -1,6 +1,7 @@
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from '@xyflow/react'
 import { Fragment, useContext, useEffect } from 'react'
 import './canvas-animations.css'
+import { BlockNode } from './block-node.tsx'
 import { HealthContext } from './health.ts'
 import { LensContext, powerColor, temperatureColor } from './lens.ts'
 import {
@@ -715,4 +716,4 @@ function JunctionNode() {
   )
 }
 
-export const nodeTypes = { device: DeviceNode, junction: JunctionNode }
+export const nodeTypes = { device: DeviceNode, junction: JunctionNode, block: BlockNode }

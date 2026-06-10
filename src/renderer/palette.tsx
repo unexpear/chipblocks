@@ -17,6 +17,62 @@ import { DeviceGlyph } from './symbols.tsx'
 
 /** dataTransfer MIME the palette → canvas drop uses. */
 export const DEFINITION_MIME = 'application/chipblocks-definition'
+/** dataTransfer MIME for dropping a copy of an existing circuit block. */
+export const BLOCK_MIME = 'application/chipblocks-block'
+
+/**
+ * The Blocks section: every block currently on the canvas, draggable to drop
+ * an independent copy (cloned internals, fresh ids). The template IS the block
+ * on canvas — delete the last copy and the template goes with it (the
+ * catalog-grade project library is the documented next rung).
+ */
+export function BlockPaletteItems({ blocks }: { blocks: { id: string; name: string }[] }) {
+  if (blocks.length === 0) return null
+  return (
+    <>
+      <div
+        style={{
+          color: '#8a93a0',
+          fontSize: 10,
+          fontFamily: 'system-ui, sans-serif',
+          margin: '8px 2px 2px',
+        }}
+      >
+        Blocks — drag to copy
+      </div>
+      {blocks.map((block) => (
+        // biome-ignore lint/a11y/noStaticElementInteractions: a palette block is a drag source, same as the parts above
+        <div
+          key={block.id}
+          draggable
+          onDragStart={(event) => {
+            event.dataTransfer.setData(BLOCK_MIME, block.id)
+            event.dataTransfer.effectAllowed = 'move'
+          }}
+          title={`Drag to place an independent copy of ${block.name}`}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '6px 8px',
+            border: '1px solid #2a2a2f',
+            borderRadius: 6,
+            background: '#1b1b1f',
+            cursor: 'grab',
+            color: '#cdd6e0',
+            fontSize: 11,
+            fontFamily: 'system-ui, sans-serif',
+          }}
+        >
+          <span aria-hidden style={{ color: '#a06ad8' }}>
+            ⧉
+          </span>
+          {block.name}
+        </div>
+      ))}
+    </>
+  )
+}
 
 const PARTS: { definition: string; label: string }[] = [
   { definition: 'power_source', label: 'Source' },

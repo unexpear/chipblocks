@@ -16,6 +16,7 @@ export type KeybindAction =
   | 'delete'
   | 'deleteAlt'
   | 'cancelWire'
+  | 'selectAll'
   | 'openCircuit'
   | 'saveCircuit'
   | 'saveCircuitAs'
@@ -28,6 +29,7 @@ export const DEFAULT_KEYBINDS: Keybinds = {
   delete: 'Delete',
   deleteAlt: 'Backspace',
   cancelWire: 'Escape',
+  selectAll: 'Ctrl+Shift+A',
   openCircuit: 'Ctrl+O',
   saveCircuit: 'Ctrl+S',
   saveCircuitAs: 'Ctrl+Shift+S',
@@ -39,6 +41,7 @@ export const KEYBIND_LABELS: Record<KeybindAction, string> = {
   delete: 'Delete the selected part or wire',
   deleteAlt: 'Delete (second key)',
   cancelWire: 'Abandon the wire being drawn',
+  selectAll: 'Select every part on the canvas (then Group can block them)',
   openCircuit: 'Open a circuit file',
   saveCircuit: 'Save the circuit',
   saveCircuitAs: 'Save the circuit as…',
@@ -135,6 +138,16 @@ export const FIXED_CONTROLS: { group: string; control: string; does: string }[] 
   { group: 'Canvas', control: 'Drag a part', does: 'Move it (wires re-route and re-solve)' },
   { group: 'Canvas', control: 'Drag from the palette', does: 'Place a new part where you drop it' },
   { group: 'Canvas', control: 'Double-click a switch', does: 'Flip it open / closed' },
+  {
+    group: 'Canvas',
+    control: 'Ctrl+click parts (or Shift+drag a box)',
+    does: 'Select several parts at once — then Group can turn them into a block',
+  },
+  {
+    group: 'Canvas',
+    control: 'Double-click a block',
+    does: 'Descend into it — see the real circuit inside (Ungroup there to edit)',
+  },
   { group: 'Canvas', control: 'Drag empty canvas', does: 'Pan the view' },
   { group: 'Canvas', control: 'Scroll wheel', does: 'Zoom in / out' },
   {
@@ -203,6 +216,11 @@ export const FIXED_CONTROLS: { group: string; control: string; does: string }[] 
     does: 'Freeze the reading to compare; click again to release',
   },
   { group: 'Toolbar', control: 'Solve button', does: 'Run the physics now (with Always-on off)' },
+  {
+    group: 'Toolbar',
+    control: 'Group button',
+    does: 'Turn the selected parts into ONE reusable block — ports come from the wires crossing the selection; the solver still computes the real parts inside',
+  },
   {
     group: 'Toolbar',
     control: 'Scope button',
