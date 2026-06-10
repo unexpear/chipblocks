@@ -40,6 +40,7 @@ import { materialCapabilities, validMaterialsByRole } from './material-roles.ts'
 import {
   acVoltsRms,
   CONTINUITY_OHMS,
+  capacitanceTest,
   diodeTest,
   equivalentResistance,
   MeterProbes,
@@ -496,13 +497,23 @@ function Canvas() {
   // The dial position survives tool switches, like a real meter left on a setting.
   const [redProbe, setRedProbe] = useState<ProbeRef | undefined>(undefined)
   const [blackProbe, setBlackProbe] = useState<ProbeRef | undefined>(undefined)
-  const [meterMode, setMeterMode] = useState<'volts' | 'acvolts' | 'ohms' | 'diode'>('volts')
+  const [meterMode, setMeterMode] = useState<'volts' | 'acvolts' | 'ohms' | 'diode' | 'cap'>(
+    'volts',
+  )
+  // HOLD: freeze the current reading on the display (probe elsewhere, compare),
+  // exactly the bench move. Measurement continues underneath, like a real meter.
+  const [heldReadout, setHeldReadout] = useState<{
+    icon: string
+    iconColor: string
+    text: string
+  } | null>(null)
   const [clampWire, setClampWire] = useState<string | undefined>(undefined)
   useEffect(() => {
     if (tool !== 'meter') {
       setRedProbe(undefined)
       setBlackProbe(undefined)
       setClampWire(undefined)
+      setHeldReadout(null)
     }
   }, [tool])
   // If the clamped wire is deleted, the clamp comes off with it.
@@ -612,6 +623,27 @@ function Canvas() {
       return diodeChip(
         `Diode test: ${formatEng(result.volts, 'V')} forward at ${formatEng(result.amps, 'A')}`,
       )
+    }
+    if (meterMode === 'cap') {
+      const capChip = (text: string) => ({ icon: '⊣⊢', iconColor: '#a06ad8', text })
+      const nets = bothProbeNets()
+      if (typeof nets === 'string') return capChip(nets)
+      const result = capacitanceTest(solvedWorld, nets.netRed, nets.netBlack)
+      if (result.status === 'measured') {
+        return capChip(`Capacitance: ${formatEng(result.farads, 'F')}`)
+      }
+      if (result.status === 'parallel-leak') {
+        return capChip(
+          "Capacitance: can't measure — a resistive path is in parallel (free one leg of the cap, like a real meter)",
+        )
+      }
+      if (result.status === 'over-range') {
+        return capChip('Capacitance: over range — still charging past the 100 s test window')
+      }
+      if (result.status === 'open') {
+        return capChip('Capacitance: under 1 pF — nothing measurable between the probes')
+      }
+      return capChip("Capacitance test can't run on this circuit")
     }
     const voltChip = (text: string) => ({ icon: 'Ⓥ', iconColor: '#e0594f', text })
     if (redProbe === undefined) return voltChip('Touch a terminal dot to place the red probe')
@@ -970,11 +1002,39 @@ function Canvas() {
               >
                 ⏵
               </button>
+              <button
+                type="button"
+                onClick={() => setMeterMode('cap')}
+                title="Capacitance — charges the powered-off network between the probes with a small known source (0.5 V behind 10 kΩ, below junction turn-on), starting discharged like the real procedure, and counts the actual charge: C = Q/V. Autoranges its window like a real meter. A resistive parallel path makes the reading impossible — real meters refuse too: free one leg first."
+                style={meterDialStyle(meterMode === 'cap', light)}
+              >
+                ⊣⊢
+              </button>
             </span>
-            <span aria-hidden style={{ color: meterReadout.iconColor, fontWeight: 700 }}>
-              {meterReadout.icon}
-            </span>
-            {meterReadout.text}
+            {(() => {
+              const shown = heldReadout ?? meterReadout
+              return (
+                <>
+                  <span aria-hidden style={{ color: shown.iconColor, fontWeight: 700 }}>
+                    {shown.icon}
+                  </span>
+                  {shown.text}
+                </>
+              )
+            })()}
+            <button
+              type="button"
+              onClick={() => setHeldReadout(heldReadout === null ? meterReadout : null)}
+              title="HOLD — freeze this reading on the display so you can probe somewhere else and compare. The measurement keeps running underneath, like a real meter."
+              style={{
+                ...meterDialStyle(heldReadout !== null, light),
+                marginLeft: 2,
+                fontSize: 9,
+                letterSpacing: 0.5,
+              }}
+            >
+              HOLD
+            </button>
           </div>
         ) : null}
 

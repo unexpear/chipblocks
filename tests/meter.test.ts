@@ -13,6 +13,7 @@ import type { Instance, Net, World } from '../src/cross-fk-validator.ts'
 import type { Solution } from '../src/dc-solver.ts'
 import {
   acVoltsRms,
+  capacitanceTest,
   diodeTest,
   equivalentResistance,
   terminalNets,
@@ -360,6 +361,115 @@ describe('diodeTest (⏵ mode)', () => {
     if (result === null) return
     // I = 3.0 / (2000 + 470); V = I·470 — real meters show this on resistors too.
     expect(result.volts).toBeCloseTo((3.0 / 2470) * 470, 4)
+  })
+})
+
+// --- ⊣⊢ capacitance -----------------------------------------------------------
+
+function capWorld(
+  parts: Array<{ id: string; definition: string; parameters: object; connects: string[][] }>,
+  extraNets: string[] = [],
+): World {
+  const netIds = new Set<string>(extraNets)
+  for (const part of parts) for (const [net] of part.connects) netIds.add(net ?? '')
+  return ohmWorld(
+    [...netIds].map((id) => ({ id })),
+    parts,
+  )
+}
+
+const capPart = (id: string, farads: number, netA: string, netB: string) => ({
+  id,
+  definition: 'capacitor',
+  parameters: { capacitance: scalar(farads, 'farad') },
+  connects: [
+    [netA, 'terminal_a'],
+    [netB, 'terminal_b'],
+  ],
+})
+
+describe('capacitanceTest (⊣⊢ mode)', () => {
+  const relativeError = (measured: number, expected: number) =>
+    Math.abs(measured - expected) / expected
+
+  test('a lone 100 µF capacitor measures from real integrated charge — C = Q/V', () => {
+    const result = capacitanceTest(capWorld([capPart('c1', 100e-6, 'a', 'b')]), 'a', 'b')
+    expect(result.status).toBe('measured')
+    if (result.status !== 'measured') return
+    expect(relativeError(result.farads, 100e-6)).toBeLessThan(0.005)
+  })
+
+  test('two capacitors in parallel add', () => {
+    const w = capWorld([capPart('c1', 100e-6, 'a', 'b'), capPart('c2', 47e-6, 'a', 'b')])
+    const result = capacitanceTest(w, 'a', 'b')
+    expect(result.status).toBe('measured')
+    if (result.status !== 'measured') return
+    expect(relativeError(result.farads, 147e-6)).toBeLessThan(0.005)
+  })
+
+  test('two capacitors in series halve', () => {
+    const w = capWorld([capPart('c1', 100e-6, 'a', 'mid'), capPart('c2', 100e-6, 'mid', 'b')])
+    const result = capacitanceTest(w, 'a', 'b')
+    expect(result.status).toBe('measured')
+    if (result.status !== 'measured') return
+    expect(relativeError(result.farads, 50e-6)).toBeLessThan(0.005)
+  })
+
+  test('a resistor in parallel keeps current flowing forever — honest refusal, like a real meter', () => {
+    const w = capWorld([
+      capPart('c1', 100e-6, 'a', 'b'),
+      {
+        id: 'r1',
+        definition: 'resistor',
+        parameters: { resistance: scalar(470, 'ohm') },
+        connects: [
+          ['a', 'terminal_a'],
+          ['b', 'terminal_b'],
+        ],
+      },
+    ])
+    expect(capacitanceTest(w, 'a', 'b').status).toBe('parallel-leak')
+  })
+
+  test('a pure resistor between the probes is also a leak — no capacitance to read', () => {
+    const w = capWorld([
+      {
+        id: 'r1',
+        definition: 'resistor',
+        parameters: { resistance: scalar(470, 'ohm') },
+        connects: [
+          ['a', 'terminal_a'],
+          ['b', 'terminal_b'],
+        ],
+      },
+    ])
+    expect(capacitanceTest(w, 'a', 'b').status).toBe('parallel-leak')
+  })
+
+  test('a 1 F capacitor charges past the longest window — over range', () => {
+    const result = capacitanceTest(capWorld([capPart('c1', 1, 'a', 'b')]), 'a', 'b')
+    expect(result.status).toBe('over-range')
+  })
+
+  test('no conductive path between the probes reads open', () => {
+    // The capacitor hangs off net a toward mid; net b only reaches gnd — there
+    // is nothing between the probe pair.
+    const w = capWorld(
+      [
+        capPart('c1', 100e-6, 'a', 'mid'),
+        {
+          id: 'r1',
+          definition: 'resistor',
+          parameters: { resistance: scalar(1000, 'ohm') },
+          connects: [
+            ['b', 'terminal_a'],
+            ['gnd', 'terminal_b'],
+          ],
+        },
+      ],
+      ['b'],
+    )
+    expect(capacitanceTest(w, 'a', 'b').status).toBe('open')
   })
 })
 

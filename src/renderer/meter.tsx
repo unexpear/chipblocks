@@ -46,15 +46,22 @@ export function terminalNets(world: World): Map<string, string> {
 }
 
 const OHM_TEST_SOURCE_ID = 'meter_ohm_test_source'
-/** Continuity indication threshold — Fluke-117-class handhelds beep ≤ ~20 Ω. */
+/**
+ * Continuity indication threshold — Fluke 117 datasheet: "Beeper on < 20 Ω,
+ * off > 250 Ω" (verified against the published datasheet 2026-06-10).
+ */
 export const CONTINUITY_OHMS = 20
-/** Real handheld Ω ranges top out around 40–60 MΩ; past 1 GΩ we show OL. */
+/** Real handheld Ω ranges top out at 40 MΩ (Fluke 117); past 1 GΩ we show OL. */
 const OVERLOAD_OHMS = 1e9
 /**
- * Ω-mode test voltage. Real DMMs keep it BELOW junction turn-on (~0.6 V for
- * silicon) so in-circuit resistors measure correctly without forward-biasing
- * diodes — which is also why a diode honestly reads OL in Ω mode on a real
- * meter. R = V/I is exact for linear elements at any test voltage.
+ * Ω-mode test voltage. The DOCUMENTED real-meter behavior this reproduces:
+ * semiconductor junctions read open/OL in resistance mode (Fluke's own diode
+ * guidance), so in-circuit resistors measure without diodes conducting. Real
+ * meters get there by current-limiting per range (Fluke 117 Ω spec: open
+ * circuit < 2.7 V, short circuit < 350 µA — verified 2026-06-10); we get to
+ * the same verified outcome with a source held below junction turn-on. For
+ * linear elements R = V/I is identical under either rig — Ohm's law does not
+ * depend on the test level.
  */
 const OHM_TEST_VOLTS = 0.2
 /**
@@ -74,23 +81,21 @@ const TEST_SOURCE_OHMS = 1
 const SHUNT_OHMS = 1e12
 
 /**
- * The shared powered-off test rig behind Ω mode and the diode test, built the
- * way the real measurements work: every source's EMF is set to zero while its
- * internal resistance stays in place (the textbook Thévenin rule), then a test
- * source with the instrument's own series resistance drives the probe pair.
- * The BLACK probe is the solve's reference — the meter brings its own, so a
- * lone part on the bench measures fine with no circuit ground.
- *
- * Returns the solved voltage ACROSS the probes (after the instrument's internal
- * drop) and the test current, or null when the sub-solve fails.
+ * The shared powered-off test rig behind Ω mode, the diode test, and the
+ * capacitance test, built the way the real measurements work: every source's
+ * EMF is set to zero while its internal resistance stays in place (the
+ * textbook Thévenin rule), then a test source with the instrument's own series
+ * resistance drives the probe pair. The BLACK probe is the solve's reference —
+ * the meter brings its own, so a lone part on the bench measures fine with no
+ * circuit ground.
  */
-function poweredOffProbe(
+function poweredOffWorld(
   world: World,
   netA: string,
   netB: string,
   testVolts: number,
   testOhms: number,
-): { volts: number; amps: number } | null {
+): World {
   const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
   const instances = new Map<string, Instance>()
   for (const [id, inst] of world.instances) {
@@ -136,8 +141,22 @@ function poweredOffProbe(
       ],
     } as Instance)
   }
+  return { ...world, instances }
+}
 
-  const solution = solveDC({ ...world, instances }, { ground: netB })
+/**
+ * Solved DC voltage ACROSS the probes (after the instrument's internal drop)
+ * and the test current on the powered-off rig, or null when the solve fails.
+ */
+function poweredOffProbe(
+  world: World,
+  netA: string,
+  netB: string,
+  testVolts: number,
+  testOhms: number,
+): { volts: number; amps: number } | null {
+  const testWorld = poweredOffWorld(world, netA, netB, testVolts, testOhms)
+  const solution = solveDC(testWorld, { ground: netB })
   if (solution.status !== 'solved') return null
   return {
     volts: solution.nodes.get(netA) ?? 0,
@@ -163,11 +182,13 @@ export function equivalentResistance(world: World, netA: string, netB: string): 
 }
 
 /**
- * Diode-test compliance voltage and series resistance. Handheld meters drive
- * roughly 0.5–1.5 mA with a few volts behind it — enough to read silicon
- * junctions (~0.6–0.7 V) and most LEDs at a real operating point. 3.0 V through
- * 2 kΩ gives 1.5 mA into a short; LEDs with forward voltage at or above ~3 V
- * (blue, UV) honestly read OL — exactly what lower-compliance real meters do.
+ * Diode-test compliance voltage and series resistance. Fluke 117 diode test
+ * spec (verified 2026-06-10): open circuit < 2.7 V, short circuit < 1.2 mA,
+ * display full scale 2.000 V. Ours is the same idea at slightly higher
+ * compliance — 3.0 V through 2 kΩ (1.5 mA into a short) — so red/green LEDs
+ * around 2 V read a real operating point where a 117's 2.000 V display would
+ * already show OL. LEDs at or above ~3 V forward (blue, UV) honestly read OL
+ * here too, as on any meter whose compliance sits below their forward drop.
  */
 const DIODE_TEST_VOLTS = 3.0
 const DIODE_TEST_OHMS = 2000
@@ -245,6 +266,126 @@ export function acVoltsRms(
     }
   }
   return { rms, hz }
+}
+
+/**
+ * Capacitance test (the ⊣⊢ dial position). The real-meter method (Fluke,
+ * verified 2026-06-10): charge the capacitor from a known source, measure the
+ * resulting voltage, compute C = I·Δt/ΔV. Ours is the same identity with the
+ * current integrated instead of held constant: C = Q/ΔV, Q = ∫i·dt. The test
+ * level stays small so junctions don't conduct, same rationale as Ω mode.
+ */
+const CAP_TEST_VOLTS = 0.5
+const CAP_TEST_OHMS = 10_000
+/** Autorange windows, decade-stepped — simulated seconds are free. */
+const CAP_WINDOWS = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 10, 100]
+/** Settled when the probe voltage stops moving (0.3 % of the test voltage). */
+const CAP_FLAT_VOLTS = 0.003 * CAP_TEST_VOLTS
+/** Charged out when the test current has decayed to ≤ 2 % of its peak. */
+const CAP_DECAY_RATIO = 0.02
+/** Below ~50 pA peak nothing between the probes conducts at all. */
+const CAP_OPEN_AMPS = 5e-11
+
+export type CapacitanceResult =
+  | { status: 'measured'; farads: number }
+  | { status: 'parallel-leak' }
+  | { status: 'over-range' }
+  | { status: 'open' }
+  | { status: 'failed' }
+
+type ChargeWindow = {
+  endVolts: number
+  flat: boolean
+  decayed: boolean
+  endAmps: number
+  peakAmps: number
+  coulombs: number
+  duration: number
+}
+
+/** One charge run: step the powered-off rig and integrate the real current. */
+function runChargeWindow(
+  testWorld: World,
+  netA: string,
+  netB: string,
+  duration: number,
+  steps: number,
+): ChargeWindow | null {
+  const result = solveTransient(testWorld, {
+    ground: netB,
+    timeStep: duration / steps,
+    duration,
+  })
+  if (result.status !== 'solved' || result.series.length < 8) return null
+  const series = result.series
+  const probeVolts = series.map((p) => p.nodes.get(netA) ?? 0)
+  // The test current follows from the source's Thévenin form: what the EMF
+  // pushes minus what the probe node already sits at, over the known R.
+  const amps = probeVolts.map((v) => (CAP_TEST_VOLTS - v) / CAP_TEST_OHMS)
+  // Right-rectangle integration, NOT trapezoid: backward-Euler holds each
+  // step's current at its end value, so this is the solver's own exact
+  // integral — it telescopes to precisely C·ΔV for a capacitor at any step
+  // size, where a trapezoid would carry a boundary error of i₀·Δt/2.
+  let coulombs = 0
+  for (let i = 1; i < amps.length; i++) {
+    const dt = (series[i]?.time ?? 0) - (series[i - 1]?.time ?? 0)
+    coulombs += (amps[i] ?? 0) * dt
+  }
+  const endVolts = probeVolts[probeVolts.length - 1] ?? 0
+  const midVolts = probeVolts[Math.floor(probeVolts.length * 0.6)] ?? 0
+  const endAmps = Math.abs(amps[amps.length - 1] ?? 0)
+  const peakAmps = amps.reduce((max, a) => Math.max(max, Math.abs(a)), 0)
+  return {
+    endVolts,
+    flat: Math.abs(endVolts - midVolts) < CAP_FLAT_VOLTS,
+    decayed: endAmps <= CAP_DECAY_RATIO * peakAmps,
+    endAmps,
+    peakAmps,
+    coulombs,
+    duration,
+  }
+}
+
+/**
+ * Capacitance between the probes, measured the way a real meter does it:
+ * powered-off circuit, capacitor starting DISCHARGED (the real procedure says
+ * discharge before measuring — the sub-solve always starts there), a small
+ * known test source charges the network, and C = Q/V from the real integrated
+ * charge once the current has died out. The window autoranges across decades
+ * until the charge curve fits, like a real meter hunting for its range.
+ *
+ * Honest refusals, same as the real instrument:
+ *  - a resistive path in parallel keeps current flowing forever → no reading
+ *    (real manuals say to free one leg of the capacitor first);
+ *  - still charging past the 100 s window → over range;
+ *  - nothing conducting at all → open (a bench meter shows ~0 there).
+ */
+export function capacitanceTest(world: World, netA: string, netB: string): CapacitanceResult {
+  if (netA === netB) return { status: 'parallel-leak' } // shorted probes
+  const testWorld = poweredOffWorld(world, netA, netB, CAP_TEST_VOLTS, CAP_TEST_OHMS)
+  const runs: ChargeWindow[] = []
+  for (const window of CAP_WINDOWS) {
+    const coarse = runChargeWindow(testWorld, netA, netB, window, 120)
+    if (coarse === null) return { status: 'failed' }
+    runs.push(coarse)
+    if (!(coarse.flat && coarse.decayed)) continue
+    // The charge curve fits this window — re-run finer for the number (1200
+    // steps keeps backward-Euler's systematic charge error under ~1 %).
+    const fine = runChargeWindow(testWorld, netA, netB, window, 1200)
+    if (fine === null) return { status: 'failed' }
+    if (!fine.decayed) return { status: 'parallel-leak' }
+    if (fine.peakAmps < CAP_OPEN_AMPS || fine.endVolts <= 0) return { status: 'open' }
+    const farads = (fine.coulombs - fine.endAmps * fine.duration) / fine.endVolts
+    return farads < 1e-12 ? { status: 'open' } : { status: 'measured', farads }
+  }
+  // Never settled cleanly. A leak plateaus (same end voltage every window); a
+  // too-big capacitor keeps climbing decade after decade. Compare the last two.
+  const last = runs[runs.length - 1]
+  const prev = runs[runs.length - 2]
+  if (last === undefined || prev === undefined) return { status: 'failed' }
+  if (last.peakAmps < CAP_OPEN_AMPS) return { status: 'open' }
+  const stillClimbing = last.endVolts > 2 * Math.max(prev.endVolts, 1e-12)
+  return stillClimbing ? { status: 'over-range' } : { status: 'parallel-leak' }
 }
 
 /** A probe needle pinned to its terminal, riding along when the part moves. */
