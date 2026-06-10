@@ -8,7 +8,7 @@ A free, open-source, ground-up electronics design system. Real physical blocks a
 
 Read [OBJECT-MODEL.md](OBJECT-MODEL.md) for the canonical foundation spec — the object model everything is built on. Read [README.md](README.md) for the public-facing identity and [PRD.md](PRD.md) for the product requirements. [RESET-PLAN.md](RESET-PLAN.md) and [FINAL-STATE-VISION.md](FINAL-STATE-VISION.md) are historical/reference only — not active planning inputs.
 
-**Current status (2026-05-20):** docs-only foundation-spec phase after the second reset. **No frontend, schemas, manifests, validators, codegen, tests, Electron shell, or materials database currently exist on master.** The repo is markdown only. v3 Sprint 1 produced [OBJECT-MODEL.md](OBJECT-MODEL.md) (the canonical foundation spec); v3 Sprint 2 will write the object schema after that doc clears review. History is preserved: the original audio-synth direction (v1) on `legacy/audio-synth-direction` + `v0.1.0-alpha.9-final`; the v2 ground-up foundation on `archive/foundation-pre-second-reset` + `v0.2.0-foundation-2026-05-20`.
+**Current status (2026-06-09):** a working Electron + React + TypeScript app lives on master. Shipped so far: JSON-Schema-validated catalog (materials, behaviors, interfaces, primitive devices through transistors and transformers, all cited per the anti-placeholder rules) with a cross-FK validator; **two solvers** — DC (Modified Nodal Analysis + Newton-Raphson + pnjlim, with lumped thermal + electro-thermal feedback) and transient/time-domain (backward-Euler + per-step Newton-Raphson: R/C/L, AC sources, diodes/LEDs, NPN+PNP BJTs, transformers incl. center-tapped with core loss + saturation detection); an **interactive canvas editor** (13-part palette, properties panel with cited defaults + live readings, wire drawing/routing, Scope waveform view, voltage/power/temp/flow lenses, failure animations); a **multimeter tool** (probe terminals like real meter leads — DC volts, true-RMS AC volts + counted frequency, powered-off Ω + continuity, diode test, clamp-style amps on wires); failure-mode checks (LED, resistor, capacitor polarity/overvoltage, over-temperature); circuit **Save/Load** (`.chipblocks` files); a native menu (File/Edit/View/Settings). ~425 Vitest tests + tsc + Biome + build gate every commit. Sprint history lives in `sprints/` (currently Sprint 19, increments numbered `S19-v3-NN`). Older history: v1 on `legacy/audio-synth-direction`; v2 on `archive/foundation-pre-second-reset`.
 
 ## Core principles (load-bearing)
 
@@ -49,14 +49,12 @@ Layer 0 — Materials          (copper, silicon, FR4, solder, ceramic, ferrite, 
 
 Each layer is composed from the layer(s) below. The user sees the layer they're working at; descending into a block reveals its lower-layer composition. [OBJECT-MODEL.md](OBJECT-MODEL.md) uses **named** layers (material, shape, interface, behavior, primitive_device, circuit, assembly, board_or_chip, system) as canonical; the numbers above are a quick visual reference only.
 
-## Tech stack (intended future target, not current implementation)
+## Tech stack
 
-**None of this exists on master yet** — it's the target stack for when code returns (v3 Sprint 2+).
-
-- **Frontend**: Electron + React + TypeScript
-- **Renderer canvas**: React Flow (the intended canvas; not yet built)
+- **Frontend**: Electron + React + TypeScript (electron-vite; Biome for lint/format; Vitest) — **live on master**
+- **Renderer canvas**: React Flow (`@xyflow/react` v12) — **live**
 - **Backend (when added)**: Python; for chip-side work, Amaranth HDL. Not yet on the new main — added in later sprints as needed.
-- **Physics engine (when added)**: in-app deterministic for DC analysis at v1 — **Modified Nodal Analysis (MNA) + Newton-Raphson with convergence aids** for nonlinear elements (diodes, LEDs, transistors). Naive "Ohm + KCL + KVL" framing oversimplifies — pure nodal analysis cannot handle voltage sources (infinite conductance), and nonlinear devices need iterative Newton-Raphson with specific heuristics (pnjlim algorithm) to avoid overflow on the exponential diode equation. Verified 2026-06-05 against IEEE EMC Society "How SPICE Works" + Qucs technical docs. Plus switch state machines + LED failure-mode checks. See [SIMULATION-AND-VISUALIZATION-ARC.md](SIMULATION-AND-VISUALIZATION-ARC.md) for the full arc + tool license verification. **ngspice for transient simulation later — invoked as separate user-installed process, NOT bundled.** ngspice ships mixed-license code: primarily 3-clause BSD but with embedded LGPL/GPL components (numparam LGPLv2+, XSPICE table module GPLv2+, TCL integration LGPLv2, ADMST LGPLv2.1) per maintainer Holger Vogt's license inventory, verified 2026-06-05. The original "in-app bundled ngspice" framing of an earlier CLAUDE.md revision was wrong.
+- **Physics engine (implemented)**: in-app deterministic DC analysis — **Modified Nodal Analysis (MNA) + Newton-Raphson with convergence aids (pnjlim)** for nonlinear elements (diodes, LEDs, transistors). Verified 2026-06-05 against IEEE EMC Society "How SPICE Works" + Qucs technical docs; live in `src/dc-solver.ts` with switch states, failure-mode checks, and electro-thermal feedback (`src/electro-thermal.ts`). **An in-app transient (time-domain) solver also exists** (`src/transient-solver.ts`): backward-Euler with a per-step Newton-Raphson loop, covering R/C/L, AC sources, diodes/LEDs, NPN+PNP BJTs, and transformers (incl. center-tapped; core loss + volt-second saturation detection) — this supersedes the earlier framing that transient simulation requires ngspice. See [SIMULATION-AND-VISUALIZATION-ARC.md](SIMULATION-AND-VISUALIZATION-ARC.md) for the full arc + tool license verification. **ngspice remains a possible future high-fidelity option — invoked as a separate user-installed process, NOT bundled.** ngspice ships mixed-license code: primarily 3-clause BSD but with embedded LGPL/GPL components (numparam LGPLv2+, XSPICE table module GPLv2+, TCL integration LGPLv2, ADMST LGPLv2.1) per maintainer Holger Vogt's license inventory, verified 2026-06-05.
 - **Layout / GDS (when added)**: **Magic** (for layout) — UC Berkeley BSD-style permissive, bundleable, verified 2026-06-05 at github.com/RTimothyEdwards/magic LICENSE. **KLayout** (for GDS viewing) — GPL-3.0, invoked separately as a user-installed external process, NOT bundled. Verified 2026-06-05 at github.com/KLayout/klayout (SPDX GPL-3.0, maintained by Matthias Köfferlein).
 - **EM solvers (if ever added)**: openEMS (GPL-3.0) or MEEP (GPL-2.0-or-later) — both copyleft, external-process invocation only. NOTE: MEEP's "MIT" in its name refers to Massachusetts Institute of Technology (originating institution), NOT the MIT software license — common misconception, corrected 2026-06-05. See SIMULATION-AND-VISUALIZATION-ARC.md.
 - **Thermal solver (if ever added)**: no clean permissive open-source path. Elmer FEM is dual-LGPL/GPL but the heat-conduction modules are on the GPL side. Recommended path: from-scratch 2-D finite-difference solver in TypeScript using FR4 thermal conductivity (~0.3 W/m·K) and lumped thermal-resistance networks for PCB-scale modeling. See SIMULATION-AND-VISUALIZATION-ARC.md.
@@ -68,27 +66,27 @@ Each layer is composed from the layer(s) below. The user sees the layer they're 
 - User has **WSL2 Ubuntu** installed (confirmed). Used for any Python-side tooling.
 - Frontend (Electron, npm, React) runs in Windows.
 
-## Project structure (current state — docs only)
+## Project structure (current state)
 
 ```
 chipzzzd/
+├── src/                        solvers + renderer
+│   ├── dc-solver.ts            DC MNA + Newton-Raphson (+ diode/bjt/thermal models,
+│   │                           electro-thermal.ts, transient-solver.ts, validators)
+│   └── renderer/               Electron renderer: App.tsx canvas, palette, symbols,
+│                               part defaults/readings, scope, lenses, circuit-file
+├── electron/                   main process (menu, dialogs, Save/Load IPC) + preload
+├── schemas/                    JSON Schemas (definition, instance, behavior, net, …)
+├── fixtures/valid/             the catalog: materials, behaviors, devices, instances
+│                               (+ fixtures/invalid/ for must-fail schema tests)
+├── tests/                      Vitest (~400 tests)
+├── sprints/                    sprint plans + close-outs (sprint-2 … sprint-19)
 ├── OBJECT-MODEL.md             canonical v3 foundation spec
-├── README.md                   public-facing identity
-├── CLAUDE.md                   this file — development companion
-├── PRD.md                      product requirements
-├── MATERIAL-SOURCES.md         Layer 0 sourcing reference
-├── PHYSICS-COVERAGE-MAP.md     long-horizon physics roadmap
-├── OPEN-HARDWARE-ECOSYSTEM.md  open-hardware ecosystem notes
-├── TOOLING-RESEARCH-2026-05.md modern-toolchain research notes
-├── LICENSE                     MIT
-├── CLA.md                      contributor license agreement
-├── .gitignore
-└── (historical, banner-marked) ADR-006, ADR-007, ROADMAP,
-                                RESET-PLAN, FINAL-STATE-VISION,
-                                SPRINT-1, SPRINT-2, SPRINT-3
+├── README.md / PRD.md / CLAUDE.md / EDUCATION-101.md / LICENSE / CLA.md
+└── research + reference docs (MATERIAL-SOURCES, PHYSICS-COVERAGE-MAP,
+    SIMULATION-AND-VISUALIZATION-ARC, SCHEMATIC-SYMBOLS, TOOLING-RESEARCH,
+    LEGAL-CONSIDERATIONS, DISCLAIMER, CREDITS, historical banner-marked docs)
 ```
-
-Everything else — frontend, schemas, manifests, codegen, tests, CI — was removed in the second reset. It returns as v3 sprints rebuild it. The first code to return is `schemas/object.schema.json` in v3 Sprint 2.
 
 ## Working preferences
 
@@ -116,21 +114,18 @@ Everything else — frontend, schemas, manifests, codegen, tests, CI — was rem
 
 ## Testing
 
-There are currently **no automated code gates because there is no code.** When schemas/code return (v3 Sprint 2+), tests must return with them:
+Four gates run before any commit is declared done (they are separate gates — passing one is not passing the others):
 
-- **TypeScript check** (`npx tsc --noEmit`) — required on every commit once a frontend exists again.
-- **Vitest** — returns when there's renderer/logic to test.
-- **Pytest** — returns when the Python backend lands.
+- **TypeScript check**: `npx tsc --noEmit`
+- **Lint/format**: `npx biome check --write src tests`
+- **Tests**: `npx vitest run` (~400 tests: schema validation of every fixture, cross-FK referential integrity, solver physics against textbook/analytic results, failure checks, UI logic)
+- **Build**: `npm run build` (compiles main + preload + renderer)
 
-The v1 cookbook lesson still holds: tsc and tests are separate gates. But none run today — the repo is markdown only.
+**Pytest** returns when the Python backend lands. Dev app: `npm run dev` (Electron; main-process changes need a full restart, renderer hot-reloads).
 
 ## Sprint cadence
 
-v3 sprint numbering (the second reset restarted the count):
-
-- **v3 Sprint 1:** [OBJECT-MODEL.md](OBJECT-MODEL.md) — the canonical foundation spec (done; in review).
-- **v3 Sprint 2:** `schemas/object.schema.json` — only after OBJECT-MODEL.md clears review.
-- **Later:** TBD from the settled foundation. No LED demo, manifests, or canvas are scheduled yet — those get planned once the object model + schema are solid.
+v3 sprint numbering (the second reset restarted the count). Sprints 1–18 are complete and documented in `sprints/`: foundation spec → schemas → catalog (materials, behaviors, devices) → cross-FK validator → equations → nets → DC solver → failure detection → Electron shell + static canvas. **Sprint 19 (open)** began as "make the canvas read like a real circuit" and grew into the interactive-canvas + simulation mega-sprint — per-feature increments numbered `S19-v3-NN` in commit messages (at `S19-v3-55`: the multimeter tool).
 
 Variable-length sprints; pace dictated by correctness, not deadlines. The v2 `SPRINT-1/2/3.md` docs are historical (banner-marked), not the active plan.
 

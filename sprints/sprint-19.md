@@ -1,6 +1,28 @@
 # Sprint 19 — Make the canvas read like a real circuit
 
-> **Status: open (2026-06-06).** Sprint 18 landed the canvas: standard symbols, real
+> **Status: open — grown far beyond the written scope (updated 2026-06-09).**
+> The scope below (A–D: labels, loop layout, drag-and-drop, physics-driven
+> arrows) shipped in the first days. The sprint then kept going as the
+> **interactive-canvas + simulation mega-sprint**, per-feature increments
+> `S19-v3-NN` in the commit log. Landed beyond the written scope (through
+> S19-v3-55): the editable Properties panel with cited defaults, live readings
+> and provenance; real wire resistance + the per-point voltage probe; LED
+> color physics; the unified engineering-units formatter; the native menu +
+> Settings (light mode, grid color); transistors (NPN + PNP, Ebers-Moll, in
+> both solvers); the whole **transient/time-domain solver** (R/C/L, AC
+> sources, rectifiers, amplifiers) + the **Scope** waveform view; capacitor +
+> inductor + transformer + center-tapped transformer parts (core loss +
+> saturation detection); four **visualization lenses** (voltage / power / temp
+> / flow); the **lumped thermal model** + over-temperature checks + the
+> **electro-thermal feedback loop**; capacitor polarity + overvoltage checks;
+> terminal hover labels; circuit **Save/Load**; the **multimeter tool**
+> (S19-v3-53..55: red/black probes on terminal dots with a mode dial — DC
+> volts, true-RMS AC volts with frequency counted from the waveform's own
+> zero crossings, powered-off Ω + continuity done the textbook Thévenin way,
+> a real diode test — plus clamp-style amps by touching a wire). The original
+> text below is the sprint's opening plan, kept as written.
+>
+> *(Original banner, 2026-06-06):* Sprint 18 landed the canvas: standard symbols, real
 > render. But it lays parts out in a 3-column grid and draws the wires as bezier
 > curves through the middle — so the wires cross into a rat's nest that looks
 > nothing like a schematic. The project lead showed the target: a hand-drawn

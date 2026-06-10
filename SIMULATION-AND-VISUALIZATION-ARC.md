@@ -8,6 +8,32 @@
 
 ---
 
+## Status update (2026-06-09) — where reality overtook this doc
+
+The research below is kept as verified on 2026-06-05. Sprint 19 has since built
+most of the arc; the per-stage reality:
+
+| Stage | Status |
+|---|---|
+| **1** Net model | ✅ Done (Sprints 13–14) |
+| **2** Behavior-derives-value | ✅ Done (equations, R = ρL/A, C = ε₀ε_rA/d, λ = hc/E_g) |
+| **3** DC solver | ✅ Done, exceeded — full Option B (MNA + Newton-Raphson + pnjlim), plus BJTs (NPN + PNP), inductors, transformers, and electro-thermal feedback |
+| **4** Failure checks | ✅ Done — LED overload/reverse, resistor overpower, capacitor polarity/overvoltage, part over-temperature |
+| **5** Canvas | ✅ Done — interactive editor, 13-part palette, properties, Save/Load |
+| **6** Lenses | ✅ The "replicable now" set is done: voltage map, power overlay, temperature overlay, animated current flow, rating-violation highlighting. Far-future items (eye diagrams, EMI surfaces) remain future |
+| **7** Thermal | 🟡 Rungs 1–2 done: lumped T = T_amb + P·θ_JA per part + electro-thermal feedback into the solve. Rung 3 (2-D spatial FD over board geometry) blocked on the PCB layer |
+| **8** EMI/EMC | ⬜ Untouched (correctly — external-process territory) |
+
+**Framing correction:** this doc filed transient simulation under "requires
+ngspice external process." An **in-app transient solver now exists**
+(`src/transient-solver.ts`: backward-Euler + per-step Newton-Raphson — R/C/L,
+AC sources, diode rectifiers, BJT amplifiers/switches, transformers with core
+loss + volt-second saturation detection) and drives the in-app Scope. ngspice
+remains a possible future *high-fidelity* option (license posture below still
+accurate), no longer the prerequisite for time-domain at all.
+
+---
+
 ## Why this doc exists
 
 The user explicitly asked for the simulation + visualization arc to be made durable so the foundation work being done in Sprints 1-11 has a clear destination beyond "the catalog grows." They want the system to eventually catch voltage drop-off, LED overloading, hotspots, EMI from bad shapes — and to visualize all of that on a canvas with multiple overlay "lenses."
