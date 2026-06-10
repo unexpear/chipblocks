@@ -57,7 +57,7 @@ export function ToolbarItems({
       <button
         type="button"
         onClick={() => onTool(meterActive ? 'select' : 'meter')}
-        title="Meter — touch terminal dots like multimeter probes: red then black reads between them (DC volts, AC volts rms, ohms, diode test, or capacitance — set by the dial on the readout); both probes on one part reads its current; touch a wire to clamp onto it and read its amps without breaking the circuit; HOLD freezes a reading to compare"
+        title="Meter — touch terminal dots like multimeter probes: red then black reads between them (DC volts, AC volts rms, ohms, diode test, or capacitance — set by the dial on the readout); both probes on one part reads its current; touch a wire to clamp onto it and read its amps the clamp-meter way (senses the wire's magnetic field — nothing inserted, zero burden voltage, circuit untouched); HOLD freezes a reading to compare"
         style={{ ...toolButton(meterActive), flexDirection: 'row', gap: 6, padding: '8px 10px' }}
       >
         <span aria-hidden style={{ color: '#e0594f', fontSize: 13 }}>

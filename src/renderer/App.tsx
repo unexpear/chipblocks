@@ -606,9 +606,15 @@ function Canvas() {
       const nets = bothProbeNets()
       if (typeof nets === 'string') return acChip(nets)
       const ac = acVoltsRms(solvedWorld, nets.netRed, nets.netBlack)
+      if (ac === 'span-too-wide') {
+        return acChip('V~: source frequencies are too far apart to resolve in one pass')
+      }
       if (ac === null) return acChip("V~ can't run a time pass on this circuit — no reading")
       const hzText = ac.hz !== null ? ` · ${formatEng(ac.hz, 'Hz')}` : ''
-      return acChip(`V~ (red − black): ${formatEng(ac.rms, 'V')} rms${hzText}`)
+      // Sub-µV residue is solver float noise, not signal — floor the display
+      // like a real meter's resolution floor instead of printing femtovolts.
+      const shownRms = ac.rms < 1e-6 ? 0 : ac.rms
+      return acChip(`V~ (red − black): ${formatEng(shownRms, 'V')} rms${hzText}`)
     }
     if (meterMode === 'diode') {
       const diodeChip = (text: string) => ({ icon: '⏵', iconColor: '#6ec06e', text })

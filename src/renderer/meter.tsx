@@ -1,6 +1,7 @@
 import { useInternalNode, ViewportPortal } from '@xyflow/react'
 import type { Instance, World } from '../cross-fk-validator.ts'
 import { type Solution, solveDC } from '../dc-solver.ts'
+import { readScalarParam } from '../instance-params.ts'
 import { solveTransient } from '../transient-solver.ts'
 import { scopeWindow } from './scope.tsx'
 
@@ -11,8 +12,12 @@ import { scopeWindow } from './scope.tsx'
  * ground, both probes on one part also reads its current), V~ (true-RMS AC
  * volts from a real time-domain run), Ω (powered-off resistance + continuity),
  * ⏵ (diode test: real test current, forward drop). Touching a wire clamps onto
- * it and reads its current — the clamp-meter move. All values are live solved
- * data; an unwired terminal honestly reads "not wired", never a fake 0.
+ * it and reads its current — the clamp-meter move. A real clamp senses the
+ * conductor's magnetic field without breaking the circuit, so reading current
+ * with ZERO burden voltage is the genuine physics of that method (burden is a
+ * series-insertion effect; Fluke clamp guidance, verified 2026-06-10). All
+ * values are live solved data; an unwired terminal honestly reads "not
+ * wired", never a fake 0.
  */
 
 export type ProbeRef = { nodeId: string; handleId: string }
@@ -220,10 +225,17 @@ export function diodeTest(
  * of the LIVE circuit (sources on; this is the powered measurement). Like a
  * real DMM's V~ range the reading is AC-coupled: the mean (the DC level) is
  * subtracted and the RMS of what remains is displayed — a steady DC point
- * honestly reads ~0 V~. The first third of the simulated window is discarded
- * so the start-up transient (capacitors charging from rest) doesn't pollute
- * the steady-state answer. Frequency comes from counting the AC waveform's
- * rising zero crossings — measured, not read off the source's label.
+ * honestly reads ~0 V~ (the Fluke 117 datasheet states its AC volts ranges
+ * are ac-coupled). The first third of the simulated window is discarded so
+ * the start-up transient (capacitors charging from rest) doesn't pollute the
+ * steady-state answer.
+ *
+ * Sampling follows the FASTEST source, not the display heuristic: the window
+ * length tracks the slowest source, so a second fast source would otherwise
+ * alias into a silently wrong RMS. We take ≥32 samples per fastest period;
+ * when the sources span so many decades that one pass can't resolve both,
+ * the meter refuses honestly ('span-too-wide') — a band-limited real meter
+ * is out of range there too, it just rolls off instead of saying so.
  *
  * Returns null when the time-domain solve can't run (its status tells why).
  */
@@ -231,9 +243,21 @@ export function acVoltsRms(
   world: World,
   netA: string,
   netB: string,
-): { rms: number; hz: number | null } | null {
+): { rms: number; hz: number | null } | 'span-too-wide' | null {
   const window = scopeWindow(world)
-  const result = solveTransient(world, window)
+  let fastestHz = 0
+  for (const inst of world.instances.values()) {
+    if (inst.definition !== 'power_source') continue
+    const amplitude = readScalarParam(inst, 'ac_amplitude') ?? 0
+    const frequency = readScalarParam(inst, 'frequency') ?? 0
+    if (amplitude > 0 && frequency > fastestHz) fastestHz = frequency
+  }
+  const steps = Math.max(500, Math.ceil(window.duration * fastestHz * 32))
+  if (steps > 20000) return 'span-too-wide'
+  const result = solveTransient(world, {
+    timeStep: window.duration / steps,
+    duration: window.duration,
+  })
   if (result.status !== 'solved' || result.series.length < 8) return null
   const settleTime = window.duration / 3
   const points = result.series.filter((p) => p.time >= settleTime)
@@ -242,27 +266,42 @@ export function acVoltsRms(
   const mean = volts.reduce((sum, v) => sum + v, 0) / volts.length
   const rms = Math.sqrt(volts.reduce((sum, v) => sum + (v - mean) ** 2, 0) / volts.length)
 
-  // Frequency from mean crossings in BOTH directions — consecutive crossings of
-  // a periodic wave are half-periods apart, so n crossings span (n−1)/2 periods.
-  // Gated on real amplitude: a flat reading has no frequency to count.
-  let crossings = 0
-  let firstCrossing = -1
-  let lastCrossing = -1
-  for (let i = 1; i < volts.length; i++) {
-    const before = (volts[i - 1] ?? 0) - mean
-    const after = (volts[i] ?? 0) - mean
-    if ((before <= 0 && after > 0) || (before >= 0 && after < 0)) {
-      crossings += 1
-      if (firstCrossing < 0) firstCrossing = i
-      lastCrossing = i
+  // Frequency from band-transitions with hysteresis — the Schmitt-trigger
+  // technique real counters use so ripple riding on the waveform can't
+  // double-count a crossing: the band is ±10 % of the peak deviation, and an
+  // excursion only counts after traversing the FULL band. The period comes
+  // from SAME-direction events only (rising→rising or falling→falling),
+  // which are spaced exactly one period apart for ANY periodic shape — a
+  // half-wave-rectified hump included — so n of them span n−1 whole periods.
+  // Both directions are tracked because a short analysis slice can clip one
+  // direction's events at its edges. Ripple LARGER than the band still fools
+  // the count — true of real handheld counters on strongly distorted signals
+  // as well. Gated on real amplitude: a flat line has no frequency to count.
+  const peak = volts.reduce((max, v) => Math.max(max, Math.abs(v - mean)), 0)
+  const band = 0.1 * peak
+  let state: 'high' | 'low' | 'between' = 'between'
+  const rising = { count: 0, first: -1, last: -1 }
+  const falling = { count: 0, first: -1, last: -1 }
+  for (let i = 0; i < volts.length; i++) {
+    const v = (volts[i] ?? 0) - mean
+    const next: 'high' | 'low' | 'between' = v > band ? 'high' : v < -band ? 'low' : state
+    const edge = state === 'low' && next === 'high' ? rising : null
+    const fallEdge = state === 'high' && next === 'low' ? falling : null
+    const hit = edge ?? fallEdge
+    if (hit !== null) {
+      hit.count += 1
+      if (hit.first < 0) hit.first = i
+      hit.last = i
     }
+    state = next
   }
+  const events = rising.count >= 2 ? rising : falling
   let hz: number | null = null
-  if (rms >= 1e-3 && crossings >= 3 && lastCrossing > firstCrossing) {
-    const firstTime = points[firstCrossing]?.time
-    const lastTime = points[lastCrossing]?.time
+  if (rms >= 1e-3 && events.count >= 2 && events.last > events.first) {
+    const firstTime = points[events.first]?.time
+    const lastTime = points[events.last]?.time
     if (firstTime !== undefined && lastTime !== undefined && lastTime > firstTime) {
-      hz = (crossings - 1) / (2 * (lastTime - firstTime))
+      hz = (events.count - 1) / (lastTime - firstTime)
     }
   }
   return { rms, hz }

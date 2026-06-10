@@ -507,10 +507,172 @@ describe('acVoltsRms (V~ mode)', () => {
     )
     const result = acVoltsRms(w, 'live', 'gnd')
     expect(result).not.toBeNull()
-    if (result === null) return
+    if (result === null || result === 'span-too-wide') return
     // 10 V amplitude × (1000/1001) divider → rms ≈ 7.06 V; backward-Euler at
     // ~167 steps/cycle attenuates slightly, so the tolerance is loose-but-real.
     expect(Math.abs(result.rms - 10 / Math.sqrt(2))).toBeLessThan(0.2)
+    expect(result.hz).not.toBeNull()
+    if (result.hz === null) return
+    expect(Math.abs(result.hz - 60)).toBeLessThan(1.5)
+  })
+
+  test('two sources decades apart: the fast one is sampled, not aliased — RMS adds in quadrature', () => {
+    // 10 V @ 60 Hz in series with 1 V @ 5 kHz into 1 kΩ. The window follows the
+    // slow source; sampling must follow the FAST one (≥32 points/period) or the
+    // 5 kHz part aliases. Orthogonal components: rms² = rms₁² + rms₂².
+    const w = ohmWorld(
+      [{ id: 'live' }, { id: 'mid' }, { id: 'gnd', ground: true }],
+      [
+        {
+          id: 'src_slow',
+          definition: 'power_source',
+          parameters: {
+            nominal_voltage: scalar(0, 'volt'),
+            ac_amplitude: scalar(10, 'volt'),
+            frequency: scalar(60, 'hertz'),
+            internal_resistance: scalar(1, 'ohm'),
+          },
+          connects: [
+            ['live', 'terminal_positive'],
+            ['mid', 'terminal_negative'],
+          ],
+        },
+        {
+          id: 'src_fast',
+          definition: 'power_source',
+          parameters: {
+            nominal_voltage: scalar(0, 'volt'),
+            ac_amplitude: scalar(1, 'volt'),
+            frequency: scalar(5000, 'hertz'),
+            internal_resistance: scalar(1, 'ohm'),
+          },
+          connects: [
+            ['mid', 'terminal_positive'],
+            ['gnd', 'terminal_negative'],
+          ],
+        },
+        {
+          id: 'r1',
+          definition: 'resistor',
+          parameters: { resistance: scalar(1000, 'ohm') },
+          connects: [
+            ['live', 'terminal_a'],
+            ['gnd', 'terminal_b'],
+          ],
+        },
+      ],
+    )
+    const result = acVoltsRms(w, 'live', 'gnd')
+    expect(result).not.toBeNull()
+    expect(result).not.toBe('span-too-wide')
+    if (result === null || result === 'span-too-wide') return
+    const divider = 1000 / 1002
+    const expected = divider * Math.sqrt((10 * 10 + 1 * 1) / 2)
+    expect(Math.abs(result.rms - expected)).toBeLessThan(0.1)
+    // The hysteresis band (±10 % of peak ≈ ±1.1 V) is wider than the 1 V ripple,
+    // so the counter still reads the 60 Hz fundamental, not ripple crossings.
+    expect(result.hz).not.toBeNull()
+    if (result.hz === null) return
+    expect(Math.abs(result.hz - 60)).toBeLessThan(1.5)
+  })
+
+  test('sources too many decades apart refuse honestly instead of aliasing', () => {
+    const w = ohmWorld(
+      [{ id: 'live' }, { id: 'mid' }, { id: 'gnd', ground: true }],
+      [
+        {
+          id: 'src_slow',
+          definition: 'power_source',
+          parameters: {
+            nominal_voltage: scalar(0, 'volt'),
+            ac_amplitude: scalar(5, 'volt'),
+            frequency: scalar(0.1, 'hertz'),
+            internal_resistance: scalar(1, 'ohm'),
+          },
+          connects: [
+            ['live', 'terminal_positive'],
+            ['mid', 'terminal_negative'],
+          ],
+        },
+        {
+          id: 'src_fast',
+          definition: 'power_source',
+          parameters: {
+            nominal_voltage: scalar(0, 'volt'),
+            ac_amplitude: scalar(1, 'volt'),
+            frequency: scalar(1e6, 'hertz'),
+            internal_resistance: scalar(1, 'ohm'),
+          },
+          connects: [
+            ['mid', 'terminal_positive'],
+            ['gnd', 'terminal_negative'],
+          ],
+        },
+        {
+          id: 'r1',
+          definition: 'resistor',
+          parameters: { resistance: scalar(1000, 'ohm') },
+          connects: [
+            ['live', 'terminal_a'],
+            ['gnd', 'terminal_b'],
+          ],
+        },
+      ],
+    )
+    expect(acVoltsRms(w, 'live', 'gnd')).toBe('span-too-wide')
+  })
+
+  test('a half-wave rectified hump (strongly asymmetric) still counts the true source frequency', () => {
+    // Rising-edge-only counting is what makes this exact: consecutive rising
+    // transitions are one full period apart for ANY periodic shape. Counting
+    // both edge directions would misread this waveform by ~7 %.
+    const w = ohmWorld(
+      [{ id: 'live' }, { id: 'out' }, { id: 'gnd', ground: true }],
+      [
+        {
+          id: 'src',
+          definition: 'power_source',
+          parameters: {
+            nominal_voltage: scalar(0, 'volt'),
+            ac_amplitude: scalar(10, 'volt'),
+            frequency: scalar(60, 'hertz'),
+            internal_resistance: scalar(1, 'ohm'),
+          },
+          connects: [
+            ['live', 'terminal_positive'],
+            ['gnd', 'terminal_negative'],
+          ],
+        },
+        {
+          id: 'd1',
+          definition: 'diode_silicon_rectifier',
+          parameters: {
+            forward_voltage: scalar(0.7, 'volt'),
+            max_forward_current: scalar(1, 'ampere'),
+          },
+          connects: [
+            ['live', 'anode'],
+            ['out', 'cathode'],
+          ],
+        },
+        {
+          id: 'r1',
+          definition: 'resistor',
+          parameters: { resistance: scalar(1000, 'ohm') },
+          connects: [
+            ['out', 'terminal_a'],
+            ['gnd', 'terminal_b'],
+          ],
+        },
+      ],
+    )
+    const result = acVoltsRms(w, 'out', 'gnd')
+    expect(result).not.toBeNull()
+    expect(result).not.toBe('span-too-wide')
+    if (result === null || result === 'span-too-wide') return
+    // AC-coupled rms of a ~9.3 V half-sine hump train ≈ 3.6 V — loose real bounds.
+    expect(result.rms).toBeGreaterThan(3.0)
+    expect(result.rms).toBeLessThan(4.2)
     expect(result.hz).not.toBeNull()
     if (result.hz === null) return
     expect(Math.abs(result.hz - 60)).toBeLessThan(1.5)
@@ -545,7 +707,7 @@ describe('acVoltsRms (V~ mode)', () => {
     )
     const result = acVoltsRms(w, 'vcc', 'gnd')
     expect(result).not.toBeNull()
-    if (result === null) return
+    if (result === null || result === 'span-too-wide') return
     expect(result.rms).toBeLessThan(0.05)
     expect(result.hz).toBeNull()
   })
