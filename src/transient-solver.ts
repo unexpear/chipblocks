@@ -154,8 +154,12 @@ type TransformerElement = {
   m: number // mutual inductance k·√(L1·L2)
   r1: number // primary winding resistance (Ω)
   r2: number // secondary winding resistance (Ω)
+  rCore: number // core-loss resistance across the primary (Ω); 0 ⇒ lossless
+  satFluxVs: number // saturation flux linkage (V·s); Infinity ⇒ not rated
   i1Prev: number // primary current (pA → pB) at the previous step
   i2Prev: number // secondary current (sA → sB) at the previous step
+  fluxVs: number // running ∫v_primary·dt (V·s) — the core's real flux linkage
+  saturationWarned: boolean
 }
 
 /**
@@ -175,7 +179,11 @@ type CtTransformerElement = {
   lMatrix: number[][]
   /** Per-winding series resistance (each half gets primary_resistance/2). */
   r: [number, number, number]
+  rCore: number // core-loss resistance across the full primary (Ω); 0 ⇒ lossless
+  satFluxVs: number // saturation flux linkage (V·s); Infinity ⇒ not rated
   iPrev: [number, number, number]
+  fluxVs: number // running ∫v_full_primary·dt (V·s)
+  saturationWarned: boolean
 }
 
 /** A diode-family element resolved for the per-step Newton-Raphson loop. */
@@ -311,8 +319,12 @@ function resolveTransformer(
     m: k * Math.sqrt(l1 * l2),
     r1: readScalarParam(inst, 'primary_resistance') ?? 0,
     r2: readScalarParam(inst, 'secondary_resistance') ?? 0,
+    rCore: readScalarParam(inst, 'core_loss_resistance') ?? 0,
+    satFluxVs: readScalarParam(inst, 'saturation_flux_linkage') ?? Number.POSITIVE_INFINITY,
     i1Prev: 0,
     i2Prev: 0,
+    fluxVs: 0,
+    saturationWarned: false,
   }
 }
 
@@ -371,7 +383,11 @@ function resolveCtTransformer(
       [mPS, mPS, l2],
     ],
     r: [rHalf, rHalf, readScalarParam(inst, 'secondary_resistance') ?? 0],
+    rCore: readScalarParam(inst, 'core_loss_resistance') ?? 0,
+    satFluxVs: readScalarParam(inst, 'saturation_flux_linkage') ?? Number.POSITIVE_INFINITY,
     iPrev: [0, 0, 0],
+    fluxVs: 0,
+    saturationWarned: false,
   }
 }
 
@@ -599,6 +615,16 @@ function stampTransformerCompanion(
     addB(p.a, -p.ih)
     addB(p.b, p.ih)
   }
+  // Core (iron) loss: the equivalent-circuit parallel resistance across the
+  // primary — draws real loss current in proportion to the flux swing, and
+  // nothing at DC (no changing flux), exactly like a real core.
+  if (tr.rCore > 0) {
+    const gCore = 1 / tr.rCore
+    add(tr.iPA, tr.iPA, gCore)
+    add(tr.iPB, tr.iPB, gCore)
+    add(tr.iPA, tr.iPB, -gCore)
+    add(tr.iPB, tr.iPA, -gCore)
+  }
 }
 
 /**
@@ -632,6 +658,16 @@ function stampCtTransformerCompanion(
     }
     addB(aW, -(ih[w] ?? 0))
     addB(bW, ih[w] ?? 0)
+  }
+  // Core loss across the FULL primary (primary_a ↔ primary_b) — one shared core.
+  if (tr.rCore > 0) {
+    const gCore = 1 / tr.rCore
+    const [pA] = tr.idx[0]
+    const [, pB] = tr.idx[1]
+    add(pA, pA, gCore)
+    add(pB, pB, gCore)
+    add(pA, pB, -gCore)
+    add(pB, pA, -gCore)
   }
 }
 
@@ -912,6 +948,18 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const v2 = (nodes.get(tr.sA) ?? 0) - (nodes.get(tr.sB) ?? 0)
       tr.i1Prev = g11 * v1 + g12 * v2 + ih1
       tr.i2Prev = g12 * v1 + g22 * v2 + ih2
+      // The core's real flux linkage IS the primary's volt-second integral —
+      // exceeding the rated capacity is genuine core saturation (too-low
+      // frequency, overvoltage, DC bias, or switch-on inrush all get here).
+      tr.fluxVs += v1 * dt
+      if (!tr.saturationWarned && Math.abs(tr.fluxVs) > tr.satFluxVs) {
+        tr.saturationWarned = true
+        warnings.push(
+          `Transformer core saturated at t = ${t.toPrecision(3)} s: |∫v·dt| exceeded ` +
+            `${tr.satFluxVs} V·s — the waveform beyond this point is optimistic ` +
+            '(saturation collapse is detected, not yet modeled).',
+        )
+      }
     }
     for (const tr of ctTransformers) {
       const { G, ih } = ctTransformerStep(tr, dt) // OLD history
@@ -919,6 +967,16 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       tr.iPrev = [0, 1, 2].map(
         (w) => (G[w] ?? []).reduce((acc, g, j) => acc + g * (v[j] ?? 0), 0) + (ih[w] ?? 0),
       ) as [number, number, number]
+      // Shared core: flux from the FULL primary's volt-seconds (both halves).
+      tr.fluxVs += ((nodes.get(tr.nets[0][0]) ?? 0) - (nodes.get(tr.nets[1][1]) ?? 0)) * dt
+      if (!tr.saturationWarned && Math.abs(tr.fluxVs) > tr.satFluxVs) {
+        tr.saturationWarned = true
+        warnings.push(
+          `Transformer core saturated at t = ${t.toPrecision(3)} s: |∫v·dt| exceeded ` +
+            `${tr.satFluxVs} V·s — the waveform beyond this point is optimistic ` +
+            '(saturation collapse is detected, not yet modeled).',
+        )
+      }
     }
     series.push({ time: t, nodes })
   }

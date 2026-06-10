@@ -70,6 +70,16 @@ parameters:
     units: ohm
     required: false
     description: DC resistance of the secondary winding. 0 / absent models an ideal winding.
+  core_loss_resistance:
+    type: quantity
+    units: ohm
+    required: false
+    description: Core (iron) loss modeled as the classic equivalent-circuit parallel resistance across the primary — hysteresis + eddy-current losses drawn in proportion to the flux swing. Draws nothing at DC (no changing flux, no core loss); absent = lossless core.
+  saturation_flux_linkage:
+    type: quantity
+    units: weber
+    required: false
+    description: The core's volt-second capacity referred to the full primary (flux linkage at saturation). The transient solver integrates the primary's real volt-seconds and WARNS when it is exceeded — too-low frequency, too-high voltage, DC bias, or switch-on inrush all genuinely saturate a core. Detection only; the collapsed-inductance waveform beyond saturation is not yet modeled.
 behaviors:
   - couples_magnetically
   - has_inductance

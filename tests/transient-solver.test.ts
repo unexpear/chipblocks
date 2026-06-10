@@ -624,6 +624,8 @@ describe('solveTransient — transformer (coupled windings)', () => {
     ac?: { amplitude: number; frequency: number }
     seriesOhms?: number
     loadOhms: number
+    coreLossOhms?: number
+    satFluxVs?: number
   }): World {
     const world: World = {
       definitions: new Map(),
@@ -678,6 +680,12 @@ describe('solveTransient — transformer (coupled windings)', () => {
         coupling_coefficient: scalar(0.98, 'dimensionless'),
         primary_resistance: scalar(0.5, 'ohm'),
         secondary_resistance: scalar(50, 'ohm'),
+        ...(opts.coreLossOhms !== undefined
+          ? { core_loss_resistance: scalar(opts.coreLossOhms, 'ohm') }
+          : {}),
+        ...(opts.satFluxVs !== undefined
+          ? { saturation_flux_linkage: scalar(opts.satFluxVs, 'weber') }
+          : {}),
       },
       connects: [
         { net: pFeed, terminal: 'primary_a', of: 't1' },
@@ -737,6 +745,55 @@ describe('solveTransient — transformer (coupled windings)', () => {
     expect(dc.nodes.get('p_in')).toBeCloseTo(0.5, 6)
     expect(dc.branches.get('t1')).toBeCloseTo(1, 6) // primary winding current
     expect(dc.nodes.get('out')).toBeCloseTo(0, 9) // no DC transformation
+  })
+
+  test('core (iron) loss draws real power — the primary sags behind a source impedance', () => {
+    const f = 60
+    const T = 1 / f
+    const swingAtPrimary = (coreLossOhms?: number) => {
+      const res = solveTransient(
+        transformerCircuit({
+          dc: 0,
+          ac: { amplitude: 12, frequency: f },
+          seriesOhms: 50,
+          loadOhms: 100000,
+          ...(coreLossOhms !== undefined ? { coreLossOhms } : {}),
+        }),
+        { timeStep: T / 200, duration: 3 * T },
+      )
+      expect(res.status).toBe('solved')
+      const lastPeriod = res.series.filter((p) => p.time >= 2 * T)
+      const v = lastPeriod.map((p) => p.nodes.get('p_in') ?? 0)
+      return Math.max(...v) - Math.min(...v)
+    }
+    const lossless = swingAtPrimary()
+    const withIronLoss = swingAtPrimary(200)
+    // The 200 Ω core-loss branch pulls real in-phase current through the 50 Ω
+    // source impedance, sagging the primary measurably below the lossless case.
+    expect(withIronLoss).toBeLessThan(lossless - 0.5)
+  })
+
+  test('core saturation is detected from real volt-seconds: too-low frequency warns', () => {
+    // 75 mV·s core: at 60 Hz a 12 V drive peaks at 2V/ω ≈ 64 mV·s (inrush
+    // doubling included) — inside the rating, silent. At 5 Hz the same drive
+    // integrates to ≈ 0.76 V·s — a genuinely saturated core, warned.
+    const run = (frequency: number) =>
+      solveTransient(
+        transformerCircuit({
+          dc: 0,
+          ac: { amplitude: 12, frequency },
+          loadOhms: 100000,
+          satFluxVs: 0.075,
+        }),
+        { timeStep: 1 / frequency / 200, duration: 2 / frequency },
+      )
+    const nominal = run(60)
+    expect(nominal.status).toBe('solved')
+    expect(nominal.warnings.some((w) => w.includes('saturated'))).toBe(false)
+
+    const tooSlow = run(5)
+    expect(tooSlow.status).toBe('solved')
+    expect(tooSlow.warnings.some((w) => w.includes('saturated'))).toBe(true)
   })
 })
 
