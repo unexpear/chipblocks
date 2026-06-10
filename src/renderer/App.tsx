@@ -31,11 +31,22 @@ import { solveElectroThermal } from '../electro-thermal.ts'
 import { solveTransient, type TransientResult } from '../transient-solver.ts'
 import { type CanvasEdge, type CanvasNode, canvasToWorld } from './canvas-to-world.ts'
 import { loadCatalogWorld } from './catalog-loader.ts'
+import { deserializeCircuit, maxIdSuffix, serializeCircuit } from './circuit-file.ts'
 import { DockablePanel, type DockEdge } from './dockable-panel.tsx'
 import { wireFlow } from './edge-currents.ts'
 import { canvasHealth, HealthContext, type NodeHealth } from './health.ts'
 import { LensContext, type LensMode } from './lens.ts'
 import { materialCapabilities, validMaterialsByRole } from './material-roles.ts'
+import {
+  acVoltsRms,
+  CONTINUITY_OHMS,
+  diodeTest,
+  equivalentResistance,
+  MeterProbes,
+  type ProbeRef,
+  terminalNets,
+  terminalVoltages,
+} from './meter.tsx'
 import { edgeTypes } from './net-edge.tsx'
 import { DEFINITION_MIME, PaletteItems } from './palette.tsx'
 import { defaultParameters, toggledSwitch } from './part-defaults.ts'
@@ -45,6 +56,7 @@ import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
 import { ScopePlot, scopeWindow } from './scope.tsx'
 import { type DeviceNodeData, nodeTypes } from './symbols.tsx'
 import { type Tool, ToolbarItems } from './toolbar.tsx'
+import { formatEng } from './units.ts'
 import { lengthFromDrawn, wireResistance } from './wire-length.ts'
 import { worldToFlow } from './world-to-flow.ts'
 
@@ -57,6 +69,9 @@ declare global {
       onTheme: (callback: (theme: 'light' | 'dark') => void) => void
       onGridColor: (callback: (color: string) => void) => void
       onGridColorCustom: (callback: () => void) => void
+      onSaveRequest: (callback: () => void) => void
+      saveCircuitData: (text: string) => Promise<{ ok: boolean; path?: string }>
+      onCircuitOpened: (callback: (text: string) => void) => void
     }
   }
 }
@@ -134,6 +149,21 @@ function edgePhysics(
   }
 }
 
+/** The meter chip's V⎓ / Ω dial buttons — the mode switch on a real meter. */
+function meterDialStyle(active: boolean, light: boolean): React.CSSProperties {
+  return {
+    padding: '2px 7px',
+    borderRadius: 4,
+    cursor: 'pointer',
+    fontSize: 11,
+    fontWeight: 700,
+    fontFamily: 'system-ui, sans-serif',
+    background: active ? '#24405f' : light ? '#f4f5f7' : '#1b1b1f',
+    border: active ? '1px solid #7ab8ff' : light ? '1px solid #c4c8ce' : '1px solid #2a2a2f',
+    color: active ? '#dde4ec' : light ? '#555' : '#9aa3ad',
+  }
+}
+
 /**
  * Re-solve the canvas from scratch (S19-v3-23, the live re-solve): rebuild the
  * World from the current nodes + wires via `canvasToWorld`, run the DC solver,
@@ -146,7 +176,13 @@ function edgePhysics(
 function solveCanvas(
   nodeList: Node[],
   edgeList: Edge[],
-): { edges: Edge[]; health: Map<string, NodeHealth>; readings: Map<string, PartReading> } {
+): {
+  edges: Edge[]
+  health: Map<string, NodeHealth>
+  readings: Map<string, PartReading>
+  terminalVolts: Map<string, number>
+  world: World
+} {
   const { world, drawn } = canvasWorld(nodeList, edgeList)
   // Electro-thermal solve (stage 7): the electrical answer at the settled part
   // temperatures — hot parts drift, warm junctions drop, all fed back until the
@@ -171,7 +207,15 @@ function solveCanvas(
       data: { ...physics.data, ...(waypoints ? { waypoints } : {}) },
     }
   })
-  return { edges, health: canvasHealth(world, solution), readings: partReadings(world, solution) }
+  return {
+    edges,
+    health: canvasHealth(world, solution),
+    readings: partReadings(world, solution),
+    // Every wired terminal's live voltage — what the multimeter probes read.
+    terminalVolts: terminalVoltages(world, solution),
+    // The solved circuit itself — the meter's Ω mode re-solves it powered-off.
+    world,
+  }
 }
 
 /**
@@ -266,6 +310,8 @@ function Canvas() {
       edges: solved.edges,
       health: solved.health,
       readings: solved.readings,
+      terminalVolts: solved.terminalVolts,
+      world: solved.world,
       materials,
       materialResistivity,
       validMaterialsByDef,
@@ -279,13 +325,71 @@ function Canvas() {
   // Per-part health (lit / overstressed) — drives the success/failure animations.
   const [health, setHealth] = useState(initial.health)
   const [readings, setReadings] = useState(initial.readings)
+  const [terminalVolts, setTerminalVolts] = useState(initial.terminalVolts)
+  // The latest solved World — Ω mode re-solves it powered-off between the probes.
+  const [solvedWorld, setSolvedWorld] = useState(initial.world)
   // Latest edges for the re-solve effect WITHOUT depending on edge data (a re-solve
   // rewrites edge data, which would loop); structural edits trigger it via
   // `topology`, node moves via `nodes`.
   const edgesRef = useRef(edges)
   edgesRef.current = edges
-  const { screenToFlowPosition } = useReactFlow()
+  const { screenToFlowPosition, fitView } = useReactFlow()
   const dropCount = useRef(0)
+
+  // Save / Load (S19-v3-52). Save: the File menu asks, we answer with the
+  // serialized circuit (parts + values + wires — never solved data). Re-registers
+  // on every change so the answer always reflects the current canvas.
+  useEffect(() => {
+    const bridge = window.chipblocks
+    if (bridge?.onSaveRequest === undefined) return
+    bridge.onSaveRequest(() => {
+      const file = serializeCircuit(
+        nodes.map((n) => ({ id: n.id, position: n.position, data: n.data as DeviceNodeData })),
+        edges,
+      )
+      void bridge.saveCircuitData(JSON.stringify(file, null, 2))
+    })
+  }, [nodes, edges])
+
+  // Load: the main process already validated the file; rebuild the canvas from
+  // it, resume the drop counter above the loaded ids, and re-fit the view. The
+  // always-on physics effect re-solves the loaded circuit automatically.
+  useEffect(() => {
+    const bridge = window.chipblocks
+    if (bridge?.onCircuitOpened === undefined) return
+    bridge.onCircuitOpened((text) => {
+      const result = deserializeCircuit(text)
+      if (!result.ok) return // main validates first; this is belt-and-braces
+      setNodes(
+        result.file.nodes.map((n) => ({
+          id: n.id,
+          type: 'device',
+          position: { x: n.x, y: n.y },
+          data: {
+            definition: n.definition,
+            label: n.id,
+            ...(n.rotation ? { rotation: n.rotation } : {}),
+            ...(n.parameters ? { parameters: n.parameters } : {}),
+          },
+        })),
+      )
+      setEdges(
+        result.file.wires.map((w) => ({
+          id: w.id,
+          source: w.source,
+          sourceHandle: w.sourceHandle,
+          target: w.target,
+          targetHandle: w.targetHandle,
+          type: 'net',
+          deletable: true,
+          style: { stroke: DRAWN },
+          ...(w.waypoints ? { data: { waypoints: w.waypoints } } : {}),
+        })),
+      )
+      dropCount.current = maxIdSuffix(result.file.nodes)
+      window.setTimeout(() => fitView({ padding: 0.15 }), 80)
+    })
+  }, [setNodes, setEdges, fitView])
 
   // Movable menus (S19-v3-10): each docks to a window edge; the user drags them.
   const [paletteEdge, setPaletteEdge] = useState<DockEdge>('left')
@@ -321,6 +425,8 @@ function Canvas() {
       setEdges(solved.edges)
       setHealth(solved.health)
       setReadings(solved.readings)
+      setTerminalVolts(solved.terminalVolts)
+      setSolvedWorld(solved.world)
     },
     [setEdges],
   )
@@ -372,6 +478,173 @@ function Canvas() {
     const { world } = canvasWorld(nodes, edges)
     setScopeResult(solveTransient(world, scopeWindow(world)))
   }, [nodes, edges])
+
+  // While the Scope is open it follows the circuit live: any edit (drop, wire,
+  // value change, switch flip) re-runs the time simulation — same spirit as the
+  // always-on DC re-solve. Closed scope costs nothing.
+  const scopeOpen = scopeResult !== null
+  useEffect(() => {
+    if (scopeOpen) runScope()
+  }, [scopeOpen, runScope])
+
+  // Multimeter (S19-v3-53/54): in meter mode, touching terminal dots places the
+  // red then the black probe — the readout shows the live value between them per
+  // the mode dial: V⎓ (voltage; both probes on one part also reads its current)
+  // or Ω (resistance, measured powered-off the real way). Touching a WIRE clamps
+  // onto it and reads its current without breaking the circuit — the clamp-meter
+  // move. Clicking empty canvas lifts everything; leaving the tool clears it.
+  // The dial position survives tool switches, like a real meter left on a setting.
+  const [redProbe, setRedProbe] = useState<ProbeRef | undefined>(undefined)
+  const [blackProbe, setBlackProbe] = useState<ProbeRef | undefined>(undefined)
+  const [meterMode, setMeterMode] = useState<'volts' | 'acvolts' | 'ohms' | 'diode'>('volts')
+  const [clampWire, setClampWire] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    if (tool !== 'meter') {
+      setRedProbe(undefined)
+      setBlackProbe(undefined)
+      setClampWire(undefined)
+    }
+  }, [tool])
+  // If the clamped wire is deleted, the clamp comes off with it.
+  useEffect(() => {
+    if (clampWire !== undefined && !edges.some((e) => e.id === clampWire)) {
+      setClampWire(undefined)
+    }
+  }, [clampWire, edges])
+  const onMeterClick = useCallback(
+    (event: ReactMouseEvent) => {
+      if (tool !== 'meter') return
+      const target = event.target as Element
+      if (target.closest?.('.cb-meter-chip') !== null) return
+      const handleEl = target.closest?.('.react-flow__handle') as HTMLElement | null
+      if (handleEl !== null) {
+        const nodeId = handleEl.dataset.nodeid
+        const handleId = handleEl.dataset.handleid
+        if (nodeId === undefined || handleId === undefined) return
+        const probe: ProbeRef = { nodeId, handleId }
+        setClampWire(undefined)
+        if (redProbe === undefined) setRedProbe(probe)
+        else if (blackProbe === undefined) setBlackProbe(probe)
+        else {
+          setRedProbe(probe)
+          setBlackProbe(undefined)
+        }
+        return
+      }
+      const edgeEl = target.closest?.('.react-flow__edge')
+      if (edgeEl !== null && edgeEl !== undefined) {
+        const dataId = edgeEl.getAttribute('data-id')
+        const testId = edgeEl.getAttribute('data-testid')
+        const wireId = dataId ?? (testId?.startsWith('rf__edge-') ? testId.slice(9) : null)
+        if (wireId !== null) {
+          setClampWire(wireId)
+          setRedProbe(undefined)
+          setBlackProbe(undefined)
+          return
+        }
+      }
+      setRedProbe(undefined)
+      setBlackProbe(undefined)
+      setClampWire(undefined)
+    },
+    [tool, redProbe, blackProbe],
+  )
+  // Each wired terminal's net — what the Ω probes hand to the powered-off solve.
+  const probeNets = useMemo(() => terminalNets(solvedWorld), [solvedWorld])
+  // The meter's display — live solved values; unwired points say so. The clamp
+  // (when set) wins regardless of the dial: it reads amps, not the dial quantity.
+  const meterReadout = useMemo(() => {
+    if (tool !== 'meter') return null
+    if (clampWire !== undefined) {
+      const amps = edges.find((e) => e.id === clampWire)?.data?.amps
+      return {
+        icon: 'Ⓐ',
+        iconColor: '#7ab8ff',
+        text:
+          typeof amps === 'number'
+            ? `Clamp on wire: ${formatEng(amps, 'A')}`
+            : 'Clamp on wire: no current flowing',
+      }
+    }
+    const voltsAt = (probe: ProbeRef | undefined) =>
+      probe ? terminalVolts.get(`${probe.nodeId}/${probe.handleId}`) : undefined
+    // V~ / Ω / ⏵ all read strictly between the two leads — the shared preamble.
+    const bothProbeNets = (): { netRed: string; netBlack: string } | string => {
+      if (redProbe === undefined) return 'Touch a terminal dot to place the red probe'
+      if (blackProbe === undefined) {
+        return 'This mode needs both probes — touch another dot for the black probe'
+      }
+      const netRed = probeNets.get(`${redProbe.nodeId}/${redProbe.handleId}`)
+      const netBlack = probeNets.get(`${blackProbe.nodeId}/${blackProbe.handleId}`)
+      if (netRed === undefined || netBlack === undefined) {
+        return 'One probe is on an unwired dot — no reading'
+      }
+      return { netRed, netBlack }
+    }
+    if (meterMode === 'ohms') {
+      const ohmsChip = (text: string) => ({ icon: 'Ω', iconColor: '#d6a23c', text })
+      const nets = bothProbeNets()
+      if (typeof nets === 'string') return ohmsChip(nets)
+      const ohms = equivalentResistance(solvedWorld, nets.netRed, nets.netBlack)
+      if (ohms === null) return ohmsChip('Resistance: OL — no conductive path (open loop)')
+      const continuity = ohms < CONTINUITY_OHMS ? ' · ● continuity' : ''
+      return ohmsChip(`Resistance: ${formatEng(ohms, 'Ω')}${continuity}`)
+    }
+    if (meterMode === 'acvolts') {
+      const acChip = (text: string) => ({ icon: '∿', iconColor: '#5a86d8', text })
+      const nets = bothProbeNets()
+      if (typeof nets === 'string') return acChip(nets)
+      const ac = acVoltsRms(solvedWorld, nets.netRed, nets.netBlack)
+      if (ac === null) return acChip("V~ can't run a time pass on this circuit — no reading")
+      const hzText = ac.hz !== null ? ` · ${formatEng(ac.hz, 'Hz')}` : ''
+      return acChip(`V~ (red − black): ${formatEng(ac.rms, 'V')} rms${hzText}`)
+    }
+    if (meterMode === 'diode') {
+      const diodeChip = (text: string) => ({ icon: '⏵', iconColor: '#6ec06e', text })
+      const nets = bothProbeNets()
+      if (typeof nets === 'string') return diodeChip(nets)
+      const result = diodeTest(solvedWorld, nets.netRed, nets.netBlack)
+      if (result === null) {
+        return diodeChip(
+          'Diode test: OL — no conduction (reversed probes, open junction, or forward voltage above the 3 V test)',
+        )
+      }
+      return diodeChip(
+        `Diode test: ${formatEng(result.volts, 'V')} forward at ${formatEng(result.amps, 'A')}`,
+      )
+    }
+    const voltChip = (text: string) => ({ icon: 'Ⓥ', iconColor: '#e0594f', text })
+    if (redProbe === undefined) return voltChip('Touch a terminal dot to place the red probe')
+    const vRed = voltsAt(redProbe)
+    if (blackProbe === undefined) {
+      return voltChip(
+        vRed === undefined
+          ? 'Red probe: not wired (no circuit at that dot)'
+          : `Red vs ground: ${formatEng(vRed, 'V', { signed: true })} — touch another dot for the black probe`,
+      )
+    }
+    const vBlack = voltsAt(blackProbe)
+    if (vRed === undefined || vBlack === undefined) {
+      return voltChip('One probe is on an unwired dot — no reading')
+    }
+    let text = `V (red − black): ${formatEng(vRed - vBlack, 'V', { signed: true })}`
+    if (redProbe.nodeId === blackProbe.nodeId && redProbe.handleId !== blackProbe.handleId) {
+      const through = readings.get(redProbe.nodeId)?.current
+      if (through !== undefined) text += ` · through ${redProbe.nodeId}: ${formatEng(through, 'A')}`
+    }
+    return voltChip(text)
+  }, [
+    tool,
+    meterMode,
+    clampWire,
+    edges,
+    redProbe,
+    blackProbe,
+    terminalVolts,
+    readings,
+    probeNets,
+    solvedWorld,
+  ])
 
   // A structural signature of the wiring — changes when a wire is added, removed,
   // or reconnected, but NOT when only its solved data (current/length) updates. So
@@ -571,6 +844,7 @@ function Canvas() {
       onDrop={onDrop}
     >
       <div
+        onClickCapture={onMeterClick}
         style={{
           gridArea: 'center',
           position: 'relative',
@@ -593,6 +867,8 @@ function Canvas() {
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
               nodesDraggable={tool === 'select'}
+              nodesConnectable={tool !== 'meter'}
+              connectOnClick={tool !== 'meter'}
               connectionMode={ConnectionMode.Loose}
               deleteKeyCode={['Delete', 'Backspace']}
               zoomOnDoubleClick={false}
@@ -615,6 +891,7 @@ function Canvas() {
                 color={gridColor}
               />
               <Controls />
+              <MeterProbes red={redProbe} black={blackProbe} />
             </ReactFlow>
           </LensContext.Provider>
         </HealthContext.Provider>
@@ -636,6 +913,70 @@ function Canvas() {
           {tool === 'wire' ? ' · wire tool: parts locked, drag between dots' : ''}
           {alwaysOn ? '' : ' · physics paused — hit Solve'}
         </div>
+
+        {/* Multimeter readout — mode dial (V⎓ / Ω) + the live reading. */}
+        {meterReadout !== null ? (
+          <div
+            className="cb-meter-chip"
+            style={{
+              position: 'absolute',
+              top: 10,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 35,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 7,
+              padding: '5px 12px 5px 6px',
+              background: light ? '#e8eaed' : '#141417',
+              border: light ? '1px solid #c4c8ce' : '1px solid #2a2a2f',
+              borderRadius: 6,
+              fontFamily: 'system-ui, sans-serif',
+              fontSize: 12,
+              color: light ? '#333' : '#dde4ec',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <span style={{ display: 'flex', gap: 3 }}>
+              <button
+                type="button"
+                onClick={() => setMeterMode('volts')}
+                title="DC volts — the steady voltage between the probes (both probes on one part also reads its current)"
+                style={meterDialStyle(meterMode === 'volts', light)}
+              >
+                V⎓
+              </button>
+              <button
+                type="button"
+                onClick={() => setMeterMode('acvolts')}
+                title="AC volts — true-RMS of the changing part of the voltage between the probes, from a real time-domain run. AC-coupled like a real V~ range: steady DC reads ~0. Frequency is counted from the waveform's own zero crossings."
+                style={meterDialStyle(meterMode === 'acvolts', light)}
+              >
+                V~
+              </button>
+              <button
+                type="button"
+                onClick={() => setMeterMode('ohms')}
+                title="Ohms — resistance between the probes, measured the real powered-off way: source EMFs zeroed (internal resistance stays), small test current, R = V/I. In-circuit readings include parallel paths, just like a real meter. Under 20 Ω shows ● continuity."
+                style={meterDialStyle(meterMode === 'ohms', light)}
+              >
+                Ω
+              </button>
+              <button
+                type="button"
+                onClick={() => setMeterMode('diode')}
+                title="Diode test — pushes a small real test current (3 V behind 2 kΩ, circuit powered off) from red to black and reads the junction's forward voltage drop. OL = no conduction: reversed probes, open junction, or an LED above the 3 V test (blue/UV)."
+                style={meterDialStyle(meterMode === 'diode', light)}
+              >
+                ⏵
+              </button>
+            </span>
+            <span aria-hidden style={{ color: meterReadout.iconColor, fontWeight: 700 }}>
+              {meterReadout.icon}
+            </span>
+            {meterReadout.text}
+          </div>
+        ) : null}
 
         {/* Grid color · Custom… (Settings menu) → an in-canvas full color picker. */}
         {showGridColorPicker ? (

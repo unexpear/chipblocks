@@ -113,6 +113,19 @@ export function ScopePlot({ result, light }: { result: TransientResult; light: b
   const yTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => vMin + f * (vMax - vMin))
   const xTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * tEnd)
 
+  // Steady DC: every trace flat is CORRECT (nothing changes over time in a DC
+  // circuit at rest) — but it reads as "broken" without saying so.
+  const allFlat = nets.every((net) => {
+    let lo = Number.POSITIVE_INFINITY
+    let hi = Number.NEGATIVE_INFINITY
+    for (const pt of series) {
+      const v = pt.nodes.get(net) ?? 0
+      if (v < lo) lo = v
+      if (v > hi) hi = v
+    }
+    return hi - lo < 1e-9
+  })
+
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif' }}>
       <svg
@@ -166,6 +179,14 @@ export function ScopePlot({ result, light }: { result: TransientResult; light: b
           </span>
         ))}
       </div>
+      {allFlat ? (
+        <div style={{ fontSize: 10, color: textColor, marginTop: 4, maxWidth: PLOT_W }}>
+          Flat lines = steady DC. Current IS flowing — each line sits at that point's real voltage
+          (a bench oscilloscope on a battery circuit shows the same) — it just isn't changing over
+          time. Add an AC source (Source → type → "AC signal") or wire in a capacitor / inductor to
+          see voltages move.
+        </div>
+      ) : null}
     </div>
   )
 }

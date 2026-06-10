@@ -15,7 +15,7 @@ import { DeviceGlyph } from './symbols.tsx'
  *    then hit Solve.
  */
 
-export type Tool = 'select' | 'wire'
+export type Tool = 'select' | 'wire' | 'meter'
 
 export function ToolbarItems({
   tool,
@@ -41,6 +41,7 @@ export function ToolbarItems({
   onFlow: (flow: boolean) => void
 }) {
   const wireActive = tool === 'wire'
+  const meterActive = tool === 'meter'
   return (
     <>
       <button
@@ -51,6 +52,18 @@ export function ToolbarItems({
       >
         <DeviceGlyph definition="wire" />
         <span style={{ fontSize: 11 }}>Wire</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={() => onTool(meterActive ? 'select' : 'meter')}
+        title="Meter — touch terminal dots like multimeter probes: red then black reads between them (DC volts, AC volts rms, ohms, or diode test — set by the dial on the readout); both probes on one part reads its current; touch a wire to clamp onto it and read its amps without breaking the circuit"
+        style={{ ...toolButton(meterActive), flexDirection: 'row', gap: 6, padding: '8px 10px' }}
+      >
+        <span aria-hidden style={{ color: '#e0594f', fontSize: 13 }}>
+          Ⓥ
+        </span>
+        <span style={{ fontSize: 11 }}>Meter</span>
       </button>
 
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
