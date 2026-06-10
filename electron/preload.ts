@@ -14,4 +14,11 @@ contextBridge.exposeInMainWorld('chipblocks', {
   onTheme: (callback: (theme: 'light' | 'dark') => void) => subscribe('settings:theme', callback),
   onGridColor: (callback: (color: string) => void) => subscribe('settings:grid-color', callback),
   onGridColorCustom: (callback: () => void) => subscribe('settings:grid-color-custom', callback),
+  // Save / Load (S19-v3-52): the File menu asks for the circuit, the renderer
+  // answers with the serialized text; an opened file's (main-validated) text
+  // arrives ready to load.
+  onSaveRequest: (callback: () => void) => subscribe('file:save-request', callback),
+  saveCircuitData: (text: string): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('file:save-data', text),
+  onCircuitOpened: (callback: (text: string) => void) => subscribe('file:opened', callback),
 })

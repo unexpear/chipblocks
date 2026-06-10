@@ -1,9 +1,83 @@
-import { dirname, join } from 'node:path'
+import { readFile, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  type MenuItemConstructorOptions,
+} from 'electron'
+import { deserializeCircuit } from '../src/renderer/circuit-file.ts'
 
 // Reconstruct __dirname under ESM output (package.json is type: module).
 const moduleDir = dirname(fileURLToPath(import.meta.url))
+
+// ---------------------------------------------------------------------------
+// Save / Load (S19-v3-52). The renderer holds the circuit; the main process
+// owns the file dialogs + disk I/O. Open validates HERE (a bad file gets a
+// native error box and never reaches the canvas); Save asks the renderer for
+// the serialized circuit, then writes it.
+// ---------------------------------------------------------------------------
+
+const CIRCUIT_FILTERS = [{ name: 'ChipBlocks Circuit', extensions: ['chipblocks'] }]
+
+/** The file the window is working on (drives plain Save + the window title). */
+let currentCircuitPath: string | null = null
+/** Whether the in-flight save request must re-ask for a location (Save As). */
+let pendingSaveAs = false
+
+function setCircuitPath(window: BrowserWindow, path: string | null): void {
+  currentCircuitPath = path
+  window.setTitle(path ? `ChipBlocks — ${basename(path)}` : 'ChipBlocks')
+}
+
+async function openCircuit(window: BrowserWindow): Promise<void> {
+  const picked = await dialog.showOpenDialog(window, {
+    filters: CIRCUIT_FILTERS,
+    properties: ['openFile'],
+  })
+  const path = picked.filePaths[0]
+  if (picked.canceled || path === undefined) return
+  let text: string
+  try {
+    text = await readFile(path, 'utf8')
+  } catch (error) {
+    dialog.showErrorBox('Could not open circuit', `Reading the file failed: ${String(error)}`)
+    return
+  }
+  const result = deserializeCircuit(text)
+  if (!result.ok) {
+    dialog.showErrorBox('Could not open circuit', result.reason)
+    return
+  }
+  window.webContents.send('file:opened', text)
+  setCircuitPath(window, path)
+}
+
+function registerSaveHandler(window: BrowserWindow): void {
+  // The renderer answers a save request with the serialized circuit text.
+  ipcMain.handle('file:save-data', async (_event, text: string) => {
+    let path = pendingSaveAs ? null : currentCircuitPath
+    if (path === null) {
+      const picked = await dialog.showSaveDialog(window, {
+        filters: CIRCUIT_FILTERS,
+        defaultPath: currentCircuitPath ?? 'circuit.chipblocks',
+      })
+      if (picked.canceled || picked.filePath === undefined) return { ok: false }
+      path = picked.filePath
+    }
+    try {
+      await writeFile(path, text, 'utf8')
+    } catch (error) {
+      dialog.showErrorBox('Could not save circuit', `Writing the file failed: ${String(error)}`)
+      return { ok: false }
+    }
+    setCircuitPath(window, path)
+    return { ok: true, path }
+  })
+}
 
 // Custom application menu — replaces Electron's default. Top level: File, Edit,
 // View (with the old Window items folded in), Settings. Every label says what the
@@ -12,7 +86,35 @@ const moduleDir = dirname(fileURLToPath(import.meta.url))
 function installMenu(window: BrowserWindow): void {
   const sendGrid = (color: string) => window.webContents.send('settings:grid-color', color)
   const template: MenuItemConstructorOptions[] = [
-    { label: 'File', submenu: [{ role: 'quit', label: 'Exit' }] },
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Open Circuit…',
+          accelerator: 'CmdOrCtrl+O',
+          click: () => void openCircuit(window),
+        },
+        { type: 'separator' },
+        {
+          label: 'Save Circuit',
+          accelerator: 'CmdOrCtrl+S',
+          click: () => {
+            pendingSaveAs = false
+            window.webContents.send('file:save-request')
+          },
+        },
+        {
+          label: 'Save Circuit As…',
+          accelerator: 'CmdOrCtrl+Shift+S',
+          click: () => {
+            pendingSaveAs = true
+            window.webContents.send('file:save-request')
+          },
+        },
+        { type: 'separator' },
+        { role: 'quit', label: 'Exit' },
+      ],
+    },
     {
       label: 'Edit',
       submenu: [
@@ -63,7 +165,10 @@ function installMenu(window: BrowserWindow): void {
             { label: 'Amber', click: () => sendGrid('#9a7b3f') },
             { label: 'Rose', click: () => sendGrid('#a04a5a') },
             { type: 'separator' },
-            { label: 'Custom…', click: () => window.webContents.send('settings:grid-color-custom') },
+            {
+              label: 'Custom…',
+              click: () => window.webContents.send('settings:grid-color-custom'),
+            },
           ],
         },
       ],
@@ -94,6 +199,7 @@ function createWindow(): void {
   }
 
   installMenu(window)
+  registerSaveHandler(window)
 }
 
 app.whenReady().then(() => {
