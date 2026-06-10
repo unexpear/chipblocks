@@ -13,7 +13,15 @@ import {
   useRef,
   useState,
 } from 'react'
-import { flowDuration, LensContext, voltageColor } from './lens.ts'
+import {
+  FIELD_COLOR,
+  FIELD_CONTOUR_MULTIPLIERS,
+  fieldHaloRadiusPx,
+  flowDuration,
+  LensContext,
+  MU_0,
+  voltageColor,
+} from './lens.ts'
 import { formatEng } from './units.ts'
 import { formatLength } from './wire-length.ts'
 
@@ -262,9 +270,32 @@ export function NetEdge({
       : null
   const edgeStyle = voltageStroke ? { ...style, stroke: voltageStroke, strokeWidth: 2.4 } : style
   const flowSeconds = lensState.flow && amps !== null ? flowDuration(amps) : null
+  // Field lens: nested isofield bands — each band edge is the real distance at
+  // which this wire's field equals that contour level (B = μ₀I/2πr inverted).
+  const fieldBands =
+    lensState.lens === 'field' && amps !== null && lensState.fieldTesla > 0
+      ? FIELD_CONTOUR_MULTIPLIERS.map((multiplier, i) => ({
+          key: multiplier,
+          radiusPx: fieldHaloRadiusPx(amps, multiplier * lensState.fieldTesla),
+          opacity: 0.09 + 0.07 * i,
+        })).filter((band) => band.radiusPx >= 0.75)
+      : []
 
   return (
     <>
+      {fieldBands.map((band) => (
+        <path
+          key={band.key}
+          d={path}
+          fill="none"
+          stroke={FIELD_COLOR}
+          strokeOpacity={band.opacity}
+          strokeWidth={2 * band.radiusPx}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          style={{ pointerEvents: 'none' }}
+        />
+      ))}
       <BaseEdge
         id={id}
         path={path}
@@ -340,6 +371,11 @@ export function NetEdge({
             {drop !== null ? (
               <div style={{ color: '#e0b070', fontSize: 8, marginTop: 1 }}>
                 drop {formatEng(drop, 'V')}
+              </div>
+            ) : null}
+            {lensState.lens === 'field' && amps !== null ? (
+              <div style={{ color: FIELD_COLOR, fontSize: 8, marginTop: 1 }}>
+                B at 1 cm: {formatEng((MU_0 * Math.abs(amps)) / (2 * Math.PI * 0.01), 'T')}
               </div>
             ) : null}
           </div>

@@ -35,7 +35,7 @@ import { deserializeCircuit, maxIdSuffix, serializeCircuit } from './circuit-fil
 import { DockablePanel, type DockEdge } from './dockable-panel.tsx'
 import { wireFlow } from './edge-currents.ts'
 import { canvasHealth, HealthContext, type NodeHealth } from './health.ts'
-import { LensContext, type LensMode } from './lens.ts'
+import { FIELD_COLOR, fieldReferenceTesla, LensContext, type LensMode } from './lens.ts'
 import { materialCapabilities, validMaterialsByRole } from './material-roles.ts'
 import {
   acVoltsRms,
@@ -447,12 +447,16 @@ function Canvas() {
   const lensState = useMemo(() => {
     let vMin = Number.POSITIVE_INFINITY
     let vMax = Number.NEGATIVE_INFINITY
+    let maxAbsAmps = 0
     for (const e of edges) {
       for (const v of [e.data?.vSource, e.data?.vTarget]) {
         if (typeof v === 'number') {
           if (v < vMin) vMin = v
           if (v > vMax) vMax = v
         }
+      }
+      if (typeof e.data?.amps === 'number' && Math.abs(e.data.amps) > maxAbsAmps) {
+        maxAbsAmps = Math.abs(e.data.amps)
       }
     }
     if (!(vMax >= vMin)) {
@@ -473,7 +477,9 @@ function Canvas() {
         if (r.temperatureC > tMaxC) tMaxC = r.temperatureC
       }
     }
-    return { lens, flow, vMin, vMax, power, pMax, temp, tMaxC }
+    // Field lens contour level, auto-ranged from the circuit's biggest current.
+    const fieldTesla = fieldReferenceTesla(maxAbsAmps)
+    return { lens, flow, vMin, vMax, power, pMax, temp, tMaxC, fieldTesla }
   }, [edges, readings, lens, flow])
   const runScope = useCallback(() => {
     const { world } = canvasWorld(nodes, edges)
@@ -1041,6 +1047,41 @@ function Canvas() {
             >
               HOLD
             </button>
+          </div>
+        ) : null}
+
+        {/* Field-lens legend — the true contour levels behind the bands. */}
+        {lens === 'field' ? (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 12,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 35,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 7,
+              padding: '5px 12px',
+              background: light ? '#e8eaed' : '#141417',
+              border: light ? '1px solid #c4c8ce' : '1px solid #2a2a2f',
+              borderRadius: 6,
+              fontFamily: 'system-ui, sans-serif',
+              fontSize: 11,
+              color: light ? '#333' : '#cdd6e0',
+              pointerEvents: 'none',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <span aria-hidden style={{ color: FIELD_COLOR, fontWeight: 700 }}>
+              ◎
+            </span>
+            {lensState.fieldTesla > 0
+              ? `B = μ₀I/2πr · band edges ${formatEng(lensState.fieldTesla, 'T')} / ${formatEng(
+                  3 * lensState.fieldTesla,
+                  'T',
+                )} / ${formatEng(10 * lensState.fieldTesla, 'T')} (innermost) · Earth ≈ 25–65 µT`
+              : 'no current flowing — no magnetic field to draw'}
           </div>
         ) : null}
 

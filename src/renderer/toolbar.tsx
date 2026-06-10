@@ -166,6 +166,22 @@ export function ToolbarItems({
       </button>
       <button
         type="button"
+        onClick={() => onLens(lens === 'field' ? 'none' : 'field')}
+        title="Magnetic-field lens — bands around each wire sized by its real field, B = μ₀I/2πr from the solved current (the straight-wire law). Each band edge is a true field level; the legend states them, with Earth's ~25–65 µT for comparison. Per-wire fields only — neighboring wires' fields are not summed (full field solving is a future stage)."
+        style={{
+          ...toolButton(lens === 'field'),
+          flexDirection: 'row',
+          gap: 6,
+          padding: '8px 10px',
+        }}
+      >
+        <span aria-hidden style={{ color: '#5ad8c8', fontSize: 13 }}>
+          ◎
+        </span>
+        <span style={{ fontSize: 11 }}>Field</span>
+      </button>
+      <button
+        type="button"
         onClick={() => onFlow(!flow)}
         title="Flow animation — march dashes along each wire in the solved current's direction, speed from its size"
         style={{ ...toolButton(flow), flexDirection: 'row', gap: 6, padding: '8px 10px' }}

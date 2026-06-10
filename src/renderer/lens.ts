@@ -1,18 +1,23 @@
 import { createContext } from 'react'
+import { METRES_PER_PIXEL } from './wire-length.ts'
 
 /**
- * Visualization lenses (S19-v3-50) — the Stage 6 overlays from
- * SIMULATION-AND-VISUALIZATION-ARC.md, drawn from REAL solved data:
+ * Visualization lenses (S19-v3-50; field lens S19-v3-57) — the Stage 6
+ * overlays from SIMULATION-AND-VISUALIZATION-ARC.md, drawn from REAL solved
+ * data:
  *  - voltage lens: every wire colored by its solved potential (blue = the
  *    circuit's lowest, red = highest), so voltage "altitude" reads at a glance;
  *  - power lens: every part halo-colored by its real dissipated watts
  *    (I·V from the solution), so the parts working hardest glow hottest;
+ *  - field lens: bands around each wire sized by its real magnetic field,
+ *    B = μ₀I/(2πr) from the solved current — each band edge is a true
+ *    isofield contour (see fieldHaloRadiusPx);
  *  - flow animation: marching dashes along each wire — direction from the
  *    solved current's sign, speed from its magnitude.
  * Pure color/speed math here (unit-tested); the canvas consumes it via context.
  */
 
-export type LensMode = 'none' | 'voltage' | 'power' | 'temp'
+export type LensMode = 'none' | 'voltage' | 'power' | 'temp' | 'field'
 
 export type LensState = {
   lens: LensMode
@@ -28,6 +33,8 @@ export type LensState = {
   temp: Map<string, number>
   /** The hottest part (°C) — the temp lens's red end. */
   tMaxC: number
+  /** Field lens contour level (tesla) — the outermost band edge. 0 = no current. */
+  fieldTesla: number
 }
 
 export const LensContext = createContext<LensState>({
@@ -39,6 +46,7 @@ export const LensContext = createContext<LensState>({
   pMax: 0,
   temp: new Map(),
   tMaxC: 0,
+  fieldTesla: 0,
 })
 
 /** 5-stop blue→cyan→green→yellow→red scale (the classic voltage-map ramp). */
@@ -110,3 +118,51 @@ export function flowDuration(amps: number): number | null {
   const duration = 2 - 0.42 * Math.log10(magnitude / 1e-6)
   return Math.min(2, Math.max(0.3, duration))
 }
+
+/**
+ * Vacuum permeability μ₀ (henry per metre). Since the 2019 SI redefinition it
+ * is a measured constant, no longer exactly 4π×10⁻⁷ — CODATA gives
+ * 1.25663706×10⁻⁶ H/m (the difference from 4π×10⁻⁷ is parts in 10⁹).
+ */
+export const MU_0 = 1.25663706e-6
+
+/**
+ * Magnetic-field lens (S19-v3-57). The math is Ampère's law for a long
+ * straight wire — the textbook result B = μ₀·I/(2π·r): field strength falls
+ * off as 1/distance, set ONLY by the current. Inverting for r gives the
+ * radius of a true isofield contour, r = μ₀·I/(2π·B), converted to canvas
+ * pixels through the SAME metres-per-pixel scale the wire-resistance physics
+ * uses (1 px = 1 mm).
+ *
+ * Honest scope: exact for a long straight run; near bends and ends the real
+ * field needs Biot–Savart, and fields from neighboring wires are NOT summed —
+ * this lens shows each wire's own field. Full interacting-field solving is
+ * the arc's future EM stage.
+ */
+export function fieldHaloRadiusPx(amps: number, contourTesla: number): number {
+  const magnitude = Math.abs(amps)
+  if (!(magnitude > 0) || !(contourTesla > 0)) return 0
+  const radiusMetres = (MU_0 * magnitude) / (2 * Math.PI * contourTesla)
+  return radiusMetres / METRES_PER_PIXEL
+}
+
+/**
+ * Auto-ranged contour level for the lens — the field strength whose contour
+ * around the BIGGEST current sits at a readable on-screen radius (like a real
+ * instrument picking its range). The legend states the chosen level; Earth's
+ * surface field is ~25–65 µT (NOAA NCEI) for comparison. 0 when nothing flows.
+ */
+export const FIELD_TARGET_PX = 22
+export function fieldReferenceTesla(maxAbsAmps: number, targetPx = FIELD_TARGET_PX): number {
+  if (!(maxAbsAmps > 0) || !(targetPx > 0)) return 0
+  const targetMetres = targetPx * METRES_PER_PIXEL
+  return (MU_0 * maxAbsAmps) / (2 * Math.PI * targetMetres)
+}
+
+/**
+ * The lens draws three nested bands per wire — contours at 1×, 3×, and 10×
+ * the reference level. Field falls as 1/r, so each stronger contour sits
+ * proportionally closer to the wire.
+ */
+export const FIELD_CONTOUR_MULTIPLIERS = [1, 3, 10] as const
+export const FIELD_COLOR = '#5ad8c8'
