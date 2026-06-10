@@ -1101,3 +1101,96 @@ describe('solveTransient — NPN BJT in the time loop', () => {
     expect(vOff).toBeGreaterThan(8.5) // cut off: collector floats up to ~Vcc
   })
 })
+
+// ---------------------------------------------------------------------------
+// Square-wave (clock) source — S19-v3-59
+// ---------------------------------------------------------------------------
+
+/** A 0–5 V clock (offset 2.5 ± 2.5 V) behind 1 Ω driving a 1 kΩ load. */
+function clockIntoResistor(waveform: 'square' | undefined): World {
+  const world: World = {
+    definitions: new Map(),
+    instances: new Map(),
+    behaviors: new Map(),
+    activeVariables: new Map(),
+    nets: new Map(),
+  }
+  world.nets.set('live', {
+    id: 'live',
+    kind: 'net',
+    members: [
+      { instance: 'src', terminal: 'terminal_positive' },
+      { instance: 'r1', terminal: 'terminal_a' },
+    ],
+  })
+  world.nets.set('gnd', {
+    id: 'gnd',
+    kind: 'net',
+    type: 'ground',
+    members: [
+      { instance: 'src', terminal: 'terminal_negative' },
+      { instance: 'r1', terminal: 'terminal_b' },
+    ],
+  })
+  world.instances.set('src', {
+    id: 'src',
+    kind_ref: 'primitive_device',
+    definition: 'power_source',
+    parameters: {
+      nominal_voltage: scalar(2.5, 'volt'),
+      ac_amplitude: scalar(2.5, 'volt'),
+      frequency: scalar(100, 'hertz'),
+      internal_resistance: scalar(1, 'ohm'),
+      ...(waveform ? { waveform: { value: waveform } } : {}),
+    },
+    connects: [
+      { net: 'live', terminal: 'terminal_positive', of: 'src' },
+      { net: 'gnd', terminal: 'terminal_negative', of: 'src' },
+    ],
+  })
+  world.instances.set('r1', {
+    id: 'r1',
+    kind_ref: 'primitive_device',
+    definition: 'resistor',
+    parameters: { resistance: scalar(1000, 'ohm') },
+    connects: [
+      { net: 'live', terminal: 'terminal_a', of: 'r1' },
+      { net: 'gnd', terminal: 'terminal_b', of: 'r1' },
+    ],
+  })
+  return world
+}
+
+describe('square-wave (clock) source', () => {
+  const T = 1 / 100
+  const divider = 1000 / 1001
+
+  test('holds its two plateau levels — offset ± amplitude — at exact 50 % duty', () => {
+    const res = solveTransient(clockIntoResistor('square'), {
+      timeStep: (2 * T) / 400,
+      duration: 2 * T,
+    })
+    expect(res.status).toBe('solved')
+    expect(vNodeAt(res.series, 'live', T / 4)).toBeCloseTo(5 * divider, 6) // HIGH half
+    expect(vNodeAt(res.series, 'live', (3 * T) / 4)).toBeCloseTo(0, 6) // LOW half
+    expect(vNodeAt(res.series, 'live', T + T / 4)).toBeCloseTo(5 * divider, 6) // periodic
+    // Every sample sits on one of the two rails — a square wave has no
+    // in-between values (edges land within one time step, as documented).
+    for (const p of res.series) {
+      const v = p.nodes.get('live') ?? Number.NaN
+      const offRail = Math.min(Math.abs(v - 5 * divider), Math.abs(v))
+      expect(offRail).toBeLessThan(1e-9)
+    }
+  })
+
+  test('an absent waveform parameter stays a sine — the pre-clock default', () => {
+    const res = solveTransient(clockIntoResistor(undefined), {
+      timeStep: (2 * T) / 400,
+      duration: 2 * T,
+    })
+    expect(res.status).toBe('solved')
+    // At t = T/8 a sine sits at offset + A·sin(45°) ≈ 4.268 V — NOT the 5 V rail.
+    const expected = (2.5 + 2.5 * Math.SQRT1_2) * divider
+    expect(vNodeAt(res.series, 'live', T / 8)).toBeCloseTo(expected, 3)
+  })
+})

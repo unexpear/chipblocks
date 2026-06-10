@@ -19,9 +19,12 @@
  * Current through an inductor cannot jump: at t = 0 it is held at its initial
  * current (default 0 — an instantaneous open), then ramps on the real L/R curve.
  *
- * A power_source is read as a time-varying Thévenin source:
- *   V(t) = nominal_voltage + ac_amplitude·sin(2π·frequency·t)
- * in series with internal_resistance. A plain DC source is just ac_amplitude = 0.
+ * A power_source is read as a time-varying Thévenin source in series with
+ * internal_resistance. Two waveforms (the `waveform` enum, default sine):
+ *   sine:   V(t) = nominal_voltage + ac_amplitude·sin(2π·frequency·t)
+ *   square: V(t) = nominal_voltage ± ac_amplitude  (sign of the sine; exact
+ *           50 % duty — the clock shape for driving logic)
+ * A plain DC source is just ac_amplitude = 0.
  *
  * Diode-family devices (silicon/Schottky rectifiers, LEDs) use the same Shockley
  * companion model + pnjlim limiting as the DC solver (diode-model.ts), but
@@ -116,6 +119,14 @@ type TimedSource = {
   amplitude: number // volts (ac_amplitude; 0 ⇒ pure DC)
   frequency: number // hertz
   rInternal: number // ohms (series internal resistance)
+  /**
+   * 'sine' (default) or 'square' — the clock shape. A square source swings
+   * offset ± amplitude at exact 50 % duty, the function-generator convention
+   * (a 0–5 V logic clock is offset 2.5 V, amplitude 2.5 V). Edges land within
+   * one time step — the solver's stated time resolution, same idealization a
+   * SPICE pulse source makes when rise/fall default to one print step.
+   */
+  waveform: 'sine' | 'square'
 }
 
 /** A capacitor resolved for the time loop. */
@@ -210,12 +221,18 @@ function resolveSource(inst: Instance, nodeIndex: Map<string, number>): TimedSou
     amplitude: readScalarParam(inst, 'ac_amplitude') ?? 0,
     frequency: readScalarParam(inst, 'frequency') ?? 0,
     rInternal: readScalarParam(inst, 'internal_resistance') ?? 0,
+    waveform: readEnumParam(inst, 'waveform') === 'square' ? 'square' : 'sine',
   }
 }
 
 function sourceVoltageAt(src: TimedSource, t: number): number {
   if (src.amplitude === 0) return src.dcOffset
-  return src.dcOffset + src.amplitude * Math.sin(2 * Math.PI * src.frequency * t)
+  const swing = Math.sin(2 * Math.PI * src.frequency * t)
+  if (src.waveform === 'square') {
+    // sign(sin) gives an exact 50 % duty cycle; the t = 0 edge starts HIGH.
+    return src.dcOffset + (swing >= 0 ? src.amplitude : -src.amplitude)
+  }
+  return src.dcOffset + src.amplitude * swing
 }
 
 /**
@@ -240,6 +257,7 @@ function resolveShort(
     amplitude: 0,
     frequency: 0,
     rInternal: seriesOhms,
+    waveform: 'sine', // irrelevant at amplitude 0 — a short has no waveform
   }
 }
 

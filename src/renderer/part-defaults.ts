@@ -258,6 +258,11 @@ export function sourceIsAc(parameters: Parameters | undefined): boolean {
   return (amountOf(parameters, 'ac_amplitude') ?? 0) > 0
 }
 
+/** Is a source's waveform square (the clock shape)? Absent = sine, like the solver. */
+export function sourceIsSquare(parameters: Parameters | undefined): boolean {
+  return stringOf(parameters, 'waveform') === 'square'
+}
+
 /** Is a switch closed (conducting)? Absent state defaults to closed — matches the solver. */
 export function switchClosed(parameters: Parameters | undefined): boolean {
   return stringOf(parameters, 'state') !== 'open'

@@ -90,6 +90,8 @@ const SOURCE_TYPES: {
   internalResistance: number
   acAmplitude: number
   frequency: number
+  /** 'square' = clock shape; absent = sine (the default for AC presets). */
+  waveform?: 'sine' | 'square'
   source: string
 }[] = [
   {
@@ -141,6 +143,15 @@ const SOURCE_TYPES: {
     source: 'function-generator class: 5 V peak sine at 1 kHz, 50 Ω output',
   },
   {
+    label: 'Clock (5 V square, 1 kHz)',
+    voltage: 2.5,
+    internalResistance: 50,
+    acAmplitude: 2.5,
+    frequency: 1000,
+    waveform: 'square',
+    source: 'function-generator class: 0–5 V square clock (offset 2.5 V ± 2.5 V), 50 Ω output',
+  },
+  {
     label: 'Mic signal',
     voltage: 0,
     internalResistance: 2200,
@@ -150,13 +161,25 @@ const SOURCE_TYPES: {
   },
 ]
 
-/** The preset matching the current DC + AC values (else null = Custom). */
+/** A source's waveform parameter ('sine' when absent — the pre-clock default). */
+function currentWaveform(parameters: Parameters | undefined): 'sine' | 'square' {
+  return parameters?.waveform?.value === 'square' ? 'square' : 'sine'
+}
+
+/** The preset matching the current DC + AC values + waveform (else null = Custom). */
 function currentSourceType(parameters: Parameters | undefined) {
   const v = amountOf(parameters, 'nominal_voltage')
   const ac = amountOf(parameters, 'ac_amplitude') ?? 0
   const f = amountOf(parameters, 'frequency') ?? 0
+  const w = currentWaveform(parameters)
   return (
-    SOURCE_TYPES.find((t) => t.voltage === v && t.acAmplitude === ac && t.frequency === f) ?? null
+    SOURCE_TYPES.find(
+      (t) =>
+        t.voltage === v &&
+        t.acAmplitude === ac &&
+        t.frequency === f &&
+        (t.waveform ?? 'sine') === w,
+    ) ?? null
   )
 }
 
@@ -200,7 +223,8 @@ export type PartInspectorProps = {
    * A dropdown falls back to all `materials` when its role isn't listed.
    */
   validMaterials: Record<string, string[]>
-  onParam: (key: string, amount: number) => void
+  /** Set a scalar value; pass `unit` to allow CREATING the parameter when absent. */
+  onParam: (key: string, amount: number, unit?: string) => void
   onEnum: (key: string, value: string) => void
   /**
    * Change a material ref. Distinct from onEnum so the App can react physically —
@@ -315,7 +339,10 @@ export function PartInspector({
   // step. So the LED panel offers Color, not raw material dropdowns.
   const hideMaterialRefs = LED_DEFINITIONS.has(selected.definition)
   const entries = Object.entries(selected.parameters ?? {}).filter(
-    ([key]) => !(hideMaterialRefs && (key === 'n_side' || key === 'p_side')),
+    ([key]) =>
+      !(hideMaterialRefs && (key === 'n_side' || key === 'p_side')) &&
+      // The source's waveform has its own dedicated dropdown above.
+      key !== 'waveform',
   )
   const rating = ratingFor(selected.definition, selected.parameters)
   // A Source (power_source) gets a type picker that sets a consistent real DC
@@ -384,12 +411,15 @@ export function PartInspector({
                 const picked = SOURCE_TYPES.find((s) => s.label === e.target.value)
                 if (picked === undefined) return
                 // Set a consistent real source: DC voltage, internal resistance,
-                // and the AC component (0/0 for the pure-DC battery types, so
-                // switching AC → battery turns the wiggle off).
-                onParam('nominal_voltage', picked.voltage)
-                onParam('internal_resistance', picked.internalResistance)
-                onParam('ac_amplitude', picked.acAmplitude)
-                onParam('frequency', picked.frequency)
+                // the AC component (0/0 for the pure-DC battery types, so
+                // switching AC → battery turns the wiggle off), and the waveform.
+                // Units stated so the params are CREATED on instances that
+                // predate them (the loaded anchor battery has no AC entries).
+                onParam('nominal_voltage', picked.voltage, 'volt')
+                onParam('internal_resistance', picked.internalResistance, 'ohm')
+                onParam('ac_amplitude', picked.acAmplitude, 'volt')
+                onParam('frequency', picked.frequency, 'hertz')
+                onEnum('waveform', picked.waveform ?? 'sine')
               }}
               className="nodrag"
               style={{ ...field, maxWidth: 130 }}
@@ -403,6 +433,21 @@ export function PartInspector({
             </select>
           </label>
           {sourceType ? <div style={sourceNote}>{sourceType.source}</div> : null}
+          {(amountOf(selected.parameters, 'ac_amplitude') ?? 0) > 0 ? (
+            <label style={row}>
+              <span style={{ color: '#aab' }}>Waveform</span>
+              <select
+                value={currentWaveform(selected.parameters)}
+                onChange={(e) => onEnum('waveform', e.target.value)}
+                className="nodrag"
+                title="Sine — the smooth AC shape. Square — the clock shape: jumps between offset − amplitude and offset + amplitude at exact 50% duty (a 0–5 V clock is offset 2.5 V ± 2.5 V)."
+                style={{ ...field, maxWidth: 130 }}
+              >
+                <option value="sine">sine ∿</option>
+                <option value="square">square ⊓ (clock)</option>
+              </select>
+            </label>
+          ) : null}
         </div>
       ) : null}
       {entries.length === 0 ? (

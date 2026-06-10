@@ -678,6 +678,50 @@ describe('acVoltsRms (V~ mode)', () => {
     expect(Math.abs(result.hz - 60)).toBeLessThan(1.5)
   })
 
+  test('a square wave reads rms = amplitude — the true-RMS difference from a sine', () => {
+    // An AC-coupled ±A square has rms exactly A, where a sine of the same peak
+    // reads A/√2 ≈ 0.707·A — the entire reason true-RMS meters exist (an
+    // average-responding meter calibrated for sines misreads square waves).
+    const w = ohmWorld(
+      [{ id: 'live' }, { id: 'gnd', ground: true }],
+      [
+        {
+          id: 'clk',
+          definition: 'power_source',
+          parameters: {
+            nominal_voltage: scalar(2.5, 'volt'),
+            ac_amplitude: scalar(2.5, 'volt'),
+            frequency: scalar(100, 'hertz'),
+            internal_resistance: scalar(1, 'ohm'),
+            waveform: { value: 'square' },
+          },
+          connects: [
+            ['live', 'terminal_positive'],
+            ['gnd', 'terminal_negative'],
+          ],
+        },
+        {
+          id: 'r1',
+          definition: 'resistor',
+          parameters: { resistance: scalar(1000, 'ohm') },
+          connects: [
+            ['live', 'terminal_a'],
+            ['gnd', 'terminal_b'],
+          ],
+        },
+      ],
+    )
+    const result = acVoltsRms(w, 'live', 'gnd')
+    expect(result).not.toBeNull()
+    expect(result).not.toBe('span-too-wide')
+    if (result === null || result === 'span-too-wide') return
+    const amplitude = 2.5 * (1000 / 1001)
+    expect(Math.abs(result.rms - amplitude)).toBeLessThan(0.05)
+    expect(result.hz).not.toBeNull()
+    if (result.hz === null) return
+    expect(Math.abs(result.hz - 100)).toBeLessThan(1.5)
+  })
+
   test('a steady DC circuit reads ~0 V~ and no frequency — AC-coupled, like a real V~ range', () => {
     const w = ohmWorld(
       [{ id: 'vcc' }, { id: 'gnd', ground: true }],
