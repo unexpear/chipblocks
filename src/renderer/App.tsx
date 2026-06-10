@@ -42,6 +42,7 @@ import { deserializeCircuit, maxIdSuffix, serializeCircuit } from './circuit-fil
 import { DockablePanel, type DockEdge } from './dockable-panel.tsx'
 import { wireFlow } from './edge-currents.ts'
 import { canvasHealth, HealthContext, type NodeHealth } from './health.ts'
+import { DEFAULT_KEYBINDS, eventMatchesBinding, type Keybinds, mergeKeybinds } from './keybinds.ts'
 import { FIELD_COLOR, fieldReferenceTesla, LensContext, type LensMode } from './lens.ts'
 import { materialCapabilities, validMaterialsByRole } from './material-roles.ts'
 import {
@@ -62,6 +63,7 @@ import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { type PartReading, partReadings } from './part-readings.ts'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
 import { ScopePlot, scopeWindow } from './scope.tsx'
+import { ShortcutsPanel } from './shortcuts-panel.tsx'
 import { type DeviceNodeData, nodeTypes } from './symbols.tsx'
 import { type Tool, ToolbarItems } from './toolbar.tsx'
 import { formatEng } from './units.ts'
@@ -81,6 +83,9 @@ declare global {
       onSaveRequest: (callback: () => void) => void
       saveCircuitData: (text: string) => Promise<{ ok: boolean; path?: string }>
       onCircuitOpened: (callback: (text: string) => void) => void
+      getKeybinds?: () => Promise<Record<string, string>>
+      setKeybinds?: (binds: Record<string, string>) => Promise<Record<string, string>>
+      onShortcutsOpen?: (callback: () => void) => void
     }
   }
 }
@@ -425,7 +430,7 @@ function Canvas() {
   // `topology`, node moves via `nodes`.
   const edgesRef = useRef(edges)
   edgesRef.current = edges
-  const { screenToFlowPosition, fitView } = useReactFlow()
+  const { screenToFlowPosition, fitView, deleteElements } = useReactFlow()
   const dropCount = useRef(0)
 
   // Save / Load (S19-v3-52). Save: the File menu asks, we answer with the
@@ -810,31 +815,63 @@ function Canvas() {
     reSolve(nodes, edgesRef.current)
   }, [alwaysOn, nodes, topology, reSolve])
 
-  // Press R to rotate the selected component(s) by 90° (S19-v3-15). DeviceNode
-  // re-measures its handles so wires follow the rotated terminals.
+  // Keyboard shortcuts (S19-v3-15 rotate; S19-v3-62 all bindings editable):
+  // every canvas key runs through the user's keybinds — rotate, delete (we own
+  // deletion so combos work; React Flow's deleteKeyCode is off), and opening
+  // the Shortcuts panel. Keys are ignored while typing in a field.
+  const [keybinds, setKeybinds] = useState<Keybinds>(DEFAULT_KEYBINDS)
+  const [showShortcuts, setShowShortcuts] = useState(false)
+  useEffect(() => {
+    const bridge = window.chipblocks
+    if (bridge?.getKeybinds === undefined) return
+    void bridge.getKeybinds().then((saved) => setKeybinds(mergeKeybinds(saved)))
+    bridge.onShortcutsOpen?.(() => setShowShortcuts(true))
+  }, [])
+  // Panel edits apply immediately + persist via the main process (which also
+  // re-installs the menu so its accelerators show the new keys). Without the
+  // bridge (dev preview) they still apply for the session.
+  const applyKeybinds = useCallback((next: Keybinds) => {
+    setKeybinds(next)
+    void window.chipblocks?.setKeybinds?.(next)
+  }, [])
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'r' && event.key !== 'R') return
-      if (event.metaKey || event.ctrlKey || event.altKey) return
       const target = event.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
-      setNodes((current) =>
-        current.map((node) =>
-          node.selected
-            ? {
-                ...node,
-                data: {
-                  ...node.data,
-                  rotation: (((node.data?.rotation as number) ?? 0) + 90) % 360,
-                },
-              }
-            : node,
-        ),
-      )
+      if (showShortcuts) return // the panel owns the keyboard while open
+      if (eventMatchesBinding(event, keybinds.shortcutsPanel)) {
+        setShowShortcuts(true)
+        return
+      }
+      if (eventMatchesBinding(event, keybinds.rotate)) {
+        setNodes((current) =>
+          current.map((node) =>
+            node.selected
+              ? {
+                  ...node,
+                  data: {
+                    ...node.data,
+                    rotation: (((node.data?.rotation as number) ?? 0) + 90) % 360,
+                  },
+                }
+              : node,
+          ),
+        )
+        return
+      }
+      if (
+        eventMatchesBinding(event, keybinds.delete) ||
+        eventMatchesBinding(event, keybinds.deleteAlt)
+      ) {
+        void deleteElements({
+          nodes: nodes.filter((n) => n.selected),
+          edges: edges.filter((e) => e.selected),
+        })
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [setNodes])
+  }, [setNodes, keybinds, showShortcuts, nodes, edges, deleteElements])
 
   const onDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -900,11 +937,11 @@ function Canvas() {
   useEffect(() => {
     if (pendingWire === null) return
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setPendingWire(null)
+      if (eventMatchesBinding(event, keybinds.cancelWire)) setPendingWire(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [pendingWire])
+  }, [pendingWire, keybinds.cancelWire])
   const finishWire = useCallback(
     (end: WireAnchor, corners: { id: string; x: number; y: number }[]) => {
       if (pendingWire === null) return
@@ -1160,7 +1197,9 @@ function Canvas() {
               // double-create — and it once let meter probes draw real wires.
               connectOnClick={false}
               connectionMode={ConnectionMode.Loose}
-              deleteKeyCode={['Delete', 'Backspace']}
+              // Deletion is OUR keybind now (editable, supports combos) — see
+              // the keyboard-shortcuts effect above.
+              deleteKeyCode={null}
               zoomOnDoubleClick={false}
               fitView
               proOptions={{ hideAttribution: true }}
@@ -1303,6 +1342,16 @@ function Canvas() {
               HOLD
             </button>
           </div>
+        ) : null}
+
+        {/* Shortcuts panel — every key and control, viewable and editable. */}
+        {showShortcuts ? (
+          <ShortcutsPanel
+            binds={keybinds}
+            onChange={applyKeybinds}
+            onClose={() => setShowShortcuts(false)}
+            light={light}
+          />
         ) : null}
 
         {/* Field-lens legend — the true contour levels behind the bands. */}

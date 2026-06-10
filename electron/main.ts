@@ -10,6 +10,7 @@ import {
   type MenuItemConstructorOptions,
 } from 'electron'
 import { deserializeCircuit } from '../src/renderer/circuit-file.ts'
+import { DEFAULT_KEYBINDS, type Keybinds, mergeKeybinds } from '../src/renderer/keybinds.ts'
 
 // Reconstruct __dirname under ESM output (package.json is type: module).
 const moduleDir = dirname(fileURLToPath(import.meta.url))
@@ -79,10 +80,45 @@ function registerSaveHandler(window: BrowserWindow): void {
   })
 }
 
+// ---------------------------------------------------------------------------
+// Keyboard shortcuts (S19-v3-62). The bindings live in ONE file in the app's
+// data folder; the renderer's Shortcuts panel reads and edits them over IPC,
+// and the menu accelerators below are built from the same map — change a
+// shortcut and the menu re-installs with the new key. A broken or missing
+// file degrades to the defaults (mergeKeybinds), never to broken input.
+// ---------------------------------------------------------------------------
+
+const keybindsPath = () => join(app.getPath('userData'), 'keybinds.json')
+let keybinds: Keybinds = { ...DEFAULT_KEYBINDS }
+
+async function loadKeybinds(): Promise<void> {
+  try {
+    keybinds = mergeKeybinds(JSON.parse(await readFile(keybindsPath(), 'utf8')))
+  } catch {
+    keybinds = { ...DEFAULT_KEYBINDS } // no file yet (or unreadable) → defaults
+  }
+}
+
+function registerKeybindHandlers(window: BrowserWindow): void {
+  ipcMain.handle('keybinds:get', () => keybinds)
+  ipcMain.handle('keybinds:set', async (_event, saved: unknown) => {
+    keybinds = mergeKeybinds(saved)
+    try {
+      await writeFile(keybindsPath(), JSON.stringify(keybinds, null, 2), 'utf8')
+    } catch (error) {
+      dialog.showErrorBox('Could not save shortcuts', `Writing the file failed: ${String(error)}`)
+    }
+    installMenu(window) // the menu shows the new accelerators immediately
+    return keybinds
+  })
+}
+
 // Custom application menu — replaces Electron's default. Top level: File, Edit,
-// View (with the old Window items folded in), Settings. Every label says what the
-// item actually does. Settings drives the renderer over IPC: a Light-mode toggle,
-// grid-color presets, and a Custom… item that opens the in-canvas color picker.
+// View (with the old Window items folded in), Settings, Shortcuts. Every label
+// says what the item actually does. Settings drives the renderer over IPC: a
+// Light-mode toggle, grid-color presets, and a Custom… item that opens the
+// in-canvas color picker. File/Shortcuts accelerators come from the editable
+// keybinds map.
 function installMenu(window: BrowserWindow): void {
   const sendGrid = (color: string) => window.webContents.send('settings:grid-color', color)
   const template: MenuItemConstructorOptions[] = [
@@ -91,13 +127,13 @@ function installMenu(window: BrowserWindow): void {
       submenu: [
         {
           label: 'Open Circuit…',
-          accelerator: 'CmdOrCtrl+O',
+          accelerator: keybinds.openCircuit,
           click: () => void openCircuit(window),
         },
         { type: 'separator' },
         {
           label: 'Save Circuit',
-          accelerator: 'CmdOrCtrl+S',
+          accelerator: keybinds.saveCircuit,
           click: () => {
             pendingSaveAs = false
             window.webContents.send('file:save-request')
@@ -105,7 +141,7 @@ function installMenu(window: BrowserWindow): void {
         },
         {
           label: 'Save Circuit As…',
-          accelerator: 'CmdOrCtrl+Shift+S',
+          accelerator: keybinds.saveCircuitAs,
           click: () => {
             pendingSaveAs = true
             window.webContents.send('file:save-request')
@@ -173,6 +209,16 @@ function installMenu(window: BrowserWindow): void {
         },
       ],
     },
+    {
+      label: 'Shortcuts',
+      submenu: [
+        {
+          label: 'View / Change Shortcuts…',
+          accelerator: keybinds.shortcutsPanel,
+          click: () => window.webContents.send('shortcuts:open'),
+        },
+      ],
+    },
   ]
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
@@ -200,9 +246,11 @@ function createWindow(): void {
 
   installMenu(window)
   registerSaveHandler(window)
+  registerKeybindHandlers(window)
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await loadKeybinds()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

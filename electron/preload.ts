@@ -21,4 +21,10 @@ contextBridge.exposeInMainWorld('chipblocks', {
   saveCircuitData: (text: string): Promise<{ ok: boolean; path?: string }> =>
     ipcRenderer.invoke('file:save-data', text),
   onCircuitOpened: (callback: (text: string) => void) => subscribe('file:opened', callback),
+  // Shortcuts (S19-v3-62): the renderer panel reads + edits the keybinds the
+  // main process persists; the Shortcuts menu opens the panel over IPC.
+  getKeybinds: (): Promise<Record<string, string>> => ipcRenderer.invoke('keybinds:get'),
+  setKeybinds: (binds: Record<string, string>): Promise<Record<string, string>> =>
+    ipcRenderer.invoke('keybinds:set', binds),
+  onShortcutsOpen: (callback: () => void) => subscribe('shortcuts:open', callback),
 })
