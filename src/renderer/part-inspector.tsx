@@ -188,7 +188,7 @@ function ratingFor(
   definition: string,
   parameters: Parameters | undefined,
 ): { quantity: 'current' | 'power'; limit: number } | null {
-  if (LED_DEFINITIONS.has(definition)) {
+  if (LED_DEFINITIONS.has(definition) || definition === 'diode_silicon_rectifier') {
     const limit = amountOf(parameters, 'max_forward_current')
     return limit ? { quantity: 'current', limit } : null
   }

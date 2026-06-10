@@ -35,6 +35,8 @@ import { junctionTemperature } from './thermal-model.ts'
 export type FailureCode =
   | 'led-overloaded'
   | 'led-reverse-breakdown'
+  | 'diode-overloaded'
+  | 'diode-reverse-breakdown'
   | 'resistor-overpower'
   | 'capacitor-reverse-polarity'
   | 'capacitor-overvoltage'
@@ -65,6 +67,8 @@ export type Failure = {
 // ---------------------------------------------------------------------------
 
 const LED_DEFINITIONS = new Set(['led', 'led_uv_algan'])
+/** Plain rectifying diodes — same forward-overload physics, plus a PIV rating. */
+const DIODE_DEFINITIONS = new Set(['diode_silicon_rectifier', 'diode_schottky_al_si'])
 
 /**
  * Walk the world's instances and compare each against its rating parameters
@@ -85,6 +89,11 @@ export function detectFailures(world: World, solution: Solution): Failure[] {
       if (overload !== null) failures.push(overload)
       const reverse = checkLedReverseBreakdown(inst, solution)
       if (reverse !== null) failures.push(reverse)
+    } else if (DIODE_DEFINITIONS.has(inst.definition)) {
+      const overload = checkDiodeForwardOverload(inst, solution)
+      if (overload !== null) failures.push(overload)
+      const piv = checkDiodePeakInverse(inst, solution)
+      if (piv !== null) failures.push(piv)
     } else if (inst.definition === 'resistor') {
       const overpower = checkResistorOverpower(inst, solution)
       if (overpower !== null) failures.push(overpower)
@@ -116,6 +125,23 @@ export function detectFailures(world: World, solution: Solution): Failure[] {
  * "unknown," not a failure).
  */
 export function checkLedForwardOverload(inst: Instance, solution: Solution): Failure | null {
+  return forwardOverloadCheck(inst, solution, 'led-overloaded')
+}
+
+/**
+ * Rectifier/Schottky forward-overload check — the same thermal-damage physics
+ * as the LED's (|I| beyond max_forward_current cooks the junction), reported
+ * under its own code so the canvas can speak about the right kind of part.
+ */
+export function checkDiodeForwardOverload(inst: Instance, solution: Solution): Failure | null {
+  return forwardOverloadCheck(inst, solution, 'diode-overloaded')
+}
+
+function forwardOverloadCheck(
+  inst: Instance,
+  solution: Solution,
+  code: 'led-overloaded' | 'diode-overloaded',
+): Failure | null {
   const maxForwardCurrent = readScalarParam(inst, 'max_forward_current')
   if (maxForwardCurrent === undefined || maxForwardCurrent <= 0) return null
 
@@ -126,7 +152,7 @@ export function checkLedForwardOverload(inst: Instance, solution: Solution): Fai
   if (magnitude <= maxForwardCurrent) return null
 
   return {
-    code: 'led-overloaded',
+    code,
     source: inst.id,
     kind: 'max_forward_current',
     measured: magnitude,
@@ -152,8 +178,26 @@ export function checkLedForwardOverload(inst: Instance, solution: Solution): Fai
  * either net voltage unresolved).
  */
 export function checkLedReverseBreakdown(inst: Instance, solution: Solution): Failure | null {
-  const reverseBreakdown = readScalarParam(inst, 'reverse_breakdown_voltage')
-  if (reverseBreakdown === undefined || reverseBreakdown <= 0) return null
+  return reverseVoltageCheck(inst, solution, 'reverse_breakdown_voltage', 'led-reverse-breakdown')
+}
+
+/**
+ * Rectifier peak-inverse-voltage check — the diode blocks up to its PIV
+ * rating; beyond it the junction avalanches, destructively for a non-Zener.
+ * Same sign-dependent shape as the LED check, against `peak_inverse_voltage`.
+ */
+export function checkDiodePeakInverse(inst: Instance, solution: Solution): Failure | null {
+  return reverseVoltageCheck(inst, solution, 'peak_inverse_voltage', 'diode-reverse-breakdown')
+}
+
+function reverseVoltageCheck(
+  inst: Instance,
+  solution: Solution,
+  ratingParam: string,
+  code: 'led-reverse-breakdown' | 'diode-reverse-breakdown',
+): Failure | null {
+  const reverseLimit = readScalarParam(inst, ratingParam)
+  if (reverseLimit === undefined || reverseLimit <= 0) return null
 
   const anodeConnect = inst.connects?.find((c) => c.terminal === 'anode')
   const cathodeConnect = inst.connects?.find((c) => c.terminal === 'cathode')
@@ -164,15 +208,15 @@ export function checkLedReverseBreakdown(inst: Instance, solution: Solution): Fa
   if (V_anode === undefined || V_cathode === undefined) return null
 
   const reverseVoltage = V_cathode - V_anode
-  if (reverseVoltage <= reverseBreakdown) return null
+  if (reverseVoltage <= reverseLimit) return null
 
   return {
-    code: 'led-reverse-breakdown',
+    code,
     source: inst.id,
-    kind: 'reverse_breakdown_voltage',
+    kind: ratingParam,
     measured: reverseVoltage,
-    rated: reverseBreakdown,
-    ratio: reverseVoltage / reverseBreakdown,
+    rated: reverseLimit,
+    ratio: reverseVoltage / reverseLimit,
     units: 'volt',
     severity: 'error',
   }

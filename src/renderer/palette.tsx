@@ -25,6 +25,7 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'inductor', label: 'Inductor' },
   { definition: 'transformer', label: 'Transformer' },
   { definition: 'transformer_center_tapped', label: 'CT Transformer' },
+  { definition: 'diode_silicon_rectifier', label: 'Diode' },
   { definition: 'led', label: 'LED' },
   { definition: 'transistor_bjt_npn', label: 'NPN' },
   { definition: 'transistor_bjt_pnp', label: 'PNP' },

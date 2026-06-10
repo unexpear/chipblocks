@@ -88,6 +88,20 @@ const DEFAULTS: Record<string, Parameters> = {
     core_loss_resistance: scalar(200, 'ohm'),
     saturation_flux_linkage: scalar(0.075, 'weber'),
   },
+  diode_silicon_rectifier: {
+    // 1N4007 class — the universal 1 A axial rectifier: forward drop ≤ 1.0 V
+    // at the 1 A rating (the Shockley calibration point; the curve then gives
+    // the realistic ~0.7 V at smaller currents), blocking up to 1000 V PIV.
+    // Thermal values are DO-41 axial class (lead-length dependent) pending the
+    // queued datasheet-verification pass.
+    forward_voltage: scalar(1.0, 'volt'),
+    max_forward_current: scalar(1, 'ampere'),
+    peak_inverse_voltage: scalar(1000, 'volt'),
+    n_side: { value: 'silicon_n_type' },
+    p_side: { value: 'silicon_p_type' },
+    thermal_resistance_junction_ambient: scalar(100, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(150, 'celsius'),
+  },
   led: {
     // Typical 5 mm red LED (Kingbright WP7113SRD-D class): 2.0 V at 20 mA max,
     // ~640 nm red emission — sets the on-canvas glow color. n_side/p_side are the
@@ -194,6 +208,13 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     secondary_resistance: 'high-voltage winding DCR (many turns of thin wire)',
     core_loss_resistance: 'small EI iron-loss class: ~0.7 W at 12 V (R ≈ V²/P)',
     saturation_flux_linkage: '≈1.4× the nominal 12 V/50 Hz swing (V·√2/ω ≈ 54 mV·s)',
+  },
+  diode_silicon_rectifier: {
+    forward_voltage: '1N4007 class: ≤ 1.0 V at the 1 A rating',
+    max_forward_current: '1N400x family rating (1 A continuous)',
+    peak_inverse_voltage: '1N4007 variant (1000 V repetitive reverse)',
+    thermal_resistance_junction_ambient: 'DO-41 axial class (~100 K/W, lead-length dependent)',
+    max_operating_temperature: 'silicon rectifier junction class (150 °C)',
   },
   led: {
     forward_voltage: 'Kingbright WP7113SRD-D (5 mm red)',

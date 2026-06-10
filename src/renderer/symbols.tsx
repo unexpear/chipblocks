@@ -102,6 +102,37 @@ function SquareSourceGlyph() {
   )
 }
 
+/** Rectifier diode — IEEE 315: triangle (anode) pointing at the cathode bar. */
+function DiodeGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>diode</title>
+      {lead(0, 26)}
+      <polygon points="26,12 26,32 44,22" fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={44} y1={12} x2={44} y2={32} stroke={STROKE} strokeWidth={1.5} />
+      {lead(44, W)}
+    </svg>
+  )
+}
+
+/** Schottky diode — the cathode bar grows the standard S-hooks. */
+function SchottkyGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>Schottky diode</title>
+      {lead(0, 26)}
+      <polygon points="26,12 26,32 44,22" fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <path
+        d="M40 15 L40 12 L44 12 L44 32 L48 32 L48 29"
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      {lead(44, W)}
+    </svg>
+  )
+}
+
 /** LED — diode triangle + cathode bar + two emission arrows. */
 function LedGlyph() {
   return (
@@ -308,6 +339,8 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   power_source: BatteryGlyph,
   led: LedGlyph,
   led_uv_algan: LedGlyph,
+  diode_silicon_rectifier: DiodeGlyph,
+  diode_schottky_al_si: SchottkyGlyph,
   ground: GroundGlyph,
   wire: WireGlyph,
   transistor_bjt_npn: BjtNpnGlyph,

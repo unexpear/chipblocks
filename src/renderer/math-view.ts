@@ -261,6 +261,15 @@ function partCard(
     if (!open && current !== undefined) lines.push(`Carrying I = ${fmtA(Math.abs(current))}.`)
     return { id: inst.id, title: `Switch — ${open ? 'open' : 'closed'}`, lines }
   }
+  if (def === 'diode_zener_silicon') {
+    return {
+      id: inst.id,
+      title: 'Zener — not solvable yet',
+      lines: [
+        'A zener exists to regulate in REVERSE breakdown — and that behavior isn’t modeled yet. Rather than pretend it’s a plain diode, the solver skips it honestly (you’ll see its warning above).',
+      ],
+    }
+  }
   if (def === 'led' || def === 'led_uv_algan' || def.startsWith('diode')) {
     const vF = readScalarParam(inst, 'forward_voltage')
     const iF = readScalarParam(inst, 'max_forward_current')

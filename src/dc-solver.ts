@@ -142,6 +142,14 @@ type ShockleyLed = {
   vGuess: number
 }
 
+/** The pn-junction family the DC solver runs through the Shockley + NR path. */
+const SHOCKLEY_DIODE_DEFINITIONS = new Set([
+  'led',
+  'led_uv_algan',
+  'diode_silicon_rectifier',
+  'diode_schottky_al_si',
+])
+
 export function solveDC(world: World, options?: SolveOptions): Solution {
   const warnings: string[] = []
 
@@ -217,10 +225,17 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
 
     if (inst.definition === 'power_source') {
       linearVoltageSources.push({ inst, kind: 'power_source' })
-    } else if (inst.definition === 'led' || inst.definition === 'led_uv_algan') {
+    } else if (SHOCKLEY_DIODE_DEFINITIONS.has(inst.definition)) {
+      // The whole pn-junction family (LEDs, the silicon rectifier, Schottky)
+      // shares the Shockley law — only the calibration point differs.
       const led = resolveShockleyLed(inst, thermalV, options?.temperaturesC?.get(inst.id))
       if (led !== null) shockleyLeds.push(led)
       else linearVoltageSources.push({ inst, kind: 'led' }) // fixed-V_F fallback
+    } else if (inst.definition === 'diode_zener_silicon') {
+      // A zener EXISTS to regulate in reverse breakdown — which isn't modeled
+      // yet. Solving it as a plain forward diode would misrepresent the part,
+      // so it is skipped honestly (matching the transient solver's posture).
+      warnings.push(`Skipped zener '${inst.id}' — reverse-breakdown regulation is not solvable yet`)
     } else if (inst.definition === 'switch_spst_toggle') {
       // Closed → stamps as a short (below). Open → omitted entirely, leaving its
       // terminals on separate nets: a real open circuit, not a hardcoded short.
