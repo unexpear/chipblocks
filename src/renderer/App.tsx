@@ -26,7 +26,8 @@ import {
   useState,
 } from 'react'
 import type { World } from '../cross-fk-validator.ts'
-import { type Solution, solveDC } from '../dc-solver.ts'
+import type { Solution } from '../dc-solver.ts'
+import { solveElectroThermal } from '../electro-thermal.ts'
 import { solveTransient, type TransientResult } from '../transient-solver.ts'
 import { type CanvasEdge, type CanvasNode, canvasToWorld } from './canvas-to-world.ts'
 import { loadCatalogWorld } from './catalog-loader.ts'
@@ -147,7 +148,11 @@ function solveCanvas(
   edgeList: Edge[],
 ): { edges: Edge[]; health: Map<string, NodeHealth>; readings: Map<string, PartReading> } {
   const { world, drawn } = canvasWorld(nodeList, edgeList)
-  const solution = solveDC(world)
+  // Electro-thermal solve (stage 7): the electrical answer at the settled part
+  // temperatures — hot parts drift, warm junctions drop, all fed back until the
+  // fixed point. Readings/health recompute temperatures from this solution and
+  // land on the same numbers (it IS the fixed point).
+  const solution = solveElectroThermal(world).solution
   const edges = edgeList.map((edge) => {
     const wire = drawn.get(edge.id) ?? { lengthM: 0, ohms: 0 }
     const physics = edgePhysics(edge, world, solution, wire.lengthM, wire.ohms)
@@ -349,13 +354,19 @@ function Canvas() {
     }
     const power = new Map<string, number>()
     let pMax = 0
+    const temp = new Map<string, number>()
+    let tMaxC = 0
     for (const [id, r] of readings) {
       if (typeof r.power === 'number' && r.power > 0) {
         power.set(id, r.power)
         if (r.power > pMax) pMax = r.power
       }
+      if (typeof r.temperatureC === 'number') {
+        temp.set(id, r.temperatureC)
+        if (r.temperatureC > tMaxC) tMaxC = r.temperatureC
+      }
     }
-    return { lens, flow, vMin, vMax, power, pMax }
+    return { lens, flow, vMin, vMax, power, pMax, temp, tMaxC }
   }, [edges, readings, lens, flow])
   const runScope = useCallback(() => {
     const { world } = canvasWorld(nodes, edges)

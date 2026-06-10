@@ -35,6 +35,39 @@ export function thermalVoltage(temperatureKelvin: number = ROOM_TEMPERATURE_KELV
   return (BOLTZMANN_CONSTANT * temperatureKelvin) / ELEMENTARY_CHARGE
 }
 
+/** Boltzmann constant in eV/K (k/q) — for the bandgap term of the I_S(T) law. */
+const BOLTZMANN_EV_PER_K = BOLTZMANN_CONSTANT / ELEMENTARY_CHARGE
+
+/** SPICE saturation-current temperature exponent XTI (junction default 3). */
+const SATURATION_TEMPERATURE_EXPONENT = 3
+
+/**
+ * Saturation current scaled from its calibration temperature to the junction's
+ * actual temperature — the standard SPICE diode/BJT temperature law:
+ *   I_S(T) = I_S(T₀) · (T/T₀)^(XTI/n) · exp( (E_g/(n·k/q)) · (1/T₀ − 1/T) )
+ * with XTI = 3 and the bandgap E_g in eV. This — together with V_T = kT/q — is
+ * what makes a real diode's forward voltage fall ≈2 mV/°C as it warms: I_S grows
+ * fast enough with temperature to more than offset the larger V_T.
+ * Verified form: ngspice manual (diode temperature model) / Sedra & Smith.
+ */
+export function scaleSaturationCurrent(
+  saturationCurrent: number,
+  temperatureKelvin: number,
+  calibrationKelvin: number,
+  idealityFactor: number,
+  bandgapEv: number,
+): number {
+  const ratio = temperatureKelvin / calibrationKelvin
+  const exponent =
+    (bandgapEv / (idealityFactor * BOLTZMANN_EV_PER_K)) *
+    (1 / calibrationKelvin - 1 / temperatureKelvin)
+  return (
+    saturationCurrent *
+    ratio ** (SATURATION_TEMPERATURE_EXPONENT / idealityFactor) *
+    Math.exp(exponent)
+  )
+}
+
 /**
  * Derive the reverse saturation current I_s from a calibration point
  * (forward voltage V_F at forward current I_F) plus the ideality factor (§20.3):

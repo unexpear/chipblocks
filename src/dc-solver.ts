@@ -46,6 +46,8 @@ import {
   deriveSaturationCurrent,
   diodeCurrent,
   pnjlim,
+  ROOM_TEMPERATURE_KELVIN,
+  scaleSaturationCurrent,
   thermalVoltage,
 } from './diode-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
@@ -82,6 +84,13 @@ export type SolveOptions = {
   /** Newton-Raphson iteration cap (default 100). Lower values let tests
    *  exercise the did-not-converge path deterministically. */
   maxIterations?: number
+  /**
+   * Per-instance junction temperatures (°C) from the electro-thermal loop.
+   * A listed LED/BJT solves at its real junction temperature — V_T = kT/q and
+   * the SPICE I_S(T) law — which is what makes a warm diode's forward voltage
+   * fall ≈2 mV/°C. Absent (the default): 300 K behavior, unchanged.
+   */
+  temperaturesC?: Map<string, number>
 }
 
 export type SolutionStatus =
@@ -127,6 +136,8 @@ type ShockleyLed = {
   cathodeNet: string
   saturationCurrent: number
   idealityFactor: number
+  /** kT/q at this junction's temperature (the global 300 K value by default). */
+  thermalV: number
   /** Current Newton-Raphson voltage guess (anode − cathode). */
   vGuess: number
 }
@@ -178,7 +189,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
 
   for (const inst of world.instances.values()) {
     if (inst.definition === 'transistor_bjt_npn' || inst.definition === 'transistor_bjt_pnp') {
-      const bjt = resolveBjt(inst)
+      const bjt = resolveBjt(inst, options?.temperaturesC?.get(inst.id))
       if (bjt !== null) bjts.push(bjt)
       continue
     }
@@ -207,7 +218,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     if (inst.definition === 'power_source') {
       linearVoltageSources.push({ inst, kind: 'power_source' })
     } else if (inst.definition === 'led' || inst.definition === 'led_uv_algan') {
-      const led = resolveShockleyLed(inst, thermalV)
+      const led = resolveShockleyLed(inst, thermalV, options?.temperaturesC?.get(inst.id))
       if (led !== null) shockleyLeds.push(led)
       else linearVoltageSources.push({ inst, kind: 'led' }) // fixed-V_F fallback
     } else if (inst.definition === 'switch_spst_toggle') {
@@ -265,10 +276,10 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         )
     }
     for (const led of shockleyLeds) {
-      stampLedCompanion(led, nodeIndex, thermalV, M, b)
+      stampLedCompanion(led, nodeIndex, led.thermalV, M, b)
     }
     for (const bjt of bjts) {
-      stampBjtCompanion(bjt, nodeIndex, thermalV, M, b)
+      stampBjtCompanion(bjt, nodeIndex, bjt.thermalV, M, b)
     }
 
     // biome-ignore lint/suspicious/noExplicitAny: mathjs lusolve return is polymorphic
@@ -311,8 +322,8 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         const vAnode = led.anodeNet === ground ? 0 : (last.nodes.get(led.anodeNet) ?? 0)
         const vCathode = led.cathodeNet === ground ? 0 : (last.nodes.get(led.cathodeNet) ?? 0)
         const vRaw = vAnode - vCathode
-        const nVT = led.idealityFactor * thermalV
-        const vcrit = criticalVoltage(led.saturationCurrent, led.idealityFactor, thermalV)
+        const nVT = led.idealityFactor * led.thermalV
+        const vcrit = criticalVoltage(led.saturationCurrent, led.idealityFactor, led.thermalV)
         const limit = pnjlim(vRaw, led.vGuess, nVT, vcrit)
         maxDelta = Math.max(maxDelta, Math.abs(limit.voltage - led.vGuess))
         if (limit.limited) anyLimited = true
@@ -323,9 +334,9 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         const vC = bjt.collectorNet === ground ? 0 : (last.nodes.get(bjt.collectorNet) ?? 0)
         const vE = bjt.emitterNet === ground ? 0 : (last.nodes.get(bjt.emitterNet) ?? 0)
         const sign = bjt.polarity === 'pnp' ? -1 : 1
-        const vcrit = criticalVoltage(bjt.params.saturationCurrent, 1, thermalV)
-        const limBE = pnjlim(sign * (vB - vE), bjt.vBE, thermalV, vcrit)
-        const limBC = pnjlim(sign * (vB - vC), bjt.vBC, thermalV, vcrit)
+        const vcrit = criticalVoltage(bjt.params.saturationCurrent, 1, bjt.thermalV)
+        const limBE = pnjlim(sign * (vB - vE), bjt.vBE, bjt.thermalV, vcrit)
+        const limBC = pnjlim(sign * (vB - vC), bjt.vBC, bjt.thermalV, vcrit)
         maxDelta = Math.max(
           maxDelta,
           Math.abs(limBE.voltage - bjt.vBE),
@@ -375,14 +386,14 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   for (const led of shockleyLeds) {
     branches.set(
       led.inst.id,
-      diodeCurrent(led.vGuess, led.saturationCurrent, led.idealityFactor, thermalV),
+      diodeCurrent(led.vGuess, led.saturationCurrent, led.idealityFactor, led.thermalV),
     )
   }
   // BJT: the collector current is the branch current we report (physical sign —
   // a PNP's conventional collector current flows out of the collector).
   for (const bjt of bjts) {
     const sign = bjt.polarity === 'pnp' ? -1 : 1
-    branches.set(bjt.inst.id, sign * bjtCurrents(bjt.vBE, bjt.vBC, bjt.params, thermalV).iC)
+    branches.set(bjt.inst.id, sign * bjtCurrents(bjt.vBE, bjt.vBC, bjt.params, bjt.thermalV).iC)
   }
 
   return { status: 'solved', nodes, branches, ground, warnings, iterations, converged }
@@ -405,11 +416,31 @@ function emptyResult(
   }
 }
 
+/** h·c in eV·nm (NIST CODATA) — an LED's bandgap from its emission wavelength. */
+const PHOTON_EV_NM = 1239.841984
+/** 0 °C in kelvin. */
+const KELVIN_OFFSET = 273.15
+/** Bandgap of silicon (eV) — the I_S(T) law's default for silicon junctions. */
+const SILICON_BANDGAP_EV = 1.11
+
 /**
  * Resolve an LED to the Shockley model, or null if it lacks calibration data
  * (forward_voltage + max_forward_current) and should fall back to fixed-V_F.
+ *
+ * With a junction temperature (the electro-thermal loop), the element solves at
+ * that temperature: V_T = kT/q and I_S scaled by the SPICE temperature law, with
+ * the bandgap taken from the LED's own emission wavelength (E_g = h·c/λ).
+ * Honest model note: for an LED, qV_F ≈ E_g, so the constant-bandgap law's two
+ * temperature effects nearly cancel — the computed V_F drift is much smaller
+ * than the ≈ −2 mV/K real LEDs show (which mostly comes from the bandgap itself
+ * shrinking with temperature, the Varshni effect — a future refinement). Silicon
+ * junctions (V_F ≪ E_g) get the full, real ≈ −2 mV/K behavior from this law.
  */
-function resolveShockleyLed(inst: Instance, thermalV: number): ShockleyLed | null {
+function resolveShockleyLed(
+  inst: Instance,
+  thermalV: number,
+  temperatureC?: number,
+): ShockleyLed | null {
   const forwardVoltage = readScalarParam(inst, 'forward_voltage')
   const forwardCurrent = readScalarParam(inst, 'max_forward_current')
   if (forwardVoltage === undefined || forwardCurrent === undefined) return null
@@ -420,12 +451,30 @@ function resolveShockleyLed(inst: Instance, thermalV: number): ShockleyLed | nul
   if (anodeConnect === undefined || cathodeConnect === undefined) return null
 
   const idealityFactor = readScalarParam(inst, 'ideality_factor') ?? DEFAULT_IDEALITY_FACTOR
-  const saturationCurrent = deriveSaturationCurrent(
+  // The V_F @ I_F calibration point is a 25 °C/300 K datasheet figure.
+  let saturationCurrent = deriveSaturationCurrent(
     forwardVoltage,
     forwardCurrent,
     idealityFactor,
     thermalV,
   )
+  let elementThermalV = thermalV
+  if (temperatureC !== undefined) {
+    const junctionKelvin = temperatureC + KELVIN_OFFSET
+    const wavelengthNm = readScalarParam(inst, 'peak_wavelength')
+    const bandgapEv =
+      wavelengthNm !== undefined && wavelengthNm > 0
+        ? PHOTON_EV_NM / wavelengthNm
+        : SILICON_BANDGAP_EV
+    saturationCurrent = scaleSaturationCurrent(
+      saturationCurrent,
+      junctionKelvin,
+      ROOM_TEMPERATURE_KELVIN,
+      idealityFactor,
+      bandgapEv,
+    )
+    elementThermalV = thermalVoltage(junctionKelvin)
+  }
 
   return {
     inst,
@@ -433,6 +482,7 @@ function resolveShockleyLed(inst: Instance, thermalV: number): ShockleyLed | nul
     cathodeNet: cathodeConnect.net,
     saturationCurrent,
     idealityFactor,
+    thermalV: elementThermalV,
     vGuess: forwardVoltage, // warm start at the rated forward voltage
   }
 }
@@ -486,6 +536,8 @@ export type BjtElement = {
   baseNet: string
   emitterNet: string
   params: BjtParams
+  /** kT/q at this junction's temperature (the global 300 K value by default). */
+  thermalV: number
   /** 'pnp' is the same Ebers-Moll model with both junctions reversed. */
   polarity: 'npn' | 'pnp'
   /**
@@ -502,8 +554,8 @@ export type BjtElement = {
  * (saturation_current + forward_current_gain) or the collector/base/emitter
  * connects. Warm-started in the forward-active region.
  */
-export function resolveBjt(inst: Instance): BjtElement | null {
-  const saturationCurrent = readScalarParam(inst, 'saturation_current')
+export function resolveBjt(inst: Instance, temperatureC?: number): BjtElement | null {
+  let saturationCurrent = readScalarParam(inst, 'saturation_current')
   const betaForward = readScalarParam(inst, 'forward_current_gain')
   if (saturationCurrent === undefined || betaForward === undefined) return null
   if (saturationCurrent <= 0 || betaForward <= 0) return null
@@ -514,12 +566,28 @@ export function resolveBjt(inst: Instance): BjtElement | null {
   const emitter = inst.connects?.find((c) => c.terminal === 'emitter')
   if (collector === undefined || base === undefined || emitter === undefined) return null
 
+  // With a junction temperature (the electro-thermal loop): V_T = kT/q and the
+  // SPICE I_S(T) law at silicon's bandgap — the declared I_S is a 25 °C figure.
+  let elementThermalV = thermalVoltage()
+  if (temperatureC !== undefined) {
+    const junctionKelvin = temperatureC + KELVIN_OFFSET
+    saturationCurrent = scaleSaturationCurrent(
+      saturationCurrent,
+      junctionKelvin,
+      ROOM_TEMPERATURE_KELVIN,
+      1,
+      SILICON_BANDGAP_EV,
+    )
+    elementThermalV = thermalVoltage(junctionKelvin)
+  }
+
   return {
     inst,
     collectorNet: collector.net,
     baseNet: base.net,
     emitterNet: emitter.net,
     params: { saturationCurrent, betaForward, betaReverse },
+    thermalV: elementThermalV,
     polarity: inst.definition === 'transistor_bjt_pnp' ? 'pnp' : 'npn',
     vBE: 0.65,
     vBC: -0.65,
