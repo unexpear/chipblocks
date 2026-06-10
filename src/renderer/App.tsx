@@ -11,6 +11,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   reconnectEdge,
+  SelectionMode,
   useEdgesState,
   useInternalNode,
   useNodesState,
@@ -51,10 +52,21 @@ import {
 } from './canvas-to-world.ts'
 import { loadCatalogWorld } from './catalog-loader.ts'
 import { deserializeCircuit, maxIdSuffix, serializeCircuit } from './circuit-file.ts'
+import {
+  type ClipboardItem,
+  emptyClipboard,
+  latestItem,
+  materializeItem,
+  snapshotSelection,
+  withCopy,
+  withCut,
+} from './clipboard.ts'
+import { ClipboardPanel } from './clipboard-panel.tsx'
 import { DockablePanel, type DockEdge } from './dockable-panel.tsx'
 import { wireFlow } from './edge-currents.ts'
 import { canvasHealth, HealthContext, type NodeHealth } from './health.ts'
 import { DEFAULT_KEYBINDS, eventMatchesBinding, type Keybinds, mergeKeybinds } from './keybinds.ts'
+import { type LassoPoint, lassoPathD, MIN_POINT_SPACING_PX, nodeIdsInLasso } from './lasso.ts'
 import { FIELD_COLOR, fieldReferenceTesla, LensContext, type LensMode } from './lens.ts'
 import { materialCapabilities, validMaterialsByRole } from './material-roles.ts'
 import { MathPanel } from './math-panel.tsx'
@@ -100,6 +112,9 @@ declare global {
       getKeybinds?: () => Promise<Record<string, string>>
       setKeybinds?: (binds: Record<string, string>) => Promise<Record<string, string>>
       onShortcutsOpen?: (callback: () => void) => void
+      onEditCopy?: (callback: () => void) => void
+      onEditCut?: (callback: () => void) => void
+      onEditPaste?: (callback: () => void) => void
     }
   }
 }
@@ -291,6 +306,7 @@ function solveCanvas(
   terminalVolts: Map<string, number>
   world: World
   solution: Solution
+  temperaturesC: Map<string, number>
 } {
   const { world, drawn } = canvasWorld(nodeList, edgeList)
   // Electro-thermal solve (stage 7): the electrical answer at the settled part
@@ -300,7 +316,8 @@ function solveCanvas(
   // component is solved: a free-floating section's voltages are genuinely
   // undefined (and would be a singular matrix) — it sits idle instead of
   // killing the whole canvas. The meter still gets the FULL world.
-  const solution = solveElectroThermal(groundedComponent(world)).solution
+  const thermal = solveElectroThermal(groundedComponent(world))
+  const solution = thermal.solution
   const edges = edgeList.map((edge) => {
     const wire = drawn.get(edge.id) ?? { lengthM: 0, ohms: 0 }
     const physics = edgePhysics(edge, world, solution, wire.lengthM, wire.ohms)
@@ -338,6 +355,9 @@ function solveCanvas(
     // and the Math panel shows the equations behind this exact solution.
     world,
     solution,
+    // The settled part temperatures — the Math panel narrates a hot resistor's
+    // tempco drift with the SAME numbers the solve used.
+    temperaturesC: thermal.temperaturesC,
   }
 }
 
@@ -445,6 +465,7 @@ function Canvas() {
       terminalVolts: solved.terminalVolts,
       world: solved.world,
       solution: solved.solution,
+      temperaturesC: solved.temperaturesC,
       materials,
       materialResistivity,
       validMaterialsByDef,
@@ -463,6 +484,8 @@ function Canvas() {
   const [solvedWorld, setSolvedWorld] = useState(initial.world)
   // The latest Solution — the Math panel derives its equations from it.
   const [solution, setSolution] = useState(initial.solution)
+  // The settled electro-thermal temperatures behind that solution.
+  const [solvedTemperatures, setSolvedTemperatures] = useState(initial.temperaturesC)
   // Latest edges for the re-solve effect WITHOUT depending on edge data (a re-solve
   // rewrites edge data, which would loop); structural edits trigger it via
   // `topology`, node moves via `nodes`.
@@ -576,6 +599,7 @@ function Canvas() {
       setTerminalVolts(solved.terminalVolts)
       setSolvedWorld(solved.world)
       setSolution(solved.solution)
+      setSolvedTemperatures(solved.temperaturesC)
     },
     [setEdges],
   )
@@ -591,8 +615,8 @@ function Canvas() {
   // live from the same solved state the canvas shows.
   const [showMath, setShowMath] = useState(false)
   const mathView = useMemo(
-    () => (showMath ? buildMathView(solvedWorld, solution) : null),
-    [showMath, solvedWorld, solution],
+    () => (showMath ? buildMathView(solvedWorld, solution, solvedTemperatures) : null),
+    [showMath, solvedWorld, solution, solvedTemperatures],
   )
 
   // Circuit blocks (S19-v3-67): group the selection into ONE reusable block.
@@ -943,6 +967,126 @@ function Canvas() {
     setKeybinds(next)
     void window.chipblocks?.setKeybinds?.(next)
   }, [])
+
+  // Clipboard (S19-v3-69): desktop-style copy/cut/paste with a Win+V-style
+  // history — 15 copies, one cut at a time. Ctrl+V pastes the newest at the
+  // cursor; the panel pastes any slot at the view center.
+  const [clipboard, setClipboard] = useState(emptyClipboard())
+  const [showClipboard, setShowClipboard] = useState(false)
+  const lastCursorFlow = useRef<{ x: number; y: number } | null>(null)
+
+  const doCopy = useCallback(() => {
+    const selected = new Set(nodes.filter((n) => n.selected).map((n) => n.id))
+    const item = snapshotSelection(
+      nodes as unknown as BlockNodeLike[],
+      edges as unknown as BlockEdgeLike[],
+      selected,
+    )
+    if (item === null) return
+    setClipboard((current) => withCopy(current, item))
+  }, [nodes, edges])
+
+  const doCut = useCallback(() => {
+    const selected = new Set(nodes.filter((n) => n.selected).map((n) => n.id))
+    const item = snapshotSelection(
+      nodes as unknown as BlockNodeLike[],
+      edges as unknown as BlockEdgeLike[],
+      selected,
+    )
+    if (item === null) return
+    setClipboard((current) => withCut(current, item))
+    void deleteElements({
+      nodes: nodes.filter((n) => n.selected),
+      edges: edges.filter((e) => e.selected),
+    })
+  }, [nodes, edges, deleteElements])
+
+  const doPaste = useCallback(
+    (item?: ClipboardItem, placement: 'cursor' | 'center' = 'cursor') => {
+      const chosen = item ?? latestItem(clipboard)
+      if (chosen === null || chosen.nodes.length === 0) return
+      const center = screenToFlowPosition({
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+      })
+      const target = placement === 'cursor' ? (lastCursorFlow.current ?? center) : center
+      dropCount.current += 1
+      const pasted = materializeItem(chosen, `p${dropCount.current}`, target)
+      setNodes((current) => [
+        ...current.map((n) => ({ ...n, selected: false })),
+        ...(pasted.nodes as unknown as Node[]),
+      ])
+      setEdges((current) => [...current, ...(pasted.edges as unknown as Edge[])])
+    },
+    [clipboard, screenToFlowPosition, setNodes, setEdges],
+  )
+
+  // The Edit menu's Cut/Copy/Paste Parts items arrive over IPC. Subscribe once;
+  // the ref always points at the latest handlers (which close over live state).
+  const editActions = useRef({ copy: doCopy, cut: doCut, paste: () => doPaste() })
+  editActions.current = { copy: doCopy, cut: doCut, paste: () => doPaste() }
+  useEffect(() => {
+    const bridge = window.chipblocks
+    bridge?.onEditCopy?.(() => editActions.current.copy())
+    bridge?.onEditCut?.(() => editActions.current.cut())
+    bridge?.onEditPaste?.(() => editActions.current.paste())
+  }, [])
+
+  // Lasso (S19-v3-69): freeform selection. The wrapper owns the pointer
+  // events; points are kept in BOTH spaces — wrapper-local for the overlay
+  // drawing, flow coordinates for the hit test (so zoom/pan can't skew it).
+  // The LIVE gesture lives in a ref — pointer events can land faster than
+  // renders, and reading render state mid-gesture would drop points; the
+  // state mirror exists only so the trail draws.
+  const [lassoPoints, setLassoPoints] = useState<{
+    screen: LassoPoint[]
+    flow: LassoPoint[]
+  } | null>(null)
+  const lassoLive = useRef<{ rect: DOMRect; screen: LassoPoint[]; flow: LassoPoint[] } | null>(null)
+  const onLassoDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (tool !== 'lasso' || event.button !== 0) return
+      const rect = event.currentTarget.getBoundingClientRect()
+      lassoLive.current = {
+        rect,
+        screen: [{ x: event.clientX - rect.left, y: event.clientY - rect.top }],
+        flow: [screenToFlowPosition({ x: event.clientX, y: event.clientY })],
+      }
+      setLassoPoints({ screen: [...lassoLive.current.screen], flow: [...lassoLive.current.flow] })
+    },
+    [tool, screenToFlowPosition],
+  )
+  const onLassoMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const live = lassoLive.current
+      if (tool !== 'lasso' || live === null) return
+      const local = { x: event.clientX - live.rect.left, y: event.clientY - live.rect.top }
+      const last = live.screen.at(-1)
+      if (
+        last !== undefined &&
+        Math.hypot(local.x - last.x, local.y - last.y) < MIN_POINT_SPACING_PX
+      ) {
+        return
+      }
+      live.screen.push(local)
+      live.flow.push(screenToFlowPosition({ x: event.clientX, y: event.clientY }))
+      setLassoPoints({ screen: [...live.screen], flow: [...live.flow] })
+    },
+    [tool, screenToFlowPosition],
+  )
+  const onLassoUp = useCallback(() => {
+    const live = lassoLive.current
+    if (tool !== 'lasso' || live === null) return
+    const picked = new Set(
+      nodeIdsInLasso(nodes as { id: string; position: { x: number; y: number } }[], live.flow),
+    )
+    if (picked.size > 0) {
+      setNodes((current) => current.map((n) => ({ ...n, selected: picked.has(n.id) })))
+    }
+    lassoLive.current = null
+    setLassoPoints(null)
+  }, [tool, nodes, setNodes])
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
@@ -955,6 +1099,21 @@ function Canvas() {
       if (eventMatchesBinding(event, keybinds.selectAll)) {
         event.preventDefault()
         setNodes((current) => current.map((n) => ({ ...n, selected: true })))
+        return
+      }
+      if (eventMatchesBinding(event, keybinds.copy)) {
+        event.preventDefault()
+        doCopy()
+        return
+      }
+      if (eventMatchesBinding(event, keybinds.cut)) {
+        event.preventDefault()
+        doCut()
+        return
+      }
+      if (eventMatchesBinding(event, keybinds.paste)) {
+        event.preventDefault()
+        doPaste()
         return
       }
       if (eventMatchesBinding(event, keybinds.rotate)) {
@@ -985,7 +1144,7 @@ function Canvas() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [setNodes, keybinds, showShortcuts, nodes, edges, deleteElements])
+  }, [setNodes, keybinds, showShortcuts, nodes, edges, deleteElements, doCopy, doCut, doPaste])
 
   const onDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -1304,11 +1463,27 @@ function Canvas() {
     >
       <div
         onClickCapture={(event) => {
+          // While the lasso is the active tool, clicks aimed at the CANVAS
+          // must not reach React Flow — its pane click would clear the
+          // selection the lasso just made. Clicks on overlay UI in this same
+          // wrapper (the clipboard panel, the meter chip) still work.
+          if (tool === 'lasso') {
+            if ((event.target as Element).closest?.('.react-flow') !== null) {
+              event.stopPropagation()
+            }
+            return
+          }
           onMeterClick(event)
           onWireClick(event)
         }}
         onDoubleClickCapture={onWireDoubleClick}
-        onMouseMove={onWireMove}
+        onMouseMove={(event) => {
+          lastCursorFlow.current = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+          onWireMove(event)
+        }}
+        onPointerDown={onLassoDown}
+        onPointerMove={onLassoMove}
+        onPointerUp={onLassoUp}
         style={{
           gridArea: 'center',
           position: 'relative',
@@ -1337,6 +1512,14 @@ function Canvas() {
               // double-create — and it once let meter probes draw real wires.
               connectOnClick={false}
               connectionMode={ConnectionMode.Loose}
+              // Desktop-style selection (S19-v3-69): LEFT-drag on empty canvas
+              // draws a selection box (like desktop icons), so panning moves to
+              // the middle/right mouse buttons. Touching the box counts —
+              // SelectionMode.Partial — exactly how a desktop marquee behaves.
+              // In lasso mode the wrapper owns the pointer, so both are off.
+              selectionOnDrag={tool === 'select'}
+              panOnDrag={tool === 'lasso' ? false : [1, 2]}
+              selectionMode={SelectionMode.Partial}
               // Windows-friendly multi-select: Ctrl+click (React Flow's default
               // is the Meta key); Shift+drag box-select is the built-in default.
               multiSelectionKeyCode={['Meta', 'Control']}
@@ -1392,8 +1575,38 @@ function Canvas() {
           {tool === 'wire'
             ? ' · wire tool: click anywhere to start, click corners, click a dot to finish (double-click in space ends there; Esc cancels)'
             : ''}
+          {tool === 'lasso'
+            ? ' · lasso: press and draw any shape around parts; release to select them'
+            : ''}
           {alwaysOn ? '' : ' · physics paused — hit Solve'}
         </div>
+
+        {/* The lasso trail — drawn in wrapper coordinates while dragging. */}
+        {lassoPoints !== null ? (
+          <svg
+            aria-hidden
+            style={{ position: 'absolute', inset: 0, zIndex: 30, pointerEvents: 'none' }}
+            width="100%"
+            height="100%"
+          >
+            <path
+              d={lassoPathD(lassoPoints.screen)}
+              fill="rgba(160, 106, 216, 0.12)"
+              stroke="#a06ad8"
+              strokeWidth={1.5}
+              strokeDasharray="6 4"
+            />
+          </svg>
+        ) : null}
+
+        {showClipboard ? (
+          <ClipboardPanel
+            clipboard={clipboard}
+            onPaste={(item) => doPaste(item, 'center')}
+            onClose={() => setShowClipboard(false)}
+            light={light}
+          />
+        ) : null}
 
         {/* Multimeter readout — mode dial (V⎓ / Ω) + the live reading. */}
         {meterReadout !== null ? (
@@ -1692,6 +1905,8 @@ function Canvas() {
           onMath={() => setShowMath((open) => !open)}
           onGroup={() => setGroupPrompt({ name: '', error: null })}
           canGroup={selectedCount >= 2}
+          onClipboard={() => setShowClipboard((open) => !open)}
+          clipboardCount={clipboard.copies.length + (clipboard.cut !== null ? 1 : 0)}
           lens={lens}
           onLens={setLens}
           flow={flow}

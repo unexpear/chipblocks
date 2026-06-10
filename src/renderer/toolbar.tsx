@@ -15,7 +15,7 @@ import { DeviceGlyph } from './symbols.tsx'
  *    then hit Solve.
  */
 
-export type Tool = 'select' | 'wire' | 'meter'
+export type Tool = 'select' | 'wire' | 'meter' | 'lasso'
 export type WireStyle = 'line' | 'curve'
 
 export function ToolbarItems({
@@ -30,6 +30,8 @@ export function ToolbarItems({
   onMath,
   onGroup,
   canGroup,
+  onClipboard,
+  clipboardCount,
   lens,
   onLens,
   flow,
@@ -46,6 +48,8 @@ export function ToolbarItems({
   onMath: () => void
   onGroup: () => void
   canGroup: boolean
+  onClipboard: () => void
+  clipboardCount: number
   lens: LensMode
   onLens: (lens: LensMode) => void
   flow: boolean
@@ -53,6 +57,7 @@ export function ToolbarItems({
 }) {
   const wireActive = tool === 'wire'
   const meterActive = tool === 'meter'
+  const lassoActive = tool === 'lasso'
   return (
     <>
       <button
@@ -100,6 +105,18 @@ export function ToolbarItems({
           </button>
         </div>
       ) : null}
+
+      <button
+        type="button"
+        onClick={() => onTool(lassoActive ? 'select' : 'lasso')}
+        title="Lasso — freeform selection: draw any shape around parts and everything whose middle is inside gets selected together (move, Group, copy, or cut them as one). Left-drag on empty canvas box-selects without this tool; the lasso is for shapes a box can't make."
+        style={{ ...toolButton(lassoActive), flexDirection: 'row', gap: 6, padding: '8px 10px' }}
+      >
+        <span aria-hidden style={{ color: '#c08ae0', fontSize: 13 }}>
+          ⟁
+        </span>
+        <span style={{ fontSize: 11 }}>Lasso</span>
+      </button>
 
       <button
         type="button"
@@ -178,6 +195,20 @@ export function ToolbarItems({
           ⧉
         </span>
         <span style={{ fontSize: 11 }}>Group</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={onClipboard}
+        title="Clipboard — the last 15 copies plus the one cut, like the Windows clipboard history. Click an item in the panel to paste it; Ctrl+V pastes the newest."
+        style={{ ...toolButton(false), flexDirection: 'row', gap: 6, padding: '8px 10px' }}
+      >
+        <span aria-hidden style={{ fontSize: 13 }}>
+          📋
+        </span>
+        <span style={{ fontSize: 11 }}>
+          Clipboard{clipboardCount > 0 ? ` (${clipboardCount})` : ''}
+        </span>
       </button>
 
       <button

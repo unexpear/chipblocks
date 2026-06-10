@@ -157,9 +157,31 @@ function installMenu(window: BrowserWindow): void {
         { role: 'undo' },
         { role: 'redo' },
         { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
+        // Canvas clipboard (S19-v3-69). registerAccelerator:false is the key:
+        // the accelerator is DISPLAYED but not claimed, so Ctrl+C/X/V reach the
+        // page — the renderer's keybind handler does canvas copy/cut/paste, and
+        // text fields keep Chromium's native clipboard behavior (its input
+        // guard steps aside). A registered accelerator (or the old role items)
+        // would swallow the keys before the canvas ever saw them.
+        {
+          label: 'Cut Parts',
+          accelerator: keybinds.cut,
+          registerAccelerator: false,
+          click: () => window.webContents.send('edit:cut'),
+        },
+        {
+          label: 'Copy Parts',
+          accelerator: keybinds.copy,
+          registerAccelerator: false,
+          click: () => window.webContents.send('edit:copy'),
+        },
+        {
+          label: 'Paste Parts',
+          accelerator: keybinds.paste,
+          registerAccelerator: false,
+          click: () => window.webContents.send('edit:paste'),
+        },
+        { type: 'separator' },
         { role: 'selectAll', label: 'Select All' },
       ],
     },

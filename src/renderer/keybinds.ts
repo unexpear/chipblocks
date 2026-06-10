@@ -17,6 +17,9 @@ export type KeybindAction =
   | 'deleteAlt'
   | 'cancelWire'
   | 'selectAll'
+  | 'copy'
+  | 'cut'
+  | 'paste'
   | 'openCircuit'
   | 'saveCircuit'
   | 'saveCircuitAs'
@@ -30,6 +33,9 @@ export const DEFAULT_KEYBINDS: Keybinds = {
   deleteAlt: 'Backspace',
   cancelWire: 'Escape',
   selectAll: 'Ctrl+Shift+A',
+  copy: 'Ctrl+C',
+  cut: 'Ctrl+X',
+  paste: 'Ctrl+V',
   openCircuit: 'Ctrl+O',
   saveCircuit: 'Ctrl+S',
   saveCircuitAs: 'Ctrl+Shift+S',
@@ -42,6 +48,9 @@ export const KEYBIND_LABELS: Record<KeybindAction, string> = {
   deleteAlt: 'Delete (second key)',
   cancelWire: 'Abandon the wire being drawn',
   selectAll: 'Select every part on the canvas (then Group can block them)',
+  copy: 'Copy the selected parts (the clipboard keeps the last 15 copies)',
+  cut: 'Cut the selected parts (one cut at a time — pasting brings them back)',
+  paste: 'Paste the newest clipboard item at the mouse position',
   openCircuit: 'Open a circuit file',
   saveCircuit: 'Save the circuit',
   saveCircuitAs: 'Save the circuit as…',
@@ -135,21 +144,44 @@ export function bindingProblem(
  */
 export const FIXED_CONTROLS: { group: string; control: string; does: string }[] = [
   { group: 'Canvas', control: 'Click a part', does: 'Select it (Properties panel shows it)' },
-  { group: 'Canvas', control: 'Drag a part', does: 'Move it (wires re-route and re-solve)' },
+  {
+    group: 'Canvas',
+    control: 'Drag a part',
+    does: 'Move it — every selected part moves along (wires re-route and re-solve)',
+  },
   { group: 'Canvas', control: 'Drag from the palette', does: 'Place a new part where you drop it' },
   { group: 'Canvas', control: 'Double-click a switch', does: 'Flip it open / closed' },
   {
     group: 'Canvas',
-    control: 'Ctrl+click parts (or Shift+drag a box)',
-    does: 'Select several parts at once — then Group can turn them into a block',
+    control: 'Drag empty canvas',
+    does: 'Box-select: everything the box touches is selected together (like desktop icons)',
+  },
+  {
+    group: 'Canvas',
+    control: 'Lasso tool: draw around parts',
+    does: 'Freeform select — any shape you draw; parts whose middle is inside get selected',
+  },
+  {
+    group: 'Canvas',
+    control: 'Ctrl+click parts',
+    does: 'Add parts to the selection one by one',
   },
   {
     group: 'Canvas',
     control: 'Double-click a block',
     does: 'Descend into it — see the real circuit inside (Ungroup there to edit)',
   },
-  { group: 'Canvas', control: 'Drag empty canvas', does: 'Pan the view' },
+  {
+    group: 'Canvas',
+    control: 'Middle-drag or right-drag',
+    does: 'Pan the view (left-drag is box-select now)',
+  },
   { group: 'Canvas', control: 'Scroll wheel', does: 'Zoom in / out' },
+  {
+    group: 'Clipboard',
+    control: '📋 Clipboard button',
+    does: 'Open the clipboard panel: the last 15 copies + the one cut — click any to paste it',
+  },
   {
     group: 'Wire tool',
     control: 'Click anywhere',

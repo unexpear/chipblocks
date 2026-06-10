@@ -27,4 +27,9 @@ contextBridge.exposeInMainWorld('chipblocks', {
   setKeybinds: (binds: Record<string, string>): Promise<Record<string, string>> =>
     ipcRenderer.invoke('keybinds:set', binds),
   onShortcutsOpen: (callback: () => void) => subscribe('shortcuts:open', callback),
+  // Clipboard (S19-v3-69): the Edit menu's Cut/Copy/Paste Parts items — the
+  // renderer owns the clipboard, the menu just asks.
+  onEditCopy: (callback: () => void) => subscribe('edit:copy', callback),
+  onEditCut: (callback: () => void) => subscribe('edit:cut', callback),
+  onEditPaste: (callback: () => void) => subscribe('edit:paste', callback),
 })
