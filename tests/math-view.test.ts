@@ -7,8 +7,10 @@
 
 import { describe, expect, test } from 'vitest'
 import { solveDC } from '../src/dc-solver.ts'
+import { resistanceAtTemperature, solveElectroThermal } from '../src/electro-thermal.ts'
 import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
 import { buildMathView } from '../src/renderer/math-view.ts'
+import { formatEng } from '../src/renderer/units.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
 
@@ -162,5 +164,76 @@ describe('buildMathView', () => {
     const view = buildMathView(world, solveDC(world))
     expect(view.solver.join(' ')).toContain('no-ground')
     expect(view.parts.length).toBe(0)
+  })
+
+  test('a HOT tempco resistor narrates its drift and uses the resistance the solver used', () => {
+    // 5 V into a 100 Ω carbon-film resistor (α −500 ppm/K, θ_JA 340): the
+    // electro-thermal fixed point runs ~114 °C with R(T) ≈ 95.5 Ω, I ≈ 52.3 mA.
+    // The card's V = I·R must reproduce the SOLVED drop (KVL-consistent), not
+    // I × 100 Ω — that mismatch is exactly the live-canvas bug this test pins.
+    const nodes: CanvasNode[] = [
+      {
+        id: 'bat',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(5, 'volt'), internal_resistance: scalar(0, 'ohm') },
+      },
+      {
+        id: 'r1',
+        definition: 'resistor',
+        parameters: {
+          resistance: scalar(100, 'ohm'),
+          temperature_coefficient: scalar(-5e-4, 'per_kelvin'),
+          thermal_resistance_junction_ambient: scalar(340, 'kelvin_per_watt'),
+        },
+      },
+      { id: 'gnd', definition: 'ground' },
+    ]
+    const edges = [
+      {
+        source: 'bat',
+        sourceHandle: 'terminal_positive',
+        target: 'r1',
+        targetHandle: 'terminal_a',
+      },
+      {
+        source: 'r1',
+        sourceHandle: 'terminal_b',
+        target: 'bat',
+        targetHandle: 'terminal_negative',
+      },
+      {
+        source: 'gnd',
+        sourceHandle: 'reference_terminal',
+        target: 'bat',
+        targetHandle: 'terminal_negative',
+      },
+    ]
+    const world = canvasToWorld(nodes, edges)
+    const result = solveElectroThermal(world)
+    const view = buildMathView(world, result.solution, result.temperaturesC)
+    const text = view.parts.find((p) => p.id === 'r1')?.lines.join(' ') ?? ''
+
+    expect(text).toContain('R(T) = R₀·(1 + α·ΔT)')
+    expect(text).toContain('−500 ppm per °C')
+    // The Ohm's-law line must use the SAME hot resistance the solver used
+    // (formatted by the same formatter — single source of truth end to end)…
+    const r1 = world.instances.get('r1')
+    const hotOhms = resistanceAtTemperature(
+      r1 ?? { id: 'r1', kind_ref: 'x', definition: 'resistor' },
+      result.temperaturesC.get('r1'),
+    )
+    expect(hotOhms).toBeDefined()
+    expect(hotOhms ?? 0).toBeCloseTo(95.55, 1)
+    expect(text).toContain(`× ${formatEng(hotOhms ?? 0, 'Ω')} `)
+    // …and the printed drop is the solved 5 V (the supply is ideal, so the
+    // whole EMF lands across the hot resistor) — NOT I × 100 Ω ≈ 5.23 V.
+    expect(text).toContain('= 5.00 V')
+
+    // Cold circuits stay untouched: without a temperatures map the card reads
+    // exactly as before.
+    const coldView = buildMathView(world, result.solution)
+    const coldText = coldView.parts.find((p) => p.id === 'r1')?.lines.join(' ') ?? ''
+    expect(coldText).not.toContain('R(T)')
+    expect(coldText).toContain('× 100 Ω')
   })
 })

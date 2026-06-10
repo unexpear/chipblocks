@@ -19,7 +19,7 @@
 import type { Instance, World } from './cross-fk-validator.ts'
 import { type Solution, type SolveOptions, solveDC } from './dc-solver.ts'
 import { readScalarParam } from './instance-params.ts'
-import { junctionTemperature, STANDARD_AMBIENT_C } from './thermal-model.ts'
+import { acrossVolts, junctionTemperature, STANDARD_AMBIENT_C } from './thermal-model.ts'
 
 export type ElectroThermalResult = {
   /** The electrically-converged solution at the final temperatures. */
@@ -38,6 +38,23 @@ const TEMPERATURE_TOLERANCE_C = 0.1
 /** Linear-tempco floor: an adjusted resistance at/below this is out of range. */
 const RESISTANCE_FLOOR_OHMS = 1e-9
 
+/**
+ * A tempco part's resistance at temperature: R(T) = R₀·(1 + α·ΔT). The ONE
+ * place this law lives — the solve loop and every display (Math panel) call
+ * it, so what the user reads is what the solver used. Undefined when the part
+ * has no tempco/resistance or no temperature is known for it.
+ */
+export function resistanceAtTemperature(
+  inst: Instance,
+  temperatureC: number | undefined,
+): number | undefined {
+  if (temperatureC === undefined) return undefined
+  const alpha = readScalarParam(inst, 'temperature_coefficient')
+  const baseResistance = readScalarParam(inst, 'resistance')
+  if (alpha === undefined || baseResistance === undefined) return undefined
+  return baseResistance * (1 + alpha * (temperatureC - STANDARD_AMBIENT_C))
+}
+
 /** A world with each tempco resistor's resistance adjusted to its temperature. */
 function worldAtTemperatures(
   world: World,
@@ -47,19 +64,16 @@ function worldAtTemperatures(
   let outOfRange = false
   const instances = new Map<string, Instance>()
   for (const [id, inst] of world.instances) {
-    const alpha = readScalarParam(inst, 'temperature_coefficient')
-    const baseResistance = readScalarParam(inst, 'resistance')
-    const temperature = temperaturesC.get(id)
-    if (alpha === undefined || baseResistance === undefined || temperature === undefined) {
+    let adjusted = resistanceAtTemperature(inst, temperaturesC.get(id))
+    if (adjusted === undefined) {
       instances.set(id, inst)
       continue
     }
-    let adjusted = baseResistance * (1 + alpha * (temperature - STANDARD_AMBIENT_C))
     if (adjusted <= RESISTANCE_FLOOR_OHMS) {
       outOfRange = true
       warnings.push(
         `'${id}': temperature-adjusted resistance fell to ${adjusted.toPrecision(3)} Ω at ` +
-          `${temperature.toFixed(0)} °C — the linear tempco model is out of range; clamped.`,
+          `${(temperaturesC.get(id) ?? STANDARD_AMBIENT_C).toFixed(0)} °C — the linear tempco model is out of range; clamped.`,
       )
       adjusted = RESISTANCE_FLOOR_OHMS
     }
@@ -83,18 +97,7 @@ function computeTemperatures(world: World, solution: Solution): Map<string, numb
     const branch = solution.branches.get(inst.id)
     if (branch === undefined) continue
 
-    const connects = inst.connects ?? []
-    let volts: number | undefined
-    if (connects.length === 2) {
-      const vA = solution.nodes.get(connects[0]?.net ?? '')
-      const vB = solution.nodes.get(connects[1]?.net ?? '')
-      if (vA !== undefined && vB !== undefined) volts = Math.abs(vA - vB)
-    } else {
-      // A transistor dissipates ≈ V_CE · I_C (the base term is comparatively tiny).
-      const vC = solution.nodes.get(connects.find((c) => c.terminal === 'collector')?.net ?? '')
-      const vE = solution.nodes.get(connects.find((c) => c.terminal === 'emitter')?.net ?? '')
-      if (vC !== undefined && vE !== undefined) volts = Math.abs(vC - vE)
-    }
+    const volts = acrossVolts(inst, solution)
     if (volts === undefined) continue
 
     temperatures.set(inst.id, junctionTemperature(Math.abs(branch) * volts, thetaJa))

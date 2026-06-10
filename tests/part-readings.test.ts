@@ -68,4 +68,65 @@ describe('partReadings', () => {
     const readings = partReadings(world, solveDC(world))
     expect(readings.size).toBe(0)
   })
+
+  test('a MOSFET reads V_DS, P = V_DS·I_D, and its junction temperature', () => {
+    // Saturation: V_GS = 3.1 V (V_OV = 1 V, k = 26 mA/V², no λ) → I_D = 13 mA;
+    // V_DS = 10 − 100 × 0.013 = 8.7 V → P = 113.1 mW; θ 312.5 → T ≈ 60.3 °C.
+    // Before S19-v3-68 a three-terminal part had NO voltage/power/temperature.
+    const nodes: CanvasNode[] = [
+      {
+        id: 'vdd',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(10, 'volt'), internal_resistance: scalar(0, 'ohm') },
+      },
+      {
+        id: 'vg',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(3.1, 'volt'), internal_resistance: scalar(0, 'ohm') },
+      },
+      { id: 'rload', definition: 'resistor', parameters: { resistance: scalar(100, 'ohm') } },
+      {
+        id: 'm1',
+        definition: 'transistor_mosfet_nmos',
+        parameters: {
+          threshold_voltage: scalar(2.1, 'volt'),
+          transconductance_parameter: scalar(0.026, 'ampere_per_volt_squared'),
+          thermal_resistance_junction_ambient: scalar(312.5, 'kelvin_per_watt'),
+          max_operating_temperature: scalar(150, 'celsius'),
+        },
+      },
+      { id: 'gnd', definition: 'ground' },
+    ] as CanvasNode[]
+    const edges = [
+      {
+        source: 'vdd',
+        sourceHandle: 'terminal_positive',
+        target: 'rload',
+        targetHandle: 'terminal_a',
+      },
+      { source: 'rload', sourceHandle: 'terminal_b', target: 'm1', targetHandle: 'drain' },
+      { source: 'm1', sourceHandle: 'source', target: 'vdd', targetHandle: 'terminal_negative' },
+      { source: 'vg', sourceHandle: 'terminal_positive', target: 'm1', targetHandle: 'gate' },
+      {
+        source: 'vg',
+        sourceHandle: 'terminal_negative',
+        target: 'vdd',
+        targetHandle: 'terminal_negative',
+      },
+      {
+        source: 'gnd',
+        sourceHandle: 'reference_terminal',
+        target: 'vdd',
+        targetHandle: 'terminal_negative',
+      },
+    ]
+    const world = canvasToWorld(nodes, edges)
+    const readings = partReadings(world, solveDC(world))
+    const m1 = readings.get('m1')
+    expect(m1?.current).toBeCloseTo(0.013, 4)
+    expect(m1?.voltage).toBeCloseTo(8.7, 2)
+    expect(m1?.power).toBeCloseTo(0.1131, 3)
+    expect(m1?.temperatureC).toBeCloseTo(60.34, 1)
+    expect(m1?.maxTemperatureC).toBe(150)
+  })
 })

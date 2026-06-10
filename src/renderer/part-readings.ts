@@ -1,7 +1,7 @@
 import type { World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
 import { readScalarParam } from '../instance-params.ts'
-import { junctionTemperature } from '../thermal-model.ts'
+import { acrossVolts, junctionTemperature } from '../thermal-model.ts'
 
 /**
  * Per-part electrical readings from a solved circuit (Sprint 19) — what the
@@ -10,7 +10,8 @@ import { junctionTemperature } from '../thermal-model.ts'
  * EveryCircuit) leads with these; we already solve them, this just collects them.
  *
  *  - current = |branch current| (the solver's per-part branch).
- *  - voltage = |V(terminal_a net) − V(terminal_b net)| (a part with two connects).
+ *  - voltage = |V across the part's terminal pair| (two-terminal parts; a
+ *    transistor reads its conducting pair — V_CE for a BJT, V_DS for a MOSFET).
  *  - power   = current × voltage (dissipated for a resistor/LED; delivered for a
  *    source — the sign/direction is implied by the part).
  *  - temperatureC = the lumped thermal model (stage 7): 25 °C ambient + P·θ_JA,
@@ -35,12 +36,8 @@ export function partReadings(world: World, solution: Solution): Map<string, Part
     const branch = solution.branches.get(inst.id)
     if (branch !== undefined) reading.current = Math.abs(branch)
 
-    const connects = inst.connects ?? []
-    if (connects.length === 2) {
-      const va = solution.nodes.get(connects[0]?.net ?? '') ?? 0
-      const vb = solution.nodes.get(connects[1]?.net ?? '') ?? 0
-      reading.voltage = Math.abs(va - vb)
-    }
+    const volts = acrossVolts(inst, solution)
+    if (volts !== undefined) reading.voltage = volts
 
     if (reading.current !== undefined && reading.voltage !== undefined) {
       reading.power = reading.current * reading.voltage

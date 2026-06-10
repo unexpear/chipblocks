@@ -10,7 +10,8 @@ import { describe, expect, test } from 'vitest'
 import type { World } from '../src/cross-fk-validator.ts'
 import { solveDC } from '../src/dc-solver.ts'
 import { scaleSaturationCurrent, thermalVoltage } from '../src/diode-model.ts'
-import { solveElectroThermal } from '../src/electro-thermal.ts'
+import { resistanceAtTemperature, solveElectroThermal } from '../src/electro-thermal.ts'
+import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
 
@@ -197,5 +198,139 @@ describe('solveElectroThermal', () => {
     const result = solveElectroThermal(selfHeatingResistor({ alpha: -4e-3, thetaJa: 1000 }))
     expect(result.thermalConverged).toBe(false)
     expect(result.warnings.some((w) => w.includes('out of range'))).toBe(true)
+  })
+
+  test('a MOSFET heats like any other rated part — V_DS·I_D through its θ_JA', () => {
+    // 10 V supply → 100 Ω → drain; gate at 3.1 V (V_OV = 1 V, k = 26 mA/V², no λ)
+    // → saturation: I_D = 13 mA exactly, V_DS = 10 − 1.3 = 8.7 V.
+    // P = 8.7 V × 13 mA = 113.1 mW; θ_JA 312.5 → T = 25 + 35.34 = 60.34 °C.
+    const nodes: CanvasNode[] = [
+      {
+        id: 'vdd',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(10, 'volt'), internal_resistance: scalar(0, 'ohm') },
+      },
+      {
+        id: 'vg',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(3.1, 'volt'), internal_resistance: scalar(0, 'ohm') },
+      },
+      { id: 'rload', definition: 'resistor', parameters: { resistance: scalar(100, 'ohm') } },
+      {
+        id: 'm1',
+        definition: 'transistor_mosfet_nmos',
+        parameters: {
+          threshold_voltage: scalar(2.1, 'volt'),
+          transconductance_parameter: scalar(0.026, 'ampere_per_volt_squared'),
+          thermal_resistance_junction_ambient: scalar(312.5, 'kelvin_per_watt'),
+        },
+      },
+      { id: 'gnd', definition: 'ground' },
+    ] as CanvasNode[]
+    const edges = [
+      {
+        source: 'vdd',
+        sourceHandle: 'terminal_positive',
+        target: 'rload',
+        targetHandle: 'terminal_a',
+      },
+      { source: 'rload', sourceHandle: 'terminal_b', target: 'm1', targetHandle: 'drain' },
+      { source: 'm1', sourceHandle: 'source', target: 'vdd', targetHandle: 'terminal_negative' },
+      { source: 'vg', sourceHandle: 'terminal_positive', target: 'm1', targetHandle: 'gate' },
+      {
+        source: 'vg',
+        sourceHandle: 'terminal_negative',
+        target: 'vdd',
+        targetHandle: 'terminal_negative',
+      },
+      {
+        source: 'gnd',
+        sourceHandle: 'reference_terminal',
+        target: 'vdd',
+        targetHandle: 'terminal_negative',
+      },
+    ]
+    const result = solveElectroThermal(canvasToWorld(nodes, edges))
+    expect(result.solution.status).toBe('solved')
+    expect(result.thermalConverged).toBe(true)
+    expect(result.temperaturesC.get('m1') ?? 0).toBeCloseTo(60.34, 1)
+  })
+
+  test('the live-canvas regression: a hot tempco resistor in an NMOS switch keeps KVL', () => {
+    // The exact circuit a live verification flagged (2026-06-10): 9 V EMF with
+    // 1 Ω inside, 470 Ω carbon-film resistor (α −500 ppm/K, θ_JA 340) into an
+    // NMOS switch, gate tied to the battery terminal. The resistor runs ~58 °C
+    // over ambient, drifts DOWN ~3%, and the loop current rises to ~19.4 mA —
+    // a COLD hand-solve says 18.9 mA. The numbers must close the loop with the
+    // HOT resistance: EMF = I·r + I·R(T) + V_DS.
+    const nodes: CanvasNode[] = [
+      {
+        id: 'bat',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(9, 'volt'), internal_resistance: scalar(1, 'ohm') },
+      },
+      {
+        id: 'r1',
+        definition: 'resistor',
+        parameters: {
+          resistance: scalar(470, 'ohm'),
+          temperature_coefficient: scalar(-5e-4, 'per_kelvin'),
+          thermal_resistance_junction_ambient: scalar(340, 'kelvin_per_watt'),
+        },
+      },
+      {
+        id: 'm1',
+        definition: 'transistor_mosfet_nmos',
+        parameters: {
+          threshold_voltage: scalar(2.1, 'volt'),
+          transconductance_parameter: scalar(0.026, 'ampere_per_volt_squared'),
+          channel_length_modulation: scalar(0.02, 'per_volt'),
+        },
+      },
+      { id: 'gnd', definition: 'ground' },
+    ] as CanvasNode[]
+    const edges = [
+      {
+        source: 'bat',
+        sourceHandle: 'terminal_positive',
+        target: 'r1',
+        targetHandle: 'terminal_a',
+      },
+      { source: 'r1', sourceHandle: 'terminal_b', target: 'm1', targetHandle: 'drain' },
+      { source: 'm1', sourceHandle: 'source', target: 'bat', targetHandle: 'terminal_negative' },
+      { source: 'bat', sourceHandle: 'terminal_positive', target: 'm1', targetHandle: 'gate' },
+      {
+        source: 'gnd',
+        sourceHandle: 'reference_terminal',
+        target: 'bat',
+        targetHandle: 'terminal_negative',
+      },
+    ]
+    const world = canvasToWorld(nodes, edges)
+    const result = solveElectroThermal(world)
+    expect(result.solution.status).toBe('solved')
+    expect(result.thermalConverged).toBe(true)
+
+    const current = Math.abs(result.solution.branches.get('r1') ?? 0)
+    expect(current).toBeGreaterThan(0.019) // the hot answer…
+    expect(current).toBeLessThan(0.0198) // …not the cold 18.9 mA
+
+    const r1 = world.instances.get('r1')
+    if (r1 === undefined) throw new Error('r1 missing')
+    const hotOhms = resistanceAtTemperature(r1, result.temperaturesC.get('r1'))
+    if (hotOhms === undefined) throw new Error('hot resistance missing')
+    expect(hotOhms).toBeLessThan(460) // it really drifted
+
+    // KVL around the loop with the values the solver USED. V_DS is read from
+    // the solved nodes via the drain/source nets. The loop settles at ΔT <
+    // 0.1 °C, so R(T_final) can differ from the R the last solve used by up to
+    // ~0.024 Ω (≈0.5 mV here) — ±5 mV is far inside that AND 50× tighter than
+    // the 270 mV cold-R inconsistency this test exists to catch.
+    const netOf = (terminal: string) =>
+      world.instances.get('m1')?.connects?.find((c) => c.terminal === terminal)?.net ?? ''
+    const vDrain = result.solution.nodes.get(netOf('drain')) ?? Number.NaN
+    const vSource = result.solution.nodes.get(netOf('source')) ?? Number.NaN
+    const kvl = current * 1 + current * hotOhms + (vDrain - vSource)
+    expect(kvl).toBeCloseTo(9, 2)
   })
 })

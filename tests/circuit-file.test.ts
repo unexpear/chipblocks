@@ -101,6 +101,70 @@ describe('deserializeCircuit — honest rejections', () => {
   })
 })
 
+describe('circuit blocks (S19-v3-67)', () => {
+  test('a block — internals, ports, and a nested block — survives the round trip exactly', () => {
+    const block = {
+      name: 'NOT gate',
+      origin: { x: 100, y: 60 },
+      nodes: [
+        {
+          id: 'mn1',
+          definition: 'transistor_mosfet_nmos',
+          x: 120,
+          y: 140,
+          parameters: {
+            threshold_voltage: { value: { kind: 'scalar', amount: 2.1, unit: 'volt' } },
+          },
+        },
+        {
+          id: 'inner_block',
+          definition: 'block',
+          x: 260,
+          y: 140,
+          block: {
+            name: 'pull-up',
+            origin: { x: 260, y: 140 },
+            nodes: [{ id: 'r1', definition: 'resistor', x: 0, y: 0 }],
+            edges: [],
+            ports: [],
+          },
+        },
+      ],
+      edges: [
+        {
+          id: 'w_inner',
+          source: 'mn1',
+          sourceHandle: 'terminal_drain',
+          target: 'inner_block',
+          targetHandle: 'port_1',
+        },
+      ],
+      ports: [
+        {
+          id: 'port_1',
+          label: 'mn1 · gate',
+          side: 'left' as const,
+          offset: 14,
+          inner: { nodeId: 'mn1', handleId: 'terminal_gate' },
+        },
+      ],
+    }
+    const file = serializeCircuit(
+      [{ id: 'block_1', position: { x: 100, y: 60 }, data: { definition: 'block', block } }],
+      [],
+    )
+    const parsed = deserializeCircuit(JSON.stringify(file))
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.file.nodes[0]?.block).toEqual(block)
+  })
+
+  test('an ordinary part saves WITHOUT a block field — nothing invented', () => {
+    const file = serializeCircuit(nodes, edges)
+    expect('block' in (file.nodes[0] ?? {})).toBe(false)
+  })
+})
+
 describe('maxIdSuffix', () => {
   test('the drop counter resumes above loaded ids', () => {
     expect(maxIdSuffix([{ id: 'resistor_7' }, { id: 'led_12' }, { id: 'ground_001' }])).toBe(12)

@@ -1,6 +1,7 @@
 import type { Instance, World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
 import { deriveSaturationCurrent, thermalVoltage } from '../diode-model.ts'
+import { resistanceAtTemperature } from '../electro-thermal.ts'
 import { readScalarParam } from '../instance-params.ts'
 import { mosfetOperatingPoint } from '../mosfet-model.ts'
 import { formatEng } from './units.ts'
@@ -98,7 +99,11 @@ export function unitsKeyFor(lines: string[]): string[] {
   return key
 }
 
-export function buildMathView(world: World, solution: Solution): MathView {
+export function buildMathView(
+  world: World,
+  solution: Solution,
+  temperaturesC?: Map<string, number>,
+): MathView {
   if (solution.status !== 'solved') {
     return {
       solver: [
@@ -136,7 +141,7 @@ export function buildMathView(world: World, solution: Solution): MathView {
   const parts: MathPartCard[] = []
   for (const inst of world.instances.values()) {
     if (!inst.connects || inst.connects.length === 0) continue
-    const card = partCard(inst, solution, across(inst))
+    const card = partCard(inst, solution, across(inst), temperaturesC?.get(inst.id))
     if (card !== null) parts.push(card)
   }
 
@@ -188,6 +193,7 @@ function partCard(
   inst: Instance,
   solution: Solution,
   acrossV: number | undefined,
+  temperatureC: number | undefined,
 ): MathPartCard | null {
   const current = solution.branches.get(inst.id)
   const lines: string[] = []
@@ -227,17 +233,35 @@ function partCard(
     return { id: inst.id, title: 'Source — a pusher with internal resistance', lines }
   }
   if (def === 'resistor' || def === 'wire') {
-    const ohms = readScalarParam(inst, 'resistance')
+    const nominalOhms = readScalarParam(inst, 'resistance')
     const title = def === 'wire' ? 'Wire — even wire resists a little' : 'Resistor — Ohm’s law'
     if (def === 'wire') {
       lines.push(
-        ohms !== undefined
-          ? `R = ρ·L/A: resistance grows with length (L) and shrinks with thickness (A); ρ is the material’s own resistivity (copper here). This wire, at its drawn length: ${formatEng(ohms, 'Ω')}.`
+        nominalOhms !== undefined
+          ? `R = ρ·L/A: resistance grows with length (L) and shrinks with thickness (A); ρ is the material’s own resistivity (copper here). This wire, at its drawn length: ${formatEng(nominalOhms, 'Ω')}.`
           : 'Treated as an ideal short (no resistance assigned).',
       )
-    } else if (ohms !== undefined) {
+    } else if (nominalOhms !== undefined) {
       lines.push(
-        `Ohm’s law: the voltage used up equals the current times the resistance. This one is R = ${formatEng(ohms, 'Ω')}.`,
+        `Ohm’s law: the voltage used up equals the current times the resistance. This one is R = ${formatEng(nominalOhms, 'Ω')}.`,
+      )
+    }
+    // A tempco part runs at its SOLVED temperature, not the 25 °C on the label —
+    // the solver used the hot resistance, so this page must too (same formula,
+    // same function, one source of truth). Only narrate the drift when it is
+    // big enough to see in the printed numbers.
+    const hotOhms = resistanceAtTemperature(inst, temperatureC)
+    const ohms = hotOhms !== undefined && nominalOhms !== undefined ? hotOhms : nominalOhms
+    if (
+      hotOhms !== undefined &&
+      nominalOhms !== undefined &&
+      temperatureC !== undefined &&
+      Math.abs(hotOhms - nominalOhms) / nominalOhms > 0.001
+    ) {
+      const alpha = readScalarParam(inst, 'temperature_coefficient') ?? 0
+      const alphaPpm = `${alpha < 0 ? '−' : ''}${Math.abs(alpha * 1e6).toFixed(0)}`
+      lines.push(
+        `But this part is not at the 25 °C it was labeled at — it runs at ${temperatureC.toFixed(0)} °C from its own heat. Its resistance drifts with temperature (α = ${alphaPpm} ppm per °C): R(T) = R₀·(1 + α·ΔT) = ${formatEng(hotOhms, 'Ω')}. Everything below uses that real, hot value — the same one the solver used.`,
       )
     }
     if (current !== undefined && ohms !== undefined) {

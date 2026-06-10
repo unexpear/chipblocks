@@ -701,4 +701,97 @@ describe('part over-temperature (stage 7 lumped thermal model)', () => {
     expect(checkOvertemperature(part(undefined, 155), solvedWith(1, 5, 0))).toBeNull()
     expect(checkOvertemperature(part(340, undefined), solvedWith(1, 5, 0))).toBeNull()
   })
+
+  test('a MOSFET running hot fires too — V_DS·I_D across drain/source', () => {
+    // 60 mA at V_DS = 8 V → 0.48 W; θ_JA 312.5 → 25 + 150 = 175 °C > 150 °C max.
+    // Before S19-v3-68 a three-terminal part silently skipped this check.
+    const mosfet = {
+      id: 'm1',
+      kind_ref: 'primitive_device',
+      definition: 'transistor_mosfet_nmos',
+      parameters: {
+        thermal_resistance_junction_ambient: {
+          value: { kind: 'scalar', amount: 312.5, unit: 'kelvin_per_watt' },
+        },
+        max_operating_temperature: { value: { kind: 'scalar', amount: 150, unit: 'celsius' } },
+      },
+      connects: [
+        { net: 'net_g', terminal: 'gate', of: 'm1' },
+        { net: 'net_d', terminal: 'drain', of: 'm1' },
+        { net: 'net_s', terminal: 'source', of: 'm1' },
+      ],
+      // biome-ignore lint/suspicious/noExplicitAny: minimal test fixture
+    } as any
+    const sol = {
+      status: 'solved',
+      nodes: new Map([
+        ['net_g', 5],
+        ['net_d', 8],
+        ['net_s', 0],
+      ]),
+      branches: new Map([['m1', 0.06]]),
+      ground: 'net_s',
+      warnings: [],
+      iterations: 1,
+      converged: true,
+      // biome-ignore lint/suspicious/noExplicitAny: minimal test fixture
+    } as any
+    const f = checkOvertemperature(mosfet, sol)
+    expect(f?.code).toBe('part-overtemperature')
+    expect(f?.measured).toBeCloseTo(175, 6)
+    expect(f?.rated).toBe(150)
+  })
+
+  test('a BJT running hot fires — V_CE·I_C across collector/emitter', () => {
+    // 100 mA at V_CE = 5 V → 0.5 W; θ_JA 312.5 → 25 + 156.25 = 181.25 °C > 150 °C.
+    const bjt = {
+      id: 'q1',
+      kind_ref: 'primitive_device',
+      definition: 'transistor_bjt_npn',
+      parameters: {
+        thermal_resistance_junction_ambient: {
+          value: { kind: 'scalar', amount: 312.5, unit: 'kelvin_per_watt' },
+        },
+        max_operating_temperature: { value: { kind: 'scalar', amount: 150, unit: 'celsius' } },
+      },
+      connects: [
+        { net: 'net_b', terminal: 'base', of: 'q1' },
+        { net: 'net_c', terminal: 'collector', of: 'q1' },
+        { net: 'net_e', terminal: 'emitter', of: 'q1' },
+      ],
+      // biome-ignore lint/suspicious/noExplicitAny: minimal test fixture
+    } as any
+    const sol = {
+      status: 'solved',
+      nodes: new Map([
+        ['net_b', 0.7],
+        ['net_c', 5],
+        ['net_e', 0],
+      ]),
+      branches: new Map([['q1', 0.1]]),
+      ground: 'net_e',
+      warnings: [],
+      iterations: 1,
+      converged: true,
+      // biome-ignore lint/suspicious/noExplicitAny: minimal test fixture
+    } as any
+    const f = checkOvertemperature(bjt, sol)
+    expect(f?.code).toBe('part-overtemperature')
+    expect(f?.measured).toBeCloseTo(181.25, 6)
+  })
+})
+
+describe('checkResistorOverpower uses the SOLVED voltage when nodes resolve', () => {
+  test('a hot tempco resistor dissipates |I|·V, not I²·R(nominal)', () => {
+    // The solver ran this resistor HOT: its real resistance fell to 90 Ω, so
+    // the solved drop is 9 V at 100 mA → 0.9 W. The nominal-resistance estimate
+    // I²·R = 1.0 W would overstate it. The check must use the solved 0.9 W.
+    const inst = resistorInstance('r_x', 100, 0.25)
+    const sol = solutionWith({ r_x: 0.1 }, { net_a: 9.5, net_gnd: 0.5 })
+    const failure = checkResistorOverpower(inst, sol)
+    expect(failure).not.toBeNull()
+    if (failure === null) return
+    expect(failure.measured).toBeCloseTo(0.9, 9)
+    expect(failure.ratio).toBeCloseTo(3.6, 9)
+  })
 })

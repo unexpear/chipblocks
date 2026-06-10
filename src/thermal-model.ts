@@ -29,3 +29,32 @@ export function junctionTemperature(
 ): number {
   return ambientC + watts * thetaJaKelvinPerWatt
 }
+
+type ConnectsLike = { connects?: { net: string; terminal: string }[] }
+type NodeVoltages = { nodes: Map<string, number> }
+
+/**
+ * The voltage ACROSS a part from solved node voltages — the V in its dissipated
+ * power P = |I|·V. Two-terminal parts read their terminal pair; a transistor
+ * dissipates across its conducting pair (collector–emitter for a BJT,
+ * drain–source for a MOSFET — the base/gate term is comparatively tiny).
+ * Undefined when the nets can't be resolved.
+ */
+export function acrossVolts(inst: ConnectsLike, solution: NodeVoltages): number | undefined {
+  const connects = inst.connects ?? []
+  let aNet: string | undefined
+  let bNet: string | undefined
+  if (connects.length === 2) {
+    aNet = connects[0]?.net
+    bNet = connects[1]?.net
+  } else {
+    const byTerminal = (names: string[]) => connects.find((c) => names.includes(c.terminal))?.net
+    aNet = byTerminal(['collector', 'drain'])
+    bNet = byTerminal(['emitter', 'source'])
+  }
+  if (aNet === undefined || bNet === undefined) return undefined
+  const vA = solution.nodes.get(aNet)
+  const vB = solution.nodes.get(bNet)
+  if (vA === undefined || vB === undefined) return undefined
+  return Math.abs(vA - vB)
+}

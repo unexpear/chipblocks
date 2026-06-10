@@ -26,7 +26,7 @@
 import type { Instance, World } from './cross-fk-validator.ts'
 import type { Solution } from './dc-solver.ts'
 import { readScalarParam } from './instance-params.ts'
-import { junctionTemperature } from './thermal-model.ts'
+import { acrossVolts, junctionTemperature } from './thermal-model.ts'
 
 // ---------------------------------------------------------------------------
 // Public API types
@@ -355,9 +355,10 @@ export function checkCapacitorOvervoltage(inst: Instance, solution: Solution): F
  * Over-temperature check (stage 7, lumped thermal model). For any part that
  * declares BOTH thermal_resistance_junction_ambient (θ_JA) and
  * max_operating_temperature, compute the steady-state part temperature
- * T = 25 °C ambient + P·θ_JA from its real dissipated power (|I|·|V| across its
- * two terminals) and fire when it exceeds the declared maximum. Parts without
- * the thermal ratings skip honestly — the rating is "unknown," not "infinite."
+ * T = 25 °C ambient + P·θ_JA from its real dissipated power (|I|·|V| across
+ * its terminal pair — collector–emitter / drain–source for a transistor) and
+ * fire when it exceeds the declared maximum. Parts without the thermal
+ * ratings skip honestly — the rating is "unknown," not "infinite."
  */
 export function checkOvertemperature(inst: Instance, solution: Solution): Failure | null {
   const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
@@ -367,13 +368,10 @@ export function checkOvertemperature(inst: Instance, solution: Solution): Failur
 
   const branch = solution.branches.get(inst.id)
   if (branch === undefined) return null
-  const connects = inst.connects ?? []
-  if (connects.length !== 2) return null
-  const vA = solution.nodes.get(connects[0]?.net ?? '')
-  const vB = solution.nodes.get(connects[1]?.net ?? '')
-  if (vA === undefined || vB === undefined) return null
+  const volts = acrossVolts(inst, solution)
+  if (volts === undefined) return null
 
-  const watts = Math.abs(branch) * Math.abs(vA - vB)
+  const watts = Math.abs(branch) * volts
   const temperature = junctionTemperature(watts, thetaJa)
   if (temperature <= maxTemperature) return null
 
@@ -391,8 +389,12 @@ export function checkOvertemperature(inst: Instance, solution: Solution): Failur
 
 /**
  * Resistor overpower check (§19.3 / §19.6).
- * Fires resistor-overpower when the dissipated power I²R exceeds power_rating.
- * I²R is sign-independent, so the branch current's sign doesn't matter.
+ * Fires resistor-overpower when the dissipated power exceeds power_rating.
+ * The power is |I|·V from the SOLVED voltage across the part when the node
+ * voltages resolve — that V already reflects the resistance the solver
+ * actually used (a hot tempco resistor drifts from its nominal ohms). When
+ * the nodes can't be read (a hand-built solution), I²·R at the nominal
+ * resistance is the honest best estimate. Sign-independent either way.
  *
  * Returns the Failure, or null when the check doesn't fire OR the inputs
  * can't be resolved (missing resistance, missing power_rating, or missing
@@ -408,7 +410,9 @@ export function checkResistorOverpower(inst: Instance, solution: Solution): Fail
   const current = solution.branches.get(inst.id)
   if (current === undefined) return null
 
-  const dissipated = current * current * resistance
+  const volts = acrossVolts(inst, solution)
+  const dissipated =
+    volts !== undefined ? Math.abs(current) * volts : current * current * resistance
   if (dissipated <= powerRating) return null
 
   return {
