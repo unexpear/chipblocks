@@ -1,0 +1,139 @@
+# Valid fixture: material definition for silicon dioxide (SiO2, thermal oxide).
+# The gate dielectric that made the MOSFET possible: an insulating film grown
+# directly on silicon by oxidation, electrically isolating the gate from the
+# channel so the gate controls the channel by FIELD alone (no DC gate current).
+# Values are for thermally grown amorphous SiO2, the classic gate-oxide form
+# (fused-silica values where bulk properties apply).
+# MUST validate against definition.schema.json.
+kind: material
+id: silicon_dioxide
+origin: builtin
+layer: material
+name: Silicon dioxide (thermal oxide)
+description: Amorphous insulating oxide grown on silicon by thermal oxidation. The canonical MOS gate dielectric — its high resistivity and clean interface with silicon are why a MOSFET's gate draws essentially no DC current and controls the channel purely by electric field. Also the standard isolation/passivation layer across silicon devices.
+composition:
+  uses: []
+enables:
+  - electrical_insulation
+  - dielectric_insulation
+properties:
+  relative_permittivity:
+    value:
+      kind: condition_bound
+      amount: 3.9
+      unit: dimensionless
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+        form:
+          value: thermally_grown_amorphous
+    provenance:
+      source_type: reference
+      title: SiO2 relative permittivity (the universal gate-oxide kappa)
+      citation: "Sze & Ng, Physics of Semiconductor Devices, 3rd ed., Appendix G (SiO2 properties); standard value used throughout MOS device physics"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  band_gap:
+    value:
+      kind: condition_bound
+      amount: 9.0
+      unit: electron_volt
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+    provenance:
+      source_type: reference
+      title: SiO2 band gap (~9 eV — a wide-gap insulator)
+      citation: "Sze & Ng, Physics of Semiconductor Devices, 3rd ed., Appendix G; commonly quoted 8.9-9.0 eV for amorphous SiO2"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  dielectric_strength:
+    value:
+      kind: condition_bound
+      amount: 1.0e9
+      unit: volt_per_meter
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+        form:
+          value: thermally_grown_thin_film
+    provenance:
+      source_type: reference
+      title: SiO2 intrinsic breakdown field (~10 MV/cm for quality thermal oxide)
+      citation: "Sze & Ng, Physics of Semiconductor Devices, 3rd ed. (oxide breakdown ~10 MV/cm); the physical reason a MOSFET gate has an absolute-maximum V_GS rating"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  volume_resistivity:
+    value:
+      kind: range
+      min: 1.0e12
+      max: 1.0e14
+      typical: 1.0e13
+      unit: ohm_meter
+      distribution: uniform
+    provenance:
+      source_type: reference
+      title: SiO2 DC volume resistivity (10^14-10^16 ohm-cm quoted; converted to ohm-m)
+      citation: "Sze & Ng, Physics of Semiconductor Devices, 3rd ed., Appendix G — resistivity 10^14-10^16 ohm-cm depending on growth quality and field"
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 2200
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Amorphous SiO2 (fused silica / thermal oxide) density ~2.2 g/cm3
+      citation: "CRC Handbook of Chemistry and Physics — fused silica density 2.196 g/cm3; thermal oxide ~2.2 g/cm3"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 1.4
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 25
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Amorphous SiO2 thermal conductivity at room temperature
+      citation: "CRC Handbook of Chemistry and Physics — fused silica ~1.38 W/m-K at 25 C"
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Thermally grown amorphous SiO2 — the form that sits under a MOSFET gate.
+  Crystalline quartz has anisotropic, slightly different values and is NOT this
+  entry. Modern sub-100nm processes replace pure SiO2 with high-k dielectrics
+  (HfO2 class) precisely because thinning SiO2 further runs into tunneling —
+  those become separate material definitions when chip-level modeling needs
+  them. The dielectric_strength entry is the physics behind every MOSFET
+  datasheet's absolute-maximum gate-source voltage.

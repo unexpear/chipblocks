@@ -1,0 +1,134 @@
+# Valid fixture: N-channel enhancement MOSFET.
+# The device modern electronics is built from: a gate electrode sits on an
+# insulating oxide over a p-type body; pulling the gate ABOVE the source by
+# more than the threshold voltage inverts the surface into an n-channel
+# between the n+ source and drain. The gate controls the channel by FIELD
+# alone — it draws essentially no DC current, which is why CMOS logic sips
+# power when idle.
+#
+# Solved by both engines via the classic three-region Level-1 model
+# (Shichman-Hodges; mosfet-model.ts): cutoff / triode / saturation with
+# channel-length modulation. Three terminals with the body tied to the source
+# — exactly how discrete packaged MOSFETs (2N7000 class) are built, so there
+# is no body effect to approximate away (V_SB = 0 by construction).
+#
+# Per the device-power-source convention this definition carries NO builtin
+# numeric defaults on the electrical parameters (a 2N7000 differs from a power
+# FET) — the cited canvas drop defaults live in part-defaults.ts (2N7000
+# class); only the structural material regions default here.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: transistor_mosfet_nmos
+origin: builtin
+layer: primitive_device
+name: "N-channel MOSFET (enhancement)"
+description: "A three-terminal field-effect transistor: gate, drain, source, with the body tied to the source (discrete-package convention). Gate above the source by more than the threshold voltage forms an n-channel; below it the device is off. The insulated gate draws no DC current. Modeled by the classic three-region equations (cutoff / triode / saturation, Shichman-Hodges Level 1) with channel-length modulation. The building block of CMOS logic (paired with its PMOS mirror) and the standard low-side switch."
+composition:
+  uses:
+    - pn_junction
+  requires:
+    body_region:
+      kind: material
+      must_enable:
+        - p_type_semiconductor
+    source_drain_regions:
+      kind: material
+      must_enable:
+        - n_type_semiconductor
+    gate_dielectric:
+      kind: material
+      must_enable:
+        - electrical_insulation
+    endpoints:
+      kind: interface
+      min_count: 3
+parameters:
+  body_region:
+    type: material_ref
+    satisfies_role: body_region
+    required: true
+    default:
+      value: silicon_p_type
+    description: The p-type body the channel inverts in. Tied to the source terminal in this three-terminal (discrete-package) device.
+  source_drain_regions:
+    type: material_ref
+    satisfies_role: source_drain_regions
+    required: true
+    default:
+      value: silicon_n_type
+    description: The heavily n-doped source and drain wells the channel connects.
+  gate_dielectric:
+    type: material_ref
+    satisfies_role: gate_dielectric
+    required: true
+    default:
+      value: silicon_dioxide
+    description: The insulating layer between gate and channel — the O in MOS. Its quality sets the absolute-maximum gate voltage (oxide breakdown ~10 MV/cm for thermal SiO2).
+  threshold_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: Gate-source voltage V_th at which the channel begins to form. Positive for an enhancement NMOS (e.g. 2N7000 ~ 2.1 V typical, 0.8-3 V across parts). Below it the device is in cutoff.
+  transconductance_parameter:
+    type: quantity
+    units: ampere_per_volt_squared
+    required: true
+    description: "The device transconductance parameter k = k'·(W/L) in the Level-1 equations: I_D(sat) = (k/2)·(V_GS − V_th)². Derivable from a datasheet (I_D(on), V_GS) point measured in saturation."
+  channel_length_modulation:
+    type: quantity
+    units: per_volt
+    required: false
+    description: "λ — the slight rise of saturation current with V_DS (finite output resistance): I_D ∝ (1 + λ·V_DS). Rarely on datasheets; textbook Level-1 class values run 0.01-0.05 per volt."
+  max_drain_current:
+    type: quantity
+    units: ampere
+    required: false
+    description: Maximum continuous drain current before thermal damage (2N7000 class ~ 200 mA continuous).
+  drain_source_breakdown_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Maximum drain-source voltage V_DS before avalanche breakdown (2N7000 class ~ 60 V).
+  max_gate_source_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Absolute-maximum gate-source voltage — beyond it the gate OXIDE ruptures, instantly and permanently (the classic static-electricity death). 2N7000 class ±20 V.
+  thermal_resistance_junction_ambient:
+    type: quantity
+    units: kelvin_per_watt
+    required: false
+    description: Junction-to-ambient thermal resistance (θ_JA) of the package — the lumped thermal model's slope, T = T_ambient + P·θ_JA.
+  max_operating_temperature:
+    type: quantity
+    units: celsius
+    required: false
+    description: Maximum junction operating temperature. The stage-7 thermal check fires when the computed steady-state temperature exceeds it.
+behaviors:
+  - acts_as_transistor
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  gate:
+    description: The insulated control terminal — its voltage relative to the source forms or removes the channel. Draws no DC current.
+  drain:
+    description: The terminal current enters when the channel is on (conventional current, NMOS).
+  source:
+    description: The reference terminal the gate and drain voltages are measured against; the body is tied here (discrete-package convention).
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Level-1 (Shichman-Hodges) three-region model in both solvers; the two
+  regions meet smoothly at V_DS = V_GS − V_th, and the channel's real symmetry
+  (drain/source role swap when V_DS < 0) is modeled. Honest gaps, stated:
+  the body diode every discrete MOSFET carries from source to drain is NOT
+  yet modeled (matters for inductive freewheeling); neither are gate
+  capacitance (switching speed) nor avalanche. Body effect does not apply —
+  the body is tied to the source by construction in this three-terminal
+  device, so V_SB = 0 exactly. The PMOS variant is the polarity mirror.

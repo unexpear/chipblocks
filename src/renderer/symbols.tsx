@@ -330,6 +330,57 @@ function BjtPnpGlyph() {
   )
 }
 
+/** N-channel enhancement MOSFET — insulated gate bar (the gap IS the oxide),
+ * channel bar, drain up, source down with the inward arrow. Gate from the left. */
+function MosfetNmosGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>NMOS transistor</title>
+      {/* gate lead + the gate bar — separated from the channel: the insulator */}
+      <line x1={0} y1={MID} x2={30} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={30} y1={14} x2={30} y2={30} stroke={STROKE} strokeWidth={2} />
+      <line x1={34} y1={12} x2={34} y2={32} stroke={STROKE} strokeWidth={2} />
+      {/* drain: channel top → up to the top-center handle */}
+      <line x1={34} y1={15} x2={40} y2={15} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={15} x2={40} y2={0} stroke={STROKE} strokeWidth={1.5} />
+      {/* source: channel bottom → down, arrow pointing IN toward the channel */}
+      <line x1={34} y1={29} x2={40} y2={29} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={29} x2={40} y2={44} stroke={STROKE} strokeWidth={1.5} />
+      <polygon
+        points="34.5,29 39.5,26.8 39.5,31.2"
+        fill={STROKE}
+        stroke={STROKE}
+        strokeWidth={0.4}
+      />
+    </svg>
+  )
+}
+
+/** P-channel enhancement MOSFET — the mirror: source UP (toward the supply,
+ * as wired in CMOS), drain down, arrow pointing OUT away from the channel. */
+function MosfetPmosGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>PMOS transistor</title>
+      <line x1={0} y1={MID} x2={30} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={30} y1={14} x2={30} y2={30} stroke={STROKE} strokeWidth={2} />
+      <line x1={34} y1={12} x2={34} y2={32} stroke={STROKE} strokeWidth={2} />
+      {/* source: channel top → up to the top-center handle, arrow pointing OUT */}
+      <line x1={34} y1={15} x2={40} y2={15} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={15} x2={40} y2={0} stroke={STROKE} strokeWidth={1.5} />
+      <polygon
+        points="39.5,15 34.5,12.8 34.5,17.2"
+        fill={STROKE}
+        stroke={STROKE}
+        strokeWidth={0.4}
+      />
+      {/* drain: channel bottom → down to the bottom-center handle */}
+      <line x1={34} y1={29} x2={40} y2={29} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={29} x2={40} y2={44} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
 // switch_spst_toggle is intentionally absent — DeviceGlyph renders it specially
 // (it needs the open/closed state, unlike these stateless one-shot glyphs).
 const GLYPHS: Record<string, () => React.JSX.Element> = {
@@ -345,6 +396,8 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   wire: WireGlyph,
   transistor_bjt_npn: BjtNpnGlyph,
   transistor_bjt_pnp: BjtPnpGlyph,
+  transistor_mosfet_nmos: MosfetNmosGlyph,
+  transistor_mosfet_pmos: MosfetPmosGlyph,
   transformer: TransformerGlyph,
   transformer_center_tapped: CtTransformerGlyph,
 }
@@ -382,6 +435,17 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
     { id: 'base', position: Position.Left },
     { id: 'collector', position: Position.Top },
     { id: 'emitter', position: Position.Bottom },
+  ],
+  transistor_mosfet_nmos: [
+    { id: 'gate', position: Position.Left },
+    { id: 'drain', position: Position.Top },
+    { id: 'source', position: Position.Bottom },
+  ],
+  // PMOS source sits on TOP — toward the supply, the way CMOS wires it.
+  transistor_mosfet_pmos: [
+    { id: 'gate', position: Position.Left },
+    { id: 'source', position: Position.Top },
+    { id: 'drain', position: Position.Bottom },
   ],
   transformer: [
     { id: 'primary_a', position: Position.Left, offset: 10 },

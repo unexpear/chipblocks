@@ -51,6 +51,7 @@ import {
   thermalVoltage,
 } from './diode-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
+import { limitMosfetStep, type MosfetParams, mosfetOperatingPoint } from './mosfet-model.ts'
 
 /**
  * A switch conducts only when closed. State lives on the instance as
@@ -194,11 +195,20 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   const linearVoltageSources: Array<{ inst: Instance; kind: VsLikeKind }> = []
   const shockleyLeds: ShockleyLed[] = []
   const bjts: BjtElement[] = []
+  const mosfets: MosfetElement[] = []
 
   for (const inst of world.instances.values()) {
     if (inst.definition === 'transistor_bjt_npn' || inst.definition === 'transistor_bjt_pnp') {
       const bjt = resolveBjt(inst, options?.temperaturesC?.get(inst.id))
       if (bjt !== null) bjts.push(bjt)
+      continue
+    }
+    if (
+      inst.definition === 'transistor_mosfet_nmos' ||
+      inst.definition === 'transistor_mosfet_pmos'
+    ) {
+      const fet = resolveMosfet(inst)
+      if (fet !== null) mosfets.push(fet)
       continue
     }
     if (inst.definition === 'transformer') {
@@ -296,6 +306,9 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     for (const bjt of bjts) {
       stampBjtCompanion(bjt, nodeIndex, bjt.thermalV, M, b)
     }
+    for (const fet of mosfets) {
+      stampMosfetCompanion(fet, nodeIndex, M, b)
+    }
 
     // biome-ignore lint/suspicious/noExplicitAny: mathjs lusolve return is polymorphic
     let x: any
@@ -320,7 +333,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   let iterations = 1
   let converged = true
 
-  if (shockleyLeds.length === 0 && bjts.length === 0) {
+  if (shockleyLeds.length === 0 && bjts.length === 0 && mosfets.length === 0) {
     solved = buildAndSolve()
     if (solved === null) return emptyResult('singular-matrix', ground, warnings)
   } else {
@@ -360,6 +373,19 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         if (limBE.limited || limBC.limited) anyLimited = true
         bjt.vBE = limBE.voltage
         bjt.vBC = limBC.voltage
+      }
+      for (const fet of mosfets) {
+        const vG = fet.gateNet === ground ? 0 : (last.nodes.get(fet.gateNet) ?? 0)
+        const vD = fet.drainNet === ground ? 0 : (last.nodes.get(fet.drainNet) ?? 0)
+        const vS = fet.sourceNet === ground ? 0 : (last.nodes.get(fet.sourceNet) ?? 0)
+        // The square-law is gentler than a junction exponential — a plain
+        // per-iteration voltage-step clamp (SPICE's fetlim idea) is enough.
+        const nextVGS = limitMosfetStep(vG - vS, fet.vGS)
+        const nextVDS = limitMosfetStep(vD - vS, fet.vDS)
+        maxDelta = Math.max(maxDelta, Math.abs(nextVGS - fet.vGS), Math.abs(nextVDS - fet.vDS))
+        if (nextVGS !== vG - vS || nextVDS !== vD - vS) anyLimited = true
+        fet.vGS = nextVGS
+        fet.vDS = nextVDS
       }
       if (maxDelta < NR_VOLTAGE_TOLERANCE && !anyLimited) {
         converged = true
@@ -409,6 +435,11 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   for (const bjt of bjts) {
     const sign = bjt.polarity === 'pnp' ? -1 : 1
     branches.set(bjt.inst.id, sign * bjtCurrents(bjt.vBE, bjt.vBC, bjt.params, bjt.thermalV).iC)
+  }
+  // MOSFET: the drain current at the converged bias (signed into the drain —
+  // negative for a conducting PMOS, whose current flows source → drain).
+  for (const fet of mosfets) {
+    branches.set(fet.inst.id, mosfetOperatingPoint(fet.vGS, fet.vDS, fet.params).iD)
   }
 
   return { status: 'solved', nodes, branches, ground, warnings, iterations, converged }
@@ -664,6 +695,95 @@ export function stampBjtCompanion(
       M.set([ix, iy], (M.get([ix, iy]) ?? 0) + g[x][y])
     }
   }
+}
+
+/**
+ * A MOSFET resolved for the Newton-Raphson solve (S19-v3-66): its three
+ * terminal nets + Level-1 parameters + the current bias guesses. Exported for
+ * the transient solver, which runs the same companion inside its per-step
+ * Newton-Raphson loop.
+ *
+ * Honest scope note: the electro-thermal loop does not yet adjust MOSFETs
+ * (the Level-1 temperature laws — V_th drift, mobility fall — are a
+ * documented future increment); LEDs and BJTs do get the I_S(T) treatment.
+ */
+export type MosfetElement = {
+  inst: Instance
+  gateNet: string
+  drainNet: string
+  sourceNet: string
+  params: MosfetParams
+  /** Current NR bias guesses in the labeled frame (volts). */
+  vGS: number
+  vDS: number
+}
+
+/**
+ * Resolve a MOSFET to the Level-1 model, or null if it lacks the parameters
+ * (threshold_voltage + transconductance_parameter) or its three connects.
+ * Warm-started at 0 V bias (cutoff) — the step-limited NR walks it up.
+ */
+export function resolveMosfet(inst: Instance): MosfetElement | null {
+  const thresholdVoltage = readScalarParam(inst, 'threshold_voltage')
+  const transconductance = readScalarParam(inst, 'transconductance_parameter')
+  if (thresholdVoltage === undefined || transconductance === undefined) return null
+  if (transconductance <= 0) return null
+  const channelLengthModulation = readScalarParam(inst, 'channel_length_modulation') ?? 0
+
+  const gate = inst.connects?.find((c) => c.terminal === 'gate')
+  const drain = inst.connects?.find((c) => c.terminal === 'drain')
+  const source = inst.connects?.find((c) => c.terminal === 'source')
+  if (gate === undefined || drain === undefined || source === undefined) return null
+
+  return {
+    inst,
+    gateNet: gate.net,
+    drainNet: drain.net,
+    sourceNet: source.net,
+    params: {
+      channel: inst.definition === 'transistor_mosfet_pmos' ? 'pmos' : 'nmos',
+      thresholdVoltage,
+      transconductance,
+      channelLengthModulation,
+    },
+    vGS: 0,
+    vDS: 0,
+  }
+}
+
+/**
+ * Stamp a MOSFET's Newton-Raphson companion: the linearized drain current
+ *   I_D ≈ I_D₀ + g_m·(v_G − v_S) + g_ds·(v_D − v_S)
+ * enters the drain node and leaves the source node; the insulated gate
+ * carries no DC current (its column appears only through g_m). Ground
+ * rows/cols are omitted, the same Norton form every companion here uses.
+ */
+export function stampMosfetCompanion(
+  fet: MosfetElement,
+  nodeIndex: Map<string, number>,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const op = mosfetOperatingPoint(fet.vGS, fet.vDS, fet.params)
+  const ieq = op.iD - op.gm * fet.vGS - op.gds * fet.vDS
+  const iG = nodeIndex.get(fet.gateNet)
+  const iD = nodeIndex.get(fet.drainNet)
+  const iS = nodeIndex.get(fet.sourceNet)
+
+  const add = (row: number | undefined, col: number | undefined, value: number) => {
+    if (row === undefined || col === undefined) return
+    M.set([row, col], (M.get([row, col]) ?? 0) + value)
+  }
+  add(iD, iG, op.gm)
+  add(iD, iD, op.gds)
+  add(iD, iS, -(op.gm + op.gds))
+  add(iS, iG, -op.gm)
+  add(iS, iD, -op.gds)
+  add(iS, iS, op.gm + op.gds)
+  if (iD !== undefined) b.set([iD, 0], (b.get([iD, 0]) ?? 0) - ieq)
+  if (iS !== undefined) b.set([iS, 0], (b.get([iS, 0]) ?? 0) + ieq)
 }
 
 // ---------------------------------------------------------------------------

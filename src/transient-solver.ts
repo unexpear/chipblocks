@@ -51,9 +51,12 @@ import {
   assignNodeIndices,
   type BjtElement,
   identifyGround,
+  type MosfetElement,
   mathInstance as math,
   resolveBjt,
+  resolveMosfet,
   stampBjtCompanion,
+  stampMosfetCompanion,
   stampResistor,
 } from './dc-solver.ts'
 import {
@@ -64,6 +67,7 @@ import {
   thermalVoltage,
 } from './diode-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
+import { limitMosfetStep } from './mosfet-model.ts'
 
 /** Newton-Raphson controls per time step (matches the DC solver's §20.6). */
 const NR_MAX_ITERATIONS = 100
@@ -763,6 +767,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   const ctTransformers: CtTransformerElement[] = []
   const diodes: DiodeElement[] = []
   const bjts: BjtElement[] = []
+  const mosfets: MosfetElement[] = []
   for (const inst of world.instances.values()) {
     if (inst.definition === 'power_source' && inst.connects?.length === 2) {
       const src = resolveSource(inst, nodeIndex)
@@ -793,6 +798,13 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const bjt = resolveBjt(inst)
       if (bjt !== null) bjts.push(bjt)
       else warnings.push(`Skipped transistor '${inst.id}' (missing parameters or terminals)`)
+    } else if (
+      inst.definition === 'transistor_mosfet_nmos' ||
+      inst.definition === 'transistor_mosfet_pmos'
+    ) {
+      const fet = resolveMosfet(inst)
+      if (fet !== null) mosfets.push(fet)
+      else warnings.push(`Skipped MOSFET '${inst.id}' (missing parameters or terminals)`)
     } else if (inst.definition === 'wire') {
       const short = resolveShort(
         inst,
@@ -863,6 +875,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     }
     for (const d of diodes) stampDiodeCompanion(d, vT, M, b)
     for (const bjt of bjts) stampBjtCompanion(bjt, nodeIndex, vT, M, b)
+    for (const fet of mosfets) stampMosfetCompanion(fet, nodeIndex, M, b)
 
     // biome-ignore lint/suspicious/noExplicitAny: mathjs lusolve return is polymorphic
     let x: any
@@ -920,6 +933,17 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         if (limBE.limited || limBC.limited) anyLimited = true
         bjt.vBE = limBE.voltage
         bjt.vBC = limBC.voltage
+      }
+      for (const fet of mosfets) {
+        const vG = fet.gateNet === ground ? 0 : (nodes.get(fet.gateNet) ?? 0)
+        const vD = fet.drainNet === ground ? 0 : (nodes.get(fet.drainNet) ?? 0)
+        const vS = fet.sourceNet === ground ? 0 : (nodes.get(fet.sourceNet) ?? 0)
+        const nextVGS = limitMosfetStep(vG - vS, fet.vGS)
+        const nextVDS = limitMosfetStep(vD - vS, fet.vDS)
+        maxDelta = Math.max(maxDelta, Math.abs(nextVGS - fet.vGS), Math.abs(nextVDS - fet.vDS))
+        if (nextVGS !== vG - vS || nextVDS !== vD - vS) anyLimited = true
+        fet.vGS = nextVGS
+        fet.vDS = nextVDS
       }
       if (maxDelta < NR_VOLTAGE_TOLERANCE && !anyLimited) return nodes
     }

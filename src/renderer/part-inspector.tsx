@@ -29,7 +29,15 @@ const humanize = (key: string): string =>
   key.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
 
 const LED_DEFINITIONS = new Set(['led', 'led_uv_algan'])
-const MATERIAL_REF_KEYS = new Set(['resistive_material', 'n_side', 'p_side', 'contact_material'])
+const MATERIAL_REF_KEYS = new Set([
+  'resistive_material',
+  'n_side',
+  'p_side',
+  'contact_material',
+  'body_region',
+  'source_drain_regions',
+  'gate_dielectric',
+])
 
 /**
  * LED emission-color presets. Picking one sets a CONSISTENT real LED — the
@@ -190,6 +198,10 @@ function ratingFor(
 ): { quantity: 'current' | 'power'; limit: number } | null {
   if (LED_DEFINITIONS.has(definition) || definition === 'diode_silicon_rectifier') {
     const limit = amountOf(parameters, 'max_forward_current')
+    return limit ? { quantity: 'current', limit } : null
+  }
+  if (definition === 'transistor_mosfet_nmos' || definition === 'transistor_mosfet_pmos') {
+    const limit = amountOf(parameters, 'max_drain_current')
     return limit ? { quantity: 'current', limit } : null
   }
   if (definition === 'resistor') {

@@ -2,6 +2,7 @@ import type { Instance, World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
 import { deriveSaturationCurrent, thermalVoltage } from '../diode-model.ts'
 import { readScalarParam } from '../instance-params.ts'
+import { mosfetOperatingPoint } from '../mosfet-model.ts'
 import { formatEng } from './units.ts'
 
 /**
@@ -331,6 +332,42 @@ function partCard(
     }
     if (current !== undefined) lines.push(`I_C = ${fmtA(Math.abs(current))} (collector current).`)
     return { id: inst.id, title: 'Transistor — small current steers big current', lines }
+  }
+  if (def === 'transistor_mosfet_nmos' || def === 'transistor_mosfet_pmos') {
+    const vth = readScalarParam(inst, 'threshold_voltage')
+    const k = readScalarParam(inst, 'transconductance_parameter')
+    const lambda = readScalarParam(inst, 'channel_length_modulation') ?? 0
+    const vGate = solution.nodes.get(netOfTerminal(inst, 'gate') ?? '')
+    const vDrain = solution.nodes.get(netOfTerminal(inst, 'drain') ?? '')
+    const vSource = solution.nodes.get(netOfTerminal(inst, 'source') ?? '')
+    lines.push(
+      'A MOSFET is a field-controlled valve: the gate’s VOLTAGE (it draws no current) forms or removes the channel between drain and source.',
+    )
+    lines.push(
+      `Three regions: below the threshold (${vth !== undefined ? fmtV(vth) : 'V_th'}) the channel is gone (cutoff); just above it the channel is a gate-controlled resistor (triode, I = k·[(V_GS−V_th)·V_DS − V_DS²/2]); pushed harder it pinches off and the current depends on the gate alone (saturation, I = (k/2)·(V_GS−V_th)²).`,
+    )
+    if (
+      vth !== undefined &&
+      k !== undefined &&
+      vGate !== undefined &&
+      vDrain !== undefined &&
+      vSource !== undefined
+    ) {
+      const op = mosfetOperatingPoint(vGate - vSource, vDrain - vSource, {
+        channel: def === 'transistor_mosfet_pmos' ? 'pmos' : 'nmos',
+        thresholdVoltage: vth,
+        transconductance: k,
+        channelLengthModulation: lambda,
+      })
+      lines.push(
+        `Right now: V_GS = ${fmtV(vGate - vSource)}, V_DS = ${fmtV(vDrain - vSource)} → the ${op.region} region, I_D = ${fmtA(Math.abs(op.iD))} (k = ${formatEng(k, 'A')}/V²).`,
+      )
+    }
+    return {
+      id: inst.id,
+      title: `MOSFET (${def === 'transistor_mosfet_pmos' ? 'P' : 'N'}-channel) — the three-region law`,
+      lines,
+    }
   }
   if (def === 'transformer' || def === 'transformer_center_tapped') {
     lines.push(

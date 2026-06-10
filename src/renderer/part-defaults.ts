@@ -157,6 +157,44 @@ const DEFAULTS: Record<string, Parameters> = {
     thermal_resistance_junction_ambient: scalar(200, 'kelvin_per_watt'),
     max_operating_temperature: scalar(150, 'celsius'),
   },
+  transistor_mosfet_nmos: {
+    // 2N7000 (TO-92 N-channel) — the classic hobby NMOS. k is DERIVED from the
+    // datasheet saturation point I_D(on) ≥ 75 mA at V_GS = 4.5 V with V_th 2.1 V:
+    // k = 2·I/(V_GS − V_th)² ≈ 26 mA/V². That k independently reproduces the
+    // separate R_DS(on) ≤ 5 Ω at V_GS = 10 V spec line (unit-tested). λ is a
+    // textbook Level-1 class value — NOT on the datasheet, affects only the
+    // slight current rise in saturation. θ_JA derived from the 400 mW power
+    // rating: (150 − 25) °C / 0.4 W.
+    threshold_voltage: scalar(2.1, 'volt'),
+    transconductance_parameter: scalar(0.026, 'ampere_per_volt_squared'),
+    channel_length_modulation: scalar(0.02, 'per_volt'),
+    max_drain_current: scalar(0.2, 'ampere'),
+    drain_source_breakdown_voltage: scalar(60, 'volt'),
+    max_gate_source_voltage: scalar(20, 'volt'),
+    body_region: { value: 'silicon_p_type' },
+    source_drain_regions: { value: 'silicon_n_type' },
+    gate_dielectric: { value: 'silicon_dioxide' },
+    thermal_resistance_junction_ambient: scalar(312.5, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(150, 'celsius'),
+  },
+  transistor_mosfet_pmos: {
+    // BS250 (TO-92 P-channel) — the 2N7000's standard complement. k derived the
+    // same way from I_D(on) ≥ −175 mA at V_GS = −10 V with V_th −2.5 V:
+    // k = 2·0.175/7.5² ≈ 6.2 mA/V² (p-channel mobility is lower — the smaller k
+    // is real silicon physics, not a typo). θ_JA derived from the 700 mW power
+    // rating: (150 − 25) °C / 0.7 W.
+    threshold_voltage: scalar(-2.5, 'volt'),
+    transconductance_parameter: scalar(0.0062, 'ampere_per_volt_squared'),
+    channel_length_modulation: scalar(0.02, 'per_volt'),
+    max_drain_current: scalar(0.23, 'ampere'),
+    drain_source_breakdown_voltage: scalar(45, 'volt'),
+    max_gate_source_voltage: scalar(20, 'volt'),
+    body_region: { value: 'silicon_n_type' },
+    source_drain_regions: { value: 'silicon_p_type' },
+    gate_dielectric: { value: 'silicon_dioxide' },
+    thermal_resistance_junction_ambient: scalar(178.6, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(150, 'celsius'),
+  },
 }
 
 /**
@@ -243,6 +281,29 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     collector_emitter_breakdown_voltage: '2N3904 V_CEO 40 V (onsemi datasheet)',
     thermal_resistance_junction_ambient: '2N3904 R_θJA 200 °C/W, TO-92 (onsemi datasheet)',
     max_operating_temperature: '2N3904 T_J max 150 °C (onsemi datasheet)',
+  },
+  transistor_mosfet_nmos: {
+    threshold_voltage: '2N7000 V_GS(th) 2.1 V typical (0.8–3 V range, datasheet)',
+    transconductance_parameter:
+      'derived from the 2N7000 datasheet point I_D(on) ≥ 75 mA at V_GS 4.5 V: k = 2I/(V_GS−V_th)²; reproduces the independent R_DS(on) ≤ 5 Ω spec',
+    channel_length_modulation:
+      'textbook Level-1 class value (λ is not on discrete datasheets); affects only the slight current rise in saturation',
+    max_drain_current: '2N7000 I_D 200 mA continuous (datasheet)',
+    drain_source_breakdown_voltage: '2N7000 V_DS 60 V (datasheet)',
+    max_gate_source_voltage: '2N7000 V_GS ±20 V absolute max — beyond it the gate oxide ruptures',
+    thermal_resistance_junction_ambient: 'derived: (150−25) °C / 0.4 W TO-92 power rating',
+    max_operating_temperature: '2N7000 T_J max 150 °C (datasheet)',
+  },
+  transistor_mosfet_pmos: {
+    threshold_voltage: 'BS250 V_GS(th) −2.5 V class (−1 to −3.5 V range, datasheet)',
+    transconductance_parameter:
+      'derived from the BS250 datasheet point I_D(on) ≥ −175 mA at V_GS −10 V: k = 2I/(V_GS−V_th)² (p-channel mobility is lower — the smaller k is real)',
+    channel_length_modulation: 'textbook Level-1 class value (λ is not on discrete datasheets)',
+    max_drain_current: 'BS250 I_D −230 mA continuous (datasheet)',
+    drain_source_breakdown_voltage: 'BS250 V_DS −45 V (datasheet)',
+    max_gate_source_voltage: 'BS250 V_GS ±20 V absolute max — gate-oxide limit',
+    thermal_resistance_junction_ambient: 'derived: (150−25) °C / 0.7 W TO-92 power rating',
+    max_operating_temperature: 'BS250 T_J max 150 °C (datasheet)',
   },
   transistor_bjt_pnp: {
     saturation_current: 'small-signal PNP transport I_S ~1e-14 A (2N3906 class)',

@@ -37,6 +37,8 @@ export type FailureCode =
   | 'led-reverse-breakdown'
   | 'diode-overloaded'
   | 'diode-reverse-breakdown'
+  | 'mosfet-overloaded'
+  | 'mosfet-gate-overvoltage'
   | 'resistor-overpower'
   | 'capacitor-reverse-polarity'
   | 'capacitor-overvoltage'
@@ -94,6 +96,14 @@ export function detectFailures(world: World, solution: Solution): Failure[] {
       if (overload !== null) failures.push(overload)
       const piv = checkDiodePeakInverse(inst, solution)
       if (piv !== null) failures.push(piv)
+    } else if (
+      inst.definition === 'transistor_mosfet_nmos' ||
+      inst.definition === 'transistor_mosfet_pmos'
+    ) {
+      const overload = checkMosfetOverload(inst, solution)
+      if (overload !== null) failures.push(overload)
+      const oxide = checkMosfetGateOvervoltage(inst, solution)
+      if (oxide !== null) failures.push(oxide)
     } else if (inst.definition === 'resistor') {
       const overpower = checkResistorOverpower(inst, solution)
       if (overpower !== null) failures.push(overpower)
@@ -217,6 +227,58 @@ function reverseVoltageCheck(
     measured: reverseVoltage,
     rated: reverseLimit,
     ratio: reverseVoltage / reverseLimit,
+    units: 'volt',
+    severity: 'error',
+  }
+}
+
+/**
+ * MOSFET drain-current overload: |I_D| beyond max_drain_current cooks the
+ * channel — the same thermal-damage shape as the diode checks.
+ */
+export function checkMosfetOverload(inst: Instance, solution: Solution): Failure | null {
+  const maxDrain = readScalarParam(inst, 'max_drain_current')
+  if (maxDrain === undefined || maxDrain <= 0) return null
+  const current = solution.branches.get(inst.id)
+  if (current === undefined) return null
+  const magnitude = Math.abs(current)
+  if (magnitude <= maxDrain) return null
+  return {
+    code: 'mosfet-overloaded',
+    source: inst.id,
+    kind: 'max_drain_current',
+    measured: magnitude,
+    rated: maxDrain,
+    ratio: magnitude / maxDrain,
+    units: 'ampere',
+    severity: 'error',
+  }
+}
+
+/**
+ * MOSFET gate-oxide overvoltage: |V_GS| beyond the absolute-maximum rating
+ * RUPTURES the gate oxide — instant, permanent, and the classic
+ * static-electricity death. Checked from the solved gate and source node
+ * voltages against max_gate_source_voltage (a magnitude rating, ±).
+ */
+export function checkMosfetGateOvervoltage(inst: Instance, solution: Solution): Failure | null {
+  const maxGate = readScalarParam(inst, 'max_gate_source_voltage')
+  if (maxGate === undefined || maxGate <= 0) return null
+  const gate = inst.connects?.find((c) => c.terminal === 'gate')
+  const source = inst.connects?.find((c) => c.terminal === 'source')
+  if (gate === undefined || source === undefined) return null
+  const vGate = solution.nodes.get(gate.net)
+  const vSource = solution.nodes.get(source.net)
+  if (vGate === undefined || vSource === undefined) return null
+  const magnitude = Math.abs(vGate - vSource)
+  if (magnitude <= maxGate) return null
+  return {
+    code: 'mosfet-gate-overvoltage',
+    source: inst.id,
+    kind: 'max_gate_source_voltage',
+    measured: magnitude,
+    rated: maxGate,
+    ratio: magnitude / maxGate,
     units: 'volt',
     severity: 'error',
   }

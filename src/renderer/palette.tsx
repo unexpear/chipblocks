@@ -29,6 +29,8 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'led', label: 'LED' },
   { definition: 'transistor_bjt_npn', label: 'NPN' },
   { definition: 'transistor_bjt_pnp', label: 'PNP' },
+  { definition: 'transistor_mosfet_nmos', label: 'NMOS' },
+  { definition: 'transistor_mosfet_pmos', label: 'PMOS' },
   { definition: 'switch_spst_toggle', label: 'Switch' },
   { definition: 'ground', label: 'Ground' },
 ]
