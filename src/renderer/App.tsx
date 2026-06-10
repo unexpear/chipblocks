@@ -45,6 +45,8 @@ import { canvasHealth, HealthContext, type NodeHealth } from './health.ts'
 import { DEFAULT_KEYBINDS, eventMatchesBinding, type Keybinds, mergeKeybinds } from './keybinds.ts'
 import { FIELD_COLOR, fieldReferenceTesla, LensContext, type LensMode } from './lens.ts'
 import { materialCapabilities, validMaterialsByRole } from './material-roles.ts'
+import { MathPanel } from './math-panel.tsx'
+import { buildMathView } from './math-view.ts'
 import {
   acVoltsRms,
   CONTINUITY_OHMS,
@@ -276,6 +278,7 @@ function solveCanvas(
   readings: Map<string, PartReading>
   terminalVolts: Map<string, number>
   world: World
+  solution: Solution
 } {
   const { world, drawn } = canvasWorld(nodeList, edgeList)
   // Electro-thermal solve (stage 7): the electrical answer at the settled part
@@ -310,8 +313,10 @@ function solveCanvas(
     readings: partReadings(world, solution),
     // Every wired terminal's live voltage — what the multimeter probes read.
     terminalVolts: terminalVoltages(world, solution),
-    // The solved circuit itself — the meter's Ω mode re-solves it powered-off.
+    // The solved circuit itself — the meter's Ω mode re-solves it powered-off,
+    // and the Math panel shows the equations behind this exact solution.
     world,
+    solution,
   }
 }
 
@@ -409,6 +414,7 @@ function Canvas() {
       readings: solved.readings,
       terminalVolts: solved.terminalVolts,
       world: solved.world,
+      solution: solved.solution,
       materials,
       materialResistivity,
       validMaterialsByDef,
@@ -425,6 +431,8 @@ function Canvas() {
   const [terminalVolts, setTerminalVolts] = useState(initial.terminalVolts)
   // The latest solved World — Ω mode re-solves it powered-off between the probes.
   const [solvedWorld, setSolvedWorld] = useState(initial.world)
+  // The latest Solution — the Math panel derives its equations from it.
+  const [solution, setSolution] = useState(initial.solution)
   // Latest edges for the re-solve effect WITHOUT depending on edge data (a re-solve
   // rewrites edge data, which would loop); structural edits trigger it via
   // `topology`, node moves via `nodes`.
@@ -531,6 +539,7 @@ function Canvas() {
       setReadings(solved.readings)
       setTerminalVolts(solved.terminalVolts)
       setSolvedWorld(solved.world)
+      setSolution(solved.solution)
     },
     [setEdges],
   )
@@ -541,6 +550,14 @@ function Canvas() {
   // an auto-picked window and show every node voltage as a waveform.
   const [scopeResult, setScopeResult] = useState<TransientResult | null>(null)
   const [scopeEdge, setScopeEdge] = useState<DockEdge>('bottom')
+
+  // Math panel (S19-v3-63): the equations behind the current solution, derived
+  // live from the same solved state the canvas shows.
+  const [showMath, setShowMath] = useState(false)
+  const mathView = useMemo(
+    () => (showMath ? buildMathView(solvedWorld, solution) : null),
+    [showMath, solvedWorld, solution],
+  )
 
   // Lenses (S19-v3-50): overlay the solved physics on the schematic. The context
   // carries the solved voltage range (for the wire color ramp) + each part's real
@@ -1344,6 +1361,11 @@ function Canvas() {
           </div>
         ) : null}
 
+        {/* Math panel — the equations behind the current solution. */}
+        {mathView !== null ? (
+          <MathPanel view={mathView} onClose={() => setShowMath(false)} light={light} />
+        ) : null}
+
         {/* Shortcuts panel — every key and control, viewable and editable. */}
         {showShortcuts ? (
           <ShortcutsPanel
@@ -1460,6 +1482,7 @@ function Canvas() {
           onAlwaysOn={setAlwaysOn}
           onSolve={handleSolve}
           onScope={runScope}
+          onMath={() => setShowMath((open) => !open)}
           lens={lens}
           onLens={setLens}
           flow={flow}

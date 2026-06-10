@@ -27,6 +27,7 @@ export function ToolbarItems({
   onAlwaysOn,
   onSolve,
   onScope,
+  onMath,
   lens,
   onLens,
   flow,
@@ -40,6 +41,7 @@ export function ToolbarItems({
   onAlwaysOn: (on: boolean) => void
   onSolve: () => void
   onScope: () => void
+  onMath: () => void
   lens: LensMode
   onLens: (lens: LensMode) => void
   flow: boolean
@@ -152,6 +154,18 @@ export function ToolbarItems({
           ∿
         </span>
         <span style={{ fontSize: 11 }}>Scope</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={onMath}
+        title="Math — see every equation behind the current circuit: each part's law with the real numbers in it, and Kirchhoff's current law re-summed at every net (the checkmark is computed, not assumed)"
+        style={{ ...toolButton(false), flexDirection: 'row', gap: 6, padding: '8px 12px' }}
+      >
+        <span aria-hidden style={{ color: '#d6a23c', fontSize: 13 }}>
+          Σ
+        </span>
+        <span style={{ fontSize: 11 }}>Math</span>
       </button>
 
       {/* Lenses (S19-v3-50): overlay the solved physics on the schematic. Voltage
