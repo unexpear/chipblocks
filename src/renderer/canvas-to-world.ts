@@ -45,6 +45,11 @@ const scalarParam = (amount: number, unit: string) => ({ value: { kind: 'scalar'
 export function canvasToWorld(nodes: CanvasNode[], edges: CanvasEdge[]): World {
   const instances = new Map<string, Instance>()
   for (const node of nodes) {
+    // A junction is a pure tie point, not an electrical element: every wire
+    // touching its handle resolves to ONE net below (netForPoint), which is
+    // the whole job — current passes through the shared net by KCL, with
+    // nothing to stamp. So no instance is created for it.
+    if (node.definition === 'junction') continue
     instances.set(node.id, {
       id: node.id,
       kind_ref: 'primitive_device',
@@ -52,6 +57,7 @@ export function canvasToWorld(nodes: CanvasNode[], edges: CanvasEdge[]): World {
       ...(node.parameters ? { parameters: node.parameters } : {}),
     })
   }
+  const junctions = new Set(nodes.filter((n) => n.definition === 'junction').map((n) => n.id))
 
   const nets = new Map<string, Net>()
   const pointNet = new Map<string, string>()
@@ -84,9 +90,10 @@ export function canvasToWorld(nodes: CanvasNode[], edges: CanvasEdge[]): World {
   }
 
   let wireCount = 0
+  const isEndpoint = (id: string) => instances.has(id) || junctions.has(id)
   for (const edge of edges) {
     if (!edge.sourceHandle || !edge.targetHandle) continue // need both terminals
-    if (!instances.has(edge.source) || !instances.has(edge.target)) continue
+    if (!isEndpoint(edge.source) || !isEndpoint(edge.target)) continue
 
     const netA = netForPoint(edge.source, edge.sourceHandle)
     const netB = netForPoint(edge.target, edge.targetHandle)
@@ -118,4 +125,46 @@ export function canvasToWorld(nodes: CanvasNode[], edges: CanvasEdge[]): World {
     behaviors: new Map(),
     activeVariables: new Map(),
   }
+}
+
+/**
+ * The ground-connected part of a world (S19-v3-61). Free-floating sections —
+ * possible now that wires can start and end in open space — have genuinely
+ * UNDEFINED voltages relative to ground (and would make the solve singular),
+ * so the display solve covers only what ground can reach; floating pieces sit
+ * honestly idle instead of killing the whole canvas. The multimeter keeps the
+ * FULL world: its Ω/capacitance rigs bring their own reference, so floating
+ * sections measure fine there.
+ *
+ * Reachability walks elements: an instance whose ANY net is reached pulls all
+ * its nets in. No ground at all returns the world unchanged (the solver's
+ * no-ground status already reports that case honestly).
+ */
+export function groundedComponent(world: World): World {
+  const groundNets = [...world.nets.values()].filter((n) => n.type === 'ground').map((n) => n.id)
+  if (groundNets.length === 0) return world
+
+  const reachedNets = new Set<string>(groundNets)
+  const keptInstances = new Set<string>()
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const inst of world.instances.values()) {
+      if (keptInstances.has(inst.id)) continue
+      const nets = (inst.connects ?? []).map((c) => c.net)
+      if (nets.length === 0) continue
+      if (!nets.some((n) => reachedNets.has(n))) continue
+      keptInstances.add(inst.id)
+      for (const n of nets) {
+        if (!reachedNets.has(n)) {
+          reachedNets.add(n)
+          grew = true
+        }
+      }
+    }
+  }
+
+  const instances = new Map([...world.instances].filter(([id]) => keptInstances.has(id)))
+  const nets = new Map([...world.nets].filter(([id]) => reachedNets.has(id)))
+  return { ...world, instances, nets }
 }

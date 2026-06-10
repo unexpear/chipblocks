@@ -24,6 +24,7 @@ import {
 } from './lens.ts'
 import { formatEng } from './units.ts'
 import { formatLength } from './wire-length.ts'
+import { roundedPathD } from './wire-path.ts'
 
 /**
  * Net edge — a wire. Two routing modes (Sprint 19):
@@ -126,9 +127,11 @@ export function NetEdge({
   let labelX: number
   let labelY: number
   if (waypoints.length > 0) {
-    // Manual: the user's hand-routed path through the corner points.
+    // Manual: the user's hand-routed path through the corner points — sharp
+    // segments, or quadratic fillets when drawn with the curve subtool (the
+    // SAME geometry wire-path.ts measures for the wire's physical length).
     const points: Point[] = [{ x: sourceX, y: sourceY }, ...waypoints, { x: targetX, y: targetY }]
-    path = pathThrough(points)
+    path = data?.curved === true ? roundedPathD(points) : pathThrough(points)
     const mid = points[Math.floor(points.length / 2)] ?? points[0]
     labelX = mid?.x ?? sourceX
     labelY = mid?.y ?? sourceY

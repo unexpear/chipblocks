@@ -8,7 +8,11 @@
 
 import { describe, expect, test } from 'vitest'
 import { solveDC } from '../src/dc-solver.ts'
-import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
+import {
+  type CanvasNode,
+  canvasToWorld,
+  groundedComponent,
+} from '../src/renderer/canvas-to-world.ts'
 import { wireFlow } from '../src/renderer/edge-currents.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
@@ -239,5 +243,116 @@ describe('canvasToWorld', () => {
     const tap = wireFlow(solution, 'wire_3', true)
     expect(tap.carries).toBe(false)
     expect(tap.amps).toBeCloseTo(0, 9)
+  })
+})
+
+describe('junctions (S19-v3-61)', () => {
+  test('a junction is a pure tie point — wires meeting there share one net, no element is stamped', () => {
+    // bat+ —wire— J —wire— r1.a, r1.b —wire— bat− (grounded). Same Ohm's-law
+    // loop as above but routed THROUGH a junction dot.
+    const nodes: CanvasNode[] = [
+      {
+        id: 'bat',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(9, 'volt'), internal_resistance: scalar(1, 'ohm') },
+      },
+      { id: 'j1', definition: 'junction' },
+      { id: 'r1', definition: 'resistor', parameters: { resistance: scalar(100, 'ohm') } },
+      { id: 'gnd', definition: 'ground' },
+    ]
+    const edges = [
+      { source: 'bat', sourceHandle: 'terminal_positive', target: 'j1', targetHandle: 'tie' },
+      { source: 'j1', sourceHandle: 'tie', target: 'r1', targetHandle: 'terminal_a' },
+      {
+        source: 'r1',
+        sourceHandle: 'terminal_b',
+        target: 'bat',
+        targetHandle: 'terminal_negative',
+      },
+      {
+        source: 'gnd',
+        sourceHandle: 'reference_terminal',
+        target: 'bat',
+        targetHandle: 'terminal_negative',
+      },
+    ]
+    const world = canvasToWorld(nodes, edges)
+    expect(world.instances.has('j1')).toBe(false) // no element for the dot
+    const solution = solveDC(world)
+    expect(solution.status).toBe('solved')
+    // The full loop current flows THROUGH the junction: both wires touching it
+    // carry the same ~89.1 mA the direct wiring carries.
+    expect(Math.abs(solution.branches.get('r1') ?? -1)).toBeCloseTo(0.0891, 4)
+    const intoJunction = wireFlow(solution, 'wire_1', true)
+    const outOfJunction = wireFlow(solution, 'wire_2', true)
+    expect(intoJunction.carries).toBe(true)
+    expect(outOfJunction.carries).toBe(true)
+    expect(Math.abs(intoJunction.amps - outOfJunction.amps)).toBeLessThan(1e-9)
+  })
+})
+
+describe('groundedComponent (S19-v3-61)', () => {
+  test('a free-floating section is excluded so the main circuit still solves', () => {
+    const nodes: CanvasNode[] = [
+      {
+        id: 'bat',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(9, 'volt'), internal_resistance: scalar(1, 'ohm') },
+      },
+      { id: 'r1', definition: 'resistor', parameters: { resistance: scalar(100, 'ohm') } },
+      { id: 'gnd', definition: 'ground' },
+      // A wire drawn between two free junctions — connected to nothing else.
+      { id: 'j1', definition: 'junction' },
+      { id: 'j2', definition: 'junction' },
+    ]
+    const edges = [
+      {
+        id: 'main1',
+        source: 'bat',
+        sourceHandle: 'terminal_positive',
+        target: 'r1',
+        targetHandle: 'terminal_a',
+      },
+      {
+        id: 'main2',
+        source: 'r1',
+        sourceHandle: 'terminal_b',
+        target: 'bat',
+        targetHandle: 'terminal_negative',
+      },
+      {
+        id: 'main3',
+        source: 'gnd',
+        sourceHandle: 'reference_terminal',
+        target: 'bat',
+        targetHandle: 'terminal_negative',
+      },
+      {
+        id: 'float',
+        source: 'j1',
+        sourceHandle: 'tie',
+        target: 'j2',
+        targetHandle: 'tie',
+        resistanceOhms: 0.05,
+      },
+    ]
+    const full = canvasToWorld(nodes, edges)
+    expect(full.instances.has('wire_float')).toBe(true) // it IS in the world…
+    const pruned = groundedComponent(full)
+    expect(pruned.instances.has('wire_float')).toBe(false) // …but not in the solve
+    expect(pruned.instances.has('r1')).toBe(true)
+    const solution = solveDC(pruned)
+    expect(solution.status).toBe('solved')
+    expect(Math.abs(solution.branches.get('r1') ?? -1)).toBeCloseTo(0.0891, 4)
+  })
+
+  test('with no ground anywhere the world passes through unchanged', () => {
+    const nodes: CanvasNode[] = [
+      { id: 'j1', definition: 'junction' },
+      { id: 'j2', definition: 'junction' },
+    ]
+    const edges = [{ source: 'j1', sourceHandle: 'tie', target: 'j2', targetHandle: 'tie' }]
+    const world = canvasToWorld(nodes, edges)
+    expect(groundedComponent(world)).toBe(world)
   })
 })

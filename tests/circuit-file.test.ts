@@ -107,3 +107,44 @@ describe('maxIdSuffix', () => {
     expect(maxIdSuffix([])).toBe(0)
   })
 })
+
+describe('junctions + curve subtool (S19-v3-61)', () => {
+  test('a junction node and a curved wire survive the save/load round trip', () => {
+    const file = serializeCircuit(
+      [
+        {
+          id: 'junction_3',
+          position: { x: 40, y: 60 },
+          data: { definition: 'junction' },
+        },
+      ],
+      [
+        {
+          id: 'w9',
+          source: 'junction_3',
+          sourceHandle: 'tie',
+          target: 'r1',
+          targetHandle: 'terminal_a',
+          data: {
+            waypoints: [{ id: 'wp1', x: 80, y: 60 }],
+            curved: true,
+          },
+        },
+      ],
+    )
+    const parsed = deserializeCircuit(JSON.stringify(file))
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.file.nodes[0]?.definition).toBe('junction')
+    expect(parsed.file.wires[0]?.curved).toBe(true)
+    expect(parsed.file.wires[0]?.waypoints?.length).toBe(1)
+  })
+
+  test('a straight wire saves WITHOUT a curved flag — nothing invented', () => {
+    const file = serializeCircuit(
+      [],
+      [{ id: 'w1', source: 'a', sourceHandle: 'x', target: 'b', targetHandle: 'y' }],
+    )
+    expect('curved' in (file.wires[0] ?? {})).toBe(false)
+  })
+})

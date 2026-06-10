@@ -16,10 +16,13 @@ import { DeviceGlyph } from './symbols.tsx'
  */
 
 export type Tool = 'select' | 'wire' | 'meter'
+export type WireStyle = 'line' | 'curve'
 
 export function ToolbarItems({
   tool,
   onTool,
+  wireStyle,
+  onWireStyle,
   alwaysOn,
   onAlwaysOn,
   onSolve,
@@ -31,6 +34,8 @@ export function ToolbarItems({
 }: {
   tool: Tool
   onTool: (tool: Tool) => void
+  wireStyle: WireStyle
+  onWireStyle: (style: WireStyle) => void
   alwaysOn: boolean
   onAlwaysOn: (on: boolean) => void
   onSolve: () => void
@@ -47,12 +52,48 @@ export function ToolbarItems({
       <button
         type="button"
         onClick={() => onTool(wireActive ? 'select' : 'wire')}
-        title="Wire tool — draw a connection between two parts' dots"
+        title="Wire tool — works like a CAD line tool: click anywhere to start (a terminal dot, or open space — a junction dot is made there), click to drop corners, then click a terminal dot to finish, or double-click in space to end there. No holding (drag between dots also works). Esc or re-clicking the start abandons the wire."
         style={toolButton(wireActive)}
       >
         <DeviceGlyph definition="wire" />
         <span style={{ fontSize: 11 }}>Wire</span>
       </button>
+      {wireActive ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <button
+            type="button"
+            onClick={() => onWireStyle('line')}
+            title="Straight segments with sharp corners. Honest physics: at DC a corner itself doesn't change a wire's resistance — the route's LENGTH sets R = ρL/A, and the length follows exactly what you draw."
+            style={{
+              ...toolButton(wireStyle === 'line'),
+              flexDirection: 'row',
+              gap: 6,
+              padding: '4px 10px',
+            }}
+          >
+            <span aria-hidden style={{ fontSize: 12 }}>
+              ⌐
+            </span>
+            <span style={{ fontSize: 11 }}>Line</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onWireStyle('curve')}
+            title="The same route with rounded corners (fillets). Slightly shorter than sharp corners — it cuts the corner — so slightly less resistance, measured for real. Sharp-corner effects BEYOND length (radio-frequency reflections, high-voltage field crowding at points) are real but live at future solver stages; they are documented, not faked."
+            style={{
+              ...toolButton(wireStyle === 'curve'),
+              flexDirection: 'row',
+              gap: 6,
+              padding: '4px 10px',
+            }}
+          >
+            <span aria-hidden style={{ fontSize: 12 }}>
+              ◠
+            </span>
+            <span style={{ fontSize: 11 }}>Curve</span>
+          </button>
+        </div>
+      ) : null}
 
       <button
         type="button"

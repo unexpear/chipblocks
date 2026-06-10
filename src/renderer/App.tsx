@@ -12,8 +12,10 @@ import {
   ReactFlowProvider,
   reconnectEdge,
   useEdgesState,
+  useInternalNode,
   useNodesState,
   useReactFlow,
+  ViewportPortal,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import {
@@ -29,7 +31,12 @@ import type { World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
 import { solveElectroThermal } from '../electro-thermal.ts'
 import { solveTransient, type TransientResult } from '../transient-solver.ts'
-import { type CanvasEdge, type CanvasNode, canvasToWorld } from './canvas-to-world.ts'
+import {
+  type CanvasEdge,
+  type CanvasNode,
+  canvasToWorld,
+  groundedComponent,
+} from './canvas-to-world.ts'
 import { loadCatalogWorld } from './catalog-loader.ts'
 import { deserializeCircuit, maxIdSuffix, serializeCircuit } from './circuit-file.ts'
 import { DockablePanel, type DockEdge } from './dockable-panel.tsx'
@@ -59,6 +66,7 @@ import { type DeviceNodeData, nodeTypes } from './symbols.tsx'
 import { type Tool, ToolbarItems } from './toolbar.tsx'
 import { formatEng } from './units.ts'
 import { lengthFromDrawn, wireResistance } from './wire-length.ts'
+import { type PathPoint, polylineLength, roundedPathD, roundedPathLength } from './wire-path.ts'
 import { worldToFlow } from './world-to-flow.ts'
 
 // The preload bridge (electron/preload.ts): the native Settings menu pushes
@@ -93,14 +101,32 @@ function toCanvasNode(node: Node): CanvasNode {
   }
 }
 
-/** A wire's real length + resistance from how it is drawn (pixels → metres → R = ρL/A). */
+/**
+ * A wire's real length + resistance from how it is drawn (pixels → metres →
+ * R = ρL/A). A hand-routed wire is measured along its ACTUAL path — straight
+ * segments through the corners, or the rounded route when drawn with the curve
+ * subtool (same geometry the renderer draws, from wire-path.ts) — so routing
+ * is physically real: a longer route is more ohms, more drop, more heat. An
+ * un-routed wire keeps the straight-line seed it always had.
+ */
 function drawnWire(
-  edge: { source: string; target: string },
+  edge: { source: string; target: string; data?: { waypoints?: unknown; curved?: unknown } },
   positions: Map<string, NodePosition>,
 ): { lengthM: number; ohms: number } {
   const from = positions.get(edge.source)
   const to = positions.get(edge.target)
-  const drawnPixels = from && to ? Math.hypot(to.x - from.x, to.y - from.y) : 0
+  let drawnPixels = 0
+  if (from && to) {
+    const waypoints = Array.isArray(edge.data?.waypoints)
+      ? (edge.data.waypoints as PathPoint[])
+      : []
+    if (waypoints.length > 0) {
+      const points = [from, ...waypoints, to]
+      drawnPixels = edge.data?.curved === true ? roundedPathLength(points) : polylineLength(points)
+    } else {
+      drawnPixels = Math.hypot(to.x - from.x, to.y - from.y)
+    }
+  }
   const lengthM = lengthFromDrawn(drawnPixels)
   return { lengthM, ohms: wireResistance(lengthM) }
 }
@@ -150,6 +176,68 @@ function edgePhysics(
   }
 }
 
+/**
+ * The wire-in-progress (click-by-click drawing): a dashed route from the start
+ * anchor (a terminal dot, or a free point in space) through the clicked
+ * corners to the cursor — sharp or rounded to match the active subtool. Pinned
+ * in flow coordinates so it pans/zooms with the canvas.
+ */
+function PendingWirePreview({
+  pending,
+  cursor,
+  curved,
+}: {
+  pending: {
+    start: { nodeId: string; handleId: string } | { x: number; y: number }
+    corners: { id: string; x: number; y: number }[]
+  }
+  cursor: { x: number; y: number } | null
+  curved: boolean
+}) {
+  const start = pending.start
+  const anchoredToNode = 'nodeId' in start
+  const node = useInternalNode(anchoredToNode ? start.nodeId : '__free_point__')
+  let origin: { x: number; y: number } | null = null
+  if (anchoredToNode) {
+    const handle = node?.internals.handleBounds?.source?.find((h) => h.id === start.handleId)
+    if (node && handle) {
+      origin = {
+        x: node.internals.positionAbsolute.x + handle.x + handle.width / 2,
+        y: node.internals.positionAbsolute.y + handle.y + handle.height / 2,
+      }
+    }
+  } else {
+    origin = start
+  }
+  if (origin === null) return null
+  const points = [origin, ...pending.corners, ...(cursor !== null ? [cursor] : [])]
+  const path = curved
+    ? roundedPathD(points)
+    : points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x},${p.y}`).join(' ')
+  return (
+    <ViewportPortal>
+      <svg
+        width={1}
+        height={1}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          overflow: 'visible',
+          pointerEvents: 'none',
+        }}
+        aria-hidden
+      >
+        <path d={path} fill="none" stroke={DRAWN} strokeWidth={1.6} strokeDasharray="6 4" />
+        {pending.corners.map((c) => (
+          <circle key={c.id} cx={c.x} cy={c.y} r={3.5} fill="#7ab8ff" stroke="#0c0c0e" />
+        ))}
+        <circle cx={origin.x} cy={origin.y} r={4} fill="none" stroke="#7ab8ff" strokeWidth={1.5} />
+      </svg>
+    </ViewportPortal>
+  )
+}
+
 /** The meter chip's V⎓ / Ω dial buttons — the mode switch on a real meter. */
 function meterDialStyle(active: boolean, light: boolean): React.CSSProperties {
   return {
@@ -188,8 +276,11 @@ function solveCanvas(
   // Electro-thermal solve (stage 7): the electrical answer at the settled part
   // temperatures — hot parts drift, warm junctions drop, all fed back until the
   // fixed point. Readings/health recompute temperatures from this solution and
-  // land on the same numbers (it IS the fixed point).
-  const solution = solveElectroThermal(world).solution
+  // land on the same numbers (it IS the fixed point). Only the ground-connected
+  // component is solved: a free-floating section's voltages are genuinely
+  // undefined (and would be a singular matrix) — it sits idle instead of
+  // killing the whole canvas. The meter still gets the FULL world.
+  const solution = solveElectroThermal(groundedComponent(world)).solution
   const edges = edgeList.map((edge) => {
     const wire = drawn.get(edge.id) ?? { lengthM: 0, ohms: 0 }
     const physics = edgePhysics(edge, world, solution, wire.lengthM, wire.ohms)
@@ -364,7 +455,7 @@ function Canvas() {
       setNodes(
         result.file.nodes.map((n) => ({
           id: n.id,
-          type: 'device',
+          type: n.definition === 'junction' ? 'junction' : 'device',
           position: { x: n.x, y: n.y },
           data: {
             definition: n.definition,
@@ -384,7 +475,14 @@ function Canvas() {
           type: 'net',
           deletable: true,
           style: { stroke: DRAWN },
-          ...(w.waypoints ? { data: { waypoints: w.waypoints } } : {}),
+          ...(w.waypoints || w.curved
+            ? {
+                data: {
+                  ...(w.waypoints ? { waypoints: w.waypoints } : {}),
+                  ...(w.curved ? { curved: true } : {}),
+                },
+              }
+            : {}),
         })),
       )
       dropCount.current = maxIdSuffix(result.file.nodes)
@@ -482,7 +580,7 @@ function Canvas() {
     return { lens, flow, vMin, vMax, power, pMax, temp, tMaxC, fieldTesla }
   }, [edges, readings, lens, flow])
   const runScope = useCallback(() => {
-    const { world } = canvasWorld(nodes, edges)
+    const world = groundedComponent(canvasWorld(nodes, edges).world)
     setScopeResult(solveTransient(world, scopeWindow(world)))
   }, [nodes, edges])
 
@@ -777,6 +875,136 @@ function Canvas() {
     [setEdges],
   )
 
+  // Click-by-click wire drawing (S19-v3-60; CAD-style free placement + curves
+  // S19-v3-61): in wire mode the canvas works like a CAD line tool — click
+  // ANYWHERE to start (a terminal dot, or open space), click to drop corners,
+  // then click a terminal dot to finish — or double-click in space to end
+  // there. A free start/end becomes a JUNCTION (the schematic tie dot): wires
+  // meeting at it are connected; a free end is honestly an open circuit until
+  // something reaches it. The Line/Curve subtool picks sharp corners or
+  // rounded fillets — the wire's physical length follows whichever shape is
+  // drawn. Escape (or re-clicking the start) abandons the wire-in-progress.
+  const [wireStyle, setWireStyle] = useState<'line' | 'curve'>('line')
+  type WireAnchor = { nodeId: string; handleId: string } | { x: number; y: number }
+  const [pendingWire, setPendingWire] = useState<{
+    start: WireAnchor
+    corners: { id: string; x: number; y: number }[]
+  } | null>(null)
+  const [wireCursor, setWireCursor] = useState<{ x: number; y: number } | null>(null)
+  useEffect(() => {
+    if (tool !== 'wire') {
+      setPendingWire(null)
+      setWireCursor(null)
+    }
+  }, [tool])
+  useEffect(() => {
+    if (pendingWire === null) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPendingWire(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [pendingWire])
+  const finishWire = useCallback(
+    (end: WireAnchor, corners: { id: string; x: number; y: number }[]) => {
+      if (pendingWire === null) return
+      // A free anchor materializes as a junction node centered on the point
+      // (the node box is 14×14 with its tie handle in the middle).
+      const materialize = (anchor: WireAnchor): { nodeId: string; handleId: string } => {
+        if ('nodeId' in anchor) return anchor
+        dropCount.current += 1
+        const id = `junction_${dropCount.current}`
+        setNodes((current) =>
+          current.concat({
+            id,
+            type: 'junction',
+            position: { x: anchor.x - 7, y: anchor.y - 7 },
+            data: { definition: 'junction', label: id },
+          }),
+        )
+        return { nodeId: id, handleId: 'tie' }
+      }
+      const from = materialize(pendingWire.start)
+      const to = materialize(end)
+      setEdges((current) =>
+        addEdge(
+          {
+            source: from.nodeId,
+            sourceHandle: from.handleId,
+            target: to.nodeId,
+            targetHandle: to.handleId,
+            type: 'net',
+            deletable: true,
+            style: { stroke: DRAWN },
+            data: {
+              ...(corners.length > 0 ? { waypoints: corners } : {}),
+              ...(wireStyle === 'curve' ? { curved: true } : {}),
+            },
+          },
+          current,
+        ),
+      )
+      setPendingWire(null)
+    },
+    [pendingWire, wireStyle, setEdges, setNodes],
+  )
+  const onWireClick = useCallback(
+    (event: ReactMouseEvent) => {
+      if (tool !== 'wire') return
+      const target = event.target as Element
+      const handleEl = target.closest?.('.react-flow__handle') as HTMLElement | null
+      if (handleEl !== null) {
+        const nodeId = handleEl.dataset.nodeid
+        const handleId = handleEl.dataset.handleid
+        if (nodeId === undefined || handleId === undefined) return
+        if (pendingWire === null) {
+          setPendingWire({ start: { nodeId, handleId }, corners: [] })
+          return
+        }
+        const start = pendingWire.start
+        if ('nodeId' in start && start.nodeId === nodeId && start.handleId === handleId) {
+          setPendingWire(null)
+          return
+        }
+        finishWire({ nodeId, handleId }, pendingWire.corners)
+        return
+      }
+      if (target.closest?.('.react-flow__pane') === null) return
+      const point = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      if (pendingWire === null) {
+        // CAD-style: a wire can START in open space (a junction is made there).
+        setPendingWire({ start: point, corners: [] })
+        return
+      }
+      setPendingWire({
+        ...pendingWire,
+        corners: [...pendingWire.corners, { id: crypto.randomUUID(), ...point }],
+      })
+    },
+    [tool, pendingWire, finishWire, screenToFlowPosition],
+  )
+  // Double-click in open space ENDS the wire there (the CAD convention). The
+  // double-click's own two single clicks each dropped a corner — remove them.
+  const onWireDoubleClick = useCallback(
+    (event: ReactMouseEvent) => {
+      if (tool !== 'wire' || pendingWire === null) return
+      const target = event.target as Element
+      if (target.closest?.('.react-flow__handle') !== null) return
+      if (target.closest?.('.react-flow__pane') === null) return
+      const point = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      finishWire(point, pendingWire.corners.slice(0, -2))
+    },
+    [tool, pendingWire, finishWire, screenToFlowPosition],
+  )
+  // The rubber band follows the cursor between clicks (flow coordinates).
+  const onWireMove = useCallback(
+    (event: ReactMouseEvent) => {
+      if (tool !== 'wire' || pendingWire === null) return
+      setWireCursor(screenToFlowPosition({ x: event.clientX, y: event.clientY }))
+    },
+    [tool, pendingWire, screenToFlowPosition],
+  )
+
   // Reconnect: drag a wire's endpoint to a different dot. Dropping in empty space
   // does nothing, so a wire is never lost this way — removal is explicit (select +
   // Delete). The topology effect re-solves once the endpoint lands.
@@ -812,9 +1040,12 @@ function Canvas() {
 
   // Edit a part's scalar value (resistance, voltage, ...) → live re-solve. The
   // value lives in the node's parameters, so updating it triggers the always-on
-  // re-solve, exactly like the switch toggle.
+  // re-solve, exactly like the switch toggle. A missing parameter is CREATED
+  // only when the caller states its unit (the Source presets do — a loaded
+  // pre-AC battery instance has no ac_amplitude/frequency entries to update);
+  // without a unit an unknown key is ignored, never invented.
   const onEditParam = useCallback(
-    (nodeId: string, key: string, amount: number) => {
+    (nodeId: string, key: string, amount: number, unit?: string) => {
       setNodes((current) =>
         current.map((n) => {
           if (n.id !== nodeId) return n
@@ -825,7 +1056,14 @@ function Canvas() {
             value === null ||
             (value as { kind?: unknown }).kind !== 'scalar'
           ) {
-            return n
+            if (unit === undefined) return n
+            return {
+              ...n,
+              data: {
+                ...n.data,
+                parameters: { ...params, [key]: { value: { kind: 'scalar', amount, unit } } },
+              },
+            }
           }
           const scalar = value as { kind: string; amount: number; unit: string }
           return {
@@ -888,7 +1126,12 @@ function Canvas() {
       onDrop={onDrop}
     >
       <div
-        onClickCapture={onMeterClick}
+        onClickCapture={(event) => {
+          onMeterClick(event)
+          onWireClick(event)
+        }}
+        onDoubleClickCapture={onWireDoubleClick}
+        onMouseMove={onWireMove}
         style={{
           gridArea: 'center',
           position: 'relative',
@@ -912,7 +1155,10 @@ function Canvas() {
               edgeTypes={edgeTypes}
               nodesDraggable={tool === 'select'}
               nodesConnectable={tool !== 'meter'}
-              connectOnClick={tool !== 'meter'}
+              // Click-to-connect is OUR gesture now (onWireClick, wire tool
+              // only, with corner routing); React Flow's built-in one would
+              // double-create — and it once let meter probes draw real wires.
+              connectOnClick={false}
               connectionMode={ConnectionMode.Loose}
               deleteKeyCode={['Delete', 'Backspace']}
               zoomOnDoubleClick={false}
@@ -936,6 +1182,13 @@ function Canvas() {
               />
               <Controls />
               <MeterProbes red={redProbe} black={blackProbe} />
+              {pendingWire !== null ? (
+                <PendingWirePreview
+                  pending={pendingWire}
+                  cursor={wireCursor}
+                  curved={wireStyle === 'curve'}
+                />
+              ) : null}
             </ReactFlow>
           </LensContext.Provider>
         </HealthContext.Provider>
@@ -954,7 +1207,9 @@ function Canvas() {
         >
           ChipBlocks — {nodes.length} components, {edges.length} wires · select a part to edit it, R
           to rotate, Delete to remove, double-click a switch to flip
-          {tool === 'wire' ? ' · wire tool: parts locked, drag between dots' : ''}
+          {tool === 'wire'
+            ? ' · wire tool: click anywhere to start, click corners, click a dot to finish (double-click in space ends there; Esc cancels)'
+            : ''}
           {alwaysOn ? '' : ' · physics paused — hit Solve'}
         </div>
 
@@ -1150,6 +1405,8 @@ function Canvas() {
         <ToolbarItems
           tool={tool}
           onTool={setTool}
+          wireStyle={wireStyle}
+          onWireStyle={setWireStyle}
           alwaysOn={alwaysOn}
           onAlwaysOn={setAlwaysOn}
           onSolve={handleSolve}
@@ -1168,8 +1425,8 @@ function Canvas() {
           validMaterials={
             selectedPart ? (initial.validMaterialsByDef.get(selectedPart.definition) ?? {}) : {}
           }
-          onParam={(key, amount) => {
-            if (selectedPart) onEditParam(selectedPart.id, key, amount)
+          onParam={(key, amount, unit) => {
+            if (selectedPart) onEditParam(selectedPart.id, key, amount, unit)
           }}
           onEnum={(key, value) => {
             if (selectedPart) onEditEnum(selectedPart.id, key, value)

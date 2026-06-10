@@ -3,7 +3,13 @@ import { Fragment, useContext, useEffect } from 'react'
 import './canvas-animations.css'
 import { HealthContext } from './health.ts'
 import { LensContext, powerColor, temperatureColor } from './lens.ts'
-import { type Parameters, primaryValue, sourceIsAc, switchClosed } from './part-defaults.ts'
+import {
+  type Parameters,
+  primaryValue,
+  sourceIsAc,
+  sourceIsSquare,
+  switchClosed,
+} from './part-defaults.ts'
 import { formatEng } from './units.ts'
 
 /**
@@ -73,6 +79,24 @@ function AcSourceGlyph() {
       {lead(0, 26)}
       <circle cx={40} cy={MID} r={14} fill="none" stroke={STROKE} strokeWidth={1.5} />
       <path d="M31 22 q4.5 -9 9 0 q4.5 9 9 0" fill="none" stroke={STROKE} strokeWidth={1.3} />
+      {lead(54, W)}
+    </svg>
+  )
+}
+
+/** Square-wave clock source — the generator circle with a square-wave trace. */
+function SquareSourceGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>square-wave clock source</title>
+      {lead(0, 26)}
+      <circle cx={40} cy={MID} r={14} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <path
+        d="M31 26 L31 18 L40 18 L40 26 L49 26 L49 18"
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.3}
+      />
       {lead(54, W)}
     </svg>
   )
@@ -399,8 +423,11 @@ export function DeviceGlyph({
 }) {
   // The switch is state-dependent: render its blade open or closed.
   if (definition === 'switch_spst_toggle') return <SwitchGlyph closed={switchClosed(parameters)} />
-  // A source with an AC component renders the IEC circle-sine, not battery plates.
-  if (definition === 'power_source' && sourceIsAc(parameters)) return <AcSourceGlyph />
+  // A source with an AC component renders the IEC circle-sine, not battery
+  // plates — and a square-wave (clock) source shows its square trace.
+  if (definition === 'power_source' && sourceIsAc(parameters)) {
+    return sourceIsSquare(parameters) ? <SquareSourceGlyph /> : <AcSourceGlyph />
+  }
   const Glyph = GLYPHS[definition]
   if (Glyph) return <Glyph />
   return (
@@ -562,4 +589,33 @@ export function DeviceNode({ id, data }: NodeProps) {
   )
 }
 
-export const nodeTypes = { device: DeviceNode }
+/**
+ * A junction — the IEEE schematic junction dot: a tie point where wires meet.
+ * Every wire attached to its single handle shares one net (canvasToWorld merges
+ * them), so it carries no element of its own — it IS just a point in the
+ * circuit graph. Created by starting or ending a wire in open space.
+ */
+function JunctionNode() {
+  return (
+    <div
+      title="junction — wires meeting here are connected"
+      style={{ position: 'relative', width: 14, height: 14 }}
+    >
+      <Handle
+        id="tie"
+        type="source"
+        position={Position.Top}
+        style={{
+          left: 7,
+          top: 7,
+          width: 9,
+          height: 9,
+          background: '#cdd6e0',
+          border: '1px solid #555',
+        }}
+      />
+    </div>
+  )
+}
+
+export const nodeTypes = { device: DeviceNode, junction: JunctionNode }
