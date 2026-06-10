@@ -1,5 +1,7 @@
 import type { World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
+import { readScalarParam } from '../instance-params.ts'
+import { junctionTemperature } from '../thermal-model.ts'
 
 /**
  * Per-part electrical readings from a solved circuit (Sprint 19) — what the
@@ -11,8 +13,17 @@ import type { Solution } from '../dc-solver.ts'
  *  - voltage = |V(terminal_a net) − V(terminal_b net)| (a part with two connects).
  *  - power   = current × voltage (dissipated for a resistor/LED; delivered for a
  *    source — the sign/direction is implied by the part).
+ *  - temperatureC = the lumped thermal model (stage 7): 25 °C ambient + P·θ_JA,
+ *    for parts that declare a thermal resistance (with the declared max alongside
+ *    so the panel can show headroom).
  */
-export type PartReading = { current?: number; voltage?: number; power?: number }
+export type PartReading = {
+  current?: number
+  voltage?: number
+  power?: number
+  temperatureC?: number
+  maxTemperatureC?: number
+}
 
 export function partReadings(world: World, solution: Solution): Map<string, PartReading> {
   const readings = new Map<string, PartReading>()
@@ -33,6 +44,12 @@ export function partReadings(world: World, solution: Solution): Map<string, Part
 
     if (reading.current !== undefined && reading.voltage !== undefined) {
       reading.power = reading.current * reading.voltage
+      const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
+      if (thetaJa !== undefined && thetaJa > 0) {
+        reading.temperatureC = junctionTemperature(reading.power, thetaJa)
+        const maxTemperature = readScalarParam(inst, 'max_operating_temperature')
+        if (maxTemperature !== undefined) reading.maxTemperatureC = maxTemperature
+      }
     }
 
     if (reading.current !== undefined || reading.voltage !== undefined) {

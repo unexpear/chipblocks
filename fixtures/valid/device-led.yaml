@@ -103,6 +103,16 @@ parameters:
         title: "LED diode ideality factor (typical range 1-2, LEDs near 2)"
         citation: "Wikipedia, Shockley diode equation (ideality factor 1-2, recombination-dominated); Schubert, Light-Emitting Diodes, 2nd ed., §4 on the diode equation for LEDs"
         confidence: medium
+  thermal_resistance_junction_ambient:
+    type: quantity
+    units: kelvin_per_watt
+    required: false
+    description: Junction-to-ambient thermal resistance (θ_JA) of the package — the lumped thermal model's slope, T = T_ambient + P·θ_JA. Datasheet-specified per package class.
+  max_operating_temperature:
+    type: quantity
+    units: celsius
+    required: false
+    description: Maximum part/junction operating temperature. The stage-7 thermal check fires when the computed steady-state temperature exceeds it.
 properties:
   peak_wavelength:
     value:

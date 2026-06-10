@@ -358,6 +358,18 @@ export function PartInspector({
           {reading.power !== undefined
             ? readingRow('Power', formatEng(reading.power, 'W'), headroom('power', reading.power))
             : null}
+          {reading.temperatureC !== undefined
+            ? readingRow(
+                'Temperature',
+                `${reading.temperatureC.toFixed(1)} °C`,
+                reading.maxTemperatureC !== undefined
+                  ? {
+                      text: `max ${reading.maxTemperatureC} °C`,
+                      over: reading.temperatureC >= reading.maxTemperatureC,
+                    }
+                  : null,
+              )
+            : null}
         </>
       ) : null}
 

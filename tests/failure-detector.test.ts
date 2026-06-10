@@ -32,6 +32,7 @@ import {
   checkCapacitorReversePolarity,
   checkLedForwardOverload,
   checkLedReverseBreakdown,
+  checkOvertemperature,
   checkResistorOverpower,
   detectFailures,
 } from '../src/failure-detector.ts'
@@ -458,12 +459,14 @@ describe('detectFailures: the consolidated cross-sprint contract (S15-v3-6)', ()
     expect(sol.status).toBe('solved')
 
     const failures = detectFailures(world, sol)
-    expect(failures.length).toBe(1)
+    // Two real violations: the LED is overdriven AND (since the anchor resistor
+    // carries thermal ratings, stage 7) the undersized 100 Ω at ~69 mA runs
+    // 0.47 W → 25 + 0.47·340 ≈ 186 °C, past its 155 °C film rating.
+    expect(failures.length).toBe(2)
 
-    const f = failures[0]
+    const f = failures.find((x) => x.code === 'led-overloaded')
     expect(f).toBeDefined()
     if (f === undefined) return
-    expect(f.code).toBe('led-overloaded')
     expect(f.source).toBe('led_001')
     expect(f.kind).toBe('max_forward_current')
     expect(f.measured).toBeCloseTo(0.0686754, 6)
@@ -471,6 +474,11 @@ describe('detectFailures: the consolidated cross-sprint contract (S15-v3-6)', ()
     expect(f.ratio).toBeCloseTo(3.4338, 3)
     expect(f.units).toBe('ampere')
     expect(f.severity).toBe('error')
+
+    const hot = failures.find((x) => x.code === 'part-overtemperature')
+    expect(hot?.source).toBe('resistor_001')
+    expect(hot?.rated).toBe(155)
+    expect(hot?.measured).toBeGreaterThan(155)
   })
 
   test('collects multiple failures when a synthetic circuit violates more than one rating', () => {
@@ -629,5 +637,68 @@ describe('capacitor polarity + voltage checks (S19-v3-48)', () => {
 
   test('missing voltage_rating skips honestly (unknown, not infinite)', () => {
     expect(checkCapacitorOvervoltage(cap(false), solvedAt(100, 0))).toBeNull()
+  })
+})
+
+describe('part over-temperature (stage 7 lumped thermal model)', () => {
+  const part = (theta?: number, maxC?: number) =>
+    ({
+      id: 'r1',
+      kind_ref: 'primitive_device',
+      definition: 'resistor',
+      parameters: {
+        ...(theta !== undefined
+          ? {
+              thermal_resistance_junction_ambient: {
+                value: { kind: 'scalar', amount: theta, unit: 'kelvin_per_watt' },
+              },
+            }
+          : {}),
+        ...(maxC !== undefined
+          ? {
+              max_operating_temperature: {
+                value: { kind: 'scalar', amount: maxC, unit: 'celsius' },
+              },
+            }
+          : {}),
+      },
+      connects: [
+        { net: 'a', terminal: 'terminal_a', of: 'r1' },
+        { net: 'b', terminal: 'terminal_b', of: 'r1' },
+      ],
+      // biome-ignore lint/suspicious/noExplicitAny: minimal test fixture
+    }) as any
+
+  const solvedWith = (amps: number, vA: number, vB: number) =>
+    ({
+      status: 'solved',
+      nodes: new Map([
+        ['a', vA],
+        ['b', vB],
+      ]),
+      branches: new Map([['r1', amps]]),
+      ground: 'gnd',
+      warnings: [],
+      iterations: 1,
+      converged: true,
+      // biome-ignore lint/suspicious/noExplicitAny: minimal test fixture
+    }) as any
+
+  test('fires when 25 °C + P·θ_JA exceeds the max operating temperature', () => {
+    // 1 A across 5 V → 5 W at θ 340 → 25 + 1700 = 1725 °C ≫ 155 °C.
+    const f = checkOvertemperature(part(340, 155), solvedWith(1, 5, 0))
+    expect(f?.code).toBe('part-overtemperature')
+    expect(f?.measured).toBeCloseTo(1725, 6)
+    expect(f?.rated).toBe(155)
+  })
+
+  test('a cool part does not fire (anchor-class numbers: ~60 °C vs 155 °C)', () => {
+    // 14.9 mA across 7 V → 104 mW at θ 340 → ~60.5 °C, safely under 155.
+    expect(checkOvertemperature(part(340, 155), solvedWith(0.0149, 7, 0))).toBeNull()
+  })
+
+  test('missing thermal ratings skip honestly (unknown, not infinite)', () => {
+    expect(checkOvertemperature(part(undefined, 155), solvedWith(1, 5, 0))).toBeNull()
+    expect(checkOvertemperature(part(340, undefined), solvedWith(1, 5, 0))).toBeNull()
   })
 })

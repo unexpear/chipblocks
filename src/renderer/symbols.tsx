@@ -2,7 +2,7 @@ import { Handle, type NodeProps, Position, useUpdateNodeInternals } from '@xyflo
 import { Fragment, useContext, useEffect } from 'react'
 import './canvas-animations.css'
 import { HealthContext } from './health.ts'
-import { LensContext, powerColor } from './lens.ts'
+import { LensContext, powerColor, temperatureColor } from './lens.ts'
 import { type Parameters, primaryValue, sourceIsAc, switchClosed } from './part-defaults.ts'
 import { formatEng } from './units.ts'
 
@@ -432,11 +432,17 @@ export function DeviceNode({ id, data }: NodeProps) {
   const value = primaryValue(definition, parameters)
   const health = useContext(HealthContext).get(id)
   const lensState = useContext(LensContext)
-  // Power lens: halo each part by its REAL dissipated watts (heat-colored
-  // against the circuit's hottest part) + show the number under the label.
+  // Power lens: halo each part by its REAL dissipated watts; Temp lens: by its
+  // computed temperature (25 °C + P·θ_JA) — both heat-colored against the
+  // circuit's hottest part, with the number shown under the label.
   const watts = lensState.power.get(id)
+  const tempC = lensState.temp.get(id)
   const heat =
-    lensState.lens === 'power' && watts !== undefined ? powerColor(watts, lensState.pMax) : null
+    lensState.lens === 'power' && watts !== undefined
+      ? powerColor(watts, lensState.pMax)
+      : lensState.lens === 'temp' && tempC !== undefined
+        ? temperatureColor(tempC, lensState.tMaxC)
+        : null
   const updateNodeInternals = useUpdateNodeInternals()
   // After a rotation, re-measure the handles so wires follow the rotated terminals.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `rotation` is an intentional re-run trigger — the effect must re-measure when the node rotates, though it isn't read in the body
@@ -542,6 +548,9 @@ export function DeviceNode({ id, data }: NodeProps) {
         {value ? <span style={{ color: '#7ab8ff', marginLeft: 5 }}>{value}</span> : null}
         {lensState.lens === 'power' && watts !== undefined && watts > 0 ? (
           <span style={{ color: '#e0a050', marginLeft: 5 }}>{formatEng(watts, 'W')}</span>
+        ) : null}
+        {lensState.lens === 'temp' && tempC !== undefined ? (
+          <span style={{ color: '#e0a050', marginLeft: 5 }}>{tempC.toFixed(1)} °C</span>
         ) : null}
         {health?.failed ? (
           <span title={health.note} style={{ marginLeft: 5 }}>

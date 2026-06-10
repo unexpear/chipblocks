@@ -34,6 +34,13 @@ const DEFAULTS: Record<string, Parameters> = {
     resistive_material: { value: 'nichrome' },
     length: scalar(3.356, 'metre'),
     cross_section_area: scalar(7.854e-9, 'square_metre'),
+    // Lumped thermal model (stage 7): θ_JA derived from the 1/4 W film derating
+    // curve (full power at 70 °C ambient, zero at 155 °C → (155−70)/0.25).
+    thermal_resistance_junction_ambient: scalar(340, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(155, 'celsius'),
+    // Electro-thermal feedback: carbon film drifts DOWN as it heats (negative
+    // tempco) — R(T) = R₀·(1 + α·ΔT).
+    temperature_coefficient: scalar(-0.0005, 'per_kelvin'),
   },
   power_source: {
     // 9 V alkaline (6LR61), per ANSI/IEC 60086-2 — same family as the anchor battery.
@@ -65,6 +72,10 @@ const DEFAULTS: Record<string, Parameters> = {
     coupling_coefficient: scalar(0.98, 'dimensionless'),
     primary_resistance: scalar(0.5, 'ohm'),
     secondary_resistance: scalar(50, 'ohm'),
+    // Core realism: iron loss as the classic parallel resistance; saturation as
+    // the core's volt-second capacity (≈1.4× the nominal 12 V / 50 Hz swing).
+    core_loss_resistance: scalar(200, 'ohm'),
+    saturation_flux_linkage: scalar(0.075, 'weber'),
   },
   transformer_center_tapped: {
     // Push-pull inverter transformer class (12-0-12 : mains): each primary half is
@@ -74,6 +85,8 @@ const DEFAULTS: Record<string, Parameters> = {
     coupling_coefficient: scalar(0.98, 'dimensionless'),
     primary_resistance: scalar(1, 'ohm'),
     secondary_resistance: scalar(50, 'ohm'),
+    core_loss_resistance: scalar(200, 'ohm'),
+    saturation_flux_linkage: scalar(0.075, 'weber'),
   },
   led: {
     // Typical 5 mm red LED (Kingbright WP7113SRD-D class): 2.0 V at 20 mA max,
@@ -85,6 +98,8 @@ const DEFAULTS: Record<string, Parameters> = {
     peak_wavelength: scalar(640, 'nanometer'),
     n_side: { value: 'aluminum_gallium_indium_phosphide_n_type' },
     p_side: { value: 'aluminum_gallium_indium_phosphide_p_type' },
+    thermal_resistance_junction_ambient: scalar(300, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(85, 'celsius'),
   },
   led_uv_algan: {
     // AlGaN UV LED: ~3.4 V at 20 mA, ~340 nm (invisible UV → a faint violet glow).
@@ -93,6 +108,8 @@ const DEFAULTS: Record<string, Parameters> = {
     peak_wavelength: scalar(340, 'nanometer'),
     n_side: { value: 'aluminum_gallium_nitride_n_type' },
     p_side: { value: 'aluminum_gallium_nitride_p_type' },
+    thermal_resistance_junction_ambient: scalar(300, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(85, 'celsius'),
   },
   switch_spst_toggle: {
     // Panel-mount SPST toggle (C&K 7101 class, matching the anchor switch
@@ -113,6 +130,8 @@ const DEFAULTS: Record<string, Parameters> = {
     reverse_current_gain: scalar(2, 'dimensionless'),
     max_collector_current: scalar(0.2, 'ampere'),
     collector_emitter_breakdown_voltage: scalar(40, 'volt'),
+    thermal_resistance_junction_ambient: scalar(200, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(150, 'celsius'),
   },
   transistor_bjt_pnp: {
     // 2N3906 (onsemi) — the 2N3904's standard PNP complement; same class numbers.
@@ -121,6 +140,8 @@ const DEFAULTS: Record<string, Parameters> = {
     reverse_current_gain: scalar(2, 'dimensionless'),
     max_collector_current: scalar(0.2, 'ampere'),
     collector_emitter_breakdown_voltage: scalar(40, 'volt'),
+    thermal_resistance_junction_ambient: scalar(200, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(150, 'celsius'),
   },
 }
 
@@ -137,6 +158,9 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     power_rating: 'carbon-film 1/4 W class',
     length: 'nichrome wirewound geometry (≈470 Ω at 0.1 mm dia)',
     cross_section_area: '0.1 mm diameter wire (π/4·d²)',
+    thermal_resistance_junction_ambient: 'from 1/4 W film derating: (155−70)°C / 0.25 W',
+    max_operating_temperature: '155 °C film-resistor class',
+    temperature_coefficient: 'carbon-film TCR class: −200…−800 ppm/°C; −500 typical',
   },
   power_source: {
     nominal_voltage: 'ANSI/IEC 60086-2 — 9 V 6LR61 (PP3)',
@@ -159,6 +183,8 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     coupling_coefficient: 'iron-core k ≈ 0.95–0.998; 0.98 typical',
     primary_resistance: 'low-voltage winding DCR (few turns of thick wire)',
     secondary_resistance: 'high-voltage winding DCR (many turns of thin wire)',
+    core_loss_resistance: 'small EI iron-loss class: ~0.7 W at 12 V (R ≈ V²/P)',
+    saturation_flux_linkage: '≈1.4× the nominal 12 V/50 Hz swing (V·√2/ω ≈ 54 mV·s)',
   },
   transformer_center_tapped: {
     primary_inductance: 'push-pull inverter class — 12-0-12 end-to-end',
@@ -166,16 +192,22 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     coupling_coefficient: 'iron-core k ≈ 0.95–0.998; 0.98 typical',
     primary_resistance: 'end-to-end DCR; each half carries half of it',
     secondary_resistance: 'high-voltage winding DCR (many turns of thin wire)',
+    core_loss_resistance: 'small EI iron-loss class: ~0.7 W at 12 V (R ≈ V²/P)',
+    saturation_flux_linkage: '≈1.4× the nominal 12 V/50 Hz swing (V·√2/ω ≈ 54 mV·s)',
   },
   led: {
     forward_voltage: 'Kingbright WP7113SRD-D (5 mm red)',
     max_forward_current: '5 mm indicator LED standard (20 mA)',
     peak_wavelength: 'AlGaInP red ~640 nm',
+    thermal_resistance_junction_ambient: '5 mm epoxy LED class (~300 K/W)',
+    max_operating_temperature: '85 °C epoxy LED operating class',
   },
   led_uv_algan: {
     forward_voltage: 'AlGaN UV LED (~3.4 V at 20 mA)',
     max_forward_current: '20 mA',
     peak_wavelength: 'AlGaN UV ~340 nm',
+    thermal_resistance_junction_ambient: '5 mm epoxy LED class (~300 K/W)',
+    max_operating_temperature: '85 °C epoxy LED operating class',
   },
   switch_spst_toggle: {
     contact_resistance_closed: 'C&K 7101 class (~20 mΩ closed)',
@@ -188,6 +220,8 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     reverse_current_gain: 'reverse β small for an NPN; 2N3904 SPICE BR ~0.74, rounded to 2',
     max_collector_current: '2N3904 I_C(max) 200 mA (onsemi datasheet)',
     collector_emitter_breakdown_voltage: '2N3904 V_CEO 40 V (onsemi datasheet)',
+    thermal_resistance_junction_ambient: '2N3904 R_θJA 200 °C/W, TO-92 (onsemi datasheet)',
+    max_operating_temperature: '2N3904 T_J max 150 °C (onsemi datasheet)',
   },
   transistor_bjt_pnp: {
     saturation_current: 'small-signal PNP transport I_S ~1e-14 A (2N3906 class)',
@@ -195,6 +229,8 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     reverse_current_gain: 'reverse β small for a PNP; 2N3906 class, rounded to 2',
     max_collector_current: '2N3906 I_C(max) 200 mA (onsemi datasheet)',
     collector_emitter_breakdown_voltage: '2N3906 V_CEO 40 V (onsemi datasheet)',
+    thermal_resistance_junction_ambient: '2N3906 R_θJA 200 °C/W, TO-92 (onsemi datasheet)',
+    max_operating_temperature: '2N3906 T_J max 150 °C (onsemi datasheet)',
   },
 }
 

@@ -26,6 +26,7 @@
 import type { Instance, World } from './cross-fk-validator.ts'
 import type { Solution } from './dc-solver.ts'
 import { readScalarParam } from './instance-params.ts'
+import { junctionTemperature } from './thermal-model.ts'
 
 // ---------------------------------------------------------------------------
 // Public API types
@@ -37,6 +38,7 @@ export type FailureCode =
   | 'resistor-overpower'
   | 'capacitor-reverse-polarity'
   | 'capacitor-overvoltage'
+  | 'part-overtemperature'
 
 export type FailureSeverity = 'error'
 
@@ -92,6 +94,10 @@ export function detectFailures(world: World, solution: Solution): Failure[] {
       const overvolt = checkCapacitorOvervoltage(inst, solution)
       if (overvolt !== null) failures.push(overvolt)
     }
+    // Thermal is generic: any part declaring a thermal resistance + max
+    // operating temperature gets the lumped T = T_amb + P·θ_JA check (§ stage 7).
+    const overtemp = checkOvertemperature(inst, solution)
+    if (overtemp !== null) failures.push(overtemp)
   }
 
   return failures
@@ -235,6 +241,44 @@ export function checkCapacitorOvervoltage(inst: Instance, solution: Solution): F
     rated: voltageRating,
     ratio: forwardVoltage / voltageRating,
     units: 'volt',
+    severity: 'error',
+  }
+}
+
+/**
+ * Over-temperature check (stage 7, lumped thermal model). For any part that
+ * declares BOTH thermal_resistance_junction_ambient (θ_JA) and
+ * max_operating_temperature, compute the steady-state part temperature
+ * T = 25 °C ambient + P·θ_JA from its real dissipated power (|I|·|V| across its
+ * two terminals) and fire when it exceeds the declared maximum. Parts without
+ * the thermal ratings skip honestly — the rating is "unknown," not "infinite."
+ */
+export function checkOvertemperature(inst: Instance, solution: Solution): Failure | null {
+  const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
+  const maxTemperature = readScalarParam(inst, 'max_operating_temperature')
+  if (thetaJa === undefined || thetaJa <= 0) return null
+  if (maxTemperature === undefined) return null
+
+  const branch = solution.branches.get(inst.id)
+  if (branch === undefined) return null
+  const connects = inst.connects ?? []
+  if (connects.length !== 2) return null
+  const vA = solution.nodes.get(connects[0]?.net ?? '')
+  const vB = solution.nodes.get(connects[1]?.net ?? '')
+  if (vA === undefined || vB === undefined) return null
+
+  const watts = Math.abs(branch) * Math.abs(vA - vB)
+  const temperature = junctionTemperature(watts, thetaJa)
+  if (temperature <= maxTemperature) return null
+
+  return {
+    code: 'part-overtemperature',
+    source: inst.id,
+    kind: 'max_operating_temperature',
+    measured: temperature,
+    rated: maxTemperature,
+    ratio: temperature / maxTemperature,
+    units: 'celsius',
     severity: 'error',
   }
 }

@@ -89,6 +89,16 @@ parameters:
     units: volt
     required: false
     description: Collector-emitter breakdown voltage with the base open (V_CEO). Exceeding it drives avalanche breakdown (e.g. 2N3904 ~ 40 V).
+  thermal_resistance_junction_ambient:
+    type: quantity
+    units: kelvin_per_watt
+    required: false
+    description: Junction-to-ambient thermal resistance (θ_JA) of the package — the lumped thermal model's slope, T = T_ambient + P·θ_JA. Datasheet-specified per package class.
+  max_operating_temperature:
+    type: quantity
+    units: celsius
+    required: false
+    description: Maximum part/junction operating temperature. The stage-7 thermal check fires when the computed steady-state temperature exceeds it.
 behaviors:
   - acts_as_transistor
   - conducts_current

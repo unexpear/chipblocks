@@ -12,7 +12,7 @@ import { createContext } from 'react'
  * Pure color/speed math here (unit-tested); the canvas consumes it via context.
  */
 
-export type LensMode = 'none' | 'voltage' | 'power'
+export type LensMode = 'none' | 'voltage' | 'power' | 'temp'
 
 export type LensState = {
   lens: LensMode
@@ -24,6 +24,10 @@ export type LensState = {
   power: Map<string, number>
   /** The largest dissipated power (watts) — the lens's red end. */
   pMax: number
+  /** Instance id → lumped part temperature (°C), from the part readings. */
+  temp: Map<string, number>
+  /** The hottest part (°C) — the temp lens's red end. */
+  tMaxC: number
 }
 
 export const LensContext = createContext<LensState>({
@@ -33,6 +37,8 @@ export const LensContext = createContext<LensState>({
   vMax: 0,
   power: new Map(),
   pMax: 0,
+  temp: new Map(),
+  tMaxC: 0,
 })
 
 /** 5-stop blue→cyan→green→yellow→red scale (the classic voltage-map ramp). */
@@ -77,6 +83,20 @@ export function powerColor(watts: number, pMax: number): string | null {
   const b = Math.round(lerp(64, 50, t))
   const alpha = (0.25 + 0.45 * t).toFixed(2)
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+/**
+ * Heat color for a part at `tempC` against the circuit's hottest part, both
+ * measured above the 25 °C standard ambient — the thermal-hotspot ramp (stage 7
+ * lumped model). Null = no halo (at/below ambient, or nothing in the circuit
+ * runs warm).
+ */
+export function temperatureColor(tempC: number, hottestC: number): string | null {
+  const AMBIENT_C = 25
+  const rise = tempC - AMBIENT_C
+  const hottestRise = hottestC - AMBIENT_C
+  if (!(rise > 0) || !(hottestRise > 0)) return null
+  return powerColor(rise, hottestRise)
 }
 
 /**

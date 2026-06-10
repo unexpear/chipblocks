@@ -137,6 +137,22 @@ export function ToolbarItems({
       </button>
       <button
         type="button"
+        onClick={() => onLens(lens === 'temp' ? 'none' : 'temp')}
+        title="Temp lens — heat-color every part by its computed temperature (25 °C ambient + power × thermal resistance): the hotspots"
+        style={{
+          ...toolButton(lens === 'temp'),
+          flexDirection: 'row',
+          gap: 6,
+          padding: '8px 10px',
+        }}
+      >
+        <span aria-hidden style={{ color: '#e0a050', fontSize: 13 }}>
+          ℃
+        </span>
+        <span style={{ fontSize: 11 }}>Temp</span>
+      </button>
+      <button
+        type="button"
         onClick={() => onFlow(!flow)}
         title="Flow animation — march dashes along each wire in the solved current's direction, speed from its size"
         style={{ ...toolButton(flow), flexDirection: 'row', gap: 6, padding: '8px 10px' }}

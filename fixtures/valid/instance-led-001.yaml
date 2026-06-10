@@ -14,6 +14,16 @@ definition: led
 id: led_001
 origin: project
 parameters:
+  thermal_resistance_junction_ambient:
+    value:
+      kind: scalar
+      amount: 300
+      unit: kelvin_per_watt
+  max_operating_temperature:
+    value:
+      kind: scalar
+      amount: 85
+      unit: celsius
   forward_voltage:
     value:
       kind: scalar
