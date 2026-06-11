@@ -31,6 +31,7 @@ import {
 import type { World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
 import { solveElectroThermal } from '../electro-thermal.ts'
+import { readScalarParam } from '../instance-params.ts'
 import { solveTransient, type TransientResult } from '../transient-solver.ts'
 import { BlockViewer } from './block-viewer.tsx'
 import {
@@ -103,6 +104,8 @@ import {
   channelsForProbes,
   fastestSourceHz,
   ScopePlot,
+  type ScopeProbe,
+  scopeProbeKey,
   scopeWindow,
   TRACE_COLORS,
 } from './scope.tsx'
@@ -741,7 +744,7 @@ function Canvas() {
   const [scopeRefusal, setScopeRefusal] = useState<string | null>(null)
   // Scope probes (S19-v3-77): the terminals the user clipped channels onto.
   // Only these plot — clipping where you care, like real scope leads.
-  const [scopeProbes, setScopeProbes] = useState<ProbeRef[]>([])
+  const [scopeProbes, setScopeProbes] = useState<ScopeProbe[]>([])
   const [scopeEdge, setScopeEdge] = useState<DockEdge>('bottom')
 
   // Math panel (S19-v3-63): the equations behind the current solution, derived
@@ -882,30 +885,66 @@ function Canvas() {
     if (scopeOpen) runScope()
   }, [scopeOpen, runScope])
 
-  // Clip / unclip a scope probe (S19-v3-77): with the Scope open and the plain
-  // select tool, clicking a terminal dot toggles a channel there. Returns
-  // whether the click was consumed (so it doesn't also select the part).
+  // Clip / unclip a scope probe (S19-v3-77; clamps S19-v3-83): with the Scope
+  // open and the plain select tool, clicking a terminal dot toggles a VOLTAGE
+  // channel there; clicking a WIRE clamps a CURRENT channel around it — the
+  // clamp-meter idiom, and every branch has a wire. Returns whether the click
+  // was consumed (so it doesn't also select the part/wire).
   const onScopeProbeClick = useCallback(
     (event: ReactMouseEvent): boolean => {
       if (!scopeOpen || tool !== 'select') return false
-      const handleEl = (event.target as Element).closest?.(
-        '.react-flow__handle',
-      ) as HTMLElement | null
-      if (handleEl === null) return false
-      const nodeId = handleEl.dataset.nodeid
-      const handleId = handleEl.dataset.handleid
-      if (nodeId === undefined || handleId === undefined) return false
-      setScopeProbes((current) => {
-        const exists = current.some((p) => p.nodeId === nodeId && p.handleId === handleId)
-        return exists
-          ? current.filter((p) => !(p.nodeId === nodeId && p.handleId === handleId))
-          : [...current, { nodeId, handleId }]
-      })
-      event.stopPropagation()
-      return true
+      const target = event.target as Element
+      const handleEl = target.closest?.('.react-flow__handle') as HTMLElement | null
+      const toggle = (probe: ScopeProbe) => {
+        const key = scopeProbeKey(probe)
+        setScopeProbes((current) =>
+          current.some((p) => scopeProbeKey(p) === key)
+            ? current.filter((p) => scopeProbeKey(p) !== key)
+            : [...current, probe],
+        )
+        event.stopPropagation()
+      }
+      if (handleEl !== null) {
+        const nodeId = handleEl.dataset.nodeid
+        const handleId = handleEl.dataset.handleid
+        if (nodeId === undefined || handleId === undefined) return false
+        toggle({ kind: 'terminal', nodeId, handleId })
+        return true
+      }
+      const edgeEl = target.closest?.('.react-flow__edge')
+      if (edgeEl !== null && edgeEl !== undefined) {
+        const dataId = edgeEl.getAttribute('data-id')
+        const testId = edgeEl.getAttribute('data-testid')
+        const edgeId = dataId ?? (testId?.startsWith('rf__edge-') ? testId.slice(9) : null)
+        if (edgeId === null) return false
+        toggle({ kind: 'wire', edgeId })
+        return true
+      }
+      return false
     },
     [scopeOpen, tool],
   )
+
+  // Each drawn wire's two nets + real resistance, for the scope's clamps —
+  // from the SAME world the solves use (wire instance ids are wire_<edgeId>).
+  const scopeWireInfo = useMemo(() => {
+    const info = new Map<string, { netA: string; netB: string; ohms: number; label: string }>()
+    for (const edge of edges) {
+      const inst = solvedWorld.instances.get(`wire_${edge.id}`)
+      if (inst === undefined) continue
+      const netA = inst.connects?.find((c) => c.terminal === 'terminal_a')?.net
+      const netB = inst.connects?.find((c) => c.terminal === 'terminal_b')?.net
+      const ohms = readScalarParam(inst, 'resistance') ?? 0
+      if (netA === undefined || netB === undefined) continue
+      info.set(edge.id, {
+        netA,
+        netB,
+        ohms,
+        label: `clamp · ${edge.source} → ${edge.target}`,
+      })
+    }
+    return info
+  }, [edges, solvedWorld])
 
   // Multimeter (S19-v3-53/54): in meter mode, touching terminal dots places the
   // red then the black probe — the readout shows the live value between them per
@@ -998,11 +1037,17 @@ function Canvas() {
     }
     return nets
   }, [solvedWorld, nodes])
-  // The probed channels the Scope plots — resolved through the same
-  // terminal→net lookup the multimeter uses (block ports + lead taps included).
+  // The probed channels the Scope plots — terminals resolved through the same
+  // terminal→net lookup the multimeter uses (block ports + lead taps
+  // included); wire clamps through the wire-instance lookup.
   const scopeChannels = useMemo(
-    () => channelsForProbes(scopeProbes, (key) => probeNets.get(key)),
-    [scopeProbes, probeNets],
+    () =>
+      channelsForProbes(
+        scopeProbes,
+        (key) => probeNets.get(key),
+        (edgeId) => scopeWireInfo.get(edgeId),
+      ),
+    [scopeProbes, probeNets, scopeWireInfo],
   )
   // The meter's display — live solved values; unwired points say so. The clamp
   // (when set) wins regardless of the dial: it reads amps, not the dial quantity.
@@ -1900,16 +1945,19 @@ function Canvas() {
                 />
                 <Controls />
                 <MeterProbes red={redProbe} black={blackProbe} />
-                {/* Scope channel probes (S19-v3-77): one colored clip per channel. */}
+                {/* Scope channel probes (S19-v3-77): one colored clip per
+                    voltage channel. Wire clamps show in the channel chips. */}
                 {scopeOpen
-                  ? scopeProbes.map((p, i) => (
-                      <ProbeMarker
-                        key={`${p.nodeId}/${p.handleId}`}
-                        probe={p}
-                        color={TRACE_COLORS[i % TRACE_COLORS.length] ?? '#888'}
-                        label={`CH${i + 1}`}
-                      />
-                    ))
+                  ? scopeProbes.map((p, i) =>
+                      p.kind === 'terminal' ? (
+                        <ProbeMarker
+                          key={scopeProbeKey(p)}
+                          probe={{ nodeId: p.nodeId, handleId: p.handleId }}
+                          color={TRACE_COLORS[i % TRACE_COLORS.length] ?? '#888'}
+                          label={`CH${i + 1}`}
+                        />
+                      ) : null,
+                    )
                   : null}
                 {pendingWire !== null ? (
                   <PendingWirePreview
@@ -2318,9 +2366,7 @@ function Canvas() {
             windowDuration={scopeWindowSec}
             channels={scopeChannels}
             onRemoveChannel={(key) =>
-              setScopeProbes((current) =>
-                current.filter((p) => `${p.nodeId}/${p.handleId}` !== key),
-              )
+              setScopeProbes((current) => current.filter((p) => scopeProbeKey(p) !== key))
             }
             secPerDiv={scopeSecPerDiv}
             onSecPerDiv={setScopeSecPerDiv}

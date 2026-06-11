@@ -3,6 +3,7 @@ import type { Instance, World } from '../cross-fk-validator.ts'
 import { type Solution, solveDC } from '../dc-solver.ts'
 import { solveTransient } from '../transient-solver.ts'
 import { fastestSourceHz, scopeWindow } from './scope.tsx'
+import { measureSeries } from './waveform-measure.ts'
 
 /**
  * Multimeter tool (S19-v3-53/54/55) — point measurements, the way a real meter
@@ -255,49 +256,13 @@ export function acVoltsRms(
   const settleTime = window.duration / 3
   const points = result.series.filter((p) => p.time >= settleTime)
   if (points.length < 4) return null
-  const volts = points.map((p) => (p.nodes.get(netA) ?? 0) - (p.nodes.get(netB) ?? 0))
-  const mean = volts.reduce((sum, v) => sum + v, 0) / volts.length
-  const rms = Math.sqrt(volts.reduce((sum, v) => sum + (v - mean) ** 2, 0) / volts.length)
-
-  // Frequency from band-transitions with hysteresis — the Schmitt-trigger
-  // technique real counters use so ripple riding on the waveform can't
-  // double-count a crossing: the band is ±10 % of the peak deviation, and an
-  // excursion only counts after traversing the FULL band. The period comes
-  // from SAME-direction events only (rising→rising or falling→falling),
-  // which are spaced exactly one period apart for ANY periodic shape — a
-  // half-wave-rectified hump included — so n of them span n−1 whole periods.
-  // Both directions are tracked because a short analysis slice can clip one
-  // direction's events at its edges. Ripple LARGER than the band still fools
-  // the count — true of real handheld counters on strongly distorted signals
-  // as well. Gated on real amplitude: a flat line has no frequency to count.
-  const peak = volts.reduce((max, v) => Math.max(max, Math.abs(v - mean)), 0)
-  const band = 0.1 * peak
-  let state: 'high' | 'low' | 'between' = 'between'
-  const rising = { count: 0, first: -1, last: -1 }
-  const falling = { count: 0, first: -1, last: -1 }
-  for (let i = 0; i < volts.length; i++) {
-    const v = (volts[i] ?? 0) - mean
-    const next: 'high' | 'low' | 'between' = v > band ? 'high' : v < -band ? 'low' : state
-    const edge = state === 'low' && next === 'high' ? rising : null
-    const fallEdge = state === 'high' && next === 'low' ? falling : null
-    const hit = edge ?? fallEdge
-    if (hit !== null) {
-      hit.count += 1
-      if (hit.first < 0) hit.first = i
-      hit.last = i
-    }
-    state = next
-  }
-  const events = rising.count >= 2 ? rising : falling
-  let hz: number | null = null
-  if (rms >= 1e-3 && events.count >= 2 && events.last > events.first) {
-    const firstTime = points[events.first]?.time
-    const lastTime = points[events.last]?.time
-    if (firstTime !== undefined && lastTime !== undefined && lastTime > firstTime) {
-      hz = (events.count - 1) / (lastTime - firstTime)
-    }
-  }
-  return { rms, hz }
+  // The RMS + Schmitt-hysteresis frequency math lives in waveform-measure.ts
+  // (S19-v3-80) — one implementation shared with the scope's measurement
+  // strip, so the two instruments can never disagree.
+  const measured = measureSeries(
+    points.map((p) => ({ t: p.time, v: (p.nodes.get(netA) ?? 0) - (p.nodes.get(netB) ?? 0) })),
+  )
+  return { rms: measured.rmsAc, hz: measured.hz }
 }
 
 /**
