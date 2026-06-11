@@ -173,7 +173,7 @@ describe('maxIdSuffix', () => {
 })
 
 describe('junctions + curve subtool (S19-v3-61)', () => {
-  test('a junction node and a curved wire survive the save/load round trip', () => {
+  test('a junction node and a curved wire (with its sweep size) survive the round trip', () => {
     const file = serializeCircuit(
       [
         {
@@ -192,6 +192,7 @@ describe('junctions + curve subtool (S19-v3-61)', () => {
           data: {
             waypoints: [{ id: 'wp1', x: 80, y: 60 }],
             curved: true,
+            curveRadius: 28,
           },
         },
       ],
@@ -201,14 +202,16 @@ describe('junctions + curve subtool (S19-v3-61)', () => {
     if (!parsed.ok) return
     expect(parsed.file.nodes[0]?.definition).toBe('junction')
     expect(parsed.file.wires[0]?.curved).toBe(true)
+    expect(parsed.file.wires[0]?.curveRadius).toBe(28)
     expect(parsed.file.wires[0]?.waypoints?.length).toBe(1)
   })
 
-  test('a straight wire saves WITHOUT a curved flag — nothing invented', () => {
+  test('a straight wire saves WITHOUT a curved flag or sweep size — nothing invented', () => {
     const file = serializeCircuit(
       [],
       [{ id: 'w1', source: 'a', sourceHandle: 'x', target: 'b', targetHandle: 'y' }],
     )
     expect('curved' in (file.wires[0] ?? {})).toBe(false)
+    expect('curveRadius' in (file.wires[0] ?? {})).toBe(false)
   })
 })

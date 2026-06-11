@@ -217,6 +217,30 @@ describe('ungroupBlock — the exact inverse', () => {
     const mp = ungrouped.nodes.find((n) => n.id === 'mp')
     expect(mp?.position).toEqual({ x: 300, y: 90 }) // 200+100, 40+50
   })
+
+  test('a curved wire keeps its sweep size through group → ungroup (S19-v3-70)', () => {
+    // The sweep size changes the wire's REAL length (resistance) — losing it
+    // in a round trip would silently change the physics.
+    const { nodes, edges } = inverterCanvas(5)
+    const curvyEdges = edges.map((e) =>
+      e.id === 'e2'
+        ? {
+            ...e,
+            data: { waypoints: [{ id: 'wp1', x: 220, y: 100 }], curved: true, curveRadius: 56 },
+          }
+        : e,
+    )
+    const grouped = groupSelection(nodes, curvyEdges, new Set(['mp', 'mn']), 'not1', 'NOT')
+    if ('reason' in grouped) throw new Error(grouped.reason)
+    const block = grouped.nodes.find((n) => n.id === 'not1')?.data.block
+    expect(block?.edges.find((e) => e.id === 'e2')?.curveRadius).toBe(56)
+
+    const ungrouped = ungroupBlock(grouped.nodes, grouped.edges, 'not1')
+    if ('reason' in ungrouped) throw new Error(ungrouped.reason)
+    const e2 = ungrouped.edges.find((e) => e.id === 'e2')
+    expect(e2?.data?.curved).toBe(true)
+    expect(e2?.data?.curveRadius).toBe(56)
+  })
 })
 
 describe('flattening, bubbling, aliases, cloning', () => {

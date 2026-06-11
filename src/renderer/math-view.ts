@@ -128,8 +128,6 @@ export function buildMathView(
 
   const volts = (net: string | undefined) =>
     net !== undefined ? solution.nodes.get(net) : undefined
-  const netOf = (inst: Instance, terminal: string) =>
-    inst.connects?.find((c) => c.terminal === terminal)?.net
   const across = (inst: Instance): number | undefined => {
     const aNet = inst.connects?.find((c) => A_SIDE.has(c.terminal))?.net
     const bNet = inst.connects?.find((c) => B_SIDE.has(c.terminal))?.net

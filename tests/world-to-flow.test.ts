@@ -183,6 +183,94 @@ describe('worldToFlow', () => {
     expect(a.nodes[0]?.position).toEqual(b.nodes[0]?.position)
   })
 
+  test('the anchor circuit lays out as a hand-routed series loop (S19-v3-71)', () => {
+    const world = loadWorld('fixtures/valid')
+    const { nodes, edges } = worldToFlow(world)
+    const byId = new Map(nodes.map((n) => [n.id, n]))
+
+    // The four loop parts sit in ONE ROW, in wiring order, battery first.
+    const row = nodes.filter((n) => n.data.definition !== 'ground')
+    expect(row.every((n) => n.position.y === 0)).toBe(true)
+    const ordered = [...row].sort((a, b) => a.position.x - b.position.x)
+    expect(ordered[0]?.data.definition).toBe('power_source')
+    // The battery faces the chain: its + (a left-docking terminal) must point
+    // RIGHT, so the layout rotates it 180°.
+    expect(ordered[0]?.data.rotation).toBe(180)
+
+    // Ground sits BELOW the row (under the return lane), not in it.
+    const ground = byId.get('ground_001')
+    expect((ground?.position.y ?? 0) > 100).toBe(true)
+
+    // Exactly one wire (the loop-closing one) carries the 4-corner outside
+    // route; the ground tap carries its 1-corner ride up the margin. Every
+    // routed segment is orthogonal — horizontal or vertical, never diagonal.
+    const routed = edges.filter((e) => (e.waypoints?.length ?? 0) > 0)
+    const closing = routed.find((e) => e.waypoints?.length === 4)
+    expect(closing).toBeDefined()
+    for (const e of routed) {
+      const pts = e.waypoints ?? []
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1]
+        const b = pts[i]
+        if (!a || !b) continue
+        expect(a.x === b.x || a.y === b.y).toBe(true)
+      }
+    }
+
+    // NOT LAZY: no routed corner lands inside any part's box.
+    const boxes = nodes.map((n) => ({
+      x: n.position.x,
+      y: n.position.y,
+      w: 80,
+      h: 44,
+    }))
+    for (const e of routed) {
+      for (const p of e.waypoints ?? []) {
+        for (const b of boxes) {
+          const inside = p.x > b.x && p.x < b.x + b.w && p.y > b.y && p.y < b.y + b.h
+          expect(inside).toBe(false)
+        }
+      }
+    }
+
+    // Neighbor wires (no waypoints) only ever join parts ADJACENT in the row —
+    // a straight run across a 140 px clear gap cannot cross another part.
+    const xOf = (id: string) => byId.get(id)?.position.x ?? Number.NaN
+    for (const e of edges) {
+      if ((e.waypoints?.length ?? 0) > 0) continue
+      if (e.source === 'ground_001' || e.target === 'ground_001') continue
+      expect(Math.abs(xOf(e.source) - xOf(e.target))).toBe(220)
+    }
+  })
+
+  test('a non-loop world keeps the plain grid (no invented routing)', () => {
+    const world = emptyWorld()
+    for (const id of ['a', 'b', 'c']) {
+      world.instances.set(id, {
+        id,
+        kind_ref: 'primitive_device',
+        definition: 'resistor',
+        connects: [{ net: 'j', terminal: 'terminal_a', of: id }],
+      })
+    }
+    world.nets.set('j', {
+      id: 'j',
+      kind: 'net',
+      members: [
+        { instance: 'a', terminal: 'terminal_a' },
+        { instance: 'b', terminal: 'terminal_a' },
+        { instance: 'c', terminal: 'terminal_a' },
+      ],
+    })
+    const { nodes, edges } = worldToFlow(world)
+    expect(nodes.map((n) => n.position)).toEqual([
+      { x: 0, y: 0 },
+      { x: 220, y: 0 },
+      { x: 440, y: 0 },
+    ])
+    expect(edges.every((e) => e.waypoints === undefined)).toBe(true)
+  })
+
   test('end-to-end on the real anchor-circuit fixtures: 5 components, wires are edges', () => {
     const world = loadWorld('fixtures/valid')
     const { nodes, edges } = worldToFlow(world)

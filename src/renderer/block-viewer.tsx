@@ -48,6 +48,7 @@ export function BlockViewer({
           data: {
             ...(e.waypoints ? { waypoints: e.waypoints } : {}),
             ...(e.curved ? { curved: true } : {}),
+            ...(typeof e.curveRadius === 'number' ? { curveRadius: e.curveRadius } : {}),
           },
         }
       : {}),
@@ -103,6 +104,8 @@ export function BlockViewer({
             colorMode={light ? 'light' : 'dark'}
             fitView
             fitViewOptions={{ padding: 0.2 }}
+            minZoom={0.001}
+            maxZoom={1000}
             nodesDraggable={false}
             nodesConnectable={false}
             elementsSelectable={false}

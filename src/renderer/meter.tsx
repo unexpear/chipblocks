@@ -1,9 +1,8 @@
 import { useInternalNode, ViewportPortal } from '@xyflow/react'
 import type { Instance, World } from '../cross-fk-validator.ts'
 import { type Solution, solveDC } from '../dc-solver.ts'
-import { readScalarParam } from '../instance-params.ts'
 import { solveTransient } from '../transient-solver.ts'
-import { scopeWindow } from './scope.tsx'
+import { fastestSourceHz, scopeWindow } from './scope.tsx'
 
 /**
  * Multimeter tool (S19-v3-53/54/55) — point measurements, the way a real meter
@@ -245,13 +244,7 @@ export function acVoltsRms(
   netB: string,
 ): { rms: number; hz: number | null } | 'span-too-wide' | null {
   const window = scopeWindow(world)
-  let fastestHz = 0
-  for (const inst of world.instances.values()) {
-    if (inst.definition !== 'power_source') continue
-    const amplitude = readScalarParam(inst, 'ac_amplitude') ?? 0
-    const frequency = readScalarParam(inst, 'frequency') ?? 0
-    if (amplitude > 0 && frequency > fastestHz) fastestHz = frequency
-  }
+  const fastestHz = fastestSourceHz(world)
   const steps = Math.max(500, Math.ceil(window.duration * fastestHz * 32))
   if (steps > 20000) return 'span-too-wide'
   const result = solveTransient(world, {
@@ -427,8 +420,17 @@ export function capacitanceTest(world: World, netA: string, netB: string): Capac
   return stillClimbing ? { status: 'over-range' } : { status: 'parallel-leak' }
 }
 
-/** A probe needle pinned to its terminal, riding along when the part moves. */
-function ProbeMarker({ probe, color, label }: { probe: ProbeRef; color: string; label: string }) {
+/** A probe needle pinned to its terminal, riding along when the part moves.
+ *  Shared by the meter's red/black leads and the Scope's channel probes. */
+export function ProbeMarker({
+  probe,
+  color,
+  label,
+}: {
+  probe: ProbeRef
+  color: string
+  label: string
+}) {
   const node = useInternalNode(probe.nodeId)
   if (!node) return null
   const handle = node.internals.handleBounds?.source?.find((h) => h.id === probe.handleId)

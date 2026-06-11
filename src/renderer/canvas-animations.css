@@ -112,3 +112,47 @@
 .cb-scroll-hidden::-webkit-scrollbar {
   display: none; /* Chromium / Electron */
 }
+
+/* Themed scrollbars (S19-v3-72) — every scrolling panel (palette, Math,
+   clipboard, shortcuts) gets the same slim, translucent bar instead of the
+   browser default. Translucent gray reads correctly on both themes. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(138, 147, 160, 0.4);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(138, 147, 160, 0.7);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* The canvas''s own pan bars (canvas-scrollbars.tsx). */
+.cb-scroll-track {
+  position: absolute;
+  border-radius: 5px;
+  background: rgba(138, 147, 160, 0.12);
+  z-index: 25;
+  pointer-events: auto;
+}
+.cb-scroll-thumb {
+  position: absolute;
+  border-radius: 5px;
+  background: rgba(138, 147, 160, 0.45);
+  transition: background 0.12s ease;
+}
+.cb-scroll-thumb:hover,
+.cb-scroll-thumb.cb-dragging {
+  background: rgba(122, 184, 255, 0.75);
+}

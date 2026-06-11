@@ -9,6 +9,7 @@ import {
   primaryValue,
   sourceIsAc,
   sourceIsSquare,
+  sourceTerminalCount,
   switchClosed,
 } from './part-defaults.ts'
 import { formatEng } from './units.ts'
@@ -51,53 +52,68 @@ function ResistorGlyph() {
   )
 }
 
-/** Battery / DC source — IEC 60617: alternating long (+) / short (−) plates. */
-function BatteryGlyph() {
+/**
+ * DC source — the generic IEC source circle with the DC sign inside (a solid
+ * line over a dashed one), matching the AC and clock circles so every source
+ * is the same shape and the mark inside says WHICH it is. The voltage (or an
+ * AC source's swing + frequency) prints under the part; polarity lives on the
+ * handle badges, which always track the real terminals. The mark inside
+ * counter-rotates so it reads upright however the part is turned — the
+ * circle is symmetric, only the label needs to stay readable.
+ */
+function DcSourceGlyph({ rotation = 0 }: { rotation?: number }) {
   return (
     <svg width={W} height={H}>
       <title>DC source</title>
       {lead(0, 26)}
-      {/* long plate (+) */}
-      <line x1={30} y1={10} x2={30} y2={34} stroke={STROKE} strokeWidth={1.5} />
-      {/* short plate (−) */}
-      <line x1={38} y1={17} x2={38} y2={27} stroke={STROKE} strokeWidth={3} />
-      {/* second cell */}
-      <line x1={46} y1={10} x2={46} y2={34} stroke={STROKE} strokeWidth={1.5} />
-      <line x1={54} y1={17} x2={54} y2={27} stroke={STROKE} strokeWidth={3} />
+      <circle cx={40} cy={MID} r={14} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <g transform={`rotate(${-rotation} 40 ${MID})`}>
+        <line x1={33} y1={MID - 3} x2={47} y2={MID - 3} stroke={STROKE} strokeWidth={1.5} />
+        <line
+          x1={33}
+          y1={MID + 3}
+          x2={47}
+          y2={MID + 3}
+          stroke={STROKE}
+          strokeWidth={1.5}
+          strokeDasharray="3 2"
+        />
+      </g>
       {lead(54, W)}
-      <text x={28} y={8} fill={STROKE} fontSize={9}>
-        +
-      </text>
     </svg>
   )
 }
 
-/** AC source — IEC 60617: a circle with one sine period inside. */
-function AcSourceGlyph() {
+/** AC source — IEC 60617: a circle with one sine period inside (kept upright). */
+function AcSourceGlyph({ rotation = 0 }: { rotation?: number }) {
   return (
     <svg width={W} height={H}>
       <title>AC source</title>
       {lead(0, 26)}
       <circle cx={40} cy={MID} r={14} fill="none" stroke={STROKE} strokeWidth={1.5} />
-      <path d="M31 22 q4.5 -9 9 0 q4.5 9 9 0" fill="none" stroke={STROKE} strokeWidth={1.3} />
+      <g transform={`rotate(${-rotation} 40 ${MID})`}>
+        <path d="M31 22 q4.5 -9 9 0 q4.5 9 9 0" fill="none" stroke={STROKE} strokeWidth={1.3} />
+      </g>
       {lead(54, W)}
     </svg>
   )
 }
 
-/** Square-wave clock source — the generator circle with a square-wave trace. */
-function SquareSourceGlyph() {
+/** Square-wave clock source — the generator circle with its trace (kept upright). */
+function SquareSourceGlyph({ rotation = 0 }: { rotation?: number }) {
   return (
     <svg width={W} height={H}>
       <title>square-wave clock source</title>
       {lead(0, 26)}
       <circle cx={40} cy={MID} r={14} fill="none" stroke={STROKE} strokeWidth={1.5} />
-      <path
-        d="M31 26 L31 18 L40 18 L40 26 L49 26 L49 18"
-        fill="none"
-        stroke={STROKE}
-        strokeWidth={1.3}
-      />
+      <g transform={`rotate(${-rotation} 40 ${MID})`}>
+        <path
+          d="M31 26 L31 18 L40 18 L40 26 L49 26 L49 18"
+          fill="none"
+          stroke={STROKE}
+          strokeWidth={1.3}
+        />
+      </g>
       {lead(54, W)}
     </svg>
   )
@@ -388,7 +404,6 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   resistor: ResistorGlyph,
   capacitor: CapacitorGlyph,
   inductor: InductorGlyph,
-  power_source: BatteryGlyph,
   led: LedGlyph,
   led_uv_algan: LedGlyph,
   diode_silicon_rectifier: DiodeGlyph,
@@ -493,10 +508,49 @@ function polarityOf(definition: string, terminalId: string): '+' | '−' | undef
   return TERMINAL_POLARITY[terminalId]
 }
 
-/** The terminals (handle id + side + optional vertical offset) for a device definition. */
+/** The source circle's geometry — shared by the glyph, taps, and stubs. */
+const SOURCE_CX = 40
+const SOURCE_R = 14
+/** Tap leads sit a short stub OUTSIDE the rim, on the circle's lower arc. */
+const SOURCE_TAP_R = 21
+
+/**
+ * The terminals (handle id + side + optional placement) for a device
+ * definition. `offset` is vertical px for a Left/Right handle; `at` is an
+ * exact point in the node box. A source's set is DYNAMIC (S19-v3-74): its
+ * Properties choose 1–6 leads — + on the left, − on the right, and taps
+ * popping out radially around the circle's lower rim, tap_1 nearest the +
+ * and sweeping toward the − in stack order.
+ */
 export function terminalsOf(
   definition: string,
-): { id: string; position: Position; offset?: number }[] {
+  parameters?: Parameters,
+): { id: string; position: Position; offset?: number; at?: { x: number; y: number } }[] {
+  if (definition === 'power_source') {
+    const count = sourceTerminalCount(parameters)
+    if (count === 1) return [{ id: 'terminal_positive', position: Position.Left }]
+    if (count > 2) {
+      const tapCount = count - 2
+      const taps = Array.from({ length: tapCount }, (_, i) => {
+        // Sweep the lower arc from the + side (180°) toward the − side (0°),
+        // evenly spaced — y grows downward in SVG, so sin > 0 is the bottom.
+        const angle = (Math.PI * (tapCount - i)) / (tapCount + 1)
+        return {
+          id: `tap_${i + 1}`,
+          position: Position.Bottom,
+          at: {
+            x: SOURCE_CX + SOURCE_TAP_R * Math.cos(angle),
+            y: MID + SOURCE_TAP_R * Math.sin(angle),
+          },
+        }
+      })
+      return [
+        { id: 'terminal_positive', position: Position.Left },
+        ...taps,
+        { id: 'terminal_negative', position: Position.Right },
+      ]
+    }
+  }
   return TERMINALS[definition] ?? FALLBACK_TERMINALS
 }
 
@@ -515,16 +569,26 @@ export type DeviceNodeData = {
 export function DeviceGlyph({
   definition,
   parameters,
+  rotation = 0,
 }: {
   definition: string
   parameters?: Parameters
+  /** The node's rotation — source circles counter-rotate their inner mark. */
+  rotation?: number
 }) {
   // The switch is state-dependent: render its blade open or closed.
   if (definition === 'switch_spst_toggle') return <SwitchGlyph closed={switchClosed(parameters)} />
-  // A source with an AC component renders the IEC circle-sine, not battery
-  // plates — and a square-wave (clock) source shows its square trace.
-  if (definition === 'power_source' && sourceIsAc(parameters)) {
-    return sourceIsSquare(parameters) ? <SquareSourceGlyph /> : <AcSourceGlyph />
+  // Every source is the same IEC circle; the mark inside says which kind —
+  // DC bars, the sine, or the clock trace — and stays upright at any rotation.
+  if (definition === 'power_source') {
+    if (sourceIsAc(parameters)) {
+      return sourceIsSquare(parameters) ? (
+        <SquareSourceGlyph rotation={rotation} />
+      ) : (
+        <AcSourceGlyph rotation={rotation} />
+      )
+    }
+    return <DcSourceGlyph rotation={rotation} />
   }
   const Glyph = GLYPHS[definition]
   if (Glyph) return <Glyph />
@@ -568,12 +632,14 @@ export function DeviceNode({ id, data }: NodeProps) {
       : lensState.lens === 'temp' && tempC !== undefined
         ? temperatureColor(tempC, lensState.tMaxC)
         : null
+  const terminals = terminalsOf(definition, parameters)
   const updateNodeInternals = useUpdateNodeInternals()
-  // After a rotation, re-measure the handles so wires follow the rotated terminals.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `rotation` is an intentional re-run trigger — the effect must re-measure when the node rotates, though it isn't read in the body
+  // After a rotation — or a lead-count change (a source's terminals are
+  // parameter-driven) — re-measure the handles so wires follow the terminals.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rotation + the terminal count are intentional re-run triggers — the effect must re-measure when they change, though it doesn't read them
   useEffect(() => {
     updateNodeInternals(id)
-  }, [id, rotation, updateNodeInternals])
+  }, [id, rotation, terminals.length, updateNodeInternals])
   // The node box IS the glyph (W×H); handles sit on the glyph's lead line
   // (left/right ends at the vertical midline), so a wire connects at the symbol's
   // own drawn terminal — not at an offset box edge. The glyph + handles rotate
@@ -616,7 +682,7 @@ export function DeviceNode({ id, data }: NodeProps) {
       >
         {/* One handle per terminal; id = terminal name. connectionMode="loose"
             (App) lets any terminal wire to any terminal. Ground = one top stem. */}
-        {terminalsOf(definition).map((t) => {
+        {terminals.map((t) => {
           const polarity = polarityOf(definition, t.id)
           const onSide = t.position === Position.Left || t.position === Position.Right
           // Hover any terminal dot to see which spot it is (like the wire probe):
@@ -633,7 +699,13 @@ export function DeviceNode({ id, data }: NodeProps) {
                   background: polarity === '+' ? '#e0594f' : polarity === '−' ? '#5a86d8' : '#888',
                   width: polarity ? 9 : undefined,
                   height: polarity ? 9 : undefined,
-                  ...(onSide ? { top: t.offset ?? MID } : {}),
+                  ...(t.at !== undefined
+                    ? { left: t.at.x, top: t.at.y, transform: 'translate(-50%, -50%)' }
+                    : onSide
+                      ? { top: t.offset ?? MID }
+                      : t.offset !== undefined
+                        ? { left: t.offset }
+                        : {}),
                 }}
               />
               {polarity ? (
@@ -655,7 +727,58 @@ export function DeviceNode({ id, data }: NodeProps) {
             </Fragment>
           )
         })}
-        <DeviceGlyph definition={definition} {...(parameters ? { parameters } : {})} />
+        <DeviceGlyph
+          definition={definition}
+          rotation={rotation}
+          {...(parameters ? { parameters } : {})}
+        />
+        {/* Tap stubs (S19-v3-74): each tap lead pops radially out of the
+            circle's rim to its dot, so the extra terminals read as part of
+            the symbol. A 1-lead source marks its hidden return-through-ground. */}
+        {definition === 'power_source' && terminals.some((t) => t.at !== undefined) ? (
+          // biome-ignore lint/a11y/noSvgWithoutTitle: decorative tap-stub overlay, hidden from the accessibility tree
+          <svg
+            aria-hidden
+            width={W}
+            height={H}
+            style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+          >
+            {terminals
+              .filter((t) => t.at !== undefined)
+              .map((t) => {
+                const at = t.at as { x: number; y: number }
+                const dx = at.x - SOURCE_CX
+                const dy = at.y - MID
+                const len = Math.hypot(dx, dy) || 1
+                return (
+                  <line
+                    key={`stub-${t.id}`}
+                    x1={SOURCE_CX + (dx / len) * SOURCE_R}
+                    y1={MID + (dy / len) * SOURCE_R}
+                    x2={at.x}
+                    y2={at.y}
+                    stroke={STROKE}
+                    strokeWidth={1.5}
+                  />
+                )
+              })}
+          </svg>
+        ) : null}
+        {definition === 'power_source' && terminals.length === 1 ? (
+          <div
+            title="1-lead source: the return path is bonded to the circuit's ground inside"
+            style={{
+              position: 'absolute',
+              right: 2,
+              top: MID + 2,
+              fontSize: 10,
+              color: '#8a93a0',
+              pointerEvents: 'none',
+            }}
+          >
+            ⏚
+          </div>
+        ) : null}
       </div>
       <div
         style={{

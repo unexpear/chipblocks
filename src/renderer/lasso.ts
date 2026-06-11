@@ -33,32 +33,76 @@ export function pointInPolygon(point: LassoPoint, polygon: LassoPoint[]): boolea
   return inside
 }
 
+type NodeLike = {
+  id: string
+  position: { x: number; y: number }
+  measured?: { width?: number; height?: number }
+}
+
+/** Typical symbol footprint for nodes React Flow has not measured yet. */
+const FALLBACK_SIZE = { width: 90, height: 40 }
+
+/** A node's center in flow coordinates (measured size, or the fallback). */
+export function nodeCenter(
+  node: NodeLike,
+  fallback: { width: number; height: number } = FALLBACK_SIZE,
+): LassoPoint {
+  return {
+    x: node.position.x + (node.measured?.width ?? fallback.width) / 2,
+    y: node.position.y + (node.measured?.height ?? fallback.height) / 2,
+  }
+}
+
 /**
  * Which nodes the lasso catches: center-in-polygon, in flow coordinates.
  * Sizes come from React Flow's measurements when present; the fallback is the
  * typical symbol footprint so an unmeasured node still has a sensible center.
  */
 export function nodeIdsInLasso(
-  nodes: {
-    id: string
-    position: { x: number; y: number }
-    measured?: { width?: number; height?: number }
-  }[],
+  nodes: NodeLike[],
   polygon: LassoPoint[],
-  fallback: { width: number; height: number } = { width: 90, height: 40 },
+  fallback: { width: number; height: number } = FALLBACK_SIZE,
 ): string[] {
   if (polygon.length < 3) return []
-  return nodes
-    .filter((n) =>
-      pointInPolygon(
-        {
-          x: n.position.x + (n.measured?.width ?? fallback.width) / 2,
-          y: n.position.y + (n.measured?.height ?? fallback.height) / 2,
-        },
-        polygon,
-      ),
-    )
-    .map((n) => n.id)
+  return nodes.filter((n) => pointInPolygon(nodeCenter(n, fallback), polygon)).map((n) => n.id)
+}
+
+/**
+ * Which wires the selection TOUCHES (S19-v3-70): a wire is selected when any
+ * portion of its drawn path falls inside the region — its end parts do NOT
+ * have to be selected, so you can grab a wire without its components. The
+ * caller supplies the region test (lasso polygon or box rectangle) and the
+ * path sampler (wire-path.ts walks the true route, fillets included).
+ */
+export function edgeIdsTouchingRegion(
+  edges: {
+    id: string
+    source: string
+    target: string
+    data?: { waypoints?: unknown; curved?: unknown; curveRadius?: unknown }
+  }[],
+  centerOf: (nodeId: string) => LassoPoint | undefined,
+  isInside: (point: LassoPoint) => boolean,
+  samplePath: (
+    points: LassoPoint[],
+    options: { curved?: boolean; radius?: number },
+  ) => LassoPoint[],
+): string[] {
+  const touched: string[] = []
+  for (const edge of edges) {
+    const from = centerOf(edge.source)
+    const to = centerOf(edge.target)
+    if (from === undefined || to === undefined) continue
+    const waypoints = Array.isArray(edge.data?.waypoints)
+      ? (edge.data.waypoints as LassoPoint[])
+      : []
+    const samples = samplePath([from, ...waypoints, to], {
+      ...(edge.data?.curved === true ? { curved: true } : {}),
+      ...(typeof edge.data?.curveRadius === 'number' ? { radius: edge.data.curveRadius } : {}),
+    })
+    if (samples.some(isInside)) touched.push(edge.id)
+  }
+  return touched
 }
 
 /** The SVG path string for the overlay ("M x y L x y …", closed). */

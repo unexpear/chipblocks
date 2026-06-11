@@ -47,6 +47,8 @@ export type BlockInnerEdge = {
   targetHandle: string | null
   waypoints?: { id: string; x: number; y: number }[]
   curved?: boolean
+  /** Corner sweep size (px) for a curve-style wire — each wire keeps its own. */
+  curveRadius?: number
 }
 
 export type BlockData = {
@@ -81,7 +83,20 @@ export type CanvasEdgeLike = {
   type?: string
   deletable?: boolean
   style?: Record<string, unknown>
-  data?: { waypoints?: unknown; curved?: unknown }
+  data?: { waypoints?: unknown; curved?: unknown; curveRadius?: unknown; internalBond?: unknown }
+}
+
+/**
+ * Is this wire fully INSIDE the selection (both endpoints selected)? The one
+ * rule everywhere selection meets wires: grouping keeps these as the block's
+ * internals, the clipboard copies exactly these, and box/lasso/select-all
+ * highlight exactly these.
+ */
+export function edgeInsideSelection(
+  edge: { source: string; target: string },
+  selectedIds: ReadonlySet<string>,
+): boolean {
+  return selectedIds.has(edge.source) && selectedIds.has(edge.target)
 }
 
 export const BLOCK_WIDTH = 96
@@ -105,6 +120,7 @@ const edgeData = (edge: CanvasEdgeLike): BlockInnerEdge => ({
     ? { waypoints: edge.data.waypoints as { id: string; x: number; y: number }[] }
     : {}),
   ...(edge.data?.curved === true ? { curved: true } : {}),
+  ...(typeof edge.data?.curveRadius === 'number' ? { curveRadius: edge.data.curveRadius } : {}),
 })
 
 /**
@@ -126,7 +142,7 @@ export function groupSelection(
   const inner = nodes.filter((n) => selectedIds.has(n.id))
   if (inner.length < 2) return { reason: 'Select at least two parts to group into a block.' }
 
-  const innerEdges = edges.filter((e) => selectedIds.has(e.source) && selectedIds.has(e.target))
+  const innerEdges = edges.filter((e) => edgeInsideSelection(e, selectedIds))
   const boundaryEdges = edges.filter((e) => selectedIds.has(e.source) !== selectedIds.has(e.target))
   const outsideEdges = edges.filter((e) => !selectedIds.has(e.source) && !selectedIds.has(e.target))
 
@@ -255,6 +271,7 @@ export function ungroupBlock(
                 }
               : {}),
             ...(e.curved ? { curved: true } : {}),
+            ...(typeof e.curveRadius === 'number' ? { curveRadius: e.curveRadius } : {}),
           },
         }
       : {}),
@@ -325,6 +342,7 @@ export function flattenBlocks(
             data: {
               ...(e.waypoints ? { waypoints: e.waypoints } : {}),
               ...(e.curved ? { curved: true } : {}),
+              ...(typeof e.curveRadius === 'number' ? { curveRadius: e.curveRadius } : {}),
             },
           }
         : {}),

@@ -1,5 +1,10 @@
 import { type CSSProperties, useEffect, useRef } from 'react'
-import { defaultParameters, defaultProvenance, type Parameters } from './part-defaults.ts'
+import {
+  defaultParameters,
+  defaultProvenance,
+  type Parameters,
+  sourceTerminalCount,
+} from './part-defaults.ts'
 import type { PartReading } from './part-readings.ts'
 import { formatEng } from './units.ts'
 
@@ -27,6 +32,18 @@ const amountOf = (parameters: Parameters | undefined, key: string): number | und
 
 const humanize = (key: string): string =>
   key.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
+
+const stepButton = (disabled: boolean): CSSProperties => ({
+  width: 20,
+  height: 20,
+  borderRadius: 4,
+  border: '1px solid #2a2a2f',
+  background: '#1b1b1f',
+  color: disabled ? '#555' : '#cdd6e0',
+  cursor: disabled ? 'default' : 'pointer',
+  fontSize: 12,
+  lineHeight: 1,
+})
 
 const LED_DEFINITIONS = new Set(['led', 'led_uv_algan'])
 const MATERIAL_REF_KEYS = new Set([
@@ -353,8 +370,9 @@ export function PartInspector({
   const entries = Object.entries(selected.parameters ?? {}).filter(
     ([key]) =>
       !(hideMaterialRefs && (key === 'n_side' || key === 'p_side')) &&
-      // The source's waveform has its own dedicated dropdown above.
-      key !== 'waveform',
+      // The source's waveform + lead count have dedicated controls above.
+      key !== 'waveform' &&
+      key !== 'terminal_count',
   )
   const rating = ratingFor(selected.definition, selected.parameters)
   // A Source (power_source) gets a type picker that sets a consistent real DC
@@ -460,6 +478,53 @@ export function PartInspector({
               </select>
             </label>
           ) : null}
+          {(() => {
+            const leads = sourceTerminalCount(selected.parameters)
+            const setLeads = (next: number) =>
+              onParam('terminal_count', Math.min(6, Math.max(1, next)), 'count')
+            return (
+              <div>
+                <div style={row}>
+                  <span
+                    style={{ color: '#aab' }}
+                    title="How many leads this source brings out. 2 = a plain source. 3–6 = a tapped stack: every lead going down drops one section of this voltage (a real tapped pack — 3 leads make a ± dual-rail supply). 1 = a supply rail whose return is through the circuit's ground."
+                  >
+                    Leads
+                  </span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <button
+                      type="button"
+                      className="nodrag"
+                      onClick={() => setLeads(leads - 1)}
+                      disabled={leads <= 1}
+                      style={stepButton(leads <= 1)}
+                    >
+                      −
+                    </button>
+                    <span style={{ color: '#cdd6e0', fontSize: 12, minWidth: 12 }}>{leads}</span>
+                    <button
+                      type="button"
+                      className="nodrag"
+                      onClick={() => setLeads(leads + 1)}
+                      disabled={leads >= 6}
+                      style={stepButton(leads >= 6)}
+                    >
+                      +
+                    </button>
+                  </span>
+                </div>
+                {leads !== 2 ? (
+                  <div style={sourceNote}>
+                    {leads === 1
+                      ? 'rail lead — the return is bonded to the circuit’s ground'
+                      : `tapped stack: ${leads - 1} sections of ${
+                          amountOf(selected.parameters, 'nominal_voltage') ?? '?'
+                        } V each; tap_1 sits one section under the +`}
+                  </div>
+                ) : null}
+              </div>
+            )
+          })()}
         </div>
       ) : null}
       {entries.length === 0 ? (

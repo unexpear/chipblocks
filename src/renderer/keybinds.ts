@@ -17,6 +17,8 @@ export type KeybindAction =
   | 'deleteAlt'
   | 'cancelWire'
   | 'selectAll'
+  | 'undo'
+  | 'redo'
   | 'copy'
   | 'cut'
   | 'paste'
@@ -33,6 +35,8 @@ export const DEFAULT_KEYBINDS: Keybinds = {
   deleteAlt: 'Backspace',
   cancelWire: 'Escape',
   selectAll: 'Ctrl+Shift+A',
+  undo: 'Ctrl+Z',
+  redo: 'Ctrl+Y',
   copy: 'Ctrl+C',
   cut: 'Ctrl+X',
   paste: 'Ctrl+V',
@@ -48,6 +52,8 @@ export const KEYBIND_LABELS: Record<KeybindAction, string> = {
   deleteAlt: 'Delete (second key)',
   cancelWire: 'Abandon the wire being drawn',
   selectAll: 'Select every part on the canvas (then Group can block them)',
+  undo: 'Undo the last canvas change (placing, wiring, deleting, edits — anything)',
+  redo: 'Redo the change you just undid',
   copy: 'Copy the selected parts (the clipboard keeps the last 15 copies)',
   cut: 'Cut the selected parts (one cut at a time — pasting brings them back)',
   paste: 'Paste the newest clipboard item at the mouse position',
@@ -154,12 +160,12 @@ export const FIXED_CONTROLS: { group: string; control: string; does: string }[] 
   {
     group: 'Canvas',
     control: 'Drag empty canvas',
-    does: 'Box-select: everything the box touches is selected together (like desktop icons)',
+    does: 'Box-select: everything the box touches is selected together (like desktop icons) — a wire counts if ANY part of it is in the box, parts not required',
   },
   {
     group: 'Canvas',
     control: 'Lasso tool: draw around parts',
-    does: 'Freeform select — any shape you draw; parts whose middle is inside get selected',
+    does: 'Freeform select — any shape you draw; parts whose middle is inside get selected, and any wire the shape touches',
   },
   {
     group: 'Canvas',
@@ -207,7 +213,7 @@ export const FIXED_CONTROLS: { group: string; control: string; does: string }[] 
   {
     group: 'Wire tool',
     control: 'Line / Curve buttons',
-    does: 'Sharp corners, or rounded fillets (the wire’s real length follows the shape)',
+    does: 'Sharp corners, or rounded sweeps — Curve offers three sizes (Gentle / Round / Wide); each wire keeps the size it was drawn with, and its real length follows the shape',
   },
   {
     group: 'Wires',

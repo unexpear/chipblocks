@@ -42,6 +42,7 @@ export type ClipEdge = {
   targetHandle: string | null
   waypoints?: { id: string; x: number; y: number }[]
   curved?: boolean
+  curveRadius?: number
 }
 
 export type ClipboardItem = {
@@ -112,6 +113,7 @@ export function snapshotSelection(
           }
         : {}),
       ...(e.data?.curved === true ? { curved: true } : {}),
+      ...(typeof e.data?.curveRadius === 'number' ? { curveRadius: e.data.curveRadius } : {}),
     }))
 
   return { label: describeParts(clipNodes), nodes: clipNodes, edges: clipEdges }
@@ -210,6 +212,7 @@ export function materializeItem(
           }
         : {}),
       ...(e.curved === true ? { curved: true } : {}),
+      ...(typeof e.curveRadius === 'number' ? { curveRadius: e.curveRadius } : {}),
     },
   }))
 

@@ -50,6 +50,11 @@ const DEFAULTS: Record<string, Parameters> = {
     internal_resistance: scalar(1, 'ohm'),
     ac_amplitude: scalar(0, 'volt'),
     frequency: scalar(0, 'hertz'),
+    // How many leads the source brings out (S19-v3-74). 2 = a plain source.
+    // 3–6 = a tapped stack of identical sections (each section contributes
+    // nominal_voltage behind internal_resistance — like cells with taps brought
+    // out). 1 = a supply rail lead whose return is bonded to ground.
+    terminal_count: scalar(2, 'count'),
   },
   capacitor: {
     // 100 µF aluminum electrolytic, 16 V class — a standard E12 value. With the
@@ -219,6 +224,8 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     internal_resistance: '~1 Ω fresh 9 V alkaline (Duracell MN1604)',
     ac_amplitude: '0 = pure DC (a battery has no AC component)',
     frequency: '0 = pure DC; set by the AC source types',
+    terminal_count:
+      '2 = plain source; 3–6 = a tapped stack of identical sections; 1 = a rail lead returning through ground',
   },
   capacitor: {
     capacitance: 'E12 standard — 100 µF aluminum electrolytic',
@@ -353,6 +360,28 @@ export function switchClosed(parameters: Parameters | undefined): boolean {
 /** The opposite state's parameters — flips a switch open↔closed for double-click toggle. */
 export function toggledSwitch(parameters: Parameters | undefined): Parameters {
   return { ...parameters, state: { value: switchClosed(parameters) ? 'open' : 'closed' } }
+}
+
+/**
+ * How many leads a source brings out (S19-v3-74), clamped to the real range.
+ * Absent (every pre-existing source) reads as 2 — the plain two-lead source.
+ */
+export function sourceTerminalCount(parameters: Parameters | undefined): number {
+  const raw = amountOf(parameters, 'terminal_count') ?? 2
+  return Math.min(6, Math.max(1, Math.round(raw)))
+}
+
+/**
+ * The lead (handle/terminal) names for a source with `count` leads — THE one
+ * naming scheme, shared by the symbol's handles, the Properties stepper's
+ * edge-pruning, and the multi-lead expansion that feeds the solver.
+ * 1 → [+]; 2 → [+, −]; N → [+, tap_1 … tap_{N−2}, −] ordered top of the stack
+ * (highest voltage) downward.
+ */
+export function sourceTerminalIds(count: number): string[] {
+  if (count <= 1) return ['terminal_positive']
+  const taps = Array.from({ length: count - 2 }, (_, i) => `tap_${i + 1}`)
+  return ['terminal_positive', ...taps, 'terminal_negative']
 }
 
 /** The headline value to show on a part (resistance / supply voltage / forward voltage). */

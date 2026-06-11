@@ -19,8 +19,22 @@
 
 export type PathPoint = { x: number; y: number }
 
-/** Corner fillet radius for curve-style wires, in canvas px (1 px = 1 mm). */
+/** Default corner fillet radius for curve-style wires, in canvas px (1 px = 1 mm). */
 export const CURVE_RADIUS_PX = 14
+
+/**
+ * The curve-size choices the wire tool offers (S19-v3-70) — how far before a
+ * corner the wire starts bending. Each wire remembers its own size; a bigger
+ * sweep cuts more of the corner, so the wire is REALLY shorter (less
+ * resistance) — the length math below measures whatever is drawn. The fillet
+ * still clamps to half of each adjoining segment, so a Wide setting on a
+ * short hop bends as far as the geometry allows and no further.
+ */
+export const CURVE_SIZES: { label: string; radiusPx: number; hint: string }[] = [
+  { label: 'Gentle', radiusPx: CURVE_RADIUS_PX, hint: 'a small ease around the corner' },
+  { label: 'Round', radiusPx: 28, hint: 'a clear quarter-turn sweep' },
+  { label: 'Wide', radiusPx: 56, hint: 'a long, gradual bend' },
+]
 
 const distance = (a: PathPoint, b: PathPoint) => Math.hypot(b.x - a.x, b.y - a.y)
 
@@ -102,6 +116,61 @@ function quadraticLength(p0: PathPoint, control: PathPoint, p2: PathPoint): numb
     prev = point
   }
   return total
+}
+
+/** Point on one quadratic Bézier at parameter t. */
+function quadraticPoint(p0: PathPoint, control: PathPoint, p2: PathPoint, t: number): PathPoint {
+  const u = 1 - t
+  return {
+    x: u * u * p0.x + 2 * u * t * control.x + t * t * p2.x,
+    y: u * u * p0.y + 2 * u * t * control.y + t * t * p2.y,
+  }
+}
+
+/**
+ * Points along the TRUE drawn route, roughly every `stepPx` (S19-v3-70) — for
+ * hit-testing a wire against a selection box or lasso. Same fillet geometry
+ * as the renderer and the length math, so a curved wire is tested where it
+ * actually runs (the cut corner, not the sharp tip it never touches).
+ */
+export function samplePathPoints(
+  points: PathPoint[],
+  options: { curved?: boolean; radius?: number; stepPx?: number } = {},
+): PathPoint[] {
+  const stepPx = options.stepPx ?? 10
+  const first = points[0]
+  if (!first) return []
+  const samples: PathPoint[] = [first]
+  const sampleSegment = (from: PathPoint, to: PathPoint) => {
+    const length = distance(from, to)
+    const steps = Math.max(1, Math.ceil(length / stepPx))
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps
+      samples.push({ x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t })
+    }
+  }
+
+  if (options.curved !== true || points.length < 3) {
+    for (let i = 1; i < points.length; i++) {
+      const next = points[i]
+      if (next) sampleSegment(samples[samples.length - 1] ?? first, next)
+    }
+    return samples
+  }
+
+  const fillets = filletsOf(points, options.radius ?? CURVE_RADIUS_PX)
+  let cursor: PathPoint = first
+  for (const f of fillets) {
+    sampleSegment(cursor, f.enter)
+    const arcSteps = Math.max(2, Math.ceil(quadraticLength(f.enter, f.corner, f.exit) / stepPx))
+    for (let i = 1; i <= arcSteps; i++) {
+      samples.push(quadraticPoint(f.enter, f.corner, f.exit, i / arcSteps))
+    }
+    cursor = f.exit
+  }
+  const last = points[points.length - 1]
+  if (last) sampleSegment(cursor, last)
+  return samples
 }
 
 /**

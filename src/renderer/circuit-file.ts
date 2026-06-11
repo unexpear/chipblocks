@@ -39,6 +39,8 @@ export type SavedWire = {
   waypoints?: { id: string; x: number; y: number }[]
   /** Drawn with the curve subtool — corners render (and measure) as fillets. */
   curved?: boolean
+  /** The wire's own corner sweep size (px); absent = the default Gentle size. */
+  curveRadius?: number
 }
 
 export type CircuitFile = {
@@ -60,7 +62,7 @@ type CanvasEdgeLike = {
   sourceHandle?: string | null
   target: string
   targetHandle?: string | null
-  data?: { waypoints?: unknown; curved?: unknown }
+  data?: { waypoints?: unknown; curved?: unknown; curveRadius?: unknown }
 }
 
 /** The canvas state → a versioned, solver-free circuit file. */
@@ -89,6 +91,7 @@ export function serializeCircuit(nodes: CanvasNodeLike[], edges: CanvasEdgeLike[
         targetHandle: e.targetHandle ?? null,
         ...(waypoints && waypoints.length > 0 ? { waypoints } : {}),
         ...(e.data?.curved === true ? { curved: true } : {}),
+        ...(typeof e.data?.curveRadius === 'number' ? { curveRadius: e.data.curveRadius } : {}),
       }
     }),
   }

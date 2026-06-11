@@ -8,7 +8,12 @@
  */
 
 import { describe, expect, test } from 'vitest'
-import { polylineLength, roundedPathD, roundedPathLength } from '../src/renderer/wire-path.ts'
+import {
+  CURVE_SIZES,
+  polylineLength,
+  roundedPathD,
+  roundedPathLength,
+} from '../src/renderer/wire-path.ts'
 
 describe('polylineLength', () => {
   test('sums straight segments exactly (3-4-5 triangle legs)', () => {
@@ -71,6 +76,37 @@ describe('roundedPathLength (curve subtool)', () => {
     const length = roundedPathLength(points, 14) // radius bigger than the arms
     expect(length).toBeGreaterThan(10) // it still goes around the corner
     expect(length).toBeLessThan(20) // …but shorter than the sharp route
+  })
+
+  test('curve sizes (S19-v3-70): a bigger sweep cuts more corner — really shorter', () => {
+    // Long arms so no preset clamps: each size must measure its own length,
+    // and Wide < Round < Gentle < sharp. Per corner the saving is
+    // (2 − 1.623204)·r, so Gentle→Wide differs by 0.376796 × (56 − 14).
+    const points = [
+      { x: 0, y: 200 },
+      { x: 0, y: 0 },
+      { x: 200, y: 0 },
+    ]
+    const sharp = polylineLength(points)
+    const sizes = CURVE_SIZES.map((s) => roundedPathLength(points, s.radiusPx))
+    const [gentle, round, wide] = sizes
+    if (gentle === undefined || round === undefined || wide === undefined) {
+      throw new Error('expected three curve sizes')
+    }
+    expect(wide).toBeLessThan(round)
+    expect(round).toBeLessThan(gentle)
+    expect(gentle).toBeLessThan(sharp)
+    expect(Math.abs(gentle - wide - 0.376796 * (56 - 14))).toBeLessThan(0.2)
+  })
+
+  test('an oversized sweep on short arms saturates at the clamp — same as the clamp value', () => {
+    const points = [
+      { x: 0, y: 30 },
+      { x: 0, y: 0 },
+      { x: 30, y: 0 },
+    ]
+    // Both 56 and 15 exceed half the 30 px arms → both clamp to 15.
+    expect(roundedPathLength(points, 56)).toBeCloseTo(roundedPathLength(points, 15), 9)
   })
 })
 

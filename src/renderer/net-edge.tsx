@@ -1,11 +1,4 @@
-import {
-  BaseEdge,
-  EdgeLabelRenderer,
-  type EdgeProps,
-  getSmoothStepPath,
-  useNodes,
-  useReactFlow,
-} from '@xyflow/react'
+import { BaseEdge, EdgeLabelRenderer, type EdgeProps, useReactFlow } from '@xyflow/react'
 import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -22,19 +15,24 @@ import {
   MU_0,
   voltageColor,
 } from './lens.ts'
+import { CheckpointContext } from './undo-context.ts'
 import { formatEng } from './units.ts'
 import { formatLength } from './wire-length.ts'
 import { roundedPathD } from './wire-path.ts'
 
 /**
  * Net edge — a wire. Two routing modes (Sprint 19):
- *  - Auto (no waypoints): orthogonal smooth-step, straight runs + right-angle
- *    corners (S19-v3-11).
+ *  - Plain (no waypoints): the straight segment between the two terminals —
+ *    exactly the length the physics measures, so the picture and the
+ *    resistance can never disagree. The old auto component-avoidance hop
+ *    (S19-v3-18) was REMOVED in S19-v3-70 by request: routing belongs to the
+ *    user — the canvas never invents a path that wasn't drawn (and the auto
+ *    detour was drawn but never measured, an honesty gap).
  *  - Manual (S19-v3-17): the user routes it point by point. Double-click the wire
  *    to drop a corner at the nearest segment; drag a corner dot to move it. The
- *    wire then runs straight through source → corners → target. This is the
- *    "easy scaling" escape hatch — any wire can be hand-routed around anything,
- *    so the auto-router never has to be perfect.
+ *    wire runs straight through source → corners → target, or sweeps each
+ *    corner when drawn with the curve subtool (each wire keeps its own sweep
+ *    size).
  *
  * The chip (net id + current + length·resistance) is rendered via
  * EdgeLabelRenderer, lifted above the wire so it never covers a symbol.
@@ -60,20 +58,6 @@ function distanceToSegment(p: Point, a: Point, b: Point): number {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
 }
 
-type Box = { x: number; y: number; w: number; h: number }
-
-/** Does the straight segment a→b pass through the box? (sampled — endpoints excluded). */
-function crossesBox(ax: number, ay: number, bx: number, by: number, box: Box): boolean {
-  const steps = 24
-  for (let i = 1; i < steps; i++) {
-    const t = i / steps
-    const x = ax + (bx - ax) * t
-    const y = ay + (by - ay) * t
-    if (x > box.x && x < box.x + box.w && y > box.y && y < box.y + box.h) return true
-  }
-  return false
-}
-
 /** Index in the waypoint list to insert a new point so it lands on the nearest segment. */
 function nearestSegment(points: Point[], p: Point): number {
   let best = 0
@@ -97,8 +81,6 @@ export function NetEdge({
   sourceY,
   targetX,
   targetY,
-  sourcePosition,
-  targetPosition,
   label,
   style,
   markerStart,
@@ -106,8 +88,8 @@ export function NetEdge({
   data,
 }: EdgeProps) {
   const { setEdges, screenToFlowPosition } = useReactFlow()
-  const nodes = useNodes()
   const lensState = useContext(LensContext)
+  const checkpointAction = useContext(CheckpointContext)
   const waypoints = readWaypoints(data)
   // The detail chip (net id · current · length · resistance) only pops up while
   // the wire is hovered — keeps the schematic clean; the current arrows on the
@@ -129,56 +111,22 @@ export function NetEdge({
   if (waypoints.length > 0) {
     // Manual: the user's hand-routed path through the corner points — sharp
     // segments, or quadratic fillets when drawn with the curve subtool (the
-    // SAME geometry wire-path.ts measures for the wire's physical length).
+    // SAME geometry, and the same per-wire sweep size, that wire-path.ts
+    // measures for the wire's physical length).
     const points: Point[] = [{ x: sourceX, y: sourceY }, ...waypoints, { x: targetX, y: targetY }]
-    path = data?.curved === true ? roundedPathD(points) : pathThrough(points)
+    const sweep = typeof data?.curveRadius === 'number' ? data.curveRadius : undefined
+    path = data?.curved === true ? roundedPathD(points, sweep) : pathThrough(points)
     const mid = points[Math.floor(points.length / 2)] ?? points[0]
     labelX = mid?.x ?? sourceX
     labelY = mid?.y ?? sourceY
   } else {
-    // Auto component-avoidance (S19-v3-18): if the straight route crosses any
-    // part's box, hop over the top / under the bottom (whichever detour is
-    // shorter); otherwise the plain orthogonal route. The user can switch to
-    // hand-routing by double-clicking to drop corners.
-    //
-    // Endpoints are INCLUDED (S19-v3-19): when a wire connects terminals that
-    // face away (e.g. switch's right terminal to a resistor sitting to its left),
-    // the straight route cuts back through both bodies — including them makes the
-    // wire route around its own parts instead of through them.
-    const obstacles: Box[] = nodes.map((n) => ({
-      x: n.position.x,
-      y: n.position.y,
-      w: n.measured?.width ?? 80,
-      h: n.measured?.height ?? 44,
-    }))
-    const crossed = obstacles.filter((b) => crossesBox(sourceX, sourceY, targetX, targetY, b))
-    if (crossed.length > 0) {
-      const midY = (sourceY + targetY) / 2
-      const overY = Math.min(...crossed.map((b) => b.y)) - 22
-      const underY = Math.max(...crossed.map((b) => b.y + b.h)) + 22
-      const clearY = Math.abs(overY - midY) <= Math.abs(underY - midY) ? overY : underY
-      path = pathThrough([
-        { x: sourceX, y: sourceY },
-        { x: sourceX, y: clearY },
-        { x: targetX, y: clearY },
-        { x: targetX, y: targetY },
-      ])
-      labelX = (sourceX + targetX) / 2
-      labelY = clearY
-    } else {
-      const [autoPath, autoX, autoY] = getSmoothStepPath({
-        sourceX,
-        sourceY,
-        targetX,
-        targetY,
-        sourcePosition,
-        targetPosition,
-        borderRadius: 0,
-      })
-      path = autoPath
-      labelX = autoX
-      labelY = autoY
-    }
+    // Plain: the straight segment the physics measures — nothing invented.
+    path = pathThrough([
+      { x: sourceX, y: sourceY },
+      { x: targetX, y: targetY },
+    ])
+    labelX = (sourceX + targetX) / 2
+    labelY = (sourceY + targetY) / 2
   }
 
   const amps = typeof data?.amps === 'number' ? data.amps : null
@@ -192,6 +140,7 @@ export function NetEdge({
 
   const addWaypoint = (event: ReactMouseEvent) => {
     event.stopPropagation()
+    checkpointAction('wire-corner')
     const pos = screenToFlowPosition({ x: event.clientX, y: event.clientY })
     setEdges((edges) =>
       edges.map((edge) => {
@@ -209,6 +158,7 @@ export function NetEdge({
   const dragWaypoint = (index: number) => (down: ReactPointerEvent) => {
     down.preventDefault()
     down.stopPropagation()
+    checkpointAction('wire-corner')
     const move = (event: PointerEvent) => {
       const pos = screenToFlowPosition({ x: event.clientX, y: event.clientY })
       setEdges((edges) =>

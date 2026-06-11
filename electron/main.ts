@@ -154,8 +154,22 @@ function installMenu(window: BrowserWindow): void {
     {
       label: 'Edit',
       submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
+        // Canvas undo/redo (S19-v3-73) — same registerAccelerator:false
+        // pattern as the clipboard items below: the shortcut is DISPLAYED but
+        // not claimed, so Ctrl+Z/Ctrl+Y reach the page (text fields keep
+        // Chromium's native text undo via the renderer's input guard).
+        {
+          label: 'Undo',
+          accelerator: keybinds.undo,
+          registerAccelerator: false,
+          click: () => window.webContents.send('edit:undo'),
+        },
+        {
+          label: 'Redo',
+          accelerator: keybinds.redo,
+          registerAccelerator: false,
+          click: () => window.webContents.send('edit:redo'),
+        },
         { type: 'separator' },
         // Canvas clipboard (S19-v3-69). registerAccelerator:false is the key:
         // the accelerator is DISPLAYED but not claimed, so Ctrl+C/X/V reach the

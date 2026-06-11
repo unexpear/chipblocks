@@ -44,6 +44,7 @@ import {
   groupSelection,
   ungroupBlock,
 } from './blocks.ts'
+import { CanvasScrollbars } from './canvas-scrollbars.tsx'
 import {
   type CanvasEdge,
   type CanvasNode,
@@ -66,7 +67,15 @@ import { DockablePanel, type DockEdge } from './dockable-panel.tsx'
 import { wireFlow } from './edge-currents.ts'
 import { canvasHealth, HealthContext, type NodeHealth } from './health.ts'
 import { DEFAULT_KEYBINDS, eventMatchesBinding, type Keybinds, mergeKeybinds } from './keybinds.ts'
-import { type LassoPoint, lassoPathD, MIN_POINT_SPACING_PX, nodeIdsInLasso } from './lasso.ts'
+import {
+  edgeIdsTouchingRegion,
+  type LassoPoint,
+  lassoPathD,
+  MIN_POINT_SPACING_PX,
+  nodeCenter,
+  nodeIdsInLasso,
+  pointInPolygon,
+} from './lasso.ts'
 import { FIELD_COLOR, fieldReferenceTesla, LensContext, type LensMode } from './lens.ts'
 import { materialCapabilities, validMaterialsByRole } from './material-roles.ts'
 import { MathPanel } from './math-panel.tsx'
@@ -78,23 +87,41 @@ import {
   diodeTest,
   equivalentResistance,
   MeterProbes,
+  ProbeMarker,
   type ProbeRef,
   terminalNets,
   terminalVoltages,
 } from './meter.tsx'
+import { expandMultiLeadSources, multiLeadAliases } from './multi-tap-source.ts'
 import { edgeTypes } from './net-edge.tsx'
 import { BLOCK_MIME, BlockPaletteItems, DEFINITION_MIME, PaletteItems } from './palette.tsx'
-import { defaultParameters, toggledSwitch } from './part-defaults.ts'
+import { defaultParameters, sourceTerminalIds, toggledSwitch } from './part-defaults.ts'
 import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { type PartReading, partReadings } from './part-readings.ts'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
-import { ScopePlot, scopeWindow } from './scope.tsx'
+import {
+  channelsForProbes,
+  fastestSourceHz,
+  ScopePlot,
+  scopeWindow,
+  TRACE_COLORS,
+} from './scope.tsx'
+import { H_DIVISIONS, scopeRecordSteps, slowestHonestTimebase } from './scope-scales.ts'
 import { ShortcutsPanel } from './shortcuts-panel.tsx'
 import { type DeviceNodeData, nodeTypes } from './symbols.tsx'
 import { type Tool, ToolbarItems } from './toolbar.tsx'
+import { CheckpointContext } from './undo-context.ts'
+import { checkpoint, emptyHistory, redo, undo } from './undo-history.ts'
 import { formatEng } from './units.ts'
 import { lengthFromDrawn, wireResistance } from './wire-length.ts'
-import { type PathPoint, polylineLength, roundedPathD, roundedPathLength } from './wire-path.ts'
+import {
+  CURVE_RADIUS_PX,
+  type PathPoint,
+  polylineLength,
+  roundedPathD,
+  roundedPathLength,
+  samplePathPoints,
+} from './wire-path.ts'
 import { worldToFlow } from './world-to-flow.ts'
 
 // The preload bridge (electron/preload.ts): the native Settings menu pushes
@@ -115,6 +142,8 @@ declare global {
       onEditCopy?: (callback: () => void) => void
       onEditCut?: (callback: () => void) => void
       onEditPaste?: (callback: () => void) => void
+      onEditUndo?: (callback: () => void) => void
+      onEditRedo?: (callback: () => void) => void
     }
   }
 }
@@ -144,7 +173,11 @@ function toCanvasNode(node: Node): CanvasNode {
  * un-routed wire keeps the straight-line seed it always had.
  */
 function drawnWire(
-  edge: { source: string; target: string; data?: { waypoints?: unknown; curved?: unknown } },
+  edge: {
+    source: string
+    target: string
+    data?: { waypoints?: unknown; curved?: unknown; curveRadius?: unknown }
+  },
   positions: Map<string, NodePosition>,
 ): { lengthM: number; ohms: number } {
   const from = positions.get(edge.source)
@@ -156,7 +189,9 @@ function drawnWire(
       : []
     if (waypoints.length > 0) {
       const points = [from, ...waypoints, to]
-      drawnPixels = edge.data?.curved === true ? roundedPathLength(points) : polylineLength(points)
+      const sweep = typeof edge.data?.curveRadius === 'number' ? edge.data.curveRadius : undefined
+      drawnPixels =
+        edge.data?.curved === true ? roundedPathLength(points, sweep) : polylineLength(points)
     } else {
       drawnPixels = Math.hypot(to.x - from.x, to.y - from.y)
     }
@@ -220,6 +255,7 @@ function PendingWirePreview({
   pending,
   cursor,
   curved,
+  curveRadius,
 }: {
   pending: {
     start: { nodeId: string; handleId: string } | { x: number; y: number }
@@ -227,6 +263,7 @@ function PendingWirePreview({
   }
   cursor: { x: number; y: number } | null
   curved: boolean
+  curveRadius: number
 }) {
   const start = pending.start
   const anchoredToNode = 'nodeId' in start
@@ -246,10 +283,11 @@ function PendingWirePreview({
   if (origin === null) return null
   const points = [origin, ...pending.corners, ...(cursor !== null ? [cursor] : [])]
   const path = curved
-    ? roundedPathD(points)
+    ? roundedPathD(points, curveRadius)
     : points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x},${p.y}`).join(' ')
   return (
     <ViewportPortal>
+      {/* biome-ignore lint/a11y/noSvgWithoutTitle: decorative rubber-band preview, hidden from the accessibility tree */}
       <svg
         width={1}
         height={1}
@@ -308,7 +346,7 @@ function solveCanvas(
   solution: Solution
   temperaturesC: Map<string, number>
 } {
-  const { world, drawn } = canvasWorld(nodeList, edgeList)
+  const { world, drawn, leadAliases } = canvasWorld(nodeList, edgeList)
   // Electro-thermal solve (stage 7): the electrical answer at the settled part
   // temperatures — hot parts drift, warm junctions drop, all fed back until the
   // fixed point. Readings/health recompute temperatures from this solution and
@@ -332,15 +370,33 @@ function solveCanvas(
       type: 'net',
       deletable: true,
       label: edge.label,
+      // Re-solving recomputes PHYSICS — it must not touch what the user did.
+      // Selection and the drawn shape (corners, curve flag, sweep size) are
+      // user state and survive the rebuild verbatim.
+      ...(edge.selected !== undefined ? { selected: edge.selected } : {}),
       ...physics,
-      data: { ...physics.data, ...(waypoints ? { waypoints } : {}) },
+      data: {
+        ...physics.data,
+        ...(waypoints ? { waypoints } : {}),
+        ...(edge.data?.curved === true ? { curved: true } : {}),
+        ...(typeof edge.data?.curveRadius === 'number'
+          ? { curveRadius: edge.data.curveRadius }
+          : {}),
+      },
     }
   })
   // An internal part's failure also marks its block node (validation bubbles
-  // up the hierarchy, per the object model).
+  // up the hierarchy, per the object model — a failing source SECTION marks
+  // its source the same way).
   const health = bubbleBlockHealth(canvasHealth(world, solution))
-  // Probing a block's PORT reads the real internal terminal it stands for.
+  // Probing a block's PORT or a multi-lead source's lead reads the real
+  // terminal it stands for. Lead aliases land first: a block port may itself
+  // point at a lead that the expansion re-homed.
   const terminalVolts = terminalVoltages(world, solution)
+  for (const alias of leadAliases) {
+    const inner = terminalVolts.get(alias.inner)
+    if (inner !== undefined) terminalVolts.set(alias.outer, inner)
+  }
   for (const alias of blockPortAliases(nodeList as unknown as BlockNodeLike[])) {
     const inner = terminalVolts.get(alias.inner)
     if (inner !== undefined) terminalVolts.set(alias.outer, inner)
@@ -370,21 +426,32 @@ function solveCanvas(
 function canvasWorld(
   nodeList: Node[],
   edgeList: Edge[],
-): { world: World; drawn: Map<string, { lengthM: number; ohms: number }> } {
+): {
+  world: World
+  drawn: Map<string, { lengthM: number; ohms: number }>
+  leadAliases: { outer: string; inner: string }[]
+} {
   // Blocks are pure structure: expand every block back into its REAL parts
   // (namespaced ids, ports routed to the real internal terminals) before
-  // anything physical is computed. The solver never sees a block.
+  // anything physical is computed. The solver never sees a block. The same
+  // rule expands a multi-lead source into its real two-lead sections.
   const flat = flattenBlocks(
     nodeList as unknown as BlockNodeLike[],
     edgeList as unknown as BlockEdgeLike[],
   )
-  const flatNodes = flat.nodes as unknown as Node[]
-  const flatEdges = flat.edges as unknown as Edge[]
+  const expanded = expandMultiLeadSources(flat.nodes, flat.edges)
+  const flatNodes = expanded.nodes as unknown as Node[]
+  const flatEdges = expanded.edges as unknown as Edge[]
   const positions = new Map<string, NodePosition>(flatNodes.map((n) => [n.id, n.position]))
   // Each wire's real resistance feeds BOTH the solve (so it drops real voltage)
   // and the on-wire readout — computed once here from how the wire is drawn.
+  // A multi-lead source's internal seams are INSIDE the pack: zero length,
+  // zero resistance — they are not drawn wires.
   const drawn = new Map<string, { lengthM: number; ohms: number }>(
-    flatEdges.map((e) => [e.id, drawnWire(e, positions)]),
+    flatEdges.map((e) => [
+      e.id,
+      e.data?.internalBond === true ? { lengthM: 0, ohms: 0 } : drawnWire(e, positions),
+    ]),
   )
   const canvasEdges: CanvasEdge[] = flatEdges.map((e) => ({
     id: e.id,
@@ -394,7 +461,11 @@ function canvasWorld(
     targetHandle: e.targetHandle ?? null,
     resistanceOhms: drawn.get(e.id)?.ohms ?? 0,
   }))
-  return { world: canvasToWorld(flatNodes.map(toCanvasNode), canvasEdges), drawn }
+  return {
+    world: canvasToWorld(flatNodes.map(toCanvasNode), canvasEdges),
+    drawn,
+    leadAliases: expanded.aliases,
+  }
 }
 
 /**
@@ -420,11 +491,17 @@ function Canvas() {
       id: n.id,
       type: 'device',
       position: n.position,
-      data: { definition: n.data.definition, label: n.id, parameters: n.data.parameters },
+      data: {
+        definition: n.data.definition,
+        label: n.id,
+        parameters: n.data.parameters,
+        ...(n.data.rotation ? { rotation: n.data.rotation } : {}),
+      },
     }))
     // Wires start as bare connections (just the terminals they join); the canvas
     // re-solve fills in current + length + resistance — the same path a later
-    // drop/edit takes. A wire is a connection, not a deletable block.
+    // drop/edit takes. A wire is a connection, not a deletable block. The
+    // series-loop layout's hand-quality routing arrives as waypoints.
     const baseEdges: Edge[] = flow.edges.map((e) => ({
       id: e.id,
       source: e.source,
@@ -434,6 +511,7 @@ function Canvas() {
       type: 'net',
       deletable: false,
       label: e.showLabel ? e.label : undefined,
+      ...(e.waypoints ? { data: { waypoints: e.waypoints } } : {}),
     }))
     // Catalog material ids for the Properties panel's material dropdown.
     const materials = [...world.definitions.values()]
@@ -491,8 +569,30 @@ function Canvas() {
   // `topology`, node moves via `nodes`.
   const edgesRef = useRef(edges)
   edgesRef.current = edges
+  const nodesRef = useRef(nodes)
+  nodesRef.current = nodes
   const { screenToFlowPosition, fitView, deleteElements } = useReactFlow()
   const dropCount = useRef(0)
+
+  // Undo / redo (S19-v3-73): every mutating action calls checkpointAction
+  // FIRST — the canvas as it is right before the change goes onto the undo
+  // stack. Snapshots are deep copies (later edits can't reach back into
+  // history); restoring re-solves, so the physics always matches the canvas.
+  const undoHistory = useRef(emptyHistory<{ nodes: Node[]; edges: Edge[] }>())
+  const snapshotCanvas = useCallback(
+    (): { nodes: Node[]; edges: Edge[] } =>
+      JSON.parse(JSON.stringify({ nodes: nodesRef.current, edges: edgesRef.current })) as {
+        nodes: Node[]
+        edges: Edge[]
+      },
+    [],
+  )
+  const checkpointAction = useCallback(
+    (tag: string) => {
+      undoHistory.current = checkpoint(undoHistory.current, snapshotCanvas(), tag, Date.now())
+    },
+    [snapshotCanvas],
+  )
 
   // Save / Load (S19-v3-52). Save: the File menu asks, we answer with the
   // serialized circuit (parts + values + wires — never solved data). Re-registers
@@ -518,6 +618,7 @@ function Canvas() {
     bridge.onCircuitOpened((text) => {
       const result = deserializeCircuit(text)
       if (!result.ok) return // main validates first; this is belt-and-braces
+      checkpointAction('load')
       setNodes(
         result.file.nodes.map((n) => ({
           id: n.id,
@@ -552,6 +653,7 @@ function Canvas() {
                 data: {
                   ...(w.waypoints ? { waypoints: w.waypoints } : {}),
                   ...(w.curved ? { curved: true } : {}),
+                  ...(typeof w.curveRadius === 'number' ? { curveRadius: w.curveRadius } : {}),
                 },
               }
             : {}),
@@ -560,7 +662,7 @@ function Canvas() {
       dropCount.current = maxIdSuffix(result.file.nodes)
       window.setTimeout(() => fitView({ padding: 0.15 }), 80)
     })
-  }, [setNodes, setEdges, fitView])
+  }, [setNodes, setEdges, fitView, checkpointAction])
 
   // Movable menus (S19-v3-10): each docks to a window edge; the user drags them.
   const [paletteEdge, setPaletteEdge] = useState<DockEdge>('left')
@@ -606,9 +708,40 @@ function Canvas() {
 
   const handleSolve = useCallback(() => reSolve(nodes, edges), [reSolve, nodes, edges])
 
+  // Walk the undo timeline. The restored canvas re-solves immediately so the
+  // currents, health, and Math panel always describe what is on screen.
+  const doUndo = useCallback(() => {
+    const result = undo(undoHistory.current, snapshotCanvas())
+    if (result === null) return
+    undoHistory.current = result.history
+    setNodes(result.restored.nodes)
+    setEdges(result.restored.edges)
+    reSolve(result.restored.nodes, result.restored.edges)
+  }, [snapshotCanvas, setNodes, setEdges, reSolve])
+  const doRedo = useCallback(() => {
+    const result = redo(undoHistory.current, snapshotCanvas(), Date.now())
+    if (result === null) return
+    undoHistory.current = result.history
+    setNodes(result.restored.nodes)
+    setEdges(result.restored.edges)
+    reSolve(result.restored.nodes, result.restored.edges)
+  }, [snapshotCanvas, setNodes, setEdges, reSolve])
+
   // Scope (time-domain view): run the canvas circuit through solveTransient over
   // an auto-picked window and show every node voltage as a waveform.
   const [scopeResult, setScopeResult] = useState<TransientResult | null>(null)
+  // One display-window's duration — the trigger aligns sweeps inside the
+  // 3-window record (set alongside each scope run).
+  const [scopeWindowSec, setScopeWindowSec] = useState(1e-3)
+  // Timebase knob (S19-v3-78): seconds per grid square, or 'auto' (the window
+  // heuristic). Manual settings re-run the sim at the new window; a setting
+  // too slow to sample the fastest source honestly is REFUSED, never aliased.
+  const [scopeSecPerDiv, setScopeSecPerDiv] = useState<number | 'auto'>('auto')
+  const [scopeAutoWindowSec, setScopeAutoWindowSec] = useState(1e-3)
+  const [scopeRefusal, setScopeRefusal] = useState<string | null>(null)
+  // Scope probes (S19-v3-77): the terminals the user clipped channels onto.
+  // Only these plot — clipping where you care, like real scope leads.
+  const [scopeProbes, setScopeProbes] = useState<ProbeRef[]>([])
   const [scopeEdge, setScopeEdge] = useState<DockEdge>('bottom')
 
   // Math panel (S19-v3-63): the equations behind the current solution, derived
@@ -643,10 +776,11 @@ function Canvas() {
       setGroupPrompt({ name, error: result.reason })
       return
     }
+    checkpointAction('group')
     setNodes(result.nodes as unknown as Node[])
     setEdges(result.edges as unknown as Edge[])
     setGroupPrompt(null)
-  }, [groupPrompt, nodes, edges, setNodes, setEdges])
+  }, [groupPrompt, nodes, edges, setNodes, setEdges, checkpointAction])
   const handleUngroup = useCallback(
     (blockNodeId: string) => {
       const result = ungroupBlock(
@@ -655,16 +789,17 @@ function Canvas() {
         blockNodeId,
       )
       if ('reason' in result) return
+      checkpointAction('ungroup')
       setNodes(result.nodes as unknown as Node[])
       setEdges(result.edges as unknown as Edge[])
       setViewBlockId(null)
     },
-    [nodes, edges, setNodes, setEdges],
+    [nodes, edges, setNodes, setEdges, checkpointAction],
   )
   const viewedBlock: BlockData | null =
     viewBlockId !== null
-      ? (((nodes.find((n) => n.id === viewBlockId)?.data as { block?: BlockData }) ?? {}).block ??
-        null)
+      ? ((nodes.find((n) => n.id === viewBlockId)?.data as { block?: BlockData } | undefined)
+          ?.block ?? null)
       : null
 
   // Lenses (S19-v3-50): overlay the solved physics on the schematic. The context
@@ -711,16 +846,66 @@ function Canvas() {
   }, [edges, readings, lens, flow])
   const runScope = useCallback(() => {
     const world = groundedComponent(canvasWorld(nodes, edges).world)
-    setScopeResult(solveTransient(world, scopeWindow(world)))
-  }, [nodes, edges])
+    const auto = scopeWindow(world)
+    setScopeAutoWindowSec(auto.duration)
+    const windowSec = scopeSecPerDiv === 'auto' ? auto.duration : scopeSecPerDiv * H_DIVISIONS
+    setScopeWindowSec(windowSec)
+    // The RECORD is three display-windows long (S19-v3-75): the trigger search
+    // starts after the first (power-on transients settle), and a full window
+    // always fits after the trigger point. Step spacing follows the FASTEST
+    // source (≥32 samples/cycle, ≤20 000 steps — the multimeter's V~ honesty
+    // rule); a timebase too slow to keep that is refused, never aliased.
+    const fastestHz = fastestSourceHz(world)
+    const steps = scopeRecordSteps(windowSec * 3, fastestHz)
+    if (steps === 'span-too-wide') {
+      const slowest = slowestHonestTimebase(fastestHz)
+      setScopeRefusal(
+        `${formatEng(windowSec / H_DIVISIONS, 's')}/div spans too much time to sample the ` +
+          `${formatEng(fastestHz, 'Hz')} source honestly (the scope keeps at least 32 points ` +
+          `per cycle, at most 20 000 steps — past that the trace would alias into a shape ` +
+          `that was never there). Slowest honest setting for this circuit: ` +
+          `${formatEng(slowest, 's')}/div.`,
+      )
+      return
+    }
+    setScopeRefusal(null)
+    setScopeResult(
+      solveTransient(world, { timeStep: (windowSec * 3) / steps, duration: windowSec * 3 }),
+    )
+  }, [nodes, edges, scopeSecPerDiv])
 
   // While the Scope is open it follows the circuit live: any edit (drop, wire,
   // value change, switch flip) re-runs the time simulation — same spirit as the
   // always-on DC re-solve. Closed scope costs nothing.
-  const scopeOpen = scopeResult !== null
+  const scopeOpen = scopeResult !== null || scopeRefusal !== null
   useEffect(() => {
     if (scopeOpen) runScope()
   }, [scopeOpen, runScope])
+
+  // Clip / unclip a scope probe (S19-v3-77): with the Scope open and the plain
+  // select tool, clicking a terminal dot toggles a channel there. Returns
+  // whether the click was consumed (so it doesn't also select the part).
+  const onScopeProbeClick = useCallback(
+    (event: ReactMouseEvent): boolean => {
+      if (!scopeOpen || tool !== 'select') return false
+      const handleEl = (event.target as Element).closest?.(
+        '.react-flow__handle',
+      ) as HTMLElement | null
+      if (handleEl === null) return false
+      const nodeId = handleEl.dataset.nodeid
+      const handleId = handleEl.dataset.handleid
+      if (nodeId === undefined || handleId === undefined) return false
+      setScopeProbes((current) => {
+        const exists = current.some((p) => p.nodeId === nodeId && p.handleId === handleId)
+        return exists
+          ? current.filter((p) => !(p.nodeId === nodeId && p.handleId === handleId))
+          : [...current, { nodeId, handleId }]
+      })
+      event.stopPropagation()
+      return true
+    },
+    [scopeOpen, tool],
+  )
 
   // Multimeter (S19-v3-53/54): in meter mode, touching terminal dots places the
   // red then the black probe — the readout shows the live value between them per
@@ -795,15 +980,30 @@ function Canvas() {
     [tool, redProbe, blackProbe],
   )
   // Each wired terminal's net — what the Ω probes hand to the powered-off
-  // solve. Block PORTS alias to the real internal terminal they stand for.
+  // solve. Block PORTS and multi-lead source LEADS alias to the real terminal
+  // they stand for (lead aliases first — a port can point at a lead).
   const probeNets = useMemo(() => {
     const nets = terminalNets(solvedWorld)
+    const flat = flattenBlocks(
+      nodes as unknown as BlockNodeLike[],
+      edgesRef.current as unknown as BlockEdgeLike[],
+    )
+    for (const alias of multiLeadAliases(flat.nodes)) {
+      const inner = nets.get(alias.inner)
+      if (inner !== undefined) nets.set(alias.outer, inner)
+    }
     for (const alias of blockPortAliases(nodes as unknown as BlockNodeLike[])) {
       const inner = nets.get(alias.inner)
       if (inner !== undefined) nets.set(alias.outer, inner)
     }
     return nets
   }, [solvedWorld, nodes])
+  // The probed channels the Scope plots — resolved through the same
+  // terminal→net lookup the multimeter uses (block ports + lead taps included).
+  const scopeChannels = useMemo(
+    () => channelsForProbes(scopeProbes, (key) => probeNets.get(key)),
+    [scopeProbes, probeNets],
+  )
   // The meter's display — live solved values; unwired points say so. The clamp
   // (when set) wins regardless of the dial: it reads amps, not the dial quantity.
   const meterReadout = useMemo(() => {
@@ -994,17 +1194,19 @@ function Canvas() {
       selected,
     )
     if (item === null) return
+    checkpointAction('cut')
     setClipboard((current) => withCut(current, item))
     void deleteElements({
       nodes: nodes.filter((n) => n.selected),
       edges: edges.filter((e) => e.selected),
     })
-  }, [nodes, edges, deleteElements])
+  }, [nodes, edges, deleteElements, checkpointAction])
 
   const doPaste = useCallback(
     (item?: ClipboardItem, placement: 'cursor' | 'center' = 'cursor') => {
       const chosen = item ?? latestItem(clipboard)
       if (chosen === null || chosen.nodes.length === 0) return
+      checkpointAction('paste')
       const center = screenToFlowPosition({
         x: window.innerWidth / 2,
         y: window.innerHeight / 2,
@@ -1018,18 +1220,32 @@ function Canvas() {
       ])
       setEdges((current) => [...current, ...(pasted.edges as unknown as Edge[])])
     },
-    [clipboard, screenToFlowPosition, setNodes, setEdges],
+    [clipboard, screenToFlowPosition, setNodes, setEdges, checkpointAction],
   )
 
-  // The Edit menu's Cut/Copy/Paste Parts items arrive over IPC. Subscribe once;
-  // the ref always points at the latest handlers (which close over live state).
-  const editActions = useRef({ copy: doCopy, cut: doCut, paste: () => doPaste() })
-  editActions.current = { copy: doCopy, cut: doCut, paste: () => doPaste() }
+  // The Edit menu's items arrive over IPC. Subscribe once; the ref always
+  // points at the latest handlers (which close over live state).
+  const editActions = useRef({
+    copy: doCopy,
+    cut: doCut,
+    paste: () => doPaste(),
+    undo: doUndo,
+    redo: doRedo,
+  })
+  editActions.current = {
+    copy: doCopy,
+    cut: doCut,
+    paste: () => doPaste(),
+    undo: doUndo,
+    redo: doRedo,
+  }
   useEffect(() => {
     const bridge = window.chipblocks
     bridge?.onEditCopy?.(() => editActions.current.copy())
     bridge?.onEditCut?.(() => editActions.current.cut())
     bridge?.onEditPaste?.(() => editActions.current.paste())
+    bridge?.onEditUndo?.(() => editActions.current.undo())
+    bridge?.onEditRedo?.(() => editActions.current.redo())
   }, [])
 
   // Lasso (S19-v3-69): freeform selection. The wrapper owns the pointer
@@ -1074,18 +1290,84 @@ function Canvas() {
     },
     [tool, screenToFlowPosition],
   )
+  // A node's center for the wire touch-test (same fallback the node test uses).
+  const centerOf = useCallback(
+    (nodeId: string) => {
+      const node = nodes.find((n) => n.id === nodeId)
+      return node === undefined ? undefined : nodeCenter(node)
+    },
+    [nodes],
+  )
+
   const onLassoUp = useCallback(() => {
     const live = lassoLive.current
     if (tool !== 'lasso' || live === null) return
     const picked = new Set(
       nodeIdsInLasso(nodes as { id: string; position: { x: number; y: number } }[], live.flow),
     )
-    if (picked.size > 0) {
+    // Wires select by TOUCH: any portion of the wire's drawn path inside the
+    // lasso grabs it — its end parts do not have to come along, so a wire can
+    // be selected without its components.
+    const touched = new Set(
+      live.flow.length >= 3
+        ? edgeIdsTouchingRegion(
+            edgesRef.current as BlockEdgeLike[],
+            centerOf,
+            (p) => pointInPolygon(p, live.flow),
+            samplePathPoints,
+          )
+        : [],
+    )
+    if (picked.size > 0 || touched.size > 0) {
       setNodes((current) => current.map((n) => ({ ...n, selected: picked.has(n.id) })))
+      setEdges((current) => current.map((e) => ({ ...e, selected: touched.has(e.id) })))
     }
     lassoLive.current = null
     setLassoPoints(null)
-  }, [tool, nodes, setNodes])
+  }, [tool, nodes, setNodes, setEdges, centerOf])
+
+  // Box-select wires the same way (S19-v3-70): React Flow's marquee only
+  // picks parts, so the box is tracked here too — on release, wires whose
+  // path the box touches join the selection. Gesture state lives in a ref.
+  const boxLive = useRef<{ start: { x: number; y: number }; end: { x: number; y: number } } | null>(
+    null,
+  )
+  const onBoxDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (tool !== 'select' || event.button !== 0) return
+      const target = event.target as Element
+      if (target.closest?.('.react-flow__pane') === null) return
+      const point = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      boxLive.current = { start: point, end: point }
+    },
+    [tool, screenToFlowPosition],
+  )
+  const onBoxMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (boxLive.current === null) return
+      boxLive.current.end = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+    },
+    [screenToFlowPosition],
+  )
+  const onBoxUp = useCallback(() => {
+    const box = boxLive.current
+    boxLive.current = null
+    if (box === null || tool !== 'select') return
+    const minX = Math.min(box.start.x, box.end.x)
+    const maxX = Math.max(box.start.x, box.end.x)
+    const minY = Math.min(box.start.y, box.end.y)
+    const maxY = Math.max(box.start.y, box.end.y)
+    if (maxX - minX < 4 && maxY - minY < 4) return // a click, not a box
+    const touched = new Set(
+      edgeIdsTouchingRegion(
+        edgesRef.current as BlockEdgeLike[],
+        centerOf,
+        (p) => p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY,
+        samplePathPoints,
+      ),
+    )
+    setEdges((current) => current.map((e) => ({ ...e, selected: touched.has(e.id) })))
+  }, [tool, centerOf, setEdges])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1099,6 +1381,17 @@ function Canvas() {
       if (eventMatchesBinding(event, keybinds.selectAll)) {
         event.preventDefault()
         setNodes((current) => current.map((n) => ({ ...n, selected: true })))
+        setEdges((current) => current.map((e) => ({ ...e, selected: true })))
+        return
+      }
+      if (eventMatchesBinding(event, keybinds.undo)) {
+        event.preventDefault()
+        doUndo()
+        return
+      }
+      if (eventMatchesBinding(event, keybinds.redo)) {
+        event.preventDefault()
+        doRedo()
         return
       }
       if (eventMatchesBinding(event, keybinds.copy)) {
@@ -1117,6 +1410,8 @@ function Canvas() {
         return
       }
       if (eventMatchesBinding(event, keybinds.rotate)) {
+        if (!nodes.some((n) => n.selected)) return
+        checkpointAction('rotate')
         setNodes((current) =>
           current.map((node) =>
             node.selected
@@ -1136,15 +1431,30 @@ function Canvas() {
         eventMatchesBinding(event, keybinds.delete) ||
         eventMatchesBinding(event, keybinds.deleteAlt)
       ) {
-        void deleteElements({
-          nodes: nodes.filter((n) => n.selected),
-          edges: edges.filter((e) => e.selected),
-        })
+        const doomedNodes = nodes.filter((n) => n.selected)
+        const doomedEdges = edges.filter((e) => e.selected)
+        if (doomedNodes.length === 0 && doomedEdges.length === 0) return
+        checkpointAction('delete')
+        void deleteElements({ nodes: doomedNodes, edges: doomedEdges })
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [setNodes, keybinds, showShortcuts, nodes, edges, deleteElements, doCopy, doCut, doPaste])
+  }, [
+    setNodes,
+    setEdges,
+    keybinds,
+    showShortcuts,
+    nodes,
+    edges,
+    deleteElements,
+    doCopy,
+    doCut,
+    doPaste,
+    doUndo,
+    doRedo,
+    checkpointAction,
+  ])
 
   const onDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -1162,6 +1472,7 @@ function Canvas() {
         const source = nodes.find((n) => n.id === blockSourceId)
         const block = (source?.data as { block?: BlockData } | undefined)?.block
         if (!block) return
+        checkpointAction('drop')
         const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
         dropCount.current += 1
         const id = `block_${dropCount.current}`
@@ -1178,6 +1489,7 @@ function Canvas() {
       }
       const definition = event.dataTransfer.getData(DEFINITION_MIME)
       if (!definition) return
+      checkpointAction('drop')
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
       dropCount.current += 1
       const id = `${definition}_${dropCount.current}`
@@ -1192,18 +1504,20 @@ function Canvas() {
         }),
       )
     },
-    [screenToFlowPosition, setNodes, nodes],
+    [screenToFlowPosition, setNodes, nodes, checkpointAction],
   )
 
   // Draw a wire between two terminals → a new edge. The topology effect re-solves
   // it (current/length/resistance) when physics is on; otherwise it stays grey
   // (DRAWN) until Solve. Deletable: select it + Delete to remove.
   const onConnect = useCallback(
-    (connection: Connection) =>
+    (connection: Connection) => {
+      checkpointAction('wire')
       setEdges((current) =>
         addEdge({ ...connection, type: 'net', deletable: true, style: { stroke: DRAWN } }, current),
-      ),
-    [setEdges],
+      )
+    },
+    [setEdges, checkpointAction],
   )
 
   // Click-by-click wire drawing (S19-v3-60; CAD-style free placement + curves
@@ -1216,6 +1530,9 @@ function Canvas() {
   // rounded fillets — the wire's physical length follows whichever shape is
   // drawn. Escape (or re-clicking the start) abandons the wire-in-progress.
   const [wireStyle, setWireStyle] = useState<'line' | 'curve'>('line')
+  // Curve sweep size (S19-v3-70): how far before each corner the wire bends.
+  // The setting applies to wires drawn from now on; every wire keeps its own.
+  const [wireCurveRadius, setWireCurveRadius] = useState(CURVE_RADIUS_PX)
   type WireAnchor = { nodeId: string; handleId: string } | { x: number; y: number }
   const [pendingWire, setPendingWire] = useState<{
     start: WireAnchor
@@ -1239,6 +1556,7 @@ function Canvas() {
   const finishWire = useCallback(
     (end: WireAnchor, corners: { id: string; x: number; y: number }[]) => {
       if (pendingWire === null) return
+      checkpointAction('wire')
       // A free anchor materializes as a junction node centered on the point
       // (the node box is 14×14 with its tie handle in the middle).
       const materialize = (anchor: WireAnchor): { nodeId: string; handleId: string } => {
@@ -1269,7 +1587,7 @@ function Canvas() {
             style: { stroke: DRAWN },
             data: {
               ...(corners.length > 0 ? { waypoints: corners } : {}),
-              ...(wireStyle === 'curve' ? { curved: true } : {}),
+              ...(wireStyle === 'curve' ? { curved: true, curveRadius: wireCurveRadius } : {}),
             },
           },
           current,
@@ -1277,7 +1595,7 @@ function Canvas() {
       )
       setPendingWire(null)
     },
-    [pendingWire, wireStyle, setEdges, setNodes],
+    [pendingWire, wireStyle, wireCurveRadius, setEdges, setNodes, checkpointAction],
   )
   const onWireClick = useCallback(
     (event: ReactMouseEvent) => {
@@ -1340,9 +1658,11 @@ function Canvas() {
   // does nothing, so a wire is never lost this way — removal is explicit (select +
   // Delete). The topology effect re-solves once the endpoint lands.
   const onReconnect = useCallback(
-    (oldEdge: Edge, newConnection: Connection) =>
-      setEdges((current) => reconnectEdge(oldEdge, newConnection, current)),
-    [setEdges],
+    (oldEdge: Edge, newConnection: Connection) => {
+      checkpointAction('reconnect')
+      setEdges((current) => reconnectEdge(oldEdge, newConnection, current))
+    },
+    [setEdges, checkpointAction],
   )
 
   // Double-click a switch to flip it open/closed — operate it and watch the
@@ -1357,6 +1677,7 @@ function Canvas() {
         return
       }
       if ((node.data as DeviceNodeData).definition !== 'switch_spst_toggle') return
+      checkpointAction('toggle')
       setNodes((current) =>
         current.map((n) =>
           n.id === node.id
@@ -1371,7 +1692,7 @@ function Canvas() {
         ),
       )
     },
-    [setNodes],
+    [setNodes, checkpointAction],
   )
 
   // Edit a part's scalar value (resistance, voltage, ...) → live re-solve. The
@@ -1382,6 +1703,19 @@ function Canvas() {
   // without a unit an unknown key is ignored, never invented.
   const onEditParam = useCallback(
     (nodeId: string, key: string, amount: number, unit?: string) => {
+      checkpointAction(`param:${nodeId}:${key}`)
+      // Shrinking a source's lead count removes leads — wires attached to a
+      // lead that no longer exists go with it (one undo step brings both back).
+      if (key === 'terminal_count') {
+        const keep = new Set(sourceTerminalIds(Math.min(6, Math.max(1, Math.round(amount)))))
+        setEdges((current) =>
+          current.filter(
+            (e) =>
+              !(e.source === nodeId && !keep.has(e.sourceHandle ?? '')) &&
+              !(e.target === nodeId && !keep.has(e.targetHandle ?? '')),
+          ),
+        )
+      }
       setNodes((current) =>
         current.map((n) => {
           if (n.id !== nodeId) return n
@@ -1409,12 +1743,13 @@ function Canvas() {
         }),
       )
     },
-    [setNodes],
+    [setNodes, setEdges, checkpointAction],
   )
 
   // Edit a part's enum value (a switch's open/closed state) → live re-solve.
   const onEditEnum = useCallback(
     (nodeId: string, key: string, value: string) => {
+      checkpointAction(`param:${nodeId}:${key}`)
       setNodes((current) =>
         current.map((n) =>
           n.id === nodeId
@@ -1429,7 +1764,7 @@ function Canvas() {
         ),
       )
     },
-    [setNodes],
+    [setNodes, checkpointAction],
   )
 
   // The selected part feeds the Properties inspector (single selection).
@@ -1461,6 +1796,7 @@ function Canvas() {
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: this wrapper only ROUTES capture-phase clicks to the active tool (lasso guard, scope probes, meter probes, wire clicks); the real interactive targets are the terminal handles and buttons inside */}
       <div
         onClickCapture={(event) => {
           // While the lasso is the active tool, clicks aimed at the CANVAS
@@ -1473,6 +1809,7 @@ function Canvas() {
             }
             return
           }
+          if (onScopeProbeClick(event)) return
           onMeterClick(event)
           onWireClick(event)
         }}
@@ -1481,9 +1818,18 @@ function Canvas() {
           lastCursorFlow.current = screenToFlowPosition({ x: event.clientX, y: event.clientY })
           onWireMove(event)
         }}
-        onPointerDown={onLassoDown}
-        onPointerMove={onLassoMove}
-        onPointerUp={onLassoUp}
+        onPointerDown={(event) => {
+          onLassoDown(event)
+          onBoxDown(event)
+        }}
+        onPointerMove={(event) => {
+          onLassoMove(event)
+          onBoxMove(event)
+        }}
+        onPointerUp={() => {
+          onLassoUp()
+          onBoxUp()
+        }}
         style={{
           gridArea: 'center',
           position: 'relative',
@@ -1494,67 +1840,87 @@ function Canvas() {
       >
         <HealthContext.Provider value={health}>
           <LensContext.Provider value={lensState}>
-            <ReactFlow
-              colorMode={theme}
-              nodes={nodes}
-              edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              onReconnect={onReconnect}
-              onNodeDoubleClick={onNodeDoubleClick}
-              nodeTypes={nodeTypes}
-              edgeTypes={edgeTypes}
-              nodesDraggable={tool === 'select'}
-              nodesConnectable={tool !== 'meter'}
-              // Click-to-connect is OUR gesture now (onWireClick, wire tool
-              // only, with corner routing); React Flow's built-in one would
-              // double-create — and it once let meter probes draw real wires.
-              connectOnClick={false}
-              connectionMode={ConnectionMode.Loose}
-              // Desktop-style selection (S19-v3-69): LEFT-drag on empty canvas
-              // draws a selection box (like desktop icons), so panning moves to
-              // the middle/right mouse buttons. Touching the box counts —
-              // SelectionMode.Partial — exactly how a desktop marquee behaves.
-              // In lasso mode the wrapper owns the pointer, so both are off.
-              selectionOnDrag={tool === 'select'}
-              panOnDrag={tool === 'lasso' ? false : [1, 2]}
-              selectionMode={SelectionMode.Partial}
-              // Windows-friendly multi-select: Ctrl+click (React Flow's default
-              // is the Meta key); Shift+drag box-select is the built-in default.
-              multiSelectionKeyCode={['Meta', 'Control']}
-              // Deletion is OUR keybind now (editable, supports combos) — see
-              // the keyboard-shortcuts effect above.
-              deleteKeyCode={null}
-              zoomOnDoubleClick={false}
-              fitView
-              proOptions={{ hideAttribution: true }}
-            >
-              {/* Graph-paper grid: fine minor lines, with a bolder major line every 5th. */}
-              <Background
-                id="grid-minor"
-                variant={BackgroundVariant.Lines}
-                gap={4}
-                lineWidth={0.5}
-                color={`${gridColor}55`}
-              />
-              <Background
-                id="grid-major"
-                variant={BackgroundVariant.Lines}
-                gap={20}
-                lineWidth={1}
-                color={gridColor}
-              />
-              <Controls />
-              <MeterProbes red={redProbe} black={blackProbe} />
-              {pendingWire !== null ? (
-                <PendingWirePreview
-                  pending={pendingWire}
-                  cursor={wireCursor}
-                  curved={wireStyle === 'curve'}
+            <CheckpointContext.Provider value={checkpointAction}>
+              <ReactFlow
+                colorMode={theme}
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onReconnect={onReconnect}
+                onNodeDoubleClick={onNodeDoubleClick}
+                onNodeDragStart={() => checkpointAction('move')}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                nodesDraggable={tool === 'select'}
+                nodesConnectable={tool !== 'meter'}
+                // Click-to-connect is OUR gesture now (onWireClick, wire tool
+                // only, with corner routing); React Flow's built-in one would
+                // double-create — and it once let meter probes draw real wires.
+                connectOnClick={false}
+                connectionMode={ConnectionMode.Loose}
+                // Desktop-style selection (S19-v3-69): LEFT-drag on empty canvas
+                // draws a selection box (like desktop icons), so panning moves to
+                // the middle/right mouse buttons. Touching the box counts —
+                // SelectionMode.Partial — exactly how a desktop marquee behaves.
+                // In lasso mode the wrapper owns the pointer, so both are off.
+                selectionOnDrag={tool === 'select'}
+                panOnDrag={tool === 'lasso' ? false : [1, 2]}
+                selectionMode={SelectionMode.Partial}
+                // Windows-friendly multi-select: Ctrl+click (React Flow's default
+                // is the Meta key); Shift+drag box-select is the built-in default.
+                multiSelectionKeyCode={['Meta', 'Control']}
+                // Deletion is OUR keybind now (editable, supports combos) — see
+                // the keyboard-shortcuts effect above.
+                deleteKeyCode={null}
+                zoomOnDoubleClick={false}
+                // Effectively unbounded zoom (React Flow defaults stop at 0.5×–2×):
+                // the project's horizon runs from a full PC down to a transistor,
+                // so the canvas must zoom six orders of magnitude either way.
+                minZoom={0.001}
+                maxZoom={1000}
+                fitView
+                proOptions={{ hideAttribution: true }}
+              >
+                {/* Graph-paper grid: fine minor lines, with a bolder major line every 5th. */}
+                <Background
+                  id="grid-minor"
+                  variant={BackgroundVariant.Lines}
+                  gap={4}
+                  lineWidth={0.5}
+                  color={`${gridColor}55`}
                 />
-              ) : null}
-            </ReactFlow>
+                <Background
+                  id="grid-major"
+                  variant={BackgroundVariant.Lines}
+                  gap={20}
+                  lineWidth={1}
+                  color={gridColor}
+                />
+                <Controls />
+                <MeterProbes red={redProbe} black={blackProbe} />
+                {/* Scope channel probes (S19-v3-77): one colored clip per channel. */}
+                {scopeOpen
+                  ? scopeProbes.map((p, i) => (
+                      <ProbeMarker
+                        key={`${p.nodeId}/${p.handleId}`}
+                        probe={p}
+                        color={TRACE_COLORS[i % TRACE_COLORS.length] ?? '#888'}
+                        label={`CH${i + 1}`}
+                      />
+                    ))
+                  : null}
+                {pendingWire !== null ? (
+                  <PendingWirePreview
+                    pending={pendingWire}
+                    cursor={wireCursor}
+                    curved={wireStyle === 'curve'}
+                    curveRadius={wireCurveRadius}
+                  />
+                ) : null}
+              </ReactFlow>
+            </CheckpointContext.Provider>
           </LensContext.Provider>
         </HealthContext.Provider>
 
@@ -1583,6 +1949,7 @@ function Canvas() {
 
         {/* The lasso trail — drawn in wrapper coordinates while dragging. */}
         {lassoPoints !== null ? (
+          // biome-ignore lint/a11y/noSvgWithoutTitle: decorative selection trail, hidden from the accessibility tree
           <svg
             aria-hidden
             style={{ position: 'absolute', inset: 0, zIndex: 30, pointerEvents: 'none' }}
@@ -1607,6 +1974,9 @@ function Canvas() {
             light={light}
           />
         ) : null}
+
+        {/* Side-to-side / up-down pan bars over the canvas (S19-v3-72). */}
+        <CanvasScrollbars nodes={nodes} />
 
         {/* Multimeter readout — mode dial (V⎓ / Ω) + the live reading. */}
         {meterReadout !== null ? (
@@ -1898,6 +2268,8 @@ function Canvas() {
           onTool={setTool}
           wireStyle={wireStyle}
           onWireStyle={setWireStyle}
+          curveRadius={wireCurveRadius}
+          onCurveRadius={setWireCurveRadius}
           alwaysOn={alwaysOn}
           onAlwaysOn={setAlwaysOn}
           onSolve={handleSolve}
@@ -1938,12 +2310,29 @@ function Canvas() {
           }}
         />
       </DockablePanel>
-      {scopeResult ? (
+      {scopeOpen ? (
         <DockablePanel edge={scopeEdge} onEdgeChange={setScopeEdge} light={light} title="Scope">
-          <ScopePlot result={scopeResult} light={light} />
+          <ScopePlot
+            result={scopeResult}
+            light={light}
+            windowDuration={scopeWindowSec}
+            channels={scopeChannels}
+            onRemoveChannel={(key) =>
+              setScopeProbes((current) =>
+                current.filter((p) => `${p.nodeId}/${p.handleId}` !== key),
+              )
+            }
+            secPerDiv={scopeSecPerDiv}
+            onSecPerDiv={setScopeSecPerDiv}
+            autoSecPerDiv={scopeAutoWindowSec / H_DIVISIONS}
+            refusal={scopeRefusal}
+          />
           <button
             type="button"
-            onClick={() => setScopeResult(null)}
+            onClick={() => {
+              setScopeResult(null)
+              setScopeRefusal(null)
+            }}
             className="nodrag"
             style={{
               background: 'none',

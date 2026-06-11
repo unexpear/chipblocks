@@ -32,4 +32,7 @@ contextBridge.exposeInMainWorld('chipblocks', {
   onEditCopy: (callback: () => void) => subscribe('edit:copy', callback),
   onEditCut: (callback: () => void) => subscribe('edit:cut', callback),
   onEditPaste: (callback: () => void) => subscribe('edit:paste', callback),
+  // Undo / redo (S19-v3-73): same shape — the renderer owns the history.
+  onEditUndo: (callback: () => void) => subscribe('edit:undo', callback),
+  onEditRedo: (callback: () => void) => subscribe('edit:redo', callback),
 })

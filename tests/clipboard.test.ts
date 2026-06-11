@@ -50,7 +50,7 @@ const edges: CanvasEdgeLike[] = [
     sourceHandle: 'terminal_b',
     target: 'led1',
     targetHandle: 'anode',
-    data: { waypoints: [{ id: 'wp1', x: 200, y: 80 }], curved: true },
+    data: { waypoints: [{ id: 'wp1', x: 200, y: 80 }], curved: true, curveRadius: 56 },
   },
   {
     id: 'w2',
@@ -70,6 +70,7 @@ describe('snapshotSelection', () => {
     // w2 reaches the unselected battery — it has nowhere to attach on paste.
     expect(item.edges.map((e) => e.id)).toEqual(['w1'])
     expect(item.edges[0]?.curved).toBe(true)
+    expect(item.edges[0]?.curveRadius).toBe(56) // the wire's own sweep size travels
     expect(item.edges[0]?.waypoints?.length).toBe(1)
     expect(item.label).toBe('resistor + led')
   })
@@ -134,10 +135,11 @@ describe('materializeItem', () => {
     // Original bbox center was (200, 100) → everything shifts by (+300, +300).
     expect(out.nodes.find((n) => n.id === 'r1_p7')?.position).toEqual({ x: 400, y: 400 })
     expect(out.nodes.find((n) => n.id === 'led1_p7')?.position).toEqual({ x: 600, y: 400 })
-    // Waypoints travel with the group (and get fresh ids).
+    // Waypoints travel with the group (and get fresh ids); the sweep size too.
     const wp = (out.edges[0]?.data?.waypoints as { id: string; x: number; y: number }[])[0]
     expect(wp).toMatchObject({ x: 500, y: 380 })
     expect(wp?.id).not.toBe('wp1')
+    expect(out.edges[0]?.data?.curveRadius).toBe(56)
     // Pasted parts arrive selected, ready to drag as a group.
     expect(out.nodes.every((n) => n.selected === true)).toBe(true)
     // Values are kept (and rotation).

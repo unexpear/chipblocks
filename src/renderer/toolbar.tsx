@@ -1,5 +1,6 @@
 import type { LensMode } from './lens.ts'
 import { DeviceGlyph } from './symbols.tsx'
+import { CURVE_SIZES } from './wire-path.ts'
 
 /**
  * Tools toolbar (Sprint 19 S19-v3-10; physics controls S19-v3-14). Tools — as
@@ -23,6 +24,8 @@ export function ToolbarItems({
   onTool,
   wireStyle,
   onWireStyle,
+  curveRadius,
+  onCurveRadius,
   alwaysOn,
   onAlwaysOn,
   onSolve,
@@ -41,6 +44,8 @@ export function ToolbarItems({
   onTool: (tool: Tool) => void
   wireStyle: WireStyle
   onWireStyle: (style: WireStyle) => void
+  curveRadius: number
+  onCurveRadius: (radiusPx: number) => void
   alwaysOn: boolean
   onAlwaysOn: (on: boolean) => void
   onSolve: () => void
@@ -103,6 +108,35 @@ export function ToolbarItems({
             </span>
             <span style={{ fontSize: 11 }}>Curve</span>
           </button>
+          {wireStyle === 'curve' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 6 }}>
+              {CURVE_SIZES.map((size) => (
+                <button
+                  key={size.label}
+                  type="button"
+                  onClick={() => onCurveRadius(size.radiusPx)}
+                  title={`${size.hint} — the wire starts bending ${size.radiusPx} mm before each corner (clamped on short hops). A bigger sweep cuts more of the corner, so the wire is really shorter: less resistance, measured for real. Applies to wires drawn from now on; every wire keeps its own size.`}
+                  style={{
+                    ...toolButton(curveRadius === size.radiusPx),
+                    flexDirection: 'row',
+                    gap: 6,
+                    padding: '3px 8px',
+                  }}
+                >
+                  {/* biome-ignore lint/a11y/noSvgWithoutTitle: decorative curve-size icon; the button's title carries the text */}
+                  <svg aria-hidden width={22} height={14} viewBox="0 0 22 14">
+                    <path
+                      d={`M 1 13 L ${11 - size.radiusPx / 7} 13 Q 11 13 11 ${13 - size.radiusPx / 7} L 11 1`}
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={1.5}
+                    />
+                  </svg>
+                  <span style={{ fontSize: 10 }}>{size.label}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
