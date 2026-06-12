@@ -93,11 +93,11 @@ export const TRACE_COLORS = [
 ]
 
 /**
- * One scope channel. A VOLTAGE channel reads its net directly; a CURRENT
- * channel (S19-v3-83, a clamp on a wire) reads (vA−vB)/R of that wire — the
- * wire is a real resistor the solver already solved, so its branch current
- * at every step is exact Ohm's law, no current invented. Like a real clamp,
- * it goes around a WIRE — and every branch has one.
+ * One scope channel. A VOLTAGE channel reads its net directly; a wire-clamp
+ * CURRENT channel (S19-v3-83) reads (vA−vB)/R of the clamped wire — exact
+ * Ohm's law on solved voltages; a PART current channel (S20-v3-3) reads the
+ * device's terminal current the solver RECORDED at every step — the MNA
+ * auxiliary variables and device laws themselves, no current invented.
  */
 export type ScopeChannel = {
   key: string
@@ -105,37 +105,53 @@ export type ScopeChannel = {
   unit: 'V' | 'A'
   /** Voltage channels: the net to read. */
   net?: string
-  /** Current channels: the clamped wire's two nets and its real resistance. */
+  /** Wire clamps: the clamped wire's two nets and its real resistance. */
   diff?: { netA: string; netB: string; ohms: number }
+  /** Part currents: the recorded-currents key (`instanceId/terminal`). */
+  device?: { currentKey: string }
+}
+
+/** One solved instant — node voltages plus the recorded terminal currents. */
+export type ScopeSamplePoint = {
+  nodes: Map<string, number>
+  currents?: Map<string, number>
 }
 
 /** The channel's value at one solved instant — every consumer reads through this. */
-export function channelValue(channel: ScopeChannel, nodes: Map<string, number>): number {
+export function channelValue(channel: ScopeChannel, point: ScopeSamplePoint): number {
+  if (channel.device !== undefined) {
+    return point.currents?.get(channel.device.currentKey) ?? 0
+  }
   if (channel.diff !== undefined) {
     return (
-      ((nodes.get(channel.diff.netA) ?? 0) - (nodes.get(channel.diff.netB) ?? 0)) /
+      ((point.nodes.get(channel.diff.netA) ?? 0) - (point.nodes.get(channel.diff.netB) ?? 0)) /
       channel.diff.ohms
     )
   }
-  return channel.net !== undefined ? (nodes.get(channel.net) ?? 0) : 0
-}
-
-/** A probe: clipped on a terminal (volts) or clamped around a wire (amps). */
-export type ScopeProbe =
-  | { kind: 'terminal'; nodeId: string; handleId: string }
-  | { kind: 'wire'; edgeId: string }
-
-export function scopeProbeKey(probe: ScopeProbe): string {
-  return probe.kind === 'terminal' ? `${probe.nodeId}/${probe.handleId}` : `clamp:${probe.edgeId}`
+  return channel.net !== undefined ? (point.nodes.get(channel.net) ?? 0) : 0
 }
 
 /**
- * Channels from the user's probes (S19-v3-77; clamps S19-v3-83): a probe
- * whose terminal or wire no longer resolves (the part was deleted) is
- * dropped, never invented. A clamped wire with no real resistance (a 0 Ω
- * ideal short) is also dropped — ΔV/R can't read it. Pure — the App supplies
- * the terminal→net lookup (the same one the multimeter probes use) and the
- * wire lookup.
+ * A probe: clipped on a terminal (volts), clamped around a wire (amps), or
+ * clamped on a part's body (the device's own recorded current, amps).
+ */
+export type ScopeProbe =
+  | { kind: 'terminal'; nodeId: string; handleId: string }
+  | { kind: 'wire'; edgeId: string }
+  | { kind: 'part'; nodeId: string }
+
+export function scopeProbeKey(probe: ScopeProbe): string {
+  if (probe.kind === 'terminal') return `${probe.nodeId}/${probe.handleId}`
+  if (probe.kind === 'wire') return `clamp:${probe.edgeId}`
+  return `part:${probe.nodeId}`
+}
+
+/**
+ * Channels from the user's probes (S19-v3-77; clamps S19-v3-83; part
+ * currents S20-v3-3): a probe whose terminal, wire, or part no longer
+ * resolves (deleted) is dropped, never invented. A clamped wire with no real
+ * resistance (a 0 Ω ideal short) is also dropped — ΔV/R can't read it. Pure —
+ * the App supplies the lookups (the terminal→net one is the multimeter's).
  */
 export function channelsForProbes(
   probes: ScopeProbe[],
@@ -143,6 +159,7 @@ export function channelsForProbes(
   wireOf: (
     edgeId: string,
   ) => { netA: string; netB: string; ohms: number; label: string } | undefined,
+  partOf: (nodeId: string) => { currentKey: string; label: string } | undefined,
 ): ScopeChannel[] {
   const channels: ScopeChannel[] = []
   for (const probe of probes) {
@@ -158,13 +175,24 @@ export function channelsForProbes(
       })
       continue
     }
-    const wire = wireOf(probe.edgeId)
-    if (wire === undefined || !(wire.ohms > 0)) continue
+    if (probe.kind === 'wire') {
+      const wire = wireOf(probe.edgeId)
+      if (wire === undefined || !(wire.ohms > 0)) continue
+      channels.push({
+        key: scopeProbeKey(probe),
+        label: wire.label,
+        unit: 'A',
+        diff: { netA: wire.netA, netB: wire.netB, ohms: wire.ohms },
+      })
+      continue
+    }
+    const part = partOf(probe.nodeId)
+    if (part === undefined) continue
     channels.push({
       key: scopeProbeKey(probe),
-      label: wire.label,
+      label: part.label,
       unit: 'A',
-      diff: { netA: wire.netA, netB: wire.netB, ohms: wire.ohms },
+      device: { currentKey: part.currentKey },
     })
   }
   return channels
@@ -229,7 +257,7 @@ function widestSwingChannel(
     let lo = Number.POSITIVE_INFINITY
     let hi = Number.NEGATIVE_INFINITY
     for (const pt of series) {
-      const v = channelValue(channel, pt.nodes)
+      const v = channelValue(channel, pt)
       if (v < lo) lo = v
       if (v > hi) hi = v
     }
@@ -311,8 +339,7 @@ export function ScopePlot({
   const pickedChannel =
     trigSource === 'auto' ? undefined : channels.find((c) => c.key === trigSource)
   const sourceChannel = pickedChannel ?? widestSwingChannel(series, channels)
-  const samples =
-    sourceChannel === null ? [] : series.map((p) => channelValue(sourceChannel, p.nodes))
+  const samples = sourceChannel === null ? [] : series.map((p) => channelValue(sourceChannel, p))
   const parsedLevel = Number.parseFloat(levelText)
   const level =
     levelText.trim() === 'auto' || Number.isNaN(parsedLevel) ? autoLevel(samples) : parsedLevel
@@ -459,9 +486,11 @@ export function ScopePlot({
     if (solved && channels.length === 0) {
       return (
         <div style={{ fontSize: 11, color: textColor, maxWidth: 320, fontFamily: 'system-ui' }}>
-          No probes attached. With the Scope open (and the plain select tool), CLICK terminal dots
-          on the canvas to clip a probe there — each probed point becomes a colored channel, like
-          clipping real scope leads where you care. Click a dot again to unclip it.
+          No probes attached. With the Scope open (and the plain select tool): CLICK a terminal dot
+          for that point's VOLTAGE, click a WIRE to clamp its CURRENT, or ALT+CLICK a part's body
+          for the part's own current — each becomes a colored channel, like clipping real leads
+          where you care. The same gesture again unclips it. Tip: a voltage channel as X and a part
+          current as Y in XY mode draws the part's I-V curve — the curve tracer.
         </div>
       )
     }
@@ -493,7 +522,7 @@ export function ScopePlot({
     let lo = Number.POSITIVE_INFINITY
     let hi = Number.NEGATIVE_INFINITY
     for (const pt of fitPoints) {
-      const v = channelValue(channel, pt.nodes)
+      const v = channelValue(channel, pt)
       if (v < lo) lo = v
       if (v > hi) hi = v
     }
@@ -524,7 +553,7 @@ export function ScopePlot({
     sweep.sourceKey !== null ? sweep.channels.find((c) => c.key === sweep.sourceKey) : undefined
   const cursorSeries =
     cursorsOn && sweepSourceChannel !== undefined
-      ? points.map((p) => ({ t: p.time - tZero, v: channelValue(sweepSourceChannel, p.nodes) }))
+      ? points.map((p) => ({ t: p.time - tZero, v: channelValue(sweepSourceChannel, p) }))
       : null
   const cursorAt = (frac: number) => {
     const t = tFirst + frac * (tLast - tFirst)
@@ -554,16 +583,16 @@ export function ScopePlot({
       ? mathResultUnit(mathAChannel.unit, mathBChannel.unit, mathOp)
       : null
   const mathOn = mathOp !== 'off' && mathUnit !== null
-  const mathValueAt = (nodes: Map<string, number>): number => {
-    const a = mathAChannel !== undefined ? channelValue(mathAChannel, nodes) : 0
-    const b = mathBChannel !== undefined ? channelValue(mathBChannel, nodes) : 0
+  const mathValueAt = (point: ScopeSamplePoint): number => {
+    const a = mathAChannel !== undefined ? channelValue(mathAChannel, point) : 0
+    const b = mathBChannel !== undefined ? channelValue(mathBChannel, point) : 0
     return mathOp === 'mul' ? a * b : a - b
   }
   if (mathOn) {
     let lo = Number.POSITIVE_INFINITY
     let hi = Number.NEGATIVE_INFINITY
     for (const pt of fitPoints) {
-      const v = mathValueAt(pt.nodes)
+      const v = mathValueAt(pt)
       if (v < lo) lo = v
       if (v > hi) hi = v
     }
@@ -586,7 +615,7 @@ export function ScopePlot({
           label: `CH${i + 1}`,
           color: TRACE_COLORS[i % TRACE_COLORS.length] ?? MATH_COLOR,
           unit: channel.unit as string,
-          m: measureSeries(points.map((p) => ({ t: p.time, v: channelValue(channel, p.nodes) }))),
+          m: measureSeries(points.map((p) => ({ t: p.time, v: channelValue(channel, p) }))),
         })),
         ...(mathOn && mathUnit !== null
           ? [
@@ -595,7 +624,7 @@ export function ScopePlot({
                 label: `M ${mathLabel}`,
                 color: MATH_COLOR,
                 unit: mathUnit,
-                m: measureSeries(points.map((p) => ({ t: p.time, v: mathValueAt(p.nodes) }))),
+                m: measureSeries(points.map((p) => ({ t: p.time, v: mathValueAt(p) }))),
               },
             ]
           : []),
@@ -614,7 +643,7 @@ export function ScopePlot({
   const spectrum =
     fftInput !== null && sweepSourceChannel !== undefined
       ? fftMagnitudes(
-          fftInput.map((p) => channelValue(sweepSourceChannel, p.nodes)),
+          fftInput.map((p) => channelValue(sweepSourceChannel, p)),
           dt,
         )
       : null
@@ -668,14 +697,14 @@ export function ScopePlot({
       ...sweep.channels.map((channel) => ({
         label: channel.label,
         unit: channel.unit as string,
-        values: points.map((p) => channelValue(channel, p.nodes)),
+        values: points.map((p) => channelValue(channel, p)),
       })),
       ...(mathOn && mathUnit !== null
         ? [
             {
               label: `M ${mathLabel}`,
               unit: mathUnit,
-              values: points.map((p) => mathValueAt(p.nodes)),
+              values: points.map((p) => mathValueAt(p)),
             },
           ]
         : []),
@@ -702,7 +731,7 @@ export function ScopePlot({
     let lo = Number.POSITIVE_INFINITY
     let hi = Number.NEGATIVE_INFINITY
     for (const pt of points) {
-      const v = channelValue(channel, pt.nodes)
+      const v = channelValue(channel, pt)
       if (v < lo) lo = v
       if (v > hi) hi = v
     }
@@ -1091,7 +1120,7 @@ export function ScopePlot({
                 points={points
                   .map(
                     (p) =>
-                      `${xyXPos(channelValue(xyXChannel, p.nodes))},${yFor(xyYChannel.key)(channelValue(xyYChannel, p.nodes))}`,
+                      `${xyXPos(channelValue(xyXChannel, p))},${yFor(xyYChannel.key)(channelValue(xyYChannel, p))}`,
                   )
                   .join(' ')}
               />
@@ -1121,7 +1150,7 @@ export function ScopePlot({
                     points={ghost.points
                       .map(
                         (p) =>
-                          `${x(p.time - ghostTZero)},${yFor(channel.key)(channelValue(channel, p.nodes))}`,
+                          `${x(p.time - ghostTZero)},${yFor(channel.key)(channelValue(channel, p))}`,
                       )
                       .join(' ')}
                   />
@@ -1137,7 +1166,7 @@ export function ScopePlot({
                   stroke={TRACE_COLORS[i % TRACE_COLORS.length]}
                   strokeWidth={channel.key === sweep.sourceKey ? 2 : 1.4}
                   points={points
-                    .map((p) => `${x(p.time - tZero)},${yChannel(channelValue(channel, p.nodes))}`)
+                    .map((p) => `${x(p.time - tZero)},${yChannel(channelValue(channel, p))}`)
                     .join(' ')}
                 />
               )
@@ -1149,7 +1178,7 @@ export function ScopePlot({
                 strokeWidth={1.4}
                 strokeDasharray="7 3"
                 points={points
-                  .map((p) => `${x(p.time - tZero)},${yFor(MATH_KEY)(mathValueAt(p.nodes))}`)
+                  .map((p) => `${x(p.time - tZero)},${yFor(MATH_KEY)(mathValueAt(p))}`)
                   .join(' ')}
               />
             ) : null}

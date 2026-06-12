@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, test } from 'vitest'
+import { diodeCurrent, thermalVoltage } from '../src/diode-model.ts'
 import { canvasToWorld } from '../src/renderer/canvas-to-world.ts'
 import {
   channelsForProbes,
@@ -29,6 +30,7 @@ describe('channelsForProbes', () => {
     ['w0', { netA: 'net_3', netB: 'net_5', ohms: 0, label: 'ideal short' }],
   ])
   const wireOf = (id: string) => wires.get(id)
+  const partOf = (_: string) => undefined
 
   test('each probed terminal becomes a labeled voltage channel on its net', () => {
     const channels = channelsForProbes(
@@ -38,6 +40,7 @@ describe('channelsForProbes', () => {
       ],
       lookup,
       wireOf,
+      partOf,
     )
     expect(channels).toEqual([
       { key: 'led_001/anode', label: 'led_001 · anode', unit: 'V', net: 'net_3' },
@@ -46,7 +49,7 @@ describe('channelsForProbes', () => {
   })
 
   test('a clamped wire becomes a current channel carrying its nets and ohms', () => {
-    const channels = channelsForProbes([{ kind: 'wire', edgeId: 'w1' }], lookup, wireOf)
+    const channels = channelsForProbes([{ kind: 'wire', edgeId: 'w1' }], lookup, wireOf, partOf)
     expect(channels).toEqual([
       {
         key: 'clamp:w1',
@@ -66,12 +69,13 @@ describe('channelsForProbes', () => {
       ],
       lookup,
       wireOf,
+      partOf,
     )
     expect(channels.map((c) => c.key)).toEqual(['led_001/cathode'])
   })
 
   test('a 0 Ω ideal short cannot be clamped — ΔV/R has no answer there', () => {
-    expect(channelsForProbes([{ kind: 'wire', edgeId: 'w0' }], lookup, wireOf)).toEqual([])
+    expect(channelsForProbes([{ kind: 'wire', edgeId: 'w0' }], lookup, wireOf, partOf)).toEqual([])
   })
 
   test('two probes on the same net stay two channels (overlapping traces are honest)', () => {
@@ -83,20 +87,24 @@ describe('channelsForProbes', () => {
       ],
       sameNet,
       wireOf,
+      partOf,
     )
     expect(channels.length).toBe(2)
   })
 })
 
 describe('channelValue', () => {
-  const nodes = new Map([
-    ['net_a', 9.0],
-    ['net_b', 8.99906],
-  ])
+  const point = {
+    nodes: new Map([
+      ['net_a', 9.0],
+      ['net_b', 8.99906],
+    ]),
+    currents: new Map([['d1/anode', 0.0149]]),
+  }
 
   test('a voltage channel reads its net', () => {
     const channel: ScopeChannel = { key: 'k', label: 'l', unit: 'V', net: 'net_a' }
-    expect(channelValue(channel, nodes)).toBe(9.0)
+    expect(channelValue(channel, point)).toBe(9.0)
   })
 
   test('a current channel reads the wire by Ohm’s law: (vA−vB)/R', () => {
@@ -106,7 +114,39 @@ describe('channelValue', () => {
       unit: 'A',
       diff: { netA: 'net_a', netB: 'net_b', ohms: 0.002 },
     }
-    expect(channelValue(channel, nodes)).toBeCloseTo(0.47, 3)
+    expect(channelValue(channel, point)).toBeCloseTo(0.47, 3)
+  })
+
+  test('a part channel reads the device’s recorded terminal current', () => {
+    const channel: ScopeChannel = {
+      key: 'part:d1',
+      label: 'd1 · I(anode→cathode)',
+      unit: 'A',
+      device: { currentKey: 'd1/anode' },
+    }
+    expect(channelValue(channel, point)).toBe(0.0149)
+  })
+
+  test('a part probe resolves through the part lookup, and drops when absent', () => {
+    const partOf = (id: string) =>
+      id === 'd1' ? { currentKey: 'd1/anode', label: 'd1 · I(anode→cathode)' } : undefined
+    const channels = channelsForProbes(
+      [
+        { kind: 'part', nodeId: 'd1' },
+        { kind: 'part', nodeId: 'ground_1' },
+      ],
+      () => undefined,
+      () => undefined,
+      partOf,
+    )
+    expect(channels).toEqual([
+      {
+        key: 'part:d1',
+        label: 'd1 · I(anode→cathode)',
+        unit: 'A',
+        device: { currentKey: 'd1/anode' },
+      },
+    ])
   })
 })
 
@@ -125,6 +165,113 @@ describe('mathResultUnit', () => {
     expect(mathResultUnit('V', 'V', 'sub')).toBe('V')
     expect(mathResultUnit('A', 'A', 'sub')).toBe('A')
     expect(mathResultUnit('V', 'A', 'sub')).toBeNull()
+  })
+})
+
+describe('the curve tracer identity (S20-v3-3): swept V-I pairs lie ON the device law', () => {
+  test('diode exponential and resistor line, from one AC sweep', () => {
+    const world = canvasToWorld(
+      [
+        {
+          id: 'src',
+          definition: 'power_source',
+          parameters: {
+            nominal_voltage: { value: { kind: 'scalar', amount: 0, unit: 'volt' } },
+            ac_amplitude: { value: { kind: 'scalar', amount: 5, unit: 'volt' } },
+            frequency: { value: { kind: 'scalar', amount: 1000, unit: 'hertz' } },
+            internal_resistance: { value: { kind: 'scalar', amount: 0, unit: 'ohm' } },
+          },
+        },
+        {
+          id: 'r1',
+          definition: 'resistor',
+          parameters: { resistance: { value: { kind: 'scalar', amount: 470, unit: 'ohm' } } },
+        },
+        {
+          id: 'd1',
+          definition: 'led',
+          parameters: {
+            forward_voltage: { value: { kind: 'scalar', amount: 2, unit: 'volt' } },
+            max_forward_current: { value: { kind: 'scalar', amount: 0.02, unit: 'ampere' } },
+            ideality_factor: { value: { kind: 'scalar', amount: 2, unit: 'dimensionless' } },
+          },
+        },
+        { id: 'gnd', definition: 'ground' },
+      ],
+      [
+        {
+          id: 'e1',
+          source: 'src',
+          target: 'r1',
+          sourceHandle: 'terminal_positive',
+          targetHandle: 'terminal_a',
+        },
+        {
+          id: 'e2',
+          source: 'r1',
+          target: 'd1',
+          sourceHandle: 'terminal_b',
+          targetHandle: 'anode',
+        },
+        {
+          id: 'e3',
+          source: 'd1',
+          target: 'src',
+          sourceHandle: 'cathode',
+          targetHandle: 'terminal_negative',
+        },
+        {
+          id: 'e4',
+          source: 'gnd',
+          target: 'src',
+          sourceHandle: 'reference_terminal',
+          targetHandle: 'terminal_negative',
+        },
+      ],
+    )
+    const result = solveTransient(world, { timeStep: 2e-6, duration: 1e-3 })
+    expect(result.status).toBe('solved')
+
+    const anodeNet = world.instances.get('d1')?.connects?.find((c) => c.terminal === 'anode')?.net
+    const cathodeNet = world.instances
+      .get('d1')
+      ?.connects?.find((c) => c.terminal === 'cathode')?.net
+    const r1NetA = world.instances.get('r1')?.connects?.[0]?.net
+    const r1NetB = world.instances.get('r1')?.connects?.[1]?.net
+    const r1Term = world.instances.get('r1')?.connects?.[0]?.terminal
+    if (
+      anodeNet === undefined ||
+      cathodeNet === undefined ||
+      r1NetA === undefined ||
+      r1NetB === undefined ||
+      r1Term === undefined
+    ) {
+      throw new Error('missing nets')
+    }
+    const diodeV: ScopeChannel = { key: 'x', label: 'x', unit: 'V', net: anodeNet }
+    const diodeI: ScopeChannel = {
+      key: 'y',
+      label: 'y',
+      unit: 'A',
+      device: { currentKey: 'd1/anode' },
+    }
+    const vT = thermalVoltage()
+    const iS = 0.02 / (Math.exp(2 / (2 * vT)) - 1)
+    for (const p of result.series) {
+      // The diode's (V, I) pair sits on the Shockley exponential — the
+      // cathode is at the source return (not exactly ground: it shares the
+      // net with the source negative through real solving), so take the
+      // junction voltage from both nets.
+      const v = (p.nodes.get(anodeNet) ?? 0) - (p.nodes.get(cathodeNet) ?? 0)
+      const i = channelValue(diodeI, p)
+      expect(i).toBeCloseTo(diodeCurrent(v, iS, 2, vT), 9)
+      // The resistor's (V, I) pair sits on the straight line of slope 1/R.
+      const vR = (p.nodes.get(r1NetA) ?? 0) - (p.nodes.get(r1NetB) ?? 0)
+      const iR = p.currents?.get(`r1/${r1Term}`) ?? Number.NaN
+      expect(iR).toBeCloseTo(vR / 470, 9)
+      // And the X channel really is the plottable anode voltage.
+      expect(channelValue(diodeV, p)).toBe(p.nodes.get(anodeNet) ?? 0)
+    }
   })
 })
 
@@ -192,6 +339,6 @@ describe('clamp current against the solved circuit (the analytic check)', () => 
     const last = result.series[result.series.length - 1]
     if (last === undefined) throw new Error('no samples')
     const expected = 9 / (50 + 850 + 2 * wireOhms)
-    expect(channelValue(clamp, last.nodes)).toBeCloseTo(expected, 6)
+    expect(channelValue(clamp, last)).toBeCloseTo(expected, 6)
   })
 })

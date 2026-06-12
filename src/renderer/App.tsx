@@ -885,16 +885,16 @@ function Canvas() {
     if (scopeOpen) runScope()
   }, [scopeOpen, runScope])
 
-  // Clip / unclip a scope probe (S19-v3-77; clamps S19-v3-83): with the Scope
-  // open and the plain select tool, clicking a terminal dot toggles a VOLTAGE
-  // channel there; clicking a WIRE clamps a CURRENT channel around it — the
-  // clamp-meter idiom, and every branch has a wire. Returns whether the click
-  // was consumed (so it doesn't also select the part/wire).
+  // Clip / unclip a scope probe (S19-v3-77; clamps S19-v3-83; part currents
+  // S20-v3-3): with the Scope open and the plain select tool, clicking a
+  // terminal dot toggles a VOLTAGE channel there; clicking a WIRE clamps a
+  // CURRENT channel around it; ALT+clicking a part's BODY clamps the part's
+  // own recorded current (the curve tracer's Y axis). Plain body clicks stay
+  // selection. Returns whether the click was consumed.
   const onScopeProbeClick = useCallback(
     (event: ReactMouseEvent): boolean => {
       if (!scopeOpen || tool !== 'select') return false
       const target = event.target as Element
-      const handleEl = target.closest?.('.react-flow__handle') as HTMLElement | null
       const toggle = (probe: ScopeProbe) => {
         const key = scopeProbeKey(probe)
         setScopeProbes((current) =>
@@ -904,6 +904,14 @@ function Canvas() {
         )
         event.stopPropagation()
       }
+      if (event.altKey) {
+        const nodeEl = target.closest?.('.react-flow__node') as HTMLElement | null
+        const nodeId = nodeEl?.getAttribute('data-id')
+        if (nodeId === null || nodeId === undefined) return false
+        toggle({ kind: 'part', nodeId })
+        return true
+      }
+      const handleEl = target.closest?.('.react-flow__handle') as HTMLElement | null
       if (handleEl !== null) {
         const nodeId = handleEl.dataset.nodeid
         const handleId = handleEl.dataset.handleid
@@ -924,6 +932,62 @@ function Canvas() {
     },
     [scopeOpen, tool],
   )
+
+  // Each probeable PART's recorded-current key (S20-v3-3): which terminal's
+  // current the solver records as "the" device current, per definition —
+  // fixed names where the device has them (anode, collector, drain, +), the
+  // instance's own first connect for symmetric two-leads (so the label can
+  // state the direction honestly). Parts with no recorded element current
+  // (ground, junctions, expanded multi-lead sources, blocks) resolve to
+  // nothing and the probe is dropped, never invented.
+  const scopePartInfo = useMemo(() => {
+    const DIODES = new Set([
+      'led',
+      'led_uv_algan',
+      'diode_silicon_rectifier',
+      'diode_schottky_al_si',
+    ])
+    const info = new Map<string, { currentKey: string; label: string }>()
+    for (const inst of solvedWorld.instances.values()) {
+      const id = inst.id
+      if (DIODES.has(inst.definition)) {
+        info.set(id, { currentKey: `${id}/anode`, label: `${id} · I(anode→cathode)` })
+      } else if (inst.definition === 'power_source') {
+        info.set(id, { currentKey: `${id}/terminal_positive`, label: `${id} · I(+→−)` })
+      } else if (
+        inst.definition === 'transistor_bjt_npn' ||
+        inst.definition === 'transistor_bjt_pnp'
+      ) {
+        info.set(id, { currentKey: `${id}/collector`, label: `${id} · I(collector)` })
+      } else if (
+        inst.definition === 'transistor_mosfet_nmos' ||
+        inst.definition === 'transistor_mosfet_pmos'
+      ) {
+        info.set(id, { currentKey: `${id}/drain`, label: `${id} · I(drain)` })
+      } else if (inst.definition === 'switch_spst_toggle') {
+        info.set(id, { currentKey: `${id}/terminal_in`, label: `${id} · I(in→out)` })
+      } else if (
+        inst.definition === 'transformer' ||
+        inst.definition === 'transformer_center_tapped'
+      ) {
+        info.set(id, { currentKey: `${id}/primary_a`, label: `${id} · I(primary)` })
+      } else if (
+        inst.definition === 'resistor' ||
+        inst.definition === 'capacitor' ||
+        inst.definition === 'inductor'
+      ) {
+        const c1 = inst.connects?.[0]
+        const c2 = inst.connects?.[1]
+        if (c1 === undefined || c2 === undefined) continue
+        const short = (t: string) => t.replace(/^terminal_/, '')
+        info.set(id, {
+          currentKey: `${id}/${c1.terminal}`,
+          label: `${id} · I(${short(c1.terminal)}→${short(c2.terminal)})`,
+        })
+      }
+    }
+    return info
+  }, [solvedWorld])
 
   // Each drawn wire's two nets + real resistance, for the scope's clamps —
   // from the SAME world the solves use (wire instance ids are wire_<edgeId>).
@@ -1046,8 +1110,9 @@ function Canvas() {
         scopeProbes,
         (key) => probeNets.get(key),
         (edgeId) => scopeWireInfo.get(edgeId),
+        (nodeId) => scopePartInfo.get(nodeId),
       ),
-    [scopeProbes, probeNets, scopeWireInfo],
+    [scopeProbes, probeNets, scopeWireInfo, scopePartInfo],
   )
   // The meter's display — live solved values; unwired points say so. The clamp
   // (when set) wins regardless of the dial: it reads amps, not the dial quantity.
