@@ -4,6 +4,7 @@ import { readScalarParam } from '../instance-params.ts'
 import type { TransientResult } from '../transient-solver.ts'
 import { scopeCsv } from './scope-csv.ts'
 import { cursorReadout, interpolateSeries } from './scope-cursors.ts'
+import { type FamilyStep, familyExtent } from './scope-family.ts'
 import { fftMagnitudes, spectrumPeak } from './scope-fft.ts'
 import { H_DIVISIONS, TIMEBASES, transformFor, V_DIVISIONS, VOLTS_PER_DIV } from './scope-scales.ts'
 import { alignSweep, autoLevel, type TriggerEdge, type TriggerMode } from './scope-trigger.ts'
@@ -283,6 +284,11 @@ export function ScopePlot({
   onSecPerDiv,
   autoSecPerDiv,
   refusal,
+  family,
+  familyNote,
+  familySources,
+  onTraceFamily,
+  onClearFamily,
 }: {
   result: TransientResult | null
   light: boolean
@@ -298,6 +304,26 @@ export function ScopePlot({
   autoSecPerDiv: number
   /** Honest-sampling refusal from the App; when set, no trace is drawn. */
   refusal: string | null
+  /** Family curves (S20-v3-4): a frozen set of stepped-source runs. */
+  family: {
+    steps: FamilyStep[]
+    xChannel: ScopeChannel
+    yChannel: ScopeChannel
+    sourceId: string
+    skipped: string[]
+  } | null
+  familyNote: string | null
+  /** The circuit's power sources — candidates for the stepped drive. */
+  familySources: string[]
+  onTraceFamily: (
+    xChannel: ScopeChannel,
+    yChannel: ScopeChannel,
+    sourceId: string,
+    from: number,
+    to: number,
+    count: number,
+  ) => void
+  onClearFamily: () => void
 }) {
   const textColor = light ? '#556' : '#9aa'
   const [trigSource, setTrigSource] = useState('auto')
@@ -325,6 +351,11 @@ export function ScopePlot({
   const [fftOn, setFftOn] = useState(false)
   // The extras (S19-v3-82): persistence ghosts, XY mode, CSV export.
   const [displayMode, setDisplayMode] = useState<'yt' | 'xy'>('yt')
+  // Family sweep settings (S20-v3-4) — the stepped source and its range.
+  const [famSource, setFamSource] = useState('')
+  const [famFrom, setFamFrom] = useState('2.5')
+  const [famTo, setFamTo] = useState('4')
+  const [famCount, setFamCount] = useState('5')
   const [persistOn, setPersistOn] = useState(false)
   const [ghosts, setGhosts] = useState<{ id: number; sweep: Sweep }[]>([])
   const prevSweepRef = useRef<Sweep | null>(null)
@@ -681,14 +712,38 @@ export function ScopePlot({
     )
   }
 
+  // Family curves (S20-v3-4): when a traced family is shown, the axes speak
+  // ITS union fit and ITS channels' units — one ruler for the whole family.
+  const famActive = xyOn && family !== null && family.steps.length > 0
+  const famExtent = famActive && family !== null ? familyExtent(family.steps) : null
+  const famXTf = famExtent !== null ? transformFor(famExtent.xLo, famExtent.xHi, 'auto') : null
+  const famYTf = famExtent !== null ? transformFor(famExtent.yLo, famExtent.yHi, 'auto') : null
+  const famXPos = (v: number): number =>
+    famXTf === null
+      ? MARGIN.left + innerW / 2
+      : MARGIN.left +
+        innerW / 2 +
+        ((v - famXTf.offsetVolts) / famXTf.voltsPerDiv) * (innerW / H_DIVISIONS)
+  const famYPos = (v: number): number =>
+    famYTf === null
+      ? centerY
+      : centerY - ((v - famYTf.offsetVolts) / famYTf.voltsPerDiv) * pxPerDivY
+
   // The vertical axis speaks the ▶ source channel in YT, the Y channel in XY
-  // — value AND unit (a clamp channel's axis reads amps).
-  const axisYTf = xyOn
-    ? xyYChannel !== undefined
-      ? transforms.get(xyYChannel.key)
-      : undefined
-    : sourceTf
-  const axisYUnit = (xyOn ? xyYChannel?.unit : sweepSourceChannel?.unit) ?? 'V'
+  // — value AND unit (a clamp channel's axis reads amps); a shown family
+  // overrides both with its own frozen fit.
+  const axisYTf =
+    famActive && famYTf !== null
+      ? famYTf
+      : xyOn
+        ? xyYChannel !== undefined
+          ? transforms.get(xyYChannel.key)
+          : undefined
+        : sourceTf
+  const axisYUnit =
+    famActive && family !== null
+      ? family.yChannel.unit
+      : ((xyOn ? xyYChannel?.unit : sweepSourceChannel?.unit) ?? 'V')
   const sourceUnit = sourceChannel?.unit ?? 'V'
   const fftUnit = sweepSourceChannel?.unit ?? 'V'
 
@@ -951,6 +1006,91 @@ export function ScopePlot({
           csv
         </button>
       </div>
+      {/* The family sweep (S20-v3-4): step one source across N values, run the
+          simulation once per step, overlay every run's (X, Y) path — the
+          device's characteristic family, the datasheet picture. */}
+      {xyOn ? (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            marginBottom: 4,
+            maxWidth: PLOT_W,
+            flexWrap: 'wrap',
+          }}
+        >
+          <span style={{ fontSize: 10, color: textColor }}>Family</span>
+          <select
+            value={famSource !== '' ? famSource : (familySources[0] ?? '')}
+            onChange={(e) => setFamSource(e.target.value)}
+            className="nodrag"
+            title="Which source to STEP between runs — the gate drive for a transistor family. Everything else in the circuit stays exactly as drawn."
+            style={{ ...controlStyle, maxWidth: 110 }}
+          >
+            {familySources.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </select>
+          <input
+            value={famFrom}
+            onChange={(e) => setFamFrom(e.target.value)}
+            className="nodrag"
+            title="The stepped source's FIRST voltage"
+            style={{ ...controlStyle, width: 34 }}
+          />
+          <span style={{ fontSize: 10, color: textColor }}>to</span>
+          <input
+            value={famTo}
+            onChange={(e) => setFamTo(e.target.value)}
+            className="nodrag"
+            title="The stepped source's LAST voltage"
+            style={{ ...controlStyle, width: 34 }}
+          />
+          <span style={{ fontSize: 10, color: textColor }}>×</span>
+          <input
+            value={famCount}
+            onChange={(e) => setFamCount(e.target.value)}
+            className="nodrag"
+            title="How many steps (2–8), evenly spaced, endpoints included"
+            style={{ ...controlStyle, width: 26 }}
+          />
+          <button
+            type="button"
+            className="nodrag"
+            onClick={() => {
+              if (!xyReady || xyXChannel === undefined || xyYChannel === undefined) return
+              const from = Number.parseFloat(famFrom)
+              const to = Number.parseFloat(famTo)
+              const count = Number.parseFloat(famCount)
+              if (Number.isNaN(from) || Number.isNaN(to) || Number.isNaN(count)) return
+              const sourceId = famSource !== '' ? famSource : (familySources[0] ?? '')
+              if (sourceId === '') return
+              onTraceFamily(xyXChannel, xyYChannel, sourceId, from, to, count)
+            }}
+            title="Run the simulation once per step (the chosen source's voltage overridden, nothing else touched) and overlay every run's X-vs-Y path. The picture FREEZES until you trace again or clear — N runs per edit would not be live, it would be lag. A step that fails to solve is named and skipped, never faked."
+            style={{ ...controlStyle, cursor: 'pointer' }}
+          >
+            trace
+          </button>
+          {family !== null ? (
+            <button
+              type="button"
+              className="nodrag"
+              onClick={onClearFamily}
+              title="Drop the traced family and go back to the live XY path"
+              style={{ ...controlStyle, cursor: 'pointer' }}
+            >
+              clear
+            </button>
+          ) : null}
+          {familyNote !== null ? (
+            <span style={{ fontSize: 10, color: textColor }}>{familyNote}</span>
+          ) : null}
+        </div>
+      ) : null}
 
       <svg
         width={PLOT_W}
@@ -1025,10 +1165,18 @@ export function ScopePlot({
               )
             })
           : null}
-        {/* XY's horizontal axis speaks the X channel's volts. */}
-        {xyOn && xyXChannel !== undefined
+        {/* XY's horizontal axis speaks the X channel's unit — the live fit,
+            or the family's frozen union fit when one is shown. */}
+        {xyOn && (famActive || xyXChannel !== undefined)
           ? [-H_DIVISIONS / 2, 0, H_DIVISIONS / 2].map((divs) => {
-              const tf = transforms.get(xyXChannel.key)
+              const tf =
+                famActive && famXTf !== null
+                  ? famXTf
+                  : xyXChannel !== undefined
+                    ? transforms.get(xyXChannel.key)
+                    : undefined
+              const unit =
+                famActive && family !== null ? family.xChannel.unit : (xyXChannel?.unit ?? 'V')
               if (tf === undefined) return null
               return (
                 <text
@@ -1039,7 +1187,7 @@ export function ScopePlot({
                   fill={textColor}
                   textAnchor="middle"
                 >
-                  {formatEng(tf.offsetVolts + divs * tf.voltsPerDiv, xyXChannel.unit, {
+                  {formatEng(tf.offsetVolts + divs * tf.voltsPerDiv, unit, {
                     signed: true,
                   })}
                 </text>
@@ -1104,7 +1252,19 @@ export function ScopePlot({
           />
         ) : null}
         {waitingInNormal ? null : xyOn ? (
-          xyReady && xyXChannel !== undefined && xyYChannel !== undefined ? (
+          famActive && family !== null ? (
+            <g clipPath="url(#scope-screen)">
+              {family.steps.map((step, i) => (
+                <polyline
+                  key={step.label}
+                  fill="none"
+                  stroke={TRACE_COLORS[i % TRACE_COLORS.length]}
+                  strokeWidth={1.6}
+                  points={step.path.map((p) => `${famXPos(p.x)},${famYPos(p.y)}`).join(' ')}
+                />
+              ))}
+            </g>
+          ) : xyReady && xyXChannel !== undefined && xyYChannel !== undefined ? (
             <g clipPath="url(#scope-screen)">
               <polyline
                 fill="none"
@@ -1257,6 +1417,28 @@ export function ScopePlot({
           </text>
         ) : null}
       </svg>
+      {/* The family legend: which color is which stepped value. */}
+      {famActive && family !== null ? (
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 10,
+            marginTop: 3,
+            maxWidth: PLOT_W,
+            fontSize: 10,
+          }}
+        >
+          {family.steps.map((step, i) => (
+            <span key={step.label} style={{ color: TRACE_COLORS[i % TRACE_COLORS.length] }}>
+              — {step.label}
+            </span>
+          ))}
+          <span style={{ color: textColor }}>
+            (frozen — X {family.xChannel.label}, Y {family.yChannel.label}; trace again after edits)
+          </span>
+        </div>
+      ) : null}
       {/* The FFT panel: the source signal split into its frequencies. */}
       {fftOn && !waitingInNormal && spectrum !== null && fftPeak !== null ? (
         <div style={{ marginTop: 4 }}>

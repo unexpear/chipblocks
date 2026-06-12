@@ -30,9 +30,9 @@ import {
 } from 'react'
 import type { World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
-import { solveElectroThermal } from '../electro-thermal.ts'
+import { solveElectroThermal, solveTransientThermal } from '../electro-thermal.ts'
 import { readScalarParam } from '../instance-params.ts'
-import { solveTransient, type TransientResult } from '../transient-solver.ts'
+import type { TransientResult } from '../transient-solver.ts'
 import { BlockViewer } from './block-viewer.tsx'
 import {
   type BlockData,
@@ -103,12 +103,14 @@ import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
 import {
   channelsForProbes,
   fastestSourceHz,
+  type ScopeChannel,
   ScopePlot,
   type ScopeProbe,
   scopeProbeKey,
   scopeWindow,
   TRACE_COLORS,
 } from './scope.tsx'
+import { extractXyPath, type FamilyStep, stepValues, withSourceVoltage } from './scope-family.ts'
 import { H_DIVISIONS, scopeRecordSteps, slowestHonestTimebase } from './scope-scales.ts'
 import { ShortcutsPanel } from './shortcuts-panel.tsx'
 import { type DeviceNodeData, nodeTypes } from './symbols.tsx'
@@ -742,6 +744,18 @@ function Canvas() {
   const [scopeSecPerDiv, setScopeSecPerDiv] = useState<number | 'auto'>('auto')
   const [scopeAutoWindowSec, setScopeAutoWindowSec] = useState(1e-3)
   const [scopeRefusal, setScopeRefusal] = useState<string | null>(null)
+  // Family curves (S20-v3-4): a FROZEN set of stepped-parameter runs — the
+  // I-V family. Each trace is a real solver run with one source's voltage
+  // overridden; the dataset stays until cleared or re-traced (re-running N
+  // simulations on every edit would not be a live view, it would be a lag).
+  const [scopeFamily, setScopeFamily] = useState<{
+    steps: FamilyStep[]
+    xChannel: ScopeChannel
+    yChannel: ScopeChannel
+    sourceId: string
+    skipped: string[]
+  } | null>(null)
+  const [scopeFamilyNote, setScopeFamilyNote] = useState<string | null>(null)
   // Scope probes (S19-v3-77): the terminals the user clipped channels onto.
   // Only these plot — clipping where you care, like real scope leads.
   const [scopeProbes, setScopeProbes] = useState<ScopeProbe[]>([])
@@ -872,10 +886,75 @@ function Canvas() {
       return
     }
     setScopeRefusal(null)
-    setScopeResult(
-      solveTransient(world, { timeStep: (windowSec * 3) / steps, duration: windowSec * 3 }),
-    )
+    // Electro-thermal (S20-v3-5): the scope's simulation heats the parts by
+    // the same lumped law the DC solve uses — the meter clamp and the scope
+    // clamp now agree on the same wire. The thermal loop's own warnings
+    // (runaway, out-of-range tempco) surface with the solver's.
+    const thermal = solveTransientThermal(world, {
+      timeStep: (windowSec * 3) / steps,
+      duration: windowSec * 3,
+    })
+    setScopeResult({
+      ...thermal.result,
+      warnings: [...thermal.result.warnings, ...thermal.warnings],
+    })
   }, [nodes, edges, scopeSecPerDiv])
+
+  // Trace a family (S20-v3-4): one solver run per stepped value of the chosen
+  // source's voltage, each run's settled (X, Y) path kept. The window and the
+  // honest-sampling guard are computed ONCE from the base circuit — stepping
+  // a DC value changes no frequency, so every run shares them. Failed steps
+  // are reported by name, never faked.
+  const runFamily = useCallback(
+    (
+      xChannel: ScopeChannel,
+      yChannel: ScopeChannel,
+      sourceId: string,
+      from: number,
+      to: number,
+      count: number,
+    ) => {
+      const baseWorld = groundedComponent(canvasWorld(nodes, edges).world)
+      const auto = scopeWindow(baseWorld)
+      const windowSec = scopeSecPerDiv === 'auto' ? auto.duration : scopeSecPerDiv * H_DIVISIONS
+      const fastestHz = fastestSourceHz(baseWorld)
+      const honestSteps = scopeRecordSteps(windowSec * 3, fastestHz)
+      if (honestSteps === 'span-too-wide') {
+        setScopeFamily(null)
+        setScopeFamilyNote(
+          `the timebase is too slow to sample the ${formatEng(fastestHz, 'Hz')} source honestly — ` +
+            `pick a faster Horiz setting, then trace`,
+        )
+        return
+      }
+      const dt = (windowSec * 3) / honestSteps
+      const traced: FamilyStep[] = []
+      const skipped: string[] = []
+      for (const value of stepValues(from, to, count)) {
+        const stepped = withSourceVoltage(
+          nodes as unknown as { id: string; data?: { parameters?: Record<string, unknown> } }[],
+          sourceId,
+          value,
+        ) as unknown as Node[]
+        const world = groundedComponent(canvasWorld(stepped, edges).world)
+        // Each family run heats its parts too — a high-gate step's curve is
+        // traced at the temperature that step actually sustains.
+        const result = solveTransientThermal(world, {
+          timeStep: dt,
+          duration: windowSec * 3,
+        }).result
+        const label = `${sourceId} = ${formatEng(value, 'V')}`
+        if (result.status !== 'solved') {
+          skipped.push(`${formatEng(value, 'V')}: ${result.status}`)
+          continue
+        }
+        traced.push({ label, path: extractXyPath(result.series, xChannel, yChannel, windowSec) })
+      }
+      setScopeFamily({ steps: traced, xChannel, yChannel, sourceId, skipped })
+      setScopeFamilyNote(skipped.length > 0 ? `skipped — ${skipped.join(' · ')}` : null)
+    },
+    [nodes, edges, scopeSecPerDiv],
+  )
 
   // While the Scope is open it follows the circuit live: any edit (drop, wire,
   // value change, switch flip) re-runs the time simulation — same spirit as the
@@ -2437,6 +2516,16 @@ function Canvas() {
             onSecPerDiv={setScopeSecPerDiv}
             autoSecPerDiv={scopeAutoWindowSec / H_DIVISIONS}
             refusal={scopeRefusal}
+            family={scopeFamily}
+            familyNote={scopeFamilyNote}
+            familySources={nodes
+              .filter((n) => (n.data as { definition?: string }).definition === 'power_source')
+              .map((n) => n.id)}
+            onTraceFamily={runFamily}
+            onClearFamily={() => {
+              setScopeFamily(null)
+              setScopeFamilyNote(null)
+            }}
           />
           <button
             type="button"
