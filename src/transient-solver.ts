@@ -46,6 +46,7 @@
  * wire, switch.
  */
 
+import { bjtCurrents } from './bjt-model.ts'
 import type { Instance, World } from './cross-fk-validator.ts'
 import {
   assignNodeIndices,
@@ -63,11 +64,12 @@ import {
   companionModel,
   criticalVoltage,
   deriveSaturationCurrent,
+  diodeCurrent,
   pnjlim,
   thermalVoltage,
 } from './diode-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
-import { limitMosfetStep } from './mosfet-model.ts'
+import { limitMosfetStep, mosfetOperatingPoint } from './mosfet-model.ts'
 
 /** Newton-Raphson controls per time step (matches the DC solver's §20.6). */
 const NR_MAX_ITERATIONS = 100
@@ -98,6 +100,17 @@ export type TransientPoint = {
   time: number
   /** Net id → voltage relative to ground, in volts, at this instant. */
   nodes: Map<string, number>
+  /**
+   * Amps flowing INTO each device terminal at this instant, keyed
+   * `instanceId/terminal` (S20-v3-2). Every value is computed from
+   * quantities the solve already produced — MNA auxiliary currents (wires,
+   * switches, sources), companion-model state (C, L, transformers), or the
+   * shipped device laws at the converged solution (Shockley, Ebers-Moll,
+   * Level-1) — never invented. Per-device KCL holds: one device's terminal
+   * currents sum to zero. Optional only so display-side test fixtures can
+   * fabricate voltage-only points; the solver always records it.
+   */
+  currents?: Map<string, number>
 }
 
 export type TransientStatus =
@@ -117,6 +130,11 @@ export type TransientResult = {
 
 /** A power source resolved for the time loop: V(t) = dcOffset + amplitude·sin(2πft). */
 type TimedSource = {
+  /** The instance + its two terminal names — current recording's identity.
+      The MNA auxiliary variable IS this element's branch current (termP→termN). */
+  id: string
+  termP: string
+  termN: string
   iP: number | undefined // matrix index of the positive net (undefined ⇒ ground)
   iN: number | undefined // matrix index of the negative net
   dcOffset: number // volts (nominal_voltage)
@@ -135,6 +153,9 @@ type TimedSource = {
 
 /** A capacitor resolved for the time loop. */
 type CapElement = {
+  id: string
+  termA: string
+  termB: string
   netA: string
   netB: string
   iA: number | undefined // matrix index of netA (undefined ⇒ that net is ground)
@@ -145,6 +166,9 @@ type CapElement = {
 
 /** An inductor resolved for the time loop. */
 type InductorElement = {
+  id: string
+  termA: string
+  termB: string
   netA: string
   netB: string
   iA: number | undefined // matrix index of netA (undefined ⇒ that net is ground)
@@ -156,6 +180,7 @@ type InductorElement = {
 
 /** A transformer (two magnetically-coupled windings) resolved for the time loop. */
 type TransformerElement = {
+  id: string
   pA: string
   pB: string
   sA: string
@@ -183,6 +208,7 @@ type TransformerElement = {
  * carries a quarter of the end-to-end primary inductance (L ∝ N²).
  */
 type CtTransformerElement = {
+  id: string
   /** Winding terminal nets, [from, to] × 3: P-half-1, P-half-2, secondary. */
   nets: [[string, string], [string, string], [string, string]]
   idx: [
@@ -203,6 +229,7 @@ type CtTransformerElement = {
 
 /** A diode-family element resolved for the per-step Newton-Raphson loop. */
 type DiodeElement = {
+  id: string
   anodeNet: string
   cathodeNet: string
   iA: number | undefined // matrix index of the anode net (undefined ⇒ ground)
@@ -219,6 +246,9 @@ function resolveSource(inst: Instance, nodeIndex: Map<string, number>): TimedSou
   const nNet = inst.connects?.find((c) => c.terminal === 'terminal_negative')?.net
   if (pNet === undefined || nNet === undefined) return null
   return {
+    id: inst.id,
+    termP: 'terminal_positive',
+    termN: 'terminal_negative',
     iP: nodeIndex.get(pNet),
     iN: nodeIndex.get(nNet),
     dcOffset,
@@ -255,6 +285,9 @@ function resolveShort(
   const bNet = inst.connects?.find((c) => c.terminal === terminalB)?.net
   if (aNet === undefined || bNet === undefined) return null
   return {
+    id: inst.id,
+    termP: terminalA,
+    termN: terminalB,
     iP: nodeIndex.get(aNet),
     iN: nodeIndex.get(bNet),
     dcOffset: 0,
@@ -273,6 +306,9 @@ function resolveCapacitor(inst: Instance, nodeIndex: Map<string, number>): CapEl
   const c2 = inst.connects[1]
   if (c1 === undefined || c2 === undefined) return null
   return {
+    id: inst.id,
+    termA: c1.terminal,
+    termB: c2.terminal,
     netA: c1.net,
     netB: c2.net,
     iA: nodeIndex.get(c1.net),
@@ -290,6 +326,9 @@ function resolveInductor(inst: Instance, nodeIndex: Map<string, number>): Induct
   const c2 = inst.connects[1]
   if (c1 === undefined || c2 === undefined) return null
   return {
+    id: inst.id,
+    termA: c1.terminal,
+    termB: c2.terminal,
     netA: c1.net,
     netB: c2.net,
     iA: nodeIndex.get(c1.net),
@@ -328,6 +367,7 @@ function resolveTransformer(
     return null
   }
   return {
+    id: inst.id,
     pA,
     pB,
     sA,
@@ -389,6 +429,7 @@ function resolveCtTransformer(
   const mPS = k * Math.sqrt(lHalf * l2)
   const rHalf = (readScalarParam(inst, 'primary_resistance') ?? 0) / 2
   return {
+    id: inst.id,
     nets: [
       [pA, ct],
       [ct, pB],
@@ -477,6 +518,7 @@ function resolveDiode(
   if (saturationCurrent <= 0) return null
 
   return {
+    id: inst.id,
     anodeNet,
     cathodeNet,
     iA: nodeIndex.get(anodeNet),
@@ -560,6 +602,17 @@ function stampCapacitorCompanion(
     M.set([iA, iB], (M.get([iA, iB]) ?? 0) - gEq)
     M.set([iB, iA], (M.get([iB, iA]) ?? 0) - gEq)
   }
+}
+
+/**
+ * The inductor's backward-Euler step current i_n (netA → netB), given this
+ * step's converged voltage across it — the exact current the companion stamp
+ * implies. ONE expression shared by the history update and the current
+ * recording, so the two can never disagree.
+ */
+function inductorStepCurrent(ind: InductorElement, voltsAtoB: number, dt: number): number {
+  const denominator = ind.inductance + ind.windingOhms * dt
+  return (dt * voltsAtoB + ind.inductance * ind.iPrev) / denominator
 }
 
 /**
@@ -768,7 +821,33 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   const diodes: DiodeElement[] = []
   const bjts: BjtElement[] = []
   const mosfets: MosfetElement[] = []
+  // Resistors are stamped straight from the world each instant; for current
+  // recording we mirror stampResistor's exact reads (connects[0]/[1], the
+  // `resistance` param) so the recorded ΔV/R is what the matrix saw.
+  const resistors: {
+    id: string
+    termA: string
+    termB: string
+    netA: string
+    netB: string
+    ohms: number
+  }[] = []
   for (const inst of world.instances.values()) {
+    if (inst.definition === 'resistor') {
+      const ohms = readScalarParam(inst, 'resistance')
+      const c1 = inst.connects?.[0]
+      const c2 = inst.connects?.[1]
+      if (ohms !== undefined && ohms > 0 && c1 !== undefined && c2 !== undefined) {
+        resistors.push({
+          id: inst.id,
+          termA: c1.terminal,
+          termB: c2.terminal,
+          netA: c1.net,
+          netB: c2.net,
+          ohms,
+        })
+      }
+    }
     if (inst.definition === 'power_source' && inst.connects?.length === 2) {
       const src = resolveSource(inst, nodeIndex)
       if (src !== null) sources.push(src)
@@ -833,8 +912,13 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   // Solve one instant at time t with the diodes linearized at their current
   // guesses. 'initial' holds each capacitor at its initial condition (a
   // fixed-voltage stamp, one aux each); 'step' uses the backward-Euler companion.
-  // Returns the net-voltage map, or null on a singular matrix.
-  const solveInstant = (mode: 'initial' | 'step', t: number): Map<string, number> | null => {
+  // Returns the net-voltage map PLUS the raw solution vector (the auxiliary
+  // entries are the sources'/wires'/switches' exact branch currents — current
+  // recording reads them instead of re-deriving), or null on a singular matrix.
+  const solveInstant = (
+    mode: 'initial' | 'step',
+    t: number,
+  ): { nodes: Map<string, number>; x: number[][] } | null => {
     const extraAux = mode === 'initial' ? caps.length : 0
     const size = N + S + extraAux
     // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
@@ -890,7 +974,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const v = xArr[idx]?.[0]
       if (typeof v === 'number') nodes.set(netId, v)
     }
-    return nodes
+    return { nodes, x: xArr }
   }
 
   // One converged instant: Newton-Raphson over the diode linearizations (§20.6 —
@@ -899,11 +983,11 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   const solveConverged = (
     mode: 'initial' | 'step',
     t: number,
-  ): Map<string, number> | 'singular' | 'no-convergence' => {
-    let nodes: Map<string, number> | null = null
+  ): { nodes: Map<string, number>; x: number[][] } | 'singular' | 'no-convergence' => {
     for (let iter = 1; iter <= maxIter; iter++) {
-      nodes = solveInstant(mode, t)
-      if (nodes === null) return 'singular'
+      const solved = solveInstant(mode, t)
+      if (solved === null) return 'singular'
+      const nodes = solved.nodes
       let maxDelta = 0
       let anyLimited = false
       for (const d of diodes) {
@@ -945,9 +1029,136 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         fet.vGS = nextVGS
         fet.vDS = nextVDS
       }
-      if (maxDelta < NR_VOLTAGE_TOLERANCE && !anyLimited) return nodes
+      if (maxDelta < NR_VOLTAGE_TOLERANCE && !anyLimited) return solved
     }
     return 'no-convergence'
+  }
+
+  // Per-terminal currents at one converged instant (S20-v3-2): amps flowing
+  // INTO each terminal, keyed `instanceId/terminal`. Every value comes from
+  // what the solve already computed — the MNA auxiliary variables, the
+  // companion state, or the shipped device laws at the converged voltages —
+  // so per-device KCL closes by construction.
+  const recordCurrents = (
+    nodes: Map<string, number>,
+    x: number[][],
+    mode: 'initial' | 'step',
+  ): Map<string, number> => {
+    const into = new Map<string, number>()
+    const volts = (net: string): number => (net === ground ? 0 : (nodes.get(net) ?? 0))
+    // A two-terminal element with through-current I (termA → termB inside it).
+    const through = (id: string, termA: string, termB: string, amps: number) => {
+      into.set(`${id}/${termA}`, amps)
+      into.set(`${id}/${termB}`, -amps)
+    }
+
+    // Sources, wires, closed switches: the auxiliary variable at N+s IS the
+    // branch current termP → termN (the stamp's equation is
+    // v_P − v_N − I·r = V, the same a→b convention the wire clamp uses).
+    for (let s = 0; s < S; s++) {
+      // biome-ignore lint/style/noNonNullAssertion: s is bound by S
+      const src = sources[s]!
+      through(src.id, src.termP, src.termN, x[N + s]?.[0] ?? 0)
+    }
+
+    for (const r of resistors) {
+      through(r.id, r.termA, r.termB, (volts(r.netA) - volts(r.netB)) / r.ohms)
+    }
+
+    for (let j = 0; j < caps.length; j++) {
+      // biome-ignore lint/style/noNonNullAssertion: j is bound by caps.length
+      const cap = caps[j]!
+      if (mode === 'initial') {
+        // At t = 0 the capacitor is held by a fixed-voltage stamp; its
+        // auxiliary variable is the exact current the hold supplies.
+        through(cap.id, cap.termA, cap.termB, x[N + S + j]?.[0] ?? 0)
+      } else {
+        // The backward-Euler companion's current at this step, from the OLD
+        // history (vPrev is updated only after recording).
+        const gEq = cap.capacitance / dt
+        const v = volts(cap.netA) - volts(cap.netB)
+        through(cap.id, cap.termA, cap.termB, gEq * v - gEq * cap.vPrev)
+      }
+    }
+
+    for (const ind of inductors) {
+      const amps =
+        mode === 'initial'
+          ? ind.iPrev // held: current through an inductor cannot jump
+          : inductorStepCurrent(ind, volts(ind.netA) - volts(ind.netB), dt)
+      through(ind.id, ind.termA, ind.termB, amps)
+    }
+
+    for (const tr of transformers) {
+      let i1: number
+      let i2: number
+      if (mode === 'initial') {
+        i1 = tr.i1Prev
+        i2 = tr.i2Prev
+      } else {
+        const { g11, g12, g22, ih1, ih2 } = transformerStep(tr, dt)
+        const v1 = volts(tr.pA) - volts(tr.pB)
+        const v2 = volts(tr.sA) - volts(tr.sB)
+        i1 = g11 * v1 + g12 * v2 + ih1
+        i2 = g12 * v1 + g22 * v2 + ih2
+      }
+      // Core loss rides the primary terminals alongside the winding current.
+      const iCore = tr.rCore > 0 ? (volts(tr.pA) - volts(tr.pB)) / tr.rCore : 0
+      into.set(`${tr.id}/primary_a`, i1 + iCore)
+      into.set(`${tr.id}/primary_b`, -i1 - iCore)
+      through(tr.id, 'secondary_a', 'secondary_b', i2)
+    }
+
+    for (const tr of ctTransformers) {
+      let i: [number, number, number]
+      if (mode === 'initial') {
+        i = tr.iPrev
+      } else {
+        const { G, ih } = ctTransformerStep(tr, dt)
+        const v = tr.nets.map(([from, to]) => volts(from) - volts(to))
+        i = [0, 1, 2].map(
+          (w) => (G[w] ?? []).reduce((acc, g, j) => acc + g * (v[j] ?? 0), 0) + (ih[w] ?? 0),
+        ) as [number, number, number]
+      }
+      const vFullPrimary = volts(tr.nets[0][0]) - volts(tr.nets[1][1])
+      const iCore = tr.rCore > 0 ? vFullPrimary / tr.rCore : 0
+      // Windings: pA→ct, ct→pB, sA→sB; the center tap carries both halves.
+      into.set(`${tr.id}/primary_a`, (i[0] ?? 0) + iCore)
+      into.set(`${tr.id}/primary_ct`, -(i[0] ?? 0) + (i[1] ?? 0))
+      into.set(`${tr.id}/primary_b`, -(i[1] ?? 0) - iCore)
+      through(tr.id, 'secondary_a', 'secondary_b', i[2] ?? 0)
+    }
+
+    for (const d of diodes) {
+      // Shockley at the converged junction voltage — the device law itself.
+      const v = volts(d.anodeNet) - volts(d.cathodeNet)
+      through(d.id, 'anode', 'cathode', diodeCurrent(v, d.saturationCurrent, d.idealityFactor, vT))
+    }
+
+    for (const bjt of bjts) {
+      // Ebers-Moll at the converged node voltages. PNP evaluates in the
+      // forward frame (negated junction voltages) and flips the currents —
+      // the same convention stampBjtCompanion uses.
+      const sign = bjt.polarity === 'pnp' ? -1 : 1
+      const vBE = sign * (volts(bjt.baseNet) - volts(bjt.emitterNet))
+      const vBC = sign * (volts(bjt.baseNet) - volts(bjt.collectorNet))
+      const i = bjtCurrents(vBE, vBC, bjt.params, bjt.thermalV)
+      into.set(`${bjt.inst.id}/collector`, sign * i.iC)
+      into.set(`${bjt.inst.id}/base`, sign * i.iB)
+      into.set(`${bjt.inst.id}/emitter`, sign * i.iE)
+    }
+
+    for (const fet of mosfets) {
+      // Level-1 at the converged labeled voltages (PMOS handled inside).
+      const vGS = volts(fet.gateNet) - volts(fet.sourceNet)
+      const vDS = volts(fet.drainNet) - volts(fet.sourceNet)
+      const { iD } = mosfetOperatingPoint(vGS, vDS, fet.params)
+      into.set(`${fet.inst.id}/drain`, iD)
+      into.set(`${fet.inst.id}/source`, -iD)
+      into.set(`${fet.inst.id}/gate`, 0) // insulated gate: no DC current in Level-1
+    }
+
+    return into
   }
 
   const series: TransientPoint[] = []
@@ -959,29 +1170,36 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     warnings.push('Newton-Raphson did not converge at t = 0')
     return { status: 'did-not-converge', series: [], ground, warnings }
   }
-  series.push({ time: 0, nodes: initial })
+  series.push({
+    time: 0,
+    nodes: initial.nodes,
+    currents: recordCurrents(initial.nodes, initial.x, 'initial'),
+  })
 
   // March forward with backward-Euler. Each step: converge the nonlinear solve
-  // (warm-started from the previous operating point), refresh the capacitor
-  // history, record the sample.
+  // (warm-started from the previous operating point), record the sample WITH
+  // its per-terminal currents (computed from the still-old histories), then
+  // refresh the companion histories.
   const steps = Math.round(duration / dt)
   for (let k = 1; k <= steps; k++) {
     const t = k * dt
-    const nodes = solveConverged('step', t)
-    if (nodes === 'singular') return { status: 'singular-matrix', series, ground, warnings }
-    if (nodes === 'no-convergence') {
+    const solved = solveConverged('step', t)
+    if (solved === 'singular') return { status: 'singular-matrix', series, ground, warnings }
+    if (solved === 'no-convergence') {
       warnings.push(`Newton-Raphson did not converge at t = ${t}`)
       return { status: 'did-not-converge', series, ground, warnings }
     }
+    const nodes = solved.nodes
+    const currents = recordCurrents(nodes, solved.x, 'step')
+    series.push({ time: t, nodes, currents })
+
     for (const cap of caps) {
       cap.vPrev = (nodes.get(cap.netA) ?? 0) - (nodes.get(cap.netB) ?? 0)
     }
     for (const ind of inductors) {
-      // The converged step's current through the inductor (from its companion),
-      // computed from the OLD iPrev before overwriting it.
-      const v = (nodes.get(ind.netA) ?? 0) - (nodes.get(ind.netB) ?? 0)
-      const denominator = ind.inductance + ind.windingOhms * dt
-      ind.iPrev = (dt * v + ind.inductance * ind.iPrev) / denominator
+      // The converged step's current through the inductor — the value just
+      // recorded (computed from the OLD iPrev), now becoming the history.
+      ind.iPrev = currents.get(`${ind.id}/${ind.termA}`) ?? ind.iPrev
     }
     for (const tr of transformers) {
       // Same: this step's winding currents from the companion at the OLD history.
@@ -1020,7 +1238,6 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         )
       }
     }
-    series.push({ time: t, nodes })
   }
 
   return { status: 'solved', series, ground, warnings }
