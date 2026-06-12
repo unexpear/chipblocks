@@ -36,22 +36,27 @@ export const VOLTS_PER_DIV = oneTwoFive(1e-3, 20)
 
 /**
  * One channel's vertical mapping: volts per division plus the voltage sitting
- * at screen center. The offset always auto-centers on the channel's midpoint
- * (a position knob is a future increment) — display placement only, the data
- * is untouched. Auto scale fits the swing into AUTO_FILL_DIVISIONS; a flat
- * trace gets 0.125 V/div (the full screen spans 1 V around it, matching the
- * old flat-line view).
+ * at screen center. The offset auto-centers on the channel's midpoint, then
+ * the POSITION knob (S20-v3-10) slides the trace up (+) or down (−) by whole
+ * fractions of a division — display placement only, the data is untouched,
+ * exactly the second-most-used knob on a bench scope (it separates two
+ * same-shape traces that would otherwise overlap). Auto scale fits the swing
+ * into AUTO_FILL_DIVISIONS; a flat trace gets 0.125 V/div (the full screen
+ * spans 1 V around it, matching the old flat-line view).
  */
 export function transformFor(
   lo: number,
   hi: number,
   setting: number | 'auto',
+  positionDivisions = 0,
 ): { voltsPerDiv: number; offsetVolts: number } {
-  const offsetVolts = (lo + hi) / 2
-  if (setting !== 'auto') return { voltsPerDiv: setting, offsetVolts }
+  const midpoint = (lo + hi) / 2
   const swing = hi - lo
-  if (!(swing > 1e-12)) return { voltsPerDiv: 1 / V_DIVISIONS, offsetVolts }
-  return { voltsPerDiv: swing / AUTO_FILL_DIVISIONS, offsetVolts }
+  const voltsPerDiv =
+    setting !== 'auto' ? setting : swing > 1e-12 ? swing / AUTO_FILL_DIVISIONS : 1 / V_DIVISIONS
+  // Moving the trace UP by p divisions = showing a voltage p·vdiv LOWER at
+  // screen center.
+  return { voltsPerDiv, offsetVolts: midpoint - positionDivisions * voltsPerDiv }
 }
 
 const SAMPLES_PER_CYCLE = 32

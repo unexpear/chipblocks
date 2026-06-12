@@ -7,10 +7,48 @@
  */
 
 import { describe, expect, test } from 'vitest'
-import { fftMagnitudes, spectrumPeak } from '../src/renderer/scope-fft.ts'
+import {
+  amplitudeToDbRms,
+  DB_FLOOR,
+  fftMagnitudes,
+  spectrumPeak,
+} from '../src/renderer/scope-fft.ts'
 
 const sine = (amplitude: number, hz: number, dt: number, n: number, offset = 0) =>
   Array.from({ length: n }, (_, i) => offset + amplitude * Math.sin(2 * Math.PI * hz * i * dt))
+
+describe('amplitudeToDbRms (S20-v3-9): the dB vertical', () => {
+  test('the textbook identities: 1 V peak = −3.01 dBV, √2 V peak = 1 V rms = 0 dBV', () => {
+    expect(amplitudeToDbRms(1)).toBeCloseTo(-3.0103, 4)
+    expect(amplitudeToDbRms(Math.SQRT2)).toBeCloseTo(0, 12)
+    expect(amplitudeToDbRms(0.1)).toBeCloseTo(-23.0103, 4)
+    // Every ×10 of amplitude is exactly +20 dB.
+    expect(amplitudeToDbRms(10) - amplitudeToDbRms(1)).toBeCloseTo(20, 12)
+  })
+
+  test('zero and tiny amplitudes clamp to the floor — log of zero never reaches the screen', () => {
+    expect(amplitudeToDbRms(0)).toBe(DB_FLOOR)
+    expect(amplitudeToDbRms(-1)).toBe(DB_FLOOR)
+    expect(amplitudeToDbRms(1e-9)).toBe(DB_FLOOR)
+    expect(amplitudeToDbRms(1e-5)).toBeGreaterThan(DB_FLOOR)
+  })
+
+  test('a square wave in dB: each odd harmonic sits 20·log10(n) below the fundamental', () => {
+    // The 1/n harmonic law reads as −9.54 dB at n=3 and −13.98 dB at n=5 —
+    // the picture a log scale exists to show.
+    const dt = 1e-6
+    const f0 = 8 / (1024 * dt)
+    const square = Array.from({ length: 1024 }, (_, i) =>
+      Math.sin(2 * Math.PI * f0 * i * dt) >= 0 ? 1 : -1,
+    )
+    const spectrum = fftMagnitudes(square, dt)
+    if (spectrum === null) throw new Error('no spectrum')
+    const binAmp = (k: number) => spectrum.amplitude[k - 1] ?? 0
+    const fundamentalDb = amplitudeToDbRms(binAmp(8))
+    expect(amplitudeToDbRms(binAmp(24)) - fundamentalDb).toBeCloseTo(-20 * Math.log10(3), 1)
+    expect(amplitudeToDbRms(binAmp(40)) - fundamentalDb).toBeCloseTo(-20 * Math.log10(5), 1)
+  })
+})
 
 describe('fftMagnitudes', () => {
   test('a bin-aligned sine peaks at its exact frequency and amplitude', () => {

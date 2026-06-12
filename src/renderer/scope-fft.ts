@@ -91,6 +91,23 @@ export function fftMagnitudes(samples: number[], dtSeconds: number): Spectrum | 
   return { freqHz, amplitude, deltaFHz: 1 / (n * dtSeconds), pointCount: n }
 }
 
+/**
+ * Display floor for the dB scale — bins at/below zero amplitude clamp here.
+ * Real DSO FFTs floor similarly (their ADC noise floor sits far above this).
+ */
+export const DB_FLOOR = -120
+
+/**
+ * A bin amplitude (PEAK, the fftMagnitudes convention) in dB relative to
+ * 1 unit RMS — the bench-scope FFT vertical (dBV for volt channels: Tek/Rigol
+ * FFT modes display dBVrms by default). 20·log10(A_peak/√2), floored.
+ */
+export function amplitudeToDbRms(amplitudePeak: number): number {
+  if (!(amplitudePeak > 0)) return DB_FLOOR
+  const db = 20 * Math.log10(amplitudePeak / Math.SQRT2)
+  return db < DB_FLOOR ? DB_FLOOR : db
+}
+
 /** The tallest bin — what the FFT panel's peak readout shows. */
 export function spectrumPeak(spectrum: Spectrum): { freqHz: number; amplitude: number } | null {
   let best = -1

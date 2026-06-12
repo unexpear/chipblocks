@@ -5,7 +5,7 @@ import type { TransientResult } from '../transient-solver.ts'
 import { scopeCsv } from './scope-csv.ts'
 import { cursorReadout, interpolateSeries } from './scope-cursors.ts'
 import { type FamilyStep, familyExtent } from './scope-family.ts'
-import { fftMagnitudes, spectrumPeak } from './scope-fft.ts'
+import { amplitudeToDbRms, fftMagnitudes, spectrumPeak } from './scope-fft.ts'
 import { H_DIVISIONS, TIMEBASES, transformFor, V_DIVISIONS, VOLTS_PER_DIV } from './scope-scales.ts'
 import { alignSweep, autoLevel, type TriggerEdge, type TriggerMode } from './scope-trigger.ts'
 import { formatEng } from './units.ts'
@@ -334,6 +334,10 @@ export function ScopePlot({
   const [armed, setArmed] = useState(false)
   // Per-channel volts/div knob (S19-v3-78); absent = auto fit.
   const [vdivSettings, setVdivSettings] = useState<Record<string, number | 'auto'>>({})
+  // Per-channel vertical POSITION knob (S20-v3-10), in divisions; absent = 0.
+  // Display placement only — separates same-shape traces that auto-fit on
+  // top of each other. Like vdiv, changing it never drops a held sweep.
+  const [posSettings, setPosSettings] = useState<Record<string, number>>({})
   // Cursors (S19-v3-79): two time lines as fractions of the plot width —
   // fractions survive timebase changes the way real cursors keep their
   // screen position. The drag gesture lives in a ref (the gesture lesson).
@@ -349,6 +353,8 @@ export function ScopePlot({
   const [mathA, setMathA] = useState<string | null>(null)
   const [mathB, setMathB] = useState<string | null>(null)
   const [fftOn, setFftOn] = useState(false)
+  // dB vertical for the FFT (S20-v3-9) — 20·log10(rms), the DSO default view.
+  const [fftDb, setFftDb] = useState(false)
   // The extras (S19-v3-82): persistence ghosts, XY mode, CSV export.
   const [displayMode, setDisplayMode] = useState<'yt' | 'xy'>('yt')
   // Family sweep settings (S20-v3-4) — the stepped source and its range.
@@ -501,6 +507,21 @@ export function ScopePlot({
       >
         fft
       </button>
+      {fftOn ? (
+        <button
+          type="button"
+          className="nodrag"
+          onClick={() => setFftDb((on) => !on)}
+          title="dB scale: each bin as 20·log10 of its RMS value relative to 1 V (dBV) or 1 A — the bench-scope FFT vertical. A log scale shows harmonics 100× smaller than the fundamental that vanish on the linear view; 80 dB of range, 10 dB per division."
+          style={{
+            ...controlStyle,
+            cursor: 'pointer',
+            ...(fftDb ? { borderColor: CURSOR_COLOR, color: CURSOR_COLOR } : {}),
+          }}
+        >
+          dB
+        </button>
+      ) : null}
     </div>
   )
 
@@ -557,7 +578,10 @@ export function ScopePlot({
       if (v < lo) lo = v
       if (v > hi) hi = v
     }
-    transforms.set(channel.key, transformFor(lo, hi, vdivSettings[channel.key] ?? 'auto'))
+    transforms.set(
+      channel.key,
+      transformFor(lo, hi, vdivSettings[channel.key] ?? 'auto', posSettings[channel.key] ?? 0),
+    )
   }
 
   const innerW = PLOT_W - MARGIN.left - MARGIN.right
@@ -627,7 +651,10 @@ export function ScopePlot({
       if (v < lo) lo = v
       if (v > hi) hi = v
     }
-    transforms.set(MATH_KEY, transformFor(lo, hi, vdivSettings[MATH_KEY] ?? 'auto'))
+    transforms.set(
+      MATH_KEY,
+      transformFor(lo, hi, vdivSettings[MATH_KEY] ?? 'auto', posSettings[MATH_KEY] ?? 0),
+    )
   }
   const mathLabel = mathOp === 'mul' ? 'A×B' : 'A−B'
   const mathUnitsClash =
@@ -1454,7 +1481,17 @@ export function ScopePlot({
               const fMax = spectrum.freqHz[fftLastIdx] ?? 1
               const aMax = fftPeak.amplitude * 1.1 || 1
               const xF = (f: number) => MARGIN.left + (f / fMax) * innerW
-              const yF = (a: number) => MARGIN.top + (1 - a / aMax) * innerFftH
+              // dB vertical (S20-v3-9): 80 dB window, top snapped to the next
+              // 10 dB above the peak — 10 dB per division like a bench DSO.
+              const dbTop = Math.ceil(amplitudeToDbRms(fftPeak.amplitude) / 10) * 10
+              const dbBottom = dbTop - 80
+              const yF = (a: number) => {
+                if (fftDb) {
+                  const db = Math.max(dbBottom, amplitudeToDbRms(a))
+                  return MARGIN.top + ((dbTop - db) / (dbTop - dbBottom)) * innerFftH
+                }
+                return MARGIN.top + (1 - a / aMax) * innerFftH
+              }
               const bins = spectrum.freqHz.slice(0, fftLastIdx + 1)
               return (
                 <>
@@ -1470,6 +1507,20 @@ export function ScopePlot({
                       opacity={0.5}
                     />
                   ))}
+                  {fftDb
+                    ? [20, 40, 60].map((down) => (
+                        <line
+                          key={`fdb${down}`}
+                          x1={MARGIN.left}
+                          y1={MARGIN.top + (down / 80) * innerFftH}
+                          x2={MARGIN.left + innerW}
+                          y2={MARGIN.top + (down / 80) * innerFftH}
+                          stroke={gridStroke}
+                          strokeWidth={1}
+                          opacity={0.5}
+                        />
+                      ))
+                    : null}
                   {[0, 0.25, 0.5, 0.75, 1].map((f) => (
                     <text
                       key={`fxl${f}`}
@@ -1489,8 +1540,19 @@ export function ScopePlot({
                     fill={textColor}
                     textAnchor="end"
                   >
-                    {formatEng(aMax, fftUnit)}
+                    {fftDb ? `${dbTop} dB${fftUnit}` : formatEng(aMax, fftUnit)}
                   </text>
+                  {fftDb ? (
+                    <text
+                      x={MARGIN.left - 4}
+                      y={MARGIN.top + innerFftH}
+                      fontSize={9}
+                      fill={textColor}
+                      textAnchor="end"
+                    >
+                      {dbBottom}
+                    </text>
+                  ) : null}
                   <polyline
                     fill="none"
                     stroke={
@@ -1511,8 +1573,12 @@ export function ScopePlot({
             })()}
           </svg>
           <div style={{ fontSize: 10, color: textColor, maxWidth: PLOT_W, marginTop: 2 }}>
-            peak {formatEng(fftPeak.freqHz, 'Hz')} at {formatEng(fftPeak.amplitude, fftUnit)} · Δf{' '}
-            {formatEng(spectrum.deltaFHz, 'Hz')} ({spectrum.pointCount} pts) · Hann · mean removed
+            peak {formatEng(fftPeak.freqHz, 'Hz')} at{' '}
+            {fftDb
+              ? `${amplitudeToDbRms(fftPeak.amplitude).toFixed(1)} dB${fftUnit} (rms)`
+              : formatEng(fftPeak.amplitude, fftUnit)}{' '}
+            · Δf {formatEng(spectrum.deltaFHz, 'Hz')} ({spectrum.pointCount} pts) · Hann · mean
+            removed
           </div>
         </div>
       ) : null}
@@ -1627,6 +1693,29 @@ export function ScopePlot({
                 </option>
               ))}
             </select>
+            <input
+              type="number"
+              step={0.5}
+              value={posSettings[channel.key] ?? 0}
+              onChange={(e) => {
+                const next = Number(e.target.value)
+                setPosSettings((current) => ({
+                  ...current,
+                  [channel.key]: Number.isFinite(next) ? next : 0,
+                }))
+              }}
+              className="nodrag"
+              title={`CH${i + 1} vertical position, in grid squares: + slides the trace up, − down. Separates same-shape traces that auto-fit on top of each other; the ▸ zero marker moves with it. Display placement only — the captured data is untouched.`}
+              style={{
+                width: 34,
+                fontSize: 9,
+                background: light ? '#fff' : '#1b1b1f',
+                color: 'inherit',
+                border: '1px solid #2a2a2f',
+                borderRadius: 3,
+                padding: '0 2px',
+              }}
+            />
             {held === null ? (
               <button
                 type="button"
@@ -1692,6 +1781,29 @@ export function ScopePlot({
                 </option>
               ))}
             </select>
+            <input
+              type="number"
+              step={0.5}
+              value={posSettings[MATH_KEY] ?? 0}
+              onChange={(e) => {
+                const next = Number(e.target.value)
+                setPosSettings((current) => ({
+                  ...current,
+                  [MATH_KEY]: Number.isFinite(next) ? next : 0,
+                }))
+              }}
+              className="nodrag"
+              title="M vertical position, in grid squares: + slides the math trace up, − down. Display placement only."
+              style={{
+                width: 34,
+                fontSize: 9,
+                background: light ? '#fff' : '#1b1b1f',
+                color: 'inherit',
+                border: '1px solid #2a2a2f',
+                borderRadius: 3,
+                padding: '0 2px',
+              }}
+            />
           </span>
         ) : null}
       </div>

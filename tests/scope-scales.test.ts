@@ -62,6 +62,26 @@ describe('transformFor', () => {
     expect(tf.voltsPerDiv).toBe(2)
     expect(tf.offsetVolts).toBe(0)
   })
+
+  test('the position knob (S20-v3-10): +p divisions shows p·vdiv LOWER at center', () => {
+    // Manual scale: 2 V/div, up 1.5 div → center voltage drops by 3 V.
+    const manual = transformFor(-5, 5, 2, 1.5)
+    expect(manual.voltsPerDiv).toBe(2)
+    expect(manual.offsetVolts).toBeCloseTo(-3, 12)
+    // Auto scale: the shift is in the AUTO vdiv, so the trace moves the same
+    // number of SCREEN divisions whatever the fit chose.
+    const auto = transformFor(4.2, 4.8, 'auto', -2)
+    expect(auto.voltsPerDiv).toBeCloseTo(0.6 / AUTO_FILL_DIVISIONS, 12)
+    expect(auto.offsetVolts).toBeCloseTo(4.5 + 2 * (0.6 / AUTO_FILL_DIVISIONS), 12)
+    // Flat trace: position still slides it (the 0.125 V/div window).
+    const flat = transformFor(9, 9, 'auto', 4)
+    expect(flat.offsetVolts).toBeCloseTo(9 - 4 / V_DIVISIONS, 12)
+    // Position 0 (the default) is exactly the old behavior.
+    const zero = transformFor(-5, 5, 'auto', 0)
+    const old = transformFor(-5, 5, 'auto')
+    expect(zero.offsetVolts).toBe(old.offsetVolts)
+    expect(zero.voltsPerDiv).toBe(old.voltsPerDiv)
+  })
 })
 
 describe('scopeRecordSteps', () => {
