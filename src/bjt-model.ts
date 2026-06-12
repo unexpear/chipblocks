@@ -19,11 +19,19 @@
  * NPN convention: V_BE = V_base − V_emitter, V_BC = V_base − V_collector. The
  * returned terminal currents flow INTO each terminal and sum to zero (KCL).
  *
- * Honest model note (made visible by the curve tracer, 2026-06-12): the
- * transport model has NO Early effect — a real BJT's I_C–V_CE family tilts
- * gently upward in forward-active (I_C grows with V_CE, slope set by the
- * Early voltage V_A); ours draws perfectly flat plateaus. Adding the
- * (1 + V_CE/V_A) factor with a cited V_A is a future increment.
+ * EARLY EFFECT (S20-v3-7): with `earlyVoltageForward` (V_AF) set, the transport
+ * current is divided by the first-order Gummel-Poon base-charge factor
+ * q_b = 1/(1 − V_BC/V_AF) — i.e. multiplied by (1 − V_BC/V_AF). Physically:
+ * a wider collector-base depletion region thins the base (base-width
+ * modulation, Early 1952), so the same V_BE collects MORE current as V_CE
+ * rises — the family plateaus tilt, extrapolating back to −V_A like every
+ * datasheet. The BASE current is NOT scaled (a thinner base collects more,
+ * it doesn't recombine more) — so β effectively grows with V_CE, exactly as
+ * SPICE's Gummel-Poon does with only VAF set. Omitted V_AF = infinite = the
+ * plain transport model. Still unmodeled from full Gummel-Poon: reverse Early
+ * (VAR), high-level injection (IKF/IKR), leakage diodes (ISE/ISC). Numerical
+ * note: the factor needs no clamping — pnjlim keeps junction voltages ~1 V,
+ * far from the V_BC = V_AF ≥ ~19 V pole.
  */
 
 export type BjtParams = {
@@ -33,6 +41,8 @@ export type BjtParams = {
   betaForward: number
   /** Reverse current gain β_R (small, ~1–5). */
   betaReverse: number
+  /** Forward Early voltage V_AF (V). Omitted → no Early effect (infinite V_A). */
+  earlyVoltageForward?: number
 }
 
 /** Terminal currents (into collector / base / emitter) — Ebers-Moll transport. */
@@ -42,12 +52,20 @@ export function bjtCurrents(
   params: BjtParams,
   thermalV: number,
 ): { iC: number; iB: number; iE: number } {
-  const { saturationCurrent: is, betaForward: bf, betaReverse: br } = params
+  const {
+    saturationCurrent: is,
+    betaForward: bf,
+    betaReverse: br,
+    earlyVoltageForward: va,
+  } = params
   const expBE = Math.exp(vBE / thermalV) - 1
   const expBC = Math.exp(vBC / thermalV) - 1
 
-  // Transport: I_C = I_CC − I_EC(1 + 1/β_R); I_B = I_CC/β_F + I_EC/β_R.
-  const iC = is * expBE - is * expBC * (1 + 1 / br)
+  // Transport: I_C = (I_CC − I_EC)·(1 − V_BC/V_AF) − I_EC/β_R — only the
+  // collector-emitter TRANSPORT current carries the Early factor; the base
+  // current does not (see the header note). V_AF omitted → factor 1.
+  const earlyFactor = va === undefined ? 1 : 1 - vBC / va
+  const iC = is * (expBE - expBC) * earlyFactor - (is / br) * expBC
   const iB = (is / bf) * expBE + (is / br) * expBC
   const iE = -(iC + iB)
   return { iC, iB, iE }
@@ -72,15 +90,26 @@ export function bjtCompanion(
   dIB_dVBE: number
   dIB_dVBC: number
 } {
-  const { saturationCurrent: is, betaForward: bf, betaReverse: br } = params
+  const {
+    saturationCurrent: is,
+    betaForward: bf,
+    betaReverse: br,
+    earlyVoltageForward: va,
+  } = params
   const { iC, iB } = bjtCurrents(vBE, vBC, params, thermalV)
   const gF = (is / thermalV) * Math.exp(vBE / thermalV)
   const gR = (is / thermalV) * Math.exp(vBC / thermalV)
+  // d(transport·f)/dV_BC has TWO terms: the junction conductance scaled by f,
+  // plus transport·df/dV_BC = −(I_CC − I_EC)/V_AF — the output conductance
+  // g_o ≈ I_C/V_A that makes real plateaus tilt. (exp − 1) terms cancel in
+  // the transport difference, so it is the bare exponential difference.
+  const earlyFactor = va === undefined ? 1 : 1 - vBC / va
+  const transport = is * (Math.exp(vBE / thermalV) - Math.exp(vBC / thermalV))
   return {
     iC,
     iB,
-    dIC_dVBE: gF,
-    dIC_dVBC: -gR * (1 + 1 / br),
+    dIC_dVBE: gF * earlyFactor,
+    dIC_dVBC: -gR * earlyFactor - (va === undefined ? 0 : transport / va) - gR / br,
     dIB_dVBE: gF / bf,
     dIB_dVBC: gR / br,
   }

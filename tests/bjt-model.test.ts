@@ -50,3 +50,46 @@ describe('bjtCompanion (Newton-Raphson linearization)', () => {
     expect(c.iB).toBeCloseTo(direct.iB, 12)
   })
 })
+
+describe('the Early effect (S20-v3-7): forward Early voltage V_AF', () => {
+  const early = { ...npn, earlyVoltageForward: 74 }
+
+  test('the collector current scales by exactly (1 − V_BC/V_A); the base current does not', () => {
+    // Base-width modulation collects MORE, it does not recombine more — so
+    // I_C gains the factor while I_B is bit-identical with or without V_A.
+    const flat = bjtCurrents(0.65, -5, npn, vt)
+    const tilted = bjtCurrents(0.65, -5, early, vt)
+    expect(tilted.iB).toBe(flat.iB)
+    expect(tilted.iC / flat.iC).toBeCloseTo(1 - -5 / 74, 9)
+    expect(tilted.iC + tilted.iB + tilted.iE).toBeCloseTo(0, 12)
+  })
+
+  test('β grows with collector voltage: I_C/I_B = β_F·(1 − V_BC/V_A) in forward-active', () => {
+    const lowVce = bjtCurrents(0.65, -2, early, vt)
+    const highVce = bjtCurrents(0.65, -8, early, vt)
+    expect(lowVce.iC / lowVce.iB).toBeCloseTo(100 * (1 + 2 / 74), 6)
+    expect(highVce.iC / highVce.iB).toBeCloseTo(100 * (1 + 8 / 74), 6)
+    expect(highVce.iC).toBeGreaterThan(lowVce.iC)
+  })
+
+  test('the Jacobian gains the output conductance: finite differences confirm both ∂I_C terms', () => {
+    const h = 1e-7
+    const c = bjtCompanion(0.65, -5, early, vt)
+    const fdVbe =
+      (bjtCurrents(0.65 + h, -5, early, vt).iC - bjtCurrents(0.65 - h, -5, early, vt).iC) / (2 * h)
+    const fdVbc =
+      (bjtCurrents(0.65, -5 + h, early, vt).iC - bjtCurrents(0.65, -5 - h, early, vt).iC) / (2 * h)
+    expect(c.dIC_dVBE).toBeCloseTo(fdVbe, 6)
+    expect(c.dIC_dVBC).toBeCloseTo(fdVbc, 6)
+    // In forward-active the V_BC junction is dark — the derivative IS the
+    // output conductance g_o = −∂I_C/∂V_BC ≈ I_C/(V_A − V_BC), the tilt slope.
+    expect(-c.dIC_dVBC).toBeCloseTo(c.iC / (74 + 5), 9)
+  })
+
+  test('companion currents still match bjtCurrents with V_A set', () => {
+    const c = bjtCompanion(0.6, -3, early, vt)
+    const direct = bjtCurrents(0.6, -3, early, vt)
+    expect(c.iC).toBeCloseTo(direct.iC, 12)
+    expect(c.iB).toBeCloseTo(direct.iB, 12)
+  })
+})

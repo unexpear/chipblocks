@@ -97,14 +97,18 @@ describe('familyExtent', () => {
   })
 })
 
-describe('the BJT family (S20-v3-6): I_C vs V_CE at stepped base drive', () => {
-  test('equally spaced curves at β·I_B — the bipolar fingerprint, dead-flat plateaus', () => {
+describe('the BJT family (S20-v3-6/7): I_C vs V_CE at stepped base drive', () => {
+  test('equally spaced curves at β·I_B, plateaus tilting toward −V_A (the Early effect)', () => {
     // The classic rig: vcc sweeps the collector 0..9 V; the base is driven
     // through a 100 kΩ resistor from the STEPPED source, so equal voltage
     // steps make near-equal base-current steps — and β multiplies them into
     // equally spaced collector plateaus (the MOSFET's family spacing grows
     // quadratically; the BJT's is linear — the device-physics fingerprint).
+    // With a cited V_A (S20-v3-7) the plateaus are no longer flat: each one
+    // climbs gently, and extrapolated backward they all meet near −V_A on
+    // the voltage axis — the convergent fan on every datasheet.
     const betaForward = 100
+    const earlyVoltage = 74
     const baseNodes = [
       {
         id: 'vcc',
@@ -135,6 +139,7 @@ describe('the BJT family (S20-v3-6): I_C vs V_CE at stepped base drive', () => {
         parameters: {
           saturation_current: scalar(1e-14, 'ampere'),
           forward_current_gain: scalar(betaForward, 'dimensionless'),
+          forward_early_voltage: scalar(earlyVoltage, 'volt'),
         },
       },
       { id: 'gnd', definition: 'ground' },
@@ -179,6 +184,7 @@ describe('the BJT family (S20-v3-6): I_C vs V_CE at stepped base drive', () => {
     ]
 
     const plateaus: number[] = []
+    const xIntercepts: number[] = []
     for (const vBase of stepValues(2, 4, 3)) {
       const nodes = withSourceVoltage(
         baseNodes.map((n) => ({
@@ -202,13 +208,16 @@ describe('the BJT family (S20-v3-6): I_C vs V_CE at stepped base drive', () => {
       const collectorNet = world.instances
         .get('q1')
         ?.connects?.find((c) => c.terminal === 'collector')?.net
+      const baseNet = world.instances.get('q1')?.connects?.find((c) => c.terminal === 'base')?.net
       const emitterNet = world.instances
         .get('q1')
         ?.connects?.find((c) => c.terminal === 'emitter')?.net
-      if (collectorNet === undefined || emitterNet === undefined) throw new Error('missing nets')
+      if (collectorNet === undefined || baseNet === undefined || emitterNet === undefined)
+        throw new Error('missing nets')
 
-      // Forward-active samples (V_CE well past saturation): I_C/I_B = β
-      // EXACTLY in the transport model — both currents RECORDED, not derived.
+      // Forward-active samples (V_CE well past saturation): the Early effect
+      // scales only the transport current, so I_C/I_B = β·(1 − V_BC/V_A)
+      // EXACTLY — both currents AND both voltages RECORDED, not derived.
       const settled = result.series.filter((p) => p.time >= 1e-3 / 3)
       const active = settled.filter((p) => {
         const vce = (p.nodes.get(collectorNet) ?? 0) - (p.nodes.get(emitterNet) ?? 0)
@@ -218,28 +227,46 @@ describe('the BJT family (S20-v3-6): I_C vs V_CE at stepped base drive', () => {
       for (const p of active) {
         const iC = p.currents?.get('q1/collector') ?? 0
         const iB = p.currents?.get('q1/base') ?? 0
-        expect(iC / iB).toBeCloseTo(betaForward, 3)
+        const vBC = (p.nodes.get(baseNet) ?? 0) - (p.nodes.get(collectorNet) ?? 0)
+        expect(iC / iB).toBeCloseTo(betaForward * (1 - vBC / earlyVoltage), 3)
       }
 
-      // The plateau is DEAD flat: our Ebers-Moll transport model has no
-      // Early effect (collector-voltage dependence) — an honest gap the
-      // curve tracer makes visible; real curves tilt up slightly.
-      const iAt = (vceTarget: number) => {
+      // The plateau TILTS (S20-v3-7): along one curve V_BE is pinned by the
+      // base loop, so I_C is exactly proportional to (1 − V_BC/V_A) — the
+      // sampled pair must sit in that ratio, and the line through them must
+      // extrapolate back to V_CE = V_BE − V_A ≈ −V_A: the datasheet fan.
+      const sampleAt = (vceTarget: number) => {
         let best = Number.POSITIVE_INFINITY
         let amps = 0
+        let vce = 0
+        let vbc = 0
         for (const p of active) {
-          const vce = (p.nodes.get(collectorNet) ?? 0) - (p.nodes.get(emitterNet) ?? 0)
-          if (Math.abs(vce - vceTarget) < best) {
-            best = Math.abs(vce - vceTarget)
+          const v = (p.nodes.get(collectorNet) ?? 0) - (p.nodes.get(emitterNet) ?? 0)
+          if (Math.abs(v - vceTarget) < best) {
+            best = Math.abs(v - vceTarget)
             amps = p.currents?.get('q1/collector') ?? 0
+            vce = v
+            vbc = (p.nodes.get(baseNet) ?? 0) - (p.nodes.get(collectorNet) ?? 0)
           }
         }
-        return amps
+        return { amps, vce, vbc }
       }
-      const iLow = iAt(2)
-      const iHigh = iAt(7)
-      expect(Math.abs(iHigh - iLow) / iHigh).toBeLessThan(2e-3)
-      plateaus.push(iHigh)
+      const low = sampleAt(2)
+      const high = sampleAt(7)
+      expect(high.amps).toBeGreaterThan(low.amps)
+      expect(high.amps / low.amps).toBeCloseTo(
+        (1 - high.vbc / earlyVoltage) / (1 - low.vbc / earlyVoltage),
+        3,
+      )
+      const slope = (high.amps - low.amps) / (high.vce - low.vce)
+      xIntercepts.push(low.vce - low.amps / slope)
+      // Every step's plateau magnitude brackets β·(V_BB − V_BE)/R_B once its
+      // own measured Early factor is divided out — V_BE sits between 0.6 and
+      // 0.7 V at these microamp base currents.
+      const plateauFlat = high.amps / (1 - high.vbc / earlyVoltage)
+      expect(plateauFlat).toBeGreaterThan((betaForward * (vBase - 0.7)) / 100000)
+      expect(plateauFlat).toBeLessThan((betaForward * (vBase - 0.6)) / 100000)
+      plateaus.push(high.amps)
     }
 
     // Equal vbb steps → near-equal I_C spacing (β·ΔV/R_B), the linear law.
@@ -247,11 +274,16 @@ describe('the BJT family (S20-v3-6): I_C vs V_CE at stepped base drive', () => {
     const gap2 = (plateaus[2] ?? 0) - (plateaus[1] ?? 0)
     expect(gap1).toBeGreaterThan(0)
     expect(gap2 / gap1).toBeCloseTo(1, 1)
-    // And the plateau magnitude brackets β·(V_BB − V_BE)/R_B — V_BE sits
-    // between 0.6 and 0.7 V at these microamp base currents (the exact
-    // per-point law is already pinned by I_C/I_B = β above).
-    expect(plateaus[0]).toBeGreaterThan((betaForward * (2 - 0.7)) / 100000)
-    expect(plateaus[0]).toBeLessThan((betaForward * (2 - 0.6)) / 100000)
+
+    // The convergent fan: every plateau's extrapolation lands near −V_A
+    // (exactly V_BE − V_A per curve, so all three agree within ~20 mV of
+    // each other plus sampling noise).
+    for (const x0 of xIntercepts) {
+      expect(x0).toBeGreaterThan(-(earlyVoltage + 0.5))
+      expect(x0).toBeLessThan(-(earlyVoltage - 1.5))
+    }
+    const spread = Math.max(...xIntercepts) - Math.min(...xIntercepts)
+    expect(spread).toBeLessThan(0.3)
   })
 })
 

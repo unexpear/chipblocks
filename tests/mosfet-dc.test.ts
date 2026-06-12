@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, test } from 'vitest'
-import { solveDC } from '../src/dc-solver.ts'
+import { resolveMosfet, solveDC } from '../src/dc-solver.ts'
 import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
@@ -102,6 +102,87 @@ describe('NMOS in the DC solver', () => {
       .find((i) => i.id === 'm1')
       ?.connects?.find((c) => c.terminal === 'drain')?.net
     expect(solution.nodes.get(drainNet ?? '')).toBeCloseTo(0.6498, 3)
+  })
+})
+
+describe('MOSFET temperature laws (S20-v3-8)', () => {
+  const tcParams = {
+    ...nmosParams,
+    threshold_temperature_coefficient: scalar(-0.0034, 'volt_per_kelvin'),
+  }
+
+  test('resolveMosfet at 125 °C: k falls by the mobility law, V_th by the declared tc', () => {
+    const world = nmosSwitch(5)
+    const inst = world.instances.get('m1')
+    if (inst === undefined) throw new Error('missing instance')
+    const withTc = {
+      ...inst,
+      parameters: {
+        ...inst.parameters,
+        threshold_temperature_coefficient: {
+          value: { kind: 'scalar' as const, amount: -0.0034, unit: 'volt_per_kelvin' },
+        },
+      },
+    }
+    const hot = resolveMosfet(withTc as never, 125)
+    if (hot === null) throw new Error('failed to resolve')
+    // Mobility: k(T) = k·(T/T₀)^−1.5 in kelvin, T₀ = the same 300 K reference
+    // the diode/BJT I_S(T) laws use (diode-model's ROOM_TEMPERATURE_KELVIN).
+    expect(hot.params.transconductance).toBeCloseTo(0.026 * (398.15 / 300) ** -1.5, 12)
+    // Threshold: 2.1 + (−3.4 mV/K)·(125 − 25) = 1.76 V exactly.
+    expect(hot.params.thresholdVoltage).toBeCloseTo(1.76, 12)
+    // No temperature → the declared 25 °C values, bit-identical behavior.
+    const cold = resolveMosfet(withTc as never)
+    expect(cold?.params.transconductance).toBe(0.026)
+    expect(cold?.params.thresholdVoltage).toBe(2.1)
+    // Without the tc parameter the mobility law still applies; V_th holds.
+    const noTc = resolveMosfet(inst, 125)
+    expect(noTc?.params.transconductance).toBeCloseTo(0.026 * (398.15 / 300) ** -1.5, 12)
+    expect(noTc?.params.thresholdVoltage).toBe(2.1)
+  })
+
+  test('a hot PMOS threshold drifts TOWARD zero (positive signed tc)', () => {
+    const { world } = cmosInverter(0)
+    const inst = world.instances.get('mp')
+    if (inst === undefined) throw new Error('missing instance')
+    const withTc = {
+      ...inst,
+      parameters: {
+        ...inst.parameters,
+        threshold_temperature_coefficient: {
+          value: { kind: 'scalar' as const, amount: 0.0034, unit: 'volt_per_kelvin' },
+        },
+      },
+    }
+    const hot = resolveMosfet(withTc as never, 125)
+    expect(hot?.params.thresholdVoltage).toBeCloseTo(-2.16, 12)
+  })
+
+  test('the ZTC crossover: hot conducts MORE near threshold, LESS at strong drive', () => {
+    // The two laws oppose. Near threshold the V_th drop dominates (dangerous
+    // in bias circuits); at strong gate drive the mobility fall dominates
+    // (why MOSFETs parallel safely). The analytic crossover for the square
+    // law sits at V_OV(ztc) = −2·tc·T/1.5 ≈ 1.35 V → V_GS ≈ 3.45 V here.
+    const hotMap = new Map([['m1', 125]])
+    const nearThreshold = nmosSwitch(3)
+    for (const inst of nearThreshold.instances.values()) {
+      if (inst.id === 'm1') Object.assign(inst.parameters ?? {}, tcParams)
+    }
+    const coldNear = solveDC(nearThreshold)
+    const hotNear = solveDC(nearThreshold, { temperaturesC: hotMap })
+    expect(Math.abs(hotNear.branches.get('m1') ?? 0)).toBeGreaterThan(
+      Math.abs(coldNear.branches.get('m1') ?? 0),
+    )
+
+    const strongDrive = nmosSwitch(10)
+    for (const inst of strongDrive.instances.values()) {
+      if (inst.id === 'm1') Object.assign(inst.parameters ?? {}, tcParams)
+    }
+    const coldStrong = solveDC(strongDrive)
+    const hotStrong = solveDC(strongDrive, { temperaturesC: hotMap })
+    expect(Math.abs(hotStrong.branches.get('m1') ?? 0)).toBeLessThan(
+      Math.abs(coldStrong.branches.get('m1') ?? 0),
+    )
   })
 })
 

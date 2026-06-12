@@ -930,7 +930,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       inst.definition === 'transistor_mosfet_nmos' ||
       inst.definition === 'transistor_mosfet_pmos'
     ) {
-      const fet = resolveMosfet(inst)
+      const fet = resolveMosfet(inst, options.temperaturesC?.get(inst.id))
       if (fet !== null) mosfets.push(fet)
       else warnings.push(`Skipped MOSFET '${inst.id}' (missing parameters or terminals)`)
     } else if (inst.definition === 'wire') {

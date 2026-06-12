@@ -236,4 +236,81 @@ describe('buildMathView', () => {
     expect(coldText).not.toContain('R(T)')
     expect(coldText).toContain('× 100 Ω')
   })
+
+  test('a hot MOSFET card narrates the SAME adjusted k and V_th the solver used (S20-v3-8)', () => {
+    // Found live: the card printed I_D from the COLD law at hot voltages —
+    // 45.8 mA narrated where the solver carried 44.7. The card must resolve
+    // through resolveMosfet with the part temperature (one source of truth).
+    const nodes: CanvasNode[] = [
+      {
+        id: 'vdd',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(5, 'volt'), internal_resistance: scalar(0, 'ohm') },
+      },
+      {
+        id: 'vg',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(5, 'volt'), internal_resistance: scalar(0, 'ohm') },
+      },
+      { id: 'rload', definition: 'resistor', parameters: { resistance: scalar(100, 'ohm') } },
+      {
+        id: 'm1',
+        definition: 'transistor_mosfet_nmos',
+        parameters: {
+          threshold_voltage: scalar(2.1, 'volt'),
+          transconductance_parameter: scalar(0.026, 'ampere_per_volt_squared'),
+          threshold_temperature_coefficient: scalar(-0.0034, 'volt_per_kelvin'),
+          thermal_resistance_junction_ambient: scalar(312.5, 'kelvin_per_watt'),
+        },
+      },
+      { id: 'gnd', definition: 'ground' },
+    ]
+    const edges = [
+      {
+        source: 'vdd',
+        sourceHandle: 'terminal_positive',
+        target: 'rload',
+        targetHandle: 'terminal_a',
+      },
+      { source: 'rload', sourceHandle: 'terminal_b', target: 'm1', targetHandle: 'drain' },
+      { source: 'm1', sourceHandle: 'source', target: 'vdd', targetHandle: 'terminal_negative' },
+      { source: 'vg', sourceHandle: 'terminal_positive', target: 'm1', targetHandle: 'gate' },
+      {
+        source: 'vg',
+        sourceHandle: 'terminal_negative',
+        target: 'vdd',
+        targetHandle: 'terminal_negative',
+      },
+      {
+        source: 'gnd',
+        sourceHandle: 'reference_terminal',
+        target: 'vdd',
+        targetHandle: 'terminal_negative',
+      },
+    ]
+    const world = canvasToWorld(nodes, edges)
+    const result = solveElectroThermal(world)
+    expect(result.thermalConverged).toBe(true)
+    const t = result.temperaturesC.get('m1')
+    if (t === undefined) throw new Error('no temperature for m1')
+
+    const view = buildMathView(world, result.solution, result.temperaturesC)
+    const text = view.parts.find((p) => p.id === 'm1')?.lines.join(' ') ?? ''
+    // The narrated k IS the mobility-scaled one…
+    const hotK = 0.026 * ((t + 273.15) / 300) ** -1.5
+    expect(text).toContain(`k = ${formatEng(hotK, 'A')}/V²`)
+    // …the drift line speaks the running temperature and the drifted V_th…
+    expect(text).toContain(`Running at ${t.toFixed(1)} °C`)
+    // …and the narrated I_D agrees with the solver's branch current.
+    const narrated = text.match(/I_D = ([\d.]+) mA/)
+    const branchMa = Math.abs(result.solution.branches.get('m1') ?? 0) * 1000
+    expect(narrated).not.toBeNull()
+    expect(Number(narrated?.[1])).toBeCloseTo(branchMa, 1)
+
+    // Cold view: no drift line, the declared 25 °C k.
+    const coldView = buildMathView(world, result.solution)
+    const coldText = coldView.parts.find((p) => p.id === 'm1')?.lines.join(' ') ?? ''
+    expect(coldText).not.toContain('Running at')
+    expect(coldText).toContain(`k = ${formatEng(0.026, 'A')}/V²`)
+  })
 })

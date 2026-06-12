@@ -1,5 +1,5 @@
 import type { Instance, World } from '../cross-fk-validator.ts'
-import type { Solution } from '../dc-solver.ts'
+import { resolveMosfet, type Solution } from '../dc-solver.ts'
 import { deriveSaturationCurrent, thermalVoltage } from '../diode-model.ts'
 import { resistanceAtTemperature } from '../electro-thermal.ts'
 import { readScalarParam } from '../instance-params.ts'
@@ -352,13 +352,21 @@ function partCard(
         `V_CE (collector to emitter, the “controlled path”): ${fmtV(vCollector - vEmitter)}.`,
       )
     }
+    const earlyVoltage = readScalarParam(inst, 'forward_early_voltage')
+    if (earlyVoltage !== undefined && vBase !== undefined && vCollector !== undefined) {
+      // The forward-frame V_BC (negated for PNP) — the same value the solver
+      // feeds the (1 − V_BC/V_A) base-charge factor.
+      const vBcForward = def === 'transistor_bjt_pnp' ? vCollector - vBase : vBase - vCollector
+      const factor = 1 - vBcForward / earlyVoltage
+      lines.push(
+        `Early effect: the collector voltage widens the collector–base depletion region and thins the base, scaling I_C by (1 − V_BC/V_A) = ${factor.toFixed(3)} here (V_A = ${earlyVoltage} V) — why the I_C–V_CE plateau tilts instead of lying flat.`,
+      )
+    }
     if (current !== undefined) lines.push(`I_C = ${fmtA(Math.abs(current))} (collector current).`)
     return { id: inst.id, title: 'Transistor — small current steers big current', lines }
   }
   if (def === 'transistor_mosfet_nmos' || def === 'transistor_mosfet_pmos') {
     const vth = readScalarParam(inst, 'threshold_voltage')
-    const k = readScalarParam(inst, 'transconductance_parameter')
-    const lambda = readScalarParam(inst, 'channel_length_modulation') ?? 0
     const vGate = solution.nodes.get(netOfTerminal(inst, 'gate') ?? '')
     const vDrain = solution.nodes.get(netOfTerminal(inst, 'drain') ?? '')
     const vSource = solution.nodes.get(netOfTerminal(inst, 'source') ?? '')
@@ -368,22 +376,24 @@ function partCard(
     lines.push(
       `Three regions: below the threshold (${vth !== undefined ? fmtV(vth) : 'V_th'}) the channel is gone (cutoff); just above it the channel is a gate-controlled resistor (triode, I = k·[(V_GS−V_th)·V_DS − V_DS²/2]); pushed harder it pinches off and the current depends on the gate alone (saturation, I = (k/2)·(V_GS−V_th)²).`,
     )
-    if (
-      vth !== undefined &&
-      k !== undefined &&
-      vGate !== undefined &&
-      vDrain !== undefined &&
-      vSource !== undefined
-    ) {
-      const op = mosfetOperatingPoint(vGate - vSource, vDrain - vSource, {
-        channel: def === 'transistor_mosfet_pmos' ? 'pmos' : 'nmos',
-        thresholdVoltage: vth,
-        transconductance: k,
-        channelLengthModulation: lambda,
-      })
+    // The SAME resolve the solver ran (one source of truth): with a junction
+    // temperature this carries the mobility-scaled k and the drifted V_th —
+    // what the user reads is what the solver used.
+    const resolved = resolveMosfet(inst, temperatureC)
+    if (resolved !== null && vGate !== undefined && vDrain !== undefined && vSource !== undefined) {
+      const op = mosfetOperatingPoint(vGate - vSource, vDrain - vSource, resolved.params)
       lines.push(
-        `Right now: V_GS = ${fmtV(vGate - vSource)}, V_DS = ${fmtV(vDrain - vSource)} → the ${op.region} region, I_D = ${fmtA(Math.abs(op.iD))} (k = ${formatEng(k, 'A')}/V²).`,
+        `Right now: V_GS = ${fmtV(vGate - vSource)}, V_DS = ${fmtV(vDrain - vSource)} → the ${op.region} region, I_D = ${fmtA(Math.abs(op.iD))} (k = ${formatEng(resolved.params.transconductance, 'A')}/V²).`,
       )
+      if (
+        temperatureC !== undefined &&
+        vth !== undefined &&
+        Math.abs(resolved.params.thresholdVoltage - vth) > 5e-4
+      ) {
+        lines.push(
+          `Running at ${temperatureC.toFixed(1)} °C: heat thins the channel mobility (k falls by (T/T₀)^1.5) and the threshold drifts to ${fmtV(resolved.params.thresholdVoltage)} — these adjusted values ARE the ones in the numbers above.`,
+        )
+      }
     }
     return {
       id: inst.id,

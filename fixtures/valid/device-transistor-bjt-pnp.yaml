@@ -79,6 +79,11 @@ parameters:
     units: dimensionless
     required: false
     description: Reverse current gain beta_R — small for a normal PNP (often <10); governs behavior when collector and emitter roles swap (saturation / inverse mode).
+  forward_early_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Forward Early voltage V_AF — base-width modulation. A wider collector-base depletion region thins the base, so the collector current magnitude rises gently as the collector-emitter voltage grows; the solver scales the transport current by (1 - V_BC/V_AF) in the forward frame, the first-order Gummel-Poon base-charge factor. Omitted = no Early effect (infinite V_A). Part-specific (2N3906 SPICE model VAF 18.7 V).
   max_collector_current:
     type: quantity
     units: ampere

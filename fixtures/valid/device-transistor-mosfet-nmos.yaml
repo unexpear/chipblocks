@@ -80,6 +80,11 @@ parameters:
     units: per_volt
     required: false
     description: "λ — the slight rise of saturation current with V_DS (finite output resistance): I_D ∝ (1 + λ·V_DS). Rarely on datasheets; textbook Level-1 class values run 0.01-0.05 per volt."
+  threshold_temperature_coefficient:
+    type: quantity
+    units: volt_per_kelvin
+    required: false
+    description: "dV_th/dT — the threshold falls as the junction heats (negative for an N-channel; ~−3.4 mV/K for the 2N7000 family, derived from the published V_GS(th)-vs-temperature curve). Datasheets plot this as a curve, not a spec line. Omitted = no drift modeled. The companion mobility fall, k ∝ (T/T₀)^−1.5, needs no parameter — it applies whenever the electro-thermal loop supplies a junction temperature."
   max_drain_current:
     type: quantity
     units: ampere
@@ -126,9 +131,12 @@ extensions:
 notes: |
   Level-1 (Shichman-Hodges) three-region model in both solvers; the two
   regions meet smoothly at V_DS = V_GS − V_th, and the channel's real symmetry
-  (drain/source role swap when V_DS < 0) is modeled. Honest gaps, stated:
-  the body diode every discrete MOSFET carries from source to drain is NOT
-  yet modeled (matters for inductive freewheeling); neither are gate
-  capacitance (switching speed) nor avalanche. Body effect does not apply —
+  (drain/source role swap when V_DS < 0) is modeled. Temperature laws (S20-v3-8):
+  with a junction temperature from the electro-thermal loop, k falls by the
+  mobility law (T/T₀)^−1.5 and V_th drifts by threshold_temperature_coefficient —
+  the two oppose, giving the real zero-temperature-coefficient (ZTC) bias point.
+  Honest gaps, stated: the body diode every discrete MOSFET carries from source
+  to drain is NOT yet modeled (matters for inductive freewheeling); neither are
+  gate capacitance (switching speed) nor avalanche. Body effect does not apply —
   the body is tied to the source by construction in this three-terminal
   device, so V_SB = 0 exactly. The PMOS variant is the polarity mirror.

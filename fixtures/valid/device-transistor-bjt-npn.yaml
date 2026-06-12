@@ -79,6 +79,11 @@ parameters:
     units: dimensionless
     required: false
     description: Reverse current gain beta_R — small for a normal NPN (often <10); governs behavior when collector and emitter roles swap (saturation / inverse mode).
+  forward_early_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Forward Early voltage V_AF — base-width modulation. A wider collector-base depletion region thins the base, so I_C rises gently with V_CE; the solver scales the transport current by (1 - V_BC/V_AF), the first-order Gummel-Poon base-charge factor. Omitted = no Early effect (infinite V_A). Part-specific (2N3904 SPICE model VAF 74.03 V).
   max_collector_current:
     type: quantity
     units: ampere
@@ -124,6 +129,9 @@ notes: |
   numeric defaults on beta / I_S (part-specific) — the canvas drop defaults (part-defaults.ts,
   2N3904 class, cited) and per-instance values fill them in; the n/p/n material regions DO
   default to silicon. PNP is the same model with reversed polarities (future variant).
-  Gummel-Poon (Early effect, high-level injection, charge storage) is the higher-fidelity
-  successor — deferred. Ratings (max_collector_current, V_CEO) are present for future
-  failure-mode checks; the active solver reads saturation_current + forward/reverse gain.
+  The Early effect (base-width modulation) IS modeled when forward_early_voltage is set —
+  the first-order Gummel-Poon base-charge factor on the transport current (S20-v3-7); the
+  rest of Gummel-Poon (reverse Early, high-level injection, charge storage) remains the
+  higher-fidelity successor — deferred. Ratings (max_collector_current, V_CEO) are present
+  for future failure-mode checks; the active solver reads saturation_current +
+  forward/reverse gain + forward_early_voltage.

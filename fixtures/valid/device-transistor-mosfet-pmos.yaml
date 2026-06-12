@@ -72,6 +72,11 @@ parameters:
     units: per_volt
     required: false
     description: λ — the slight rise of saturation current magnitude with |V_DS|. Textbook Level-1 class values 0.01-0.05 per volt.
+  threshold_temperature_coefficient:
+    type: quantity
+    units: volt_per_kelvin
+    required: false
+    description: "dV_th/dT — the threshold MAGNITUDE falls as the junction heats, so for a P-channel (negative V_th) the signed coefficient is POSITIVE (V_th drifts toward zero). Datasheets plot this as a curve, not a spec line. Omitted = no drift modeled. The companion mobility fall, k ∝ (T/T₀)^−1.5, needs no parameter — it applies whenever the electro-thermal loop supplies a junction temperature."
   max_drain_current:
     type: quantity
     units: ampere

@@ -201,6 +201,120 @@ describe('AC heating follows AVERAGE power, not peak', () => {
   })
 })
 
+describe('MOSFET temperature laws in the thermal loop (S20-v3-8)', () => {
+  /** 2N7000-class NMOS low-side switch at strong gate drive: 5 V supply,
+      100 Ω load, gate 5 V — past the ZTC point, so heating must REDUCE the
+      current (the mobility fall wins; the self-limiting property). */
+  function mosfetWorld() {
+    return canvasToWorld(
+      [
+        {
+          id: 'vdd',
+          definition: 'power_source',
+          parameters: { nominal_voltage: scalar(5, 'volt'), internal_resistance: scalar(0, 'ohm') },
+        },
+        {
+          id: 'vgate',
+          definition: 'power_source',
+          parameters: { nominal_voltage: scalar(5, 'volt'), internal_resistance: scalar(0, 'ohm') },
+        },
+        { id: 'rload', definition: 'resistor', parameters: { resistance: scalar(100, 'ohm') } },
+        {
+          id: 'm1',
+          definition: 'transistor_mosfet_nmos',
+          parameters: {
+            threshold_voltage: scalar(2.1, 'volt'),
+            transconductance_parameter: scalar(0.026, 'ampere_per_volt_squared'),
+            threshold_temperature_coefficient: scalar(-0.0034, 'volt_per_kelvin'),
+            thermal_resistance_junction_ambient: scalar(312.5, 'kelvin_per_watt'),
+          },
+        },
+        { id: 'gnd', definition: 'ground' },
+      ],
+      [
+        {
+          id: 'e1',
+          source: 'vdd',
+          target: 'rload',
+          sourceHandle: 'terminal_positive',
+          targetHandle: 'terminal_a',
+        },
+        {
+          id: 'e2',
+          source: 'rload',
+          target: 'm1',
+          sourceHandle: 'terminal_b',
+          targetHandle: 'drain',
+        },
+        {
+          id: 'e3',
+          source: 'm1',
+          target: 'vdd',
+          sourceHandle: 'source',
+          targetHandle: 'terminal_negative',
+        },
+        {
+          id: 'e4',
+          source: 'vgate',
+          target: 'm1',
+          sourceHandle: 'terminal_positive',
+          targetHandle: 'gate',
+        },
+        {
+          id: 'e5',
+          source: 'vgate',
+          target: 'vdd',
+          sourceHandle: 'terminal_negative',
+          targetHandle: 'terminal_negative',
+        },
+        {
+          id: 'e6',
+          source: 'gnd',
+          target: 'vdd',
+          sourceHandle: 'reference_terminal',
+          targetHandle: 'terminal_negative',
+        },
+      ],
+    )
+  }
+
+  test('both engines settle a heated MOSFET on the SAME current and temperature', () => {
+    const dc = solveElectroThermal(mosfetWorld())
+    expect(dc.solution.status).toBe('solved')
+    expect(dc.thermalConverged).toBe(true)
+
+    const tr = solveTransientThermal(mosfetWorld(), { timeStep: 1e-5, duration: 1e-3 })
+    expect(tr.result.status).toBe('solved')
+    expect(tr.thermalConverged).toBe(true)
+
+    const last = tr.result.series[tr.result.series.length - 1]
+    if (last === undefined) throw new Error('no samples')
+    const transientAmps = last.currents?.get('m1/drain')
+    const dcAmps = dc.solution.branches.get('m1')
+    if (transientAmps === undefined || dcAmps === undefined) throw new Error('missing currents')
+    expect(Math.abs(transientAmps) - Math.abs(dcAmps)).toBeCloseTo(0, 7)
+
+    const dcT = dc.temperaturesC.get('m1')
+    const trT = tr.temperaturesC.get('m1')
+    if (dcT === undefined || trT === undefined) throw new Error('missing temperature')
+    expect(trT).toBeCloseTo(dcT, 1)
+    // It genuinely heated: ~28 mW × 312.5 K/W ≈ 9 °C above ambient.
+    expect(dcT).toBeGreaterThan(30)
+  })
+
+  test('past the ZTC point the hot MOSFET carries LESS current (self-limiting)', () => {
+    const cold = solveTransient(mosfetWorld(), { timeStep: 1e-5, duration: 1e-3 })
+    const hot = solveTransientThermal(mosfetWorld(), { timeStep: 1e-5, duration: 1e-3 })
+    const coldLast = cold.series[cold.series.length - 1]
+    const hotLast = hot.result.series[hot.result.series.length - 1]
+    if (coldLast === undefined || hotLast === undefined) throw new Error('no samples')
+    const coldAmps = coldLast.currents?.get('m1/drain') ?? 0
+    const hotAmps = hotLast.currents?.get('m1/drain') ?? 0
+    expect(hotAmps).toBeLessThan(coldAmps)
+    expect(hotAmps / coldAmps).toBeGreaterThan(0.9)
+  })
+})
+
 describe('honest defaults and gates', () => {
   test('a plain solveTransient (no temperatures) is exactly the cold solve', () => {
     const a = solveTransient(auditWorld(), { timeStep: 1e-5, duration: 5e-4 })

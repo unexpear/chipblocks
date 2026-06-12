@@ -52,6 +52,7 @@ import {
 } from './diode-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { limitMosfetStep, type MosfetParams, mosfetOperatingPoint } from './mosfet-model.ts'
+import { STANDARD_AMBIENT_C } from './thermal-model.ts'
 
 /**
  * A switch conducts only when closed. State lives on the instance as
@@ -207,7 +208,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       inst.definition === 'transistor_mosfet_nmos' ||
       inst.definition === 'transistor_mosfet_pmos'
     ) {
-      const fet = resolveMosfet(inst)
+      const fet = resolveMosfet(inst, options?.temperaturesC?.get(inst.id))
       if (fet !== null) mosfets.push(fet)
       continue
     }
@@ -606,6 +607,10 @@ export function resolveBjt(inst: Instance, temperatureC?: number): BjtElement | 
   if (saturationCurrent === undefined || betaForward === undefined) return null
   if (saturationCurrent <= 0 || betaForward <= 0) return null
   const betaReverse = readScalarParam(inst, 'reverse_current_gain') ?? 1
+  // Forward Early voltage V_AF (volts) — optional; a nonsense value (≤ 0)
+  // disqualifies the part the same way a nonsense I_S or β does.
+  const earlyVoltageForward = readScalarParam(inst, 'forward_early_voltage')
+  if (earlyVoltageForward !== undefined && earlyVoltageForward <= 0) return null
 
   const collector = inst.connects?.find((c) => c.terminal === 'collector')
   const base = inst.connects?.find((c) => c.terminal === 'base')
@@ -632,7 +637,12 @@ export function resolveBjt(inst: Instance, temperatureC?: number): BjtElement | 
     collectorNet: collector.net,
     baseNet: base.net,
     emitterNet: emitter.net,
-    params: { saturationCurrent, betaForward, betaReverse },
+    params: {
+      saturationCurrent,
+      betaForward,
+      betaReverse,
+      ...(earlyVoltageForward === undefined ? {} : { earlyVoltageForward }),
+    },
     thermalV: elementThermalV,
     polarity: inst.definition === 'transistor_bjt_pnp' ? 'pnp' : 'npn',
     vBE: 0.65,
@@ -703,9 +713,17 @@ export function stampBjtCompanion(
  * the transient solver, which runs the same companion inside its per-step
  * Newton-Raphson loop.
  *
- * Honest scope note: the electro-thermal loop does not yet adjust MOSFETs
- * (the Level-1 temperature laws — V_th drift, mobility fall — are a
- * documented future increment); LEDs and BJTs do get the I_S(T) treatment.
+ * Temperature laws (S20-v3-8): with a junction temperature from the
+ * electro-thermal loop, k falls as (T/T₀)^−1.5 — carrier mobility limited by
+ * phonon (lattice) scattering, the SPICE law M₀(T) = M₀(T₀)/(T/T₀)^1.5
+ * (ngspice manual §1.4 "Analysis at different temperatures"; Sze, Physics of
+ * Semiconductor Devices) — and V_th drifts by the part's declared
+ * threshold_temperature_coefficient (datasheet-derived V/K). The two oppose:
+ * just above threshold the V_th drop WINS (a hot MOSFET conducts more);
+ * at strong gate drive the mobility fall WINS (it conducts less) — the
+ * crossover is the zero-temperature-coefficient (ZTC) bias real datasheets
+ * plot. No clamping on the V_th shift: crossing 0 V would take ~600 °C at the
+ * cited −3.4 mV/°C, far past the over-temperature failure check.
  */
 export type MosfetElement = {
   inst: Instance
@@ -718,17 +736,33 @@ export type MosfetElement = {
   vDS: number
 }
 
+/** Carrier mobility falls as T^−1.5 (phonon scattering) — the SPICE exponent. */
+export const MOBILITY_TEMPERATURE_EXPONENT = -1.5
+
 /**
  * Resolve a MOSFET to the Level-1 model, or null if it lacks the parameters
  * (threshold_voltage + transconductance_parameter) or its three connects.
  * Warm-started at 0 V bias (cutoff) — the step-limited NR walks it up.
  */
-export function resolveMosfet(inst: Instance): MosfetElement | null {
-  const thresholdVoltage = readScalarParam(inst, 'threshold_voltage')
-  const transconductance = readScalarParam(inst, 'transconductance_parameter')
+export function resolveMosfet(inst: Instance, temperatureC?: number): MosfetElement | null {
+  let thresholdVoltage = readScalarParam(inst, 'threshold_voltage')
+  let transconductance = readScalarParam(inst, 'transconductance_parameter')
   if (thresholdVoltage === undefined || transconductance === undefined) return null
   if (transconductance <= 0) return null
   const channelLengthModulation = readScalarParam(inst, 'channel_length_modulation') ?? 0
+
+  // With a junction temperature (the electro-thermal loop): the declared k and
+  // V_th are 25 °C figures; k scales by the mobility law, V_th drifts by the
+  // part's declared coefficient (absent → no drift modeled, stated in the
+  // fixture). See the MosfetElement doc for the laws and sources.
+  if (temperatureC !== undefined) {
+    const junctionKelvin = temperatureC + KELVIN_OFFSET
+    transconductance *= (junctionKelvin / ROOM_TEMPERATURE_KELVIN) ** MOBILITY_TEMPERATURE_EXPONENT
+    const thresholdTc = readScalarParam(inst, 'threshold_temperature_coefficient')
+    if (thresholdTc !== undefined) {
+      thresholdVoltage += thresholdTc * (temperatureC - STANDARD_AMBIENT_C)
+    }
+  }
 
   const gate = inst.connects?.find((c) => c.terminal === 'gate')
   const drain = inst.connects?.find((c) => c.terminal === 'drain')

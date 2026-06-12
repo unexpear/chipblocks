@@ -202,8 +202,12 @@ describe('solveElectroThermal', () => {
 
   test('a MOSFET heats like any other rated part — V_DS·I_D through its θ_JA', () => {
     // 10 V supply → 100 Ω → drain; gate at 3.1 V (V_OV = 1 V, k = 26 mA/V², no λ)
-    // → saturation: I_D = 13 mA exactly, V_DS = 10 − 1.3 = 8.7 V.
-    // P = 8.7 V × 13 mA = 113.1 mW; θ_JA 312.5 → T = 25 + 35.34 = 60.34 °C.
+    // → saturation, COLD: I_D = 13 mA exactly, V_DS = 8.7 V, P = 113.1 mW —
+    // through θ_JA 312.5 that WOULD read 60.3 °C. But heating now feeds back
+    // (S20-v3-8): k falls by the mobility law, the hot transistor conducts
+    // less, and it settles COOLER — the fixed point of
+    // T = 25 + 312.5·I_D(T)·(10 − 100·I_D(T)) with I_D(T) = 13 mA·(T_K/300)^−1.5,
+    // hand-iterated to ≈ 56.3 °C at I_D ≈ 11.3 mA.
     const nodes: CanvasNode[] = [
       {
         id: 'vdd',
@@ -253,7 +257,13 @@ describe('solveElectroThermal', () => {
     const result = solveElectroThermal(canvasToWorld(nodes, edges))
     expect(result.solution.status).toBe('solved')
     expect(result.thermalConverged).toBe(true)
-    expect(result.temperaturesC.get('m1') ?? 0).toBeCloseTo(60.34, 1)
+    const t = result.temperaturesC.get('m1') ?? 0
+    expect(t).toBeGreaterThan(55.8)
+    expect(t).toBeLessThan(56.8)
+    // Self-consistency: the reported temperature IS the lumped law applied to
+    // the power of the SOLVED operating point (within the loop's 0.1 °C gate).
+    const iD = Math.abs(result.solution.branches.get('m1') ?? 0)
+    expect(t).toBeCloseTo(25 + 312.5 * iD * (10 - 100 * iD), 0)
   })
 
   test('the live-canvas regression: a hot tempco resistor in an NMOS switch keeps KVL', () => {
