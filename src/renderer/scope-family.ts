@@ -15,10 +15,16 @@
 import type { TransientPoint } from '../transient-solver.ts'
 import { channelValue, type ScopeChannel } from './scope.tsx'
 
-/** N evenly spaced step values, endpoints included. Count clamps to 2..8. */
+/**
+ * N evenly spaced step values, endpoints included. Count clamps to 2..8.
+ * Exact duplicates collapse (from = to gives ONE step, not N identical
+ * simulations of the same circuit — found by a verification probe: the
+ * duplicate labels also collided as render keys).
+ */
 export function stepValues(from: number, to: number, count: number): number[] {
   const n = Math.max(2, Math.min(8, Math.round(count)))
-  return Array.from({ length: n }, (_, k) => from + (k * (to - from)) / (n - 1))
+  const values = Array.from({ length: n }, (_, k) => from + (k * (to - from)) / (n - 1))
+  return [...new Set(values)]
 }
 
 /**
@@ -45,8 +51,10 @@ export function withSourceVoltage<
   })
 }
 
-/** One traced family step: its stepped value's label and the (x, y) path. */
+/** One traced family step: the stepped value, its label, and the (x, y) path. */
 export type FamilyStep = {
+  /** The exact stepped value — the stable identity (labels can round-collide). */
+  value: number
   label: string
   path: { x: number; y: number }[]
 }

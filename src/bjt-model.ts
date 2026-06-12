@@ -18,6 +18,12 @@
  *
  * NPN convention: V_BE = V_base − V_emitter, V_BC = V_base − V_collector. The
  * returned terminal currents flow INTO each terminal and sum to zero (KCL).
+ *
+ * Honest model note (made visible by the curve tracer, 2026-06-12): the
+ * transport model has NO Early effect — a real BJT's I_C–V_CE family tilts
+ * gently upward in forward-active (I_C grows with V_CE, slope set by the
+ * Early voltage V_A); ours draws perfectly flat plateaus. Adding the
+ * (1 + V_CE/V_A) factor with a cited V_A is a future increment.
  */
 
 export type BjtParams = {

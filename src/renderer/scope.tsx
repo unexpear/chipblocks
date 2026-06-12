@@ -1256,7 +1256,7 @@ export function ScopePlot({
             <g clipPath="url(#scope-screen)">
               {family.steps.map((step, i) => (
                 <polyline
-                  key={step.label}
+                  key={step.value}
                   fill="none"
                   stroke={TRACE_COLORS[i % TRACE_COLORS.length]}
                   strokeWidth={1.6}
@@ -1430,7 +1430,7 @@ export function ScopePlot({
           }}
         >
           {family.steps.map((step, i) => (
-            <span key={step.label} style={{ color: TRACE_COLORS[i % TRACE_COLORS.length] }}>
+            <span key={step.value} style={{ color: TRACE_COLORS[i % TRACE_COLORS.length] }}>
               — {step.label}
             </span>
           ))}

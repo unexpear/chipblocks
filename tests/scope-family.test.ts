@@ -30,6 +30,12 @@ describe('stepValues', () => {
     expect(stepValues(0, 1, 99).length).toBe(8)
   })
 
+  test('from = to collapses to ONE step — not N identical simulations', () => {
+    // Found by a verification probe: five identical runs also gave five
+    // identical labels, which collided as render keys.
+    expect(stepValues(2.5, 2.5, 5)).toEqual([2.5])
+  })
+
   test('a descending range steps downward just as honestly', () => {
     expect(stepValues(4, 2, 3)).toEqual([4, 3, 2])
   })
@@ -67,6 +73,7 @@ describe('familyExtent', () => {
   test('the union of every step, one axis fit for the family', () => {
     const extent = familyExtent([
       {
+        value: 1,
         label: 'a',
         path: [
           { x: 0, y: 0 },
@@ -74,6 +81,7 @@ describe('familyExtent', () => {
         ],
       },
       {
+        value: 2,
         label: 'b',
         path: [
           { x: -1, y: 0.002 },
@@ -85,7 +93,165 @@ describe('familyExtent', () => {
   })
 
   test('no points → null, never a fake box', () => {
-    expect(familyExtent([{ label: 'a', path: [] }])).toBeNull()
+    expect(familyExtent([{ value: 0, label: 'a', path: [] }])).toBeNull()
+  })
+})
+
+describe('the BJT family (S20-v3-6): I_C vs V_CE at stepped base drive', () => {
+  test('equally spaced curves at β·I_B — the bipolar fingerprint, dead-flat plateaus', () => {
+    // The classic rig: vcc sweeps the collector 0..9 V; the base is driven
+    // through a 100 kΩ resistor from the STEPPED source, so equal voltage
+    // steps make near-equal base-current steps — and β multiplies them into
+    // equally spaced collector plateaus (the MOSFET's family spacing grows
+    // quadratically; the BJT's is linear — the device-physics fingerprint).
+    const betaForward = 100
+    const baseNodes = [
+      {
+        id: 'vcc',
+        definition: 'power_source',
+        parameters: {
+          nominal_voltage: scalar(4.5, 'volt'),
+          ac_amplitude: scalar(4.5, 'volt'),
+          frequency: scalar(1000, 'hertz'),
+          internal_resistance: scalar(50, 'ohm'),
+        },
+      },
+      {
+        id: 'vbb',
+        definition: 'power_source',
+        parameters: {
+          nominal_voltage: scalar(2, 'volt'),
+          internal_resistance: scalar(0, 'ohm'),
+        },
+      },
+      {
+        id: 'rb',
+        definition: 'resistor',
+        parameters: { resistance: scalar(100000, 'ohm') },
+      },
+      {
+        id: 'q1',
+        definition: 'transistor_bjt_npn',
+        parameters: {
+          saturation_current: scalar(1e-14, 'ampere'),
+          forward_current_gain: scalar(betaForward, 'dimensionless'),
+        },
+      },
+      { id: 'gnd', definition: 'ground' },
+    ]
+    const edges = [
+      {
+        id: 'e1',
+        source: 'vcc',
+        target: 'q1',
+        sourceHandle: 'terminal_positive',
+        targetHandle: 'collector',
+      },
+      {
+        id: 'e2',
+        source: 'vbb',
+        target: 'rb',
+        sourceHandle: 'terminal_positive',
+        targetHandle: 'terminal_a',
+      },
+      { id: 'e3', source: 'rb', target: 'q1', sourceHandle: 'terminal_b', targetHandle: 'base' },
+      {
+        id: 'e4',
+        source: 'q1',
+        target: 'vcc',
+        sourceHandle: 'emitter',
+        targetHandle: 'terminal_negative',
+      },
+      {
+        id: 'e5',
+        source: 'vbb',
+        target: 'vcc',
+        sourceHandle: 'terminal_negative',
+        targetHandle: 'terminal_negative',
+      },
+      {
+        id: 'e6',
+        source: 'gnd',
+        target: 'vcc',
+        sourceHandle: 'reference_terminal',
+        targetHandle: 'terminal_negative',
+      },
+    ]
+
+    const plateaus: number[] = []
+    for (const vBase of stepValues(2, 4, 3)) {
+      const nodes = withSourceVoltage(
+        baseNodes.map((n) => ({
+          id: n.id,
+          data: { parameters: n.parameters as Record<string, unknown> },
+        })),
+        'vbb',
+        vBase,
+      )
+      const world = canvasToWorld(
+        nodes.map((n, i) => ({
+          id: n.id,
+          definition: baseNodes[i]?.definition ?? '',
+          parameters: n.data?.parameters as never,
+        })),
+        edges,
+      )
+      const result = solveTransient(world, { timeStep: 2e-6, duration: 1e-3 })
+      expect(result.status).toBe('solved')
+
+      const collectorNet = world.instances
+        .get('q1')
+        ?.connects?.find((c) => c.terminal === 'collector')?.net
+      const emitterNet = world.instances
+        .get('q1')
+        ?.connects?.find((c) => c.terminal === 'emitter')?.net
+      if (collectorNet === undefined || emitterNet === undefined) throw new Error('missing nets')
+
+      // Forward-active samples (V_CE well past saturation): I_C/I_B = β
+      // EXACTLY in the transport model — both currents RECORDED, not derived.
+      const settled = result.series.filter((p) => p.time >= 1e-3 / 3)
+      const active = settled.filter((p) => {
+        const vce = (p.nodes.get(collectorNet) ?? 0) - (p.nodes.get(emitterNet) ?? 0)
+        return vce > 1
+      })
+      expect(active.length).toBeGreaterThan(50)
+      for (const p of active) {
+        const iC = p.currents?.get('q1/collector') ?? 0
+        const iB = p.currents?.get('q1/base') ?? 0
+        expect(iC / iB).toBeCloseTo(betaForward, 3)
+      }
+
+      // The plateau is DEAD flat: our Ebers-Moll transport model has no
+      // Early effect (collector-voltage dependence) — an honest gap the
+      // curve tracer makes visible; real curves tilt up slightly.
+      const iAt = (vceTarget: number) => {
+        let best = Number.POSITIVE_INFINITY
+        let amps = 0
+        for (const p of active) {
+          const vce = (p.nodes.get(collectorNet) ?? 0) - (p.nodes.get(emitterNet) ?? 0)
+          if (Math.abs(vce - vceTarget) < best) {
+            best = Math.abs(vce - vceTarget)
+            amps = p.currents?.get('q1/collector') ?? 0
+          }
+        }
+        return amps
+      }
+      const iLow = iAt(2)
+      const iHigh = iAt(7)
+      expect(Math.abs(iHigh - iLow) / iHigh).toBeLessThan(2e-3)
+      plateaus.push(iHigh)
+    }
+
+    // Equal vbb steps → near-equal I_C spacing (β·ΔV/R_B), the linear law.
+    const gap1 = (plateaus[1] ?? 0) - (plateaus[0] ?? 0)
+    const gap2 = (plateaus[2] ?? 0) - (plateaus[1] ?? 0)
+    expect(gap1).toBeGreaterThan(0)
+    expect(gap2 / gap1).toBeCloseTo(1, 1)
+    // And the plateau magnitude brackets β·(V_BB − V_BE)/R_B — V_BE sits
+    // between 0.6 and 0.7 V at these microamp base currents (the exact
+    // per-point law is already pinned by I_C/I_B = β above).
+    expect(plateaus[0]).toBeGreaterThan((betaForward * (2 - 0.7)) / 100000)
+    expect(plateaus[0]).toBeLessThan((betaForward * (2 - 0.6)) / 100000)
   })
 })
 

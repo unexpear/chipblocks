@@ -948,7 +948,11 @@ function Canvas() {
           skipped.push(`${formatEng(value, 'V')}: ${result.status}`)
           continue
         }
-        traced.push({ label, path: extractXyPath(result.series, xChannel, yChannel, windowSec) })
+        traced.push({
+          value,
+          label,
+          path: extractXyPath(result.series, xChannel, yChannel, windowSec),
+        })
       }
       setScopeFamily({ steps: traced, xChannel, yChannel, sourceId, skipped })
       setScopeFamilyNote(skipped.length > 0 ? `skipped — ${skipped.join(' · ')}` : null)
