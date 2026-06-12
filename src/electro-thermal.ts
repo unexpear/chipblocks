@@ -20,6 +20,7 @@ import type { Instance, World } from './cross-fk-validator.ts'
 import { type Solution, type SolveOptions, solveDC } from './dc-solver.ts'
 import { readScalarParam } from './instance-params.ts'
 import { acrossVolts, junctionTemperature, STANDARD_AMBIENT_C } from './thermal-model.ts'
+import { solveTransient, type TransientOptions, type TransientResult } from './transient-solver.ts'
 
 export type ElectroThermalResult = {
   /** The electrically-converged solution at the final temperatures. */
@@ -147,6 +148,124 @@ export function solveElectroThermal(world: World, options?: SolveOptions): Elect
 
   return {
     solution,
+    temperaturesC,
+    thermalIterations: Math.min(iteration, MAX_THERMAL_ITERATIONS),
+    thermalConverged,
+    warnings,
+  }
+}
+
+export type TransientThermalOptions = TransientOptions & {
+  /**
+   * Power-averaging starts here (default duration/3 — the settle convention
+   * the multimeter and the FFT share), so a power-on transient doesn't bias
+   * the steady temperature.
+   */
+  thermalSettleSeconds?: number
+}
+
+export type TransientThermalResult = {
+  /** The time-domain result at the final temperatures. */
+  result: TransientResult
+  /** Instance id → settled part temperature (°C), for parts with a θ_JA. */
+  temperaturesC: Map<string, number>
+  thermalIterations: number
+  thermalConverged: boolean
+  warnings: string[]
+}
+
+/**
+ * Each θ_JA-rated part's temperature from its AVERAGE absorbed power over the
+ * settled record — the exact per-terminal ledger Σ v·i_into the solver
+ * records (the same numbers Tellegen's theorem balances), time-averaged.
+ *
+ * Quasi-static thermal model: electrical periods (µs–ms) are far shorter
+ * than a part's thermal settling (seconds), so the part sits at the
+ * temperature its average dissipation sustains — the same steady lumped law
+ * the DC loop uses, T = 25 °C + P·θ. Thermal MASS (warm-up curves within a
+ * record) needs cited heat capacities and is a documented future increment.
+ */
+function computeTransientTemperatures(
+  world: World,
+  result: TransientResult,
+  settleSeconds: number,
+): Map<string, number> {
+  const temperatures = new Map<string, number>()
+  for (const inst of world.instances.values()) {
+    const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
+    if (thetaJa === undefined || thetaJa <= 0) continue
+    const connects = inst.connects ?? []
+    if (connects.length === 0) continue
+
+    let sum = 0
+    let samples = 0
+    for (const point of result.series) {
+      if (point.time < settleSeconds || point.currents === undefined) continue
+      let power = 0
+      for (const c of connects) {
+        power +=
+          (point.nodes.get(c.net) ?? 0) * (point.currents.get(`${inst.id}/${c.terminal}`) ?? 0)
+      }
+      sum += power
+      samples++
+    }
+    if (samples === 0) continue
+    // A passive part's average absorbed power can't be negative; clamp the
+    // float dust so a reactive part reads ambient, not below it.
+    temperatures.set(inst.id, junctionTemperature(Math.max(0, sum / samples), thetaJa))
+  }
+  return temperatures
+}
+
+/**
+ * The transient solve with temperature feedback (S20-v3-5) — the same
+ * fixed-point loop as solveElectroThermal, run on the time-domain engine:
+ * solve → average each rated part's real dissipation → re-solve with R(T)
+ * and per-junction I_S(T)/V_T(T) → repeat until temperatures settle. Closes
+ * the measured cross-engine gap: the meter (DC loop) and the scope (this)
+ * now heat the same parts by the same law.
+ */
+export function solveTransientThermal(
+  world: World,
+  options: TransientThermalOptions,
+): TransientThermalResult {
+  const warnings: string[] = []
+  const settleSeconds = options.thermalSettleSeconds ?? options.duration / 3
+  let temperaturesC = new Map<string, number>()
+  let result: TransientResult = solveTransient(world, options)
+  let thermalConverged = false
+  let iteration = 0
+
+  for (iteration = 1; iteration <= MAX_THERMAL_ITERATIONS; iteration++) {
+    if (result.status !== 'solved') break
+
+    const next = computeTransientTemperatures(world, result, settleSeconds)
+    let maxDelta = 0
+    for (const [id, t] of next) {
+      const previous = temperaturesC.get(id) ?? STANDARD_AMBIENT_C
+      maxDelta = Math.max(maxDelta, Math.abs(t - previous))
+    }
+    temperaturesC = next
+
+    if (maxDelta < TEMPERATURE_TOLERANCE_C) {
+      thermalConverged = true
+      break
+    }
+
+    const adjusted = worldAtTemperatures(world, temperaturesC, warnings)
+    result = solveTransient(adjusted.world, { ...options, temperaturesC })
+    if (adjusted.outOfRange) break // model out of validity — report, don't fake
+  }
+
+  if (iteration > MAX_THERMAL_ITERATIONS) {
+    warnings.push(
+      `Electro-thermal loop did not settle in ${MAX_THERMAL_ITERATIONS} iterations — ` +
+        'the circuit may be thermally unstable (runaway).',
+    )
+  }
+
+  return {
+    result,
     temperaturesC,
     thermalIterations: Math.min(iteration, MAX_THERMAL_ITERATIONS),
     thermalConverged,

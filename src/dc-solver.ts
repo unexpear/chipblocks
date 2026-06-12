@@ -463,11 +463,11 @@ function emptyResult(
 }
 
 /** h·c in eV·nm (NIST CODATA) — an LED's bandgap from its emission wavelength. */
-const PHOTON_EV_NM = 1239.841984
+export const PHOTON_EV_NM = 1239.841984
 /** 0 °C in kelvin. */
-const KELVIN_OFFSET = 273.15
+export const KELVIN_OFFSET = 273.15
 /** Bandgap of silicon (eV) — the I_S(T) law's default for silicon junctions. */
-const SILICON_BANDGAP_EV = 1.11
+export const SILICON_BANDGAP_EV = 1.11
 
 /**
  * Resolve an LED to the Shockley model, or null if it lacks calibration data

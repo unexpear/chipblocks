@@ -19,6 +19,14 @@
  * Current through an inductor cannot jump: at t = 0 it is held at its initial
  * current (default 0 — an instantaneous open), then ramps on the real L/R curve.
  *
+ * Honest model note (measured 2026-06-12, the instrument self-audit):
+ * backward-Euler numerically DAMPS reactive elements — an ideal capacitor
+ * shows a small false average dissipation ≈ (π·f·Δt) of its reactive power
+ * (~2 % at 167 samples/cycle, shrinking linearly with Δt: 232 µW → 57 µW at
+ * 3× finer steps, verified live). For precision on reactive circuits, raise
+ * the samples-per-cycle (a faster scope timebase = finer Δt); the energy
+ * books still balance exactly — the source genuinely supplies the artifact.
+ *
  * A power_source is read as a time-varying Thévenin source in series with
  * internal_resistance. Two waveforms (the `waveform` enum, default sine):
  *   sine:   V(t) = nominal_voltage + ac_amplitude·sin(2π·frequency·t)
@@ -52,10 +60,13 @@ import {
   assignNodeIndices,
   type BjtElement,
   identifyGround,
+  KELVIN_OFFSET,
   type MosfetElement,
   mathInstance as math,
+  PHOTON_EV_NM,
   resolveBjt,
   resolveMosfet,
+  SILICON_BANDGAP_EV,
   stampBjtCompanion,
   stampMosfetCompanion,
   stampResistor,
@@ -66,6 +77,8 @@ import {
   deriveSaturationCurrent,
   diodeCurrent,
   pnjlim,
+  ROOM_TEMPERATURE_KELVIN,
+  scaleSaturationCurrent,
   thermalVoltage,
 } from './diode-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
@@ -93,6 +106,14 @@ export type TransientOptions = {
   duration: number
   /** Newton-Raphson iteration cap per time step (default 100). */
   maxIterations?: number
+  /**
+   * Instance id → junction temperature (°C), from the electro-thermal loop
+   * (S20-v3-5). A listed diode/LED/BJT solves at ITS temperature — V_T = kT/q
+   * and the SPICE I_S(T) law, the same per-element treatment the DC solver
+   * applies. Resistor R(T) arrives separately via the adjusted world (the
+   * shared worldAtTemperatures), exactly like the DC loop. Absent ⇒ 25 °C.
+   */
+  temperaturesC?: Map<string, number>
 }
 
 export type TransientPoint = {
@@ -236,6 +257,8 @@ type DiodeElement = {
   iK: number | undefined // matrix index of the cathode net
   saturationCurrent: number
   idealityFactor: number
+  /** kT/q at THIS junction's temperature (300 K when no temperature given). */
+  thermalV: number
   vGuess: number // linearization point; carries across steps as the warm start
 }
 
@@ -496,11 +519,18 @@ function transformerStep(tr: TransformerElement, dt: number) {
  * forward_saturation_current when present, else is derived from the
  * forward_voltage @ max_forward_current calibration point (same as the DC
  * solver's LED path). Starts OFF (vGuess 0) — the natural t = 0 state.
+ *
+ * With a junction temperature (the electro-thermal loop, S20-v3-5), the
+ * element solves at that temperature exactly like the DC path: V_T = kT/q
+ * and I_S scaled by the SPICE law, the bandgap taken from an LED's own
+ * emission wavelength (E_g = h·c/λ) or silicon's 1.11 eV otherwise. The
+ * 25 °C calibration figures are scaled FROM room temperature.
  */
 function resolveDiode(
   inst: Instance,
   nodeIndex: Map<string, number>,
   vT: number,
+  temperatureC?: number,
 ): DiodeElement | null {
   const anodeNet = inst.connects?.find((c) => c.terminal === 'anode')?.net
   const cathodeNet = inst.connects?.find((c) => c.terminal === 'cathode')?.net
@@ -517,6 +547,24 @@ function resolveDiode(
   }
   if (saturationCurrent <= 0) return null
 
+  let elementThermalV = vT
+  if (temperatureC !== undefined) {
+    const junctionKelvin = temperatureC + KELVIN_OFFSET
+    const wavelengthNm = readScalarParam(inst, 'peak_wavelength')
+    const bandgapEv =
+      wavelengthNm !== undefined && wavelengthNm > 0
+        ? PHOTON_EV_NM / wavelengthNm
+        : SILICON_BANDGAP_EV
+    saturationCurrent = scaleSaturationCurrent(
+      saturationCurrent,
+      junctionKelvin,
+      ROOM_TEMPERATURE_KELVIN,
+      idealityFactor,
+      bandgapEv,
+    )
+    elementThermalV = thermalVoltage(junctionKelvin)
+  }
+
   return {
     id: inst.id,
     anodeNet,
@@ -525,6 +573,7 @@ function resolveDiode(
     iK: nodeIndex.get(cathodeNet),
     saturationCurrent,
     idealityFactor,
+    thermalV: elementThermalV,
     vGuess: 0,
   }
 }
@@ -867,14 +916,14 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const tr = resolveCtTransformer(inst, nodeIndex, warnings)
       if (tr !== null) ctTransformers.push(tr)
     } else if (DIODE_DEFINITIONS.has(inst.definition)) {
-      const d = resolveDiode(inst, nodeIndex, vT)
+      const d = resolveDiode(inst, nodeIndex, vT, options.temperaturesC?.get(inst.id))
       if (d !== null) diodes.push(d)
       else warnings.push(`Skipped diode '${inst.id}' (missing calibration or anode/cathode)`)
     } else if (
       inst.definition === 'transistor_bjt_npn' ||
       inst.definition === 'transistor_bjt_pnp'
     ) {
-      const bjt = resolveBjt(inst)
+      const bjt = resolveBjt(inst, options.temperaturesC?.get(inst.id))
       if (bjt !== null) bjts.push(bjt)
       else warnings.push(`Skipped transistor '${inst.id}' (missing parameters or terminals)`)
     } else if (
@@ -957,8 +1006,8 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       for (const tr of transformers) stampTransformerCompanion(tr, dt, M, b)
       for (const tr of ctTransformers) stampCtTransformerCompanion(tr, dt, M, b)
     }
-    for (const d of diodes) stampDiodeCompanion(d, vT, M, b)
-    for (const bjt of bjts) stampBjtCompanion(bjt, nodeIndex, vT, M, b)
+    for (const d of diodes) stampDiodeCompanion(d, d.thermalV, M, b)
+    for (const bjt of bjts) stampBjtCompanion(bjt, nodeIndex, bjt.thermalV, M, b)
     for (const fet of mosfets) stampMosfetCompanion(fet, nodeIndex, M, b)
 
     // biome-ignore lint/suspicious/noExplicitAny: mathjs lusolve return is polymorphic
@@ -993,8 +1042,8 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       for (const d of diodes) {
         const vAnode = d.anodeNet === ground ? 0 : (nodes.get(d.anodeNet) ?? 0)
         const vCathode = d.cathodeNet === ground ? 0 : (nodes.get(d.cathodeNet) ?? 0)
-        const nVT = d.idealityFactor * vT
-        const vcrit = criticalVoltage(d.saturationCurrent, d.idealityFactor, vT)
+        const nVT = d.idealityFactor * d.thermalV
+        const vcrit = criticalVoltage(d.saturationCurrent, d.idealityFactor, d.thermalV)
         const limit = pnjlim(vAnode - vCathode, d.vGuess, nVT, vcrit)
         maxDelta = Math.max(maxDelta, Math.abs(limit.voltage - d.vGuess))
         if (limit.limited) anyLimited = true
@@ -1006,9 +1055,9 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         const vE = bjt.emitterNet === ground ? 0 : (nodes.get(bjt.emitterNet) ?? 0)
         // PNP junction guesses live in the forward frame (negated physical).
         const sign = bjt.polarity === 'pnp' ? -1 : 1
-        const vcrit = criticalVoltage(bjt.params.saturationCurrent, 1, vT)
-        const limBE = pnjlim(sign * (vB - vE), bjt.vBE, vT, vcrit)
-        const limBC = pnjlim(sign * (vB - vC), bjt.vBC, vT, vcrit)
+        const vcrit = criticalVoltage(bjt.params.saturationCurrent, 1, bjt.thermalV)
+        const limBE = pnjlim(sign * (vB - vE), bjt.vBE, bjt.thermalV, vcrit)
+        const limBC = pnjlim(sign * (vB - vC), bjt.vBC, bjt.thermalV, vcrit)
         maxDelta = Math.max(
           maxDelta,
           Math.abs(limBE.voltage - bjt.vBE),
@@ -1130,9 +1179,15 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     }
 
     for (const d of diodes) {
-      // Shockley at the converged junction voltage — the device law itself.
+      // Shockley at the converged junction voltage — the device law itself,
+      // at THIS junction's own temperature.
       const v = volts(d.anodeNet) - volts(d.cathodeNet)
-      through(d.id, 'anode', 'cathode', diodeCurrent(v, d.saturationCurrent, d.idealityFactor, vT))
+      through(
+        d.id,
+        'anode',
+        'cathode',
+        diodeCurrent(v, d.saturationCurrent, d.idealityFactor, d.thermalV),
+      )
     }
 
     for (const bjt of bjts) {
