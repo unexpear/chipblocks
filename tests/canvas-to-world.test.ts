@@ -356,3 +356,94 @@ describe('groundedComponent (S19-v3-61)', () => {
     expect(groundedComponent(world)).toBe(world)
   })
 })
+
+describe('multiple grounds — every ground symbol is one 0 V node (S21-v3-3)', () => {
+  // Two galvanically-independent circuits, each with its OWN ground part. By
+  // schematic convention every ground symbol on a sheet is the SAME node, so
+  // BOTH grounds must sit at exactly 0 V and each circuit's ABSOLUTE voltages
+  // must be right — not merely the segment differences. Before the fix the
+  // solver pinned only the first ground and the second sub-circuit floated at an
+  // arbitrary offset: the potentiometer-divider symptom seen in live testing.
+  const twoCircuits = (): CanvasNode[] => [
+    // Circuit 1: a plain 9 V / 100 Ω loop.
+    { id: 'bat1', definition: 'power_source', parameters: { nominal_voltage: scalar(9, 'volt') } },
+    { id: 'r1', definition: 'resistor', parameters: { resistance: scalar(100, 'ohm') } },
+    { id: 'gnd1', definition: 'ground' },
+    // Circuit 2: a SEPARATE 9 V divider, 2.5 kΩ over 7.5 kΩ (a 25 % tap).
+    { id: 'bat2', definition: 'power_source', parameters: { nominal_voltage: scalar(9, 'volt') } },
+    { id: 'rtop', definition: 'resistor', parameters: { resistance: scalar(2500, 'ohm') } },
+    { id: 'rbot', definition: 'resistor', parameters: { resistance: scalar(7500, 'ohm') } },
+    { id: 'gnd2', definition: 'ground' },
+  ]
+  const edges = [
+    // Circuit 1 loop + its ground tap on bat1−.
+    { source: 'bat1', sourceHandle: 'terminal_positive', target: 'r1', targetHandle: 'terminal_a' },
+    { source: 'r1', sourceHandle: 'terminal_b', target: 'bat1', targetHandle: 'terminal_negative' },
+    {
+      source: 'gnd1',
+      sourceHandle: 'reference_terminal',
+      target: 'bat1',
+      targetHandle: 'terminal_negative',
+    },
+    // Circuit 2 divider + its OWN ground tap on bat2−.
+    {
+      source: 'bat2',
+      sourceHandle: 'terminal_positive',
+      target: 'rtop',
+      targetHandle: 'terminal_a',
+    },
+    { source: 'rtop', sourceHandle: 'terminal_b', target: 'rbot', targetHandle: 'terminal_a' },
+    {
+      source: 'rbot',
+      sourceHandle: 'terminal_b',
+      target: 'bat2',
+      targetHandle: 'terminal_negative',
+    },
+    {
+      source: 'gnd2',
+      sourceHandle: 'reference_terminal',
+      target: 'bat2',
+      targetHandle: 'terminal_negative',
+    },
+  ]
+
+  const netAt = (world: ReturnType<typeof canvasToWorld>, instance: string, terminal: string) =>
+    [...world.nets.values()].find((n) =>
+      n.members.some((m) => m.instance === instance && m.terminal === terminal),
+    )?.id
+
+  test('both ground parts collapse to a single 0 V net', () => {
+    const world = canvasToWorld(twoCircuits(), edges)
+    const groundNets = [...world.nets.values()].filter((n) => n.type === 'ground')
+    expect(groundNets).toHaveLength(1)
+    // Both ground symbols resolve to that one shared net.
+    expect(netAt(world, 'gnd1', 'reference_terminal')).toBe(groundNets[0]?.id)
+    expect(netAt(world, 'gnd2', 'reference_terminal')).toBe(groundNets[0]?.id)
+  })
+
+  test('each independent circuit is pinned: both grounds at 0 V, absolute voltages correct', () => {
+    const world = canvasToWorld(twoCircuits(), edges)
+    const solution = solveDC(world)
+    expect(solution.status).toBe('solved')
+    // Two symbols are one node, so there is no genuine "multiple grounds" case.
+    expect(solution.warnings.some((w) => w.toLowerCase().includes('multiple ground'))).toBe(false)
+
+    const v = (instance: string, terminal: string) => {
+      const net = netAt(world, instance, terminal)
+      return net ? (solution.nodes.get(net) ?? Number.NaN) : Number.NaN
+    }
+
+    // The fix: BOTH grounds sit at exactly 0 V (previously only the first did).
+    expect(v('gnd1', 'reference_terminal')).toBeCloseTo(0, 9)
+    expect(v('gnd2', 'reference_terminal')).toBeCloseTo(0, 9)
+
+    // Circuit 1: 9 V across 100 Ω.
+    expect(v('bat1', 'terminal_positive')).toBeCloseTo(9, 6)
+    expect(Math.abs(solution.branches.get('r1') ?? 0)).toBeCloseTo(0.09, 6)
+
+    // Circuit 2 divider: top rail at +9 V, the 25 % tap at +6.75 V ABSOLUTE —
+    // not 6.75 V above some arbitrary floating offset.
+    expect(v('bat2', 'terminal_positive')).toBeCloseTo(9, 6)
+    expect(v('rtop', 'terminal_b')).toBeCloseTo(6.75, 6) // = rbot.terminal_a, the tap
+  })
+})

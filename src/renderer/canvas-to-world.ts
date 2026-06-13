@@ -13,8 +13,11 @@ import type { Instance, Net, World } from '../cross-fk-validator.ts'
  *    drawn). So a wire drops a real I·R voltage in the solve — long/thin/loaded
  *    wires droop, exactly like the battery's internal resistance.
  *  - A connection point shared by several wires (a junction handle) is ONE net —
- *    the wires meet there. A net is `ground` when its component terminal belongs
- *    to a ground part, giving the solver its 0 V reference.
+ *    the wires meet there. EVERY ground part's terminal resolves to a SINGLE
+ *    shared `ground` net — schematic convention: all ground symbols on a sheet
+ *    are the same 0 V node — so the solver pins every grounded sub-circuit, not
+ *    just the first one it finds (like a netlister assigning every GND symbol to
+ *    node 0).
  *  - `resistanceOhms` absent ⇒ an ideal 0 Ω short (a bare-edge test wire stays
  *    ideal, so the solved physics is identical to a plain net merge).
  *
@@ -62,25 +65,39 @@ export function canvasToWorld(nodes: CanvasNode[], edges: CanvasEdge[]): World {
   const nets = new Map<string, Net>()
   const pointNet = new Map<string, string>()
   let netCount = 0
+  // All ground symbols are the SAME node (0 V reference). The first grounded
+  // terminal creates the one ground net; every later one reuses it, so two
+  // ground parts on two otherwise-independent sub-circuits share one reference
+  // and BOTH get pinned to 0 V. Without this, each ground made its own net and
+  // the solver pinned only the first — the rest floated at an arbitrary offset.
+  let groundNetId: string | undefined
 
-  // One net per distinct connection point. A handle shared by several wires
-  // resolves to the same net (the junction), so the wires genuinely meet there.
-  // The net is grounded iff its component terminal belongs to a ground part.
+  // One net per distinct connection point — except grounds, which all collapse
+  // to the single shared net above. A handle shared by several wires resolves to
+  // the same net (the junction), so the wires genuinely meet there.
   const netForPoint = (instance: string, terminal: string): string => {
     const key = pointKey(instance, terminal)
     const existing = pointNet.get(key)
     if (existing !== undefined) return existing
 
-    netCount += 1
-    const id = `net_${netCount}`
-    pointNet.set(key, id)
     const grounded = instances.get(instance)?.definition === 'ground'
-    nets.set(id, {
-      id,
-      kind: 'net',
-      members: [{ instance, terminal }],
-      ...(grounded ? { type: 'ground' } : {}),
-    })
+    let id: string
+    if (grounded && groundNetId !== undefined) {
+      id = groundNetId
+    } else {
+      netCount += 1
+      id = `net_${netCount}`
+      if (grounded) groundNetId = id
+    }
+    pointNet.set(key, id)
+
+    let net = nets.get(id)
+    if (net === undefined) {
+      net = { id, kind: 'net', members: [], ...(grounded ? { type: 'ground' } : {}) }
+      nets.set(id, net)
+    }
+    net.members.push({ instance, terminal })
+
     const inst = instances.get(instance)
     if (inst) {
       inst.connects ??= []

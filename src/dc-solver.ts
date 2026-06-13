@@ -878,21 +878,25 @@ export function identifyGround(
     return options.ground
   }
 
-  // (2) Ground ports — the net a ground reference marker attaches to.
-  const portNets: string[] = []
+  // (2) Ground ports — the net a ground reference marker attaches to. Several
+  // ground SYMBOLS that resolve to the same net are one ground node (the canvas
+  // collapses every ground symbol onto a single net), so dedupe to distinct nets
+  // before deciding whether there are genuinely multiple, separate references.
+  const portNets = new Set<string>()
   for (const inst of world.instances.values()) {
     if (inst.definition !== 'ground') continue
     const net = inst.connects?.[0]?.net
-    if (net !== undefined && world.nets.has(net)) portNets.push(net)
+    if (net !== undefined && world.nets.has(net)) portNets.add(net)
   }
-  if (portNets.length > 0) {
-    if (portNets.length > 1) {
+  if (portNets.size > 0) {
+    const distinct = [...portNets]
+    if (distinct.length > 1) {
       warnings.push(
-        `Multiple ground ports found (nets ${portNets.join(', ')}); using '${portNets[0]}' (deterministic first).`,
+        `Multiple ground ports found (nets ${distinct.join(', ')}); using '${distinct[0]}' (deterministic first).`,
       )
     }
-    // biome-ignore lint/style/noNonNullAssertion: length checked above
-    return portNets[0]!
+    // biome-ignore lint/style/noNonNullAssertion: size checked above
+    return distinct[0]!
   }
 
   // (3) type: ground net property — backward-compatible fallback.
