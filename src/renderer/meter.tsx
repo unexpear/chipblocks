@@ -170,20 +170,37 @@ function poweredOffProbe(
 }
 
 /**
+ * The test leads' own resistance (S20-v3-13), pair total including contact
+ * resistance — a class value (quality leads measure tens of mΩ each; worn
+ * tips and contact pressure push the pair toward a few hundred mΩ; medium
+ * confidence, stated). A 2-wire ohmmeter measures THROUGH its leads, so
+ * every Ω reading carries this — shorted probes read it directly, which is
+ * exactly what the REL/zero workflow exists to subtract. The same 0.2 Ω
+ * sits in series in every other two-probe mode too, where it is below
+ * display resolution by arithmetic (0.2 Ω against the 10 MΩ voltmeter
+ * input, the 2 kΩ diode rig, the 10 kΩ capacitance rig) and is therefore
+ * not added there — an approximation stated, not hidden.
+ */
+export const LEAD_OHMS = 0.2
+
+/**
  * Equivalent (Thévenin) resistance between two nets — Ω mode. R = V/I from the
  * probe-pair voltage and the real solved test current; the instrument's series
- * resistance drops before the probes, so no correction term is needed.
+ * resistance drops before the probes, so no correction term is needed. The
+ * LEADS are part of the measured loop (2-wire measurement): the displayed
+ * value is R + LEAD_OHMS, and touching the probes together reads the leads
+ * alone — the REL anchor.
  *
  * Returns null for an open loop or > 1 GΩ (a real meter shows OL).
  */
 export function equivalentResistance(world: World, netA: string, netB: string): number | null {
-  if (netA === netB) return 0
+  if (netA === netB) return LEAD_OHMS // shorted probes measure the leads
   const probe = poweredOffProbe(world, netA, netB, OHM_TEST_VOLTS, TEST_SOURCE_OHMS)
   if (probe === null) return null
   if (probe.amps < OHM_TEST_VOLTS / OVERLOAD_OHMS) return null // open loop
   const ohms = probe.volts / probe.amps
   if (ohms > OVERLOAD_OHMS) return null // past any real handheld's range
-  return Math.max(0, ohms) // float error on a dead short can land at -1e-16
+  return Math.max(0, ohms) + LEAD_OHMS // float error on a dead short can land at -1e-16
 }
 
 /**
@@ -221,6 +238,58 @@ export function diodeTest(
 }
 
 /**
+ * The voltmeter's input impedance (S20-v3-12) — a real DMM's V input is a
+ * ~10 MΩ resistance to its common (Fluke 117 datasheet: input impedance
+ * 10 MΩ; the 87V the same). Probing a point puts that resistance INTO the
+ * circuit: invisible on stiff (kΩ-class) circuits, but on high-impedance
+ * ones the meter itself bends the reading — the classic loading lesson.
+ * Both V modes here measure through it for real: the reading comes from a
+ * sub-solve of the circuit WITH the meter's input resistance connected.
+ */
+export const VOLTMETER_INPUT_OHMS = 10e6
+
+const VOLTMETER_LOAD_ID = 'meter_input_impedance'
+
+/** The world with the meter's 10 MΩ input connected between the probe nets. */
+function withVoltmeterLoad(world: World, netRed: string, netBlack: string): World {
+  const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
+  const instances = new Map<string, Instance>(world.instances)
+  instances.set(VOLTMETER_LOAD_ID, {
+    id: VOLTMETER_LOAD_ID,
+    kind_ref: 'primitive_device',
+    definition: 'resistor',
+    parameters: { resistance: scalar(VOLTMETER_INPUT_OHMS, 'ohm') },
+    connects: [
+      { net: netRed, terminal: 'terminal_a', of: VOLTMETER_LOAD_ID },
+      { net: netBlack, terminal: 'terminal_b', of: VOLTMETER_LOAD_ID },
+    ],
+  } as Instance)
+  return { ...world, instances }
+}
+
+/** The reference net a lone red probe measures against — the (deterministic
+ *  first) ground-typed net, the same convention the solver itself uses. */
+export function groundNetOf(world: World): string | undefined {
+  const nets: string[] = []
+  for (const net of world.nets.values()) {
+    if (net.type === 'ground') nets.push(net.id)
+  }
+  return nets.sort()[0]
+}
+
+/**
+ * The V⎓ measurement solve: the live circuit WITH the meter's input
+ * resistance across the probes. Callers read the loaded node voltages (and
+ * the through-part current convenience) from the returned solution — what
+ * the meter displays IS what the loaded circuit does.
+ */
+export function voltmeterSolve(world: World, netRed: string, netBlack: string): Solution | null {
+  if (netRed === netBlack) return null
+  const solution = solveDC(withVoltmeterLoad(world, netRed, netBlack))
+  return solution.status === 'solved' ? solution : null
+}
+
+/**
  * V~ mode — true-RMS AC volts between the probes, from a real time-domain run
  * of the LIVE circuit (sources on; this is the powered measurement). Like a
  * real DMM's V~ range the reading is AC-coupled: the mean (the DC level) is
@@ -228,7 +297,8 @@ export function diodeTest(
  * honestly reads ~0 V~ (the Fluke 117 datasheet states its AC volts ranges
  * are ac-coupled). The first third of the simulated window is discarded so
  * the start-up transient (capacitors charging from rest) doesn't pollute the
- * steady-state answer.
+ * steady-state answer. The measurement is taken THROUGH the meter's 10 MΩ
+ * input (S20-v3-12) — high-impedance circuits sag here exactly as on V⎓.
  *
  * Sampling follows the FASTEST source, not the display heuristic: the window
  * length tracks the slowest source, so a second fast source would otherwise
@@ -239,16 +309,17 @@ export function diodeTest(
  *
  * Returns null when the time-domain solve can't run (its status tells why).
  */
-export function acVoltsRms(
+function settledProbeSeries(
   world: World,
   netA: string,
   netB: string,
-): { rms: number; hz: number | null } | 'span-too-wide' | null {
+): { t: number; v: number }[] | 'span-too-wide' | null {
+  const loaded = netA === netB ? world : withVoltmeterLoad(world, netA, netB)
   const window = scopeWindow(world)
   const fastestHz = fastestSourceHz(world)
   const steps = Math.max(500, Math.ceil(window.duration * fastestHz * 32))
   if (steps > 20000) return 'span-too-wide'
-  const result = solveTransient(world, {
+  const result = solveTransient(loaded, {
     timeStep: window.duration / steps,
     duration: window.duration,
   })
@@ -256,13 +327,89 @@ export function acVoltsRms(
   const settleTime = window.duration / 3
   const points = result.series.filter((p) => p.time >= settleTime)
   if (points.length < 4) return null
+  return points.map((p) => ({
+    t: p.time,
+    v: (p.nodes.get(netA) ?? 0) - (p.nodes.get(netB) ?? 0),
+  }))
+}
+
+export function acVoltsRms(
+  world: World,
+  netA: string,
+  netB: string,
+): { rms: number; hz: number | null; duty: number | null } | 'span-too-wide' | null {
+  const series = settledProbeSeries(world, netA, netB)
+  if (series === 'span-too-wide' || series === null) return series
   // The RMS + Schmitt-hysteresis frequency math lives in waveform-measure.ts
   // (S19-v3-80) — one implementation shared with the scope's measurement
-  // strip, so the two instruments can never disagree.
-  const measured = measureSeries(
-    points.map((p) => ({ t: p.time, v: (p.nodes.get(netA) ?? 0) - (p.nodes.get(netB) ?? 0) })),
-  )
-  return { rms: measured.rmsAc, hz: measured.hz }
+  // strip, so the two instruments can never disagree. Duty (S20-v3-16) rides
+  // along from the same shared module: the fraction of each period spent
+  // above the 50 % level.
+  const measured = measureSeries(series)
+  return { rms: measured.rmsAc, hz: measured.hz, duty: measured.dutyHigh }
+}
+
+/**
+ * MIN/MAX/AVG (S20-v3-14) — what the button on a bench meter records while a
+ * signal varies, read off the same settled time-domain record V~ uses: the
+ * instantaneous extremes and the mean of the probe-pair voltage. On a steady
+ * DC point all three agree; on a ripply or swinging point MIN/MAX bound the
+ * excursion and AVG is the DC component. Measured through the meter's 10 MΩ
+ * input like every voltage mode.
+ */
+export function dcExtremes(
+  world: World,
+  netA: string,
+  netB: string,
+): { min: number; max: number; avg: number } | 'span-too-wide' | null {
+  const series = settledProbeSeries(world, netA, netB)
+  if (series === 'span-too-wide' || series === null) return series
+  let min = Number.POSITIVE_INFINITY
+  let max = Number.NEGATIVE_INFINITY
+  let sum = 0
+  for (const point of series) {
+    if (point.v < min) min = point.v
+    if (point.v > max) max = point.v
+    sum += point.v
+  }
+  return { min, max, avg: sum / series.length }
+}
+
+/**
+ * 6000-count display (S20-v3-16) — the Fluke 117 is a 6000-count meter: four
+ * digits, the last quantized to the range's resolution (range/6000), ranges
+ * stepping 6 / 60 / 600 per decade. The solver knows values to float
+ * precision; a real display does not, and printing more digits than the
+ * instrument class resolves would overstate the measurement. The eng prefix
+ * follows the range the way the real display does (5999 Ω reads 5.999 kΩ).
+ */
+export const DISPLAY_COUNTS = 6000
+
+const COUNT_PREFIXES: Record<number, string> = {
+  '-12': 'p',
+  '-9': 'n',
+  '-6': 'µ',
+  '-3': 'm',
+  0: '',
+  3: 'k',
+  6: 'M',
+  9: 'G',
+}
+
+export function displayCounts(value: number, unit: string): string {
+  if (!Number.isFinite(value)) return `OL ${unit}`
+  // Below any handheld range's resolution (and solver float dust) the real
+  // display sits at zero — never scientific notation on a meter face.
+  if (Math.abs(value) < 1e-9) return `0.000 ${unit}`
+  const magnitude = Math.abs(value)
+  const exponent = Math.ceil(Math.log10(magnitude / 6))
+  const resolution = (6 * 10 ** exponent) / DISPLAY_COUNTS
+  const quantized = Math.round(value / resolution) * resolution
+  const prefixExp = 3 * Math.floor(exponent / 3)
+  const decimals = 3 - (exponent - prefixExp)
+  const scaled = quantized / 10 ** prefixExp
+  const prefix = COUNT_PREFIXES[prefixExp] ?? `e${prefixExp}`
+  return `${scaled.toFixed(decimals)} ${prefix}${unit}`
 }
 
 /**
@@ -383,6 +530,87 @@ export function capacitanceTest(world: World, netA: string, netB: string): Capac
   if (last.peakAmps < CAP_OPEN_AMPS) return { status: 'open' }
   const stillClimbing = last.endVolts > 2 * Math.max(prev.endVolts, 1e-12)
   return stillClimbing ? { status: 'over-range' } : { status: 'parallel-leak' }
+}
+
+/**
+ * Series ammeter (S20-v3-11, the A⎓ dial position) — the meter becomes a REAL
+ * element of the live circuit: a small shunt resistance between the probes,
+ * behind a fuse. That one honest mechanism gives all three behaviors of the
+ * real instrument with no special cases:
+ *  - the CORRECT procedure: open the circuit (flip a switch off, lift a wire)
+ *    and bridge the gap with the probes — the loop's current now flows
+ *    through the meter and is read exactly;
+ *  - the BURDEN: the shunt drops a real voltage (I·R_shunt), so inserting the
+ *    meter slightly changes the circuit it measures — the reason clamp meters
+ *    exist (the wire clamp reads with zero burden; this jack pays it);
+ *  - the FAMOUS MISTAKE: probes across a live source put the near-short shunt
+ *    directly across it — the resulting current blows the fuse.
+ *
+ * Jack values are the Fluke 87V's published figures (the electronics meter the
+ * research pointed at; our reference 117 has no mA range at all):
+ *  - mA jack: burden 1.8 mV/mA → 1.8 Ω effective shunt (Fluke "Can you live
+ *    with the burden?" article, which derives the same 1.8 Ω; verified
+ *    2026-06-12), fused at 440 mA (Fluke 440 mA/1000 V fast fuse — the
+ *    87V's mA/µA input fuse, Fluke product page, verified 2026-06-12).
+ *  - 10 A jack: fused at 11 A (Fluke 11 A/1000 V fuse, verified 2026-06-12);
+ *    shunt 0.03 Ω — class value (~30 mV/A burden), consistent with the
+ *    published mA-range method; the exact A-input figure is not in the public
+ *    datasheet (confidence medium, stated).
+ *
+ * Fuse model: a fast fuse carries its rating and opens above it. Sustained
+ * current past the rating blows it here; the real I²t time dependence (brief
+ * surges above rating that a fast fuse still rides out) is not modeled —
+ * stated honestly. A blown fuse is an OPEN: the meter drops out of the
+ * circuit entirely until replaced (the caller owns that state, like the
+ * spare-fuse compartment in a real meter).
+ */
+export type AmmeterJack = 'milliamp' | 'amp'
+
+export const AMMETER_JACKS: Record<
+  AmmeterJack,
+  { shuntOhms: number; fuseAmps: number; label: string }
+> = {
+  milliamp: { shuntOhms: 1.8, fuseAmps: 0.44, label: 'mA' },
+  amp: { shuntOhms: 0.03, fuseAmps: 11, label: '10 A' },
+}
+
+const AMMETER_SHUNT_ID = 'meter_ammeter_shunt'
+
+export type AmmeterResult =
+  | { status: 'measured'; amps: number; burdenVolts: number }
+  | { status: 'blew'; amps: number }
+  | { status: 'failed' }
+
+/**
+ * Insert the meter's shunt between the probe nets of the LIVE circuit and
+ * read the current through itself (red → black positive, like current
+ * entering a real meter's A jack). Past the jack's fuse rating → 'blew',
+ * carrying the current that did it for the display.
+ */
+export function seriesAmmeter(
+  world: World,
+  netRed: string,
+  netBlack: string,
+  jack: AmmeterJack,
+): AmmeterResult {
+  const spec = AMMETER_JACKS[jack]
+  const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
+  const instances = new Map<string, Instance>(world.instances)
+  instances.set(AMMETER_SHUNT_ID, {
+    id: AMMETER_SHUNT_ID,
+    kind_ref: 'primitive_device',
+    definition: 'resistor',
+    parameters: { resistance: scalar(spec.shuntOhms, 'ohm') },
+    connects: [
+      { net: netRed, terminal: 'terminal_a', of: AMMETER_SHUNT_ID },
+      { net: netBlack, terminal: 'terminal_b', of: AMMETER_SHUNT_ID },
+    ],
+  } as Instance)
+  const solution = solveDC({ ...world, instances })
+  if (solution.status !== 'solved') return { status: 'failed' }
+  const amps = solution.branches.get(AMMETER_SHUNT_ID) ?? 0
+  if (Math.abs(amps) > spec.fuseAmps) return { status: 'blew', amps }
+  return { status: 'measured', amps, burdenVolts: amps * spec.shuntOhms }
 }
 
 /** A probe needle pinned to its terminal, riding along when the part moves.

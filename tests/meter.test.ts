@@ -16,6 +16,7 @@ import {
   capacitanceTest,
   diodeTest,
   equivalentResistance,
+  LEAD_OHMS,
   terminalNets,
   terminalVoltages,
 } from '../src/renderer/meter.tsx'
@@ -150,8 +151,8 @@ describe('equivalentResistance (Ω mode)', () => {
         },
       ],
     )
-    expect(equivalentResistance(w, 'a', 'gnd')).toBeCloseTo(320, 6)
-    expect(equivalentResistance(w, 'a', 'mid')).toBeCloseTo(100, 6)
+    expect(equivalentResistance(w, 'a', 'gnd')).toBeCloseTo(320 + LEAD_OHMS, 6)
+    expect(equivalentResistance(w, 'a', 'mid')).toBeCloseTo(100 + LEAD_OHMS, 6)
   })
 
   test('two resistors in parallel read the parallel combination', () => {
@@ -178,7 +179,7 @@ describe('equivalentResistance (Ω mode)', () => {
         },
       ],
     )
-    expect(equivalentResistance(w, 'a', 'gnd')).toBeCloseTo(50, 6)
+    expect(equivalentResistance(w, 'a', 'gnd')).toBeCloseTo(50 + LEAD_OHMS, 6)
   })
 
   test("a battery's EMF is zeroed but its internal resistance stays (Thévenin)", () => {
@@ -210,7 +211,7 @@ describe('equivalentResistance (Ω mode)', () => {
         },
       ],
     )
-    expect(equivalentResistance(w, 'vcc', 'gnd')).toBeCloseTo((1 * 470) / 471, 6)
+    expect(equivalentResistance(w, 'vcc', 'gnd')).toBeCloseTo((1 * 470) / 471 + LEAD_OHMS, 6)
   })
 
   test('no conductive path between the probes reads null — OL, like a real meter', () => {
@@ -246,7 +247,7 @@ describe('equivalentResistance (Ω mode)', () => {
         },
       ],
     )
-    expect(equivalentResistance(w, 'a', 'b')).toBeCloseTo(4700, 3)
+    expect(equivalentResistance(w, 'a', 'b')).toBeCloseTo(4700 + LEAD_OHMS, 3)
   })
 
   test('a diode reads OL in Ω mode — the test voltage sits below junction turn-on, like a real DMM', () => {
@@ -272,7 +273,7 @@ describe('equivalentResistance (Ω mode)', () => {
 
   test('both probes on the same net read 0 Ω — continuity', () => {
     const w = ohmWorld([{ id: 'a' }, { id: 'gnd', ground: true }], [])
-    expect(equivalentResistance(w, 'a', 'a')).toBe(0)
+    expect(equivalentResistance(w, 'a', 'a')).toBe(LEAD_OHMS)
   })
 
   test('a closed switch (ideal short) reads 0 Ω, not a solver blow-up', () => {
@@ -295,7 +296,8 @@ describe('equivalentResistance (Ω mode)', () => {
     )
     const ohms = equivalentResistance(w, 'a', 'b')
     expect(ohms).not.toBeNull()
-    expect(ohms).toBeLessThan(1e-6)
+    // The ideal short itself contributes nothing — the reading IS the leads.
+    expect(ohms).toBeCloseTo(LEAD_OHMS, 6)
   })
 })
 

@@ -82,16 +82,23 @@ import { materialCapabilities, validMaterialsByRole } from './material-roles.ts'
 import { MathPanel } from './math-panel.tsx'
 import { buildMathView } from './math-view.ts'
 import {
+  AMMETER_JACKS,
+  type AmmeterJack,
   acVoltsRms,
   CONTINUITY_OHMS,
   capacitanceTest,
+  dcExtremes,
   diodeTest,
+  displayCounts,
   equivalentResistance,
+  groundNetOf,
   MeterProbes,
   ProbeMarker,
   type ProbeRef,
+  seriesAmmeter,
   terminalNets,
   terminalVoltages,
+  voltmeterSolve,
 } from './meter.tsx'
 import { expandMultiLeadSources, multiLeadAliases } from './multi-tap-source.ts'
 import { edgeTypes } from './net-edge.tsx'
@@ -1102,9 +1109,28 @@ function Canvas() {
   // The dial position survives tool switches, like a real meter left on a setting.
   const [redProbe, setRedProbe] = useState<ProbeRef | undefined>(undefined)
   const [blackProbe, setBlackProbe] = useState<ProbeRef | undefined>(undefined)
-  const [meterMode, setMeterMode] = useState<'volts' | 'acvolts' | 'ohms' | 'diode' | 'cap'>(
-    'volts',
-  )
+  const [meterMode, setMeterMode] = useState<
+    'volts' | 'acvolts' | 'ohms' | 'diode' | 'cap' | 'amps' | 'tempc'
+  >('volts')
+  // A⎓ jack selection + per-jack fuse state (S20-v3-11). A blown fuse stores
+  // the current that killed it — the display keeps telling the story until
+  // the fuse is replaced, and the meter is an OPEN circuit meanwhile.
+  const [meterJack, setMeterJack] = useState<AmmeterJack>('milliamp')
+  const [blownFuses, setBlownFuses] = useState<{ milliamp: number | null; amp: number | null }>({
+    milliamp: null,
+    amp: null,
+  })
+  // REL/zero (S20-v3-13): the stored Ω offset the display subtracts — short
+  // the probes (they read the leads' 0.2 Ω), press REL, measure relative.
+  // MIN/MAX (S20-v3-14): V⎓ shows the record's extremes instead of one value.
+  // Both drop on a dial change, like the real buttons.
+  const [relOhms, setRelOhms] = useState<number | null>(null)
+  const [minMaxOn, setMinMaxOn] = useState(false)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: meterMode is the intentional trigger — turning the dial drops REL and MIN/MAX like a real meter
+  useEffect(() => {
+    setRelOhms(null)
+    setMinMaxOn(false)
+  }, [meterMode])
   // HOLD: freeze the current reading on the display (probe elsewhere, compare),
   // exactly the bench move. Measurement continues underneath, like a real meter.
   const [heldReadout, setHeldReadout] = useState<{
@@ -1197,6 +1223,48 @@ function Canvas() {
       ),
     [scopeProbes, probeNets, scopeWireInfo, scopePartInfo],
   )
+  // Ω measurement — its own memo because TWO consumers need the raw number:
+  // the readout and the REL button (which stores it as the zero offset).
+  const ohmsReading = useMemo(() => {
+    if (tool !== 'meter' || meterMode !== 'ohms' || clampWire !== undefined) return null
+    if (redProbe === undefined || blackProbe === undefined) return null
+    const netRed = probeNets.get(`${redProbe.nodeId}/${redProbe.handleId}`)
+    const netBlack = probeNets.get(`${blackProbe.nodeId}/${blackProbe.handleId}`)
+    if (netRed === undefined || netBlack === undefined) return null
+    return equivalentResistance(solvedWorld, netRed, netBlack)
+  }, [tool, meterMode, clampWire, redProbe, blackProbe, probeNets, solvedWorld])
+
+  // A⎓ measurement (S20-v3-11) — its own memo so the fuse-blow EFFECT below
+  // can watch it (a memo must not set state). Runs only with the dial on A,
+  // both probes on wired dots, and the selected jack's fuse intact.
+  const ammeterReading = useMemo(() => {
+    if (tool !== 'meter' || meterMode !== 'amps' || clampWire !== undefined) return null
+    if (redProbe === undefined || blackProbe === undefined) return null
+    if (blownFuses[meterJack] !== null) return null
+    const netRed = probeNets.get(`${redProbe.nodeId}/${redProbe.handleId}`)
+    const netBlack = probeNets.get(`${blackProbe.nodeId}/${blackProbe.handleId}`)
+    if (netRed === undefined || netBlack === undefined) return null
+    return seriesAmmeter(solvedWorld, netRed, netBlack, meterJack)
+  }, [
+    tool,
+    meterMode,
+    clampWire,
+    redProbe,
+    blackProbe,
+    blownFuses,
+    meterJack,
+    probeNets,
+    solvedWorld,
+  ])
+
+  // The pop: a blow result marks the jack's fuse dead, storing the killing
+  // current so the display keeps telling the story until 'replace fuse'.
+  useEffect(() => {
+    if (ammeterReading?.status === 'blew') {
+      setBlownFuses((fuses) => ({ ...fuses, [meterJack]: Math.abs(ammeterReading.amps) }))
+    }
+  }, [ammeterReading, meterJack])
+
   // The meter's display — live solved values; unwired points say so. The clamp
   // (when set) wins regardless of the dial: it reads amps, not the dial quantity.
   const meterReadout = useMemo(() => {
@@ -1231,10 +1299,14 @@ function Canvas() {
       const ohmsChip = (text: string) => ({ icon: 'Ω', iconColor: '#d6a23c', text })
       const nets = bothProbeNets()
       if (typeof nets === 'string') return ohmsChip(nets)
-      const ohms = equivalentResistance(solvedWorld, nets.netRed, nets.netBlack)
-      if (ohms === null) return ohmsChip('Resistance: OL — no conductive path (open loop)')
-      const continuity = ohms < CONTINUITY_OHMS ? ' · ● continuity' : ''
-      return ohmsChip(`Resistance: ${formatEng(ohms, 'Ω')}${continuity}`)
+      if (ohmsReading === null) return ohmsChip('Resistance: OL — no conductive path (open loop)')
+      const continuity = ohmsReading < CONTINUITY_OHMS ? ' · ● continuity' : ''
+      if (relOhms !== null) {
+        return ohmsChip(
+          `Δ ${displayCounts(ohmsReading - relOhms, 'Ω')} (REL zeroed at ${displayCounts(relOhms, 'Ω')})${continuity}`,
+        )
+      }
+      return ohmsChip(`Resistance: ${displayCounts(ohmsReading, 'Ω')}${continuity}`)
     }
     if (meterMode === 'acvolts') {
       const acChip = (text: string) => ({ icon: '∿', iconColor: '#5a86d8', text })
@@ -1246,10 +1318,14 @@ function Canvas() {
       }
       if (ac === null) return acChip("V~ can't run a time pass on this circuit — no reading")
       const hzText = ac.hz !== null ? ` · ${formatEng(ac.hz, 'Hz')}` : ''
+      // Duty (S20-v3-16) rides the counted frequency — the fraction of each
+      // cycle the waveform spends above its midline, from the shared module.
+      const dutyText =
+        ac.hz !== null && ac.duty !== null ? ` · duty ${(ac.duty * 100).toFixed(1)} %` : ''
       // Sub-µV residue is solver float noise, not signal — floor the display
       // like a real meter's resolution floor instead of printing femtovolts.
       const shownRms = ac.rms < 1e-6 ? 0 : ac.rms
-      return acChip(`V~ (red − black): ${formatEng(shownRms, 'V')} rms${hzText}`)
+      return acChip(`V~ (red − black): ${displayCounts(shownRms, 'V')} rms${hzText}${dutyText}`)
     }
     if (meterMode === 'diode') {
       const diodeChip = (text: string) => ({ icon: '⏵', iconColor: '#6ec06e', text })
@@ -1286,29 +1362,120 @@ function Canvas() {
       }
       return capChip("Capacitance test can't run on this circuit")
     }
+    if (meterMode === 'amps') {
+      const spec = AMMETER_JACKS[meterJack]
+      const ampChip = (text: string) => ({ icon: 'A⎓', iconColor: '#7ab8ff', text })
+      const blownAt = blownFuses[meterJack]
+      if (blownAt !== null) {
+        return ampChip(
+          `${spec.label} jack FUSE BLOWN — ${formatEng(blownAt, 'A')} through the ${formatEng(spec.fuseAmps, 'A')} fuse. The meter reads nothing until you replace it.`,
+        )
+      }
+      const nets = bothProbeNets()
+      if (typeof nets === 'string') return ampChip(nets)
+      if (ammeterReading === null || ammeterReading.status === 'failed') {
+        return ampChip("A⎓ can't solve this circuit — no reading")
+      }
+      if (ammeterReading.status === 'blew') {
+        return ampChip(
+          `POP — ${formatEng(Math.abs(ammeterReading.amps), 'A')} through the ${formatEng(spec.fuseAmps, 'A')} fuse`,
+        )
+      }
+      return ampChip(
+        `A⎓ (red → black): ${displayCounts(ammeterReading.amps, 'A')} · burden ${displayCounts(Math.abs(ammeterReading.burdenVolts), 'V')}`,
+      )
+    }
+    if (meterMode === 'tempc') {
+      const tempChip = (text: string) => ({ icon: '°C', iconColor: '#e09f3e', text })
+      if (redProbe === undefined) {
+        return tempChip('Touch any terminal of a part with the red probe — it is the thermocouple')
+      }
+      const reading = readings.get(redProbe.nodeId)
+      if (reading?.temperatureC !== undefined) {
+        const max =
+          reading.maxTemperatureC !== undefined ? ` · max ${reading.maxTemperatureC} °C` : ''
+        return tempChip(
+          `${redProbe.nodeId}: ${reading.temperatureC.toFixed(1)} °C — its real junction temperature, from its own dissipation${max}`,
+        )
+      }
+      return tempChip(
+        `${redProbe.nodeId}: 25.0 °C — ambient (no thermal rating declared on this part, so the model holds it at room temperature)`,
+      )
+    }
     const voltChip = (text: string) => ({ icon: 'Ⓥ', iconColor: '#e0594f', text })
     if (redProbe === undefined) return voltChip('Touch a terminal dot to place the red probe')
     const vRed = voltsAt(redProbe)
+    const netRed = probeNets.get(`${redProbe.nodeId}/${redProbe.handleId}`)
+    // The loading note (S20-v3-12): when the meter's own 10 MΩ visibly bends
+    // the point it measures, say so and show what the point sits at unprobed.
+    const loadNote = (shown: number, unloaded: number) =>
+      Math.abs(shown - unloaded) > Math.max(1e-3, 0.005 * Math.abs(unloaded))
+        ? ` · your meter's 10 MΩ input is loading this point (it sits at ${displayCounts(unloaded, 'V')} unprobed)`
+        : ''
     if (blackProbe === undefined) {
+      if (vRed === undefined || netRed === undefined) {
+        return voltChip('Red probe: not wired (no circuit at that dot)')
+      }
+      const groundNet = groundNetOf(solvedWorld)
+      const loaded =
+        groundNet !== undefined && groundNet !== netRed
+          ? voltmeterSolve(solvedWorld, netRed, groundNet)
+          : null
+      const shown = loaded !== null ? (loaded.nodes.get(netRed) ?? vRed) : vRed
       return voltChip(
-        vRed === undefined
-          ? 'Red probe: not wired (no circuit at that dot)'
-          : `Red vs ground: ${formatEng(vRed, 'V', { signed: true })} — touch another dot for the black probe`,
+        `Red vs ground: ${displayCounts(shown, 'V')}${loadNote(shown, vRed)} — touch another dot for the black probe`,
       )
     }
     const vBlack = voltsAt(blackProbe)
-    if (vRed === undefined || vBlack === undefined) {
+    const netBlack = probeNets.get(`${blackProbe.nodeId}/${blackProbe.handleId}`)
+    if (
+      vRed === undefined ||
+      vBlack === undefined ||
+      netRed === undefined ||
+      netBlack === undefined
+    ) {
       return voltChip('One probe is on an unwired dot — no reading')
     }
-    let text = `V (red − black): ${formatEng(vRed - vBlack, 'V', { signed: true })}`
+    // MIN/MAX/AVG (S20-v3-14): the settled record's extremes instead of the
+    // single operating-point number — what the real button records.
+    if (minMaxOn) {
+      const extremes = dcExtremes(solvedWorld, netRed, netBlack)
+      if (extremes === 'span-too-wide') {
+        return voltChip('MIN/MAX: source frequencies are too far apart to resolve in one pass')
+      }
+      if (extremes === null) {
+        return voltChip("MIN/MAX can't run a time pass on this circuit — no reading")
+      }
+      return voltChip(
+        `MIN ${displayCounts(extremes.min, 'V')} · MAX ${displayCounts(extremes.max, 'V')} · AVG ${displayCounts(extremes.avg, 'V')}`,
+      )
+    }
+    const loaded = netRed === netBlack ? null : voltmeterSolve(solvedWorld, netRed, netBlack)
+    const unloadedDiff = vRed - vBlack
+    const shown =
+      loaded !== null
+        ? (loaded.nodes.get(netRed) ?? 0) - (loaded.nodes.get(netBlack) ?? 0)
+        : unloadedDiff
+    let text = `V (red − black): ${displayCounts(shown, 'V')}${loadNote(shown, unloadedDiff)}`
     if (redProbe.nodeId === blackProbe.nodeId && redProbe.handleId !== blackProbe.handleId) {
-      const through = readings.get(redProbe.nodeId)?.current
-      if (through !== undefined) text += ` · through ${redProbe.nodeId}: ${formatEng(through, 'A')}`
+      const through =
+        loaded !== null
+          ? Math.abs(loaded.branches.get(redProbe.nodeId) ?? Number.NaN)
+          : readings.get(redProbe.nodeId)?.current
+      if (through !== undefined && Number.isFinite(through)) {
+        text += ` · through ${redProbe.nodeId}: ${displayCounts(through, 'A')}`
+      }
     }
     return voltChip(text)
   }, [
     tool,
     meterMode,
+    meterJack,
+    blownFuses,
+    ammeterReading,
+    ohmsReading,
+    relOhms,
+    minMaxOn,
     clampWire,
     edges,
     redProbe,
@@ -2238,7 +2405,86 @@ function Canvas() {
               >
                 ⊣⊢
               </button>
+              <button
+                type="button"
+                onClick={() => setMeterMode('amps')}
+                title="DC amps, the SERIES way — the meter inserts itself between the probes as a real shunt resistance behind a fuse, and current flows THROUGH it. Correct use: open the circuit (flip a switch off) and bridge the gap with the probes. The shunt drops a real burden voltage — the price the clamp (touch a wire) doesn't pay. Probes across a live source = the classic mistake: the near-short blows the fuse."
+                style={meterDialStyle(meterMode === 'amps', light)}
+              >
+                A⎓
+              </button>
+              <button
+                type="button"
+                onClick={() => setMeterMode('tempc')}
+                title="Temperature — the red probe becomes a thermocouple: touch any terminal of a part and read its real junction temperature, the same number the electro-thermal loop solved (25 °C ambient + its actual dissipation × its θ rating). Parts with no thermal rating honestly read ambient."
+                style={meterDialStyle(meterMode === 'tempc', light)}
+              >
+                °C
+              </button>
             </span>
+            {meterMode === 'ohms' ? (
+              <button
+                type="button"
+                onClick={() => setRelOhms(relOhms !== null ? null : ohmsReading)}
+                disabled={relOhms === null && ohmsReading === null}
+                title="REL / zero — the real lead-zeroing workflow: touch the probes together (they read the leads' own 0.2 Ω), press REL to store that as zero, then measure relative to it. Press again to clear."
+                style={{
+                  ...meterDialStyle(relOhms !== null, light),
+                  fontSize: 9,
+                  letterSpacing: 0.5,
+                }}
+              >
+                REL
+              </button>
+            ) : null}
+            {meterMode === 'volts' ? (
+              <button
+                type="button"
+                onClick={() => setMinMaxOn((on) => !on)}
+                title="MIN MAX — record the lowest, highest, and average instantaneous voltage over the settled record instead of one number: ripple floor and ceiling, swing extremes. On steady DC all three agree."
+                style={{
+                  ...meterDialStyle(minMaxOn, light),
+                  fontSize: 9,
+                  letterSpacing: 0.5,
+                }}
+              >
+                MIN/MAX
+              </button>
+            ) : null}
+            {meterMode === 'amps' ? (
+              <span style={{ display: 'flex', gap: 3 }}>
+                {(['milliamp', 'amp'] as const).map((jack) => (
+                  <button
+                    key={jack}
+                    type="button"
+                    onClick={() => setMeterJack(jack)}
+                    title={
+                      jack === 'milliamp'
+                        ? 'mA jack — 1.8 Ω shunt (the Fluke 87V’s published 1.8 mV/mA burden), fused at 440 mA. The electronics jack: fine readings, easy to blow.'
+                        : '10 A jack — 0.03 Ω shunt, fused at 11 A (the Fluke 11 A/1000 V fuse). The high-current jack: tiny burden, survives what kills the mA fuse.'
+                    }
+                    style={{
+                      ...meterDialStyle(meterJack === jack, light),
+                      fontSize: 9,
+                      ...(blownFuses[jack] !== null ? { color: '#e0594f' } : {}),
+                    }}
+                  >
+                    {AMMETER_JACKS[jack].label}
+                    {blownFuses[jack] !== null ? ' ✕' : ''}
+                  </button>
+                ))}
+                {blownFuses[meterJack] !== null ? (
+                  <button
+                    type="button"
+                    onClick={() => setBlownFuses((fuses) => ({ ...fuses, [meterJack]: null }))}
+                    title="Fit a fresh fuse in this jack — the real meters keep a spare in the battery compartment for exactly this moment."
+                    style={{ ...meterDialStyle(false, light), fontSize: 9 }}
+                  >
+                    replace fuse
+                  </button>
+                ) : null}
+              </span>
+            ) : null}
             {(() => {
               const shown = heldReadout ?? meterReadout
               return (
