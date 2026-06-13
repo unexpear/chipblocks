@@ -111,6 +111,12 @@ export function buildMathView(
    * with no thermally-rated parts always "settles").
    */
   thermalConverged = true,
+  /**
+   * Did the relay loop settle? False = a buzzer / oscillator (a coil powered
+   * through its own contacts), so the contact states below are a non-converged
+   * snapshot, not a steady answer. Defaults true (no relays always "settles").
+   */
+  relaysSettled = true,
 ): MathView {
   if (solution.status !== 'solved') {
     return {
@@ -136,6 +142,11 @@ export function buildMathView(
   if (!thermalConverged) {
     solver.push(
       '⚠ THERMAL RUNAWAY — the electro-thermal loop did NOT settle. The temperatures kept climbing every pass (a part heating itself faster than it can shed the heat, with no stable point — what an NTC thermistor straight across a stiff supply does). Every temperature and temperature-dependent resistance below is a NON-CONVERGED snapshot at the iteration cap, not a real steady state. Treat those numbers as “runaway,” not as an answer.',
+    )
+  }
+  if (!relaysSettled) {
+    solver.push(
+      '⚠ RELAY CHATTER — a relay could not settle: its coil is powered THROUGH its own contacts, so energizing it cuts its own power and it falls back, over and over (a buzzer / oscillator). A static solve cannot show a continuous oscillation; the contact state below is a frozen snapshot at the iteration cap, not a steady answer.',
     )
   }
 
@@ -383,6 +394,38 @@ function partCard(
       }
     }
     return { id: inst.id, title: 'Fuse — intact', lines }
+  }
+  if (def === 'relay') {
+    const energized = inst.parameters?.coil_state?.value === 'energized'
+    const pullIn = readScalarParam(inst, 'pull_in_voltage')
+    const coilA = inst.connects?.find((c) => c.terminal === 'coil_a')?.net
+    const coilB = inst.connects?.find((c) => c.terminal === 'coil_b')?.net
+    const vA = coilA !== undefined ? solution.nodes.get(coilA) : undefined
+    const vB = coilB !== undefined ? solution.nodes.get(coilB) : undefined
+    const coilVolts = vA !== undefined && vB !== undefined ? Math.abs(vA - vB) : undefined
+    lines.push(
+      'A relay is a coil that throws a switch: energize the coil and its magnetic field pulls the common contact from normally-closed over to normally-open, isolating the little control side from the switched load.',
+    )
+    if (coilVolts !== undefined && pullIn !== undefined) {
+      const dropOut = readScalarParam(inst, 'drop_out_voltage') ?? pullIn / 2
+      const draw = current !== undefined ? ` (drawing ${fmtA(Math.abs(current))})` : ''
+      let why: string
+      if (energized && coilVolts < pullIn) {
+        // Held by hysteresis: below pull-in but still above the release threshold.
+        why = `below its ${fmtV(pullIn)} pull-in but still above the ${fmtV(dropOut)} release — so it STAYS energized (the hysteresis that keeps it from chattering at the edge)`
+      } else if (energized) {
+        why = `at or above its ${fmtV(pullIn)} pull-in — so it is ENERGIZED`
+      } else {
+        why = `below its ${fmtV(pullIn)} pull-in — so it is at REST`
+      }
+      lines.push(`The coil sees ${fmtV(coilVolts)}${draw}, ${why}.`)
+    }
+    lines.push(
+      energized
+        ? 'Energized: the common contact is on normally_open (normally_closed is now an open contact).'
+        : 'At rest: the common contact is on normally_closed (normally_open is an open contact).',
+    )
+    return { id: inst.id, title: `Relay — ${energized ? 'energized' : 'at rest'}`, lines }
   }
   if (def === 'diode_zener_silicon') {
     return {

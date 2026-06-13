@@ -66,6 +66,7 @@ import {
   mathInstance as math,
   PHOTON_EV_NM,
   potentiometerSegments,
+  relayCoilEnergized,
   resolveBjt,
   resolveMosfet,
   SILICON_BANDGAP_EV,
@@ -988,6 +989,28 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         if (short !== null) sources.push(short)
         else warnings.push(`Skipped fuse '${inst.id}' (missing terminal connects)`)
       }
+    } else if (inst.definition === 'relay') {
+      // Coil (a resistor across coil_a/coil_b) + contacts (common shorted to the
+      // live throw at the coil_state the relay loop resolved). Quasi-static: the
+      // contacts hold their settled position through the record; mid-record
+      // switching (the pull-in delay) is a documented refinement.
+      const coil = resolveShort(
+        inst,
+        nodeIndex,
+        'coil_a',
+        'coil_b',
+        readScalarParam(inst, 'coil_resistance') ?? 0,
+      )
+      if (coil !== null) sources.push(coil)
+      const liveThrow = relayCoilEnergized(inst) ? 'normally_open' : 'normally_closed'
+      const contact = resolveShort(
+        inst,
+        nodeIndex,
+        'common',
+        liveThrow,
+        readScalarParam(inst, 'contact_resistance') ?? 0,
+      )
+      if (contact !== null) sources.push(contact)
     } else if (
       inst.definition === 'switch_spst_toggle' ||
       inst.definition === 'switch_spst_momentary'

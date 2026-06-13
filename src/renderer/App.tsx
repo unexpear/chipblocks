@@ -30,9 +30,10 @@ import {
 } from 'react'
 import type { World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
-import { solveElectroThermal, solveTransientThermal } from '../electro-thermal.ts'
+import { solveTransientThermal } from '../electro-thermal.ts'
 import { overcurrentFuseIds } from '../failure-detector.ts'
 import { readScalarParam } from '../instance-params.ts'
+import { type RelayState, solveWithRelays } from '../relay.ts'
 import type { TransientResult } from '../transient-solver.ts'
 import { BlockViewer } from './block-viewer.tsx'
 import {
@@ -108,6 +109,7 @@ import {
   blownFuse,
   defaultParameters,
   fuseIntact,
+  relayWithCoilState,
   replacedFuse,
   sourceTerminalIds,
   toggledSpdt,
@@ -367,6 +369,8 @@ function solveCanvas(
   solution: Solution
   temperaturesC: Map<string, number>
   thermalConverged: boolean
+  relayStates: Map<string, RelayState>
+  relaysSettled: boolean
 } {
   const { world, drawn, leadAliases } = canvasWorld(nodeList, edgeList)
   // Electro-thermal solve (stage 7): the electrical answer at the settled part
@@ -376,7 +380,7 @@ function solveCanvas(
   // component is solved: a free-floating section's voltages are genuinely
   // undefined (and would be a singular matrix) — it sits idle instead of
   // killing the whole canvas. The meter still gets the FULL world.
-  const thermal = solveElectroThermal(groundedComponent(world))
+  const thermal = solveWithRelays(groundedComponent(world))
   const solution = thermal.solution
   const edges = edgeList.map((edge) => {
     const wire = drawn.get(edge.id) ?? { lengthM: 0, ohms: 0 }
@@ -439,6 +443,10 @@ function solveCanvas(
     // Did the thermal loop settle? False = runaway — the Math panel flags the
     // temperatures below as a non-converged snapshot instead of an answer.
     thermalConverged: thermal.thermalConverged,
+    // Each relay's resolved contact state (for the symbol) + whether the relay
+    // loop settled (false = a buzzer/oscillator the Math panel flags).
+    relayStates: thermal.relayStates,
+    relaysSettled: thermal.relaysSettled,
   }
 }
 
@@ -570,6 +578,8 @@ function Canvas() {
       solution: solved.solution,
       temperaturesC: solved.temperaturesC,
       thermalConverged: solved.thermalConverged,
+      relayStates: solved.relayStates,
+      relaysSettled: solved.relaysSettled,
       materials,
       materialResistivity,
       validMaterialsByDef,
@@ -592,6 +602,10 @@ function Canvas() {
   const [solvedTemperatures, setSolvedTemperatures] = useState(initial.temperaturesC)
   // Did the thermal loop settle? False = runaway — the Math panel flags it.
   const [thermalConverged, setThermalConverged] = useState(initial.thermalConverged)
+  // Each relay's resolved contact state (drives the symbol) + whether the relay
+  // loop settled (false = a buzzer — flagged like the runaway).
+  const [relayStates, setRelayStates] = useState(initial.relayStates)
+  const [relaysSettled, setRelaysSettled] = useState(initial.relaysSettled)
   // Latest edges for the re-solve effect WITHOUT depending on edge data (a re-solve
   // rewrites edge data, which would loop); structural edits trigger it via
   // `topology`, node moves via `nodes`.
@@ -731,6 +745,8 @@ function Canvas() {
       setSolution(solved.solution)
       setSolvedTemperatures(solved.temperaturesC)
       setThermalConverged(solved.thermalConverged)
+      setRelayStates(solved.relayStates)
+      setRelaysSettled(solved.relaysSettled)
     },
     [setEdges],
   )
@@ -790,8 +806,10 @@ function Canvas() {
   const [showMath, setShowMath] = useState(false)
   const mathView = useMemo(
     () =>
-      showMath ? buildMathView(solvedWorld, solution, solvedTemperatures, thermalConverged) : null,
-    [showMath, solvedWorld, solution, solvedTemperatures, thermalConverged],
+      showMath
+        ? buildMathView(solvedWorld, solution, solvedTemperatures, thermalConverged, relaysSettled)
+        : null,
+    [showMath, solvedWorld, solution, solvedTemperatures, thermalConverged, relaysSettled],
   )
 
   // Circuit blocks (S19-v3-67): group the selection into ONE reusable block.
@@ -1085,6 +1103,8 @@ function Canvas() {
         info.set(id, { currentKey: `${id}/wiper`, label: `${id} · I(wiper)` })
       } else if (inst.definition === 'fuse') {
         info.set(id, { currentKey: `${id}/terminal_a`, label: `${id} · I(a→b)` })
+      } else if (inst.definition === 'relay') {
+        info.set(id, { currentKey: `${id}/coil_a`, label: `${id} · I(coil)` })
       } else if (
         inst.definition === 'transformer' ||
         inst.definition === 'transformer_center_tapped'
@@ -1562,6 +1582,28 @@ function Canvas() {
       ),
     )
   }, [solvedWorld, solution, setNodes])
+
+  // Persist each relay's resolved contact state onto its node, so the symbol
+  // shows energized vs at-rest. solveWithRelays already settled the states (the
+  // solution + currents are correct now); this just makes the node param catch
+  // up. Setting coil_state to the resolved value re-solves to the SAME value, so
+  // it converges in one render. Only writes when a value actually changes (else
+  // a fresh node array would loop). Not checkpointed — automatic physics.
+  useEffect(() => {
+    if (relayStates.size === 0) return
+    setNodes((current) => {
+      let changed = false
+      const next = current.map((n) => {
+        const target = relayStates.get(n.id)
+        if (target === undefined) return n
+        const params = (n.data as DeviceNodeData).parameters
+        if (params?.coil_state?.value === target) return n
+        changed = true
+        return { ...n, data: { ...n.data, parameters: relayWithCoilState(params, target) } }
+      })
+      return changed ? next : current
+    })
+  }, [relayStates, setNodes])
 
   // Keyboard shortcuts (S19-v3-15 rotate; S19-v3-62 all bindings editable):
   // every canvas key runs through the user's keybinds — rotate, delete (we own

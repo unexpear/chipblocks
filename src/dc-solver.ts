@@ -77,6 +77,16 @@ export function fuseIsIntact(inst: Instance): boolean {
   return readEnumParam(inst, 'state') !== 'blown'
 }
 
+/**
+ * Is a relay's coil energized? Its `coil_state` (energized|de_energized) is a
+ * canvas-level state the relay loop sets from the solved coil voltage; absent
+ * defaults to de_energized (a relay at rest). Energized routes the common
+ * contact to normally_open, de-energized to normally_closed.
+ */
+export function relayCoilEnergized(inst: Instance): boolean {
+  return readEnumParam(inst, 'coil_state') === 'energized'
+}
+
 /** Newton-Raphson controls (§20.6). */
 const NR_MAX_ITERATIONS = 100
 const NR_VOLTAGE_TOLERANCE = 1e-6 // volts
@@ -200,6 +210,8 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     | 'led'
     | 'switch'
     | 'switch_spdt'
+    | 'relay_coil'
+    | 'relay_contact'
     | 'fuse'
     | 'wire'
     | 'inductor'
@@ -251,6 +263,23 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       // common→throw pair stamps as a closed switch (below); the other throw
       // is left unstamped — a real open contact on its own net.
       if (inst.connects?.length === 3) linearVoltageSources.push({ inst, kind: 'switch_spdt' })
+      continue
+    }
+    if (inst.definition === 'relay') {
+      // Coil + SPDT contacts, stamped INDEPENDENTLY of each other: the coil (a
+      // resistor across coil_a/coil_b) whenever both coil leads are wired, and
+      // the contact (a short from common to the live throw) whenever common AND
+      // that throw are wired — a real relay often leaves the unused throw open.
+      // Contact pushed FIRST so the coil's aux current is the reported branch
+      // (the coil current decides energization).
+      const wired = (t: string) => inst.connects?.some((c) => c.terminal === t) ?? false
+      const liveThrow = relayCoilEnergized(inst) ? 'normally_open' : 'normally_closed'
+      if (wired('common') && wired(liveThrow)) {
+        linearVoltageSources.push({ inst, kind: 'relay_contact' })
+      }
+      if (wired('coil_a') && wired('coil_b')) {
+        linearVoltageSources.push({ inst, kind: 'relay_coil' })
+      }
       continue
     }
     if (inst.connects?.length !== 2) continue
@@ -324,6 +353,8 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       else if (kind === 'led') ok = stampLED(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'switch') ok = stampClosedSwitch(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'switch_spdt') ok = stampSpdt(inst, nodeIndex, auxIdx, M, b)
+      else if (kind === 'relay_coil') ok = stampRelayCoil(inst, nodeIndex, auxIdx, M, b)
+      else if (kind === 'relay_contact') ok = stampRelayContact(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'fuse') ok = stampFuse(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'wire') ok = stampWire(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'inductor') ok = stampInductorDC(inst, nodeIndex, auxIdx, M, b)
@@ -1161,6 +1192,65 @@ export function stampSpdt(
 ): boolean {
   const throwTerminal = readEnumParam(inst, 'position') === 'throw_b' ? 'throw_b' : 'throw_a'
   return findAndStampVoltageSource(inst, nodeIndex, auxIdx, 0, 'common', throwTerminal, M, b)
+}
+
+/**
+ * Stamp a relay's COIL: a 0 V source carrying its coil_resistance between coil_a
+ * and coil_b — the winding is just a resistor to the steady solve, and its aux
+ * current (= the coil current) is what the relay loop checks against the pull-in
+ * threshold. Absent coil_resistance falls back to an ideal short (degenerate).
+ */
+export function stampRelayCoil(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  auxIdx: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
+  const coilResistance = readScalarParam(inst, 'coil_resistance') ?? 0
+  return findAndStampVoltageSource(
+    inst,
+    nodeIndex,
+    auxIdx,
+    0,
+    'coil_a',
+    'coil_b',
+    M,
+    b,
+    coilResistance,
+  )
+}
+
+/**
+ * Stamp a relay's CONTACTS: a 0 V short (carrying contact_resistance) from the
+ * common pole to whichever throw the coil state selects — normally_open when
+ * energized, normally_closed at rest. The other throw is never stamped, so it
+ * stays an open contact: break-before-make, exactly like the SPDT.
+ */
+export function stampRelayContact(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  auxIdx: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
+  const liveThrow = relayCoilEnergized(inst) ? 'normally_open' : 'normally_closed'
+  const contactResistance = readScalarParam(inst, 'contact_resistance') ?? 0
+  return findAndStampVoltageSource(
+    inst,
+    nodeIndex,
+    auxIdx,
+    0,
+    'common',
+    liveThrow,
+    M,
+    b,
+    contactResistance,
+  )
 }
 
 /**

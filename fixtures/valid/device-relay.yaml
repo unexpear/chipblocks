@@ -1,0 +1,149 @@
+# Valid fixture: relay (electromechanical SPDT, coil-driven).
+# An electromagnet (the coil) that throws a mechanical switch (the contacts).
+# Energize the coil and its magnetic field pulls an armature that moves the
+# COMMON contact from the normally-closed throw to the normally-open one; let
+# the coil current fall and a spring returns it. The way a small control signal
+# switches a big load while staying electrically ISOLATED from it -- the coil
+# circuit and the contact circuit share no wire.
+#
+# Five terminals: two for the coil (coil_a, coil_b), three for the SPDT contacts
+# (common, normally_open, normally_closed). DE-ENERGIZED, common touches
+# normally_closed (NC closed at rest); ENERGIZED, common touches normally_open.
+#
+# Model: the coil is a resistor (its DC coil_resistance) across coil_a/coil_b;
+# the contacts are an SPDT short whose throw is chosen by whether the coil is
+# energized. Energized is decided from the SOLVED coil voltage against the
+# datasheet thresholds, with hysteresis: it pulls IN at pull_in_voltage and only
+# releases below the lower drop_out_voltage, so it does not chatter at the edge.
+# The contact state drives a re-solve -- the same solved-quantity-vs-threshold,
+# then re-solve pattern the fuse uses, but reversible.
+#
+# Honest gaps: this is the STEADY contact state from the steady coil voltage.
+# The pull-in / release TIME (the coil current rising through L/R, contact bounce,
+# the buzzer/oscillator a coil powered through its own contacts makes) needs the
+# time-domain engine to switch the contacts mid-record -- a refinement; the
+# transient solver holds the contacts at their settled state for now. A latching
+# (bistable) relay that stays put with no coil power is a sibling part. Coil
+# self-heating is not modeled.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: relay
+origin: builtin
+layer: primitive_device
+name: "Relay (electromechanical SPDT)"
+description: "A coil-driven mechanical switch: an electromagnet whose magnetic field throws a single-pole double-throw contact when energized, isolating a low-power control side (the coil) from the switched load (the contacts). De-energized, the common contact rests on the normally-closed throw; energize the coil past its pull-in voltage and the common moves to the normally-open throw, releasing back below the drop-out voltage. The way a microcontroller switches a motor or a mains lamp. Five terminals: a two-wire coil and a three-wire SPDT contact set."
+composition:
+  uses:
+    - solder_joint
+  requires:
+    coil_material:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    contact_material:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 5
+parameters:
+  coil_material:
+    type: material_ref
+    satisfies_role: coil_material
+    required: true
+    description: The coil winding's conductor (enamelled copper in real relays). Sets the coil's resistance with its length and gauge; the catalog's conductive default stands in.
+  contact_material:
+    type: material_ref
+    satisfies_role: contact_material
+    required: true
+    description: The contact metal (silver alloys in real relays, for low, stable contact resistance). The conductive default stands in.
+  coil_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: DC resistance of the coil winding. With the coil voltage it sets the coil current (I = V/R) and the coil's power draw. A 5 V signal-relay coil is typically tens to a couple hundred ohms.
+  pull_in_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: The must-operate voltage -- the coil voltage at or above which the armature pulls in and the common contact moves to normally_open. Datasheets quote it as a fraction of the nominal coil voltage (often ~75 %).
+  drop_out_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: The must-release voltage -- the coil voltage at or below which the spring releases the armature back to normally_closed. Below pull_in_voltage, giving the relay hysteresis so it does not chatter near the threshold (often ~10 % of nominal). Absent reads half the pull-in voltage.
+  nominal_coil_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: The rated coil drive voltage the relay is designed for (a "5 V relay"). The headline figure; pull_in / drop_out are fractions of it.
+  contact_resistance:
+    type: quantity
+    units: ohm
+    required: false
+    description: Resistance of the closed contact path (common to the made throw). Small but non-zero. Absent reads an ideal 0 ohm short.
+  coil_inductance:
+    type: quantity
+    units: henry
+    required: false
+    description: The coil's inductance. Used only by the time-domain engine (it sets the pull-in delay, the coil current rising through L/R); the steady solve ignores it.
+  contact_current_rating:
+    type: quantity
+    units: ampere
+    required: false
+    description: Maximum current the contacts can switch and carry. Signal relays are rated around an amp; power relays many amps.
+behaviors:
+  - switches_circuit
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+  - couples_magnetically
+state_machine:
+  initial_state: de_energized
+  states:
+    de_energized:
+      description: The resting state, coil unpowered. The spring holds the common contact on the normally_closed throw; the normally_open throw is an open contact.
+    energized:
+      description: The coil's field has pulled the armature in. The common contact is now on the normally_open throw; the normally_closed throw is open.
+  transitions:
+    - from: de_energized
+      to: energized
+      trigger: coil_pulls_in
+      description: The coil voltage reaches pull_in_voltage; the magnetic force overcomes the spring and the common moves from normally_closed to normally_open.
+    - from: energized
+      to: de_energized
+      trigger: coil_releases
+      description: The coil voltage falls below drop_out_voltage; the spring returns the common to normally_closed. The lower release threshold (hysteresis) keeps it from chattering near pull-in.
+terminals:
+  coil_a:
+    description: One end of the coil winding. The coil is non-polar for a plain (non-diode) relay; energize it either way round.
+  coil_b:
+    description: The other end of the coil winding.
+  common:
+    description: The pole of the SPDT contact -- the terminal that moves between the two throws.
+  normally_open:
+    description: The throw the common contact makes when the relay is ENERGIZED (open at rest).
+  normally_closed:
+    description: The throw the common contact makes when the relay is DE-ENERGIZED (closed at rest).
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved as two linked pieces: the coil is a resistor (coil_resistance) between
+  coil_a and coil_b, and the contacts are a 0 V short from common to whichever
+  throw is live -- normally_closed when de-energized, normally_open when
+  energized (each carrying contact_resistance). Which throw is live is decided
+  from the solved coil voltage |V(coil_a) - V(coil_b)| against pull_in_voltage
+  (to pull in) and drop_out_voltage (to release), with the lower release giving
+  real hysteresis. The state drives a re-solve to a self-consistent fixed point,
+  the reversible cousin of the fuse's blow. A relay whose coil is powered through
+  its own contacts cannot settle (the buzzer / oscillator) -- the solve reports
+  it could not settle rather than picking an arbitrary state, the same way a
+  thermal runaway is reported. The pull-in/release TIME, contact bounce, latching
+  (bistable) relays, and coil self-heating are documented refinements.

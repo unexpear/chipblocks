@@ -8,6 +8,7 @@ import {
   fuseIntact,
   type Parameters,
   primaryValue,
+  relayEnergized,
   sourceIsAc,
   sourceIsSquare,
   sourceTerminalCount,
@@ -320,6 +321,45 @@ function ThermistorGlyph() {
   )
 }
 
+/** Relay — IEC: a coil box (the electromagnet) mechanically linked (the dashed
+ *  armature) to an SPDT contact. Energized, the common arm throws up to
+ *  normally_open; at rest a spring holds it down on normally_closed. The arm
+ *  position shows the state at a glance. coil_a/coil_b left, common right,
+ *  normally_open top, normally_closed bottom. */
+function RelayGlyph({ energized }: { energized: boolean }) {
+  const armTipY = energized ? 11 : 33
+  return (
+    <svg width={W} height={H}>
+      <title>{energized ? 'relay (energized)' : 'relay (at rest)'}</title>
+      {/* coil: two leads + the box on the left */}
+      <line x1={0} y1={13} x2={12} y2={13} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={0} y1={31} x2={12} y2={31} stroke={STROKE} strokeWidth={1.5} />
+      <rect x={12} y={11} width={14} height={22} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      {/* the mechanical link (armature) from the coil to the contact pivot */}
+      <line
+        x1={26}
+        y1={MID}
+        x2={56}
+        y2={MID}
+        stroke={STROKE}
+        strokeWidth={1}
+        strokeDasharray="2 2"
+      />
+      {/* common pole: the pivot + its lead out to the right edge */}
+      <circle cx={58} cy={MID} r={2} fill={STROKE} stroke={STROKE} />
+      <line x1={58} y1={MID} x2={W} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+      {/* the swinging arm — up to NO when energized, down to NC at rest */}
+      <line x1={58} y1={MID} x2={40} y2={armTipY} stroke={STROKE} strokeWidth={1.5} />
+      {/* normally_open contact (top) + lead to the top edge */}
+      <circle cx={40} cy={11} r={2} fill="none" stroke={STROKE} />
+      <line x1={40} y1={9} x2={40} y2={0} stroke={STROKE} strokeWidth={1.5} />
+      {/* normally_closed contact (bottom) + lead to the bottom edge */}
+      <circle cx={40} cy={33} r={2} fill="none" stroke={STROKE} />
+      <line x1={40} y1={35} x2={40} y2={H} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
 /** Inductor — IEEE 315: a row of winding humps. */
 function InductorGlyph() {
   return (
@@ -585,6 +625,14 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
     { id: 'terminal_b', position: Position.Right },
   ],
   fuse: TWO('terminal_a', 'terminal_b'),
+  // Coil on the left, the SPDT contact on the right/top/bottom.
+  relay: [
+    { id: 'coil_a', position: Position.Left, offset: 13 },
+    { id: 'coil_b', position: Position.Left, offset: 31 },
+    { id: 'common', position: Position.Right, offset: 22 },
+    { id: 'normally_open', position: Position.Top },
+    { id: 'normally_closed', position: Position.Bottom },
+  ],
   transistor_bjt_npn: [
     { id: 'base', position: Position.Left },
     { id: 'collector', position: Position.Top },
@@ -729,6 +777,8 @@ export function DeviceGlyph({
     return <PotentiometerGlyph position={wiperFraction(parameters)} />
   // The fuse is state-dependent: a whole element vs a melted, broken one.
   if (definition === 'fuse') return <FuseGlyph intact={fuseIntact(parameters)} />
+  // The relay's arm shows whether the coil is energized (the solve resolves it).
+  if (definition === 'relay') return <RelayGlyph energized={relayEnergized(parameters)} />
   // Every source is the same IEC circle; the mark inside says which kind —
   // DC bars, the sine, or the clock trace — and stays upright at any rotation.
   if (definition === 'power_source') {

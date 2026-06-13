@@ -93,6 +93,7 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'switch_spst_momentary', label: 'Button' },
   { definition: 'switch_spdt', label: 'SPDT' },
   { definition: 'fuse', label: 'Fuse' },
+  { definition: 'relay', label: 'Relay' },
   { definition: 'ground', label: 'Ground' },
 ]
 

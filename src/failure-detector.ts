@@ -149,6 +149,40 @@ export function overcurrentFuseIds(world: World, solution: Solution): string[] {
   return ids
 }
 
+/**
+ * Relays whose contact state should CHANGE given the solved coil voltage — the
+ * map of instance id → target `coil_state`. The canvas applies these (a state
+ * change + re-solve, the reversible cousin of the fuse blow) and re-checks until
+ * no relay needs to move. With hysteresis: a de-energized relay pulls IN only at
+ * or above pull_in_voltage; an energized one releases only BELOW the lower
+ * drop_out_voltage (default half the pull-in), so it never chatters at the edge.
+ * Relays already in the right state are not listed (the loop settles).
+ */
+export function relayCoilTargets(
+  world: World,
+  solution: Solution,
+): Map<string, 'energized' | 'de_energized'> {
+  const targets = new Map<string, 'energized' | 'de_energized'>()
+  if (solution.status !== 'solved') return targets
+  for (const inst of world.instances.values()) {
+    if (inst.definition !== 'relay') continue
+    const pullIn = readScalarParam(inst, 'pull_in_voltage')
+    if (pullIn === undefined || pullIn <= 0) continue
+    const dropOut = readScalarParam(inst, 'drop_out_voltage') ?? pullIn / 2
+    const aNet = inst.connects?.find((c) => c.terminal === 'coil_a')?.net
+    const bNet = inst.connects?.find((c) => c.terminal === 'coil_b')?.net
+    if (aNet === undefined || bNet === undefined) continue
+    const va = solution.nodes.get(aNet)
+    const vb = solution.nodes.get(bNet)
+    if (va === undefined || vb === undefined) continue
+    const coilVolts = Math.abs(va - vb)
+    const energized = readEnumParam(inst, 'coil_state') === 'energized'
+    if (!energized && coilVolts >= pullIn) targets.set(inst.id, 'energized')
+    else if (energized && coilVolts < dropOut) targets.set(inst.id, 'de_energized')
+  }
+  return targets
+}
+
 // ---------------------------------------------------------------------------
 // Per-check implementations — exposed for unit testing
 // ---------------------------------------------------------------------------

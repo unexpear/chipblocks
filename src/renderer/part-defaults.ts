@@ -195,6 +195,21 @@ const DEFAULTS: Record<string, Parameters> = {
     thermal_resistance_junction_ambient: scalar(667, 'kelvin_per_watt'),
     max_operating_temperature: scalar(125, 'celsius'),
   },
+  relay: {
+    // 5 V SPDT signal/power relay (SONGLE SRD-05VDC-SL-C, the ubiquitous blue
+    // Arduino-module relay): 70 Ω coil (~71 mA, ~0.36 W at 5 V), must-operate
+    // 75 % = 3.75 V, must-release 10 % = 0.5 V, 10 A contacts. Starts at rest
+    // (de-energized → common on normally_closed).
+    coil_resistance: scalar(70, 'ohm'),
+    pull_in_voltage: scalar(3.75, 'volt'),
+    drop_out_voltage: scalar(0.5, 'volt'),
+    nominal_coil_voltage: scalar(5, 'volt'),
+    contact_resistance: scalar(0.1, 'ohm'),
+    contact_current_rating: scalar(10, 'ampere'),
+    coil_material: { value: 'copper' },
+    contact_material: { value: 'copper' },
+    coil_state: { value: 'de_energized' },
+  },
   transistor_bjt_npn: {
     // 2N3904 (onsemi) — the classic jellybean small-signal NPN. beta + I_S are
     // part-specific, so the device definition carries no builtin numeric default
@@ -366,6 +381,12 @@ const PROVENANCE: Record<string, Record<string, string>> = {
       'derived: 1/δ, dissipation factor ~1.5 mW/°C in still air (Vishay NTCLE100E3)',
     max_operating_temperature: 'epoxy NTC bead operating class (~125 °C)',
   },
+  relay: {
+    coil_resistance: 'SONGLE SRD-05VDC-SL-C 70 Ω coil (~0.36 W at 5 V, datasheet)',
+    pull_in_voltage: 'must-operate ≤ 75 % of the 5 V nominal coil (datasheet)',
+    drop_out_voltage: 'must-release ≥ 10 % of the 5 V nominal coil (datasheet)',
+    contact_current_rating: 'SRD-05 10 A contact rating (datasheet)',
+  },
   transistor_bjt_npn: {
     saturation_current: 'small-signal NPN transport I_S ~1e-14 A (2N3904 SPICE IS ~6.7 fA)',
     forward_current_gain: '2N3904 hFE ≥ 100 at I_C = 10 mA (onsemi datasheet)',
@@ -489,6 +510,19 @@ export function replacedFuse(parameters: Parameters | undefined): Parameters {
   return { ...parameters, state: { value: 'intact' } }
 }
 
+/** Is a relay's coil energized? Absent coil_state defaults to de-energized (at rest). */
+export function relayEnergized(parameters: Parameters | undefined): boolean {
+  return stringOf(parameters, 'coil_state') === 'energized'
+}
+
+/** Set a relay's resolved coil state — the canvas syncs this from the solve. */
+export function relayWithCoilState(
+  parameters: Parameters | undefined,
+  state: 'energized' | 'de_energized',
+): Parameters {
+  return { ...parameters, coil_state: { value: state } }
+}
+
 /**
  * How many leads a source brings out (S19-v3-74), clamped to the real range.
  * Absent (every pre-existing source) reads as 2 — the plain two-lead source.
@@ -551,6 +585,11 @@ export function primaryValue(
   if (definition === 'thermistor') {
     const r = amountOf(parameters, 'resistance')
     return r === undefined ? 'NTC' : `${formatEng(r, 'Ω')} NTC`
+  }
+  if (definition === 'relay') {
+    const v = amountOf(parameters, 'nominal_coil_voltage')
+    const label = v === undefined ? 'relay' : `${formatEng(v, 'V')} relay`
+    return relayEnergized(parameters) ? `${label} ⚡` : label
   }
   if (definition === 'transistor_bjt_npn' || definition === 'transistor_bjt_pnp') {
     const beta = amountOf(parameters, 'forward_current_gain')
