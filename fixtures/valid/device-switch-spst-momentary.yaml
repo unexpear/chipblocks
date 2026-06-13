@@ -1,0 +1,92 @@
+# Valid fixture: SPST momentary push-button switch.
+# The push button in nearly every breadboard project: single pole, single
+# throw, but NORMALLY OPEN — the contacts touch only while the button is held,
+# and spring back open when released. Electrically identical to the SPST toggle
+# when closed (a low-resistance conductor); the difference is the default state
+# (open, not closed) and the actuation semantics (held vs latched).
+#
+# The static/steady solvers have no notion of "held for a duration", so the
+# canvas models a press as a state toggle (double-click closes it, double-click
+# again releases it) — the honest gap stated in notes. A normally-CLOSED push
+# button (the release-to-make variant) would be a sibling definition.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: switch_spst_momentary
+origin: builtin
+layer: primitive_device
+name: "SPST momentary push button (normally open)"
+description: "A two-terminal push-button switch with one switching element and a single closed position, normally open: the contacts touch only while the button is pressed and spring back apart when released. The reset button, the doorbell, the keypad key. When pressed the contacts behave like a very-low-resistance conductor; released, the contacts separate and the device is an open circuit. The complement of the latching SPST toggle — same closed-state physics, momentary actuation."
+composition:
+  requires:
+    contact_material:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  contact_material:
+    type: material_ref
+    satisfies_role: contact_material
+    required: true
+    description: The conductive material the button contacts are made of. Tactile-switch domes are commonly nickel-plated or silver over a stainless dome; determines closed-state contact resistance and current rating.
+  contact_resistance_closed:
+    type: quantity
+    units: ohm
+    required: false
+    description: Effective resistance between terminals while pressed. Small but non-zero — tactile pushbuttons run higher than panel toggles (tens to low hundreds of milliohms) because the contact force is light.
+  max_current:
+    type: quantity
+    units: ampere
+    required: false
+    description: Maximum current the contacts can carry without damage. Tactile buttons are low-current signal parts (often ~50 mA), not power switches.
+  rated_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Maximum voltage across the open contacts before breakdown across the gap.
+behaviors:
+  - switches_circuit
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+state_machine:
+  initial_state: open
+  states:
+    open:
+      description: The default, unpressed state. The spring holds the contacts apart; no conductive path between terminals.
+    closed:
+      description: The pressed state. The actuator forces the contacts together for a low-resistance path; the spring reopens them the moment the press ends.
+  transitions:
+    - from: open
+      to: closed
+      trigger: pressed
+      description: The user presses and holds the button; the contacts make for as long as the press lasts.
+    - from: closed
+      to: open
+      trigger: released
+      description: The press ends; the spring drives the contacts apart again. (Distinct from the toggle's single alternating 'actuated' trigger — a momentary button has separate make and break events.)
+terminals:
+  terminal_in:
+    description: One pole of the button contact.
+  terminal_out:
+    description: The other pole of the button contact.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Electrically the same as switch_spst_toggle when closed (a 0 Ω-class short
+  carrying its contact_resistance_closed); the solver handles both the same
+  way. The ONLY model differences are the default state (open, so a freshly
+  dropped button leaves its branch open) and the actuation semantics. The
+  static and steady-state solvers have no "held for a duration" concept, so
+  the canvas simulates a press as a state toggle (double-click) — an honest
+  gap; true momentary timing would need the press to carry a duration into the
+  transient solver. A normally-closed momentary (release-to-make) is the
+  sibling variant.

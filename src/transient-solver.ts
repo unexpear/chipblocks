@@ -64,11 +64,13 @@ import {
   type MosfetElement,
   mathInstance as math,
   PHOTON_EV_NM,
+  potentiometerSegments,
   resolveBjt,
   resolveMosfet,
   SILICON_BANDGAP_EV,
   stampBjtCompanion,
   stampMosfetCompanion,
+  stampPotentiometer,
   stampResistor,
 } from './dc-solver.ts'
 import {
@@ -881,6 +883,17 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     netB: string
     ohms: number
   }[] = []
+  // Potentiometers, kept for the per-terminal current recording: the wiper net
+  // plus whichever ends are wired (a rheostat leaves one end floating) and the
+  // two segment resistances at the current wiper position.
+  const pots: {
+    id: string
+    netA?: string
+    netW: string
+    netB?: string
+    rTop: number
+    rBottom: number
+  }[] = []
   for (const inst of world.instances.values()) {
     if (inst.definition === 'resistor') {
       const ohms = readScalarParam(inst, 'resistance')
@@ -894,6 +907,22 @@ export function solveTransient(world: World, options: TransientOptions): Transie
           netA: c1.net,
           netB: c2.net,
           ohms,
+        })
+      }
+    }
+    if (inst.definition === 'potentiometer') {
+      const seg = potentiometerSegments(inst)
+      const a = inst.connects?.find((c) => c.terminal === 'terminal_a')?.net
+      const w = inst.connects?.find((c) => c.terminal === 'wiper')?.net
+      const b = inst.connects?.find((c) => c.terminal === 'terminal_b')?.net
+      if (seg !== null && w !== undefined && (a !== undefined || b !== undefined)) {
+        pots.push({
+          id: inst.id,
+          ...(a === undefined ? {} : { netA: a }),
+          netW: w,
+          ...(b === undefined ? {} : { netB: b }),
+          rTop: seg.top,
+          rBottom: seg.bottom,
         })
       }
     }
@@ -943,13 +972,23 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       )
       if (short !== null) sources.push(short)
       else warnings.push(`Skipped wire '${inst.id}' (missing terminal connects)`)
-    } else if (inst.definition === 'switch_spst_toggle') {
-      // Closed → an ideal 0 V short; open → omitted entirely, a real open circuit.
+    } else if (
+      inst.definition === 'switch_spst_toggle' ||
+      inst.definition === 'switch_spst_momentary'
+    ) {
+      // Closed → an ideal 0 V short; open → omitted entirely, a real open
+      // circuit. The momentary push button is the same (default open).
       if (readEnumParam(inst, 'state') !== 'open') {
         const short = resolveShort(inst, nodeIndex, 'terminal_in', 'terminal_out', 0)
         if (short !== null) sources.push(short)
         else warnings.push(`Skipped switch '${inst.id}' (missing terminal connects)`)
       }
+    } else if (inst.definition === 'switch_spdt') {
+      // The selected common→throw pair shorts; the other throw stays open.
+      const throwTerminal = readEnumParam(inst, 'position') === 'throw_b' ? 'throw_b' : 'throw_a'
+      const short = resolveShort(inst, nodeIndex, 'common', throwTerminal, 0)
+      if (short !== null) sources.push(short)
+      else warnings.push(`Skipped SPDT '${inst.id}' (missing common/throw connects)`)
     } else if (inst.definition === 'diode_zener_silicon') {
       // A Zener's defining behavior is reverse breakdown, which isn't modeled
       // yet — skipping it (visible warning) beats faking it as a plain diode.
@@ -977,6 +1016,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
 
     for (const inst of world.instances.values()) {
       if (inst.definition === 'resistor') stampResistor(inst, nodeIndex, M)
+      else if (inst.definition === 'potentiometer') stampPotentiometer(inst, nodeIndex, M)
     }
     for (let s = 0; s < S; s++) {
       // biome-ignore lint/style/noNonNullAssertion: s is bound by S
@@ -1112,6 +1152,18 @@ export function solveTransient(world: World, options: TransientOptions): Transie
 
     for (const r of resistors) {
       through(r.id, r.termA, r.termB, (volts(r.netA) - volts(r.netB)) / r.ohms)
+    }
+
+    // A pot is two segments sharing the wiper, so its terminal currents are set
+    // directly (the 2-terminal `through` helper can't express the wiper carrying
+    // the difference of the two segment currents). An unwired end contributes no
+    // current (rheostat use).
+    for (const pot of pots) {
+      const iTop = pot.netA === undefined ? 0 : (volts(pot.netA) - volts(pot.netW)) / pot.rTop
+      const iBottom = pot.netB === undefined ? 0 : (volts(pot.netB) - volts(pot.netW)) / pot.rBottom
+      if (pot.netA !== undefined) into.set(`${pot.id}/terminal_a`, iTop)
+      if (pot.netB !== undefined) into.set(`${pot.id}/terminal_b`, iBottom)
+      into.set(`${pot.id}/wiper`, -(iTop + iBottom)) // KCL: the wiper carries the rest
     }
 
     for (let j = 0; j < caps.length; j++) {

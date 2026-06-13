@@ -1,0 +1,94 @@
+# Valid fixture: SPDT switch (single pole, double throw).
+# The basic selector: one common pole that routes to EITHER of two throws,
+# never both. The changeover switch, the A/B selector, the SPDT slide. Unlike
+# the SPST (one closed position, one open), the SPDT always has a closed path —
+# it just chooses which of the two. Three terminals: the common pole plus throw
+# A and throw B.
+#
+# Solved from the same 0 Ohm-short machinery as the SPST: the selected
+# common->throw pair stamps as a closed switch; the unselected throw is simply
+# not stamped, leaving it on its own net (a real open contact). A 'break-before-
+# make' SPDT never shorts the two throws together, which is what this model
+# does (exactly one throw connected at a time).
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: switch_spdt
+origin: builtin
+layer: primitive_device
+name: "SPDT switch (single pole, double throw)"
+description: "A three-terminal mechanical switch: one common pole that connects to one of two throw contacts (A or B), never both. The changeover / selector switch — picking between two signal sources, routing power down one of two paths, the center-off-less two-position toggle. The selected common-to-throw pair behaves like a very-low-resistance conductor; the other throw is an open contact. Break-before-make: exactly one throw is connected at any time."
+composition:
+  requires:
+    contact_material:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 3
+parameters:
+  contact_material:
+    type: material_ref
+    satisfies_role: contact_material
+    required: true
+    description: The conductive material the switch contacts are made of. Sets closed-state contact resistance, current-carrying capacity, and arc/wear behavior of the selected pair.
+  contact_resistance_closed:
+    type: quantity
+    units: ohm
+    required: false
+    description: Effective resistance between the common and the selected throw. Small but non-zero — contact area, plating, oxidation, contact force.
+  max_current:
+    type: quantity
+    units: ampere
+    required: false
+    description: Maximum continuous current the selected contact pair can carry without damage.
+  rated_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Maximum voltage across an open throw contact before dielectric breakdown across the gap.
+behaviors:
+  - switches_circuit
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+state_machine:
+  initial_state: throw_a
+  states:
+    throw_a:
+      description: The common pole is connected to throw A; throw B is open. A low-resistance path exists between common and throw_a.
+    throw_b:
+      description: The common pole is connected to throw B; throw A is open. A low-resistance path exists between common and throw_b.
+  transitions:
+    - from: throw_a
+      to: throw_b
+      trigger: actuated
+      description: Actuation moves the common pole from throw A to throw B. Break-before-make — A opens before B closes, so the two throws are never momentarily shorted.
+    - from: throw_b
+      to: throw_a
+      trigger: actuated
+      description: Actuation moves the common pole back from throw B to throw A.
+terminals:
+  common:
+    description: The pole that routes to one of the two throws — the shared terminal.
+  throw_a:
+    description: Throw A — connected to the common pole in state throw_a.
+  throw_b:
+    description: Throw B — connected to the common pole in state throw_b.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved by both engines from the SPST's 0 Ohm-short stamp: the common-to-
+  selected-throw pair becomes a closed switch (a 0 V source carrying its branch
+  current through contact_resistance_closed); the unselected throw is not
+  stamped, so it stays on its own net — a real open contact. The 'position'
+  runtime enum (throw_a / throw_b) selects which; double-click flips it. This
+  is a break-before-make model (exactly one throw connected), so the two throws
+  are never shorted to each other. A center-off SPDT (a third 'open' state) and
+  the make-before-break variant are sibling refinements.

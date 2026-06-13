@@ -1,5 +1,5 @@
 import type { Instance, World } from '../cross-fk-validator.ts'
-import { resolveMosfet, type Solution } from '../dc-solver.ts'
+import { potentiometerSegments, resolveMosfet, type Solution } from '../dc-solver.ts'
 import { deriveSaturationCurrent, thermalVoltage } from '../diode-model.ts'
 import { resistanceAtTemperature } from '../electro-thermal.ts'
 import { readScalarParam } from '../instance-params.ts'
@@ -273,6 +273,35 @@ function partCard(
       lines.push(`Carrying I = ${fmtA(Math.abs(current))}.`)
     }
     return { id: inst.id, title, lines }
+  }
+  if (def === 'potentiometer') {
+    const total = readScalarParam(inst, 'resistance')
+    const seg = potentiometerSegments(inst)
+    const p = Math.min(1, Math.max(0, readScalarParam(inst, 'wiper_position') ?? 0.5))
+    lines.push(
+      `A potentiometer is one resistor track with a sliding tap (the wiper). The wiper splits the track into two series pieces set by how far it has turned — here ${(p * 100).toFixed(0)} % of the way from end A to end B.`,
+    )
+    if (total !== undefined && seg !== null) {
+      lines.push(
+        `Total track R = ${formatEng(total, 'Ω')}. The split: R(A→wiper) = R·p = ${formatEng(seg.top, 'Ω')}, R(wiper→B) = R·(1−p) = ${formatEng(seg.bottom, 'Ω')} — the two pieces always add back to the whole.`,
+      )
+    }
+    const netVolts = (terminal: string) => {
+      const net = inst.connects?.find((c) => c.terminal === terminal)?.net
+      return net === undefined ? undefined : solution.nodes.get(net)
+    }
+    const vA = netVolts('terminal_a')
+    const vW = netVolts('wiper')
+    const vB = netVolts('terminal_b')
+    if (vA !== undefined && vW !== undefined && vB !== undefined) {
+      lines.push(
+        `Wired across both ends it is a voltage divider: the wiper reads V_wiper = ${fmtV(vW)}, sitting between end A (${fmtV(vA)}) and end B (${fmtV(vB)}). Turn the wiper and that output slides between the two ends.`,
+      )
+    }
+    if (current !== undefined) {
+      lines.push(`Track current (into the wired end): I = ${fmtA(Math.abs(current))}.`)
+    }
+    return { id: inst.id, title: 'Potentiometer — a divider you can turn', lines }
   }
   if (def === 'switch_spst_toggle') {
     const open = inst.parameters?.state?.value === 'open'

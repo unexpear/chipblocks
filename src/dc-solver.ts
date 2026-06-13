@@ -187,6 +187,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     | 'power_source'
     | 'led'
     | 'switch'
+    | 'switch_spdt'
     | 'wire'
     | 'inductor'
     | 'transformer_primary'
@@ -232,6 +233,13 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       }
       continue
     }
+    if (inst.definition === 'switch_spdt') {
+      // Three-terminal selector (common + two throws): the selected
+      // common→throw pair stamps as a closed switch (below); the other throw
+      // is left unstamped — a real open contact on its own net.
+      if (inst.connects?.length === 3) linearVoltageSources.push({ inst, kind: 'switch_spdt' })
+      continue
+    }
     if (inst.connects?.length !== 2) continue
 
     if (inst.definition === 'power_source') {
@@ -247,9 +255,13 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       // yet. Solving it as a plain forward diode would misrepresent the part,
       // so it is skipped honestly (matching the transient solver's posture).
       warnings.push(`Skipped zener '${inst.id}' — reverse-breakdown regulation is not solvable yet`)
-    } else if (inst.definition === 'switch_spst_toggle') {
+    } else if (
+      inst.definition === 'switch_spst_toggle' ||
+      inst.definition === 'switch_spst_momentary'
+    ) {
       // Closed → stamps as a short (below). Open → omitted entirely, leaving its
       // terminals on separate nets: a real open circuit, not a hardcoded short.
+      // The momentary push button is electrically identical (default open).
       if (switchIsClosed(inst)) linearVoltageSources.push({ inst, kind: 'switch' })
     } else if (inst.definition === 'wire') {
       linearVoltageSources.push({ inst, kind: 'wire' })
@@ -276,6 +288,10 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         const ok = stampResistor(inst, nodeIndex, M)
         if (!ok)
           warnings.push(`Skipped resistor stamp for instance '${inst.id}' (missing R or connects)`)
+      } else if (inst.definition === 'potentiometer') {
+        const ok = stampPotentiometer(inst, nodeIndex, M)
+        if (!ok)
+          warnings.push(`Skipped potentiometer '${inst.id}' (missing resistance or connects)`)
       }
     }
     for (let s = 0; s < linearVoltageSources.length; s++) {
@@ -286,6 +302,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       if (kind === 'power_source') ok = stampVoltageSource(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'led') ok = stampLED(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'switch') ok = stampClosedSwitch(inst, nodeIndex, auxIdx, M, b)
+      else if (kind === 'switch_spdt') ok = stampSpdt(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'wire') ok = stampWire(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'inductor') ok = stampInductorDC(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'transformer_primary')
@@ -416,6 +433,19 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     if (inst.definition === 'resistor') {
       const I = computeResistorCurrent(inst, nodes)
       if (I !== undefined) branches.set(inst.id, I)
+    } else if (inst.definition === 'potentiometer') {
+      // The pot's reported current is the input-end current: into terminal_a
+      // (top segment) for a divider/rheostat fed from a; if a is the floating
+      // end, the wired end b carries it instead (the other rheostat orientation).
+      const seg = potentiometerSegments(inst)
+      const a = inst.connects?.find((c) => c.terminal === 'terminal_a')?.net
+      const w = inst.connects?.find((c) => c.terminal === 'wiper')?.net
+      const b = inst.connects?.find((c) => c.terminal === 'terminal_b')?.net
+      if (seg !== null && w !== undefined && a !== undefined) {
+        branches.set(inst.id, ((nodes.get(a) ?? 0) - (nodes.get(w) ?? 0)) / seg.top)
+      } else if (seg !== null && w !== undefined && b !== undefined) {
+        branches.set(inst.id, ((nodes.get(b) ?? 0) - (nodes.get(w) ?? 0)) / seg.bottom)
+      }
     }
   }
   for (let s = 0; s < linearVoltageSources.length; s++) {
@@ -899,6 +929,30 @@ export function assignNodeIndices(nets: Map<string, Net>, ground: string): Map<s
  * Returns true if the stamp was applied; false if the resistor's R value or
  * connects are missing or malformed.
  */
+/**
+ * The bare conductance stamp (§18.4): +1/R on the two diagonals, −1/R on the
+ * off-diagonals, ground rows/columns omitted. The shared core of every linear
+ * resistive element (a plain resistor, each segment of a potentiometer).
+ */
+export function stampConductance(
+  nodeIndex: Map<string, number>,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  netA: string,
+  netB: string,
+  ohms: number,
+): void {
+  const G = 1 / ohms
+  const i_a = nodeIndex.get(netA) // undefined when net is ground (excluded)
+  const i_b = nodeIndex.get(netB)
+  if (i_a !== undefined) M.set([i_a, i_a], (M.get([i_a, i_a]) ?? 0) + G)
+  if (i_b !== undefined) M.set([i_b, i_b], (M.get([i_b, i_b]) ?? 0) + G)
+  if (i_a !== undefined && i_b !== undefined) {
+    M.set([i_a, i_b], (M.get([i_a, i_b]) ?? 0) - G)
+    M.set([i_b, i_a], (M.get([i_b, i_a]) ?? 0) - G)
+  }
+}
+
 export function stampResistor(
   inst: Instance,
   nodeIndex: Map<string, number>,
@@ -913,23 +967,62 @@ export function stampResistor(
   const c2 = inst.connects[1]
   if (c1 === undefined || c2 === undefined) return false
 
-  const i_a = nodeIndex.get(c1.net) // undefined when net is ground (excluded)
-  const i_b = nodeIndex.get(c2.net)
-
-  const G = 1 / R
-
-  if (i_a !== undefined) {
-    M.set([i_a, i_a], (M.get([i_a, i_a]) ?? 0) + G)
-  }
-  if (i_b !== undefined) {
-    M.set([i_b, i_b], (M.get([i_b, i_b]) ?? 0) + G)
-  }
-  if (i_a !== undefined && i_b !== undefined) {
-    M.set([i_a, i_b], (M.get([i_a, i_b]) ?? 0) - G)
-    M.set([i_b, i_a], (M.get([i_b, i_a]) ?? 0) - G)
-  }
-
+  stampConductance(nodeIndex, M, c1.net, c2.net, R)
   return true
+}
+
+/**
+ * A real pot's wiper end resistance (Ω): the track never reaches exactly 0 Ω
+ * at the travel limits, so each segment is floored here and is never an ideal
+ * short. Small enough to be invisible mid-travel.
+ */
+export const POT_END_OHMS = 0.5
+
+/**
+ * A potentiometer's two segment resistances from its total + wiper position:
+ * R_top = R·p (terminal_a→wiper), R_bottom = R·(1−p) (wiper→terminal_b), each
+ * floored at POT_END_OHMS. Null when the total resistance is missing/invalid.
+ */
+export function potentiometerSegments(inst: Instance): { top: number; bottom: number } | null {
+  const total = readScalarParam(inst, 'resistance')
+  if (total === undefined || total <= 0) return null
+  const p = Math.min(1, Math.max(0, readScalarParam(inst, 'wiper_position') ?? 0.5))
+  return {
+    top: Math.max(total * p, POT_END_OHMS),
+    bottom: Math.max(total * (1 - p), POT_END_OHMS),
+  }
+}
+
+/**
+ * Stamp a potentiometer as two series conductances sharing the wiper net —
+ * the real linear-taper track. No new physics, no aux variable. The wiper must
+ * be wired; each end segment is stamped only when its end is wired too, so a
+ * two-terminal rheostat (wiper + one end, the other end left floating) is the
+ * single wired segment. Returns false if nothing could be stamped.
+ */
+export function stampPotentiometer(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+): boolean {
+  const seg = potentiometerSegments(inst)
+  if (seg === null) return false
+  const connects = inst.connects ?? []
+  const a = connects.find((c) => c.terminal === 'terminal_a')?.net
+  const w = connects.find((c) => c.terminal === 'wiper')?.net
+  const b = connects.find((c) => c.terminal === 'terminal_b')?.net
+  if (w === undefined) return false
+  let stamped = false
+  if (a !== undefined) {
+    stampConductance(nodeIndex, M, a, w, seg.top)
+    stamped = true
+  }
+  if (b !== undefined) {
+    stampConductance(nodeIndex, M, w, b, seg.bottom)
+    stamped = true
+  }
+  return stamped
 }
 
 /**
@@ -1023,6 +1116,25 @@ export function stampClosedSwitch(
   b: any,
 ): boolean {
   return findAndStampVoltageSource(inst, nodeIndex, auxIdx, 0, 'terminal_in', 'terminal_out', M, b)
+}
+
+/**
+ * Stamp an SPDT selector: a 0 V short from the common pole to the SELECTED
+ * throw (position 'throw_b' → throw_b, anything else → throw_a). The
+ * unselected throw is never stamped, so it stays an open contact on its own
+ * net. Break-before-make — exactly one throw is ever connected.
+ */
+export function stampSpdt(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  auxIdx: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
+  const throwTerminal = readEnumParam(inst, 'position') === 'throw_b' ? 'throw_b' : 'throw_a'
+  return findAndStampVoltageSource(inst, nodeIndex, auxIdx, 0, 'common', throwTerminal, M, b)
 }
 
 /**

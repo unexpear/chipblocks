@@ -1,0 +1,94 @@
+# Valid fixture: potentiometer (3-terminal variable resistor).
+# A resistive track with a sliding wiper: the two ends (terminal_a, terminal_b)
+# span the full resistance, and the wiper taps a point along it. The wiper
+# position splits the track into two series segments —
+#   R(terminal_a → wiper) = R_total · p
+#   R(wiper → terminal_b) = R_total · (1 − p)
+# where p is the wiper position (0 at terminal_a, 1 at terminal_b). Wire all
+# three for an adjustable voltage divider (volume control); wire one end + the
+# wiper for an adjustable resistor (rheostat).
+#
+# Solved by both engines as two series resistors sharing the wiper net — a real
+# linear-taper track. The segments are floored at a small end resistance (a
+# real wiper never reaches exactly 0 Ω at the travel limits), so neither
+# segment is ever an ideal short.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: potentiometer
+origin: builtin
+layer: primitive_device
+name: "Potentiometer (3-terminal variable resistor)"
+description: "A resistive track of fixed total resistance with a movable wiper that taps a point along it. The two end terminals span the full resistance; the wiper divides it into two series segments set by the wiper position. The volume knob, the trim pot, the adjustable voltage divider. Wired across all three terminals it is a divider whose output is the wiper voltage; wired as two terminals (one end + wiper) it is an adjustable resistor (rheostat)."
+composition:
+  uses:
+    - solder_joint
+  requires:
+    track_material:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 3
+parameters:
+  track_material:
+    type: material_ref
+    satisfies_role: track_material
+    required: true
+    default:
+      value: nichrome
+    description: The resistive material the track is made of (carbon composition, cermet, or conductive plastic in real pots; the catalog's resistive default stands in). Sets the track's total resistance and its temperature behavior.
+  resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: Total end-to-end track resistance (terminal_a to terminal_b), independent of wiper position. The headline value printed on the part (e.g. a 10 kΩ pot).
+  wiper_position:
+    type: quantity
+    units: dimensionless
+    required: false
+    description: "Fraction of the track from terminal_a to the wiper, 0..1. 0 puts the wiper at terminal_a (R_top → end resistance, R_bottom → full); 1 at terminal_b; 0.5 at the midpoint. Absent reads 0.5. The segments are R_total·p and R_total·(1−p)."
+  taper:
+    type: enum
+    allowed: [linear, logarithmic]
+    required: false
+    description: How resistance maps to wiper travel. Linear (the default and what the solver models) splits the track in direct proportion to position; logarithmic (audio) taper compresses the low end to match perceived loudness — a future refinement.
+  power_rating:
+    type: quantity
+    units: watt
+    required: false
+    description: Maximum power the track can dissipate before damage. Small panel pots are typically rated a fraction of a watt.
+  temperature_coefficient:
+    type: quantity
+    units: per_kelvin
+    required: false
+    description: Fractional change in track resistance per unit temperature, near the operating point (cermet pots are stable; carbon drifts more).
+behaviors:
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+terminals:
+  terminal_a:
+    description: One end of the resistive track. The wiper position is measured from here (position 0).
+  wiper:
+    description: The sliding tap. Its voltage is the divider output; the resistance from here to each end is set by the wiper position.
+  terminal_b:
+    description: The other end of the resistive track (position 1).
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved by both engines as two series resistors sharing the wiper net:
+  R_top = R_total·p between terminal_a and the wiper, R_bottom = R_total·(1−p)
+  between the wiper and terminal_b — stamped as plain conductances, no new
+  physics. Each segment is floored at a small end resistance (POT_END_OHMS in
+  dc-solver.ts) so a fully-turned wiper has a real, non-zero end resistance
+  instead of an ideal short. Only LINEAR taper is modeled; logarithmic (audio)
+  taper, a multi-gang ganged pot, and the wiper's own contact resistance are
+  documented refinements. The wiper drawing no current (an unloaded divider)
+  reduces to the textbook R_top/(R_top+R_bottom) ratio exactly.

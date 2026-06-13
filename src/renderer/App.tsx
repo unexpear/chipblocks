@@ -103,7 +103,12 @@ import {
 import { expandMultiLeadSources, multiLeadAliases } from './multi-tap-source.ts'
 import { edgeTypes } from './net-edge.tsx'
 import { BLOCK_MIME, BlockPaletteItems, DEFINITION_MIME, PaletteItems } from './palette.tsx'
-import { defaultParameters, sourceTerminalIds, toggledSwitch } from './part-defaults.ts'
+import {
+  defaultParameters,
+  sourceTerminalIds,
+  toggledSpdt,
+  toggledSwitch,
+} from './part-defaults.ts'
 import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { type PartReading, partReadings } from './part-readings.ts'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
@@ -1054,8 +1059,17 @@ function Canvas() {
         inst.definition === 'transistor_mosfet_pmos'
       ) {
         info.set(id, { currentKey: `${id}/drain`, label: `${id} · I(drain)` })
-      } else if (inst.definition === 'switch_spst_toggle') {
+      } else if (
+        inst.definition === 'switch_spst_toggle' ||
+        inst.definition === 'switch_spst_momentary'
+      ) {
         info.set(id, { currentKey: `${id}/terminal_in`, label: `${id} · I(in→out)` })
+      } else if (inst.definition === 'switch_spdt') {
+        info.set(id, { currentKey: `${id}/common`, label: `${id} · I(common)` })
+      } else if (inst.definition === 'potentiometer') {
+        // The wiper current is the pot-specific quantity: ~0 in an unloaded
+        // divider, nonzero as a rheostat or when the tap drives a load.
+        info.set(id, { currentKey: `${id}/wiper`, label: `${id} · I(wiper)` })
       } else if (
         inst.definition === 'transformer' ||
         inst.definition === 'transformer_center_tapped'
@@ -2036,7 +2050,16 @@ function Canvas() {
         setViewBlockId(node.id)
         return
       }
-      if ((node.data as DeviceNodeData).definition !== 'switch_spst_toggle') return
+      // Double-click toggles a switch: state for the SPST toggle + momentary
+      // push button (open↔closed), the throw for the SPDT (A↔B).
+      const def = (node.data as DeviceNodeData).definition
+      const flip =
+        def === 'switch_spst_toggle' || def === 'switch_spst_momentary'
+          ? toggledSwitch
+          : def === 'switch_spdt'
+            ? toggledSpdt
+            : null
+      if (flip === null) return
       checkpointAction('toggle')
       setNodes((current) =>
         current.map((n) =>
@@ -2045,7 +2068,7 @@ function Canvas() {
                 ...n,
                 data: {
                   ...n.data,
-                  parameters: toggledSwitch((n.data as DeviceNodeData).parameters),
+                  parameters: flip((n.data as DeviceNodeData).parameters),
                 },
               }
             : n,

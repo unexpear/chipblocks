@@ -140,6 +140,37 @@ const DEFAULTS: Record<string, Parameters> = {
     max_current: scalar(6, 'ampere'),
     rated_voltage: scalar(125, 'volt'),
   },
+  switch_spst_momentary: {
+    // 12 mm tactile push button (Omron B3F class): nickel/silver dome,
+    // ~100 mΩ closed, signal-level 50 mA / 24 V. Starts OPEN (normally open) —
+    // double-click presses it closed, again releases it.
+    state: { value: 'open' },
+    contact_material: { value: 'copper' },
+    contact_resistance_closed: scalar(0.1, 'ohm'),
+    max_current: scalar(0.05, 'ampere'),
+    rated_voltage: scalar(24, 'volt'),
+  },
+  switch_spdt: {
+    // Panel-mount SPDT toggle (C&K 7201 — the SPDT sibling of the 7101 SPST):
+    // copper contacts, ~20 mΩ, 6 A, 125 V. Starts on throw A; double-click
+    // flips the common to throw B. `position` is a runtime enum.
+    position: { value: 'throw_a' },
+    contact_material: { value: 'copper' },
+    contact_resistance_closed: scalar(0.02, 'ohm'),
+    max_current: scalar(6, 'ampere'),
+    rated_voltage: scalar(125, 'volt'),
+  },
+  potentiometer: {
+    // 10 kΩ linear pot (Bourns 3296/3386 cermet class): ±10 %, 0.5 W at 70 °C,
+    // linear taper. Wiper starts centered (0.5). track_material is the catalog's
+    // resistive stand-in — real pots use a carbon-composition or cermet track the
+    // catalog doesn't carry yet, so nichrome holds the resistive role.
+    resistance: scalar(10000, 'ohm'),
+    track_material: { value: 'nichrome' },
+    wiper_position: scalar(0.5, 'dimensionless'),
+    taper: { value: 'linear' },
+    power_rating: scalar(0.5, 'watt'),
+  },
   transistor_bjt_npn: {
     // 2N3904 (onsemi) — the classic jellybean small-signal NPN. beta + I_S are
     // part-specific, so the device definition carries no builtin numeric default
@@ -284,6 +315,21 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     max_current: 'C&K 7101 (6 A)',
     rated_voltage: 'C&K 7101 (125 V)',
   },
+  switch_spst_momentary: {
+    contact_resistance_closed: '12 mm tactile button (Omron B3F class): 100 mΩ max',
+    max_current: 'Omron B3F rated 50 mA at 24 VDC',
+    rated_voltage: 'Omron B3F rated 24 VDC',
+  },
+  switch_spdt: {
+    contact_resistance_closed: 'C&K 7201 SPDT class (~20 mΩ closed)',
+    max_current: 'C&K 7201 (6 A)',
+    rated_voltage: 'C&K 7201 (125 V)',
+  },
+  potentiometer: {
+    resistance: '10 kΩ standard value (Bourns 3296/3386 cermet trimmer class)',
+    wiper_position: 'centered (0.5) — a fresh pot at mid-travel',
+    power_rating: 'Bourns 3296 0.5 W at 70 °C (datasheet)',
+  },
   transistor_bjt_npn: {
     saturation_current: 'small-signal NPN transport I_S ~1e-14 A (2N3904 SPICE IS ~6.7 fA)',
     forward_current_gain: '2N3904 hFE ≥ 100 at I_C = 10 mA (onsemi datasheet)',
@@ -372,6 +418,26 @@ export function toggledSwitch(parameters: Parameters | undefined): Parameters {
   return { ...parameters, state: { value: switchClosed(parameters) ? 'open' : 'closed' } }
 }
 
+/** Is an SPDT routed to throw A? Absent position defaults to throw_a — matches the solver. */
+export function spdtOnA(parameters: Parameters | undefined): boolean {
+  return stringOf(parameters, 'position') !== 'throw_b'
+}
+
+/** Flip an SPDT's selected throw — for the double-click toggle. */
+export function toggledSpdt(parameters: Parameters | undefined): Parameters {
+  return { ...parameters, position: { value: spdtOnA(parameters) ? 'throw_b' : 'throw_a' } }
+}
+
+/**
+ * A potentiometer's wiper position as a fraction 0..1 (terminal_a → terminal_b),
+ * clamped to the real travel. Absent reads 0.5 (mid-travel) — matches the solver's
+ * potentiometerSegments default. Drives the sliding wiper arrow on the symbol.
+ */
+export function wiperFraction(parameters: Parameters | undefined): number {
+  const raw = amountOf(parameters, 'wiper_position') ?? 0.5
+  return Math.min(1, Math.max(0, raw))
+}
+
 /**
  * How many leads a source brings out (S19-v3-74), clamped to the real range.
  * Absent (every pre-existing source) reads as 2 — the plain two-lead source.
@@ -415,8 +481,16 @@ export function primaryValue(
     const v = amountOf(parameters, 'forward_voltage')
     return v === undefined ? null : `${v} V`
   }
-  if (definition === 'switch_spst_toggle') {
+  if (definition === 'switch_spst_toggle' || definition === 'switch_spst_momentary') {
     return switchClosed(parameters) ? 'closed' : 'open'
+  }
+  if (definition === 'switch_spdt') {
+    return spdtOnA(parameters) ? '→ A' : '→ B'
+  }
+  if (definition === 'potentiometer') {
+    const r = amountOf(parameters, 'resistance')
+    if (r === undefined) return null
+    return `${formatEng(r, 'Ω')} ${Math.round(wiperFraction(parameters) * 100)}%`
   }
   if (definition === 'transistor_bjt_npn' || definition === 'transistor_bjt_pnp') {
     const beta = amountOf(parameters, 'forward_current_gain')

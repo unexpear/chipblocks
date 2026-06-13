@@ -10,7 +10,9 @@ import {
   sourceIsAc,
   sourceIsSquare,
   sourceTerminalCount,
+  spdtOnA,
   switchClosed,
+  wiperFraction,
 } from './part-defaults.ts'
 import { formatEng } from './units.ts'
 
@@ -188,6 +190,73 @@ function SwitchGlyph({ closed }: { closed: boolean }) {
       />
       <circle cx={52} cy={MID} r={2.5} fill="none" stroke={STROKE} />
       {lead(54, W)}
+    </svg>
+  )
+}
+
+/** SPST momentary push button — two contacts bridged by a plunger-driven bar;
+ *  pressed = bar down on the contacts, open = bar lifted with a gap. */
+function PushButtonGlyph({ closed }: { closed: boolean }) {
+  const barY = closed ? MID - 4 : MID - 12
+  return (
+    <svg width={W} height={H}>
+      <title>{closed ? 'push button (pressed)' : 'push button (open)'}</title>
+      {lead(0, 26)}
+      {lead(54, W)}
+      {/* the two fixed contacts the bar lands on when pressed */}
+      <line x1={26} y1={MID} x2={26} y2={MID - 4} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={54} y1={MID} x2={54} y2={MID - 4} stroke={STROKE} strokeWidth={1.5} />
+      {/* the moving contact bar */}
+      <line x1={24} y1={barY} x2={56} y2={barY} stroke={STROKE} strokeWidth={1.5} />
+      {/* the plunger stem and button cap */}
+      <line x1={40} y1={barY} x2={40} y2={barY - 7} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={33} y1={barY - 7} x2={47} y2={barY - 7} stroke={STROKE} strokeWidth={2.5} />
+    </svg>
+  )
+}
+
+/** SPDT selector — a common pivot whose lever throws to the upper (A) or
+ *  lower (B) contact; the unselected throw stays an open contact. */
+function SpdtGlyph({ onA }: { onA: boolean }) {
+  return (
+    <svg width={W} height={H}>
+      <title>{onA ? 'SPDT switch (common → A)' : 'SPDT switch (common → B)'}</title>
+      <line x1={0} y1={MID} x2={26} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+      <circle cx={28} cy={MID} r={2.5} fill="none" stroke={STROKE} />
+      <line x1={56} y1={12} x2={W} y2={12} stroke={STROKE} strokeWidth={1.5} />
+      <circle cx={54} cy={12} r={2.5} fill="none" stroke={STROKE} />
+      <line x1={56} y1={32} x2={W} y2={32} stroke={STROKE} strokeWidth={1.5} />
+      <circle cx={54} cy={32} r={2.5} fill="none" stroke={STROKE} />
+      {/* the lever from the pivot to the selected throw */}
+      <line x1={28} y1={MID} x2={52} y2={onA ? 13 : 31} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
+/** Potentiometer — IEEE 315: a resistor body (the full track) with a wiper
+ *  arrow tapping a point along it. The arrow slides with the wiper position so
+ *  the symbol shows where the tap sits between the two ends. */
+function PotentiometerGlyph({ position }: { position: number }) {
+  const p = Math.min(Math.max(position, 0), 1)
+  const wiperX = 18 + 44 * p
+  return (
+    <svg width={W} height={H}>
+      <title>{`potentiometer (wiper ${Math.round(p * 100)}%)`}</title>
+      {lead(0, 18)}
+      <polyline
+        points="18,22 23,12 31,32 39,12 47,32 55,12 62,22"
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      {lead(62, W)}
+      {/* the wiper: a stem from the top tapping the track with an arrowhead */}
+      <line x1={wiperX} y1={1} x2={wiperX} y2={14} stroke={STROKE} strokeWidth={1.5} />
+      <polygon
+        points={`${wiperX},21 ${wiperX - 3.5},13 ${wiperX + 3.5},13`}
+        fill={STROKE}
+        stroke={STROKE}
+      />
     </svg>
   )
 }
@@ -442,6 +511,18 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   diode_schottky_al_si: TWO('anode', 'cathode'),
   diode_zener_silicon: TWO('anode', 'cathode'),
   switch_spst_toggle: TWO('terminal_in', 'terminal_out'),
+  switch_spst_momentary: TWO('terminal_in', 'terminal_out'),
+  switch_spdt: [
+    { id: 'common', position: Position.Left, offset: 22 },
+    { id: 'throw_a', position: Position.Right, offset: 12 },
+    { id: 'throw_b', position: Position.Right, offset: 32 },
+  ],
+  // The wiper taps the track from the top; the two ends span the full track.
+  potentiometer: [
+    { id: 'terminal_a', position: Position.Left },
+    { id: 'wiper', position: Position.Top },
+    { id: 'terminal_b', position: Position.Right },
+  ],
   transistor_bjt_npn: [
     { id: 'base', position: Position.Left },
     { id: 'collector', position: Position.Top },
@@ -578,6 +659,12 @@ export function DeviceGlyph({
 }) {
   // The switch is state-dependent: render its blade open or closed.
   if (definition === 'switch_spst_toggle') return <SwitchGlyph closed={switchClosed(parameters)} />
+  if (definition === 'switch_spst_momentary')
+    return <PushButtonGlyph closed={switchClosed(parameters)} />
+  if (definition === 'switch_spdt') return <SpdtGlyph onA={spdtOnA(parameters)} />
+  // The potentiometer's wiper arrow slides to where the tap sits on the track.
+  if (definition === 'potentiometer')
+    return <PotentiometerGlyph position={wiperFraction(parameters)} />
   // Every source is the same IEC circle; the mark inside says which kind —
   // DC bars, the sine, or the clock trace — and stays upright at any rotation.
   if (definition === 'power_source') {

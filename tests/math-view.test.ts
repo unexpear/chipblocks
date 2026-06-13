@@ -69,6 +69,64 @@ describe('buildMathView', () => {
     expect(text).toContain('= 8.91 V') // 9 − 0.0891×1
   })
 
+  test('the potentiometer card shows the segment split and the live divider voltage', () => {
+    // 12 V → pot.a; pot.b → ground; wiper → 10 MΩ load → ground. Wiper at 0.25.
+    const nodes: CanvasNode[] = [
+      {
+        id: 'src',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(12, 'volt'), internal_resistance: scalar(0, 'ohm') },
+      },
+      {
+        id: 'pot',
+        definition: 'potentiometer',
+        parameters: {
+          resistance: scalar(10000, 'ohm'),
+          wiper_position: scalar(0.25, 'dimensionless'),
+        },
+      },
+      { id: 'load', definition: 'resistor', parameters: { resistance: scalar(10e6, 'ohm') } },
+      { id: 'gnd', definition: 'ground' },
+    ]
+    const edges = [
+      {
+        source: 'src',
+        sourceHandle: 'terminal_positive',
+        target: 'pot',
+        targetHandle: 'terminal_a',
+      },
+      {
+        source: 'pot',
+        sourceHandle: 'terminal_b',
+        target: 'src',
+        targetHandle: 'terminal_negative',
+      },
+      { source: 'pot', sourceHandle: 'wiper', target: 'load', targetHandle: 'terminal_a' },
+      {
+        source: 'load',
+        sourceHandle: 'terminal_b',
+        target: 'src',
+        targetHandle: 'terminal_negative',
+      },
+      {
+        source: 'gnd',
+        sourceHandle: 'reference_terminal',
+        target: 'src',
+        targetHandle: 'terminal_negative',
+      },
+    ]
+    const world = canvasToWorld(nodes, edges)
+    const view = buildMathView(world, solveDC(world))
+    const text = view.parts.find((p) => p.id === 'pot')?.lines.join(' ') ?? ''
+    // p = 0.25 → R_top 2.50 kΩ, R_bottom 7.50 kΩ; both engines agree.
+    expect(text).toContain('25 %')
+    expect(text).toContain(`R·p = ${formatEng(2500, 'Ω')}`)
+    expect(text).toContain(`R·(1−p) = ${formatEng(7500, 'Ω')}`)
+    // V_wiper ≈ 12·(1−0.25) = 9 V at the tap.
+    expect(text).toContain('V_wiper')
+    expect(text).toContain('9.00 V')
+  })
+
   test('every net’s KCL sum is genuinely re-computed and balances', () => {
     const world = ohmLawCircuit()
     const view = buildMathView(world, solveDC(world))
