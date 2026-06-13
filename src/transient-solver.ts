@@ -59,6 +59,7 @@ import type { Instance, World } from './cross-fk-validator.ts'
 import {
   assignNodeIndices,
   type BjtElement,
+  fuseIsIntact,
   identifyGround,
   KELVIN_OFFSET,
   type MosfetElement,
@@ -895,7 +896,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     rBottom: number
   }[] = []
   for (const inst of world.instances.values()) {
-    if (inst.definition === 'resistor') {
+    if (inst.definition === 'resistor' || inst.definition === 'thermistor') {
       const ohms = readScalarParam(inst, 'resistance')
       const c1 = inst.connects?.[0]
       const c2 = inst.connects?.[1]
@@ -972,6 +973,21 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       )
       if (short !== null) sources.push(short)
       else warnings.push(`Skipped wire '${inst.id}' (missing terminal connects)`)
+    } else if (inst.definition === 'fuse') {
+      // Intact → a 0 V link carrying its small cold element resistance, like a
+      // wire; blown → omitted entirely, a real open circuit. The blow itself is
+      // a canvas-level state change off the solved current, not done here.
+      if (fuseIsIntact(inst)) {
+        const short = resolveShort(
+          inst,
+          nodeIndex,
+          'terminal_a',
+          'terminal_b',
+          readScalarParam(inst, 'element_resistance') ?? 0,
+        )
+        if (short !== null) sources.push(short)
+        else warnings.push(`Skipped fuse '${inst.id}' (missing terminal connects)`)
+      }
     } else if (
       inst.definition === 'switch_spst_toggle' ||
       inst.definition === 'switch_spst_momentary'
@@ -1015,7 +1031,10 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     const b: any = math.zeros(size, 1)
 
     for (const inst of world.instances.values()) {
-      if (inst.definition === 'resistor') stampResistor(inst, nodeIndex, M)
+      // A thermistor stamps as a resistor at its Beta-law resistance (written by
+      // the electro-thermal loop for this temperature).
+      if (inst.definition === 'resistor' || inst.definition === 'thermistor')
+        stampResistor(inst, nodeIndex, M)
       else if (inst.definition === 'potentiometer') stampPotentiometer(inst, nodeIndex, M)
     }
     for (let s = 0; s < S; s++) {

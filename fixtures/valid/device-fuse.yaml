@@ -1,0 +1,107 @@
+# Valid fixture: fuse (overcurrent protection).
+# A deliberate weak link: a thin element sized to carry the circuit's normal
+# current but MELT and break the circuit when the current exceeds the rated
+# value. The part that sacrifices itself so the rest of the circuit doesn't.
+# Non-polar (it works either way round), two terminals.
+#
+# Model: a near-zero-resistance conductor (its small cold element_resistance)
+# while INTACT; once its current exceeds rated_current it BLOWS — the element
+# melts open and the device becomes an open circuit. A blown fuse STAYS blown
+# (the element is gone) until the user replaces it. The blow is driven by the
+# real solved current against the cited rating, the same way the LED
+# overcurrent check fires — stateful, never a cosmetic flag.
+#
+# Honest gap: this is an INSTANTANEOUS-rating fuse. Real fuses have an I²t
+# time-current curve (a brief surge well over the rating is tolerated; a small
+# sustained overload eventually opens) and fast-blow vs slow-blow timing. Those
+# need a time-integrated melt model in the transient engine — a refinement.
+# Here the rating is treated as a hard instantaneous threshold.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: fuse
+origin: builtin
+layer: primitive_device
+name: "Fuse (overcurrent protection)"
+description: "A two-terminal sacrificial overcurrent protector: a thin fusible element that conducts the circuit's normal current at a small resistance, then melts and opens permanently when the current exceeds its rated value. The glass cartridge fuse, the blade fuse, the resettable's one-shot cousin. Intact it is a near-ideal conductor; blown it is an open circuit that stays open until replaced. Non-polar."
+composition:
+  requires:
+    element_material:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  element_material:
+    type: material_ref
+    satisfies_role: element_material
+    required: true
+    description: The fusible element's material — a low-melting-point metal or alloy (zinc, a silver/copper alloy, or a tin-lead in older glass fuses) chosen so it melts at a predictable current. Sets the element's cold resistance and its melting behavior. The catalog's conductive default stands in until alloy data lands.
+  rated_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: The current the fuse is rated to carry continuously. The headline value printed on the cap (e.g. a 500 mA fuse). Current beyond this melts the element and opens the circuit. Modeled here as a hard instantaneous threshold; real fuses follow an I²t time-current curve.
+  element_resistance:
+    type: quantity
+    units: ohm
+    required: false
+    description: The intact element's cold resistance — small but non-zero, so an intact fuse drops a real I·R voltage (a 500 mA glass fuse runs near an ohm). A bigger fraction of the circuit than a hookup wire; not an ideal short.
+  voltage_rating:
+    type: quantity
+    units: volt
+    required: false
+    description: Maximum voltage the blown (open) fuse can safely interrupt without the arc re-striking across the gap. Exceeding it risks a sustained arc instead of a clean break.
+  blow_type:
+    type: enum
+    allowed: [fast, slow]
+    required: false
+    description: "Time-current character. Fast (F, fast-acting / fast-blow) opens quickly on overload — protects sensitive parts. Slow (T, time-lag / slow-blow) rides through brief inrush surges before opening — for motors and capacitive loads. The distinction is the I²t timing, a future refinement; the instantaneous-threshold model here treats both the same."
+behaviors:
+  - switches_circuit
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+state_machine:
+  initial_state: intact
+  states:
+    intact:
+      description: The default, working state. The element is whole and conducts at its small cold resistance — a near-ideal link in the circuit.
+    blown:
+      description: The element has melted open from overcurrent. No conductive path between terminals — an open circuit that protects everything downstream. Stays blown until the fuse is replaced.
+  transitions:
+    - from: intact
+      to: blown
+      trigger: overcurrent
+      description: The current through the element exceeds rated_current; the element heats past its melting point and opens. One-way — the element is physically destroyed.
+    - from: blown
+      to: intact
+      trigger: replaced
+      description: The user fits a fresh fuse. (Not a self-reset — a real fuse is consumed; a resettable PTC fuse would be a sibling definition.)
+terminals:
+  terminal_a:
+    description: One end of the fusible element. Non-polar — either terminal can be the supply side.
+  terminal_b:
+    description: The other end of the fusible element.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved as a voltage-source-like 0 V link carrying its element_resistance
+  between terminal_a and terminal_b (the same stamp a wire uses) while intact,
+  so its branch current is read directly and it drops a real I·R; omitted
+  entirely (an open circuit, like an open switch) once blown. The blow is a
+  STATE driven by the solved current vs the cited rating: when an intact fuse's
+  current exceeds rated_current the canvas sets state to blown and re-solves —
+  the circuit goes open, the same failure-check-plus-re-solve pattern the LED
+  overcurrent uses. A blown fuse persists (state stays blown) until the user
+  replaces it (double-click), and re-blows immediately if the overload that
+  killed it is still present. Honest gaps: the I²t time-current curve and the
+  fast/slow-blow timing distinction are not modeled (the rating is an
+  instantaneous threshold); a self-resetting PTC fuse is a separate part.

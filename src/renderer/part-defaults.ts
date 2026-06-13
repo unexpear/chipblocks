@@ -171,6 +171,30 @@ const DEFAULTS: Record<string, Parameters> = {
     taper: { value: 'linear' },
     power_rating: scalar(0.5, 'watt'),
   },
+  fuse: {
+    // 500 mA 5x20 mm glass fast-blow (Littelfuse 217 series): ~0.9 Ω cold
+    // element, 250 V. Starts intact (conducting); blows to OPEN when its current
+    // exceeds 500 mA, and stays blown until double-clicked to replace.
+    rated_current: scalar(0.5, 'ampere'),
+    element_material: { value: 'copper' },
+    element_resistance: scalar(0.9, 'ohm'),
+    voltage_rating: scalar(250, 'volt'),
+    blow_type: { value: 'fast' },
+    state: { value: 'intact' },
+  },
+  thermistor: {
+    // 10 kΩ NTC bead (Vishay NTCLE100E3103 class): R25 = 10 kΩ, B25/85 = 3977 K,
+    // dissipation ~1.5 mW/°C in still air → θ_JA ≈ 667 °C/W. Senses 25 °C ambient
+    // by default; raise ambient_temperature to place it somewhere warmer/cooler,
+    // or push current through it to watch self-heating drive the resistance down.
+    resistance: scalar(10000, 'ohm'),
+    beta_coefficient: scalar(3977, 'kelvin'),
+    reference_temperature: scalar(25, 'celsius'),
+    ambient_temperature: scalar(25, 'celsius'),
+    sensing_material: { value: 'nichrome' },
+    thermal_resistance_junction_ambient: scalar(667, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(125, 'celsius'),
+  },
   transistor_bjt_npn: {
     // 2N3904 (onsemi) — the classic jellybean small-signal NPN. beta + I_S are
     // part-specific, so the device definition carries no builtin numeric default
@@ -330,6 +354,18 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     wiper_position: 'centered (0.5) — a fresh pot at mid-travel',
     power_rating: 'Bourns 3296 0.5 W at 70 °C (datasheet)',
   },
+  fuse: {
+    rated_current: '500 mA glass fast-blow (Littelfuse 217.500)',
+    element_resistance: 'Littelfuse 217.500 nominal cold resistance ~0.9 Ω (datasheet class)',
+    voltage_rating: 'Littelfuse 217 series 250 V rating',
+  },
+  thermistor: {
+    resistance: 'R25 = 10 kΩ NTC (Vishay NTCLE100E3103 class)',
+    beta_coefficient: 'B25/85 = 3977 K (Vishay NTCLE100E3103 datasheet)',
+    thermal_resistance_junction_ambient:
+      'derived: 1/δ, dissipation factor ~1.5 mW/°C in still air (Vishay NTCLE100E3)',
+    max_operating_temperature: 'epoxy NTC bead operating class (~125 °C)',
+  },
   transistor_bjt_npn: {
     saturation_current: 'small-signal NPN transport I_S ~1e-14 A (2N3904 SPICE IS ~6.7 fA)',
     forward_current_gain: '2N3904 hFE ≥ 100 at I_C = 10 mA (onsemi datasheet)',
@@ -438,6 +474,21 @@ export function wiperFraction(parameters: Parameters | undefined): number {
   return Math.min(1, Math.max(0, raw))
 }
 
+/** Is a fuse intact (conducting)? Absent state defaults to intact — matches the solver. */
+export function fuseIntact(parameters: Parameters | undefined): boolean {
+  return stringOf(parameters, 'state') !== 'blown'
+}
+
+/** Blow a fuse — the canvas sets this when its current exceeds the rating. */
+export function blownFuse(parameters: Parameters | undefined): Parameters {
+  return { ...parameters, state: { value: 'blown' } }
+}
+
+/** Fit a fresh fuse — the double-click "replace" action on a blown fuse. */
+export function replacedFuse(parameters: Parameters | undefined): Parameters {
+  return { ...parameters, state: { value: 'intact' } }
+}
+
 /**
  * How many leads a source brings out (S19-v3-74), clamped to the real range.
  * Absent (every pre-existing source) reads as 2 — the plain two-lead source.
@@ -491,6 +542,15 @@ export function primaryValue(
     const r = amountOf(parameters, 'resistance')
     if (r === undefined) return null
     return `${formatEng(r, 'Ω')} ${Math.round(wiperFraction(parameters) * 100)}%`
+  }
+  if (definition === 'fuse') {
+    const rated = amountOf(parameters, 'rated_current')
+    const label = rated === undefined ? 'fuse' : formatEng(rated, 'A')
+    return fuseIntact(parameters) ? label : `${label} blown`
+  }
+  if (definition === 'thermistor') {
+    const r = amountOf(parameters, 'resistance')
+    return r === undefined ? 'NTC' : `${formatEng(r, 'Ω')} NTC`
   }
   if (definition === 'transistor_bjt_npn' || definition === 'transistor_bjt_pnp') {
     const beta = amountOf(parameters, 'forward_current_gain')

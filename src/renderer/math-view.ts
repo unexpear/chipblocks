@@ -103,6 +103,14 @@ export function buildMathView(
   world: World,
   solution: Solution,
   temperaturesC?: Map<string, number>,
+  /**
+   * Did the electro-thermal loop settle? False = thermal runaway (a part heats
+   * itself faster than it sheds it, with no stable point), so the temperatures
+   * and the resistances derived from them are a non-converged snapshot at the
+   * iteration cap, NOT a steady-state answer. Defaults true (a plain DC solve
+   * with no thermally-rated parts always "settles").
+   */
+  thermalConverged = true,
 ): MathView {
   if (solution.status !== 'solved') {
     return {
@@ -125,6 +133,11 @@ export function buildMathView(
   if (solution.warnings.length > 0) {
     solver.push(`Solver warnings (${solution.warnings.length}): ${solution.warnings.join(' · ')}`)
   }
+  if (!thermalConverged) {
+    solver.push(
+      '⚠ THERMAL RUNAWAY — the electro-thermal loop did NOT settle. The temperatures kept climbing every pass (a part heating itself faster than it can shed the heat, with no stable point — what an NTC thermistor straight across a stiff supply does). Every temperature and temperature-dependent resistance below is a NON-CONVERGED snapshot at the iteration cap, not a real steady state. Treat those numbers as “runaway,” not as an answer.',
+    )
+  }
 
   const volts = (net: string | undefined) =>
     net !== undefined ? solution.nodes.get(net) : undefined
@@ -140,7 +153,16 @@ export function buildMathView(
   for (const inst of world.instances.values()) {
     if (!inst.connects || inst.connects.length === 0) continue
     const card = partCard(inst, solution, across(inst), temperaturesC?.get(inst.id))
-    if (card !== null) parts.push(card)
+    if (card === null) continue
+    // A part that has a temperature in a non-converged (runaway) solve gets the
+    // caveat ON its card — so the bogus T and R(T) it narrates are never read as
+    // a settled answer, even by someone who skips the solver section.
+    if (!thermalConverged && temperaturesC?.has(inst.id)) {
+      card.lines.push(
+        '⚠ The temperatures did not settle (thermal runaway) — the temperature and resistance above are a non-converged snapshot at the iteration cap, not a steady state.',
+      )
+    }
+    parts.push(card)
   }
 
   // KCL per net: sum every member element's branch current with its sign
@@ -274,6 +296,27 @@ function partCard(
     }
     return { id: inst.id, title, lines }
   }
+  if (def === 'thermistor') {
+    const r0 = readScalarParam(inst, 'resistance')
+    const beta = readScalarParam(inst, 'beta_coefficient')
+    const t0 = readScalarParam(inst, 'reference_temperature') ?? 25
+    lines.push(
+      'An NTC thermistor’s resistance is a steep, nonlinear function of its OWN temperature: the Beta equation R(T) = R₀·e^(B·(1/T − 1/T₀)), with the temperatures in kelvin. As it warms, the resistance FALLS.',
+    )
+    if (r0 !== undefined && beta !== undefined) {
+      lines.push(
+        `Calibrated to R₀ = ${formatEng(r0, 'Ω')} at T₀ = ${t0.toFixed(0)} °C, with B = ${formatEng(beta, 'K')}.`,
+      )
+    }
+    const hot = resistanceAtTemperature(inst, temperatureC)
+    if (hot !== undefined && temperatureC !== undefined) {
+      lines.push(
+        `It is sitting at ${temperatureC.toFixed(1)} °C right now (its surroundings plus its own self-heating), so the Beta law puts its resistance at R = ${formatEng(hot, 'Ω')} — the value the solver used.`,
+      )
+    }
+    if (current !== undefined) lines.push(`Carrying I = ${fmtA(Math.abs(current))}.`)
+    return { id: inst.id, title: 'Thermistor — the Beta law', lines }
+  }
   if (def === 'potentiometer') {
     const total = readScalarParam(inst, 'resistance')
     const seg = potentiometerSegments(inst)
@@ -312,6 +355,34 @@ function partCard(
     )
     if (!open && current !== undefined) lines.push(`Carrying I = ${fmtA(Math.abs(current))}.`)
     return { id: inst.id, title: `Switch — ${open ? 'open' : 'closed'}`, lines }
+  }
+  if (def === 'fuse') {
+    const blown = inst.parameters?.state?.value === 'blown'
+    const rated = readScalarParam(inst, 'rated_current')
+    const ratedText = rated !== undefined ? fmtA(rated) : 'its rating'
+    if (blown) {
+      lines.push(
+        `BLOWN. Its element melted when the current passed ${ratedText} and the circuit is now OPEN here — no current flows. That is the fuse doing its job: sacrificing itself to protect everything downstream. Double-click it to fit a fresh one.`,
+      )
+      return { id: inst.id, title: 'Fuse — blown', lines }
+    }
+    lines.push(
+      `A fuse is a deliberate weak link: a thin element sized to MELT and break the circuit the instant too much current flows. This one is rated ${ratedText}.`,
+    )
+    if (current !== undefined) {
+      const elementOhms = readScalarParam(inst, 'element_resistance')
+      lines.push(
+        rated !== undefined
+          ? `Right now it carries I = ${fmtA(Math.abs(current))} — ${Math.abs(current) <= rated ? 'under the rating, so it holds.' : 'over the rating, so it is about to blow.'}`
+          : `Carrying I = ${fmtA(Math.abs(current))}.`,
+      )
+      if (elementOhms !== undefined && elementOhms > 0) {
+        lines.push(
+          `Its element is not a perfect short — a small cold resistance of ${formatEng(elementOhms, 'Ω')} drops V = I·R = ${formatEng(Math.abs(current) * elementOhms, 'V')}.`,
+        )
+      }
+    }
+    return { id: inst.id, title: 'Fuse — intact', lines }
   }
   if (def === 'diode_zener_silicon') {
     return {

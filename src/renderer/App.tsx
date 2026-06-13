@@ -31,6 +31,7 @@ import {
 import type { World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
 import { solveElectroThermal, solveTransientThermal } from '../electro-thermal.ts'
+import { overcurrentFuseIds } from '../failure-detector.ts'
 import { readScalarParam } from '../instance-params.ts'
 import type { TransientResult } from '../transient-solver.ts'
 import { BlockViewer } from './block-viewer.tsx'
@@ -104,7 +105,10 @@ import { expandMultiLeadSources, multiLeadAliases } from './multi-tap-source.ts'
 import { edgeTypes } from './net-edge.tsx'
 import { BLOCK_MIME, BlockPaletteItems, DEFINITION_MIME, PaletteItems } from './palette.tsx'
 import {
+  blownFuse,
   defaultParameters,
+  fuseIntact,
+  replacedFuse,
   sourceTerminalIds,
   toggledSpdt,
   toggledSwitch,
@@ -362,6 +366,7 @@ function solveCanvas(
   world: World
   solution: Solution
   temperaturesC: Map<string, number>
+  thermalConverged: boolean
 } {
   const { world, drawn, leadAliases } = canvasWorld(nodeList, edgeList)
   // Electro-thermal solve (stage 7): the electrical answer at the settled part
@@ -431,6 +436,9 @@ function solveCanvas(
     // The settled part temperatures — the Math panel narrates a hot resistor's
     // tempco drift with the SAME numbers the solve used.
     temperaturesC: thermal.temperaturesC,
+    // Did the thermal loop settle? False = runaway — the Math panel flags the
+    // temperatures below as a non-converged snapshot instead of an answer.
+    thermalConverged: thermal.thermalConverged,
   }
 }
 
@@ -561,6 +569,7 @@ function Canvas() {
       world: solved.world,
       solution: solved.solution,
       temperaturesC: solved.temperaturesC,
+      thermalConverged: solved.thermalConverged,
       materials,
       materialResistivity,
       validMaterialsByDef,
@@ -581,6 +590,8 @@ function Canvas() {
   const [solution, setSolution] = useState(initial.solution)
   // The settled electro-thermal temperatures behind that solution.
   const [solvedTemperatures, setSolvedTemperatures] = useState(initial.temperaturesC)
+  // Did the thermal loop settle? False = runaway — the Math panel flags it.
+  const [thermalConverged, setThermalConverged] = useState(initial.thermalConverged)
   // Latest edges for the re-solve effect WITHOUT depending on edge data (a re-solve
   // rewrites edge data, which would loop); structural edits trigger it via
   // `topology`, node moves via `nodes`.
@@ -719,6 +730,7 @@ function Canvas() {
       setSolvedWorld(solved.world)
       setSolution(solved.solution)
       setSolvedTemperatures(solved.temperaturesC)
+      setThermalConverged(solved.thermalConverged)
     },
     [setEdges],
   )
@@ -777,8 +789,9 @@ function Canvas() {
   // live from the same solved state the canvas shows.
   const [showMath, setShowMath] = useState(false)
   const mathView = useMemo(
-    () => (showMath ? buildMathView(solvedWorld, solution, solvedTemperatures) : null),
-    [showMath, solvedWorld, solution, solvedTemperatures],
+    () =>
+      showMath ? buildMathView(solvedWorld, solution, solvedTemperatures, thermalConverged) : null,
+    [showMath, solvedWorld, solution, solvedTemperatures, thermalConverged],
   )
 
   // Circuit blocks (S19-v3-67): group the selection into ONE reusable block.
@@ -1070,6 +1083,8 @@ function Canvas() {
         // The wiper current is the pot-specific quantity: ~0 in an unloaded
         // divider, nonzero as a rheostat or when the tap drives a load.
         info.set(id, { currentKey: `${id}/wiper`, label: `${id} · I(wiper)` })
+      } else if (inst.definition === 'fuse') {
+        info.set(id, { currentKey: `${id}/terminal_a`, label: `${id} · I(a→b)` })
       } else if (
         inst.definition === 'transformer' ||
         inst.definition === 'transformer_center_tapped'
@@ -1077,6 +1092,7 @@ function Canvas() {
         info.set(id, { currentKey: `${id}/primary_a`, label: `${id} · I(primary)` })
       } else if (
         inst.definition === 'resistor' ||
+        inst.definition === 'thermistor' ||
         inst.definition === 'capacitor' ||
         inst.definition === 'inductor'
       ) {
@@ -1521,6 +1537,31 @@ function Canvas() {
     if (!alwaysOn) return
     reSolve(nodes, edgesRef.current)
   }, [alwaysOn, nodes, topology, reSolve])
+
+  // A fuse blows when its solved current exceeds its rating: flip the offending
+  // fuses to 'blown' (a persistent state on the node), which re-solves them OPEN
+  // — the circuit goes dark. The LED-overcurrent check, but the response is a
+  // real state change, not just a flag. overcurrentFuseIds lists only INTACT
+  // fuses over their rating, so a blown fuse (carrying nothing) is never relisted
+  // and this settles in one extra solve — no loop. A blown fuse stays blown until
+  // the user double-clicks to replace it (and re-blows at once if the fault
+  // remains). Not checkpointed: it is automatic physics off the user's edit,
+  // which is already on the undo stack — undoing that edit un-blows the fuse.
+  useEffect(() => {
+    const toBlow = overcurrentFuseIds(solvedWorld, solution)
+    if (toBlow.length === 0) return
+    const blow = new Set(toBlow)
+    setNodes((current) =>
+      current.map((n) =>
+        blow.has(n.id)
+          ? {
+              ...n,
+              data: { ...n.data, parameters: blownFuse((n.data as DeviceNodeData).parameters) },
+            }
+          : n,
+      ),
+    )
+  }, [solvedWorld, solution, setNodes])
 
   // Keyboard shortcuts (S19-v3-15 rotate; S19-v3-62 all bindings editable):
   // every canvas key runs through the user's keybinds — rotate, delete (we own
@@ -2051,16 +2092,21 @@ function Canvas() {
         return
       }
       // Double-click toggles a switch: state for the SPST toggle + momentary
-      // push button (open↔closed), the throw for the SPDT (A↔B).
+      // push button (open↔closed), the throw for the SPDT (A↔B). A BLOWN fuse is
+      // replaced (→ intact); an intact fuse does nothing (a fuse isn't a toggle —
+      // it's consumed when it blows, and re-blows at once if the fault remains).
       const def = (node.data as DeviceNodeData).definition
+      const params = (node.data as DeviceNodeData).parameters
       const flip =
         def === 'switch_spst_toggle' || def === 'switch_spst_momentary'
           ? toggledSwitch
           : def === 'switch_spdt'
             ? toggledSpdt
-            : null
+            : def === 'fuse' && !fuseIntact(params)
+              ? replacedFuse
+              : null
       if (flip === null) return
-      checkpointAction('toggle')
+      checkpointAction(def === 'fuse' ? 'replace fuse' : 'toggle')
       setNodes((current) =>
         current.map((n) =>
           n.id === node.id

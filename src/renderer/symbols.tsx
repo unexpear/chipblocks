@@ -5,6 +5,7 @@ import { BlockNode } from './block-node.tsx'
 import { HealthContext } from './health.ts'
 import { LensContext, powerColor, temperatureColor } from './lens.ts'
 import {
+  fuseIntact,
   type Parameters,
   primaryValue,
   sourceIsAc,
@@ -261,6 +262,64 @@ function PotentiometerGlyph({ position }: { position: number }) {
   )
 }
 
+/** Fuse — IEC 60617: a rectangular body with the fusible element drawn through
+ *  it. Intact = the element is a whole line lead-to-lead; blown = the line has
+ *  a melted gap in the middle, so a dead fuse reads as a dead fuse at a glance. */
+function FuseGlyph({ intact }: { intact: boolean }) {
+  return (
+    <svg width={W} height={H}>
+      <title>{intact ? 'fuse' : 'fuse (blown)'}</title>
+      {lead(0, 22)}
+      <rect
+        x={22}
+        y={MID - 7}
+        width={36}
+        height={14}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      {intact ? (
+        <line x1={22} y1={MID} x2={58} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+      ) : (
+        // the melted element: two stubs retracting from a gap in the middle
+        <>
+          <line x1={22} y1={MID} x2={35} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+          <line x1={45} y1={MID} x2={58} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+          <line x1={35} y1={MID - 2} x2={37} y2={MID + 2} stroke={STROKE} strokeWidth={1.2} />
+          <line x1={45} y1={MID - 2} x2={43} y2={MID + 2} stroke={STROKE} strokeWidth={1.2} />
+        </>
+      )}
+      {lead(58, W)}
+    </svg>
+  )
+}
+
+/** Thermistor — IEC 60617: a resistor body crossed by a diagonal line with a
+ *  small foot, the standard mark for a temperature-dependent resistance (an
+ *  NTC's resistance falls as it warms). */
+function ThermistorGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>thermistor (NTC)</title>
+      {lead(0, 22)}
+      <rect
+        x={22}
+        y={MID - 7}
+        width={36}
+        height={14}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      {lead(58, W)}
+      {/* the diagonal dependence line + the small foot that marks 't°' */}
+      <line x1={20} y1={MID + 11} x2={58} y2={MID - 11} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={20} y1={MID + 11} x2={27} y2={MID + 11} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
 /** Inductor — IEEE 315: a row of winding humps. */
 function InductorGlyph() {
   return (
@@ -471,6 +530,7 @@ function MosfetPmosGlyph() {
 // (it needs the open/closed state, unlike these stateless one-shot glyphs).
 const GLYPHS: Record<string, () => React.JSX.Element> = {
   resistor: ResistorGlyph,
+  thermistor: ThermistorGlyph,
   capacitor: CapacitorGlyph,
   inductor: InductorGlyph,
   led: LedGlyph,
@@ -502,6 +562,7 @@ const TWO = (a: string, b: string) => [
 /** `offset` = vertical px for a side handle (default MID) — multi-winding parts. */
 const TERMINALS: Record<string, { id: string; position: Position; offset?: number }[]> = {
   resistor: TWO('terminal_a', 'terminal_b'),
+  thermistor: TWO('terminal_a', 'terminal_b'),
   capacitor: TWO('terminal_a', 'terminal_b'),
   inductor: TWO('terminal_a', 'terminal_b'),
   power_source: TWO('terminal_positive', 'terminal_negative'),
@@ -523,6 +584,7 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
     { id: 'wiper', position: Position.Top },
     { id: 'terminal_b', position: Position.Right },
   ],
+  fuse: TWO('terminal_a', 'terminal_b'),
   transistor_bjt_npn: [
     { id: 'base', position: Position.Left },
     { id: 'collector', position: Position.Top },
@@ -665,6 +727,8 @@ export function DeviceGlyph({
   // The potentiometer's wiper arrow slides to where the tap sits on the track.
   if (definition === 'potentiometer')
     return <PotentiometerGlyph position={wiperFraction(parameters)} />
+  // The fuse is state-dependent: a whole element vs a melted, broken one.
+  if (definition === 'fuse') return <FuseGlyph intact={fuseIntact(parameters)} />
   // Every source is the same IEC circle; the mark inside says which kind —
   // DC bars, the sine, or the clock trace — and stays upright at any rotation.
   if (definition === 'power_source') {

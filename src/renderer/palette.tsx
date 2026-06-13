@@ -78,6 +78,7 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'power_source', label: 'Source' },
   { definition: 'resistor', label: 'Resistor' },
   { definition: 'potentiometer', label: 'Pot' },
+  { definition: 'thermistor', label: 'Thermistor' },
   { definition: 'capacitor', label: 'Capacitor' },
   { definition: 'inductor', label: 'Inductor' },
   { definition: 'transformer', label: 'Transformer' },
@@ -91,6 +92,7 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'switch_spst_toggle', label: 'Switch' },
   { definition: 'switch_spst_momentary', label: 'Button' },
   { definition: 'switch_spdt', label: 'SPDT' },
+  { definition: 'fuse', label: 'Fuse' },
   { definition: 'ground', label: 'Ground' },
 ]
 

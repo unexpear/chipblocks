@@ -1,0 +1,103 @@
+# Valid fixture: thermistor (NTC temperature-sensitive resistor).
+# A resistor whose resistance is a strong, nonlinear function of temperature.
+# The NTC (negative temperature coefficient) kind: resistance FALLS as it warms,
+# following the two-parameter Beta equation
+#   R(T) = R0 * exp( B * (1/T - 1/T0) )      [T, T0 in kelvin]
+# where R0 is the resistance at the reference temperature T0 (the datasheet's
+# R25, the value at 25 C) and B is the material constant (kelvin). The
+# temperature sensor in a thermostat, a 3D-printer hot-end, a battery pack.
+#
+# Non-polar, two terminals. It senses its LOCAL environment (ambient_temperature)
+# and self-heats on top of that from its own dissipation (T = ambient + P*theta),
+# so pushing current through it warms it and — for an NTC — drives its resistance
+# down. Both effects are one coupled solve in the electro-thermal loop: the same
+# fixed point the tempco resistor uses, but with the Beta law instead of the
+# linear R0*(1 + a*dT).
+#
+# Honest gaps: only the NTC Beta form is modeled. A PTC thermistor (resistance
+# RISES with temperature, then switches sharply near a Curie point) is different
+# physics and a sibling part. The 3-coefficient Steinhart-Hart fit (more accurate
+# over a wide range) is a refinement; Beta is the standard 2-parameter datasheet
+# form and the honest first rung. The reference uses one global 25 C baseline, so
+# ambient_temperature is how you place a thermistor in a hotter or colder spot.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: thermistor
+origin: builtin
+layer: primitive_device
+name: "Thermistor (NTC temperature sensor)"
+description: "A two-terminal resistor whose resistance varies strongly and nonlinearly with temperature. The NTC type modeled here falls in resistance as it warms, following the Beta equation R(T) = R0*exp(B*(1/T - 1/T0)). It senses its local ambient temperature and self-heats from its own dissipation; both fold into one electro-thermal fixed point. The temperature probe of the hobbyist world — thermostats, hot-ends, battery monitors. Non-polar."
+composition:
+  requires:
+    sensing_material:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  sensing_material:
+    type: material_ref
+    satisfies_role: sensing_material
+    required: true
+    description: The temperature-sensitive material. Real NTC thermistors use a sintered metal-oxide ceramic (manganese, nickel, cobalt oxides) whose carrier concentration rises with temperature — the origin of the negative coefficient. The catalog's conductive default stands in until metal-oxide data lands; the resistance behavior comes from R0 + B, not from this material's bulk resistivity.
+  resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: "R0 — the resistance at the reference temperature (the datasheet R25, the value at 25 C). The headline figure (e.g. a 10 kOhm NTC). The live resistance is recomputed from this via the Beta equation at the part's solved temperature."
+  beta_coefficient:
+    type: quantity
+    units: kelvin
+    required: true
+    description: "The material constant B (kelvin) in the Beta equation, from the datasheet (often quoted as B25/85, fit between 25 C and 85 C). Larger B = a steeper resistance-vs-temperature curve. Typical small NTCs are 3000-4000 K."
+  reference_temperature:
+    type: quantity
+    units: celsius
+    required: false
+    description: "T0 — the temperature at which the resistance equals R0. Absent reads 25 C, the datasheet standard (R25)."
+  ambient_temperature:
+    type: quantity
+    units: celsius
+    required: false
+    description: "The local environment temperature the thermistor is sensing — the knob that places it somewhere hot or cold. Absent reads 25 C. The part's actual temperature is this plus its own self-heating (T = ambient + P*theta_JA), and its resistance follows the Beta curve at that temperature."
+  thermal_resistance_junction_ambient:
+    type: quantity
+    units: kelvin_per_watt
+    required: false
+    description: "Junction-to-ambient thermal resistance (the inverse of the datasheet dissipation constant delta, mW/C). Sets how much the thermistor self-heats per watt it dissipates — a small bead in still air is around 600-700 C/W. Keep the current low to read ambient without self-heating error; push it up to see the resistance fall from self-heating alone."
+  max_operating_temperature:
+    type: quantity
+    units: celsius
+    required: false
+    description: Maximum body temperature before the element degrades. Small epoxy-coated NTC beads are typically rated to ~125 C.
+behaviors:
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+terminals:
+  terminal_a:
+    description: One end of the thermistor element. Non-polar.
+  terminal_b:
+    description: The other end of the thermistor element.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved as a resistor whose resistance is recomputed every electro-thermal
+  iteration from the Beta equation at the part's own temperature — the SAME
+  fixed-point loop the tempco resistor uses (resistanceAtTemperature in
+  electro-thermal.ts), with the exponential Beta branch instead of the linear
+  R0*(1 + a*dT). The part's temperature is ambient_temperature + P*theta_JA
+  (its sensed environment plus its own self-heating), so an unloaded thermistor
+  reads R at the ambient and a current-carrying one warms and (for an NTC) drops.
+  Honest gaps: only the NTC Beta form is modeled (a PTC's Curie-switching curve
+  is different physics — a sibling part); Steinhart-Hart's 3-coefficient fit is a
+  later refinement; an unwired thermistor (no solved current) shows R0 because the
+  loop has no temperature for it.

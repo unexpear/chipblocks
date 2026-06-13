@@ -38,22 +38,50 @@ const MAX_THERMAL_ITERATIONS = 25
 const TEMPERATURE_TOLERANCE_C = 0.1
 /** Linear-tempco floor: an adjusted resistance at/below this is out of range. */
 const RESISTANCE_FLOOR_OHMS = 1e-9
+/** °C → K. */
+const CELSIUS_TO_KELVIN = 273.15
 
 /**
- * A tempco part's resistance at temperature: R(T) = R₀·(1 + α·ΔT). The ONE
- * place this law lives — the solve loop and every display (Math panel) call
- * it, so what the user reads is what the solver used. Undefined when the part
- * has no tempco/resistance or no temperature is known for it.
+ * An NTC thermistor's resistance at temperature, the two-parameter Beta law:
+ *   R(T) = R₀·exp(B·(1/T − 1/T₀))     [T, T₀ in kelvin]
+ * R₀ is `resistance` (the value at the reference temperature T₀), B is
+ * `beta_coefficient`, T₀ is `reference_temperature` (default 25 °C). Undefined
+ * when R₀ or B is missing. For an NTC (B > 0) the resistance falls as the part
+ * warms; this is the exponential branch beside the resistor's linear tempco.
+ */
+export function thermistorResistance(inst: Instance, temperatureC: number): number | undefined {
+  const r0 = readScalarParam(inst, 'resistance')
+  const beta = readScalarParam(inst, 'beta_coefficient')
+  if (r0 === undefined || beta === undefined || r0 <= 0) return undefined
+  const t0K =
+    (readScalarParam(inst, 'reference_temperature') ?? STANDARD_AMBIENT_C) + CELSIUS_TO_KELVIN
+  const tK = temperatureC + CELSIUS_TO_KELVIN
+  if (tK <= 0) return undefined
+  return r0 * Math.exp(beta * (1 / tK - 1 / t0K))
+}
+
+/**
+ * A temperature-dependent part's resistance at temperature. The ONE place these
+ * laws live — the solve loop and every display (Math panel) call it, so what the
+ * user reads is what the solver used. A thermistor follows the exponential Beta
+ * law; a plain resistor with a tempco follows the linear R₀·(1 + α·ΔT). Undefined
+ * when the part has no such law/resistance or no temperature is known for it.
  */
 export function resistanceAtTemperature(
   inst: Instance,
   temperatureC: number | undefined,
 ): number | undefined {
   if (temperatureC === undefined) return undefined
+  if (inst.definition === 'thermistor') return thermistorResistance(inst, temperatureC)
   const alpha = readScalarParam(inst, 'temperature_coefficient')
   const baseResistance = readScalarParam(inst, 'resistance')
   if (alpha === undefined || baseResistance === undefined) return undefined
   return baseResistance * (1 + alpha * (temperatureC - STANDARD_AMBIENT_C))
+}
+
+/** A part's local ambient (°C): its own `ambient_temperature`, else the 25 °C baseline. */
+function ambientOf(inst: Instance): number {
+  return readScalarParam(inst, 'ambient_temperature') ?? STANDARD_AMBIENT_C
 }
 
 /** A world with each tempco resistor's resistance adjusted to its temperature. */
@@ -101,7 +129,10 @@ function computeTemperatures(world: World, solution: Solution): Map<string, numb
     const volts = acrossVolts(inst, solution)
     if (volts === undefined) continue
 
-    temperatures.set(inst.id, junctionTemperature(Math.abs(branch) * volts, thetaJa))
+    temperatures.set(
+      inst.id,
+      junctionTemperature(Math.abs(branch) * volts, thetaJa, ambientOf(inst)),
+    )
   }
   return temperatures
 }
@@ -212,7 +243,10 @@ function computeTransientTemperatures(
     if (samples === 0) continue
     // A passive part's average absorbed power can't be negative; clamp the
     // float dust so a reactive part reads ambient, not below it.
-    temperatures.set(inst.id, junctionTemperature(Math.max(0, sum / samples), thetaJa))
+    temperatures.set(
+      inst.id,
+      junctionTemperature(Math.max(0, sum / samples), thetaJa, ambientOf(inst)),
+    )
   }
   return temperatures
 }

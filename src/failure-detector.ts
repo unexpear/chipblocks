@@ -25,8 +25,8 @@
 
 import type { Instance, World } from './cross-fk-validator.ts'
 import type { Solution } from './dc-solver.ts'
-import { readScalarParam } from './instance-params.ts'
-import { acrossVolts, junctionTemperature } from './thermal-model.ts'
+import { readEnumParam, readScalarParam } from './instance-params.ts'
+import { acrossVolts, junctionTemperature, STANDARD_AMBIENT_C } from './thermal-model.ts'
 
 // ---------------------------------------------------------------------------
 // Public API types
@@ -120,6 +120,33 @@ export function detectFailures(world: World, solution: Solution): Failure[] {
   }
 
   return failures
+}
+
+/**
+ * Intact fuses whose solved current exceeds their rated_current — the fuses that
+ * should BLOW. The canvas calls this after each solve, flips the returned fuses
+ * to 'blown' (a persistent state change), and re-solves: the element opens and
+ * the circuit goes dark, the same failure-check-plus-re-solve pattern as the LED
+ * overcurrent. A blown fuse is already open (carries no current) so it is never
+ * re-listed; an intact fuse whose overload is removed stops being listed and
+ * keeps conducting. Returns instance ids (empty when nothing is over its rating).
+ *
+ * This is overcurrent DETECTION, kept separate from detectFailures (which only
+ * reports), because the fuse's response is to change state, not just to flag.
+ */
+export function overcurrentFuseIds(world: World, solution: Solution): string[] {
+  if (solution.status !== 'solved') return []
+  const ids: string[] = []
+  for (const inst of world.instances.values()) {
+    if (inst.definition !== 'fuse') continue
+    if (readEnumParam(inst, 'state') === 'blown') continue
+    const rated = readScalarParam(inst, 'rated_current')
+    if (rated === undefined || rated <= 0) continue
+    const current = solution.branches.get(inst.id)
+    if (current === undefined) continue
+    if (Math.abs(current) > rated) ids.push(inst.id)
+  }
+  return ids
 }
 
 // ---------------------------------------------------------------------------
@@ -372,7 +399,10 @@ export function checkOvertemperature(inst: Instance, solution: Solution): Failur
   if (volts === undefined) return null
 
   const watts = Math.abs(branch) * volts
-  const temperature = junctionTemperature(watts, thetaJa)
+  // A part can declare its own local ambient (a thermistor placed in a hot spot);
+  // default to the 25 °C baseline so every existing part is unchanged.
+  const ambient = readScalarParam(inst, 'ambient_temperature') ?? STANDARD_AMBIENT_C
+  const temperature = junctionTemperature(watts, thetaJa, ambient)
   if (temperature <= maxTemperature) return null
 
   return {

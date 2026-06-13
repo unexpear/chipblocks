@@ -65,6 +65,18 @@ function switchIsClosed(inst: Instance): boolean {
   return readEnumParam(inst, 'state') !== 'open'
 }
 
+/**
+ * A fuse conducts while INTACT and is an open circuit once BLOWN. State lives on
+ * the instance as `state: intact|blown`; absent state defaults to intact (a fresh
+ * fuse conducts). A blown fuse is simply not stamped — its terminals stay on
+ * separate nets, a real open circuit, exactly like an open switch. The blow
+ * itself (intact → blown on overcurrent) is a canvas-level state change driven by
+ * the solved current, not something the solver does mid-solve.
+ */
+export function fuseIsIntact(inst: Instance): boolean {
+  return readEnumParam(inst, 'state') !== 'blown'
+}
+
 /** Newton-Raphson controls (§20.6). */
 const NR_MAX_ITERATIONS = 100
 const NR_VOLTAGE_TOLERANCE = 1e-6 // volts
@@ -188,6 +200,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     | 'led'
     | 'switch'
     | 'switch_spdt'
+    | 'fuse'
     | 'wire'
     | 'inductor'
     | 'transformer_primary'
@@ -263,6 +276,12 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       // terminals on separate nets: a real open circuit, not a hardcoded short.
       // The momentary push button is electrically identical (default open).
       if (switchIsClosed(inst)) linearVoltageSources.push({ inst, kind: 'switch' })
+    } else if (inst.definition === 'fuse') {
+      // Intact → conducts like a wire carrying its element resistance (below).
+      // Blown → omitted entirely, leaving its terminals on separate nets: a real
+      // open circuit. The intact→blown transition is a canvas-level state change
+      // driven by the solved current, not done here mid-solve.
+      if (fuseIsIntact(inst)) linearVoltageSources.push({ inst, kind: 'fuse' })
     } else if (inst.definition === 'wire') {
       linearVoltageSources.push({ inst, kind: 'wire' })
     } else if (inst.definition === 'inductor') {
@@ -284,7 +303,9 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     const b: any = math.zeros(N + S, 1)
 
     for (const inst of world.instances.values()) {
-      if (inst.definition === 'resistor') {
+      // A thermistor stamps exactly like a resistor — its `resistance` is the
+      // Beta-law value the electro-thermal loop already wrote for this temperature.
+      if (inst.definition === 'resistor' || inst.definition === 'thermistor') {
         const ok = stampResistor(inst, nodeIndex, M)
         if (!ok)
           warnings.push(`Skipped resistor stamp for instance '${inst.id}' (missing R or connects)`)
@@ -303,6 +324,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       else if (kind === 'led') ok = stampLED(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'switch') ok = stampClosedSwitch(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'switch_spdt') ok = stampSpdt(inst, nodeIndex, auxIdx, M, b)
+      else if (kind === 'fuse') ok = stampFuse(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'wire') ok = stampWire(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'inductor') ok = stampInductorDC(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'transformer_primary')
@@ -430,7 +452,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   // Branch currents (§18.6 sign convention).
   const branches = new Map<string, number>()
   for (const inst of world.instances.values()) {
-    if (inst.definition === 'resistor') {
+    if (inst.definition === 'resistor' || inst.definition === 'thermistor') {
       const I = computeResistorCurrent(inst, nodes)
       if (I !== undefined) branches.set(inst.id, I)
     } else if (inst.definition === 'potentiometer') {
@@ -1176,6 +1198,36 @@ export function stampWire(
     M,
     b,
     seriesResistance,
+  )
+}
+
+/**
+ * Apply an INTACT fuse's contribution: a 0 V source carrying its small cold
+ * element_resistance between terminal_a and terminal_b — exactly the wire stamp,
+ * so the fuse's branch current is the auxiliary variable and it drops a real
+ * I·R. Absent element_resistance ⇒ an ideal 0 Ω link. A BLOWN fuse is never
+ * stamped (it is omitted from linearVoltageSources, an open circuit).
+ */
+export function stampFuse(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  auxIdx: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
+  const elementResistance = readScalarParam(inst, 'element_resistance') ?? 0
+  return findAndStampVoltageSource(
+    inst,
+    nodeIndex,
+    auxIdx,
+    0,
+    'terminal_a',
+    'terminal_b',
+    M,
+    b,
+    elementResistance,
   )
 }
 

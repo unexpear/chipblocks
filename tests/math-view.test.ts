@@ -48,6 +48,70 @@ describe('buildMathView', () => {
     expect(view.solver.join(' ')).toContain('converged: yes')
   })
 
+  test('a thermal runaway is flagged — both in the solver section and on the part', () => {
+    // A 10 kΩ NTC straight across 9 V at 85 °C ambient runs away (its self-heating
+    // drops R, which raises the current, which heats it more — no stable point).
+    const world = canvasToWorld(
+      [
+        {
+          id: 'src',
+          definition: 'power_source',
+          parameters: { nominal_voltage: scalar(9, 'volt'), internal_resistance: scalar(1, 'ohm') },
+        },
+        {
+          id: 'th',
+          definition: 'thermistor',
+          parameters: {
+            resistance: scalar(10000, 'ohm'),
+            beta_coefficient: scalar(3977, 'kelvin'),
+            ambient_temperature: scalar(85, 'celsius'),
+            thermal_resistance_junction_ambient: scalar(667, 'kelvin_per_watt'),
+            max_operating_temperature: scalar(125, 'celsius'),
+          },
+        },
+        { id: 'gnd', definition: 'ground' },
+      ],
+      [
+        {
+          source: 'src',
+          sourceHandle: 'terminal_positive',
+          target: 'th',
+          targetHandle: 'terminal_a',
+        },
+        {
+          source: 'th',
+          sourceHandle: 'terminal_b',
+          target: 'src',
+          targetHandle: 'terminal_negative',
+        },
+        {
+          source: 'gnd',
+          sourceHandle: 'reference_terminal',
+          target: 'src',
+          targetHandle: 'terminal_negative',
+        },
+      ],
+    )
+    const thermal = solveElectroThermal(world)
+    expect(thermal.thermalConverged).toBe(false) // the loop detected the runaway
+
+    const view = buildMathView(
+      world,
+      thermal.solution,
+      thermal.temperaturesC,
+      thermal.thermalConverged,
+    )
+    // The solver section warns loudly...
+    expect(view.solver.join(' ')).toContain('THERMAL RUNAWAY')
+    // ...and the thermistor's own card carries the caveat next to its bogus R(T).
+    const card = view.parts.find((p) => p.id === 'th')
+    expect(card?.lines.join(' ')).toContain('did not settle')
+
+    // A normal (settled) solve shows NO runaway warning.
+    const ok = buildMathView(world, thermal.solution, thermal.temperaturesC, true)
+    expect(ok.solver.join(' ')).not.toContain('THERMAL RUNAWAY')
+  })
+
   test('the resistor card shows Ohm’s law with the actual solved numbers', () => {
     const world = ohmLawCircuit()
     const view = buildMathView(world, solveDC(world))
