@@ -1,6 +1,7 @@
 import { useInternalNode, ViewportPortal } from '@xyflow/react'
 import type { Instance, World } from '../cross-fk-validator.ts'
 import { type Solution, solveDC } from '../dc-solver.ts'
+import { solveElectroThermal, solveTransientThermal } from '../electro-thermal.ts'
 import { solveTransient } from '../transient-solver.ts'
 import { fastestSourceHz, scopeWindow } from './scope.tsx'
 import { measureSeries } from './waveform-measure.ts'
@@ -282,10 +283,18 @@ export function groundNetOf(world: World): string | undefined {
  * resistance across the probes. Callers read the loaded node voltages (and
  * the through-part current convenience) from the returned solution — what
  * the meter displays IS what the loaded circuit does.
+ *
+ * Solved through the electro-thermal loop (S20-v3-17), NOT a cold solveDC:
+ * the rest of the system (the clamp, the scope, the Properties/Math panels)
+ * reports the warm operating point, so this live measurement must share that
+ * one temperature too — otherwise the meter's own voltage dial would disagree
+ * with its own current clamp by the self-heating drift. The meter's 10 MΩ
+ * input carries no thermal rating, so it just sits in the network and the
+ * loop heats the real circuit exactly as the main solve does.
  */
 export function voltmeterSolve(world: World, netRed: string, netBlack: string): Solution | null {
   if (netRed === netBlack) return null
-  const solution = solveDC(withVoltmeterLoad(world, netRed, netBlack))
+  const { solution } = solveElectroThermal(withVoltmeterLoad(world, netRed, netBlack))
   return solution.status === 'solved' ? solution : null
 }
 
@@ -319,7 +328,10 @@ function settledProbeSeries(
   const fastestHz = fastestSourceHz(world)
   const steps = Math.max(500, Math.ceil(window.duration * fastestHz * 32))
   if (steps > 20000) return 'span-too-wide'
-  const result = solveTransient(loaded, {
+  // Through the transient electro-thermal loop (S20-v3-17), same as the scope —
+  // V~ and MIN/MAX share the one warm operating point with every other live
+  // instrument instead of reading a cold circuit.
+  const { result } = solveTransientThermal(loaded, {
     timeStep: window.duration / steps,
     duration: window.duration,
   })
@@ -606,7 +618,10 @@ export function seriesAmmeter(
       { net: netBlack, terminal: 'terminal_b', of: AMMETER_SHUNT_ID },
     ],
   } as Instance)
-  const solution = solveDC({ ...world, instances })
+  // Through the electro-thermal loop (S20-v3-17): the inserted meter measures
+  // the same warm circuit the clamp and panels do, so its current agrees with
+  // theirs (minus its own honest burden) instead of reading a cold circuit.
+  const { solution } = solveElectroThermal({ ...world, instances })
   if (solution.status !== 'solved') return { status: 'failed' }
   const amps = solution.branches.get(AMMETER_SHUNT_ID) ?? 0
   if (Math.abs(amps) > spec.fuseAmps) return { status: 'blew', amps }

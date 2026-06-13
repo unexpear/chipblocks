@@ -6,12 +6,15 @@
  */
 
 import { describe, expect, test } from 'vitest'
+import { solveDC } from '../src/dc-solver.ts'
+import { solveElectroThermal } from '../src/electro-thermal.ts'
 import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
 import {
   acVoltsRms,
   dcExtremes,
   displayCounts,
   groundNetOf,
+  seriesAmmeter,
   terminalNets,
   voltmeterSolve,
 } from '../src/renderer/meter.tsx'
@@ -273,5 +276,121 @@ describe('the 6000-count display (S20-v3-16)', () => {
     expect(displayCounts(6, 'V')).toBe('6.000 V')
     // Solver float dust shows a real display's zero, never e-notation.
     expect(displayCounts(-3.674e-15, 'V')).toBe('0.000 V')
+  })
+})
+
+describe('the meter reads the WARM circuit (S20-v3-17)', () => {
+  // A live-audit found the meter contradicting itself: clamp a wire and read
+  // the warm current, probe across the part and read the cold one — because
+  // V⎓/A⎓/V~/MIN-MAX re-solved cold while the clamp/scope/panels solve hot.
+  // This fixture makes the gap unmissable: R1 carries a strong tempco AND a
+  // poor heatsink (high θ_JA) so its self-heating drops it well below nominal,
+  // while R2 stays stable — the operating point genuinely shifts with heat.
+  // (The −2000 ppm/K is thermistor-class, chosen for a clean test margin, not
+  // a typical resistor.)
+  function warmLoop(switchState: 'open' | 'closed') {
+    const nodes: CanvasNode[] = [
+      {
+        id: 'src',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(12, 'volt'), internal_resistance: scalar(0, 'ohm') },
+      },
+      {
+        id: 'sw',
+        definition: 'switch_spst_toggle',
+        parameters: { state: { value: switchState } },
+      },
+      {
+        id: 'r1',
+        definition: 'resistor',
+        parameters: {
+          resistance: scalar(1000, 'ohm'),
+          temperature_coefficient: scalar(-2000e-6, 'per_kelvin'),
+          thermal_resistance_junction_ambient: scalar(2500, 'kelvin_per_watt'),
+        },
+      },
+      { id: 'r2', definition: 'resistor', parameters: { resistance: scalar(2000, 'ohm') } },
+      { id: 'gnd', definition: 'ground' },
+    ]
+    const edges = [
+      {
+        source: 'src',
+        sourceHandle: 'terminal_positive',
+        target: 'sw',
+        targetHandle: 'terminal_in',
+      },
+      { source: 'sw', sourceHandle: 'terminal_out', target: 'r1', targetHandle: 'terminal_a' },
+      { source: 'r1', sourceHandle: 'terminal_b', target: 'r2', targetHandle: 'terminal_a' },
+      {
+        source: 'r2',
+        sourceHandle: 'terminal_b',
+        target: 'src',
+        targetHandle: 'terminal_negative',
+      },
+      {
+        source: 'gnd',
+        sourceHandle: 'reference_terminal',
+        target: 'src',
+        targetHandle: 'terminal_negative',
+      },
+    ]
+    return canvasToWorld(nodes, edges)
+  }
+
+  function r1Nets(world: ReturnType<typeof warmLoop>) {
+    const nets = terminalNets(world)
+    const a = nets.get('r1/terminal_a')
+    const b = nets.get('r1/terminal_b')
+    if (a === undefined || b === undefined) throw new Error('missing R1 nets')
+    return { a, b }
+  }
+
+  test('the hot and cold solves genuinely differ — the test is not vacuous', () => {
+    const world = warmLoop('closed')
+    const hot = Math.abs(solveElectroThermal(world).solution.branches.get('r1') ?? 0)
+    const cold = Math.abs(solveDC(world).branches.get('r1') ?? 0)
+    expect(hot / cold).toBeGreaterThan(1.02) // self-heating lifts the current ≥2%
+  })
+
+  test('V⎓ through-current follows the WARM operating point, not the cold one', () => {
+    const world = warmLoop('closed')
+    const hot = Math.abs(solveElectroThermal(world).solution.branches.get('r1') ?? 0)
+    const cold = Math.abs(solveDC(world).branches.get('r1') ?? 0)
+    const { a, b } = r1Nets(world)
+    const sol = voltmeterSolve(world, a, b)
+    if (sol === null) throw new Error('no voltmeter solution')
+    const meterI = Math.abs(sol.branches.get('r1') ?? 0)
+    expect(meterI).toBeCloseTo(hot, 4) // matches the warm clamp/scope value
+    expect(meterI).not.toBeCloseTo(cold, 4) // and is NOT the cold reading
+  })
+
+  test('the series ammeter reads warm: clearly above the cold-circuit current', () => {
+    const cold = Math.abs(solveDC(warmLoop('closed')).branches.get('r1') ?? 0)
+    // Bridge the open switch — the inserted shunt completes the loop and the
+    // electro-thermal loop heats it, so the reading sits above cold despite
+    // its own burden dragging the other way.
+    const open = warmLoop('open')
+    const nets = terminalNets(open)
+    const inNet = nets.get('sw/terminal_in')
+    const outNet = nets.get('sw/terminal_out')
+    if (inNet === undefined || outNet === undefined) throw new Error('missing switch nets')
+    const result = seriesAmmeter(open, inNet, outNet, 'milliamp')
+    if (result.status !== 'measured') throw new Error(`expected a reading, got ${result.status}`)
+    expect(Math.abs(result.amps) / cold).toBeGreaterThan(1.015)
+  })
+
+  test('MIN/MAX/AVG (the transient-thermal path) reads the warm voltage', () => {
+    const world = warmLoop('closed')
+    const hot = solveElectroThermal(world).solution
+    const cold = solveDC(world)
+    const { a, b } = r1Nets(world)
+    const hotV = Math.abs((hot.nodes.get(a) ?? 0) - (hot.nodes.get(b) ?? 0))
+    const coldV = Math.abs((cold.nodes.get(a) ?? 0) - (cold.nodes.get(b) ?? 0))
+    expect(Math.abs(hotV - coldV)).toBeGreaterThan(0.1) // the two differ clearly
+    const extremes = dcExtremes(world, a, b)
+    if (extremes === 'span-too-wide' || extremes === null) throw new Error('no extremes')
+    // Steady DC → min = max = avg, and it IS the warm value.
+    expect(Math.abs(extremes.avg)).toBeCloseTo(hotV, 1)
+    expect(Math.abs(extremes.avg)).not.toBeCloseTo(coldV, 1)
   })
 })
