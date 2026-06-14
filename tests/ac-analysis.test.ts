@@ -13,6 +13,7 @@
 import { describe, expect, test } from 'vitest'
 import { acResponse, acSweep } from '../src/ac-analysis.ts'
 import type { World } from '../src/cross-fk-validator.ts'
+import { solveDCRobust } from '../src/dc-robust.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
 
@@ -146,5 +147,77 @@ describe('AC analysis — first-order RC filters vs textbook', () => {
     }
     expect(points[0]?.gain ?? 0).toBeCloseTo(1, 2) // 1 Hz << f_c
     expect(points[points.length - 1]?.gainDb ?? 0).toBeLessThan(-40) // 100 kHz >> f_c
+  })
+})
+
+/**
+ * Common-emitter amplifier: vcc(9V) -> Rc(4.5k) -> collector, base driven by `vinDc`
+ * (also the AC stimulus), emitter to ground. The transistor carries cited device
+ * capacitances so the response rolls off. ~0.8 mA bias gives g_m ~ 31 mS and a
+ * low-frequency gain of g_m*(Rc||r_o) ~ 130, inverting.
+ */
+function commonEmitterAmp(vinDc: number): World {
+  const w = makeWorld()
+  ensureNet(w, 'gnd', true)
+  addPart(w, 'vcc', 'power_source', { nominal_voltage: scalar(9, 'volt') }, [
+    { net: 'vcc', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  addPart(w, 'vin', 'power_source', { nominal_voltage: scalar(vinDc, 'volt') }, [
+    { net: 'base', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  addPart(w, 'rc', 'resistor', { resistance: scalar(4500, 'ohm') }, [
+    { net: 'vcc', terminal: 'terminal_a' },
+    { net: 'coll', terminal: 'terminal_b' },
+  ])
+  addPart(
+    w,
+    'q1',
+    'transistor_bjt_npn',
+    {
+      saturation_current: scalar(1e-14, 'ampere'),
+      forward_current_gain: scalar(150, 'dimensionless'),
+      reverse_current_gain: scalar(2, 'dimensionless'),
+      forward_early_voltage: scalar(74, 'volt'),
+      base_emitter_capacitance: scalar(4.5e-12, 'farad'),
+      base_collector_capacitance: scalar(3.6e-12, 'farad'),
+      forward_transit_time: scalar(300e-12, 'second'),
+    },
+    [
+      { net: 'coll', terminal: 'collector' },
+      { net: 'base', terminal: 'base' },
+      { net: 'gnd', terminal: 'emitter' },
+    ],
+  )
+  return w
+}
+
+describe('AC analysis — transistor small-signal (common-emitter amp)', () => {
+  const ceOpts = { inputSource: 'vin', outputNet: 'coll' }
+
+  test('low-frequency gain equals the DC small-signal slope, and it inverts', () => {
+    const vinDc = 0.65
+    // The DC small-signal slope dVc/dVin, straight off the nonlinear DC solver.
+    const delta = 1e-4
+    const vc = (vin: number) => solveDCRobust(commonEmitterAmp(vin)).nodes.get('coll') ?? Number.NaN
+    const dcSlope = Math.abs((vc(vinDc + delta) - vc(vinDc - delta)) / (2 * delta))
+
+    // The AC gain at a low frequency (caps negligible) must be the same number —
+    // because the AC conductances ARE the DC companion Jacobian.
+    const ac = acResponse(commonEmitterAmp(vinDc), ceOpts, 10)
+    expect(ac.gain).toBeGreaterThan(80) // a real CE gain (~130), not a divider
+    expect(ac.gain).toBeLessThan(220)
+    expect(Math.abs(ac.gain / dcSlope - 1)).toBeLessThan(0.02) // within ~1% of the DC slope
+
+    // Common-emitter inverts: the phase is ~180 deg.
+    expect(Math.abs(ac.phaseDeg)).toBeGreaterThan(170)
+  })
+
+  test('the base-collector capacitance rolls the gain off at high frequency', () => {
+    const amp = commonEmitterAmp(0.65)
+    const low = acResponse(amp, ceOpts, 1e3).gain
+    const high = acResponse(amp, ceOpts, 1e9).gain
+    expect(high).toBeLessThan(0.3 * low) // a genuine high-frequency roll-off from C_mu
   })
 })

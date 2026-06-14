@@ -1,5 +1,7 @@
 import type { Instance, World } from './cross-fk-validator.ts'
+import { solveDCRobust } from './dc-robust.ts'
 import { mathInstance as math } from './dc-solver.ts'
+import { type BjtSmallSignal, bjtSmallSignalModel } from './small-signal.ts'
 
 /**
  * Small-signal AC (frequency-domain) analysis. Where the DC solver finds the
@@ -30,12 +32,17 @@ function readParam(inst: Instance, name: string): number | undefined {
   return typeof amount === 'number' ? amount : undefined
 }
 
+type BjtAcModel = BjtSmallSignal & { bIdx: number; cIdx: number; eIdx: number }
+
 type Topology = {
   ground: string
   nodeIndex: Map<string, number>
   vsources: Instance[]
   dim: number
+  bjts: BjtAcModel[]
 }
+
+const BJT_DEFINITIONS = new Set(['transistor_bjt_npn', 'transistor_bjt_pnp'])
 
 function buildTopology(world: World): Topology | null {
   let ground: string | undefined
@@ -47,7 +54,30 @@ function buildTopology(world: World): Topology | null {
     if (net.id !== ground) nodeIndex.set(net.id, nodeIndex.size)
   }
   const vsources = [...world.instances.values()].filter((i) => i.definition === 'power_source')
-  return { ground, nodeIndex, vsources, dim: nodeIndex.size + vsources.length }
+  const idx = (net: string) => (net === ground ? -1 : (nodeIndex.get(net) ?? -1))
+
+  // Transistors are linearized at the DC operating point: solve it once (only when the
+  // circuit has any), then build each hybrid-pi small-signal model around it.
+  const bjts: BjtAcModel[] = []
+  const transistors = [...world.instances.values()].filter((i) => BJT_DEFINITIONS.has(i.definition))
+  if (transistors.length > 0) {
+    const dc = solveDCRobust(world)
+    if (dc.status === 'solved') {
+      const nodeVoltage = (net: string) => (net === ground ? 0 : (dc.nodes.get(net) ?? 0))
+      for (const inst of transistors) {
+        const ss = bjtSmallSignalModel(inst, nodeVoltage)
+        if (ss === null) continue
+        bjts.push({
+          ...ss,
+          bIdx: idx(ss.baseNet),
+          cIdx: idx(ss.collectorNet),
+          eIdx: idx(ss.emitterNet),
+        })
+      }
+    }
+  }
+
+  return { ground, nodeIndex, vsources, dim: nodeIndex.size + vsources.length, bjts }
 }
 
 /** Solve the linear circuit at angular frequency omega; return the complex node
@@ -115,6 +145,31 @@ function solveAtOmega(
     rhs.set([branch, 0], vs.id === inputSource ? 1 : 0)
   })
 
+  // Transistors: the hybrid-pi small-signal model at the operating point — the 2-port
+  // conductance block (straight from the DC companion Jacobian) plus the junction
+  // capacitances that set the high-frequency poles. v_BE = V_B - V_E, v_BC = V_B - V_C.
+  const accumulateGrounded = (i: number, j: number, re: number, im: number) => {
+    if (i >= 0 && j >= 0) accumulate(i, j, re, im)
+  }
+  for (const t of topo.bjts) {
+    const { bIdx: b, cIdx: c, eIdx: e, gmBE, gmBC, gpiBE, gpiBC, cPi, cMu } = t
+    // i_C = gmBE*v_BE + gmBC*v_BC, flowing into the collector node
+    accumulateGrounded(c, b, gmBE + gmBC, 0)
+    accumulateGrounded(c, e, -gmBE, 0)
+    accumulateGrounded(c, c, -gmBC, 0)
+    // i_B = gpiBE*v_BE + gpiBC*v_BC, into the base node
+    accumulateGrounded(b, b, gpiBE + gpiBC, 0)
+    accumulateGrounded(b, e, -gpiBE, 0)
+    accumulateGrounded(b, c, -gpiBC, 0)
+    // i_E = -(i_C + i_B), into the emitter node
+    accumulateGrounded(e, b, -(gmBE + gpiBE + gmBC + gpiBC), 0)
+    accumulateGrounded(e, e, gmBE + gpiBE, 0)
+    accumulateGrounded(e, c, gmBC + gpiBC, 0)
+    // C_pi across base-emitter, C_mu across base-collector
+    stampY(b, e, 0, omega * cPi)
+    stampY(b, c, 0, omega * cMu)
+  }
+
   // biome-ignore lint/suspicious/noExplicitAny: mathjs lusolve return is polymorphic
   let solution: any
   try {
@@ -171,4 +226,58 @@ export function acSweep(world: World, opts: AcSweepOptions): AcPoint[] {
     points.push(toPoint(f, vout))
   }
   return points
+}
+
+export type PhaseMarginResult = {
+  /** Frequency where the open-loop gain falls to unity (0 dB). */
+  unityGainHz: number
+  /** 180° + the open-loop phase at that frequency. >0 is stable; bigger is more so
+   *  (45–60° is the usual healthy target). Measured with a non-inverting drive, so
+   *  the DC phase starts near 0° and the poles rotate it down. */
+  phaseMarginDeg: number
+  dcGainDb: number
+}
+
+/**
+ * Phase margin of an amplifier's open-loop response — the un-foolable stability
+ * number. Sweeps the response, unwraps the phase (atan2 wraps at ±180°), finds the
+ * unity-gain crossover, and reports 180° + the phase there. Returns null if the gain
+ * never crosses unity over the swept band. Drive the NON-inverting input so the DC
+ * phase begins near 0° and the convention holds.
+ */
+export function phaseMargin(world: World, opts: AcSweepOptions): PhaseMarginResult | null {
+  const points = acSweep(world, opts)
+  if (points.length < 2) return null
+
+  const phase: number[] = []
+  for (let i = 0; i < points.length; i++) {
+    const raw = points[i]?.phaseDeg ?? 0
+    if (i === 0) {
+      phase.push(raw)
+      continue
+    }
+    let p = raw
+    const prev = phase[i - 1] ?? 0
+    while (p - prev > 180) p -= 360
+    while (p - prev < -180) p += 360
+    phase.push(p)
+  }
+
+  const dcGainDb = points[0]?.gainDb ?? Number.NaN
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]
+    const b = points[i]
+    if (!a || !b) continue
+    if (a.gainDb >= 0 && b.gainDb < 0) {
+      const t = a.gainDb / (a.gainDb - b.gainDb) // fraction to the 0 dB crossing
+      const pa = phase[i - 1] ?? 0
+      const pb = phase[i] ?? 0
+      return {
+        unityGainHz: a.frequencyHz * (b.frequencyHz / a.frequencyHz) ** t,
+        phaseMarginDeg: 180 + (pa + t * (pb - pa)),
+        dcGainDb,
+      }
+    }
+  }
+  return null
 }
