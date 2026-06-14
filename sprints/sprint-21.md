@@ -1,6 +1,6 @@
 # Sprint 21 — The parts bench
 
-> **Status: open (2026-06-13).** Sprint 20 closed with second-order-honest
+> **Status: closed (2026-06-14).** Sprint 20 closed with second-order-honest
 > device models and a finished instrument bench proven by self-audit. Before
 > the digital chapter (logic gates from real transistors), this short sprint
 > fills the four most-wanted gaps in the beginner parts a hobbyist reaches for
@@ -125,3 +125,62 @@ drives the value down for an NTC), live verify.
 - **S21-v3-4** — fuse.
 - **S21-v3-5** — thermistor.
 - **S21-v3-6** — retro.
+
+## Close-out (2026-06-14) — Sprint 21 closes
+
+Planned as a short four-part bench-rounding sprint; it grew into the longest
+post-S19 stretch as each part opened the next door and the project lead kept
+pulling threads. What landed, in three waves:
+
+**Wave 1 — the planned parts bench (S21-v3-2 … 5).** The switch family
+(momentary push button + SPDT selector), the potentiometer (a real wiper split
+into two solver resistors), the fuse (stateful overcurrent blow), and the NTC
+thermistor (the Beta law on the electro-thermal loop's own temperature). All
+four drop, solve, carry cited defaults, tested + live-verified exactly as
+scoped.
+
+**Wave 2 — past the plan.** Adding an illumination input (the stated blocker
+for light parts) turned out clean, so the "deferred" light family landed too
+(S21-v3-7 … 9): the photoresistor (LDR) on a per-part incident-light axis, a
+light source casting E = I/d² by canvas distance, and the photodiode +
+phototransistor as light-driven current sources. Plus worst-case tolerance
+analysis (S21-v3-10 — every value's ± band swept to the corner extremes), and
+the relay — another non-goal — built as pure composition (a coil driving a
+switch, no new physics).
+
+**Wave 3 — honest-gap closure + interface depth.** A self-review surfaced a
+backlog of "defined but not fully modelled" / "cited to a class" caveats; the
+lead chose to close them all rather than carry them. Localized wire hot-spots
+(the fin model colouring the real hot section, ends heat-sunk by the connected
+parts) + the wire over-temperature failure; LED forward-voltage droop (Varshni
+bandgap); Zener reverse breakdown (regulates at V_Z in both engines);
+transformer core saturation (the magnetizing inductance collapses past the
+rated flux — the real magnetizing-current spike, not just a warning); per-wire
+gauge with its derived ampacity rating + a default-gauge picker; panel
+tab-grouping (drag one panel onto another to stack into tabs); and a
+datasheet-verification pass that caught a mislabelled inductor (a µH-package
+part cited for a 10 mH value) and tied the class-cited defaults to specific
+part numbers. Wire shielding was raised and honestly DEFERRED to the future EM
+stage — logged in PHYSICS-COVERAGE-MAP.md, not faked.
+
+### Retro
+
+- **Reuse over re-engineering.** Every increment rode existing machinery: the
+  pot the multi-element expansion, the fuse the failure-check + re-solve, the
+  thermistor + light parts the electro-thermal loop, the panel tabs a small
+  pure reducer, the saturation the volt-second flux the solver already tracked.
+- **Build → four gates → drive it live → then done.** This caught real errors
+  green tests alone would not have: the mislabelled inductor (datasheet pass),
+  and back in S20 the meter once reading a cold circuit (self-audit).
+- **"Fine taking time" held.** The sprint ran long because correctness, not a
+  deadline, set the pace — and it ends with no remaining honest-gap debt: every
+  shipped value is either tied to a real part or clearly labelled a class /
+  model / representative value.
+- **Honestly deferred (named, not faked).** Wire shielding's EMI rejection,
+  characteristic impedance, and twisted-pair coupling → the future EM-field
+  stage. Steinhart-Hart, log-taper pots, slow-blow I²t timing, JFET/SCR → later
+  refinements.
+
+**Sprint 22** opens on the project lead's direction: **more analog depth** —
+the op-amp as the keystone (amplifiers, comparators, active filters,
+oscillators), then the everyday analog toolbox.
