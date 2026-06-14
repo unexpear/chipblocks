@@ -1,0 +1,67 @@
+/*
+ * Tactile UI interactions — the whole app's clickable and draggable surfaces
+ * lift toward the cursor on hover and sink under a press, with a springy ease so
+ * they "pop." Only transform / filter / shadow animate (never width, height, or
+ * position), so nothing in the layout reflows. Honors prefers-reduced-motion.
+ */
+
+button,
+[draggable="true"] {
+  transition:
+    transform 0.14s cubic-bezier(0.34, 1.45, 0.5, 1),
+    box-shadow 0.14s ease,
+    filter 0.14s ease,
+    background-color 0.14s ease,
+    border-color 0.14s ease;
+}
+
+/* Hover — pop up off the surface (the springy ease overshoots slightly, so the
+   element gives a little bounce as the cursor crosses it). */
+button:not(:disabled):hover,
+[draggable="true"]:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.12);
+  box-shadow: 0 5px 12px -3px rgba(0, 0, 0, 0.6);
+}
+
+/* Press — sink in: down a touch, a hair smaller, dimmer, the lift-shadow gone.
+   A faster ease so the press feels immediate. */
+button:not(:disabled):active,
+[draggable="true"]:active {
+  transform: translateY(1px) scale(0.97);
+  filter: brightness(0.92);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  transition-duration: 0.05s;
+}
+
+/* A disabled button shouldn't pretend to be pressable. */
+button:disabled {
+  cursor: default;
+}
+
+/* Canvas parts brighten as the cursor passes — no transform, so React Flow's own
+   positioning transform on the node is never disturbed. */
+.react-flow__node {
+  transition: filter 0.14s ease;
+}
+.react-flow__node:hover {
+  filter: brightness(1.14);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button,
+  [draggable="true"],
+  .react-flow__node {
+    transition-property: filter, background-color, border-color;
+  }
+  /* Same selectors as the lift/sink rules above, so these win by source order
+     (equal specificity) without !important — the movement simply drops out,
+     while the brightness feedback stays. */
+  button:not(:disabled):hover,
+  button:not(:disabled):active,
+  [draggable="true"]:hover,
+  [draggable="true"]:active {
+    transform: none;
+    box-shadow: none;
+  }
+}

@@ -19,6 +19,7 @@ import {
   ViewportPortal,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import './interactions.css'
 import {
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
