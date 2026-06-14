@@ -271,7 +271,7 @@ type DiodeElement = {
   iK: number | undefined // matrix index of the cathode net
   saturationCurrent: number
   idealityFactor: number
-  /** kT/q at THIS junction's temperature (300 K when no temperature given). */
+  /** kT/q at THIS junction's temperature (298.15 K / 25 °C when no temperature given). */
   thermalV: number
   vGuess: number // linearization point; carries across steps as the warm start
 }

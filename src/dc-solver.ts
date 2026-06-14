@@ -121,7 +121,7 @@ export type SolveOptions = {
    * Per-instance junction temperatures (°C) from the electro-thermal loop.
    * A listed LED/BJT solves at its real junction temperature — V_T = kT/q and
    * the SPICE I_S(T) law — which is what makes a warm diode's forward voltage
-   * fall ≈2 mV/°C. Absent (the default): 300 K behavior, unchanged.
+   * fall ≈2 mV/°C. Absent (the default): 298.15 K (25 °C) behavior, unchanged.
    */
   temperaturesC?: Map<string, number>
   /**
@@ -176,7 +176,7 @@ type ShockleyLed = {
   cathodeNet: string
   saturationCurrent: number
   idealityFactor: number
-  /** kT/q at this junction's temperature (the global 300 K value by default). */
+  /** kT/q at this junction's temperature (the global 298.15 K / 25 °C value by default). */
   thermalV: number
   /** Current Newton-Raphson voltage guess (anode − cathode). */
   vGuess: number
@@ -691,7 +691,7 @@ function resolveShockleyLed(
   if (anodeConnect === undefined || cathodeConnect === undefined) return null
 
   const idealityFactor = readScalarParam(inst, 'ideality_factor') ?? DEFAULT_IDEALITY_FACTOR
-  // The V_F @ I_F calibration point is a 25 °C/300 K datasheet figure.
+  // The V_F @ I_F calibration point is a 25 °C (298.15 K) datasheet figure.
   let saturationCurrent = deriveSaturationCurrent(
     forwardVoltage,
     forwardCurrent,
@@ -906,7 +906,7 @@ export type BjtElement = {
   baseNet: string
   emitterNet: string
   params: BjtParams
-  /** kT/q at this junction's temperature (the global 300 K value by default). */
+  /** kT/q at this junction's temperature (the global 298.15 K / 25 °C value by default). */
   thermalV: number
   /** 'pnp' is the same Ebers-Moll model with both junctions reversed. */
   polarity: 'npn' | 'pnp'

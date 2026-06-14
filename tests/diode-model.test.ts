@@ -17,6 +17,7 @@ import {
   LED_VARSHNI_ALPHA_EV_PER_K,
   LED_VARSHNI_BETA_K,
   pnjlim,
+  ROOM_TEMPERATURE_KELVIN,
   scaleSaturationCurrent,
   thermalVoltage,
   varshniEnergyGap,
@@ -42,6 +43,13 @@ describe('thermalVoltage', () => {
   test('scales linearly with temperature', () => {
     // V_T(600) = 2 × V_T(300)
     expect(thermalVoltage(600)).toBeCloseTo(2 * thermalVoltage(300), 9)
+  })
+
+  test('defaults to the single 298.15 K (25 °C) reference, not the old 300 K approximation', () => {
+    // The audit fix: one calibration/operating reference for every device law, so a
+    // resting part sits exactly at its datasheet 25 °C point (no spurious 1.85 K shift).
+    expect(ROOM_TEMPERATURE_KELVIN).toBe(298.15)
+    expect(thermalVoltage()).toBeCloseTo(0.025693, 6) // 25.693 mV, vs 25.852 mV at 300 K
   })
 
   test('defaults to 298.15 K (25 °C, the datasheet calibration condition)', () => {

@@ -510,7 +510,7 @@ function partCard(
       )
     }
     lines.push(
-      `n = ${n} is the ideality factor (how textbook-perfect the junction is); V_T = kT/q = ${formatEng(vT, 'V')} comes from temperature itself (300 K here).`,
+      `n = ${n} is the ideality factor (how textbook-perfect the junction is); V_T = kT/q = ${formatEng(vT, 'V')} comes from temperature itself (298.15 K / 25 °C here).`,
     )
     if (acrossV !== undefined && current !== undefined) {
       lines.push(
