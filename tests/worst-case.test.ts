@@ -8,7 +8,7 @@
 import { describe, expect, test } from 'vitest'
 import { solveDC } from '../src/dc-solver.ts'
 import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
-import { toleranceParts, worstCaseAnalysis } from '../src/renderer/worst-case.ts'
+import { deratingDashboard, toleranceParts, worstCaseAnalysis } from '../src/renderer/worst-case.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
 
@@ -153,5 +153,63 @@ describe('no toleranced parts → nothing to sweep', () => {
     const v = entry(result, 'r2', 'voltage')
     expect(v?.min).toBeCloseTo(v?.nominal ?? -1, 9)
     expect(v?.max).toBeCloseTo(v?.nominal ?? -1, 9)
+  })
+})
+
+describe('deratingDashboard — the margin scorecard', () => {
+  /** 9 V (ideal) → one R → ground, with a power rating. P = 81/R W. */
+  function loaded(rOhms: number, powerRating: number) {
+    const nodes: CanvasNode[] = [
+      {
+        id: 'src',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(9, 'volt'), internal_resistance: scalar(0, 'ohm') },
+      },
+      {
+        id: 'r',
+        definition: 'resistor',
+        parameters: {
+          resistance: scalar(rOhms, 'ohm'),
+          tolerance_percent: scalar(5, 'percent'),
+          power_rating: scalar(powerRating, 'watt'),
+        },
+      },
+      { id: 'gnd', definition: 'ground' },
+    ]
+    const edges = [
+      { source: 'src', sourceHandle: 'terminal_positive', target: 'r', targetHandle: 'terminal_a' },
+      { source: 'r', sourceHandle: 'terminal_b', target: 'src', targetHandle: 'terminal_negative' },
+      {
+        source: 'gnd',
+        sourceHandle: 'reference_terminal',
+        target: 'src',
+        targetHandle: 'terminal_negative',
+      },
+    ]
+    return canvasToWorld(nodes, edges)
+  }
+  const powerEntry = (powerRating: number) => {
+    const w = loaded(100, powerRating)
+    return deratingDashboard(w, solveDC(w)).entries.find(
+      (e) => e.partId === 'r' && e.quantity === 'power',
+    )
+  }
+
+  test('comfortably under the rating bands SAFE', () => {
+    const p = powerEntry(2) // 0.81 W of 2 W → 41 %
+    expect(p?.fraction).toBeCloseTo(0.81 / 2, 3)
+    expect(p?.band).toBe('safe')
+  })
+
+  test('approaching the rating bands CAUTION; past ~90 % bands CRITICAL', () => {
+    expect(powerEntry(1.0)?.band).toBe('caution') // 0.81 → 81 %
+    const crit = powerEntry(0.83) // 0.81 / 0.83 → 98 %
+    expect(crit?.band).toBe('critical')
+    expect(crit?.fraction ?? 0).toBeGreaterThanOrEqual(0.9)
+  })
+
+  test('worstFraction is the highest fraction-of-a-rating on the board', () => {
+    const w = loaded(100, 0.83)
+    expect(deratingDashboard(w, solveDC(w)).worstFraction).toBeCloseTo(0.81 / 0.83, 3)
   })
 })

@@ -294,13 +294,13 @@ export function ToolbarItems({
       <button
         type="button"
         onClick={onWorstCase}
-        title="Worst-case — sweep every part's ±tolerance and report each reading's min/max envelope, crossed against its rating. Asks 'is EVERY corner safe?', not just the nominal one."
+        title="Margins — the derating scorecard (how close each part runs to its limit now), the worst-case envelope over every part's ±tolerance, and Monte-Carlo (the realistic spread and what fraction of boards fail)."
         style={{ ...toolButton(false), flexDirection: 'row', gap: 6, padding: '8px 12px' }}
       >
         <span aria-hidden style={{ color: '#d6a23c', fontSize: 13 }}>
           ±
         </span>
-        <span style={{ fontSize: 11 }}>Worst-case</span>
+        <span style={{ fontSize: 11 }}>Margins</span>
       </button>
 
       {/* Lenses (S19-v3-50): overlay the solved physics on the schematic. Voltage

@@ -22,10 +22,11 @@
 import type { Instance, World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
 import { readScalarParam } from '../instance-params.ts'
+import { thermalSeverity } from '../thermal-model.ts'
 import { type PartReading, partReadings } from './part-readings.ts'
 
 export type Quantity = 'current' | 'voltage' | 'power' | 'temperature'
-const QUANTITIES: Quantity[] = ['current', 'voltage', 'power', 'temperature']
+export const QUANTITIES: Quantity[] = ['current', 'voltage', 'power', 'temperature']
 
 /** Definitions whose declared VALUE carries the ±tolerance the sweep varies. */
 const TOLERANCED_VALUE: Record<string, string> = {
@@ -63,7 +64,7 @@ export function toleranceParts(world: World): TolerancePart[] {
 /** The rating (absolute-max limit) for a part's reading, if it declares one. The
  *  worst-case is crossed against this. Temperature uses max_operating_temperature;
  *  power the power_rating; current whichever current limit the part type carries. */
-function ratingFor(inst: Instance, quantity: Quantity): number | undefined {
+export function ratingFor(inst: Instance, quantity: Quantity): number | undefined {
   if (quantity === 'temperature') return readScalarParam(inst, 'max_operating_temperature')
   if (quantity === 'power') return readScalarParam(inst, 'power_rating')
   if (quantity === 'current') {
@@ -82,7 +83,7 @@ function ratingFor(inst: Instance, quantity: Quantity): number | undefined {
   return undefined
 }
 
-const readingOf = (reading: PartReading | undefined, q: Quantity): number | undefined =>
+export const readingOf = (reading: PartReading | undefined, q: Quantity): number | undefined =>
   q === 'current'
     ? reading?.current
     : q === 'voltage'
@@ -91,19 +92,23 @@ const readingOf = (reading: PartReading | undefined, q: Quantity): number | unde
         ? reading?.power
         : reading?.temperatureC
 
-/** A world with the listed parts moved to a corner: dir +1 = high end of the
- *  tolerance band, −1 = low end, 0 = nominal. Units/structure preserved. */
-function worldAtCorner(world: World, parts: TolerancePart[], dirs: Map<string, number>): World {
+/** A world with each listed part's value param set to amountOf(part) (undefined = leave
+ *  it at nominal). The shared builder behind the worst-case corners AND the Monte-Carlo
+ *  samples; units and structure are preserved. */
+export function worldWithPartValues(
+  world: World,
+  parts: TolerancePart[],
+  amountOf: (part: TolerancePart) => number | undefined,
+): World {
   const instances = new Map(world.instances)
   for (const part of parts) {
-    const dir = dirs.get(part.id) ?? 0
-    if (dir === 0) continue
+    const amount = amountOf(part)
+    if (amount === undefined) continue
     const inst = instances.get(part.id)
     const existing = inst?.parameters?.[part.param] as
       | { value?: { kind: string; amount: number; unit: string } }
       | undefined
     if (inst === undefined || existing?.value === undefined) continue
-    const amount = part.nominal * (1 + dir * part.tolFraction)
     instances.set(part.id, {
       ...inst,
       parameters: {
@@ -113,6 +118,15 @@ function worldAtCorner(world: World, parts: TolerancePart[], dirs: Map<string, n
     })
   }
   return { ...world, instances }
+}
+
+/** A world with the listed parts moved to a corner: dir +1 = high end of the
+ *  tolerance band, −1 = low end, 0 = nominal. Units/structure preserved. */
+function worldAtCorner(world: World, parts: TolerancePart[], dirs: Map<string, number>): World {
+  return worldWithPartValues(world, parts, (part) => {
+    const dir = dirs.get(part.id) ?? 0
+    return dir === 0 ? undefined : part.nominal * (1 + dir * part.tolFraction)
+  })
 }
 
 export interface WorstCaseEntry {
@@ -234,4 +248,62 @@ function collectEntries(
     }
   }
   return entries
+}
+
+export type DeratingBand = 'safe' | 'caution' | 'critical'
+
+/** Margin bands. Real reliability practice keeps parts well under their absolute limits;
+ *  caution at 70 % matches the temp lens's warning fraction, critical at 90 % is the
+ *  "running out of headroom" mark. */
+export const DERATING_CAUTION_FRACTION = 0.7
+export const DERATING_CRITICAL_FRACTION = 0.9
+
+export interface DeratingEntry {
+  partId: string
+  quantity: Quantity
+  value: number
+  rating: number
+  /** Fraction of the rating used: |value| / rating, or for temperature the rise as a
+   *  fraction of ambient -> rated max (the same severity the temp lens bands on). */
+  fraction: number
+  band: DeratingBand
+}
+
+export interface DeratingResult {
+  entries: DeratingEntry[]
+  /** The single highest fraction-of-a-rating anywhere on the board. */
+  worstFraction: number
+}
+
+function deratingBand(fraction: number): DeratingBand {
+  if (fraction >= DERATING_CRITICAL_FRACTION) return 'critical'
+  if (fraction >= DERATING_CAUTION_FRACTION) return 'caution'
+  return 'safe'
+}
+
+/**
+ * The derating dashboard: every part reading as a fraction of its OWN rating at the
+ * nominal operating point, banded green / amber / red. No sweep and no re-solve -- it
+ * reads the solution already in hand, so it is the always-cheap "how much margin is
+ * left, everywhere" scorecard that sits beside the worst-case corners.
+ */
+export function deratingDashboard(world: World, solution: Solution): DeratingResult {
+  const readings = partReadings(world, solution)
+  const entries: DeratingEntry[] = []
+  let worstFraction = 0
+  for (const [partId, reading] of readings) {
+    const inst = world.instances.get(partId)
+    if (inst === undefined) continue
+    for (const q of QUANTITIES) {
+      const value = readingOf(reading, q)
+      if (value === undefined) continue
+      const rating = ratingFor(inst, q)
+      if (rating === undefined || rating <= 0) continue
+      const fraction =
+        q === 'temperature' ? thermalSeverity(value, rating) : Math.abs(value) / rating
+      entries.push({ partId, quantity: q, value, rating, fraction, band: deratingBand(fraction) })
+      if (fraction > worstFraction) worstFraction = fraction
+    }
+  }
+  return { entries, worstFraction }
 }

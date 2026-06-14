@@ -109,6 +109,7 @@ import {
   terminalVoltages,
   voltmeterSolve,
 } from './meter.tsx'
+import { type MonteCarloResult, monteCarloAnalysis } from './monte-carlo.ts'
 import { expandMultiLeadSources, multiLeadAliases } from './multi-tap-source.ts'
 import { edgeTypes } from './net-edge.tsx'
 import { BLOCK_MIME, BlockPaletteItems, DEFINITION_MIME, PaletteItems } from './palette.tsx'
@@ -161,7 +162,12 @@ import {
   samplePathPoints,
 } from './wire-path.ts'
 import { worldToFlow } from './world-to-flow.ts'
-import { type WorstCaseResult, worstCaseAnalysis } from './worst-case.ts'
+import {
+  type DeratingResult,
+  deratingDashboard,
+  type WorstCaseResult,
+  worstCaseAnalysis,
+} from './worst-case.ts'
 import { WorstCasePanel } from './worst-case-panel.tsx'
 
 // The preload bridge (electron/preload.ts): the native Settings menu pushes
@@ -897,11 +903,30 @@ function Canvas() {
   // reading's worst corner crossed against its rating. Runs the SAME heat-aware
   // solve the canvas uses, on the grounded circuit.
   const [worstCase, setWorstCase] = useState<WorstCaseResult | null>(null)
+  const [derating, setDerating] = useState<DeratingResult | null>(null)
+  const [monteCarlo, setMonteCarlo] = useState<MonteCarloResult | null>(null)
+  const [monteCarloRunning, setMonteCarloRunning] = useState(false)
   const runWorstCase = useCallback(() => {
-    setWorstCase(
-      worstCaseAnalysis(groundedComponent(solvedWorld), (w) => solveWithRelays(w).solution),
-    )
+    const grounded = groundedComponent(solvedWorld)
+    setWorstCase(worstCaseAnalysis(grounded, (w) => solveWithRelays(w).solution))
+    setDerating(deratingDashboard(grounded, solveWithRelays(grounded).solution))
+    setMonteCarlo(null)
   }, [solvedWorld])
+  const runMonteCarlo = useCallback(() => {
+    setMonteCarloRunning(true)
+    // Defer the heavy sweep a tick so the "Running…" label paints first.
+    window.setTimeout(() => {
+      const grounded = groundedComponent(solvedWorld)
+      setMonteCarlo(monteCarloAnalysis(grounded, (w) => solveWithRelays(w).solution))
+      setMonteCarloRunning(false)
+    }, 0)
+  }, [solvedWorld])
+  const closeMargins = useCallback(() => {
+    setWorstCase(null)
+    setDerating(null)
+    setMonteCarlo(null)
+    setMonteCarloRunning(false)
+  }, [])
 
   // Circuit blocks (S19-v3-67): group the selection into ONE reusable block.
   // The prompt collects the block's name; the viewer (double-click a block)
@@ -2915,7 +2940,15 @@ function Canvas() {
         ) : null}
         {/* Worst-case panel — each reading's envelope over tolerances vs its rating. */}
         {worstCase !== null ? (
-          <WorstCasePanel result={worstCase} onClose={() => setWorstCase(null)} light={light} />
+          <WorstCasePanel
+            result={worstCase}
+            derating={derating}
+            monteCarlo={monteCarlo}
+            monteCarloRunning={monteCarloRunning}
+            onRunMonteCarlo={runMonteCarlo}
+            onClose={closeMargins}
+            light={light}
+          />
         ) : null}
 
         {/* Shortcuts panel — every key and control, viewable and editable. */}
