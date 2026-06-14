@@ -50,6 +50,11 @@ const AIR_PRANDTL = 0.71
 const GRAVITY = 9.81 // m/s²
 /** Copper thermal conductivity (W/m·K) — for the fin equation's thermal length. */
 const COPPER_THERMAL_CONDUCTIVITY = 400
+/** Stefan–Boltzmann constant (W/m²·K⁴), NIST CODATA — for radiative cooling. */
+const STEFAN_BOLTZMANN = 5.670374e-8
+/** Emissivity of a PVC-insulated wire's surface (plastics ~0.9–0.95). A bare
+ *  polished-copper wire would be far lower (~0.05), but hookup wire is insulated. */
+const WIRE_EMISSIVITY = 0.9
 
 /**
  * Natural-convection heat-transfer coefficient (W/m²·K) for a horizontal wire of
@@ -83,21 +88,22 @@ export interface WireThermalProfile {
 
 /**
  * A current-carrying wire's REAL temperature profile. Its I²R heat is generated
- * uniformly, then shed two ways: convection along its whole surface, AND
- * conduction into its ends, which the parts/pads it connects to hold near ambient
- * (heat-sinks). The steady-state result is the textbook fin distribution —
- * hottest in the MIDDLE, tapering to ambient at the ends, so a wire has a genuine
- * hot SPOT, not a uniform glow (this is why fuses melt in the middle):
- *   T(x) = T₀ + ΔT_conv · [ 1 − cosh(κ(x − L/2)) / cosh(κL/2) ]
- * ΔT_conv = I²R / (h·A_surface) is the convective-limit rise; κ = √(h·P/(k_c·A))
- * is the inverse thermal length (a long wire reaches ΔT_conv in the middle; a
- * short one stays cooler because the cooled ends reach the centre). The
- * convection coefficient h is itself derived (Churchill–Chu, see
- * convectionCoefficient) — not a magic number.
+ * uniformly, then shed three ways: convection AND radiation along its whole
+ * surface, plus conduction into its two ends — which the parts it connects to
+ * hold at their own solved temperatures (near ambient when those parts run cool).
+ * The steady-state result is the textbook fin distribution — hottest in the
+ * MIDDLE for equal ends, so a wire has a genuine hot SPOT, not a uniform glow
+ * (this is why fuses melt in the middle); an end resting on a hot part lifts the
+ * wire near it, shifting the spot. ΔT_conv = I²R / (h·A_surface) is the
+ * convective-limit rise; κ = √(h·P/(k_c·A)) is the inverse thermal length (a long
+ * wire reaches ΔT_conv in the middle; a short one stays cooler because the ends
+ * reach the centre). The total surface coefficient h is itself derived — the
+ * Churchill–Chu convection correlation plus the Stefan–Boltzmann radiation term —
+ * not a magic number.
  *
- * Honest gaps: the ends are taken at ambient (not the connected parts' own solved
- * temperature); no radiation; one fixed AWG/material per wire; still-air
- * convection (no forced airflow or bundling).
+ * Honest gaps: one fixed AWG/material per wire; still-air natural convection (no
+ * forced airflow or bundling); a dead (no-current) wire reads ambient even if it
+ * touches a hot part (passive end-to-end conduction is not drawn yet).
  */
 export function wireThermalProfile(
   amps: number,
@@ -105,6 +111,8 @@ export function wireThermalProfile(
   lengthM: number,
   areaM2: number,
   ambientC: number = STANDARD_AMBIENT_C,
+  endAC: number = ambientC,
+  endBC: number = ambientC,
 ): WireThermalProfile {
   const flat: WireThermalProfile = { peakC: ambientC, tempAtFraction: () => ambientC }
   if (!(Math.abs(amps) > 0) || resistanceOhm <= 0 || lengthM <= 0 || areaM2 <= 0) return flat
@@ -113,21 +121,45 @@ export function wireThermalProfile(
   const perimeter = Math.PI * diameterM // surface per unit length
   const surfaceArea = perimeter * lengthM
   if (surfaceArea <= 0) return flat
-  // The convection coefficient depends on the temperature rise and the rise
-  // depends on the coefficient, so settle the two together — a few passes
-  // converge (the dependence is weak, ∝ ΔT^(1/6)).
-  let convection = convectionCoefficient(diameterM, 50, ambientC) // seeded guess
-  let riseConvective = power / (convection * surfaceArea)
-  for (let i = 0; i < 3; i++) {
-    convection = convectionCoefficient(diameterM, riseConvective, ambientC)
-    riseConvective = power / (convection * surfaceArea)
+  // The wire sheds heat two ways along its surface — convection AND radiation —
+  // and both depend on the temperature rise, which in turn depends on them. So
+  // settle the loop together (a few passes converge). Radiation is the
+  // Stefan–Boltzmann law εσ(Ts⁴−T₀⁴), folded into an effective coefficient; it
+  // is small when the wire is cool and grows steeply once it runs hot.
+  const ambientK = ambientC + 273.15
+  let totalCoeff = convectionCoefficient(diameterM, 50, ambientC) // seeded guess
+  let riseConvective = power / (totalCoeff * surfaceArea)
+  for (let i = 0; i < 5; i++) {
+    const convection = convectionCoefficient(diameterM, riseConvective, ambientC)
+    const surfaceK = ambientK + riseConvective
+    const radiation =
+      WIRE_EMISSIVITY *
+      STEFAN_BOLTZMANN *
+      (surfaceK * surfaceK + ambientK * ambientK) *
+      (surfaceK + ambientK)
+    totalCoeff = convection + radiation
+    riseConvective = power / (totalCoeff * surfaceArea)
   }
-  const kappa = Math.sqrt((convection * perimeter) / (COPPER_THERMAL_CONDUCTIVITY * areaM2))
-  const coshHalf = Math.cosh((kappa * lengthM) / 2)
-  const riseAt = (u: number) =>
-    riseConvective * (1 - Math.cosh(kappa * lengthM * (u - 0.5)) / coshHalf)
+  const kappa = Math.sqrt((totalCoeff * perimeter) / (COPPER_THERMAL_CONDUCTIVITY * areaM2))
+  // The fin profile with the two ends held at the connected parts' temperatures
+  // (not ambient): θ(x) = θ_conv + C₁·cosh(κx) + C₂·sinh(κx), solved for the end
+  // rises θ_a, θ_b. Both ends at ambient → the symmetric middle-hottest spot; an
+  // end sitting on a hot part lifts the wire near it.
+  const kL = kappa * lengthM
+  const thetaA = endAC - ambientC
+  const thetaB = endBC - ambientC
+  const sinhKL = Math.sinh(kL)
+  const c1 = thetaA - riseConvective
+  const c2 = sinhKL > 0 ? (thetaB - riseConvective - c1 * Math.cosh(kL)) / sinhKL : 0
+  const riseAt = (u: number) => riseConvective + c1 * Math.cosh(kL * u) + c2 * Math.sinh(kL * u)
+  // With unequal ends the peak can sit off-centre — sample to find the hottest point.
+  let peak = riseAt(0.5)
+  for (let i = 0; i <= 20; i++) {
+    const r = riseAt(i / 20)
+    if (r > peak) peak = r
+  }
   return {
-    peakC: ambientC + riseAt(0.5),
+    peakC: ambientC + peak,
     tempAtFraction: (u) => ambientC + riseAt(Math.min(1, Math.max(0, u))),
   }
 }

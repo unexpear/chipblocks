@@ -6,7 +6,12 @@ import {
   useRef,
   useState,
 } from 'react'
-import { thermalSeverity, WIRE_INSULATION_MAX_C, wireThermalProfile } from '../thermal-model.ts'
+import {
+  STANDARD_AMBIENT_C,
+  thermalSeverity,
+  WIRE_INSULATION_MAX_C,
+  wireThermalProfile,
+} from '../thermal-model.ts'
 import {
   FIELD_COLOR,
   FIELD_CONTOUR_MULTIPLIERS,
@@ -162,7 +167,19 @@ export function NetEdge({
   // the same always-on feedback an over-rated part gets.
   let wirePeakC: number | null = null
   if (amps !== null && ohms !== null && lengthM !== null) {
-    const profile = wireThermalProfile(amps, ohms, lengthM, AWG22_AREA_M2)
+    // The wire's two ends sit on the parts they connect to, at those parts' solved
+    // temperatures (the fin boundary) — so a wire off a hot part runs hotter.
+    const endA = typeof data?.endTempA === 'number' ? data.endTempA : STANDARD_AMBIENT_C
+    const endB = typeof data?.endTempB === 'number' ? data.endTempB : STANDARD_AMBIENT_C
+    const profile = wireThermalProfile(
+      amps,
+      ohms,
+      lengthM,
+      AWG22_AREA_M2,
+      STANDARD_AMBIENT_C,
+      endA,
+      endB,
+    )
     wirePeakC = profile.peakC
     if (thermalSeverity(profile.peakC, WIRE_INSULATION_MAX_C) >= THERMAL_WARNING_FRACTION) {
       const samples = samplePathPoints(routePoints, {

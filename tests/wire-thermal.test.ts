@@ -78,6 +78,31 @@ describe('wireThermalProfile — the hot spot', () => {
   })
 })
 
+describe('wireThermalProfile — real end temperatures (the fin boundary)', () => {
+  test('the ends sit at the connected parts temperatures, not ambient', () => {
+    const p = wireThermalProfile(8, R, LENGTH_M, AREA, A, 90, 40)
+    expect(p.tempAtFraction(0)).toBeCloseTo(90, 0) // end A on a 90 C part
+    expect(p.tempAtFraction(1)).toBeCloseTo(40, 0) // end B on a 40 C part
+  })
+
+  test('a hot end lifts the wire near it -- the spot is no longer symmetric', () => {
+    const p = wireThermalProfile(8, R, LENGTH_M, AREA, A, 95, A) // end A hot, end B ambient
+    expect(p.tempAtFraction(0.15)).toBeGreaterThan(p.tempAtFraction(0.85))
+  })
+
+  test('both ends on hot parts -> the whole wire runs hotter than with cool ends', () => {
+    const cool = wireThermalProfile(8, R, LENGTH_M, AREA).peakC
+    const hot = wireThermalProfile(8, R, LENGTH_M, AREA, A, 80, 80).peakC
+    expect(hot).toBeGreaterThan(cool)
+  })
+
+  test('equal ambient ends reproduce the symmetric middle spot', () => {
+    const p = wireThermalProfile(8, R, LENGTH_M, AREA, A, A, A)
+    expect(p.tempAtFraction(0.3)).toBeCloseTo(p.tempAtFraction(0.7), 6) // symmetric
+    expect(p.tempAtFraction(0.5)).toBeGreaterThan(p.tempAtFraction(0.1)) // middle hottest
+  })
+})
+
 describe('thermalSeverity — closeness to a real rated maximum', () => {
   test('0 at ambient, 1 exactly at the rating, >1 over it', () => {
     expect(thermalSeverity(A, 105)).toBe(0)

@@ -36,6 +36,7 @@ import { overcurrentFuseIds } from '../failure-detector.ts'
 import { readScalarParam } from '../instance-params.ts'
 import { LIGHT_SENSOR_DEFINITIONS, type LightSource, worldWithCastLight } from '../light.ts'
 import { type RelayState, solveWithRelays } from '../relay.ts'
+import { STANDARD_AMBIENT_C } from '../thermal-model.ts'
 import type { TransientResult } from '../transient-solver.ts'
 import { BlockViewer } from './block-viewer.tsx'
 import {
@@ -240,6 +241,7 @@ function edgePhysics(
   solution: Solution,
   lengthM: number,
   ohms: number,
+  temperatures: Map<string, number>,
 ) {
   const flow = wireFlow(solution, `wire_${edge.id}`, true)
   // The wire's two end potentials, so the on-wire probe can read the interpolated
@@ -261,6 +263,11 @@ function edgePhysics(
       drop: flow.carries ? flow.amps * ohms : null,
       vSource,
       vTarget,
+      // The two ends sit on the parts they connect to, at those parts' solved
+      // temperatures (ambient when a part runs cool / has no thermal model) — the
+      // boundary conditions for the wire's hot-spot fin model.
+      endTempA: temperatures.get(edge.source) ?? STANDARD_AMBIENT_C,
+      endTempB: temperatures.get(edge.target) ?? STANDARD_AMBIENT_C,
     },
     style: {
       stroke: flow.carries ? CURRENT : IDLE,
@@ -416,7 +423,14 @@ function solveCanvas(
   const solution = thermal.solution
   const edges = edgeList.map((edge) => {
     const wire = drawn.get(edge.id) ?? { lengthM: 0, ohms: 0 }
-    const physics = edgePhysics(edge, world, solution, wire.lengthM, wire.ohms)
+    const physics = edgePhysics(
+      edge,
+      world,
+      solution,
+      wire.lengthM,
+      wire.ohms,
+      thermal.temperaturesC,
+    )
     const existing = edge.data?.waypoints
     const waypoints = Array.isArray(existing) ? existing : undefined
     return {
