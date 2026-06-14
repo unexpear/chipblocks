@@ -180,10 +180,133 @@ export const INVERTER_BLOCK: BlockData = {
   ],
 }
 
+/**
+ * 2-INPUT NAND — OUT = NOT(A AND B), a universal gate (every other gate can be built from
+ * NANDs). CMOS form: the pull-up is two PMOS in PARALLEL (either input LOW switches one on
+ * and pulls OUT up), the pull-down is two NMOS in SERIES (only A AND B both HIGH lets the
+ * stack conduct and pull OUT down). Four MOSFETs; it flattens to them, so the truth table is
+ * real switching. Inputs A/B, output, and the V+/GND rails become ports.
+ */
+export const NAND2_BLOCK: BlockData = {
+  name: 'NAND',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'p_a', definition: 'transistor_mosfet_pmos', x: 60, y: 30, parameters: LOGIC_PMOS },
+    { id: 'p_b', definition: 'transistor_mosfet_pmos', x: 200, y: 30, parameters: LOGIC_PMOS },
+    { id: 'n_b', definition: 'transistor_mosfet_nmos', x: 130, y: 170, parameters: LOGIC_NMOS },
+    { id: 'n_a', definition: 'transistor_mosfet_nmos', x: 130, y: 300, parameters: LOGIC_NMOS },
+  ],
+  edges: [
+    // V+ rail: the two PMOS sources
+    {
+      id: 'rail_vdd',
+      source: 'p_a',
+      sourceHandle: 'source',
+      target: 'p_b',
+      targetHandle: 'source',
+    },
+    // output net: both PMOS drains + the top NMOS drain
+    { id: 'out_pp', source: 'p_a', sourceHandle: 'drain', target: 'p_b', targetHandle: 'drain' },
+    { id: 'out_pn', source: 'p_b', sourceHandle: 'drain', target: 'n_b', targetHandle: 'drain' },
+    // series middle: bottom NMOS drain — top NMOS source
+    { id: 'series', source: 'n_a', sourceHandle: 'drain', target: 'n_b', targetHandle: 'source' },
+    // input A: p_a.gate — n_a.gate ; input B: p_b.gate — n_b.gate
+    { id: 'gate_a', source: 'p_a', sourceHandle: 'gate', target: 'n_a', targetHandle: 'gate' },
+    { id: 'gate_b', source: 'p_b', sourceHandle: 'gate', target: 'n_b', targetHandle: 'gate' },
+  ],
+  ports: [
+    { id: 'a', label: 'A', side: 'left', offset: 14, inner: { nodeId: 'n_a', handleId: 'gate' } },
+    { id: 'b', label: 'B', side: 'left', offset: 36, inner: { nodeId: 'n_b', handleId: 'gate' } },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 58,
+      inner: { nodeId: 'n_a', handleId: 'source' },
+    },
+    {
+      id: 'out',
+      label: 'out',
+      side: 'right',
+      offset: 14,
+      inner: { nodeId: 'p_a', handleId: 'drain' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 36,
+      inner: { nodeId: 'p_a', handleId: 'source' },
+    },
+  ],
+}
+
+/**
+ * 2-INPUT NOR — OUT = NOT(A OR B), the other universal gate. CMOS form is the NAND's mirror:
+ * the pull-up is two PMOS in SERIES (only A AND B both LOW lets the stack pull OUT up), the
+ * pull-down is two NMOS in PARALLEL (either input HIGH pulls OUT down). Four MOSFETs; real
+ * switching, flattened to the solver.
+ */
+export const NOR2_BLOCK: BlockData = {
+  name: 'NOR',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'p_a', definition: 'transistor_mosfet_pmos', x: 130, y: 30, parameters: LOGIC_PMOS },
+    { id: 'p_b', definition: 'transistor_mosfet_pmos', x: 130, y: 160, parameters: LOGIC_PMOS },
+    { id: 'n_a', definition: 'transistor_mosfet_nmos', x: 60, y: 300, parameters: LOGIC_NMOS },
+    { id: 'n_b', definition: 'transistor_mosfet_nmos', x: 200, y: 300, parameters: LOGIC_NMOS },
+  ],
+  edges: [
+    // series middle: top PMOS drain — bottom PMOS source
+    { id: 'series', source: 'p_a', sourceHandle: 'drain', target: 'p_b', targetHandle: 'source' },
+    // output net: bottom PMOS drain + both NMOS drains
+    { id: 'out_pn', source: 'p_b', sourceHandle: 'drain', target: 'n_a', targetHandle: 'drain' },
+    { id: 'out_nn', source: 'n_a', sourceHandle: 'drain', target: 'n_b', targetHandle: 'drain' },
+    // GND rail: the two NMOS sources
+    {
+      id: 'rail_gnd',
+      source: 'n_a',
+      sourceHandle: 'source',
+      target: 'n_b',
+      targetHandle: 'source',
+    },
+    // input A: p_a.gate — n_a.gate ; input B: p_b.gate — n_b.gate
+    { id: 'gate_a', source: 'p_a', sourceHandle: 'gate', target: 'n_a', targetHandle: 'gate' },
+    { id: 'gate_b', source: 'p_b', sourceHandle: 'gate', target: 'n_b', targetHandle: 'gate' },
+  ],
+  ports: [
+    { id: 'a', label: 'A', side: 'left', offset: 14, inner: { nodeId: 'n_a', handleId: 'gate' } },
+    { id: 'b', label: 'B', side: 'left', offset: 36, inner: { nodeId: 'n_b', handleId: 'gate' } },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 58,
+      inner: { nodeId: 'n_a', handleId: 'source' },
+    },
+    {
+      id: 'out',
+      label: 'out',
+      side: 'right',
+      offset: 14,
+      inner: { nodeId: 'p_b', handleId: 'drain' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 36,
+      inner: { nodeId: 'p_a', handleId: 'source' },
+    },
+  ],
+}
+
 /** Built-in blocks droppable from the palette, keyed by their palette definition id.
  *  The palette lists these like parts; App's drop handler turns one into a block node
  *  (a fresh deep copy) that descends + flattens like any user-grouped block. */
 export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   op_amp: OPAMP_BLOCK,
   logic_not: INVERTER_BLOCK,
+  logic_nand: NAND2_BLOCK,
+  logic_nor: NOR2_BLOCK,
 }

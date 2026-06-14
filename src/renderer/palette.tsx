@@ -96,6 +96,8 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'transistor_mosfet_pmos', label: 'PMOS' },
   { definition: 'op_amp', label: 'Op-Amp' },
   { definition: 'logic_not', label: 'NOT' },
+  { definition: 'logic_nand', label: 'NAND' },
+  { definition: 'logic_nor', label: 'NOR' },
   { definition: 'switch_spst_toggle', label: 'Switch' },
   { definition: 'switch_spst_momentary', label: 'Button' },
   { definition: 'switch_spdt', label: 'SPDT' },

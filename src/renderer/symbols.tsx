@@ -629,6 +629,44 @@ function NotGateGlyph() {
   )
 }
 
+/** NAND gate — the AND D-shape (flat back, round front) with the inversion bubble. */
+function NandGateGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>NAND gate</title>
+      <line x1={0} y1={MID - 7} x2={18} y2={MID - 7} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={0} y1={MID + 7} x2={18} y2={MID + 7} stroke={STROKE} strokeWidth={1.5} />
+      <path
+        d={`M 18 ${MID - 14} L 38 ${MID - 14} A 14 14 0 0 1 38 ${MID + 14} L 18 ${MID + 14} Z`}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <circle cx={56} cy={MID} r={4} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={60} y1={MID} x2={80} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
+/** NOR gate — the OR shield (curved back, pointed front) with the inversion bubble. */
+function NorGateGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>NOR gate</title>
+      <line x1={0} y1={MID - 7} x2={18} y2={MID - 7} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={0} y1={MID + 7} x2={18} y2={MID + 7} stroke={STROKE} strokeWidth={1.5} />
+      <path
+        d={`M 16 ${MID - 14} Q 34 ${MID - 14} 50 ${MID} Q 34 ${MID + 14} 16 ${MID + 14} Q 25 ${MID} 16 ${MID - 14} Z`}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <circle cx={54} cy={MID} r={4} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={58} y1={MID} x2={80} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
 /** N-channel enhancement MOSFET — insulated gate bar (the gap IS the oxide),
  * channel bar, drain up, source down with the inward arrow. Gate from the left. */
 function MosfetNmosGlyph() {
@@ -748,6 +786,8 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   transistor_mosfet_pmos: MosfetPmosGlyph,
   op_amp: OpAmpGlyph,
   logic_not: NotGateGlyph,
+  logic_nand: NandGateGlyph,
+  logic_nor: NorGateGlyph,
   transformer: TransformerGlyph,
   transformer_center_tapped: CtTransformerGlyph,
 }
