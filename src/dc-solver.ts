@@ -124,6 +124,13 @@ export type SolveOptions = {
    * fall ≈2 mV/°C. Absent (the default): 300 K behavior, unchanged.
    */
   temperaturesC?: Map<string, number>
+  /**
+   * A node-voltage starting guess (net id → volts) — SPICE's .nodeset. Seeds the
+   * nonlinear devices' junction/terminal voltages so Newton-Raphson starts near
+   * the answer. Used by the pseudo-transient fallback (pseudo-transient.ts) to make
+   * a hard circuit's final solve converge instantly; harmless on easy circuits.
+   */
+  initialNodes?: Map<string, number>
 }
 
 export type SolutionStatus =
@@ -444,6 +451,26 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       if (typeof v === 'number') nodes.set(netId, v)
     }
     return { nodes, xArr }
+  }
+
+  // Optional .nodeset seed: set every nonlinear device's junction/terminal
+  // voltages directly from a node-voltage hint, so the Newton starts at (or near)
+  // the operating point. The seed IS an operating point — no per-iteration
+  // limiting, just place the guesses, exactly mirroring the loop's update below.
+  if (options?.initialNodes) {
+    const seed = options.initialNodes
+    const sv = (net: string) => (net === ground ? 0 : (seed.get(net) ?? 0))
+    for (const led of shockleyLeds) led.vGuess = sv(led.anodeNet) - sv(led.cathodeNet)
+    for (const z of zeners) z.vGuess = sv(z.anodeNet) - sv(z.cathodeNet)
+    for (const bjt of bjts) {
+      const sign = bjt.polarity === 'pnp' ? -1 : 1
+      bjt.vBE = sign * (sv(bjt.baseNet) - sv(bjt.emitterNet))
+      bjt.vBC = sign * (sv(bjt.baseNet) - sv(bjt.collectorNet))
+    }
+    for (const fet of mosfets) {
+      fet.vGS = sv(fet.gateNet) - sv(fet.sourceNet)
+      fet.vDS = sv(fet.drainNet) - sv(fet.sourceNet)
+    }
   }
 
   // Linear fast-path: no Shockley LEDs → a single solve (Sprint 14 behavior).
