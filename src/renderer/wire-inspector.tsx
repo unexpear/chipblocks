@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
 import { wireAmpacity } from '../thermal-model.ts'
 import { formatEng } from './units.ts'
-import { formatLength, gaugeAreaM2, WIRE_GAUGES } from './wire-length.ts'
+import { formatLength, gaugeAreaM2, WIRE_GAUGES, WIRE_MATERIALS } from './wire-length.ts'
 
 /**
  * Properties inspector for a selected wire (the edge equivalent of PartInspector).
@@ -12,6 +12,7 @@ import { formatLength, gaugeAreaM2, WIRE_GAUGES } from './wire-length.ts'
 export type SelectedWire = {
   id: string
   gaugeAwg: number
+  material: string
   lengthM: number | null
   ohms: number | null
   amps: number | null
@@ -46,11 +47,13 @@ const muted: CSSProperties = { color: '#9fb0c0' }
 export function WireInspector({
   wire,
   onGauge,
+  onMaterial,
 }: {
   wire: SelectedWire
   onGauge: (gaugeAwg: number) => void
+  onMaterial: (material: string) => void
 }) {
-  const { gaugeAwg, lengthM, ohms, amps } = wire
+  const { gaugeAwg, material, lengthM, ohms, amps } = wire
   // The wire's real ampacity from the same hot-spot model — the current at which
   // its middle would reach the 105 C insulation limit — and how hard it is driven.
   const ampacity =
@@ -80,6 +83,22 @@ export function WireInspector({
           {WIRE_GAUGES.map((g) => (
             <option key={g.awg} value={g.awg}>
               {g.awg} AWG · {g.diameterMm.toFixed(2)} mm
+            </option>
+          ))}
+        </select>
+      </div>
+      <div style={sectionLabel}>Material</div>
+      <div style={row}>
+        <span style={muted}>Metal</span>
+        <select
+          className="nodrag"
+          style={field}
+          value={material}
+          onChange={(event) => onMaterial(event.target.value)}
+        >
+          {WIRE_MATERIALS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
             </option>
           ))}
         </select>

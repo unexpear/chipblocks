@@ -147,10 +147,11 @@ import { checkpoint, emptyHistory, redo, undo } from './undo-history.ts'
 import { formatEng } from './units.ts'
 import { type SelectedWire, WireInspector } from './wire-inspector.tsx'
 import {
-  COPPER_RESISTIVITY_OHM_M,
   DEFAULT_WIRE_GAUGE_AWG,
+  DEFAULT_WIRE_MATERIAL,
   gaugeAreaM2,
   lengthFromDrawn,
+  materialResistivity,
   wireResistance,
 } from './wire-length.ts'
 import {
@@ -222,7 +223,13 @@ function drawnWire(
   edge: {
     source: string
     target: string
-    data?: { waypoints?: unknown; curved?: unknown; curveRadius?: unknown; gaugeAwg?: unknown }
+    data?: {
+      waypoints?: unknown
+      curved?: unknown
+      curveRadius?: unknown
+      gaugeAwg?: unknown
+      material?: unknown
+    }
   },
   positions: Map<string, NodePosition>,
 ): { lengthM: number; ohms: number } {
@@ -245,7 +252,11 @@ function drawnWire(
   const lengthM = lengthFromDrawn(drawnPixels)
   return {
     lengthM,
-    ohms: wireResistance(lengthM, COPPER_RESISTIVITY_OHM_M, gaugeAreaM2(edge.data?.gaugeAwg)),
+    ohms: wireResistance(
+      lengthM,
+      materialResistivity(edge.data?.material),
+      gaugeAreaM2(edge.data?.gaugeAwg),
+    ),
   }
 }
 
@@ -476,6 +487,7 @@ function solveCanvas(
           ? { curveRadius: edge.data.curveRadius }
           : {}),
         ...(typeof edge.data?.gaugeAwg === 'number' ? { gaugeAwg: edge.data.gaugeAwg } : {}),
+        ...(typeof edge.data?.material === 'string' ? { material: edge.data.material } : {}),
       },
     }
   })
@@ -771,13 +783,17 @@ function Canvas() {
           type: 'net',
           deletable: true,
           style: { stroke: DRAWN },
-          ...(w.waypoints || w.curved || typeof w.gaugeAwg === 'number'
+          ...(w.waypoints ||
+          w.curved ||
+          typeof w.gaugeAwg === 'number' ||
+          typeof w.material === 'string'
             ? {
                 data: {
                   ...(w.waypoints ? { waypoints: w.waypoints } : {}),
                   ...(w.curved ? { curved: true } : {}),
                   ...(typeof w.curveRadius === 'number' ? { curveRadius: w.curveRadius } : {}),
                   ...(typeof w.gaugeAwg === 'number' ? { gaugeAwg: w.gaugeAwg } : {}),
+                  ...(typeof w.material === 'string' ? { material: w.material } : {}),
                 },
               }
             : {}),
@@ -2445,6 +2461,16 @@ function Canvas() {
     },
     [edges, nodes, alwaysOn, setEdges, reSolve, checkpointAction],
   )
+  // Pick a wire's material → its resistivity ρ changes, so R = ρ·L/A re-solves live too.
+  const onEditWireMaterial = useCallback(
+    (edgeId: string, material: string) => {
+      checkpointAction(`material:${edgeId}`)
+      const next = edges.map((e) => (e.id === edgeId ? { ...e, data: { ...e.data, material } } : e))
+      if (alwaysOn) reSolve(nodes, next)
+      else setEdges(next)
+    },
+    [edges, nodes, alwaysOn, setEdges, reSolve, checkpointAction],
+  )
 
   // The selected part feeds the Properties inspector (single selection).
   const selectedNode = nodes.find((n) => n.selected)
@@ -2465,6 +2491,10 @@ function Canvas() {
             typeof selectedEdge.data?.gaugeAwg === 'number'
               ? selectedEdge.data.gaugeAwg
               : DEFAULT_WIRE_GAUGE_AWG,
+          material:
+            typeof selectedEdge.data?.material === 'string'
+              ? selectedEdge.data.material
+              : DEFAULT_WIRE_MATERIAL,
           lengthM:
             typeof selectedEdge.data?.lengthM === 'number' ? selectedEdge.data.lengthM : null,
           ohms: typeof selectedEdge.data?.ohms === 'number' ? selectedEdge.data.ohms : null,
@@ -3112,6 +3142,7 @@ function Canvas() {
               <WireInspector
                 wire={selectedWire}
                 onGauge={(gaugeAwg) => onEditWireGauge(selectedWire.id, gaugeAwg)}
+                onMaterial={(material) => onEditWireMaterial(selectedWire.id, material)}
               />
             ) : (
               <PartInspector

@@ -101,6 +101,48 @@ export function gaugeAreaM2(gaugeAwg: unknown): number {
   return awgAreaM2(typeof gaugeAwg === 'number' ? gaugeAwg : DEFAULT_WIRE_GAUGE_AWG)
 }
 
+export interface WireMaterial {
+  id: string
+  label: string
+  resistivityOhmM: number
+  /** Citation for the resistivity (all at 20 °C). */
+  source: string
+}
+
+/**
+ * Wire conductor materials by their REAL resistivity at 20 °C (CRC Handbook of Chemistry
+ * & Physics). Lower resistivity = less I·R drop and less heat for the same gauge: silver
+ * leads, copper is the everyday default, aluminum trades ≈60 % more resistance for weight
+ * and cost. Nichrome is a resistance-wire alloy (≈65× copper) — the heater case, which the
+ * temp lens lights up. R = ρ·L/A, so a wire's resistance scales straight with this number.
+ */
+export const WIRE_MATERIALS: WireMaterial[] = [
+  { id: 'silver', label: 'Silver', resistivityOhmM: 1.59e-8, source: 'CRC Handbook (20 °C)' },
+  {
+    id: 'copper',
+    label: 'Copper',
+    resistivityOhmM: COPPER_RESISTIVITY_OHM_M,
+    source: 'CRC Handbook, annealed (20 °C)',
+  },
+  { id: 'gold', label: 'Gold', resistivityOhmM: 2.44e-8, source: 'CRC Handbook (20 °C)' },
+  { id: 'aluminum', label: 'Aluminum', resistivityOhmM: 2.65e-8, source: 'CRC Handbook (20 °C)' },
+  {
+    id: 'nichrome',
+    label: 'Nichrome (resistance wire)',
+    resistivityOhmM: 1.1e-6,
+    source: 'Ni-Cr 80/20 alloy, ~20 °C',
+  },
+]
+
+/** A freshly drawn wire is copper until the user picks another material. */
+export const DEFAULT_WIRE_MATERIAL = 'copper'
+
+/** A wire edge's stored material id → resistivity, falling back to copper when unset. */
+export function materialResistivity(material: unknown): number {
+  const found = WIRE_MATERIALS.find((m) => m.id === material)
+  return found ? found.resistivityOhmM : COPPER_RESISTIVITY_OHM_M
+}
+
 /** Human-readable length in imperial — inches under a foot, feet at/above one. */
 export function formatLength(metres: number): string {
   const inches = Math.max(0, metres) / INCH_M

@@ -18,8 +18,10 @@ import {
   MAX_LENGTH_M,
   METRES_PER_PIXEL,
   MIN_LENGTH_M,
+  materialResistivity,
   visualFromLength,
   WIRE_GAUGES,
+  WIRE_MATERIALS,
   wireResistance,
 } from '../src/renderer/wire-length.ts'
 
@@ -105,6 +107,38 @@ describe('AWG gauge (geometric definition, per-wire area)', () => {
     const g22 = WIRE_GAUGES.find((g) => g.awg === 22)
     expect(g22?.areaM2).toBeCloseTo(awgAreaM2(22), 12)
     expect(g22?.diameterMm).toBeCloseTo(0.644, 2)
+  })
+})
+
+describe('wire material (per-wire resistivity)', () => {
+  test('materialResistivity returns the cited resistivity by id, copper by default', () => {
+    expect(materialResistivity('copper')).toBe(COPPER_RESISTIVITY_OHM_M)
+    expect(materialResistivity('aluminum')).toBeCloseTo(2.65e-8, 12)
+    expect(materialResistivity('silver')).toBeCloseTo(1.59e-8, 12)
+    // unset or unknown id falls back to copper
+    expect(materialResistivity(undefined)).toBe(COPPER_RESISTIVITY_OHM_M)
+    expect(materialResistivity('unobtainium')).toBe(COPPER_RESISTIVITY_OHM_M)
+  })
+
+  test('silver is the lowest-resistivity conductor; nichrome is the resistance wire', () => {
+    expect(materialResistivity('silver')).toBeLessThan(materialResistivity('copper'))
+    expect(materialResistivity('copper')).toBeLessThan(materialResistivity('aluminum'))
+    // nichrome is dozens of times copper — the heater case
+    expect(materialResistivity('nichrome') / COPPER_RESISTIVITY_OHM_M).toBeGreaterThan(50)
+  })
+
+  test('resistance scales straight with material: aluminum > copper at the same gauge + length', () => {
+    const cu = wireResistance(0.3, materialResistivity('copper'), awgAreaM2(22))
+    const al = wireResistance(0.3, materialResistivity('aluminum'), awgAreaM2(22))
+    expect(al).toBeGreaterThan(cu)
+    // R = ρ·L/A → the resistance ratio is exactly the resistivity ratio
+    expect(al / cu).toBeCloseTo(2.65e-8 / COPPER_RESISTIVITY_OHM_M, 6)
+  })
+
+  test('WIRE_MATERIALS lists copper with its catalog resistivity', () => {
+    const copper = WIRE_MATERIALS.find((m) => m.id === 'copper')
+    expect(copper?.resistivityOhmM).toBe(COPPER_RESISTIVITY_OHM_M)
+    expect(WIRE_MATERIALS.length).toBeGreaterThanOrEqual(4)
   })
 })
 
