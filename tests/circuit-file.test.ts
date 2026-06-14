@@ -206,6 +206,26 @@ describe('junctions + curve subtool (S19-v3-61)', () => {
     expect(parsed.file.wires[0]?.waypoints?.length).toBe(1)
   })
 
+  test('a wire saves and restores its chosen gauge (drives R = ρ·L/A on load)', () => {
+    const file = serializeCircuit(
+      [],
+      [
+        {
+          id: 'w1',
+          source: 'a',
+          sourceHandle: 'x',
+          target: 'b',
+          targetHandle: 'y',
+          data: { gaugeAwg: 14 },
+        },
+      ],
+    )
+    const parsed = deserializeCircuit(JSON.stringify(file))
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.file.wires[0]?.gaugeAwg).toBe(14)
+  })
+
   test('a straight wire saves WITHOUT a curved flag or sweep size — nothing invented', () => {
     const file = serializeCircuit(
       [],
@@ -213,5 +233,6 @@ describe('junctions + curve subtool (S19-v3-61)', () => {
     )
     expect('curved' in (file.wires[0] ?? {})).toBe(false)
     expect('curveRadius' in (file.wires[0] ?? {})).toBe(false)
+    expect('gaugeAwg' in (file.wires[0] ?? {})).toBe(false)
   })
 })

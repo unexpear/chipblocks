@@ -8,12 +8,18 @@
 
 import { describe, expect, test } from 'vitest'
 import {
+  AWG22_AREA_M2,
+  awgAreaM2,
+  COPPER_RESISTIVITY_OHM_M,
+  DEFAULT_WIRE_GAUGE_AWG,
   formatLength,
+  gaugeAreaM2,
   lengthFromDrawn,
   MAX_LENGTH_M,
   METRES_PER_PIXEL,
   MIN_LENGTH_M,
   visualFromLength,
+  WIRE_GAUGES,
   wireResistance,
 } from '../src/renderer/wire-length.ts'
 
@@ -68,6 +74,37 @@ describe('wireResistance (R = ρ·L/A, real-number math)', () => {
   })
   test('guards a zero/invalid cross-section', () => {
     expect(wireResistance(0.15, 1.68e-8, 0)).toBe(0)
+  })
+})
+
+describe('AWG gauge (geometric definition, per-wire area)', () => {
+  test('awgAreaM2(22) reproduces the catalog default area', () => {
+    expect(awgAreaM2(22) / AWG22_AREA_M2).toBeCloseTo(1, 2)
+  })
+  test('lower gauge number = thicker wire = more copper', () => {
+    expect(awgAreaM2(14)).toBeGreaterThan(awgAreaM2(22))
+    expect(awgAreaM2(22)).toBeGreaterThan(awgAreaM2(30))
+  })
+  test('the standard ratio holds: −6 gauges ≈ 4× the area', () => {
+    expect(awgAreaM2(16) / awgAreaM2(22)).toBeCloseTo(4, 1)
+  })
+  test('gaugeAreaM2 falls back to the 22 AWG default for an unset/invalid gauge', () => {
+    expect(gaugeAreaM2(undefined)).toBeCloseTo(awgAreaM2(DEFAULT_WIRE_GAUGE_AWG), 12)
+    expect(gaugeAreaM2('thick')).toBeCloseTo(awgAreaM2(DEFAULT_WIRE_GAUGE_AWG), 12)
+    expect(gaugeAreaM2(14)).toBeCloseTo(awgAreaM2(14), 12)
+  })
+  test('resistance scales with the gauge: a thin wire has proportionally more R', () => {
+    const thin = wireResistance(0.3, COPPER_RESISTIVITY_OHM_M, awgAreaM2(30))
+    const thick = wireResistance(0.3, COPPER_RESISTIVITY_OHM_M, awgAreaM2(14))
+    expect(thin).toBeGreaterThan(thick)
+    // R = ρ·L/A at the same length → the resistance ratio is the inverse area ratio.
+    expect(thin / thick).toBeCloseTo(awgAreaM2(14) / awgAreaM2(30), 5)
+  })
+  test('WIRE_GAUGES lists standard bench gauges with matching areas', () => {
+    expect(WIRE_GAUGES.some((g) => g.awg === 22)).toBe(true)
+    const g22 = WIRE_GAUGES.find((g) => g.awg === 22)
+    expect(g22?.areaM2).toBeCloseTo(awgAreaM2(22), 12)
+    expect(g22?.diameterMm).toBeCloseTo(0.644, 2)
   })
 })
 

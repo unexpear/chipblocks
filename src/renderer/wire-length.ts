@@ -72,6 +72,35 @@ export function wireResistance(
   return (resistivityOhmM * Math.max(0, metres)) / areaM2
 }
 
+/**
+ * AWG (American Wire Gauge) → real conductor geometry. The gauge is defined
+ * geometrically, not by lookup: each step scales the diameter by the 39th root
+ * of 92, so d = 0.005 in · 92^((36 − n)/39) and the area follows from π·d²/4
+ * (ASTM B258 / the standard AWG ratio). Lower number = thicker wire; −6 gauges
+ * is ≈ 4× the copper. awgAreaM2(22) reproduces AWG22_AREA_M2, the catalog default.
+ */
+function awgDiameterM(awg: number): number {
+  return 0.005 * 92 ** ((36 - awg) / 39) * INCH_M
+}
+export function awgAreaM2(awg: number): number {
+  const d = awgDiameterM(awg)
+  return (Math.PI / 4) * d ** 2
+}
+
+/** The gauge a freshly drawn wire takes until the user picks another. */
+export const DEFAULT_WIRE_GAUGE_AWG = 22
+/** Standard bench gauges, thick (10 AWG power) to thin (30 AWG jumper). */
+export const WIRE_GAUGES = [10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30].map((awg) => ({
+  awg,
+  areaM2: awgAreaM2(awg),
+  diameterMm: awgDiameterM(awg) * 1000,
+}))
+
+/** A wire edge's stored gauge → conductor area, falling back to the default when unset. */
+export function gaugeAreaM2(gaugeAwg: unknown): number {
+  return awgAreaM2(typeof gaugeAwg === 'number' ? gaugeAwg : DEFAULT_WIRE_GAUGE_AWG)
+}
+
 /** Human-readable length in imperial — inches under a foot, feet at/above one. */
 export function formatLength(metres: number): string {
   const inches = Math.max(0, metres) / INCH_M

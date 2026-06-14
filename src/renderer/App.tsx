@@ -23,6 +23,7 @@ import './interactions.css'
 import {
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -69,7 +70,7 @@ import {
   withCut,
 } from './clipboard.ts'
 import { ClipboardPanel } from './clipboard-panel.tsx'
-import { DockablePanel, type DockEdge } from './dockable-panel.tsx'
+import { DockablePanel, type TabDropTarget } from './dockable-panel.tsx'
 import { wireFlow } from './edge-currents.ts'
 import { canvasHealth, HealthContext, type NodeHealth } from './health.ts'
 import { DEFAULT_KEYBINDS, eventMatchesBinding, type Keybinds, mergeKeybinds } from './keybinds.ts'
@@ -108,6 +109,7 @@ import {
 import { expandMultiLeadSources, multiLeadAliases } from './multi-tap-source.ts'
 import { edgeTypes } from './net-edge.tsx'
 import { BLOCK_MIME, BlockPaletteItems, DEFINITION_MIME, PaletteItems } from './palette.tsx'
+import { moveToEdge, type PanelLayout, panelGroups, stackOnto } from './panel-groups.ts'
 import {
   blownFuse,
   defaultParameters,
@@ -139,7 +141,14 @@ import { type Tool, ToolbarItems } from './toolbar.tsx'
 import { CheckpointContext } from './undo-context.ts'
 import { checkpoint, emptyHistory, redo, undo } from './undo-history.ts'
 import { formatEng } from './units.ts'
-import { lengthFromDrawn, wireResistance } from './wire-length.ts'
+import { type SelectedWire, WireInspector } from './wire-inspector.tsx'
+import {
+  COPPER_RESISTIVITY_OHM_M,
+  DEFAULT_WIRE_GAUGE_AWG,
+  gaugeAreaM2,
+  lengthFromDrawn,
+  wireResistance,
+} from './wire-length.ts'
 import {
   CURVE_RADIUS_PX,
   type PathPoint,
@@ -204,7 +213,7 @@ function drawnWire(
   edge: {
     source: string
     target: string
-    data?: { waypoints?: unknown; curved?: unknown; curveRadius?: unknown }
+    data?: { waypoints?: unknown; curved?: unknown; curveRadius?: unknown; gaugeAwg?: unknown }
   },
   positions: Map<string, NodePosition>,
 ): { lengthM: number; ohms: number } {
@@ -225,7 +234,10 @@ function drawnWire(
     }
   }
   const lengthM = lengthFromDrawn(drawnPixels)
-  return { lengthM, ohms: wireResistance(lengthM) }
+  return {
+    lengthM,
+    ohms: wireResistance(lengthM, COPPER_RESISTIVITY_OHM_M, gaugeAreaM2(edge.data?.gaugeAwg)),
+  }
 }
 
 /**
@@ -454,6 +466,7 @@ function solveCanvas(
         ...(typeof edge.data?.curveRadius === 'number'
           ? { curveRadius: edge.data.curveRadius }
           : {}),
+        ...(typeof edge.data?.gaugeAwg === 'number' ? { gaugeAwg: edge.data.gaugeAwg } : {}),
       },
     }
   })
@@ -736,12 +749,13 @@ function Canvas() {
           type: 'net',
           deletable: true,
           style: { stroke: DRAWN },
-          ...(w.waypoints || w.curved
+          ...(w.waypoints || w.curved || typeof w.gaugeAwg === 'number'
             ? {
                 data: {
                   ...(w.waypoints ? { waypoints: w.waypoints } : {}),
                   ...(w.curved ? { curved: true } : {}),
                   ...(typeof w.curveRadius === 'number' ? { curveRadius: w.curveRadius } : {}),
+                  ...(typeof w.gaugeAwg === 'number' ? { gaugeAwg: w.gaugeAwg } : {}),
                 },
               }
             : {}),
@@ -753,9 +767,15 @@ function Canvas() {
   }, [setNodes, setEdges, fitView, checkpointAction])
 
   // Movable menus (S19-v3-10): each docks to a window edge; the user drags them.
-  const [paletteEdge, setPaletteEdge] = useState<DockEdge>('left')
-  const [toolbarEdge, setToolbarEdge] = useState<DockEdge>('top')
-  const [propsEdge, setPropsEdge] = useState<DockEdge>('right')
+  // Dock panels + their tab-stack grouping (Sprint 21). Each panel starts on its own
+  // edge; dragging one onto another stacks them into a tabbed group (panel-groups.ts).
+  const [panelLayout, setPanelLayout] = useState<PanelLayout>({
+    parts: { edge: 'left', group: 0 },
+    tools: { edge: 'top', group: 1 },
+    properties: { edge: 'right', group: 2 },
+    scope: { edge: 'bottom', group: 3 },
+  })
+  const [activeTab, setActiveTab] = useState<Record<number, string>>({})
   // Active tool: 'select' (move parts) or 'wire' (parts locked; drag draws wires).
   const [tool, setTool] = useState<Tool>('select')
   // Active physics (S19-v3-14): re-solve + refresh every wire's current/length/
@@ -845,7 +865,6 @@ function Canvas() {
   // Scope probes (S19-v3-77): the terminals the user clipped channels onto.
   // Only these plot — clipping where you care, like real scope leads.
   const [scopeProbes, setScopeProbes] = useState<ScopeProbe[]>([])
-  const [scopeEdge, setScopeEdge] = useState<DockEdge>('bottom')
 
   // Math panel (S19-v3-63): the equations behind the current solution, derived
   // live from the same solved state the canvas shows.
@@ -2341,6 +2360,19 @@ function Canvas() {
     [setNodes, checkpointAction],
   )
 
+  // Pick a wire's gauge → its R = ρ·L/A changes; re-solve so the resistance,
+  // current and hot spot all update live (a data edit, like a part's params,
+  // so it must drive the re-solve itself rather than wait on a topology change).
+  const onEditWireGauge = useCallback(
+    (edgeId: string, gaugeAwg: number) => {
+      checkpointAction(`gauge:${edgeId}`)
+      const next = edges.map((e) => (e.id === edgeId ? { ...e, data: { ...e.data, gaugeAwg } } : e))
+      if (alwaysOn) reSolve(nodes, next)
+      else setEdges(next)
+    },
+    [edges, nodes, alwaysOn, setEdges, reSolve, checkpointAction],
+  )
+
   // The selected part feeds the Properties inspector (single selection).
   const selectedNode = nodes.find((n) => n.selected)
   const selectedPart: SelectedPart | null = selectedNode
@@ -2350,6 +2382,34 @@ function Canvas() {
         parameters: (selectedNode.data as DeviceNodeData).parameters,
       }
     : null
+  // A selected wire (and no part) feeds the wire-gauge inspector instead.
+  const selectedEdge = edges.find((e) => e.selected)
+  const selectedWire: SelectedWire | null =
+    selectedEdge && !selectedPart
+      ? {
+          id: selectedEdge.id,
+          gaugeAwg:
+            typeof selectedEdge.data?.gaugeAwg === 'number'
+              ? selectedEdge.data.gaugeAwg
+              : DEFAULT_WIRE_GAUGE_AWG,
+          lengthM:
+            typeof selectedEdge.data?.lengthM === 'number' ? selectedEdge.data.lengthM : null,
+          ohms: typeof selectedEdge.data?.ohms === 'number' ? selectedEdge.data.ohms : null,
+          amps: typeof selectedEdge.data?.amps === 'number' ? selectedEdge.data.amps : null,
+        }
+      : null
+
+  // Drag a panel's grip/tab onto another panel to stack them into a tab group; drop
+  // onto an edge to dock it (or pop a stacked tab back out). The reducer is pure.
+  const onTabDrop = (tabId: string, target: TabDropTarget) => {
+    if (target.kind === 'edge') {
+      setPanelLayout((layout) => moveToEdge(layout, tabId, target.edge))
+      return
+    }
+    const group = panelLayout[target.targetId]?.group
+    if (group !== undefined) setActiveTab((cur) => ({ ...cur, [group]: tabId }))
+    setPanelLayout((layout) => stackOnto(layout, tabId, target.targetId))
+  }
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: the dock-grid is the drop target for palette parts; keyboard-accessible placement is future work
@@ -2911,112 +2971,172 @@ function Canvas() {
         ) : null}
       </div>
 
-      <DockablePanel edge={paletteEdge} onEdgeChange={setPaletteEdge} light={light} title="Parts">
-        <PaletteItems />
-        <BlockPaletteItems
-          blocks={nodes
-            .filter((n) => (n.data as { definition?: string }).definition === 'block')
-            .map((n) => ({
-              id: n.id,
-              name: ((n.data as { block?: BlockData }).block?.name ?? n.id) as string,
-            }))}
-        />
-      </DockablePanel>
-      <DockablePanel edge={toolbarEdge} onEdgeChange={setToolbarEdge} light={light} title="Tools">
-        <ToolbarItems
-          tool={tool}
-          onTool={setTool}
-          wireStyle={wireStyle}
-          onWireStyle={setWireStyle}
-          curveRadius={wireCurveRadius}
-          onCurveRadius={setWireCurveRadius}
-          alwaysOn={alwaysOn}
-          onAlwaysOn={setAlwaysOn}
-          onSolve={handleSolve}
-          onScope={runScope}
-          onMath={() => setShowMath((open) => !open)}
-          onWorstCase={runWorstCase}
-          onGroup={() => setGroupPrompt({ name: '', error: null })}
-          canGroup={selectedCount >= 2}
-          onClipboard={() => setShowClipboard((open) => !open)}
-          clipboardCount={clipboard.copies.length + (clipboard.cut !== null ? 1 : 0)}
-          lens={lens}
-          onLens={setLens}
-          flow={flow}
-          onFlow={setFlow}
-        />
-      </DockablePanel>
-      <DockablePanel edge={propsEdge} onEdgeChange={setPropsEdge} light={light} title="Properties">
-        <PartInspector
-          selected={selectedPart}
-          reading={selectedPart ? readings.get(selectedPart.id) : undefined}
-          materials={initial.materials}
-          validMaterials={
-            selectedPart ? (initial.validMaterialsByDef.get(selectedPart.definition) ?? {}) : {}
-          }
-          onParam={(key, amount, unit) => {
-            if (selectedPart) onEditParam(selectedPart.id, key, amount, unit)
-          }}
-          onEnum={(key, value) => {
-            if (selectedPart) onEditEnum(selectedPart.id, key, value)
-          }}
-          onMaterial={(key, value) => {
-            if (selectedPart) onEditEnum(selectedPart.id, key, value)
-          }}
-          onDeriveResistance={() => {
-            if (!selectedPart) return
-            if (selectedPart.definition !== 'resistor') return
-            const ohms = deriveResistorOhms(selectedPart.parameters, initial.materialResistivity)
-            if (ohms !== null) onEditParam(selectedPart.id, 'resistance', ohms)
-          }}
-        />
-      </DockablePanel>
-      {scopeOpen ? (
-        <DockablePanel edge={scopeEdge} onEdgeChange={setScopeEdge} light={light} title="Scope">
-          <ScopePlot
-            result={scopeResult}
-            light={light}
-            windowDuration={scopeWindowSec}
-            channels={scopeChannels}
-            onRemoveChannel={(key) =>
-              setScopeProbes((current) => current.filter((p) => scopeProbeKey(p) !== key))
-            }
-            secPerDiv={scopeSecPerDiv}
-            onSecPerDiv={setScopeSecPerDiv}
-            autoSecPerDiv={scopeAutoWindowSec / H_DIVISIONS}
-            refusal={scopeRefusal}
-            family={scopeFamily}
-            familyNote={scopeFamilyNote}
-            familySources={nodes
-              .filter((n) => (n.data as { definition?: string }).definition === 'power_source')
-              .map((n) => n.id)}
-            onTraceFamily={runFamily}
-            onClearFamily={() => {
-              setScopeFamily(null)
-              setScopeFamilyNote(null)
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => {
-              setScopeResult(null)
-              setScopeRefusal(null)
-            }}
-            className="nodrag"
-            style={{
-              background: 'none',
-              border: light ? '1px solid #c4c8ce' : '1px solid #3a3a3f',
-              color: light ? '#444' : '#9fb0c0',
-              borderRadius: 3,
-              padding: '2px 8px',
-              fontSize: 11,
-              cursor: 'pointer',
-            }}
-          >
-            Close
-          </button>
-        </DockablePanel>
-      ) : null}
+      {(() => {
+        // The dock panels — each with its title, its live content, and whether it is
+        // shown now. Grouping (panel-groups.ts) collapses them into tabbed stacks.
+        const registry: Record<string, { title: string; content: ReactNode; visible: boolean }> = {
+          parts: {
+            title: 'Parts',
+            visible: true,
+            content: (
+              <>
+                <PaletteItems />
+                <BlockPaletteItems
+                  blocks={nodes
+                    .filter((n) => (n.data as { definition?: string }).definition === 'block')
+                    .map((n) => ({
+                      id: n.id,
+                      name: ((n.data as { block?: BlockData }).block?.name ?? n.id) as string,
+                    }))}
+                />
+              </>
+            ),
+          },
+          tools: {
+            title: 'Tools',
+            visible: true,
+            content: (
+              <ToolbarItems
+                tool={tool}
+                onTool={setTool}
+                wireStyle={wireStyle}
+                onWireStyle={setWireStyle}
+                curveRadius={wireCurveRadius}
+                onCurveRadius={setWireCurveRadius}
+                alwaysOn={alwaysOn}
+                onAlwaysOn={setAlwaysOn}
+                onSolve={handleSolve}
+                onScope={runScope}
+                onMath={() => setShowMath((open) => !open)}
+                onWorstCase={runWorstCase}
+                onGroup={() => setGroupPrompt({ name: '', error: null })}
+                canGroup={selectedCount >= 2}
+                onClipboard={() => setShowClipboard((open) => !open)}
+                clipboardCount={clipboard.copies.length + (clipboard.cut !== null ? 1 : 0)}
+                lens={lens}
+                onLens={setLens}
+                flow={flow}
+                onFlow={setFlow}
+              />
+            ),
+          },
+          properties: {
+            title: 'Properties',
+            visible: true,
+            content: selectedWire ? (
+              <WireInspector
+                wire={selectedWire}
+                onGauge={(gaugeAwg) => onEditWireGauge(selectedWire.id, gaugeAwg)}
+              />
+            ) : (
+              <PartInspector
+                selected={selectedPart}
+                reading={selectedPart ? readings.get(selectedPart.id) : undefined}
+                materials={initial.materials}
+                validMaterials={
+                  selectedPart
+                    ? (initial.validMaterialsByDef.get(selectedPart.definition) ?? {})
+                    : {}
+                }
+                onParam={(key, amount, unit) => {
+                  if (selectedPart) onEditParam(selectedPart.id, key, amount, unit)
+                }}
+                onEnum={(key, value) => {
+                  if (selectedPart) onEditEnum(selectedPart.id, key, value)
+                }}
+                onMaterial={(key, value) => {
+                  if (selectedPart) onEditEnum(selectedPart.id, key, value)
+                }}
+                onDeriveResistance={() => {
+                  if (!selectedPart) return
+                  if (selectedPart.definition !== 'resistor') return
+                  const ohms = deriveResistorOhms(
+                    selectedPart.parameters,
+                    initial.materialResistivity,
+                  )
+                  if (ohms !== null) onEditParam(selectedPart.id, 'resistance', ohms)
+                }}
+              />
+            ),
+          },
+          scope: {
+            title: 'Scope',
+            visible: scopeOpen,
+            content: (
+              <>
+                <ScopePlot
+                  result={scopeResult}
+                  light={light}
+                  windowDuration={scopeWindowSec}
+                  channels={scopeChannels}
+                  onRemoveChannel={(key) =>
+                    setScopeProbes((current) => current.filter((p) => scopeProbeKey(p) !== key))
+                  }
+                  secPerDiv={scopeSecPerDiv}
+                  onSecPerDiv={setScopeSecPerDiv}
+                  autoSecPerDiv={scopeAutoWindowSec / H_DIVISIONS}
+                  refusal={scopeRefusal}
+                  family={scopeFamily}
+                  familyNote={scopeFamilyNote}
+                  familySources={nodes
+                    .filter(
+                      (n) => (n.data as { definition?: string }).definition === 'power_source',
+                    )
+                    .map((n) => n.id)}
+                  onTraceFamily={runFamily}
+                  onClearFamily={() => {
+                    setScopeFamily(null)
+                    setScopeFamilyNote(null)
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setScopeResult(null)
+                    setScopeRefusal(null)
+                  }}
+                  className="nodrag"
+                  style={{
+                    background: 'none',
+                    border: light ? '1px solid #c4c8ce' : '1px solid #3a3a3f',
+                    color: light ? '#444' : '#9fb0c0',
+                    borderRadius: 3,
+                    padding: '2px 8px',
+                    fontSize: 11,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Close
+                </button>
+              </>
+            ),
+          },
+        }
+        return panelGroups(panelLayout, ['parts', 'tools', 'properties', 'scope'], (id) =>
+          Boolean(registry[id]?.visible),
+        ).map((g) => {
+          const stored = activeTab[g.group]
+          const active = stored && g.ids.includes(stored) ? stored : g.ids[0]
+          const def = active ? registry[active] : undefined
+          if (!active || !def) return null
+          return (
+            <DockablePanel
+              key={g.group}
+              edge={g.edge}
+              tabs={g.ids.flatMap((id) => {
+                const entry = registry[id]
+                return entry ? [{ id, title: entry.title }] : []
+              })}
+              activeId={active}
+              light={light}
+              onActivate={(id) => setActiveTab((cur) => ({ ...cur, [g.group]: id }))}
+              onTabDrop={onTabDrop}
+            >
+              {def.content}
+            </DockablePanel>
+          )
+        })
+      })()}
     </div>
   )
 }

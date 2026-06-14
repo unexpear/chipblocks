@@ -25,7 +25,7 @@ import {
 } from './lens.ts'
 import { CheckpointContext } from './undo-context.ts'
 import { formatEng } from './units.ts'
-import { AWG22_AREA_M2, formatLength } from './wire-length.ts'
+import { formatLength, gaugeAreaM2 } from './wire-length.ts'
 import { roundedPathD, samplePathPoints } from './wire-path.ts'
 
 /**
@@ -175,7 +175,7 @@ export function NetEdge({
       amps,
       ohms,
       lengthM,
-      AWG22_AREA_M2,
+      gaugeAreaM2(data?.gaugeAwg),
       STANDARD_AMBIENT_C,
       endA,
       endB,

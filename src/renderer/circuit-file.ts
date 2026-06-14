@@ -41,6 +41,8 @@ export type SavedWire = {
   curved?: boolean
   /** The wire's own corner sweep size (px); absent = the default Gentle size. */
   curveRadius?: number
+  /** The wire's AWG gauge; absent = the default 22 AWG. Drives R = ρL/A + heating. */
+  gaugeAwg?: number
 }
 
 export type CircuitFile = {
@@ -62,7 +64,7 @@ type CanvasEdgeLike = {
   sourceHandle?: string | null
   target: string
   targetHandle?: string | null
-  data?: { waypoints?: unknown; curved?: unknown; curveRadius?: unknown }
+  data?: { waypoints?: unknown; curved?: unknown; curveRadius?: unknown; gaugeAwg?: unknown }
 }
 
 /** The canvas state → a versioned, solver-free circuit file. */
@@ -92,6 +94,7 @@ export function serializeCircuit(nodes: CanvasNodeLike[], edges: CanvasEdgeLike[
         ...(waypoints && waypoints.length > 0 ? { waypoints } : {}),
         ...(e.data?.curved === true ? { curved: true } : {}),
         ...(typeof e.data?.curveRadius === 'number' ? { curveRadius: e.data.curveRadius } : {}),
+        ...(typeof e.data?.gaugeAwg === 'number' ? { gaugeAwg: e.data.gaugeAwg } : {}),
       }
     }),
   }
