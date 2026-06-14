@@ -372,7 +372,10 @@ export function PartInspector({
       !(hideMaterialRefs && (key === 'n_side' || key === 'p_side')) &&
       // The source's waveform + lead count have dedicated controls above.
       key !== 'waveform' &&
-      key !== 'terminal_count',
+      key !== 'terminal_count' &&
+      // incident_illuminance on a light sensor is COMPUTED (ambient + cast), synced
+      // from the solve — the user edits ambient_illuminance, not this.
+      key !== 'incident_illuminance',
   )
   const rating = ratingFor(selected.definition, selected.parameters)
   // A Source (power_source) gets a type picker that sets a consistent real DC

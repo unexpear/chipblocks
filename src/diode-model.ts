@@ -20,16 +20,20 @@
 const BOLTZMANN_CONSTANT = 1.380649e-23
 /** Elementary charge, C. NIST CODATA exact. */
 const ELEMENTARY_CHARGE = 1.602176634e-19
-/** Default operating temperature: 300 K (≈27°C). §20 fixes this; temperature
- *  dependence is a §15 deferred row. */
-export const ROOM_TEMPERATURE_KELVIN = 300
+/** Default operating + calibration temperature: 298.15 K (25 °C) — the standard
+ *  datasheet condition every device parameter (V_F, I_S, β, V_th, k) is specified
+ *  at. Using it as the single reference keeps the I_S(T) / mobility scaling laws
+ *  self-consistent with the calibration data AND the 25 °C thermal ambient (a part
+ *  dissipating ~0 W sits exactly at its own calibration point, no spurious shift).
+ *  (Was 300 K, a textbook approximation that put resting parts 1.85 K off-calibration.) */
+export const ROOM_TEMPERATURE_KELVIN = 298.15
 
 // ---------------------------------------------------------------------------
 // Core physics
 // ---------------------------------------------------------------------------
 
 /**
- * Thermal voltage V_T = kT/q. ≈25.852 mV at 300 K (§20.2).
+ * Thermal voltage V_T = kT/q. ≈25.693 mV at 298.15 K (25 °C).
  */
 export function thermalVoltage(temperatureKelvin: number = ROOM_TEMPERATURE_KELVIN): number {
   return (BOLTZMANN_CONSTANT * temperatureKelvin) / ELEMENTARY_CHARGE

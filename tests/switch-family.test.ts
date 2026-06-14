@@ -134,6 +134,48 @@ describe('the SPDT selector', () => {
     }
   })
 
+  // An SPDT is routinely used as a plain on/off: common + ONE throw, the other
+  // throw left open (only 2 of its 3 terminals wired). It must still conduct in
+  // the position that touches the wired throw — the same independent-stamping
+  // the relay's contacts use.
+  const twoWireSpdt = (position: 'throw_a' | 'throw_b') =>
+    canvasToWorld(
+      [
+        {
+          id: 'src',
+          definition: 'power_source',
+          parameters: { nominal_voltage: scalar(9, 'volt'), internal_resistance: scalar(0, 'ohm') },
+        },
+        { id: 'sw', definition: 'switch_spdt', parameters: { position: { value: position } } },
+        { id: 'ra', definition: 'resistor', parameters: { resistance: scalar(100, 'ohm') } },
+        { id: 'gnd', definition: 'ground' },
+      ],
+      [
+        { source: 'src', sourceHandle: 'terminal_positive', target: 'sw', targetHandle: 'common' },
+        // only throw_a is wired; throw_b is left open.
+        { source: 'sw', sourceHandle: 'throw_a', target: 'ra', targetHandle: 'terminal_a' },
+        {
+          source: 'ra',
+          sourceHandle: 'terminal_b',
+          target: 'src',
+          targetHandle: 'terminal_negative',
+        },
+        {
+          source: 'gnd',
+          sourceHandle: 'reference_terminal',
+          target: 'src',
+          targetHandle: 'terminal_negative',
+        },
+      ],
+    )
+
+  test('a 2-wire SPDT (one throw unused) still conducts on its wired throw', () => {
+    // Position A touches the wired throw → 9 V / 100 Ω flows.
+    expect(Math.abs(solveDC(twoWireSpdt('throw_a')).branches.get('ra') ?? 0)).toBeCloseTo(0.09, 6)
+    // Position B selects the UNWIRED throw → open, no current.
+    expect(Math.abs(solveDC(twoWireSpdt('throw_b')).branches.get('ra') ?? 1)).toBeLessThan(1e-9)
+  })
+
   test('the default position (absent param) is throw A', () => {
     const world = canvasToWorld(
       [

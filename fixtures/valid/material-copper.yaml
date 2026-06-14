@@ -22,9 +22,9 @@ properties:
           amount: 20
           unit: degC
     provenance:
-      source_type: standard
-      title: Copper resistivity, annealed, at 20 C
-      citation: "NIST CODATA 2018; IEC 60028 international annealed copper standard"
+      source_type: reference
+      title: Copper electrical resistivity at 20 C
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed. (high-conductivity copper ~1.68e-8 ohm-m at 20 C). NOTE: the IACS / IEC 60028 annealed-CONDUCTOR standard defines 1.7241e-8 ohm-m; this high-purity figure sits at the low end of copper's 1.65-1.72e-8 range."
       confidence: high
     support:
       model_status: defined

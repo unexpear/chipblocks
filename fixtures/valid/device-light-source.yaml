@@ -1,0 +1,64 @@
+# Valid fixture: light source (an idealized point lamp).
+# An ENVIRONMENTAL part — you place it on the canvas and it casts light onto the
+# light sensors around it. The light falls off with distance by the inverse-square
+# law: a sensor a distance d from a source of luminous intensity I sees
+#   E = I / d²      (E illuminance in lux, I in candela, d in metres)
+# and the contributions of several sources add. Drag a sensor toward the lamp and
+# it brightens; drag it away and it dims. This is the ONE place in ChipBlocks where
+# canvas POSITION carries physics — everywhere else the schematic is a position-free
+# wiring graph. The px→metre scale (1 px = 1 mm) is shared with the wire-length and
+# magnetic-field physics.
+#
+# It has NO electrical terminals and is never wired into the circuit — it is not a
+# device current flows through, it is a source of the light field the scene sits in
+# (the optical sibling of "ambient temperature," but cast from a point by distance
+# rather than set per-part). The catalog still carries it as a real definition so it
+# is a first-class block, not a free-floating icon.
+#
+# Honest gaps: point (omnidirectional) sources only — no shadows / occlusion (a
+# part between the lamp and a sensor casts no shadow), no beam angle or direction,
+# no falloff other than inverse-square. The cast is idealized from luminous_intensity
+# and does not come from any current through the lamp (it is environmental, not a
+# driven emitter like the LED). Those are refinements.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: light_source
+origin: builtin
+layer: primitive_device
+name: "Light source (lamp)"
+description: "An idealized point lamp placed on the canvas. It casts illuminance onto nearby light sensors, falling off with distance by the inverse-square law E = I/d² (I its luminous intensity in candela, d the canvas distance in metres). Drag a sensor toward it and the sensor brightens. Environmental: no electrical terminals, never wired into the circuit — it only provides light."
+composition:
+  requires:
+    emitter:
+      kind: material
+parameters:
+  emitter:
+    type: material_ref
+    satisfies_role: emitter
+    required: true
+    description: "The lamp's emitting element. Idealized here — the cast light comes from luminous_intensity, not from this material's bulk properties. A nichrome stand-in (a wire that glows when hot) holds the slot until a real filament/phosphor material lands."
+  luminous_intensity:
+    type: quantity
+    units: candela
+    required: true
+    description: "The lamp's luminous intensity I (candela) — its brightness in a direction. The illuminance it casts on a sensor is E = I/d² (lux, d in metres). Reference points: a standard candle is 1 cd (the historical anchor of the candela), a bright indicator LED is ~1-10 cd, a flashlight beam reaches 100s-1000s cd."
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved entirely on the canvas side: a pre-pass before each circuit solve reads
+  every light_source node's position + luminous_intensity, and for each light
+  sensor (photoresistor, photodiode, phototransistor) sets its incident_illuminance
+  to its ambient_illuminance plus the inverse-square sum of every source's cast at
+  that sensor's position (light.ts castIlluminance / worldWithCastLight). The
+  circuit solver then reads one number per sensor and never sees the source itself
+  — the light_source is filtered out of the electrical world (it has no terminals
+  and carries no current). Because the canvas re-solves whenever a part moves,
+  dragging a source or a sensor updates the cast light live.
+  Honest gaps: point sources only (no occlusion / beam angle / directionality),
+  inverse-square falloff only, idealized intensity (not driven by any current).

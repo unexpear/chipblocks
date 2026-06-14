@@ -51,6 +51,7 @@ import {
   thermalVoltage,
 } from './diode-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
+import { ldrResistance, lightSensorCurrent } from './light.ts'
 import { limitMosfetStep, type MosfetParams, mosfetOperatingPoint } from './mosfet-model.ts'
 import { STANDARD_AMBIENT_C } from './thermal-model.ts'
 
@@ -90,6 +91,9 @@ export function relayCoilEnergized(inst: Instance): boolean {
 /** Newton-Raphson controls (§20.6). */
 const NR_MAX_ITERATIONS = 100
 const NR_VOLTAGE_TOLERANCE = 1e-6 // volts
+/** The SPICE GMIN scale (1 pS) — a tiny node-to-ground conductance that keeps the
+ *  matrix solvable around hard-off junctions. Same scale as the MOSFET cutoff. */
+export const SOLVER_GMIN = 1e-12
 const DEFAULT_IDEALITY_FACTOR = 2.0 // LEDs (§20.2); optional per-instance override
 
 // biome-ignore lint/style/noNonNullAssertion: mathjs `all` is always defined at runtime
@@ -259,10 +263,16 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       continue
     }
     if (inst.definition === 'switch_spdt') {
-      // Three-terminal selector (common + two throws): the selected
-      // common→throw pair stamps as a closed switch (below); the other throw
-      // is left unstamped — a real open contact on its own net.
-      if (inst.connects?.length === 3) linearVoltageSources.push({ inst, kind: 'switch_spdt' })
+      // Selector (common + two throws): the selected common→throw pair stamps as
+      // a closed switch (below). Stamp whenever common AND the SELECTED throw are
+      // wired — NOT only when all three terminals are, because an SPDT is often
+      // used as a plain on/off (common + one throw, the other left open), exactly
+      // the way a relay leaves an unused contact open.
+      const throwTerminal = readEnumParam(inst, 'position') === 'throw_b' ? 'throw_b' : 'throw_a'
+      const wired = (t: string) => inst.connects?.some((c) => c.terminal === t) ?? false
+      if (wired('common') && wired(throwTerminal)) {
+        linearVoltageSources.push({ inst, kind: 'switch_spdt' })
+      }
       continue
     }
     if (inst.definition === 'relay') {
@@ -334,7 +344,12 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     for (const inst of world.instances.values()) {
       // A thermistor stamps exactly like a resistor — its `resistance` is the
       // Beta-law value the electro-thermal loop already wrote for this temperature.
-      if (inst.definition === 'resistor' || inst.definition === 'thermistor') {
+      // A photoresistor too — stampResistor reads its resistance from the light on it.
+      if (
+        inst.definition === 'resistor' ||
+        inst.definition === 'thermistor' ||
+        inst.definition === 'photoresistor'
+      ) {
         const ok = stampResistor(inst, nodeIndex, M)
         if (!ok)
           warnings.push(`Skipped resistor stamp for instance '${inst.id}' (missing R or connects)`)
@@ -342,6 +357,10 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         const ok = stampPotentiometer(inst, nodeIndex, M)
         if (!ok)
           warnings.push(`Skipped potentiometer '${inst.id}' (missing resistance or connects)`)
+      } else if (LIGHT_CURRENT_DEFINITIONS.has(inst.definition)) {
+        // A photodiode / phototransistor injects a light-driven current (+ shunt).
+        const [from, to] = lightCurrentTerminals(inst.definition)
+        stampLightCurrentSource(inst, nodeIndex, M, b, from, to)
       }
     }
     for (let s = 0; s < linearVoltageSources.length; s++) {
@@ -483,7 +502,11 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   // Branch currents (§18.6 sign convention).
   const branches = new Map<string, number>()
   for (const inst of world.instances.values()) {
-    if (inst.definition === 'resistor' || inst.definition === 'thermistor') {
+    if (
+      inst.definition === 'resistor' ||
+      inst.definition === 'thermistor' ||
+      inst.definition === 'photoresistor'
+    ) {
       const I = computeResistorCurrent(inst, nodes)
       if (I !== undefined) branches.set(inst.id, I)
     } else if (inst.definition === 'potentiometer') {
@@ -499,6 +522,10 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       } else if (seg !== null && w !== undefined && b !== undefined) {
         branches.set(inst.id, ((nodes.get(b) ?? 0) - (nodes.get(w) ?? 0)) / seg.bottom)
       }
+    } else if (LIGHT_CURRENT_DEFINITIONS.has(inst.definition)) {
+      // The device current IS the light-driven photocurrent it injects (the tiny
+      // shunt current is negligible beside it).
+      branches.set(inst.id, lightSensorCurrent(inst))
     }
   }
   for (let s = 0; s < linearVoltageSources.length; s++) {
@@ -640,17 +667,22 @@ function stampLedCompanion(
   const a = nodeIndex.get(led.anodeNet)
   const c = nodeIndex.get(led.cathodeNet)
 
+  // The diode conductance plus the SPICE GMIN floor — a 1 pS resistor in parallel
+  // with the junction (the b/current source uses G alone, so it is a pure parallel
+  // conductance). It keeps a node behind a hard-off (reverse) diode from floating,
+  // without moving the operating point (its current is sub-pA).
+  const Gd = G + SOLVER_GMIN
   if (a !== undefined) {
-    M.set([a, a], (M.get([a, a]) ?? 0) + G)
+    M.set([a, a], (M.get([a, a]) ?? 0) + Gd)
     b.set([a, 0], (b.get([a, 0]) ?? 0) - Ieq)
   }
   if (c !== undefined) {
-    M.set([c, c], (M.get([c, c]) ?? 0) + G)
+    M.set([c, c], (M.get([c, c]) ?? 0) + Gd)
     b.set([c, 0], (b.get([c, 0]) ?? 0) + Ieq)
   }
   if (a !== undefined && c !== undefined) {
-    M.set([a, c], (M.get([a, c]) ?? 0) - G)
-    M.set([c, a], (M.get([c, a]) ?? 0) - G)
+    M.set([a, c], (M.get([a, c]) ?? 0) - Gd)
+    M.set([c, a], (M.get([c, a]) ?? 0) - Gd)
   }
 }
 
@@ -767,6 +799,17 @@ export function stampBjtCompanion(
   g.E.C = -(g.C.C + g.B.C)
   g.E.B = -(g.C.B + g.B.B)
   g.E.E = -(g.C.E + g.B.E)
+
+  // SPICE GMIN floor: a 1 pS resistor across each junction (B-E and B-C), so the
+  // base / collector can't float when the transistor is hard-off. Each conductance
+  // is symmetric and row-sum-zero, so KCL is preserved; sub-pA, no bias shift.
+  g.B.B += 2 * SOLVER_GMIN
+  g.E.E += SOLVER_GMIN
+  g.C.C += SOLVER_GMIN
+  g.B.E -= SOLVER_GMIN
+  g.E.B -= SOLVER_GMIN
+  g.B.C -= SOLVER_GMIN
+  g.C.B -= SOLVER_GMIN
 
   const ieqC = sign * (j.iC - (j.dIC_dVBE * vBE + j.dIC_dVBC * vBC))
   const ieqB = sign * (j.iB - (j.dIB_dVBE * vBE + j.dIB_dVBC * vBC))
@@ -1010,13 +1053,60 @@ export function stampConductance(
   }
 }
 
+/** Definitions modeled as a light-driven current source (photoconductive mode). */
+export const LIGHT_CURRENT_DEFINITIONS: ReadonlySet<string> = new Set([
+  'photodiode',
+  'phototransistor',
+])
+
+/** The from→to terminal pair a light current source drives between — the
+ *  direction the photocurrent flows inside the device (a photodiode sinks
+ *  cathode→anode, a phototransistor collector→emitter). */
+export function lightCurrentTerminals(definition: string): [string, string] {
+  return definition === 'phototransistor' ? ['collector', 'emitter'] : ['cathode', 'anode']
+}
+
+/**
+ * A photodiode / phototransistor: a current `lightSensorCurrent(inst)` driven from
+ * `fromTerminal` to `toTerminal` by the light on it (a Norton current injection
+ * into b), in parallel with the part's shunt resistance (its real off-state path,
+ * and numerical safety so an isolated sensor's node can't float). The current
+ * LEAVES `from` and ENTERS `to` — so a node fed through a load resistor drops as
+ * the light rises, the photoconductive response.
+ */
+export function stampLightCurrentSource(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+  fromTerminal: string,
+  toTerminal: string,
+): boolean {
+  const fromNet = inst.connects?.find((c) => c.terminal === fromTerminal)?.net
+  const toNet = inst.connects?.find((c) => c.terminal === toTerminal)?.net
+  if (fromNet === undefined || toNet === undefined) return false
+  const shunt = readScalarParam(inst, 'shunt_resistance')
+  if (shunt !== undefined && shunt > 0) stampConductance(nodeIndex, M, fromNet, toNet, shunt)
+  const amps = lightSensorCurrent(inst)
+  const iFrom = nodeIndex.get(fromNet)
+  const iTo = nodeIndex.get(toNet)
+  if (iFrom !== undefined) b.set([iFrom, 0], (b.get([iFrom, 0]) ?? 0) - amps)
+  if (iTo !== undefined) b.set([iTo, 0], (b.get([iTo, 0]) ?? 0) + amps)
+  return true
+}
+
 export function stampResistor(
   inst: Instance,
   nodeIndex: Map<string, number>,
   // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
   M: any,
 ): boolean {
-  const R = readScalarParam(inst, 'resistance')
+  // A photoresistor is a resistor whose resistance comes from the light on it
+  // (the LDR power law), not a declared `resistance` — everything else is identical.
+  const R =
+    inst.definition === 'photoresistor' ? ldrResistance(inst) : readScalarParam(inst, 'resistance')
   if (R === undefined || R <= 0) return false
 
   if (inst.connects?.length !== 2) return false
@@ -1480,7 +1570,8 @@ export function computeResistorCurrent(
   inst: Instance,
   nodes: Map<string, number>,
 ): number | undefined {
-  const R = readScalarParam(inst, 'resistance')
+  const R =
+    inst.definition === 'photoresistor' ? ldrResistance(inst) : readScalarParam(inst, 'resistance')
   if (R === undefined || R <= 0) return undefined
 
   if (inst.connects?.length !== 2) return undefined

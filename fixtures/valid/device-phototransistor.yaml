@@ -1,0 +1,104 @@
+# Valid fixture: phototransistor (a photodiode with built-in gain).
+# Light falling on its base-collector junction makes a photocurrent — exactly like
+# a photodiode — but the transistor then AMPLIFIES it by its current gain:
+#   I_C = β · I_photo = β · responsivity · E      (E illuminance in lux)
+# So it sources hundreds of times more current than a bare photodiode for the same
+# light — milliamps in a bright room, enough to drive a relay or an LED directly.
+# The slower, higher-output cousin of the photodiode: the sensor in a slotted opto-
+# interrupter, a TV remote receiver, an optocoupler's output side.
+#
+# It reads the SAME incident_illuminance the LDR and photodiode do (ambient plus any
+# light_source cast), so a lamp nearby raises its collector current.
+#
+# Two terminals (collector / emitter); the base is the LIGHT input — no base lead,
+# the classic 2-pin phototransistor. The collector current flows collector→emitter
+# (an NPN). Solved as a light-controlled current source (β · the base photocurrent)
+# in parallel with its off-state resistance.
+#
+# Honest first-rung model: I_C = β · responsivity · E only. Saturation (V_CE can't
+# fall below ~0.2 V — at high light + a big load the transistor bottoms out and the
+# current stops following the light), the full BJT output curve, the base-collector
+# junction capacitance (the reason phototransistors are slow), and the temperature
+# dependence of β are omitted. The responsivity and β are representative figures.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: phototransistor
+origin: builtin
+layer: primitive_device
+name: "Phototransistor (light-to-current, amplified)"
+description: "A photodiode with a transistor's gain built in: light makes a base photocurrent that the transistor amplifies by β, so I_C = β·responsivity·E — hundreds of times a bare photodiode's current, milliamps in bright light. The high-output light sensor: opto-interrupters, remote-control receivers, optocouplers. Reads the same incident light the LDR does. Two-terminal (collector / emitter); the base is the light input."
+composition:
+  requires:
+    photoconductive_material:
+      kind: material
+      must_enable:
+        - electrical_conduction
+parameters:
+  photoconductive_material:
+    type: material_ref
+    satisfies_role: photoconductive_material
+    required: true
+    description: The light-absorbing semiconductor (silicon for visible/near-IR). Photons on the base-collector junction make the base photocurrent the transistor amplifies. The catalog's silicon default stands in; the response comes from responsivity + gain, not this material's bulk resistivity.
+  photocurrent_per_lux:
+    type: quantity
+    units: ampere_per_lux
+    required: true
+    description: "The BASE photocurrent per lux (A/lux) — the same photodiode responsivity, before the transistor's gain. A small phototransistor's base photocurrent is ~1e-8 A/lux; multiplied by β it becomes the much larger collector current. Representative, medium confidence (spectrum- and area-dependent)."
+  current_gain:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: "The transistor's current gain β (h_FE) — how much it multiplies the base photocurrent. Typically ~100-500 for a phototransistor; ~300 here. So at ~1e-8 A/lux base × 300 ≈ 3 µA/lux collector → ~0.3 mA at 100 lux, ~3 mA in bright light."
+  ambient_illuminance:
+    type: quantity
+    units: lux
+    required: false
+    description: "The baseline light this phototransistor sits in (the optical ambient, the LDR's). A light_source adds its cast on top → the computed incident_illuminance, which the photocurrent reads. Absent reads 100 lux (typical indoor light)."
+  shunt_resistance:
+    type: quantity
+    units: ohm
+    required: false
+    description: "The collector-emitter off-state (dark) resistance, in parallel with the photocurrent — high (~100 MΩ), mostly a numerical-stability / dark-leakage path. Absent reads 100 MΩ."
+  peak_wavelength:
+    type: quantity
+    units: nanometer
+    required: false
+    description: "The wavelength of peak response — a silicon phototransistor peaks near 850-900 nm (near-IR), which is why IR remotes and opto-interrupters use them."
+  max_collector_current:
+    type: quantity
+    units: ampere
+    required: false
+    description: Maximum continuous collector current. A small phototransistor is rated ~50 mA.
+  collector_emitter_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Maximum collector-emitter voltage V_CEO before breakdown — typically ~30 V for a small phototransistor.
+behaviors:
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  collector:
+    description: The collector, normally held positive. The amplified photocurrent is drawn IN here (collector→emitter, an NPN).
+  emitter:
+    description: The emitter, toward the lower-potential rail. The collector current flows OUT here.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved as a current source of magnitude lightSensorCurrent(inst) = current_gain ·
+  responsivity · incident_illuminance, driven collector→emitter, in parallel with
+  shunt_resistance (light.ts + stampLightCurrentSource; same injection in the
+  transient solver). It is the photodiode model × β — one helper serves both. The
+  incident light is the LDR's (ambient + light_source cast), so it responds to
+  position too.
+  Honest gaps: I_C = β·responsivity·E only — no saturation (V_CE(sat) floor, where a
+  real phototransistor stops following the light under a heavy load), no full BJT
+  output curve, no junction-capacitance speed limit, no temperature dependence of β;
+  responsivity and β are representative figures; not yet a scope part-probe channel
+  (its DC current shows in the meter, Math panel, and readings).

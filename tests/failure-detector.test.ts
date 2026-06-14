@@ -397,7 +397,7 @@ describe('detectFailures end-to-end: educational anchor circuit', () => {
     const ledOverload = failures.find((f) => f.code === 'led-overloaded' && f.source === 'led_001')
     expect(ledOverload).toBeDefined()
     if (ledOverload === undefined) return
-    expect(ledOverload.measured).toBeCloseTo(0.0686754, 6)
+    expect(ledOverload.measured).toBeCloseTo(0.0686793, 6)
     expect(ledOverload.rated).toBeCloseTo(0.02, 9)
     expect(ledOverload.ratio).toBeCloseTo(3.4338, 3)
     expect(ledOverload.units).toBe('ampere')
@@ -469,7 +469,7 @@ describe('detectFailures: the consolidated cross-sprint contract (S15-v3-6)', ()
     if (f === undefined) return
     expect(f.source).toBe('led_001')
     expect(f.kind).toBe('max_forward_current')
-    expect(f.measured).toBeCloseTo(0.0686754, 6)
+    expect(f.measured).toBeCloseTo(0.0686793, 6)
     expect(f.rated).toBe(0.02)
     expect(f.ratio).toBeCloseTo(3.4338, 3)
     expect(f.units).toBe('ampere')
@@ -567,9 +567,9 @@ describe('detectFailures: the consolidated cross-sprint contract (S15-v3-6)', ()
     expect(codes).toEqual(['led-overloaded', 'resistor-overpower'])
 
     const ledF = failures.find((f) => f.code === 'led-overloaded')
-    expect(ledF?.measured).toBeCloseTo(0.68175, 4) // ~681.75 mA (Shockley)
+    expect(ledF?.measured).toBeCloseTo(0.68187, 4) // ~681.9 mA (Shockley at 25 °C)
     const rF = failures.find((f) => f.code === 'resistor-overpower')
-    expect(rF?.measured).toBeCloseTo(4.648, 3) // ~4.648 W
+    expect(rF?.measured).toBeCloseTo(4.6495, 3) // ~4.65 W
   })
 
   test('an empty world produces no failures', () => {

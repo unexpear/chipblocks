@@ -1,0 +1,116 @@
+# Valid fixture: photoresistor (LDR — light-dependent resistor).
+# A resistor whose resistance is a strong, nonlinear function of the LIGHT
+# falling on it. The classic CdS (cadmium-sulfide) cell: resistance FALLS as it
+# gets brighter, following the datasheet power law
+#   R(E) = R0 * (E / E0)^(-gamma)
+# where R0 is the resistance at the reference illuminance E0 (the datasheet's
+# "resistance at 10 lux") and gamma is the log-log slope (~0.5-0.9 for a CdS
+# cell). The light sensor in a night-light, a street-lamp dusk switch, a camera
+# exposure meter.
+#
+# This is the FIRST RUNG of an illumination axis — the optical cousin of the
+# thermistor's temperature axis. Until now every part's only environmental input
+# was the 25 C ambient; the photoresistor adds INCIDENT ILLUMINANCE (lux,
+# incident_illuminance) as a per-part Active Variable: "how much light is falling
+# on this part," exactly the way ambient_temperature places a thermistor somewhere
+# hot or cold. You dial the light on the sensor and watch its resistance — and the
+# circuit around it — respond.
+#
+# Non-polar, two terminals. Solved as a resistor whose resistance is computed from
+# the light on it (ldrResistance in light.ts), not from a declared `resistance`.
+#
+# The light it reads is its ambient_illuminance plus whatever a light_source part
+# casts onto it by distance (E = I/d², the inverse square) — drag the sensor
+# toward a lamp and its resistance falls.
+#
+# Honest gaps: point light sources only (no shadows/occlusion, no beam angle).
+# Only the CdS-style power law is modeled; an LDR's slow response time (CdS cells
+# lag ~10s-100s of ms and show light history / "memory") and its small temperature
+# coefficient are omitted; the photodiode/phototransistor (which generate a
+# light-driven CURRENT, not just a resistance) are separate parts. CdS contains
+# cadmium and is RoHS-restricted; modern designs prefer photodiodes, but the CdS
+# LDR remains the canonical teaching part.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: photoresistor
+origin: builtin
+layer: primitive_device
+name: "Photoresistor (LDR — light-dependent resistor)"
+description: "A two-terminal resistor whose resistance varies strongly and nonlinearly with the light falling on it. The CdS type modeled here falls in resistance as it brightens, following the power law R(E) = R0*(E/E0)^(-gamma). Its incident_illuminance (lux) is a per-part light input — the first rung of an illumination axis, the optical cousin of the thermistor's temperature axis. The light sensor of the hobbyist world: night-lights, dusk switches, exposure meters. Non-polar."
+composition:
+  requires:
+    photoconductive_material:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  photoconductive_material:
+    type: material_ref
+    satisfies_role: photoconductive_material
+    required: true
+    description: The light-sensitive material. Real LDRs use a sintered photoconductor — cadmium sulfide (CdS) for visible light, cadmium selenide (CdSe) toward the red/IR — in which incident photons free extra charge carriers, dropping the resistance. The catalog's conductive default stands in until CdS data lands; the light response comes from R0 + gamma, not from this material's bulk resistivity.
+  reference_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: "R0 — the resistance at the reference illuminance E0 (the datasheet's resistance at 10 lux). The headline figure (e.g. a 12 kOhm-at-10-lux cell). The live resistance is recomputed from this via the power law at the part's incident illuminance."
+  reference_illuminance:
+    type: quantity
+    units: lux
+    required: false
+    description: "E0 — the illuminance at which the resistance equals R0. Absent reads 10 lux, the datasheet standard for CdS cells."
+  gamma:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: "The slope of the resistance-vs-illuminance curve on log-log axes (often quoted as gamma_10-100, fit between 10 and 100 lux). A bigger gamma = a steeper response. Typical CdS cells are 0.5-0.9; the GL5528 is about 0.6."
+  dark_resistance:
+    type: quantity
+    units: ohm
+    required: false
+    description: "The resistance with no light (the datasheet 'dark resistance,' measured ~10 s after light removal). The power law diverges as the light goes to zero, so the resistance is capped here. A GL5528 is about 1 MOhm. Absent reads 100x R0."
+  ambient_illuminance:
+    type: quantity
+    units: lux
+    required: false
+    description: "The baseline light this photoresistor sits in — the per-part knob of the illumination axis, the optical analogue of ambient_temperature. Absent reads 100 lux (typical indoor light). A light_source part adds its cast on top of this (incident = ambient + cast by distance), so this is the scene light WITHOUT any modeled lamps. Dial it toward 0 (darkness) to drive the resistance up to its dark value, or up toward daylight (10000+ lux) to push it down to a few hundred ohms. Rough reference points: moonlight ~0.1-1 lux, dim room ~50 lux, office ~300-500 lux, overcast day ~1000-10000 lux, direct sun ~100000 lux. The computed incident_illuminance (ambient + cast) is what the resistance law actually reads."
+  max_operating_temperature:
+    type: quantity
+    units: celsius
+    required: false
+    description: Maximum body temperature before the cell degrades. CdS photoresistors are typically rated to ~70 C.
+behaviors:
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+terminals:
+  terminal_a:
+    description: One end of the photoconductive element. Non-polar.
+  terminal_b:
+    description: The other end of the photoconductive element.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved as a resistor whose resistance is computed at stamp time from the light
+  on it — ldrResistance(inst) in light.ts, the power law R(E) = R0*(E/E0)^(-gamma)
+  capped at dark_resistance as E -> 0. Unlike the thermistor (whose resistance the
+  electro-thermal loop rewrites every iteration from its solved temperature), the
+  photoresistor's light is a STATIC per-part input, so its resistance is set once
+  from incident_illuminance and does not ride the thermal loop. The same DC and
+  transient resistor stamp reads it (stampResistor / the transient resistors list),
+  so the recorded current is the real DV/R the matrix saw.
+  Honest gaps: light is a per-part input, not a cast field (no light-source part /
+  ray-casting yet); only the CdS power law is modeled (response-time lag, light
+  memory, and the small temperature coefficient are omitted); a photodiode /
+  phototransistor — which produce a light-driven current rather than a variable
+  resistance — are sibling parts, not this one; an unwired photoresistor shows its
+  light-law resistance but carries no current.

@@ -13,7 +13,7 @@ id: nichrome
 origin: builtin
 layer: material
 name: Nichrome 80/20 (Ni 80% / Cr 20% resistive alloy)
-description: Nickel-chromium alloy, nominally 80% nickel and 20% chromium by weight (designated Type A per ASTM B344). The canonical material for resistive heating elements (toasters, kilns, hairdryers) and precision wire-wound resistors. High resistivity, very low temperature coefficient of resistance, and oxidation resistance up to about 1150 C.
+description: Nickel-chromium alloy, nominally 80% nickel and 20% chromium by weight (designated Type A per ASTM B344). The canonical material for resistive heating elements (toasters, kilns, hairdryers) and precision wire-wound resistors. High resistivity, very low temperature coefficient of resistance, and oxidation resistance up to about 1200 C.
 composition:
   uses: []
 enables:
@@ -89,12 +89,12 @@ properties:
   max_operating_temperature:
     value:
       kind: scalar
-      amount: 1150
+      amount: 1200
       unit: degC
     provenance:
       source_type: standard
       title: Nichrome 80/20 maximum continuous operating temperature in air
-      citation: "ASTM B344 (Type A continuous-service rating)"
+      citation: "ASTM B344 (Type A continuous-service rating, ~1200 C in air); manufacturer resistance-wire datasheets"
       confidence: high
     support:
       model_status: defined

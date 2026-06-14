@@ -38,8 +38,8 @@ describe('thermalVoltage', () => {
     expect(thermalVoltage(600)).toBeCloseTo(2 * thermalVoltage(300), 9)
   })
 
-  test('defaults to 300 K', () => {
-    expect(thermalVoltage()).toBe(thermalVoltage(300))
+  test('defaults to 298.15 K (25 °C, the datasheet calibration condition)', () => {
+    expect(thermalVoltage()).toBe(thermalVoltage(298.15))
   })
 })
 

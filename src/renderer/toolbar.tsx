@@ -31,6 +31,7 @@ export function ToolbarItems({
   onSolve,
   onScope,
   onMath,
+  onWorstCase,
   onGroup,
   canGroup,
   onClipboard,
@@ -51,6 +52,7 @@ export function ToolbarItems({
   onSolve: () => void
   onScope: () => void
   onMath: () => void
+  onWorstCase: () => void
   onGroup: () => void
   canGroup: boolean
   onClipboard: () => void
@@ -255,6 +257,18 @@ export function ToolbarItems({
           Σ
         </span>
         <span style={{ fontSize: 11 }}>Math</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={onWorstCase}
+        title="Worst-case — sweep every part's ±tolerance and report each reading's min/max envelope, crossed against its rating. Asks 'is EVERY corner safe?', not just the nominal one."
+        style={{ ...toolButton(false), flexDirection: 'row', gap: 6, padding: '8px 12px' }}
+      >
+        <span aria-hidden style={{ color: '#d6a23c', fontSize: 13 }}>
+          ±
+        </span>
+        <span style={{ fontSize: 11 }}>Worst-case</span>
       </button>
 
       {/* Lenses (S19-v3-50): overlay the solved physics on the schematic. Voltage

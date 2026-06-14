@@ -93,6 +93,18 @@ describe('primaryValue', () => {
     expect(primaryValue('switch_spst_toggle', { state: { value: 'open' } })).toBe('open')
     expect(primaryValue('switch_spst_toggle', {})).toBe('closed') // absent state defaults closed
   })
+  test('photodiode → its photocurrent; phototransistor amplifies it by β', () => {
+    const base = {
+      photocurrent_per_lux: param(1e-8, 'ampere_per_lux'),
+      ambient_illuminance: param(1000, 'lux'),
+    }
+    expect(primaryValue('photodiode', base)).toBe('10.0 µA') // 1e-8 A/lux × 1000 lux
+    // The phototransistor MUST apply β (regression: the headline once dropped the
+    // definition, so it showed the un-amplified base). 300 × 10 µA = 3 mA.
+    expect(
+      primaryValue('phototransistor', { ...base, current_gain: param(300, 'dimensionless') }),
+    ).toBe('3.00 mA')
+  })
 })
 
 describe('switch state', () => {

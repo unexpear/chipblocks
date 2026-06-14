@@ -1,0 +1,98 @@
+# Valid fixture: photodiode (a light-driven current source).
+# A pn-junction that turns light into CURRENT rather than (like the LDR) into a
+# resistance. In photoconductive mode (reverse-biased) it sources a reverse
+# photocurrent very nearly proportional to the light on it:
+#   I_photo = responsivity · E        (E illuminance in lux)
+# Drive that current through a load resistor and you get a voltage proportional to
+# light — the heart of a light meter, an optical receiver, a pulse-oximeter front
+# end. Faster and more linear than a CdS LDR (no slow CdS lag), and cadmium-free.
+#
+# It reads the SAME incident_illuminance the LDR does (ambient_illuminance + the
+# cast from any light_source), so a lamp dragged near it raises its current.
+#
+# Two terminals, POLAR (anode / cathode): the photocurrent flows cathode→anode
+# inside the device (the reverse direction), so it is normally reverse-biased
+# (cathode positive). Solved as a light-controlled current source in parallel with
+# its shunt resistance — no new physics beyond a current injection.
+#
+# Honest first-rung model: the photocurrent only (I ∝ E). The dark current
+# (~nA leakage), the diode's own forward I-V (a forward-biased photodiode is just
+# a diode — the photovoltaic/solar-cell mode is a sibling), junction capacitance
+# (which sets the real speed), and the responsivity's wavelength dependence are
+# omitted. The responsivity is a representative figure, not a per-unit calibration.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: photodiode
+origin: builtin
+layer: primitive_device
+name: "Photodiode (light-to-current sensor)"
+description: "A reverse-biased pn-junction that sources a current proportional to the light on it (I = responsivity·E). Turns light into current — faster and more linear than an LDR, and cadmium-free. Drive it through a load resistor for a light-proportional voltage. Reads the same incident illuminance the LDR does, so a light source nearby raises its current. Polar: anode / cathode."
+composition:
+  requires:
+    photoconductive_material:
+      kind: material
+      must_enable:
+        - electrical_conduction
+parameters:
+  photoconductive_material:
+    type: material_ref
+    satisfies_role: photoconductive_material
+    required: true
+    description: The light-absorbing semiconductor. Real photodiodes are silicon (visible/near-IR) or InGaAs (IR); photons promote carriers across the junction to make the photocurrent. The catalog's silicon default stands in; the response comes from responsivity, not this material's bulk resistivity.
+  photocurrent_per_lux:
+    type: quantity
+    units: ampere_per_lux
+    required: true
+    description: "The responsivity as a current per lux (A/lux) — the slope of I_photo vs illuminance. A BPW34-class silicon photodiode is roughly 1e-8 A/lux (about 10 nA per lux) at daylight, so ~1 µA at 100 lux, ~10 µA in a bright room. Representative, medium confidence: the true value depends on the spectrum and the cell area."
+  ambient_illuminance:
+    type: quantity
+    units: lux
+    required: false
+    description: "The baseline light this photodiode sits in (the optical ambient, exactly the LDR's). A light_source adds its cast on top → the computed incident_illuminance, which the photocurrent reads. Absent reads 100 lux (typical indoor light)."
+  shunt_resistance:
+    type: quantity
+    units: ohm
+    required: false
+    description: "The junction's shunt (dark) resistance, in parallel with the photocurrent — very high for a silicon photodiode (~1 GΩ). Mostly a numerical-stability / off-state path here; absent reads 1 GΩ."
+  peak_wavelength:
+    type: quantity
+    units: nanometer
+    required: false
+    description: "The wavelength of peak responsivity. A silicon photodiode (BPW34) peaks near 900 nm (near-IR); the response rolls off toward blue and past 1100 nm (silicon's band edge)."
+  max_reverse_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Maximum reverse (bias) voltage before breakdown. BPW34 is rated 32 V.
+  dark_current:
+    type: quantity
+    units: ampere
+    required: false
+    description: "The reverse leakage with NO light (the noise floor) — BPW34 ~2 nA at 10 V reverse. Declared for honesty; not added to the photocurrent in this first-rung model."
+behaviors:
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  anode:
+    description: The p-side. The photocurrent flows OUT here in the external circuit (toward the lower-potential rail).
+  cathode:
+    description: The n-side, normally held positive (reverse bias). The photocurrent is drawn IN here.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved as a current source of magnitude lightSensorCurrent(inst) = responsivity ·
+  incident_illuminance, driven cathode→anode (the reverse photocurrent), in parallel
+  with shunt_resistance (light.ts + stampLightCurrentSource in dc-solver.ts; the same
+  injection in the transient solver). The incident light is the LDR's — ambient plus
+  any light_source cast — so the photodiode responds to position too.
+  Honest gaps: photocurrent only (no dark current added, no forward/photovoltaic
+  diode I-V, no junction capacitance / speed, no wavelength-dependent responsivity);
+  the responsivity is a representative figure, not a calibrated per-part value; not
+  yet probeable as its own channel in the scope (its DC current shows in the meter,
+  Math panel, and readings).

@@ -53,6 +53,10 @@ export function canvasToWorld(nodes: CanvasNode[], edges: CanvasEdge[]): World {
     // the whole job — current passes through the shared net by KCL, with
     // nothing to stamp. So no instance is created for it.
     if (node.definition === 'junction') continue
+    // A light source is environmental, not electrical — it has no terminals and
+    // carries no current. The casting pre-pass reads it from the canvas nodes
+    // (positions + intensity); it never enters the circuit world.
+    if (node.definition === 'light_source') continue
     instances.set(node.id, {
       id: node.id,
       kind_ref: 'primitive_device',

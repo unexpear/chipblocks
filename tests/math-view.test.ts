@@ -418,8 +418,8 @@ describe('buildMathView', () => {
 
     const view = buildMathView(world, result.solution, result.temperaturesC)
     const text = view.parts.find((p) => p.id === 'm1')?.lines.join(' ') ?? ''
-    // The narrated k IS the mobility-scaled one…
-    const hotK = 0.026 * ((t + 273.15) / 300) ** -1.5
+    // The narrated k IS the mobility-scaled one (T₀ = 298.15 K, the calibration ref)…
+    const hotK = 0.026 * ((t + 273.15) / 298.15) ** -1.5
     expect(text).toContain(`k = ${formatEng(hotK, 'A')}/V²`)
     // …the drift line speaks the running temperature and the drifted V_th…
     expect(text).toContain(`Running at ${t.toFixed(1)} °C`)

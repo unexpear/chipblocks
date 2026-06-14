@@ -321,6 +321,63 @@ function ThermistorGlyph() {
   )
 }
 
+/** Photoresistor (LDR) — IEC 60617: a resistor body struck by two arrows (light
+ *  falling IN — the mirror of the LED's two arrows radiating OUT). Its resistance
+ *  falls as the incident light rises. */
+function PhotoresistorGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>photoresistor (LDR)</title>
+      {lead(0, 22)}
+      <rect
+        x={22}
+        y={MID - 7}
+        width={36}
+        height={14}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      {lead(58, W)}
+      {/* two arrows striking the body — incident light (heads at the box) */}
+      <g stroke={STROKE} strokeWidth={1.2}>
+        <line x1={28} y1={3} x2={37} y2={12} />
+        <polyline points="37,7 37,12 32,12" fill="none" />
+        <line x1={38} y1={3} x2={47} y2={12} />
+        <polyline points="47,7 47,12 42,12" fill="none" />
+      </g>
+    </svg>
+  )
+}
+
+/** Light source (lamp) — a sun: a bulb radiating rays in every direction. The
+ *  emitter that casts the light an LDR's arrows receive. Environmental, no leads. */
+function LightSourceGlyph() {
+  const cx = W / 2
+  const cy = MID
+  const rayAngles = [0, 45, 90, 135, 180, 225, 270, 315]
+  return (
+    <svg width={W} height={H}>
+      <title>light source (lamp)</title>
+      <circle cx={cx} cy={cy} r={7} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <g stroke={STROKE} strokeWidth={1.2}>
+        {rayAngles.map((deg) => {
+          const a = (deg * Math.PI) / 180
+          return (
+            <line
+              key={deg}
+              x1={cx + Math.cos(a) * 10}
+              y1={cy + Math.sin(a) * 10}
+              x2={cx + Math.cos(a) * 16}
+              y2={cy + Math.sin(a) * 16}
+            />
+          )
+        })}
+      </g>
+    </svg>
+  )
+}
+
 /** Relay — IEC: a coil box (the electromagnet) mechanically linked (the dashed
  *  armature) to an SPDT contact. Energized, the common arm throws up to
  *  normally_open; at rest a spring holds it down on normally_closed. The arm
@@ -566,11 +623,59 @@ function MosfetPmosGlyph() {
   )
 }
 
+/** Photodiode — a diode struck by two arrows (light received, like the LDR). Its
+ *  reverse photocurrent flows cathode→anode; normally reverse-biased. */
+function PhotodiodeGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>photodiode</title>
+      {lead(0, 26)}
+      <polygon points="26,12 26,32 44,22" fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={44} y1={12} x2={44} y2={32} stroke={STROKE} strokeWidth={1.5} />
+      {lead(44, W)}
+      <g stroke={STROKE} strokeWidth={1.2}>
+        <line x1={20} y1={2} x2={29} y2={11} />
+        <polyline points="29,6 29,11 24,11" fill="none" />
+        <line x1={30} y1={2} x2={39} y2={11} />
+        <polyline points="39,6 39,11 34,11" fill="none" />
+      </g>
+    </svg>
+  )
+}
+
+/** Phototransistor — an NPN struck by light at its base (NO base lead — the base
+ *  IS the light input). Collector top, emitter bottom with the NPN out-arrow. */
+function PhototransistorGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>phototransistor</title>
+      <circle cx={37} cy={MID} r={15} fill="none" stroke={STROKE} strokeWidth={1} />
+      <line x1={32} y1={13} x2={32} y2={31} stroke={STROKE} strokeWidth={2} />
+      <line x1={32} y1={18} x2={40} y2={8} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={8} x2={40} y2={0} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={32} y1={26} x2={40} y2={36} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={36} x2={40} y2={44} stroke={STROKE} strokeWidth={1.5} />
+      <polygon points="40,36 34.5,34 37.5,30" fill={STROKE} stroke={STROKE} strokeWidth={0.5} />
+      {/* light striking the base from the left */}
+      <g stroke={STROKE} strokeWidth={1.2}>
+        <line x1={6} y1={16} x2={18} y2={16} />
+        <polyline points="14,13 18,16 14,19" fill="none" />
+        <line x1={6} y1={28} x2={18} y2={28} />
+        <polyline points="14,25 18,28 14,31" fill="none" />
+      </g>
+    </svg>
+  )
+}
+
 // switch_spst_toggle is intentionally absent — DeviceGlyph renders it specially
 // (it needs the open/closed state, unlike these stateless one-shot glyphs).
 const GLYPHS: Record<string, () => React.JSX.Element> = {
   resistor: ResistorGlyph,
   thermistor: ThermistorGlyph,
+  photoresistor: PhotoresistorGlyph,
+  photodiode: PhotodiodeGlyph,
+  phototransistor: PhototransistorGlyph,
+  light_source: LightSourceGlyph,
   capacitor: CapacitorGlyph,
   inductor: InductorGlyph,
   led: LedGlyph,
@@ -603,6 +708,16 @@ const TWO = (a: string, b: string) => [
 const TERMINALS: Record<string, { id: string; position: Position; offset?: number }[]> = {
   resistor: TWO('terminal_a', 'terminal_b'),
   thermistor: TWO('terminal_a', 'terminal_b'),
+  photoresistor: TWO('terminal_a', 'terminal_b'),
+  // Photodiode: a polar diode (anode left, cathode right). Phototransistor: an
+  // NPN with the base as its light input, so just collector (top) + emitter (bottom).
+  photodiode: TWO('anode', 'cathode'),
+  phototransistor: [
+    { id: 'collector', position: Position.Top },
+    { id: 'emitter', position: Position.Bottom },
+  ],
+  // A light source is environmental — no electrical terminals to wire.
+  light_source: [],
   capacitor: TWO('terminal_a', 'terminal_b'),
   inductor: TWO('terminal_a', 'terminal_b'),
   power_source: TWO('terminal_positive', 'terminal_negative'),

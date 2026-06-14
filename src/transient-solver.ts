@@ -62,6 +62,8 @@ import {
   fuseIsIntact,
   identifyGround,
   KELVIN_OFFSET,
+  LIGHT_CURRENT_DEFINITIONS,
+  lightCurrentTerminals,
   type MosfetElement,
   mathInstance as math,
   PHOTON_EV_NM,
@@ -70,7 +72,9 @@ import {
   resolveBjt,
   resolveMosfet,
   SILICON_BANDGAP_EV,
+  SOLVER_GMIN,
   stampBjtCompanion,
+  stampLightCurrentSource,
   stampMosfetCompanion,
   stampPotentiometer,
   stampResistor,
@@ -86,6 +90,7 @@ import {
   thermalVoltage,
 } from './diode-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
+import { ldrResistance } from './light.ts'
 import { limitMosfetStep, mosfetOperatingPoint } from './mosfet-model.ts'
 
 /** Newton-Raphson controls per time step (matches the DC solver's §20.6). */
@@ -834,17 +839,20 @@ function stampDiodeCompanion(
     vT,
   )
   const { iA, iK } = d
+  // Diode conductance + the SPICE GMIN floor (a 1 pS parallel resistor — the b
+  // current source uses G alone), anchoring a node behind a hard-off junction.
+  const Gd = G + SOLVER_GMIN
   if (iA !== undefined) {
-    M.set([iA, iA], (M.get([iA, iA]) ?? 0) + G)
+    M.set([iA, iA], (M.get([iA, iA]) ?? 0) + Gd)
     b.set([iA, 0], (b.get([iA, 0]) ?? 0) - iEq)
   }
   if (iK !== undefined) {
-    M.set([iK, iK], (M.get([iK, iK]) ?? 0) + G)
+    M.set([iK, iK], (M.get([iK, iK]) ?? 0) + Gd)
     b.set([iK, 0], (b.get([iK, 0]) ?? 0) + iEq)
   }
   if (iA !== undefined && iK !== undefined) {
-    M.set([iA, iK], (M.get([iA, iK]) ?? 0) - G)
-    M.set([iK, iA], (M.get([iK, iA]) ?? 0) - G)
+    M.set([iA, iK], (M.get([iA, iK]) ?? 0) - Gd)
+    M.set([iK, iA], (M.get([iK, iA]) ?? 0) - Gd)
   }
 }
 
@@ -897,8 +905,15 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     rBottom: number
   }[] = []
   for (const inst of world.instances.values()) {
-    if (inst.definition === 'resistor' || inst.definition === 'thermistor') {
-      const ohms = readScalarParam(inst, 'resistance')
+    if (
+      inst.definition === 'resistor' ||
+      inst.definition === 'thermistor' ||
+      inst.definition === 'photoresistor'
+    ) {
+      const ohms =
+        inst.definition === 'photoresistor'
+          ? ldrResistance(inst)
+          : readScalarParam(inst, 'resistance')
       const c1 = inst.connects?.[0]
       const c2 = inst.connects?.[1]
       if (ohms !== undefined && ohms > 0 && c1 !== undefined && c2 !== undefined) {
@@ -1055,10 +1070,20 @@ export function solveTransient(world: World, options: TransientOptions): Transie
 
     for (const inst of world.instances.values()) {
       // A thermistor stamps as a resistor at its Beta-law resistance (written by
-      // the electro-thermal loop for this temperature).
-      if (inst.definition === 'resistor' || inst.definition === 'thermistor')
+      // the electro-thermal loop for this temperature). A photoresistor stamps as
+      // a resistor at its light-law resistance (stampResistor reads ldrResistance).
+      if (
+        inst.definition === 'resistor' ||
+        inst.definition === 'thermistor' ||
+        inst.definition === 'photoresistor'
+      )
         stampResistor(inst, nodeIndex, M)
       else if (inst.definition === 'potentiometer') stampPotentiometer(inst, nodeIndex, M)
+      else if (LIGHT_CURRENT_DEFINITIONS.has(inst.definition)) {
+        // A photodiode / phototransistor injects its constant light-driven current.
+        const [from, to] = lightCurrentTerminals(inst.definition)
+        stampLightCurrentSource(inst, nodeIndex, M, b, from, to)
+      }
     }
     for (let s = 0; s < S; s++) {
       // biome-ignore lint/style/noNonNullAssertion: s is bound by S

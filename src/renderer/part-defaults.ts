@@ -1,5 +1,6 @@
 import type { Instance } from '../cross-fk-validator.ts'
 import { readEnumParam, readScalarParam } from '../instance-params.ts'
+import { ldrResistance, lightSensorCurrent } from '../light.ts'
 import { formatEng } from './units.ts'
 
 /**
@@ -195,6 +196,49 @@ const DEFAULTS: Record<string, Parameters> = {
     thermal_resistance_junction_ambient: scalar(667, 'kelvin_per_watt'),
     max_operating_temperature: scalar(125, 'celsius'),
   },
+  photoresistor: {
+    // GL5528 CdS photoresistor (the ubiquitous 5 mm hobbyist LDR): ~12 kΩ at
+    // 10 lux, γ ≈ 0.6, ~1 MΩ dark. Starts in 100 lux (typical indoor light)
+    // → ~3 kΩ; dial incident_illuminance toward darkness to drive its resistance
+    // up to ~1 MΩ, toward daylight to drive it down to a few hundred ohms.
+    reference_resistance: scalar(12000, 'ohm'),
+    reference_illuminance: scalar(10, 'lux'),
+    gamma: scalar(0.6, 'dimensionless'),
+    dark_resistance: scalar(1000000, 'ohm'),
+    ambient_illuminance: scalar(100, 'lux'),
+    photoconductive_material: { value: 'nichrome' },
+    max_operating_temperature: scalar(70, 'celsius'),
+  },
+  light_source: {
+    // A small lamp: 10 cd (a bright LED indicator; a standard candle is 1 cd). On
+    // the 1px=1mm scale, at 100 px (10 cm) it casts E = 10/0.1² = 1000 lux onto a
+    // sensor; drag the sensor closer or further and the cast follows 1/d².
+    luminous_intensity: scalar(10, 'candela'),
+    emitter: { value: 'nichrome' },
+  },
+  photodiode: {
+    // BPW34-class silicon photodiode: ~10 nA/lux, ~900 nm peak, 1 GΩ shunt, 32 V
+    // reverse, ~2 nA dark. Starts in 100 lux indoor light → ~1 µA photocurrent.
+    photocurrent_per_lux: scalar(1e-8, 'ampere_per_lux'),
+    ambient_illuminance: scalar(100, 'lux'),
+    shunt_resistance: scalar(1e9, 'ohm'),
+    peak_wavelength: scalar(900, 'nanometer'),
+    max_reverse_voltage: scalar(32, 'volt'),
+    dark_current: scalar(2e-9, 'ampere'),
+    photoconductive_material: { value: 'silicon_n_type' },
+  },
+  phototransistor: {
+    // Generic NPN phototransistor: ~10 nA/lux base photocurrent × β 300 ≈ 3 µA/lux
+    // collector. Starts in 100 lux → ~0.3 mA; bright light → milliamps.
+    photocurrent_per_lux: scalar(1e-8, 'ampere_per_lux'),
+    current_gain: scalar(300, 'dimensionless'),
+    ambient_illuminance: scalar(100, 'lux'),
+    shunt_resistance: scalar(1e8, 'ohm'),
+    peak_wavelength: scalar(880, 'nanometer'),
+    max_collector_current: scalar(0.05, 'ampere'),
+    collector_emitter_voltage: scalar(30, 'volt'),
+    photoconductive_material: { value: 'silicon_n_type' },
+  },
   relay: {
     // 5 V SPDT signal/power relay (SONGLE SRD-05VDC-SL-C, the ubiquitous blue
     // Arduino-module relay): 70 Ω coil (~71 mA, ~0.36 W at 5 V), must-operate
@@ -295,7 +339,8 @@ const PROVENANCE: Record<string, Record<string, string>> = {
   },
   power_source: {
     nominal_voltage: 'ANSI/IEC 60086-2 — 9 V 6LR61 (PP3)',
-    internal_resistance: '~1 Ω fresh 9 V alkaline (Duracell MN1604)',
+    internal_resistance:
+      '~1 Ω DC internal resistance of a FRESH 9 V alkaline (Duracell MN1604) — the value a DC solve needs; the 1 kHz AC impedance is higher (~1.7–3 Ω), and both climb to several ohms as the cell discharges',
     ac_amplitude: '0 = pure DC (a battery has no AC component)',
     frequency: '0 = pure DC; set by the AC source types',
     terminal_count:
@@ -380,6 +425,33 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     thermal_resistance_junction_ambient:
       'derived: 1/δ, dissipation factor ~1.5 mW/°C in still air (Vishay NTCLE100E3)',
     max_operating_temperature: 'epoxy NTC bead operating class (~125 °C)',
+  },
+  photoresistor: {
+    reference_resistance: '~12 kΩ at 10 lux (GL5528 CdS cell, 10–20 kΩ datasheet band)',
+    reference_illuminance: '10 lux — the CdS datasheet reference point',
+    gamma: 'GL5528 γ(10–100 lux) ≈ 0.6 (CdS cells span 0.5–0.9, datasheet)',
+    dark_resistance: 'GL5528 dark resistance ~1 MΩ (datasheet minimum)',
+    ambient_illuminance: 'default 100 lux ≈ typical indoor light (illuminance reference table)',
+    max_operating_temperature: 'CdS photoresistor operating class (~70 °C)',
+  },
+  light_source: {
+    luminous_intensity:
+      '~10 cd, a small LED lamp (a standard candle is 1 cd — the historical candela anchor)',
+  },
+  photodiode: {
+    photocurrent_per_lux:
+      'BPW34-class Si photodiode ~10 nA/lux (representative; spectrum/area-dependent, medium confidence)',
+    shunt_resistance: 'silicon photodiode shunt resistance ~1 GΩ (high)',
+    peak_wavelength: 'BPW34 peak responsivity ~900 nm, near-IR (Vishay datasheet)',
+    max_reverse_voltage: 'BPW34 reverse-voltage rating 32 V (datasheet)',
+    dark_current: 'BPW34 ~2 nA dark current at 10 V reverse (datasheet)',
+  },
+  phototransistor: {
+    photocurrent_per_lux:
+      'base photocurrent ~10 nA/lux (the photodiode responsivity, before gain; representative)',
+    current_gain: 'phototransistor current gain β ~300 (typical 100–500)',
+    max_collector_current: 'small phototransistor ~50 mA continuous rating (class)',
+    collector_emitter_voltage: 'small phototransistor V_CEO ~30 V (class)',
   },
   relay: {
     coil_resistance: 'SONGLE SRD-05VDC-SL-C 70 Ω coil (~0.36 W at 5 V, datasheet)',
@@ -585,6 +657,29 @@ export function primaryValue(
   if (definition === 'thermistor') {
     const r = amountOf(parameters, 'resistance')
     return r === undefined ? 'NTC' : `${formatEng(r, 'Ω')} NTC`
+  }
+  if (definition === 'photoresistor') {
+    // Headline the LIVE resistance (computed from the light on it) plus the lux —
+    // an LDR's resistance is the whole point and swings 100× with the light. The
+    // lux shown is the incident (ambient + cast) once a lamp has been folded in,
+    // else the ambient the user set.
+    const r = ldrResistance({ parameters } as unknown as Instance)
+    if (r === undefined) return 'LDR'
+    const lux =
+      amountOf(parameters, 'incident_illuminance') ??
+      amountOf(parameters, 'ambient_illuminance') ??
+      0
+    return `${formatEng(r, 'Ω')} @ ${formatEng(lux, 'lx')}`
+  }
+  if (definition === 'light_source') {
+    const i = amountOf(parameters, 'luminous_intensity')
+    return i === undefined ? 'lamp' : `${formatEng(i, 'cd')}`
+  }
+  if (definition === 'photodiode' || definition === 'phototransistor') {
+    // Headline the live photocurrent it sources from the light on it. The
+    // definition MUST be passed — lightSensorCurrent reads it to apply β for a
+    // phototransistor (without it, the headline shows the un-amplified base).
+    return formatEng(lightSensorCurrent({ definition, parameters } as unknown as Instance), 'A')
   }
   if (definition === 'relay') {
     const v = amountOf(parameters, 'nominal_coil_voltage')

@@ -126,9 +126,9 @@ describe('MOSFET temperature laws (S20-v3-8)', () => {
     }
     const hot = resolveMosfet(withTc as never, 125)
     if (hot === null) throw new Error('failed to resolve')
-    // Mobility: k(T) = k·(T/T₀)^−1.5 in kelvin, T₀ = the same 300 K reference
-    // the diode/BJT I_S(T) laws use (diode-model's ROOM_TEMPERATURE_KELVIN).
-    expect(hot.params.transconductance).toBeCloseTo(0.026 * (398.15 / 300) ** -1.5, 12)
+    // Mobility: k(T) = k·(T/T₀)^−1.5 in kelvin, T₀ = the same 298.15 K (25 °C)
+    // reference the diode/BJT I_S(T) laws use (diode-model's ROOM_TEMPERATURE_KELVIN).
+    expect(hot.params.transconductance).toBeCloseTo(0.026 * (398.15 / 298.15) ** -1.5, 12)
     // Threshold: 2.1 + (−3.4 mV/K)·(125 − 25) = 1.76 V exactly.
     expect(hot.params.thresholdVoltage).toBeCloseTo(1.76, 12)
     // No temperature → the declared 25 °C values, bit-identical behavior.
@@ -137,7 +137,7 @@ describe('MOSFET temperature laws (S20-v3-8)', () => {
     expect(cold?.params.thresholdVoltage).toBe(2.1)
     // Without the tc parameter the mobility law still applies; V_th holds.
     const noTc = resolveMosfet(inst, 125)
-    expect(noTc?.params.transconductance).toBeCloseTo(0.026 * (398.15 / 300) ** -1.5, 12)
+    expect(noTc?.params.transconductance).toBeCloseTo(0.026 * (398.15 / 298.15) ** -1.5, 12)
     expect(noTc?.params.thresholdVoltage).toBe(2.1)
   })
 

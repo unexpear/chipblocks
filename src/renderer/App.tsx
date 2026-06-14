@@ -28,11 +28,12 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { World } from '../cross-fk-validator.ts'
+import type { Instance, World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
 import { solveTransientThermal } from '../electro-thermal.ts'
 import { overcurrentFuseIds } from '../failure-detector.ts'
 import { readScalarParam } from '../instance-params.ts'
+import { LIGHT_SENSOR_DEFINITIONS, type LightSource, worldWithCastLight } from '../light.ts'
 import { type RelayState, solveWithRelays } from '../relay.ts'
 import type { TransientResult } from '../transient-solver.ts'
 import { BlockViewer } from './block-viewer.tsx'
@@ -146,6 +147,8 @@ import {
   samplePathPoints,
 } from './wire-path.ts'
 import { worldToFlow } from './world-to-flow.ts'
+import { type WorstCaseResult, worstCaseAnalysis } from './worst-case.ts'
+import { WorstCasePanel } from './worst-case-panel.tsx'
 
 // The preload bridge (electron/preload.ts): the native Settings menu pushes
 // appearance changes (theme, grid color) into the renderer over IPC.
@@ -357,6 +360,27 @@ function meterDialStyle(active: boolean, light: boolean): React.CSSProperties {
  * the success/failure animations — the canvas, not a fixed loaded circuit, is the
  * source of truth. Manual routing (waypoints) is preserved across the re-solve.
  */
+/** The light sources (positions + intensity) and every node's position, read off
+ *  the canvas nodes — the inputs the casting pre-pass needs (light.ts). */
+function lightCastInputs(nodeList: Node[]): {
+  sources: LightSource[]
+  positions: Map<string, { x: number; y: number }>
+} {
+  const sources: LightSource[] = nodeList
+    .filter((node) => (node.data as DeviceNodeData).definition === 'light_source')
+    .map((node) => ({
+      x: node.position.x,
+      y: node.position.y,
+      intensityCandela:
+        readScalarParam(
+          { parameters: (node.data as DeviceNodeData).parameters } as Instance,
+          'luminous_intensity',
+        ) ?? 0,
+    }))
+  const positions = new Map(nodeList.map((node) => [node.id, node.position]))
+  return { sources, positions }
+}
+
 function solveCanvas(
   nodeList: Node[],
   edgeList: Edge[],
@@ -372,7 +396,14 @@ function solveCanvas(
   relayStates: Map<string, RelayState>
   relaysSettled: boolean
 } {
-  const { world, drawn, leadAliases } = canvasWorld(nodeList, edgeList)
+  const { world: rawWorld, drawn, leadAliases } = canvasWorld(nodeList, edgeList)
+  // Light casting (S21-v3-8): a light_source part throws light onto the sensors
+  // around it, falling off with distance (E = I/d²). Fold each sensor's incident
+  // illuminance — its own ambient plus the cast from every source at its canvas
+  // position — into the world before solving, so the sensor responds to the real,
+  // position-dependent light. This is the ONE place canvas position carries physics.
+  const { sources, positions } = lightCastInputs(nodeList)
+  const world = worldWithCastLight(rawWorld, positions, sources)
   // Electro-thermal solve (stage 7): the electrical answer at the settled part
   // temperatures — hot parts drift, warm junctions drop, all fed back until the
   // fixed point. Readings/health recompute temperatures from this solution and
@@ -811,6 +842,16 @@ function Canvas() {
         : null,
     [showMath, solvedWorld, solution, solvedTemperatures, thermalConverged, relaysSettled],
   )
+  // Worst-case tolerance analysis (S21-v3-10) — on demand (it re-solves the
+  // circuit many times), it sweeps every toleranced part's band and reports each
+  // reading's worst corner crossed against its rating. Runs the SAME heat-aware
+  // solve the canvas uses, on the grounded circuit.
+  const [worstCase, setWorstCase] = useState<WorstCaseResult | null>(null)
+  const runWorstCase = useCallback(() => {
+    setWorstCase(
+      worstCaseAnalysis(groundedComponent(solvedWorld), (w) => solveWithRelays(w).solution),
+    )
+  }, [solvedWorld])
 
   // Circuit blocks (S19-v3-67): group the selection into ONE reusable block.
   // The prompt collects the block's name; the viewer (double-click a block)
@@ -905,7 +946,10 @@ function Canvas() {
     return { lens, flow, vMin, vMax, power, pMax, temp, tMaxC, fieldTesla }
   }, [edges, readings, lens, flow])
   const runScope = useCallback(() => {
-    const world = groundedComponent(canvasWorld(nodes, edges).world)
+    const { sources, positions } = lightCastInputs(nodes)
+    const world = groundedComponent(
+      worldWithCastLight(canvasWorld(nodes, edges).world, positions, sources),
+    )
     const auto = scopeWindow(world)
     setScopeAutoWindowSec(auto.duration)
     const windowSec = scopeSecPerDiv === 'auto' ? auto.duration : scopeSecPerDiv * H_DIVISIONS
@@ -957,7 +1001,10 @@ function Canvas() {
       to: number,
       count: number,
     ) => {
-      const baseWorld = groundedComponent(canvasWorld(nodes, edges).world)
+      const { sources, positions } = lightCastInputs(nodes)
+      const baseWorld = groundedComponent(
+        worldWithCastLight(canvasWorld(nodes, edges).world, positions, sources),
+      )
       const auto = scopeWindow(baseWorld)
       const windowSec = scopeSecPerDiv === 'auto' ? auto.duration : scopeSecPerDiv * H_DIVISIONS
       const fastestHz = fastestSourceHz(baseWorld)
@@ -979,7 +1026,10 @@ function Canvas() {
           sourceId,
           value,
         ) as unknown as Node[]
-        const world = groundedComponent(canvasWorld(stepped, edges).world)
+        // The light is unchanged across voltage steps — reuse the base sources.
+        const world = groundedComponent(
+          worldWithCastLight(canvasWorld(stepped, edges).world, positions, sources),
+        )
         // Each family run heats its parts too — a high-gate step's curve is
         // traced at the temperature that step actually sustains.
         const result = solveTransientThermal(world, {
@@ -1113,6 +1163,7 @@ function Canvas() {
       } else if (
         inst.definition === 'resistor' ||
         inst.definition === 'thermistor' ||
+        inst.definition === 'photoresistor' ||
         inst.definition === 'capacitor' ||
         inst.definition === 'inductor'
       ) {
@@ -1604,6 +1655,43 @@ function Canvas() {
       return changed ? next : current
     })
   }, [relayStates, setNodes])
+
+  // Persist each light sensor's computed incident illuminance (its ambient plus
+  // what every light_source casts on it) onto its node, so the headline reads the
+  // REAL light on it, not just the ambient the user set. The casting pre-pass put
+  // it in the solved world; this catches the node param up. The casting always
+  // recomputes from ambient (never from this synced value), so positions unchanged
+  // → same incident → it converges; only writes on a real change. Not checkpointed.
+  useEffect(() => {
+    setNodes((current) => {
+      let changed = false
+      const next = current.map((node) => {
+        const data = node.data as DeviceNodeData
+        if (!LIGHT_SENSOR_DEFINITIONS.has(data.definition)) return node
+        const inst = solvedWorld.instances.get(node.id)
+        if (inst === undefined) return node
+        const incident = readScalarParam(inst, 'incident_illuminance')
+        if (incident === undefined) return node
+        const shown = readScalarParam(
+          { parameters: data.parameters } as Instance,
+          'incident_illuminance',
+        )
+        if (shown !== undefined && Math.abs(shown - incident) < 1e-6) return node
+        changed = true
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            parameters: {
+              ...data.parameters,
+              incident_illuminance: { value: { kind: 'scalar', amount: incident, unit: 'lux' } },
+            },
+          },
+        }
+      })
+      return changed ? next : current
+    })
+  }, [solvedWorld, setNodes])
 
   // Keyboard shortcuts (S19-v3-15 rotate; S19-v3-62 all bindings editable):
   // every canvas key runs through the user's keybinds — rotate, delete (we own
@@ -2700,6 +2788,10 @@ function Canvas() {
         {mathView !== null ? (
           <MathPanel view={mathView} onClose={() => setShowMath(false)} light={light} />
         ) : null}
+        {/* Worst-case panel — each reading's envelope over tolerances vs its rating. */}
+        {worstCase !== null ? (
+          <WorstCasePanel result={worstCase} onClose={() => setWorstCase(null)} light={light} />
+        ) : null}
 
         {/* Shortcuts panel — every key and control, viewable and editable. */}
         {showShortcuts ? (
@@ -2828,6 +2920,7 @@ function Canvas() {
           onSolve={handleSolve}
           onScope={runScope}
           onMath={() => setShowMath((open) => !open)}
+          onWorstCase={runWorstCase}
           onGroup={() => setGroupPrompt({ name: '', error: null })}
           canGroup={selectedCount >= 2}
           onClipboard={() => setShowClipboard((open) => !open)}

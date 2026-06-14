@@ -3,6 +3,7 @@ import { potentiometerSegments, resolveMosfet, type Solution } from '../dc-solve
 import { deriveSaturationCurrent, thermalVoltage } from '../diode-model.ts'
 import { resistanceAtTemperature } from '../electro-thermal.ts'
 import { readScalarParam } from '../instance-params.ts'
+import { ldrResistance, lightSensorCurrent, sensorIlluminance } from '../light.ts'
 import { mosfetOperatingPoint } from '../mosfet-model.ts'
 import { formatEng } from './units.ts'
 
@@ -327,6 +328,64 @@ function partCard(
     }
     if (current !== undefined) lines.push(`Carrying I = ${fmtA(Math.abs(current))}.`)
     return { id: inst.id, title: 'Thermistor — the Beta law', lines }
+  }
+  if (def === 'photoresistor') {
+    const r0 = readScalarParam(inst, 'reference_resistance')
+    const e0 = readScalarParam(inst, 'reference_illuminance') ?? 10
+    const gamma = readScalarParam(inst, 'gamma')
+    const ambient = readScalarParam(inst, 'ambient_illuminance') ?? 0
+    const e = sensorIlluminance(inst)
+    const cast = e - ambient
+    lines.push(
+      'A photoresistor (LDR) is a resistor whose resistance is set by the LIGHT on it: the power law R(E) = R₀·(E/E₀)^(−γ), with E the illuminance in lux. As the light rises, the resistance FALLS.',
+    )
+    if (r0 !== undefined && gamma !== undefined) {
+      lines.push(
+        `Calibrated to R₀ = ${formatEng(r0, 'Ω')} at E₀ = ${formatEng(e0, 'lx')}, with γ = ${gamma}.`,
+      )
+    }
+    if (cast > 0.5) {
+      lines.push(
+        `Its ambient light is ${formatEng(ambient, 'lx')}; a light source casts ${formatEng(cast, 'lx')} more on it (E = I/d², falling off with distance), so ${formatEng(e, 'lx')} actually lands on it. Move it nearer the lamp and that rises.`,
+      )
+    }
+    const r = ldrResistance(inst)
+    if (r !== undefined) {
+      lines.push(
+        e <= 0
+          ? `Right now it is dark (0 lx), so its resistance sits at its dark value R = ${formatEng(r, 'Ω')} — the value the solver used (the law is capped here as the light goes to zero).`
+          : `Right now ${formatEng(e, 'lx')} is falling on it, so the power law puts its resistance at R = ${formatEng(r, 'Ω')} — the value the solver used.`,
+      )
+    }
+    if (current !== undefined) lines.push(`Carrying I = ${fmtA(Math.abs(current))}.`)
+    return { id: inst.id, title: 'Photoresistor — the LDR light law', lines }
+  }
+  if (def === 'photodiode') {
+    const perLux = readScalarParam(inst, 'photocurrent_per_lux')
+    const e = sensorIlluminance(inst)
+    lines.push(
+      'A photodiode turns light into CURRENT (not resistance, like the LDR): reverse-biased, it sources a photocurrent very nearly proportional to the light, I = responsivity · E.',
+    )
+    if (perLux !== undefined) {
+      lines.push(
+        `Its responsivity is ${formatEng(perLux, 'A/lx')}, and ${formatEng(e, 'lx')} is falling on it, so I = ${formatEng(perLux, 'A/lx')} × ${formatEng(e, 'lx')} = ${formatEng(lightSensorCurrent(inst), 'A')} — the value the solver used. Drive it through a load resistor for a light-proportional voltage.`,
+      )
+    }
+    return { id: inst.id, title: 'Photodiode — light into current', lines }
+  }
+  if (def === 'phototransistor') {
+    const perLux = readScalarParam(inst, 'photocurrent_per_lux')
+    const beta = readScalarParam(inst, 'current_gain') ?? 1
+    const e = sensorIlluminance(inst)
+    lines.push(
+      'A phototransistor is a photodiode with built-in gain: light makes a base photocurrent, and the transistor multiplies it by β — so I_C = β · responsivity · E, hundreds of times a bare photodiode for the same light.',
+    )
+    if (perLux !== undefined) {
+      lines.push(
+        `Base photocurrent = ${formatEng(perLux, 'A/lx')} × ${formatEng(e, 'lx')} = ${formatEng(perLux * e, 'A')}; × β = ${beta} gives the collector current I_C = ${formatEng(lightSensorCurrent(inst), 'A')} — the value the solver used.`,
+      )
+    }
+    return { id: inst.id, title: 'Phototransistor — light into current, amplified', lines }
   }
   if (def === 'potentiometer') {
     const total = readScalarParam(inst, 'resistance')
