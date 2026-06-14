@@ -371,3 +371,178 @@ describe('op-amp input stage — the current-mirror load', () => {
     }
   })
 })
+
+// A compact World accumulator — addPart registers each pin into both the instance's
+// connects and its net's members, so a builder just lists parts, no net bookkeeping.
+function makeWorld(): World {
+  return {
+    definitions: new Map(),
+    instances: new Map(),
+    behaviors: new Map(),
+    activeVariables: new Map(),
+    nets: new Map(),
+  }
+}
+function ensureNet(world: World, id: string, ground = false) {
+  if (!world.nets.has(id)) {
+    world.nets.set(id, {
+      id,
+      kind: 'net',
+      ...(ground ? { type: 'ground' as const } : {}),
+      members: [],
+    })
+  }
+}
+function addPart(
+  world: World,
+  id: string,
+  definition: string,
+  parameters: Record<string, ReturnType<typeof scalar>>,
+  pins: { net: string; terminal: string }[],
+) {
+  world.instances.set(id, {
+    id,
+    kind_ref: 'primitive_device',
+    definition,
+    parameters,
+    connects: pins.map((p) => ({ net: p.net, terminal: p.terminal, of: id })),
+  })
+  for (const p of pins) {
+    ensureNet(world, p.net)
+    world.nets.get(p.net)?.members.push({ instance: id, terminal: p.terminal })
+  }
+}
+
+/**
+ * Two-stage op-amp: the mirror-loaded NPN pair (stage 1) driving a PNP common-
+ * emitter gain stage (stage 2). The first stage's high-impedance output sits near
+ * the +rail — exactly the level to bias a PNP stage 2 whose emitter is on +9 V. Q5's
+ * collector is the op-amp output, loaded by Rout to the −rail. No Miller cap yet
+ * (it is open at DC anyway; it belongs to the AC/stability increment).
+ *
+ * Overall polarity: vin2 is the non-inverting input (+), vin1 the inverting (−).
+ */
+function twoStageOpAmp(vin1: number, vin2: number): World {
+  const w = makeWorld()
+  ensureNet(w, 'gnd', true)
+  const v9 = { nominal_voltage: scalar(9, 'volt') }
+  addPart(w, 'vpos_src', 'power_source', v9, [
+    { net: 'vpos', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  addPart(w, 'vneg_src', 'power_source', v9, [
+    { net: 'gnd', terminal: 'terminal_positive' },
+    { net: 'vneg', terminal: 'terminal_negative' },
+  ])
+  addPart(w, 'vin1_src', 'power_source', { nominal_voltage: scalar(vin1, 'volt') }, [
+    { net: 'base1', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  addPart(w, 'vin2_src', 'power_source', { nominal_voltage: scalar(vin2, 'volt') }, [
+    { net: 'base2', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  // Stage 1 — NPN pair, tail, PNP mirror load. Interstage output on `stage1`.
+  addPart(w, 'rtail', 'resistor', { resistance: scalar(8200, 'ohm') }, [
+    { net: 'tail', terminal: 'terminal_a' },
+    { net: 'vneg', terminal: 'terminal_b' },
+  ])
+  addPart(w, 'q1', 'transistor_bjt_npn', bjt(150, 74), [
+    { net: 'mirror', terminal: 'collector' },
+    { net: 'base1', terminal: 'base' },
+    { net: 'tail', terminal: 'emitter' },
+  ])
+  addPart(w, 'q2', 'transistor_bjt_npn', bjt(150, 74), [
+    { net: 'stage1', terminal: 'collector' },
+    { net: 'base2', terminal: 'base' },
+    { net: 'tail', terminal: 'emitter' },
+  ])
+  addPart(w, 'q3', 'transistor_bjt_pnp', bjt(150, 18.7), [
+    { net: 'mirror', terminal: 'collector' },
+    { net: 'mirror', terminal: 'base' },
+    { net: 'vpos', terminal: 'emitter' },
+  ])
+  addPart(w, 'q4', 'transistor_bjt_pnp', bjt(150, 18.7), [
+    { net: 'stage1', terminal: 'collector' },
+    { net: 'mirror', terminal: 'base' },
+    { net: 'vpos', terminal: 'emitter' },
+  ])
+  // Stage 2 — PNP common-emitter: base = stage-1 output, collector = op-amp output.
+  addPart(w, 'q5', 'transistor_bjt_pnp', bjt(150, 18.7), [
+    { net: 'vout', terminal: 'collector' },
+    { net: 'stage1', terminal: 'base' },
+    { net: 'vpos', terminal: 'emitter' },
+  ])
+  addPart(w, 'rout', 'resistor', { resistance: scalar(18000, 'ohm') }, [
+    { net: 'vout', terminal: 'terminal_a' },
+    { net: 'vneg', terminal: 'terminal_b' },
+  ])
+  return w
+}
+
+/** Op-amp output for a differential input vid, applied symmetrically (+vid/2 to the
+ *  inverting input, −vid/2 to the non-inverting). */
+const vout2 = (vid: number) =>
+  solveDCRobust(twoStageOpAmp(vid / 2, -vid / 2)).nodes.get('vout') ?? Number.NaN
+
+/** Binary-search the differential input that puts the output at mid-rail (0 V) — the
+ *  op-amp's input offset voltage, and the linear point to measure open-loop gain at. */
+function findInputOffset(): number {
+  let lo = -1e-3 // vout(lo) railed high (> 0)
+  let hi = 1e-3 // vout(hi) railed low (< 0)
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2
+    if (vout2(mid) > 0) lo = mid
+    else hi = mid
+  }
+  return (lo + hi) / 2
+}
+
+describe('op-amp — two stages, open loop', () => {
+  test('biases into the active region and the second stage runs a sane current', () => {
+    const sol = solveDCRobust(twoStageOpAmp(0, 0))
+    expect(sol.status).toBe('solved')
+
+    // Interstage node sits near the +rail, biasing the PNP second stage.
+    const stage1 = sol.nodes.get('stage1') ?? Number.NaN
+    expect(stage1).toBeGreaterThan(7.5)
+    expect(stage1).toBeLessThan(8.85)
+
+    // Stage 2 draws a real, sane current (~1 mA) — not slammed to amps, not cut off.
+    const iQ5 = Math.abs(sol.branches.get('q5') ?? Number.NaN)
+    expect(iQ5).toBeGreaterThan(1e-4)
+    expect(iQ5).toBeLessThan(5e-3)
+  })
+
+  test('high gain: a tiny input swings the output rail to rail', () => {
+    // A few mV either way is enough to drive the output hard into each rail.
+    expect(vout2(-5e-3)).toBeGreaterThan(8)
+    expect(vout2(+5e-3)).toBeLessThan(-8)
+  })
+
+  test('open-loop gain reaches the tens of thousands', () => {
+    const offset = findInputOffset()
+    expect(Math.abs(offset)).toBeLessThan(2e-3) // sub-2 mV input offset
+
+    // Slope of the transfer curve at mid-rail — the open-loop gain A_OL.
+    const d = 1e-6
+    const gain = Math.abs((vout2(offset + d) - vout2(offset - d)) / (2 * d))
+    expect(gain).toBeGreaterThan(10000) // ~25,000 here — the 2nd stage multiplied it up
+  })
+
+  test('robust solves the whole op-amp, agreeing with the direct solve when it converges', () => {
+    const robust = solveDCRobust(twoStageOpAmp(0, 0))
+    expect(robust.status).toBe('solved')
+
+    // The predicted convergence wall has not appeared: even the full op-amp solves
+    // directly in ~5 iterations, so robust passes it through. The ramp stays as
+    // insurance for the harder circuits (closed-loop, CMOS, latches) still ahead.
+    const direct = solveDC(twoStageOpAmp(0, 0))
+    if (direct.status === 'solved') {
+      expect(direct.nodes.get('stage1') ?? Number.NaN).toBeCloseTo(
+        robust.nodes.get('stage1') ?? Number.NaN,
+        3,
+      )
+    }
+  })
+})
