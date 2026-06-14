@@ -43,7 +43,7 @@ describe('defaultParameters', () => {
   test('a dropped battery gets 9 V + internal resistance', () => {
     const p = defaultParameters('power_source')
     expect(p.nominal_voltage?.value).toEqual({ kind: 'scalar', amount: 9, unit: 'volt' })
-    expect(p.internal_resistance?.value).toEqual({ kind: 'scalar', amount: 1, unit: 'ohm' })
+    expect(p.internal_resistance?.value).toEqual({ kind: 'scalar', amount: 1.7, unit: 'ohm' })
   })
   test('a dropped LED gets forward voltage + max current (for the solver + failure check)', () => {
     const p = defaultParameters('led')

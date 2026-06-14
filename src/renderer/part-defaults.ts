@@ -48,7 +48,7 @@ const DEFAULTS: Record<string, Parameters> = {
     // ac_amplitude / frequency 0 = a pure DC source (a battery has no AC component);
     // the AC presets in the Properties panel set them, V(t) = DC + A·sin(2πft).
     nominal_voltage: scalar(9, 'volt'),
-    internal_resistance: scalar(1, 'ohm'),
+    internal_resistance: scalar(1.7, 'ohm'),
     ac_amplitude: scalar(0, 'volt'),
     frequency: scalar(0, 'hertz'),
     // How many leads the source brings out (S19-v3-74). 2 = a plain source.
@@ -357,7 +357,7 @@ const PROVENANCE: Record<string, Record<string, string>> = {
   power_source: {
     nominal_voltage: 'ANSI/IEC 60086-2 — 9 V 6LR61 (PP3)',
     internal_resistance:
-      '~1 Ω DC internal resistance of a FRESH 9 V alkaline (Duracell MN1604) — the value a DC solve needs; the 1 kHz AC impedance is higher (~1.7–3 Ω), and both climb to several ohms as the cell discharges',
+      '~1.7 Ω DC internal resistance of a typical 9 V alkaline (Duracell MN1604 class) — a representative mid-life figure, not the best-case fresh one (a fresh cell can be ~1 Ω, climbing to several ohms as it discharges); the 1 kHz AC impedance runs similar, ~1.7–3 Ω',
     ac_amplitude: '0 = pure DC (a battery has no AC component)',
     frequency: '0 = pure DC; set by the AC source types',
     terminal_count:
