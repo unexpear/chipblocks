@@ -155,6 +155,19 @@ function SchottkyGlyph() {
   )
 }
 
+/** Zener diode — the diode triangle + a cathode bar with the bent (Z) ends. */
+function ZenerGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>Zener diode</title>
+      {lead(0, 26)}
+      <polygon points="26,12 26,32 44,22" fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <path d="M40 8 L44 12 L44 32 L48 36" fill="none" stroke={STROKE} strokeWidth={1.5} />
+      {lead(44, W)}
+    </svg>
+  )
+}
+
 /** LED — diode triangle + cathode bar + two emission arrows. */
 function LedGlyph() {
   return (
@@ -683,6 +696,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   led_uv_algan: LedGlyph,
   diode_silicon_rectifier: DiodeGlyph,
   diode_schottky_al_si: SchottkyGlyph,
+  diode_zener_silicon: ZenerGlyph,
   ground: GroundGlyph,
   wire: WireGlyph,
   transistor_bjt_npn: BjtNpnGlyph,

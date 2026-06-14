@@ -108,6 +108,20 @@ const DEFAULTS: Record<string, Parameters> = {
     thermal_resistance_junction_ambient: scalar(100, 'kelvin_per_watt'),
     max_operating_temperature: scalar(150, 'celsius'),
   },
+  diode_zener_silicon: {
+    // 1N4733A class — a 5.1 V, 1 W silicon zener. Reverse breakdown REGULATES at
+    // V_Z (5.1 V); forward it drops like a silicon diode. Knee ~1 mA; max zener
+    // current ~178 mA (the 1 W limit, P_max / V_Z). V_Z is selectable across the
+    // E24 series (2.4–200 V) per the device fixture; forward class pending the
+    // queued datasheet-verification pass.
+    zener_voltage: scalar(5.1, 'volt'),
+    max_zener_current: scalar(0.178, 'ampere'),
+    knee_current: scalar(0.001, 'ampere'),
+    forward_voltage: scalar(1.2, 'volt'),
+    power_dissipation_max: scalar(1, 'watt'),
+    n_side: { value: 'silicon_n_type' },
+    p_side: { value: 'silicon_p_type' },
+  },
   led: {
     // Typical 5 mm red LED (Kingbright WP7113SRD-D class): 2.0 V at 20 mA max,
     // ~640 nm red emission — sets the on-canvas glow color. n_side/p_side are the
@@ -637,6 +651,10 @@ export function primaryValue(
   if (definition === 'led' || definition === 'led_uv_algan') {
     const v = amountOf(parameters, 'forward_voltage')
     return v === undefined ? null : `${v} V`
+  }
+  if (definition === 'diode_zener_silicon') {
+    const vz = amountOf(parameters, 'zener_voltage')
+    return vz === undefined ? null : `${vz} V Z`
   }
   if (definition === 'switch_spst_toggle' || definition === 'switch_spst_momentary') {
     return switchClosed(parameters) ? 'closed' : 'open'

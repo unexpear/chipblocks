@@ -37,6 +37,7 @@ export type FailureCode =
   | 'led-reverse-breakdown'
   | 'diode-overloaded'
   | 'diode-reverse-breakdown'
+  | 'zener-overload'
   | 'mosfet-overloaded'
   | 'mosfet-gate-overvoltage'
   | 'resistor-overpower'
@@ -96,6 +97,9 @@ export function detectFailures(world: World, solution: Solution): Failure[] {
       if (overload !== null) failures.push(overload)
       const piv = checkDiodePeakInverse(inst, solution)
       if (piv !== null) failures.push(piv)
+    } else if (inst.definition === 'diode_zener_silicon') {
+      const overload = checkZenerOverload(inst, solution)
+      if (overload !== null) failures.push(overload)
     } else if (
       inst.definition === 'transistor_mosfet_nmos' ||
       inst.definition === 'transistor_mosfet_pmos'
@@ -311,6 +315,32 @@ export function checkMosfetOverload(inst: Instance, solution: Solution): Failure
     measured: magnitude,
     rated: maxDrain,
     ratio: magnitude / maxDrain,
+    units: 'ampere',
+    severity: 'error',
+  }
+}
+
+/**
+ * Zener overload: the reverse-breakdown (regulating) current beyond
+ * max_zener_current — the package can dissipate only P_max = V_Z·I_max, so past
+ * it the junction runs away, the same thermal-damage shape as the MOSFET check.
+ */
+export function checkZenerOverload(inst: Instance, solution: Solution): Failure | null {
+  const maxCurrent = readScalarParam(inst, 'max_zener_current')
+  if (maxCurrent === undefined || maxCurrent <= 0) return null
+  const current = solution.branches.get(inst.id)
+  if (current === undefined) return null
+  // The reverse (regulating) current is the anode→cathode branch flowing
+  // negative; only that reverse magnitude counts toward the limit.
+  const reverseCurrent = Math.max(0, -current)
+  if (reverseCurrent <= maxCurrent) return null
+  return {
+    code: 'zener-overload',
+    source: inst.id,
+    kind: 'max_zener_current',
+    measured: reverseCurrent,
+    rated: maxCurrent,
+    ratio: reverseCurrent / maxCurrent,
     units: 'ampere',
     severity: 'error',
   }

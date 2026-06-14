@@ -50,6 +50,12 @@ describe('defaultParameters', () => {
     expect(p.forward_voltage?.value).toEqual({ kind: 'scalar', amount: 2.0, unit: 'volt' })
     expect(p.max_forward_current?.value).toEqual({ kind: 'scalar', amount: 0.02, unit: 'ampere' })
   })
+  test('a dropped zener gets its cited 5.1 V / 1 W defaults (solver + overload check)', () => {
+    const p = defaultParameters('diode_zener_silicon')
+    expect(p.zener_voltage?.value).toEqual({ kind: 'scalar', amount: 5.1, unit: 'volt' })
+    expect(p.max_zener_current?.value).toEqual({ kind: 'scalar', amount: 0.178, unit: 'ampere' })
+    expect(p.forward_voltage?.value).toEqual({ kind: 'scalar', amount: 1.2, unit: 'volt' })
+  })
   test('a part with no electrical default (ground) gets an empty set', () => {
     expect(defaultParameters('ground')).toEqual({})
   })
@@ -83,6 +89,11 @@ describe('primaryValue', () => {
   })
   test('LED → forward voltage', () => {
     expect(primaryValue('led', { forward_voltage: param(2, 'volt') })).toBe('2 V')
+  })
+  test('zener → its breakdown voltage', () => {
+    expect(primaryValue('diode_zener_silicon', { zener_voltage: param(5.1, 'volt') })).toBe(
+      '5.1 V Z',
+    )
   })
   test('parts without a headline value return null', () => {
     expect(primaryValue('ground', {})).toBeNull()

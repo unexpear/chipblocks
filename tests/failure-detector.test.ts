@@ -34,6 +34,7 @@ import {
   checkLedReverseBreakdown,
   checkOvertemperature,
   checkResistorOverpower,
+  checkZenerOverload,
   detectFailures,
 } from '../src/failure-detector.ts'
 
@@ -793,5 +794,40 @@ describe('checkResistorOverpower uses the SOLVED voltage when nodes resolve', ()
     if (failure === null) return
     expect(failure.measured).toBeCloseTo(0.9, 9)
     expect(failure.ratio).toBeCloseTo(3.6, 9)
+  })
+})
+
+describe('checkZenerOverload', () => {
+  const zenerInstance = (maxZenerCurrent: number): Instance => ({
+    id: 'z1',
+    kind_ref: 'primitive_device',
+    definition: 'diode_zener_silicon',
+    parameters: {
+      max_zener_current: { value: { kind: 'scalar', amount: maxZenerCurrent, unit: 'ampere' } },
+    },
+    connects: [
+      { net: 'net_c', terminal: 'cathode', of: 'z1' },
+      { net: 'net_gnd', terminal: 'anode', of: 'z1' },
+    ],
+  })
+
+  test('fires when the reverse breakdown current exceeds max_zener_current', () => {
+    // Reverse breakdown conducts cathode→anode, so the anode→cathode branch runs
+    // negative; 250 mA reverse is over a 178 mA (1 W / 5.1 V) zener's limit.
+    const fail = checkZenerOverload(zenerInstance(0.178), solutionWith({ z1: -0.25 }))
+    expect(fail?.code).toBe('zener-overload')
+    expect(fail?.measured).toBeCloseTo(0.25, 6)
+    expect(fail?.rated).toBe(0.178)
+  })
+
+  test('silent within the rating, and for forward current', () => {
+    const z = zenerInstance(0.178)
+    expect(checkZenerOverload(z, solutionWith({ z1: -0.1 }))).toBeNull() // 100 mA reverse, under
+    expect(checkZenerOverload(z, solutionWith({ z1: 0.5 }))).toBeNull() // forward bias, not an overload
+  })
+
+  test('silent when max_zener_current is missing', () => {
+    const z: Instance = { ...zenerInstance(0.178), parameters: {} }
+    expect(checkZenerOverload(z, solutionWith({ z1: -1 }))).toBeNull()
   })
 })
