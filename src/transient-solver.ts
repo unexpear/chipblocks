@@ -500,17 +500,37 @@ function resolveCtTransformer(
 }
 
 /**
+ * Core saturation: past the rated flux linkage the iron's permeability collapses,
+ * so the core-coupled (magnetizing) inductance rolls off toward the small leakage
+ * value. A soft B-H knee centred on the rating — ≈1 well below it, half at the
+ * rating, collapsed to TRANSFORMER_SATURATED_FRACTION beyond. The exact floor
+ * depends on the core material's B-H curve (not modelled here); 0.04 is a
+ * representative ≈25× collapse, matching the default k = 0.98 leakage.
+ */
+const TRANSFORMER_SATURATED_FRACTION = 0.04
+const TRANSFORMER_SATURATION_SHARPNESS = 8
+export function transformerSaturationFactor(fluxVs: number, satFluxVs: number): number {
+  if (!(satFluxVs > 0) || !Number.isFinite(satFluxVs)) return 1
+  const overdrive = Math.abs(fluxVs) / satFluxVs
+  return (
+    TRANSFORMER_SATURATED_FRACTION +
+    (1 - TRANSFORMER_SATURATED_FRACTION) / (1 + overdrive ** TRANSFORMER_SATURATION_SHARPNESS)
+  )
+}
+
+/**
  * The CT transformer's backward-Euler companion for one step: with three coupled
  * windings, invert A = diag(r) + L/Δt so the winding currents are i = G·v + I_h
  * (G = A⁻¹, history from the previous currents). Positive-definite for k < 1.
  */
 function ctTransformerStep(tr: CtTransformerElement, dt: number): { G: number[][]; ih: number[] } {
+  const s = transformerSaturationFactor(tr.fluxVs, tr.satFluxVs)
   const A = tr.lMatrix.map((row, w) =>
-    row.map((l, v) => l / dt + (w === v ? (tr.r[w as 0 | 1 | 2] ?? 0) : 0)),
+    row.map((l, v) => (s * l) / dt + (w === v ? (tr.r[w as 0 | 1 | 2] ?? 0) : 0)),
   )
   const G = math.inv(A) as number[][]
   const h = tr.lMatrix.map((row) =>
-    row.reduce((acc, l, v) => acc + (l / dt) * (tr.iPrev[v as 0 | 1 | 2] ?? 0), 0),
+    row.reduce((acc, l, v) => acc + ((s * l) / dt) * (tr.iPrev[v as 0 | 1 | 2] ?? 0), 0),
   )
   const ih = G.map((row) => row.reduce((acc, g, v) => acc + g * (h[v] ?? 0), 0))
   return { G, ih }
@@ -522,17 +542,26 @@ function ctTransformerStep(tr: CtTransformerElement, dt: number): { G: number[][
  *   i1 = g11·v1 + g12·v2 + ih1,   i2 = g12·v1 + g22·v2 + ih2
  * (v = the winding's terminal voltage; history from the previous currents).
  * The determinant is positive exactly when k < 1 (M² < L1·L2).
+ *
+ * Past core saturation L1/L2/M are all scaled by the same flux-dependent factor,
+ * so k (= M/√(L1·L2)) is preserved and the matrix stays positive-definite, but the
+ * magnetizing inductance collapses — the primary draws a large magnetizing current,
+ * the real saturation inrush.
  */
 function transformerStep(tr: TransformerElement, dt: number) {
-  const a11 = tr.r1 + tr.l1 / dt
-  const a22 = tr.r2 + tr.l2 / dt
-  const a12 = tr.m / dt
+  const s = transformerSaturationFactor(tr.fluxVs, tr.satFluxVs)
+  const l1 = s * tr.l1
+  const l2 = s * tr.l2
+  const m = s * tr.m
+  const a11 = tr.r1 + l1 / dt
+  const a22 = tr.r2 + l2 / dt
+  const a12 = m / dt
   const det = a11 * a22 - a12 * a12
   const g11 = a22 / det
   const g22 = a11 / det
   const g12 = -a12 / det
-  const h1 = (tr.l1 * tr.i1Prev + tr.m * tr.i2Prev) / dt
-  const h2 = (tr.m * tr.i1Prev + tr.l2 * tr.i2Prev) / dt
+  const h1 = (l1 * tr.i1Prev + m * tr.i2Prev) / dt
+  const h2 = (m * tr.i1Prev + l2 * tr.i2Prev) / dt
   return { g11, g12, g22, ih1: g11 * h1 + g12 * h2, ih2: g12 * h1 + g22 * h2 }
 }
 
@@ -1545,8 +1574,8 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         tr.saturationWarned = true
         warnings.push(
           `Transformer core saturated at t = ${t.toPrecision(3)} s: |∫v·dt| exceeded ` +
-            `${tr.satFluxVs} V·s — the waveform beyond this point is optimistic ` +
-            '(saturation collapse is detected, not yet modeled).',
+            `${tr.satFluxVs} V·s — the magnetizing inductance collapses past here and the ` +
+            'magnetizing current spikes (real core saturation).',
         )
       }
     }
@@ -1562,8 +1591,8 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         tr.saturationWarned = true
         warnings.push(
           `Transformer core saturated at t = ${t.toPrecision(3)} s: |∫v·dt| exceeded ` +
-            `${tr.satFluxVs} V·s — the waveform beyond this point is optimistic ` +
-            '(saturation collapse is detected, not yet modeled).',
+            `${tr.satFluxVs} V·s — the magnetizing inductance collapses past here and the ` +
+            'magnetizing current spikes (real core saturation).',
         )
       }
     }

@@ -10,7 +10,7 @@
 import { describe, expect, test } from 'vitest'
 import type { World } from '../src/cross-fk-validator.ts'
 import { solveDC } from '../src/dc-solver.ts'
-import { solveTransient } from '../src/transient-solver.ts'
+import { solveTransient, transformerSaturationFactor } from '../src/transient-solver.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
 
@@ -881,6 +881,62 @@ describe('solveTransient — transformer (coupled windings)', () => {
     expect(tooSlow.status).toBe('solved')
     expect(tooSlow.warnings.some((w) => w.includes('saturated'))).toBe(true)
   })
+
+  test('the saturation factor is a soft B-H knee: ≈1 below the rating, collapsed past it', () => {
+    // Well below the rated flux the core-coupled inductance is intact…
+    expect(transformerSaturationFactor(0.02, 0.075)).toBeGreaterThan(0.99)
+    // …half-collapsed at the rating itself (the knee)…
+    expect(transformerSaturationFactor(0.075, 0.075)).toBeCloseTo(0.52, 2)
+    // …and collapsed toward the leakage floor well past it.
+    expect(transformerSaturationFactor(0.2, 0.075)).toBeLessThan(0.1)
+    // An unrated (Infinity) or zero-rated core never saturates — factor stays 1.
+    expect(transformerSaturationFactor(10, Number.POSITIVE_INFINITY)).toBe(1)
+    expect(transformerSaturationFactor(10, 0)).toBe(1)
+  })
+
+  test('past saturation the magnetizing inductance collapses — the primary current spikes', () => {
+    // 5 Hz on a 75 mV·s core drives the flux to ≈0.38 V·s — ≈5× the rating, deep
+    // saturation. The secondary is near-open, so the primary current IS essentially
+    // the magnetizing current; compare it against an unsaturable core under the
+    // identical drive.
+    const f = 5
+    const peakPrimary = (satFluxVs: number) => {
+      const res = solveTransient(
+        transformerCircuit({
+          dc: 0,
+          ac: { amplitude: 12, frequency: f },
+          loadOhms: 100000,
+          satFluxVs,
+        }),
+        { timeStep: 1 / f / 400, duration: 2 / f },
+      )
+      expect(res.status).toBe('solved')
+      const i = res.series.map((p) => Math.abs(p.currents?.get('t1/primary_a') ?? 0))
+      return Math.max(...i)
+    }
+    const saturating = peakPrimary(0.075) // a real core — collapses past 75 mV·s
+    const linear = peakPrimary(1e9) // identical drive, an effectively unsaturable core
+    // The collapsed (≈25×-lower) magnetizing inductance draws a far larger primary
+    // current — the real saturation inrush, now modelled, not just warned.
+    expect(saturating).toBeGreaterThan(linear * 3)
+  })
+
+  test('DC into a rated core saturates and runs away to V / R_winding (why DC kills transformers)', () => {
+    // A steady 12 V makes the flux ramp without bound — a real core saturates, its
+    // magnetizing inductance collapses, and the only thing left to limit the current
+    // is the 0.5 Ω winding resistance: 12 / 0.5 = 24 A. The solver must still converge.
+    const res = solveTransient(transformerCircuit({ dc: 12, loadOhms: 100000, satFluxVs: 0.075 }), {
+      timeStep: 0.001,
+      duration: 0.5,
+    })
+    expect(res.status).toBe('solved')
+    expect(res.warnings.some((w) => w.includes('saturated'))).toBe(true)
+    const finalPrimary = Math.abs(
+      res.series[res.series.length - 1]?.currents?.get('t1/primary_a') ?? 0,
+    )
+    expect(finalPrimary).toBeGreaterThan(20) // collapsed core → resistance-limited, ≈ 24 A
+    expect(finalPrimary).toBeLessThan(28)
+  })
 })
 
 describe('solveTransient — center-tapped transformer (three coupled windings)', () => {
@@ -896,6 +952,7 @@ describe('solveTransient — center-tapped transformer (three coupled windings)'
     ac?: { amplitude: number; frequency: number }
     seriesOhms?: number
     loadOhms: number
+    satFluxVs?: number
   }): World {
     const world: World = {
       definitions: new Map(),
@@ -954,6 +1011,9 @@ describe('solveTransient — center-tapped transformer (three coupled windings)'
         coupling_coefficient: scalar(0.98, 'dimensionless'),
         primary_resistance: scalar(1, 'ohm'),
         secondary_resistance: scalar(50, 'ohm'),
+        ...(opts.satFluxVs !== undefined
+          ? { saturation_flux_linkage: scalar(opts.satFluxVs, 'weber') }
+          : {}),
       },
       connects: [
         { net: feed, terminal: 'primary_a', of: 't1' },
@@ -1024,6 +1084,34 @@ describe('solveTransient — center-tapped transformer (three coupled windings)'
     expect(dc.nodes.get('p_in')).toBeCloseTo(0.5, 6)
     expect(dc.branches.get('t1')).toBeCloseTo(1, 6)
     expect(dc.nodes.get('out')).toBeCloseTo(0, 9)
+  })
+
+  test('the shared core saturates too: full-drive primary current spikes past the rating', () => {
+    // The three-winding companion shares one core flux — saturating it must collapse
+    // the whole 3×3 inductance matrix, not just the 2×2 path.
+    const f = 5
+    const peak = (satFluxVs: number) => {
+      const res = solveTransient(
+        ctCircuit({
+          drive: 'full',
+          dc: 0,
+          ac: { amplitude: 12, frequency: f },
+          loadOhms: 100000,
+          satFluxVs,
+        }),
+        { timeStep: 1 / f / 400, duration: 2 / f },
+      )
+      expect(res.status).toBe('solved')
+      return {
+        pk: Math.max(...res.series.map((p) => Math.abs(p.currents?.get('t1/primary_a') ?? 0))),
+        warned: res.warnings.some((w) => w.includes('saturated')),
+      }
+    }
+    const sat = peak(0.075) // a real shared core
+    const lin = peak(1e9) // an effectively unsaturable one
+    expect(sat.warned).toBe(true)
+    expect(lin.warned).toBe(false)
+    expect(sat.pk).toBeGreaterThan(lin.pk * 2)
   })
 })
 
