@@ -166,6 +166,7 @@ ChipBlocks should not fully solve these internally at first. Detect when they ma
 | Antenna effects (unintentional) | 3 | warning_only | Long traces near edges | Length vs wavelength |
 | Magnetic coupling, eddy currents | 3 | external_solver | Inductors, transformers | Field solver |
 | Shielding / Faraday cages | 3 | warning_only + external_solver | Enclosures, shielded sections | Apertures, slot dimensions |
+| Wire/cable shielding (coax, STP) | 3 | builtin_simple (shield C) + external_solver | Shielded wires, coax, twisted pair | Wire shielding type + effects. Shield-to-conductor C is a lumped C-to-GND that loads the signal (modelable now — DEFERRED 2026-06-14 so shielding lands whole). EMI rejection (the headline), characteristic impedance Z₀, and twisted-pair magnetic cancellation are EM-stage work. |
 
 ### Category 8 — Noise sources
 
