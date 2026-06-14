@@ -114,9 +114,76 @@ export const OPAMP_BLOCK: BlockData = {
   ],
 }
 
+// Logic-process MOSFETs: lower thresholds than the discrete 2N7000 / BS250 power parts
+// (the cited defaults supply the ratings + thermal), tuned to the values proven to switch
+// cleanly in the CMOS inverter test — the transistors of a 5 V logic gate.
+const LOGIC_NMOS: Parameters = {
+  ...defaultParameters('transistor_mosfet_nmos'),
+  threshold_voltage: scalar(2.1, 'volt'),
+  transconductance_parameter: scalar(0.026, 'ampere_per_volt_squared'),
+}
+const LOGIC_PMOS: Parameters = {
+  ...defaultParameters('transistor_mosfet_pmos'),
+  threshold_voltage: scalar(-2.5, 'volt'),
+  transconductance_parameter: scalar(0.0062, 'ampere_per_volt_squared'),
+}
+
+/**
+ * THE CMOS INVERTER (NOT) — the first logic gate, two transistors. A PMOS pull-up and an
+ * NMOS pull-down share their gate (the input) and their drain (the output): drive the input
+ * HIGH and the NMOS pulls the output to GND; drive it LOW and the PMOS pulls it to V+. It
+ * flattens to the real MOSFETs, so the NOT truth table falls out of actual silicon switching,
+ * not a lookup. Five pins become ports: in, out, and the V+/GND rails.
+ */
+export const INVERTER_BLOCK: BlockData = {
+  name: 'NOT',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'pmos', definition: 'transistor_mosfet_pmos', x: 120, y: 30, parameters: LOGIC_PMOS },
+    { id: 'nmos', definition: 'transistor_mosfet_nmos', x: 120, y: 180, parameters: LOGIC_NMOS },
+  ],
+  edges: [
+    // output net: PMOS drain — NMOS drain
+    { id: 'n_out', source: 'pmos', sourceHandle: 'drain', target: 'nmos', targetHandle: 'drain' },
+    // input net: PMOS gate — NMOS gate
+    { id: 'n_in', source: 'pmos', sourceHandle: 'gate', target: 'nmos', targetHandle: 'gate' },
+  ],
+  ports: [
+    {
+      id: 'in',
+      label: 'in',
+      side: 'left',
+      offset: 18,
+      inner: { nodeId: 'nmos', handleId: 'gate' },
+    },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 42,
+      inner: { nodeId: 'nmos', handleId: 'source' },
+    },
+    {
+      id: 'out',
+      label: 'out',
+      side: 'right',
+      offset: 18,
+      inner: { nodeId: 'pmos', handleId: 'drain' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 42,
+      inner: { nodeId: 'pmos', handleId: 'source' },
+    },
+  ],
+}
+
 /** Built-in blocks droppable from the palette, keyed by their palette definition id.
  *  The palette lists these like parts; App's drop handler turns one into a block node
  *  (a fresh deep copy) that descends + flattens like any user-grouped block. */
 export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   op_amp: OPAMP_BLOCK,
+  logic_not: INVERTER_BLOCK,
 }

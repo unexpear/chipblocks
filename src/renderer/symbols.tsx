@@ -610,6 +610,25 @@ function OpAmpGlyph() {
   )
 }
 
+/** NOT gate (CMOS inverter) — the standard triangle with the inversion bubble at its tip.
+ *  On the canvas it is a block; this glyph is its palette face. */
+function NotGateGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>NOT gate (inverter)</title>
+      <line x1={0} y1={MID} x2={20} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+      <polygon
+        points={`20,${MID - 14} 20,${MID + 14} 50,${MID}`}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <circle cx={54} cy={MID} r={4} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={58} y1={MID} x2={80} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
 /** N-channel enhancement MOSFET — insulated gate bar (the gap IS the oxide),
  * channel bar, drain up, source down with the inward arrow. Gate from the left. */
 function MosfetNmosGlyph() {
@@ -728,6 +747,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   transistor_mosfet_nmos: MosfetNmosGlyph,
   transistor_mosfet_pmos: MosfetPmosGlyph,
   op_amp: OpAmpGlyph,
+  logic_not: NotGateGlyph,
   transformer: TransformerGlyph,
   transformer_center_tapped: CtTransformerGlyph,
 }
