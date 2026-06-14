@@ -136,6 +136,27 @@ export function thermalHotspotColor(severity: number): string | null {
 }
 
 /**
+ * The faint always-on warmth tint for the temp lens: a soft amber whose strength
+ * tracks a part's REAL temperature rise as a share of the hottest part's rise, so a
+ * perfectly healthy board still shows WHERE its heat sits. It is the quiet companion to
+ * thermalHotspotColor — that one stays null until a part nears its OWN rating (the
+ * alarm); this fills the calm range below it (the spread). Alpha tops out well under the
+ * power halo's, so it reads as a tint, never a warning. Null at/below ambient, or when
+ * nothing in the circuit runs warm.
+ */
+export function thermalWarmthTint(tempC: number, hottestC: number): string | null {
+  const AMBIENT_C = 25
+  const rise = tempC - AMBIENT_C
+  const hottestRise = hottestC - AMBIENT_C
+  if (!(rise > 0) || !(hottestRise > 0)) return null
+  const t = Math.min(1, rise / hottestRise)
+  const g = Math.round(lerp(186, 120, t))
+  const b = Math.round(lerp(126, 66, t))
+  const alpha = (0.06 + 0.18 * t).toFixed(2)
+  return `rgba(224, ${g}, ${b}, ${alpha})`
+}
+
+/**
  * Marching-dash period (seconds) for the flow animation: bigger current →
  * faster march, log-scaled from ~2 s at 1 µA down to 0.3 s at ~100 mA and up.
  * Null when no current flows (no animation on a dead wire).

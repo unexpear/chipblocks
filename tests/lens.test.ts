@@ -12,6 +12,7 @@ import {
   flowDuration,
   MU_0,
   powerColor,
+  thermalWarmthTint,
   voltageColor,
 } from '../src/renderer/lens.ts'
 
@@ -88,5 +89,33 @@ describe('field lens (Ampère straight-wire law)', () => {
   })
   test('μ₀/2π is the 2×10⁻⁷ constant every textbook quotes', () => {
     expect(MU_0 / (2 * Math.PI)).toBeCloseTo(2e-7, 13)
+  })
+})
+
+describe('thermalWarmthTint (the temp lens heat-spread fill)', () => {
+  const alphaOf = (color: string) => Number(color.match(/,\s*([\d.]+)\)$/)?.[1] ?? '0')
+
+  test('null at or below the 25 °C ambient — nothing to show', () => {
+    expect(thermalWarmthTint(25, 60)).toBeNull()
+    expect(thermalWarmthTint(20, 60)).toBeNull()
+  })
+
+  test('null when nothing in the circuit runs warm', () => {
+    expect(thermalWarmthTint(25, 25)).toBeNull()
+  })
+
+  test('a warm part is tinted even far below any rating — a healthy board is not blank', () => {
+    // 35 °C against a 50 °C hottest part: well under any real maximum, yet still tinted.
+    const tint = thermalWarmthTint(35, 50)
+    expect(tint).not.toBeNull()
+    expect(tint).toMatch(/^rgba\(224, /)
+  })
+
+  test('the hottest part is the strongest tint; a cooler part is fainter, and it stays faint', () => {
+    const hottest = thermalWarmthTint(60, 60) ?? '' // rise share = 1
+    const cooler = thermalWarmthTint(32.5, 60) ?? '' // rise share ≈ 0.21
+    expect(alphaOf(hottest)).toBeGreaterThan(alphaOf(cooler))
+    // a tint, never an alarm: caps below the power halo's 0.25 floor
+    expect(alphaOf(hottest)).toBeLessThanOrEqual(0.24)
   })
 })

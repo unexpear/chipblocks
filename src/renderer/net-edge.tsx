@@ -21,6 +21,7 @@ import {
   MU_0,
   THERMAL_WARNING_FRACTION,
   thermalHotspotColor,
+  thermalWarmthTint,
   voltageColor,
 } from './lens.ts'
 import { CheckpointContext } from './undo-context.ts'
@@ -152,8 +153,9 @@ export function NetEdge({
   // its ends are heat-sunk by the parts they connect to — so when a wire runs
   // hot we color the ACTUAL hot section (yellow warning → red over the
   // insulation limit), not the whole wire. The temperature and the 105 °C limit
-  // are both real (thermal-model.ts), and this is always on, regardless of lens:
-  // overheating is a safety reading you want to see in any view.
+  // are both real (thermal-model.ts). The overheat coloring is always on, in any
+  // view (a safety reading); the temp lens additionally fills the whole wire with a
+  // faint warmth tint, so the heat conducting out of the parts reads as a spread.
   const hotSegments: {
     key: string
     x1: number
@@ -181,7 +183,11 @@ export function NetEdge({
       endB,
     )
     wirePeakC = profile.peakC
-    if (thermalSeverity(profile.peakC, WIRE_INSULATION_MAX_C) >= THERMAL_WARNING_FRACTION) {
+    const tempLens = lensState.lens === 'temp'
+    if (
+      tempLens ||
+      thermalSeverity(profile.peakC, WIRE_INSULATION_MAX_C) >= THERMAL_WARNING_FRACTION
+    ) {
       const samples = samplePathPoints(routePoints, {
         curved,
         stepPx: 12,
@@ -193,9 +199,12 @@ export function NetEdge({
         const b = samples[i + 1]
         if (!a || !b) continue
         const u = (i + 0.5) / segments // fraction of the way along the wire
-        const color = thermalHotspotColor(
-          thermalSeverity(profile.tempAtFraction(u), WIRE_INSULATION_MAX_C),
-        )
+        const sectionC = profile.tempAtFraction(u)
+        // Overheat danger color (vs the insulation limit) takes precedence; below it the
+        // temp lens fills in the faint warmth tint (section temp vs the board's hottest).
+        const color =
+          thermalHotspotColor(thermalSeverity(sectionC, WIRE_INSULATION_MAX_C)) ??
+          (tempLens ? thermalWarmthTint(sectionC, lensState.tMaxC) : null)
         if (color)
           hotSegments.push({ key: `${a.x},${a.y}`, x1: a.x, y1: a.y, x2: b.x, y2: b.y, color })
       }

@@ -4,7 +4,7 @@ import './canvas-animations.css'
 import { thermalSeverity } from '../thermal-model.ts'
 import { BlockNode } from './block-node.tsx'
 import { HealthContext } from './health.ts'
-import { LensContext, powerColor, thermalHotspotColor } from './lens.ts'
+import { LensContext, powerColor, thermalHotspotColor, thermalWarmthTint } from './lens.ts'
 import {
   fuseIntact,
   type Parameters,
@@ -586,6 +586,30 @@ function BjtPnpGlyph() {
   )
 }
 
+/** Op-amp — the standard amplifier triangle pointing at the output, two inputs on the
+ * left marked + (non-inverting) and − (inverting). On the canvas it is a block; this
+ * glyph is just its palette face. */
+function OpAmpGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>op-amp</title>
+      <line x1={0} y1={MID - 7} x2={25} y2={MID - 7} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={0} y1={MID + 7} x2={25} y2={MID + 7} stroke={STROKE} strokeWidth={1.5} />
+      <polygon
+        points={`25,${MID - 15} 25,${MID + 15} 58,${MID}`}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <line x1={58} y1={MID} x2={80} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+      {/* + on the non-inverting input, − on the inverting */}
+      <line x1={29} y1={MID - 7} x2={35} y2={MID - 7} stroke={STROKE} strokeWidth={1} />
+      <line x1={32} y1={MID - 10} x2={32} y2={MID - 4} stroke={STROKE} strokeWidth={1} />
+      <line x1={29} y1={MID + 7} x2={35} y2={MID + 7} stroke={STROKE} strokeWidth={1} />
+    </svg>
+  )
+}
+
 /** N-channel enhancement MOSFET — insulated gate bar (the gap IS the oxide),
  * channel bar, drain up, source down with the inward arrow. Gate from the left. */
 function MosfetNmosGlyph() {
@@ -703,6 +727,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   transistor_bjt_pnp: BjtPnpGlyph,
   transistor_mosfet_nmos: MosfetNmosGlyph,
   transistor_mosfet_pmos: MosfetPmosGlyph,
+  op_amp: OpAmpGlyph,
   transformer: TransformerGlyph,
   transformer_center_tapped: CtTransformerGlyph,
 }
@@ -956,8 +981,9 @@ export function DeviceNode({ id, data }: NodeProps) {
   // circuit's hottest part). Temp lens: by how close its REAL temperature
   // (25 °C + P·θ_JA) sits to its OWN rated maximum — normal until the derating
   // margin, yellow approaching the limit, red over it — so the part actually at
-  // fault stands out, not just the relatively-warmest one. The number shows
-  // under the label either way.
+  // fault stands out, not just the relatively-warmest one. Below that margin a
+  // faint warmth tint still shows the heat SPREAD (rise vs the hottest part), so a
+  // healthy board isn't blank. The number shows under the label either way.
   const watts = lensState.power.get(id)
   const tempC = lensState.temp.get(id)
   const ratingValue = parameters?.max_operating_temperature?.value
@@ -968,8 +994,10 @@ export function DeviceNode({ id, data }: NodeProps) {
   const heat =
     lensState.lens === 'power' && watts !== undefined
       ? powerColor(watts, lensState.pMax)
-      : lensState.lens === 'temp' && tempC !== undefined && maxRatingC !== undefined
-        ? thermalHotspotColor(thermalSeverity(tempC, maxRatingC))
+      : lensState.lens === 'temp' && tempC !== undefined
+        ? ((maxRatingC !== undefined
+            ? thermalHotspotColor(thermalSeverity(tempC, maxRatingC))
+            : null) ?? thermalWarmthTint(tempC, lensState.tMaxC))
         : null
   const terminals = terminalsOf(definition, parameters)
   const updateNodeInternals = useUpdateNodeInternals()

@@ -1,4 +1,12 @@
-import { Background, BackgroundVariant, ReactFlow, ReactFlowProvider } from '@xyflow/react'
+import {
+  Background,
+  BackgroundVariant,
+  ReactFlow,
+  ReactFlowProvider,
+  useNodesInitialized,
+  useReactFlow,
+} from '@xyflow/react'
+import { useEffect } from 'react'
 import type { BlockData } from './blocks.ts'
 import { edgeTypes } from './net-edge.tsx'
 import { nodeTypes } from './symbols.tsx'
@@ -9,6 +17,21 @@ import { nodeTypes } from './symbols.tsx'
  * grouped layout. Editing goes through Ungroup (explode, edit, regroup);
  * descend-and-edit-in-place is the documented next rung.
  */
+
+/**
+ * Re-fit the view once the nodes have measured. The modal's flex canvas starts at
+ * zero size on mount, so React Flow's initial fitView lands on a wrong zoom (it would
+ * fill the frame with a single part); this re-fits the moment the nodes report
+ * initialized, so any block layout — narrow or wide — shows in full.
+ */
+function FitWhenReady() {
+  const initialized = useNodesInitialized()
+  const { fitView } = useReactFlow()
+  useEffect(() => {
+    if (initialized) fitView({ padding: 0.2 })
+  }, [initialized, fitView])
+  return null
+}
 
 export function BlockViewer({
   block,
@@ -112,6 +135,7 @@ export function BlockViewer({
             zoomOnDoubleClick={false}
             proOptions={{ hideAttribution: true }}
           >
+            <FitWhenReady />
             <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
           </ReactFlow>
         </ReactFlowProvider>

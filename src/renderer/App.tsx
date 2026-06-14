@@ -14,6 +14,7 @@ import {
   SelectionMode,
   useEdgesState,
   useInternalNode,
+  useNodesInitialized,
   useNodesState,
   useReactFlow,
   ViewportPortal,
@@ -51,6 +52,7 @@ import {
   groupSelection,
   ungroupBlock,
 } from './blocks.ts'
+import { BUILTIN_BLOCKS } from './builtin-blocks.ts'
 import { CanvasScrollbars } from './canvas-scrollbars.tsx'
 import {
   type CanvasEdge,
@@ -70,6 +72,7 @@ import {
   withCut,
 } from './clipboard.ts'
 import { ClipboardPanel } from './clipboard-panel.tsx'
+import { CoordinateAxes } from './coordinate-axes.tsx'
 import { DockablePanel, type TabDropTarget } from './dockable-panel.tsx'
 import { wireFlow } from './edge-currents.ts'
 import { canvasHealth, HealthContext, type NodeHealth } from './health.ts'
@@ -674,6 +677,19 @@ function Canvas() {
   nodesRef.current = nodes
   const { screenToFlowPosition, fitView, deleteElements } = useReactFlow()
   const dropCount = useRef(0)
+
+  // Frame the whole circuit on startup — but only AFTER the nodes have measured. React
+  // Flow's `fitView` prop fires on mount before measurement, which lands the view zoomed
+  // onto a single node (the ground, near the origin); re-fitting the moment the nodes
+  // report initialized frames the real circuit. One-shot — the user pans/zooms freely after.
+  const nodesInitialized = useNodesInitialized()
+  const didStartupFit = useRef(false)
+  useEffect(() => {
+    if (nodesInitialized && !didStartupFit.current && nodesRef.current.length > 0) {
+      didStartupFit.current = true
+      fitView({ padding: 0.15 })
+    }
+  }, [nodesInitialized, fitView])
 
   // Undo / redo (S19-v3-73): every mutating action calls checkpointAction
   // FIRST — the canvas as it is right before the change goes onto the undo
@@ -2068,6 +2084,24 @@ function Canvas() {
       }
       const definition = event.dataTransfer.getData(DEFINITION_MIME)
       if (!definition) return
+      // A built-in (e.g. the op-amp) drops as a block node — a fresh deep copy that
+      // descends + flattens to its real transistors like any user-grouped block.
+      const builtinBlock = BUILTIN_BLOCKS[definition]
+      if (builtinBlock) {
+        checkpointAction('drop')
+        const blockPos = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+        dropCount.current += 1
+        const block = structuredClone(builtinBlock)
+        setNodes((current) =>
+          current.concat({
+            id: `${definition}_${dropCount.current}`,
+            type: 'block',
+            position: blockPos,
+            data: { definition: 'block', label: block.name, block },
+          }),
+        )
+        return
+      }
       checkpointAction('drop')
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
       dropCount.current += 1
@@ -2546,6 +2580,8 @@ function Canvas() {
                   lineWidth={1}
                   color={gridColor}
                 />
+                {/* Coordinate-graph axes through the origin + the four quadrants. */}
+                <CoordinateAxes light={light} />
                 <Controls />
                 <MeterProbes red={redProbe} black={blackProbe} />
                 {/* Scope channel probes (S19-v3-77): one colored clip per
