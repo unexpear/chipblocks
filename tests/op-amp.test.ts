@@ -16,6 +16,7 @@
  */
 
 import { describe, expect, test } from 'vitest'
+import { acResponse, phaseMargin } from '../src/ac-analysis.ts'
 import type { World } from '../src/cross-fk-validator.ts'
 import { solveDCRobust } from '../src/dc-robust.ts'
 import { solveDC } from '../src/dc-solver.ts'
@@ -199,6 +200,9 @@ const bjt = (beta: number, vafVolts: number) => ({
   forward_current_gain: scalar(beta, 'dimensionless'),
   reverse_current_gain: scalar(2, 'dimensionless'),
   forward_early_voltage: scalar(vafVolts, 'volt'),
+  base_emitter_capacitance: scalar(4.5e-12, 'farad'),
+  base_collector_capacitance: scalar(3.6e-12, 'farad'),
+  forward_transit_time: scalar(300e-12, 'second'),
 })
 
 /**
@@ -422,7 +426,7 @@ function addPart(
  *
  * Overall polarity: vin2 is the non-inverting input (+), vin1 the inverting (−).
  */
-function twoStageOpAmp(vin1: number, vin2: number): World {
+function twoStageOpAmp(vin1: number, vin2: number, millerCapF = 0): World {
   const w = makeWorld()
   ensureNet(w, 'gnd', true)
   const v9 = { nominal_voltage: scalar(9, 'volt') }
@@ -477,6 +481,14 @@ function twoStageOpAmp(vin1: number, vin2: number): World {
     { net: 'vout', terminal: 'terminal_a' },
     { net: 'vneg', terminal: 'terminal_b' },
   ])
+  // Optional Miller compensation: a small cap across the gain stage (output to input),
+  // i.e. Q5 collector (vout) back to Q5 base (stage1). Open at DC; it shapes the AC poles.
+  if (millerCapF > 0) {
+    addPart(w, 'cc', 'capacitor', { capacitance: scalar(millerCapF, 'farad') }, [
+      { net: 'vout', terminal: 'terminal_a' },
+      { net: 'stage1', terminal: 'terminal_b' },
+    ])
+  }
   return w
 }
 
@@ -544,5 +556,45 @@ describe('op-amp — two stages, open loop', () => {
         3,
       )
     }
+  })
+})
+
+describe('op-amp — stability (phase margin)', () => {
+  const sweepOpts = {
+    inputSource: 'vin2_src',
+    outputNet: 'vout',
+    fStartHz: 1,
+    fStopHz: 1e10,
+    pointsPerDecade: 20,
+  }
+
+  test('open-loop response: ~88 dB at DC, non-inverting, rolling off with frequency', () => {
+    const at = (f: number) =>
+      acResponse(twoStageOpAmp(0, 0), { inputSource: 'vin2_src', outputNet: 'vout' }, f)
+    const dc = at(1)
+    expect(dc.gainDb).toBeGreaterThan(80) // ~88 dB == the ~25,000 open-loop gain
+    expect(Math.abs(dc.phaseDeg)).toBeLessThan(5) // a non-inverting drive starts near 0°
+    expect(at(1e8).gainDb).toBeLessThan(dc.gainDb - 30) // the device poles roll it off hard
+  })
+
+  test('uncompensated it would oscillate; the Miller cap buys a healthy phase margin', () => {
+    const uncompensated = phaseMargin(twoStageOpAmp(0, 0), sweepOpts)
+    const compensated = phaseMargin(twoStageOpAmp(0, 0, 1e-9), sweepOpts)
+    if (!uncompensated || !compensated) throw new Error('expected a unity-gain crossover for both')
+
+    // Uncompensated, the phase margin is negative — the closed loop would oscillate.
+    expect(uncompensated.phaseMarginDeg).toBeLessThan(10)
+    // The Miller cap splits the poles and lands a textbook margin (45–60°)...
+    expect(compensated.phaseMarginDeg).toBeGreaterThan(45)
+    expect(compensated.phaseMarginDeg).toBeLessThan(90)
+    // ...a large improvement over the uncompensated amplifier.
+    expect(compensated.phaseMarginDeg - uncompensated.phaseMarginDeg).toBeGreaterThan(30)
+  })
+
+  test('compensation trades bandwidth for stability: the unity-gain frequency drops', () => {
+    const uncompensated = phaseMargin(twoStageOpAmp(0, 0), sweepOpts)
+    const compensated = phaseMargin(twoStageOpAmp(0, 0, 1e-9), sweepOpts)
+    if (!uncompensated || !compensated) throw new Error('expected a unity-gain crossover for both')
+    expect(compensated.unityGainHz).toBeLessThan(uncompensated.unityGainHz)
   })
 })
