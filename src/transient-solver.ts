@@ -91,6 +91,8 @@ import {
   scaleSaturationCurrent,
   thermalVoltage,
   varshniEnergyGap,
+  ZENER_BREAKDOWN_IDEALITY,
+  zenerCompanionModel,
 } from './diode-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { ldrResistance } from './light.ts'
@@ -272,6 +274,14 @@ type DiodeElement = {
   /** kT/q at THIS junction's temperature (300 K when no temperature given). */
   thermalV: number
   vGuess: number // linearization point; carries across steps as the warm start
+}
+
+/** A Zener resolved for the per-step Newton loop — the diode fields plus its
+ *  reverse-breakdown branch (run through zenerCompanionModel). */
+type ZenerElement = DiodeElement & {
+  zenerVoltage: number
+  breakdownCurrent: number
+  breakdownIdeality: number
 }
 
 function resolveSource(inst: Instance, nodeIndex: Map<string, number>): TimedSource | null {
@@ -595,6 +605,64 @@ function resolveDiode(
 }
 
 /**
+ * Resolve a Zener for the per-step Newton loop — the diode's forward parameters
+ * plus the reverse-breakdown branch (V_Z + the knee current as the breakdown
+ * reference). Mirrors resolveDiode; forward I_S scales with temperature as
+ * silicon (constant bandgap), V_Z held constant. null without V_Z / V_F.
+ */
+function resolveTransientZener(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  vT: number,
+  temperatureC?: number,
+): ZenerElement | null {
+  const anodeNet = inst.connects?.find((c) => c.terminal === 'anode')?.net
+  const cathodeNet = inst.connects?.find((c) => c.terminal === 'cathode')?.net
+  if (anodeNet === undefined || cathodeNet === undefined) return null
+  const forwardVoltage = readScalarParam(inst, 'forward_voltage')
+  const zenerVoltage = readScalarParam(inst, 'zener_voltage')
+  if (forwardVoltage === undefined || zenerVoltage === undefined) return null
+  if (forwardVoltage <= 0 || zenerVoltage <= 0) return null
+
+  const idealityFactor = readScalarParam(inst, 'ideality_factor') ?? DEFAULT_IDEALITY_FACTOR
+  const forwardCurrent = readScalarParam(inst, 'max_forward_current') ?? 0.01
+  let saturationCurrent = deriveSaturationCurrent(
+    forwardVoltage,
+    forwardCurrent,
+    idealityFactor,
+    vT,
+  )
+  const breakdownCurrent = readScalarParam(inst, 'knee_current') ?? 0.005
+  let elementThermalV = vT
+  if (temperatureC !== undefined) {
+    const junctionKelvin = temperatureC + KELVIN_OFFSET
+    saturationCurrent = scaleSaturationCurrent(
+      saturationCurrent,
+      junctionKelvin,
+      ROOM_TEMPERATURE_KELVIN,
+      idealityFactor,
+      SILICON_BANDGAP_EV,
+    )
+    elementThermalV = thermalVoltage(junctionKelvin)
+  }
+
+  return {
+    id: inst.id,
+    anodeNet,
+    cathodeNet,
+    iA: nodeIndex.get(anodeNet),
+    iK: nodeIndex.get(cathodeNet),
+    saturationCurrent,
+    idealityFactor,
+    thermalV: elementThermalV,
+    zenerVoltage,
+    breakdownCurrent,
+    breakdownIdeality: ZENER_BREAKDOWN_IDEALITY,
+    vGuess: 0,
+  }
+}
+
+/**
  * Stamp a (Thévenin) voltage source: V_P − V_N = V − I·rInternal, via an auxiliary
  * current variable at auxIdx. The −rInternal on the aux diagonal makes the terminal
  * voltage droop under load; rInternal = 0 is an ideal source.
@@ -863,6 +931,58 @@ function stampDiodeCompanion(
   }
 }
 
+/** Stamp a Zener's companion model — identical shape to stampDiodeCompanion, but
+ *  zenerCompanionModel adds the reverse-breakdown branch so it clamps at V_Z. */
+function stampTransientZener(
+  z: ZenerElement,
+  vT: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const { conductance: G, currentSource: iEq } = zenerCompanionModel(
+    z.vGuess,
+    z.saturationCurrent,
+    z.idealityFactor,
+    vT,
+    z.zenerVoltage,
+    z.breakdownCurrent,
+    z.breakdownIdeality,
+  )
+  const { iA, iK } = z
+  const Gd = G + SOLVER_GMIN
+  if (iA !== undefined) {
+    M.set([iA, iA], (M.get([iA, iA]) ?? 0) + Gd)
+    b.set([iA, 0], (b.get([iA, 0]) ?? 0) - iEq)
+  }
+  if (iK !== undefined) {
+    M.set([iK, iK], (M.get([iK, iK]) ?? 0) + Gd)
+    b.set([iK, 0], (b.get([iK, 0]) ?? 0) + iEq)
+  }
+  if (iA !== undefined && iK !== undefined) {
+    M.set([iA, iK], (M.get([iA, iK]) ?? 0) - Gd)
+    M.set([iK, iA], (M.get([iK, iA]) ?? 0) - Gd)
+  }
+}
+
+/** Per-iteration Zener voltage limiting — pnjlim on the forward branch, else on
+ *  the breakdown branch in u = −(V + V_Z) space (same as the DC solver). */
+function limitTransientZener(vRaw: number, z: ZenerElement): { voltage: number; limited: boolean } {
+  const vcritFwd = criticalVoltage(z.saturationCurrent, z.idealityFactor, z.thermalV)
+  const fwd = pnjlim(vRaw, z.vGuess, z.idealityFactor * z.thermalV, vcritFwd)
+  if (fwd.limited) return fwd
+  const vcritBd = criticalVoltage(z.breakdownCurrent, z.breakdownIdeality, z.thermalV)
+  const bd = pnjlim(
+    -(vRaw + z.zenerVoltage),
+    -(z.vGuess + z.zenerVoltage),
+    z.breakdownIdeality * z.thermalV,
+    vcritBd,
+  )
+  if (bd.limited) return { voltage: -(bd.voltage + z.zenerVoltage), limited: true }
+  return { voltage: vRaw, limited: false }
+}
+
 export function solveTransient(world: World, options: TransientOptions): TransientResult {
   const warnings: string[] = []
   const dt = options.timeStep
@@ -887,6 +1007,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   const transformers: TransformerElement[] = []
   const ctTransformers: CtTransformerElement[] = []
   const diodes: DiodeElement[] = []
+  const zeners: ZenerElement[] = []
   const bjts: BjtElement[] = []
   const mosfets: MosfetElement[] = []
   // Resistors are stamped straight from the world each instant; for current
@@ -1051,9 +1172,11 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       if (short !== null) sources.push(short)
       else warnings.push(`Skipped SPDT '${inst.id}' (missing common/throw connects)`)
     } else if (inst.definition === 'diode_zener_silicon') {
-      // A Zener's defining behavior is reverse breakdown, which isn't modeled
-      // yet — skipping it (visible warning) beats faking it as a plain diode.
-      warnings.push(`Skipped zener '${inst.id}' (reverse breakdown not modeled in transient yet)`)
+      // Forward conduction PLUS reverse-breakdown regulation (clamps at V_Z),
+      // solved in the same per-step Newton loop as the diodes.
+      const z = resolveTransientZener(inst, nodeIndex, vT, options.temperaturesC?.get(inst.id))
+      if (z !== null) zeners.push(z)
+      else warnings.push(`Skipped zener '${inst.id}' (missing zener_voltage or forward_voltage)`)
     }
   }
   const S = sources.length
@@ -1121,6 +1244,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       for (const tr of ctTransformers) stampCtTransformerCompanion(tr, dt, M, b)
     }
     for (const d of diodes) stampDiodeCompanion(d, d.thermalV, M, b)
+    for (const z of zeners) stampTransientZener(z, z.thermalV, M, b)
     for (const bjt of bjts) stampBjtCompanion(bjt, nodeIndex, bjt.thermalV, M, b)
     for (const fet of mosfets) stampMosfetCompanion(fet, nodeIndex, M, b)
 
@@ -1162,6 +1286,14 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         maxDelta = Math.max(maxDelta, Math.abs(limit.voltage - d.vGuess))
         if (limit.limited) anyLimited = true
         d.vGuess = limit.voltage
+      }
+      for (const z of zeners) {
+        const vAnode = z.anodeNet === ground ? 0 : (nodes.get(z.anodeNet) ?? 0)
+        const vCathode = z.cathodeNet === ground ? 0 : (nodes.get(z.cathodeNet) ?? 0)
+        const next = limitTransientZener(vAnode - vCathode, z)
+        maxDelta = Math.max(maxDelta, Math.abs(next.voltage - z.vGuess))
+        if (next.limited) anyLimited = true
+        z.vGuess = next.voltage
       }
       for (const bjt of bjts) {
         const vB = bjt.baseNet === ground ? 0 : (nodes.get(bjt.baseNet) ?? 0)
@@ -1314,6 +1446,22 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         'cathode',
         diodeCurrent(v, d.saturationCurrent, d.idealityFactor, d.thermalV),
       )
+    }
+
+    for (const z of zeners) {
+      // The two-branch device current at the converged voltage — forward, or the
+      // reverse breakdown current when clamping (I = G·V + I_eq recovers it).
+      const v = volts(z.anodeNet) - volts(z.cathodeNet)
+      const { conductance, currentSource } = zenerCompanionModel(
+        v,
+        z.saturationCurrent,
+        z.idealityFactor,
+        z.thermalV,
+        z.zenerVoltage,
+        z.breakdownCurrent,
+        z.breakdownIdeality,
+      )
+      through(z.id, 'anode', 'cathode', conductance * v + currentSource)
     }
 
     for (const bjt of bjts) {

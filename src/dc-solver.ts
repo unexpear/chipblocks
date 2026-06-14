@@ -52,6 +52,8 @@ import {
   scaleSaturationCurrent,
   thermalVoltage,
   varshniEnergyGap,
+  ZENER_BREAKDOWN_IDEALITY,
+  zenerCompanionModel,
 } from './diode-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { ldrResistance, lightSensorCurrent } from './light.ts'
@@ -173,6 +175,24 @@ type ShockleyLed = {
   vGuess: number
 }
 
+/**
+ * A Zener resolved for the Newton-Raphson solve — the Shockley forward
+ * parameters plus the reverse-breakdown branch (V_Z + the breakdown reference
+ * current + its ideality). Run through zenerCompanionModel each iteration.
+ */
+type ZenerElement = {
+  inst: Instance
+  anodeNet: string
+  cathodeNet: string
+  saturationCurrent: number
+  idealityFactor: number
+  thermalV: number
+  zenerVoltage: number
+  breakdownCurrent: number
+  breakdownIdeality: number
+  vGuess: number
+}
+
 /** The pn-junction family the DC solver runs through the Shockley + NR path. */
 const SHOCKLEY_DIODE_DEFINITIONS = new Set([
   'led',
@@ -230,6 +250,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   const shockleyLeds: ShockleyLed[] = []
   const bjts: BjtElement[] = []
   const mosfets: MosfetElement[] = []
+  const zeners: ZenerElement[] = []
 
   for (const inst of world.instances.values()) {
     if (inst.definition === 'transistor_bjt_npn' || inst.definition === 'transistor_bjt_pnp') {
@@ -306,10 +327,12 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       if (led !== null) shockleyLeds.push(led)
       else linearVoltageSources.push({ inst, kind: 'led' }) // fixed-V_F fallback
     } else if (inst.definition === 'diode_zener_silicon') {
-      // A zener EXISTS to regulate in reverse breakdown — which isn't modeled
-      // yet. Solving it as a plain forward diode would misrepresent the part,
-      // so it is skipped honestly (matching the transient solver's posture).
-      warnings.push(`Skipped zener '${inst.id}' — reverse-breakdown regulation is not solvable yet`)
+      // Forward Shockley conduction PLUS reverse-breakdown regulation, solved
+      // through the same Newton loop as the LEDs (zenerCompanionModel clamps the
+      // reverse voltage at V_Z).
+      const zener = resolveZener(inst, thermalV, options?.temperaturesC?.get(inst.id))
+      if (zener !== null) zeners.push(zener)
+      else warnings.push(`Skipped zener '${inst.id}' (missing zener_voltage or forward_voltage)`)
     } else if (
       inst.definition === 'switch_spst_toggle' ||
       inst.definition === 'switch_spst_momentary'
@@ -396,6 +419,9 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     for (const led of shockleyLeds) {
       stampLedCompanion(led, nodeIndex, led.thermalV, M, b)
     }
+    for (const z of zeners) {
+      stampZenerCompanion(z, nodeIndex, z.thermalV, M, b)
+    }
     for (const bjt of bjts) {
       stampBjtCompanion(bjt, nodeIndex, bjt.thermalV, M, b)
     }
@@ -426,7 +452,12 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   let iterations = 1
   let converged = true
 
-  if (shockleyLeds.length === 0 && bjts.length === 0 && mosfets.length === 0) {
+  if (
+    shockleyLeds.length === 0 &&
+    zeners.length === 0 &&
+    bjts.length === 0 &&
+    mosfets.length === 0
+  ) {
     solved = buildAndSolve()
     if (solved === null) return emptyResult('singular-matrix', ground, warnings)
   } else {
@@ -449,6 +480,14 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         maxDelta = Math.max(maxDelta, Math.abs(limit.voltage - led.vGuess))
         if (limit.limited) anyLimited = true
         led.vGuess = limit.voltage
+      }
+      for (const z of zeners) {
+        const vAnode = z.anodeNet === ground ? 0 : (last.nodes.get(z.anodeNet) ?? 0)
+        const vCathode = z.cathodeNet === ground ? 0 : (last.nodes.get(z.cathodeNet) ?? 0)
+        const next = limitZenerStep(vAnode - vCathode, z)
+        maxDelta = Math.max(maxDelta, Math.abs(next.voltage - z.vGuess))
+        if (next.limited) anyLimited = true
+        z.vGuess = next.voltage
       }
       for (const bjt of bjts) {
         const vB = bjt.baseNet === ground ? 0 : (last.nodes.get(bjt.baseNet) ?? 0)
@@ -543,6 +582,20 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       led.inst.id,
       diodeCurrent(led.vGuess, led.saturationCurrent, led.idealityFactor, led.thermalV),
     )
+  }
+  // Zener: the device current from its two-branch companion at the converged
+  // voltage (forward conduction, or the reverse breakdown current when clamping).
+  for (const z of zeners) {
+    const { conductance, currentSource } = zenerCompanionModel(
+      z.vGuess,
+      z.saturationCurrent,
+      z.idealityFactor,
+      z.thermalV,
+      z.zenerVoltage,
+      z.breakdownCurrent,
+      z.breakdownIdeality,
+    )
+    branches.set(z.inst.id, conductance * z.vGuess + currentSource)
   }
   // BJT: the collector current is the branch current we report (physical sign —
   // a PNP's conventional collector current flows out of the collector).
@@ -654,6 +707,85 @@ function resolveShockleyLed(
 }
 
 /**
+ * Resolve a Zener to the two-branch model, or null without forward_voltage +
+ * zener_voltage. Forward I_S is calibrated like any silicon diode (V_F at a
+ * reference current); the breakdown reference current is the datasheet knee
+ * current. With a junction temperature the forward I_S scales by the SPICE law
+ * (silicon, constant bandgap); V_Z itself is held constant for now (its
+ * temperature coefficient is a future refinement).
+ */
+function resolveZener(
+  inst: Instance,
+  thermalV: number,
+  temperatureC?: number,
+): ZenerElement | null {
+  const forwardVoltage = readScalarParam(inst, 'forward_voltage')
+  const zenerVoltage = readScalarParam(inst, 'zener_voltage')
+  if (forwardVoltage === undefined || zenerVoltage === undefined) return null
+  if (forwardVoltage <= 0 || zenerVoltage <= 0) return null
+
+  const anodeConnect = inst.connects?.find((c) => c.terminal === 'anode')
+  const cathodeConnect = inst.connects?.find((c) => c.terminal === 'cathode')
+  if (anodeConnect === undefined || cathodeConnect === undefined) return null
+
+  const idealityFactor = readScalarParam(inst, 'ideality_factor') ?? DEFAULT_IDEALITY_FACTOR
+  const forwardCurrent = readScalarParam(inst, 'max_forward_current') ?? 0.01 // 10 mA reference
+  let saturationCurrent = deriveSaturationCurrent(
+    forwardVoltage,
+    forwardCurrent,
+    idealityFactor,
+    thermalV,
+  )
+  const breakdownCurrent = readScalarParam(inst, 'knee_current') ?? 0.005 // 5 mA reference
+  let elementThermalV = thermalV
+  if (temperatureC !== undefined) {
+    const junctionKelvin = temperatureC + KELVIN_OFFSET
+    saturationCurrent = scaleSaturationCurrent(
+      saturationCurrent,
+      junctionKelvin,
+      ROOM_TEMPERATURE_KELVIN,
+      idealityFactor,
+      SILICON_BANDGAP_EV,
+    )
+    elementThermalV = thermalVoltage(junctionKelvin)
+  }
+
+  return {
+    inst,
+    anodeNet: anodeConnect.net,
+    cathodeNet: cathodeConnect.net,
+    saturationCurrent,
+    idealityFactor,
+    thermalV: elementThermalV,
+    zenerVoltage,
+    breakdownCurrent,
+    breakdownIdeality: ZENER_BREAKDOWN_IDEALITY,
+    vGuess: 0, // warm start in the blocking region
+  }
+}
+
+/**
+ * Per-iteration voltage limiting for a Zener — pnjlim on whichever branch is
+ * being driven. The forward branch is limited around its critical voltage; the
+ * breakdown branch is limited the same way in u = −(V + V_Z) space, so a Newton
+ * step can't overshoot the steep breakdown knee and diverge.
+ */
+function limitZenerStep(vRaw: number, z: ZenerElement): { voltage: number; limited: boolean } {
+  const vcritFwd = criticalVoltage(z.saturationCurrent, z.idealityFactor, z.thermalV)
+  const fwd = pnjlim(vRaw, z.vGuess, z.idealityFactor * z.thermalV, vcritFwd)
+  if (fwd.limited) return fwd
+  const vcritBd = criticalVoltage(z.breakdownCurrent, z.breakdownIdeality, z.thermalV)
+  const bd = pnjlim(
+    -(vRaw + z.zenerVoltage),
+    -(z.vGuess + z.zenerVoltage),
+    z.breakdownIdeality * z.thermalV,
+    vcritBd,
+  )
+  if (bd.limited) return { voltage: -(bd.voltage + z.zenerVoltage), limited: true }
+  return { voltage: vRaw, limited: false }
+}
+
+/**
  * Stamp an LED's Newton-Raphson companion model (§20.4 / §20.7) at its current
  * voltage guess: a conductance G_eq between anode and cathode plus a current
  * source I_eq. Ground-side rows/cols are omitted.
@@ -680,6 +812,46 @@ function stampLedCompanion(
   // with the junction (the b/current source uses G alone, so it is a pure parallel
   // conductance). It keeps a node behind a hard-off (reverse) diode from floating,
   // without moving the operating point (its current is sub-pA).
+  const Gd = G + SOLVER_GMIN
+  if (a !== undefined) {
+    M.set([a, a], (M.get([a, a]) ?? 0) + Gd)
+    b.set([a, 0], (b.get([a, 0]) ?? 0) - Ieq)
+  }
+  if (c !== undefined) {
+    M.set([c, c], (M.get([c, c]) ?? 0) + Gd)
+    b.set([c, 0], (b.get([c, 0]) ?? 0) + Ieq)
+  }
+  if (a !== undefined && c !== undefined) {
+    M.set([a, c], (M.get([a, c]) ?? 0) - Gd)
+    M.set([c, a], (M.get([c, a]) ?? 0) - Gd)
+  }
+}
+
+/**
+ * Stamp a Zener's companion model at its voltage guess — identical shape to
+ * stampLedCompanion, but the conductance + current carry the reverse-breakdown
+ * branch, so a reverse-biased Zener clamps at V_Z instead of blocking.
+ */
+function stampZenerCompanion(
+  z: ZenerElement,
+  nodeIndex: Map<string, number>,
+  thermalV: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const { conductance: G, currentSource: Ieq } = zenerCompanionModel(
+    z.vGuess,
+    z.saturationCurrent,
+    z.idealityFactor,
+    thermalV,
+    z.zenerVoltage,
+    z.breakdownCurrent,
+    z.breakdownIdeality,
+  )
+  const a = nodeIndex.get(z.anodeNet)
+  const c = nodeIndex.get(z.cathodeNet)
   const Gd = G + SOLVER_GMIN
   if (a !== undefined) {
     M.set([a, a], (M.get([a, a]) ?? 0) + Gd)

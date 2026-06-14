@@ -211,6 +211,92 @@ describe('solveTransient — AC (time-varying source)', () => {
   })
 })
 
+/** V_s — R — (reg) — reverse-biased zener — ground: a shunt regulator. Purely
+ *  resistive, so the transient settles to steady state at once. */
+function zenerRegulatorWorld(Vs: number, R: number, Vz: number): World {
+  const world: World = {
+    definitions: new Map(),
+    instances: new Map(),
+    behaviors: new Map(),
+    activeVariables: new Map(),
+    nets: new Map(),
+  }
+  world.nets.set('vs', {
+    id: 'vs',
+    kind: 'net',
+    members: [
+      { instance: 'bat', terminal: 'terminal_positive' },
+      { instance: 'r1', terminal: 'terminal_a' },
+    ],
+  })
+  world.nets.set('reg', {
+    id: 'reg',
+    kind: 'net',
+    members: [
+      { instance: 'r1', terminal: 'terminal_b' },
+      { instance: 'z1', terminal: 'cathode' },
+    ],
+  })
+  world.nets.set('gnd', {
+    id: 'gnd',
+    kind: 'net',
+    type: 'ground',
+    members: [
+      { instance: 'bat', terminal: 'terminal_negative' },
+      { instance: 'z1', terminal: 'anode' },
+    ],
+  })
+  world.instances.set('bat', {
+    id: 'bat',
+    kind_ref: 'primitive_device',
+    definition: 'power_source',
+    parameters: { nominal_voltage: scalar(Vs, 'volt') },
+    connects: [
+      { net: 'vs', terminal: 'terminal_positive', of: 'bat' },
+      { net: 'gnd', terminal: 'terminal_negative', of: 'bat' },
+    ],
+  })
+  world.instances.set('r1', {
+    id: 'r1',
+    kind_ref: 'primitive_device',
+    definition: 'resistor',
+    parameters: { resistance: scalar(R, 'ohm') },
+    connects: [
+      { net: 'vs', terminal: 'terminal_a', of: 'r1' },
+      { net: 'reg', terminal: 'terminal_b', of: 'r1' },
+    ],
+  })
+  world.instances.set('z1', {
+    id: 'z1',
+    kind_ref: 'primitive_device',
+    definition: 'diode_zener_silicon',
+    parameters: {
+      zener_voltage: scalar(Vz, 'volt'),
+      forward_voltage: scalar(0.7, 'volt'),
+      knee_current: scalar(0.005, 'ampere'),
+    },
+    connects: [
+      { net: 'reg', terminal: 'cathode', of: 'z1' },
+      { net: 'gnd', terminal: 'anode', of: 'z1' },
+    ],
+  })
+  return world
+}
+
+describe('zener regulator (transient)', () => {
+  test('the regulated node clamps at V_Z, the same as the DC solver', () => {
+    // 12 V through 1 kΩ into a reverse-biased 5.1 V zener.
+    const res = solveTransient(zenerRegulatorWorld(12, 1000, 5.1), {
+      timeStep: 1e-4,
+      duration: 1e-3,
+    })
+    const last = res.series[res.series.length - 1]
+    const reg = last?.nodes.get('reg') ?? Number.NaN
+    expect(reg).toBeGreaterThan(5) // clamped near V_Z…
+    expect(reg).toBeLessThan(5.6) // …not the ~12 V it would block to unregulated
+  })
+})
+
 /**
  * Half-wave rectifier: AC source — diode — load resistor — ground, with an
  * optional smoothing capacitor across the load. THE canonical AC→DC circuit.

@@ -130,37 +130,57 @@ describe('rectifier diode in the DC solver', () => {
     expect(failures.filter((f) => f.source === 'd1')).toEqual([])
   })
 
-  test('a zener is skipped with an honest warning, not faked as a plain diode', () => {
-    const nodes: CanvasNode[] = [
-      {
-        id: 'bat',
-        definition: 'power_source',
-        parameters: { nominal_voltage: scalar(9, 'volt'), internal_resistance: scalar(1, 'ohm') },
-      },
-      { id: 'r1', definition: 'resistor', parameters: { resistance: scalar(100, 'ohm') } },
-      { id: 'z1', definition: 'diode_zener_silicon', parameters: {} },
-      { id: 'gnd', definition: 'ground' },
-    ]
-    const edges = [
-      {
-        source: 'bat',
-        sourceHandle: 'terminal_positive',
-        target: 'r1',
-        targetHandle: 'terminal_a',
-      },
-      { source: 'r1', sourceHandle: 'terminal_b', target: 'z1', targetHandle: 'cathode' },
-      { source: 'z1', sourceHandle: 'anode', target: 'bat', targetHandle: 'terminal_negative' },
-      {
-        source: 'gnd',
-        sourceHandle: 'reference_terminal',
-        target: 'bat',
-        targetHandle: 'terminal_negative',
-      },
-    ]
-    const world = canvasToWorld(nodes, edges)
+  // A 9 V source through 100 Ω into a reverse-biased zener (current enters its
+  // cathode) — the classic shunt regulator. `zenerParams` lets a test omit V_Z.
+  const zenerRegulator = (
+    zenerParams: Record<string, { value?: unknown; ref?: string }>,
+  ): CanvasNode[] => [
+    {
+      id: 'bat',
+      definition: 'power_source',
+      parameters: { nominal_voltage: scalar(9, 'volt'), internal_resistance: scalar(1, 'ohm') },
+    },
+    { id: 'r1', definition: 'resistor', parameters: { resistance: scalar(100, 'ohm') } },
+    { id: 'z1', definition: 'diode_zener_silicon', parameters: zenerParams },
+    { id: 'gnd', definition: 'ground' },
+  ]
+  const regulatorEdges = [
+    { source: 'bat', sourceHandle: 'terminal_positive', target: 'r1', targetHandle: 'terminal_a' },
+    { source: 'r1', sourceHandle: 'terminal_b', target: 'z1', targetHandle: 'cathode' },
+    { source: 'z1', sourceHandle: 'anode', target: 'bat', targetHandle: 'terminal_negative' },
+    {
+      source: 'gnd',
+      sourceHandle: 'reference_terminal',
+      target: 'bat',
+      targetHandle: 'terminal_negative',
+    },
+  ]
+
+  test('a zener regulates — the reverse voltage clamps at its V_Z', () => {
+    const world = canvasToWorld(
+      zenerRegulator({
+        zener_voltage: scalar(5.1, 'volt'),
+        forward_voltage: scalar(0.7, 'volt'),
+        knee_current: scalar(0.005, 'ampere'),
+      }),
+      regulatorEdges,
+    )
+    const solution = solveDC(world)
+    expect(solution.status).toBe('solved')
+    const z = world.instances.get('z1')
+    const cathodeNet = z?.connects?.find((c) => c.terminal === 'cathode')?.net ?? ''
+    const anodeNet = z?.connects?.find((c) => c.terminal === 'anode')?.net ?? ''
+    const reverseVolts = (solution.nodes.get(cathodeNet) ?? 0) - (solution.nodes.get(anodeNet) ?? 0)
+    expect(reverseVolts).toBeGreaterThan(5) // clamped near V_Z…
+    expect(reverseVolts).toBeLessThan(5.6) // …not the ~9 V it would block to unregulated
+    // Reverse breakdown conducts cathode→anode, so the anode→cathode branch is negative.
+    expect(solution.branches.get('z1') ?? 0).toBeLessThan(0)
+  })
+
+  test('a zener without its V_Z is skipped with a warning, not faked', () => {
+    const world = canvasToWorld(zenerRegulator({}), regulatorEdges)
     const solution = solveDC(world)
     expect(solution.warnings.join(' ')).toContain('zener')
-    // Unstamped → its branch carries nothing; no fake conduction.
     expect(solution.branches.get('z1')).toBeUndefined()
   })
 })
