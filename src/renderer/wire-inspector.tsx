@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
+import { wireAmpacity } from '../thermal-model.ts'
 import { formatEng } from './units.ts'
-import { formatLength, WIRE_GAUGES } from './wire-length.ts'
+import { formatLength, gaugeAreaM2, WIRE_GAUGES } from './wire-length.ts'
 
 /**
  * Properties inspector for a selected wire (the edge equivalent of PartInspector).
@@ -50,6 +51,20 @@ export function WireInspector({
   onGauge: (gaugeAwg: number) => void
 }) {
   const { gaugeAwg, lengthM, ohms, amps } = wire
+  // The wire's real ampacity from the same hot-spot model — the current at which
+  // its middle would reach the 105 C insulation limit — and how hard it is driven.
+  const ampacity =
+    lengthM !== null && ohms !== null ? wireAmpacity(ohms, lengthM, gaugeAreaM2(gaugeAwg)) : null
+  const loadFrac =
+    amps !== null && ampacity !== null && ampacity > 0 ? Math.abs(amps) / ampacity : null
+  const loadColor =
+    loadFrac === null
+      ? undefined
+      : loadFrac > 1
+        ? '#ff6b5e'
+        : loadFrac > 0.7
+          ? '#e0a92e'
+          : undefined
   return (
     <div style={{ width: 170, fontSize: 11, color: '#cdd6e0' }}>
       <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>Wire</div>
@@ -80,8 +95,21 @@ export function WireInspector({
       </div>
       <div style={row}>
         <span style={muted}>Current</span>
-        <span>{amps !== null ? formatEng(amps, 'A') : '—'}</span>
+        <span style={loadColor ? { color: loadColor } : undefined}>
+          {amps !== null ? formatEng(amps, 'A') : '—'}
+        </span>
       </div>
+      <div style={row}>
+        <span style={muted}>Rated</span>
+        <span>{ampacity !== null ? `~${formatEng(ampacity, 'A')}` : '—'}</span>
+      </div>
+      {loadFrac !== null && loadFrac > 0.7 ? (
+        <div style={{ fontSize: 10, marginTop: 4, color: loadColor }}>
+          {loadFrac > 1
+            ? `Undersized for this current — over its ~${formatEng(ampacity ?? 0, 'A')} rating.`
+            : `Near its rating — ${Math.round(loadFrac * 100)}% of ~${formatEng(ampacity ?? 0, 'A')}.`}
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -2086,6 +2086,10 @@ function Canvas() {
     [screenToFlowPosition, setNodes, nodes, checkpointAction],
   )
 
+  // The AWG gauge new wires take (the toolbar picker sets it); each wire keeps its
+  // own, editable later by selecting it. Declared above both wire-creation paths.
+  const [wireGauge, setWireGauge] = useState<number>(DEFAULT_WIRE_GAUGE_AWG)
+
   // Draw a wire between two terminals → a new edge. The topology effect re-solves
   // it (current/length/resistance) when physics is on; otherwise it stays grey
   // (DRAWN) until Solve. Deletable: select it + Delete to remove.
@@ -2093,10 +2097,19 @@ function Canvas() {
     (connection: Connection) => {
       checkpointAction('wire')
       setEdges((current) =>
-        addEdge({ ...connection, type: 'net', deletable: true, style: { stroke: DRAWN } }, current),
+        addEdge(
+          {
+            ...connection,
+            type: 'net',
+            deletable: true,
+            style: { stroke: DRAWN },
+            data: { gaugeAwg: wireGauge },
+          },
+          current,
+        ),
       )
     },
-    [setEdges, checkpointAction],
+    [setEdges, checkpointAction, wireGauge],
   )
 
   // Click-by-click wire drawing (S19-v3-60; CAD-style free placement + curves
@@ -2165,6 +2178,7 @@ function Canvas() {
             deletable: true,
             style: { stroke: DRAWN },
             data: {
+              gaugeAwg: wireGauge,
               ...(corners.length > 0 ? { waypoints: corners } : {}),
               ...(wireStyle === 'curve' ? { curved: true, curveRadius: wireCurveRadius } : {}),
             },
@@ -2174,7 +2188,7 @@ function Canvas() {
       )
       setPendingWire(null)
     },
-    [pendingWire, wireStyle, wireCurveRadius, setEdges, setNodes, checkpointAction],
+    [pendingWire, wireStyle, wireCurveRadius, wireGauge, setEdges, setNodes, checkpointAction],
   )
   const onWireClick = useCallback(
     (event: ReactMouseEvent) => {
@@ -3003,6 +3017,8 @@ function Canvas() {
                 onWireStyle={setWireStyle}
                 curveRadius={wireCurveRadius}
                 onCurveRadius={setWireCurveRadius}
+                wireGauge={wireGauge}
+                onWireGauge={setWireGauge}
                 alwaysOn={alwaysOn}
                 onAlwaysOn={setAlwaysOn}
                 onSolve={handleSolve}

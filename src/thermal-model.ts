@@ -165,6 +165,35 @@ export function wireThermalProfile(
 }
 
 /**
+ * A wire's real ampacity (A): the steady current at which its hot spot just
+ * reaches the insulation limit. The peak temperature climbs monotonically with
+ * current (I²R heating against the same cooling), so bisect for the crossing —
+ * this is the inverse of wireThermalProfile, the rating a wire table would list,
+ * here DERIVED from the same fin model rather than looked up. Still air, ends at
+ * ambient (the standard rating condition).
+ */
+export function wireAmpacity(
+  resistanceOhm: number,
+  lengthM: number,
+  areaM2: number,
+  ambientC: number = STANDARD_AMBIENT_C,
+  limitC: number = WIRE_INSULATION_MAX_C,
+): number {
+  if (resistanceOhm <= 0 || lengthM <= 0 || areaM2 <= 0 || !(limitC > ambientC)) return 0
+  const peakAt = (amps: number) =>
+    wireThermalProfile(amps, resistanceOhm, lengthM, areaM2, ambientC).peakC
+  let lo = 0
+  let hi = 1
+  for (let k = 0; k < 40 && peakAt(hi) < limitC; k++) hi *= 2
+  for (let k = 0; k < 60; k++) {
+    const mid = (lo + hi) / 2
+    if (peakAt(mid) < limitC) lo = mid
+    else hi = mid
+  }
+  return (lo + hi) / 2
+}
+
+/**
  * How close a real temperature is to a real rated maximum, as a fraction of the
  * rise from ambient to that rating: 0 = ambient, 1 = exactly at the rating (the
  * "line"), >1 = over it. Drives the warning (yellow, approaching) → over (red)

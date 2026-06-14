@@ -1,5 +1,6 @@
 import type { LensMode } from './lens.ts'
 import { DeviceGlyph } from './symbols.tsx'
+import { WIRE_GAUGES } from './wire-length.ts'
 import { CURVE_SIZES } from './wire-path.ts'
 
 /**
@@ -26,6 +27,8 @@ export function ToolbarItems({
   onWireStyle,
   curveRadius,
   onCurveRadius,
+  wireGauge,
+  onWireGauge,
   alwaysOn,
   onAlwaysOn,
   onSolve,
@@ -47,6 +50,8 @@ export function ToolbarItems({
   onWireStyle: (style: WireStyle) => void
   curveRadius: number
   onCurveRadius: (radiusPx: number) => void
+  wireGauge: number
+  onWireGauge: (gaugeAwg: number) => void
   alwaysOn: boolean
   onAlwaysOn: (on: boolean) => void
   onSolve: () => void
@@ -139,6 +144,33 @@ export function ToolbarItems({
               ))}
             </div>
           ) : null}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, paddingTop: 2 }}>
+            <span
+              style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5, color: '#778' }}
+            >
+              Gauge
+            </span>
+            <select
+              className="nodrag"
+              value={wireGauge}
+              onChange={(event) => onWireGauge(Number(event.target.value))}
+              title="The AWG gauge new wires are drawn at -- thinner wire is more resistance and heat. Each wire keeps its own gauge; change one later by selecting it."
+              style={{
+                background: '#1a1a1e',
+                border: '1px solid #3a3a3f',
+                color: '#cdd6e0',
+                borderRadius: 3,
+                fontSize: 10,
+                padding: '2px 3px',
+              }}
+            >
+              {WIRE_GAUGES.map((g) => (
+                <option key={g.awg} value={g.awg}>
+                  {g.awg} AWG
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       ) : null}
 

@@ -14,6 +14,7 @@ import {
   STANDARD_AMBIENT_C,
   thermalSeverity,
   WIRE_INSULATION_MAX_C,
+  wireAmpacity,
   wireThermalProfile,
 } from '../src/thermal-model.ts'
 
@@ -75,6 +76,26 @@ describe('wireThermalProfile — the hot spot', () => {
     expect(wireThermalProfile(10, 0, LENGTH_M, AREA).peakC).toBe(A)
     expect(wireThermalProfile(10, R, 0, AREA).peakC).toBe(A)
     expect(wireThermalProfile(10, R, LENGTH_M, 0).peakC).toBe(A)
+  })
+})
+
+describe('wireAmpacity — the current that just reaches the insulation limit', () => {
+  test('a wire driven at exactly its ampacity sits right on the limit', () => {
+    const amp = wireAmpacity(R, LENGTH_M, AREA)
+    expect(amp).toBeGreaterThan(7) // above the safe 7 A, below the 14 A overload
+    expect(amp).toBeLessThan(14)
+    // the inverse really lands on the limit
+    expect(wireThermalProfile(amp, R, LENGTH_M, AREA).peakC).toBeCloseTo(WIRE_INSULATION_MAX_C, 0)
+  })
+  test('a thicker wire carries more before it overheats', () => {
+    const thin = wireAmpacity(wireResistance(LENGTH_M, undefined, 5.09e-8), LENGTH_M, 5.09e-8) // 30 AWG
+    const thick = wireAmpacity(wireResistance(LENGTH_M, undefined, 2.075e-6), LENGTH_M, 2.075e-6) // 14 AWG
+    expect(thick).toBeGreaterThan(thin)
+  })
+  test('degenerate inputs give a zero rating, not NaN', () => {
+    expect(wireAmpacity(0, LENGTH_M, AREA)).toBe(0)
+    expect(wireAmpacity(R, 0, AREA)).toBe(0)
+    expect(wireAmpacity(R, LENGTH_M, 0)).toBe(0)
   })
 })
 
