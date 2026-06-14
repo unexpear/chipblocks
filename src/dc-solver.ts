@@ -45,10 +45,13 @@ import {
   criticalVoltage,
   deriveSaturationCurrent,
   diodeCurrent,
+  LED_VARSHNI_ALPHA_EV_PER_K,
+  LED_VARSHNI_BETA_K,
   pnjlim,
   ROOM_TEMPERATURE_KELVIN,
   scaleSaturationCurrent,
   thermalVoltage,
+  varshniEnergyGap,
 } from './diode-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { ldrResistance, lightSensorCurrent } from './light.ts'
@@ -619,16 +622,22 @@ function resolveShockleyLed(
   if (temperatureC !== undefined) {
     const junctionKelvin = temperatureC + KELVIN_OFFSET
     const wavelengthNm = readScalarParam(inst, 'peak_wavelength')
-    const bandgapEv =
-      wavelengthNm !== undefined && wavelengthNm > 0
-        ? PHOTON_EV_NM / wavelengthNm
-        : SILICON_BANDGAP_EV
+    const isLed = wavelengthNm !== undefined && wavelengthNm > 0
+    const bandgapEv = isLed ? PHOTON_EV_NM / (wavelengthNm as number) : SILICON_BANDGAP_EV
+    // An LED's bandgap narrows with heat (Varshni) — the dominant reason its
+    // forward voltage droops, since qV_F ≈ E_g makes the constant-bandgap law's
+    // two effects nearly cancel. A silicon junction (qV_F ≪ E_g) keeps a constant
+    // bandgap; its droop already falls out of the I_S(T) law.
+    const bandgapAtJunction = isLed
+      ? varshniEnergyGap(bandgapEv, LED_VARSHNI_ALPHA_EV_PER_K, LED_VARSHNI_BETA_K, junctionKelvin)
+      : bandgapEv
     saturationCurrent = scaleSaturationCurrent(
       saturationCurrent,
       junctionKelvin,
       ROOM_TEMPERATURE_KELVIN,
       idealityFactor,
       bandgapEv,
+      bandgapAtJunction,
     )
     elementThermalV = thermalVoltage(junctionKelvin)
   }

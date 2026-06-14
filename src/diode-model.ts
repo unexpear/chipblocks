@@ -48,10 +48,16 @@ const SATURATION_TEMPERATURE_EXPONENT = 3
 /**
  * Saturation current scaled from its calibration temperature to the junction's
  * actual temperature — the standard SPICE diode/BJT temperature law:
- *   I_S(T) = I_S(T₀) · (T/T₀)^(XTI/n) · exp( (E_g/(n·k/q)) · (1/T₀ − 1/T) )
+ *   I_S(T) = I_S(T₀) · (T/T₀)^(XTI/n) · exp( ( E_g(T₀)/T₀ − E_g(T)/T ) / (n·k/q) )
  * with XTI = 3 and the bandgap E_g in eV. This — together with V_T = kT/q — is
  * what makes a real diode's forward voltage fall ≈2 mV/°C as it warms: I_S grows
  * fast enough with temperature to more than offset the larger V_T.
+ *
+ * The bandgap is written at BOTH temperatures. With a constant bandgap the two
+ * collapse to the familiar E_g·(1/T₀ − 1/T), so silicon junctions are unchanged.
+ * When the bandgap NARROWS with heat (Varshni — see varshniEnergyGap), passing
+ * the warmer, smaller E_g(T) as `bandgapEvAtTemperature` is what gives an LED its
+ * real forward-voltage droop (whose qV_F ≈ E_g would otherwise nearly cancel it).
  * Verified form: ngspice manual (diode temperature model) / Sedra & Smith.
  */
 export function scaleSaturationCurrent(
@@ -60,17 +66,47 @@ export function scaleSaturationCurrent(
   calibrationKelvin: number,
   idealityFactor: number,
   bandgapEv: number,
+  bandgapEvAtTemperature: number = bandgapEv,
 ): number {
   const ratio = temperatureKelvin / calibrationKelvin
   const exponent =
-    (bandgapEv / (idealityFactor * BOLTZMANN_EV_PER_K)) *
-    (1 / calibrationKelvin - 1 / temperatureKelvin)
+    (bandgapEv / calibrationKelvin - bandgapEvAtTemperature / temperatureKelvin) /
+    (idealityFactor * BOLTZMANN_EV_PER_K)
   return (
     saturationCurrent *
     ratio ** (SATURATION_TEMPERATURE_EXPONENT / idealityFactor) *
     Math.exp(exponent)
   )
 }
+
+/**
+ * The bandgap energy (eV) at a temperature, by the Varshni law referenced to a
+ * known value at refKelvin:
+ *   E_g(T) = E_g(ref) − α·( T²/(T+β) − ref²/(ref+β) )
+ * The gap narrows as the lattice expands with heat; α (eV/K) and β (K) are the
+ * material's Varshni coefficients. Referenced to E_g(ref) so it returns exactly
+ * that at T = ref. Verified form: Varshni 1967 / Sze, Physics of Semiconductor
+ * Devices.
+ */
+export function varshniEnergyGap(
+  bandgapAtRefEv: number,
+  alphaEvPerK: number,
+  betaKelvin: number,
+  temperatureKelvin: number,
+  refKelvin: number = ROOM_TEMPERATURE_KELVIN,
+): number {
+  const gapShift = (t: number) => (t * t) / (t + betaKelvin)
+  return bandgapAtRefEv - alphaEvPerK * (gapShift(temperatureKelvin) - gapShift(refKelvin))
+}
+
+/**
+ * Representative Varshni coefficients for an LED's III-V bandgap. The default red
+ * LED is AlGaInP (α ≈ 4.5×10⁻⁴ eV/K, β ≈ 235 K); blue/green InGaN and UV AlGaN
+ * narrow a little differently. A representative value — per-colour coefficients
+ * are a future refinement, like the bandgap itself coming from peak_wavelength.
+ */
+export const LED_VARSHNI_ALPHA_EV_PER_K = 4.5e-4
+export const LED_VARSHNI_BETA_K = 235
 
 /**
  * Derive the reverse saturation current I_s from a calibration point

@@ -14,8 +14,12 @@ import {
   deriveSaturationCurrent,
   diodeConductance,
   diodeCurrent,
+  LED_VARSHNI_ALPHA_EV_PER_K,
+  LED_VARSHNI_BETA_K,
   pnjlim,
+  scaleSaturationCurrent,
   thermalVoltage,
+  varshniEnergyGap,
 } from '../src/diode-model.ts'
 
 // led_001's calibration point, reused across tests.
@@ -160,5 +164,46 @@ describe('pnjlim', () => {
     const { voltage } = pnjlim(2.5, 2.0, NVT, VCRIT)
     expect(voltage).toBeGreaterThan(2.0)
     expect(voltage).toBeLessThan(2.5)
+  })
+})
+
+// ===========================================================================
+// LED forward-voltage drift — the Varshni bandgap effect
+// ===========================================================================
+
+describe('LED forward-voltage drift (Varshni bandgap)', () => {
+  const N_LED = 2
+  const EG_RED = 1239.84 / 640 // a red LED's bandgap from its 640 nm peak (eV)
+  const IS_25 = deriveSaturationCurrent(2.0, 0.02, N_LED, thermalVoltage(298.15)) // 2.0 V @ 20 mA
+
+  // The LED's forward voltage at the same 20 mA at a junction temperature, with
+  // or without the bandgap narrowing: V_F = n·V_T·ln(I/I_S(T) + 1).
+  const vfAt = (tempC: number, varshni: boolean) => {
+    const tK = tempC + 273.15
+    const egT = varshni
+      ? varshniEnergyGap(EG_RED, LED_VARSHNI_ALPHA_EV_PER_K, LED_VARSHNI_BETA_K, tK)
+      : EG_RED
+    const isT = scaleSaturationCurrent(IS_25, tK, 298.15, N_LED, EG_RED, egT)
+    return N_LED * thermalVoltage(tK) * Math.log(0.02 / isT + 1)
+  }
+
+  test('the bandgap narrows with heat, and is exact at the 25 °C reference', () => {
+    const hot = varshniEnergyGap(EG_RED, LED_VARSHNI_ALPHA_EV_PER_K, LED_VARSHNI_BETA_K, 373.15)
+    const ref = varshniEnergyGap(EG_RED, LED_VARSHNI_ALPHA_EV_PER_K, LED_VARSHNI_BETA_K, 298.15)
+    expect(hot).toBeLessThan(EG_RED)
+    expect(ref).toBeCloseTo(EG_RED, 9)
+  })
+
+  test('forward voltage droops with temperature — the real direction, a few mV/K', () => {
+    const drift = (vfAt(75, true) - vfAt(25, true)) / 50 // volts per °C
+    expect(drift).toBeLessThan(0) // V_F falls as the LED warms
+    expect(drift).toBeGreaterThan(-0.003) // a few mV/K — the real ballpark
+    expect(drift).toBeLessThan(-0.0002) // clearly nonzero (vs ≈0 with a constant bandgap)
+  })
+
+  test('the constant-bandgap law nearly cancels — Varshni is what makes it droop', () => {
+    const driftConstant = (vfAt(75, false) - vfAt(25, false)) / 50
+    const driftVarshni = (vfAt(75, true) - vfAt(25, true)) / 50
+    expect(driftVarshni).toBeLessThan(driftConstant) // narrowing bandgap droops more
   })
 })
