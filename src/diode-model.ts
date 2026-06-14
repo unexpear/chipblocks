@@ -169,6 +169,44 @@ export function companionModel(
   return { conductance, currentSource: current - conductance * voltage }
 }
 
+/** Representative breakdown ideality for a Zener's reverse knee — it sets how
+ *  sharp the regulation is (the zener impedance Z_Z ≈ n_bd·V_T / I at the
+ *  operating current; ~2 gives ohms-to-tens-of-ohms at a few mA, the real
+ *  ballpark). A datasheet zener_impedance could replace it later. */
+export const ZENER_BREAKDOWN_IDEALITY = 2
+
+/**
+ * Newton companion model for a Zener diode — forward Shockley conduction PLUS a
+ * reverse breakdown branch that switches on once the reverse voltage reaches V_Z
+ * and clamps it there. The breakdown is its own exponential in u = −(V + V_Z):
+ * ≈0 while blocking, equal to the breakdown reference current at exactly −V_Z,
+ * and climbing steeply beyond, holding the reverse voltage at V_Z. Since
+ * du/dV = −1, the breakdown current SUBTRACTS from the forward total while its
+ * conductance ADDS — both terms stay ≥ 0, so the stamp never goes singular.
+ * Returns G_eq + I_eq for the MNA stamp, exactly like companionModel.
+ */
+export function zenerCompanionModel(
+  voltage: number,
+  saturationCurrent: number,
+  idealityFactor: number,
+  thermalV: number,
+  zenerVoltage: number,
+  breakdownCurrent: number,
+  breakdownIdeality: number,
+): { conductance: number; currentSource: number } {
+  const forwardG = diodeConductance(voltage, saturationCurrent, idealityFactor, thermalV)
+  const forwardI = diodeCurrent(voltage, saturationCurrent, idealityFactor, thermalV)
+  const nVtBreakdown = breakdownIdeality * thermalV
+  // The breakdown exponential, capped so a wild Newton guess can't overflow it
+  // (pnjlim keeps real iterations far below the cap).
+  const breakdownExp = Math.exp(Math.min(-(voltage + zenerVoltage) / nVtBreakdown, 80))
+  const breakdownI = breakdownCurrent * breakdownExp
+  const breakdownG = (breakdownCurrent / nVtBreakdown) * breakdownExp
+  const conductance = forwardG + breakdownG
+  const current = forwardI - breakdownI
+  return { conductance, currentSource: current - conductance * voltage }
+}
+
 /**
  * Critical voltage — the onset of the exponential's steep region, used by
  * pnjlim (§20.5). Verified from ngspice diotemp.c:

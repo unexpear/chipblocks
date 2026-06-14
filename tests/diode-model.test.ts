@@ -20,6 +20,8 @@ import {
   scaleSaturationCurrent,
   thermalVoltage,
   varshniEnergyGap,
+  ZENER_BREAKDOWN_IDEALITY,
+  zenerCompanionModel,
 } from '../src/diode-model.ts'
 
 // led_001's calibration point, reused across tests.
@@ -205,5 +207,46 @@ describe('LED forward-voltage drift (Varshni bandgap)', () => {
     const driftConstant = (vfAt(75, false) - vfAt(25, false)) / 50
     const driftVarshni = (vfAt(75, true) - vfAt(25, true)) / 50
     expect(driftVarshni).toBeLessThan(driftConstant) // narrowing bandgap droops more
+  })
+})
+
+// ===========================================================================
+// Zener reverse breakdown — the two-branch companion model
+// ===========================================================================
+
+describe('zenerCompanionModel — forward, blocking, and reverse breakdown', () => {
+  const VT = thermalVoltage(298.15)
+  const N = 2
+  const VZ = 5.1 // a 5.1 V zener
+  const IS = deriveSaturationCurrent(0.7, 0.01, N, VT) // forward 0.7 V @ 10 mA
+  const IBV = 0.005 // 5 mA breakdown reference current
+  const NZ = ZENER_BREAKDOWN_IDEALITY
+
+  // Recover the true device current at V from the companion: I(V) = G·V + I_eq.
+  const currentAt = (v: number) => {
+    const { conductance, currentSource } = zenerCompanionModel(v, IS, N, VT, VZ, IBV, NZ)
+    return conductance * v + currentSource
+  }
+
+  test('forward biased: conducts like an ordinary diode', () => {
+    expect(currentAt(0.7)).toBeGreaterThan(0.005) // ~10 mA at its forward knee
+  })
+
+  test('blocking region: essentially no current between 0 and -V_Z', () => {
+    expect(Math.abs(currentAt(-2))).toBeLessThan(1e-3) // -2 V, well short of -5.1 V
+  })
+
+  test('reverse breakdown: clamps near -V_Z and conducts hard just past it', () => {
+    const atKnee = currentAt(-VZ) // exactly -5.1 V
+    const past = currentAt(-(VZ + 0.3)) // 0.3 V deeper into breakdown
+    expect(atKnee).toBeLessThan(0) // reverse current (negative)
+    expect(past).toBeLessThan(atKnee) // more reverse current past the knee
+    expect(Math.abs(past)).toBeGreaterThan(0.02) // hard conduction — the clamp
+  })
+
+  test('the conductance is always ≥ 0 — the stamp never goes singular', () => {
+    for (const v of [-10, -VZ, -2, 0, 0.5, 0.7]) {
+      expect(zenerCompanionModel(v, IS, N, VT, VZ, IBV, NZ).conductance).toBeGreaterThanOrEqual(0)
+    }
   })
 })
