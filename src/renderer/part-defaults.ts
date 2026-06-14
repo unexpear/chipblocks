@@ -64,11 +64,12 @@ const DEFAULTS: Record<string, Parameters> = {
     voltage_rating: scalar(16, 'volt'),
   },
   inductor: {
-    // 10 mH radial-lead ferrite choke class (Bourns RLB0914 family): real small
-    // inductors of this value carry tens of ohms of winding DCR and ~60 mA rating.
+    // Bourns RLB1014-103KL, a 10 mH radial-lead choke. (Previously cited to the
+    // RLB0914 package, which only reaches tens of microhenries — 10 mH lives in the
+    // larger RLB1014/RLB1314 cans.) Datasheet/Octopart: 10 mH, 32 Ω max DCR, 135 mA.
     inductance: scalar(0.01, 'henry'),
-    winding_resistance: scalar(25, 'ohm'),
-    current_rating: scalar(0.06, 'ampere'),
+    winding_resistance: scalar(32, 'ohm'),
+    current_rating: scalar(0.135, 'ampere'),
   },
   transformer: {
     // Small EI mains transformer class, ~1:10 step-up from the low-voltage winding
@@ -95,11 +96,11 @@ const DEFAULTS: Record<string, Parameters> = {
     saturation_flux_linkage: scalar(0.075, 'weber'),
   },
   diode_silicon_rectifier: {
-    // 1N4007 class — the universal 1 A axial rectifier: forward drop ≤ 1.0 V
-    // at the 1 A rating (the Shockley calibration point; the curve then gives
-    // the realistic ~0.7 V at smaller currents), blocking up to 1000 V PIV.
-    // Thermal values are DO-41 axial class (lead-length dependent) pending the
-    // queued datasheet-verification pass.
+    // 1N4007 — the universal 1 A axial rectifier: forward drop ≤ 1.0 V at the 1 A
+    // rating (the Shockley calibration point; the curve then gives the realistic
+    // ~0.7 V at smaller currents), blocking up to 1000 V PIV. Thermal: R_thJA
+    // 100 K/W per the Diodes Inc. 1N4007 datasheet (Fairchild lists 50 K/W at
+    // 9.5 mm lead length — it is mounting/lead-length dependent); T_J max 150 °C.
     forward_voltage: scalar(1.0, 'volt'),
     max_forward_current: scalar(1, 'ampere'),
     peak_inverse_voltage: scalar(1000, 'volt'),
@@ -109,11 +110,11 @@ const DEFAULTS: Record<string, Parameters> = {
     max_operating_temperature: scalar(150, 'celsius'),
   },
   diode_zener_silicon: {
-    // 1N4733A class — a 5.1 V, 1 W silicon zener. Reverse breakdown REGULATES at
-    // V_Z (5.1 V); forward it drops like a silicon diode. Knee ~1 mA; max zener
+    // 1N4733A — a 5.1 V, 1 W silicon zener. Reverse breakdown REGULATES at V_Z
+    // (5.1 V); forward it drops like a silicon diode — V_F 1.2 V max at I_F =
+    // 200 mA per the 1N4733A datasheet (onsemi/Fairchild). Knee ~1 mA; max zener
     // current ~178 mA (the 1 W limit, P_max / V_Z). V_Z is selectable across the
-    // E24 series (2.4–200 V) per the device fixture; forward class pending the
-    // queued datasheet-verification pass.
+    // E24 series (2.4–200 V) per the device fixture.
     zener_voltage: scalar(5.1, 'volt'),
     max_zener_current: scalar(0.178, 'ampere'),
     knee_current: scalar(0.001, 'ampere'),
@@ -123,10 +124,12 @@ const DEFAULTS: Record<string, Parameters> = {
     p_side: { value: 'silicon_p_type' },
   },
   led: {
-    // Typical 5 mm red LED (Kingbright WP7113SRD-D class): 2.0 V at 20 mA max,
-    // ~640 nm red emission — sets the on-canvas glow color. n_side/p_side are the
-    // real semiconductor (red AlGaInP, the device-led default); the Color picker
-    // sets the material together with the matching wavelength + forward voltage.
+    // Kingbright WP7113SRD/D, a 5 mm red LED: 2.0 V at 20 mA max, ~640 nm red
+    // emission — sets the on-canvas glow color. n_side/p_side are the real
+    // semiconductor (red AlGaInP, the device-led default); the Color picker sets
+    // the material together with the matching wavelength + forward voltage.
+    // Thermal: +85 °C max operating (datasheet −40 to +85 °C); θ_JA ~300 K/W is
+    // the 5 mm-epoxy-LED class value (small LEDs like this do not spec θ_JA).
     forward_voltage: scalar(2.0, 'volt'),
     max_forward_current: scalar(0.02, 'ampere'),
     peak_wavelength: scalar(640, 'nanometer'),
@@ -365,9 +368,9 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     voltage_rating: '16 V electrolytic voltage class',
   },
   inductor: {
-    inductance: '10 mH radial ferrite choke class (Bourns RLB0914 family)',
-    winding_resistance: 'winding DCR, tens of Ω typical at 10 mH (RLB0914 class)',
-    current_rating: '~60 mA rated current (RLB0914 class)',
+    inductance: 'Bourns RLB1014-103KL, 10 mH radial-lead choke (the RLB0914 package is µH-only)',
+    winding_resistance: '32 Ω max DC resistance (RLB1014-103KL datasheet)',
+    current_rating: '135 mA rated current (RLB1014-103KL datasheet)',
   },
   transformer: {
     primary_inductance: 'small EI mains transformer class, low-voltage winding',
@@ -388,25 +391,29 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     saturation_flux_linkage: '≈1.4× the nominal 12 V/50 Hz swing (V·√2/ω ≈ 54 mV·s)',
   },
   diode_silicon_rectifier: {
-    forward_voltage: '1N4007 class: ≤ 1.0 V at the 1 A rating',
-    max_forward_current: '1N400x family rating (1 A continuous)',
-    peak_inverse_voltage: '1N4007 variant (1000 V repetitive reverse)',
-    thermal_resistance_junction_ambient: 'DO-41 axial class (~100 K/W, lead-length dependent)',
-    max_operating_temperature: 'silicon rectifier junction class (150 °C)',
+    forward_voltage: '1N4007: ~1.0 V typical at 1 A (datasheet V_F max 1.1 V)',
+    max_forward_current: '1N4007 rating (1 A continuous)',
+    peak_inverse_voltage: '1N4007 (1000 V repetitive reverse)',
+    thermal_resistance_junction_ambient:
+      '100 K/W (Diodes Inc. 1N4007 datasheet; Fairchild lists 50 K/W at 9.5 mm lead — mounting-dependent)',
+    max_operating_temperature: '1N4007 T_J max 150 °C (datasheet)',
   },
   led: {
     forward_voltage: 'Kingbright WP7113SRD-D (5 mm red)',
     max_forward_current: '5 mm indicator LED standard (20 mA)',
     peak_wavelength: 'AlGaInP red ~640 nm',
-    thermal_resistance_junction_ambient: '5 mm epoxy LED class (~300 K/W)',
-    max_operating_temperature: '85 °C epoxy LED operating class',
+    thermal_resistance_junction_ambient:
+      '~300 K/W, 5 mm-epoxy-LED class (the WP7113 datasheet, like most small LEDs, does not spec θ_JA)',
+    max_operating_temperature:
+      'Kingbright WP7113SRD-D operating max +85 °C (datasheet −40 to +85 °C)',
   },
   led_uv_algan: {
     forward_voltage: 'AlGaN UV LED (~3.4 V at 20 mA)',
     max_forward_current: '20 mA',
     peak_wavelength: 'AlGaN UV ~340 nm',
-    thermal_resistance_junction_ambient: '5 mm epoxy LED class (~300 K/W)',
-    max_operating_temperature: '85 °C epoxy LED operating class',
+    thermal_resistance_junction_ambient:
+      '~300 K/W, 5 mm-LED class (θ_JA not specced on small LEDs)',
+    max_operating_temperature: '~85 °C, 5 mm-LED operating class',
   },
   switch_spst_toggle: {
     contact_resistance_closed: 'C&K 7101 class (~20 mΩ closed)',
