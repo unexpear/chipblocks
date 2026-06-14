@@ -61,8 +61,8 @@ export function visualFromLength(metres: number): number {
  *  - resistivity: annealed copper at 20 °C (CRC Handbook of Chemistry & Physics).
  *  - area: 22 AWG (0.6438 mm diameter → 0.3255 mm²), a common hookup-wire gauge.
  */
-const COPPER_RESISTIVITY_OHM_M = 1.68e-8
-const AWG22_AREA_M2 = 3.255e-7
+export const COPPER_RESISTIVITY_OHM_M = 1.68e-8
+export const AWG22_AREA_M2 = 3.255e-7
 export function wireResistance(
   metres: number,
   resistivityOhmM = COPPER_RESISTIVITY_OHM_M,

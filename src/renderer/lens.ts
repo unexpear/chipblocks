@@ -108,6 +108,34 @@ export function temperatureColor(tempC: number, hottestC: number): string | null
 }
 
 /**
+ * The derating margin where "warning" begins — a part/wire is colored once its
+ * real temperature passes this fraction of the way from ambient to its real
+ * rated maximum. Real reliability practice keeps parts below ~70–80 % of their
+ * absolute max for margin (running hotter shortens life), so 0.7 is the honest
+ * "getting close to the line" mark, not a number picked to look good.
+ */
+export const THERMAL_WARNING_FRACTION = 0.7
+
+/**
+ * The overheat color for a real temperature severity (from thermalSeverity:
+ * 0 = ambient, 1 = exactly at the rated maximum, >1 = over it):
+ *  - below the warning margin → null (no color; the part/wire reads normal);
+ *  - warning band (margin → 1) → yellow warming to orange (approaching the line);
+ *  - over the line (≥1) → red, deepening as it goes further over.
+ * The same yellow→red family as the power/temp halos, driven by REAL closeness
+ * to a REAL rating.
+ */
+export function thermalHotspotColor(severity: number): string | null {
+  if (!(severity >= THERMAL_WARNING_FRACTION)) return null
+  if (severity < 1) {
+    const t = (severity - THERMAL_WARNING_FRACTION) / (1 - THERMAL_WARNING_FRACTION)
+    return `rgb(${Math.round(lerp(232, 235, t))}, ${Math.round(lerp(201, 122, t))}, ${Math.round(lerp(64, 40, t))})`
+  }
+  const over = Math.min(1, severity - 1) // deepen toward a hard red, then hold
+  return `rgb(${Math.round(lerp(224, 198, over))}, ${Math.round(lerp(74, 28, over))}, ${Math.round(lerp(54, 30, over))})`
+}
+
+/**
  * Marching-dash period (seconds) for the flow animation: bigger current →
  * faster march, log-scaled from ~2 s at 1 µA down to 0.3 s at ~100 mA and up.
  * Null when no current flows (no animation on a dead wire).

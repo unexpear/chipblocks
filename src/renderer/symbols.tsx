@@ -1,9 +1,10 @@
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from '@xyflow/react'
 import { Fragment, useContext, useEffect } from 'react'
 import './canvas-animations.css'
+import { thermalSeverity } from '../thermal-model.ts'
 import { BlockNode } from './block-node.tsx'
 import { HealthContext } from './health.ts'
-import { LensContext, powerColor, temperatureColor } from './lens.ts'
+import { LensContext, powerColor, thermalHotspotColor } from './lens.ts'
 import {
   fuseIntact,
   type Parameters,
@@ -937,16 +938,24 @@ export function DeviceNode({ id, data }: NodeProps) {
   const value = primaryValue(definition, parameters)
   const health = useContext(HealthContext).get(id)
   const lensState = useContext(LensContext)
-  // Power lens: halo each part by its REAL dissipated watts; Temp lens: by its
-  // computed temperature (25 °C + P·θ_JA) — both heat-colored against the
-  // circuit's hottest part, with the number shown under the label.
+  // Power lens: halo each part by its REAL dissipated watts (against the
+  // circuit's hottest part). Temp lens: by how close its REAL temperature
+  // (25 °C + P·θ_JA) sits to its OWN rated maximum — normal until the derating
+  // margin, yellow approaching the limit, red over it — so the part actually at
+  // fault stands out, not just the relatively-warmest one. The number shows
+  // under the label either way.
   const watts = lensState.power.get(id)
   const tempC = lensState.temp.get(id)
+  const ratingValue = parameters?.max_operating_temperature?.value
+  const maxRatingC =
+    ratingValue && typeof ratingValue === 'object' && 'amount' in ratingValue
+      ? (ratingValue as { amount: number }).amount
+      : undefined
   const heat =
     lensState.lens === 'power' && watts !== undefined
       ? powerColor(watts, lensState.pMax)
-      : lensState.lens === 'temp' && tempC !== undefined
-        ? temperatureColor(tempC, lensState.tMaxC)
+      : lensState.lens === 'temp' && tempC !== undefined && maxRatingC !== undefined
+        ? thermalHotspotColor(thermalSeverity(tempC, maxRatingC))
         : null
   const terminals = terminalsOf(definition, parameters)
   const updateNodeInternals = useUpdateNodeInternals()

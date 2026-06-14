@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { thermalSeverity, WIRE_INSULATION_MAX_C, wireThermalProfile } from '../thermal-model.ts'
 import {
   FIELD_COLOR,
   FIELD_CONTOUR_MULTIPLIERS,
@@ -13,12 +14,14 @@ import {
   flowDuration,
   LensContext,
   MU_0,
+  THERMAL_WARNING_FRACTION,
+  thermalHotspotColor,
   voltageColor,
 } from './lens.ts'
 import { CheckpointContext } from './undo-context.ts'
 import { formatEng } from './units.ts'
-import { formatLength } from './wire-length.ts'
-import { roundedPathD } from './wire-path.ts'
+import { AWG22_AREA_M2, formatLength } from './wire-length.ts'
+import { roundedPathD, samplePathPoints } from './wire-path.ts'
 
 /**
  * Net edge — a wire. Two routing modes (Sprint 19):
@@ -105,26 +108,28 @@ export function NetEdge({
     delta: number
   } | null>(null)
 
-  let path: string
+  // The routed points (terminals + any hand-dropped corners) — the ONE geometry
+  // the picture, the length math, and the hot-spot sampling all share. Manual:
+  // straight segments, or quadratic fillets when drawn with the curve subtool
+  // (the same per-wire sweep size wire-path.ts measures). Plain: the straight
+  // segment the physics measures — nothing invented.
+  const routePoints: Point[] =
+    waypoints.length > 0
+      ? [{ x: sourceX, y: sourceY }, ...waypoints, { x: targetX, y: targetY }]
+      : [
+          { x: sourceX, y: sourceY },
+          { x: targetX, y: targetY },
+        ]
+  const sweep = typeof data?.curveRadius === 'number' ? data.curveRadius : undefined
+  const curved = data?.curved === true && waypoints.length > 0
+  const path = curved ? roundedPathD(routePoints, sweep) : pathThrough(routePoints)
   let labelX: number
   let labelY: number
   if (waypoints.length > 0) {
-    // Manual: the user's hand-routed path through the corner points — sharp
-    // segments, or quadratic fillets when drawn with the curve subtool (the
-    // SAME geometry, and the same per-wire sweep size, that wire-path.ts
-    // measures for the wire's physical length).
-    const points: Point[] = [{ x: sourceX, y: sourceY }, ...waypoints, { x: targetX, y: targetY }]
-    const sweep = typeof data?.curveRadius === 'number' ? data.curveRadius : undefined
-    path = data?.curved === true ? roundedPathD(points, sweep) : pathThrough(points)
-    const mid = points[Math.floor(points.length / 2)] ?? points[0]
+    const mid = routePoints[Math.floor(routePoints.length / 2)] ?? routePoints[0]
     labelX = mid?.x ?? sourceX
     labelY = mid?.y ?? sourceY
   } else {
-    // Plain: the straight segment the physics measures — nothing invented.
-    path = pathThrough([
-      { x: sourceX, y: sourceY },
-      { x: targetX, y: targetY },
-    ])
     labelX = (sourceX + targetX) / 2
     labelY = (sourceY + targetY) / 2
   }
@@ -137,6 +142,50 @@ export function NetEdge({
   // The wire's two end potentials (volts) — for the point-by-point probe below.
   const vSource = typeof data?.vSource === 'number' ? data.vSource : null
   const vTarget = typeof data?.vTarget === 'number' ? data.vTarget : null
+
+  // Thermal hot spot: a current-carrying wire's I²R heat peaks in its MIDDLE —
+  // its ends are heat-sunk by the parts they connect to — so when a wire runs
+  // hot we color the ACTUAL hot section (yellow warning → red over the
+  // insulation limit), not the whole wire. The temperature and the 105 °C limit
+  // are both real (thermal-model.ts), and this is always on, regardless of lens:
+  // overheating is a safety reading you want to see in any view.
+  const hotSegments: {
+    key: string
+    x1: number
+    y1: number
+    x2: number
+    y2: number
+    color: string
+  }[] = []
+  // The wire's peak (middle) temperature — null when it carries no current. Over
+  // the insulation limit it counts as a real failure (a burst badge + a note),
+  // the same always-on feedback an over-rated part gets.
+  let wirePeakC: number | null = null
+  if (amps !== null && ohms !== null && lengthM !== null) {
+    const profile = wireThermalProfile(amps, ohms, lengthM, AWG22_AREA_M2)
+    wirePeakC = profile.peakC
+    if (thermalSeverity(profile.peakC, WIRE_INSULATION_MAX_C) >= THERMAL_WARNING_FRACTION) {
+      const samples = samplePathPoints(routePoints, {
+        curved,
+        stepPx: 12,
+        ...(sweep !== undefined ? { radius: sweep } : {}),
+      })
+      const segments = Math.max(1, samples.length - 1)
+      for (let i = 0; i < segments; i++) {
+        const a = samples[i]
+        const b = samples[i + 1]
+        if (!a || !b) continue
+        const u = (i + 0.5) / segments // fraction of the way along the wire
+        const color = thermalHotspotColor(
+          thermalSeverity(profile.tempAtFraction(u), WIRE_INSULATION_MAX_C),
+        )
+        if (color)
+          hotSegments.push({ key: `${a.x},${a.y}`, x1: a.x, y1: a.y, x2: b.x, y2: b.y, color })
+      }
+    }
+  }
+
+  const wireOverheating = wirePeakC !== null && wirePeakC > WIRE_INSULATION_MAX_C
 
   const addWaypoint = (event: ReactMouseEvent) => {
     event.stopPropagation()
@@ -274,6 +323,34 @@ export function NetEdge({
           }}
         />
       ) : null}
+      {hotSegments.length > 0 ? (
+        <g className="cb-wire-hotspot" style={{ pointerEvents: 'none' }}>
+          {hotSegments.map((s) => (
+            <g key={s.key}>
+              {/* soft outer glow, then the solid hot core */}
+              <line
+                x1={s.x1}
+                y1={s.y1}
+                x2={s.x2}
+                y2={s.y2}
+                stroke={s.color}
+                strokeWidth={7}
+                strokeOpacity={0.28}
+                strokeLinecap="round"
+              />
+              <line
+                x1={s.x1}
+                y1={s.y1}
+                x2={s.x2}
+                y2={s.y2}
+                stroke={s.color}
+                strokeWidth={3.6}
+                strokeLinecap="round"
+              />
+            </g>
+          ))}
+        </g>
+      ) : null}
       {/* Invisible wide hit area: hover shows the chip; double-click adds a corner. */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: the wire is a pointer routing surface (hover reveals detail, double-click adds a corner); keyboard routing is future work */}
       <path
@@ -331,6 +408,26 @@ export function NetEdge({
                 B at 1 cm: {formatEng((MU_0 * Math.abs(amps)) / (2 * Math.PI * 0.01), 'T')}
               </div>
             ) : null}
+            {wireOverheating && wirePeakC !== null ? (
+              <div style={{ color: '#e0654a', fontSize: 8, marginTop: 1, fontWeight: 600 }}>
+                💥 overheating {wirePeakC.toFixed(0)} °C (over {WIRE_INSULATION_MAX_C} °C)
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {wireOverheating ? (
+          <div
+            className="nodrag nopan"
+            title={`Wire overheating — ${wirePeakC?.toFixed(0)} °C, over the ${WIRE_INSULATION_MAX_C} °C insulation limit`}
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              fontSize: 13,
+              pointerEvents: 'none',
+              filter: 'drop-shadow(0 0 2px #000)',
+            }}
+          >
+            💥
           </div>
         ) : null}
         {probe ? (
