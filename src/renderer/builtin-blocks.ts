@@ -549,6 +549,174 @@ export const FULL_ADDER_BLOCK: BlockData = {
   ],
 }
 
+/**
+ * RIPPLE-CARRY ADDER (N-bit) — N full-adders chained, the carry-out of each cell feeding the
+ * carry-in of the next, so the carry literally ripples from the lowest bit to the highest. This
+ * is how real binary addition is built. Inputs A0..A(N-1) and B0..B(N-1) (bit 0 = least
+ * significant), a carry-in, and a shared V+/GND; outputs the sum bits S0..S(N-1) and the final
+ * carry-out. Descend to see the full-adder cells, descend again for their gates, again for the
+ * transistors. An N-bit adder is ~50·N MOSFETs.
+ */
+function rippleCarryAdder(bits: number): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  for (let i = 0; i < bits; i++) {
+    nodes.push({
+      id: `fa${i}`,
+      definition: 'block',
+      x: 40,
+      y: 30 + i * 360,
+      block: FULL_ADDER_BLOCK,
+    })
+    if (i > 0) {
+      const prev = `fa${i - 1}`
+      const here = `fa${i}`
+      // the carry ripples up one bit; V+/GND chain across the cells
+      edges.push({
+        id: `carry${i}`,
+        source: prev,
+        sourceHandle: 'cout',
+        target: here,
+        targetHandle: 'cin',
+      })
+      edges.push({
+        id: `vdd${i}`,
+        source: prev,
+        sourceHandle: 'v_dd',
+        target: here,
+        targetHandle: 'v_dd',
+      })
+      edges.push({
+        id: `gnd${i}`,
+        source: prev,
+        sourceHandle: 'gnd',
+        target: here,
+        targetHandle: 'gnd',
+      })
+    }
+  }
+  // Left side: each bit's A and B inputs, then the carry-in and ground.
+  let left = 14
+  for (let i = 0; i < bits; i++) {
+    ports.push({
+      id: `a${i}`,
+      label: `A${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `fa${i}`, handleId: 'a' },
+    })
+    left += 18
+    ports.push({
+      id: `b${i}`,
+      label: `B${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `fa${i}`, handleId: 'b' },
+    })
+    left += 18
+  }
+  ports.push({
+    id: 'cin',
+    label: 'Cin',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'fa0', handleId: 'cin' },
+  })
+  left += 18
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'fa0', handleId: 'gnd' },
+  })
+  // Right side: each bit's sum output, then the carry-out and V+.
+  let right = 14
+  for (let i = 0; i < bits; i++) {
+    ports.push({
+      id: `s${i}`,
+      label: `S${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: `fa${i}`, handleId: 'sum' },
+    })
+    right += 18
+  }
+  ports.push({
+    id: 'cout',
+    label: 'Cout',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: `fa${bits - 1}`, handleId: 'cout' },
+  })
+  right += 18
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'fa0', handleId: 'v_dd' },
+  })
+  return { name: `${bits}-bit Adder`, origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The smallest real multi-bit adder (~100 MOSFETs) and a 4-bit nibble adder (~200) — the same
+ *  ripple-carry builder, more cells in the chain. */
+export const RIPPLE_CARRY_2BIT: BlockData = rippleCarryAdder(2)
+export const RIPPLE_CARRY_4BIT: BlockData = rippleCarryAdder(4)
+
+/**
+ * SR LATCH — the first SEQUENTIAL element, two cross-coupled NOR gates. Each gate's output
+ * feeds the other's input, and that feedback is where a circuit stops being a pure function of
+ * its inputs and starts REMEMBERING. S=1 sets Q high; R=1 resets it low; S=R=0 holds whatever
+ * was last written -- one bit of memory. (S=R=1 is the disallowed state, both outputs low.)
+ * Q = NOR(R, Qbar) and Qbar = NOR(S, Q); descend to see the two NORs. The hold/memory behaviour
+ * only shows up over time, so it lives in the transient solver, not a single DC operating point.
+ */
+export const SR_LATCH_BLOCK: BlockData = {
+  name: 'SR Latch',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'nor_q', definition: 'block', x: 40, y: 30, block: NOR2_BLOCK },
+    { id: 'nor_qbar', definition: 'block', x: 40, y: 280, block: NOR2_BLOCK },
+  ],
+  edges: [
+    // cross-couple: Q feeds the other gate's input, Qbar feeds this one's
+    { id: 'q_fb', source: 'nor_q', sourceHandle: 'out', target: 'nor_qbar', targetHandle: 'b' },
+    { id: 'qbar_fb', source: 'nor_qbar', sourceHandle: 'out', target: 'nor_q', targetHandle: 'b' },
+    // shared rails
+    { id: 'vdd', source: 'nor_q', sourceHandle: 'v_dd', target: 'nor_qbar', targetHandle: 'v_dd' },
+    { id: 'gnd', source: 'nor_q', sourceHandle: 'gnd', target: 'nor_qbar', targetHandle: 'gnd' },
+  ],
+  ports: [
+    { id: 'r', label: 'R', side: 'left', offset: 14, inner: { nodeId: 'nor_q', handleId: 'a' } },
+    { id: 's', label: 'S', side: 'left', offset: 36, inner: { nodeId: 'nor_qbar', handleId: 'a' } },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 58,
+      inner: { nodeId: 'nor_q', handleId: 'gnd' },
+    },
+    { id: 'q', label: 'Q', side: 'right', offset: 14, inner: { nodeId: 'nor_q', handleId: 'out' } },
+    {
+      id: 'qbar',
+      label: 'Qbar',
+      side: 'right',
+      offset: 36,
+      inner: { nodeId: 'nor_qbar', handleId: 'out' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 58,
+      inner: { nodeId: 'nor_q', handleId: 'v_dd' },
+    },
+  ],
+}
+
 /** Built-in blocks droppable from the palette, keyed by their palette definition id.
  *  The palette lists these like parts; App's drop handler turns one into a block node
  *  (a fresh deep copy) that descends + flattens like any user-grouped block. */
@@ -562,4 +730,7 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   logic_xor: XOR_BLOCK,
   logic_half_adder: HALF_ADDER_BLOCK,
   logic_full_adder: FULL_ADDER_BLOCK,
+  logic_adder_2bit: RIPPLE_CARRY_2BIT,
+  logic_adder_4bit: RIPPLE_CARRY_4BIT,
+  logic_sr_latch: SR_LATCH_BLOCK,
 }

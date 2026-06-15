@@ -752,6 +752,30 @@ function AdderGlyph() {
   )
 }
 
+/** Latch — an IC block with two inputs and two outputs (the cross-coupled pair inside); the
+ *  palette face for the SR latch. On the canvas it is a block showing its name. */
+function LatchGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>latch</title>
+      <line x1={0} y1={MID - 8} x2={24} y2={MID - 8} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={0} y1={MID + 8} x2={24} y2={MID + 8} stroke={STROKE} strokeWidth={1.5} />
+      <rect
+        x={24}
+        y={MID - 16}
+        width={32}
+        height={32}
+        rx={3}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <line x1={56} y1={MID - 8} x2={80} y2={MID - 8} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={56} y1={MID + 8} x2={80} y2={MID + 8} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
 /** N-channel enhancement MOSFET — insulated gate bar (the gap IS the oxide),
  * channel bar, drain up, source down with the inward arrow. Gate from the left. */
 function MosfetNmosGlyph() {
@@ -878,6 +902,9 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   logic_xor: XorGateGlyph,
   logic_half_adder: AdderGlyph,
   logic_full_adder: AdderGlyph,
+  logic_adder_2bit: AdderGlyph,
+  logic_adder_4bit: AdderGlyph,
+  logic_sr_latch: LatchGlyph,
   transformer: TransformerGlyph,
   transformer_center_tapped: CtTransformerGlyph,
 }
