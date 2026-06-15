@@ -40,6 +40,7 @@
 import { all, create } from 'mathjs'
 import { type BjtParams, bjtCompanion, bjtCurrents } from './bjt-model.ts'
 import type { Instance, Net, World } from './cross-fk-validator.ts'
+import { type DenseVector, lusolve, zerosMatrix, zerosVector } from './dense-linear.ts'
 import {
   companionModel,
   criticalVoltage,
@@ -369,10 +370,8 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   // the node-voltage map + the raw solution array (for aux currents), or null
   // on a singular matrix.
   const buildAndSolve = (): { nodes: Map<string, number>; xArr: number[][] } | null => {
-    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
-    const M: any = math.zeros(N + S, N + S)
-    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
-    const b: any = math.zeros(N + S, 1)
+    const M = zerosMatrix(N + S)
+    const b = zerosVector(N + S)
 
     for (const inst of world.instances.values()) {
       // A thermistor stamps exactly like a resistor — its `resistance` is the
@@ -436,14 +435,13 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       stampMosfetCompanion(fet, nodeIndex, M, b)
     }
 
-    // biome-ignore lint/suspicious/noExplicitAny: mathjs lusolve return is polymorphic
-    let x: any
+    let x: DenseVector
     try {
-      x = math.lusolve(M, b)
+      x = lusolve(M, b)
     } catch {
       return null
     }
-    const xArr = x.toArray() as number[][]
+    const xArr = x.toArray()
     const nodes = new Map<string, number>()
     nodes.set(ground, 0)
     for (const [netId, idx] of nodeIndex) {

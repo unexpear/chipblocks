@@ -79,6 +79,7 @@ import {
   stampPotentiometer,
   stampResistor,
 } from './dc-solver.ts'
+import { type DenseVector, lusolve, zerosMatrix, zerosVector } from './dense-linear.ts'
 import {
   companionModel,
   criticalVoltage,
@@ -1222,10 +1223,8 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   ): { nodes: Map<string, number>; x: number[][] } | null => {
     const extraAux = mode === 'initial' ? caps.length : 0
     const size = N + S + extraAux
-    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
-    const M: any = math.zeros(size, size)
-    // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
-    const b: any = math.zeros(size, 1)
+    const M = zerosMatrix(size)
+    const b = zerosVector(size)
 
     for (const inst of world.instances.values()) {
       // A thermistor stamps as a resistor at its Beta-law resistance (written by
@@ -1277,14 +1276,13 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     for (const bjt of bjts) stampBjtCompanion(bjt, nodeIndex, bjt.thermalV, M, b)
     for (const fet of mosfets) stampMosfetCompanion(fet, nodeIndex, M, b)
 
-    // biome-ignore lint/suspicious/noExplicitAny: mathjs lusolve return is polymorphic
-    let x: any
+    let x: DenseVector
     try {
-      x = math.lusolve(M, b)
+      x = lusolve(M, b)
     } catch {
       return null
     }
-    const xArr = x.toArray() as number[][]
+    const xArr = x.toArray()
     const nodes = new Map<string, number>([[ground, 0]])
     for (const [netId, idx] of nodeIndex) {
       const v = xArr[idx]?.[0]
