@@ -56,6 +56,7 @@
 
 import { bjtCurrents } from './bjt-model.ts'
 import type { Instance, World } from './cross-fk-validator.ts'
+import { solveDCRobust } from './dc-robust.ts'
 import {
   assignNodeIndices,
   type BjtElement,
@@ -129,6 +130,14 @@ export type TransientOptions = {
    * shared worldAtTemperatures), exactly like the DC loop. Absent ⇒ 25 °C.
    */
   temperaturesC?: Map<string, number>
+  /**
+   * Net id → voltage to PIN at t = 0 (initial conditions, SPICE's .ic). Each listed net is
+   * hard-forced to its value while the t = 0 operating point solves, then released for t > 0, so
+   * the circuit starts from a defined power-up state. This is the only way to start a bistable
+   * circuit (a latch or flip-flop): its un-pinned cross-coupled pair has no defined DC point (it
+   * sits at the metastable midpoint), so a cold transient cannot converge.
+   */
+  initialVoltages?: Map<string, number>
 }
 
 export type TransientPoint = {
@@ -1029,6 +1038,17 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   const nodeIndex = assignNodeIndices(world.nets, ground)
   const N = nodeIndex.size
   const vT = thermalVoltage()
+
+  // Initial conditions (.ic): nets the caller pins at t = 0, resolved to matrix indices. Each is
+  // hard-forced to its value while the t = 0 operating point solves (breaking the metastability of
+  // a bistable power-up), then released for t > 0. Ground / unknown nets are skipped.
+  const icList: { idx: number; voltage: number }[] = []
+  if (options.initialVoltages) {
+    for (const [netId, voltage] of options.initialVoltages) {
+      const idx = nodeIndex.get(netId)
+      if (idx !== undefined) icList.push({ idx, voltage })
+    }
+  }
   const maxIter = options.maxIterations ?? NR_MAX_ITERATIONS
 
   const sources: TimedSource[] = []
@@ -1221,7 +1241,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     mode: 'initial' | 'step',
     t: number,
   ): { nodes: Map<string, number>; x: number[][] } | null => {
-    const extraAux = mode === 'initial' ? caps.length : 0
+    const extraAux = mode === 'initial' ? caps.length + icList.length : 0
     const size = N + S + extraAux
     const M = zerosMatrix(size)
     const b = zerosVector(size)
@@ -1253,6 +1273,12 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         // biome-ignore lint/style/noNonNullAssertion: j is bound by caps.length
         const cap = caps[j]!
         stampFixedVoltage(cap.iA, cap.iB, cap.vPrev, N + S + j, M, b)
+      }
+      for (let k = 0; k < icList.length; k++) {
+        // biome-ignore lint/style/noNonNullAssertion: k is bound by icList.length
+        const ic = icList[k]!
+        // hard-pin this net to its t = 0 initial-condition value (released for t > 0)
+        stampFixedVoltage(ic.idx, undefined, ic.voltage, N + S + caps.length + k, M, b)
       }
       for (const ind of inductors) stampFixedCurrent(ind.iA, ind.iB, ind.iPrev, b)
       for (const tr of transformers) {
@@ -1518,6 +1544,46 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   }
 
   const series: TransientPoint[] = []
+
+  // Seed the t = 0 device guesses from a robust DC operating point at the initial source values.
+  // The per-step Newton-Raphson below warm-starts from the previous step, but the first solve has
+  // no history; on stiff feedback circuits (cross-coupled logic — latches, flip-flops) a cold
+  // start can fail to converge. The DC solver's source-stepping fallback finds the t = 0 operating
+  // point reliably, so seeding the device guesses from it starts the first transient step near the
+  // answer. A failed seed solve is harmless — the cold start still runs.
+  const sourceT0 = new Map(sources.map((s) => [s.id, sourceVoltageAt(s, 0)]))
+  const seedInstances = new Map<string, Instance>()
+  for (const [id, inst] of world.instances) {
+    const v0 = sourceT0.get(id)
+    seedInstances.set(
+      id,
+      inst.definition === 'power_source' && v0 !== undefined
+        ? {
+            ...inst,
+            parameters: {
+              ...inst.parameters,
+              nominal_voltage: { value: { kind: 'scalar', amount: v0, unit: 'volt' } },
+              ac_amplitude: { value: { kind: 'scalar', amount: 0, unit: 'volt' } },
+            },
+          }
+        : inst,
+    )
+  }
+  const seed = solveDCRobust({ ...world, instances: seedInstances })
+  if (seed.status === 'solved') {
+    const at = (net: string) => (net === ground ? 0 : (seed.nodes.get(net) ?? 0))
+    for (const d of diodes) d.vGuess = at(d.anodeNet) - at(d.cathodeNet)
+    for (const z of zeners) z.vGuess = at(z.anodeNet) - at(z.cathodeNet)
+    for (const bjt of bjts) {
+      const sign = bjt.polarity === 'pnp' ? -1 : 1
+      bjt.vBE = sign * (at(bjt.baseNet) - at(bjt.emitterNet))
+      bjt.vBC = sign * (at(bjt.baseNet) - at(bjt.collectorNet))
+    }
+    for (const fet of mosfets) {
+      fet.vGS = at(fet.gateNet) - at(fet.sourceNet)
+      fet.vDS = at(fet.drainNet) - at(fet.sourceNet)
+    }
+  }
 
   // t = 0 — the initial condition (capacitors held at their initial voltage).
   const initial = solveConverged('initial', 0)
