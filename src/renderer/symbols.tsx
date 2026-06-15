@@ -667,6 +667,91 @@ function NorGateGlyph() {
   )
 }
 
+/** AND gate — the D-shape (flat back, round front), no bubble. */
+function AndGateGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>AND gate</title>
+      <line x1={0} y1={MID - 7} x2={18} y2={MID - 7} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={0} y1={MID + 7} x2={18} y2={MID + 7} stroke={STROKE} strokeWidth={1.5} />
+      <path
+        d={`M 18 ${MID - 14} L 38 ${MID - 14} A 14 14 0 0 1 38 ${MID + 14} L 18 ${MID + 14} Z`}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <line x1={52} y1={MID} x2={80} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
+/** OR gate — the shield (curved back, pointed front), no bubble. */
+function OrGateGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>OR gate</title>
+      <line x1={0} y1={MID - 7} x2={18} y2={MID - 7} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={0} y1={MID + 7} x2={18} y2={MID + 7} stroke={STROKE} strokeWidth={1.5} />
+      <path
+        d={`M 16 ${MID - 14} Q 34 ${MID - 14} 50 ${MID} Q 34 ${MID + 14} 16 ${MID + 14} Q 25 ${MID} 16 ${MID - 14} Z`}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <line x1={50} y1={MID} x2={80} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
+/** XOR gate — the OR shield with the extra back-curve that marks exclusive-or, no bubble. */
+function XorGateGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>XOR gate</title>
+      <line x1={0} y1={MID - 7} x2={14} y2={MID - 7} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={0} y1={MID + 7} x2={14} y2={MID + 7} stroke={STROKE} strokeWidth={1.5} />
+      <path
+        d={`M 12 ${MID - 14} Q 21 ${MID} 12 ${MID + 14}`}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <path
+        d={`M 18 ${MID - 14} Q 36 ${MID - 14} 52 ${MID} Q 36 ${MID + 14} 18 ${MID + 14} Q 27 ${MID} 18 ${MID - 14} Z`}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <line x1={52} y1={MID} x2={80} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
+/** Adder — a labelled IC block with a '+' inside; the palette face for the half and full
+ *  adders (on the canvas they are blocks showing their names). */
+function AdderGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>adder</title>
+      <line x1={0} y1={MID - 8} x2={22} y2={MID - 8} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={0} y1={MID + 8} x2={22} y2={MID + 8} stroke={STROKE} strokeWidth={1.5} />
+      <rect
+        x={22}
+        y={MID - 16}
+        width={36}
+        height={32}
+        rx={3}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <line x1={40} y1={MID - 8} x2={40} y2={MID + 8} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={32} y1={MID} x2={48} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={58} y1={MID} x2={80} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
 /** N-channel enhancement MOSFET — insulated gate bar (the gap IS the oxide),
  * channel bar, drain up, source down with the inward arrow. Gate from the left. */
 function MosfetNmosGlyph() {
@@ -788,6 +873,11 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   logic_not: NotGateGlyph,
   logic_nand: NandGateGlyph,
   logic_nor: NorGateGlyph,
+  logic_and: AndGateGlyph,
+  logic_or: OrGateGlyph,
+  logic_xor: XorGateGlyph,
+  logic_half_adder: AdderGlyph,
+  logic_full_adder: AdderGlyph,
   transformer: TransformerGlyph,
   transformer_center_tapped: CtTransformerGlyph,
 }

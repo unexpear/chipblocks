@@ -301,6 +301,254 @@ export const NOR2_BLOCK: BlockData = {
   ],
 }
 
+/**
+ * AND = NAND followed by an inverter (NOT(NOT(A AND B)) = A AND B). Built by COMPOSITION:
+ * its two inner nodes are the NAND and NOT gate blocks themselves, wired NAND-output to
+ * inverter-input with shared rails. Descend into it and you see a NAND and an inverter;
+ * descend again and you reach the transistors. The flatten is recursive, so the solver still
+ * sees only the six real MOSFETs.
+ */
+export const AND_BLOCK: BlockData = {
+  name: 'AND',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'nand', definition: 'block', x: 40, y: 60, block: NAND2_BLOCK },
+    { id: 'inv', definition: 'block', x: 360, y: 60, block: INVERTER_BLOCK },
+  ],
+  edges: [
+    { id: 'chain', source: 'nand', sourceHandle: 'out', target: 'inv', targetHandle: 'in' },
+    { id: 'vdd', source: 'nand', sourceHandle: 'v_dd', target: 'inv', targetHandle: 'v_dd' },
+    { id: 'gnd', source: 'nand', sourceHandle: 'gnd', target: 'inv', targetHandle: 'gnd' },
+  ],
+  ports: [
+    { id: 'a', label: 'A', side: 'left', offset: 14, inner: { nodeId: 'nand', handleId: 'a' } },
+    { id: 'b', label: 'B', side: 'left', offset: 36, inner: { nodeId: 'nand', handleId: 'b' } },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 58,
+      inner: { nodeId: 'nand', handleId: 'gnd' },
+    },
+    {
+      id: 'out',
+      label: 'out',
+      side: 'right',
+      offset: 14,
+      inner: { nodeId: 'inv', handleId: 'out' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 36,
+      inner: { nodeId: 'nand', handleId: 'v_dd' },
+    },
+  ],
+}
+
+/** OR = NOR followed by an inverter (NOT(NOT(A OR B)) = A OR B). Same composition as AND, with
+ *  a NOR in front instead of a NAND. */
+export const OR_BLOCK: BlockData = {
+  name: 'OR',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'nor', definition: 'block', x: 40, y: 60, block: NOR2_BLOCK },
+    { id: 'inv', definition: 'block', x: 360, y: 60, block: INVERTER_BLOCK },
+  ],
+  edges: [
+    { id: 'chain', source: 'nor', sourceHandle: 'out', target: 'inv', targetHandle: 'in' },
+    { id: 'vdd', source: 'nor', sourceHandle: 'v_dd', target: 'inv', targetHandle: 'v_dd' },
+    { id: 'gnd', source: 'nor', sourceHandle: 'gnd', target: 'inv', targetHandle: 'gnd' },
+  ],
+  ports: [
+    { id: 'a', label: 'A', side: 'left', offset: 14, inner: { nodeId: 'nor', handleId: 'a' } },
+    { id: 'b', label: 'B', side: 'left', offset: 36, inner: { nodeId: 'nor', handleId: 'b' } },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 58,
+      inner: { nodeId: 'nor', handleId: 'gnd' },
+    },
+    {
+      id: 'out',
+      label: 'out',
+      side: 'right',
+      offset: 14,
+      inner: { nodeId: 'inv', handleId: 'out' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 36,
+      inner: { nodeId: 'nor', handleId: 'v_dd' },
+    },
+  ],
+}
+
+/**
+ * XOR = the classic four-NAND network. nab = NAND(A,B); then OUT = NAND(NAND(A,nab),
+ * NAND(B,nab)). The output is HIGH exactly when the inputs differ. Four NAND blocks wired
+ * together — descend to see the four gates, descend again for the sixteen transistors.
+ */
+export const XOR_BLOCK: BlockData = {
+  name: 'XOR',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'g1', definition: 'block', x: 40, y: 30, block: NAND2_BLOCK },
+    { id: 'g2', definition: 'block', x: 280, y: 30, block: NAND2_BLOCK },
+    { id: 'g3', definition: 'block', x: 280, y: 220, block: NAND2_BLOCK },
+    { id: 'g4', definition: 'block', x: 520, y: 120, block: NAND2_BLOCK },
+  ],
+  edges: [
+    // A reaches g1.a and g2.a; B reaches g1.b and g3.a
+    { id: 'a_net', source: 'g1', sourceHandle: 'a', target: 'g2', targetHandle: 'a' },
+    { id: 'b_net', source: 'g1', sourceHandle: 'b', target: 'g3', targetHandle: 'a' },
+    // nab = g1.out fans out to g2.b and g3.b
+    { id: 'nab1', source: 'g1', sourceHandle: 'out', target: 'g2', targetHandle: 'b' },
+    { id: 'nab2', source: 'g1', sourceHandle: 'out', target: 'g3', targetHandle: 'b' },
+    // g2.out and g3.out into the final NAND
+    { id: 'x_net', source: 'g2', sourceHandle: 'out', target: 'g4', targetHandle: 'a' },
+    { id: 'y_net', source: 'g3', sourceHandle: 'out', target: 'g4', targetHandle: 'b' },
+    // shared V+ across all four gates
+    { id: 'vdd1', source: 'g1', sourceHandle: 'v_dd', target: 'g2', targetHandle: 'v_dd' },
+    { id: 'vdd2', source: 'g2', sourceHandle: 'v_dd', target: 'g3', targetHandle: 'v_dd' },
+    { id: 'vdd3', source: 'g3', sourceHandle: 'v_dd', target: 'g4', targetHandle: 'v_dd' },
+    // shared GND across all four gates
+    { id: 'gnd1', source: 'g1', sourceHandle: 'gnd', target: 'g2', targetHandle: 'gnd' },
+    { id: 'gnd2', source: 'g2', sourceHandle: 'gnd', target: 'g3', targetHandle: 'gnd' },
+    { id: 'gnd3', source: 'g3', sourceHandle: 'gnd', target: 'g4', targetHandle: 'gnd' },
+  ],
+  ports: [
+    { id: 'a', label: 'A', side: 'left', offset: 14, inner: { nodeId: 'g1', handleId: 'a' } },
+    { id: 'b', label: 'B', side: 'left', offset: 36, inner: { nodeId: 'g1', handleId: 'b' } },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 58,
+      inner: { nodeId: 'g1', handleId: 'gnd' },
+    },
+    {
+      id: 'out',
+      label: 'out',
+      side: 'right',
+      offset: 14,
+      inner: { nodeId: 'g4', handleId: 'out' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 36,
+      inner: { nodeId: 'g1', handleId: 'v_dd' },
+    },
+  ],
+}
+
+/**
+ * HALF ADDER — adds two bits. SUM = A XOR B, CARRY = A AND B. Literally an XOR gate and an
+ * AND gate sharing the two inputs: descend to see exactly those two gates. This is the first
+ * block with TWO outputs. (1 + 1 = 10 in binary: sum 0, carry 1 — the carry is the AND.)
+ */
+export const HALF_ADDER_BLOCK: BlockData = {
+  name: 'Half Adder',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'xor', definition: 'block', x: 40, y: 30, block: XOR_BLOCK },
+    { id: 'and', definition: 'block', x: 40, y: 300, block: AND_BLOCK },
+  ],
+  edges: [
+    // A and B each reach both gates
+    { id: 'a_net', source: 'xor', sourceHandle: 'a', target: 'and', targetHandle: 'a' },
+    { id: 'b_net', source: 'xor', sourceHandle: 'b', target: 'and', targetHandle: 'b' },
+    { id: 'vdd', source: 'xor', sourceHandle: 'v_dd', target: 'and', targetHandle: 'v_dd' },
+    { id: 'gnd', source: 'xor', sourceHandle: 'gnd', target: 'and', targetHandle: 'gnd' },
+  ],
+  ports: [
+    { id: 'a', label: 'A', side: 'left', offset: 14, inner: { nodeId: 'xor', handleId: 'a' } },
+    { id: 'b', label: 'B', side: 'left', offset: 36, inner: { nodeId: 'xor', handleId: 'b' } },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 58,
+      inner: { nodeId: 'xor', handleId: 'gnd' },
+    },
+    { id: 'sum', label: 'S', side: 'right', offset: 14, inner: { nodeId: 'xor', handleId: 'out' } },
+    {
+      id: 'carry',
+      label: 'C',
+      side: 'right',
+      offset: 36,
+      inner: { nodeId: 'and', handleId: 'out' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 58,
+      inner: { nodeId: 'xor', handleId: 'v_dd' },
+    },
+  ],
+}
+
+/**
+ * FULL ADDER — adds three bits (A, B, and a carry-in), the cell a multi-bit adder is built
+ * from. Two half-adders in series compute the sum (A XOR B XOR Cin); their two carries OR
+ * together for the carry-out. Descend to see two half-adders and an OR gate.
+ */
+export const FULL_ADDER_BLOCK: BlockData = {
+  name: 'Full Adder',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'ha1', definition: 'block', x: 40, y: 30, block: HALF_ADDER_BLOCK },
+    { id: 'ha2', definition: 'block', x: 380, y: 30, block: HALF_ADDER_BLOCK },
+    { id: 'or', definition: 'block', x: 720, y: 140, block: OR_BLOCK },
+  ],
+  edges: [
+    // first sum feeds the second half-adder; Cin arrives at ha2.b
+    { id: 's1', source: 'ha1', sourceHandle: 'sum', target: 'ha2', targetHandle: 'a' },
+    // the two carries OR together
+    { id: 'c1', source: 'ha1', sourceHandle: 'carry', target: 'or', targetHandle: 'a' },
+    { id: 'c2', source: 'ha2', sourceHandle: 'carry', target: 'or', targetHandle: 'b' },
+    // shared rails
+    { id: 'vdd1', source: 'ha1', sourceHandle: 'v_dd', target: 'ha2', targetHandle: 'v_dd' },
+    { id: 'vdd2', source: 'ha2', sourceHandle: 'v_dd', target: 'or', targetHandle: 'v_dd' },
+    { id: 'gnd1', source: 'ha1', sourceHandle: 'gnd', target: 'ha2', targetHandle: 'gnd' },
+    { id: 'gnd2', source: 'ha2', sourceHandle: 'gnd', target: 'or', targetHandle: 'gnd' },
+  ],
+  ports: [
+    { id: 'a', label: 'A', side: 'left', offset: 14, inner: { nodeId: 'ha1', handleId: 'a' } },
+    { id: 'b', label: 'B', side: 'left', offset: 32, inner: { nodeId: 'ha1', handleId: 'b' } },
+    { id: 'cin', label: 'Cin', side: 'left', offset: 50, inner: { nodeId: 'ha2', handleId: 'b' } },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 68,
+      inner: { nodeId: 'ha1', handleId: 'gnd' },
+    },
+    { id: 'sum', label: 'S', side: 'right', offset: 14, inner: { nodeId: 'ha2', handleId: 'sum' } },
+    {
+      id: 'cout',
+      label: 'Cout',
+      side: 'right',
+      offset: 32,
+      inner: { nodeId: 'or', handleId: 'out' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 50,
+      inner: { nodeId: 'ha1', handleId: 'v_dd' },
+    },
+  ],
+}
+
 /** Built-in blocks droppable from the palette, keyed by their palette definition id.
  *  The palette lists these like parts; App's drop handler turns one into a block node
  *  (a fresh deep copy) that descends + flattens like any user-grouped block. */
@@ -309,4 +557,9 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   logic_not: INVERTER_BLOCK,
   logic_nand: NAND2_BLOCK,
   logic_nor: NOR2_BLOCK,
+  logic_and: AND_BLOCK,
+  logic_or: OR_BLOCK,
+  logic_xor: XOR_BLOCK,
+  logic_half_adder: HALF_ADDER_BLOCK,
+  logic_full_adder: FULL_ADDER_BLOCK,
 }

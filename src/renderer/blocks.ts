@@ -308,7 +308,11 @@ export function ungroupBlock(
 export function flattenBlocks(
   nodes: CanvasNodeLike[],
   edges: CanvasEdgeLike[],
-): { nodes: CanvasNodeLike[]; edges: CanvasEdgeLike[] } {
+): {
+  nodes: CanvasNodeLike[]
+  edges: CanvasEdgeLike[]
+  portTarget: Map<string, { nodeId: string; handleId: string }>
+} {
   const flatNodes: CanvasNodeLike[] = []
   const flatEdges: CanvasEdgeLike[] = []
   // port lookup per block node: portId → namespaced inner endpoint
@@ -352,10 +356,14 @@ export function flattenBlocks(
     flatNodes.push(...expanded.nodes)
     flatEdges.push(...expanded.edges)
     for (const port of block.ports) {
-      portTarget.set(`${node.id}/${port.id}`, {
-        nodeId: `${prefix}${port.inner.nodeId}`,
-        handleId: port.inner.handleId,
-      })
+      // If the inner endpoint is itself a nested block's port, chain through the recursion's
+      // resolution so the outer port lands on the real terminal, not the now-flattened block.
+      const innerNode = `${prefix}${port.inner.nodeId}`
+      const chained = expanded.portTarget.get(`${innerNode}/${port.inner.handleId}`)
+      portTarget.set(
+        `${node.id}/${port.id}`,
+        chained ?? { nodeId: innerNode, handleId: port.inner.handleId },
+      )
     }
   }
 
@@ -377,7 +385,7 @@ export function flattenBlocks(
     flatEdges.push({ ...edge, source, sourceHandle, target, targetHandle })
   }
 
-  return { nodes: flatNodes, edges: flatEdges }
+  return { nodes: flatNodes, edges: flatEdges, portTarget }
 }
 
 /**
