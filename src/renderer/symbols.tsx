@@ -905,6 +905,8 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   logic_adder_2bit: AdderGlyph,
   logic_adder_4bit: AdderGlyph,
   logic_sr_latch: LatchGlyph,
+  logic_d_latch: LatchGlyph,
+  logic_d_flipflop: LatchGlyph,
   transformer: TransformerGlyph,
   transformer_center_tapped: CtTransformerGlyph,
 }

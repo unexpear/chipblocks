@@ -717,6 +717,126 @@ export const SR_LATCH_BLOCK: BlockData = {
   ],
 }
 
+/**
+ * GATED D LATCH — a controllable one-bit memory with NO forbidden state. Four NANDs: an SR latch
+ * (the two cross-coupled NANDs nq/nqbar) fed by two input NANDs (n1/n2) gated by an ENABLE. D and
+ * its complement become the latch's set/reset, so the inputs can never both assert -- the SR
+ * latch's illegal case is gone. When ENABLE is HIGH the latch is transparent (Q follows D); when
+ * ENABLE is LOW it HOLDS the last D. Level-sensitive: this is the building block the edge-
+ * triggered D flip-flop is made of (two of these in a master-slave pair). Descend for the NANDs.
+ */
+export const D_LATCH_BLOCK: BlockData = {
+  name: 'D Latch',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'n1', definition: 'block', x: 40, y: 30, block: NAND2_BLOCK },
+    { id: 'n2', definition: 'block', x: 40, y: 300, block: NAND2_BLOCK },
+    { id: 'nq', definition: 'block', x: 360, y: 30, block: NAND2_BLOCK },
+    { id: 'nqbar', definition: 'block', x: 360, y: 300, block: NAND2_BLOCK },
+  ],
+  edges: [
+    // ENABLE reaches both input NANDs (n1 = NAND(D,E), n2 = NAND(n1,E))
+    { id: 'e_share', source: 'n1', sourceHandle: 'b', target: 'n2', targetHandle: 'b' },
+    { id: 'n1_n2', source: 'n1', sourceHandle: 'out', target: 'n2', targetHandle: 'a' },
+    // n1 and n2 feed the cross-coupled SR-latch NANDs
+    { id: 'n1_nq', source: 'n1', sourceHandle: 'out', target: 'nq', targetHandle: 'a' },
+    { id: 'n2_nqbar', source: 'n2', sourceHandle: 'out', target: 'nqbar', targetHandle: 'a' },
+    // the cross-couple: Q and Qbar feed back into the other NAND
+    { id: 'q_fb', source: 'nq', sourceHandle: 'out', target: 'nqbar', targetHandle: 'b' },
+    { id: 'qbar_fb', source: 'nqbar', sourceHandle: 'out', target: 'nq', targetHandle: 'b' },
+    // shared rails
+    { id: 'vdd1', source: 'n1', sourceHandle: 'v_dd', target: 'n2', targetHandle: 'v_dd' },
+    { id: 'vdd2', source: 'n2', sourceHandle: 'v_dd', target: 'nq', targetHandle: 'v_dd' },
+    { id: 'vdd3', source: 'nq', sourceHandle: 'v_dd', target: 'nqbar', targetHandle: 'v_dd' },
+    { id: 'gnd1', source: 'n1', sourceHandle: 'gnd', target: 'n2', targetHandle: 'gnd' },
+    { id: 'gnd2', source: 'n2', sourceHandle: 'gnd', target: 'nq', targetHandle: 'gnd' },
+    { id: 'gnd3', source: 'nq', sourceHandle: 'gnd', target: 'nqbar', targetHandle: 'gnd' },
+  ],
+  ports: [
+    { id: 'd', label: 'D', side: 'left', offset: 14, inner: { nodeId: 'n1', handleId: 'a' } },
+    { id: 'e', label: 'E', side: 'left', offset: 36, inner: { nodeId: 'n1', handleId: 'b' } },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 58,
+      inner: { nodeId: 'n1', handleId: 'gnd' },
+    },
+    { id: 'q', label: 'Q', side: 'right', offset: 14, inner: { nodeId: 'nq', handleId: 'out' } },
+    {
+      id: 'qbar',
+      label: 'Qbar',
+      side: 'right',
+      offset: 36,
+      inner: { nodeId: 'nqbar', handleId: 'out' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 58,
+      inner: { nodeId: 'n1', handleId: 'v_dd' },
+    },
+  ],
+}
+
+/**
+ * D FLIP-FLOP (positive-edge-triggered) — captures D on the RISING clock edge and holds it until
+ * the next edge: the workhorse storage element of every register and CPU. Master-slave: two D
+ * latches with opposite enables (an inverter gives the master NOT-clock). While the clock is LOW
+ * the master tracks D and the slave holds; on the rising edge the master freezes the D it saw and
+ * the slave opens, copying that captured bit to Q. So Q changes ONLY at the edge -- it ignores D
+ * the rest of the time, unlike the level-sensitive latch it is built from. Descend to see the two
+ * latches and the inverter.
+ */
+export const D_FLIPFLOP_BLOCK: BlockData = {
+  name: 'D Flip-Flop',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'inv', definition: 'block', x: 40, y: 30, block: INVERTER_BLOCK },
+    { id: 'master', definition: 'block', x: 320, y: 30, block: D_LATCH_BLOCK },
+    { id: 'slave', definition: 'block', x: 760, y: 30, block: D_LATCH_BLOCK },
+  ],
+  edges: [
+    // the clock drives the inverter and the slave's enable; NOT-clock enables the master
+    { id: 'clk_slave', source: 'inv', sourceHandle: 'in', target: 'slave', targetHandle: 'e' },
+    { id: 'notclk', source: 'inv', sourceHandle: 'out', target: 'master', targetHandle: 'e' },
+    // the master's output is the slave's data input
+    { id: 'm_to_s', source: 'master', sourceHandle: 'q', target: 'slave', targetHandle: 'd' },
+    // shared rails
+    { id: 'vdd1', source: 'inv', sourceHandle: 'v_dd', target: 'master', targetHandle: 'v_dd' },
+    { id: 'vdd2', source: 'master', sourceHandle: 'v_dd', target: 'slave', targetHandle: 'v_dd' },
+    { id: 'gnd1', source: 'inv', sourceHandle: 'gnd', target: 'master', targetHandle: 'gnd' },
+    { id: 'gnd2', source: 'master', sourceHandle: 'gnd', target: 'slave', targetHandle: 'gnd' },
+  ],
+  ports: [
+    { id: 'd', label: 'D', side: 'left', offset: 14, inner: { nodeId: 'master', handleId: 'd' } },
+    { id: 'clk', label: 'CLK', side: 'left', offset: 36, inner: { nodeId: 'inv', handleId: 'in' } },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 58,
+      inner: { nodeId: 'inv', handleId: 'gnd' },
+    },
+    { id: 'q', label: 'Q', side: 'right', offset: 14, inner: { nodeId: 'slave', handleId: 'q' } },
+    {
+      id: 'qbar',
+      label: 'Qbar',
+      side: 'right',
+      offset: 36,
+      inner: { nodeId: 'slave', handleId: 'qbar' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 58,
+      inner: { nodeId: 'inv', handleId: 'v_dd' },
+    },
+  ],
+}
+
 /** Built-in blocks droppable from the palette, keyed by their palette definition id.
  *  The palette lists these like parts; App's drop handler turns one into a block node
  *  (a fresh deep copy) that descends + flattens like any user-grouped block. */
@@ -733,4 +853,6 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   logic_adder_2bit: RIPPLE_CARRY_2BIT,
   logic_adder_4bit: RIPPLE_CARRY_4BIT,
   logic_sr_latch: SR_LATCH_BLOCK,
+  logic_d_latch: D_LATCH_BLOCK,
+  logic_d_flipflop: D_FLIPFLOP_BLOCK,
 }

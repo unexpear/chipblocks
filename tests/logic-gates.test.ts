@@ -16,6 +16,8 @@ import {
 } from '../src/renderer/blocks.ts'
 import {
   AND_BLOCK,
+  D_FLIPFLOP_BLOCK,
+  D_LATCH_BLOCK,
   FULL_ADDER_BLOCK,
   HALF_ADDER_BLOCK,
   INVERTER_BLOCK,
@@ -343,5 +345,244 @@ describe('SR latch memory — the hold state, proven over time', () => {
   test('Q stays HIGH after a set pulse and LOW after a reset pulse (same S=R=0 hold)', () => {
     expect(isHigh(qInHoldAfter('s'))).toBe(true) // set, then released -> Q remembers 1
     expect(isLow(qInHoldAfter('r'))).toBe(true) // reset, then released -> Q remembers 0
+  }, 60000)
+})
+
+describe('Gated D latch — transparent when enabled, holds when not (no forbidden state)', () => {
+  test('with ENABLE high the latch is transparent: Q follows D', () => {
+    const q = (d: number) => solveBlock(D_LATCH_BLOCK, { d: d ? VDD : 0, e: VDD })('q')
+    expect(isHigh(q(1))).toBe(true) // E=1, D=1 -> Q = 1
+    expect(isLow(q(0))).toBe(true) // E=1, D=0 -> Q = 0
+  })
+
+  test('with ENABLE low the latch HOLDS its bit, ignoring D', () => {
+    // The hold state (E=0) is bistable, so which bit Q keeps depends on what was last written.
+    // We write a bit with E=1, then re-solve the hold with E=0 seeded by that solution (the
+    // dc-robust solver's initialNodes hint, the same way a real latch's prior state decides which
+    // way it sits). Q keeps the written bit even when D is pulled the other way. (A live transient
+    // run would show the same, but the transient solver can't yet cold-start this 16-transistor
+    // latch, so the seeded DC solve stands in for it.)
+    const solveLatch = (d: number, e: number, seed?: Map<string, number>) => {
+      const nodes: CanvasNodeLike[] = [
+        { id: 'g', position: { x: 0, y: 0 }, data: { definition: 'block', block: D_LATCH_BLOCK } },
+        {
+          id: 'vdd',
+          position: { x: 0, y: 0 },
+          data: { definition: 'power_source', parameters: supply(VDD) },
+        },
+        { id: 'gnd', position: { x: 0, y: 0 }, data: { definition: 'ground' } },
+        {
+          id: 'in_d',
+          position: { x: 0, y: 0 },
+          data: { definition: 'power_source', parameters: supply(d) },
+        },
+        {
+          id: 'in_e',
+          position: { x: 0, y: 0 },
+          data: { definition: 'power_source', parameters: supply(e) },
+        },
+      ]
+      const edges: CanvasEdgeLike[] = [
+        wire('w_vdd_p', 'vdd', 'terminal_positive', 'g', 'v_dd'),
+        wire('w_vdd_n', 'vdd', 'terminal_negative', 'gnd', 'reference_terminal'),
+        wire('w_gnd', 'g', 'gnd', 'gnd', 'reference_terminal'),
+        wire('w_d_p', 'in_d', 'terminal_positive', 'g', 'd'),
+        wire('w_d_n', 'in_d', 'terminal_negative', 'gnd', 'reference_terminal'),
+        wire('w_e_p', 'in_e', 'terminal_positive', 'g', 'e'),
+        wire('w_e_n', 'in_e', 'terminal_negative', 'gnd', 'reference_terminal'),
+      ]
+      const flat = flattenBlocks(nodes, edges)
+      const world = canvasToWorld(
+        flat.nodes.map((n) => ({
+          id: n.id,
+          definition: n.data.definition,
+          parameters: n.data.parameters,
+        })),
+        flat.edges.map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          sourceHandle: e.sourceHandle ?? null,
+          targetHandle: e.targetHandle ?? null,
+        })),
+      )
+      const solution = solveDCRobust(world, seed ? { initialNodes: seed } : undefined)
+      const qt = flat.portTarget.get('g/q')
+      const qNet = qt
+        ? world.instances.get(qt.nodeId)?.connects?.find((c) => c.terminal === qt.handleId)?.net
+        : undefined
+      return { nodes: solution.nodes, q: solution.nodes.get(qNet ?? '') ?? Number.NaN }
+    }
+    // Write a 1 (E=1, D=1), then disable (E=0): Q holds 1 even with D pulled to 0.
+    const wroteOne = solveLatch(VDD, VDD)
+    expect(isHigh(wroteOne.q)).toBe(true)
+    expect(isHigh(solveLatch(0, 0, wroteOne.nodes).q)).toBe(true)
+    // Write a 0 (E=1, D=0), then disable (E=0): Q holds 0 even with D pulled to 1.
+    const wroteZero = solveLatch(0, VDD)
+    expect(isLow(wroteZero.q)).toBe(true)
+    expect(isLow(solveLatch(VDD, 0, wroteZero.nodes).q)).toBe(true)
+  })
+})
+
+describe('D flip-flop — captures D on the rising clock edge (master-slave)', () => {
+  // The flip-flop's hold states are bistable, so an un-driven DC solve sits at the metastable
+  // midpoint -- there is no defined operating point without a power-up state, and the transient
+  // diverges from that unstable point. So (like the D latch) we drive it as a SEQUENCE of seeded
+  // DC solves: each clock phase is re-solved seeded by the previous one, which breaks the
+  // metastability and carries the stored bit forward exactly as the transient would. The first
+  // solve is seeded to a clean Q = 0 power-up.
+  const buildFF = (clk: number, d: number) => {
+    const nodes: CanvasNodeLike[] = [
+      { id: 'g', position: { x: 0, y: 0 }, data: { definition: 'block', block: D_FLIPFLOP_BLOCK } },
+      {
+        id: 'vdd',
+        position: { x: 0, y: 0 },
+        data: { definition: 'power_source', parameters: supply(VDD) },
+      },
+      { id: 'gnd', position: { x: 0, y: 0 }, data: { definition: 'ground' } },
+      {
+        id: 'in_clk',
+        position: { x: 0, y: 0 },
+        data: { definition: 'power_source', parameters: supply(clk) },
+      },
+      {
+        id: 'in_d',
+        position: { x: 0, y: 0 },
+        data: { definition: 'power_source', parameters: supply(d) },
+      },
+    ]
+    const edges: CanvasEdgeLike[] = [
+      wire('w_vdd_p', 'vdd', 'terminal_positive', 'g', 'v_dd'),
+      wire('w_vdd_n', 'vdd', 'terminal_negative', 'gnd', 'reference_terminal'),
+      wire('w_gnd', 'g', 'gnd', 'gnd', 'reference_terminal'),
+      wire('w_clk_p', 'in_clk', 'terminal_positive', 'g', 'clk'),
+      wire('w_clk_n', 'in_clk', 'terminal_negative', 'gnd', 'reference_terminal'),
+      wire('w_d_p', 'in_d', 'terminal_positive', 'g', 'd'),
+      wire('w_d_n', 'in_d', 'terminal_negative', 'gnd', 'reference_terminal'),
+    ]
+    const flat = flattenBlocks(nodes, edges)
+    const world = canvasToWorld(
+      flat.nodes.map((n) => ({
+        id: n.id,
+        definition: n.data.definition,
+        parameters: n.data.parameters,
+      })),
+      flat.edges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle ?? null,
+        targetHandle: e.targetHandle ?? null,
+      })),
+    )
+    const netOf = (port: string) => {
+      const t = flat.portTarget.get(`g/${port}`)
+      return t
+        ? world.instances.get(t.nodeId)?.connects?.find((c) => c.terminal === t.handleId)?.net
+        : undefined
+    }
+    return { world, qNet: netOf('q'), qbarNet: netOf('qbar') }
+  }
+  test('Q captures D at each rising edge and ignores D in between (edge-triggered)', () => {
+    const base = buildFF(0, VDD)
+    // A starting guess (Q low, Qbar high) for the very first solve; the first rising edge below
+    // then forces a clean, defined Q regardless of where the bistable pair powers up.
+    const start = new Map<string, number>()
+    if (base.qNet) start.set(base.qNet, 0)
+    if (base.qbarNet) start.set(base.qbarNet, VDD)
+    const phase = (clk: number, d: number, seed: Map<string, number>) => {
+      const ff = buildFF(clk, d)
+      const sol = solveDCRobust(ff.world, { initialNodes: seed })
+      return { nodes: sol.nodes, q: ff.qNet ? (sol.nodes.get(ff.qNet) ?? Number.NaN) : Number.NaN }
+    }
+    // Establish a clean Q = 0: a first rising edge captures D = 0 (the transparent slave is
+    // forced, dissolving the metastable power-up).
+    const e0 = phase(0, 0, start) // CLK low: the master tracks D = 0
+    const q0 = phase(VDD, 0, e0.nodes) // rising edge: Q := 0
+    expect(isLow(q0.q)).toBe(true)
+    // Capture a 1: load it into the master with CLK low, then clock it through.
+    const load1 = phase(0, VDD, q0.nodes) // master tracks 1; the slave still holds 0
+    const cap1 = phase(VDD, VDD, load1.nodes) // rising edge: Q := 1
+    expect(isHigh(cap1.q)).toBe(true)
+    // D drops to 0 while CLK stays high: the master is frozen, so Q ignores it.
+    const ignore = phase(VDD, 0, cap1.nodes)
+    expect(isHigh(ignore.q)).toBe(true) // still 1 -- edge-triggered, not level-sensitive
+    // Capture a 0 the same way.
+    const load0 = phase(0, 0, ignore.nodes) // master tracks 0; the slave still holds 1
+    const cap0 = phase(VDD, 0, load0.nodes) // rising edge: Q := 0
+    expect(isLow(cap0.q)).toBe(true)
+  })
+
+  test('in REAL transient time: an .ic power-up lets the rising edge capture D as a waveform', () => {
+    // The transient solver's new initialVoltages (.ic) pins Q = 0 at power-up, breaking the
+    // metastability that made a cold transient diverge. The 1 kHz clock is phased to start LOW
+    // (negative amplitude), so at t = 0 the master is transparent and defined by D while the .ic
+    // pins the slave -- a clean, fully-defined power-up. With D = 1, Q stays 0 through the first
+    // clock-low window, then the rising edge at 0.5 ms captures the 1 -- a real time-domain wave.
+    const clock = {
+      nominal_voltage: scalar(2.5, 'volt'),
+      ac_amplitude: scalar(-2.5, 'volt'),
+      frequency: scalar(1000, 'hertz'),
+      waveform: { value: 'square' },
+    }
+    const nodes: CanvasNodeLike[] = [
+      { id: 'g', position: { x: 0, y: 0 }, data: { definition: 'block', block: D_FLIPFLOP_BLOCK } },
+      {
+        id: 'vdd',
+        position: { x: 0, y: 0 },
+        data: { definition: 'power_source', parameters: supply(VDD) },
+      },
+      { id: 'gnd', position: { x: 0, y: 0 }, data: { definition: 'ground' } },
+      {
+        id: 'in_clk',
+        position: { x: 0, y: 0 },
+        data: { definition: 'power_source', parameters: clock },
+      },
+      {
+        id: 'in_d',
+        position: { x: 0, y: 0 },
+        data: { definition: 'power_source', parameters: supply(VDD) },
+      },
+    ]
+    const edges: CanvasEdgeLike[] = [
+      wire('w_vdd_p', 'vdd', 'terminal_positive', 'g', 'v_dd'),
+      wire('w_vdd_n', 'vdd', 'terminal_negative', 'gnd', 'reference_terminal'),
+      wire('w_gnd', 'g', 'gnd', 'gnd', 'reference_terminal'),
+      wire('w_clk_p', 'in_clk', 'terminal_positive', 'g', 'clk'),
+      wire('w_clk_n', 'in_clk', 'terminal_negative', 'gnd', 'reference_terminal'),
+      wire('w_d_p', 'in_d', 'terminal_positive', 'g', 'd'),
+      wire('w_d_n', 'in_d', 'terminal_negative', 'gnd', 'reference_terminal'),
+    ]
+    const flat = flattenBlocks(nodes, edges)
+    const world = canvasToWorld(
+      flat.nodes.map((n) => ({
+        id: n.id,
+        definition: n.data.definition,
+        parameters: n.data.parameters,
+      })),
+      flat.edges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle ?? null,
+        targetHandle: e.targetHandle ?? null,
+      })),
+    )
+    const qt = flat.portTarget.get('g/q')
+    const qNet = qt
+      ? world.instances.get(qt.nodeId)?.connects?.find((c) => c.terminal === qt.handleId)?.net
+      : undefined
+    const ic = new Map<string, number>()
+    if (qNet) ic.set(qNet, 0) // pin Q low at t = 0
+    const result = solveTransient(world, {
+      timeStep: 0.00002,
+      duration: 0.0016,
+      initialVoltages: ic,
+    })
+    expect(result.status).toBe('solved') // the .ic made the bistable flip-flop converge
+    const qAt = (t: number) =>
+      result.series.find((p) => p.time >= t)?.nodes.get(qNet ?? '') ?? Number.NaN
+    expect(isLow(qAt(0.00025))).toBe(true) // clock-low window before the first edge: still 0
+    expect(isHigh(qAt(0.00075))).toBe(true) // after the rising edge: D = 1 captured
   }, 60000)
 })

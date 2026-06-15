@@ -106,6 +106,8 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'logic_adder_2bit', label: '2-bit Add' },
   { definition: 'logic_adder_4bit', label: '4-bit Add' },
   { definition: 'logic_sr_latch', label: 'SR Latch' },
+  { definition: 'logic_d_latch', label: 'D Latch' },
+  { definition: 'logic_d_flipflop', label: 'D Flip-Flop' },
   { definition: 'switch_spst_toggle', label: 'Switch' },
   { definition: 'switch_spst_momentary', label: 'Button' },
   { definition: 'switch_spdt', label: 'SPDT' },
