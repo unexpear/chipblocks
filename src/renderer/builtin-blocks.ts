@@ -837,6 +837,103 @@ export const D_FLIPFLOP_BLOCK: BlockData = {
   ],
 }
 
+/**
+ * N-BIT REGISTER — N D flip-flops sharing ONE clock. On the rising clock edge every bit latches
+ * its D input at once, so the register stores a whole word in a single tick and holds it until the
+ * next edge. This is the storage a CPU's datapath is built from. Inputs D0..D(N-1), one CLK, a
+ * shared V+/GND; outputs Q0..Q(N-1). Descend to see the flip-flops; an N-bit register is about
+ * 34·N MOSFETs. Like any bistable circuit it needs an initial-condition power-up to simulate over
+ * time (the transient solver's .ic) -- its latches have no defined DC state otherwise.
+ */
+function dRegister(bits: number): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  for (let i = 0; i < bits; i++) {
+    nodes.push({
+      id: `ff${i}`,
+      definition: 'block',
+      x: 40,
+      y: 30 + i * 220,
+      block: D_FLIPFLOP_BLOCK,
+    })
+    if (i > 0) {
+      const prev = `ff${i - 1}`
+      const here = `ff${i}`
+      // one clock and one V+/GND fan out across every flip-flop
+      edges.push({
+        id: `clk${i}`,
+        source: prev,
+        sourceHandle: 'clk',
+        target: here,
+        targetHandle: 'clk',
+      })
+      edges.push({
+        id: `vdd${i}`,
+        source: prev,
+        sourceHandle: 'v_dd',
+        target: here,
+        targetHandle: 'v_dd',
+      })
+      edges.push({
+        id: `gnd${i}`,
+        source: prev,
+        sourceHandle: 'gnd',
+        target: here,
+        targetHandle: 'gnd',
+      })
+    }
+  }
+  let left = 14
+  for (let i = 0; i < bits; i++) {
+    ports.push({
+      id: `d${i}`,
+      label: `D${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `ff${i}`, handleId: 'd' },
+    })
+    left += 18
+  }
+  ports.push({
+    id: 'clk',
+    label: 'CLK',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'ff0', handleId: 'clk' },
+  })
+  left += 18
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'ff0', handleId: 'gnd' },
+  })
+  let right = 14
+  for (let i = 0; i < bits; i++) {
+    ports.push({
+      id: `q${i}`,
+      label: `Q${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: `ff${i}`, handleId: 'q' },
+    })
+    right += 18
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'ff0', handleId: 'v_dd' },
+  })
+  return { name: `${bits}-bit Register`, origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** A 4-bit register — four flip-flops latching a nibble on one clock edge. */
+export const REGISTER_4BIT: BlockData = dRegister(4)
+
 /** Built-in blocks droppable from the palette, keyed by their palette definition id.
  *  The palette lists these like parts; App's drop handler turns one into a block node
  *  (a fresh deep copy) that descends + flattens like any user-grouped block. */
@@ -855,4 +952,5 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   logic_sr_latch: SR_LATCH_BLOCK,
   logic_d_latch: D_LATCH_BLOCK,
   logic_d_flipflop: D_FLIPFLOP_BLOCK,
+  logic_register_4bit: REGISTER_4BIT,
 }

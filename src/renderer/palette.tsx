@@ -108,6 +108,7 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'logic_sr_latch', label: 'SR Latch' },
   { definition: 'logic_d_latch', label: 'D Latch' },
   { definition: 'logic_d_flipflop', label: 'D Flip-Flop' },
+  { definition: 'logic_register_4bit', label: '4-bit Reg' },
   { definition: 'switch_spst_toggle', label: 'Switch' },
   { definition: 'switch_spst_momentary', label: 'Button' },
   { definition: 'switch_spdt', label: 'SPDT' },

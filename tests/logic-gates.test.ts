@@ -24,6 +24,7 @@ import {
   NAND2_BLOCK,
   NOR2_BLOCK,
   OR_BLOCK,
+  REGISTER_4BIT,
   RIPPLE_CARRY_2BIT,
   RIPPLE_CARRY_4BIT,
   SR_LATCH_BLOCK,
@@ -584,5 +585,91 @@ describe('D flip-flop — captures D on the rising clock edge (master-slave)', (
       result.series.find((p) => p.time >= t)?.nodes.get(qNet ?? '') ?? Number.NaN
     expect(isLow(qAt(0.00025))).toBe(true) // clock-low window before the first edge: still 0
     expect(isHigh(qAt(0.00075))).toBe(true) // after the rising edge: D = 1 captured
+  }, 60000)
+})
+
+describe('4-bit register — four flip-flops latching a whole word on one clock edge', () => {
+  // Each bit is a D flip-flop sharing the clock; the rising edge captures all four D inputs at
+  // once. Proven in real transient time with the .ic power-up (pin every Q low, then clock): a
+  // ~136-transistor circuit storing a nibble in a single tick. The clock starts LOW so the masters
+  // are transparent and D-defined at t=0 while the .ic pins the slaves -- a clean power-up.
+  test('the rising edge latches the word 1010 across all four bits at once', () => {
+    const clock = {
+      nominal_voltage: scalar(2.5, 'volt'),
+      ac_amplitude: scalar(-2.5, 'volt'),
+      frequency: scalar(1000, 'hertz'),
+      waveform: { value: 'square' },
+    }
+    const word = [0, 1, 0, 1] // D0..D3 -> the nibble Q3 Q2 Q1 Q0 = 1010
+    const nodes: CanvasNodeLike[] = [
+      { id: 'g', position: { x: 0, y: 0 }, data: { definition: 'block', block: REGISTER_4BIT } },
+      {
+        id: 'vdd',
+        position: { x: 0, y: 0 },
+        data: { definition: 'power_source', parameters: supply(VDD) },
+      },
+      { id: 'gnd', position: { x: 0, y: 0 }, data: { definition: 'ground' } },
+      {
+        id: 'in_clk',
+        position: { x: 0, y: 0 },
+        data: { definition: 'power_source', parameters: clock },
+      },
+      ...word.map((bit, i) => ({
+        id: `in_d${i}`,
+        position: { x: 0, y: 0 },
+        data: { definition: 'power_source', parameters: supply(bit ? VDD : 0) },
+      })),
+    ]
+    const edges: CanvasEdgeLike[] = [
+      wire('w_vdd_p', 'vdd', 'terminal_positive', 'g', 'v_dd'),
+      wire('w_vdd_n', 'vdd', 'terminal_negative', 'gnd', 'reference_terminal'),
+      wire('w_gnd', 'g', 'gnd', 'gnd', 'reference_terminal'),
+      wire('w_clk_p', 'in_clk', 'terminal_positive', 'g', 'clk'),
+      wire('w_clk_n', 'in_clk', 'terminal_negative', 'gnd', 'reference_terminal'),
+      ...word.flatMap((_, i) => [
+        wire(`w_d${i}_p`, `in_d${i}`, 'terminal_positive', 'g', `d${i}`),
+        wire(`w_d${i}_n`, `in_d${i}`, 'terminal_negative', 'gnd', 'reference_terminal'),
+      ]),
+    ]
+    const flat = flattenBlocks(nodes, edges)
+    const world = canvasToWorld(
+      flat.nodes.map((n) => ({
+        id: n.id,
+        definition: n.data.definition,
+        parameters: n.data.parameters,
+      })),
+      flat.edges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle ?? null,
+        targetHandle: e.targetHandle ?? null,
+      })),
+    )
+    const qNet = (i: number) => {
+      const t = flat.portTarget.get(`g/q${i}`)
+      return t
+        ? world.instances.get(t.nodeId)?.connects?.find((c) => c.terminal === t.handleId)?.net
+        : undefined
+    }
+    // .ic: pin every Q low at power-up (the only way the bistable register starts in transient)
+    const ic = new Map<string, number>()
+    for (let i = 0; i < 4; i++) {
+      const net = qNet(i)
+      if (net) ic.set(net, 0)
+    }
+    const result = solveTransient(world, {
+      timeStep: 0.00005,
+      duration: 0.0008,
+      initialVoltages: ic,
+    })
+    expect(result.status).toBe('solved')
+    const qAt = (i: number, t: number) =>
+      result.series.find((p) => p.time >= t)?.nodes.get(qNet(i) ?? '') ?? Number.NaN
+    // after the rising edge at 0.5 ms, every bit holds its D: Q3 Q2 Q1 Q0 = 1010
+    expect(isLow(qAt(0, 0.0007))).toBe(true) // Q0 = 0
+    expect(isHigh(qAt(1, 0.0007))).toBe(true) // Q1 = 1
+    expect(isLow(qAt(2, 0.0007))).toBe(true) // Q2 = 0
+    expect(isHigh(qAt(3, 0.0007))).toBe(true) // Q3 = 1
   }, 60000)
 })
