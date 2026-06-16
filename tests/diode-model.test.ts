@@ -258,3 +258,27 @@ describe('zenerCompanionModel — forward, blocking, and reverse breakdown', () 
     }
   })
 })
+
+// ===========================================================================
+// Forward-exponential overflow guard (EXP_ARG_CAP) — a wild voltage can't make the matrix singular
+// ===========================================================================
+
+describe('the forward diode exponential is overflow-safe', () => {
+  const VT = thermalVoltage(298.15)
+  const IS = deriveSaturationCurrent(0.7, 0.01, 2, VT) // forward 0.7 V @ 10 mA
+
+  test('a wild forward voltage (30 V) stays FINITE — not Infinity/NaN', () => {
+    // Uncapped, exp(30 / (2·0.0259)) ≈ exp(580) overflows to Infinity and the MNA matrix goes
+    // singular — exactly the latch-seed bug. The cap keeps current, conductance, and the companion
+    // large-but-finite, so pnjlim can walk the voltage back.
+    expect(Number.isFinite(diodeCurrent(30, IS, 2, VT))).toBe(true)
+    expect(Number.isFinite(diodeConductance(30, IS, 2, VT))).toBe(true)
+    const { conductance, currentSource } = companionModel(30, IS, 2, VT)
+    expect(Number.isFinite(conductance)).toBe(true)
+    expect(Number.isFinite(currentSource)).toBe(true)
+  })
+
+  test('the cap does NOT touch real operating points (0.7 V still gives the calibrated 10 mA)', () => {
+    expect(diodeCurrent(0.7, IS, 2, VT)).toBeCloseTo(0.01, 6)
+  })
+})

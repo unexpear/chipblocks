@@ -124,6 +124,16 @@ export function deriveSaturationCurrent(
 }
 
 /**
+ * Exponent cap for the forward-diode exponential. A wild Newton guess (or a stale warm-start, like a
+ * blocking latch seeded at its open-circuit voltage) can push V/(n·V_T) absurdly high; capping it
+ * keeps the current and conductance large-but-FINITE so the MNA matrix never overflows to Inf/NaN
+ * (a singular solve), and pnjlim then walks the voltage back down. Real operating points sit far
+ * below it (V/(n·V_T) < ~20 — V_F under ~1 V), so it never affects a valid solve. The Zener's
+ * breakdown branch already clamps the same way; this gives the forward branch the same guard.
+ */
+const EXP_ARG_CAP = 80
+
+/**
  * Shockley diode current at voltage V (§20.2):
  *   I = I_s × (exp(V / (n·V_T)) − 1)
  */
@@ -134,7 +144,7 @@ export function diodeCurrent(
   thermalV: number,
 ): number {
   const nVT = idealityFactor * thermalV
-  return saturationCurrent * (Math.exp(voltage / nVT) - 1)
+  return saturationCurrent * (Math.exp(Math.min(voltage / nVT, EXP_ARG_CAP)) - 1)
 }
 
 /**
@@ -148,7 +158,7 @@ export function diodeConductance(
   thermalV: number,
 ): number {
   const nVT = idealityFactor * thermalV
-  return (saturationCurrent / nVT) * Math.exp(voltage / nVT)
+  return (saturationCurrent / nVT) * Math.exp(Math.min(voltage / nVT, EXP_ARG_CAP))
 }
 
 /**
