@@ -1174,6 +1174,10 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         warnings.push(
           `Skipped constant-current diode '${inst.id}' (missing parameters or terminals)`,
         )
+    } else if (inst.definition === 'diode_tunnel') {
+      // The tunnel diode's negative-resistance I-V is DC-only so far (a tunnel-diode oscillator
+      // needs the transient path — the documented successor). Warn rather than silently open it.
+      warnings.push(`Tunnel diode '${inst.id}' is not modeled in transient yet (DC only)`)
     } else if (inst.definition === 'wire') {
       const short = resolveShort(
         inst,

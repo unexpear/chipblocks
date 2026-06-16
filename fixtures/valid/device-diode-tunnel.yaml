@@ -1,0 +1,120 @@
+# Valid fixture: tunnel diode (Esaki diode).
+# A very heavily doped PN junction with an N-shaped forward I-V: the current rises to a PEAK
+# (V_P, I_P) by band-to-band tunneling, then FALLS through a NEGATIVE-RESISTANCE region to a VALLEY
+# (V_V, I_V) as the bands misalign, then rises again as ordinary forward injection takes over. The
+# negative-resistance segment (dI/dV < 0) is what makes it useful — oscillators, fast switches,
+# amplifiers. It also conducts immediately in reverse (the "backward-diode" property).
+#
+# Solved by the DC engine through the Newton-Raphson loop with a tight per-iteration voltage-step
+# clamp (the conductance goes negative across V_P..V_V) — see tunnel-diode-model.ts / resolveTunnelDiode.
+# The curve is set by the four datasheet headline numbers (peak + valley current and voltage); the
+# diffusion saturation current is calibrated so the curve passes ~through the valley.
+#
+# Per the device-power-source convention this definition carries NO builtin numeric defaults on the
+# electrical parameters — the cited canvas drop defaults live in part-defaults.ts (1N3712 Ge class);
+# only the structural material regions default here.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: diode_tunnel
+origin: builtin
+layer: primitive_device
+name: "Tunnel diode (Esaki)"
+description: "A two-terminal, very heavily doped PN-junction diode with an N-shaped forward characteristic: band-to-band tunneling makes the current rise to a peak (V_P, I_P), then fall through a NEGATIVE-RESISTANCE region to a valley (V_V, I_V), then rise again as ordinary injection takes over. The negative-resistance region (where current decreases as voltage increases) makes it useful for oscillators, fast switches, and amplifiers. Modeled by a band-to-band tunneling term plus a diffusion term, calibrated to the peak and valley points."
+composition:
+  uses:
+    - pn_junction
+  requires:
+    n_side:
+      kind: material
+      must_enable:
+        - n_type_semiconductor
+    p_side:
+      kind: material
+      must_enable:
+        - p_type_semiconductor
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  n_side:
+    type: material_ref
+    satisfies_role: n_side
+    required: true
+    default:
+      value: silicon_n_type
+    description: The n-doped side of the junction. Real tunnel diodes use a DEGENERATELY (very heavily) doped Ge or GaAs junction; the modeled I-V comes from the cited peak/valley parameters, so the material region here is structural.
+  p_side:
+    type: material_ref
+    satisfies_role: p_side
+    required: true
+    default:
+      value: silicon_p_type
+    description: The p-doped side of the junction (degenerately doped in a real device).
+  peak_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: "Peak tunneling current I_P (the local maximum at V_P). The headline rating — a 1N3712 Ge tunnel diode is ~1 mA."
+  peak_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: "Peak voltage V_P, where the tunneling current maximizes. Small — ~65 mV for Ge, ~100-150 mV for GaAs."
+  valley_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: "Valley current I_V (the local minimum at V_V), the bottom of the negative-resistance region. The peak-to-valley ratio I_P/I_V (~8-10 for Ge) sets how pronounced the negative resistance is."
+  valley_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: "Valley voltage V_V, where the current minimizes before ordinary injection takes over. ~350-500 mV for Ge."
+  ideality_factor:
+    type: quantity
+    units: dimensionless
+    required: false
+    description: "Ideality factor n of the injection (diffusion) term, which dominates past the valley. ~1 for the Ge tunnel diode; the solver falls back to 1 when unset."
+  max_forward_current:
+    type: quantity
+    units: ampere
+    required: false
+    description: Maximum continuous forward current rating before thermal damage.
+  thermal_resistance_junction_ambient:
+    type: quantity
+    units: kelvin_per_watt
+    required: false
+    description: Junction-to-ambient thermal resistance (theta_JA) of the package — the lumped thermal model's slope, T = T_ambient + P·theta_JA.
+  max_operating_temperature:
+    type: quantity
+    units: celsius
+    required: false
+    description: Maximum junction operating temperature; the stage-7 thermal check fires when the computed steady-state temperature exceeds it.
+behaviors:
+  - acts_as_diode
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+terminals:
+  anode:
+    description: Positive terminal (P-side); current enters here when forward-biased.
+  cathode:
+    description: Negative terminal (N-side); current exits here.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  The N-shaped I-V is modeled (tunnel-diode-model.ts) as a band-to-band tunneling term
+  I_P·(V/V_P)·exp(1 − V/V_P) plus a diffusion term I_S·(exp(V/(n·V_T)) − 1); I_S is calibrated so
+  the curve passes ~through the valley (V_V, I_V), so all four cited headline numbers shape the
+  curve. The DC solver runs it through the Newton loop with a tight voltage-step clamp because the
+  companion conductance goes NEGATIVE across the V_P..V_V region (resolveTunnelDiode /
+  stampTunnelDiodeCompanion). Reverse bias is modeled as a linear backward-diode conduction
+  (C1-continuous at the origin). NOT modeled yet: full reverse-tunneling magnitude, temperature
+  drift of the peak/valley, and transient (time-domain) operation — the documented successors
+  (a tunnel-diode oscillator needs the transient path).

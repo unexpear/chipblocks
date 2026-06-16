@@ -61,6 +61,13 @@ import { jfetMosfetParams } from './jfet-model.ts'
 import { ldrResistance, lightSensorCurrent } from './light.ts'
 import { limitMosfetStep, type MosfetParams, mosfetOperatingPoint } from './mosfet-model.ts'
 import { STANDARD_AMBIENT_C } from './thermal-model.ts'
+import {
+  limitTunnelDiodeStep,
+  type TunnelDiodeParams,
+  tunnelDiodeCompanion,
+  tunnelDiodeCurrent,
+  tunnelDiodeSaturationCurrent,
+} from './tunnel-diode-model.ts'
 
 /**
  * A switch conducts only when closed. State lives on the instance as
@@ -185,6 +192,18 @@ type ShockleyLed = {
 }
 
 /**
+ * A tunnel (Esaki) diode resolved for the Newton-Raphson solve. Its companion conductance goes
+ * NEGATIVE in the V_P..V_V region, so it is solved with a tight per-iteration voltage-step clamp.
+ */
+type TunnelDiode = {
+  inst: Instance
+  anodeNet: string
+  cathodeNet: string
+  params: TunnelDiodeParams
+  vGuess: number
+}
+
+/**
  * A Zener resolved for the Newton-Raphson solve — the Shockley forward
  * parameters plus the reverse-breakdown branch (V_Z + the breakdown reference
  * current + its ideality). Run through zenerCompanionModel each iteration.
@@ -258,6 +277,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     | 'transformer_ct_half_b'
   const linearVoltageSources: Array<{ inst: Instance; kind: VsLikeKind }> = []
   const shockleyLeds: ShockleyLed[] = []
+  const tunnelDiodes: TunnelDiode[] = []
   const bjts: BjtElement[] = []
   const mosfets: MosfetElement[] = []
   const zeners: ZenerElement[] = []
@@ -349,6 +369,9 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       const led = resolveShockleyLed(inst, thermalV, options?.temperaturesC?.get(inst.id))
       if (led !== null) shockleyLeds.push(led)
       else linearVoltageSources.push({ inst, kind: 'led' }) // fixed-V_F fallback
+    } else if (inst.definition === 'diode_tunnel') {
+      const td = resolveTunnelDiode(inst, thermalV)
+      if (td !== null) tunnelDiodes.push(td)
     } else if (inst.definition === 'diode_zener_silicon') {
       // Forward Shockley conduction PLUS reverse-breakdown regulation, solved
       // through the same Newton loop as the LEDs (zenerCompanionModel clamps the
@@ -440,6 +463,9 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     for (const led of shockleyLeds) {
       stampLedCompanion(led, nodeIndex, led.thermalV, M, b)
     }
+    for (const td of tunnelDiodes) {
+      stampTunnelDiodeCompanion(td, nodeIndex, M, b)
+    }
     for (const z of zeners) {
       stampZenerCompanion(z, nodeIndex, z.thermalV, M, b)
     }
@@ -474,6 +500,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     const seed = options.initialNodes
     const sv = (net: string) => (net === ground ? 0 : (seed.get(net) ?? 0))
     for (const led of shockleyLeds) led.vGuess = sv(led.anodeNet) - sv(led.cathodeNet)
+    for (const td of tunnelDiodes) td.vGuess = sv(td.anodeNet) - sv(td.cathodeNet)
     for (const z of zeners) z.vGuess = sv(z.anodeNet) - sv(z.cathodeNet)
     for (const bjt of bjts) {
       const sign = bjt.polarity === 'pnp' ? -1 : 1
@@ -494,6 +521,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
 
   if (
     shockleyLeds.length === 0 &&
+    tunnelDiodes.length === 0 &&
     zeners.length === 0 &&
     bjts.length === 0 &&
     mosfets.length === 0
@@ -559,6 +587,14 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         fet.vGS = nextVGS
         fet.vDS = nextVDS
       }
+      for (const td of tunnelDiodes) {
+        const vA = td.anodeNet === ground ? 0 : (last.nodes.get(td.anodeNet) ?? 0)
+        const vC = td.cathodeNet === ground ? 0 : (last.nodes.get(td.cathodeNet) ?? 0)
+        const next = limitTunnelDiodeStep(vA - vC, td.vGuess)
+        maxDelta = Math.max(maxDelta, Math.abs(next - td.vGuess))
+        if (next !== vA - vC) anyLimited = true
+        td.vGuess = next
+      }
       if (maxDelta < NR_VOLTAGE_TOLERANCE && !anyLimited) {
         converged = true
         break
@@ -622,6 +658,9 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       led.inst.id,
       diodeCurrent(led.vGuess, led.saturationCurrent, led.idealityFactor, led.thermalV),
     )
+  }
+  for (const td of tunnelDiodes) {
+    branches.set(td.inst.id, tunnelDiodeCurrent(td.vGuess, td.params))
   }
   // Zener: the device current from its two-branch companion at the converged
   // voltage (forward conduction, or the reverse breakdown current when clamping).
@@ -852,6 +891,76 @@ function stampLedCompanion(
   // with the junction (the b/current source uses G alone, so it is a pure parallel
   // conductance). It keeps a node behind a hard-off (reverse) diode from floating,
   // without moving the operating point (its current is sub-pA).
+  const Gd = G + SOLVER_GMIN
+  if (a !== undefined) {
+    M.set([a, a], (M.get([a, a]) ?? 0) + Gd)
+    b.set([a, 0], (b.get([a, 0]) ?? 0) - Ieq)
+  }
+  if (c !== undefined) {
+    M.set([c, c], (M.get([c, c]) ?? 0) + Gd)
+    b.set([c, 0], (b.get([c, 0]) ?? 0) + Ieq)
+  }
+  if (a !== undefined && c !== undefined) {
+    M.set([a, c], (M.get([a, c]) ?? 0) - Gd)
+    M.set([c, a], (M.get([c, a]) ?? 0) - Gd)
+  }
+}
+
+/**
+ * Resolve a tunnel diode from its four datasheet headline numbers (peak + valley current/voltage).
+ * The diffusion saturation current is calibrated so the curve passes ~through the valley point.
+ */
+export function resolveTunnelDiode(inst: Instance, thermalV: number): TunnelDiode | null {
+  const peakCurrent = readScalarParam(inst, 'peak_current')
+  const peakVoltage = readScalarParam(inst, 'peak_voltage')
+  const valleyCurrent = readScalarParam(inst, 'valley_current')
+  const valleyVoltage = readScalarParam(inst, 'valley_voltage')
+  if (
+    peakCurrent === undefined ||
+    peakVoltage === undefined ||
+    valleyCurrent === undefined ||
+    valleyVoltage === undefined
+  ) {
+    return null
+  }
+  if (peakVoltage <= 0 || valleyVoltage <= peakVoltage || peakCurrent <= 0) return null
+  const idealityFactor = readScalarParam(inst, 'ideality_factor') ?? 1
+  const anode = inst.connects?.find((c) => c.terminal === 'anode')
+  const cathode = inst.connects?.find((c) => c.terminal === 'cathode')
+  if (anode === undefined || cathode === undefined) return null
+
+  const saturationCurrent = tunnelDiodeSaturationCurrent(
+    peakCurrent,
+    peakVoltage,
+    valleyCurrent,
+    valleyVoltage,
+    idealityFactor,
+    thermalV,
+  )
+  return {
+    inst,
+    anodeNet: anode.net,
+    cathodeNet: cathode.net,
+    params: { peakCurrent, peakVoltage, saturationCurrent, idealityFactor, thermalV },
+    vGuess: 0,
+  }
+}
+
+/**
+ * Stamp a tunnel diode's Newton companion — the same conductance + current-source shape as
+ * stampLedCompanion, but the conductance may be NEGATIVE (the negative-resistance region).
+ */
+function stampTunnelDiodeCompanion(
+  td: TunnelDiode,
+  nodeIndex: Map<string, number>,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const { conductance: G, currentSource: Ieq } = tunnelDiodeCompanion(td.vGuess, td.params)
+  const a = nodeIndex.get(td.anodeNet)
+  const c = nodeIndex.get(td.cathodeNet)
   const Gd = G + SOLVER_GMIN
   if (a !== undefined) {
     M.set([a, a], (M.get([a, a]) ?? 0) + Gd)

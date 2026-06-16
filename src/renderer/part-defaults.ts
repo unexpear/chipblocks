@@ -161,6 +161,18 @@ const DEFAULTS: Record<string, Parameters> = {
     thermal_resistance_junction_ambient: scalar(200, 'kelvin_per_watt'),
     max_operating_temperature: scalar(70, 'celsius'),
   },
+  diode_tunnel: {
+    // 1N3712 (Ge tunnel diode) class: I_P 1 mA at V_P ~65 mV, I_V 0.12 mA at V_V ~350 mV.
+    peak_current: scalar(1e-3, 'ampere'),
+    peak_voltage: scalar(0.065, 'volt'),
+    valley_current: scalar(0.12e-3, 'ampere'),
+    valley_voltage: scalar(0.35, 'volt'),
+    max_forward_current: scalar(5e-3, 'ampere'),
+    n_side: { value: 'silicon_n_type' },
+    p_side: { value: 'silicon_p_type' },
+    thermal_resistance_junction_ambient: scalar(300, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(100, 'celsius'),
+  },
   switch_spst_toggle: {
     // Panel-mount SPST toggle (C&K 7101 class, matching the anchor switch
     // fixture): copper contacts, ~20 mΩ closed, 6 A, 125 V. Starts closed
@@ -474,6 +486,15 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     max_forward_current: '~50 mA absolute max, 5 mW red laser-diode class (current-sensitive)',
     thermal_resistance_junction_ambient: 'small laser-diode package class (~200 K/W)',
     max_operating_temperature: '~70 °C max, laser-diode class (threshold climbs with heat)',
+  },
+  diode_tunnel: {
+    peak_current: '1N3712 (Ge tunnel diode) I_P ~1 mA (datasheet class)',
+    peak_voltage: 'Ge tunnel diode peak voltage V_P ~65 mV (class-typical)',
+    valley_current: '1N3712-class valley current I_V ~0.12 mA (~1/8 of I_P, Ge class)',
+    valley_voltage: 'Ge tunnel diode valley voltage V_V ~350 mV (class-typical)',
+    max_forward_current: '~5 mA forward rating, small Ge tunnel-diode class',
+    thermal_resistance_junction_ambient: 'small axial package class (~300 K/W)',
+    max_operating_temperature: '~100 °C, Ge tunnel-diode class',
   },
   switch_spst_toggle: {
     contact_resistance_closed: 'C&K 7101 class (~20 mΩ closed)',

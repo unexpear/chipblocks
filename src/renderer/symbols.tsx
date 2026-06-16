@@ -218,6 +218,22 @@ function LaserDiodeGlyph() {
   )
 }
 
+/** Tunnel (Esaki) diode — the rectifier triangle, with the cathode bar drawn as a bracket
+ *  (short serifs off both ends toward the anode), the standard tunnel-diode mark. */
+function TunnelDiodeGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>tunnel diode</title>
+      {lead(0, 26)}
+      <polygon points="26,12 26,32 44,22" fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={44} y1={12} x2={44} y2={32} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={44} y1={12} x2={39} y2={12} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={44} y1={32} x2={39} y2={32} stroke={STROKE} strokeWidth={1.5} />
+      {lead(44, W)}
+    </svg>
+  )
+}
+
 /** SPST switch — a hinged blade: closed rests on the far contact, open lifts away. */
 function SwitchGlyph({ closed }: { closed: boolean }) {
   return (
@@ -1024,6 +1040,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   led: LedGlyph,
   led_uv_algan: LedGlyph,
   diode_laser: LaserDiodeGlyph,
+  diode_tunnel: TunnelDiodeGlyph,
   diode_silicon_rectifier: DiodeGlyph,
   diode_schottky_al_si: SchottkyGlyph,
   diode_zener_silicon: ZenerGlyph,
@@ -1091,6 +1108,7 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   led: TWO('anode', 'cathode'),
   led_uv_algan: TWO('anode', 'cathode'),
   diode_laser: TWO('anode', 'cathode'),
+  diode_tunnel: TWO('anode', 'cathode'),
   diode_silicon_rectifier: TWO('anode', 'cathode'),
   diode_schottky_al_si: TWO('anode', 'cathode'),
   diode_zener_silicon: TWO('anode', 'cathode'),
