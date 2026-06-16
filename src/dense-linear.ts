@@ -7,8 +7,11 @@
  * Why this exists: mathjs is a general-purpose library, and its per-element get/set dispatch plus
  * lusolve overhead dominated solve time once a circuit reached a few hundred MNA unknowns (a
  * 2-bit ripple adder is ~150; the solve was ~23 s, roughly 100x the arithmetic's own cost). The
- * numerical method here is IDENTICAL to what lusolve runs — a dense direct solve with partial
- * pivoting — so results match to rounding; only the library tax is gone. The `[row, col]` and
+ * numerical method here is the same dense direct solve with partial pivoting lusolve runs, so
+ * results match to rounding on the well-posed systems the solvers generate; only the library tax
+ * is gone. (Singular systems differ by design: mathjs throws on any singular matrix, while this
+ * pins a floating net's free variable to 0 and throws only when the system is genuinely
+ * inconsistent — see lusolve below.) The `[row, col]` and
  * `[row, 0]` accessor shapes match the mathjs Matrix API the stamping code was written against,
  * so every stamp helper in dc-solver.ts and transient-solver.ts is untouched.
  *
@@ -66,16 +69,30 @@ export function zerosVector(size: number): DenseVector {
 }
 
 /**
+ * Relative-residual tolerance for the post-solve consistency check on a rank-deficient
+ * system. A genuine floating-net solution leaves residual at float-noise level (~1e-12
+ * relative); a conflicting/over-constrained system leaves an O(1) relative residual, so
+ * 1e-6 separates them with several orders of margin.
+ */
+const INCONSISTENT_RESIDUAL_TOLERANCE = 1e-6
+
+/**
  * Solve A·x = b for x by Gaussian elimination with partial pivoting — the same dense direct
  * method math.lusolve runs. A zero-pivot column (a floating net with no path to ground — an open
  * switch's dead node, an undriven net) is treated as a free variable pinned to 0, which returns
  * the same particular solution mathjs's lusolve produced for these consistent-but-singular MNA
  * systems rather than failing on them. A and b are not mutated; the elimination runs on copies.
+ *
+ * A rank-deficient system that is ALSO inconsistent (over-constrained — e.g. two ideal sources
+ * forcing one node to conflicting voltages) is caught by a post-solve residual check and throws,
+ * so callers report an unsolvable circuit instead of confident-but-wrong numbers. Full-rank
+ * systems are always consistent and skip the check.
  */
 export function lusolve(A: DenseMatrix, b: DenseVector): DenseVector {
   const n = A.size
   const a = Float64Array.from(A.data) // working copy; the elimination mutates it
   const y = Float64Array.from(b.data) // working right-hand side, eliminated alongside A
+  let rankDeficient = false // a skipped (zero) pivot left a free variable — consistency-check below
 
   for (let col = 0; col < n; col++) {
     // Partial pivot: pick the largest-magnitude entry at or below the diagonal in this column.
@@ -91,7 +108,10 @@ export function lusolve(A: DenseMatrix, b: DenseVector): DenseVector {
     // A zero pivot means column `col` is unconstrained by the remaining rows — a free variable
     // (a floating/undriven net). Skip its elimination; back-substitution pins it to 0, the
     // particular solution mathjs returned for these consistent-but-singular circuit systems.
-    if (pivotMag === 0) continue
+    if (pivotMag === 0) {
+      rankDeficient = true
+      continue
+    }
     if (pivot !== col) {
       for (let j = col; j < n; j++) {
         const swap = a[col * n + j] as number
@@ -126,6 +146,39 @@ export function lusolve(A: DenseMatrix, b: DenseVector): DenseVector {
       sum -= (a[i * n + j] as number) * (x.data[j] as number)
     }
     x.data[i] = sum / diagonal
+  }
+
+  // A rank-deficient system has free variables we pinned to 0. That is the right particular
+  // solution ONLY when the system is consistent (a floating/undriven net) — the pinned solution
+  // still satisfies every original equation. An over-constrained system (rank-deficient AND
+  // inconsistent) does NOT, so its residual ‖A·x − b‖ is large relative to the problem scale.
+  // Detect that and throw; callers already try/catch lusolve and report an unsolvable circuit.
+  // Full-rank systems can't be inconsistent, so they never reach here.
+  if (rankDeficient) {
+    let maxResidual = 0
+    let aNorm = 0
+    let xNorm = 0
+    let bNorm = 0
+    for (let i = 0; i < n; i++) {
+      let dot = 0
+      let rowAbsSum = 0
+      for (let j = 0; j < n; j++) {
+        const aij = A.data[i * n + j] as number
+        dot += aij * (x.data[j] as number)
+        rowAbsSum += Math.abs(aij)
+      }
+      maxResidual = Math.max(maxResidual, Math.abs(dot - (b.data[i] as number)))
+      aNorm = Math.max(aNorm, rowAbsSum)
+      xNorm = Math.max(xNorm, Math.abs(x.data[i] as number))
+      bNorm = Math.max(bNorm, Math.abs(b.data[i] as number))
+    }
+    const scale = Math.max(aNorm * xNorm + bNorm, 1)
+    if (maxResidual > INCONSISTENT_RESIDUAL_TOLERANCE * scale) {
+      throw new Error(
+        `inconsistent linear system: residual ${maxResidual.toExponential(2)} exceeds tolerance ` +
+          '(over-constrained circuit — e.g. conflicting ideal sources)',
+      )
+    }
   }
   return x
 }
