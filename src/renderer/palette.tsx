@@ -103,6 +103,8 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'transistor_bjt_pnp', label: 'PNP' },
   { definition: 'transistor_mosfet_nmos', label: 'NMOS' },
   { definition: 'transistor_mosfet_pmos', label: 'PMOS' },
+  { definition: 'transistor_jfet_n_channel', label: 'N-JFET' },
+  { definition: 'transistor_jfet_p_channel', label: 'P-JFET' },
   { definition: 'darlington_npn', label: 'Darlington' },
   { definition: 'photo_darlington', label: 'Photo-Darl.' },
   { definition: 'op_amp', label: 'Op-Amp' },

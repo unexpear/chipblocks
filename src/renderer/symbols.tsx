@@ -801,6 +801,35 @@ function PhotoDarlingtonGlyph() {
   )
 }
 
+/** N-channel JFET — IEEE 315: a vertical channel (drain top, source bottom) with the gate
+ *  arrow pointing INTO the channel (N-channel). A depletion device — on at V_GS = 0. */
+function JfetNGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>N-channel JFET</title>
+      <circle cx={37} cy={MID} r={16} fill="none" stroke={STROKE} strokeWidth={1} />
+      <line x1={40} y1={0} x2={40} y2={44} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={10} x2={40} y2={34} stroke={STROKE} strokeWidth={2.5} />
+      <line x1={0} y1={MID} x2={32} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+      <polygon points="40,22 32,18.5 32,25.5" fill={STROKE} stroke={STROKE} strokeWidth={0.5} />
+    </svg>
+  )
+}
+
+/** P-channel JFET — the mirror: the gate arrow points OUT of the channel. */
+function JfetPGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>P-channel JFET</title>
+      <circle cx={37} cy={MID} r={16} fill="none" stroke={STROKE} strokeWidth={1} />
+      <line x1={40} y1={0} x2={40} y2={44} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={10} x2={40} y2={34} stroke={STROKE} strokeWidth={2.5} />
+      <line x1={0} y1={MID} x2={40} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+      <polygon points="31,22 39,18.5 39,25.5" fill={STROKE} stroke={STROKE} strokeWidth={0.5} />
+    </svg>
+  )
+}
+
 /** Adder — a labelled IC block with a '+' inside; the palette face for the half and full
  *  adders (on the canvas they are blocks showing their names). */
 function AdderGlyph() {
@@ -969,6 +998,8 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   photo_darlington: PhotoDarlingtonGlyph,
   transistor_mosfet_nmos: MosfetNmosGlyph,
   transistor_mosfet_pmos: MosfetPmosGlyph,
+  transistor_jfet_n_channel: JfetNGlyph,
+  transistor_jfet_p_channel: JfetPGlyph,
   op_amp: OpAmpGlyph,
   logic_not: NotGateGlyph,
   logic_nand: NandGateGlyph,
@@ -1066,6 +1097,16 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
     { id: 'gate', position: Position.Left },
     { id: 'source', position: Position.Top },
     { id: 'drain', position: Position.Bottom },
+  ],
+  transistor_jfet_n_channel: [
+    { id: 'gate', position: Position.Left },
+    { id: 'drain', position: Position.Top },
+    { id: 'source', position: Position.Bottom },
+  ],
+  transistor_jfet_p_channel: [
+    { id: 'gate', position: Position.Left },
+    { id: 'drain', position: Position.Top },
+    { id: 'source', position: Position.Bottom },
   ],
   transformer: [
     { id: 'primary_a', position: Position.Left, offset: 10 },

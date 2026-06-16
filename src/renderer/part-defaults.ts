@@ -335,6 +335,30 @@ const DEFAULTS: Record<string, Parameters> = {
     thermal_resistance_junction_ambient: scalar(178.6, 'kelvin_per_watt'),
     max_operating_temperature: scalar(150, 'celsius'),
   },
+  transistor_jfet_n_channel: {
+    // 2N5457 (N-JFET) datasheet typicals: V_GS(off) ~ -1.5 V, I_DSS ~ 3 mA →
+    // beta = I_DSS / V_P^2 = 3e-3 / 1.5^2 ≈ 1.33 mA/V^2. lambda a Level-1 class value.
+    pinch_off_voltage: scalar(-1.5, 'volt'),
+    transconductance: scalar(1.33e-3, 'ampere_per_volt_squared'),
+    channel_length_modulation: scalar(0.02, 'per_volt'),
+    channel_region: { value: 'silicon_n_type' },
+    gate_region: { value: 'silicon_p_type' },
+    max_drain_current: scalar(0.01, 'ampere'),
+    thermal_resistance_junction_ambient: scalar(350, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(150, 'celsius'),
+  },
+  transistor_jfet_p_channel: {
+    // 2N5460 (P-JFET) datasheet typicals: V_GS(off) ~ +2 V, |I_DSS| ~ 2 mA →
+    // beta = |I_DSS| / V_P^2 = 2e-3 / 2^2 = 0.5 mA/V^2.
+    pinch_off_voltage: scalar(2, 'volt'),
+    transconductance: scalar(5e-4, 'ampere_per_volt_squared'),
+    channel_length_modulation: scalar(0.02, 'per_volt'),
+    channel_region: { value: 'silicon_p_type' },
+    gate_region: { value: 'silicon_n_type' },
+    max_drain_current: scalar(0.01, 'ampere'),
+    thermal_resistance_junction_ambient: scalar(350, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(150, 'celsius'),
+  },
 }
 
 /**
@@ -516,6 +540,26 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     max_gate_source_voltage: 'BS250 V_GS ±20 V absolute max — gate-oxide limit',
     thermal_resistance_junction_ambient: 'derived: (150−25) °C / 0.7 W TO-92 power rating',
     max_operating_temperature: 'BS250 T_J max 150 °C (datasheet)',
+  },
+  transistor_jfet_n_channel: {
+    pinch_off_voltage: '2N5457 V_GS(off) ~ −1.5 V typical (−0.5 to −6 V range, onsemi datasheet)',
+    transconductance:
+      'derived from 2N5457 datasheet typicals I_DSS ~ 3 mA, V_P ~ −1.5 V: beta = I_DSS/V_P² ≈ 1.33 mA/V²',
+    channel_length_modulation:
+      'textbook Level-1 class value (λ is not on discrete JFET datasheets)',
+    max_drain_current: '2N5457 small-signal I_DSS-scale rating (~10 mA), onsemi datasheet class',
+    thermal_resistance_junction_ambient: 'TO-92 small-signal package class (~350 K/W)',
+    max_operating_temperature: '2N5457 T_J max 150 °C (datasheet)',
+  },
+  transistor_jfet_p_channel: {
+    pinch_off_voltage: '2N5460 V_GS(off) ~ +2 V typical (+0.75 to +6 V range, onsemi datasheet)',
+    transconductance:
+      'derived from 2N5460 datasheet typicals |I_DSS| ~ 2 mA, V_P ~ +2 V: beta = |I_DSS|/V_P² = 0.5 mA/V²',
+    channel_length_modulation:
+      'textbook Level-1 class value (λ is not on discrete JFET datasheets)',
+    max_drain_current: '2N5460 small-signal I_DSS-scale rating (~10 mA), onsemi datasheet class',
+    thermal_resistance_junction_ambient: 'TO-92 small-signal package class (~350 K/W)',
+    max_operating_temperature: '2N5460 T_J max 150 °C (datasheet)',
   },
   transistor_bjt_pnp: {
     saturation_current: 'small-signal PNP transport I_S ~1e-14 A (2N3906 class)',

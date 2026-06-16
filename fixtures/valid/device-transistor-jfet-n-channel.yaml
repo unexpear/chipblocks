@@ -1,0 +1,113 @@
+# Valid fixture: N-channel JFET (junction field-effect transistor).
+# A DEPLETION-mode FET: an n-type channel runs between source and drain, and a
+# p-type gate forms a reverse-biased PN junction along it. At zero gate bias the
+# channel is open and conducts I_DSS; pulling the gate NEGATIVE (toward the
+# pinch-off voltage V_P) widens the junction's depletion region until it squeezes
+# the channel shut. The gate junction is reverse-biased in normal use, so the
+# gate draws essentially no DC current — like a MOSFET, but a junction, not an
+# oxide.
+#
+# Solved by both engines via the Level-1 square law (jfet-model.ts), which it
+# SHARES with the MOSFET (beta = k/2): cutoff / triode / saturation with
+# channel-length modulation, mapped onto the verified MOSFET companion.
+#
+# Per the device-power-source convention this definition carries NO builtin
+# numeric defaults on the electrical parameters — the cited canvas drop defaults
+# live in part-defaults.ts (2N5457 class); only the structural material regions
+# default here.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: transistor_jfet_n_channel
+origin: builtin
+layer: primitive_device
+name: "N-channel JFET"
+description: "A three-terminal depletion-mode field-effect transistor: gate, drain, source. An n-type channel conducts at zero gate bias (I_DSS); a reverse-biased p-type gate junction pinches it off as V_GS falls to the (negative) pinch-off voltage V_P. The gate draws no DC current in normal operation. Modeled by the shared FET square law (cutoff / triode / saturation, Shichman-Hodges Level 1, with beta = k/2) plus channel-length modulation. The classic high-input-impedance amplifier and analog-switch device."
+composition:
+  uses:
+    - pn_junction
+  requires:
+    channel_region:
+      kind: material
+      must_enable:
+        - n_type_semiconductor
+    gate_region:
+      kind: material
+      must_enable:
+        - p_type_semiconductor
+    endpoints:
+      kind: interface
+      min_count: 3
+parameters:
+  channel_region:
+    type: material_ref
+    satisfies_role: channel_region
+    required: true
+    default:
+      value: silicon_n_type
+    description: The n-type channel that conducts between source and drain.
+  gate_region:
+    type: material_ref
+    satisfies_role: gate_region
+    required: true
+    default:
+      value: silicon_p_type
+    description: The p-type gate diffusion; its reverse-biased junction with the channel modulates the channel width.
+  pinch_off_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: "Pinch-off (gate cutoff) voltage V_P — NEGATIVE for an N-channel JFET (e.g. 2N5457 ~ -1.5 V typical, -0.5 to -6 V across parts). At V_GS = V_P the channel is fully depleted (cutoff); at V_GS = 0 it conducts I_DSS = beta·V_P^2."
+  transconductance:
+    type: quantity
+    units: ampere_per_volt_squared
+    required: true
+    description: "The transconductance parameter beta (A/V^2) in I_D(sat) = beta·(V_GS - V_P)^2. Equals I_DSS / V_P^2; derivable from the datasheet I_DSS and V_GS(off). Shares the MOSFET square law with k = 2·beta."
+  channel_length_modulation:
+    type: quantity
+    units: per_volt
+    required: false
+    description: "lambda — the slight rise of saturation current with V_DS (finite output resistance): I_D proportional to (1 + lambda·V_DS). Textbook Level-1 class values 0.01-0.05 per volt."
+  max_drain_current:
+    type: quantity
+    units: ampere
+    required: false
+    description: Maximum continuous drain current before thermal damage (for a small-signal JFET, an I_DSS-scale rating).
+  thermal_resistance_junction_ambient:
+    type: quantity
+    units: kelvin_per_watt
+    required: false
+    description: Junction-to-ambient thermal resistance (theta_JA) of the package — the lumped thermal model's slope, T = T_ambient + P·theta_JA.
+  max_operating_temperature:
+    type: quantity
+    units: celsius
+    required: false
+    description: Maximum junction operating temperature. The stage-7 thermal check fires when the computed steady-state temperature exceeds it.
+behaviors:
+  - acts_as_transistor
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  gate:
+    description: The control terminal — its (reverse) voltage relative to the source sets the channel width. Draws no DC current in normal operation.
+  drain:
+    description: The terminal current enters when the channel conducts (conventional current, N-channel).
+  source:
+    description: The reference terminal the gate and drain voltages are measured against.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  An n-type channel with a p-type gate junction; depletion mode (on at V_GS = 0,
+  off at V_GS = V_P < 0). Solved via the shared FET square law (jfet-model.ts maps
+  it onto the verified MOSFET companion, beta = k/2). Per the device-power-source
+  convention, no builtin numeric defaults on pinch-off / transconductance
+  (part-specific) — the canvas drop defaults (part-defaults.ts, 2N5457 class,
+  cited) and per-instance values fill them in; the n/p material regions DO default.
+  NOT modeled yet: the gate-channel junction's forward conduction and reverse
+  breakdown (the JFET analogue of the unmodeled MOSFET body diode) — the
+  higher-fidelity successor. P-channel is the same model with reversed polarities.
