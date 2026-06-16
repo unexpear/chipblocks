@@ -104,6 +104,7 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'transistor_mosfet_nmos', label: 'NMOS' },
   { definition: 'transistor_mosfet_pmos', label: 'PMOS' },
   { definition: 'darlington_npn', label: 'Darlington' },
+  { definition: 'photo_darlington', label: 'Photo-Darl.' },
   { definition: 'op_amp', label: 'Op-Amp' },
   { definition: 'logic_not', label: 'NOT' },
   { definition: 'logic_nand', label: 'NAND' },

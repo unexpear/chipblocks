@@ -1076,6 +1076,61 @@ export const DARLINGTON_BLOCK: BlockData = {
   ],
 }
 
+/**
+ * PHOTO-DARLINGTON — a phototransistor input stage driving a second NPN BJT. Light is the
+ * input (the phototransistor has no base lead): its photocurrent feeds Q2's base, and Q2
+ * amplifies it by β2, so a faint light drives a large collector current — a very sensitive
+ * detector. Flattens to the phototransistor + the real BJT. Ports: the common collector and
+ * the emitter; light level is set on the phototransistor (its illuminance).
+ */
+export const PHOTO_DARLINGTON_BLOCK: BlockData = {
+  name: 'Photo-Darlington',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    {
+      id: 'q1',
+      definition: 'phototransistor',
+      x: 60,
+      y: 30,
+      parameters: defaultParameters('phototransistor'),
+    },
+    {
+      id: 'q2',
+      definition: 'transistor_bjt_npn',
+      x: 220,
+      y: 140,
+      parameters: defaultParameters('transistor_bjt_npn'),
+    },
+  ],
+  edges: [
+    // The phototransistor's photocurrent (out its emitter) drives Q2's base; collectors tie.
+    { id: 'cascade', source: 'q1', sourceHandle: 'emitter', target: 'q2', targetHandle: 'base' },
+    {
+      id: 'collectors',
+      source: 'q1',
+      sourceHandle: 'collector',
+      target: 'q2',
+      targetHandle: 'collector',
+    },
+  ],
+  ports: [
+    {
+      id: 'collector',
+      label: 'C',
+      side: 'left',
+      offset: 18,
+      inner: { nodeId: 'q1', handleId: 'collector' },
+    },
+    {
+      id: 'emitter',
+      label: 'E',
+      side: 'right',
+      offset: 18,
+      inner: { nodeId: 'q2', handleId: 'emitter' },
+    },
+  ],
+}
+
 /** Built-in blocks droppable from the palette, keyed by their palette definition id.
  *  The palette lists these like parts; App's drop handler turns one into a block node
  *  (a fresh deep copy) that descends + flattens like any user-grouped block. */
@@ -1098,4 +1153,5 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   logic_d_flipflop: D_FLIPFLOP_BLOCK,
   logic_register_4bit: REGISTER_4BIT,
   darlington_npn: DARLINGTON_BLOCK,
+  photo_darlington: PHOTO_DARLINGTON_BLOCK,
 }
