@@ -78,6 +78,7 @@ import {
   SILICON_BANDGAP_EV,
   SOLVER_GMIN,
   stampBjtCompanion,
+  stampConductance,
   stampLightCurrentSource,
   stampMosfetCompanion,
   stampPotentiometer,
@@ -103,7 +104,7 @@ import {
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { ldrResistance } from './light.ts'
 import { limitMosfetStep, mosfetOperatingPoint } from './mosfet-model.ts'
-import { type ShockleyDiodeState, shockleyDiodeTarget } from './shockley-diode.ts'
+import { type ShockleyDiodeState, scrTarget, shockleyDiodeTarget } from './shockley-diode.ts'
 import {
   limitTunnelDiodeStep,
   tunnelDiodeCompanion,
@@ -402,6 +403,10 @@ type ShockleyTransient = {
   breakoverVoltage: number
   holdingCurrent: number
   state: ShockleyDiodeState
+  // SCR only: the gate trigger (a gate current ≥ I_GT fires it, while forward-biased).
+  gateNet?: string
+  gateResistance?: number
+  gateTriggerCurrent?: number
 }
 
 function resolveShockleyTransient(
@@ -416,7 +421,25 @@ function resolveShockleyTransient(
   if (breakoverVoltage === undefined || holdingCurrent === undefined) return null
   const state: ShockleyDiodeState =
     readEnumParam(inst, 'device_state') === 'conducting' ? 'conducting' : 'blocking'
-  return { inst, diode, breakoverVoltage, holdingCurrent, state }
+  if (inst.definition !== 'scr') {
+    return { inst, diode, breakoverVoltage, holdingCurrent, state }
+  }
+  const gateNet = inst.connects?.find((c) => c.terminal === 'gate')?.net
+  const gateResistance = readScalarParam(inst, 'gate_cathode_resistance')
+  const gateTriggerCurrent = readScalarParam(inst, 'gate_trigger_current')
+  if (gateNet === undefined || gateResistance === undefined || gateTriggerCurrent === undefined) {
+    return null
+  }
+  return {
+    inst,
+    diode,
+    breakoverVoltage,
+    holdingCurrent,
+    state,
+    gateNet,
+    gateResistance,
+    gateTriggerCurrent,
+  }
 }
 
 /** The current through a Shockley diode this step — the forward-diode law when conducting, else 0. */
@@ -1341,7 +1364,9 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       else
         warnings.push(`Skipped Shockley diode '${inst.id}' (missing parameters or anode/cathode)`)
     } else if (inst.definition === 'scr') {
-      warnings.push(`SCR '${inst.id}' is not modeled in transient yet (DC only)`)
+      const sh = resolveShockleyTransient(inst, nodeIndex, vT)
+      if (sh !== null) shockleyDiodes.push(sh)
+      else warnings.push(`Skipped SCR '${inst.id}' (missing parameters or terminals)`)
     } else if (inst.definition === 'wire') {
       const short = resolveShort(
         inst,
@@ -1484,8 +1509,12 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     }
     for (const d of diodes) stampDiodeCompanion(d, d.thermalV, M, b)
     for (const td of tunnelDiodes) stampTransientTunnel(td, nodeIndex, M, b)
-    for (const sh of shockleyDiodes)
+    for (const sh of shockleyDiodes) {
       if (sh.state === 'conducting') stampDiodeCompanion(sh.diode, sh.diode.thermalV, M, b)
+      // An SCR's gate-cathode resistance is always present (the gate current path).
+      if (sh.gateResistance !== undefined && sh.gateNet !== undefined)
+        stampConductance(nodeIndex, M, sh.gateNet, sh.diode.cathodeNet, sh.gateResistance)
+    }
     for (const z of zeners) stampTransientZener(z, z.thermalV, M, b)
     for (const bjt of bjts) stampBjtCompanion(bjt, nodeIndex, bjt.thermalV, M, b)
     for (const fet of mosfets) stampMosfetCompanion(fet, nodeIndex, M, b)
@@ -1857,15 +1886,29 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     }
     for (const sh of shockleyDiodes) {
       // The latch flips off this step's solved voltage / current, taking effect next step: breakover
-      // turns it on, a current below the holding current turns it off — a relaxation oscillator.
+      // (or, for an SCR, a forward gate trigger) turns it on; a current below the holding current
+      // turns it off. With an RC that switching is a relaxation oscillator; an SCR fires from its gate.
       const v = (nodes.get(sh.diode.anodeNet) ?? 0) - (nodes.get(sh.diode.cathodeNet) ?? 0)
-      sh.state = shockleyDiodeTarget(
-        sh.state,
-        v,
-        shockleyTransientCurrent(sh, v),
-        sh.breakoverVoltage,
-        sh.holdingCurrent,
-      )
+      const i = shockleyTransientCurrent(sh, v)
+      if (
+        sh.gateResistance !== undefined &&
+        sh.gateNet !== undefined &&
+        sh.gateTriggerCurrent !== undefined
+      ) {
+        const gateCurrent =
+          ((nodes.get(sh.gateNet) ?? 0) - (nodes.get(sh.diode.cathodeNet) ?? 0)) / sh.gateResistance
+        sh.state = scrTarget(
+          sh.state,
+          v,
+          i,
+          gateCurrent,
+          sh.breakoverVoltage,
+          sh.holdingCurrent,
+          sh.gateTriggerCurrent,
+        )
+      } else {
+        sh.state = shockleyDiodeTarget(sh.state, v, i, sh.breakoverVoltage, sh.holdingCurrent)
+      }
     }
     for (const ind of inductors) {
       // The converged step's current through the inductor — the value just

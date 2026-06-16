@@ -10,6 +10,7 @@ import { describe, expect, test } from 'vitest'
 import type { World } from '../src/cross-fk-validator.ts'
 import { solveWithRelays } from '../src/relay.ts'
 import { scrTarget } from '../src/shockley-diode.ts'
+import { solveTransient } from '../src/transient-solver.ts'
 
 describe('scrTarget (the gated-latch transition)', () => {
   const V_BO = 100
@@ -159,5 +160,113 @@ describe('solveWithRelays — SCR latch (gate-triggered)', () => {
   test('it turns off when the anode current falls below the holding current', () => {
     const r = solveScr(30, 100000, 0, 'conducting') // ~0.28 mA ≪ 5 mA holding
     expect(r.latch).toBe('blocking')
+  })
+})
+
+describe('solveTransient — SCR on an AC line (gated phase control)', () => {
+  test('conducts the gated positive half-cycles and blocks the negative ones', () => {
+    // AC anode (10 V, 1 kHz) → R(100) → SCR; gate held on (2 V). Each positive half the gate fires
+    // the SCR and it conducts; each negative half it blocks (reverse) and turns off at the
+    // zero-crossing — a gated rectifier, the core of an SCR dimmer.
+    const world: World = {
+      definitions: new Map(),
+      instances: new Map(),
+      behaviors: new Map(),
+      activeVariables: new Map(),
+      nets: new Map(),
+    }
+    world.nets.set('vac', {
+      id: 'vac',
+      kind: 'net',
+      members: [
+        { instance: 'acsrc', terminal: 'terminal_positive' },
+        { instance: 'r', terminal: 'terminal_a' },
+      ],
+    })
+    world.nets.set('anode', {
+      id: 'anode',
+      kind: 'net',
+      members: [
+        { instance: 'r', terminal: 'terminal_b' },
+        { instance: 'scr', terminal: 'anode' },
+      ],
+    })
+    world.nets.set('gate', {
+      id: 'gate',
+      kind: 'net',
+      members: [
+        { instance: 'gatesrc', terminal: 'terminal_positive' },
+        { instance: 'scr', terminal: 'gate' },
+      ],
+    })
+    world.nets.set('gnd', {
+      id: 'gnd',
+      kind: 'net',
+      type: 'ground',
+      members: [
+        { instance: 'acsrc', terminal: 'terminal_negative' },
+        { instance: 'gatesrc', terminal: 'terminal_negative' },
+        { instance: 'scr', terminal: 'cathode' },
+      ],
+    })
+    world.instances.set('acsrc', {
+      id: 'acsrc',
+      kind_ref: 'primitive_device',
+      definition: 'power_source',
+      parameters: {
+        nominal_voltage: scalar(0, 'volt'),
+        ac_amplitude: scalar(10, 'volt'),
+        frequency: scalar(1000, 'hertz'),
+      },
+      connects: [
+        { net: 'vac', terminal: 'terminal_positive', of: 'acsrc' },
+        { net: 'gnd', terminal: 'terminal_negative', of: 'acsrc' },
+      ],
+    })
+    world.instances.set('gatesrc', {
+      id: 'gatesrc',
+      kind_ref: 'primitive_device',
+      definition: 'power_source',
+      parameters: { nominal_voltage: scalar(2, 'volt') },
+      connects: [
+        { net: 'gate', terminal: 'terminal_positive', of: 'gatesrc' },
+        { net: 'gnd', terminal: 'terminal_negative', of: 'gatesrc' },
+      ],
+    })
+    world.instances.set('r', {
+      id: 'r',
+      kind_ref: 'primitive_device',
+      definition: 'resistor',
+      parameters: { resistance: scalar(100, 'ohm') },
+      connects: [
+        { net: 'vac', terminal: 'terminal_a', of: 'r' },
+        { net: 'anode', terminal: 'terminal_b', of: 'r' },
+      ],
+    })
+    world.instances.set('scr', {
+      id: 'scr',
+      kind_ref: 'primitive_device',
+      definition: 'scr',
+      parameters: {
+        breakover_voltage: scalar(100, 'volt'),
+        holding_current: scalar(0.005, 'ampere'),
+        forward_voltage: scalar(1.7, 'volt'),
+        max_forward_current: scalar(0.8, 'ampere'),
+        gate_trigger_current: scalar(0.0005, 'ampere'),
+        gate_cathode_resistance: scalar(1000, 'ohm'),
+        device_state: { value: 'blocking' },
+      },
+      connects: [
+        { net: 'anode', terminal: 'anode', of: 'scr' },
+        { net: 'gnd', terminal: 'cathode', of: 'scr' },
+        { net: 'gate', terminal: 'gate', of: 'scr' },
+      ],
+    })
+    const result = solveTransient(world, { timeStep: 1e-5, duration: 3e-3 })
+    const load = result.series.map((s) => Math.abs(s.currents?.get('r/terminal_a') ?? 0))
+    expect(Math.max(...load)).toBeGreaterThan(0.01) // conducts on the gated positive half-cycles
+    expect(Math.min(...load)).toBeLessThan(1e-3) // blocks on the negative half-cycles
+    const half = Math.floor(load.length / 2)
+    expect(Math.max(...load.slice(half))).toBeGreaterThan(0.01) // re-fires every cycle, not just once
   })
 })

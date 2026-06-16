@@ -58,7 +58,8 @@ export function scrTarget(
     return Math.abs(anodeCurrent) < holdingCurrent ? 'blocking' : 'conducting'
   }
   if (voltageAcross >= breakoverVoltage) return 'conducting'
-  return gateCurrent >= gateTriggerCurrent ? 'conducting' : 'blocking'
+  // The gate fires it only while FORWARD-biased — the gate cannot trigger reverse conduction.
+  return gateCurrent >= gateTriggerCurrent && voltageAcross > 0 ? 'conducting' : 'blocking'
 }
 
 /**
