@@ -57,6 +57,7 @@ import {
   zenerCompanionModel,
 } from './diode-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
+import { jfetMosfetParams } from './jfet-model.ts'
 import { ldrResistance, lightSensorCurrent } from './light.ts'
 import { limitMosfetStep, type MosfetParams, mosfetOperatingPoint } from './mosfet-model.ts'
 import { STANDARD_AMBIENT_C } from './thermal-model.ts'
@@ -271,6 +272,14 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       inst.definition === 'transistor_mosfet_pmos'
     ) {
       const fet = resolveMosfet(inst, options?.temperaturesC?.get(inst.id))
+      if (fet !== null) mosfets.push(fet)
+      continue
+    }
+    if (
+      inst.definition === 'transistor_jfet_n_channel' ||
+      inst.definition === 'transistor_jfet_p_channel'
+    ) {
+      const fet = resolveJfet(inst)
       if (fet !== null) mosfets.push(fet)
       continue
     }
@@ -1125,6 +1134,40 @@ export function resolveMosfet(inst: Instance, temperatureC?: number): MosfetElem
       channelLengthModulation,
       velocitySaturationTheta,
     },
+    vGS: 0,
+    vDS: 0,
+  }
+}
+
+/**
+ * Resolve a JFET to the Level-1 depletion-mode model, or null if it lacks the parameters
+ * (pinch_off_voltage + transconductance) or its three connects. A JFET shares the MOSFET square
+ * law (jfet-model.ts), so it resolves to a MosfetElement and the same companion stamps + solves
+ * it. Warm-started at 0 V bias — which for a depletion device is already conducting (~I_DSS).
+ */
+export function resolveJfet(inst: Instance): MosfetElement | null {
+  const pinchOffVoltage = readScalarParam(inst, 'pinch_off_voltage')
+  const transconductance = readScalarParam(inst, 'transconductance')
+  if (pinchOffVoltage === undefined || transconductance === undefined) return null
+  if (transconductance <= 0) return null
+  const channelLengthModulation = readScalarParam(inst, 'channel_length_modulation') ?? 0
+
+  const gate = inst.connects?.find((c) => c.terminal === 'gate')
+  const drain = inst.connects?.find((c) => c.terminal === 'drain')
+  const source = inst.connects?.find((c) => c.terminal === 'source')
+  if (gate === undefined || drain === undefined || source === undefined) return null
+
+  return {
+    inst,
+    gateNet: gate.net,
+    drainNet: drain.net,
+    sourceNet: source.net,
+    params: jfetMosfetParams({
+      channel: inst.definition === 'transistor_jfet_p_channel' ? 'p_channel' : 'n_channel',
+      pinchOffVoltage,
+      transconductance,
+      channelLengthModulation,
+    }),
     vGS: 0,
     vDS: 0,
   }

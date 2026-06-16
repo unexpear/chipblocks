@@ -71,6 +71,7 @@ import {
   potentiometerSegments,
   relayCoilEnergized,
   resolveBjt,
+  resolveJfet,
   resolveMosfet,
   SILICON_BANDGAP_EV,
   SOLVER_GMIN,
@@ -1157,6 +1158,13 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const fet = resolveMosfet(inst, options.temperaturesC?.get(inst.id))
       if (fet !== null) mosfets.push(fet)
       else warnings.push(`Skipped MOSFET '${inst.id}' (missing parameters or terminals)`)
+    } else if (
+      inst.definition === 'transistor_jfet_n_channel' ||
+      inst.definition === 'transistor_jfet_p_channel'
+    ) {
+      const fet = resolveJfet(inst)
+      if (fet !== null) mosfets.push(fet)
+      else warnings.push(`Skipped JFET '${inst.id}' (missing parameters or terminals)`)
     } else if (inst.definition === 'wire') {
       const short = resolveShort(
         inst,
