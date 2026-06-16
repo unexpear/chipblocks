@@ -9,6 +9,7 @@ import { describe, expect, test } from 'vitest'
 import type { World } from '../src/cross-fk-validator.ts'
 import { solveWithRelays } from '../src/relay.ts'
 import { shockleyDiodeTarget } from '../src/shockley-diode.ts'
+import { solveTransient } from '../src/transient-solver.ts'
 
 describe('shockleyDiodeTarget (the latch transition)', () => {
   const V_BO = 20
@@ -130,5 +131,103 @@ describe('solveWithRelays — Shockley diode latch (discrete-state fixed point)'
   test('when the current falls below the holding current it drops out', () => {
     const r = solveShockley(10, 100000, 'conducting') // ~0.09 mA ≪ 5 mA holding
     expect(r.latch).toBe('blocking')
+  })
+})
+
+describe('solveTransient — Shockley relaxation oscillator (the latch flips mid-simulation)', () => {
+  test('charges to breakover, fires, dumps the cap, re-blocks, and repeats', () => {
+    // V+(30) → R(10k) → node; C(100nF) node→GND; Shockley node→GND (V_BO 20 V, I_H 5 mA). The cap
+    // charges until breakover, the diode fires and dumps it, the steady feed (~2.9 mA through 10 kΩ)
+    // is below the 5 mA holding current so it re-blocks, and the cycle repeats — a relaxation
+    // oscillator built on the in-time-loop latch.
+    const world: World = {
+      definitions: new Map(),
+      instances: new Map(),
+      behaviors: new Map(),
+      activeVariables: new Map(),
+      nets: new Map(),
+    }
+    world.nets.set('vcc', {
+      id: 'vcc',
+      kind: 'net',
+      members: [
+        { instance: 'bat', terminal: 'terminal_positive' },
+        { instance: 'r', terminal: 'terminal_a' },
+      ],
+    })
+    world.nets.set('node', {
+      id: 'node',
+      kind: 'net',
+      members: [
+        { instance: 'r', terminal: 'terminal_b' },
+        { instance: 'c', terminal: 'terminal_a' },
+        { instance: 'sh', terminal: 'anode' },
+      ],
+    })
+    world.nets.set('gnd', {
+      id: 'gnd',
+      kind: 'net',
+      type: 'ground',
+      members: [
+        { instance: 'bat', terminal: 'terminal_negative' },
+        { instance: 'c', terminal: 'terminal_b' },
+        { instance: 'sh', terminal: 'cathode' },
+      ],
+    })
+    world.instances.set('bat', {
+      id: 'bat',
+      kind_ref: 'primitive_device',
+      definition: 'power_source',
+      parameters: { nominal_voltage: scalar(30, 'volt') },
+      connects: [
+        { net: 'vcc', terminal: 'terminal_positive', of: 'bat' },
+        { net: 'gnd', terminal: 'terminal_negative', of: 'bat' },
+      ],
+    })
+    world.instances.set('r', {
+      id: 'r',
+      kind_ref: 'primitive_device',
+      definition: 'resistor',
+      parameters: { resistance: scalar(10000, 'ohm') },
+      connects: [
+        { net: 'vcc', terminal: 'terminal_a', of: 'r' },
+        { net: 'node', terminal: 'terminal_b', of: 'r' },
+      ],
+    })
+    world.instances.set('c', {
+      id: 'c',
+      kind_ref: 'primitive_device',
+      definition: 'capacitor',
+      parameters: { capacitance: scalar(100e-9, 'farad'), initial_voltage: scalar(0, 'volt') },
+      connects: [
+        { net: 'node', terminal: 'terminal_a', of: 'c' },
+        { net: 'gnd', terminal: 'terminal_b', of: 'c' },
+      ],
+    })
+    world.instances.set('sh', {
+      id: 'sh',
+      kind_ref: 'primitive_device',
+      definition: 'diode_shockley',
+      parameters: {
+        breakover_voltage: scalar(20, 'volt'),
+        holding_current: scalar(0.005, 'ampere'),
+        forward_voltage: scalar(1.1, 'volt'),
+        max_forward_current: scalar(1, 'ampere'),
+        device_state: { value: 'blocking' },
+      },
+      connects: [
+        { net: 'node', terminal: 'anode', of: 'sh' },
+        { net: 'gnd', terminal: 'cathode', of: 'sh' },
+      ],
+    })
+    const result = solveTransient(world, { timeStep: 5e-6, duration: 5e-3 })
+    const series = result.series
+    // it broke over and fired (the diode carried well above the holding current at some point):
+    const fired = Math.max(...series.map((s) => Math.abs(s.currents?.get('sh/anode') ?? 0)))
+    expect(fired).toBeGreaterThan(0.005)
+    // and it is STILL oscillating in the late half (the feed current keeps sawtoothing, not settled):
+    const half = Math.floor(series.length / 2)
+    const lateFeed = series.slice(half).map((s) => Math.abs(s.currents?.get('r/terminal_a') ?? 0))
+    expect(Math.max(...lateFeed) - Math.min(...lateFeed)).toBeGreaterThan(5e-4)
   })
 })

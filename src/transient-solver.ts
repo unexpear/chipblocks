@@ -103,6 +103,7 @@ import {
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { ldrResistance } from './light.ts'
 import { limitMosfetStep, mosfetOperatingPoint } from './mosfet-model.ts'
+import { type ShockleyDiodeState, shockleyDiodeTarget } from './shockley-diode.ts'
 import {
   limitTunnelDiodeStep,
   tunnelDiodeCompanion,
@@ -387,6 +388,42 @@ function resolveCapacitor(inst: Instance, nodeIndex: Map<string, number>): CapEl
     capacitance,
     vPrev: readScalarParam(inst, 'initial_voltage') ?? 0,
   }
+}
+
+/**
+ * A Shockley 4-layer diode in the time loop: a latching switch. When conducting it is an ordinary
+ * forward diode; when blocking it is open. The latch flips BETWEEN steps off the solved voltage and
+ * current (breakover turns it on, a current below the holding current turns it off) — with an RC
+ * that switching is a relaxation oscillator.
+ */
+type ShockleyTransient = {
+  inst: Instance
+  diode: DiodeElement
+  breakoverVoltage: number
+  holdingCurrent: number
+  state: ShockleyDiodeState
+}
+
+function resolveShockleyTransient(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  thermalV: number,
+): ShockleyTransient | null {
+  const diode = resolveDiode(inst, nodeIndex, thermalV)
+  if (diode === null) return null
+  const breakoverVoltage = readScalarParam(inst, 'breakover_voltage')
+  const holdingCurrent = readScalarParam(inst, 'holding_current')
+  if (breakoverVoltage === undefined || holdingCurrent === undefined) return null
+  const state: ShockleyDiodeState =
+    readEnumParam(inst, 'device_state') === 'conducting' ? 'conducting' : 'blocking'
+  return { inst, diode, breakoverVoltage, holdingCurrent, state }
+}
+
+/** The current through a Shockley diode this step — the forward-diode law when conducting, else 0. */
+function shockleyTransientCurrent(sh: ShockleyTransient, vAcross: number): number {
+  return sh.state === 'conducting'
+    ? diodeCurrent(vAcross, sh.diode.saturationCurrent, sh.diode.idealityFactor, sh.diode.thermalV)
+    : 0
 }
 
 /**
@@ -1175,6 +1212,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   const ctTransformers: CtTransformerElement[] = []
   const diodes: DiodeElement[] = []
   const tunnelDiodes: TunnelDiode[] = []
+  const shockleyDiodes: ShockleyTransient[] = []
   const zeners: ZenerElement[] = []
   const bjts: BjtElement[] = []
   const mosfets: MosfetElement[] = []
@@ -1298,7 +1336,10 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       if (td !== null) tunnelDiodes.push(td)
       else warnings.push(`Skipped tunnel diode '${inst.id}' (missing parameters or anode/cathode)`)
     } else if (inst.definition === 'diode_shockley') {
-      warnings.push(`Shockley diode '${inst.id}' is not modeled in transient yet (DC only)`)
+      const sh = resolveShockleyTransient(inst, nodeIndex, vT)
+      if (sh !== null) shockleyDiodes.push(sh)
+      else
+        warnings.push(`Skipped Shockley diode '${inst.id}' (missing parameters or anode/cathode)`)
     } else if (inst.definition === 'wire') {
       const short = resolveShort(
         inst,
@@ -1441,6 +1482,8 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     }
     for (const d of diodes) stampDiodeCompanion(d, d.thermalV, M, b)
     for (const td of tunnelDiodes) stampTransientTunnel(td, nodeIndex, M, b)
+    for (const sh of shockleyDiodes)
+      if (sh.state === 'conducting') stampDiodeCompanion(sh.diode, sh.diode.thermalV, M, b)
     for (const z of zeners) stampTransientZener(z, z.thermalV, M, b)
     for (const bjt of bjts) stampBjtCompanion(bjt, nodeIndex, bjt.thermalV, M, b)
     for (const fet of mosfets) stampMosfetCompanion(fet, nodeIndex, M, b)
@@ -1490,6 +1533,18 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         maxDelta = Math.max(maxDelta, Math.abs(next - td.vGuess))
         if (next !== vA - vC) anyLimited = true
         td.vGuess = next
+      }
+      for (const sh of shockleyDiodes) {
+        if (sh.state !== 'conducting') continue
+        const d = sh.diode
+        const vAnode = d.anodeNet === ground ? 0 : (nodes.get(d.anodeNet) ?? 0)
+        const vCathode = d.cathodeNet === ground ? 0 : (nodes.get(d.cathodeNet) ?? 0)
+        const nVT = d.idealityFactor * d.thermalV
+        const vcrit = criticalVoltage(d.saturationCurrent, d.idealityFactor, d.thermalV)
+        const limit = pnjlim(vAnode - vCathode, d.vGuess, nVT, vcrit)
+        maxDelta = Math.max(maxDelta, Math.abs(limit.voltage - d.vGuess))
+        if (limit.limited) anyLimited = true
+        d.vGuess = limit.voltage
       }
       for (const z of zeners) {
         const vAnode = z.anodeNet === ground ? 0 : (nodes.get(z.anodeNet) ?? 0)
@@ -1663,6 +1718,10 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const v = volts(td.anodeNet) - volts(td.cathodeNet)
       through(td.inst.id, 'anode', 'cathode', tunnelDiodeCurrent(v, td.params))
     }
+    for (const sh of shockleyDiodes) {
+      const v = volts(sh.diode.anodeNet) - volts(sh.diode.cathodeNet)
+      through(sh.inst.id, 'anode', 'cathode', shockleyTransientCurrent(sh, v))
+    }
 
     for (const z of zeners) {
       // The two-branch device current at the converged voltage — forward, or the
@@ -1737,6 +1796,11 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     const at = (net: string) => (net === ground ? 0 : (seed.nodes.get(net) ?? 0))
     for (const d of diodes) d.vGuess = at(d.anodeNet) - at(d.cathodeNet)
     for (const td of tunnelDiodes) td.vGuess = at(td.anodeNet) - at(td.cathodeNet)
+    // Only seed a CONDUCTING latch from the DC point; a blocking one keeps its safe off-guess (0),
+    // so when it breaks over the Newton walk starts low and pnjlim climbs without overflowing.
+    for (const sh of shockleyDiodes)
+      if (sh.state === 'conducting')
+        sh.diode.vGuess = at(sh.diode.anodeNet) - at(sh.diode.cathodeNet)
     for (const z of zeners) z.vGuess = at(z.anodeNet) - at(z.cathodeNet)
     for (const bjt of bjts) {
       const sign = bjt.polarity === 'pnp' ? -1 : 1
@@ -1788,6 +1852,18 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         cap.qPrev = varactorCharge(cap.vPrev, cap.varactor)
         cap.vGuess = cap.vPrev
       }
+    }
+    for (const sh of shockleyDiodes) {
+      // The latch flips off this step's solved voltage / current, taking effect next step: breakover
+      // turns it on, a current below the holding current turns it off — a relaxation oscillator.
+      const v = (nodes.get(sh.diode.anodeNet) ?? 0) - (nodes.get(sh.diode.cathodeNet) ?? 0)
+      sh.state = shockleyDiodeTarget(
+        sh.state,
+        v,
+        shockleyTransientCurrent(sh, v),
+        sh.breakoverVoltage,
+        sh.holdingCurrent,
+      )
     }
     for (const ind of inductors) {
       // The converged step's current through the inductor — the value just
