@@ -1340,6 +1340,8 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       if (sh !== null) shockleyDiodes.push(sh)
       else
         warnings.push(`Skipped Shockley diode '${inst.id}' (missing parameters or anode/cathode)`)
+    } else if (inst.definition === 'scr') {
+      warnings.push(`SCR '${inst.id}' is not modeled in transient yet (DC only)`)
     } else if (inst.definition === 'wire') {
       const short = resolveShort(
         inst,

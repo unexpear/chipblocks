@@ -360,7 +360,9 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       }
       continue
     }
-    if (inst.connects?.length !== 2) continue
+    // The SCR is the one 3-terminal device dispatched in this section (its anode-cathode latch plus
+    // a gate); every other branch below is 2-terminal. Let it through the 2-terminal guard.
+    if (inst.connects?.length !== 2 && inst.definition !== 'scr') continue
 
     if (inst.definition === 'power_source') {
       linearVoltageSources.push({ inst, kind: 'power_source' })
@@ -373,10 +375,11 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     } else if (inst.definition === 'diode_tunnel') {
       const td = resolveTunnelDiode(inst, thermalV)
       if (td !== null) tunnelDiodes.push(td)
-    } else if (inst.definition === 'diode_shockley') {
-      // A latching 4-layer diode: conducting → an ordinary forward diode; blocking → open. The
-      // breakover / holding-current transitions between the two are the discrete-state fixed point
-      // settled in solveWithRelays, off the solved voltage across and current through.
+    } else if (inst.definition === 'diode_shockley' || inst.definition === 'scr') {
+      // A latching thyristor — the Shockley diode and the SCR's anode-cathode path. Conducting → an
+      // ordinary forward diode; blocking → open. The breakover / gate-trigger / holding-current
+      // transitions are the discrete-state fixed point settled in solveWithRelays (the SCR's gate
+      // adds the trigger); an SCR also stamps its gate-cathode resistance in the linear pass below.
       if (readEnumParam(inst, 'device_state') === 'conducting') {
         const led = resolveShockleyLed(inst, thermalV, options?.temperaturesC?.get(inst.id))
         if (led !== null) shockleyLeds.push(led)
@@ -441,6 +444,13 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         // A photodiode / phototransistor injects a light-driven current (+ shunt).
         const [from, to] = lightCurrentTerminals(inst.definition)
         stampLightCurrentSource(inst, nodeIndex, M, b, from, to)
+      } else if (inst.definition === 'scr') {
+        // The SCR's gate-cathode resistance — the current path that lets the gate trigger fire it.
+        const gate = inst.connects?.find((c) => c.terminal === 'gate')?.net
+        const cathode = inst.connects?.find((c) => c.terminal === 'cathode')?.net
+        const rGate = readScalarParam(inst, 'gate_cathode_resistance')
+        if (gate !== undefined && cathode !== undefined && rGate !== undefined && rGate > 0)
+          stampConductance(nodeIndex, M, gate, cathode, rGate)
       }
     }
     for (let s = 0; s < linearVoltageSources.length; s++) {

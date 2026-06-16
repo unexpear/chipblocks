@@ -1,0 +1,163 @@
+/**
+ * SCR (silicon controlled rectifier) tests — the gated thyristor. Its anode-cathode path is the
+ * Shockley latch; the gate ADDS a trigger: a gate current at or above I_GT fires it on, far below
+ * the self-breakover voltage. The gate cannot turn it off — only the anode current falling below the
+ * holding current does. These cover the pure trigger logic and the end-to-end latch through the
+ * discrete-state fixed point (solveWithRelays), gate drive included.
+ */
+
+import { describe, expect, test } from 'vitest'
+import type { World } from '../src/cross-fk-validator.ts'
+import { solveWithRelays } from '../src/relay.ts'
+import { scrTarget } from '../src/shockley-diode.ts'
+
+describe('scrTarget (the gated-latch transition)', () => {
+  const V_BO = 100
+  const I_H = 0.005
+  const I_GT = 0.0005
+  test('a gate current at/above I_GT fires it ON, far below breakover', () => {
+    expect(scrTarget('blocking', 30, 0, 0.001, V_BO, I_H, I_GT)).toBe('conducting') // 1 mA ≥ I_GT
+    expect(scrTarget('blocking', 30, 0, 0.0001, V_BO, I_H, I_GT)).toBe('blocking') // 0.1 mA < I_GT
+  })
+  test('it still self-fires at the breakover voltage with no gate', () => {
+    expect(scrTarget('blocking', 120, 0, 0, V_BO, I_H, I_GT)).toBe('conducting')
+    expect(scrTarget('blocking', 30, 0, 0, V_BO, I_H, I_GT)).toBe('blocking')
+  })
+  test('the gate CANNOT turn it off — only the holding current does', () => {
+    // conducting, gate removed (0), anode current well above holding → stays ON:
+    expect(scrTarget('conducting', 2, 0.02, 0, V_BO, I_H, I_GT)).toBe('conducting')
+    // conducting, anode current below holding → turns OFF:
+    expect(scrTarget('conducting', 2, 0.001, 0, V_BO, I_H, I_GT)).toBe('blocking')
+  })
+})
+
+const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
+
+/**
+ * V+(anodeSupply) → R(loadOhms) → SCR.anode; SCR.cathode → GND; V_gate drives SCR.gate. Returns the
+ * settled latch state + the anode current. I_GT 0.5 mA, R_GK 1 kΩ → a gate above ~0.5 V fires it.
+ */
+function solveScr(
+  anodeSupply: number,
+  loadOhms: number,
+  gateVolts: number,
+  startState: 'blocking' | 'conducting',
+): { latch: string | undefined; anodeCurrent: number } {
+  const world: World = {
+    definitions: new Map(),
+    instances: new Map(),
+    behaviors: new Map(),
+    activeVariables: new Map(),
+    nets: new Map(),
+  }
+  world.nets.set('va', {
+    id: 'va',
+    kind: 'net',
+    members: [
+      { instance: 'bata', terminal: 'terminal_positive' },
+      { instance: 'rload', terminal: 'terminal_a' },
+    ],
+  })
+  world.nets.set('anode', {
+    id: 'anode',
+    kind: 'net',
+    members: [
+      { instance: 'rload', terminal: 'terminal_b' },
+      { instance: 'scr', terminal: 'anode' },
+    ],
+  })
+  world.nets.set('gate', {
+    id: 'gate',
+    kind: 'net',
+    members: [
+      { instance: 'batg', terminal: 'terminal_positive' },
+      { instance: 'scr', terminal: 'gate' },
+    ],
+  })
+  world.nets.set('gnd', {
+    id: 'gnd',
+    kind: 'net',
+    type: 'ground',
+    members: [
+      { instance: 'bata', terminal: 'terminal_negative' },
+      { instance: 'batg', terminal: 'terminal_negative' },
+      { instance: 'scr', terminal: 'cathode' },
+    ],
+  })
+  world.instances.set('bata', {
+    id: 'bata',
+    kind_ref: 'primitive_device',
+    definition: 'power_source',
+    parameters: { nominal_voltage: scalar(anodeSupply, 'volt') },
+    connects: [
+      { net: 'va', terminal: 'terminal_positive', of: 'bata' },
+      { net: 'gnd', terminal: 'terminal_negative', of: 'bata' },
+    ],
+  })
+  world.instances.set('batg', {
+    id: 'batg',
+    kind_ref: 'primitive_device',
+    definition: 'power_source',
+    parameters: { nominal_voltage: scalar(gateVolts, 'volt') },
+    connects: [
+      { net: 'gate', terminal: 'terminal_positive', of: 'batg' },
+      { net: 'gnd', terminal: 'terminal_negative', of: 'batg' },
+    ],
+  })
+  world.instances.set('rload', {
+    id: 'rload',
+    kind_ref: 'primitive_device',
+    definition: 'resistor',
+    parameters: { resistance: scalar(loadOhms, 'ohm') },
+    connects: [
+      { net: 'va', terminal: 'terminal_a', of: 'rload' },
+      { net: 'anode', terminal: 'terminal_b', of: 'rload' },
+    ],
+  })
+  world.instances.set('scr', {
+    id: 'scr',
+    kind_ref: 'primitive_device',
+    definition: 'scr',
+    parameters: {
+      breakover_voltage: scalar(100, 'volt'),
+      holding_current: scalar(0.005, 'ampere'),
+      forward_voltage: scalar(1.7, 'volt'),
+      max_forward_current: scalar(0.8, 'ampere'),
+      gate_trigger_current: scalar(0.0005, 'ampere'),
+      gate_cathode_resistance: scalar(1000, 'ohm'),
+      device_state: { value: startState },
+    },
+    connects: [
+      { net: 'anode', terminal: 'anode', of: 'scr' },
+      { net: 'gnd', terminal: 'cathode', of: 'scr' },
+      { net: 'gate', terminal: 'gate', of: 'scr' },
+    ],
+  })
+  const result = solveWithRelays(world)
+  return {
+    latch: result.shockleyStates.get('scr'),
+    anodeCurrent: Math.abs(result.solution.branches.get('scr') ?? 0),
+  }
+}
+
+describe('solveWithRelays — SCR latch (gate-triggered)', () => {
+  test('a gate pulse fires it on below breakover, and the anode conducts', () => {
+    const r = solveScr(30, 1000, 2, 'blocking') // gate 2 V → 2 mA ≥ 0.5 mA I_GT
+    expect(r.latch).toBe('conducting')
+    expect(r.anodeCurrent).toBeGreaterThan(0.01) // ~(30 − 1.7) / 1000 ≈ 28 mA
+  })
+  test('with no gate drive and below breakover, it stays blocking', () => {
+    const r = solveScr(30, 1000, 0, 'blocking')
+    expect(r.latch).toBe('blocking')
+    expect(r.anodeCurrent).toBeLessThan(1e-6)
+  })
+  test('once latched it STAYS on after the gate is removed (the gate cannot turn it off)', () => {
+    const r = solveScr(30, 1000, 0, 'conducting') // gate 0, but already latched + above holding
+    expect(r.latch).toBe('conducting')
+    expect(r.anodeCurrent).toBeGreaterThan(0.01)
+  })
+  test('it turns off when the anode current falls below the holding current', () => {
+    const r = solveScr(30, 100000, 0, 'conducting') // ~0.28 mA ≪ 5 mA holding
+    expect(r.latch).toBe('blocking')
+  })
+})

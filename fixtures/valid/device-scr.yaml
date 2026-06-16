@@ -1,0 +1,122 @@
+# Valid fixture: SCR (silicon controlled rectifier) — a GATED thyristor.
+# A 4-layer PNPN latch like the Shockley diode, but with a GATE that triggers turn-on: a small gate
+# current fires it into conduction at any forward anode voltage (far below the self-breakover
+# voltage). Once latched it conducts like a forward diode and STAYS on — the gate cannot turn it off
+# — until the anode current falls below the holding current. The everyday AC-power-control device:
+# light dimmers, motor speed control, phase control, crowbar over-voltage protection.
+#
+# Modeled as the Shockley latch (the anode-cathode path: blocking / conducting via device_state, with
+# breakover + holding) PLUS a gate: a gate-cathode resistance carries the gate current, and the
+# discrete-state fixed point (solveWithRelays) ALSO fires the latch when that gate current reaches the
+# gate trigger current I_GT (scrTarget in shockley-diode.ts). App persists the latch like the Shockley.
+#
+# Per the device-power-source convention this definition carries NO builtin numeric defaults on the
+# electrical parameters — the cited canvas drop defaults live in part-defaults.ts (2N5060 class); only
+# the structural material regions default here. device_state is a runtime parameter (default
+# blocking), not declared here — like the relay's coil_state.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: scr
+origin: builtin
+layer: primitive_device
+name: "SCR (silicon controlled rectifier)"
+description: "A three-terminal gated thyristor: anode, cathode, gate. A four-layer PNPN latch that blocks forward current until a small GATE current triggers it on (or the anode reaches the self-breakover voltage); once latched it conducts like a forward diode and stays on until the anode current drops below the holding current — the gate cannot turn it off. The workhorse of AC power control: dimmers, motor speed control, phase control, crowbar protection."
+composition:
+  uses:
+    - pn_junction
+  requires:
+    n_side:
+      kind: material
+      must_enable:
+        - n_type_semiconductor
+    p_side:
+      kind: material
+      must_enable:
+        - p_type_semiconductor
+    endpoints:
+      kind: interface
+      min_count: 3
+parameters:
+  n_side:
+    type: material_ref
+    satisfies_role: n_side
+    required: true
+    default:
+      value: silicon_n_type
+    description: The n-doped material of the four-layer (PNPN) stack; the modeled behavior is the gated latch, set by the cited parameters, so the region here is structural.
+  p_side:
+    type: material_ref
+    satisfies_role: p_side
+    required: true
+    default:
+      value: silicon_p_type
+    description: The p-doped material of the stack.
+  breakover_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: "Forward self-breakover voltage — the anode voltage at which it fires WITHOUT a gate trigger. Normally the gate fires it far below this; the device blocks up to it."
+  holding_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: "Holding current I_H — the minimum anode current that keeps it latched ON. Below it the SCR turns off (the only way to turn it off — the gate cannot)."
+  forward_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: On-state anode-cathode voltage drop once conducting (~1.5-1.7 V). Also the calibration point for the on-state diode model.
+  max_forward_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: Maximum continuous on-state (anode) current rating.
+  gate_trigger_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: "Gate trigger current I_GT — the gate current that fires the SCR into conduction. Small (microamps to a few mA) compared with the anode current it then switches."
+  gate_cathode_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: "Gate-cathode resistance — the gate current path (gate current = V_GK / R). A linear stand-in for the gate junction; chosen so I_GT · R approximates the real gate trigger VOLTAGE (~0.7 V). The gate junction diode is the higher-fidelity successor."
+  thermal_resistance_junction_ambient:
+    type: quantity
+    units: kelvin_per_watt
+    required: false
+    description: Junction-to-ambient thermal resistance (theta_JA) of the package — the lumped thermal model's slope.
+  max_operating_temperature:
+    type: quantity
+    units: celsius
+    required: false
+    description: Maximum junction operating temperature; the stage-7 thermal check fires when the computed steady-state temperature exceeds it.
+behaviors:
+  - acts_as_diode
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+terminals:
+  anode:
+    description: Positive terminal; current enters here when latched on.
+  cathode:
+    description: Negative terminal; current exits here. The gate is referenced to it.
+  gate:
+    description: The trigger terminal; a gate current at or above I_GT fires the SCR. It cannot turn the device off.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  The anode-cathode path is the Shockley latch (shockley-diode.ts is the latch family: diode_shockley
+  + scr); the gate adds the trigger. The DC solver treats a conducting SCR as a forward diode and a
+  blocking one as open, stamps the gate-cathode resistance as the gate current path, and the
+  discrete-state loop (solveWithRelays, scrTarget) fires the latch at breakover OR when the gate
+  current reaches I_GT, turning off only when the anode current drops below the holding current. App
+  persists device_state (the latch memory) like the Shockley. NOT modeled yet: transient (phase
+  control) operation — the documented successor — and the gate junction (modeled as a linear
+  resistance). The triac (a bidirectional SCR) is the natural next member of the family.

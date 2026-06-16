@@ -263,6 +263,20 @@ function VaractorGlyph() {
   )
 }
 
+/** SCR (silicon controlled rectifier) — a rectifier diode with a GATE lead off the cathode side. */
+function ScrGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>SCR (silicon controlled rectifier)</title>
+      {lead(0, 26)}
+      <polygon points="26,12 26,32 44,22" fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={44} y1={12} x2={44} y2={32} stroke={STROKE} strokeWidth={1.5} />
+      {lead(44, W)}
+      <line x1={44} y1={30} x2={32} y2={44} stroke={STROKE} strokeWidth={1.2} />
+    </svg>
+  )
+}
+
 /** SPST switch — a hinged blade: closed rests on the far contact, open lifts away. */
 function SwitchGlyph({ closed }: { closed: boolean }) {
   return (
@@ -1072,6 +1086,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   diode_tunnel: TunnelDiodeGlyph,
   diode_shockley: ShockleyDiodeGlyph,
   diode_varactor: VaractorGlyph,
+  scr: ScrGlyph,
   diode_silicon_rectifier: DiodeGlyph,
   diode_schottky_al_si: SchottkyGlyph,
   diode_zener_silicon: ZenerGlyph,
@@ -1142,6 +1157,11 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   diode_tunnel: TWO('anode', 'cathode'),
   diode_shockley: TWO('anode', 'cathode'),
   diode_varactor: TWO('anode', 'cathode'),
+  scr: [
+    { id: 'anode', position: Position.Left },
+    { id: 'cathode', position: Position.Right },
+    { id: 'gate', position: Position.Bottom },
+  ],
   diode_silicon_rectifier: TWO('anode', 'cathode'),
   diode_schottky_al_si: TWO('anode', 'cathode'),
   diode_zener_silicon: TWO('anode', 'cathode'),

@@ -39,11 +39,40 @@ export function shockleyDiodeTarget(
   return voltageAcross >= breakoverVoltage ? 'conducting' : 'blocking'
 }
 
+/**
+ * The SCR's next latch state — the Shockley latch PLUS a gate trigger: a blocking SCR also fires when
+ * the gate current reaches the gate trigger current I_GT (the point of the gate), not only at
+ * breakover. Turn-OFF is unchanged: only the anode current falling below the holding current switches
+ * it off — an SCR's gate cannot turn it off.
+ */
+export function scrTarget(
+  state: ShockleyDiodeState,
+  voltageAcross: number,
+  anodeCurrent: number,
+  gateCurrent: number,
+  breakoverVoltage: number,
+  holdingCurrent: number,
+  gateTriggerCurrent: number,
+): ShockleyDiodeState {
+  if (state === 'conducting') {
+    return Math.abs(anodeCurrent) < holdingCurrent ? 'blocking' : 'conducting'
+  }
+  if (voltageAcross >= breakoverVoltage) return 'conducting'
+  return gateCurrent >= gateTriggerCurrent ? 'conducting' : 'blocking'
+}
+
+/**
+ * The latching-thyristor family the discrete-state loop settles: the gateless Shockley diode and the
+ * gated SCR (whose anode-cathode path is the same bistable latch). Both store the latch as
+ * device_state and flip it off the solved circuit.
+ */
+const LATCHING_THYRISTORS = new Set(['diode_shockley', 'scr'])
+
 /** Each Shockley diode's current state from the world (blocking = off, at rest). */
 export function shockleyStatesOf(world: World): Map<string, ShockleyDiodeState> {
   const states = new Map<string, ShockleyDiodeState>()
   for (const inst of world.instances.values()) {
-    if (inst.definition !== 'diode_shockley') continue
+    if (!LATCHING_THYRISTORS.has(inst.definition)) continue
     states.set(
       inst.id,
       readEnumParam(inst, 'device_state') === 'conducting' ? 'conducting' : 'blocking',
@@ -61,7 +90,7 @@ export function worldWithShockleyStates(
   const instances = new Map<string, Instance>()
   for (const [id, inst] of world.instances) {
     const state = states.get(id)
-    if (state === undefined || inst.definition !== 'diode_shockley') {
+    if (state === undefined || !LATCHING_THYRISTORS.has(inst.definition)) {
       instances.set(id, inst)
       continue
     }
@@ -84,7 +113,7 @@ export function shockleyDiodeTargets(
   const targets = new Map<string, ShockleyDiodeState>()
   if (solution.status !== 'solved') return targets
   for (const inst of world.instances.values()) {
-    if (inst.definition !== 'diode_shockley') continue
+    if (!LATCHING_THYRISTORS.has(inst.definition)) continue
     const breakover = readScalarParam(inst, 'breakover_voltage')
     const holding = readScalarParam(inst, 'holding_current')
     if (breakover === undefined || holding === undefined) continue
@@ -95,7 +124,18 @@ export function shockleyDiodeTargets(
       readEnumParam(inst, 'device_state') === 'conducting' ? 'conducting' : 'blocking'
     const vAcross = (solution.nodes.get(anode) ?? 0) - (solution.nodes.get(cathode) ?? 0)
     const current = Math.abs(solution.branches.get(inst.id) ?? 0)
-    const target = shockleyDiodeTarget(state, vAcross, current, breakover, holding)
+    let target: ShockleyDiodeState
+    if (inst.definition === 'scr') {
+      const gate = inst.connects?.find((c) => c.terminal === 'gate')?.net
+      const gateResistance = readScalarParam(inst, 'gate_cathode_resistance')
+      const gateTrigger = readScalarParam(inst, 'gate_trigger_current')
+      if (gate === undefined || gateResistance === undefined || gateTrigger === undefined) continue
+      const gateCurrent =
+        ((solution.nodes.get(gate) ?? 0) - (solution.nodes.get(cathode) ?? 0)) / gateResistance
+      target = scrTarget(state, vAcross, current, gateCurrent, breakover, holding, gateTrigger)
+    } else {
+      target = shockleyDiodeTarget(state, vAcross, current, breakover, holding)
+    }
     if (target !== state) targets.set(inst.id, target)
   }
   return targets

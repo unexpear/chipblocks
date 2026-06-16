@@ -198,6 +198,22 @@ const DEFAULTS: Record<string, Parameters> = {
     thermal_resistance_junction_ambient: scalar(300, 'kelvin_per_watt'),
     max_operating_temperature: scalar(125, 'celsius'),
   },
+  scr: {
+    // 2N5060-class SCR (TO-92). Blocks to a high self-breakover; the gate (I_GT ~0.2 mA) fires it
+    // well below that. I_H ~5 mA, on-state ~1.7 V, ~0.8 A. R_GK chosen so I_GT·R ≈ 0.7 V (the gate
+    // trigger voltage) — the linear stand-in for the gate junction.
+    breakover_voltage: scalar(100, 'volt'),
+    holding_current: scalar(5e-3, 'ampere'),
+    forward_voltage: scalar(1.7, 'volt'),
+    max_forward_current: scalar(0.8, 'ampere'),
+    gate_trigger_current: scalar(0.2e-3, 'ampere'),
+    gate_cathode_resistance: scalar(3500, 'ohm'),
+    device_state: { value: 'blocking' },
+    n_side: { value: 'silicon_n_type' },
+    p_side: { value: 'silicon_p_type' },
+    thermal_resistance_junction_ambient: scalar(80, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(125, 'celsius'),
+  },
   switch_spst_toggle: {
     // Panel-mount SPST toggle (C&K 7101 class, matching the anchor switch
     // fixture): copper contacts, ~20 mΩ closed, 6 A, 125 V. Starts closed
@@ -540,6 +556,17 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     transit_time: '~1 ns transit time (sets the forward diffusion charge; negligible in reverse)',
     thermal_resistance_junction_ambient: 'small package class (~300 K/W)',
     max_operating_temperature: 'silicon varactor T_J max ~125 °C',
+  },
+  scr: {
+    breakover_voltage: '2N5060-class self-breakover (rated blocking ~30-60 V; modeled at 100 V)',
+    holding_current: '2N5060 holding current ~5 mA',
+    forward_voltage: 'on-state drop ~1.7 V (a conducting silicon SCR)',
+    max_forward_current: '2N5060 ~0.8 A on-state rating',
+    gate_trigger_current: '2N5060 gate trigger current I_GT ~0.2 mA',
+    gate_cathode_resistance:
+      'chosen so I_GT·R ≈ 0.7 V (the gate trigger voltage); linear stand-in for the gate junction',
+    thermal_resistance_junction_ambient: 'small power package class (~80 K/W)',
+    max_operating_temperature: 'SCR T_J max ~125 °C (class-typical)',
   },
   switch_spst_toggle: {
     contact_resistance_closed: 'C&K 7101 class (~20 mΩ closed)',
