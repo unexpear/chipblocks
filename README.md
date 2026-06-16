@@ -6,9 +6,9 @@ A free, open-source, ground-up electronics builder. Real physical blocks all the
 >
 > **Errors may exist.** Cited values can have transcription errors, datasheet errata, or condition-dependent variation. Found something wrong? Open an issue or submit a PR with the corrected value and a source citation — community-curated errata is how data quality improves over time (same model KiCad uses).
 
-**Status:** Foundation-spec + foundation-code phase. Master has the canonical object model spec, six JSON schemas (definition, instance, behavior, active-variable, identity/provenance/quantity/support fragments), a TypeScript cross-FK validator, and 74 passing tests across 18 materials + 10 behaviors + 10 primitive devices + 16 instances (full red/blue/green/IR/UV LED catalog, three diode variants, switch, resistor, capacitor, power source, solder joints). **No UI / canvas / Electron app yet** — that's the next major direction. The shape of the work: spec the foundation → write schemas → build the validator → build the canvas → ship the first working slice. We're at step 3 going on 4.
+**Status:** A working desktop app lives on `master` — Electron + React + TypeScript. What's shipped: a fully-cited, JSON-Schema-validated catalog (19 materials, 13 behaviors, 28 primitive-device definitions — diodes, LEDs, BJTs, MOSFETs, transformers, plus switches, potentiometer, relay, fuse, thermistor, photodiode/phototransistor and more — with 17 example instances) checked by a cross-reference validator; **two physics solvers** — DC (Modified Nodal Analysis + Newton–Raphson, with electro-thermal feedback) and transient/time-domain (backward-Euler); a **full interactive schematic editor** (standard IEC 60617 / IEEE 315 symbols, CAD-style wiring, selection, undo/redo, reusable circuit blocks); a **multimeter** and a **complete oscilloscope + curve tracer**; a Math panel, failure-mode checks, five visualization lenses, and circuit Save/Load. The digital chapter — logic gates built from real transistors → adders → flip-flops and a 4-bit register — is in. Nine JSON schemas; **918 tests** plus type-check, lint, and build gate every commit. Through Sprint 21.
 
-If you want a working app, this isn't it yet. If you want to follow the design discussion, the docs in this repo are the current work.
+This is a working tool, not a finished product — heed the disclaimer above. The docs in this repo track the design and the reasoning behind it.
 
 ## Vision in one sentence
 
@@ -22,9 +22,9 @@ The three load-bearing principles:
 
 3. **Free and open-source, no paid tier ever.** MIT-licensed, permissive dependencies only, BYOK AI (no inference fees passed through to users), all toolchain components either bundled or open-source. A No-AI mode is required so the app works fully without any model.
 
-## Visual approach (eventual canvas)
+## Visual approach
 
-When the canvas exists, ChipBlocks will use **standard schematic shorthand** — the symbols people already draw on paper and that KiCad uses. Standardized in **IEC 60617** (international graphical symbols for diagrams) and **IEEE 315** (the US convention KiCad's defaults derive from). Custom icons would be anti-usability for an audience that already reads zigzag = resistor, triangle + bar = diode, two parallel lines = capacitor.
+ChipBlocks uses **standard schematic shorthand** — the symbols people already draw on paper and that KiCad uses. Standardized in **IEC 60617** (international graphical symbols for diagrams) and **IEEE 315** (the US convention KiCad's defaults derive from). Custom icons would be anti-usability for an audience that already reads zigzag = resistor, triangle + bar = diode, two parallel lines = capacitor.
 
 See [SCHEMATIC-SYMBOLS.md](SCHEMATIC-SYMBOLS.md) for the symbol inventory and the IEC vs IEEE differences. The exact mechanism — likely an optional `symbol:` field on device definitions pointing at a standard symbol id — is deferred until canvas work begins; see [OBJECT-MODEL.md](OBJECT-MODEL.md) §15 for the deferred design question.
 
@@ -40,10 +40,16 @@ The original ChipBlocks (v0.1.0-alpha.x) was a visual chip-design tool focused o
 
 The reset changes the active product direction. It does not change the value of the old work. The legacy direction may later be extracted into a separate `chipblocks-audio` repository and continued independently.
 
-## Current repo state (docs only)
+## Current repo state
 
 ```
 chipblocks/
+├── src/                        physics solvers + React renderer (editor, scope, meter, lenses)
+├── electron/                   main process (native menu, Save/Load) + preload bridge
+├── schemas/                    nine JSON Schemas (definition, instance, behavior, net, …)
+├── fixtures/valid/             the cited catalog (materials, behaviors, devices, instances, nets)
+├── tests/                      918 Vitest tests
+├── sprints/                    sprint plans + close-outs (sprint-2 … sprint-21)
 ├── OBJECT-MODEL.md             canonical v3 foundation spec
 ├── README.md                   this file
 ├── CLAUDE.md                   development companion for Claude Code
@@ -59,11 +65,11 @@ chipblocks/
                                 SPRINT-1, SPRINT-2, SPRINT-3
 ```
 
-Frontend / schemas / manifests / codegen / tests / CI all return as v3 sprints rebuild them. The first code to return is `schemas/object.schema.json` in v3 Sprint 2 — only after the object model spec clears review.
+Build and run it with `npm install`, then `npm run dev` (Electron dev app) or `npm run build`.
 
 ## Contributing
 
-ChipBlocks is in active foundation-spec work. Issues and discussions on the canonical object model ([OBJECT-MODEL.md](OBJECT-MODEL.md)) are welcome. PRs are best deferred until the spec clears review and the first schema lands. The legacy audio-synth branch (`legacy/audio-synth-direction`) is preserved but not the current direction.
+ChipBlocks is in active development. Issues, corrections to cited values (with a source), and discussion on the canonical object model ([OBJECT-MODEL.md](OBJECT-MODEL.md)) are welcome. The legacy audio-synth branch (`legacy/audio-synth-direction`) is preserved but is not the current direction.
 
 ## License
 
