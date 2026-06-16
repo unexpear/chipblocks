@@ -112,7 +112,7 @@ import {
 import { type MonteCarloResult, monteCarloAnalysis } from './monte-carlo.ts'
 import { expandMultiLeadSources, multiLeadAliases } from './multi-tap-source.ts'
 import { edgeTypes } from './net-edge.tsx'
-import { BLOCK_MIME, BlockPaletteItems, DEFINITION_MIME, PaletteItems } from './palette.tsx'
+import { BLOCK_MIME, DEFINITION_MIME, Palette } from './palette.tsx'
 import { moveToEdge, type PanelLayout, panelGroups, stackOnto } from './panel-groups.ts'
 import {
   blownFuse,
@@ -3092,17 +3092,14 @@ function Canvas() {
             title: 'Parts',
             visible: true,
             content: (
-              <>
-                <PaletteItems />
-                <BlockPaletteItems
-                  blocks={nodes
-                    .filter((n) => (n.data as { definition?: string }).definition === 'block')
-                    .map((n) => ({
-                      id: n.id,
-                      name: ((n.data as { block?: BlockData }).block?.name ?? n.id) as string,
-                    }))}
-                />
-              </>
+              <Palette
+                blocks={nodes
+                  .filter((n) => (n.data as { definition?: string }).definition === 'block')
+                  .map((n) => ({
+                    id: n.id,
+                    name: ((n.data as { block?: BlockData }).block?.name ?? n.id) as string,
+                  }))}
+              />
             ),
           },
           tools: {

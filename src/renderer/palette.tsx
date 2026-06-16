@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { DeviceGlyph } from './symbols.tsx'
 
 /**
@@ -26,8 +27,16 @@ export const BLOCK_MIME = 'application/chipblocks-block'
  * on canvas — delete the last copy and the template goes with it (the
  * catalog-grade project library is the documented next rung).
  */
-export function BlockPaletteItems({ blocks }: { blocks: { id: string; name: string }[] }) {
-  if (blocks.length === 0) return null
+export function BlockPaletteItems({
+  blocks,
+  filter,
+}: {
+  blocks: { id: string; name: string }[]
+  filter?: string
+}) {
+  const query = (filter ?? '').trim().toLowerCase()
+  const shown = query ? blocks.filter((b) => b.name.toLowerCase().includes(query)) : blocks
+  if (shown.length === 0) return null
   return (
     <>
       <div
@@ -40,7 +49,7 @@ export function BlockPaletteItems({ blocks }: { blocks: { id: string; name: stri
       >
         Blocks — drag to copy
       </div>
-      {blocks.map((block) => (
+      {shown.map((block) => (
         // biome-ignore lint/a11y/noStaticElementInteractions: a palette block is a drag source, same as the parts above
         <div
           key={block.id}
@@ -117,10 +126,17 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'ground', label: 'Ground' },
 ]
 
-export function PaletteItems() {
+export function PaletteItems({ filter }: { filter?: string }) {
+  const query = (filter ?? '').trim().toLowerCase()
+  const shown = query
+    ? PARTS.filter(
+        (part) =>
+          part.label.toLowerCase().includes(query) || part.definition.toLowerCase().includes(query),
+      )
+    : PARTS
   return (
     <>
-      {PARTS.map((part) => (
+      {shown.map((part) => (
         // biome-ignore lint/a11y/noStaticElementInteractions: a palette part is a drag source; keyboard-accessible placement is future work
         <div
           key={part.definition}
@@ -146,6 +162,42 @@ export function PaletteItems() {
           <span style={{ color: '#cdd6e0', fontSize: 11 }}>{part.label}</span>
         </div>
       ))}
+    </>
+  )
+}
+
+/**
+ * The Parts panel: a filter-as-you-type box over the placeable parts AND the
+ * on-canvas blocks. The query matches a part's label or its definition id (so
+ * "mos" finds the MOSFETs, "logic" finds the gates) and a block's name. Empty
+ * query shows everything; the box keeps its own state so typing never re-solves.
+ */
+export function Palette({ blocks }: { blocks: { id: string; name: string }[] }) {
+  const [query, setQuery] = useState('')
+  return (
+    <>
+      <input
+        type="text"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="Search parts…"
+        aria-label="Search parts"
+        style={{
+          width: '100%',
+          boxSizing: 'border-box',
+          margin: '0 0 6px',
+          padding: '5px 8px',
+          border: '1px solid #2a2a2f',
+          borderRadius: 6,
+          background: '#141417',
+          color: '#cdd6e0',
+          fontSize: 11,
+          fontFamily: 'system-ui, sans-serif',
+          outline: 'none',
+        }}
+      />
+      <PaletteItems filter={query} />
+      <BlockPaletteItems blocks={blocks} filter={query} />
     </>
   )
 }
