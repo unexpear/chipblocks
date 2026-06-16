@@ -1215,11 +1215,19 @@ function Canvas() {
   // (ground, junctions, expanded multi-lead sources, blocks) resolve to
   // nothing and the probe is dropped, never invented.
   const scopePartInfo = useMemo(() => {
+    // Parts whose recorded current is anode→cathode (the transient solver records them at /anode):
+    // the LED/diode family, the zener, and the latching thyristors (Shockley + the SCR's A-K path).
     const DIODES = new Set([
       'led',
       'led_uv_algan',
       'diode_silicon_rectifier',
       'diode_schottky_al_si',
+      'diode_zener_silicon',
+      'diode_laser',
+      'diode_tunnel',
+      'diode_shockley',
+      'diode_varactor',
+      'scr',
     ])
     const info = new Map<string, { currentKey: string; label: string }>()
     for (const inst of solvedWorld.instances.values()) {
@@ -1235,9 +1243,14 @@ function Canvas() {
         info.set(id, { currentKey: `${id}/collector`, label: `${id} · I(collector)` })
       } else if (
         inst.definition === 'transistor_mosfet_nmos' ||
-        inst.definition === 'transistor_mosfet_pmos'
+        inst.definition === 'transistor_mosfet_pmos' ||
+        inst.definition === 'transistor_jfet_n_channel' ||
+        inst.definition === 'transistor_jfet_p_channel'
       ) {
         info.set(id, { currentKey: `${id}/drain`, label: `${id} · I(drain)` })
+      } else if (inst.definition === 'diode_constant_current') {
+        // A CRD is internally a JFET, so the solver records its current at the synthetic drain.
+        info.set(id, { currentKey: `${id}/drain`, label: `${id} · I(anode→cathode)` })
       } else if (
         inst.definition === 'switch_spst_toggle' ||
         inst.definition === 'switch_spst_momentary'

@@ -9,6 +9,7 @@
 import { describe, expect, test } from 'vitest'
 import type { World } from '../src/cross-fk-validator.ts'
 import { solveWithRelays } from '../src/relay.ts'
+import { type PartReading, partReadings } from '../src/renderer/part-readings.ts'
 import { scrTarget } from '../src/shockley-diode.ts'
 import { solveTransient } from '../src/transient-solver.ts'
 
@@ -43,7 +44,7 @@ function solveScr(
   loadOhms: number,
   gateVolts: number,
   startState: 'blocking' | 'conducting',
-): { latch: string | undefined; anodeCurrent: number } {
+): { latch: string | undefined; anodeCurrent: number; reading: PartReading | undefined } {
   const world: World = {
     definitions: new Map(),
     instances: new Map(),
@@ -138,6 +139,7 @@ function solveScr(
   return {
     latch: result.shockleyStates.get('scr'),
     anodeCurrent: Math.abs(result.solution.branches.get('scr') ?? 0),
+    reading: partReadings(world, result.solution).get('scr'),
   }
 }
 
@@ -160,6 +162,12 @@ describe('solveWithRelays — SCR latch (gate-triggered)', () => {
   test('it turns off when the anode current falls below the holding current', () => {
     const r = solveScr(30, 100000, 0, 'conducting') // ~0.28 mA ≪ 5 mA holding
     expect(r.latch).toBe('blocking')
+  })
+  test('a conducting SCR reports voltage and power, not just current (the anode–cathode across)', () => {
+    const r = solveScr(30, 1000, 2, 'blocking') // fires on; ~28 mA through its ~1.7 V forward drop
+    expect(r.reading?.current).toBeGreaterThan(0.01)
+    expect(r.reading?.voltage).toBeGreaterThan(0) // |V_anode − V_cathode| — was undefined before
+    expect(r.reading?.power).toBeGreaterThan(0)
   })
 })
 
@@ -268,5 +276,8 @@ describe('solveTransient — SCR on an AC line (gated phase control)', () => {
     expect(Math.min(...load)).toBeLessThan(1e-3) // blocks on the negative half-cycles
     const half = Math.floor(load.length / 2)
     expect(Math.max(...load.slice(half))).toBeGreaterThan(0.01) // re-fires every cycle, not just once
+    // The SCR's anode current is recorded at scr/anode — the key the scope's part-current probe
+    // (scopePartInfo) reads, so the curve tracer can actually probe it and the other new devices.
+    expect(result.series.some((s) => (s.currents?.get('scr/anode') ?? 0) !== 0)).toBe(true)
   })
 })

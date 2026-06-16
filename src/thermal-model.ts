@@ -216,8 +216,8 @@ type NodeVoltages = { nodes: Map<string, number> }
  * The voltage ACROSS a part from solved node voltages — the V in its dissipated
  * power P = |I|·V. Two-terminal parts read their terminal pair; a transistor
  * dissipates across its conducting pair (collector–emitter for a BJT,
- * drain–source for a MOSFET — the base/gate term is comparatively tiny).
- * Undefined when the nets can't be resolved.
+ * drain–source for a MOSFET, anode–cathode for a 3-terminal SCR — the base/gate
+ * term is comparatively tiny). Undefined when the nets can't be resolved.
  */
 export function acrossVolts(inst: ConnectsLike, solution: NodeVoltages): number | undefined {
   const connects = inst.connects ?? []
@@ -230,8 +230,8 @@ export function acrossVolts(inst: ConnectsLike, solution: NodeVoltages): number 
     const byTerminal = (names: string[]) => connects.find((c) => names.includes(c.terminal))?.net
     // A potentiometer's "across" is its full track (end to end); a transistor's
     // is its conducting pair.
-    aNet = byTerminal(['collector', 'drain', 'terminal_a'])
-    bNet = byTerminal(['emitter', 'source', 'terminal_b'])
+    aNet = byTerminal(['collector', 'drain', 'anode', 'terminal_a'])
+    bNet = byTerminal(['emitter', 'source', 'cathode', 'terminal_b'])
   }
   if (aNet === undefined || bNet === undefined) return undefined
   const vA = solution.nodes.get(aNet)
