@@ -18,7 +18,7 @@
  * (ρ(T), etc.) land when the DC solver supplies callers that can pass T,
  * frequency, and so on.
  *
- * Physical constants are bound from NIST CODATA 2022 values
+ * Physical constants are bound from NIST CODATA 2018 values
  * (verified at physics.nist.gov 2026-06-05). See §16.4 for the full table.
  */
 
@@ -28,7 +28,10 @@ import { all, create } from 'mathjs'
 const math = create(all!)
 
 // ---------------------------------------------------------------------------
-// Physical constants — NIST CODATA 2022. Verified at physics.nist.gov 2026-06-05.
+// Physical constants — NIST CODATA 2018. Verified at physics.nist.gov 2026-06-05.
+// (epsilon_0/mu_0 are the 2018 measured values; h, c, e, k_B, N_A are SI-exact and
+// identical across CODATA sets. The 2022 set nudges epsilon_0/mu_0 by ~1e-9 relative
+// — negligible for circuit work, a pending refresh.)
 // Bound into the mathjs scope when the equation declares constants_used.
 // ---------------------------------------------------------------------------
 

@@ -1010,7 +1010,7 @@ Each `inputs.<name>` entry is one of three shapes, discriminated by `kind`:
 
 ### 16.4 Physical constants
 
-The evaluator binds these by name, sourced from NIST CODATA 2022 (verified at physics.nist.gov 2026-06-05). Declaring them in `constants_used: [...]` makes the dependency explicit.
+The evaluator binds these by name, sourced from NIST CODATA 2018 (verified at physics.nist.gov 2026-06-05; `epsilon_0` and `mu_0` are the 2018 measured values, while the SI-defined exact constants are identical in any CODATA set). Declaring them in `constants_used: [...]` makes the dependency explicit.
 
 | Name | Value | Units | Notes |
 |---|---|---|---|

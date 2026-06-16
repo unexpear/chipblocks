@@ -224,8 +224,9 @@ export function criticalVoltage(
 /**
  * pnjlim — the SPICE diode-voltage limiting algorithm (§20.5). Caps the
  * per-iteration voltage change in the diode's steep region so exp() can't
- * overflow. Reproduced verbatim from ngspice DEVpnjlim (devsup.c), verified
- * 2026-06-06.
+ * overflow. The forward-bias branch follows ngspice DEVpnjlim (devsup.c),
+ * verified 2026-06-06; the reverse-bias branch below is an added safeguard
+ * (NOT part of DEVpnjlim) that caps large negative voltage swings.
  *
  * `vt` here is the SCALED thermal voltage n·V_T (matching how vcrit is
  * computed). Returns the limited voltage + whether limiting fired (the
@@ -249,7 +250,8 @@ export function pnjlim(
     return { voltage: vt * Math.log(vnew / vt), limited: true }
   }
 
-  // Reverse-bias branch — limit large negative swings (ngspice devsup.c).
+  // Reverse-bias branch — an added safeguard (not part of ngspice DEVpnjlim)
+  // that caps large negative voltage swings.
   if (vnew < 0) {
     const arg = vold > 0 ? -vold - 1 : 2 * vold - 1
     if (vnew < arg) {
