@@ -1,6 +1,7 @@
 import type { World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
 import { readScalarParam } from '../instance-params.ts'
+import { laserOpticalPowerW } from '../laser-model.ts'
 import { acrossVolts, junctionTemperature } from '../thermal-model.ts'
 
 /**
@@ -22,6 +23,7 @@ export type PartReading = {
   current?: number
   voltage?: number
   power?: number
+  opticalOutputW?: number
   temperatureC?: number
   maxTemperatureC?: number
 }
@@ -46,6 +48,22 @@ export function partReadings(world: World, solution: Solution): Map<string, Part
         reading.temperatureC = junctionTemperature(reading.power, thetaJa)
         const maxTemperature = readScalarParam(inst, 'max_operating_temperature')
         if (maxTemperature !== undefined) reading.maxTemperatureC = maxTemperature
+      }
+    }
+
+    // Laser diode: the optical output is the defining, current-dependent reading (zero below the
+    // lasing threshold, then a steep rise). threshold_current is the laser-only marker.
+    const thresholdCurrent = readScalarParam(inst, 'threshold_current')
+    if (thresholdCurrent !== undefined && reading.current !== undefined) {
+      const wavelengthNm = readScalarParam(inst, 'peak_wavelength')
+      const efficiency = readScalarParam(inst, 'external_quantum_efficiency')
+      if (wavelengthNm !== undefined && efficiency !== undefined) {
+        reading.opticalOutputW = laserOpticalPowerW(
+          reading.current,
+          thresholdCurrent,
+          efficiency,
+          wavelengthNm,
+        )
       }
     }
 

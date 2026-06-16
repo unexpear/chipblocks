@@ -418,6 +418,9 @@ export function PartInspector({
           {reading.power !== undefined
             ? readingRow('Power', formatEng(reading.power, 'W'), headroom('power', reading.power))
             : null}
+          {reading.opticalOutputW !== undefined
+            ? readingRow('Optical output', formatEng(reading.opticalOutputW, 'W'), null)
+            : null}
           {reading.temperatureC !== undefined
             ? readingRow(
                 'Temperature',

@@ -206,6 +206,7 @@ type ZenerElement = {
 const SHOCKLEY_DIODE_DEFINITIONS = new Set([
   'led',
   'led_uv_algan',
+  'diode_laser',
   'diode_silicon_rectifier',
   'diode_schottky_al_si',
 ])

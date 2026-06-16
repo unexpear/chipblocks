@@ -1,0 +1,133 @@
+# Valid fixture: laser diode (semiconductor injection laser).
+# Electrically an ordinary forward-biased light-emitting PN junction — it solves through the same
+# Shockley + Newton-Raphson path as the LED (SHOCKLEY_DIODE_DEFINITIONS in dc-solver.ts). Its
+# DEFINING difference is optical: below the threshold current it emits only weak spontaneous light;
+# above the threshold, stimulated emission takes over and the optical output rises steeply and
+# ~linearly with current (the L-I curve). The renderer computes that output from the solved forward
+# current via laser-model.ts: P = eta_d · E_photon · (I_f − I_th), shown as a live "Optical output"
+# reading. The default composition is a 650 nm red AlGaInP laser (like a laser-pointer diode).
+#
+# Per the device-power-source convention this definition carries NO builtin numeric defaults on the
+# electrical parameters — the cited canvas drop defaults live in part-defaults.ts (650 nm red laser
+# class); only the structural material regions default here.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: diode_laser
+origin: builtin
+layer: primitive_device
+name: "Laser diode"
+description: "A two-terminal semiconductor injection laser. Electrically a forward-biased light-emitting PN junction (same diode I-V as an LED); optically it differs by a lasing THRESHOLD: below the threshold current it emits faint incoherent light, above it stimulated emission produces coherent light whose power rises steeply and ~linearly with current (the L-I curve, set by the differential quantum efficiency). Used in optical drives, fiber links, range-finders, and laser pointers. The default is a 650 nm red AlGaInP device."
+composition:
+  uses:
+    - pn_junction
+  requires:
+    n_side:
+      kind: material
+      must_enable:
+        - n_type_semiconductor
+        - direct_bandgap
+    p_side:
+      kind: material
+      must_enable:
+        - p_type_semiconductor
+        - direct_bandgap
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  n_side:
+    type: material_ref
+    satisfies_role: n_side
+    required: true
+    default:
+      value: aluminum_gallium_indium_phosphide_n_type
+    description: The n-doped semiconductor on the n-side of the PN junction. Determines (with p_side) the emitted wavelength via the junction's bandgap. Default is AlGaInP n-type for ~650 nm red emission.
+  p_side:
+    type: material_ref
+    satisfies_role: p_side
+    required: true
+    default:
+      value: aluminum_gallium_indium_phosphide_p_type
+    description: The p-doped semiconductor on the p-side. Should be from the same material system as n_side. Default is AlGaInP p-type for red emission.
+  forward_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: Operating forward voltage at the rated drive current. A red laser diode runs ~2.2-2.6 V (higher than the bandgap-derived LED value because of series resistance and the threshold).
+  peak_wavelength:
+    type: quantity
+    units: nanometer
+    required: true
+    description: Lasing wavelength, set by the active-region bandgap. AlGaInP red 635-670 nm; GaAs/AlGaAs IR 780-850 nm; InGaN blue/violet 405-450 nm.
+  threshold_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: The lasing threshold current I_th. Below it the device emits only weak spontaneous light; above it the optical output rises steeply with current. The defining laser parameter. Rises with temperature (not modeled yet).
+  external_quantum_efficiency:
+    type: quantity
+    units: dimensionless
+    required: false
+    description: "The differential (slope) quantum efficiency eta_d above threshold — the fraction of each above-threshold electron that leaves as an emitted photon. With the photon energy it sets the slope of the L-I curve: P_optical = eta_d · (h·c/lambda) · (I_f − I_th). Typical edge-emitters 0.2-0.6."
+  max_forward_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: Absolute maximum continuous forward current. Laser diodes are current-sensitive — modest overdrive destroys the facet, so the headroom matters.
+  reverse_breakdown_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Reverse voltage at which the junction breaks down. Laser diodes tolerate very little reverse bias (often only ~2 V); they are not designed for reverse operation.
+  ideality_factor:
+    type: quantity
+    units: dimensionless
+    required: false
+    description: "Shockley diode ideality factor n in I = I_s(exp(V/(n*V_T)) - 1). The nonlinear DC solver derives the I-V curve from forward_voltage + max_forward_current; falls back to 2.0 when unset."
+    default:
+      value: 2.0
+      provenance:
+        source_type: reference
+        title: "Diode ideality factor (typical range 1-2; wide-bandgap emitters near 2)"
+        citation: "Schubert, Light-Emitting Diodes, 2nd ed., §4 (the diode equation for LEDs/laser diodes)"
+        confidence: medium
+  thermal_resistance_junction_ambient:
+    type: quantity
+    units: kelvin_per_watt
+    required: false
+    description: Junction-to-ambient thermal resistance (theta_JA) of the package — the lumped thermal model's slope, T = T_ambient + P·theta_JA.
+  max_operating_temperature:
+    type: quantity
+    units: celsius
+    required: false
+    description: Maximum junction operating temperature; the stage-7 thermal check fires when the computed steady-state temperature exceeds it. Laser diodes are temperature-sensitive (the threshold climbs with heat).
+behaviors:
+  - acts_as_diode
+  - emits_light
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+terminals:
+  anode:
+    description: Positive terminal (P-side); current enters here when forward-biased.
+  cathode:
+    description: Negative terminal (N-side); current exits here.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Electrically a light-emitting PN junction — resolved through the same Shockley + NR path as the
+  LED (SHOCKLEY_DIODE_DEFINITIONS in dc-solver.ts; DIODE_DEFINITIONS in transient-solver.ts), with
+  the bandgap (from peak_wavelength) setting the forward voltage. The laser-specific physics is the
+  OPTICAL output: laser-model.ts computes P_optical = eta_d · (h·c/lambda) · (I_f − I_th) for
+  I_f > I_th (else 0), surfaced as a live "Optical output" reading. external_quantum_efficiency is
+  reused as the differential (slope) quantum efficiency eta_d. Per the device-power-source
+  convention, no builtin numeric defaults on the electrical parameters — the canvas drop defaults
+  (part-defaults.ts, 650 nm red laser class, cited) fill them in; the n/p material regions DO
+  default. NOT modeled yet: the temperature drift of the threshold, the sub-threshold spontaneous
+  light, and high-current roll-over — the higher-fidelity successors.

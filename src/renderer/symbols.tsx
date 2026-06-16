@@ -198,6 +198,26 @@ function LedGlyph() {
   )
 }
 
+/** Laser diode — the LED's emitting junction, but the two arrows are PARALLEL (a coherent,
+ *  collimated beam) rather than the LED's divergent rays. */
+function LaserDiodeGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>laser diode</title>
+      {lead(0, 26)}
+      <polygon points="26,12 26,32 44,22" fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={44} y1={12} x2={44} y2={32} stroke={STROKE} strokeWidth={1.5} />
+      {lead(44, W)}
+      <g stroke={STROKE} strokeWidth={1.2}>
+        <line x1={33} y1={10} x2={33} y2={0} />
+        <polyline points="30,3 33,0 36,3" fill="none" />
+        <line x1={41} y1={10} x2={41} y2={0} />
+        <polyline points="38,3 41,0 44,3" fill="none" />
+      </g>
+    </svg>
+  )
+}
+
 /** SPST switch — a hinged blade: closed rests on the far contact, open lifts away. */
 function SwitchGlyph({ closed }: { closed: boolean }) {
   return (
@@ -1003,6 +1023,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   inductor: InductorGlyph,
   led: LedGlyph,
   led_uv_algan: LedGlyph,
+  diode_laser: LaserDiodeGlyph,
   diode_silicon_rectifier: DiodeGlyph,
   diode_schottky_al_si: SchottkyGlyph,
   diode_zener_silicon: ZenerGlyph,
@@ -1069,6 +1090,7 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   power_source: TWO('terminal_positive', 'terminal_negative'),
   led: TWO('anode', 'cathode'),
   led_uv_algan: TWO('anode', 'cathode'),
+  diode_laser: TWO('anode', 'cathode'),
   diode_silicon_rectifier: TWO('anode', 'cathode'),
   diode_schottky_al_si: TWO('anode', 'cathode'),
   diode_zener_silicon: TWO('anode', 'cathode'),

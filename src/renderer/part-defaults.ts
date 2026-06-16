@@ -148,6 +148,19 @@ const DEFAULTS: Record<string, Parameters> = {
     thermal_resistance_junction_ambient: scalar(300, 'kelvin_per_watt'),
     max_operating_temperature: scalar(85, 'celsius'),
   },
+  diode_laser: {
+    // 650 nm red laser diode (laser-pointer class, e.g. Ushio HL6501MG): ~2.4 V operating,
+    // I_th ~ 25 mA, differential (slope) quantum efficiency ~0.3, ~5 mW near 35 mA. AlGaInP red.
+    forward_voltage: scalar(2.4, 'volt'),
+    peak_wavelength: scalar(650, 'nanometer'),
+    threshold_current: scalar(0.025, 'ampere'),
+    external_quantum_efficiency: scalar(0.3, 'dimensionless'),
+    max_forward_current: scalar(0.05, 'ampere'),
+    n_side: { value: 'aluminum_gallium_indium_phosphide_n_type' },
+    p_side: { value: 'aluminum_gallium_indium_phosphide_p_type' },
+    thermal_resistance_junction_ambient: scalar(200, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(70, 'celsius'),
+  },
   switch_spst_toggle: {
     // Panel-mount SPST toggle (C&K 7101 class, matching the anchor switch
     // fixture): copper contacts, ~20 mΩ closed, 6 A, 125 V. Starts closed
@@ -449,6 +462,18 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     thermal_resistance_junction_ambient:
       '~300 K/W, 5 mm-LED class (θ_JA not specced on small LEDs)',
     max_operating_temperature: '~85 °C, 5 mm-LED operating class',
+  },
+  diode_laser: {
+    forward_voltage:
+      '650 nm red laser diode operating ~2.4 V (laser-pointer class, e.g. Ushio HL6501MG)',
+    peak_wavelength: 'AlGaInP red laser ~650 nm',
+    threshold_current:
+      '~25 mA lasing threshold, 650 nm red laser-diode class (medium confidence — typical, not one exact datasheet)',
+    external_quantum_efficiency:
+      'differential (slope) quantum efficiency ~0.3 above threshold, red edge-emitter class',
+    max_forward_current: '~50 mA absolute max, 5 mW red laser-diode class (current-sensitive)',
+    thermal_resistance_junction_ambient: 'small laser-diode package class (~200 K/W)',
+    max_operating_temperature: '~70 °C max, laser-diode class (threshold climbs with heat)',
   },
   switch_spst_toggle: {
     contact_resistance_closed: 'C&K 7101 class (~20 mΩ closed)',

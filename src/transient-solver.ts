@@ -111,6 +111,7 @@ const DEFAULT_IDEALITY_FACTOR = 2.0
 const DIODE_DEFINITIONS = new Set([
   'led',
   'led_uv_algan',
+  'diode_laser',
   'diode_silicon_rectifier',
   'diode_schottky_al_si',
 ])
