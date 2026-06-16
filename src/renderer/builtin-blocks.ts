@@ -1021,6 +1021,61 @@ function dRegister(bits: number): BlockData {
 /** A 4-bit register — four flip-flops latching a nibble on one clock edge. */
 export const REGISTER_4BIT: BlockData = dRegister(4)
 
+/**
+ * DARLINGTON pair — two NPN BJTs cascaded: the first's emitter drives the second's base, the
+ * collectors tied. The composite acts as one transistor with β ≈ β1·β2 (a few thousand) and a
+ * DOUBLED base-emitter drop (~1.3 V, two junctions). Flattens to the two real BJTs. Ports: the
+ * base (Q1), the common collector, and the emitter (Q2).
+ */
+export const DARLINGTON_BLOCK: BlockData = {
+  name: 'Darlington',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    {
+      id: 'q1',
+      definition: 'transistor_bjt_npn',
+      x: 60,
+      y: 30,
+      parameters: defaultParameters('transistor_bjt_npn'),
+    },
+    {
+      id: 'q2',
+      definition: 'transistor_bjt_npn',
+      x: 220,
+      y: 140,
+      parameters: defaultParameters('transistor_bjt_npn'),
+    },
+  ],
+  edges: [
+    // Q1 emitter drives Q2 base (the cascade); the two collectors tie together.
+    { id: 'cascade', source: 'q1', sourceHandle: 'emitter', target: 'q2', targetHandle: 'base' },
+    {
+      id: 'collectors',
+      source: 'q1',
+      sourceHandle: 'collector',
+      target: 'q2',
+      targetHandle: 'collector',
+    },
+  ],
+  ports: [
+    { id: 'base', label: 'B', side: 'left', offset: 22, inner: { nodeId: 'q1', handleId: 'base' } },
+    {
+      id: 'collector',
+      label: 'C',
+      side: 'right',
+      offset: 14,
+      inner: { nodeId: 'q1', handleId: 'collector' },
+    },
+    {
+      id: 'emitter',
+      label: 'E',
+      side: 'right',
+      offset: 36,
+      inner: { nodeId: 'q2', handleId: 'emitter' },
+    },
+  ],
+}
+
 /** Built-in blocks droppable from the palette, keyed by their palette definition id.
  *  The palette lists these like parts; App's drop handler turns one into a block node
  *  (a fresh deep copy) that descends + flattens like any user-grouped block. */
@@ -1042,4 +1097,5 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   logic_d_latch: D_LATCH_BLOCK,
   logic_d_flipflop: D_FLIPFLOP_BLOCK,
   logic_register_4bit: REGISTER_4BIT,
+  darlington_npn: DARLINGTON_BLOCK,
 }

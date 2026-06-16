@@ -752,6 +752,29 @@ function BufferGlyph() {
   )
 }
 
+/** Darlington pair — an NPN transistor with TWO emitter arrows, the compact mark for two BJTs
+ *  cascaded into one very-high-gain composite. Base in from the left, collector up, emitter
+ *  down. */
+function DarlingtonGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>Darlington transistor</title>
+      <circle cx={37} cy={MID} r={16} fill="none" stroke={STROKE} strokeWidth={1} />
+      <line x1={0} y1={MID} x2={30} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={30} y1={12} x2={30} y2={32} stroke={STROKE} strokeWidth={2} />
+      {/* collector: bar → up to the top handle */}
+      <line x1={30} y1={17} x2={40} y2={8} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={8} x2={40} y2={0} stroke={STROKE} strokeWidth={1.5} />
+      {/* two out-pointing emitter arrows — the cascaded pair */}
+      <line x1={30} y1={23} x2={40} y2={31} stroke={STROKE} strokeWidth={1.5} />
+      <polygon points="40,31 34.6,30 37,26.2" fill={STROKE} stroke={STROKE} strokeWidth={0.5} />
+      <line x1={30} y1={28} x2={40} y2={37} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={37} x2={40} y2={44} stroke={STROKE} strokeWidth={1.5} />
+      <polygon points="40,37 34.6,36 37,32.2" fill={STROKE} stroke={STROKE} strokeWidth={0.5} />
+    </svg>
+  )
+}
+
 /** Adder — a labelled IC block with a '+' inside; the palette face for the half and full
  *  adders (on the canvas they are blocks showing their names). */
 function AdderGlyph() {
@@ -916,6 +939,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   wire: WireGlyph,
   transistor_bjt_npn: BjtNpnGlyph,
   transistor_bjt_pnp: BjtPnpGlyph,
+  darlington_npn: DarlingtonGlyph,
   transistor_mosfet_nmos: MosfetNmosGlyph,
   transistor_mosfet_pmos: MosfetPmosGlyph,
   op_amp: OpAmpGlyph,
