@@ -1512,7 +1512,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     for (const sh of shockleyDiodes) {
       if (sh.state === 'conducting') stampDiodeCompanion(sh.diode, sh.diode.thermalV, M, b)
       // An SCR's gate-cathode resistance is always present (the gate current path).
-      if (sh.gateResistance !== undefined && sh.gateNet !== undefined)
+      if (sh.gateResistance !== undefined && sh.gateResistance > 0 && sh.gateNet !== undefined)
         stampConductance(nodeIndex, M, sh.gateNet, sh.diode.cathodeNet, sh.gateResistance)
     }
     for (const z of zeners) stampTransientZener(z, z.thermalV, M, b)
@@ -1896,7 +1896,10 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         sh.gateTriggerCurrent !== undefined
       ) {
         const gateCurrent =
-          ((nodes.get(sh.gateNet) ?? 0) - (nodes.get(sh.diode.cathodeNet) ?? 0)) / sh.gateResistance
+          sh.gateResistance > 0
+            ? ((nodes.get(sh.gateNet) ?? 0) - (nodes.get(sh.diode.cathodeNet) ?? 0)) /
+              sh.gateResistance
+            : 0
         sh.state = scrTarget(
           sh.state,
           v,

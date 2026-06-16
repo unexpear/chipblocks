@@ -132,7 +132,9 @@ export function shockleyDiodeTargets(
       const gateTrigger = readScalarParam(inst, 'gate_trigger_current')
       if (gate === undefined || gateResistance === undefined || gateTrigger === undefined) continue
       const gateCurrent =
-        ((solution.nodes.get(gate) ?? 0) - (solution.nodes.get(cathode) ?? 0)) / gateResistance
+        gateResistance > 0
+          ? ((solution.nodes.get(gate) ?? 0) - (solution.nodes.get(cathode) ?? 0)) / gateResistance
+          : 0
       target = scrTarget(state, vAcross, current, gateCurrent, breakover, holding, gateTrigger)
     } else {
       target = shockleyDiodeTarget(state, vAcross, current, breakover, holding)

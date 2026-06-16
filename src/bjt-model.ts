@@ -62,6 +62,16 @@ export type BjtParams = {
 }
 
 /**
+ * Cap on the exponential argument V/V_T — mirrors the diode model's EXP_ARG_CAP. pnjlim keeps a
+ * junction near its operating point in normal solves, but a stale .nodeset seed or a future
+ * curve-trace sweep could hand bjtCurrents / bjtCompanion an absurd V_BE / V_BC; capping keeps the
+ * transport currents and conductances large-but-FINITE so the MNA matrix never overflows to Inf/NaN.
+ * A real operating point sits far below the cap (V_BE / V_T ≈ 27 at 0.7 V).
+ */
+const EXP_ARG_CAP = 80
+const safeExp = (x: number): number => Math.exp(Math.min(x, EXP_ARG_CAP))
+
+/**
  * The normalized base-charge factor F = 1/q_b that the transport current carries
  * (I_C_transport = I_S·(e^{V_BE/V_T} − e^{V_BC/V_T})·F), plus its two partials.
  * Folds forward + reverse Early (q_b1) and high-level injection (q_b2):
@@ -85,8 +95,8 @@ function baseChargeFactor(
     kneeCurrentReverse: ikr,
   } = params
   const q1inv = 1 - (vaf === undefined ? 0 : vBC / vaf) - (varv === undefined ? 0 : vBE / varv)
-  const expBE = Math.exp(vBE / thermalV) - 1
-  const expBC = Math.exp(vBC / thermalV) - 1
+  const expBE = safeExp(vBE / thermalV) - 1
+  const expBC = safeExp(vBC / thermalV) - 1
   const q2 =
     (ikf === undefined ? 0 : (is / ikf) * expBE) + (ikr === undefined ? 0 : (is / ikr) * expBC)
   const root = Math.sqrt(1 + 4 * q2)
@@ -94,8 +104,8 @@ function baseChargeFactor(
   // ∂q1inv: −1/V_AR w.r.t. V_BE, −1/V_AF w.r.t. V_BC. ∂q2: (I_S/I_K)·e^{V/V_T}/V_T.
   const dq1dVBE = varv === undefined ? 0 : -1 / varv
   const dq1dVBC = vaf === undefined ? 0 : -1 / vaf
-  const dq2dVBE = ikf === undefined ? 0 : ((is / ikf) * Math.exp(vBE / thermalV)) / thermalV
-  const dq2dVBC = ikr === undefined ? 0 : ((is / ikr) * Math.exp(vBC / thermalV)) / thermalV
+  const dq2dVBE = ikf === undefined ? 0 : ((is / ikf) * safeExp(vBE / thermalV)) / thermalV
+  const dq2dVBC = ikr === undefined ? 0 : ((is / ikr) * safeExp(vBC / thermalV)) / thermalV
   // ∂h/∂q2 = −4 / (root·(1 + root)²); chain through q2 for the V partials.
   const dhdq2 = -4 / (root * (1 + root) * (1 + root))
   return {
@@ -113,8 +123,8 @@ export function bjtCurrents(
   thermalV: number,
 ): { iC: number; iB: number; iE: number } {
   const { saturationCurrent: is, betaForward: bf, betaReverse: br } = params
-  const expBE = Math.exp(vBE / thermalV) - 1
-  const expBC = Math.exp(vBC / thermalV) - 1
+  const expBE = safeExp(vBE / thermalV) - 1
+  const expBC = safeExp(vBC / thermalV) - 1
 
   // Transport: I_C = (I_CC − I_EC)·F − I_EC/β_R, where F = 1/q_b folds in the
   // Early effect(s) and high-level injection (see baseChargeFactor). Only the
@@ -149,15 +159,15 @@ export function bjtCompanion(
 } {
   const { saturationCurrent: is, betaForward: bf, betaReverse: br } = params
   const { iC, iB } = bjtCurrents(vBE, vBC, params, thermalV)
-  const gF = (is / thermalV) * Math.exp(vBE / thermalV)
-  const gR = (is / thermalV) * Math.exp(vBC / thermalV)
+  const gF = (is / thermalV) * safeExp(vBE / thermalV)
+  const gR = (is / thermalV) * safeExp(vBC / thermalV)
   // I_C = transport·F − I_EC/β_R. Product rule on transport·F: the junction
   // conductance scaled by F, PLUS transport·∂F/∂V — the output-conductance tilt
   // from Early and the high-injection slope. F and its partials come from
   // baseChargeFactor; (exp − 1) terms cancel in the transport difference, so it
   // is the bare exponential difference.
   const { factor, dFdVBE, dFdVBC } = baseChargeFactor(vBE, vBC, params, thermalV)
-  const transport = is * (Math.exp(vBE / thermalV) - Math.exp(vBC / thermalV))
+  const transport = is * (safeExp(vBE / thermalV) - safeExp(vBC / thermalV))
   return {
     iC,
     iB,

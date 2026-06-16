@@ -144,3 +144,25 @@ describe('reverse Early voltage V_AR', () => {
     expect(c.dIC_dVBE).toBeCloseTo(fdVbe, 6)
   })
 })
+
+describe('overflow safety (the EXP_ARG_CAP guard)', () => {
+  // pnjlim normally keeps a junction near 0.7 V, but a stale .nodeset seed or a curve-trace sweep can
+  // hand the model an absurd V_BE. exp(5 / 0.026) ≈ exp(192) would be Infinity unclamped; the cap
+  // keeps every current and conductance finite so the MNA matrix can't be poisoned with Inf/NaN.
+  test('an absurd forward V_BE yields finite currents and a finite Jacobian, not Inf/NaN', () => {
+    const i = bjtCurrents(5, 0, npn, vt)
+    expect(Number.isFinite(i.iC)).toBe(true)
+    expect(Number.isFinite(i.iB)).toBe(true)
+    expect(Number.isFinite(i.iE)).toBe(true)
+    const c = bjtCompanion(5, 0, npn, vt)
+    expect(Number.isFinite(c.iC)).toBe(true)
+    expect(Number.isFinite(c.dIC_dVBE)).toBe(true)
+    expect(Number.isFinite(c.dIB_dVBE)).toBe(true)
+  })
+  test('the cap also protects the reverse junction and the high-injection knee', () => {
+    const hi = { ...npn, kneeCurrentForward: 1e-3, earlyVoltageForward: 74 }
+    const c = bjtCompanion(5, 3, hi, vt) // both junctions slammed far forward
+    expect(Number.isFinite(c.iC)).toBe(true)
+    expect(Number.isFinite(c.dIC_dVBC)).toBe(true)
+  })
+})

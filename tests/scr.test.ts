@@ -44,6 +44,7 @@ function solveScr(
   loadOhms: number,
   gateVolts: number,
   startState: 'blocking' | 'conducting',
+  gateResistance = 1000,
 ): { latch: string | undefined; anodeCurrent: number; reading: PartReading | undefined } {
   const world: World = {
     definitions: new Map(),
@@ -126,7 +127,7 @@ function solveScr(
       forward_voltage: scalar(1.7, 'volt'),
       max_forward_current: scalar(0.8, 'ampere'),
       gate_trigger_current: scalar(0.0005, 'ampere'),
-      gate_cathode_resistance: scalar(1000, 'ohm'),
+      gate_cathode_resistance: scalar(gateResistance, 'ohm'),
       device_state: { value: startState },
     },
     connects: [
@@ -279,5 +280,92 @@ describe('solveTransient — SCR on an AC line (gated phase control)', () => {
     // The SCR's anode current is recorded at scr/anode — the key the scope's part-current probe
     // (scopePartInfo) reads, so the curve tracer can actually probe it and the other new devices.
     expect(result.series.some((s) => (s.currents?.get('scr/anode') ?? 0) !== 0)).toBe(true)
+  })
+})
+
+describe('SCR with a zero / invalid gate-cathode resistance (divide-by-zero guard)', () => {
+  test('DC: R_GK = 0 disables the gate trigger without dividing by zero — stays blocking, finite', () => {
+    const r = solveScr(30, 1000, 2, 'blocking', 0) // gate 2 V, but R_GK 0 → no gate current/trigger
+    expect(Number.isFinite(r.anodeCurrent)).toBe(true)
+    expect(r.latch).toBe('blocking') // below breakover with the gate disabled
+  })
+  test('transient: R_GK = 0 stamps no 1/0 — every recorded current stays finite', () => {
+    const world: World = {
+      definitions: new Map(),
+      instances: new Map(),
+      behaviors: new Map(),
+      activeVariables: new Map(),
+      nets: new Map(),
+    }
+    world.nets.set('vp', {
+      id: 'vp',
+      kind: 'net',
+      members: [
+        { instance: 'src', terminal: 'terminal_positive' },
+        { instance: 'r', terminal: 'terminal_a' },
+      ],
+    })
+    world.nets.set('anode', {
+      id: 'anode',
+      kind: 'net',
+      members: [
+        { instance: 'r', terminal: 'terminal_b' },
+        { instance: 'scr', terminal: 'anode' },
+      ],
+    })
+    world.nets.set('gnd', {
+      id: 'gnd',
+      kind: 'net',
+      type: 'ground',
+      members: [
+        { instance: 'src', terminal: 'terminal_negative' },
+        { instance: 'scr', terminal: 'cathode' },
+        { instance: 'scr', terminal: 'gate' },
+      ],
+    })
+    world.instances.set('src', {
+      id: 'src',
+      kind_ref: 'primitive_device',
+      definition: 'power_source',
+      parameters: { nominal_voltage: scalar(30, 'volt') },
+      connects: [
+        { net: 'vp', terminal: 'terminal_positive', of: 'src' },
+        { net: 'gnd', terminal: 'terminal_negative', of: 'src' },
+      ],
+    })
+    world.instances.set('r', {
+      id: 'r',
+      kind_ref: 'primitive_device',
+      definition: 'resistor',
+      parameters: { resistance: scalar(1000, 'ohm') },
+      connects: [
+        { net: 'vp', terminal: 'terminal_a', of: 'r' },
+        { net: 'anode', terminal: 'terminal_b', of: 'r' },
+      ],
+    })
+    world.instances.set('scr', {
+      id: 'scr',
+      kind_ref: 'primitive_device',
+      definition: 'scr',
+      parameters: {
+        breakover_voltage: scalar(100, 'volt'),
+        holding_current: scalar(0.005, 'ampere'),
+        forward_voltage: scalar(1.7, 'volt'),
+        gate_trigger_current: scalar(0.0005, 'ampere'),
+        gate_cathode_resistance: scalar(0, 'ohm'), // invalid → gate disabled, must NOT stamp 1/0
+        device_state: { value: 'blocking' },
+      },
+      connects: [
+        { net: 'anode', terminal: 'anode', of: 'scr' },
+        { net: 'gnd', terminal: 'cathode', of: 'scr' },
+        { net: 'gnd', terminal: 'gate', of: 'scr' },
+      ],
+    })
+    const result = solveTransient(world, { timeStep: 1e-4, duration: 5e-4 })
+    expect(result.status).not.toBe('singular-matrix')
+    const allFinite = result.series.every((s) =>
+      [...(s.currents?.values() ?? [])].every((v) => Number.isFinite(v)),
+    )
+    expect(allFinite).toBe(true)
   })
 })
