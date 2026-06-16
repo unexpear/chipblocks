@@ -40,19 +40,29 @@ const lead = (x1: number, x2: number) => (
   <line x1={x1} y1={MID} x2={x2} y2={MID} stroke={STROKE} strokeWidth={1.5} />
 )
 
+/** The shared IEEE 315 zigzag resistor track (two leads + the zigzag body). Used
+ *  by the resistor and every resistor-family part (potentiometer, thermistor,
+ *  LDR) so the whole family reads as one symbol under the adopted US/IEEE-315
+ *  standard — change the body here and they all follow. */
+const ResistorTrack = () => (
+  <>
+    {lead(0, 18)}
+    <polyline
+      points="18,22 23,12 31,32 39,12 47,32 55,12 62,22"
+      fill="none"
+      stroke={STROKE}
+      strokeWidth={1.5}
+    />
+    {lead(62, W)}
+  </>
+)
+
 /** Resistor — IEEE 315 zigzag. */
 function ResistorGlyph() {
   return (
     <svg width={W} height={H}>
       <title>resistor</title>
-      {lead(0, 18)}
-      <polyline
-        points="18,22 23,12 31,32 39,12 47,32 55,12 62,22"
-        fill="none"
-        stroke={STROKE}
-        strokeWidth={1.5}
-      />
-      {lead(62, W)}
+      <ResistorTrack />
     </svg>
   )
 }
@@ -258,14 +268,7 @@ function PotentiometerGlyph({ position }: { position: number }) {
   return (
     <svg width={W} height={H}>
       <title>{`potentiometer (wiper ${Math.round(p * 100)}%)`}</title>
-      {lead(0, 18)}
-      <polyline
-        points="18,22 23,12 31,32 39,12 47,32 55,12 62,22"
-        fill="none"
-        stroke={STROKE}
-        strokeWidth={1.5}
-      />
-      {lead(62, W)}
+      <ResistorTrack />
       {/* the wiper: a stem from the top tapping the track with an arrowhead */}
       <line x1={wiperX} y1={1} x2={wiperX} y2={14} stroke={STROKE} strokeWidth={1.5} />
       <polygon
@@ -310,24 +313,14 @@ function FuseGlyph({ intact }: { intact: boolean }) {
   )
 }
 
-/** Thermistor — IEC 60617: a resistor body crossed by a diagonal line with a
- *  small foot, the standard mark for a temperature-dependent resistance (an
- *  NTC's resistance falls as it warms). */
+/** Thermistor — IEEE 315: a resistor (zigzag) body crossed by a diagonal line
+ *  with a small foot, the standard mark for a temperature-dependent resistance
+ *  (an NTC's resistance falls as it warms). */
 function ThermistorGlyph() {
   return (
     <svg width={W} height={H}>
       <title>thermistor (NTC)</title>
-      {lead(0, 22)}
-      <rect
-        x={22}
-        y={MID - 7}
-        width={36}
-        height={14}
-        fill="none"
-        stroke={STROKE}
-        strokeWidth={1.5}
-      />
-      {lead(58, W)}
+      <ResistorTrack />
       {/* the diagonal dependence line + the small foot that marks 't°' */}
       <line x1={20} y1={MID + 11} x2={58} y2={MID - 11} stroke={STROKE} strokeWidth={1.5} />
       <line x1={20} y1={MID + 11} x2={27} y2={MID + 11} stroke={STROKE} strokeWidth={1.5} />
@@ -335,25 +328,15 @@ function ThermistorGlyph() {
   )
 }
 
-/** Photoresistor (LDR) — IEC 60617: a resistor body struck by two arrows (light
- *  falling IN — the mirror of the LED's two arrows radiating OUT). Its resistance
- *  falls as the incident light rises. */
+/** Photoresistor (LDR) — IEEE 315: a resistor (zigzag) body struck by two arrows
+ *  (light falling IN — the mirror of the LED's two arrows radiating OUT). Its
+ *  resistance falls as the incident light rises. */
 function PhotoresistorGlyph() {
   return (
     <svg width={W} height={H}>
       <title>photoresistor (LDR)</title>
-      {lead(0, 22)}
-      <rect
-        x={22}
-        y={MID - 7}
-        width={36}
-        height={14}
-        fill="none"
-        stroke={STROKE}
-        strokeWidth={1.5}
-      />
-      {lead(58, W)}
-      {/* two arrows striking the body — incident light (heads at the box) */}
+      <ResistorTrack />
+      {/* two arrows striking the body — incident light (heads at the zigzag) */}
       <g stroke={STROKE} strokeWidth={1.2}>
         <line x1={28} y1={3} x2={37} y2={12} />
         <polyline points="37,7 37,12 32,12" fill="none" />
