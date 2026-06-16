@@ -93,3 +93,54 @@ describe('the Early effect (S20-v3-7): forward Early voltage V_AF', () => {
     expect(c.iB).toBeCloseTo(direct.iB, 12)
   })
 })
+
+describe('high-level injection (forward knee current I_KF): β rolloff', () => {
+  const hi = { ...npn, kneeCurrentForward: 1e-3 } // 1 mA knee
+
+  test('below the knee β ≈ β_F; above it β rolls off hard', () => {
+    const below = bjtCurrents(0.45, -5, hi, vt) // I_C ~ 0.4 µA, well under the knee
+    const above = bjtCurrents(0.7, -5, hi, vt) // I_C ~ several mA, well over the knee
+    expect(below.iC / below.iB).toBeGreaterThan(95) // ~β_F, no rolloff yet
+    expect(above.iC / above.iB).toBeLessThan(50) // high-injection droop
+    expect(above.iB).toBe(bjtCurrents(0.7, -5, npn, vt).iB) // I_B is NOT scaled — only I_C droops
+  })
+
+  test('I_KF ≫ I_C → no rolloff, bit-identical to the plain model', () => {
+    const plain = bjtCurrents(0.7, -5, npn, vt)
+    const huge = bjtCurrents(0.7, -5, { ...npn, kneeCurrentForward: 1e6 }, vt)
+    expect(huge.iC).toBeCloseTo(plain.iC, 9)
+  })
+
+  test('the Jacobian stays exact with I_KF on (finite differences)', () => {
+    const h = 1e-7
+    const c = bjtCompanion(0.7, -5, hi, vt)
+    const fdVbe =
+      (bjtCurrents(0.7 + h, -5, hi, vt).iC - bjtCurrents(0.7 - h, -5, hi, vt).iC) / (2 * h)
+    const fdVbc =
+      (bjtCurrents(0.7, -5 + h, hi, vt).iC - bjtCurrents(0.7, -5 - h, hi, vt).iC) / (2 * h)
+    expect(c.dIC_dVBE).toBeCloseTo(fdVbe, 5)
+    expect(c.dIC_dVBC).toBeCloseTo(fdVbc, 6)
+  })
+})
+
+describe('reverse Early voltage V_AR', () => {
+  test('V_AR adds a V_BE/V_AR term to the base-charge factor', () => {
+    const noVar = { ...npn, earlyVoltageForward: 74 }
+    const withVar = { ...noVar, earlyVoltageReverse: 20 }
+    // factor (1 − V_BC/V_AF) → (1 − V_BC/V_AF − V_BE/V_AR); the I_C ratio is the
+    // factor ratio (the −I_EC/β_R term is ~5e-15, negligible vs the mA transport).
+    const ratio = (1 + 5 / 74 - 0.6 / 20) / (1 + 5 / 74)
+    const a = bjtCurrents(0.6, -5, noVar, vt)
+    const b = bjtCurrents(0.6, -5, withVar, vt)
+    expect(b.iC / a.iC).toBeCloseTo(ratio, 6)
+  })
+
+  test('the Jacobian gains the V_AR slope too (finite differences)', () => {
+    const rev = { ...npn, earlyVoltageForward: 74, earlyVoltageReverse: 20 }
+    const h = 1e-7
+    const c = bjtCompanion(0.6, -5, rev, vt)
+    const fdVbe =
+      (bjtCurrents(0.6 + h, -5, rev, vt).iC - bjtCurrents(0.6 - h, -5, rev, vt).iC) / (2 * h)
+    expect(c.dIC_dVBE).toBeCloseTo(fdVbe, 6)
+  })
+})

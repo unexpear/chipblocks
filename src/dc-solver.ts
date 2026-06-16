@@ -932,6 +932,14 @@ export function resolveBjt(inst: Instance, temperatureC?: number): BjtElement | 
   // disqualifies the part the same way a nonsense I_S or β does.
   const earlyVoltageForward = readScalarParam(inst, 'forward_early_voltage')
   if (earlyVoltageForward !== undefined && earlyVoltageForward <= 0) return null
+  // Rest of the Gummel-Poon base charge — all optional, all disqualify on ≤ 0:
+  // reverse Early V_AR plus the forward/reverse high-injection knee currents.
+  const earlyVoltageReverse = readScalarParam(inst, 'reverse_early_voltage')
+  if (earlyVoltageReverse !== undefined && earlyVoltageReverse <= 0) return null
+  const kneeCurrentForward = readScalarParam(inst, 'forward_knee_current')
+  if (kneeCurrentForward !== undefined && kneeCurrentForward <= 0) return null
+  const kneeCurrentReverse = readScalarParam(inst, 'reverse_knee_current')
+  if (kneeCurrentReverse !== undefined && kneeCurrentReverse <= 0) return null
 
   const collector = inst.connects?.find((c) => c.terminal === 'collector')
   const base = inst.connects?.find((c) => c.terminal === 'base')
@@ -963,6 +971,9 @@ export function resolveBjt(inst: Instance, temperatureC?: number): BjtElement | 
       betaForward,
       betaReverse,
       ...(earlyVoltageForward === undefined ? {} : { earlyVoltageForward }),
+      ...(earlyVoltageReverse === undefined ? {} : { earlyVoltageReverse }),
+      ...(kneeCurrentForward === undefined ? {} : { kneeCurrentForward }),
+      ...(kneeCurrentReverse === undefined ? {} : { kneeCurrentReverse }),
     },
     thermalV: elementThermalV,
     polarity: inst.definition === 'transistor_bjt_pnp' ? 'pnp' : 'npn',
