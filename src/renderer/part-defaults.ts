@@ -359,6 +359,17 @@ const DEFAULTS: Record<string, Parameters> = {
     thermal_resistance_junction_ambient: scalar(350, 'kelvin_per_watt'),
     max_operating_temperature: scalar(150, 'celsius'),
   },
+  diode_constant_current: {
+    // 1N5305 (current-limiting diode): I_P = 2.0 mA regulated. knee ~ 1.3 V (the minimum
+    // voltage to reach regulation). lambda small — a CRD has very high output impedance.
+    limiting_current: scalar(2.0e-3, 'ampere'),
+    knee_voltage: scalar(1.3, 'volt'),
+    channel_length_modulation: scalar(0.005, 'per_volt'),
+    channel_region: { value: 'silicon_n_type' },
+    gate_region: { value: 'silicon_p_type' },
+    thermal_resistance_junction_ambient: scalar(350, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(150, 'celsius'),
+  },
 }
 
 /**
@@ -560,6 +571,15 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     max_drain_current: '2N5460 small-signal I_DSS-scale rating (~10 mA), onsemi datasheet class',
     thermal_resistance_junction_ambient: 'TO-92 small-signal package class (~350 K/W)',
     max_operating_temperature: '2N5460 T_J max 150 °C (datasheet)',
+  },
+  diode_constant_current: {
+    limiting_current:
+      '1N5305 (current-limiting diode series) I_P 2.0 mA regulated current (datasheet)',
+    knee_voltage: '1N5305-class limiting voltage ~ 1.3 V (minimum voltage to reach regulation)',
+    channel_length_modulation:
+      'small — a CRD has very high dynamic (output) impedance, so the regulated current barely rises with voltage; Level-1 class value',
+    thermal_resistance_junction_ambient: 'small-signal axial/TO-92 package class (~350 K/W)',
+    max_operating_temperature: '1N5305 T_J max 150 °C (datasheet)',
   },
   transistor_bjt_pnp: {
     saturation_current: 'small-signal PNP transport I_S ~1e-14 A (2N3906 class)',

@@ -98,6 +98,7 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'transformer_center_tapped', label: 'CT Transformer' },
   { definition: 'diode_silicon_rectifier', label: 'Diode' },
   { definition: 'diode_zener_silicon', label: 'Zener' },
+  { definition: 'diode_constant_current', label: 'CRD' },
   { definition: 'led', label: 'LED' },
   { definition: 'transistor_bjt_npn', label: 'NPN' },
   { definition: 'transistor_bjt_pnp', label: 'PNP' },

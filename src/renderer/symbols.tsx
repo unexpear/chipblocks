@@ -830,6 +830,22 @@ function JfetPGlyph() {
   )
 }
 
+/** Constant-current diode (current-limiting diode) — the rectifier triangle + cathode bar
+ *  with short serifs off the bar ends, the standard current-regulator mark. */
+function ConstantCurrentDiodeGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>constant-current diode</title>
+      {lead(0, 26)}
+      <polygon points="26,12 26,32 44,22" fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={44} y1={12} x2={44} y2={32} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={44} y1={12} x2={49} y2={12} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={44} y1={32} x2={49} y2={32} stroke={STROKE} strokeWidth={1.5} />
+      {lead(44, W)}
+    </svg>
+  )
+}
+
 /** Adder — a labelled IC block with a '+' inside; the palette face for the half and full
  *  adders (on the canvas they are blocks showing their names). */
 function AdderGlyph() {
@@ -990,6 +1006,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   diode_silicon_rectifier: DiodeGlyph,
   diode_schottky_al_si: SchottkyGlyph,
   diode_zener_silicon: ZenerGlyph,
+  diode_constant_current: ConstantCurrentDiodeGlyph,
   ground: GroundGlyph,
   wire: WireGlyph,
   transistor_bjt_npn: BjtNpnGlyph,
@@ -1055,6 +1072,7 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   diode_silicon_rectifier: TWO('anode', 'cathode'),
   diode_schottky_al_si: TWO('anode', 'cathode'),
   diode_zener_silicon: TWO('anode', 'cathode'),
+  diode_constant_current: TWO('anode', 'cathode'),
   switch_spst_toggle: TWO('terminal_in', 'terminal_out'),
   switch_spst_momentary: TWO('terminal_in', 'terminal_out'),
   switch_spdt: [

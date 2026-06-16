@@ -1,0 +1,103 @@
+# Valid fixture: constant-current diode (current-limiting diode / current regulator).
+# Despite the name, this is NOT a PN-junction diode — it is an N-channel JFET with its
+# gate tied to its source. With V_GS pinned at 0 the JFET sits in saturation and passes
+# its zero-bias current I_DSS regardless of the voltage across it (above a small knee),
+# giving a simple two-terminal constant-current source. The classic part is the 1N5305
+# (1N5283-1N5314 series); used for LED drive, bias strings, and ramp generators.
+#
+# Solved by both engines as exactly that: an N-channel JFET (jfet-model.ts / the shared
+# FET square law) with gate and source on the same (cathode) net, so V_GS = 0 and the
+# regulated current is I_DSS = beta·V_P^2 = the limiting current I_P (resolveCrd). beta is
+# recovered from the cited I_P and knee voltage: beta = I_P / V_K^2.
+#
+# Per the device-power-source convention this definition carries NO builtin numeric
+# defaults on the electrical parameters — the cited canvas drop defaults live in
+# part-defaults.ts (1N5305 class); only the structural material regions default here.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: diode_constant_current
+origin: builtin
+layer: primitive_device
+name: "Constant-current diode"
+description: "A two-terminal constant-current device (current-limiting diode / current regulator). Internally an N-channel JFET with gate tied to source: with V_GS held at 0 it regulates to its zero-bias current I_DSS (the limiting current I_P) once the applied voltage exceeds a small knee, presenting a high dynamic impedance. Used to drive LEDs at fixed current, set bias points, and generate ramps without a resistor's voltage-dependence. Modeled by the shared FET square law with the gate shorted to the source."
+composition:
+  uses:
+    - pn_junction
+  requires:
+    channel_region:
+      kind: material
+      must_enable:
+        - n_type_semiconductor
+    gate_region:
+      kind: material
+      must_enable:
+        - p_type_semiconductor
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  channel_region:
+    type: material_ref
+    satisfies_role: channel_region
+    required: true
+    default:
+      value: silicon_n_type
+    description: The n-type JFET channel that carries the regulated current between the two terminals.
+  gate_region:
+    type: material_ref
+    satisfies_role: gate_region
+    required: true
+    default:
+      value: silicon_p_type
+    description: The p-type gate diffusion, tied internally to the source; its reverse-biased junction sets the channel width and hence I_DSS.
+  limiting_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: "The regulated (pinch-off) current I_P the device holds once the voltage across it exceeds the knee — equal to the internal JFET's zero-bias I_DSS = beta·V_P^2. The headline rating (1N5305 ~ 2.0 mA)."
+  knee_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: "The minimum voltage across the device for it to reach regulation (the internal JFET's |V_P|, the saturation knee). Below it the current ramps up; above it the current holds ~constant at I_P. Typically ~1-3 V."
+  channel_length_modulation:
+    type: quantity
+    units: per_volt
+    required: false
+    description: "lambda — the slight rise of the regulated current with voltage (finite output resistance). Small for a CRD, which has very high dynamic impedance."
+  thermal_resistance_junction_ambient:
+    type: quantity
+    units: kelvin_per_watt
+    required: false
+    description: Junction-to-ambient thermal resistance (theta_JA) of the package — the lumped thermal model's slope, T = T_ambient + P·theta_JA.
+  max_operating_temperature:
+    type: quantity
+    units: celsius
+    required: false
+    description: Maximum junction operating temperature; the stage-7 thermal check fires when the computed steady-state temperature exceeds it.
+behaviors:
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  anode:
+    description: The terminal current enters when forward-biased (the internal JFET's drain). Conventional current flows anode to cathode.
+  cathode:
+    description: The terminal current leaves (the internal JFET's source, with the gate tied to it).
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Not a PN-junction diode despite the name: an N-channel JFET with gate tied to source.
+  resolveCrd builds an N-JFET MosfetElement whose gate and source share the cathode net,
+  so V_GS = 0 and the regulated current is I_DSS = beta·V_P^2 = the cited limiting current
+  I_P; beta is recovered as I_P / knee_voltage^2. Solved by both engines via the shared FET
+  square law (jfet-model.ts). Per the device-power-source convention, no builtin numeric
+  defaults on the electrical parameters — the canvas drop defaults (part-defaults.ts, 1N5305
+  class, cited) fill them in; the n/p material regions DO default. NOT modeled: the reverse
+  region (a real CRD conducts like a forward diode when reverse-biased) and the gate-junction
+  forward conduction — the same higher-fidelity successors noted on the JFET.

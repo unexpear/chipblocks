@@ -283,6 +283,11 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       if (fet !== null) mosfets.push(fet)
       continue
     }
+    if (inst.definition === 'diode_constant_current') {
+      const fet = resolveCrd(inst)
+      if (fet !== null) mosfets.push(fet)
+      continue
+    }
     if (inst.definition === 'transformer') {
       // At steady DC nothing couples (di/dt = 0) — each winding is a 0 V source
       // through its winding resistance. Secondary pushed first so the primary's
@@ -1166,6 +1171,41 @@ export function resolveJfet(inst: Instance): MosfetElement | null {
       channel: inst.definition === 'transistor_jfet_p_channel' ? 'p_channel' : 'n_channel',
       pinchOffVoltage,
       transconductance,
+      channelLengthModulation,
+    }),
+    vGS: 0,
+    vDS: 0,
+  }
+}
+
+/**
+ * A constant-current diode (current-limiting diode, e.g. the 1N5305) is not a PN diode at all — it
+ * is an N-channel JFET with its gate tied to its source. V_GS is therefore pinned at 0, so the part
+ * regulates to I_DSS = beta·V_P² (= the limiting current I_P) once the voltage across it exceeds the
+ * knee. We model exactly that: an N-JFET MosfetElement whose gate AND source share the cathode net
+ * (so the companion's g_m terms cancel, leaving a current source with the small output slope λ),
+ * with the anode as drain. beta is recovered from the datasheet I_P and knee voltage: beta = I_P/V_K².
+ */
+export function resolveCrd(inst: Instance): MosfetElement | null {
+  const limitingCurrent = readScalarParam(inst, 'limiting_current')
+  const kneeVoltage = readScalarParam(inst, 'knee_voltage')
+  if (limitingCurrent === undefined || kneeVoltage === undefined) return null
+  if (limitingCurrent <= 0 || kneeVoltage <= 0) return null
+  const channelLengthModulation = readScalarParam(inst, 'channel_length_modulation') ?? 0
+
+  const anode = inst.connects?.find((c) => c.terminal === 'anode')
+  const cathode = inst.connects?.find((c) => c.terminal === 'cathode')
+  if (anode === undefined || cathode === undefined) return null
+
+  return {
+    inst,
+    gateNet: cathode.net,
+    drainNet: anode.net,
+    sourceNet: cathode.net,
+    params: jfetMosfetParams({
+      channel: 'n_channel',
+      pinchOffVoltage: -kneeVoltage,
+      transconductance: limitingCurrent / (kneeVoltage * kneeVoltage),
       channelLengthModulation,
     }),
     vGS: 0,

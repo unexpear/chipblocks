@@ -71,6 +71,7 @@ import {
   potentiometerSegments,
   relayCoilEnergized,
   resolveBjt,
+  resolveCrd,
   resolveJfet,
   resolveMosfet,
   SILICON_BANDGAP_EV,
@@ -1165,6 +1166,13 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const fet = resolveJfet(inst)
       if (fet !== null) mosfets.push(fet)
       else warnings.push(`Skipped JFET '${inst.id}' (missing parameters or terminals)`)
+    } else if (inst.definition === 'diode_constant_current') {
+      const fet = resolveCrd(inst)
+      if (fet !== null) mosfets.push(fet)
+      else
+        warnings.push(
+          `Skipped constant-current diode '${inst.id}' (missing parameters or terminals)`,
+        )
     } else if (inst.definition === 'wire') {
       const short = resolveShort(
         inst,
