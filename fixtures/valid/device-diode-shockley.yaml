@@ -1,0 +1,117 @@
+# Valid fixture: Shockley 4-layer (PNPN) diode — a latching, bistable switch (a thyristor with no
+# gate). Forward bias: it BLOCKS until the breakover voltage V_BO, then snaps ON to a low-voltage
+# conducting state and LATCHES, conducting until the current falls below the holding current I_H,
+# then it switches off. The on/off choice depends on HISTORY (a true bistable latch).
+#
+# Modeled as device STATE, like the fuse's blown state and the relay's contact state: the DC solver
+# treats a 'conducting' diode as an ordinary forward diode and a 'blocking' one as an open circuit
+# (see dc-solver.ts), and the discrete-state fixed point (solveWithRelays) flips the latch at
+# breakover / holding-current dropout off the solved voltage and current. App persists the settled
+# state onto the node — the latch's memory. The latch state is a runtime parameter the canvas adds
+# (default 'blocking' from part-defaults.ts), not declared here — exactly like the relay's coil_state.
+#
+# Per the device-power-source convention this definition carries NO builtin numeric defaults on the
+# electrical parameters — the cited canvas drop defaults live in part-defaults.ts (4-layer diode
+# class); only the structural material regions default here.
+#
+# Structurally a PNPN (four-layer, three-junction) device; modeled here as a two-terminal latching
+# diode (pn_junction + n_side/p_side), the modeled behavior being the latch, which is parameter-driven.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: diode_shockley
+origin: builtin
+layer: primitive_device
+name: "Shockley 4-layer diode"
+description: "A two-terminal latching switch (a PNPN four-layer diode, i.e. a thyristor without a gate). It blocks forward current until the breakover voltage, then snaps into a low-voltage conducting state and LATCHES — staying on until the current drops below the holding current, then switching off. Bistable: its state depends on history. Used in relaxation oscillators, trigger and timing circuits, and as the basis of the SCR/triac family."
+composition:
+  uses:
+    - pn_junction
+  requires:
+    n_side:
+      kind: material
+      must_enable:
+        - n_type_semiconductor
+    p_side:
+      kind: material
+      must_enable:
+        - p_type_semiconductor
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  n_side:
+    type: material_ref
+    satisfies_role: n_side
+    required: true
+    default:
+      value: silicon_n_type
+    description: The n-doped material of the junction stack (a real device is a four-layer PNPN; the modeled behavior is the latch, set by the cited parameters, so the region here is structural).
+  p_side:
+    type: material_ref
+    satisfies_role: p_side
+    required: true
+    default:
+      value: silicon_p_type
+    description: The p-doped material of the junction stack.
+  breakover_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: "Breakover voltage V_BO — the forward voltage at which the blocking device snaps into conduction (regenerative turn-on). The defining trigger threshold."
+  holding_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: "Holding current I_H — the minimum current that keeps the device latched ON. Once the current falls below it, the device returns to blocking. The defining latch-release threshold."
+  forward_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: On-state forward voltage drop once conducting (~1 V for a silicon PNPN). Also the calibration point for the on-state diode model.
+  max_forward_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: Maximum continuous on-state forward current rating (and the diode-model calibration current).
+  reverse_breakdown_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Reverse voltage at which the device breaks down; it is not designed for sustained reverse operation.
+  thermal_resistance_junction_ambient:
+    type: quantity
+    units: kelvin_per_watt
+    required: false
+    description: Junction-to-ambient thermal resistance (theta_JA) of the package — the lumped thermal model's slope, T = T_ambient + P·theta_JA.
+  max_operating_temperature:
+    type: quantity
+    units: celsius
+    required: false
+    description: Maximum junction operating temperature; the stage-7 thermal check fires when the computed steady-state temperature exceeds it.
+behaviors:
+  - acts_as_diode
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+terminals:
+  anode:
+    description: Positive terminal; current enters here when latched on.
+  cathode:
+    description: Negative terminal; current exits here.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  The latch is modeled as device state (shockley-diode.ts): 'conducting' resolves to an ordinary
+  forward diode, 'blocking' to an open circuit; solveWithRelays settles the breakover / holding
+  transitions off the solved voltage and current (the same discrete-state fixed point the relay
+  uses, capped and reporting "could not settle" for a relaxation oscillator), and App persists the
+  settled state onto the node (the latch's memory). device_state is a runtime parameter (default
+  'blocking' in part-defaults.ts), not declared above — like the relay's coil_state. NOT modeled
+  yet: transient (time-domain) operation — a relaxation oscillator needs it — and the reverse
+  branch; the documented successors. The gated SCR/triac is the natural next member of the family.

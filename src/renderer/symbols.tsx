@@ -234,6 +234,20 @@ function TunnelDiodeGlyph() {
   )
 }
 
+/** Shockley 4-layer diode — a latching trigger diode: the rectifier shape with a FILLED triangle
+ *  (the trigger/switching-diode convention), distinct from the open-triangle rectifier. */
+function ShockleyDiodeGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>Shockley 4-layer diode</title>
+      {lead(0, 26)}
+      <polygon points="26,12 26,32 44,22" fill={STROKE} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={44} y1={12} x2={44} y2={32} stroke={STROKE} strokeWidth={1.5} />
+      {lead(44, W)}
+    </svg>
+  )
+}
+
 /** SPST switch — a hinged blade: closed rests on the far contact, open lifts away. */
 function SwitchGlyph({ closed }: { closed: boolean }) {
   return (
@@ -1041,6 +1055,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   led_uv_algan: LedGlyph,
   diode_laser: LaserDiodeGlyph,
   diode_tunnel: TunnelDiodeGlyph,
+  diode_shockley: ShockleyDiodeGlyph,
   diode_silicon_rectifier: DiodeGlyph,
   diode_schottky_al_si: SchottkyGlyph,
   diode_zener_silicon: ZenerGlyph,
@@ -1109,6 +1124,7 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   led_uv_algan: TWO('anode', 'cathode'),
   diode_laser: TWO('anode', 'cathode'),
   diode_tunnel: TWO('anode', 'cathode'),
+  diode_shockley: TWO('anode', 'cathode'),
   diode_silicon_rectifier: TWO('anode', 'cathode'),
   diode_schottky_al_si: TWO('anode', 'cathode'),
   diode_zener_silicon: TWO('anode', 'cathode'),

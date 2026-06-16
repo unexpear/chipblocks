@@ -38,6 +38,7 @@ import { overcurrentFuseIds } from '../failure-detector.ts'
 import { readScalarParam } from '../instance-params.ts'
 import { LIGHT_SENSOR_DEFINITIONS, type LightSource, worldWithCastLight } from '../light.ts'
 import { type RelayState, solveWithRelays } from '../relay.ts'
+import type { ShockleyDiodeState } from '../shockley-diode.ts'
 import { STANDARD_AMBIENT_C } from '../thermal-model.ts'
 import type { TransientResult } from '../transient-solver.ts'
 import { BlockViewer } from './block-viewer.tsx'
@@ -120,6 +121,7 @@ import {
   fuseIntact,
   relayWithCoilState,
   replacedFuse,
+  shockleyDiodeWithState,
   sourceTerminalIds,
   toggledSpdt,
   toggledSwitch,
@@ -434,6 +436,7 @@ function solveCanvas(
   temperaturesC: Map<string, number>
   thermalConverged: boolean
   relayStates: Map<string, RelayState>
+  shockleyStates: Map<string, ShockleyDiodeState>
   relaysSettled: boolean
 } {
   const { world: rawWorld, drawn, leadAliases } = canvasWorld(nodeList, edgeList)
@@ -526,6 +529,7 @@ function solveCanvas(
     // Each relay's resolved contact state (for the symbol) + whether the relay
     // loop settled (false = a buzzer/oscillator the Math panel flags).
     relayStates: thermal.relayStates,
+    shockleyStates: thermal.shockleyStates,
     relaysSettled: thermal.relaysSettled,
   }
 }
@@ -659,6 +663,7 @@ function Canvas() {
       temperaturesC: solved.temperaturesC,
       thermalConverged: solved.thermalConverged,
       relayStates: solved.relayStates,
+      shockleyStates: solved.shockleyStates,
       relaysSettled: solved.relaysSettled,
       materials,
       materialResistivity,
@@ -685,6 +690,7 @@ function Canvas() {
   // Each relay's resolved contact state (drives the symbol) + whether the relay
   // loop settled (false = a buzzer — flagged like the runaway).
   const [relayStates, setRelayStates] = useState(initial.relayStates)
+  const [shockleyStates, setShockleyStates] = useState(initial.shockleyStates)
   const [relaysSettled, setRelaysSettled] = useState(initial.relaysSettled)
   // Latest edges for the re-solve effect WITHOUT depending on edge data (a re-solve
   // rewrites edge data, which would loop); structural edits trigger it via
@@ -850,6 +856,7 @@ function Canvas() {
       setSolvedTemperatures(solved.temperaturesC)
       setThermalConverged(solved.thermalConverged)
       setRelayStates(solved.relayStates)
+      setShockleyStates(solved.shockleyStates)
       setRelaysSettled(solved.relaysSettled)
     },
     [setEdges],
@@ -1746,6 +1753,26 @@ function Canvas() {
       return changed ? next : current
     })
   }, [relayStates, setNodes])
+
+  // Persist each Shockley diode's settled latch state onto its node — the latch's MEMORY. Without
+  // this it would re-settle from 'blocking' every solve and never stay latched after the trigger
+  // is removed. Mirrors the relay sync above (writes only on a real change, so it converges in one
+  // render). Not checkpointed — automatic physics off the user's edit.
+  useEffect(() => {
+    if (shockleyStates.size === 0) return
+    setNodes((current) => {
+      let changed = false
+      const next = current.map((n) => {
+        const target = shockleyStates.get(n.id)
+        if (target === undefined) return n
+        const params = (n.data as DeviceNodeData).parameters
+        if (params?.device_state?.value === target) return n
+        changed = true
+        return { ...n, data: { ...n.data, parameters: shockleyDiodeWithState(params, target) } }
+      })
+      return changed ? next : current
+    })
+  }, [shockleyStates, setNodes])
 
   // Persist each light sensor's computed incident illuminance (its ambient plus
   // what every light_source casts on it) onto its node, so the headline reads the

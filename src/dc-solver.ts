@@ -372,6 +372,15 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     } else if (inst.definition === 'diode_tunnel') {
       const td = resolveTunnelDiode(inst, thermalV)
       if (td !== null) tunnelDiodes.push(td)
+    } else if (inst.definition === 'diode_shockley') {
+      // A latching 4-layer diode: conducting → an ordinary forward diode; blocking → open. The
+      // breakover / holding-current transitions between the two are the discrete-state fixed point
+      // settled in solveWithRelays, off the solved voltage across and current through.
+      if (readEnumParam(inst, 'device_state') === 'conducting') {
+        const led = resolveShockleyLed(inst, thermalV, options?.temperaturesC?.get(inst.id))
+        if (led !== null) shockleyLeds.push(led)
+        else linearVoltageSources.push({ inst, kind: 'led' })
+      }
     } else if (inst.definition === 'diode_zener_silicon') {
       // Forward Shockley conduction PLUS reverse-breakdown regulation, solved
       // through the same Newton loop as the LEDs (zenerCompanionModel clamps the

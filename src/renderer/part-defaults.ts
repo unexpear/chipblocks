@@ -173,6 +173,18 @@ const DEFAULTS: Record<string, Parameters> = {
     thermal_resistance_junction_ambient: scalar(300, 'kelvin_per_watt'),
     max_operating_temperature: scalar(100, 'celsius'),
   },
+  diode_shockley: {
+    // 4-layer (PNPN) diode class: breakover ~20 V, holding ~5 mA, ~1.1 V on-state, 1 A rating.
+    breakover_voltage: scalar(20, 'volt'),
+    holding_current: scalar(5e-3, 'ampere'),
+    forward_voltage: scalar(1.1, 'volt'),
+    max_forward_current: scalar(1, 'ampere'),
+    device_state: { value: 'blocking' },
+    n_side: { value: 'silicon_n_type' },
+    p_side: { value: 'silicon_p_type' },
+    thermal_resistance_junction_ambient: scalar(80, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(125, 'celsius'),
+  },
   switch_spst_toggle: {
     // Panel-mount SPST toggle (C&K 7101 class, matching the anchor switch
     // fixture): copper contacts, ~20 mΩ closed, 6 A, 125 V. Starts closed
@@ -496,6 +508,15 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     thermal_resistance_junction_ambient: 'small axial package class (~300 K/W)',
     max_operating_temperature: '~100 °C, Ge tunnel-diode class',
   },
+  diode_shockley: {
+    breakover_voltage:
+      '4-layer/Shockley diode breakover ~20 V (class-typical low-voltage trigger device)',
+    holding_current: 'thyristor-class holding current ~5 mA',
+    forward_voltage: 'on-state drop ~1.1 V (a conducting silicon PNPN)',
+    max_forward_current: '~1 A on-state rating, small-thyristor class',
+    thermal_resistance_junction_ambient: 'small power package class (~80 K/W)',
+    max_operating_temperature: 'thyristor T_J max ~125 °C (class-typical)',
+  },
   switch_spst_toggle: {
     contact_resistance_closed: 'C&K 7101 class (~20 mΩ closed)',
     max_current: 'C&K 7101 (6 A)',
@@ -724,6 +745,14 @@ export function relayWithCoilState(
   state: 'energized' | 'de_energized',
 ): Parameters {
   return { ...parameters, coil_state: { value: state } }
+}
+
+/** Set a Shockley 4-layer diode's resolved latch state — the canvas syncs this from the solve. */
+export function shockleyDiodeWithState(
+  parameters: Parameters | undefined,
+  state: 'blocking' | 'conducting',
+): Parameters {
+  return { ...parameters, device_state: { value: state } }
 }
 
 /**

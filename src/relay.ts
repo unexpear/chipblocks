@@ -17,6 +17,12 @@ import type { SolveOptions } from './dc-solver.ts'
 import { type ElectroThermalResult, solveElectroThermal } from './electro-thermal.ts'
 import { relayCoilTargets } from './failure-detector.ts'
 import { readEnumParam } from './instance-params.ts'
+import {
+  type ShockleyDiodeState,
+  shockleyDiodeTargets,
+  shockleyStatesOf,
+  worldWithShockleyStates,
+} from './shockley-diode.ts'
 
 const MAX_RELAY_ITERATIONS = 20
 
@@ -25,7 +31,9 @@ export type RelayState = 'energized' | 'de_energized'
 export type RelaySolveResult = ElectroThermalResult & {
   /** Each relay's resolved contact state (energized → common on normally_open). */
   relayStates: Map<string, RelayState>
-  /** False when a relay could not settle — a buzzer / oscillator. */
+  /** Each Shockley 4-layer diode's settled latch state (blocking / conducting). */
+  shockleyStates: Map<string, ShockleyDiodeState>
+  /** False when a discrete-state device (relay or Shockley diode) could not settle — an oscillator. */
   relaysSettled: boolean
 }
 
@@ -60,26 +68,40 @@ function worldWithRelayStates(world: World, states: Map<string, RelayState>): Wo
 }
 
 /**
- * Solve with relays resolved to a self-consistent contact state. Wraps the
- * electro-thermal solve (which ignores the relay — its coil carries no thermal
- * rating): the OUTER loop here flips contacts, the INNER loop there settles
- * temperatures. With no relays this is a single electro-thermal solve.
+ * Solve with all discrete-state devices resolved to a self-consistent state — relays (contact
+ * position) AND Shockley 4-layer diodes (latch blocking/conducting). Wraps the electro-thermal
+ * solve: the OUTER loop here flips relay contacts + diode latches off the solved voltages/currents,
+ * the INNER loop there settles temperatures. With none of these it is a single solve. An oscillator
+ * (a buzzer, or a Shockley relaxation oscillator) never settles — the loop is capped and
+ * relaysSettled is reported false, the same honest "could not settle" the thermal runaway uses.
  */
 export function solveWithRelays(world: World, options?: SolveOptions): RelaySolveResult {
-  let states = relayStatesOf(world)
-  let result = solveElectroThermal(worldWithRelayStates(world, states), options)
-  if (states.size === 0) return { ...result, relayStates: states, relaysSettled: true }
+  let relayStates = relayStatesOf(world)
+  let shockleyStates = shockleyStatesOf(world)
+  const composed = () =>
+    worldWithRelayStates(worldWithShockleyStates(world, shockleyStates), relayStates)
+  let result = solveElectroThermal(composed(), options)
+  if (relayStates.size === 0 && shockleyStates.size === 0) {
+    return { ...result, relayStates, shockleyStates, relaysSettled: true }
+  }
 
   let relaysSettled = false
   for (let i = 0; i < MAX_RELAY_ITERATIONS; i++) {
-    const targets = relayCoilTargets(worldWithRelayStates(world, states), result.solution)
-    if (targets.size === 0) {
+    const relayTargets = relayCoilTargets(composed(), result.solution)
+    const shockleyTargets = shockleyDiodeTargets(composed(), result.solution)
+    if (relayTargets.size === 0 && shockleyTargets.size === 0) {
       relaysSettled = true
       break
     }
-    states = new Map(states)
-    for (const [id, target] of targets) states.set(id, target)
-    result = solveElectroThermal(worldWithRelayStates(world, states), options)
+    if (relayTargets.size > 0) {
+      relayStates = new Map(relayStates)
+      for (const [id, target] of relayTargets) relayStates.set(id, target)
+    }
+    if (shockleyTargets.size > 0) {
+      shockleyStates = new Map(shockleyStates)
+      for (const [id, target] of shockleyTargets) shockleyStates.set(id, target)
+    }
+    result = solveElectroThermal(composed(), options)
   }
-  return { ...result, relayStates: states, relaysSettled }
+  return { ...result, relayStates, shockleyStates, relaysSettled }
 }
