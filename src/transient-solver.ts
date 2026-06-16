@@ -74,6 +74,7 @@ import {
   resolveCrd,
   resolveJfet,
   resolveMosfet,
+  resolveTunnelDiode,
   SILICON_BANDGAP_EV,
   SOLVER_GMIN,
   stampBjtCompanion,
@@ -81,6 +82,7 @@ import {
   stampMosfetCompanion,
   stampPotentiometer,
   stampResistor,
+  type TunnelDiode,
 } from './dc-solver.ts'
 import { type DenseVector, lusolve, zerosMatrix, zerosVector } from './dense-linear.ts'
 import {
@@ -101,6 +103,11 @@ import {
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { ldrResistance } from './light.ts'
 import { limitMosfetStep, mosfetOperatingPoint } from './mosfet-model.ts'
+import {
+  limitTunnelDiodeStep,
+  tunnelDiodeCompanion,
+  tunnelDiodeCurrent,
+} from './tunnel-diode-model.ts'
 import { type VaractorParams, varactorCapacitance, varactorCharge } from './varactor-model.ts'
 
 /** Newton-Raphson controls per time step (matches the DC solver's §20.6). */
@@ -433,6 +440,37 @@ function resolveVaractor(inst: Instance, nodeIndex: Map<string, number>): CapEle
     varactor: params,
     vGuess: vPrev,
     qPrev: varactorCharge(vPrev, params),
+  }
+}
+
+/**
+ * Stamp a tunnel diode's companion in the time loop — its negative-resistance I-V as a conductance
+ * (which may be NEGATIVE between the peak and valley) plus a current source; the same shape as the
+ * DC stamp. With an LC tank this negative resistance sustains a tunnel-diode oscillator.
+ */
+function stampTransientTunnel(
+  td: TunnelDiode,
+  nodeIndex: Map<string, number>,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const { conductance: G, currentSource: Ieq } = tunnelDiodeCompanion(td.vGuess, td.params)
+  const a = nodeIndex.get(td.anodeNet)
+  const c = nodeIndex.get(td.cathodeNet)
+  const Gd = G + SOLVER_GMIN
+  if (a !== undefined) {
+    M.set([a, a], (M.get([a, a]) ?? 0) + Gd)
+    b.set([a, 0], (b.get([a, 0]) ?? 0) - Ieq)
+  }
+  if (c !== undefined) {
+    M.set([c, c], (M.get([c, c]) ?? 0) + Gd)
+    b.set([c, 0], (b.get([c, 0]) ?? 0) + Ieq)
+  }
+  if (a !== undefined && c !== undefined) {
+    M.set([a, c], (M.get([a, c]) ?? 0) - Gd)
+    M.set([c, a], (M.get([c, a]) ?? 0) - Gd)
   }
 }
 
@@ -1136,6 +1174,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   const transformers: TransformerElement[] = []
   const ctTransformers: CtTransformerElement[] = []
   const diodes: DiodeElement[] = []
+  const tunnelDiodes: TunnelDiode[] = []
   const zeners: ZenerElement[] = []
   const bjts: BjtElement[] = []
   const mosfets: MosfetElement[] = []
@@ -1255,9 +1294,9 @@ export function solveTransient(world: World, options: TransientOptions): Transie
           `Skipped constant-current diode '${inst.id}' (missing parameters or terminals)`,
         )
     } else if (inst.definition === 'diode_tunnel') {
-      // The tunnel diode's negative-resistance I-V is DC-only so far (a tunnel-diode oscillator
-      // needs the transient path — the documented successor). Warn rather than silently open it.
-      warnings.push(`Tunnel diode '${inst.id}' is not modeled in transient yet (DC only)`)
+      const td = resolveTunnelDiode(inst, vT)
+      if (td !== null) tunnelDiodes.push(td)
+      else warnings.push(`Skipped tunnel diode '${inst.id}' (missing parameters or anode/cathode)`)
     } else if (inst.definition === 'diode_shockley') {
       warnings.push(`Shockley diode '${inst.id}' is not modeled in transient yet (DC only)`)
     } else if (inst.definition === 'wire') {
@@ -1401,6 +1440,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       for (const tr of ctTransformers) stampCtTransformerCompanion(tr, dt, M, b)
     }
     for (const d of diodes) stampDiodeCompanion(d, d.thermalV, M, b)
+    for (const td of tunnelDiodes) stampTransientTunnel(td, nodeIndex, M, b)
     for (const z of zeners) stampTransientZener(z, z.thermalV, M, b)
     for (const bjt of bjts) stampBjtCompanion(bjt, nodeIndex, bjt.thermalV, M, b)
     for (const fet of mosfets) stampMosfetCompanion(fet, nodeIndex, M, b)
@@ -1442,6 +1482,14 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         maxDelta = Math.max(maxDelta, Math.abs(limit.voltage - d.vGuess))
         if (limit.limited) anyLimited = true
         d.vGuess = limit.voltage
+      }
+      for (const td of tunnelDiodes) {
+        const vA = td.anodeNet === ground ? 0 : (nodes.get(td.anodeNet) ?? 0)
+        const vC = td.cathodeNet === ground ? 0 : (nodes.get(td.cathodeNet) ?? 0)
+        const next = limitTunnelDiodeStep(vA - vC, td.vGuess)
+        maxDelta = Math.max(maxDelta, Math.abs(next - td.vGuess))
+        if (next !== vA - vC) anyLimited = true
+        td.vGuess = next
       }
       for (const z of zeners) {
         const vAnode = z.anodeNet === ground ? 0 : (nodes.get(z.anodeNet) ?? 0)
@@ -1611,6 +1659,10 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         diodeCurrent(v, d.saturationCurrent, d.idealityFactor, d.thermalV),
       )
     }
+    for (const td of tunnelDiodes) {
+      const v = volts(td.anodeNet) - volts(td.cathodeNet)
+      through(td.inst.id, 'anode', 'cathode', tunnelDiodeCurrent(v, td.params))
+    }
 
     for (const z of zeners) {
       // The two-branch device current at the converged voltage — forward, or the
@@ -1684,6 +1736,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   if (seed.status === 'solved') {
     const at = (net: string) => (net === ground ? 0 : (seed.nodes.get(net) ?? 0))
     for (const d of diodes) d.vGuess = at(d.anodeNet) - at(d.cathodeNet)
+    for (const td of tunnelDiodes) td.vGuess = at(td.anodeNet) - at(td.cathodeNet)
     for (const z of zeners) z.vGuess = at(z.anodeNet) - at(z.cathodeNet)
     for (const bjt of bjts) {
       const sign = bjt.polarity === 'pnp' ? -1 : 1

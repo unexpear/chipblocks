@@ -8,6 +8,7 @@
 import { describe, expect, test } from 'vitest'
 import type { World } from '../src/cross-fk-validator.ts'
 import { solveDC } from '../src/dc-solver.ts'
+import { solveTransient } from '../src/transient-solver.ts'
 import {
   type TunnelDiodeParams,
   tunnelDiodeCurrent,
@@ -145,5 +146,88 @@ describe('solveDC — tunnel diode through the Newton loop (negative resistance 
     const pastValley = tunnelCurrent(0.35, 1) // ~V_V across the diode
     expect(atPeak).toBeGreaterThan(pastValley) // MORE current at LOWER voltage = negative resistance
     expect(atPeak).toBeCloseTo(I_P, 4)
+  })
+})
+
+/** V+(supply) → R(1 Ω) → tunnel.anode; tunnel.cathode → GND, solved in the time domain. */
+function tunnelTransientCurrent(supplyVolts: number): number {
+  const world: World = {
+    definitions: new Map(),
+    instances: new Map(),
+    behaviors: new Map(),
+    activeVariables: new Map(),
+    nets: new Map(),
+  }
+  world.nets.set('vcc', {
+    id: 'vcc',
+    kind: 'net',
+    members: [
+      { instance: 'bat', terminal: 'terminal_positive' },
+      { instance: 'r', terminal: 'terminal_a' },
+    ],
+  })
+  world.nets.set('mid', {
+    id: 'mid',
+    kind: 'net',
+    members: [
+      { instance: 'r', terminal: 'terminal_b' },
+      { instance: 'td', terminal: 'anode' },
+    ],
+  })
+  world.nets.set('gnd', {
+    id: 'gnd',
+    kind: 'net',
+    type: 'ground',
+    members: [
+      { instance: 'bat', terminal: 'terminal_negative' },
+      { instance: 'td', terminal: 'cathode' },
+    ],
+  })
+  world.instances.set('bat', {
+    id: 'bat',
+    kind_ref: 'primitive_device',
+    definition: 'power_source',
+    parameters: { nominal_voltage: scalar(supplyVolts, 'volt') },
+    connects: [
+      { net: 'vcc', terminal: 'terminal_positive', of: 'bat' },
+      { net: 'gnd', terminal: 'terminal_negative', of: 'bat' },
+    ],
+  })
+  world.instances.set('r', {
+    id: 'r',
+    kind_ref: 'primitive_device',
+    definition: 'resistor',
+    parameters: { resistance: scalar(1, 'ohm') },
+    connects: [
+      { net: 'vcc', terminal: 'terminal_a', of: 'r' },
+      { net: 'mid', terminal: 'terminal_b', of: 'r' },
+    ],
+  })
+  world.instances.set('td', {
+    id: 'td',
+    kind_ref: 'primitive_device',
+    definition: 'diode_tunnel',
+    parameters: {
+      peak_current: scalar(I_P, 'ampere'),
+      peak_voltage: scalar(V_P, 'volt'),
+      valley_current: scalar(I_V, 'ampere'),
+      valley_voltage: scalar(V_V, 'volt'),
+    },
+    connects: [
+      { net: 'mid', terminal: 'anode', of: 'td' },
+      { net: 'gnd', terminal: 'cathode', of: 'td' },
+    ],
+  })
+  const result = solveTransient(world, { timeStep: 2e-7, duration: 1e-5 })
+  const last = result.series[result.series.length - 1]
+  return Math.abs(last?.currents?.get('td/anode') ?? 0)
+}
+
+describe('solveTransient — the tunnel diode carries its negative-resistance I-V in the time domain', () => {
+  test('peak current still exceeds valley current (the NDR survives into transient)', () => {
+    // The negative resistance now present in the time loop is what an LC tank turns into a
+    // tunnel-diode oscillator; here we confirm the I-V itself is reproduced after the solve settles.
+    expect(tunnelTransientCurrent(0.065)).toBeGreaterThan(tunnelTransientCurrent(0.35))
+    expect(tunnelTransientCurrent(0.065)).toBeCloseTo(I_P, 3) // ~I_P at the peak voltage
   })
 })

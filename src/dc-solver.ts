@@ -195,7 +195,7 @@ type ShockleyLed = {
  * A tunnel (Esaki) diode resolved for the Newton-Raphson solve. Its companion conductance goes
  * NEGATIVE in the V_P..V_V region, so it is solved with a tight per-iteration voltage-step clamp.
  */
-type TunnelDiode = {
+export type TunnelDiode = {
   inst: Instance
   anodeNet: string
   cathodeNet: string
