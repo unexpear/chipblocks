@@ -40,6 +40,8 @@ export type FailureCode =
   | 'zener-overload'
   | 'mosfet-overloaded'
   | 'mosfet-gate-overvoltage'
+  | 'bjt-overloaded'
+  | 'bjt-ceo-breakdown'
   | 'resistor-overpower'
   | 'capacitor-reverse-polarity'
   | 'capacitor-overvoltage'
@@ -72,6 +74,8 @@ export type Failure = {
 const LED_DEFINITIONS = new Set(['led', 'led_uv_algan'])
 /** Plain rectifying diodes — same forward-overload physics, plus a PIV rating. */
 const DIODE_DEFINITIONS = new Set(['diode_silicon_rectifier', 'diode_schottky_al_si'])
+/** Bipolar transistors — collector-current overload + V_CEO breakdown. */
+const BJT_DEFINITIONS = new Set(['transistor_bjt_npn', 'transistor_bjt_pnp'])
 
 /**
  * Walk the world's instances and compare each against its rating parameters
@@ -108,6 +112,11 @@ export function detectFailures(world: World, solution: Solution): Failure[] {
       if (overload !== null) failures.push(overload)
       const oxide = checkMosfetGateOvervoltage(inst, solution)
       if (oxide !== null) failures.push(oxide)
+    } else if (BJT_DEFINITIONS.has(inst.definition)) {
+      const overload = checkBjtOverload(inst, solution)
+      if (overload !== null) failures.push(overload)
+      const breakdown = checkBjtBreakdown(inst, solution)
+      if (breakdown !== null) failures.push(breakdown)
     } else if (inst.definition === 'resistor') {
       const overpower = checkResistorOverpower(inst, solution)
       if (overpower !== null) failures.push(overpower)
@@ -370,6 +379,60 @@ export function checkMosfetGateOvervoltage(inst: Instance, solution: Solution): 
     measured: magnitude,
     rated: maxGate,
     ratio: magnitude / maxGate,
+    units: 'volt',
+    severity: 'error',
+  }
+}
+
+/**
+ * BJT collector-current overload: |I_C| beyond max_collector_current cooks the
+ * junction — the same thermal-damage shape as the MOSFET/diode checks. The DC
+ * solver stores the (signed) collector current as the BJT's branch current.
+ */
+export function checkBjtOverload(inst: Instance, solution: Solution): Failure | null {
+  const maxCollector = readScalarParam(inst, 'max_collector_current')
+  if (maxCollector === undefined || maxCollector <= 0) return null
+  const current = solution.branches.get(inst.id)
+  if (current === undefined) return null
+  const magnitude = Math.abs(current)
+  if (magnitude <= maxCollector) return null
+  return {
+    code: 'bjt-overloaded',
+    source: inst.id,
+    kind: 'max_collector_current',
+    measured: magnitude,
+    rated: maxCollector,
+    ratio: magnitude / maxCollector,
+    units: 'ampere',
+    severity: 'error',
+  }
+}
+
+/**
+ * BJT collector-emitter breakdown (V_CEO, base open): when the C–E voltage in the
+ * part's blocking direction exceeds collector_emitter_breakdown_voltage, the
+ * collector-base junction avalanches. Sign-dependent by polarity — an NPN blocks
+ * a positive V_C − V_E, a PNP blocks a positive V_E − V_C — so a normally-biased
+ * part never false-fires.
+ */
+export function checkBjtBreakdown(inst: Instance, solution: Solution): Failure | null {
+  const breakdownLimit = readScalarParam(inst, 'collector_emitter_breakdown_voltage')
+  if (breakdownLimit === undefined || breakdownLimit <= 0) return null
+  const collector = inst.connects?.find((c) => c.terminal === 'collector')
+  const emitter = inst.connects?.find((c) => c.terminal === 'emitter')
+  if (collector === undefined || emitter === undefined) return null
+  const vC = solution.nodes.get(collector.net)
+  const vE = solution.nodes.get(emitter.net)
+  if (vC === undefined || vE === undefined) return null
+  const blockingVoltage = inst.definition === 'transistor_bjt_pnp' ? vE - vC : vC - vE
+  if (blockingVoltage <= breakdownLimit) return null
+  return {
+    code: 'bjt-ceo-breakdown',
+    source: inst.id,
+    kind: 'collector_emitter_breakdown_voltage',
+    measured: blockingVoltage,
+    rated: breakdownLimit,
+    ratio: blockingVoltage / breakdownLimit,
     units: 'volt',
     severity: 'error',
   }

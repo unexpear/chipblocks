@@ -28,6 +28,8 @@ import {
 } from '../src/cross-fk-validator.ts'
 import { solveDC } from '../src/dc-solver.ts'
 import {
+  checkBjtBreakdown,
+  checkBjtOverload,
   checkCapacitorOvervoltage,
   checkCapacitorReversePolarity,
   checkLedForwardOverload,
@@ -829,5 +831,100 @@ describe('checkZenerOverload', () => {
   test('silent when max_zener_current is missing', () => {
     const z: Instance = { ...zenerInstance(0.178), parameters: {} }
     expect(checkZenerOverload(z, solutionWith({ z1: -1 }))).toBeNull()
+  })
+})
+
+describe('BJT failure modes (checkBjtOverload + checkBjtBreakdown)', () => {
+  // 2N3904 / 2N3906 class: I_C(max) = 200 mA, V_CEO = 40 V.
+  const bjtInstance = (definition: 'transistor_bjt_npn' | 'transistor_bjt_pnp'): Instance => ({
+    id: 'q1',
+    kind_ref: 'primitive_device',
+    definition,
+    parameters: {
+      max_collector_current: { value: { kind: 'scalar', amount: 0.2, unit: 'ampere' } },
+      collector_emitter_breakdown_voltage: {
+        value: { kind: 'scalar', amount: 40, unit: 'volt' },
+      },
+    },
+    connects: [
+      { net: 'net_c', terminal: 'collector', of: 'q1' },
+      { net: 'net_b', terminal: 'base', of: 'q1' },
+      { net: 'net_e', terminal: 'emitter', of: 'q1' },
+    ],
+  })
+
+  // The DC solver stores the (signed) collector current as the BJT's branch.
+  const sol = (iC: number, vC: number, vE: number) =>
+    ({
+      status: 'solved',
+      nodes: new Map([
+        ['net_c', vC],
+        ['net_e', vE],
+        ['net_b', 0.7],
+      ]),
+      branches: new Map([['q1', iC]]),
+      ground: 'net_e',
+      warnings: [],
+      iterations: 1,
+      converged: true,
+      // biome-ignore lint/suspicious/noExplicitAny: minimal test fixture
+    }) as any
+
+  test('over-collector-current fires when |I_C| exceeds max_collector_current', () => {
+    // 300 mA over the 200 mA rating → 1.5×.
+    const f = checkBjtOverload(bjtInstance('transistor_bjt_npn'), sol(0.3, 5, 0))
+    expect(f?.code).toBe('bjt-overloaded')
+    expect(f?.measured).toBeCloseTo(0.3, 9)
+    expect(f?.rated).toBe(0.2)
+    expect(f?.ratio).toBeCloseTo(1.5, 9)
+    expect(f?.units).toBe('ampere')
+  })
+
+  test('over-current uses magnitude, so a PNP (negative branch) fires too', () => {
+    // A PNP's collector current is stored negative; |−0.25| = 250 mA > 200 mA.
+    const f = checkBjtOverload(bjtInstance('transistor_bjt_pnp'), sol(-0.25, -5, 0))
+    expect(f?.code).toBe('bjt-overloaded')
+    expect(f?.measured).toBeCloseTo(0.25, 9)
+  })
+
+  test('silent within the collector-current rating', () => {
+    expect(checkBjtOverload(bjtInstance('transistor_bjt_npn'), sol(0.15, 5, 0))).toBeNull()
+  })
+
+  test('V_CEO breakdown fires when an NPN blocks more than V_CEO', () => {
+    // Cutoff NPN with 50 V across collector→emitter, over the 40 V rating.
+    const f = checkBjtBreakdown(bjtInstance('transistor_bjt_npn'), sol(0, 50, 0))
+    expect(f?.code).toBe('bjt-ceo-breakdown')
+    expect(f?.measured).toBeCloseTo(50, 9)
+    expect(f?.rated).toBe(40)
+    expect(f?.units).toBe('volt')
+  })
+
+  test('V_CEO is sign-aware: a PNP blocks V_E − V_C', () => {
+    // PNP with emitter 50 V above collector → blocking voltage 50 V > 40 V.
+    const f = checkBjtBreakdown(bjtInstance('transistor_bjt_pnp'), sol(0, 0, 50))
+    expect(f?.code).toBe('bjt-ceo-breakdown')
+    expect(f?.measured).toBeCloseTo(50, 9)
+  })
+
+  test('V_CEO does not false-fire for a normally-biased part', () => {
+    // NPN at V_CE = 5 V; PNP at V_CE = −5 V (blocking direction = +5 V) — both under 40 V.
+    expect(checkBjtBreakdown(bjtInstance('transistor_bjt_npn'), sol(0.01, 5, 0))).toBeNull()
+    expect(checkBjtBreakdown(bjtInstance('transistor_bjt_pnp'), sol(-0.01, 0, 5))).toBeNull()
+  })
+
+  test('silent when ratings are missing (unknown, not infinite)', () => {
+    const bare: Instance = { ...bjtInstance('transistor_bjt_npn'), parameters: {} }
+    expect(checkBjtOverload(bare, sol(0.3, 50, 0))).toBeNull()
+    expect(checkBjtBreakdown(bare, sol(0.3, 50, 0))).toBeNull()
+  })
+
+  test('detectFailures wires both BJT checks — an over-driven NPN is no longer "healthy"', () => {
+    const world = {
+      instances: new Map([['q1', bjtInstance('transistor_bjt_npn')]]),
+    } as unknown as World
+    const codes = detectFailures(world, sol(0.3, 50, 0)).map((f) => f.code)
+    expect(codes).toContain('bjt-overloaded')
+    expect(codes).toContain('bjt-ceo-breakdown')
   })
 })
