@@ -16,6 +16,7 @@ import {
 } from '../src/renderer/blocks.ts'
 import {
   AND_BLOCK,
+  BUFFER_BLOCK,
   D_FLIPFLOP_BLOCK,
   D_LATCH_BLOCK,
   FULL_ADDER_BLOCK,
@@ -28,6 +29,7 @@ import {
   RIPPLE_CARRY_2BIT,
   RIPPLE_CARRY_4BIT,
   SR_LATCH_BLOCK,
+  XNOR_BLOCK,
   XOR_BLOCK,
 } from '../src/renderer/builtin-blocks.ts'
 import { canvasToWorld } from '../src/renderer/canvas-to-world.ts'
@@ -122,6 +124,23 @@ const gate2Out = (block: BlockData, aVolts: number, bVolts: number): number =>
 
 const isHigh = (v: number) => v > VDD * 0.7
 const isLow = (v: number) => v < VDD * 0.3
+
+describe('CMOS XNOR block — OUT = NOT(A XOR B), HIGH when the inputs match', () => {
+  test('the full truth table (XOR feeding an inverter, real MOSFETs)', () => {
+    expect(isHigh(gate2Out(XNOR_BLOCK, 0, 0))).toBe(true) // 0,0 -> 1 (match)
+    expect(isLow(gate2Out(XNOR_BLOCK, 0, VDD))).toBe(true) // 0,1 -> 0
+    expect(isLow(gate2Out(XNOR_BLOCK, VDD, 0))).toBe(true) // 1,0 -> 0
+    expect(isHigh(gate2Out(XNOR_BLOCK, VDD, VDD))).toBe(true) // 1,1 -> 1 (match)
+  })
+})
+
+describe('Buffer block — OUT follows IN (two inverters in series)', () => {
+  const bufferOut = (inVolts: number): number => solveBlock(BUFFER_BLOCK, { in: inVolts })('out')
+  test('input LOW -> output LOW; input HIGH -> output HIGH', () => {
+    expect(isLow(bufferOut(0))).toBe(true) // 0 -> 0
+    expect(isHigh(bufferOut(VDD))).toBe(true) // 1 -> 1
+  })
+})
 
 describe('CMOS NAND block — OUT = NOT(A AND B), the universal gate', () => {
   test('the full truth table from four real MOSFETs', () => {

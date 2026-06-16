@@ -710,6 +710,48 @@ function XorGateGlyph() {
   )
 }
 
+/** XNOR gate — the XOR shield with the inversion bubble (HIGH when the inputs match). */
+function XnorGateGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>XNOR gate</title>
+      <line x1={0} y1={MID - 7} x2={14} y2={MID - 7} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={0} y1={MID + 7} x2={14} y2={MID + 7} stroke={STROKE} strokeWidth={1.5} />
+      <path
+        d={`M 12 ${MID - 14} Q 21 ${MID} 12 ${MID + 14}`}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <path
+        d={`M 18 ${MID - 14} Q 36 ${MID - 14} 52 ${MID} Q 36 ${MID + 14} 18 ${MID + 14} Q 27 ${MID} 18 ${MID - 14} Z`}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <circle cx={56} cy={MID} r={4} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={60} y1={MID} x2={80} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
+/** Buffer — the amplifier triangle, no bubble (a non-inverting gate: out follows in). */
+function BufferGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>buffer</title>
+      <line x1={0} y1={MID} x2={20} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+      <polygon
+        points={`20,${MID - 14} 20,${MID + 14} 50,${MID}`}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <line x1={50} y1={MID} x2={80} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
 /** Adder — a labelled IC block with a '+' inside; the palette face for the half and full
  *  adders (on the canvas they are blocks showing their names). */
 function AdderGlyph() {
@@ -883,6 +925,8 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   logic_and: AndGateGlyph,
   logic_or: OrGateGlyph,
   logic_xor: XorGateGlyph,
+  logic_xnor: XnorGateGlyph,
+  logic_buffer: BufferGlyph,
   logic_half_adder: AdderGlyph,
   logic_full_adder: AdderGlyph,
   logic_adder_2bit: AdderGlyph,

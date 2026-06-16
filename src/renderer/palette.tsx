@@ -110,6 +110,8 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'logic_and', label: 'AND' },
   { definition: 'logic_or', label: 'OR' },
   { definition: 'logic_xor', label: 'XOR' },
+  { definition: 'logic_xnor', label: 'XNOR' },
+  { definition: 'logic_buffer', label: 'Buffer' },
   { definition: 'logic_half_adder', label: 'Half Add' },
   { definition: 'logic_full_adder', label: 'Full Add' },
   { definition: 'logic_adder_2bit', label: '2-bit Add' },

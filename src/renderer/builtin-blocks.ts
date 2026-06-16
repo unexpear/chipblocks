@@ -449,6 +449,93 @@ export const XOR_BLOCK: BlockData = {
 }
 
 /**
+ * XNOR = XOR followed by an inverter (NOT(A XOR B)) — HIGH exactly when the inputs MATCH.
+ * Composition of an XOR block and a NOT block: XOR-output to inverter-input, shared rails.
+ * Flattens recursively to the XOR's sixteen MOSFETs plus the inverter's two.
+ */
+export const XNOR_BLOCK: BlockData = {
+  name: 'XNOR',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'xor', definition: 'block', x: 40, y: 60, block: XOR_BLOCK },
+    { id: 'inv', definition: 'block', x: 660, y: 60, block: INVERTER_BLOCK },
+  ],
+  edges: [
+    { id: 'chain', source: 'xor', sourceHandle: 'out', target: 'inv', targetHandle: 'in' },
+    { id: 'vdd', source: 'xor', sourceHandle: 'v_dd', target: 'inv', targetHandle: 'v_dd' },
+    { id: 'gnd', source: 'xor', sourceHandle: 'gnd', target: 'inv', targetHandle: 'gnd' },
+  ],
+  ports: [
+    { id: 'a', label: 'A', side: 'left', offset: 14, inner: { nodeId: 'xor', handleId: 'a' } },
+    { id: 'b', label: 'B', side: 'left', offset: 36, inner: { nodeId: 'xor', handleId: 'b' } },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 58,
+      inner: { nodeId: 'xor', handleId: 'gnd' },
+    },
+    {
+      id: 'out',
+      label: 'out',
+      side: 'right',
+      offset: 14,
+      inner: { nodeId: 'inv', handleId: 'out' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 36,
+      inner: { nodeId: 'xor', handleId: 'v_dd' },
+    },
+  ],
+}
+
+/**
+ * BUFFER = two inverters in series (NOT(NOT(A)) = A) — a non-inverting gate that restores a
+ * clean full-swing logic level and drives a load. Composition of two NOT blocks; flattens to
+ * the four MOSFETs.
+ */
+export const BUFFER_BLOCK: BlockData = {
+  name: 'Buffer',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'inv1', definition: 'block', x: 40, y: 60, block: INVERTER_BLOCK },
+    { id: 'inv2', definition: 'block', x: 320, y: 60, block: INVERTER_BLOCK },
+  ],
+  edges: [
+    { id: 'chain', source: 'inv1', sourceHandle: 'out', target: 'inv2', targetHandle: 'in' },
+    { id: 'vdd', source: 'inv1', sourceHandle: 'v_dd', target: 'inv2', targetHandle: 'v_dd' },
+    { id: 'gnd', source: 'inv1', sourceHandle: 'gnd', target: 'inv2', targetHandle: 'gnd' },
+  ],
+  ports: [
+    { id: 'in', label: 'in', side: 'left', offset: 18, inner: { nodeId: 'inv1', handleId: 'in' } },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 42,
+      inner: { nodeId: 'inv1', handleId: 'gnd' },
+    },
+    {
+      id: 'out',
+      label: 'out',
+      side: 'right',
+      offset: 18,
+      inner: { nodeId: 'inv2', handleId: 'out' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 42,
+      inner: { nodeId: 'inv1', handleId: 'v_dd' },
+    },
+  ],
+}
+
+/**
  * HALF ADDER — adds two bits. SUM = A XOR B, CARRY = A AND B. Literally an XOR gate and an
  * AND gate sharing the two inputs: descend to see exactly those two gates. This is the first
  * block with TWO outputs. (1 + 1 = 10 in binary: sum 0, carry 1 — the carry is the AND.)
@@ -945,6 +1032,8 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   logic_and: AND_BLOCK,
   logic_or: OR_BLOCK,
   logic_xor: XOR_BLOCK,
+  logic_xnor: XNOR_BLOCK,
+  logic_buffer: BUFFER_BLOCK,
   logic_half_adder: HALF_ADDER_BLOCK,
   logic_full_adder: FULL_ADDER_BLOCK,
   logic_adder_2bit: RIPPLE_CARRY_2BIT,
