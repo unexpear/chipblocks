@@ -85,6 +85,11 @@ parameters:
     units: volt
     required: false
     description: Initial junction voltage (anode − cathode) at t = 0 for the transient solve. Reverse bias is negative.
+  transit_time:
+    type: quantity
+    units: second
+    required: false
+    description: "Transit time τ_T for the forward diffusion charge Q_diff = τ_T·I_diode. Sets the forward diffusion capacitance; negligible in reverse (the varactor's regime). 0 disables it."
   thermal_resistance_junction_ambient:
     type: quantity
     units: kelvin_per_watt

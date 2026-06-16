@@ -101,7 +101,7 @@ import {
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { ldrResistance } from './light.ts'
 import { limitMosfetStep, mosfetOperatingPoint } from './mosfet-model.ts'
-import { junctionCapacitance } from './varactor-model.ts'
+import { type VaractorParams, varactorCapacitance, varactorCharge } from './varactor-model.ts'
 
 /** Newton-Raphson controls per time step (matches the DC solver's §20.6). */
 const NR_MAX_ITERATIONS = 100
@@ -211,8 +211,11 @@ type CapElement = {
   iB: number | undefined
   capacitance: number // farads
   vPrev: number // V across (netA − netB) at the previous step
-  /** Present for a varactor: capacitance is recomputed each step from vPrev via junctionCapacitance. */
-  varactor?: { cj0: number; vj: number; m: number }
+  /** Present for a varactor — the engine integrates its charge Q(V) implicitly (see capCompanion). */
+  varactor?: VaractorParams
+  /** Varactor Newton guess for this step's voltage, and its stored charge at the previous step. */
+  vGuess?: number
+  qPrev?: number
 }
 
 /** An inductor resolved for the time loop. */
@@ -380,9 +383,9 @@ function resolveCapacitor(inst: Instance, nodeIndex: Map<string, number>): CapEl
 }
 
 /**
- * Resolve a varactor — a capacitor whose capacitance is its junction capacitance C(V), recomputed
- * from the voltage across it each step (capCapacitance). In DC it is a reverse-biased diode (it
- * blocks); the time loop is where its voltage-controlled capacitance matters.
+ * Resolve a varactor — a capacitor whose stored charge Q(V) the engine integrates implicitly
+ * (capCompanion, charge-conserving) rather than freezing C at the step-start voltage. In DC it is a
+ * reverse-biased diode (it blocks); the time loop is where its voltage-controlled capacitance matters.
  */
 function resolveVaractor(inst: Instance, nodeIndex: Map<string, number>): CapElement | null {
   const cj0 = readScalarParam(inst, 'junction_capacitance_zero_bias')
@@ -394,6 +397,29 @@ function resolveVaractor(inst: Instance, nodeIndex: Map<string, number>): CapEle
   const cathode = inst.connects?.find((c) => c.terminal === 'cathode')
   if (anode === undefined || cathode === undefined) return null
   const vPrev = readScalarParam(inst, 'initial_voltage') ?? 0
+  // Forward diffusion charge (τ_T · I_S) — negligible in reverse, the varactor's regime; transit_time
+  // 0 (the default) disables it. I_S is calibrated from the forward operating point.
+  const thermalV = 0.025852 // kT/q at ~300 K
+  const ideality = readScalarParam(inst, 'ideality_factor') ?? 1
+  const transitTime = readScalarParam(inst, 'transit_time') ?? 0
+  const forwardVoltage = readScalarParam(inst, 'forward_voltage')
+  const maxForwardCurrent = readScalarParam(inst, 'max_forward_current')
+  const saturationCurrent =
+    transitTime > 0 &&
+    forwardVoltage !== undefined &&
+    maxForwardCurrent !== undefined &&
+    forwardVoltage > 0
+      ? maxForwardCurrent / (Math.exp(forwardVoltage / (ideality * thermalV)) - 1)
+      : 0
+  const params: VaractorParams = {
+    zeroBiasCapacitance: cj0,
+    junctionPotential: vj,
+    gradingCoefficient: m,
+    transitTime,
+    saturationCurrent,
+    ideality,
+    thermalV,
+  }
   return {
     id: inst.id,
     termA: anode.terminal,
@@ -402,9 +428,11 @@ function resolveVaractor(inst: Instance, nodeIndex: Map<string, number>): CapEle
     netB: cathode.net,
     iA: nodeIndex.get(anode.net),
     iB: nodeIndex.get(cathode.net),
-    capacitance: junctionCapacitance(vPrev, cj0, vj, m),
+    capacitance: varactorCapacitance(vPrev, params),
     vPrev,
-    varactor: { cj0, vj, m },
+    varactor: params,
+    vGuess: vPrev,
+    qPrev: varactorCharge(vPrev, params),
   }
 }
 
@@ -785,10 +813,21 @@ function stampFixedVoltage(
   b.set([auxIdx, 0], V)
 }
 
-/** A capacitor's present capacitance — for a varactor, recomputed from its voltage each step. */
-function capCapacitance(cap: CapElement): number {
-  if (cap.varactor === undefined) return cap.capacitance
-  return junctionCapacitance(cap.vPrev, cap.varactor.cj0, cap.varactor.vj, cap.varactor.m)
+/**
+ * A capacitor's backward-Euler companion {conductance, history source}. A linear cap freezes C at
+ * the step-start voltage; a varactor integrates its charge Q(V) implicitly — evaluated at the
+ * Newton guess vGuess, with qPrev the charge carried from the previous step (charge-conserving:
+ * i = (Q(vGuess) − qPrev)/dt linearized as gEq·V − iHist).
+ */
+function capCompanion(cap: CapElement, dt: number): { gEq: number; iHist: number } {
+  if (cap.varactor === undefined) {
+    const gEq = cap.capacitance / dt
+    return { gEq, iHist: gEq * cap.vPrev }
+  }
+  const v = cap.vGuess ?? cap.vPrev
+  const gEq = varactorCapacitance(v, cap.varactor) / dt
+  const iHist = gEq * v - (varactorCharge(v, cap.varactor) - (cap.qPrev ?? 0)) / dt
+  return { gEq, iHist }
 }
 
 /** Stamp a capacitor's backward-Euler companion: conductance C/Δt + history source. */
@@ -800,8 +839,7 @@ function stampCapacitorCompanion(
   // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
   b: any,
 ): void {
-  const gEq = capCapacitance(cap) / dt
-  const iHist = gEq * cap.vPrev
+  const { gEq, iHist } = capCompanion(cap, dt)
   const { iA, iB } = cap
   if (iA !== undefined) {
     M.set([iA, iA], (M.get([iA, iA]) ?? 0) + gEq)
@@ -1442,6 +1480,14 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         fet.vGS = nextVGS
         fet.vDS = nextVDS
       }
+      for (const cap of caps) {
+        if (cap.varactor === undefined) continue
+        const vA = cap.netA === ground ? 0 : (nodes.get(cap.netA) ?? 0)
+        const vC = cap.netB === ground ? 0 : (nodes.get(cap.netB) ?? 0)
+        const next = vA - vC
+        maxDelta = Math.max(maxDelta, Math.abs(next - (cap.vGuess ?? cap.vPrev)))
+        cap.vGuess = next
+      }
       if (maxDelta < NR_VOLTAGE_TOLERANCE && !anyLimited) return solved
     }
     return 'no-convergence'
@@ -1500,9 +1546,9 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       } else {
         // The backward-Euler companion's current at this step, from the OLD
         // history (vPrev is updated only after recording).
-        const gEq = capCapacitance(cap) / dt
+        const { gEq, iHist } = capCompanion(cap, dt)
         const v = volts(cap.netA) - volts(cap.netB)
-        through(cap.id, cap.termA, cap.termB, gEq * v - gEq * cap.vPrev)
+        through(cap.id, cap.termA, cap.termB, gEq * v - iHist)
       }
     }
 
@@ -1648,6 +1694,9 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       fet.vGS = at(fet.gateNet) - at(fet.sourceNet)
       fet.vDS = at(fet.drainNet) - at(fet.sourceNet)
     }
+    for (const cap of caps) {
+      if (cap.varactor !== undefined) cap.vGuess = at(cap.netA) - at(cap.netB)
+    }
   }
 
   // t = 0 — the initial condition (capacitors held at their initial voltage).
@@ -1682,6 +1731,10 @@ export function solveTransient(world: World, options: TransientOptions): Transie
 
     for (const cap of caps) {
       cap.vPrev = (nodes.get(cap.netA) ?? 0) - (nodes.get(cap.netB) ?? 0)
+      if (cap.varactor !== undefined) {
+        cap.qPrev = varactorCharge(cap.vPrev, cap.varactor)
+        cap.vGuess = cap.vPrev
+      }
     }
     for (const ind of inductors) {
       // The converged step's current through the inductor — the value just

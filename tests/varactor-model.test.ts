@@ -7,7 +7,13 @@
 import { describe, expect, test } from 'vitest'
 import type { World } from '../src/cross-fk-validator.ts'
 import { solveTransient } from '../src/transient-solver.ts'
-import { junctionCapacitance } from '../src/varactor-model.ts'
+import {
+  diffusionCapacitance,
+  junctionCapacitance,
+  type VaractorParams,
+  varactorCapacitance,
+  varactorCharge,
+} from '../src/varactor-model.ts'
 
 describe('junctionCapacitance — C(V)', () => {
   const CJ0 = 100e-12
@@ -30,6 +36,42 @@ describe('junctionCapacitance — C(V)', () => {
   test('the forward region is clamped — bounded, never divergent', () => {
     expect(Number.isFinite(junctionCapacitance(0.7, CJ0, VJ, 0.5))).toBe(true)
     expect(Number.isFinite(junctionCapacitance(5, CJ0, VJ, 0.5))).toBe(true)
+  })
+})
+
+describe('charge integration — Q(V), the large-signal state', () => {
+  const P: VaractorParams = {
+    zeroBiasCapacitance: 100e-12,
+    junctionPotential: 0.7,
+    gradingCoefficient: 0.5,
+    transitTime: 0,
+    saturationCurrent: 0,
+    ideality: 1,
+    thermalV: 0.025852,
+  }
+  test('Q is monotonic increasing in V (more voltage stores more charge)', () => {
+    expect(varactorCharge(-8, P)).toBeLessThan(varactorCharge(-2, P))
+    expect(varactorCharge(-2, P)).toBeLessThan(varactorCharge(0, P))
+  })
+  test('dQ/dV equals C(V) — the charge is the integral of the capacitance', () => {
+    for (const v of [-8, -4, -1, -0.2]) {
+      const h = 1e-6
+      const dQ = (varactorCharge(v + h, P) - varactorCharge(v - h, P)) / (2 * h)
+      expect(Math.abs(dQ - varactorCapacitance(v, P)) / varactorCapacitance(v, P)).toBeLessThan(
+        1e-4,
+      )
+    }
+  })
+  test('the forward diffusion term adds capacitance under forward bias, negligible in reverse', () => {
+    const withDiff: VaractorParams = { ...P, transitTime: 1e-8, saturationCurrent: 1e-12 }
+    expect(varactorCapacitance(0.4, withDiff)).toBeGreaterThan(varactorCapacitance(0.4, P))
+    expect(diffusionCapacitance(-5, 1e-8, 1e-12, 1, 0.025852)).toBeLessThan(1e-15)
+    // dQ/dV still equals C with diffusion enabled
+    const h = 1e-6
+    const dQ = (varactorCharge(0.3 + h, withDiff) - varactorCharge(0.3 - h, withDiff)) / (2 * h)
+    expect(
+      Math.abs(dQ - varactorCapacitance(0.3, withDiff)) / varactorCapacitance(0.3, withDiff),
+    ).toBeLessThan(1e-4)
   })
 })
 
