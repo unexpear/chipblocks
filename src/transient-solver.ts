@@ -101,6 +101,7 @@ import {
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { ldrResistance } from './light.ts'
 import { limitMosfetStep, mosfetOperatingPoint } from './mosfet-model.ts'
+import { junctionCapacitance } from './varactor-model.ts'
 
 /** Newton-Raphson controls per time step (matches the DC solver's §20.6). */
 const NR_MAX_ITERATIONS = 100
@@ -210,6 +211,8 @@ type CapElement = {
   iB: number | undefined
   capacitance: number // farads
   vPrev: number // V across (netA − netB) at the previous step
+  /** Present for a varactor: capacitance is recomputed each step from vPrev via junctionCapacitance. */
+  varactor?: { cj0: number; vj: number; m: number }
 }
 
 /** An inductor resolved for the time loop. */
@@ -373,6 +376,35 @@ function resolveCapacitor(inst: Instance, nodeIndex: Map<string, number>): CapEl
     iB: nodeIndex.get(c2.net),
     capacitance,
     vPrev: readScalarParam(inst, 'initial_voltage') ?? 0,
+  }
+}
+
+/**
+ * Resolve a varactor — a capacitor whose capacitance is its junction capacitance C(V), recomputed
+ * from the voltage across it each step (capCapacitance). In DC it is a reverse-biased diode (it
+ * blocks); the time loop is where its voltage-controlled capacitance matters.
+ */
+function resolveVaractor(inst: Instance, nodeIndex: Map<string, number>): CapElement | null {
+  const cj0 = readScalarParam(inst, 'junction_capacitance_zero_bias')
+  const vj = readScalarParam(inst, 'junction_potential')
+  const m = readScalarParam(inst, 'grading_coefficient')
+  if (cj0 === undefined || vj === undefined || m === undefined) return null
+  if (cj0 <= 0 || vj <= 0 || m <= 0) return null
+  const anode = inst.connects?.find((c) => c.terminal === 'anode')
+  const cathode = inst.connects?.find((c) => c.terminal === 'cathode')
+  if (anode === undefined || cathode === undefined) return null
+  const vPrev = readScalarParam(inst, 'initial_voltage') ?? 0
+  return {
+    id: inst.id,
+    termA: anode.terminal,
+    termB: cathode.terminal,
+    netA: anode.net,
+    netB: cathode.net,
+    iA: nodeIndex.get(anode.net),
+    iB: nodeIndex.get(cathode.net),
+    capacitance: junctionCapacitance(vPrev, cj0, vj, m),
+    vPrev,
+    varactor: { cj0, vj, m },
   }
 }
 
@@ -753,6 +785,12 @@ function stampFixedVoltage(
   b.set([auxIdx, 0], V)
 }
 
+/** A capacitor's present capacitance — for a varactor, recomputed from its voltage each step. */
+function capCapacitance(cap: CapElement): number {
+  if (cap.varactor === undefined) return cap.capacitance
+  return junctionCapacitance(cap.vPrev, cap.varactor.cj0, cap.varactor.vj, cap.varactor.m)
+}
+
 /** Stamp a capacitor's backward-Euler companion: conductance C/Δt + history source. */
 function stampCapacitorCompanion(
   cap: CapElement,
@@ -762,7 +800,7 @@ function stampCapacitorCompanion(
   // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
   b: any,
 ): void {
-  const gEq = cap.capacitance / dt
+  const gEq = capCapacitance(cap) / dt
   const iHist = gEq * cap.vPrev
   const { iA, iB } = cap
   if (iA !== undefined) {
@@ -1132,6 +1170,10 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const cap = resolveCapacitor(inst, nodeIndex)
       if (cap !== null) caps.push(cap)
       else warnings.push(`Skipped capacitor '${inst.id}' (missing capacitance or connects)`)
+    } else if (inst.definition === 'diode_varactor') {
+      const v = resolveVaractor(inst, nodeIndex)
+      if (v !== null) caps.push(v)
+      else warnings.push(`Skipped varactor '${inst.id}' (missing capacitance params or connects)`)
     } else if (inst.definition === 'inductor') {
       const ind = resolveInductor(inst, nodeIndex)
       if (ind !== null) inductors.push(ind)
@@ -1458,7 +1500,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       } else {
         // The backward-Euler companion's current at this step, from the OLD
         // history (vPrev is updated only after recording).
-        const gEq = cap.capacitance / dt
+        const gEq = capCapacitance(cap) / dt
         const v = volts(cap.netA) - volts(cap.netB)
         through(cap.id, cap.termA, cap.termB, gEq * v - gEq * cap.vPrev)
       }

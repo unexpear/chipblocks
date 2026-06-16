@@ -421,6 +421,9 @@ export function PartInspector({
           {reading.opticalOutputW !== undefined
             ? readingRow('Optical output', formatEng(reading.opticalOutputW, 'W'), null)
             : null}
+          {reading.junctionCapacitanceF !== undefined
+            ? readingRow('Junction capacitance', formatEng(reading.junctionCapacitanceF, 'F'), null)
+            : null}
           {reading.temperatureC !== undefined
             ? readingRow(
                 'Temperature',

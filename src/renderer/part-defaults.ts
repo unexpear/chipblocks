@@ -185,6 +185,18 @@ const DEFAULTS: Record<string, Parameters> = {
     thermal_resistance_junction_ambient: scalar(80, 'kelvin_per_watt'),
     max_operating_temperature: scalar(125, 'celsius'),
   },
+  diode_varactor: {
+    // Abrupt-junction varactor class (e.g. 1N5461 / BB-series): Cj0 ~100 pF, Vj 0.7 V, m 0.5.
+    junction_capacitance_zero_bias: scalar(100e-12, 'farad'),
+    junction_potential: scalar(0.7, 'volt'),
+    grading_coefficient: scalar(0.5, 'dimensionless'),
+    forward_voltage: scalar(0.7, 'volt'),
+    max_forward_current: scalar(0.1, 'ampere'),
+    n_side: { value: 'silicon_n_type' },
+    p_side: { value: 'silicon_p_type' },
+    thermal_resistance_junction_ambient: scalar(300, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(125, 'celsius'),
+  },
   switch_spst_toggle: {
     // Panel-mount SPST toggle (C&K 7101 class, matching the anchor switch
     // fixture): copper contacts, ~20 mΩ closed, 6 A, 125 V. Starts closed
@@ -516,6 +528,16 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     max_forward_current: '~1 A on-state rating, small-thyristor class',
     thermal_resistance_junction_ambient: 'small power package class (~80 K/W)',
     max_operating_temperature: 'thyristor T_J max ~125 °C (class-typical)',
+  },
+  diode_varactor: {
+    junction_capacitance_zero_bias:
+      'abrupt-junction varactor class Cj0 ~100 pF (e.g. 1N5461 / BB-series)',
+    junction_potential: 'silicon built-in potential ~0.7 V',
+    grading_coefficient: 'm = 0.5 for an abrupt junction (0.33 graded, 1–2 hyperabrupt)',
+    forward_voltage: 'silicon forward drop ~0.7 V',
+    max_forward_current: '~100 mA forward rating, small-signal varactor class',
+    thermal_resistance_junction_ambient: 'small package class (~300 K/W)',
+    max_operating_temperature: 'silicon varactor T_J max ~125 °C',
   },
   switch_spst_toggle: {
     contact_resistance_closed: 'C&K 7101 class (~20 mΩ closed)',

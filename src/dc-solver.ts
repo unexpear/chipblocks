@@ -228,6 +228,7 @@ const SHOCKLEY_DIODE_DEFINITIONS = new Set([
   'diode_laser',
   'diode_silicon_rectifier',
   'diode_schottky_al_si',
+  'diode_varactor',
 ])
 
 export function solveDC(world: World, options?: SolveOptions): Solution {

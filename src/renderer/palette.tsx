@@ -103,6 +103,7 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'diode_laser', label: 'Laser' },
   { definition: 'diode_tunnel', label: 'Tunnel' },
   { definition: 'diode_shockley', label: 'Shockley' },
+  { definition: 'diode_varactor', label: 'Varactor' },
   { definition: 'transistor_bjt_npn', label: 'NPN' },
   { definition: 'transistor_bjt_pnp', label: 'PNP' },
   { definition: 'transistor_mosfet_nmos', label: 'NMOS' },

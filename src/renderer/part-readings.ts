@@ -3,6 +3,7 @@ import type { Solution } from '../dc-solver.ts'
 import { readScalarParam } from '../instance-params.ts'
 import { laserOpticalPowerW } from '../laser-model.ts'
 import { acrossVolts, junctionTemperature } from '../thermal-model.ts'
+import { junctionCapacitance } from '../varactor-model.ts'
 
 /**
  * Per-part electrical readings from a solved circuit (Sprint 19) — what the
@@ -24,6 +25,7 @@ export type PartReading = {
   voltage?: number
   power?: number
   opticalOutputW?: number
+  junctionCapacitanceF?: number
   temperatureC?: number
   maxTemperatureC?: number
 }
@@ -64,6 +66,20 @@ export function partReadings(world: World, solution: Solution): Map<string, Part
           efficiency,
           wavelengthNm,
         )
+      }
+    }
+
+    // Varactor: the voltage-controlled junction capacitance C(V) is the defining reading.
+    // junction_capacitance_zero_bias is the varactor-only marker.
+    const cj0 = readScalarParam(inst, 'junction_capacitance_zero_bias')
+    if (cj0 !== undefined) {
+      const vj = readScalarParam(inst, 'junction_potential')
+      const m = readScalarParam(inst, 'grading_coefficient')
+      const anode = inst.connects?.find((c) => c.terminal === 'anode')?.net
+      const cathode = inst.connects?.find((c) => c.terminal === 'cathode')?.net
+      if (vj !== undefined && m !== undefined && anode !== undefined && cathode !== undefined) {
+        const vJunction = (solution.nodes.get(anode) ?? 0) - (solution.nodes.get(cathode) ?? 0)
+        reading.junctionCapacitanceF = junctionCapacitance(vJunction, cj0, vj, m)
       }
     }
 

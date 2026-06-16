@@ -1,0 +1,126 @@
+# Valid fixture: varactor (varicap) diode — a voltage-controlled CAPACITOR.
+# A diode operated in REVERSE bias is a capacitor: the depletion region is the dielectric, and its
+# width — hence the junction capacitance — shrinks as the reverse voltage rises: C(V) = Cj0/(1−V/Vj)^m.
+# This is how a varactor tunes an LC oscillator or filter — change the reverse (tuning) voltage,
+# change the capacitance, change the resonant frequency.
+#
+# Solved in the time-domain (transient) engine as a capacitor whose capacitance is recomputed from
+# the voltage across it each step (resolveVaractor / capCapacitance / varactor-model.ts). In DC it
+# is a reverse-biased diode (it blocks); the live "Junction capacitance" reading shows C at the DC
+# bias. The grading coefficient m selects abrupt (~0.5), graded (~0.33), or hyperabrupt (1–2) tuning.
+#
+# Per the device-power-source convention this definition carries NO builtin numeric defaults on the
+# electrical parameters — the cited canvas drop defaults live in part-defaults.ts (abrupt varactor
+# class); only the structural material regions default here.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: diode_varactor
+origin: builtin
+layer: primitive_device
+name: "Varactor (varicap) diode"
+description: "A two-terminal diode operated in reverse bias as a voltage-controlled capacitor. The depletion region is the dielectric; its width (and thus the junction capacitance) varies with the reverse voltage as C(V) = Cj0/(1 − V/Vj)^m. Used to tune LC oscillators and filters (VCOs, RF front-ends) by varying a DC bias. In DC it blocks like a diode; in the time domain it presents its bias-dependent capacitance."
+composition:
+  uses:
+    - pn_junction
+  requires:
+    n_side:
+      kind: material
+      must_enable:
+        - n_type_semiconductor
+    p_side:
+      kind: material
+      must_enable:
+        - p_type_semiconductor
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  n_side:
+    type: material_ref
+    satisfies_role: n_side
+    required: true
+    default:
+      value: silicon_n_type
+    description: The n-doped side of the junction.
+  p_side:
+    type: material_ref
+    satisfies_role: p_side
+    required: true
+    default:
+      value: silicon_p_type
+    description: The p-doped side of the junction.
+  junction_capacitance_zero_bias:
+    type: quantity
+    units: farad
+    required: true
+    description: "Zero-bias junction capacitance C_j0 — the capacitance at V = 0 (its maximum). Reverse bias shrinks it. The headline tuning spec, typically a few pF to ~100 pF."
+  junction_potential:
+    type: quantity
+    units: volt
+    required: true
+    description: "Built-in (junction) potential V_j in C(V) = Cj0/(1 − V/Vj)^m. ~0.7 V for silicon."
+  grading_coefficient:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: "Grading coefficient m — the doping-profile exponent: ~0.5 for an abrupt junction, ~0.33 for a linearly graded one, and 1–2 (up to ~4) for a HYPERABRUPT varactor built for a wide tuning range."
+  forward_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: Forward voltage drop if forward-biased (~0.7 V silicon). A varactor is normally run in reverse; this sets the DC diode model's calibration point.
+  max_forward_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: Maximum forward current rating (and the DC diode-model calibration current).
+  reverse_breakdown_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Reverse voltage at which the junction breaks down — the top of the usable tuning range.
+  initial_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Initial junction voltage (anode − cathode) at t = 0 for the transient solve. Reverse bias is negative.
+  thermal_resistance_junction_ambient:
+    type: quantity
+    units: kelvin_per_watt
+    required: false
+    description: Junction-to-ambient thermal resistance (theta_JA) of the package — the lumped thermal model's slope.
+  max_operating_temperature:
+    type: quantity
+    units: celsius
+    required: false
+    description: Maximum junction operating temperature; the stage-7 thermal check fires when the computed steady-state temperature exceeds it.
+behaviors:
+  - acts_as_diode
+  - has_capacitance
+  - stores_charge
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+terminals:
+  anode:
+    description: Positive terminal (P-side).
+  cathode:
+    description: Negative terminal (N-side); the tuning (reverse) voltage is applied cathode-positive.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  The defining physics is the voltage-controlled junction capacitance C(V) = Cj0/(1 − V/Vj)^m
+  (varactor-model.ts). The transient engine models it as a capacitor whose capacitance is
+  recomputed from the voltage across it each step (resolveVaractor pushes a CapElement with a
+  varactor field; capCapacitance recomputes C from vPrev — a semi-implicit, stable scheme that
+  reuses the proven backward-Euler cap companion). In DC it is a reverse-biased diode (in
+  SHOCKLEY_DIODE_DEFINITIONS — it blocks in reverse, conducts forward); part-readings surfaces the
+  live "Junction capacitance" at the DC bias. NOT modeled yet: the forward diffusion capacitance,
+  and the full large-signal nonlinear charge integration (the per-step-frozen C is the documented
+  approximation). A varactor + inductor is the on-ramp to a voltage-controlled oscillator.
