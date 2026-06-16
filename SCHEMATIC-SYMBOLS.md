@@ -1,8 +1,10 @@
 # SCHEMATIC-SYMBOLS.md
 
-> **Status:** Research notes for the eventual canvas. Captures the design commitment to use **standard schematic shorthand** as the visual layer, plus a reference inventory of the common symbols and the international (IEC 60617) vs US (IEEE 315) differences. **Last verified 2026-05-20**; supplementary verification of open-source libraries + ARRL inventory checklist added **2026-06-05** (see end of file).
+> **Status:** The canvas symbols are implemented as original SVGs in `src/renderer/symbols.tsx`. **Decision (2026-06-16):** the project lead adopted the standard electronic-symbol set — the **US / IEEE 315 conventions** compiled in the reference chart the lead provided (an Electronics Hub poster) — as ChipBlocks' canonical symbol language. Our resistor already uses the IEEE 315 zigzag; this just formalizes the choice.
 >
-> Not yet a decision-implementation doc — when the canvas lands (v3 canvas sprint), the actual `symbol:` field on device definitions and the symbol-library integration get designed against this reference. See [OBJECT-MODEL.md](OBJECT-MODEL.md) §15 ("Visual symbol library") for the deferred design question.
+> **Important (facts vs expression, per [LEGAL-CONSIDERATIONS.md](LEGAL-CONSIDERATIONS.md)):** we adopt the *standard symbols* the chart depicts (the IEEE/IEC conventions are public domain — nobody owns "zigzag = resistor"). We do **not** copy the poster's artwork; every glyph in `symbols.tsx` is drawn from scratch. The chart is a **coverage + style reference**, not a source asset.
+>
+> Remaining work: (1) a consistency audit of the existing `symbols.tsx` glyphs against the chart's conventions (most already match; a few are currently drawn IEC-style and would align to the US style); (2) using the chart as the visual spec when not-yet-drawn devices are added. **Last verified 2026-05-20**; OSS-library + ARRL checklist verification added **2026-06-05** (see end of file).
 
 ---
 
