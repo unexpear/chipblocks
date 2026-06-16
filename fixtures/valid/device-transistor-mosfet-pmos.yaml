@@ -72,6 +72,11 @@ parameters:
     units: per_volt
     required: false
     description: λ — the slight rise of saturation current magnitude with |V_DS|. Textbook Level-1 class values 0.01-0.05 per volt.
+  velocity_saturation_theta:
+    type: quantity
+    units: per_volt
+    required: false
+    description: "θ — velocity-saturation / mobility-degradation: the strong-inversion current magnitude is divided by (1 + θ·|V_OV|), bending |I_D| below the square law at high gate overdrive. Omitted = pure square law. Significant for short-channel devices; negligible (and left out) for the discrete long-channel BS250 here. Sedra & Smith; SPICE LEVEL-2/3 θ."
   threshold_temperature_coefficient:
     type: quantity
     units: volt_per_kelvin

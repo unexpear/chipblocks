@@ -138,3 +138,63 @@ describe('NR step limiting (the fetlim-style damper)', () => {
     expect(limitMosfetStep(0.4, 0)).toBe(0.4)
   })
 })
+
+describe('velocity saturation / mobility degradation (θ)', () => {
+  const THETA = 0.5 // 1/V — deliberately large so the effect is visible in the asserts
+  const NMOS_THETA: MosfetParams = { ...NMOS, velocitySaturationTheta: THETA }
+
+  test('θ = 0 is exactly the pure square law (no regression)', () => {
+    const plain = mosfetOperatingPoint(4.5, 10, NMOS)
+    const zero = mosfetOperatingPoint(4.5, 10, { ...NMOS, velocitySaturationTheta: 0 })
+    expect(zero.iD).toBe(plain.iD)
+    expect(zero.gm).toBe(plain.gm)
+    expect(zero.gds).toBe(plain.gds)
+  })
+
+  test('saturation current is divided by (1 + θ·V_OV), below the square law', () => {
+    // V_OV = 4.5 − 2.1 = 2.4; square-law I_D = 74.88 mA; ÷ (1 + 0.5·2.4) = ÷ 2.2.
+    const point = mosfetOperatingPoint(4.5, 10, NMOS_THETA)
+    expect(point.region).toBe('saturation')
+    expect(point.iD).toBeCloseTo(0.07488 / (1 + THETA * 2.4), 9)
+    expect(point.iD).toBeLessThan(0.07488)
+  })
+
+  test('the I_D–V_GS curve sub-linearizes — more overdrive degrades more', () => {
+    const square = (vGS: number) => mosfetOperatingPoint(vGS, 10, NMOS).iD
+    const degraded = (vGS: number) => mosfetOperatingPoint(vGS, 10, NMOS_THETA).iD
+    const ratioLow = degraded(3.5) / square(3.5) // V_OV = 1.4
+    const ratioHigh = degraded(6.5) / square(6.5) // V_OV = 4.4
+    expect(ratioHigh).toBeLessThan(ratioLow)
+  })
+
+  test('derivatives still match finite differences with θ on (NMOS, swap, PMOS)', () => {
+    const n: MosfetParams = { ...NMOS_THETA, channelLengthModulation: 0.02 }
+    checkDerivatives(4.5, 10, n) // saturation
+    checkDerivatives(10, 0.1, n) // triode
+    checkDerivatives(1.0, 5, n) // cutoff
+    checkDerivatives(4.5, -1, n) // V_DS < 0 role swap
+    const p: MosfetParams = {
+      ...PMOS,
+      channelLengthModulation: 0.02,
+      velocitySaturationTheta: THETA,
+    }
+    checkDerivatives(-4.5, -10, p) // PMOS saturation
+    checkDerivatives(-10, -0.1, p) // PMOS triode
+  })
+
+  test('triode/saturation boundary stays seamless with θ on', () => {
+    const n: MosfetParams = { ...NMOS_THETA, channelLengthModulation: 0.02 }
+    const vOV = 4.5 - 2.1
+    const below = mosfetOperatingPoint(4.5, vOV - 1e-9, n)
+    const above = mosfetOperatingPoint(4.5, vOV + 1e-9, n)
+    expect(Math.abs(below.iD - above.iD)).toBeLessThan(1e-9)
+    expect(Math.abs(below.gm - above.gm)).toBeLessThan(1e-6)
+    expect(Math.abs(below.gds - above.gds)).toBeLessThan(1e-6)
+  })
+
+  test('a PMOS with θ mirrors an NMOS with θ', () => {
+    const n = mosfetOperatingPoint(4.5, 10, NMOS_THETA)
+    const p = mosfetOperatingPoint(-4.5, -10, { ...PMOS, velocitySaturationTheta: THETA })
+    expect(p.iD).toBeCloseTo(-n.iD, 12)
+  })
+})

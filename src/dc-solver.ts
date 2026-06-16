@@ -1082,6 +1082,7 @@ export function resolveMosfet(inst: Instance, temperatureC?: number): MosfetElem
   if (thresholdVoltage === undefined || transconductance === undefined) return null
   if (transconductance <= 0) return null
   const channelLengthModulation = readScalarParam(inst, 'channel_length_modulation') ?? 0
+  const velocitySaturationTheta = readScalarParam(inst, 'velocity_saturation_theta') ?? 0
 
   // With a junction temperature (the electro-thermal loop): the declared k and
   // V_th are 25 °C figures; k scales by the mobility law, V_th drifts by the
@@ -1111,6 +1112,7 @@ export function resolveMosfet(inst: Instance, temperatureC?: number): MosfetElem
       thresholdVoltage,
       transconductance,
       channelLengthModulation,
+      velocitySaturationTheta,
     },
     vGS: 0,
     vDS: 0,
