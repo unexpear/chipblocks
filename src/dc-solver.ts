@@ -231,6 +231,54 @@ const SHOCKLEY_DIODE_DEFINITIONS = new Set([
   'diode_varactor',
 ])
 
+/**
+ * Every device definition the DC solver knows how to handle — either it stamps the device, or the
+ * device is legitimately inert at DC (a capacitor is an open circuit; ground is just a net marker).
+ * An instance whose definition is NOT in this set is unmodeled: solveDC reports 'unsupported-element'
+ * with a warning naming it, rather than silently treating it as an open circuit and reporting a
+ * maybe-wrong 'solved'. Keep in sync with the dispatch below; the test suite (which solves real
+ * circuits and expects 'solved') guards against this set drifting out of date.
+ */
+const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
+  ...SHOCKLEY_DIODE_DEFINITIONS,
+  // Light-current sensors (LIGHT_CURRENT_DEFINITIONS, defined later in this file).
+  'photodiode',
+  'phototransistor',
+  // Transistors.
+  'transistor_bjt_npn',
+  'transistor_bjt_pnp',
+  'transistor_mosfet_nmos',
+  'transistor_mosfet_pmos',
+  'transistor_jfet_n_channel',
+  'transistor_jfet_p_channel',
+  // Other nonlinear / latching devices.
+  'diode_constant_current',
+  'diode_tunnel',
+  'diode_shockley',
+  'scr',
+  'diode_zener_silicon',
+  // Magnetics, switches, protection.
+  'transformer',
+  'transformer_center_tapped',
+  'switch_spdt',
+  'switch_spst_toggle',
+  'switch_spst_momentary',
+  'relay',
+  'fuse',
+  // Linear / passive.
+  'power_source',
+  'wire',
+  'inductor',
+  'resistor',
+  'thermistor',
+  'photoresistor',
+  'potentiometer',
+  // Legitimately produce no DC stamp (not unsupported):
+  'capacitor', // an open circuit at DC
+  'ground', // the reference-node marker — defines a net, no device to stamp
+  'light_source', // environmental (no electrical terminals)
+])
+
 export function solveDC(world: World, options?: SolveOptions): Solution {
   const warnings: string[] = []
 
@@ -239,13 +287,29 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     return emptyResult('no-ground', undefined, warnings)
   }
 
+  // Honesty check: surface any instance whose definition the solver doesn't model, instead of
+  // silently dropping it as an open circuit and reporting a maybe-wrong 'solved'. The supported part
+  // of the circuit is still solved; the status flags that an element was skipped.
+  let hasUnsupported = false
+  for (const inst of world.instances.values()) {
+    // Only primitive devices are circuit elements the solver stamps; interface / material instances
+    // (a solder joint, a material sample) are catalog metadata, legitimately not stamped.
+    if (inst.kind_ref !== 'primitive_device') continue
+    if (!DC_SUPPORTED_DEFINITIONS.has(inst.definition)) {
+      warnings.push(
+        `Unsupported element '${inst.id}' (${inst.definition}) — not modeled; treated as an open circuit`,
+      )
+      hasUnsupported = true
+    }
+  }
+
   const nodeIndex = assignNodeIndices(world.nets, ground)
   const N = nodeIndex.size
 
   // A circuit with only the ground net has no unknowns — return trivially.
   if (N === 0) {
     return {
-      status: 'solved',
+      status: hasUnsupported ? 'unsupported-element' : 'solved',
       nodes: new Map([[ground, 0]]),
       branches: new Map(),
       ground,
@@ -708,7 +772,15 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     branches.set(fet.inst.id, mosfetOperatingPoint(fet.vGS, fet.vDS, fet.params).iD)
   }
 
-  return { status: 'solved', nodes, branches, ground, warnings, iterations, converged }
+  return {
+    status: hasUnsupported ? 'unsupported-element' : 'solved',
+    nodes,
+    branches,
+    ground,
+    warnings,
+    iterations,
+    converged,
+  }
 }
 
 /** Shorthand for the no-result early returns. */
