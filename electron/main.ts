@@ -8,6 +8,7 @@ import {
   ipcMain,
   Menu,
   type MenuItemConstructorOptions,
+  session,
 } from 'electron'
 import { deserializeCircuit } from '../src/renderer/circuit-file.ts'
 import { DEFAULT_KEYBINDS, type Keybinds, mergeKeybinds } from '../src/renderer/keybinds.ts'
@@ -259,6 +260,55 @@ function installMenu(window: BrowserWindow): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
+// ---------------------------------------------------------------------------
+// Security hardening (defense-in-depth). contextIsolation + nodeIntegration are
+// already safe (Electron 42 defaults + the contextBridge preload); these close
+// the rest of the project's intended baseline (TOOLING-RESEARCH-2026-05.md):
+// lock down navigation + window.open, and apply a Content-Security-Policy.
+//
+// The CSP is delivered two ways because Electron CANNOT set a response header on
+// a file:// document — and the packaged app loads its renderer with loadFile().
+// So the shipped build carries its (strict) policy as a <meta> tag injected at
+// build time (electron.vite.config.ts). Here we cover the OTHER load path, the
+// dev server, whose http origin DOES accept a header — loosened only enough for
+// Vite's inline HMR preamble + websocket, while keeping the same inline-style
+// allowance the shipped policy relies on.
+const DEV_CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Vite's dev preamble is inline + HMR uses eval
+  "style-src 'self' 'unsafe-inline'", // the renderer is inline-styled throughout
+  "img-src 'self' data:",
+  "connect-src 'self' ws: wss:", // Vite HMR websocket
+].join('; ')
+
+function installDevContentSecurityPolicy(): void {
+  // Dev only: the packaged file:// app gets its CSP from the build-injected
+  // <meta> tag instead (a header can't reach a file:// document).
+  if (process.env.ELECTRON_RENDERER_URL === undefined) return
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [DEV_CONTENT_SECURITY_POLICY],
+      },
+    })
+  })
+}
+
+function hardenNavigation(window: BrowserWindow, devUrl: string | undefined): void {
+  // Nothing in the app opens a second window or an external URL — the menu
+  // drives everything over IPC. Deny window.open outright, and block any
+  // navigation away from our own renderer so a stray or injected link can't
+  // move the window to a remote origin that could then reach the `chipblocks`
+  // IPC bridge.
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  window.webContents.on('will-navigate', (event, navigationUrl) => {
+    const internal =
+      devUrl !== undefined ? navigationUrl.startsWith(devUrl) : navigationUrl.startsWith('file://')
+    if (!internal) event.preventDefault()
+  })
+}
+
 function createWindow(): void {
   const window = new BrowserWindow({
     width: 1280,
@@ -266,8 +316,13 @@ function createWindow(): void {
     title: 'ChipBlocks',
     backgroundColor: '#1e1e1e',
     webPreferences: {
-      preload: join(moduleDir, '../preload/preload.mjs'),
-      sandbox: false,
+      preload: join(moduleDir, '../preload/preload.cjs'),
+      // Sandboxed renderer (OS-level process isolation). The preload is built as
+      // CommonJS (preload.cjs — see electron.vite.config.ts) because a sandboxed
+      // renderer loads its preload through a CommonJS-only shim; an ESM (.mjs)
+      // preload silently fails to run, leaving window.chipblocks undefined. Keep
+      // these in lockstep: preload output 'cjs' ⇄ this .cjs path ⇄ sandbox: true.
+      sandbox: true,
     },
   })
 
@@ -280,6 +335,7 @@ function createWindow(): void {
     window.loadFile(join(moduleDir, '../renderer/index.html'))
   }
 
+  hardenNavigation(window, devUrl)
   installMenu(window)
   registerSaveHandler(window)
   registerKeybindHandlers(window)
@@ -287,6 +343,7 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   await loadKeybinds()
+  installDevContentSecurityPolicy()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
