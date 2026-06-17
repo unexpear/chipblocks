@@ -20,6 +20,19 @@ import { CURVE_SIZES } from './wire-path.ts'
 export type Tool = 'select' | 'wire' | 'meter' | 'lasso'
 export type WireStyle = 'line' | 'curve'
 
+/**
+ * Standard operating-environment presets for the board ambient — recognized JEDEC/AEC temperature
+ * grades, real and cited: commercial/bench 25 °C; industrial −40…+85 °C; automotive AEC-Q100 Grade 2
+ * −40…+105 °C and Grade 1 (underhood) −40…+125 °C; −40 °C is the shared industrial/automotive low end.
+ */
+const AMBIENT_PRESETS: { label: string; c: number }[] = [
+  { label: 'Bench / lab — 25 °C', c: 25 },
+  { label: 'Cold outdoor — −40 °C', c: -40 },
+  { label: 'Industrial — 85 °C', c: 85 },
+  { label: 'Automotive cabin — 105 °C', c: 105 },
+  { label: 'Engine bay — 125 °C', c: 125 },
+]
+
 export function ToolbarItems({
   tool,
   onTool,
@@ -237,23 +250,41 @@ export function ToolbarItems({
         </label>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 2px' }}>
-        <span
-          style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5, color: '#778' }}
-        >
-          Ambient °C
-        </span>
-        <input
-          type="number"
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '0 2px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span
+            style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5, color: '#778' }}
+          >
+            Ambient °C
+          </span>
+          <input
+            type="number"
+            className="nodrag"
+            value={projectAmbientC}
+            onChange={(event) => {
+              const next = Number(event.target.value)
+              if (Number.isFinite(next)) onProjectAmbient(next)
+            }}
+            title="The whole board's ambient temperature (°C) — the environment every part sits in (a bench is 25 °C, a car's engine bay ~105 °C). Each part falls back to this unless you give it its own ambient_temperature. Drives R(T), junction-voltage drift, and the Temp lens."
+            style={{
+              width: 46,
+              background: '#1a1a1e',
+              border: '1px solid #3a3a3f',
+              color: '#cdd6e0',
+              borderRadius: 3,
+              fontSize: 10,
+              padding: '2px 3px',
+            }}
+          />
+        </div>
+        <select
           className="nodrag"
-          value={projectAmbientC}
+          value={AMBIENT_PRESETS.find((p) => p.c === projectAmbientC)?.c ?? ''}
           onChange={(event) => {
-            const next = Number(event.target.value)
-            if (Number.isFinite(next)) onProjectAmbient(next)
+            if (event.target.value !== '') onProjectAmbient(Number(event.target.value))
           }}
-          title="The whole board's ambient temperature (°C) — the environment every part sits in (a bench is 25 °C, a car's engine bay ~105 °C). Each part falls back to this unless you give it its own ambient_temperature. Drives R(T), junction-voltage drift, and the Temp lens."
+          title="Jump to a standard operating environment — the recognized JEDEC/AEC temperature grades (commercial, industrial, automotive). A value off the list reads ‘Custom’."
           style={{
-            width: 46,
             background: '#1a1a1e',
             border: '1px solid #3a3a3f',
             color: '#cdd6e0',
@@ -261,7 +292,14 @@ export function ToolbarItems({
             fontSize: 10,
             padding: '2px 3px',
           }}
-        />
+        >
+          <option value="">Custom…</option>
+          {AMBIENT_PRESETS.map((p) => (
+            <option key={p.c} value={p.c}>
+              {p.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       <button
