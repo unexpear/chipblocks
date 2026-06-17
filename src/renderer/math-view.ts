@@ -487,13 +487,57 @@ function partCard(
     return { id: inst.id, title: `Relay — ${energized ? 'energized' : 'at rest'}`, lines }
   }
   if (def === 'diode_zener_silicon') {
-    return {
-      id: inst.id,
-      title: 'Zener — not solvable yet',
-      lines: [
-        'A zener exists to regulate in REVERSE breakdown — and that behavior isn’t modeled yet. Rather than pretend it’s a plain diode, the solver skips it honestly (you’ll see its warning above).',
-      ],
+    const vZ = readScalarParam(inst, 'zener_voltage')
+    lines.push(
+      'A zener conducts forward like an ordinary diode, but its JOB is the reverse direction: past its zener voltage V_Z it breaks down and CLAMPS — the voltage across it barely moves while the current climbs, which is how it regulates.',
+    )
+    if (vZ !== undefined) {
+      lines.push(
+        `V_Z = ${fmtV(vZ)} — the reverse breakdown / regulation voltage this part is rated at.`,
+      )
     }
+    if (acrossV !== undefined && current !== undefined) {
+      lines.push(`Operating point: V = ${fmtV(acrossV)}, I = ${fmtA(Math.abs(current))}.`)
+    }
+    return { id: inst.id, title: 'Zener — forward diode + reverse regulation', lines }
+  }
+  if (def === 'diode_tunnel') {
+    lines.push(
+      'A tunnel diode has a NEGATIVE-resistance region: as forward voltage rises past its peak the current FALLS (quantum tunneling), then rises again — an N-shaped curve, the basis of tunnel-diode oscillators.',
+    )
+    if (acrossV !== undefined && current !== undefined) {
+      lines.push(`Operating point: V = ${fmtV(acrossV)}, I = ${fmtA(Math.abs(current))}.`)
+    }
+    return { id: inst.id, title: 'Tunnel diode — negative resistance', lines }
+  }
+  if (def === 'diode_shockley') {
+    lines.push(
+      'A Shockley 4-layer diode is a LATCH: it blocks until the breakover voltage, then snaps on and STAYS on until the current falls below its holding current — bistable, a thyristor without a gate.',
+    )
+    if (acrossV !== undefined && current !== undefined) {
+      lines.push(
+        `Operating point: V = ${fmtV(acrossV)}, I = ${fmtA(Math.abs(current))} (high = latched on; near zero = blocking).`,
+      )
+    }
+    return { id: inst.id, title: 'Shockley diode — a latch', lines }
+  }
+  if (def === 'diode_varactor') {
+    lines.push(
+      'A varactor is used as a voltage-controlled CAPACITOR: reverse-biased, its junction capacitance C(V) shrinks as the reverse voltage grows (for tuning). It blocks DC, so the steady current is near zero.',
+    )
+    if (acrossV !== undefined && current !== undefined) {
+      lines.push(`Operating point: V = ${fmtV(acrossV)}, I = ${fmtA(Math.abs(current))}.`)
+    }
+    return { id: inst.id, title: 'Varactor — a voltage-controlled capacitor', lines }
+  }
+  if (def === 'diode_constant_current') {
+    lines.push(
+      'A constant-current diode is a JFET wired gate-to-source: it REGULATES current to a near-fixed value almost regardless of the voltage across it — a 2-terminal current source.',
+    )
+    if (acrossV !== undefined && current !== undefined) {
+      lines.push(`Operating point: V = ${fmtV(acrossV)}, I = ${fmtA(Math.abs(current))}.`)
+    }
+    return { id: inst.id, title: 'Constant-current diode — a current regulator', lines }
   }
   if (def === 'led' || def === 'led_uv_algan' || def.startsWith('diode')) {
     const vF = readScalarParam(inst, 'forward_voltage')
