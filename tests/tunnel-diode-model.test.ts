@@ -6,8 +6,8 @@
  */
 
 import { describe, expect, test } from 'vitest'
-import type { World } from '../src/cross-fk-validator.ts'
-import { solveDC } from '../src/dc-solver.ts'
+import type { Instance, World } from '../src/cross-fk-validator.ts'
+import { resolveTunnelDiode, solveDC } from '../src/dc-solver.ts'
 import { solveTransient } from '../src/transient-solver.ts'
 import {
   type TunnelDiodeParams,
@@ -146,6 +146,31 @@ describe('solveDC — tunnel diode through the Newton loop (negative resistance 
     const pastValley = tunnelCurrent(0.35, 1) // ~V_V across the diode
     expect(atPeak).toBeGreaterThan(pastValley) // MORE current at LOWER voltage = negative resistance
     expect(atPeak).toBeCloseTo(I_P, 4)
+  })
+})
+
+describe('resolveTunnelDiode — a non-positive ideality is rejected (n > 0; else n·V_T = 0 → NaN)', () => {
+  test('ideality_factor > 0 resolves; ≤ 0 returns null (the device is skipped, not stamped as NaN)', () => {
+    const td = (ideality: number): Instance =>
+      ({
+        id: 'td',
+        kind_ref: 'primitive_device',
+        definition: 'diode_tunnel',
+        parameters: {
+          peak_current: scalar(I_P, 'ampere'),
+          peak_voltage: scalar(V_P, 'volt'),
+          valley_current: scalar(I_V, 'ampere'),
+          valley_voltage: scalar(V_V, 'volt'),
+          ideality_factor: scalar(ideality, 'dimensionless'),
+        },
+        connects: [
+          { net: 'mid', terminal: 'anode', of: 'td' },
+          { net: 'gnd', terminal: 'cathode', of: 'td' },
+        ],
+      }) as unknown as Instance
+    expect(resolveTunnelDiode(td(1), VT)).not.toBeNull()
+    expect(resolveTunnelDiode(td(0), VT)).toBeNull()
+    expect(resolveTunnelDiode(td(-1), VT)).toBeNull()
   })
 })
 

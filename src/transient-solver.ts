@@ -473,6 +473,7 @@ function resolveVaractor(inst: Instance, nodeIndex: Map<string, number>): CapEle
   // temperature V_T is the honest choice here.
   const thermalV = thermalVoltage()
   const ideality = readScalarParam(inst, 'ideality_factor') ?? 1
+  if (ideality <= 0) return null // n > 0; a non-positive ideality zeros n·V_T → NaN
   const transitTime = readScalarParam(inst, 'transit_time') ?? 0
   const forwardVoltage = readScalarParam(inst, 'forward_voltage')
   const maxForwardCurrent = readScalarParam(inst, 'max_forward_current')
@@ -764,6 +765,7 @@ function resolveDiode(
   if (anodeNet === undefined || cathodeNet === undefined) return null
 
   const idealityFactor = readScalarParam(inst, 'ideality_factor') ?? DEFAULT_IDEALITY_FACTOR
+  if (idealityFactor <= 0) return null // n > 0; a non-positive ideality zeros n·V_T → NaN
   let saturationCurrent = readScalarParam(inst, 'forward_saturation_current')
   if (saturationCurrent === undefined) {
     const forwardVoltage = readScalarParam(inst, 'forward_voltage')
@@ -830,6 +832,7 @@ function resolveTransientZener(
   if (forwardVoltage <= 0 || zenerVoltage <= 0) return null
 
   const idealityFactor = readScalarParam(inst, 'ideality_factor') ?? DEFAULT_IDEALITY_FACTOR
+  if (idealityFactor <= 0) return null // n > 0; a non-positive ideality zeros n·V_T → NaN
   const forwardCurrent = readScalarParam(inst, 'max_forward_current') ?? 0.01
   let saturationCurrent = deriveSaturationCurrent(
     forwardVoltage,

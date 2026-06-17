@@ -817,6 +817,7 @@ function resolveShockleyLed(
   if (anodeConnect === undefined || cathodeConnect === undefined) return null
 
   const idealityFactor = readScalarParam(inst, 'ideality_factor') ?? DEFAULT_IDEALITY_FACTOR
+  if (idealityFactor <= 0) return null // n > 0; a non-positive ideality zeros n·V_T → NaN
   // The V_F @ I_F calibration point is a 25 °C (298.15 K) datasheet figure.
   let saturationCurrent = deriveSaturationCurrent(
     forwardVoltage,
@@ -882,6 +883,7 @@ function resolveZener(
   if (anodeConnect === undefined || cathodeConnect === undefined) return null
 
   const idealityFactor = readScalarParam(inst, 'ideality_factor') ?? DEFAULT_IDEALITY_FACTOR
+  if (idealityFactor <= 0) return null // n > 0; a non-positive ideality zeros n·V_T → NaN
   const forwardCurrent = readScalarParam(inst, 'max_forward_current') ?? 0.01 // 10 mA reference
   let saturationCurrent = deriveSaturationCurrent(
     forwardVoltage,
@@ -1010,6 +1012,7 @@ export function resolveTunnelDiode(inst: Instance, thermalV: number): TunnelDiod
   }
   if (peakVoltage <= 0 || valleyVoltage <= peakVoltage || peakCurrent <= 0) return null
   const idealityFactor = readScalarParam(inst, 'ideality_factor') ?? 1
+  if (idealityFactor <= 0) return null // n > 0; a non-positive ideality zeros n·V_T → NaN
   const anode = inst.connects?.find((c) => c.terminal === 'anode')
   const cathode = inst.connects?.find((c) => c.terminal === 'cathode')
   if (anode === undefined || cathode === undefined) return null
