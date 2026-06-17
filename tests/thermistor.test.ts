@@ -152,6 +152,38 @@ describe('the ambient knob works without a θ_JA (a placed environment, no self-
   })
 })
 
+describe('a project-wide ambient places parts that set no ambient of their own', () => {
+  test('DC: a thermistor with no own ambient inherits the 85 °C project ambient → R(85)', () => {
+    const world = selfHeatRig(1e6) // θ_JA present, NO own ambient, ~9 µA so self-heating is negligible
+    const result = solveElectroThermal(world, { projectAmbientC: 85 })
+    expect(result.solution.status).toBe('solved')
+    expect(result.temperaturesC.get('th') ?? 25).toBeCloseTo(85, 0)
+    const r = resistanceAtTemperature(
+      world.instances.get('th') as Instance,
+      result.temperaturesC.get('th') ?? 85,
+    )
+    expect(r ?? 0).toBeCloseTo(betaAt(85), 0)
+  })
+
+  test('DC: the project ambient reaches a θ_JA-less thermistor too (placement, no self-heating)', () => {
+    const world = selfHeatRig(1e6, undefined, true) // no θ_JA, no own ambient
+    const result = solveElectroThermal(world, { projectAmbientC: 85 })
+    expect(result.temperaturesC.get('th') ?? 25).toBeCloseTo(85, 1)
+  })
+
+  test("a part's own ambient_temperature overrides the project ambient", () => {
+    const world = selfHeatRig(1e6, 50) // own ambient 50 °C, θ_JA present
+    const result = solveElectroThermal(world, { projectAmbientC: 85 })
+    expect(result.temperaturesC.get('th') ?? 0).toBeCloseTo(50, 0) // own 50 wins over project 85
+  })
+
+  test('transient: the scope inherits the same project ambient', () => {
+    const world = selfHeatRig(1e6)
+    const tr = solveTransientThermal(world, { timeStep: 1e-4, duration: 3e-3, projectAmbientC: 85 })
+    expect(tr.temperaturesC.get('th') ?? 25).toBeCloseTo(85, 0)
+  })
+})
+
 describe('both engines agree on the self-heated thermistor', () => {
   test('the transient steady-state temperature matches the DC loop', () => {
     const world = selfHeatRig(1)

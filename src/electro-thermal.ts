@@ -79,9 +79,25 @@ export function resistanceAtTemperature(
   return baseResistance * (1 + alpha * (temperatureC - STANDARD_AMBIENT_C))
 }
 
-/** A part's local ambient (°C): its own `ambient_temperature`, else the 25 °C baseline. */
-function ambientOf(inst: Instance): number {
-  return readScalarParam(inst, 'ambient_temperature') ?? STANDARD_AMBIENT_C
+/** A part's local ambient (°C): its own `ambient_temperature`, else the project-wide ambient, else
+ *  the 25 °C baseline. The part's own value always wins, so one part can sit in a hotter pocket. */
+function ambientOf(inst: Instance, projectAmbientC?: number): number {
+  return readScalarParam(inst, 'ambient_temperature') ?? projectAmbientC ?? STANDARD_AMBIENT_C
+}
+
+/**
+ * The temperature to record for a part with no usable θ_JA (no self-heating), or undefined to leave it
+ * at the 25 °C baseline. A part with its own ambient_temperature takes that; otherwise a non-baseline
+ * project ambient places a part whose resistance follows temperature (thermistor / tempco resistor —
+ * exactly the parts resistanceAtTemperature handles). A θ_JA-less junction device isn't placed this
+ * way, but junction parts ship a θ_JA and so heat through the self-heating path instead.
+ */
+function placedAmbient(inst: Instance, projectAmbientC?: number): number | undefined {
+  const ambient = ambientOf(inst, projectAmbientC)
+  if (readScalarParam(inst, 'ambient_temperature') !== undefined) return ambient
+  if (ambient !== STANDARD_AMBIENT_C && resistanceAtTemperature(inst, ambient) !== undefined)
+    return ambient
+  return undefined
 }
 
 /** A world with each tempco resistor's resistance adjusted to its temperature. */
@@ -117,18 +133,22 @@ function worldAtTemperatures(
   return { world: { ...world, instances }, outOfRange }
 }
 
-/** Each part's temperature: ambient + P·θ_JA (self-heating), or just its placed ambient. */
-function computeTemperatures(world: World, solution: Solution): Map<string, number> {
+/** Each part's temperature: ambient + P·θ_JA (self-heating), or just its placed ambient (own
+ *  ambient_temperature, else the project-wide ambient, else 25 °C). */
+function computeTemperatures(
+  world: World,
+  solution: Solution,
+  projectAmbientC?: number,
+): Map<string, number> {
   const temperatures = new Map<string, number>()
   for (const inst of world.instances.values()) {
-    // A part's temperature is ambient + P·θ_JA. A θ_JA earns the self-heating term; a part placed in an
-    // explicit ambient_temperature (even with no θ_JA) still takes that ambient, so the ambient knob
-    // works on its own. With neither, the part stays at the 25 °C baseline (no entry → R₀, as before).
-    // (computeTransientTemperatures applies the same rule.)
+    // A θ_JA earns the self-heating term P·θ_JA on top of the ambient. A part with no θ_JA still takes
+    // its placed ambient (placedAmbient: own ambient_temperature, or a non-baseline project ambient on a
+    // temperature-following part); with neither it stays at 25 °C. (computeTransientTemperatures mirrors this.)
     const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
     if (thetaJa === undefined || thetaJa <= 0) {
-      const ambient = readScalarParam(inst, 'ambient_temperature')
-      if (ambient !== undefined) temperatures.set(inst.id, ambient)
+      const placed = placedAmbient(inst, projectAmbientC)
+      if (placed !== undefined) temperatures.set(inst.id, placed)
       continue
     }
     const branch = solution.branches.get(inst.id)
@@ -139,10 +159,16 @@ function computeTemperatures(world: World, solution: Solution): Map<string, numb
 
     temperatures.set(
       inst.id,
-      junctionTemperature(Math.abs(branch) * volts, thetaJa, ambientOf(inst)),
+      junctionTemperature(Math.abs(branch) * volts, thetaJa, ambientOf(inst, projectAmbientC)),
     )
   }
   return temperatures
+}
+
+export type ElectroThermalOptions = SolveOptions & {
+  /** The project-wide ambient (°C) every part falls back to when it sets no ambient_temperature of its
+   *  own. Absent ⇒ the 25 °C baseline. A part's own ambient_temperature always overrides it. */
+  projectAmbientC?: number
 }
 
 /**
@@ -150,8 +176,12 @@ function computeTemperatures(world: World, solution: Solution): Map<string, numb
  * to the electro-thermal fixed point. With no thermally-rated parts this reduces
  * to a single plain DC solve (plus one confirmation pass).
  */
-export function solveElectroThermal(world: World, options?: SolveOptions): ElectroThermalResult {
+export function solveElectroThermal(
+  world: World,
+  options?: ElectroThermalOptions,
+): ElectroThermalResult {
   const warnings: string[] = []
+  const projectAmbientC = options?.projectAmbientC
   let temperaturesC = new Map<string, number>()
   let solution: Solution = solveDC(world, options)
   let thermalConverged = false
@@ -160,7 +190,7 @@ export function solveElectroThermal(world: World, options?: SolveOptions): Elect
   for (iteration = 1; iteration <= MAX_THERMAL_ITERATIONS; iteration++) {
     if (solution.status !== 'solved') break
 
-    const next = computeTemperatures(world, solution)
+    const next = computeTemperatures(world, solution, projectAmbientC)
     let maxDelta = 0
     for (const [id, t] of next) {
       const previous = temperaturesC.get(id) ?? STANDARD_AMBIENT_C
@@ -201,6 +231,8 @@ export type TransientThermalOptions = TransientOptions & {
    * the steady temperature.
    */
   thermalSettleSeconds?: number
+  /** The project-wide ambient (°C) every part falls back to (see ElectroThermalOptions). */
+  projectAmbientC?: number
 }
 
 export type TransientThermalResult = {
@@ -228,14 +260,15 @@ function computeTransientTemperatures(
   world: World,
   result: TransientResult,
   settleSeconds: number,
+  projectAmbientC?: number,
 ): Map<string, number> {
   const temperatures = new Map<string, number>()
   for (const inst of world.instances.values()) {
     const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
     if (thetaJa === undefined || thetaJa <= 0) {
       // No self-heating, but a placed ambient still sets the part's temperature (mirrors the DC loop).
-      const ambient = readScalarParam(inst, 'ambient_temperature')
-      if (ambient !== undefined) temperatures.set(inst.id, ambient)
+      const placed = placedAmbient(inst, projectAmbientC)
+      if (placed !== undefined) temperatures.set(inst.id, placed)
       continue
     }
     const connects = inst.connects ?? []
@@ -258,7 +291,7 @@ function computeTransientTemperatures(
     // float dust so a reactive part reads ambient, not below it.
     temperatures.set(
       inst.id,
-      junctionTemperature(Math.max(0, sum / samples), thetaJa, ambientOf(inst)),
+      junctionTemperature(Math.max(0, sum / samples), thetaJa, ambientOf(inst, projectAmbientC)),
     )
   }
   return temperatures
@@ -278,6 +311,7 @@ export function solveTransientThermal(
 ): TransientThermalResult {
   const warnings: string[] = []
   const settleSeconds = options.thermalSettleSeconds ?? options.duration / 3
+  const projectAmbientC = options.projectAmbientC
   let temperaturesC = new Map<string, number>()
   let result: TransientResult = solveTransient(world, options)
   let thermalConverged = false
@@ -286,7 +320,7 @@ export function solveTransientThermal(
   for (iteration = 1; iteration <= MAX_THERMAL_ITERATIONS; iteration++) {
     if (result.status !== 'solved') break
 
-    const next = computeTransientTemperatures(world, result, settleSeconds)
+    const next = computeTransientTemperatures(world, result, settleSeconds, projectAmbientC)
     let maxDelta = 0
     for (const [id, t] of next) {
       const previous = temperaturesC.get(id) ?? STANDARD_AMBIENT_C
