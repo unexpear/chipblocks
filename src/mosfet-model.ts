@@ -78,8 +78,9 @@ export type MosfetOperatingPoint = {
 }
 
 /**
- * NMOS core in its own frame (V_DS ≥ 0, V_th > 0). Returns current into the
- * drain plus the two partial derivatives.
+ * NMOS core in its own frame (V_DS ≥ 0). Returns current into the drain plus the two partial
+ * derivatives. V_th may be ANY sign — everything is expressed in V_OV = V_GS − V_th, so a negative
+ * threshold (a depletion device) works the same; that is how jfet-model.ts maps an N-channel JFET on.
  */
 function nmosCore(
   vGS: number,
