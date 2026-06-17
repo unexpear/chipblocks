@@ -960,8 +960,9 @@ function Canvas() {
   const [monteCarloRunning, setMonteCarloRunning] = useState(false)
   const runWorstCase = useCallback(() => {
     const grounded = groundedComponent(solvedWorld)
-    setWorstCase(worstCaseAnalysis(grounded, (w) => solveWithRelays(w).solution))
-    setDerating(deratingDashboard(grounded, solveWithRelays(grounded).solution))
+    const ambientOpts = { projectAmbientC: projectAmbientRef.current }
+    setWorstCase(worstCaseAnalysis(grounded, (w) => solveWithRelays(w, ambientOpts).solution))
+    setDerating(deratingDashboard(grounded, solveWithRelays(grounded, ambientOpts).solution))
     setMonteCarlo(null)
   }, [solvedWorld])
   const runMonteCarlo = useCallback(() => {
@@ -969,7 +970,8 @@ function Canvas() {
     // Defer the heavy sweep a tick so the "Running…" label paints first.
     window.setTimeout(() => {
       const grounded = groundedComponent(solvedWorld)
-      setMonteCarlo(monteCarloAnalysis(grounded, (w) => solveWithRelays(w).solution))
+      const ambientOpts = { projectAmbientC: projectAmbientRef.current }
+      setMonteCarlo(monteCarloAnalysis(grounded, (w) => solveWithRelays(w, ambientOpts).solution))
       setMonteCarloRunning(false)
     }, 0)
   }, [solvedWorld])
