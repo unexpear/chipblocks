@@ -7,7 +7,9 @@ import {
   resolveJfet,
   resolveMosfet,
 } from './dc-solver.ts'
+import { deriveSaturationCurrent, diodeConductance, thermalVoltage } from './diode-model.ts'
 import { mosfetOperatingPoint } from './mosfet-model.ts'
+import { junctionCapacitance } from './varactor-model.ts'
 
 /**
  * BJT small-signal (hybrid-pi) model for AC analysis, linearized at the DC operating
@@ -140,4 +142,56 @@ export function mosfetSmallSignalModel(
     gm: op.gm,
     gds: op.gds,
   }
+}
+
+const DEFAULT_DIODE_IDEALITY = 2.0
+const DEFAULT_JUNCTION_POTENTIAL_V = 0.7
+const DEFAULT_GRADING_COEFFICIENT = 0.5
+
+export type DiodeSmallSignal = {
+  anodeNet: string
+  cathodeNet: string
+  /** Dynamic conductance g = dI/dV at the operating point (siemens) — the forward-diode slope. */
+  g: number
+  /** Junction capacitance at the operating point (farads); 0 if the part declares none. */
+  c: number
+}
+
+/**
+ * Forward-diode small-signal model for AC: a parallel conductance + junction capacitance at the DC
+ * operating point. g = dI/dV is the same diodeConductance the DC solver linearizes with (consistent
+ * by construction); C is the voltage-dependent junction capacitance (the varactor's whole purpose,
+ * and a real high-frequency pole for any diode that declares it). Covers the forward Shockley family
+ * (rectifier / Schottky / LED / laser / varactor); the zener, tunnel, and Shockley-latch diodes have
+ * their own regimes (reverse breakdown / negative resistance / bistable) and are not modeled here.
+ * Returns null if neither a conductance nor a capacitance can be formed.
+ */
+export function diodeSmallSignalModel(
+  inst: Instance,
+  nodeVoltage: (net: string) => number,
+): DiodeSmallSignal | null {
+  const anodeNet = inst.connects?.find((conn) => conn.terminal === 'anode')?.net
+  const cathodeNet = inst.connects?.find((conn) => conn.terminal === 'cathode')?.net
+  if (anodeNet === undefined || cathodeNet === undefined) return null
+  const vT = thermalVoltage()
+  const v = nodeVoltage(anodeNet) - nodeVoltage(cathodeNet)
+
+  let g = 0
+  const vF = readParam(inst, 'forward_voltage')
+  const iF = readParam(inst, 'max_forward_current')
+  if (vF !== undefined && iF !== undefined) {
+    const n = readParam(inst, 'ideality_factor') ?? DEFAULT_DIODE_IDEALITY
+    g = diodeConductance(v, deriveSaturationCurrent(vF, iF, n, vT), n, vT)
+  }
+
+  let c = 0
+  const cj0 = readParam(inst, 'junction_capacitance_zero_bias')
+  if (cj0 !== undefined) {
+    const vj = readParam(inst, 'junction_potential') ?? DEFAULT_JUNCTION_POTENTIAL_V
+    const m = readParam(inst, 'grading_coefficient') ?? DEFAULT_GRADING_COEFFICIENT
+    c = junctionCapacitance(v, cj0, vj, m)
+  }
+
+  if (g === 0 && c === 0) return null
+  return { anodeNet, cathodeNet, g, c }
 }

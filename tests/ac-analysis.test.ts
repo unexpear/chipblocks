@@ -307,3 +307,90 @@ describe('AC analysis — MOSFET small-signal (common-source amp)', () => {
     expect(Math.abs(ac.phaseDeg)).toBeGreaterThan(170) // common-source inverts
   })
 })
+
+/** vin(3V bias + AC) -> diode -> mid -> R(1k) -> gnd. A forward diode is a small dynamic resistance
+ *  r_d = 1/g_d, so v_mid/v_in is the divider R/(R+r_d) — and that must equal the DC slope dVmid/dVin. */
+function diodeDivider(vinDc: number): World {
+  const w = makeWorld()
+  ensureNet(w, 'gnd', true)
+  addPart(w, 'vin', 'power_source', { nominal_voltage: scalar(vinDc, 'volt') }, [
+    { net: 'in', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  addPart(
+    w,
+    'd1',
+    'diode_silicon_rectifier',
+    {
+      forward_voltage: scalar(0.7, 'volt'),
+      max_forward_current: scalar(1, 'ampere'),
+      ideality_factor: scalar(2, 'dimensionless'),
+    },
+    [
+      { net: 'in', terminal: 'anode' },
+      { net: 'mid', terminal: 'cathode' },
+    ],
+  )
+  addPart(w, 'r1', 'resistor', { resistance: scalar(1000, 'ohm') }, [
+    { net: 'mid', terminal: 'terminal_a' },
+    { net: 'gnd', terminal: 'terminal_b' },
+  ])
+  return w
+}
+
+describe('AC analysis — forward-diode small-signal', () => {
+  const dOpts = { inputSource: 'vin', outputNet: 'mid' }
+
+  test('a forward diode passes as its dynamic conductance — matching the DC slope', () => {
+    const vin = 3
+    const delta = 1e-4
+    const vmid = (v: number) => solveDCRobust(diodeDivider(v)).nodes.get('mid') ?? Number.NaN
+    const dcSlope = Math.abs((vmid(vin + delta) - vmid(vin - delta)) / (2 * delta))
+
+    const ac = acResponse(diodeDivider(vin), dOpts, 10)
+    expect(ac.gain).toBeGreaterThan(0.5) // the diode conducts (g_d stamped); dropped would read ~0
+    expect(Math.abs(ac.gain / dcSlope - 1)).toBeLessThan(0.02) // == the DC small-signal slope
+  })
+})
+
+/** vin(5V reverse bias + AC) -> varactor(cathode='in', anode='out') -> out -> R(1M) -> gnd. The
+ *  reverse-biased varactor is a near-ideal C_j(V) to the signal: a high-pass that rolls in above
+ *  ~1/(2πR·C_j). */
+function varactorHighPass(): World {
+  const w = makeWorld()
+  ensureNet(w, 'gnd', true)
+  addPart(w, 'vin', 'power_source', { nominal_voltage: scalar(5, 'volt') }, [
+    { net: 'in', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  addPart(
+    w,
+    'cv',
+    'diode_varactor',
+    {
+      junction_capacitance_zero_bias: scalar(100e-12, 'farad'),
+      junction_potential: scalar(0.7, 'volt'),
+      grading_coefficient: scalar(0.5, 'dimensionless'),
+    },
+    [
+      { net: 'out', terminal: 'anode' },
+      { net: 'in', terminal: 'cathode' },
+    ],
+  )
+  addPart(w, 'r1', 'resistor', { resistance: scalar(1e6, 'ohm') }, [
+    { net: 'out', terminal: 'terminal_a' },
+    { net: 'gnd', terminal: 'terminal_b' },
+  ])
+  return w
+}
+
+describe('AC analysis — varactor presents its junction capacitance', () => {
+  const vOpts = { inputSource: 'vin', outputNet: 'out' }
+
+  test('the reverse-biased varactor couples high frequencies (a C_j high-pass), blocks low ones', () => {
+    const low = acResponse(varactorHighPass(), vOpts, 10).gain
+    const high = acResponse(varactorHighPass(), vOpts, 1e7).gain
+    expect(low).toBeLessThan(0.1) // C_j blocks well below the corner
+    expect(high).toBeGreaterThan(0.7) // and passes well above it — the varactor IS a capacitor here
+  })
+})

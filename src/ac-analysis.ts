@@ -4,6 +4,8 @@ import { fuseIsIntact, mathInstance as math, switchIsClosed } from './dc-solver.
 import {
   type BjtSmallSignal,
   bjtSmallSignalModel,
+  type DiodeSmallSignal,
+  diodeSmallSignalModel,
   type MosfetSmallSignal,
   mosfetSmallSignalModel,
 } from './small-signal.ts'
@@ -23,13 +25,14 @@ import {
  * exactly in the frequency domain (R -> 1/R, C -> jwC, L -> 1/jwL) via the same
  * mathjs lusolve the DC solver uses — here over a complex MNA matrix. Wires, intact
  * fuses, and closed SPST switches stamp as 0 V shorts (matching the DC/transient
- * engines). BJT and MOSFET/JFET/CRD small-signal models, linearized at the DC
- * operating point (the same companion Jacobian the DC solver uses), are included.
- * Verified against the textbook RC/CR first-order responses.
+ * engines). BJT, MOSFET/JFET/CRD, and forward-diode small-signal models, linearized
+ * at the DC operating point (the same companion Jacobian the DC solver uses), are
+ * included. Verified against the textbook RC/CR first-order responses.
  *
  * KNOWN LIMITATIONS — this engine is test-only today, NOT yet wired to the canvas UI:
  *  - SPDT switches and relay contacts are not yet shorted (only wires, intact fuses, and
- *    closed SPST switches are); diode small-signal is not modeled (diodes are dropped).
+ *    closed SPST switches are); the zener, tunnel, and Shockley-latch diodes are not modeled
+ *    (only the forward Shockley family + varactor are).
  *  - The DC operating point is solved at 25 C (the temperaturesC map is not threaded in).
  */
 
@@ -46,6 +49,7 @@ function readParam(inst: Instance, name: string): number | undefined {
 
 type BjtAcModel = BjtSmallSignal & { bIdx: number; cIdx: number; eIdx: number }
 type MosfetAcModel = MosfetSmallSignal & { gIdx: number; dIdx: number; sIdx: number }
+type DiodeAcModel = DiodeSmallSignal & { aIdx: number; cIdx: number }
 
 type Topology = {
   ground: string
@@ -56,6 +60,7 @@ type Topology = {
   dim: number
   bjts: BjtAcModel[]
   mosfets: MosfetAcModel[]
+  diodes: DiodeAcModel[]
 }
 
 const BJT_DEFINITIONS = new Set(['transistor_bjt_npn', 'transistor_bjt_pnp'])
@@ -67,6 +72,14 @@ const FET_DEFINITIONS = new Set([
   'diode_constant_current',
 ])
 const SHORT_DEFINITIONS = new Set(['wire', 'fuse', 'switch_spst_toggle', 'switch_spst_momentary'])
+const DIODE_AC_DEFINITIONS = new Set([
+  'led',
+  'led_uv_algan',
+  'diode_laser',
+  'diode_silicon_rectifier',
+  'diode_schottky_al_si',
+  'diode_varactor',
+])
 
 function buildTopology(world: World): Topology | null {
   let ground: string | undefined
@@ -96,9 +109,13 @@ function buildTopology(world: World): Topology | null {
   // (only when the circuit has any), then build each small-signal model around it.
   const bjts: BjtAcModel[] = []
   const mosfets: MosfetAcModel[] = []
+  const diodes: DiodeAcModel[] = []
   const bjtInsts = [...world.instances.values()].filter((i) => BJT_DEFINITIONS.has(i.definition))
   const fetInsts = [...world.instances.values()].filter((i) => FET_DEFINITIONS.has(i.definition))
-  if (bjtInsts.length > 0 || fetInsts.length > 0) {
+  const diodeInsts = [...world.instances.values()].filter((i) =>
+    DIODE_AC_DEFINITIONS.has(i.definition),
+  )
+  if (bjtInsts.length > 0 || fetInsts.length > 0 || diodeInsts.length > 0) {
     const dc = solveDCRobust(world)
     if (dc.status === 'solved') {
       const nodeVoltage = (net: string) => (net === ground ? 0 : (dc.nodes.get(net) ?? 0))
@@ -122,6 +139,11 @@ function buildTopology(world: World): Topology | null {
           sIdx: idx(ss.sourceNet),
         })
       }
+      for (const inst of diodeInsts) {
+        const ss = diodeSmallSignalModel(inst, nodeVoltage)
+        if (ss === null) continue
+        diodes.push({ ...ss, aIdx: idx(ss.anodeNet), cIdx: idx(ss.cathodeNet) })
+      }
     }
   }
 
@@ -133,6 +155,7 @@ function buildTopology(world: World): Topology | null {
     dim: nodeIndex.size + vsources.length + shorts.length,
     bjts,
     mosfets,
+    diodes,
   }
 }
 
@@ -252,6 +275,11 @@ function solveAtOmega(
     accumulateGrounded(s, g, -gm, 0)
     accumulateGrounded(s, d, -gds, 0)
     accumulateGrounded(s, s, gm + gds, 0)
+  }
+
+  // Diodes: a small-signal conductance + junction capacitance in parallel (g + jωC) at the op point.
+  for (const d of topo.diodes) {
+    stampY(d.aIdx, d.cIdx, d.g, omega * d.c)
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: mathjs lusolve return is polymorphic
