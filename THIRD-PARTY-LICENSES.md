@@ -116,6 +116,8 @@ All transitive LICENSE files available at `node_modules/<pkg>/LICENSE` after `np
 
 The pre-mathjs full transitive audit (deep-research 2026-06-05) found `lightningcss` (MPL-2.0) as a deeper transitive via Vite → Vitest. MPL-2.0 is file-level copyleft and is on the permissive whitelist (CLAUDE.md principle 4). See [LEGAL-CONSIDERATIONS.md](LEGAL-CONSIDERATIONS.md) §1 for the rationale.
 
+The integration audit (2026-06-16) also noted `caniuse-lite` (CC-BY-4.0), carried transitively via browserslist → Vite. CC-BY-4.0 is a **content/data** license — it covers browser-support data tables, not software — and the package is build-time only (browserslist reads it while bundling the renderer); none of its data ships in the product. It is thus outside the code whitelist *by kind* rather than in violation of it. Noted here for an exhaustive accounting.
+
 ---
 
 ## Dev-time vs runtime distinction
