@@ -15,42 +15,24 @@ import {
   ZENER_BREAKDOWN_IDEALITY,
   zenerCompanionModel,
 } from './diode-model.ts'
-import { readEnumParam } from './instance-params.ts'
+import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { mosfetOperatingPoint } from './mosfet-model.ts'
 import { tunnelDiodeOperatingPoint } from './tunnel-diode-model.ts'
 import { junctionCapacitance } from './varactor-model.ts'
 
 /**
- * BJT small-signal (hybrid-pi) model for AC analysis, linearized at the DC operating
- * point.
- *
- * The CONDUCTANCES come straight from the DC solver's own companion Jacobian
- * (bjtCompanion), so the AC model is exactly consistent with the DC model by
- * construction -- no second, drifting set of formulas. In hybrid-pi terms:
- *   g_m   = dI_C/dV_BE     (transconductance)
- *   g_o   = -dI_C/dV_BC    (output conductance, the Early-effect slope)
- *   1/r_pi = dI_B/dV_BE
- * We keep the four raw partials and stamp the 2-port directly, which also carries
- * the polarity correctly (the PNP sign cancels: the partials are taken in the
- * forward frame, the node voltages are physical, and sign^2 = 1).
- *
- * The CAPACITANCES are the new piece -- the poles that decide stability live here:
- *   C_pi = C_je + g_m * tau_F          (base-emitter: junction + forward-transit diffusion)
- *   C_mu = C_jc / (1 + V_CB/Vj)^m      (base-collector junction, thinning with reverse bias)
- * Cited from a 2N3904-class small-signal transistor: C_je ~ 4.5 pF, C_jc ~ 3.6 pF,
- * tau_F ~ 300 ps; Vj ~ 0.75 V and m ~ 0.33 are the standard silicon junction-grading
- * constants. Omitted capacitance params default to 0 (an ideal, roll-off-free device),
- * so transistor circuits built before this stage are unaffected until caps are declared.
+ * Small-signal device models for the frequency-domain AC analyzer (ac-analysis.ts). Each function
+ * linearizes a device at its DC operating point and returns the conductances (and capacitances) the
+ * complex MNA matrix stamps. Every conductance comes from the DC solver's OWN companion Jacobian /
+ * operating-point routine (bjtCompanion, mosfetOperatingPoint, the diode / zener / tunnel companions),
+ * so the AC model is exactly consistent with the DC model by construction — no second, drifting set of
+ * formulas. Three families: the BJT (hybrid-pi), the MOSFET / JFET / CRD (square law), and the diode
+ * (regime-dispatched: forward, zener breakdown, tunnel negative-resistance, latched Shockley / SCR). A
+ * capacitance defaults to 0 when a part declares none.
  */
 
 const BC_JUNCTION_POTENTIAL_V = 0.75
 const BC_GRADING_COEFFICIENT = 0.33
-
-function readParam(inst: Instance, name: string): number | undefined {
-  const params = inst.parameters as Record<string, { value?: { amount?: number } }> | undefined
-  const amount = params?.[name]?.value?.amount
-  return typeof amount === 'number' ? amount : undefined
-}
 
 export type BjtSmallSignal = {
   baseNet: string
@@ -67,9 +49,18 @@ export type BjtSmallSignal = {
 }
 
 /**
- * Resolve a BJT instance to its hybrid-pi small-signal model at the operating point
- * given by `nodeVoltage` (net id -> volts, ground = 0). Returns null for a
- * non-BJT instance or one missing the DC parameters.
+ * BJT hybrid-pi small-signal model, linearized at the DC operating point given by `nodeVoltage`
+ * (net id -> volts, ground = 0). Returns null for a non-BJT instance or one missing the DC params.
+ *
+ * The CONDUCTANCES are the four raw companion partials (bjtCompanion), stamped as the 2-port directly
+ * — which carries the polarity correctly (the PNP sign cancels: the partials are in the forward frame,
+ * the node voltages are physical, sign^2 = 1):
+ *   g_m = dI_C/dV_BE,  g_o = -dI_C/dV_BC (the Early slope),  1/r_pi = dI_B/dV_BE.
+ * The CAPACITANCES set the high-frequency poles:
+ *   C_pi = C_je + g_m·tau_F          (base-emitter: junction + forward-transit diffusion)
+ *   C_mu = C_jc / (1 + V_CB/Vj)^m    (base-collector junction, thinning with reverse bias)
+ * Cited from a 2N3904-class transistor: C_je ~ 4.5 pF, C_jc ~ 3.6 pF, tau_F ~ 300 ps; Vj ~ 0.75 V,
+ * m ~ 0.33 are the standard silicon junction-grading constants. Omitted cap params default to 0.
  */
 export function bjtSmallSignalModel(
   inst: Instance,
@@ -84,9 +75,9 @@ export function bjtSmallSignalModel(
   const vBC = sign * (nodeVoltage(bjt.baseNet) - nodeVoltage(bjt.collectorNet))
   const comp = bjtCompanion(vBE, vBC, bjt.params, bjt.thermalV)
 
-  const cje = readParam(inst, 'base_emitter_capacitance') ?? 0
-  const cjc = readParam(inst, 'base_collector_capacitance') ?? 0
-  const tauF = readParam(inst, 'forward_transit_time') ?? 0
+  const cje = readScalarParam(inst, 'base_emitter_capacitance') ?? 0
+  const cjc = readScalarParam(inst, 'base_collector_capacitance') ?? 0
+  const tauF = readScalarParam(inst, 'forward_transit_time') ?? 0
   const reverseBC = Math.max(0, -vBC) // active-region B-C reverse bias (forward frame)
 
   return {
@@ -183,16 +174,20 @@ function diodeRegimeConductance(
 ): number {
   switch (inst.definition) {
     case 'diode_tunnel': {
+      // Temperature threads in only through V_T (the injection term); the peak/valley tunneling
+      // currents use the declared 25 °C datasheet values — the model has no cited temp law for them.
       const td = resolveTunnelDiode(inst, vT)
       return td !== null ? tunnelDiodeOperatingPoint(v, td.params).conductance : 0
     }
     case 'diode_zener_silicon': {
-      const vF = readParam(inst, 'forward_voltage')
-      const iF = readParam(inst, 'max_forward_current')
-      const vZ = readParam(inst, 'zener_voltage')
+      // I_S is derived at the operating V_T (not 25 °C-then-scaled) — a minor approximation; the
+      // breakdown conductance, which is what matters here, barely depends on I_S.
+      const vF = readScalarParam(inst, 'forward_voltage')
+      const iF = readScalarParam(inst, 'max_forward_current')
+      const vZ = readScalarParam(inst, 'zener_voltage')
       if (vF === undefined || iF === undefined || vZ === undefined) return 0
       const iS = deriveSaturationCurrent(vF, iF, n, vT)
-      const bdCurrent = readParam(inst, 'knee_current') ?? 0.005
+      const bdCurrent = readScalarParam(inst, 'knee_current') ?? 0.005
       return zenerCompanionModel(v, iS, n, vT, vZ, bdCurrent, ZENER_BREAKDOWN_IDEALITY).conductance
     }
     case 'diode_shockley':
@@ -226,14 +221,14 @@ export function diodeSmallSignalModel(
     temperatureC !== undefined ? thermalVoltage(temperatureC + KELVIN_OFFSET) : thermalVoltage()
   const v = nodeVoltage(anodeNet) - nodeVoltage(cathodeNet)
 
-  const n = readParam(inst, 'ideality_factor') ?? DEFAULT_DIODE_IDEALITY
+  const n = readScalarParam(inst, 'ideality_factor') ?? DEFAULT_DIODE_IDEALITY
   const g = diodeRegimeConductance(inst, v, vT, branchCurrent, n)
 
   let c = 0
-  const cj0 = readParam(inst, 'junction_capacitance_zero_bias')
+  const cj0 = readScalarParam(inst, 'junction_capacitance_zero_bias')
   if (cj0 !== undefined) {
-    const vj = readParam(inst, 'junction_potential') ?? DEFAULT_JUNCTION_POTENTIAL_V
-    const m = readParam(inst, 'grading_coefficient') ?? DEFAULT_GRADING_COEFFICIENT
+    const vj = readScalarParam(inst, 'junction_potential') ?? DEFAULT_JUNCTION_POTENTIAL_V
+    const m = readScalarParam(inst, 'grading_coefficient') ?? DEFAULT_GRADING_COEFFICIENT
     c = junctionCapacitance(v, cj0, vj, m)
   }
 

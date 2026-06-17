@@ -6,7 +6,7 @@ import {
   relayCoilEnergized,
   switchIsClosed,
 } from './dc-solver.ts'
-import { readEnumParam } from './instance-params.ts'
+import { readEnumParam, readScalarParam } from './instance-params.ts'
 import {
   type BjtSmallSignal,
   bjtSmallSignalModel,
@@ -53,12 +53,6 @@ const cArgDeg = (re: number, im: number): number => (Math.atan2(im, re) * 180) /
  *  ungrounded transformer secondary) gives a finite result instead of a singular matrix. ~1 GΩ —
  *  negligible beside any real circuit impedance. */
 const AC_GMIN = 1e-9
-
-function readParam(inst: Instance, name: string): number | undefined {
-  const params = inst.parameters as Record<string, { value?: { amount?: number } }> | undefined
-  const amount = params?.[name]?.value?.amount
-  return typeof amount === 'number' ? amount : undefined
-}
 
 type BjtAcModel = BjtSmallSignal & { bIdx: number; cIdx: number; eIdx: number }
 type MosfetAcModel = MosfetSmallSignal & { gIdx: number; dIdx: number; sIdx: number }
@@ -170,9 +164,9 @@ function buildTopology(world: World, temperaturesC?: Map<string, number>): Topol
   const transformers: TransformerAcModel[] = []
   for (const inst of world.instances.values()) {
     if (inst.definition !== 'transformer') continue
-    const l1 = readParam(inst, 'primary_inductance')
-    const l2 = readParam(inst, 'secondary_inductance')
-    const k = readParam(inst, 'coupling_coefficient')
+    const l1 = readScalarParam(inst, 'primary_inductance')
+    const l2 = readScalarParam(inst, 'secondary_inductance')
+    const k = readScalarParam(inst, 'coupling_coefficient')
     if (l1 === undefined || l2 === undefined || k === undefined) continue
     if (l1 <= 0 || l2 <= 0 || k <= 0 || k >= 1) continue
     const netOf = (t: string) => inst.connects?.find((conn) => conn.terminal === t)?.net
@@ -290,17 +284,17 @@ function solveAtOmega(
     if (ports.length < 2) continue
     const [a, c] = ports as [number, number]
     if (inst.definition === 'resistor') {
-      const r = readParam(inst, 'resistance')
+      const r = readScalarParam(inst, 'resistance')
       if (r && r > 0) stampY(a, c, 1 / r, 0)
     } else if (inst.definition === 'capacitor') {
-      const cap = readParam(inst, 'capacitance')
+      const cap = readScalarParam(inst, 'capacitance')
       if (cap && cap > 0) stampY(a, c, 0, omega * cap)
     } else if (inst.definition === 'inductor') {
-      const l = readParam(inst, 'inductance')
+      const l = readScalarParam(inst, 'inductance')
       if (l && l > 0) stampY(a, c, 0, -1 / (omega * l))
     } else if (inst.definition === 'relay') {
       // The coil is a resistor across coil_a/coil_b (its contact is shorted separately, above).
-      const coilR = readParam(inst, 'coil_resistance')
+      const coilR = readScalarParam(inst, 'coil_resistance')
       const ca = inst.connects?.find((conn) => conn.terminal === 'coil_a')?.net
       const cb = inst.connects?.find((conn) => conn.terminal === 'coil_b')?.net
       if (coilR && coilR > 0 && ca !== undefined && cb !== undefined) {
