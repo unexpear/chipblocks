@@ -1,7 +1,7 @@
 import { useInternalNode, ViewportPortal } from '@xyflow/react'
 import type { Instance, World } from '../cross-fk-validator.ts'
 import { type Solution, solveDC } from '../dc-solver.ts'
-import { solveElectroThermal, solveTransientThermal } from '../electro-thermal.ts'
+import { solveElectroThermal, solveTransientThermal, worldAtAmbient } from '../electro-thermal.ts'
 import { solveTransient } from '../transient-solver.ts'
 import { fastestSourceHz, scopeWindow } from './scope.tsx'
 import { measureSeries } from './waveform-measure.ts'
@@ -194,9 +194,22 @@ export const LEAD_OHMS = 0.2
  *
  * Returns null for an open loop or > 1 GΩ (a real meter shows OL).
  */
-export function equivalentResistance(world: World, netA: string, netB: string): number | null {
+export function equivalentResistance(
+  world: World,
+  netA: string,
+  netB: string,
+  projectAmbientC?: number,
+): number | null {
   if (netA === netB) return LEAD_OHMS // shorted probes measure the leads
-  const probe = poweredOffProbe(world, netA, netB, OHM_TEST_VOLTS, TEST_SOURCE_OHMS)
+  // Powered off, each part sits at its ambient (no self-heating), so a tempco resistor / thermistor
+  // reads R(ambient) — not the 25 °C nominal — exactly as a real 2-wire ohmmeter would.
+  const probe = poweredOffProbe(
+    worldAtAmbient(world, projectAmbientC),
+    netA,
+    netB,
+    OHM_TEST_VOLTS,
+    TEST_SOURCE_OHMS,
+  )
   if (probe === null) return null
   if (probe.amps < OHM_TEST_VOLTS / OVERLOAD_OHMS) return null // open loop
   const ohms = probe.volts / probe.amps

@@ -12,7 +12,9 @@ import {
   solveElectroThermal,
   solveTransientThermal,
   thermistorResistance,
+  worldAtAmbient,
 } from '../src/electro-thermal.ts'
+import { readScalarParam } from '../src/instance-params.ts'
 import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
@@ -181,6 +183,14 @@ describe('a project-wide ambient places parts that set no ambient of their own',
     const world = selfHeatRig(1e6)
     const tr = solveTransientThermal(world, { timeStep: 1e-4, duration: 3e-3, projectAmbientC: 85 })
     expect(tr.temperaturesC.get('th') ?? 25).toBeCloseTo(85, 0)
+  })
+})
+
+describe('worldAtAmbient — the powered-off ohmmeter reads R(board ambient)', () => {
+  test('a thermistor with no own ambient is set to R(85) under an 85 °C board ambient', () => {
+    const adjusted = worldAtAmbient(selfHeatRig(1e6), 85)
+    const r = readScalarParam(adjusted.instances.get('th') as Instance, 'resistance')
+    expect(r ?? 0).toBeCloseTo(betaAt(85), 0) // R(85), not the 25 °C nominal R₀
   })
 })
 

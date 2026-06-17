@@ -1476,7 +1476,7 @@ function Canvas() {
     const netRed = probeNets.get(`${redProbe.nodeId}/${redProbe.handleId}`)
     const netBlack = probeNets.get(`${blackProbe.nodeId}/${blackProbe.handleId}`)
     if (netRed === undefined || netBlack === undefined) return null
-    return equivalentResistance(solvedWorld, netRed, netBlack)
+    return equivalentResistance(solvedWorld, netRed, netBlack, projectAmbientRef.current)
   }, [tool, meterMode, clampWire, redProbe, blackProbe, probeNets, solvedWorld])
 
   // A⎓ measurement (S20-v3-11) — its own memo so the fuse-blow EFFECT below

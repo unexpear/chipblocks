@@ -133,6 +133,21 @@ function worldAtTemperatures(
   return { world: { ...world, instances }, outOfRange }
 }
 
+/**
+ * A world with every temperature-following resistor (thermistor / tempco) set to its resistance at its
+ * effective ambient — own ambient_temperature, else the project ambient, else 25 °C — with NO
+ * self-heating. The de-energized case a 2-wire ohmmeter measures: a powered-off part sits at the
+ * ambient, so the read returns R(ambient), not the 25 °C nominal.
+ */
+export function worldAtAmbient(world: World, projectAmbientC?: number): World {
+  const temperatures = new Map<string, number>()
+  for (const inst of world.instances.values()) {
+    const ambient = ambientOf(inst, projectAmbientC)
+    if (resistanceAtTemperature(inst, ambient) !== undefined) temperatures.set(inst.id, ambient)
+  }
+  return worldAtTemperatures(world, temperatures, []).world
+}
+
 /** Each part's temperature: ambient + P·θ_JA (self-heating), or just its placed ambient (own
  *  ambient_temperature, else the project-wide ambient, else 25 °C). */
 function computeTemperatures(
