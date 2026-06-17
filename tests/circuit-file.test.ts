@@ -43,6 +43,16 @@ const edges = [
 ]
 
 describe('serialize → deserialize round-trip', () => {
+  test('round-trips the board ambient; an older file without it reads undefined', () => {
+    const withAmbient = deserializeCircuit(JSON.stringify(serializeCircuit(nodes, edges, 85)))
+    expect(withAmbient.ok).toBe(true)
+    if (withAmbient.ok) expect(withAmbient.file.projectAmbientC).toBe(85)
+    // Omitted (the 25 °C default isn't written) → loads as undefined; the app applies 25.
+    const without = deserializeCircuit(JSON.stringify(serializeCircuit(nodes, edges)))
+    expect(without.ok).toBe(true)
+    if (without.ok) expect(without.file.projectAmbientC).toBeUndefined()
+  })
+
   test('keeps everything the user built; drops solved data', () => {
     const file = serializeCircuit(nodes, edges)
     const text = JSON.stringify(file, null, 2)

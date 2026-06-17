@@ -50,6 +50,8 @@ export type SavedWire = {
 export type CircuitFile = {
   format: typeof CIRCUIT_FILE_FORMAT
   version: typeof CIRCUIT_FILE_VERSION
+  /** The board-wide ambient (°C) parts inherit; absent ⇒ the 25 °C default (older files). */
+  projectAmbientC?: number
   nodes: SavedNode[]
   wires: SavedWire[]
 }
@@ -91,10 +93,15 @@ function persistableParameters(parameters: Parameters | undefined): Parameters |
 }
 
 /** The canvas state → a versioned, solver-free circuit file. */
-export function serializeCircuit(nodes: CanvasNodeLike[], edges: CanvasEdgeLike[]): CircuitFile {
+export function serializeCircuit(
+  nodes: CanvasNodeLike[],
+  edges: CanvasEdgeLike[],
+  projectAmbientC?: number,
+): CircuitFile {
   return {
     format: CIRCUIT_FILE_FORMAT,
     version: CIRCUIT_FILE_VERSION,
+    ...(typeof projectAmbientC === 'number' ? { projectAmbientC } : {}),
     nodes: nodes.map((n) => {
       const parameters = persistableParameters(n.data.parameters)
       return {

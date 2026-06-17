@@ -748,6 +748,7 @@ function Canvas() {
       const file = serializeCircuit(
         nodes.map((n) => ({ id: n.id, position: n.position, data: n.data as DeviceNodeData })),
         edges,
+        projectAmbientRef.current,
       )
       void bridge.saveCircuitData(JSON.stringify(file, null, 2))
     })
@@ -763,6 +764,15 @@ function Canvas() {
       const result = deserializeCircuit(text)
       if (!result.ok) return // main validates first; this is belt-and-braces
       checkpointAction('load')
+      // Restore the saved board ambient (older files have none → the 25 °C default). Set the ref
+      // synchronously so the auto-resolve that setNodes triggers below solves at the loaded ambient.
+      const loadedAmbient =
+        typeof result.file.projectAmbientC === 'number' &&
+        Number.isFinite(result.file.projectAmbientC)
+          ? result.file.projectAmbientC
+          : STANDARD_AMBIENT_C
+      projectAmbientRef.current = loadedAmbient
+      setProjectAmbientC(loadedAmbient)
       setNodes(
         result.file.nodes.map((n) => ({
           id: n.id,
