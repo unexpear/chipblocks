@@ -141,6 +141,20 @@ describe('MOSFET temperature laws (S20-v3-8)', () => {
     expect(noTc?.params.thresholdVoltage).toBe(2.1)
   })
 
+  test('resolveMosfet rejects an out-of-range second-order param (θ < 0 or λ < 0); 0 is valid', () => {
+    const inst = nmosSwitch(5).instances.get('m1')
+    if (inst === undefined) throw new Error('missing instance')
+    const withParam = (key: string, amount: number) => ({
+      ...inst,
+      parameters: { ...inst.parameters, [key]: scalar(amount, 'per_volt') },
+    })
+    // θ = 0 / λ = 0 are the valid defaults; a negative θ drives the (1 + θ·V_OV) divisor through
+    // zero (NaN) and a negative λ flips the output conductance, so the resolver rejects them.
+    expect(resolveMosfet(withParam('velocity_saturation_theta', 0) as never)).not.toBeNull()
+    expect(resolveMosfet(withParam('velocity_saturation_theta', -0.5) as never)).toBeNull()
+    expect(resolveMosfet(withParam('channel_length_modulation', -0.02) as never)).toBeNull()
+  })
+
   test('a hot PMOS threshold drifts TOWARD zero (positive signed tc)', () => {
     const { world } = cmosInverter(0)
     const inst = world.instances.get('mp')

@@ -1274,7 +1274,9 @@ export function resolveMosfet(inst: Instance, temperatureC?: number): MosfetElem
   if (thresholdVoltage === undefined || transconductance === undefined) return null
   if (transconductance <= 0) return null
   const channelLengthModulation = readScalarParam(inst, 'channel_length_modulation') ?? 0
+  if (channelLengthModulation < 0) return null // λ ≥ 0; a negative value flips the output conductance
   const velocitySaturationTheta = readScalarParam(inst, 'velocity_saturation_theta') ?? 0
+  if (velocitySaturationTheta < 0) return null // θ ≥ 0; a negative value zeros the (1 + θ·V_OV) divisor → NaN
 
   // With a junction temperature (the electro-thermal loop): the declared k and
   // V_th are 25 °C figures; k scales by the mobility law, V_th drifts by the
@@ -1323,6 +1325,7 @@ export function resolveJfet(inst: Instance, temperatureC?: number): MosfetElemen
   if (pinchOffVoltage === undefined || transconductance === undefined) return null
   if (transconductance <= 0) return null
   const channelLengthModulation = readScalarParam(inst, 'channel_length_modulation') ?? 0
+  if (channelLengthModulation < 0) return null // λ ≥ 0; a negative value flips the output conductance
   // Carrier mobility falls as T^−1.5 (the same law as the MOSFET's k); the pinch-off tempco is left
   // to the fixture, not modeled here.
   if (temperatureC !== undefined) {
@@ -1365,6 +1368,7 @@ export function resolveCrd(inst: Instance, temperatureC?: number): MosfetElement
   if (limitingCurrent === undefined || kneeVoltage === undefined) return null
   if (limitingCurrent <= 0 || kneeVoltage <= 0) return null
   const channelLengthModulation = readScalarParam(inst, 'channel_length_modulation') ?? 0
+  if (channelLengthModulation < 0) return null // λ ≥ 0; a negative value flips the output conductance
   let transconductance = limitingCurrent / (kneeVoltage * kneeVoltage)
   // Carrier mobility falls as T^−1.5 (the same law as the MOSFET's k).
   if (temperatureC !== undefined) {
