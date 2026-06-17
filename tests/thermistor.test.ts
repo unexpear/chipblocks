@@ -63,14 +63,15 @@ describe('the Beta law R(T) = R₀·exp(B·(1/T − 1/T₀))', () => {
   })
 })
 
-/** 9 V → thermistor → ground, with the thermistor's own θ_JA so it self-heats. */
-function selfHeatRig(seriesOhms: number, ambientC?: number) {
+/** 9 V → thermistor → ground. By default the thermistor carries its own θ_JA so it self-heats;
+ *  pass omitThetaJa to drop it — testing that a placed ambient alone still drives the resistance. */
+function selfHeatRig(seriesOhms: number, ambientC?: number, omitThetaJa?: boolean) {
   const params: Record<string, { value?: unknown; ref?: string }> = {
     resistance: scalar(R0, 'ohm'),
     beta_coefficient: scalar(B, 'kelvin'),
     reference_temperature: scalar(25, 'celsius'),
-    thermal_resistance_junction_ambient: scalar(667, 'kelvin_per_watt'),
   }
+  if (!omitThetaJa) params.thermal_resistance_junction_ambient = scalar(667, 'kelvin_per_watt')
   if (ambientC !== undefined) params.ambient_temperature = scalar(ambientC, 'celsius')
   const nodes: CanvasNode[] = [
     {
@@ -125,6 +126,29 @@ describe('the ambient knob places the thermistor in a warmer spot', () => {
       result.temperaturesC.get('th') ?? 85,
     )
     expect(r ?? 0).toBeCloseTo(betaAt(85), 0)
+  })
+})
+
+describe('the ambient knob works without a θ_JA (a placed environment, no self-heating)', () => {
+  test('DC: a thermistor with ambient set but no θ_JA reads R at that ambient, not R₀', () => {
+    // 85 °C ambient, NO θ_JA, ~9 µA so self-heating is moot anyway — the ambient must take effect
+    // on its own. Before the fix this thermistor was skipped (no θ_JA) and stayed at R₀ (25 °C).
+    const world = selfHeatRig(1e6, 85, true)
+    const result = solveElectroThermal(world)
+    expect(result.solution.status).toBe('solved')
+    expect(result.temperaturesC.get('th') ?? 25).toBeCloseTo(85, 1)
+    const r = resistanceAtTemperature(
+      world.instances.get('th') as Instance,
+      result.temperaturesC.get('th') ?? 85,
+    )
+    expect(r ?? 0).toBeCloseTo(betaAt(85), 0)
+    expect(r ?? 0).toBeLessThan(R0) // the NTC fell below its 25 °C R₀
+  })
+
+  test('transient: the scope agrees — the same ambient-only thermistor settles at 85 °C', () => {
+    const world = selfHeatRig(1e6, 85, true)
+    const tr = solveTransientThermal(world, { timeStep: 1e-4, duration: 3e-3 })
+    expect(tr.temperaturesC.get('th') ?? 25).toBeCloseTo(85, 1)
   })
 })
 

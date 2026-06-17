@@ -117,16 +117,20 @@ function worldAtTemperatures(
   return { world: { ...world, instances }, outOfRange }
 }
 
-/** Each θ_JA-rated part's temperature from its real dissipated power. */
+/** Each part's temperature: ambient + P·θ_JA (self-heating), or just its placed ambient. */
 function computeTemperatures(world: World, solution: Solution): Map<string, number> {
   const temperatures = new Map<string, number>()
   for (const inst of world.instances.values()) {
-    // A part's temperature is ambient + P·θ_JA, so a θ_JA is the entry ticket: with none there is no
-    // temperature to assign here, and worldAtTemperatures leaves the part at R₀. A thermistor set only
-    // through ambient_temperature (no θ_JA) therefore keeps R₀ — its shipped default carries a θ_JA, so
-    // the ambient knob takes effect as the fixture documents. (computeTransientTemperatures gates the same.)
+    // A part's temperature is ambient + P·θ_JA. A θ_JA earns the self-heating term; a part placed in an
+    // explicit ambient_temperature (even with no θ_JA) still takes that ambient, so the ambient knob
+    // works on its own. With neither, the part stays at the 25 °C baseline (no entry → R₀, as before).
+    // (computeTransientTemperatures applies the same rule.)
     const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
-    if (thetaJa === undefined || thetaJa <= 0) continue
+    if (thetaJa === undefined || thetaJa <= 0) {
+      const ambient = readScalarParam(inst, 'ambient_temperature')
+      if (ambient !== undefined) temperatures.set(inst.id, ambient)
+      continue
+    }
     const branch = solution.branches.get(inst.id)
     if (branch === undefined) continue
 
@@ -228,7 +232,12 @@ function computeTransientTemperatures(
   const temperatures = new Map<string, number>()
   for (const inst of world.instances.values()) {
     const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
-    if (thetaJa === undefined || thetaJa <= 0) continue
+    if (thetaJa === undefined || thetaJa <= 0) {
+      // No self-heating, but a placed ambient still sets the part's temperature (mirrors the DC loop).
+      const ambient = readScalarParam(inst, 'ambient_temperature')
+      if (ambient !== undefined) temperatures.set(inst.id, ambient)
+      continue
+    }
     const connects = inst.connects ?? []
     if (connects.length === 0) continue
 
