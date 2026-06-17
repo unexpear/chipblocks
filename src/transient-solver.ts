@@ -467,7 +467,11 @@ function resolveVaractor(inst: Instance, nodeIndex: Map<string, number>): CapEle
   const vPrev = readScalarParam(inst, 'initial_voltage') ?? 0
   // Forward diffusion charge (τ_T · I_S) — negligible in reverse, the varactor's regime; transit_time
   // 0 (the default) disables it. I_S is calibrated from the forward operating point.
-  const thermalV = thermalVoltage() // kT/q at the standard 298.15 K (matches the rest of the solver)
+  // kT/q at 298.15 K — deliberately NOT threaded to the part temperature (unlike the junction
+  // devices): the varactor runs reverse-biased, so V_T touches only the gated-off diffusion charge
+  // above, and the junction potential's weak temperature drift has no cited law to scale by. Room-
+  // temperature V_T is the honest choice here.
+  const thermalV = thermalVoltage()
   const ideality = readScalarParam(inst, 'ideality_factor') ?? 1
   const transitTime = readScalarParam(inst, 'transit_time') ?? 0
   const forwardVoltage = readScalarParam(inst, 'forward_voltage')
@@ -1796,7 +1800,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const { iD } = mosfetOperatingPoint(vGS, vDS, fet.params)
       into.set(`${fet.inst.id}/drain`, iD)
       into.set(`${fet.inst.id}/source`, -iD)
-      into.set(`${fet.inst.id}/gate`, 0) // insulated gate: no DC current in Level-1
+      into.set(`${fet.inst.id}/gate`, 0) // no gate current in Level-1: a MOSFET's insulated gate, a JFET/CRD's reverse-biased junction
     }
 
     return into
