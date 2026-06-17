@@ -125,6 +125,34 @@ describe('cross-FK validator — invalid worlds (one per error code MUST fire)',
     expect(hit).toBeDefined()
   })
 
+  test('object_ref: a dangling id fires unknown-reference; an existing id of any kind does not', () => {
+    const world = loadWorld(join(FIXTURE_DIR, 'valid'))
+    // Retype the wire's material slot to object_ref — it must still EXIST, but accepts ANY kind.
+    const slot = getOrThrow(world.definitions, 'wire', 'object_ref test').parameters
+      ?.conductor_material
+    if (slot === undefined) throw new Error('wire is missing its conductor_material slot')
+    slot.type = 'object_ref'
+    const wire001 = getOrThrow(world.instances, 'wire_001', 'object_ref test')
+
+    // A dangling id is still caught (the previous bug skipped object_ref existence entirely).
+    wire001.parameters = { ...wire001.parameters, conductor_material: { value: 'no_such_object' } }
+    expect(
+      validateWorld(world).find(
+        (e) =>
+          e.code === 'unknown-reference' && e.source === 'wire_001' && e.ref === 'no_such_object',
+      ),
+    ).toBeDefined()
+
+    // An EXISTING id of a DIFFERENT kind (a primitive_device) resolves with no ref error —
+    // object_ref carries no kind constraint, so neither unknown-reference nor kind-mismatch fires.
+    wire001.parameters = { ...wire001.parameters, conductor_material: { value: 'wire' } }
+    const refErrors = validateWorld(world).filter(
+      (e) =>
+        (e.code === 'unknown-reference' || e.code === 'kind-mismatch') && e.source === 'wire_001',
+    )
+    expect(refErrors).toEqual([])
+  })
+
   test('unknown-behavior: device claims a behavior id not in the registry', () => {
     const world = loadWorld(join(FIXTURE_DIR, 'valid'))
     const wireDef = getOrThrow(world.definitions, 'wire', 'unknown-behavior test')

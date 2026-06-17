@@ -264,6 +264,16 @@ function paramKindFromType(type: string): string | null {
   }
 }
 
+/**
+ * Whether a parameter type is a REFERENCE — its value (or AV value) is a string id that must resolve
+ * to an existing object. material_ref / shape_ref additionally carry a KIND constraint
+ * (paramKindFromType); object_ref must exist but accepts any kind. Non-ref types (quantity, enum, …)
+ * reference nothing, so they get no existence check.
+ */
+function isRefType(type: string): boolean {
+  return type === 'material_ref' || type === 'shape_ref' || type === 'object_ref'
+}
+
 // ---------------------------------------------------------------------------
 // Helpers for derives-violates-rating (S12-v3-7)
 // ---------------------------------------------------------------------------
@@ -540,8 +550,8 @@ export function validateWorld(world: World): CrossFkError[] {
         if (slot === undefined) continue
 
         if (paramValue.value !== undefined) {
-          const expectedKind = paramKindFromType(slot.type)
-          if (expectedKind !== null && typeof paramValue.value === 'string') {
+          if (isRefType(slot.type) && typeof paramValue.value === 'string') {
+            const expectedKind = paramKindFromType(slot.type)
             const target = lookup(world, paramValue.value)
             if (target === null) {
               errors.push({
@@ -550,7 +560,7 @@ export function validateWorld(world: World): CrossFkError[] {
                 ref: paramValue.value,
                 where: `parameters.${paramName}.value`,
               })
-            } else if (target.kind !== expectedKind) {
+            } else if (expectedKind !== null && target.kind !== expectedKind) {
               errors.push({
                 code: 'kind-mismatch',
                 source: inst.id,
@@ -586,7 +596,7 @@ export function validateWorld(world: World): CrossFkError[] {
           }
 
           const expectedKind = paramKindFromType(slot.type)
-          if (expectedKind !== null && typeof av.value === 'string') {
+          if (isRefType(slot.type) && typeof av.value === 'string') {
             const target = lookup(world, av.value)
             if (target === null) {
               errors.push({
@@ -595,7 +605,7 @@ export function validateWorld(world: World): CrossFkError[] {
                 ref: av.value,
                 where: `parameters.${paramName}.ref -> ${paramValue.ref}.value`,
               })
-            } else if (target.kind !== expectedKind) {
+            } else if (expectedKind !== null && target.kind !== expectedKind) {
               errors.push({
                 code: 'kind-mismatch',
                 source: inst.id,
