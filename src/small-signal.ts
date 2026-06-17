@@ -1,13 +1,14 @@
 import { bjtCompanion } from './bjt-model.ts'
 import type { Instance } from './cross-fk-validator.ts'
 import {
+  KELVIN_OFFSET,
   type MosfetElement,
   resolveBjt,
   resolveCrd,
   resolveJfet,
   resolveMosfet,
 } from './dc-solver.ts'
-import { deriveSaturationCurrent, diodeConductance, thermalVoltage } from './diode-model.ts'
+import { thermalVoltage } from './diode-model.ts'
 import { mosfetOperatingPoint } from './mosfet-model.ts'
 import { junctionCapacitance } from './varactor-model.ts'
 
@@ -65,8 +66,9 @@ export type BjtSmallSignal = {
 export function bjtSmallSignalModel(
   inst: Instance,
   nodeVoltage: (net: string) => number,
+  temperatureC?: number,
 ): BjtSmallSignal | null {
-  const bjt = resolveBjt(inst)
+  const bjt = resolveBjt(inst, temperatureC)
   if (bjt === null) return null
 
   const sign = bjt.polarity === 'pnp' ? -1 : 1
@@ -102,13 +104,15 @@ export type MosfetSmallSignal = {
   gds: number
 }
 
-function resolveFetLike(inst: Instance): MosfetElement | null {
+function resolveFetLike(inst: Instance, temperatureC?: number): MosfetElement | null {
   if (
     inst.definition === 'transistor_mosfet_nmos' ||
     inst.definition === 'transistor_mosfet_pmos'
   ) {
-    return resolveMosfet(inst)
+    return resolveMosfet(inst, temperatureC)
   }
+  // The JFET / CRD resolvers take no temperature, so their square-law parameters stay at 25 °C; the
+  // operating point itself still shifts with temperature (the DC op-point solve honors it).
   if (
     inst.definition === 'transistor_jfet_n_channel' ||
     inst.definition === 'transistor_jfet_p_channel'
@@ -129,8 +133,9 @@ function resolveFetLike(inst: Instance): MosfetElement | null {
 export function mosfetSmallSignalModel(
   inst: Instance,
   nodeVoltage: (net: string) => number,
+  temperatureC?: number,
 ): MosfetSmallSignal | null {
-  const fet = resolveFetLike(inst)
+  const fet = resolveFetLike(inst, temperatureC)
   if (fet === null) return null
   const vGS = nodeVoltage(fet.gateNet) - nodeVoltage(fet.sourceNet)
   const vDS = nodeVoltage(fet.drainNet) - nodeVoltage(fet.sourceNet)
@@ -169,19 +174,23 @@ export type DiodeSmallSignal = {
 export function diodeSmallSignalModel(
   inst: Instance,
   nodeVoltage: (net: string) => number,
+  branchCurrent?: number,
+  temperatureC?: number,
 ): DiodeSmallSignal | null {
   const anodeNet = inst.connects?.find((conn) => conn.terminal === 'anode')?.net
   const cathodeNet = inst.connects?.find((conn) => conn.terminal === 'cathode')?.net
   if (anodeNet === undefined || cathodeNet === undefined) return null
-  const vT = thermalVoltage()
+  const vT =
+    temperatureC !== undefined ? thermalVoltage(temperatureC + KELVIN_OFFSET) : thermalVoltage()
   const v = nodeVoltage(anodeNet) - nodeVoltage(cathodeNet)
 
+  // The dynamic conductance at the operating point is g = dI/dV = I_op / (n·V_T) — taken from the
+  // solved branch current (consistent with the DC solve and temperature-correct via V_T, with no
+  // separate I_S to drift). A reverse-biased part (a varactor) carries ~0 current, so g ~ 0.
   let g = 0
-  const vF = readParam(inst, 'forward_voltage')
-  const iF = readParam(inst, 'max_forward_current')
-  if (vF !== undefined && iF !== undefined) {
+  if (branchCurrent !== undefined) {
     const n = readParam(inst, 'ideality_factor') ?? DEFAULT_DIODE_IDEALITY
-    g = diodeConductance(v, deriveSaturationCurrent(vF, iF, n, vT), n, vT)
+    g = Math.abs(branchCurrent) / (n * vT)
   }
 
   let c = 0

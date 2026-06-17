@@ -221,6 +221,14 @@ describe('AC analysis — transistor small-signal (common-emitter amp)', () => {
     const high = acResponse(amp, ceOpts, 1e9).gain
     expect(high).toBeLessThan(0.3 * low) // a genuine high-frequency roll-off from C_mu
   })
+
+  test('supplying a part temperature shifts the operating point and the gain', () => {
+    const amp = commonEmitterAmp(0.65)
+    const cold = acResponse(amp, ceOpts, 10).gain
+    const hot = acResponse(amp, { ...ceOpts, temperaturesC: new Map([['q1', 85]]) }, 10).gain
+    expect(Number.isFinite(hot)).toBe(true) // the hot operating point still solves
+    expect(Math.abs(hot / cold - 1)).toBeGreaterThan(0.05) // temperature is threaded → the gain moves
+  })
 })
 
 /** vin -> R -> mid -> WIRE -> out -> C -> gnd : the wire must vanish (short mid = out), so this reads

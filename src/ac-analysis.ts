@@ -39,7 +39,9 @@ import {
  * KNOWN LIMITATIONS — this engine is test-only today, NOT yet wired to the canvas UI:
  *  - The zener, tunnel, and Shockley-latch diodes are not modeled (only the forward Shockley
  *    family + varactor are).
- *  - The DC operating point is solved at 25 C (the temperaturesC map is not threaded in).
+ *  - A supplied temperaturesC map drives the operating point and the BJT / MOSFET / diode
+ *    small-signal, but the JFET / CRD square-law parameters are not temperature-scaled (their
+ *    resolvers take no temperature) — their bias shifts with temperature, their transconductance not.
  */
 
 export type Complex = { re: number; im: number }
@@ -120,7 +122,7 @@ function acShortPair(inst: Instance): { aNet: string; bNet: string } | null {
   }
 }
 
-function buildTopology(world: World): Topology | null {
+function buildTopology(world: World, temperaturesC?: Map<string, number>): Topology | null {
   let ground: string | undefined
   for (const net of world.nets.values()) if (net.type === 'ground') ground = net.id
   if (ground === undefined) return null
@@ -152,11 +154,11 @@ function buildTopology(world: World): Topology | null {
     DIODE_AC_DEFINITIONS.has(i.definition),
   )
   if (bjtInsts.length > 0 || fetInsts.length > 0 || diodeInsts.length > 0) {
-    const dc = solveDCRobust(world)
+    const dc = solveDCRobust(world, temperaturesC ? { temperaturesC } : undefined)
     if (dc.status === 'solved') {
       const nodeVoltage = (net: string) => (net === ground ? 0 : (dc.nodes.get(net) ?? 0))
       for (const inst of bjtInsts) {
-        const ss = bjtSmallSignalModel(inst, nodeVoltage)
+        const ss = bjtSmallSignalModel(inst, nodeVoltage, temperaturesC?.get(inst.id))
         if (ss === null) continue
         bjts.push({
           ...ss,
@@ -166,7 +168,7 @@ function buildTopology(world: World): Topology | null {
         })
       }
       for (const inst of fetInsts) {
-        const ss = mosfetSmallSignalModel(inst, nodeVoltage)
+        const ss = mosfetSmallSignalModel(inst, nodeVoltage, temperaturesC?.get(inst.id))
         if (ss === null) continue
         mosfets.push({
           ...ss,
@@ -176,7 +178,12 @@ function buildTopology(world: World): Topology | null {
         })
       }
       for (const inst of diodeInsts) {
-        const ss = diodeSmallSignalModel(inst, nodeVoltage)
+        const ss = diodeSmallSignalModel(
+          inst,
+          nodeVoltage,
+          dc.branches.get(inst.id),
+          temperaturesC?.get(inst.id),
+        )
         if (ss === null) continue
         diodes.push({ ...ss, aIdx: idx(ss.anodeNet), cIdx: idx(ss.cathodeNet) })
       }
@@ -340,7 +347,13 @@ function solveAtOmega(
 }
 
 export type AcPoint = { frequencyHz: number; gain: number; gainDb: number; phaseDeg: number }
-export type AcOptions = { inputSource: string; outputNet: string }
+export type AcOptions = {
+  inputSource: string
+  outputNet: string
+  /** Per-instance junction temperatures (°C) — the op-point + BJT/MOSFET/diode small-signal honor
+   *  them; absent → every part at the standard 25 °C. */
+  temperaturesC?: Map<string, number>
+}
 export type AcSweepOptions = AcOptions & {
   fStartHz: number
   fStopHz: number
@@ -357,7 +370,7 @@ const toPoint = (frequencyHz: number, vout: Complex | null): AcPoint => {
 
 /** Gain and phase of outputNet / inputSource at a single frequency. */
 export function acResponse(world: World, opts: AcOptions, frequencyHz: number): AcPoint {
-  const topo = buildTopology(world)
+  const topo = buildTopology(world, opts.temperaturesC)
   if (topo === null) return toPoint(frequencyHz, null)
   const vout = solveAtOmega(
     world,
@@ -371,7 +384,7 @@ export function acResponse(world: World, opts: AcOptions, frequencyHz: number): 
 
 /** A logarithmic frequency sweep (a Bode plot's worth of points). */
 export function acSweep(world: World, opts: AcSweepOptions): AcPoint[] {
-  const topo = buildTopology(world)
+  const topo = buildTopology(world, opts.temperaturesC)
   if (topo === null) return []
   const decades = Math.log10(opts.fStopHz / opts.fStartHz)
   const steps = Math.max(1, Math.round(decades * opts.pointsPerDecade))
