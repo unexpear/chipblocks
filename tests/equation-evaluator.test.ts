@@ -300,6 +300,62 @@ describe('evaluateEquation — error paths', () => {
   })
 })
 
+describe('evaluateEquation — dimensionless outputs', () => {
+  test('all-dimensionless inputs → a bare number is returned (not a false unit mismatch)', () => {
+    const spec: EquationValue = {
+      kind: 'equation',
+      expression: 'numerator / denominator',
+      inputs: {
+        numerator: { kind: 'constant', amount: 3, unit: '' },
+        denominator: { kind: 'constant', amount: 4, unit: 'dimensionless' },
+      },
+      output_unit: 'dimensionless',
+    }
+    const result = evaluateEquation(spec, { propertyRefs: {} })
+    expect(result.status).toBe('evaluated')
+    if (result.status === 'evaluated') {
+      expect(result.unit).toBe('dimensionless')
+      expect(result.amount).toBeCloseTo(0.75, 12)
+    }
+  })
+
+  test('a result whose units CANCEL to dimensionless (ohm / ohm) returns the ratio', () => {
+    const spec: EquationValue = {
+      kind: 'equation',
+      expression: 'r_top / r_total',
+      inputs: {
+        r_top: { kind: 'constant', amount: 1000, unit: 'ohm' },
+        r_total: { kind: 'constant', amount: 4000, unit: 'ohm' },
+      },
+      output_unit: '1',
+    }
+    const result = evaluateEquation(spec, { propertyRefs: {} })
+    expect(result.status).toBe('evaluated')
+    if (result.status === 'evaluated') {
+      expect(result.amount).toBeCloseTo(0.25, 12) // a voltage-divider ratio
+    }
+  })
+
+  test('a DIMENSIONAL result against a dimensionless output is still a unit mismatch', () => {
+    const spec: EquationValue = {
+      kind: 'equation',
+      expression: 'r * i', // ohm × A = volts, not dimensionless
+      inputs: {
+        r: { kind: 'constant', amount: 100, unit: 'ohm' },
+        i: { kind: 'constant', amount: 0.5, unit: 'A' },
+      },
+      output_unit: 'dimensionless',
+    }
+    try {
+      evaluateEquation(spec, { propertyRefs: {} })
+      throw new Error('Expected throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(EquationEvalError)
+      expect((err as EquationEvalError).code).toBe('derives-unit-mismatch')
+    }
+  })
+})
+
 // ===========================================================================
 // 4. End-to-end: device-resistor.yaml's catalog-shipped equation evaluates
 // ===========================================================================

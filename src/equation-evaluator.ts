@@ -178,9 +178,30 @@ export function evaluateEquation(
     )
   }
 
-  // Verify the result is a Unit (not a bare number) — bare numbers mean
-  // the expression collapsed to dimensionless, which is a unit mismatch
-  // against any non-dimensionless output_unit.
+  const finalize = (value: number): EvaluationResult =>
+    spec.conditions !== undefined
+      ? { status: 'evaluated', amount: value, unit: spec.output_unit, conditions: spec.conditions }
+      : { status: 'evaluated', amount: value, unit: spec.output_unit }
+
+  // A dimensionless output ('' / '1' / 'dimensionless') is the one case where a bare-number result
+  // — or a unit that reduces to dimensionless — is CORRECT, not a unit mismatch. safeUnit passes
+  // dimensionless inputs as bare numbers, so an all-dimensionless equation lands here.
+  const outputIsDimensionless =
+    spec.output_unit === '' || spec.output_unit === '1' || spec.output_unit === 'dimensionless'
+  if (outputIsDimensionless) {
+    if (typeof result === 'number' && Number.isFinite(result)) return finalize(result)
+    if (math.typeOf(result) === 'Unit' && result.dimensions.every((d: number) => d === 0)) {
+      return finalize(result.toNumber())
+    }
+    throw new EquationEvalError(
+      'derives-unit-mismatch',
+      `Output units do not match declared output_unit`,
+      `Expression: ${spec.expression}; declared: ${spec.output_unit} (dimensionless); computed: ${String(result)}`,
+    )
+  }
+
+  // Verify the result is a Unit (not a bare number) — a bare number means the expression collapsed
+  // to dimensionless, which is a unit mismatch against this non-dimensionless output_unit.
   if (math.typeOf(result) !== 'Unit') {
     throw new EquationEvalError(
       'derives-unit-mismatch',
@@ -200,20 +221,7 @@ export function evaluateEquation(
   }
 
   // Convert the result to the declared units for the returned amount
-  const amount = result.toNumber(toMathjsUnit(spec.output_unit))
-  if (spec.conditions !== undefined) {
-    return {
-      status: 'evaluated',
-      amount,
-      unit: spec.output_unit,
-      conditions: spec.conditions,
-    }
-  }
-  return {
-    status: 'evaluated',
-    amount,
-    unit: spec.output_unit,
-  }
+  return finalize(result.toNumber(toMathjsUnit(spec.output_unit)))
 }
 
 /**
