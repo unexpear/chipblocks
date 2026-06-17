@@ -16,9 +16,18 @@ import { type BjtSmallSignal, bjtSmallSignalModel } from './small-signal.ts'
  *
  * This stage covers the LINEAR elements (R, C, L) plus independent sources, solved
  * exactly in the frequency domain (R -> 1/R, C -> jwC, L -> 1/jwL) via the same
- * mathjs lusolve the DC solver uses — here over a complex MNA matrix. Transistor
- * and diode small-signal models, linearized at the DC operating point, are layered
- * on in the next increment. Verified against the textbook RC/CR first-order responses.
+ * mathjs lusolve the DC solver uses — here over a complex MNA matrix. BJT small-signal
+ * models, linearized at the DC operating point (the same companion Jacobian the DC
+ * solver uses), are included. Verified against the textbook RC/CR first-order responses.
+ *
+ * KNOWN LIMITATIONS — this engine is test-only today, NOT yet wired to the canvas UI;
+ * these must be addressed before it is:
+ *  - Wires and closed switches are NOT stamped, so AC leaves their nets unconnected,
+ *    whereas the DC and transient engines short them (a 0 V source). A canvas circuit
+ *    drawn with wire segments would compute wrong until this is added.
+ *  - Only 2-terminal R/L/C and BJTs are handled. MOSFET/JFET and diode small-signal
+ *    are not modeled, so those parts are silently dropped.
+ *  - The DC operating point is solved at 25 C (the temperaturesC map is not threaded in).
  */
 
 export type Complex = { re: number; im: number }
