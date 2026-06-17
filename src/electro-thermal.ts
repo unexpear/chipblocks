@@ -121,6 +121,10 @@ function worldAtTemperatures(
 function computeTemperatures(world: World, solution: Solution): Map<string, number> {
   const temperatures = new Map<string, number>()
   for (const inst of world.instances.values()) {
+    // A part's temperature is ambient + P·θ_JA, so a θ_JA is the entry ticket: with none there is no
+    // temperature to assign here, and worldAtTemperatures leaves the part at R₀. A thermistor set only
+    // through ambient_temperature (no θ_JA) therefore keeps R₀ — its shipped default carries a θ_JA, so
+    // the ambient knob takes effect as the fixture documents. (computeTransientTemperatures gates the same.)
     const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
     if (thetaJa === undefined || thetaJa <= 0) continue
     const branch = solution.branches.get(inst.id)
