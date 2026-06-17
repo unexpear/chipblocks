@@ -623,3 +623,89 @@ describe('AC analysis — transformer (coupled inductors)', () => {
     expect(acResponse(w, opts, 1e5).gain).toBeCloseTo(expected, 1) // and at 100 kHz — frequency-flat
   })
 })
+
+/** A 2:1 step-down (L1 = 4·L2), tight coupling, with a real 1 kΩ load on the secondary — exercises a
+ *  loaded secondary (the load + the winding share the 'out' node). */
+function transformerLoaded(): World {
+  const w = makeWorld()
+  ensureNet(w, 'gnd', true)
+  addPart(w, 'vin', 'power_source', { nominal_voltage: scalar(1, 'volt') }, [
+    { net: 'in', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  addPart(
+    w,
+    'tx',
+    'transformer',
+    {
+      primary_inductance: scalar(40e-3, 'henry'),
+      secondary_inductance: scalar(10e-3, 'henry'),
+      coupling_coefficient: scalar(0.999, 'dimensionless'),
+    },
+    [
+      { net: 'in', terminal: 'primary_a' },
+      { net: 'gnd', terminal: 'primary_b' },
+      { net: 'out', terminal: 'secondary_a' },
+      { net: 'gnd', terminal: 'secondary_b' },
+    ],
+  )
+  addPart(w, 'rl', 'resistor', { resistance: scalar(1000, 'ohm') }, [
+    { net: 'out', terminal: 'terminal_a' },
+    { net: 'gnd', terminal: 'terminal_b' },
+  ])
+  return w
+}
+
+/** A transformer whose secondary (sa, sb) touches no ground and no load — a floating subsection that
+ *  would make the matrix singular without gmin. */
+function transformerFloatingSecondary(): World {
+  const w = makeWorld()
+  ensureNet(w, 'gnd', true)
+  addPart(w, 'vin', 'power_source', { nominal_voltage: scalar(1, 'volt') }, [
+    { net: 'in', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  addPart(
+    w,
+    'tx',
+    'transformer',
+    {
+      primary_inductance: scalar(1e-3, 'henry'),
+      secondary_inductance: scalar(4e-3, 'henry'),
+      coupling_coefficient: scalar(0.99, 'dimensionless'),
+    },
+    [
+      { net: 'in', terminal: 'primary_a' },
+      { net: 'gnd', terminal: 'primary_b' },
+      { net: 'sa', terminal: 'secondary_a' },
+      { net: 'sb', terminal: 'secondary_b' },
+    ],
+  )
+  return w
+}
+
+describe('AC analysis — transformer loading + robustness', () => {
+  test('a loaded step-down transformer delivers the turns-ratio voltage to its load', () => {
+    const gain = acResponse(transformerLoaded(), { inputSource: 'vin', outputNet: 'out' }, 1e5).gain
+    expect(gain).toBeCloseTo(0.5, 1) // ~k·√(L2/L1) = 0.999·0.5, lightly loaded
+  })
+
+  test('a floating (ungrounded) secondary yields a finite result, not NaN (gmin keeps it solvable)', () => {
+    const gain = acResponse(
+      transformerFloatingSecondary(),
+      { inputSource: 'vin', outputNet: 'sa' },
+      1e3,
+    ).gain
+    expect(Number.isFinite(gain)).toBe(true)
+  })
+
+  test('an unknown input source or output net yields NaN, not a misleading 0', () => {
+    const w = rcLowPass(R, C)
+    expect(Number.isNaN(acResponse(w, { inputSource: 'nope', outputNet: 'out' }, fc).gain)).toBe(
+      true,
+    )
+    expect(Number.isNaN(acResponse(w, { inputSource: 'vin', outputNet: 'nope' }, fc).gain)).toBe(
+      true,
+    )
+  })
+})

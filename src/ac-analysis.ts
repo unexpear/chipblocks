@@ -49,6 +49,11 @@ export type Complex = { re: number; im: number }
 const cAbs = (re: number, im: number): number => Math.hypot(re, im)
 const cArgDeg = (re: number, im: number): number => (Math.atan2(im, re) * 180) / Math.PI
 
+/** A tiny node-to-ground conductance (S) added to every node so a floating subsection (e.g. an
+ *  ungrounded transformer secondary) gives a finite result instead of a singular matrix. ~1 GΩ —
+ *  negligible beside any real circuit impedance. */
+const AC_GMIN = 1e-9
+
 function readParam(inst: Instance, name: string): number | undefined {
   const params = inst.parameters as Record<string, { value?: { amount?: number } }> | undefined
   const amount = params?.[name]?.value?.amount
@@ -260,6 +265,9 @@ function solveAtOmega(
   const { ground, nodeIndex, vsources, shorts, dim } = topo
   if (dim === 0) return { re: 0, im: 0 }
   const idx = (net: string) => (net === ground ? -1 : (nodeIndex.get(net) ?? -1))
+  // Unknown input source or output net → NaN, not a misleading 0 (a real ground output stays 0).
+  if (!vsources.some((vs) => vs.id === inputSource)) return null
+  if (idx(outputNet) < 0 && outputNet !== ground) return null
 
   // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
   const M: any = math.zeros(dim, dim)
@@ -405,6 +413,10 @@ function solveAtOmega(
   for (const d of topo.diodes) {
     stampY(d.aIdx, d.cIdx, d.g, omega * d.c)
   }
+
+  // gmin: a tiny conductance from every node to ground (see AC_GMIN) so a floating subsection can't
+  // make the matrix singular; negligible for any grounded circuit.
+  for (let i = 0; i < nodeIndex.size; i++) accumulate(i, i, AC_GMIN, 0)
 
   // biome-ignore lint/suspicious/noExplicitAny: mathjs lusolve return is polymorphic
   let solution: any
