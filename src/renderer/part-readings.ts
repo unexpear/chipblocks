@@ -16,9 +16,11 @@ import { junctionCapacitance } from '../varactor-model.ts'
  *    transistor reads its conducting pair — V_CE for a BJT, V_DS for a MOSFET).
  *  - power   = current × voltage (dissipated for a resistor/LED; delivered for a
  *    source — the sign/direction is implied by the part).
- *  - temperatureC = the lumped thermal model (stage 7): 25 °C ambient + P·θ_JA,
- *    for parts that declare a thermal resistance (with the declared max alongside
- *    so the panel can show headroom).
+ *  - temperatureC = the part's real temperature from the electro-thermal solve
+ *    (its ambient — own or the board's — plus P·θ_JA self-heating), for parts
+ *    that declare a thermal resistance, with the declared max alongside so the
+ *    panel can show headroom. Falls back to the 25 °C lumped law when no solve
+ *    temperature is supplied.
  */
 export type PartReading = {
   current?: number
@@ -30,7 +32,11 @@ export type PartReading = {
   maxTemperatureC?: number
 }
 
-export function partReadings(world: World, solution: Solution): Map<string, PartReading> {
+export function partReadings(
+  world: World,
+  solution: Solution,
+  temperaturesC?: Map<string, number>,
+): Map<string, PartReading> {
   const readings = new Map<string, PartReading>()
   if (solution.status !== 'solved') return readings
 
@@ -47,7 +53,11 @@ export function partReadings(world: World, solution: Solution): Map<string, Part
       reading.power = reading.current * reading.voltage
       const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
       if (thetaJa !== undefined && thetaJa > 0) {
-        reading.temperatureC = junctionTemperature(reading.power, thetaJa)
+        // The part's real temperature from the electro-thermal solve — its ambient (own or the
+        // board's) plus self-heating. Falls back to the 25 °C lumped law when no solve temperature
+        // is supplied (an analysis pass, or a bare solveDC).
+        reading.temperatureC =
+          temperaturesC?.get(inst.id) ?? junctionTemperature(reading.power, thetaJa)
         const maxTemperature = readScalarParam(inst, 'max_operating_temperature')
         if (maxTemperature !== undefined) reading.maxTemperatureC = maxTemperature
       }

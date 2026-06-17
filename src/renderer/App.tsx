@@ -516,7 +516,7 @@ function solveCanvas(
   return {
     edges,
     health,
-    readings: partReadings(world, solution),
+    readings: partReadings(world, solution, thermal.temperaturesC),
     // Every wired terminal's live voltage — what the multimeter probes read.
     terminalVolts,
     // The solved circuit itself — the meter's Ω mode re-solves it powered-off,
