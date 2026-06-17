@@ -431,8 +431,8 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     if (inst.definition === 'power_source') {
       linearVoltageSources.push({ inst, kind: 'power_source' })
     } else if (SHOCKLEY_DIODE_DEFINITIONS.has(inst.definition)) {
-      // The whole pn-junction family (LEDs, the silicon rectifier, Schottky)
-      // shares the Shockley law — only the calibration point differs.
+      // The whole pn-junction family (LEDs incl. the laser diode, the silicon rectifier, Schottky,
+      // and the varactor) shares the Shockley law — only the calibration point differs.
       const led = resolveShockleyLed(inst, thermalV, options?.temperaturesC?.get(inst.id))
       if (led !== null) shockleyLeds.push(led)
       else linearVoltageSources.push({ inst, kind: 'led' }) // fixed-V_F fallback

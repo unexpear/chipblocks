@@ -64,7 +64,7 @@
     },
     "connects": {
       "type": "array",
-      "description": "Net / terminal / device connections. Ad-hoc shape per OBJECT-MODEL.md §2 example; formal net model deferred per §15.",
+      "description": "Net / terminal / device connections, per OBJECT-MODEL.md §2. Nets are first-class objects (net.schema.json, §17); cross-FK checks each connection's net membership and terminal name.",
       "items": {
         "type": "object",
         "properties": {

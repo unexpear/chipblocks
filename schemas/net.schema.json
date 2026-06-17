@@ -28,7 +28,7 @@
           "terminal": {
             "type": "string",
             "minLength": 1,
-            "description": "Free string identifying the instance's terminal/pin connected to this net (e.g., 'anode', 'cathode', 'positive_terminal', 'in', 'out'). Sprint 13 does NOT validate terminal names — terminal-name validation is deferred to a future sprint when devices declare their named terminal taxonomy."
+            "description": "Free string identifying the instance's terminal/pin connected to this net (e.g., 'anode', 'cathode', 'positive_terminal', 'in', 'out'). Cross-FK validation checks these against the referenced device's declared terminals (an unknown-terminal error) when the device declares its terminal taxonomy."
           }
         },
         "required": ["instance", "terminal"],

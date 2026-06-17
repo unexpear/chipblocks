@@ -136,7 +136,7 @@ export function evaluateEquation(
   // biome-ignore lint/suspicious/noExplicitAny: mathjs scope is intentionally polymorphic
   const scope: Record<string, any> = {}
 
-  // Bind declared physical constants from the NIST CODATA 2022 table
+  // Bind declared physical constants from the NIST CODATA 2018 table
   for (const constantName of spec.constants_used ?? []) {
     const constant = PHYSICAL_CONSTANTS[constantName]
     if (!constant) {

@@ -34,24 +34,23 @@
  *           50 % duty — the clock shape for driving logic)
  * A plain DC source is just ac_amplitude = 0.
  *
- * Diode-family devices (silicon/Schottky rectifiers, LEDs) use the same Shockley
- * companion model + pnjlim limiting as the DC solver (diode-model.ts), but
- * re-linearized INSIDE each time step: every step runs a Newton-Raphson loop to
- * convergence before time advances, warm-started from the previous step's
- * operating point (so a settled circuit converges in one iteration). A Zener is
- * deliberately skipped with a warning — its defining reverse-breakdown behavior
- * isn't modeled yet, and faking it as a plain diode would be wrong.
+ * Diode-family devices (silicon/Schottky rectifiers, LEDs, the laser diode) use the same Shockley
+ * companion model + pnjlim limiting as the DC solver (diode-model.ts), but re-linearized INSIDE each
+ * time step: every step runs a Newton-Raphson loop to convergence before time advances, warm-started
+ * from the previous step's operating point (so a settled circuit converges in one iteration). The
+ * zener adds its reverse-breakdown branch; the tunnel diode its negative-resistance region; the
+ * varactor its voltage-controlled, charge-conserving junction capacitance. The Shockley 4-layer diode
+ * and the gate-triggered SCR march their latch state across steps (a relaxation oscillator / gated
+ * rectifier).
  *
- * NPN BJTs run in the same per-step Newton-Raphson loop via the DC solver's
- * Ebers-Moll companion stamp — two coupled junctions, each pnjlim-limited — so a
- * transistor amplifies (or switches) a moving signal through time.
+ * Transistors run in the same per-step Newton-Raphson loop via the DC solver's companion stamps:
+ * NPN + PNP BJTs (Ebers-Moll, two coupled pnjlim-limited junctions), MOSFETs and JFETs (square law),
+ * and the JFET-based constant-current diode — so a transistor amplifies or switches a moving signal.
  *
- * Drawn wires and closed switches stamp as 0 V sources (a wire carries its real
- * series resistance R = ρL/A; an open switch is omitted — a real open circuit),
- * matching the DC solver, so a canvas circuit runs through time unchanged.
- *
- * Scope: resistor, capacitor, inductor, DC/AC power_source, diode/LED, NPN BJT,
- * wire, switch.
+ * Drawn wires and closed switches stamp as 0 V sources (a wire carries its real series resistance
+ * R = ρL/A; an open switch is omitted — a real open circuit), matching the DC solver, so a canvas
+ * circuit runs through time unchanged. Transformers (incl. center-tapped, with core loss + volt-second
+ * saturation), relays, fuses, potentiometers, thermistors, and photoresistors are handled too.
  */
 
 import { bjtCurrents } from './bjt-model.ts'

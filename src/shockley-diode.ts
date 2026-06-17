@@ -10,8 +10,9 @@
  * the state at breakover / holding-current dropout off the solved voltage and current, settling to a
  * self-consistent latch. App persists the settled state onto the node — the latch's memory.
  *
- * NOT modeled yet: transient (time-domain) operation — a relaxation oscillator needs it — and the
- * reverse-breakdown branch; the documented successors.
+ * Transient (time-domain) operation IS modeled (transient-solver.ts): the latch state marches across
+ * time steps, so an RC around the diode becomes a relaxation oscillator and the SCR a gated rectifier.
+ * Reverse breakdown (avalanche in the blocking state) is not modeled — an unusual region for a latch.
  *
  * Sources: Sze & Ng, Physics of Semiconductor Devices, 3rd ed., §11 (thyristors / the PNPN diode,
  * breakover and holding current); Horowitz & Hill, The Art of Electronics, 3rd ed. (latching).

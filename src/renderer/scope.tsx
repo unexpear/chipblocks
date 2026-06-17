@@ -346,9 +346,9 @@ export function ScopePlot({
   const cursorDrag = useRef<'a' | 'b' | null>(null)
   // Auto-measurements (S19-v3-80): live numbers per channel, off by default.
   const [measureOn, setMeasureOn] = useState(false)
-  // Math channel + FFT (S19-v3-81). A−B is volts; A×B is honestly V·V (both
-  // probes read volts — a real scope multiplies volts × a CURRENT probe to
-  // get watts, and that awaits per-step solver currents).
+  // Math channel + FFT (S19-v3-81). A−B subtracts two same-unit channels; A×B
+  // multiplies — and because current probes (wire clamps + per-device part
+  // currents) exist, volts × amps reads REAL WATTS (unit algebra in mathResultUnit).
   const [mathOp, setMathOp] = useState<'off' | 'sub' | 'mul'>('off')
   const [mathA, setMathA] = useState<string | null>(null)
   const [mathB, setMathB] = useState<string | null>(null)
@@ -931,9 +931,8 @@ export function ScopePlot({
         <span style={{ fontSize: 10, color: statusColor, marginLeft: 'auto' }}>{status}</span>
       </div>
       {horizRow}
-      {/* The math channel row: M = A−B (volts across, what one probe can't
-          read) or A×B (the product waveform, in V·V — watts need a current
-          input, which awaits per-step solver currents). */}
+      {/* The math channel row: M = A−B (two same-unit channels) or A×B (the
+          product waveform — volts × a current probe reads real watts). */}
       <div
         style={{
           display: 'flex',
