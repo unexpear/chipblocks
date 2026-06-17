@@ -13,7 +13,7 @@ import type { Instance } from './cross-fk-validator.ts'
 /**
  * Read a scalar parameter's amount from an instance.
  * Returns undefined if the parameter is missing, not a scalar value, or
- * has a non-numeric amount.
+ * has a non-numeric or non-finite (NaN / ±Infinity) amount.
  */
 export function readScalarParam(inst: Instance, name: string): number | undefined {
   const param = inst.parameters?.[name]
@@ -23,6 +23,7 @@ export function readScalarParam(inst: Instance, name: string): number | undefine
   const v = value as Record<string, unknown>
   if (v.kind !== 'scalar') return undefined
   if (typeof v.amount !== 'number') return undefined
+  if (!Number.isFinite(v.amount)) return undefined // a non-finite amount (NaN / ±∞) reads as missing
   return v.amount
 }
 
