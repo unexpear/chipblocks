@@ -119,15 +119,13 @@ function resolveFetLike(inst: Instance, temperatureC?: number): MosfetElement | 
   ) {
     return resolveMosfet(inst, temperatureC)
   }
-  // The JFET / CRD resolvers take no temperature, so their square-law parameters stay at 25 °C; the
-  // operating point itself still shifts with temperature (the DC op-point solve honors it).
   if (
     inst.definition === 'transistor_jfet_n_channel' ||
     inst.definition === 'transistor_jfet_p_channel'
   ) {
-    return resolveJfet(inst)
+    return resolveJfet(inst, temperatureC)
   }
-  if (inst.definition === 'diode_constant_current') return resolveCrd(inst)
+  if (inst.definition === 'diode_constant_current') return resolveCrd(inst, temperatureC)
   return null
 }
 

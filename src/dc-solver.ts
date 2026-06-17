@@ -1352,12 +1352,18 @@ export function resolveMosfet(inst: Instance, temperatureC?: number): MosfetElem
  * law (jfet-model.ts), so it resolves to a MosfetElement and the same companion stamps + solves
  * it. Warm-started at 0 V bias — which for a depletion device is already conducting (~I_DSS).
  */
-export function resolveJfet(inst: Instance): MosfetElement | null {
+export function resolveJfet(inst: Instance, temperatureC?: number): MosfetElement | null {
   const pinchOffVoltage = readScalarParam(inst, 'pinch_off_voltage')
-  const transconductance = readScalarParam(inst, 'transconductance')
+  let transconductance = readScalarParam(inst, 'transconductance')
   if (pinchOffVoltage === undefined || transconductance === undefined) return null
   if (transconductance <= 0) return null
   const channelLengthModulation = readScalarParam(inst, 'channel_length_modulation') ?? 0
+  // Carrier mobility falls as T^−1.5 (the same law as the MOSFET's k); the pinch-off tempco is left
+  // to the fixture, not modeled here.
+  if (temperatureC !== undefined) {
+    transconductance *=
+      ((temperatureC + KELVIN_OFFSET) / ROOM_TEMPERATURE_KELVIN) ** MOBILITY_TEMPERATURE_EXPONENT
+  }
 
   const gate = inst.connects?.find((c) => c.terminal === 'gate')
   const drain = inst.connects?.find((c) => c.terminal === 'drain')
@@ -1388,12 +1394,18 @@ export function resolveJfet(inst: Instance): MosfetElement | null {
  * (so the companion's g_m terms cancel, leaving a current source with the small output slope λ),
  * with the anode as drain. beta is recovered from the datasheet I_P and knee voltage: beta = I_P/V_K².
  */
-export function resolveCrd(inst: Instance): MosfetElement | null {
+export function resolveCrd(inst: Instance, temperatureC?: number): MosfetElement | null {
   const limitingCurrent = readScalarParam(inst, 'limiting_current')
   const kneeVoltage = readScalarParam(inst, 'knee_voltage')
   if (limitingCurrent === undefined || kneeVoltage === undefined) return null
   if (limitingCurrent <= 0 || kneeVoltage <= 0) return null
   const channelLengthModulation = readScalarParam(inst, 'channel_length_modulation') ?? 0
+  let transconductance = limitingCurrent / (kneeVoltage * kneeVoltage)
+  // Carrier mobility falls as T^−1.5 (the same law as the MOSFET's k).
+  if (temperatureC !== undefined) {
+    transconductance *=
+      ((temperatureC + KELVIN_OFFSET) / ROOM_TEMPERATURE_KELVIN) ** MOBILITY_TEMPERATURE_EXPONENT
+  }
 
   const anode = inst.connects?.find((c) => c.terminal === 'anode')
   const cathode = inst.connects?.find((c) => c.terminal === 'cathode')
@@ -1407,7 +1419,7 @@ export function resolveCrd(inst: Instance): MosfetElement | null {
     params: jfetMosfetParams({
       channel: 'n_channel',
       pinchOffVoltage: -kneeVoltage,
-      transconductance: limitingCurrent / (kneeVoltage * kneeVoltage),
+      transconductance,
       channelLengthModulation,
     }),
     vGS: 0,

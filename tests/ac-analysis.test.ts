@@ -533,3 +533,49 @@ describe('AC analysis — zener / tunnel / Shockley-latch small-signal', () => {
     expect(diodeSmallSignalModel(off, () => 0, 0)).toBeNull() // blocking + no current → nothing to stamp
   })
 })
+
+/** vin(0 V DC + AC) -> gate; vdd(10 V) -> Rd(500) -> drain; source to ground. An n-channel JFET at
+ *  V_GS = 0 sits at I_DSS in saturation, giving a real common-source gain ~g_m·Rd. */
+function jfetCommonSource(): World {
+  const w = makeWorld()
+  ensureNet(w, 'gnd', true)
+  addPart(w, 'vdd', 'power_source', { nominal_voltage: scalar(10, 'volt') }, [
+    { net: 'vdd', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  addPart(w, 'vin', 'power_source', { nominal_voltage: scalar(0, 'volt') }, [
+    { net: 'gate', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  addPart(w, 'rd', 'resistor', { resistance: scalar(500, 'ohm') }, [
+    { net: 'vdd', terminal: 'terminal_a' },
+    { net: 'drain', terminal: 'terminal_b' },
+  ])
+  addPart(
+    w,
+    'j1',
+    'transistor_jfet_n_channel',
+    {
+      pinch_off_voltage: scalar(-2, 'volt'),
+      transconductance: scalar(0.002, 'ampere_per_volt_squared'),
+    },
+    [
+      { net: 'drain', terminal: 'drain' },
+      { net: 'gate', terminal: 'gate' },
+      { net: 'gnd', terminal: 'source' },
+    ],
+  )
+  return w
+}
+
+describe('AC analysis — JFET transconductance scales with temperature', () => {
+  const opts = { inputSource: 'vin', outputNet: 'drain' }
+  test("a JFET amp's gain falls with temperature (carrier mobility ∝ T^−1.5)", () => {
+    const amp = jfetCommonSource()
+    const cold = acResponse(amp, opts, 10).gain
+    const hot = acResponse(amp, { ...opts, temperaturesC: new Map([['j1', 125]]) }, 10).gain
+    expect(cold).toBeGreaterThan(1) // a real common-source gain (~g_m·Rd)
+    expect(hot).toBeLessThan(cold) // higher T → lower mobility → lower g_m → lower gain
+    expect(Math.abs(hot / cold - 1)).toBeGreaterThan(0.05)
+  })
+})

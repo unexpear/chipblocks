@@ -37,10 +37,10 @@ import {
  * point (the same companion Jacobian the DC solver uses), are included. Verified against
  * the textbook RC/CR first-order responses.
  *
- * KNOWN LIMITATIONS — this engine is test-only today, NOT yet wired to the canvas UI:
- *  - A supplied temperaturesC map drives the operating point and the BJT / MOSFET / diode
- *    small-signal, but the JFET / CRD square-law parameters are not temperature-scaled (their
- *    resolvers take no temperature) — their bias shifts with temperature, their transconductance not.
+ * KNOWN LIMITATIONS — this engine is test-only today (NOT yet wired to the canvas UI), and it does
+ * not model the transformer (mutual inductance / coupled windings). Every discrete element is
+ * covered: R/C/L, sources, all shorts, and BJT / MOSFET / JFET / CRD / diode small-signal, at
+ * temperature.
  */
 
 export type Complex = { re: number; im: number }
