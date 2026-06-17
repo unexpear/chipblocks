@@ -59,7 +59,8 @@ export function sensorIlluminance(inst: Instance): number {
 export function ldrResistance(inst: Instance): number | undefined {
   const r0 = readScalarParam(inst, 'reference_resistance')
   const gamma = readScalarParam(inst, 'gamma')
-  if (r0 === undefined || gamma === undefined || r0 <= 0) return undefined
+  // R₀ > 0 and γ > 0 are required for the power law; a non-positive γ inverts/flattens it (not an LDR).
+  if (r0 === undefined || gamma === undefined || r0 <= 0 || gamma <= 0) return undefined
   const e0 = readScalarParam(inst, 'reference_illuminance') ?? DEFAULT_REFERENCE_LUX
   const dark = readScalarParam(inst, 'dark_resistance') ?? r0 * 100
   const e = sensorIlluminance(inst)

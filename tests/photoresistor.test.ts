@@ -46,6 +46,23 @@ describe('the LDR power law R(E) = R₀·(E/E₀)^(−γ)', () => {
     expect(ldrResistance(ldr(E0))).toBeCloseTo(R0, 6)
   })
 
+  test('a non-positive γ is rejected — not a valid LDR power law (returns undefined)', () => {
+    const ldrG = (g: number): Instance =>
+      ({
+        id: 'ldr',
+        definition: 'photoresistor',
+        parameters: {
+          reference_resistance: scalar(R0, 'ohm'),
+          reference_illuminance: scalar(E0, 'lux'),
+          gamma: scalar(g, 'dimensionless'),
+          ambient_illuminance: scalar(10, 'lux'),
+        },
+      }) as unknown as Instance
+    expect(ldrResistance(ldrG(0.6))).not.toBeUndefined() // a real LDR resolves
+    expect(ldrResistance(ldrG(0))).toBeUndefined() // γ = 0 flattens the response
+    expect(ldrResistance(ldrG(-0.5))).toBeUndefined() // γ < 0 inverts it
+  })
+
   test('brighter → lower resistance, matching the law', () => {
     const bright = ldrResistance(ldr(100)) ?? Number.NaN
     expect(bright).toBeCloseTo(lawAt(100), 6)
