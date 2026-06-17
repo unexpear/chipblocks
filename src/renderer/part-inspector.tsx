@@ -208,27 +208,23 @@ function currentSourceType(parameters: Parameters | undefined) {
   )
 }
 
-/** The reading quantity that carries a rating, and its limit — for headroom. */
+/**
+ * The reading quantity that carries a rating, and its limit — for headroom. Driven by which max_*
+ * parameter the part actually declares, so every rated device is covered (the diodes incl. the newer
+ * zener / tunnel / Shockley / varactor / laser, the JFETs, MOSFETs, resistor, switch) with no
+ * per-definition list to keep in sync.
+ */
 function ratingFor(
-  definition: string,
   parameters: Parameters | undefined,
 ): { quantity: 'current' | 'power'; limit: number } | null {
-  if (LED_DEFINITIONS.has(definition) || definition === 'diode_silicon_rectifier') {
-    const limit = amountOf(parameters, 'max_forward_current')
-    return limit ? { quantity: 'current', limit } : null
-  }
-  if (definition === 'transistor_mosfet_nmos' || definition === 'transistor_mosfet_pmos') {
-    const limit = amountOf(parameters, 'max_drain_current')
-    return limit ? { quantity: 'current', limit } : null
-  }
-  if (definition === 'resistor') {
-    const limit = amountOf(parameters, 'power_rating')
-    return limit ? { quantity: 'power', limit } : null
-  }
-  if (definition === 'switch_spst_toggle') {
-    const limit = amountOf(parameters, 'max_current')
-    return limit ? { quantity: 'current', limit } : null
-  }
+  const maxForward = amountOf(parameters, 'max_forward_current')
+  if (maxForward) return { quantity: 'current', limit: maxForward }
+  const maxDrain = amountOf(parameters, 'max_drain_current')
+  if (maxDrain) return { quantity: 'current', limit: maxDrain }
+  const powerRating = amountOf(parameters, 'power_rating')
+  if (powerRating) return { quantity: 'power', limit: powerRating }
+  const maxCurrent = amountOf(parameters, 'max_current')
+  if (maxCurrent) return { quantity: 'current', limit: maxCurrent }
   return null
 }
 
@@ -377,7 +373,7 @@ export function PartInspector({
       // from the solve — the user edits ambient_illuminance, not this.
       key !== 'incident_illuminance',
   )
-  const rating = ratingFor(selected.definition, selected.parameters)
+  const rating = ratingFor(selected.parameters)
   // A Source (power_source) gets a type picker that sets a consistent real DC
   // source; the matched preset (by nominal voltage) drives the dropdown + citation.
   const sourceType =

@@ -77,6 +77,32 @@ describe('canvasHealth', () => {
     expect(health.has('bat')).toBe(false)
     expect(health.has('gnd')).toBe(false)
   })
+
+  test('a conducting laser diode glows like an LED, at its own wavelength', () => {
+    const laserNodes: CanvasNode[] = [
+      { id: 'bat', definition: 'power_source', parameters: { nominal_voltage: scalar(9, 'volt') } },
+      {
+        id: 'r1',
+        definition: 'resistor',
+        parameters: { resistance: scalar(470, 'ohm'), power_rating: scalar(0.25, 'watt') },
+      },
+      {
+        id: 'led', // the diode slot in EDGES (anode/cathode handles)
+        definition: 'diode_laser',
+        parameters: {
+          forward_voltage: scalar(1.8, 'volt'),
+          max_forward_current: scalar(0.05, 'ampere'),
+          threshold_current: scalar(0.02, 'ampere'),
+          peak_wavelength: scalar(640, 'nanometer'),
+        },
+      },
+      { id: 'gnd', definition: 'ground' },
+    ]
+    const world = canvasToWorld(laserNodes, EDGES)
+    const health = canvasHealth(world, solveDC(world))
+    expect(health.get('led')?.lit).toBe(true) // ~15 mA, well above the lit floor
+    expect(health.get('led')?.glow).toBe('rgb(255, 20, 0)') // 640 nm → red, like a red laser
+  })
 })
 
 describe('wavelengthToColor', () => {

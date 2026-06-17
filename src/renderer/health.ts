@@ -63,7 +63,9 @@ export function wavelengthToColor(nm: number): string {
   return `rgb(${to255(r)}, ${to255(g)}, ${to255(b)})`
 }
 
-const LED_DEFINITIONS = new Set(['led', 'led_uv_algan'])
+// Light-emitting junctions that glow when conducting — LEDs and the laser diode (which emits like an
+// LED below its lasing threshold), each at its own peak wavelength.
+const LED_DEFINITIONS = new Set(['led', 'led_uv_algan', 'diode_laser'])
 /** 0.1 mA — above this an LED is visibly conducting (so: glowing). */
 const LIT_FLOOR_AMPS = 1e-4
 
