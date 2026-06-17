@@ -136,10 +136,12 @@ export type TransientOptions = {
   maxIterations?: number
   /**
    * Instance id → junction temperature (°C), from the electro-thermal loop
-   * (S20-v3-5). A listed diode/LED/BJT solves at ITS temperature — V_T = kT/q
-   * and the SPICE I_S(T) law, the same per-element treatment the DC solver
-   * applies. Resistor R(T) arrives separately via the adjusted world (the
-   * shared worldAtTemperatures), exactly like the DC loop. Absent ⇒ 25 °C.
+   * (S20-v3-5). Each listed nonlinear device solves at ITS temperature, the
+   * same per-element treatment the DC solver applies: junctions (diode/LED,
+   * BJT, zener, tunnel) scale V_T = kT/q and the SPICE I_S(T) law; the FET
+   * family (MOSFET/JFET/constant-current diode) scales mobility and threshold.
+   * Resistor R(T) arrives separately via the adjusted world (the shared
+   * worldAtTemperatures), exactly like the DC loop. Absent ⇒ 25 °C.
    */
   temperaturesC?: Map<string, number>
   /**
@@ -1343,18 +1345,23 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       inst.definition === 'transistor_jfet_n_channel' ||
       inst.definition === 'transistor_jfet_p_channel'
     ) {
-      const fet = resolveJfet(inst)
+      const fet = resolveJfet(inst, options.temperaturesC?.get(inst.id))
       if (fet !== null) mosfets.push(fet)
       else warnings.push(`Skipped JFET '${inst.id}' (missing parameters or terminals)`)
     } else if (inst.definition === 'diode_constant_current') {
-      const fet = resolveCrd(inst)
+      const fet = resolveCrd(inst, options.temperaturesC?.get(inst.id))
       if (fet !== null) mosfets.push(fet)
       else
         warnings.push(
           `Skipped constant-current diode '${inst.id}' (missing parameters or terminals)`,
         )
     } else if (inst.definition === 'diode_tunnel') {
-      const td = resolveTunnelDiode(inst, vT)
+      // The injection term scales with the junction temperature (a per-part V_T); the peak/valley
+      // tunneling currents keep their declared 25 °C datasheet values — no cited temp law to scale.
+      const tunnelTemp = options.temperaturesC?.get(inst.id)
+      const tunnelThermalV =
+        tunnelTemp !== undefined ? thermalVoltage(tunnelTemp + KELVIN_OFFSET) : vT
+      const td = resolveTunnelDiode(inst, tunnelThermalV)
       if (td !== null) tunnelDiodes.push(td)
       else warnings.push(`Skipped tunnel diode '${inst.id}' (missing parameters or anode/cathode)`)
     } else if (inst.definition === 'diode_shockley') {

@@ -465,6 +465,101 @@ describe('solveTransient — diode in the time loop (half-wave rectifier)', () =
 })
 
 /**
+ * N-JFET common source for the time loop: V+(9, pure DC) → Rd(1k) → drain, gate tied to
+ * the source at ground (V_GS = 0 → I_DSS). No reactive elements, so each step is just the
+ * DC operating point — the settled drain current exposes whether the transient dispatch
+ * threaded the JFET's junction temperature into resolveJfet (it previously passed nothing).
+ */
+function jfetTransientDrainCurrent(temperaturesC?: Map<string, number>): number {
+  const world: World = {
+    definitions: new Map(),
+    instances: new Map(),
+    behaviors: new Map(),
+    activeVariables: new Map(),
+    nets: new Map(),
+  }
+  world.nets.set('vcc', {
+    id: 'vcc',
+    kind: 'net',
+    members: [
+      { instance: 'bat', terminal: 'terminal_positive' },
+      { instance: 'rd', terminal: 'terminal_a' },
+    ],
+  })
+  world.nets.set('drain', {
+    id: 'drain',
+    kind: 'net',
+    members: [
+      { instance: 'rd', terminal: 'terminal_b' },
+      { instance: 'q1', terminal: 'drain' },
+    ],
+  })
+  world.nets.set('gnd', {
+    id: 'gnd',
+    kind: 'net',
+    type: 'ground',
+    members: [
+      { instance: 'bat', terminal: 'terminal_negative' },
+      { instance: 'q1', terminal: 'gate' },
+      { instance: 'q1', terminal: 'source' },
+    ],
+  })
+  world.instances.set('bat', {
+    id: 'bat',
+    kind_ref: 'primitive_device',
+    definition: 'power_source',
+    parameters: { nominal_voltage: scalar(9, 'volt') },
+    connects: [
+      { net: 'vcc', terminal: 'terminal_positive', of: 'bat' },
+      { net: 'gnd', terminal: 'terminal_negative', of: 'bat' },
+    ],
+  })
+  world.instances.set('rd', {
+    id: 'rd',
+    kind_ref: 'primitive_device',
+    definition: 'resistor',
+    parameters: { resistance: scalar(1000, 'ohm') },
+    connects: [
+      { net: 'vcc', terminal: 'terminal_a', of: 'rd' },
+      { net: 'drain', terminal: 'terminal_b', of: 'rd' },
+    ],
+  })
+  world.instances.set('q1', {
+    id: 'q1',
+    kind_ref: 'primitive_device',
+    definition: 'transistor_jfet_n_channel',
+    parameters: {
+      pinch_off_voltage: scalar(-2, 'volt'),
+      transconductance: scalar(1e-3, 'ampere_per_volt_squared'),
+      channel_length_modulation: scalar(0, 'per_volt'),
+    },
+    connects: [
+      { net: 'drain', terminal: 'drain', of: 'q1' },
+      { net: 'gnd', terminal: 'gate', of: 'q1' },
+      { net: 'gnd', terminal: 'source', of: 'q1' },
+    ],
+  })
+  const res = solveTransient(world, {
+    timeStep: 1e-6,
+    duration: 3e-6,
+    ...(temperaturesC ? { temperaturesC } : {}),
+  })
+  const last = res.series[res.series.length - 1]
+  return last?.currents?.get('q1/drain') ?? Number.NaN
+}
+
+describe('solveTransient — JFET junction temperature (dispatch threading)', () => {
+  test('a hot JFET derates: drain current falls to ~0.648× at 125 °C (mobility T^−1.5)', () => {
+    const cold = jfetTransientDrainCurrent()
+    expect(cold).toBeCloseTo(0.004, 3) // V_GS = 0 → ~I_DSS = β·V_P² = 1e-3·2² = 4 mA
+    const hot = jfetTransientDrainCurrent(new Map([['q1', 125]]))
+    // k(398.15 K)/k(298.15 K) = (398.15/298.15)^−1.5 ≈ 0.648 — present only if the transient
+    // dispatch threads the junction temperature into resolveJfet (it previously passed nothing).
+    expect(hot / cold).toBeCloseTo(0.648, 1)
+  })
+})
+
+/**
  * Common-emitter NPN stage for the time loop. Vcc(9 V) → Rc(470) → collector;
  * emitter → ground. The base is fed through Rb either straight from Vcc (the
  * bjt-solver.test DC topology, for cross-validation) or from a separate
