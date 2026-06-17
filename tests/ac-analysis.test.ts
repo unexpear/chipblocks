@@ -16,6 +16,7 @@ import type { World } from '../src/cross-fk-validator.ts'
 import { solveDCRobust } from '../src/dc-robust.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
+const enumValue = (value: string) => ({ value })
 
 function makeWorld(): World {
   return {
@@ -40,7 +41,7 @@ function addPart(
   world: World,
   id: string,
   definition: string,
-  parameters: Record<string, ReturnType<typeof scalar>>,
+  parameters: Record<string, { value: unknown }>,
   pins: { net: string; terminal: string }[],
 ) {
   world.instances.set(id, {
@@ -392,5 +393,88 @@ describe('AC analysis — varactor presents its junction capacitance', () => {
     const high = acResponse(varactorHighPass(), vOpts, 1e7).gain
     expect(low).toBeLessThan(0.1) // C_j blocks well below the corner
     expect(high).toBeGreaterThan(0.7) // and passes well above it — the varactor IS a capacitor here
+  })
+})
+
+/** vin -> common; the SPDT routes common to throw_a ('a') or throw_b ('b') by its position; each
+ *  throw has a resistor to ground so the unselected one is a defined (driven-to-zero) node. */
+function spdtRouter(position: string): World {
+  const w = makeWorld()
+  ensureNet(w, 'gnd', true)
+  addPart(w, 'vin', 'power_source', { nominal_voltage: scalar(1, 'volt') }, [
+    { net: 'common', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  addPart(w, 'sw', 'switch_spdt', { position: enumValue(position) }, [
+    { net: 'common', terminal: 'common' },
+    { net: 'a', terminal: 'throw_a' },
+    { net: 'b', terminal: 'throw_b' },
+  ])
+  addPart(w, 'ra', 'resistor', { resistance: scalar(1000, 'ohm') }, [
+    { net: 'a', terminal: 'terminal_a' },
+    { net: 'gnd', terminal: 'terminal_b' },
+  ])
+  addPart(w, 'rb', 'resistor', { resistance: scalar(1000, 'ohm') }, [
+    { net: 'b', terminal: 'terminal_a' },
+    { net: 'gnd', terminal: 'terminal_b' },
+  ])
+  return w
+}
+
+/** vin -> common; the relay contact ties common to normally_closed (at rest) or normally_open
+ *  (energized). The coil sits across coila/gnd (its resistor must keep that net non-floating). */
+function relayContact(coilState: string): World {
+  const w = makeWorld()
+  ensureNet(w, 'gnd', true)
+  addPart(w, 'vin', 'power_source', { nominal_voltage: scalar(1, 'volt') }, [
+    { net: 'common', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  addPart(
+    w,
+    'k1',
+    'relay',
+    { coil_state: enumValue(coilState), coil_resistance: scalar(100, 'ohm') },
+    [
+      { net: 'common', terminal: 'common' },
+      { net: 'nc', terminal: 'normally_closed' },
+      { net: 'no', terminal: 'normally_open' },
+      { net: 'coila', terminal: 'coil_a' },
+      { net: 'gnd', terminal: 'coil_b' },
+    ],
+  )
+  addPart(w, 'rnc', 'resistor', { resistance: scalar(1000, 'ohm') }, [
+    { net: 'nc', terminal: 'terminal_a' },
+    { net: 'gnd', terminal: 'terminal_b' },
+  ])
+  addPart(w, 'rno', 'resistor', { resistance: scalar(1000, 'ohm') }, [
+    { net: 'no', terminal: 'terminal_a' },
+    { net: 'gnd', terminal: 'terminal_b' },
+  ])
+  return w
+}
+
+describe('AC analysis — SPDT + relay contacts stamp as shorts', () => {
+  test('an SPDT routes the signal to its selected throw, isolating the other', () => {
+    const toA = spdtRouter('throw_a')
+    expect(acResponse(toA, { inputSource: 'vin', outputNet: 'a' }, 1e3).gain).toBeCloseTo(1, 3)
+    expect(acResponse(toA, { inputSource: 'vin', outputNet: 'b' }, 1e3).gain).toBeLessThan(0.01)
+    const toB = spdtRouter('throw_b')
+    expect(acResponse(toB, { inputSource: 'vin', outputNet: 'b' }, 1e3).gain).toBeCloseTo(1, 3)
+    expect(acResponse(toB, { inputSource: 'vin', outputNet: 'a' }, 1e3).gain).toBeLessThan(0.01)
+  })
+
+  test('a relay contact ties common to NC at rest, NO when energized (coil stays non-floating)', () => {
+    const atRest = relayContact('de_energized')
+    expect(acResponse(atRest, { inputSource: 'vin', outputNet: 'nc' }, 1e3).gain).toBeCloseTo(1, 3)
+    expect(acResponse(atRest, { inputSource: 'vin', outputNet: 'no' }, 1e3).gain).toBeLessThan(0.01)
+    const energized = relayContact('energized')
+    expect(acResponse(energized, { inputSource: 'vin', outputNet: 'no' }, 1e3).gain).toBeCloseTo(
+      1,
+      3,
+    )
+    expect(acResponse(energized, { inputSource: 'vin', outputNet: 'nc' }, 1e3).gain).toBeLessThan(
+      0.01,
+    )
   })
 })

@@ -1,6 +1,12 @@
 import type { Instance, World } from './cross-fk-validator.ts'
 import { solveDCRobust } from './dc-robust.ts'
-import { fuseIsIntact, mathInstance as math, switchIsClosed } from './dc-solver.ts'
+import {
+  fuseIsIntact,
+  mathInstance as math,
+  relayCoilEnergized,
+  switchIsClosed,
+} from './dc-solver.ts'
+import { readEnumParam } from './instance-params.ts'
 import {
   type BjtSmallSignal,
   bjtSmallSignalModel,
@@ -24,15 +30,15 @@ import {
  * This stage covers the LINEAR elements (R, C, L) plus independent sources, solved
  * exactly in the frequency domain (R -> 1/R, C -> jwC, L -> 1/jwL) via the same
  * mathjs lusolve the DC solver uses — here over a complex MNA matrix. Wires, intact
- * fuses, and closed SPST switches stamp as 0 V shorts (matching the DC/transient
- * engines). BJT, MOSFET/JFET/CRD, and forward-diode small-signal models, linearized
+ * fuses, closed SPST switches, the SPDT's selected throw, and the relay's live contact
+ * stamp as 0 V shorts (matching the DC/transient engines); the relay coil stamps as its
+ * resistance. BJT, MOSFET/JFET/CRD, and forward-diode small-signal models, linearized
  * at the DC operating point (the same companion Jacobian the DC solver uses), are
  * included. Verified against the textbook RC/CR first-order responses.
  *
  * KNOWN LIMITATIONS — this engine is test-only today, NOT yet wired to the canvas UI:
- *  - SPDT switches and relay contacts are not yet shorted (only wires, intact fuses, and
- *    closed SPST switches are); the zener, tunnel, and Shockley-latch diodes are not modeled
- *    (only the forward Shockley family + varactor are).
+ *  - The zener, tunnel, and Shockley-latch diodes are not modeled (only the forward Shockley
+ *    family + varactor are).
  *  - The DC operating point is solved at 25 C (the temperaturesC map is not threaded in).
  */
 
@@ -71,7 +77,6 @@ const FET_DEFINITIONS = new Set([
   'transistor_jfet_p_channel',
   'diode_constant_current',
 ])
-const SHORT_DEFINITIONS = new Set(['wire', 'fuse', 'switch_spst_toggle', 'switch_spst_momentary'])
 const DIODE_AC_DEFINITIONS = new Set([
   'led',
   'led_uv_algan',
@@ -80,6 +85,40 @@ const DIODE_AC_DEFINITIONS = new Set([
   'diode_schottky_al_si',
   'diode_varactor',
 ])
+
+/**
+ * The net pair a 2-port short ties together at AC, or null if it is open / not a short. Wires + intact
+ * fuses + closed SPST switches tie their two leads; an SPDT ties common to its selected throw; a relay
+ * ties common to the throw its coil selects (normally_open when energized, else normally_closed) —
+ * exactly the pairs the DC and transient engines short.
+ */
+function acShortPair(inst: Instance): { aNet: string; bNet: string } | null {
+  const netOf = (t: string) => inst.connects?.find((conn) => conn.terminal === t)?.net
+  const pair = (a: string | undefined, b: string | undefined) =>
+    a !== undefined && b !== undefined && a !== b ? { aNet: a, bNet: b } : null
+  const leads = () => pair(inst.connects?.[0]?.net, inst.connects?.[1]?.net)
+  switch (inst.definition) {
+    case 'wire':
+      return leads()
+    case 'fuse':
+      return fuseIsIntact(inst) ? leads() : null
+    case 'switch_spst_toggle':
+    case 'switch_spst_momentary':
+      return switchIsClosed(inst) ? leads() : null
+    case 'switch_spdt':
+      return pair(
+        netOf('common'),
+        netOf(readEnumParam(inst, 'position') === 'throw_b' ? 'throw_b' : 'throw_a'),
+      )
+    case 'relay':
+      return pair(
+        netOf('common'),
+        netOf(relayCoilEnergized(inst) ? 'normally_open' : 'normally_closed'),
+      )
+    default:
+      return null
+  }
+}
 
 function buildTopology(world: World): Topology | null {
   let ground: string | undefined
@@ -93,16 +132,13 @@ function buildTopology(world: World): Topology | null {
   const vsources = [...world.instances.values()].filter((i) => i.definition === 'power_source')
   const idx = (net: string) => (net === ground ? -1 : (nodeIndex.get(net) ?? -1))
 
-  // 2-terminal 0 V shorts the DC/transient engines also stamp: a wire (its tiny series R is
-  // negligible at signal level), an intact fuse, a closed SPST switch. Each becomes a 0 V source.
+  // 0 V shorts the DC/transient engines also stamp — wires (their tiny series R is negligible at
+  // signal level), intact fuses, closed SPST switches, the SPDT's selected throw, and the relay's
+  // live contact — each becomes a 0 V source (a branch unknown).
   const shorts: { aNet: string; bNet: string }[] = []
   for (const inst of world.instances.values()) {
-    if (!SHORT_DEFINITIONS.has(inst.definition)) continue
-    if (inst.definition === 'fuse' && !fuseIsIntact(inst)) continue
-    if (inst.definition.startsWith('switch_') && !switchIsClosed(inst)) continue
-    const aNet = inst.connects?.[0]?.net
-    const bNet = inst.connects?.[1]?.net
-    if (aNet !== undefined && bNet !== undefined && aNet !== bNet) shorts.push({ aNet, bNet })
+    const pair = acShortPair(inst)
+    if (pair !== null) shorts.push(pair)
   }
 
   // Transistors (BJT + MOSFET/JFET/CRD) are linearized at the DC operating point: solve it once
@@ -202,6 +238,14 @@ function solveAtOmega(
     } else if (inst.definition === 'inductor') {
       const l = readParam(inst, 'inductance')
       if (l && l > 0) stampY(a, c, 0, -1 / (omega * l))
+    } else if (inst.definition === 'relay') {
+      // The coil is a resistor across coil_a/coil_b (its contact is shorted separately, above).
+      const coilR = readParam(inst, 'coil_resistance')
+      const ca = inst.connects?.find((conn) => conn.terminal === 'coil_a')?.net
+      const cb = inst.connects?.find((conn) => conn.terminal === 'coil_b')?.net
+      if (coilR && coilR > 0 && ca !== undefined && cb !== undefined) {
+        stampY(idx(ca), idx(cb), 1 / coilR, 0)
+      }
     }
   }
 
