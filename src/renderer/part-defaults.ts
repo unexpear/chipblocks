@@ -268,13 +268,13 @@ const DEFAULTS: Record<string, Parameters> = {
   },
   thermistor: {
     // 10 kΩ NTC bead (Vishay NTCLE100E3103 class): R25 = 10 kΩ, B25/85 = 3977 K,
-    // dissipation ~1.5 mW/°C in still air → θ_JA ≈ 667 °C/W. Senses 25 °C ambient
-    // by default; raise ambient_temperature to place it somewhere warmer/cooler,
-    // or push current through it to watch self-heating drive the resistance down.
+    // dissipation ~1.5 mW/°C in still air → θ_JA ≈ 667 °C/W. No ambient_temperature of its own, so it
+    // inherits the project-wide ambient (the toolbar's Ambient °C, default 25 °C); set a per-part
+    // ambient_temperature to place THIS bead somewhere warmer/cooler, or push current through it to
+    // watch self-heating drive the resistance down.
     resistance: scalar(10000, 'ohm'),
     beta_coefficient: scalar(3977, 'kelvin'),
     reference_temperature: scalar(25, 'celsius'),
-    ambient_temperature: scalar(25, 'celsius'),
     sensing_material: { value: 'nichrome' },
     thermal_resistance_junction_ambient: scalar(667, 'kelvin_per_watt'),
     max_operating_temperature: scalar(125, 'celsius'),

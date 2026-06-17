@@ -31,6 +31,8 @@ export function ToolbarItems({
   onWireGauge,
   alwaysOn,
   onAlwaysOn,
+  projectAmbientC,
+  onProjectAmbient,
   onSolve,
   onScope,
   onMath,
@@ -54,6 +56,8 @@ export function ToolbarItems({
   onWireGauge: (gaugeAwg: number) => void
   alwaysOn: boolean
   onAlwaysOn: (on: boolean) => void
+  projectAmbientC: number
+  onProjectAmbient: (c: number) => void
   onSolve: () => void
   onScope: () => void
   onMath: () => void
@@ -233,6 +237,33 @@ export function ToolbarItems({
         </label>
       </div>
 
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 2px' }}>
+        <span
+          style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5, color: '#778' }}
+        >
+          Ambient °C
+        </span>
+        <input
+          type="number"
+          className="nodrag"
+          value={projectAmbientC}
+          onChange={(event) => {
+            const next = Number(event.target.value)
+            if (Number.isFinite(next)) onProjectAmbient(next)
+          }}
+          title="The whole board's ambient temperature (°C) — the environment every part sits in (a bench is 25 °C, a car's engine bay ~105 °C). Each part falls back to this unless you give it its own ambient_temperature. Drives R(T), junction-voltage drift, and the Temp lens."
+          style={{
+            width: 46,
+            background: '#1a1a1e',
+            border: '1px solid #3a3a3f',
+            color: '#cdd6e0',
+            borderRadius: 3,
+            fontSize: 10,
+            padding: '2px 3px',
+          }}
+        />
+      </div>
+
       <button
         type="button"
         onClick={onScope}
@@ -341,7 +372,7 @@ export function ToolbarItems({
       <button
         type="button"
         onClick={() => onLens(lens === 'temp' ? 'none' : 'temp')}
-        title="Temp lens — heat-color every part by its computed temperature (25 °C ambient + power × thermal resistance): the hotspots"
+        title="Temp lens — heat-color every part by its computed temperature (the board ambient + power × thermal resistance): the hotspots"
         style={{
           ...toolButton(lens === 'temp'),
           flexDirection: 'row',

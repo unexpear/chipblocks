@@ -13,8 +13,11 @@
  */
 
 import type { Instance, World } from './cross-fk-validator.ts'
-import type { SolveOptions } from './dc-solver.ts'
-import { type ElectroThermalResult, solveElectroThermal } from './electro-thermal.ts'
+import {
+  type ElectroThermalOptions,
+  type ElectroThermalResult,
+  solveElectroThermal,
+} from './electro-thermal.ts'
 import { relayCoilTargets } from './failure-detector.ts'
 import { readEnumParam } from './instance-params.ts'
 import {
@@ -75,7 +78,7 @@ function worldWithRelayStates(world: World, states: Map<string, RelayState>): Wo
  * (a buzzer, or a Shockley relaxation oscillator) never settles — the loop is capped and
  * relaysSettled is reported false, the same honest "could not settle" the thermal runaway uses.
  */
-export function solveWithRelays(world: World, options?: SolveOptions): RelaySolveResult {
+export function solveWithRelays(world: World, options?: ElectroThermalOptions): RelaySolveResult {
   let relayStates = relayStatesOf(world)
   let shockleyStates = shockleyStatesOf(world)
   const composed = () =>

@@ -425,6 +425,7 @@ function lightCastInputs(nodeList: Node[]): {
 function solveCanvas(
   nodeList: Node[],
   edgeList: Edge[],
+  projectAmbientC?: number,
 ): {
   edges: Edge[]
   health: Map<string, NodeHealth>
@@ -453,7 +454,10 @@ function solveCanvas(
   // component is solved: a free-floating section's voltages are genuinely
   // undefined (and would be a singular matrix) — it sits idle instead of
   // killing the whole canvas. The meter still gets the FULL world.
-  const thermal = solveWithRelays(groundedComponent(world))
+  const thermal = solveWithRelays(
+    groundedComponent(world),
+    projectAmbientC === undefined ? undefined : { projectAmbientC },
+  )
   const solution = thermal.solution
   const edges = edgeList.map((edge) => {
     const wire = drawn.get(edge.id) ?? { lengthM: 0, ohms: 0 }
@@ -826,6 +830,11 @@ function Canvas() {
   // default); turn it off and hit Solve to batch big edits without the PC
   // recomputing on every small move.
   const [alwaysOn, setAlwaysOn] = useState(true)
+  // Project-wide ambient (°C): the environment the whole board sits in. Each part falls back to it
+  // unless it sets its own ambient_temperature (electro-thermal.ts). A ref lets the stable-identity
+  // reSolve read the current value without being re-created; onProjectAmbient re-solves on change.
+  const [projectAmbientC, setProjectAmbientC] = useState(STANDARD_AMBIENT_C)
+  const projectAmbientRef = useRef(projectAmbientC)
   // Appearance (S19-v3-37/38): light/dark theme + grid-line color, driven by the
   // native Settings menu over IPC; the menu's Custom… opens an in-canvas picker.
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
@@ -845,7 +854,7 @@ function Canvas() {
   // AND the new part health. Stable identity (only setters in deps).
   const reSolve = useCallback(
     (nodeList: Node[], edgeList: Edge[]) => {
-      const solved = solveCanvas(nodeList, edgeList)
+      const solved = solveCanvas(nodeList, edgeList, projectAmbientRef.current)
       setEdges(solved.edges)
       setHealth(solved.health)
       setReadings(solved.readings)
@@ -862,6 +871,17 @@ function Canvas() {
   )
 
   const handleSolve = useCallback(() => reSolve(nodes, edges), [reSolve, nodes, edges])
+
+  // Changing the board ambient updates the ref synchronously (so the stable-identity reSolve picks it
+  // up) and re-solves immediately, like hitting Solve.
+  const onProjectAmbient = useCallback(
+    (c: number) => {
+      projectAmbientRef.current = c
+      setProjectAmbientC(c)
+      reSolve(nodes, edges)
+    },
+    [reSolve, nodes, edges],
+  )
 
   // Walk the undo timeline. The restored canvas re-solves immediately so the
   // currents, health, and Math panel always describe what is on screen.
@@ -3156,6 +3176,8 @@ function Canvas() {
                 onWireGauge={setWireGauge}
                 alwaysOn={alwaysOn}
                 onAlwaysOn={setAlwaysOn}
+                projectAmbientC={projectAmbientC}
+                onProjectAmbient={onProjectAmbient}
                 onSolve={handleSolve}
                 onScope={runScope}
                 onMath={() => setShowMath((open) => !open)}
