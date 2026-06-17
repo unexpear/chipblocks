@@ -76,7 +76,7 @@ import {
  * anchor circuit keep conducting. An OPEN switch is simply not stamped — its two
  * terminals stay on separate nets, i.e. a real open circuit.
  */
-function switchIsClosed(inst: Instance): boolean {
+export function switchIsClosed(inst: Instance): boolean {
   return readEnumParam(inst, 'state') !== 'open'
 }
 

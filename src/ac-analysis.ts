@@ -1,7 +1,12 @@
 import type { Instance, World } from './cross-fk-validator.ts'
 import { solveDCRobust } from './dc-robust.ts'
-import { mathInstance as math } from './dc-solver.ts'
-import { type BjtSmallSignal, bjtSmallSignalModel } from './small-signal.ts'
+import { fuseIsIntact, mathInstance as math, switchIsClosed } from './dc-solver.ts'
+import {
+  type BjtSmallSignal,
+  bjtSmallSignalModel,
+  type MosfetSmallSignal,
+  mosfetSmallSignalModel,
+} from './small-signal.ts'
 
 /**
  * Small-signal AC (frequency-domain) analysis. Where the DC solver finds the
@@ -16,17 +21,15 @@ import { type BjtSmallSignal, bjtSmallSignalModel } from './small-signal.ts'
  *
  * This stage covers the LINEAR elements (R, C, L) plus independent sources, solved
  * exactly in the frequency domain (R -> 1/R, C -> jwC, L -> 1/jwL) via the same
- * mathjs lusolve the DC solver uses — here over a complex MNA matrix. BJT small-signal
- * models, linearized at the DC operating point (the same companion Jacobian the DC
- * solver uses), are included. Verified against the textbook RC/CR first-order responses.
+ * mathjs lusolve the DC solver uses — here over a complex MNA matrix. Wires, intact
+ * fuses, and closed SPST switches stamp as 0 V shorts (matching the DC/transient
+ * engines). BJT and MOSFET/JFET/CRD small-signal models, linearized at the DC
+ * operating point (the same companion Jacobian the DC solver uses), are included.
+ * Verified against the textbook RC/CR first-order responses.
  *
- * KNOWN LIMITATIONS — this engine is test-only today, NOT yet wired to the canvas UI;
- * these must be addressed before it is:
- *  - Wires and closed switches are NOT stamped, so AC leaves their nets unconnected,
- *    whereas the DC and transient engines short them (a 0 V source). A canvas circuit
- *    drawn with wire segments would compute wrong until this is added.
- *  - Only 2-terminal R/L/C and BJTs are handled. MOSFET/JFET and diode small-signal
- *    are not modeled, so those parts are silently dropped.
+ * KNOWN LIMITATIONS — this engine is test-only today, NOT yet wired to the canvas UI:
+ *  - SPDT switches and relay contacts are not yet shorted (only wires, intact fuses, and
+ *    closed SPST switches are); diode small-signal is not modeled (diodes are dropped).
  *  - The DC operating point is solved at 25 C (the temperaturesC map is not threaded in).
  */
 
@@ -42,16 +45,28 @@ function readParam(inst: Instance, name: string): number | undefined {
 }
 
 type BjtAcModel = BjtSmallSignal & { bIdx: number; cIdx: number; eIdx: number }
+type MosfetAcModel = MosfetSmallSignal & { gIdx: number; dIdx: number; sIdx: number }
 
 type Topology = {
   ground: string
   nodeIndex: Map<string, number>
   vsources: Instance[]
+  /** 2-terminal 0 V shorts (wires, intact fuses, closed SPST switches): a branch unknown each. */
+  shorts: { aNet: string; bNet: string }[]
   dim: number
   bjts: BjtAcModel[]
+  mosfets: MosfetAcModel[]
 }
 
 const BJT_DEFINITIONS = new Set(['transistor_bjt_npn', 'transistor_bjt_pnp'])
+const FET_DEFINITIONS = new Set([
+  'transistor_mosfet_nmos',
+  'transistor_mosfet_pmos',
+  'transistor_jfet_n_channel',
+  'transistor_jfet_p_channel',
+  'diode_constant_current',
+])
+const SHORT_DEFINITIONS = new Set(['wire', 'fuse', 'switch_spst_toggle', 'switch_spst_momentary'])
 
 function buildTopology(world: World): Topology | null {
   let ground: string | undefined
@@ -65,15 +80,29 @@ function buildTopology(world: World): Topology | null {
   const vsources = [...world.instances.values()].filter((i) => i.definition === 'power_source')
   const idx = (net: string) => (net === ground ? -1 : (nodeIndex.get(net) ?? -1))
 
-  // Transistors are linearized at the DC operating point: solve it once (only when the
-  // circuit has any), then build each hybrid-pi small-signal model around it.
+  // 2-terminal 0 V shorts the DC/transient engines also stamp: a wire (its tiny series R is
+  // negligible at signal level), an intact fuse, a closed SPST switch. Each becomes a 0 V source.
+  const shorts: { aNet: string; bNet: string }[] = []
+  for (const inst of world.instances.values()) {
+    if (!SHORT_DEFINITIONS.has(inst.definition)) continue
+    if (inst.definition === 'fuse' && !fuseIsIntact(inst)) continue
+    if (inst.definition.startsWith('switch_') && !switchIsClosed(inst)) continue
+    const aNet = inst.connects?.[0]?.net
+    const bNet = inst.connects?.[1]?.net
+    if (aNet !== undefined && bNet !== undefined && aNet !== bNet) shorts.push({ aNet, bNet })
+  }
+
+  // Transistors (BJT + MOSFET/JFET/CRD) are linearized at the DC operating point: solve it once
+  // (only when the circuit has any), then build each small-signal model around it.
   const bjts: BjtAcModel[] = []
-  const transistors = [...world.instances.values()].filter((i) => BJT_DEFINITIONS.has(i.definition))
-  if (transistors.length > 0) {
+  const mosfets: MosfetAcModel[] = []
+  const bjtInsts = [...world.instances.values()].filter((i) => BJT_DEFINITIONS.has(i.definition))
+  const fetInsts = [...world.instances.values()].filter((i) => FET_DEFINITIONS.has(i.definition))
+  if (bjtInsts.length > 0 || fetInsts.length > 0) {
     const dc = solveDCRobust(world)
     if (dc.status === 'solved') {
       const nodeVoltage = (net: string) => (net === ground ? 0 : (dc.nodes.get(net) ?? 0))
-      for (const inst of transistors) {
+      for (const inst of bjtInsts) {
         const ss = bjtSmallSignalModel(inst, nodeVoltage)
         if (ss === null) continue
         bjts.push({
@@ -83,10 +112,28 @@ function buildTopology(world: World): Topology | null {
           eIdx: idx(ss.emitterNet),
         })
       }
+      for (const inst of fetInsts) {
+        const ss = mosfetSmallSignalModel(inst, nodeVoltage)
+        if (ss === null) continue
+        mosfets.push({
+          ...ss,
+          gIdx: idx(ss.gateNet),
+          dIdx: idx(ss.drainNet),
+          sIdx: idx(ss.sourceNet),
+        })
+      }
     }
   }
 
-  return { ground, nodeIndex, vsources, dim: nodeIndex.size + vsources.length, bjts }
+  return {
+    ground,
+    nodeIndex,
+    vsources,
+    shorts,
+    dim: nodeIndex.size + vsources.length + shorts.length,
+    bjts,
+    mosfets,
+  }
 }
 
 /** Solve the linear circuit at angular frequency omega; return the complex node
@@ -99,7 +146,7 @@ function solveAtOmega(
   outputNet: string,
   omega: number,
 ): Complex | null {
-  const { ground, nodeIndex, vsources, dim } = topo
+  const { ground, nodeIndex, vsources, shorts, dim } = topo
   if (dim === 0) return { re: 0, im: 0 }
   const idx = (net: string) => (net === ground ? -1 : (nodeIndex.get(net) ?? -1))
 
@@ -154,6 +201,22 @@ function solveAtOmega(
     rhs.set([branch, 0], vs.id === inputSource ? 1 : 0)
   })
 
+  // 2-terminal shorts: a 0 V source (branch unknown) per short — its equation constrains v_a = v_b.
+  shorts.forEach((sh, k) => {
+    const branch = nodeIndex.size + vsources.length + k
+    const a = idx(sh.aNet)
+    const b = idx(sh.bNet)
+    if (a >= 0) {
+      accumulate(a, branch, 1, 0)
+      accumulate(branch, a, 1, 0)
+    }
+    if (b >= 0) {
+      accumulate(b, branch, -1, 0)
+      accumulate(branch, b, -1, 0)
+    }
+    // rhs[branch] stays 0 — a short carries any current at zero volts across.
+  })
+
   // Transistors: the hybrid-pi small-signal model at the operating point — the 2-port
   // conductance block (straight from the DC companion Jacobian) plus the junction
   // capacitances that set the high-frequency poles. v_BE = V_B - V_E, v_BC = V_B - V_C.
@@ -177,6 +240,18 @@ function solveAtOmega(
     // C_pi across base-emitter, C_mu across base-collector
     stampY(b, e, 0, omega * cPi)
     stampY(b, c, 0, omega * cMu)
+  }
+
+  // MOSFETs / JFETs / CRDs: a voltage-controlled current source at the operating point.
+  // i_D into the drain = g_m·(v_G − v_S) + g_ds·(v_D − v_S); i_S = −i_D; the gate draws no current.
+  for (const m of topo.mosfets) {
+    const { gIdx: g, dIdx: d, sIdx: s, gm, gds } = m
+    accumulateGrounded(d, g, gm, 0)
+    accumulateGrounded(d, d, gds, 0)
+    accumulateGrounded(d, s, -(gm + gds), 0)
+    accumulateGrounded(s, g, -gm, 0)
+    accumulateGrounded(s, d, -gds, 0)
+    accumulateGrounded(s, s, gm + gds, 0)
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: mathjs lusolve return is polymorphic

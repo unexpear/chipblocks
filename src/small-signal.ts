@@ -1,6 +1,13 @@
 import { bjtCompanion } from './bjt-model.ts'
 import type { Instance } from './cross-fk-validator.ts'
-import { resolveBjt } from './dc-solver.ts'
+import {
+  type MosfetElement,
+  resolveBjt,
+  resolveCrd,
+  resolveJfet,
+  resolveMosfet,
+} from './dc-solver.ts'
+import { mosfetOperatingPoint } from './mosfet-model.ts'
 
 /**
  * BJT small-signal (hybrid-pi) model for AC analysis, linearized at the DC operating
@@ -80,5 +87,57 @@ export function bjtSmallSignalModel(
     gpiBC: comp.dIB_dVBC,
     cPi: cje + comp.dIC_dVBE * tauF,
     cMu: cjc / (1 + reverseBC / BC_JUNCTION_POTENTIAL_V) ** BC_GRADING_COEFFICIENT,
+  }
+}
+
+export type MosfetSmallSignal = {
+  gateNet: string
+  drainNet: string
+  sourceNet: string
+  /** dI_D/dV_GS — the transconductance g_m (siemens), at the DC operating point. */
+  gm: number
+  /** dI_D/dV_DS — the output conductance g_ds (siemens). */
+  gds: number
+}
+
+function resolveFetLike(inst: Instance): MosfetElement | null {
+  if (
+    inst.definition === 'transistor_mosfet_nmos' ||
+    inst.definition === 'transistor_mosfet_pmos'
+  ) {
+    return resolveMosfet(inst)
+  }
+  if (
+    inst.definition === 'transistor_jfet_n_channel' ||
+    inst.definition === 'transistor_jfet_p_channel'
+  ) {
+    return resolveJfet(inst)
+  }
+  if (inst.definition === 'diode_constant_current') return resolveCrd(inst)
+  return null
+}
+
+/**
+ * MOSFET / JFET / constant-current-diode small-signal model for AC, linearized at the DC operating
+ * point. g_m and g_ds come straight from the same operating-point Jacobian the DC companion uses
+ * (mosfetOperatingPoint), so AC and DC stay consistent by construction. The gate draws no DC current
+ * (an ideal insulated gate), so there is no input conductance; gate capacitance is a future addition,
+ * like the BJT's. Returns null for a non-FET instance or one missing parameters.
+ */
+export function mosfetSmallSignalModel(
+  inst: Instance,
+  nodeVoltage: (net: string) => number,
+): MosfetSmallSignal | null {
+  const fet = resolveFetLike(inst)
+  if (fet === null) return null
+  const vGS = nodeVoltage(fet.gateNet) - nodeVoltage(fet.sourceNet)
+  const vDS = nodeVoltage(fet.drainNet) - nodeVoltage(fet.sourceNet)
+  const op = mosfetOperatingPoint(vGS, vDS, fet.params)
+  return {
+    gateNet: fet.gateNet,
+    drainNet: fet.drainNet,
+    sourceNet: fet.sourceNet,
+    gm: op.gm,
+    gds: op.gds,
   }
 }

@@ -221,3 +221,89 @@ describe('AC analysis — transistor small-signal (common-emitter amp)', () => {
     expect(high).toBeLessThan(0.3 * low) // a genuine high-frequency roll-off from C_mu
   })
 })
+
+/** vin -> R -> mid -> WIRE -> out -> C -> gnd : the wire must vanish (short mid = out), so this reads
+ *  identically to the plain low-pass. */
+function rcLowPassThroughWire(rOhm: number, cFarad: number): World {
+  const w = makeWorld()
+  ensureNet(w, 'gnd', true)
+  addPart(w, 'vin', 'power_source', { nominal_voltage: scalar(1, 'volt') }, [
+    { net: 'in', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  addPart(w, 'r1', 'resistor', { resistance: scalar(rOhm, 'ohm') }, [
+    { net: 'in', terminal: 'terminal_a' },
+    { net: 'mid', terminal: 'terminal_b' },
+  ])
+  addPart(w, 'w1', 'wire', {}, [
+    { net: 'mid', terminal: 'terminal_a' },
+    { net: 'out', terminal: 'terminal_b' },
+  ])
+  addPart(w, 'c1', 'capacitor', { capacitance: scalar(cFarad, 'farad') }, [
+    { net: 'out', terminal: 'terminal_a' },
+    { net: 'gnd', terminal: 'terminal_b' },
+  ])
+  return w
+}
+
+describe('AC analysis — wires stamp as shorts', () => {
+  test('a series wire is transparent: the response matches the wireless low-pass', () => {
+    const atFc = acResponse(rcLowPassThroughWire(R, C), opts, fc)
+    expect(atFc.gain).toBeCloseTo(Math.SQRT1_2, 4) // −3 dB at the corner, exactly as with no wire
+    expect(atFc.phaseDeg).toBeCloseTo(-45, 3)
+    const low = acResponse(rcLowPassThroughWire(R, C), opts, fc / 1000)
+    expect(low.gain).toBeCloseTo(1, 3) // flat well below the corner — the wire adds nothing
+  })
+})
+
+/** vdd(10V) -> Rd(1k) -> drain; gate driven by `vGateDc` (also the AC stimulus); source to ground.
+ *  V_th 2 V, k 0.01 A/V^2: at V_GS = 3 V the NMOS sits in saturation (I_D ~ 5 mA, V_DS ~ 5 V), so
+ *  g_m = k*V_OV = 0.01 S and the low-frequency gain g_m*Rd ~ 10, inverting. */
+function commonSourceAmp(vGateDc: number): World {
+  const w = makeWorld()
+  ensureNet(w, 'gnd', true)
+  addPart(w, 'vdd', 'power_source', { nominal_voltage: scalar(10, 'volt') }, [
+    { net: 'vdd', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  addPart(w, 'vin', 'power_source', { nominal_voltage: scalar(vGateDc, 'volt') }, [
+    { net: 'gate', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  addPart(w, 'rd', 'resistor', { resistance: scalar(1000, 'ohm') }, [
+    { net: 'vdd', terminal: 'terminal_a' },
+    { net: 'drain', terminal: 'terminal_b' },
+  ])
+  addPart(
+    w,
+    'm1',
+    'transistor_mosfet_nmos',
+    {
+      threshold_voltage: scalar(2, 'volt'),
+      transconductance_parameter: scalar(0.01, 'ampere_per_volt_squared'),
+    },
+    [
+      { net: 'drain', terminal: 'drain' },
+      { net: 'gate', terminal: 'gate' },
+      { net: 'gnd', terminal: 'source' },
+    ],
+  )
+  return w
+}
+
+describe('AC analysis — MOSFET small-signal (common-source amp)', () => {
+  const csOpts = { inputSource: 'vin', outputNet: 'drain' }
+
+  test('low-frequency gain equals the DC small-signal slope, and it inverts', () => {
+    const vg = 3
+    // The DC small-signal slope dVdrain/dVgate, straight off the nonlinear DC solver.
+    const delta = 1e-4
+    const vd = (v: number) => solveDCRobust(commonSourceAmp(v)).nodes.get('drain') ?? Number.NaN
+    const dcSlope = Math.abs((vd(vg + delta) - vd(vg - delta)) / (2 * delta))
+
+    const ac = acResponse(commonSourceAmp(vg), csOpts, 10)
+    expect(ac.gain).toBeGreaterThan(5) // a real CS gain (~g_m*Rd = 10), not zero (the MOSFET dropped)
+    expect(Math.abs(ac.gain / dcSlope - 1)).toBeLessThan(0.02) // == the DC companion slope (~1%)
+    expect(Math.abs(ac.phaseDeg)).toBeGreaterThan(170) // common-source inverts
+  })
+})
