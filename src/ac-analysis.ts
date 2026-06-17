@@ -34,13 +34,14 @@ import {
  * stamp as 0 V shorts (matching the DC/transient engines); the relay coil stamps as its
  * resistance. BJT, MOSFET/JFET/CRD, and diode small-signal (forward, zener breakdown,
  * tunnel negative-resistance, latched Shockley/SCR), linearized at the DC operating
- * point (the same companion Jacobian the DC solver uses), are included. Verified against
- * the textbook RC/CR first-order responses.
+ * point (the same companion Jacobian the DC solver uses), are included, as are 2-winding
+ * transformers (coupled inductances, V = jωL·I + jωM·I). Verified against the textbook
+ * RC/CR first-order responses.
  *
- * KNOWN LIMITATIONS — this engine is test-only today (NOT yet wired to the canvas UI), and it does
- * not model the transformer (mutual inductance / coupled windings). Every discrete element is
- * covered: R/C/L, sources, all shorts, and BJT / MOSFET / JFET / CRD / diode small-signal, at
- * temperature.
+ * KNOWN LIMITATIONS — this engine is test-only today (NOT yet wired to the canvas UI). It now models
+ * every element a circuit can contain: R/C/L, sources, all shorts, BJT / MOSFET / JFET / CRD / diode
+ * small-signal (all regimes), and the 2-winding transformer — all at temperature. The one structure
+ * still not handled is the CENTER-TAPPED transformer's tapped winding.
  */
 
 export type Complex = { re: number; im: number }
@@ -57,6 +58,16 @@ function readParam(inst: Instance, name: string): number | undefined {
 type BjtAcModel = BjtSmallSignal & { bIdx: number; cIdx: number; eIdx: number }
 type MosfetAcModel = MosfetSmallSignal & { gIdx: number; dIdx: number; sIdx: number }
 type DiodeAcModel = DiodeSmallSignal & { aIdx: number; cIdx: number }
+/** A 2-winding transformer's coupled inductances + its four winding-terminal node indices. */
+type TransformerAcModel = {
+  pPlusIdx: number
+  pMinusIdx: number
+  sPlusIdx: number
+  sMinusIdx: number
+  l1: number
+  l2: number
+  m: number
+}
 
 type Topology = {
   ground: string
@@ -64,6 +75,8 @@ type Topology = {
   vsources: Instance[]
   /** 2-terminal 0 V shorts (wires, intact fuses, closed SPST switches): a branch unknown each. */
   shorts: { aNet: string; bNet: string }[]
+  /** 2-winding transformers: TWO branch unknowns each (the primary + secondary winding currents). */
+  transformers: TransformerAcModel[]
   dim: number
   bjts: BjtAcModel[]
   mosfets: MosfetAcModel[]
@@ -146,6 +159,34 @@ function buildTopology(world: World, temperaturesC?: Map<string, number>): Topol
     if (pair !== null) shorts.push(pair)
   }
 
+  // 2-winding transformers: coupled inductances, stamped via two branch currents (no matrix
+  // inversion, so any 0 < k < 1 is fine). M = k·√(L1·L2). The center-tapped variant's tapped
+  // winding is a more complex structure, not handled here.
+  const transformers: TransformerAcModel[] = []
+  for (const inst of world.instances.values()) {
+    if (inst.definition !== 'transformer') continue
+    const l1 = readParam(inst, 'primary_inductance')
+    const l2 = readParam(inst, 'secondary_inductance')
+    const k = readParam(inst, 'coupling_coefficient')
+    if (l1 === undefined || l2 === undefined || k === undefined) continue
+    if (l1 <= 0 || l2 <= 0 || k <= 0 || k >= 1) continue
+    const netOf = (t: string) => inst.connects?.find((conn) => conn.terminal === t)?.net
+    const pA = netOf('primary_a')
+    const pB = netOf('primary_b')
+    const sA = netOf('secondary_a')
+    const sB = netOf('secondary_b')
+    if (pA === undefined || pB === undefined || sA === undefined || sB === undefined) continue
+    transformers.push({
+      pPlusIdx: idx(pA),
+      pMinusIdx: idx(pB),
+      sPlusIdx: idx(sA),
+      sMinusIdx: idx(sB),
+      l1,
+      l2,
+      m: k * Math.sqrt(l1 * l2),
+    })
+  }
+
   // Transistors (BJT + MOSFET/JFET/CRD) are linearized at the DC operating point: solve it once
   // (only when the circuit has any), then build each small-signal model around it.
   const bjts: BjtAcModel[] = []
@@ -198,7 +239,8 @@ function buildTopology(world: World, temperaturesC?: Map<string, number>): Topol
     nodeIndex,
     vsources,
     shorts,
-    dim: nodeIndex.size + vsources.length + shorts.length,
+    transformers,
+    dim: nodeIndex.size + vsources.length + shorts.length + 2 * transformers.length,
     bjts,
     mosfets,
     diodes,
@@ -292,6 +334,34 @@ function solveAtOmega(
       accumulate(branch, b, -1, 0)
     }
     // rhs[branch] stays 0 — a short carries any current at zero volts across.
+  })
+
+  // 2-winding transformers: two coupled inductors with two branch currents (I1, I2). The branch
+  // equations are the impedance relations V1 = jωL1·I1 + jωM·I2, V2 = jωM·I1 + jωL2·I2.
+  topo.transformers.forEach((tf, t) => {
+    const branchP = nodeIndex.size + vsources.length + shorts.length + 2 * t
+    const branchS = branchP + 1
+    const { pPlusIdx: pp, pMinusIdx: pm, sPlusIdx: sp, sMinusIdx: sm, l1, l2, m } = tf
+    if (pp >= 0) {
+      accumulate(pp, branchP, 1, 0)
+      accumulate(branchP, pp, 1, 0)
+    }
+    if (pm >= 0) {
+      accumulate(pm, branchP, -1, 0)
+      accumulate(branchP, pm, -1, 0)
+    }
+    if (sp >= 0) {
+      accumulate(sp, branchS, 1, 0)
+      accumulate(branchS, sp, 1, 0)
+    }
+    if (sm >= 0) {
+      accumulate(sm, branchS, -1, 0)
+      accumulate(branchS, sm, -1, 0)
+    }
+    accumulate(branchP, branchP, 0, -omega * l1)
+    accumulate(branchP, branchS, 0, -omega * m)
+    accumulate(branchS, branchP, 0, -omega * m)
+    accumulate(branchS, branchS, 0, -omega * l2)
   })
 
   // Transistors: the hybrid-pi small-signal model at the operating point — the 2-port

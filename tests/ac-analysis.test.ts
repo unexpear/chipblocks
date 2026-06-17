@@ -579,3 +579,47 @@ describe('AC analysis — JFET transconductance scales with temperature', () => 
     expect(Math.abs(hot / cold - 1)).toBeGreaterThan(0.05)
   })
 })
+
+/** vin -> primary (primary_a='in', primary_b=gnd); secondary (secondary_a='out', secondary_b=gnd)
+ *  into a large (≈ open) load. An open-secondary transformer's voltage ratio is M/L1 = k·√(L2/L1),
+ *  frequency-independent — here L2 = 4·L1, a ~2x step-up. */
+function transformerStepUp(): World {
+  const w = makeWorld()
+  ensureNet(w, 'gnd', true)
+  addPart(w, 'vin', 'power_source', { nominal_voltage: scalar(1, 'volt') }, [
+    { net: 'in', terminal: 'terminal_positive' },
+    { net: 'gnd', terminal: 'terminal_negative' },
+  ])
+  addPart(
+    w,
+    'tx',
+    'transformer',
+    {
+      primary_inductance: scalar(1e-3, 'henry'),
+      secondary_inductance: scalar(4e-3, 'henry'),
+      coupling_coefficient: scalar(0.99, 'dimensionless'),
+    },
+    [
+      { net: 'in', terminal: 'primary_a' },
+      { net: 'gnd', terminal: 'primary_b' },
+      { net: 'out', terminal: 'secondary_a' },
+      { net: 'gnd', terminal: 'secondary_b' },
+    ],
+  )
+  addPart(w, 'rload', 'resistor', { resistance: scalar(1e6, 'ohm') }, [
+    { net: 'out', terminal: 'terminal_a' },
+    { net: 'gnd', terminal: 'terminal_b' },
+  ])
+  return w
+}
+
+describe('AC analysis — transformer (coupled inductors)', () => {
+  const opts = { inputSource: 'vin', outputNet: 'out' }
+  const expected = 0.99 * 2 // k·√(L2/L1) = 0.99·√4 = 1.98
+
+  test('an (open-secondary) transformer steps the voltage by k·√(Ls/Lp), and it is flat', () => {
+    const w = transformerStepUp()
+    expect(acResponse(w, opts, 1e3).gain).toBeCloseTo(expected, 1) // ~1.98 at 1 kHz
+    expect(acResponse(w, opts, 1e5).gain).toBeCloseTo(expected, 1) // and at 100 kHz — frequency-flat
+  })
+})
