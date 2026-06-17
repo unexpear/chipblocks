@@ -1,40 +1,24 @@
 /**
- * DC solver — Modified Nodal Analysis for linear circuits.
+ * DC solver — Modified Nodal Analysis + Newton-Raphson for the steady-state operating point.
  *
- * Per OBJECT-MODEL.md §18. Sprint 14 MVP scope: resistors + voltage sources
- * + wires + LEDs (fixed-V_F approximation) + switches (open/closed state). Single
- * deterministic linear solve via mathjs's lusolve. Nonlinear iterative
- * solving (Shockley + Newton-Raphson + pnjlim) lands in Sprint 15.
+ * Per OBJECT-MODEL.md §18 / §20. A single linear MNA solve (via dense-linear.ts) when the circuit is
+ * purely linear; otherwise a Newton-Raphson loop with SPICE-style pnjlim / step limiting around each
+ * device's companion model, to convergence. Handles: resistors, voltage sources, wires, switches
+ * (SPST + SPDT), fuses, relays (coil + contacts), inductors and transformers (0 V sources at DC — no
+ * coupling), potentiometers, light-driven sensors (thermistor / photoresistor / photodiode /
+ * phototransistor), and the full nonlinear device set — diodes (LED / rectifier / Schottky / laser /
+ * varactor), zeners (forward + reverse breakdown), tunnel diodes (negative resistance), the Shockley
+ * latch + SCR, BJTs (Ebers-Moll), and MOSFETs / JFETs / constant-current diodes (square law). With a
+ * per-instance junction temperature (the electro-thermal loop) each junction solves at V_T = kT/q and
+ * the SPICE I_S(T) / mobility laws.
  *
- * Per the "real all the way down" principle: the solver doesn't fake passes.
- * Unsupported elements surface 'unsupported-element' rather than silently
- * producing wrong results. No silent ground default — a circuit with no
- * type: ground net returns status 'no-ground' without attempting to solve.
+ * Honesty (the "real all the way down" principle): the solver never fakes a pass. An unmodeled
+ * definition surfaces 'unsupported-element' (not a silent wrong 'solved'); a circuit with no ground
+ * net returns 'no-ground' without solving; a non-converging nonlinear circuit returns
+ * 'did-not-converge'. The Solution carries warnings, branch currents, and the iteration count.
  *
- * S14-v3-3 scaffold: types + ground identification + node-index assignment
- * + resistor stamps + lusolve smoke test.
- * S14-v3-4 voltage source: pre-pass counts voltage sources, matrix grows
- * to (N + S) × (N + S), each source extends the system with one auxiliary
- * current variable per §18.4's modified-nodal stamp pattern.
- * S14-v3-5 adds three more voltage-source-like elements sharing the same
- * MNA stamp pattern:
- *   - LED (fixed-V_F approximation): stamps as voltage source with
- *     V = forward_voltage between anode (+) and cathode (-).
- *   - Switch (SPST): reads its open/closed state (S19). A closed switch stamps
- *     as an ideal 0 V source between terminal_in and terminal_out; an open
- *     switch is omitted entirely, leaving a real open circuit (no current).
- *   - Wire (S19-v3-32): stamps as a 0 V source carrying its real series
- *     resistance (R = ρL/A) between terminal_a and terminal_b, so the wire
- *     drops a real I·R voltage. Absent resistance falls back to an ideal 0 V
- *     short (the fixtures' ideal hookup wires); the canvas supplies each drawn
- *     wire's resistance from its length + conductor, so long/thin/loaded wires
- *     droop measurably.
- * S14-v3-6 extracts branch currents into the Solution.branches map. The
- * sign convention is fixed by the MNA stamp pattern: positive current
- * flows from positive terminal (anode / terminal_positive / terminal_a /
- * terminal_in) toward the negative terminal. For resistors compute
- * I = (V_pos - V_neg) / R; for voltage-source-like elements the
- * auxiliary current variable x[N+s] is already in this convention.
+ * Sign convention (§18.6): positive branch current flows from the positive terminal (anode /
+ * terminal_positive / terminal_a / terminal_in) toward the negative.
  */
 
 import { all, create } from 'mathjs'
@@ -365,12 +349,12 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       inst.definition === 'transistor_jfet_n_channel' ||
       inst.definition === 'transistor_jfet_p_channel'
     ) {
-      const fet = resolveJfet(inst)
+      const fet = resolveJfet(inst, options?.temperaturesC?.get(inst.id))
       if (fet !== null) mosfets.push(fet)
       continue
     }
     if (inst.definition === 'diode_constant_current') {
-      const fet = resolveCrd(inst)
+      const fet = resolveCrd(inst, options?.temperaturesC?.get(inst.id))
       if (fet !== null) mosfets.push(fet)
       continue
     }
@@ -437,7 +421,12 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       if (led !== null) shockleyLeds.push(led)
       else linearVoltageSources.push({ inst, kind: 'led' }) // fixed-V_F fallback
     } else if (inst.definition === 'diode_tunnel') {
-      const td = resolveTunnelDiode(inst, thermalV)
+      // Only the injection (diffusion) term scales with V_T at the junction temperature; the
+      // peak/valley tunneling currents stay at the declared 25 °C values (no cited temp law).
+      const tunnelTemp = options?.temperaturesC?.get(inst.id)
+      const tunnelThermalV =
+        tunnelTemp !== undefined ? thermalVoltage(tunnelTemp + KELVIN_OFFSET) : thermalV
+      const td = resolveTunnelDiode(inst, tunnelThermalV)
       if (td !== null) tunnelDiodes.push(td)
     } else if (inst.definition === 'diode_shockley' || inst.definition === 'scr') {
       // A latching thyristor — the Shockley diode and the SCR's anode-cathode path. Conducting → an
@@ -957,10 +946,40 @@ function limitZenerStep(vRaw: number, z: ZenerElement): { voltage: number; limit
 }
 
 /**
- * Stamp an LED's Newton-Raphson companion model (§20.4 / §20.7) at its current
- * voltage guess: a conductance G_eq between anode and cathode plus a current
- * source I_eq. Ground-side rows/cols are omitted.
+ * Stamp a 2-terminal junction companion (the shared core of the LED / tunnel / zener stamps): a
+ * Norton conductance G between anode and cathode plus a current source I_eq, with the SPICE GMIN
+ * floor — a 1 pS resistor in parallel with the junction that keeps a node behind a hard-off junction
+ * from floating, without moving the operating point (its current is sub-pA). Ground rows/cols omitted.
  */
+function stampJunctionCompanion(
+  anodeNet: string,
+  cathodeNet: string,
+  conductance: number,
+  currentSource: number,
+  nodeIndex: Map<string, number>,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const a = nodeIndex.get(anodeNet)
+  const c = nodeIndex.get(cathodeNet)
+  const Gd = conductance + SOLVER_GMIN
+  if (a !== undefined) {
+    M.set([a, a], (M.get([a, a]) ?? 0) + Gd)
+    b.set([a, 0], (b.get([a, 0]) ?? 0) - currentSource)
+  }
+  if (c !== undefined) {
+    M.set([c, c], (M.get([c, c]) ?? 0) + Gd)
+    b.set([c, 0], (b.get([c, 0]) ?? 0) + currentSource)
+  }
+  if (a !== undefined && c !== undefined) {
+    M.set([a, c], (M.get([a, c]) ?? 0) - Gd)
+    M.set([c, a], (M.get([c, a]) ?? 0) - Gd)
+  }
+}
+
+/** Stamp an LED / forward-diode Shockley companion at its voltage guess (§20.4 / §20.7). */
 function stampLedCompanion(
   led: ShockleyLed,
   nodeIndex: Map<string, number>,
@@ -970,32 +989,13 @@ function stampLedCompanion(
   // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
   b: any,
 ): void {
-  const { conductance: G, currentSource: Ieq } = companionModel(
+  const { conductance, currentSource } = companionModel(
     led.vGuess,
     led.saturationCurrent,
     led.idealityFactor,
     thermalV,
   )
-  const a = nodeIndex.get(led.anodeNet)
-  const c = nodeIndex.get(led.cathodeNet)
-
-  // The diode conductance plus the SPICE GMIN floor — a 1 pS resistor in parallel
-  // with the junction (the b/current source uses G alone, so it is a pure parallel
-  // conductance). It keeps a node behind a hard-off (reverse) diode from floating,
-  // without moving the operating point (its current is sub-pA).
-  const Gd = G + SOLVER_GMIN
-  if (a !== undefined) {
-    M.set([a, a], (M.get([a, a]) ?? 0) + Gd)
-    b.set([a, 0], (b.get([a, 0]) ?? 0) - Ieq)
-  }
-  if (c !== undefined) {
-    M.set([c, c], (M.get([c, c]) ?? 0) + Gd)
-    b.set([c, 0], (b.get([c, 0]) ?? 0) + Ieq)
-  }
-  if (a !== undefined && c !== undefined) {
-    M.set([a, c], (M.get([a, c]) ?? 0) - Gd)
-    M.set([c, a], (M.get([c, a]) ?? 0) - Gd)
-  }
+  stampJunctionCompanion(led.anodeNet, led.cathodeNet, conductance, currentSource, nodeIndex, M, b)
 }
 
 /**
@@ -1039,8 +1039,8 @@ export function resolveTunnelDiode(inst: Instance, thermalV: number): TunnelDiod
 }
 
 /**
- * Stamp a tunnel diode's Newton companion — the same conductance + current-source shape as
- * stampLedCompanion, but the conductance may be NEGATIVE (the negative-resistance region).
+ * Stamp a tunnel diode's Newton companion — the same junction-companion shape, but the conductance
+ * may be NEGATIVE (the negative-resistance region).
  */
 function stampTunnelDiodeCompanion(
   td: TunnelDiode,
@@ -1050,22 +1050,8 @@ function stampTunnelDiodeCompanion(
   // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
   b: any,
 ): void {
-  const { conductance: G, currentSource: Ieq } = tunnelDiodeCompanion(td.vGuess, td.params)
-  const a = nodeIndex.get(td.anodeNet)
-  const c = nodeIndex.get(td.cathodeNet)
-  const Gd = G + SOLVER_GMIN
-  if (a !== undefined) {
-    M.set([a, a], (M.get([a, a]) ?? 0) + Gd)
-    b.set([a, 0], (b.get([a, 0]) ?? 0) - Ieq)
-  }
-  if (c !== undefined) {
-    M.set([c, c], (M.get([c, c]) ?? 0) + Gd)
-    b.set([c, 0], (b.get([c, 0]) ?? 0) + Ieq)
-  }
-  if (a !== undefined && c !== undefined) {
-    M.set([a, c], (M.get([a, c]) ?? 0) - Gd)
-    M.set([c, a], (M.get([c, a]) ?? 0) - Gd)
-  }
+  const { conductance, currentSource } = tunnelDiodeCompanion(td.vGuess, td.params)
+  stampJunctionCompanion(td.anodeNet, td.cathodeNet, conductance, currentSource, nodeIndex, M, b)
 }
 
 /**
@@ -1082,7 +1068,7 @@ function stampZenerCompanion(
   // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
   b: any,
 ): void {
-  const { conductance: G, currentSource: Ieq } = zenerCompanionModel(
+  const { conductance, currentSource } = zenerCompanionModel(
     z.vGuess,
     z.saturationCurrent,
     z.idealityFactor,
@@ -1091,21 +1077,7 @@ function stampZenerCompanion(
     z.breakdownCurrent,
     z.breakdownIdeality,
   )
-  const a = nodeIndex.get(z.anodeNet)
-  const c = nodeIndex.get(z.cathodeNet)
-  const Gd = G + SOLVER_GMIN
-  if (a !== undefined) {
-    M.set([a, a], (M.get([a, a]) ?? 0) + Gd)
-    b.set([a, 0], (b.get([a, 0]) ?? 0) - Ieq)
-  }
-  if (c !== undefined) {
-    M.set([c, c], (M.get([c, c]) ?? 0) + Gd)
-    b.set([c, 0], (b.get([c, 0]) ?? 0) + Ieq)
-  }
-  if (a !== undefined && c !== undefined) {
-    M.set([a, c], (M.get([a, c]) ?? 0) - Gd)
-    M.set([c, a], (M.get([c, a]) ?? 0) - Gd)
-  }
+  stampJunctionCompanion(z.anodeNet, z.cathodeNet, conductance, currentSource, nodeIndex, M, b)
 }
 
 /**
@@ -1558,6 +1530,7 @@ export function stampConductance(
   netB: string,
   ohms: number,
 ): void {
+  if (!(ohms > 0)) return // a non-positive resistance would stamp an infinite conductance
   const G = 1 / ohms
   const i_a = nodeIndex.get(netA) // undefined when net is ground (excluded)
   const i_b = nodeIndex.get(netB)

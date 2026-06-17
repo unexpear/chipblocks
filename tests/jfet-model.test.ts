@@ -83,7 +83,7 @@ const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amo
  * the solved drain current (through Rd). Exercises the JFET through the real DC solver, proving
  * resolveJfet + the shared MOSFET companion path work end to end.
  */
-function jfetDrainCurrent(vGate: number): number {
+function jfetDrainCurrent(vGate: number, temperaturesC?: Map<string, number>): number {
   const world: World = {
     definitions: new Map(),
     instances: new Map(),
@@ -170,7 +170,7 @@ function jfetDrainCurrent(vGate: number): number {
       { net: 'gnd', terminal: 'source', of: 'q1' },
     ],
   })
-  const sol = solveDC(world)
+  const sol = solveDC(world, temperaturesC ? { temperaturesC } : undefined)
   return Math.abs(sol.branches.get('rd') ?? Number.NaN)
 }
 
@@ -178,5 +178,13 @@ describe('solveDC — N-JFET common source (resolveJfet through the MOSFET compa
   test('V_GS = 0 conducts ~I_DSS (4 mA); V_GS past pinch-off is off', () => {
     expect(jfetDrainCurrent(0)).toBeCloseTo(0.004, 3) // ~I_DSS, in saturation (drain at ~5 V)
     expect(jfetDrainCurrent(-3)).toBeLessThan(1e-4) // V_GS = −3 < V_P = −2 → cut off
+  })
+
+  test('a hot junction lowers the drain current (transconductance scales with mobility, T^−1.5)', () => {
+    const cold = jfetDrainCurrent(0)
+    const hot = jfetDrainCurrent(0, new Map([['q1', 125]]))
+    // I_D ∝ k, and k(398 K)/k(298 K) = (398.15/298.15)^−1.5 ≈ 0.648 — so the DC dispatch must thread
+    // the junction temperature into resolveJfet (it previously passed nothing).
+    expect(hot / cold).toBeCloseTo(0.648, 1)
   })
 })
