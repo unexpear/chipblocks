@@ -21,8 +21,8 @@ import {
   EquationEvalError,
   type EquationValue,
   evaluateEquation,
-  mathInstance as math,
 } from '../src/equation-evaluator.ts'
+import { mathInstance as math } from '../src/mathjs-instance.ts'
 
 // ===========================================================================
 // 1. mathjs unit-algebra smoke test

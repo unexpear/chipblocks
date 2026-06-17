@@ -22,10 +22,7 @@
  * (verified at physics.nist.gov 2026-06-05). See §16.4 for the full table.
  */
 
-import { all, create } from 'mathjs'
-
-// biome-ignore lint/style/noNonNullAssertion: mathjs's `all` is always defined at runtime; its type declaration lists it as possibly undefined.
-const math = create(all!)
+import { mathInstance as math } from './mathjs-instance.ts'
 
 // ---------------------------------------------------------------------------
 // Physical constants — NIST CODATA 2018. Verified at physics.nist.gov 2026-06-05.
@@ -108,12 +105,6 @@ export class EquationEvalError extends Error {
 // ---------------------------------------------------------------------------
 // Evaluator
 // ---------------------------------------------------------------------------
-
-/**
- * Public re-export so tests can directly exercise mathjs's unit algebra
- * without re-instantiating their own math instance.
- */
-export const mathInstance = math
 
 /**
  * Evaluate an equation-valued property.

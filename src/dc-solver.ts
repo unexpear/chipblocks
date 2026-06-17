@@ -21,7 +21,6 @@
  * terminal_positive / terminal_a / terminal_in) toward the negative.
  */
 
-import { all, create } from 'mathjs'
 import { type BjtParams, bjtCompanion, bjtCurrents } from './bjt-model.ts'
 import type { Instance, Net, World } from './cross-fk-validator.ts'
 import { type DenseVector, lusolve, zerosMatrix, zerosVector } from './dense-linear.ts'
@@ -93,12 +92,6 @@ const NR_VOLTAGE_TOLERANCE = 1e-6 // volts
  *  matrix solvable around hard-off junctions. Same scale as the MOSFET cutoff. */
 export const SOLVER_GMIN = 1e-12
 const DEFAULT_IDEALITY_FACTOR = 2.0 // LEDs (§20.2); optional per-instance override
-
-// biome-ignore lint/style/noNonNullAssertion: mathjs `all` is always defined at runtime
-const math = create(all!)
-
-/** Exposed for tests so they can drive mathjs's linear algebra directly. */
-export const mathInstance = math
 
 // ---------------------------------------------------------------------------
 // Public API types

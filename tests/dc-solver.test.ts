@@ -36,7 +36,6 @@ import {
   assignNodeIndices,
   computeResistorCurrent,
   identifyGround,
-  mathInstance as math,
   solveDC,
   stampClosedSwitch,
   stampLED,
@@ -44,6 +43,7 @@ import {
   stampVoltageSource,
   stampWire,
 } from '../src/dc-solver.ts'
+import { mathInstance as math } from '../src/mathjs-instance.ts'
 
 // Helper: load every *.yaml in `dir` into a World, sorting by kind.
 // (Same shape as the loader in cross-fk.test.ts — inlined here so this

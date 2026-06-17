@@ -38,8 +38,8 @@ import {
   type EquationValue,
   type EvaluationContext,
   evaluateEquation,
-  mathInstance,
 } from './equation-evaluator.ts'
+import { mathInstance } from './mathjs-instance.ts'
 
 // ---------------------------------------------------------------------------
 // Object shapes (minimal — only the fields cross-FK needs)

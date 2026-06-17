@@ -1,12 +1,8 @@
 import type { Instance, World } from './cross-fk-validator.ts'
 import { solveDCRobust } from './dc-robust.ts'
-import {
-  fuseIsIntact,
-  mathInstance as math,
-  relayCoilEnergized,
-  switchIsClosed,
-} from './dc-solver.ts'
+import { fuseIsIntact, relayCoilEnergized, switchIsClosed } from './dc-solver.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
+import { mathInstance as math } from './mathjs-instance.ts'
 import {
   type BjtSmallSignal,
   bjtSmallSignalModel,

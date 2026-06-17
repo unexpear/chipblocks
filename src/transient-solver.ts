@@ -65,7 +65,6 @@ import {
   LIGHT_CURRENT_DEFINITIONS,
   lightCurrentTerminals,
   type MosfetElement,
-  mathInstance as math,
   PHOTON_EV_NM,
   potentiometerSegments,
   relayCoilEnergized,
@@ -102,6 +101,7 @@ import {
 } from './diode-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { ldrResistance } from './light.ts'
+import { mathInstance as math } from './mathjs-instance.ts'
 import { limitMosfetStep, mosfetOperatingPoint } from './mosfet-model.ts'
 import { type ShockleyDiodeState, scrTarget, shockleyDiodeTarget } from './shockley-diode.ts'
 import {
