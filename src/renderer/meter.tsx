@@ -292,9 +292,17 @@ export function groundNetOf(world: World): string | undefined {
  * input carries no thermal rating, so it just sits in the network and the
  * loop heats the real circuit exactly as the main solve does.
  */
-export function voltmeterSolve(world: World, netRed: string, netBlack: string): Solution | null {
+export function voltmeterSolve(
+  world: World,
+  netRed: string,
+  netBlack: string,
+  projectAmbientC?: number,
+): Solution | null {
   if (netRed === netBlack) return null
-  const { solution } = solveElectroThermal(withVoltmeterLoad(world, netRed, netBlack))
+  const { solution } = solveElectroThermal(
+    withVoltmeterLoad(world, netRed, netBlack),
+    projectAmbientC === undefined ? undefined : { projectAmbientC },
+  )
   return solution.status === 'solved' ? solution : null
 }
 
@@ -322,6 +330,7 @@ function settledProbeSeries(
   world: World,
   netA: string,
   netB: string,
+  projectAmbientC?: number,
 ): { t: number; v: number }[] | 'span-too-wide' | null {
   const loaded = netA === netB ? world : withVoltmeterLoad(world, netA, netB)
   const window = scopeWindow(world)
@@ -334,6 +343,7 @@ function settledProbeSeries(
   const { result } = solveTransientThermal(loaded, {
     timeStep: window.duration / steps,
     duration: window.duration,
+    ...(projectAmbientC !== undefined ? { projectAmbientC } : {}),
   })
   if (result.status !== 'solved' || result.series.length < 8) return null
   const settleTime = window.duration / 3
@@ -349,8 +359,9 @@ export function acVoltsRms(
   world: World,
   netA: string,
   netB: string,
+  projectAmbientC?: number,
 ): { rms: number; hz: number | null; duty: number | null } | 'span-too-wide' | null {
-  const series = settledProbeSeries(world, netA, netB)
+  const series = settledProbeSeries(world, netA, netB, projectAmbientC)
   if (series === 'span-too-wide' || series === null) return series
   // The RMS + Schmitt-hysteresis frequency math lives in waveform-measure.ts
   // (S19-v3-80) — one implementation shared with the scope's measurement
@@ -373,8 +384,9 @@ export function dcExtremes(
   world: World,
   netA: string,
   netB: string,
+  projectAmbientC?: number,
 ): { min: number; max: number; avg: number } | 'span-too-wide' | null {
-  const series = settledProbeSeries(world, netA, netB)
+  const series = settledProbeSeries(world, netA, netB, projectAmbientC)
   if (series === 'span-too-wide' || series === null) return series
   let min = Number.POSITIVE_INFINITY
   let max = Number.NEGATIVE_INFINITY
@@ -604,6 +616,7 @@ export function seriesAmmeter(
   netRed: string,
   netBlack: string,
   jack: AmmeterJack,
+  projectAmbientC?: number,
 ): AmmeterResult {
   const spec = AMMETER_JACKS[jack]
   const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
@@ -621,7 +634,10 @@ export function seriesAmmeter(
   // Through the electro-thermal loop (S20-v3-17): the inserted meter measures
   // the same warm circuit the clamp and panels do, so its current agrees with
   // theirs (minus its own honest burden) instead of reading a cold circuit.
-  const { solution } = solveElectroThermal({ ...world, instances })
+  const { solution } = solveElectroThermal(
+    { ...world, instances },
+    projectAmbientC === undefined ? undefined : { projectAmbientC },
+  )
   if (solution.status !== 'solved') return { status: 'failed' }
   const amps = solution.branches.get(AMMETER_SHUNT_ID) ?? 0
   if (Math.abs(amps) > spec.fuseAmps) return { status: 'blew', amps }

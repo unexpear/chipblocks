@@ -1107,6 +1107,7 @@ function Canvas() {
     const thermal = solveTransientThermal(world, {
       timeStep: (windowSec * 3) / steps,
       duration: windowSec * 3,
+      projectAmbientC: projectAmbientRef.current,
     })
     setScopeResult({
       ...thermal.result,
@@ -1162,6 +1163,7 @@ function Canvas() {
         const result = solveTransientThermal(world, {
           timeStep: dt,
           duration: windowSec * 3,
+          projectAmbientC: projectAmbientRef.current,
         }).result
         const label = `${sourceId} = ${formatEng(value, 'V')}`
         if (result.status !== 'solved') {
@@ -1485,7 +1487,7 @@ function Canvas() {
     const netRed = probeNets.get(`${redProbe.nodeId}/${redProbe.handleId}`)
     const netBlack = probeNets.get(`${blackProbe.nodeId}/${blackProbe.handleId}`)
     if (netRed === undefined || netBlack === undefined) return null
-    return seriesAmmeter(solvedWorld, netRed, netBlack, meterJack)
+    return seriesAmmeter(solvedWorld, netRed, netBlack, meterJack, projectAmbientRef.current)
   }, [
     tool,
     meterMode,
@@ -1553,7 +1555,7 @@ function Canvas() {
       const acChip = (text: string) => ({ icon: '∿', iconColor: '#5a86d8', text })
       const nets = bothProbeNets()
       if (typeof nets === 'string') return acChip(nets)
-      const ac = acVoltsRms(solvedWorld, nets.netRed, nets.netBlack)
+      const ac = acVoltsRms(solvedWorld, nets.netRed, nets.netBlack, projectAmbientRef.current)
       if (ac === 'span-too-wide') {
         return acChip('V~: source frequencies are too far apart to resolve in one pass')
       }
@@ -1660,7 +1662,7 @@ function Canvas() {
       const groundNet = groundNetOf(solvedWorld)
       const loaded =
         groundNet !== undefined && groundNet !== netRed
-          ? voltmeterSolve(solvedWorld, netRed, groundNet)
+          ? voltmeterSolve(solvedWorld, netRed, groundNet, projectAmbientRef.current)
           : null
       const shown = loaded !== null ? (loaded.nodes.get(netRed) ?? vRed) : vRed
       return voltChip(
@@ -1680,7 +1682,7 @@ function Canvas() {
     // MIN/MAX/AVG (S20-v3-14): the settled record's extremes instead of the
     // single operating-point number — what the real button records.
     if (minMaxOn) {
-      const extremes = dcExtremes(solvedWorld, netRed, netBlack)
+      const extremes = dcExtremes(solvedWorld, netRed, netBlack, projectAmbientRef.current)
       if (extremes === 'span-too-wide') {
         return voltChip('MIN/MAX: source frequencies are too far apart to resolve in one pass')
       }
@@ -1691,7 +1693,10 @@ function Canvas() {
         `MIN ${displayCounts(extremes.min, 'V')} · MAX ${displayCounts(extremes.max, 'V')} · AVG ${displayCounts(extremes.avg, 'V')}`,
       )
     }
-    const loaded = netRed === netBlack ? null : voltmeterSolve(solvedWorld, netRed, netBlack)
+    const loaded =
+      netRed === netBlack
+        ? null
+        : voltmeterSolve(solvedWorld, netRed, netBlack, projectAmbientRef.current)
     const unloadedDiff = vRed - vBlack
     const shown =
       loaded !== null
