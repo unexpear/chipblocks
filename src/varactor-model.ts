@@ -25,7 +25,9 @@
  */
 
 const FORWARD_CLAMP = 0.1
-const EXP_CLAMP = 40
+// Overflow guard on an exp argument — 80 (exp(80) is finite). Matches the EXP_ARG_CAP the diode and
+// BJT models use. A varactor runs reverse-biased, so its exps are tiny; this only catches a wild guess.
+const EXP_CLAMP = 80
 
 function safeExp(x: number): number {
   return Math.exp(x > EXP_CLAMP ? EXP_CLAMP : x < -EXP_CLAMP ? -EXP_CLAMP : x)

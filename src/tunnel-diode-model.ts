@@ -27,7 +27,10 @@
  * regions). The compact (V/V_P)·exp(1 − V/V_P) tunneling form is the widely-used circuit model.
  */
 
-const EXP_CLAMP = 40
+// Overflow guard on an exp argument — 80 (exp(80) is finite). Matches the EXP_ARG_CAP the diode and
+// BJT models use, so the junction-exp cap is one magnitude across the codebase. Real tunnel-diode
+// voltages (< ~0.6 V) never approach it; it only catches a wild Newton guess far outside the device.
+const EXP_CLAMP = 80
 
 function safeExp(x: number): number {
   return Math.exp(x > EXP_CLAMP ? EXP_CLAMP : x < -EXP_CLAMP ? -EXP_CLAMP : x)
