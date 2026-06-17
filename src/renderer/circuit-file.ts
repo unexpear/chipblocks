@@ -75,20 +75,38 @@ type CanvasEdgeLike = {
   }
 }
 
+/**
+ * Parameters the solver DERIVES from the circuit (and recomputes on load), so they are not persisted
+ * — per the no-solved-data rule. incident_illuminance is computed by light casting from the sensor +
+ * source positions and is overwritten on the first solve after load; saving it would freeze a stale
+ * derived value into the file. (Device state like device_state / coil_state IS kept — that is the
+ * latch's / relay's memory, what the user built, not a transient solved quantity.)
+ */
+const DERIVED_PARAMETERS = new Set(['incident_illuminance'])
+
+function persistableParameters(parameters: Parameters | undefined): Parameters | undefined {
+  if (!parameters) return undefined
+  const kept = Object.entries(parameters).filter(([key]) => !DERIVED_PARAMETERS.has(key))
+  return kept.length > 0 ? (Object.fromEntries(kept) as Parameters) : undefined
+}
+
 /** The canvas state → a versioned, solver-free circuit file. */
 export function serializeCircuit(nodes: CanvasNodeLike[], edges: CanvasEdgeLike[]): CircuitFile {
   return {
     format: CIRCUIT_FILE_FORMAT,
     version: CIRCUIT_FILE_VERSION,
-    nodes: nodes.map((n) => ({
-      id: n.id,
-      definition: n.data.definition,
-      x: n.position.x,
-      y: n.position.y,
-      ...(n.data.rotation ? { rotation: n.data.rotation } : {}),
-      ...(n.data.parameters ? { parameters: n.data.parameters } : {}),
-      ...(n.data.block ? { block: n.data.block } : {}),
-    })),
+    nodes: nodes.map((n) => {
+      const parameters = persistableParameters(n.data.parameters)
+      return {
+        id: n.id,
+        definition: n.data.definition,
+        x: n.position.x,
+        y: n.position.y,
+        ...(n.data.rotation ? { rotation: n.data.rotation } : {}),
+        ...(parameters ? { parameters } : {}),
+        ...(n.data.block ? { block: n.data.block } : {}),
+      }
+    }),
     wires: edges.map((e) => {
       const waypoints = Array.isArray(e.data?.waypoints)
         ? (e.data.waypoints as { id: string; x: number; y: number }[])

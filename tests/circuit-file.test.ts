@@ -73,6 +73,43 @@ describe('serialize → deserialize round-trip', () => {
     // Solved data must never be persisted — it is recomputed on load.
     expect(text.includes('amps')).toBe(false)
   })
+
+  test('drops the solver-derived incident_illuminance but keeps the user value', () => {
+    const sensor = [
+      {
+        id: 'photoresistor_1',
+        position: { x: 40, y: 80 },
+        data: {
+          definition: 'photoresistor',
+          parameters: {
+            ambient_illuminance: { value: { kind: 'scalar', amount: 200, unit: 'lux' } }, // user — kept
+            incident_illuminance: { value: { kind: 'scalar', amount: 1450, unit: 'lux' } }, // derived — dropped
+          },
+        },
+      },
+    ]
+    const file = serializeCircuit(sensor, [])
+    expect(file.nodes[0]?.parameters?.ambient_illuminance).toBeDefined()
+    expect(file.nodes[0]?.parameters?.incident_illuminance).toBeUndefined()
+    expect(JSON.stringify(file).includes('incident_illuminance')).toBe(false)
+  })
+
+  test('a node whose only parameter is derived saves with no parameters field — nothing stale', () => {
+    const sensor = [
+      {
+        id: 'photoresistor_1',
+        position: { x: 0, y: 0 },
+        data: {
+          definition: 'photoresistor',
+          parameters: {
+            incident_illuminance: { value: { kind: 'scalar', amount: 1450, unit: 'lux' } },
+          },
+        },
+      },
+    ]
+    const file = serializeCircuit(sensor, [])
+    expect('parameters' in (file.nodes[0] ?? {})).toBe(false)
+  })
 })
 
 describe('deserializeCircuit — honest rejections', () => {
