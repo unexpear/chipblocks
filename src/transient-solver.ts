@@ -465,7 +465,7 @@ function resolveVaractor(inst: Instance, nodeIndex: Map<string, number>): CapEle
   const vPrev = readScalarParam(inst, 'initial_voltage') ?? 0
   // Forward diffusion charge (τ_T · I_S) — negligible in reverse, the varactor's regime; transit_time
   // 0 (the default) disables it. I_S is calibrated from the forward operating point.
-  const thermalV = 0.025852 // kT/q at ~300 K
+  const thermalV = thermalVoltage() // kT/q at the standard 298.15 K (matches the rest of the solver)
   const ideality = readScalarParam(inst, 'ideality_factor') ?? 1
   const transitTime = readScalarParam(inst, 'transit_time') ?? 0
   const forwardVoltage = readScalarParam(inst, 'forward_voltage')
