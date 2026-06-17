@@ -295,6 +295,14 @@ describe('solveDCRobust — fast path is an exact pass-through', () => {
     expect(robust.status).toBe('solved')
     expect(maxNodeDiff(robust, direct)).toBe(0)
   })
+
+  test('honors a caller-supplied maxIterations instead of overriding it with the robust default', () => {
+    // The generous internal budget is only the DEFAULT. One Newton pass can't bias a BJT from cold,
+    // so an explicit maxIterations: 1 makes the solve honestly fail to converge rather than quietly
+    // using the 100-iteration budget — while the default (no limit) solves the same circuit.
+    expect(solveDCRobust(commonEmitter(150), { maxIterations: 1 }).status).not.toBe('solved')
+    expect(solveDCRobust(commonEmitter(150)).status).toBe('solved')
+  })
 })
 
 describe('solveDCBySourceStepping — the ramp lands on the exact operating point', () => {

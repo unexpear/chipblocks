@@ -29,7 +29,8 @@ import {
  * source stepping; this adds the missing tool rather than the substitute.
  */
 
-/** A generous Newton budget for each ramp level — "robust" means try hard. */
+/** The DEFAULT Newton budget per ramp level — "robust" means try hard. A caller's own
+ *  maxIterations overrides it. */
 const RAMP_SOLVE_MAX_ITERATIONS = 100
 /** Ramp schedule: a modest first touch (junctions turn on most sharply near zero),
  *  growing on success and halving on failure, with bounds that keep it terminating. */
@@ -95,7 +96,7 @@ export function scaleSources(world: World, alpha: number): World {
  * (no stable operating point can be reached) — never a faked answer.
  */
 export function solveDCBySourceStepping(world: World, options?: SolveOptions): Solution {
-  const rampOptions: SolveOptions = { ...options, maxIterations: RAMP_SOLVE_MAX_ITERATIONS }
+  const rampOptions: SolveOptions = { maxIterations: RAMP_SOLVE_MAX_ITERATIONS, ...options }
   let alpha = 0
   let step = RAMP_STEP_INITIAL
   let seed: Map<string, number> | undefined
@@ -128,10 +129,11 @@ export function solveDCBySourceStepping(world: World, options?: SolveOptions): S
  * The DC operating point, robust to convergence failure. Tries the direct solve with
  * a full Newton budget first (the fast path for every circuit that converges); only
  * on failure does it fall back to source stepping. Returns the direct result
- * unchanged when it succeeds, so existing circuits are untouched.
+ * unchanged when it succeeds, so existing circuits are untouched. The generous budget
+ * is only the DEFAULT — a caller that passes its own maxIterations is honored.
  */
 export function solveDCRobust(world: World, options?: SolveOptions): Solution {
-  const direct = solveDC(world, { ...options, maxIterations: RAMP_SOLVE_MAX_ITERATIONS })
+  const direct = solveDC(world, { maxIterations: RAMP_SOLVE_MAX_ITERATIONS, ...options })
   if (direct.status === 'solved' || direct.status === 'no-ground') return direct
   return solveDCBySourceStepping(world, options)
 }
