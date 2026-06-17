@@ -7,9 +7,17 @@ import {
   resolveCrd,
   resolveJfet,
   resolveMosfet,
+  resolveTunnelDiode,
 } from './dc-solver.ts'
-import { thermalVoltage } from './diode-model.ts'
+import {
+  deriveSaturationCurrent,
+  thermalVoltage,
+  ZENER_BREAKDOWN_IDEALITY,
+  zenerCompanionModel,
+} from './diode-model.ts'
+import { readEnumParam } from './instance-params.ts'
 import { mosfetOperatingPoint } from './mosfet-model.ts'
+import { tunnelDiodeOperatingPoint } from './tunnel-diode-model.ts'
 import { junctionCapacitance } from './varactor-model.ts'
 
 /**
@@ -163,13 +171,49 @@ export type DiodeSmallSignal = {
 }
 
 /**
- * Forward-diode small-signal model for AC: a parallel conductance + junction capacitance at the DC
- * operating point. g = dI/dV is the same diodeConductance the DC solver linearizes with (consistent
- * by construction); C is the voltage-dependent junction capacitance (the varactor's whole purpose,
- * and a real high-frequency pole for any diode that declares it). Covers the forward Shockley family
- * (rectifier / Schottky / LED / laser / varactor); the zener, tunnel, and Shockley-latch diodes have
- * their own regimes (reverse breakdown / negative resistance / bistable) and are not modeled here.
- * Returns null if neither a conductance nor a capacitance can be formed.
+ * The diode's dynamic small-signal conductance g = dI/dV at the operating point, dispatched by
+ * regime: the forward Shockley family + a latched Shockley/SCR are g = I_op/(n·V_T) from the solved
+ * branch current; a zener uses its forward/breakdown companion slope; a tunnel diode its N-shaped
+ * slope (NEGATIVE in the valley). A blocking latch or a part carrying no current contributes nothing.
+ */
+function diodeRegimeConductance(
+  inst: Instance,
+  v: number,
+  vT: number,
+  branchCurrent: number | undefined,
+  n: number,
+): number {
+  switch (inst.definition) {
+    case 'diode_tunnel': {
+      const td = resolveTunnelDiode(inst, vT)
+      return td !== null ? tunnelDiodeOperatingPoint(v, td.params).conductance : 0
+    }
+    case 'diode_zener_silicon': {
+      const vF = readParam(inst, 'forward_voltage')
+      const iF = readParam(inst, 'max_forward_current')
+      const vZ = readParam(inst, 'zener_voltage')
+      if (vF === undefined || iF === undefined || vZ === undefined) return 0
+      const iS = deriveSaturationCurrent(vF, iF, n, vT)
+      const bdCurrent = readParam(inst, 'knee_current') ?? 0.005
+      return zenerCompanionModel(v, iS, n, vT, vZ, bdCurrent, ZENER_BREAKDOWN_IDEALITY).conductance
+    }
+    case 'diode_shockley':
+    case 'scr':
+      // A latch: a forward diode when conducting, an open when blocking.
+      return readEnumParam(inst, 'device_state') === 'conducting' && branchCurrent !== undefined
+        ? Math.abs(branchCurrent) / (n * vT)
+        : 0
+    default:
+      // Forward Shockley family: g = I_op / (n·V_T) from the solved current.
+      return branchCurrent !== undefined ? Math.abs(branchCurrent) / (n * vT) : 0
+  }
+}
+
+/**
+ * Diode small-signal model for AC: a parallel dynamic conductance + junction capacitance at the DC
+ * operating point. g (see diodeRegimeConductance) is consistent with the DC solve by construction; C
+ * is the voltage-dependent junction capacitance (the varactor's whole purpose, and a real
+ * high-frequency pole for any diode that declares it). Returns null if neither can be formed.
  */
 export function diodeSmallSignalModel(
   inst: Instance,
@@ -184,14 +228,8 @@ export function diodeSmallSignalModel(
     temperatureC !== undefined ? thermalVoltage(temperatureC + KELVIN_OFFSET) : thermalVoltage()
   const v = nodeVoltage(anodeNet) - nodeVoltage(cathodeNet)
 
-  // The dynamic conductance at the operating point is g = dI/dV = I_op / (n·V_T) — taken from the
-  // solved branch current (consistent with the DC solve and temperature-correct via V_T, with no
-  // separate I_S to drift). A reverse-biased part (a varactor) carries ~0 current, so g ~ 0.
-  let g = 0
-  if (branchCurrent !== undefined) {
-    const n = readParam(inst, 'ideality_factor') ?? DEFAULT_DIODE_IDEALITY
-    g = Math.abs(branchCurrent) / (n * vT)
-  }
+  const n = readParam(inst, 'ideality_factor') ?? DEFAULT_DIODE_IDEALITY
+  const g = diodeRegimeConductance(inst, v, vT, branchCurrent, n)
 
   let c = 0
   const cj0 = readParam(inst, 'junction_capacitance_zero_bias')

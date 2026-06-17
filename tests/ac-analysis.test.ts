@@ -12,8 +12,9 @@
 
 import { describe, expect, test } from 'vitest'
 import { acResponse, acSweep } from '../src/ac-analysis.ts'
-import type { World } from '../src/cross-fk-validator.ts'
+import type { Instance, World } from '../src/cross-fk-validator.ts'
 import { solveDCRobust } from '../src/dc-robust.ts'
+import { diodeSmallSignalModel } from '../src/small-signal.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
 const enumValue = (value: string) => ({ value })
@@ -484,5 +485,51 @@ describe('AC analysis — SPDT + relay contacts stamp as shorts', () => {
     expect(acResponse(energized, { inputSource: 'vin', outputNet: 'nc' }, 1e3).gain).toBeLessThan(
       0.01,
     )
+  })
+})
+
+/** A bare 2-terminal diode instance (anode='a', cathode='k') — for unit-testing the regime-specific
+ *  small-signal conductance directly, with a mock node-voltage map. */
+function diodeInst(definition: string, parameters: Record<string, { value: unknown }>): Instance {
+  return {
+    id: 'd',
+    kind_ref: 'primitive_device',
+    definition,
+    parameters,
+    connects: [
+      { net: 'a', terminal: 'anode', of: 'd' },
+      { net: 'k', terminal: 'cathode', of: 'd' },
+    ],
+  }
+}
+
+describe('AC analysis — zener / tunnel / Shockley-latch small-signal', () => {
+  test('a zener in reverse breakdown has a positive dynamic conductance (its r_z)', () => {
+    const z = diodeInst('diode_zener_silicon', {
+      forward_voltage: scalar(0.9, 'volt'),
+      max_forward_current: scalar(1, 'ampere'),
+      zener_voltage: scalar(5.1, 'volt'),
+      knee_current: scalar(0.005, 'ampere'),
+    })
+    const nodeV = (net: string) => (net === 'k' ? 5.6 : 0) // V = anode−cathode = −5.6, past −V_Z
+    expect(diodeSmallSignalModel(z, nodeV)?.g ?? 0).toBeGreaterThan(0) // breakdown slope, r_z = 1/g
+  })
+
+  test('a tunnel diode biased in its negative-resistance region has a NEGATIVE conductance', () => {
+    const t = diodeInst('diode_tunnel', {
+      peak_voltage: scalar(0.065, 'volt'),
+      peak_current: scalar(1e-3, 'ampere'),
+      valley_voltage: scalar(0.35, 'volt'),
+      valley_current: scalar(1e-4, 'ampere'),
+    })
+    const nodeV = (net: string) => (net === 'a' ? 0.2 : 0) // 0.2 V sits between peak and valley (NDR)
+    expect(diodeSmallSignalModel(t, nodeV)?.g ?? 0).toBeLessThan(0) // dI/dV < 0 — the tunnel's signature
+  })
+
+  test('a Shockley-latch diode conducts as a forward diode when latched, opens when blocking', () => {
+    const on = diodeInst('diode_shockley', { device_state: enumValue('conducting') })
+    expect(diodeSmallSignalModel(on, () => 0, 0.01)?.g ?? 0).toBeGreaterThan(0) // 10 mA → forward g
+    const off = diodeInst('diode_shockley', { device_state: enumValue('blocking') })
+    expect(diodeSmallSignalModel(off, () => 0, 0)).toBeNull() // blocking + no current → nothing to stamp
   })
 })

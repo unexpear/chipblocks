@@ -32,13 +32,12 @@ import {
  * mathjs lusolve the DC solver uses — here over a complex MNA matrix. Wires, intact
  * fuses, closed SPST switches, the SPDT's selected throw, and the relay's live contact
  * stamp as 0 V shorts (matching the DC/transient engines); the relay coil stamps as its
- * resistance. BJT, MOSFET/JFET/CRD, and forward-diode small-signal models, linearized
- * at the DC operating point (the same companion Jacobian the DC solver uses), are
- * included. Verified against the textbook RC/CR first-order responses.
+ * resistance. BJT, MOSFET/JFET/CRD, and diode small-signal (forward, zener breakdown,
+ * tunnel negative-resistance, latched Shockley/SCR), linearized at the DC operating
+ * point (the same companion Jacobian the DC solver uses), are included. Verified against
+ * the textbook RC/CR first-order responses.
  *
  * KNOWN LIMITATIONS — this engine is test-only today, NOT yet wired to the canvas UI:
- *  - The zener, tunnel, and Shockley-latch diodes are not modeled (only the forward Shockley
- *    family + varactor are).
  *  - A supplied temperaturesC map drives the operating point and the BJT / MOSFET / diode
  *    small-signal, but the JFET / CRD square-law parameters are not temperature-scaled (their
  *    resolvers take no temperature) — their bias shifts with temperature, their transconductance not.
@@ -86,6 +85,10 @@ const DIODE_AC_DEFINITIONS = new Set([
   'diode_silicon_rectifier',
   'diode_schottky_al_si',
   'diode_varactor',
+  'diode_zener_silicon',
+  'diode_tunnel',
+  'diode_shockley',
+  'scr',
 ])
 
 /**
