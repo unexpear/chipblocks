@@ -209,7 +209,7 @@ export function zenerCompanionModel(
   const nVtBreakdown = breakdownIdeality * thermalV
   // The breakdown exponential, capped so a wild Newton guess can't overflow it
   // (pnjlim keeps real iterations far below the cap).
-  const breakdownExp = Math.exp(Math.min(-(voltage + zenerVoltage) / nVtBreakdown, 80))
+  const breakdownExp = Math.exp(Math.min(-(voltage + zenerVoltage) / nVtBreakdown, EXP_ARG_CAP))
   const breakdownI = breakdownCurrent * breakdownExp
   const breakdownG = (breakdownCurrent / nVtBreakdown) * breakdownExp
   const conductance = forwardG + breakdownG
