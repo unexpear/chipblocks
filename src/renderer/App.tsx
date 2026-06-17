@@ -3207,6 +3207,7 @@ function Canvas() {
                 selected={selectedPart}
                 reading={selectedPart ? readings.get(selectedPart.id) : undefined}
                 materials={initial.materials}
+                projectAmbientC={projectAmbientC}
                 validMaterials={
                   selectedPart
                     ? (initial.validMaterialsByDef.get(selectedPart.definition) ?? {})

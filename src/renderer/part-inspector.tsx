@@ -259,6 +259,8 @@ export type PartInspectorProps = {
   onMaterial: (key: string, value: string) => void
   /** Recompute a resistor's R = ρL/A from its material + geometry (the "Derive R" button). */
   onDeriveResistance: () => void
+  /** The board-wide ambient (°C) a part inherits when it sets no ambient_temperature of its own. */
+  projectAmbientC: number
 }
 
 const row: CSSProperties = {
@@ -351,6 +353,7 @@ export function PartInspector({
   onEnum,
   onMaterial,
   onDeriveResistance,
+  projectAmbientC,
 }: PartInspectorProps) {
   if (selected === null) {
     return (
@@ -371,8 +374,19 @@ export function PartInspector({
       key !== 'terminal_count' &&
       // incident_illuminance on a light sensor is COMPUTED (ambient + cast), synced
       // from the solve — the user edits ambient_illuminance, not this.
-      key !== 'incident_illuminance',
+      key !== 'incident_illuminance' &&
+      // ambient_temperature has its own override row below (it inherits the board ambient).
+      key !== 'ambient_temperature',
   )
+  const ownAmbientC = amountOf(selected.parameters, 'ambient_temperature')
+  // Offer a per-part ambient override on parts whose behavior depends on temperature: a θ_JA
+  // (self-heats from ambient), a thermistor's Beta law, or a resistor tempco — or one already
+  // carrying an explicit ambient. Other parts have no temperature dependence to place.
+  const supportsAmbient =
+    ownAmbientC !== undefined ||
+    amountOf(selected.parameters, 'thermal_resistance_junction_ambient') !== undefined ||
+    amountOf(selected.parameters, 'beta_coefficient') !== undefined ||
+    amountOf(selected.parameters, 'temperature_coefficient') !== undefined
   const rating = ratingFor(selected.parameters)
   // A Source (power_source) gets a type picker that sets a consistent real DC
   // source; the matched preset (by nominal voltage) drives the dropdown + citation.
@@ -436,6 +450,24 @@ export function PartInspector({
       ) : null}
 
       <div style={sectionLabel}>Values</div>
+      {supportsAmbient ? (
+        <div>
+          <div style={row}>
+            <span style={{ color: '#aab' }}>Ambient (this part)</span>
+            <ScalarField
+              value={ownAmbientC ?? projectAmbientC}
+              unit="celsius"
+              onCommit={(next) => onParam('ambient_temperature', next, 'celsius')}
+            />
+          </div>
+          {ownAmbientC === undefined ? (
+            <div style={sourceNote}>
+              inherits the board ambient ({projectAmbientC} °C) — set to place THIS part somewhere
+              hotter or cooler
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {selected.definition === 'power_source' ? (
         <div>
           <label style={row}>
