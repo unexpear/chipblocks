@@ -1,5 +1,10 @@
 import type { Instance, World } from './cross-fk-validator.ts'
-import { type Solution, type SolveOptions, solveDC } from './dc-solver.ts'
+import {
+  LIGHT_CURRENT_DEFINITIONS,
+  type Solution,
+  type SolveOptions,
+  solveDC,
+} from './dc-solver.ts'
 
 /**
  * Robust DC operating-point finding by SOURCE STEPPING — the textbook fallback for
@@ -43,21 +48,42 @@ function scaleScalarParam(param: unknown, alpha: number): unknown {
   return param
 }
 
+/** A copy of `params` with the listed scalar keys scaled by `alpha` (missing keys left alone). */
+function scaleParamKeys(
+  params: Record<string, unknown>,
+  alpha: number,
+  keys: readonly string[],
+): Record<string, unknown> {
+  const scaled = { ...params }
+  for (const key of keys) {
+    if (key in params) scaled[key] = scaleScalarParam(params[key], alpha)
+  }
+  return scaled
+}
+
 /**
- * A copy of `world` with every independent source's drive scaled by `alpha`
- * (0 → dead, 1 → full). Resistances, device parameters, and topology are untouched.
+ * A copy of `world` with every independent EXCITATION's drive scaled by `alpha` (0 → dead, 1 → full):
+ * a voltage source's nominal_voltage, and a light sensor's illuminance (a photodiode / phototransistor
+ * injects a current LINEAR in it, so scaling the illuminance ramps the photocurrent from zero). Other
+ * parameters, topology — and a photoresistor's light-set RESISTANCE, a passive value rather than an
+ * excitation — are all untouched.
  */
 export function scaleSources(world: World, alpha: number): World {
   const instances = new Map(world.instances)
   for (const [id, inst] of world.instances) {
-    if (inst.definition !== 'power_source') continue
     const params = inst.parameters as Record<string, unknown> | undefined
-    if (!params || !('nominal_voltage' in params)) continue
-    const scaled: Record<string, unknown> = {
-      ...params,
-      nominal_voltage: scaleScalarParam(params.nominal_voltage, alpha),
+    if (params === undefined) continue
+    if (inst.definition === 'power_source' && 'nominal_voltage' in params) {
+      instances.set(id, {
+        ...inst,
+        parameters: scaleParamKeys(params, alpha, ['nominal_voltage']),
+      } as Instance)
+    } else if (LIGHT_CURRENT_DEFINITIONS.has(inst.definition)) {
+      instances.set(id, {
+        ...inst,
+        parameters: scaleParamKeys(params, alpha, ['incident_illuminance', 'ambient_illuminance']),
+      } as Instance)
     }
-    instances.set(id, { ...inst, parameters: scaled } as Instance)
   }
   return { ...world, instances }
 }

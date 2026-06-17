@@ -15,9 +15,10 @@
  */
 
 import { describe, expect, test } from 'vitest'
-import type { World } from '../src/cross-fk-validator.ts'
+import type { Instance, World } from '../src/cross-fk-validator.ts'
 import { scaleSources, solveDCBySourceStepping, solveDCRobust } from '../src/dc-robust.ts'
 import { type Solution, solveDC } from '../src/dc-solver.ts'
+import { readScalarParam } from '../src/instance-params.ts'
 import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
@@ -326,5 +327,41 @@ describe('scaleSources — ramping a supply scales its drive linearly', () => {
     const half = solveDC(scaleSources(commonEmitter(150), 0.5))
     expect(half.status).toBe('solved')
     expect(half.nodes.get('vcc') ?? Number.NaN).toBeCloseTo(4.5, 6)
+  })
+
+  test("a light sensor's illuminance ramps too, but a passive photoresistor's does not", () => {
+    const world: World = {
+      definitions: new Map(),
+      instances: new Map(),
+      behaviors: new Map(),
+      activeVariables: new Map(),
+      nets: new Map(),
+    }
+    world.instances.set('pd', {
+      id: 'pd',
+      kind_ref: 'primitive_device',
+      definition: 'photodiode',
+      parameters: {
+        incident_illuminance: scalar(1000, 'lux'),
+        ambient_illuminance: scalar(200, 'lux'),
+        photocurrent_per_lux: scalar(1e-6, 'ampere'),
+      },
+    } as unknown as Instance)
+    world.instances.set('ldr', {
+      id: 'ldr',
+      kind_ref: 'primitive_device',
+      definition: 'photoresistor',
+      parameters: { incident_illuminance: scalar(1000, 'lux') },
+    } as unknown as Instance)
+    const scaled = scaleSources(world, 0.5)
+    const pd = scaled.instances.get('pd') as Instance
+    // The photodiode's light-driven current is an independent excitation → its illuminance ramps.
+    expect(readScalarParam(pd, 'incident_illuminance')).toBeCloseTo(500, 6)
+    expect(readScalarParam(pd, 'ambient_illuminance')).toBeCloseTo(100, 6)
+    // photocurrent_per_lux is a device property, not an excitation → untouched.
+    expect(readScalarParam(pd, 'photocurrent_per_lux')).toBeCloseTo(1e-6, 12)
+    // The photoresistor is passive (its light-set resistance isn't an excitation) → untouched.
+    const ldr = scaled.instances.get('ldr') as Instance
+    expect(readScalarParam(ldr, 'incident_illuminance')).toBeCloseTo(1000, 6)
   })
 })
