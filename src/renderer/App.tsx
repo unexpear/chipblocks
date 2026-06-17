@@ -178,7 +178,6 @@ import { WorstCasePanel } from './worst-case-panel.tsx'
 declare global {
   interface Window {
     chipblocks?: {
-      version: string
       onTheme: (callback: (theme: 'light' | 'dark') => void) => void
       onGridColor: (callback: (color: string) => void) => void
       onGridColorCustom: (callback: () => void) => void

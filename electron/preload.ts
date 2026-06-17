@@ -10,7 +10,6 @@ function subscribe<T>(channel: string, callback: (value: T) => void): void {
 }
 
 contextBridge.exposeInMainWorld('chipblocks', {
-  version: '0.0.0',
   onTheme: (callback: (theme: 'light' | 'dark') => void) => subscribe('settings:theme', callback),
   onGridColor: (callback: (color: string) => void) => subscribe('settings:grid-color', callback),
   onGridColorCustom: (callback: () => void) => subscribe('settings:grid-color-custom', callback),

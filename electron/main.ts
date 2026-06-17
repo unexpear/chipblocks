@@ -60,6 +60,9 @@ async function openCircuit(window: BrowserWindow): Promise<void> {
 
 function registerSaveHandler(window: BrowserWindow): void {
   // The renderer answers a save request with the serialized circuit text.
+  // removeHandler first so re-running createWindow (e.g. a macOS reactivate after all
+  // windows have closed) can't throw "Attempted to register a second handler".
+  ipcMain.removeHandler('file:save-data')
   ipcMain.handle('file:save-data', async (_event, text: string) => {
     let path = pendingSaveAs ? null : currentCircuitPath
     if (path === null) {
@@ -101,6 +104,9 @@ async function loadKeybinds(): Promise<void> {
 }
 
 function registerKeybindHandlers(window: BrowserWindow): void {
+  // removeHandler first — see registerSaveHandler (re-registration must be idempotent).
+  ipcMain.removeHandler('keybinds:get')
+  ipcMain.removeHandler('keybinds:set')
   ipcMain.handle('keybinds:get', () => keybinds)
   ipcMain.handle('keybinds:set', async (_event, saved: unknown) => {
     keybinds = mergeKeybinds(saved)
@@ -323,6 +329,10 @@ function createWindow(): void {
       // preload silently fails to run, leaving window.chipblocks undefined. Keep
       // these in lockstep: preload output 'cjs' ⇄ this .cjs path ⇄ sandbox: true.
       sandbox: true,
+      // Set explicitly, not left to Electron's secure defaults, so a future default
+      // change or a stray edit can't silently weaken the renderer's isolation.
+      contextIsolation: true,
+      nodeIntegration: false,
     },
   })
 
