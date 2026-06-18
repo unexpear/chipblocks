@@ -53,4 +53,17 @@ describe('formatEng', () => {
   test('below the smallest prefix (sub-femto) reads as 0', () => {
     expect(formatEng(1e-16, 'A')).toBe('0 A')
   })
+
+  test('non-finite values read AS non-finite, not a fake prefixed number', () => {
+    expect(formatEng(Number.NaN, 'V')).toBe('NaN V')
+    expect(formatEng(Number.POSITIVE_INFINITY, 'V')).toBe('∞ V')
+    expect(formatEng(Number.NEGATIVE_INFINITY, 'V', { signed: true })).toBe('-∞ V')
+    expect(formatEng(Number.NEGATIVE_INFINITY, 'V')).toBe('∞ V') // magnitude by default
+  })
+
+  test('a value that rounds up to 1000 rolls to the next prefix', () => {
+    expect(formatEng(999.6, 'Ω')).toBe('1.00 kΩ') // not "1000 Ω"
+    expect(formatEng(0.9996, 'Ω')).toBe('1.00 Ω') // not "1000 mΩ"
+    expect(formatEng(999.4, 'Ω')).toBe('999 Ω') // just below the round-up stays put
+  })
 })

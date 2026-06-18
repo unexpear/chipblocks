@@ -35,6 +35,12 @@ const PREFIXES: { factor: number; symbol: string }[] = [
  * Below the smallest prefix (or exactly 0) it returns "0 <unit>".
  */
 export function formatEng(value: number, unit: string, options?: EngOptions): string {
+  // A non-finite value isn't a measurement — show it AS non-finite, with no spurious
+  // prefix, instead of letting it fall through to "NaN fV" / "Infinity TV".
+  if (!Number.isFinite(value)) {
+    const sign = options?.signed && value < 0 ? '-' : ''
+    return `${sign}${Number.isNaN(value) ? 'NaN' : '∞'} ${unit}`
+  }
   const sigFigs = options?.sigFigs ?? 3
   const magnitude = Math.abs(value)
 
@@ -43,9 +49,18 @@ export function formatEng(value: number, unit: string, options?: EngOptions): st
     return `0 ${unit}`
   }
 
-  const prefix = PREFIXES.find((p) => magnitude >= p.factor) ?? smallest
-  const mantissa = magnitude / prefix.factor
-  const decimals = Math.max(0, sigFigs - 1 - Math.floor(Math.log10(mantissa)))
+  let prefix = PREFIXES.find((p) => magnitude >= p.factor) ?? smallest
+  const decimalsFor = (m: number) => Math.max(0, sigFigs - 1 - Math.floor(Math.log10(m)))
+  let mantissa = magnitude / prefix.factor
+  // Rounding to sig figs can push the mantissa up to 1000 (e.g. 999.6 → "1000"); roll to the
+  // next-larger prefix so it reads 1.00 k, not 1000. Carry the ROUNDED value into the new band
+  // (rounded/1000 = 1.00, not the raw 0.9996 which would print "1.000"). No-op at the top (T).
+  const rounded = Number(mantissa.toFixed(decimalsFor(mantissa)))
+  const stepUp = PREFIXES[PREFIXES.indexOf(prefix) - 1]
+  if (rounded >= 1000 && stepUp !== undefined) {
+    prefix = stepUp
+    mantissa = rounded / 1000
+  }
   const sign = options?.signed && value < 0 ? '-' : ''
-  return `${sign}${mantissa.toFixed(decimals)} ${prefix.symbol}${unit}`
+  return `${sign}${mantissa.toFixed(decimalsFor(mantissa))} ${prefix.symbol}${unit}`
 }
