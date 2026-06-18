@@ -50,7 +50,13 @@ const edges: CanvasEdgeLike[] = [
     sourceHandle: 'terminal_b',
     target: 'led1',
     targetHandle: 'anode',
-    data: { waypoints: [{ id: 'wp1', x: 200, y: 80 }], curved: true, curveRadius: 56 },
+    data: {
+      waypoints: [{ id: 'wp1', x: 200, y: 80 }],
+      curved: true,
+      curveRadius: 56,
+      gaugeAwg: 14,
+      material: 'aluminum',
+    },
   },
   {
     id: 'w2',
@@ -71,6 +77,8 @@ describe('snapshotSelection', () => {
     expect(item.edges.map((e) => e.id)).toEqual(['w1'])
     expect(item.edges[0]?.curved).toBe(true)
     expect(item.edges[0]?.curveRadius).toBe(56) // the wire's own sweep size travels
+    expect(item.edges[0]?.gaugeAwg).toBe(14) // gauge + material travel too (they set R = ρL/A)
+    expect(item.edges[0]?.material).toBe('aluminum')
     expect(item.edges[0]?.waypoints?.length).toBe(1)
     expect(item.label).toBe('resistor + led')
   })
@@ -140,6 +148,8 @@ describe('materializeItem', () => {
     expect(wp).toMatchObject({ x: 500, y: 380 })
     expect(wp?.id).not.toBe('wp1')
     expect(out.edges[0]?.data?.curveRadius).toBe(56)
+    expect(out.edges[0]?.data?.gaugeAwg).toBe(14) // gauge + material survive the paste
+    expect(out.edges[0]?.data?.material).toBe('aluminum')
     // Pasted parts arrive selected, ready to drag as a group.
     expect(out.nodes.every((n) => n.selected === true)).toBe(true)
     // Values are kept (and rotation).

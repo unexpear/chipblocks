@@ -43,6 +43,9 @@ export type ClipEdge = {
   waypoints?: { id: string; x: number; y: number }[]
   curved?: boolean
   curveRadius?: number
+  /** The wire's AWG gauge + conductor material — both drive R = ρL/A, so a paste must keep them. */
+  gaugeAwg?: number
+  material?: string
 }
 
 export type ClipboardItem = {
@@ -114,6 +117,8 @@ export function snapshotSelection(
         : {}),
       ...(e.data?.curved === true ? { curved: true } : {}),
       ...(typeof e.data?.curveRadius === 'number' ? { curveRadius: e.data.curveRadius } : {}),
+      ...(typeof e.data?.gaugeAwg === 'number' ? { gaugeAwg: e.data.gaugeAwg } : {}),
+      ...(typeof e.data?.material === 'string' ? { material: e.data.material } : {}),
     }))
 
   return { label: describeParts(clipNodes), nodes: clipNodes, edges: clipEdges }
@@ -213,6 +218,8 @@ export function materializeItem(
         : {}),
       ...(e.curved === true ? { curved: true } : {}),
       ...(typeof e.curveRadius === 'number' ? { curveRadius: e.curveRadius } : {}),
+      ...(typeof e.gaugeAwg === 'number' ? { gaugeAwg: e.gaugeAwg } : {}),
+      ...(typeof e.material === 'string' ? { material: e.material } : {}),
     },
   }))
 

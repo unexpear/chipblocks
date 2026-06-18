@@ -83,7 +83,14 @@ export type CanvasEdgeLike = {
   type?: string
   deletable?: boolean
   style?: Record<string, unknown>
-  data?: { waypoints?: unknown; curved?: unknown; curveRadius?: unknown; internalBond?: unknown }
+  data?: {
+    waypoints?: unknown
+    curved?: unknown
+    curveRadius?: unknown
+    gaugeAwg?: unknown
+    material?: unknown
+    internalBond?: unknown
+  }
 }
 
 /**
