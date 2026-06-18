@@ -36,11 +36,11 @@ properties:
     support:
       model_status: defined
       solver_status: not_applicable
-  band_gap:
+  bandgap_energy:
     value:
       kind: condition_bound
       amount: 9.0
-      unit: electron_volt
+      unit: electronvolt
       conditions:
         temperature:
           amount: 25
