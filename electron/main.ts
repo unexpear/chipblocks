@@ -310,7 +310,14 @@ function hardenNavigation(window: BrowserWindow, devUrl: string | undefined): vo
   // IPC bridge. isInternalNavigation compares ORIGINS (not string prefixes, which
   // a userinfo @ trick or a UNC file path would slip past — see navigation.ts).
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  // Guard BOTH events with the same origin check: will-navigate fires for a link or
+  // location change, but a SERVER-side redirect (a 302) fires will-redirect INSTEAD —
+  // so a navigation to an allowed origin that then redirects out would slip past a
+  // will-navigate-only guard. preventDefault on will-redirect cancels the navigation.
   window.webContents.on('will-navigate', (event, navigationUrl) => {
+    if (!isInternalNavigation(navigationUrl, devUrl)) event.preventDefault()
+  })
+  window.webContents.on('will-redirect', (event, navigationUrl) => {
     if (!isInternalNavigation(navigationUrl, devUrl)) event.preventDefault()
   })
 }
