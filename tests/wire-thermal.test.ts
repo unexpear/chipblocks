@@ -31,6 +31,17 @@ describe('wireThermalProfile — the hot spot', () => {
     expect(p.tempAtFraction(0)).toBe(A)
   })
 
+  test('an absurdly long wire stays finite — the fin κL is clamped, not overflowed to NaN', () => {
+    // 100 m drives κ·L well past where cosh/sinh overflow float64 (κL ≈ 710); pre-clamp this
+    // returned NaN. The κL cap holds the peak at its θ_conv asymptote, finite.
+    const longLen = 100
+    const p = wireThermalProfile(5, wireResistance(longLen), longLen, AREA)
+    expect(Number.isFinite(p.peakC)).toBe(true)
+    expect(p.peakC).toBeGreaterThan(A) // a current-carrying wire is above ambient
+    expect(Number.isFinite(p.tempAtFraction(0.5))).toBe(true)
+    expect(Number.isFinite(p.tempAtFraction(0.1))).toBe(true)
+  })
+
   test('the hot spot is the MIDDLE; the ends stay at ambient', () => {
     const p = wireThermalProfile(12, R, LENGTH_M, AREA)
     // Middle hotter than the quarter point, hotter than the end.

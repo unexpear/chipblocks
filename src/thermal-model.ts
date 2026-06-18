@@ -55,6 +55,10 @@ const STEFAN_BOLTZMANN = 5.670374e-8
 /** Emissivity of a PVC-insulated wire's surface (plastics ~0.9–0.95). A bare
  *  polished-copper wire would be far lower (~0.05), but hookup wire is insulated. */
 const WIRE_EMISSIVITY = 0.9
+/** Cap on κ·L for the fin profile: cosh/sinh overflow float64 near κL ≈ 710 (and lose precision well
+ *  before). By κL = 50 the profile has already reached its asymptote — a flat θ_conv middle with sharp
+ *  end transitions — so clamping here leaves the peak and the visible shape unchanged, just bounded. */
+const MAX_FIN_KL = 50
 
 /**
  * Natural-convection heat-transfer coefficient (W/m²·K) for a horizontal wire of
@@ -145,7 +149,7 @@ export function wireThermalProfile(
   // (not ambient): θ(x) = θ_conv + C₁·cosh(κx) + C₂·sinh(κx), solved for the end
   // rises θ_a, θ_b. Both ends at ambient → the symmetric middle-hottest spot; an
   // end sitting on a hot part lifts the wire near it.
-  const kL = kappa * lengthM
+  const kL = Math.min(kappa * lengthM, MAX_FIN_KL)
   const thetaA = endAC - ambientC
   const thetaB = endBC - ambientC
   const sinhKL = Math.sinh(kL)
