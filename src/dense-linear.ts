@@ -180,5 +180,18 @@ export function lusolve(A: DenseMatrix, b: DenseVector): DenseVector {
       )
     }
   }
+  // A near-singular column (a TINY but nonzero pivot) escapes the exact-zero rank-deficiency test
+  // above, so 1/pivot can overflow and drive a non-finite value through back-substitution without
+  // tripping the residual check. Catch ANY non-finite result — from that, or from a non-finite
+  // stamp that propagated in — and throw, so callers report an unsolvable circuit instead of
+  // accepting Infinity/NaN node voltages as a confident answer. Well-posed systems return finite x.
+  for (let i = 0; i < n; i++) {
+    if (!Number.isFinite(x.data[i] as number)) {
+      throw new Error(
+        'non-finite linear solution (near-singular / ill-conditioned system — ' +
+          'e.g. a floating node with no usable conductance to ground)',
+      )
+    }
+  }
   return x
 }

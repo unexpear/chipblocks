@@ -132,4 +132,19 @@ describe('lusolve — singular systems', () => {
       ),
     ).toThrow(/inconsistent/)
   })
+
+  test('a near-singular pivot throws instead of returning non-finite voltages', () => {
+    // A tiny but NONZERO pivot (5e-324, the smallest subnormal) slips past the exact-zero
+    // rank-deficiency test, and 1/5e-324 overflows to Infinity. The solver must refuse — throw,
+    // which callers report as unsolvable — not hand back an Infinity solution as if it were real.
+    expect(() =>
+      lusolve(
+        mat([
+          [Number.MIN_VALUE, 0],
+          [0, 1],
+        ]),
+        vec([1, 1]),
+      ),
+    ).toThrow(/non-finite/)
+  })
 })
