@@ -253,6 +253,56 @@ describe('buildMathView', () => {
     }
   })
 
+  test('the LED card narrates V_T and I_S at the solved junction temperature, not 25 °C', () => {
+    const nodes: CanvasNode[] = [
+      {
+        id: 'bat',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(9, 'volt'), internal_resistance: scalar(1, 'ohm') },
+      },
+      { id: 'r1', definition: 'resistor', parameters: { resistance: scalar(470, 'ohm') } },
+      {
+        id: 'led1',
+        definition: 'led',
+        parameters: {
+          forward_voltage: scalar(2, 'volt'),
+          max_forward_current: scalar(0.02, 'ampere'),
+        },
+      },
+      { id: 'gnd', definition: 'ground' },
+    ]
+    const edges = [
+      {
+        source: 'bat',
+        sourceHandle: 'terminal_positive',
+        target: 'r1',
+        targetHandle: 'terminal_a',
+      },
+      { source: 'r1', sourceHandle: 'terminal_b', target: 'led1', targetHandle: 'anode' },
+      {
+        source: 'led1',
+        sourceHandle: 'cathode',
+        target: 'bat',
+        targetHandle: 'terminal_negative',
+      },
+      {
+        source: 'gnd',
+        sourceHandle: 'reference_terminal',
+        target: 'bat',
+        targetHandle: 'terminal_negative',
+      },
+    ]
+    const world = canvasToWorld(nodes, edges)
+    // Feed the card the SAME junction temperature the electro-thermal solve would
+    // (75 °C): the V_T and I_S it narrates must be at 75 °C, matching the solver,
+    // not the 25 °C calibration label (the drift this fix closes).
+    const view = buildMathView(world, solveDC(world), new Map([['led1', 75]]))
+    const text = view.parts.find((p) => p.id === 'led1')?.lines.join(' ') ?? ''
+    expect(text).toContain('348.15 K / 75 °C') // the real junction temperature
+    expect(text).not.toContain('298.15 K') // NOT the hardcoded 25 °C value
+    expect(text).toContain('scaled to 75 °C') // I_S carried through the SPICE I_S(T) law
+  })
+
   test('the units key writes out exactly the units the board used — no more, no less', () => {
     const world = ohmLawCircuit()
     const view = buildMathView(world, solveDC(world))

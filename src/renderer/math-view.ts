@@ -1,5 +1,10 @@
 import type { Instance, World } from '../cross-fk-validator.ts'
-import { potentiometerSegments, resolveMosfet, type Solution } from '../dc-solver.ts'
+import {
+  potentiometerSegments,
+  resolveMosfet,
+  resolveShockleyLed,
+  type Solution,
+} from '../dc-solver.ts'
 import { deriveSaturationCurrent, thermalVoltage } from '../diode-model.ts'
 import { resistanceAtTemperature } from '../electro-thermal.ts'
 import { readScalarParam } from '../instance-params.ts'
@@ -543,18 +548,24 @@ function partCard(
     const vF = readScalarParam(inst, 'forward_voltage')
     const iF = readScalarParam(inst, 'max_forward_current')
     const n = readScalarParam(inst, 'ideality_factor') ?? DEFAULT_IDEALITY_FACTOR
-    const vT = thermalVoltage()
+    // The SAME resolve the solver ran (one source of truth): with a junction
+    // temperature it carries the SPICE I_S(T) and V_T(T) the solver used, NOT the
+    // 25 °C calibration values. Null (uncalibrated / unwired) → the 25 °C fallback.
+    const resolved = resolveShockleyLed(inst, thermalVoltage(), temperatureC)
+    const atTemp = resolved !== null && temperatureC !== undefined
+    const vT = resolved?.thermalV ?? thermalVoltage()
+    const shownC = atTemp ? (temperatureC as number) : 25
     lines.push(
       'A diode does NOT follow Ohm’s law — below its turn-on voltage almost nothing flows, then current grows explosively. The curve is the Shockley equation: I = I_S·(e^(V/(n·V_T)) − 1).',
     )
     if (vF !== undefined && iF !== undefined) {
-      const iS = deriveSaturationCurrent(vF, iF, n, vT)
+      const iS = resolved?.saturationCurrent ?? deriveSaturationCurrent(vF, iF, n, thermalVoltage())
       lines.push(
-        `I_S = ${formatEng(iS, 'A')} — a tiny “leakage” constant, chosen so the curve passes exactly through this part’s rated point (${fmtV(vF)} at ${fmtA(iF)}).`,
+        `I_S = ${formatEng(iS, 'A')} — a tiny “leakage” constant, chosen so the curve passes exactly through this part’s rated point (${fmtV(vF)} at ${fmtA(iF)})${atTemp ? `, then scaled to ${shownC.toFixed(0)} °C by the SPICE I_S(T) law` : ''}.`,
       )
     }
     lines.push(
-      `n = ${n} is the ideality factor (how textbook-perfect the junction is); V_T = kT/q = ${formatEng(vT, 'V')} comes from temperature itself (298.15 K / 25 °C here).`,
+      `n = ${n} is the ideality factor (how textbook-perfect the junction is); V_T = kT/q = ${formatEng(vT, 'V')} comes from temperature itself (${(shownC + 273.15).toFixed(2)} K / ${shownC.toFixed(0)} °C here).`,
     )
     if (acrossV !== undefined && current !== undefined) {
       lines.push(

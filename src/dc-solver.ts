@@ -156,7 +156,7 @@ export type Solution = {
  * forward_voltage and max_forward_current (the I_s calibration point) qualify;
  * LEDs with forward_voltage only fall back to the fixed-V_F linear stamp.
  */
-type ShockleyLed = {
+export type ShockleyLed = {
   inst: Instance
   anodeNet: string
   cathodeNet: string
@@ -804,7 +804,7 @@ export const SILICON_BANDGAP_EV = 1.11
  * shrinking with temperature, the Varshni effect — a future refinement). Silicon
  * junctions (V_F ≪ E_g) get the full, real ≈ −2 mV/K behavior from this law.
  */
-function resolveShockleyLed(
+export function resolveShockleyLed(
   inst: Instance,
   thermalV: number,
   temperatureC?: number,
