@@ -12,6 +12,7 @@ import {
 } from 'electron'
 import { deserializeCircuit } from '../src/renderer/circuit-file.ts'
 import { DEFAULT_KEYBINDS, type Keybinds, mergeKeybinds } from '../src/renderer/keybinds.ts'
+import { isInternalNavigation } from './navigation.ts'
 
 // Reconstruct __dirname under ESM output (package.json is type: module).
 const moduleDir = dirname(fileURLToPath(import.meta.url))
@@ -306,12 +307,11 @@ function hardenNavigation(window: BrowserWindow, devUrl: string | undefined): vo
   // drives everything over IPC. Deny window.open outright, and block any
   // navigation away from our own renderer so a stray or injected link can't
   // move the window to a remote origin that could then reach the `chipblocks`
-  // IPC bridge.
+  // IPC bridge. isInternalNavigation compares ORIGINS (not string prefixes, which
+  // a userinfo @ trick or a UNC file path would slip past — see navigation.ts).
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', (event, navigationUrl) => {
-    const internal =
-      devUrl !== undefined ? navigationUrl.startsWith(devUrl) : navigationUrl.startsWith('file://')
-    if (!internal) event.preventDefault()
+    if (!isInternalNavigation(navigationUrl, devUrl)) event.preventDefault()
   })
 }
 
