@@ -63,6 +63,25 @@ describe('canvasToWorld', () => {
     expect(Math.abs(solution.branches.get('r1') ?? -1)).toBeCloseTo(0.0891, 4)
   })
 
+  test('distinct points never collide, even with the separator char inside an id or terminal', () => {
+    // Under a space separator ("a b","x") and ("a","b x") both key to "a b x" and would wrongly
+    // merge into one net (and drop the second connection on the early-return). With the NUL
+    // separator they stay distinct. Not reachable with today's ids, but the keying must not
+    // silently depend on ids being space-free.
+    const world = canvasToWorld(
+      [
+        { id: 'a b', definition: 'resistor', parameters: { resistance: scalar(100, 'ohm') } },
+        { id: 'a', definition: 'resistor', parameters: { resistance: scalar(100, 'ohm') } },
+      ],
+      [{ id: 'w', source: 'a b', sourceHandle: 'x', target: 'a', targetHandle: 'b x' }],
+    )
+    const netAB = world.instances.get('a b')?.connects?.find((c) => c.terminal === 'x')?.net
+    const netA = world.instances.get('a')?.connects?.find((c) => c.terminal === 'b x')?.net
+    expect(netAB).toBeDefined()
+    expect(netA).toBeDefined()
+    expect(netAB).not.toBe(netA)
+  })
+
   test('the battery’s internal resistance limits the current (a near-short isn’t infinite)', () => {
     const nodes: CanvasNode[] = [
       {

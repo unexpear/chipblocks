@@ -41,7 +41,12 @@ export type CanvasEdge = {
   resistanceOhms?: number
 }
 
-const SEP = ' '
+// NUL separates the two halves of a point key because it can't appear in any node id or
+// terminal name (ids are auto-generated, block ids are '/'-namespaced, terminal names are
+// fixed identifiers), so two distinct (instance, terminal) points can never key to the same
+// string. A space could collide — ("a b","x") and ("a","b x") would both be "a b x", silently
+// merging two nets and dropping a connection — and '/' is unsafe because block ids contain it.
+const SEP = String.fromCharCode(0)
 const pointKey = (instance: string, terminal: string) => `${instance}${SEP}${terminal}`
 const scalarParam = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
 
