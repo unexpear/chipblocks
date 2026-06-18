@@ -61,7 +61,10 @@ describe('fftMagnitudes', () => {
     if (spectrum === null) return
     const peak = spectrumPeak(spectrum)
     expect(peak?.freqHz).toBeCloseTo(f0, 6)
-    expect(peak?.amplitude).toBeCloseTo(5, 2)
+    // EXACT (not just ~5): the periodic Hann's coherent gain is exactly 0.5, so the 4/n
+    // scale recovers the true amplitude on a bin-aligned tone. The old symmetric (n-1)
+    // window read ~5.005 here and would fail this precision.
+    expect(peak?.amplitude).toBeCloseTo(5, 6)
   })
 
   test('an off-bin sine still lands within one bin, amplitude within Hann scalloping', () => {

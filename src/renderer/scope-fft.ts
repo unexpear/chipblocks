@@ -8,9 +8,10 @@
  *    the most settled part).
  *  - The mean is removed first (AC-coupled — the DC level would otherwise
  *    dwarf every real peak; the strip's "dc" number already reports it).
- *  - A Hann window tapers the slice so a non-whole number of cycles doesn't
- *    smear false content across the spectrum; amplitudes are corrected for
- *    the window's gain (×2 single-sided, ÷0.5 Hann coherent gain).
+ *  - A periodic (DFT-even) Hann window tapers the slice so a non-whole number of
+ *    cycles doesn't smear false content across the spectrum; amplitudes are
+ *    corrected for the window's gain (×2 single-sided, ÷0.5 Hann coherent gain —
+ *    exact for the periodic window, where the symmetric n-1 form runs ~1/n high).
  *  - Off-bin tones still read up to ~15 % low (Hann scalloping) — true of
  *    real scopes too; the peak FREQUENCY stays within one bin.
  */
@@ -76,7 +77,11 @@ export function fftMagnitudes(samples: number[], dtSeconds: number): Spectrum | 
   const re: number[] = new Array(n)
   const im: number[] = new Array(n).fill(0)
   for (let i = 0; i < n; i++) {
-    const hann = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (n - 1)))
+    // PERIODIC (DFT-even) Hann — denominator n, not n-1. The symmetric (n-1) form is for
+    // filter design; the periodic one is the correct window for FFT spectral analysis and
+    // its coherent gain is EXACTLY 0.5, which makes the 4/n amplitude scale below exact (a
+    // bin-aligned tone reads its true amplitude, not ~1/n high as the n-1 window gave).
+    const hann = 0.5 * (1 - Math.cos((2 * Math.PI * i) / n))
     re[i] = ((tail[i] ?? 0) - mean) * hann
   }
   fftInPlace(re, im)
