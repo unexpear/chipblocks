@@ -129,4 +129,64 @@ describe('partReadings', () => {
     expect(m1?.temperatureC).toBeCloseTo(60.34, 1)
     expect(m1?.maxTemperatureC).toBe(150)
   })
+
+  test('the temperature fallback honors the board ambient (own ambient_temperature still wins)', () => {
+    // 10 V across a lone 100 Ω → 0.1 A, P = 1 W; θ_JA 50 K/W → +50 °C self-heating.
+    // partReadings(...) with no temperaturesC takes the lumped-law fallback — the path the
+    // worst-case / derating / Monte-Carlo analyses use, which used to be hardwired to 25 °C.
+    const make = (extra: Record<string, unknown> = {}) =>
+      canvasToWorld(
+        [
+          {
+            id: 'bat',
+            definition: 'power_source',
+            parameters: {
+              nominal_voltage: scalar(10, 'volt'),
+              internal_resistance: scalar(0, 'ohm'),
+            },
+          },
+          {
+            id: 'r1',
+            definition: 'resistor',
+            parameters: { resistance: scalar(100, 'ohm'), ...extra },
+          },
+          { id: 'gnd', definition: 'ground' },
+        ] as CanvasNode[],
+        [
+          {
+            source: 'bat',
+            sourceHandle: 'terminal_positive',
+            target: 'r1',
+            targetHandle: 'terminal_a',
+          },
+          {
+            source: 'r1',
+            sourceHandle: 'terminal_b',
+            target: 'bat',
+            targetHandle: 'terminal_negative',
+          },
+          {
+            source: 'gnd',
+            sourceHandle: 'reference_terminal',
+            target: 'bat',
+            targetHandle: 'terminal_negative',
+          },
+        ],
+      )
+
+    const theta = { thermal_resistance_junction_ambient: scalar(50, 'kelvin_per_watt') }
+    // No board ambient → the 25 °C baseline: 25 + 50 = 75 °C.
+    const base = make(theta)
+    expect(partReadings(base, solveDC(base)).get('r1')?.temperatureC).toBeCloseTo(75, 3)
+    // Board ambient 70 °C lifts it by the full delta: 70 + 50 = 120 °C (the gap this closes).
+    expect(partReadings(base, solveDC(base), undefined, 70).get('r1')?.temperatureC).toBeCloseTo(
+      120,
+      3,
+    )
+    // A part's own ambient_temperature overrides the board ambient: 25 + 50 = 75 °C.
+    const withOwn = make({ ...theta, ambient_temperature: scalar(25, 'celsius') })
+    expect(
+      partReadings(withOwn, solveDC(withOwn), undefined, 70).get('r1')?.temperatureC,
+    ).toBeCloseTo(75, 3)
+  })
 })

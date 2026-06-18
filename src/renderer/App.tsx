@@ -962,8 +962,20 @@ function Canvas() {
   const runWorstCase = useCallback(() => {
     const grounded = groundedComponent(solvedWorld)
     const ambientOpts = { projectAmbientC: projectAmbientRef.current }
-    setWorstCase(worstCaseAnalysis(grounded, (w) => solveWithRelays(w, ambientOpts).solution))
-    setDerating(deratingDashboard(grounded, solveWithRelays(grounded, ambientOpts).solution))
+    setWorstCase(
+      worstCaseAnalysis(
+        grounded,
+        (w) => solveWithRelays(w, ambientOpts).solution,
+        ambientOpts.projectAmbientC,
+      ),
+    )
+    setDerating(
+      deratingDashboard(
+        grounded,
+        solveWithRelays(grounded, ambientOpts).solution,
+        ambientOpts.projectAmbientC,
+      ),
+    )
     setMonteCarlo(null)
   }, [solvedWorld])
   const runMonteCarlo = useCallback(() => {
@@ -972,7 +984,14 @@ function Canvas() {
     window.setTimeout(() => {
       const grounded = groundedComponent(solvedWorld)
       const ambientOpts = { projectAmbientC: projectAmbientRef.current }
-      setMonteCarlo(monteCarloAnalysis(grounded, (w) => solveWithRelays(w, ambientOpts).solution))
+      setMonteCarlo(
+        monteCarloAnalysis(
+          grounded,
+          (w) => solveWithRelays(w, ambientOpts).solution,
+          undefined,
+          ambientOpts.projectAmbientC,
+        ),
+      )
       setMonteCarloRunning(false)
     }, 0)
   }, [solvedWorld])

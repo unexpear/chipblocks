@@ -154,10 +154,16 @@ export interface WorstCaseResult {
  * Sweep every toleranced part's band and report each reading's min/max envelope,
  * crossed against ratings. `solve` is the project's real solve (heat-aware), passed
  * in so this stays decoupled and testable; it must return the solved `Solution`.
+ * projectAmbientC is the board ambient that solve was bound to, so the temperature
+ * reading lands at the same ambient the corners were solved at (not 25 °C).
  */
-export function worstCaseAnalysis(world: World, solve: (w: World) => Solution): WorstCaseResult {
+export function worstCaseAnalysis(
+  world: World,
+  solve: (w: World) => Solution,
+  projectAmbientC?: number,
+): WorstCaseResult {
   const parts = toleranceParts(world)
-  const nominalReadings = partReadings(world, solve(world))
+  const nominalReadings = partReadings(world, solve(world), undefined, projectAmbientC)
 
   if (parts.length === 0) {
     // Nothing to vary — every envelope collapses to the nominal point.
@@ -173,7 +179,7 @@ export function worstCaseAnalysis(world: World, solve: (w: World) => Solution): 
   const perturbed = new Map<string, Map<string, PartReading>>()
   for (const part of parts) {
     const cornered = worldAtCorner(world, parts, new Map([[part.id, 1]]))
-    perturbed.set(part.id, partReadings(cornered, solve(cornered)))
+    perturbed.set(part.id, partReadings(cornered, solve(cornered), undefined, projectAmbientC))
   }
 
   // Cache corner solves by their direction pattern — many readings share a corner.
@@ -186,7 +192,7 @@ export function worstCaseAnalysis(world: World, solve: (w: World) => Solution): 
     const hit = cornerCache.get(key)
     if (hit !== undefined) return hit
     const cornered = worldAtCorner(world, parts, dirs)
-    const solved = partReadings(cornered, solve(cornered))
+    const solved = partReadings(cornered, solve(cornered), undefined, projectAmbientC)
     cornerCache.set(key, solved)
     return solved
   }
@@ -285,10 +291,16 @@ function deratingBand(fraction: number): DeratingBand {
  * The derating dashboard: every part reading as a fraction of its OWN rating at the
  * nominal operating point, banded green / amber / red. No sweep and no re-solve -- it
  * reads the solution already in hand, so it is the always-cheap "how much margin is
- * left, everywhere" scorecard that sits beside the worst-case corners.
+ * left, everywhere" scorecard that sits beside the worst-case corners. projectAmbientC
+ * is the board ambient the solution was solved at, so the temperature margin is read at
+ * that ambient rather than the 25 °C fallback.
  */
-export function deratingDashboard(world: World, solution: Solution): DeratingResult {
-  const readings = partReadings(world, solution)
+export function deratingDashboard(
+  world: World,
+  solution: Solution,
+  projectAmbientC?: number,
+): DeratingResult {
+  const readings = partReadings(world, solution, undefined, projectAmbientC)
   const entries: DeratingEntry[] = []
   let worstFraction = 0
   for (const [partId, reading] of readings) {

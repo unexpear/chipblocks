@@ -19,8 +19,9 @@ import { junctionCapacitance } from '../varactor-model.ts'
  *  - temperatureC = the part's real temperature from the electro-thermal solve
  *    (its ambient — own or the board's — plus P·θ_JA self-heating), for parts
  *    that declare a thermal resistance, with the declared max alongside so the
- *    panel can show headroom. Falls back to the 25 °C lumped law when no solve
- *    temperature is supplied.
+ *    panel can show headroom. When no solve temperature is supplied (an analysis
+ *    pass) it falls back to the lumped law at the same ambient precedence:
+ *    own ambient_temperature, else the board's projectAmbientC, else 25 °C.
  */
 export type PartReading = {
   current?: number
@@ -36,6 +37,7 @@ export function partReadings(
   world: World,
   solution: Solution,
   temperaturesC?: Map<string, number>,
+  projectAmbientC?: number,
 ): Map<string, PartReading> {
   const readings = new Map<string, PartReading>()
   if (solution.status !== 'solved') return readings
@@ -54,10 +56,16 @@ export function partReadings(
       const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
       if (thetaJa !== undefined && thetaJa > 0) {
         // The part's real temperature from the electro-thermal solve — its ambient (own or the
-        // board's) plus self-heating. Falls back to the 25 °C lumped law when no solve temperature
-        // is supplied (an analysis pass, or a bare solveDC).
+        // board's) plus self-heating. When no solve temperature is supplied (an analysis pass, or
+        // a bare solveDC) it falls back to the lumped law at the SAME ambient the solve would use:
+        // own ambient_temperature, else the board ambient, else junctionTemperature's 25 °C default.
         reading.temperatureC =
-          temperaturesC?.get(inst.id) ?? junctionTemperature(reading.power, thetaJa)
+          temperaturesC?.get(inst.id) ??
+          junctionTemperature(
+            reading.power,
+            thetaJa,
+            readScalarParam(inst, 'ambient_temperature') ?? projectAmbientC,
+          )
         const maxTemperature = readScalarParam(inst, 'max_operating_temperature')
         if (maxTemperature !== undefined) reading.maxTemperatureC = maxTemperature
       }

@@ -100,12 +100,14 @@ function summarize(
 /**
  * Run the Monte-Carlo sweep. `solve` is the project's real heat-aware solve, injected so
  * this stays decoupled and testable; `random` is injectable too so a seeded source makes a
- * run reproducible (defaults to Math.random).
+ * run reproducible (defaults to Math.random). projectAmbientC is the board ambient solve was
+ * bound to, so each sample's temperature reading lands at that ambient, not the 25 °C fallback.
  */
 export function monteCarloAnalysis(
   world: World,
   solve: (w: World) => Solution,
   options?: { samples?: number; random?: () => number },
+  projectAmbientC?: number,
 ): MonteCarloResult {
   const parts = toleranceParts(world)
   const samples = Math.max(1, Math.floor(options?.samples ?? MONTE_CARLO_DEFAULT_SAMPLES))
@@ -128,7 +130,7 @@ export function monteCarloAnalysis(
 
   if (parts.length === 0) {
     // Nothing to vary -- one nominal solve; every distribution is a spike.
-    record(partReadings(world, solve(world)))
+    record(partReadings(world, solve(world), undefined, projectAmbientC))
   } else {
     for (let s = 0; s < samples; s++) {
       const sampled = worldWithPartValues(world, parts, (part) => {
@@ -137,7 +139,7 @@ export function monteCarloAnalysis(
         const offset = Math.max(-bound, Math.min(bound, gaussian(random) * sigma))
         return part.nominal + offset
       })
-      record(partReadings(sampled, solve(sampled)))
+      record(partReadings(sampled, solve(sampled), undefined, projectAmbientC))
     }
   }
 
