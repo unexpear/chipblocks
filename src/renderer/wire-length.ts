@@ -54,30 +54,13 @@ export function visualFromLength(metres: number): number {
 }
 
 /**
- * Real-number resistance of a wire, R = ρ·L/A, in ohms.
- *
- * Defaults are real + cited so a wire is never ideal-by-accident; callers pass
- * catalog-sourced values once a drawn wire carries its own material + gauge.
- *  - resistivity: annealed copper at 20 °C (CRC Handbook of Chemistry & Physics).
- *  - area: 22 AWG (0.6438 mm diameter → 0.3255 mm²), a common hookup-wire gauge.
- */
-export const COPPER_RESISTIVITY_OHM_M = 1.68e-8
-export const AWG22_AREA_M2 = 3.255e-7
-export function wireResistance(
-  metres: number,
-  resistivityOhmM = COPPER_RESISTIVITY_OHM_M,
-  areaM2 = AWG22_AREA_M2,
-): number {
-  if (areaM2 <= 0) return 0
-  return (resistivityOhmM * Math.max(0, metres)) / areaM2
-}
-
-/**
  * AWG (American Wire Gauge) → real conductor geometry. The gauge is defined
  * geometrically, not by lookup: each step scales the diameter by the 39th root
  * of 92, so d = 0.005 in · 92^((36 − n)/39) and the area follows from π·d²/4
  * (ASTM B258 / the standard AWG ratio). Lower number = thicker wire; −6 gauges
- * is ≈ 4× the copper. awgAreaM2(22) reproduces AWG22_AREA_M2, the catalog default.
+ * is ≈ 4× the copper. This is the single source of truth for conductor areas —
+ * the AWG22_AREA_M2 catalog default below IS awgAreaM2(22), so the two can never
+ * drift (it used to be a separately hand-rounded literal, ~0.02 % off).
  */
 function awgDiameterM(awg: number): number {
   return 0.005 * 92 ** ((36 - awg) / 39) * INCH_M
@@ -85,6 +68,26 @@ function awgDiameterM(awg: number): number {
 export function awgAreaM2(awg: number): number {
   const d = awgDiameterM(awg)
   return (Math.PI / 4) * d ** 2
+}
+
+/**
+ * Real-number resistance of a wire, R = ρ·L/A, in ohms.
+ *
+ * Defaults are real + cited so a wire is never ideal-by-accident; callers pass
+ * catalog-sourced values once a drawn wire carries its own material + gauge.
+ *  - resistivity: annealed copper at 20 °C (CRC Handbook of Chemistry & Physics).
+ *  - area: 22 AWG (≈0.6438 mm diameter), a common hookup-wire gauge, taken
+ *    straight from the geometric AWG definition above (one source of truth).
+ */
+export const COPPER_RESISTIVITY_OHM_M = 1.68e-8
+export const AWG22_AREA_M2 = awgAreaM2(22)
+export function wireResistance(
+  metres: number,
+  resistivityOhmM = COPPER_RESISTIVITY_OHM_M,
+  areaM2 = AWG22_AREA_M2,
+): number {
+  if (areaM2 <= 0) return 0
+  return (resistivityOhmM * Math.max(0, metres)) / areaM2
 }
 
 /** The gauge a freshly drawn wire takes until the user picks another. */

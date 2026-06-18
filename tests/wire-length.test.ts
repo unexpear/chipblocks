@@ -66,7 +66,10 @@ describe('visualFromLength (soft, bounded, no hard clamp)', () => {
 
 describe('wireResistance (R = ρ·L/A, real-number math)', () => {
   test('default copper / 22 AWG, 15 cm ≈ 7.7 mΩ', () => {
-    expect(wireResistance(0.15)).toBeCloseTo(0.0077419, 6)
+    // Against the geometric AWG22 area (awgAreaM2(22) = 3.25534e-7 m²) the
+    // default now resolves to exactly this — the old 0.0077419 came from a
+    // hand-rounded area literal that the constant no longer carries.
+    expect(wireResistance(0.15)).toBeCloseTo(0.0077411, 6)
   })
   test('linear in length', () => {
     expect(wireResistance(0.3)).toBeCloseTo(2 * wireResistance(0.15), 9)
