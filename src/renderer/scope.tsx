@@ -26,13 +26,16 @@ import { measureSeries } from './waveform-measure.ts'
 /**
  * Pick the simulated window. This is a DISPLAY heuristic (what's worth looking
  * at), not physics: 3 periods of the slowest AC source if one exists; else 5× the
- * slowest charging timescale present — R·C for capacitors, L/R for inductors
- * (largest values of each); else 1 ms (a circuit with no time-dependent elements
- * settles instantly — flat lines are honest). Always 500 steps across the window.
+ * slowest charging timescale present — R·C (largest R × largest C) for capacitors,
+ * L/R (largest L ÷ the SMALLEST resistor) for inductors; each is the slowest of
+ * its kind, so the window errs LONG (a settled trace flat-lines honestly) rather
+ * than truncating a slow ramp; else 1 ms (a circuit with no time-dependent
+ * elements settles instantly). Always 500 steps across the window.
  */
 export function scopeWindow(world: World): { timeStep: number; duration: number } {
   let slowestAcHz = Number.POSITIVE_INFINITY
   let maxOhms = 0
+  let minResistorOhms = Number.POSITIVE_INFINITY
   let maxFarads = 0
   let maxHenry = 0
   for (const inst of world.instances.values()) {
@@ -41,7 +44,9 @@ export function scopeWindow(world: World): { timeStep: number; duration: number 
       const frequency = readScalarParam(inst, 'frequency') ?? 0
       if (amplitude > 0 && frequency > 0) slowestAcHz = Math.min(slowestAcHz, frequency)
     } else if (inst.definition === 'resistor') {
-      maxOhms = Math.max(maxOhms, readScalarParam(inst, 'resistance') ?? 0)
+      const ohms = readScalarParam(inst, 'resistance') ?? 0
+      maxOhms = Math.max(maxOhms, ohms)
+      if (ohms > 0) minResistorOhms = Math.min(minResistorOhms, ohms)
     } else if (inst.definition === 'capacitor') {
       maxFarads = Math.max(maxFarads, readScalarParam(inst, 'capacitance') ?? 0)
     } else if (inst.definition === 'inductor') {
@@ -58,7 +63,9 @@ export function scopeWindow(world: World): { timeStep: number; duration: number 
     duration = 3 / slowestAcHz
   } else {
     const tauRC = maxOhms > 0 && maxFarads > 0 ? maxOhms * maxFarads : 0
-    const tauRL = maxOhms > 0 && maxHenry > 0 ? maxHenry / maxOhms : 0
+    // L/R is SLOWEST through the smallest resistor — using the largest would shrink the
+    // window and truncate a slow ramp. A pure-L circuit (no resistor) falls to the 1 ms floor.
+    const tauRL = Number.isFinite(minResistorOhms) && maxHenry > 0 ? maxHenry / minResistorOhms : 0
     const tau = Math.max(tauRC, tauRL)
     duration = tau > 0 ? 5 * tau : 1e-3
   }

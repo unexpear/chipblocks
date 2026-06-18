@@ -81,6 +81,19 @@ describe('scopeWindow', () => {
     expect(scopeWindow(world).duration).toBeCloseTo(5 * (0.01 / 100), 9) // 0.5 ms
   })
 
+  test('an R-L circuit windows on the SMALLEST resistor — the slow ramp is not truncated', () => {
+    // L = 10 mH. The inductor's loop can settle as slowly as τ = L/1 Ω = 10 ms; a large
+    // 10 kΩ elsewhere must NOT shrink the window 10000× (5 µs would cut the ramp off
+    // mid-rise). The window follows the slowest L/R — erring long is honest, truncating isn't.
+    const world = worldWith([
+      { id: 'bat', definition: 'power_source', parameters: { nominal_voltage: scalar(5, 'volt') } },
+      { id: 'r_small', definition: 'resistor', parameters: { resistance: scalar(1, 'ohm') } },
+      { id: 'r_big', definition: 'resistor', parameters: { resistance: scalar(10000, 'ohm') } },
+      { id: 'l1', definition: 'inductor', parameters: { inductance: scalar(0.01, 'henry') } },
+    ])
+    expect(scopeWindow(world).duration).toBeCloseTo(5 * (0.01 / 1), 9) // 50 ms, on the 1 Ω
+  })
+
   test('with both C and L present the slower timescale wins (everything fits)', () => {
     const world = worldWith([
       { id: 'bat', definition: 'power_source', parameters: { nominal_voltage: scalar(9, 'volt') } },
