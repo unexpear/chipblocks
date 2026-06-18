@@ -2741,16 +2741,24 @@ function Canvas() {
                 {/* Scope channel probes (S19-v3-77): one colored clip per
                     voltage channel. Wire clamps show in the channel chips. */}
                 {scopeOpen
-                  ? scopeProbes.map((p, i) =>
-                      p.kind === 'terminal' ? (
+                  ? scopeProbes.map((p) => {
+                      if (p.kind !== 'terminal') return null
+                      // Color + CH number come from the probe's slot in the RESOLVED channel
+                      // list (what the traces and chips index), NOT its raw scopeProbes index —
+                      // an unresolved probe earlier in the list would otherwise shift this off,
+                      // so the on-canvas marker disagreed with the plotted trace. No channel
+                      // (the probe didn't resolve → no trace) ⇒ no marker.
+                      const ch = scopeChannels.findIndex((c) => c.key === scopeProbeKey(p))
+                      if (ch < 0) return null
+                      return (
                         <ProbeMarker
                           key={scopeProbeKey(p)}
                           probe={{ nodeId: p.nodeId, handleId: p.handleId }}
-                          color={TRACE_COLORS[i % TRACE_COLORS.length] ?? '#888'}
-                          label={`CH${i + 1}`}
+                          color={TRACE_COLORS[ch % TRACE_COLORS.length] ?? '#888'}
+                          label={`CH${ch + 1}`}
                         />
-                      ) : null,
-                    )
+                      )
+                    })
                   : null}
                 {pendingWire !== null ? (
                   <PendingWirePreview
