@@ -30,6 +30,25 @@ function asScalar(value: unknown): ScalarValue | null {
 const amountOf = (parameters: Parameters | undefined, key: string): number | undefined =>
   asScalar(parameters?.[key]?.value)?.amount
 
+/**
+ * Params that can legitimately be ≤ 0, so editing them must NOT clamp the sign: a tempco
+ * (NTC is negative), a FET threshold (PMOS is negative), a source EMF (a user may type a
+ * negative to reverse it), and any temperature in °C (sub-zero is real). Every other edited
+ * value is a physical magnitude, so `paramMin` floors it at 0 — the inspector won't commit a
+ * negative resistance / capacitance / current. Zero is left to the solver (a degenerate 0
+ * reads as open, not a crash); 0 Hz / 0 V AC are legitimate anyway.
+ */
+const SIGNED_PARAM_KEYS = new Set([
+  'temperature_coefficient',
+  'threshold_voltage',
+  'nominal_voltage',
+])
+export function paramMin(key: string, unit: string): number | undefined {
+  if (SIGNED_PARAM_KEYS.has(key)) return undefined
+  if (unit === 'celsius' || unit === 'degC') return undefined
+  return 0
+}
+
 const humanize = (key: string): string =>
   key.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
 
@@ -316,10 +335,12 @@ function ScalarField({
   value,
   unit,
   onCommit,
+  min,
 }: {
   value: number
   unit: string
   onCommit: (next: number) => void
+  min?: number | undefined
 }) {
   const ref = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -332,9 +353,12 @@ function ScalarField({
         ref={ref}
         type="number"
         defaultValue={value}
+        {...(min !== undefined ? { min } : {})}
         onChange={(event) => {
           const next = event.target.valueAsNumber
-          if (Number.isFinite(next)) onCommit(next)
+          // Reject NaN (empty field) and an out-of-range sign (a negative magnitude); the
+          // model keeps its last valid value, the same honest refusal as the NaN guard.
+          if (Number.isFinite(next) && (min === undefined || next >= min)) onCommit(next)
         }}
         className="nodrag"
         style={{ ...field, width: 58, marginRight: 4 }}
@@ -580,6 +604,7 @@ export function PartInspector({
                   <ScalarField
                     value={scalar.amount}
                     unit={scalar.unit}
+                    min={paramMin(key, scalar.unit)}
                     onCommit={(next) => onParam(key, next)}
                   />
                 </div>
