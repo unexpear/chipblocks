@@ -1,31 +1,18 @@
 /**
- * Per-edge conventional-current flow, from the DC solver (Sprint 19 S19-v3-4).
+ * Per-wire conventional-current flow, from the DC solver (Sprint 19 S19-v3-9).
  *
  * "Wire in the physics": the canvas arrows are NOT a topological guess at flow
- * direction — they come from the real current `solveDC` computes. This module
- * turns the solver's per-device branch currents into a direction + magnitude for
- * one wire (a net spoke between two instances).
+ * direction — they come from the real current `solveDC` computes. Each wire is a
+ * real 2-terminal element with its own branch current; this turns that current
+ * into a direction + magnitude for the wire's arrow.
  *
  * Sign convention (from dc-solver.ts, verified against the solved anchor circuit
- * in tests/dc-solver.test.ts): a device's positive branch current flows from its
- * positive-side terminal (terminal_positive / anode / terminal_a / terminal_in)
- * toward its negative side — i.e. current EXITS the device at the negative-side
- * terminal when the branch current is positive. A source delivering power reads
- * negative (it sinks positive→negative internally).
+ * in tests/dc-solver.test.ts): a wire's positive branch current flows from
+ * terminal_a (the edge's source side) toward terminal_b — so when the source sits
+ * on the positive side, current runs source→target while the branch is positive.
  */
 
-import type { World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
-
-const POSITIVE_SIDE = new Set(['terminal_positive', 'anode', 'terminal_a', 'terminal_in'])
-const NEGATIVE_SIDE = new Set(['terminal_negative', 'cathode', 'terminal_b', 'terminal_out'])
-
-/** +1 = positive side, -1 = negative side, 0 = neither (a reference tap like ground). */
-function terminalSide(terminal: string | undefined): number {
-  if (terminal && POSITIVE_SIDE.has(terminal)) return 1
-  if (terminal && NEGATIVE_SIDE.has(terminal)) return -1
-  return 0
-}
 
 export type EdgeFlow = {
   /** Current magnitude in amperes (always ≥ 0). */
@@ -37,37 +24,6 @@ export type EdgeFlow = {
 }
 
 const FLOOR_AMPS = 1e-12
-
-/**
- * Conventional-current flow for one edge — the net spoke from `source` to
- * `target`. Returns `carries: false` (no arrow) when either end is a reference
- * tap (ground) or no current flows.
- */
-export function edgeFlow(
-  world: World,
-  solution: Solution,
-  net: string,
-  source: string,
-  target: string,
-): EdgeFlow {
-  const members = world.nets.get(net)?.members ?? []
-  const sourceSide = terminalSide(members.find((m) => m.instance === source)?.terminal)
-  const targetSide = terminalSide(members.find((m) => m.instance === target)?.terminal)
-  if (sourceSide === 0 || targetSide === 0) {
-    return { amps: 0, sourceToTarget: true, carries: false }
-  }
-
-  const branch = solution.branches.get(source) ?? 0
-  // Current leaving `source` into the net: the branch current if `source`
-  // connects via its negative side (current exits there when branch > 0),
-  // else its negation (a positive-side connection sees current entering).
-  const flowFromSource = sourceSide < 0 ? branch : -branch
-  return {
-    amps: Math.abs(flowFromSource),
-    sourceToTarget: flowFromSource >= 0,
-    carries: Math.abs(flowFromSource) > FLOOR_AMPS,
-  }
-}
 
 /**
  * Conventional-current flow for a wire-EDGE (a collapsed `wire` instance),

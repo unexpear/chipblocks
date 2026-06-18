@@ -3,9 +3,9 @@
  *
  * Verifies the canvas arrow direction + magnitude against the REAL solved
  * anchor circuit — not a hand-fed expectation. We run the actual DC solver on
- * the fixtures and confirm edgeFlow recovers the physical current direction
- * (battery out its +, around the loop, back to its −) and the ~69.4 mA loop
- * current, and that the ground tap carries nothing.
+ * the fixtures and confirm wireFlow recovers each wire's own physical current
+ * direction and the ~14.9 mA loop current, and that an unknown wire carries
+ * nothing.
  */
 
 import { readdirSync, readFileSync } from 'node:fs'
@@ -21,7 +21,7 @@ import type {
   World,
 } from '../src/cross-fk-validator.ts'
 import { solveDC } from '../src/dc-solver.ts'
-import { edgeFlow, wireFlow } from '../src/renderer/edge-currents.ts'
+import { wireFlow } from '../src/renderer/edge-currents.ts'
 
 function loadWorld(dir: string): World {
   const definitions = new Map<string, Definition>()
@@ -42,48 +42,6 @@ function loadWorld(dir: string): World {
   }
   return { definitions, instances, behaviors, activeVariables, nets }
 }
-
-describe('edgeFlow — arrows driven by the real solver', () => {
-  const world = loadWorld('fixtures/valid')
-  const solution = solveDC(world)
-  const LOOP_AMPS = 0.0148944 // anchor loop current (9 V, 470 Ω, ~2 V LED, 1 Ω internal R)
-
-  test('the solver actually solved the anchor circuit', () => {
-    expect(solution.status).toBe('solved')
-  })
-
-  test('current leaves the battery at its + terminal (battery → wire_001)', () => {
-    const f = edgeFlow(world, solution, 'net_battery_pos', 'battery_9v_001', 'wire_001')
-    expect(f.carries).toBe(true)
-    expect(f.sourceToTarget).toBe(true)
-    expect(f.amps).toBeCloseTo(LOOP_AMPS, 6)
-  })
-
-  test('direction is orientation-aware: the same wire read backwards reverses', () => {
-    const f = edgeFlow(world, solution, 'net_battery_pos', 'wire_001', 'battery_9v_001')
-    expect(f.carries).toBe(true)
-    expect(f.sourceToTarget).toBe(false) // current still flows battery → wire_001
-    expect(f.amps).toBeCloseTo(LOOP_AMPS, 6)
-  })
-
-  test('current flows through the limiting resistor into the LED (resistor → led)', () => {
-    const f = edgeFlow(world, solution, 'net_resistor_led', 'resistor_001', 'led_001')
-    expect(f.sourceToTarget).toBe(true)
-    expect(f.amps).toBeCloseTo(LOOP_AMPS, 6)
-  })
-
-  test('return current closes the loop back to the battery (wire_002 → battery)', () => {
-    const f = edgeFlow(world, solution, 'net_battery_neg', 'wire_002', 'battery_9v_001')
-    expect(f.sourceToTarget).toBe(true)
-    expect(f.amps).toBeCloseTo(LOOP_AMPS, 6)
-  })
-
-  test('the ground tap carries no series current (no arrow)', () => {
-    const f = edgeFlow(world, solution, 'net_battery_neg', 'wire_002', 'ground_001')
-    expect(f.carries).toBe(false)
-    expect(f.amps).toBe(0)
-  })
-})
 
 describe('wireFlow — a collapsed wire-edge reads its own branch current', () => {
   const world = loadWorld('fixtures/valid')
