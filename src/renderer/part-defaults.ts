@@ -113,8 +113,8 @@ const DEFAULTS: Record<string, Parameters> = {
     // 1N4733A — a 5.1 V, 1 W silicon zener. Reverse breakdown REGULATES at V_Z
     // (5.1 V); forward it drops like a silicon diode — V_F 1.2 V max at I_F =
     // 200 mA per the 1N4733A datasheet (onsemi/Fairchild). Knee ~1 mA; max zener
-    // current ~178 mA (the 1 W limit, P_max / V_Z). V_Z is selectable across the
-    // E24 series (2.4–200 V) per the device fixture.
+    // current ~178 mA (datasheet I_ZM — the 1 W rating derates it below the naive P_max/V_Z ≈ 196 mA).
+    // V_Z is selectable across the E24 series (2.4–200 V) per the device fixture.
     zener_voltage: scalar(5.1, 'volt'),
     max_zener_current: scalar(0.178, 'ampere'),
     knee_current: scalar(0.001, 'ampere'),
@@ -636,7 +636,8 @@ const PROVENANCE: Record<string, Record<string, string>> = {
   transistor_bjt_npn: {
     saturation_current: 'small-signal NPN transport I_S ~1e-14 A (2N3904 SPICE IS ~6.7 fA)',
     forward_current_gain: '2N3904 hFE ≥ 100 at I_C = 10 mA (onsemi datasheet)',
-    reverse_current_gain: 'reverse β small for an NPN; 2N3904 SPICE BR ~0.74, rounded to 2',
+    reverse_current_gain:
+      'reverse β small for an NPN — a class-typical small reverse gain (~1–5); the 2N3904 SPICE BR itself is ~0.74',
     forward_early_voltage: '2N3904 SPICE model VAF 74.03 V (onsemi/Fairchild), rounded to 74',
     max_collector_current: '2N3904 I_C(max) 200 mA (onsemi datasheet)',
     collector_emitter_breakdown_voltage: '2N3904 V_CEO 40 V (onsemi datasheet)',
@@ -702,7 +703,7 @@ const PROVENANCE: Record<string, Record<string, string>> = {
   transistor_bjt_pnp: {
     saturation_current: 'small-signal PNP transport I_S ~1e-14 A (2N3906 class)',
     forward_current_gain: '2N3906 hFE ≥ 100 at I_C = 10 mA (onsemi datasheet)',
-    reverse_current_gain: 'reverse β small for a PNP; 2N3906 class, rounded to 2',
+    reverse_current_gain: 'reverse β small for a PNP — a class-typical small reverse gain (~1–5)',
     forward_early_voltage: '2N3906 SPICE model VAF 18.7 V (onsemi/Fairchild), rounded to 19',
     max_collector_current: '2N3906 I_C(max) 200 mA (onsemi datasheet)',
     collector_emitter_breakdown_voltage: '2N3906 V_CEO 40 V (onsemi datasheet)',

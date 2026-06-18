@@ -786,7 +786,9 @@ function emptyResult(
 export const PHOTON_EV_NM = 1239.841984
 /** 0 °C in kelvin. */
 export const KELVIN_OFFSET = 273.15
-/** Bandgap of silicon (eV) — the I_S(T) law's default for silicon junctions. */
+/** Bandgap of silicon (eV) for the I_S(T) law — the 1.11 eV SPICE EG default (ngspice's silicon
+ *  junction model), a different convention from the 1.12 eV physical 300 K value in
+ *  material-silicon.yaml; both are correct in their place. */
 export const SILICON_BANDGAP_EV = 1.11
 
 /**
