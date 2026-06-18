@@ -53,6 +53,23 @@ describe('serialize → deserialize round-trip', () => {
     if (without.ok) expect(without.file.projectAmbientC).toBeUndefined()
   })
 
+  test('a malformed projectAmbientC is dropped, not passed through as a fake number', () => {
+    // The loader and the type both expect a number; a string / null / wrong type must not
+    // ride through typed as one. The circuit still loads — the ambient just falls to default.
+    for (const value of ['hot', null, true, [25]]) {
+      const file = { ...serializeCircuit(nodes, edges), projectAmbientC: value }
+      const r = deserializeCircuit(JSON.stringify(file))
+      expect(r.ok).toBe(true)
+      if (r.ok) expect(r.file.projectAmbientC).toBeUndefined()
+    }
+    // A valid finite number still rides through untouched.
+    const good = deserializeCircuit(
+      JSON.stringify({ ...serializeCircuit(nodes, edges), projectAmbientC: 40 }),
+    )
+    expect(good.ok).toBe(true)
+    if (good.ok) expect(good.file.projectAmbientC).toBe(40)
+  })
+
   test('keeps everything the user built; drops solved data', () => {
     const file = serializeCircuit(nodes, edges)
     const text = JSON.stringify(file, null, 2)

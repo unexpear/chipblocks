@@ -185,7 +185,12 @@ export function deserializeCircuit(text: string): DeserializeResult {
       return { ok: false, reason: 'A wire in the file is missing its id or endpoints.' }
     }
   }
-  return { ok: true, file: raw as CircuitFile }
+  // projectAmbientC drives the solve temperature; if present it must be a finite number.
+  // A malformed one is DROPPED — not a reason to reject the whole circuit — so the returned
+  // type is honest (a number or absent) and the loader falls back to the 25 °C default.
+  const { projectAmbientC, ...rest } = file
+  const ambientOk = typeof projectAmbientC === 'number' && Number.isFinite(projectAmbientC)
+  return { ok: true, file: (ambientOk ? file : rest) as CircuitFile }
 }
 
 /**
@@ -196,8 +201,10 @@ export function deserializeCircuit(text: string): DeserializeResult {
 export function maxIdSuffix(nodes: { id: string }[]): number {
   let max = 0
   for (const n of nodes) {
-    const match = /_(\d+)$/.exec(n.id)
-    if (match?.[1]) max = Math.max(max, Number.parseInt(match[1], 10))
+    // The trailing _<n> suffix, if any. Test `!== undefined`, not truthiness, so an _0
+    // suffix counts — `"0"` is falsy, which the old truthiness check silently skipped.
+    const digits = /_(\d+)$/.exec(n.id)?.[1]
+    if (digits !== undefined) max = Math.max(max, Number.parseInt(digits, 10))
   }
   return max
 }
