@@ -33,6 +33,9 @@ export type LensState = {
   temp: Map<string, number>
   /** The hottest part (°C) — the temp lens's red end. */
   tMaxC: number
+  /** The board ambient (°C) the temp lens measures rise FROM — the baseline below
+   *  which a part shows no warmth (so a cool board in a warm room isn't lit up). */
+  ambientC: number
   /** Field lens contour level (tesla) — the outermost band edge. 0 = no current. */
   fieldTesla: number
 }
@@ -46,6 +49,7 @@ export const LensContext = createContext<LensState>({
   pMax: 0,
   temp: new Map(),
   tMaxC: 0,
+  ambientC: 25,
   fieldTesla: 0,
 })
 
@@ -94,20 +98,6 @@ export function powerColor(watts: number, pMax: number): string | null {
 }
 
 /**
- * Heat color for a part at `tempC` against the circuit's hottest part, both
- * measured above the 25 °C standard ambient — the thermal-hotspot ramp (stage 7
- * lumped model). Null = no halo (at/below ambient, or nothing in the circuit
- * runs warm).
- */
-export function temperatureColor(tempC: number, hottestC: number): string | null {
-  const AMBIENT_C = 25
-  const rise = tempC - AMBIENT_C
-  const hottestRise = hottestC - AMBIENT_C
-  if (!(rise > 0) || !(hottestRise > 0)) return null
-  return powerColor(rise, hottestRise)
-}
-
-/**
  * The derating margin where "warning" begins — a part/wire is colored once its
  * real temperature passes this fraction of the way from ambient to its real
  * rated maximum. Real reliability practice keeps parts below ~70–80 % of their
@@ -144,10 +134,9 @@ export function thermalHotspotColor(severity: number): string | null {
  * power halo's, so it reads as a tint, never a warning. Null at/below ambient, or when
  * nothing in the circuit runs warm.
  */
-export function thermalWarmthTint(tempC: number, hottestC: number): string | null {
-  const AMBIENT_C = 25
-  const rise = tempC - AMBIENT_C
-  const hottestRise = hottestC - AMBIENT_C
+export function thermalWarmthTint(tempC: number, hottestC: number, ambientC = 25): string | null {
+  const rise = tempC - ambientC
+  const hottestRise = hottestC - ambientC
   if (!(rise > 0) || !(hottestRise > 0)) return null
   const t = Math.min(1, rise / hottestRise)
   const g = Math.round(lerp(186, 120, t))

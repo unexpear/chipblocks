@@ -1092,7 +1092,10 @@ function Canvas() {
     }
     // Field lens contour level, auto-ranged from the circuit's biggest current.
     const fieldTesla = fieldReferenceTesla(maxAbsAmps)
-    return { lens, flow, vMin, vMax, power, pMax, temp, tMaxC, fieldTesla }
+    // The temp lens measures warmth-rise FROM the board ambient, so a cool board in a
+    // warm room reads calm (rise above the room, not above a fixed 25 °C).
+    const ambientC = projectAmbientRef.current
+    return { lens, flow, vMin, vMax, power, pMax, temp, tMaxC, ambientC, fieldTesla }
   }, [edges, readings, lens, flow])
   const runScope = useCallback(() => {
     const { sources, positions } = lightCastInputs(nodes)

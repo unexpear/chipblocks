@@ -204,7 +204,7 @@ export function NetEdge({
         // temp lens fills in the faint warmth tint (section temp vs the board's hottest).
         const color =
           thermalHotspotColor(thermalSeverity(sectionC, WIRE_INSULATION_MAX_C)) ??
-          (tempLens ? thermalWarmthTint(sectionC, lensState.tMaxC) : null)
+          (tempLens ? thermalWarmthTint(sectionC, lensState.tMaxC, lensState.ambientC) : null)
         if (color)
           hotSegments.push({ key: `${a.x},${a.y}`, x1: a.x, y1: a.y, x2: b.x, y2: b.y, color })
       }

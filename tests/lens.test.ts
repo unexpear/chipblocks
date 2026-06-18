@@ -118,4 +118,15 @@ describe('thermalWarmthTint (the temp lens heat-spread fill)', () => {
     // a tint, never an alarm: caps below the power halo's 0.25 floor
     expect(alphaOf(hottest)).toBeLessThanOrEqual(0.24)
   })
+
+  test('the rise is measured from the supplied board ambient, not a fixed 25 °C', () => {
+    // A 70 °C board with NO self-heating: every part sits at the ambient, so nothing
+    // is a hotspot — the lens stays calm instead of lighting the whole board up.
+    expect(thermalWarmthTint(70, 70, 70)).toBeNull()
+    expect(thermalWarmthTint(70, 90, 70)).toBeNull() // a cool part at board temp: no tint
+    // A part self-heating above the 70 °C board IS tinted (rise above the room).
+    expect(thermalWarmthTint(90, 90, 70)).not.toBeNull()
+    // Default ambient stays 25 °C (unchanged callers): 70 °C reads as a real rise.
+    expect(thermalWarmthTint(70, 90)).not.toBeNull()
+  })
 })

@@ -1407,7 +1407,7 @@ export function DeviceNode({ id, data }: NodeProps) {
       : lensState.lens === 'temp' && tempC !== undefined
         ? ((maxRatingC !== undefined
             ? thermalHotspotColor(thermalSeverity(tempC, maxRatingC))
-            : null) ?? thermalWarmthTint(tempC, lensState.tMaxC))
+            : null) ?? thermalWarmthTint(tempC, lensState.tMaxC, lensState.ambientC))
         : null
   const terminals = terminalsOf(definition, parameters)
   const updateNodeInternals = useUpdateNodeInternals()
