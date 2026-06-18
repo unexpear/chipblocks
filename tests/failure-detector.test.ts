@@ -700,6 +700,28 @@ describe('part over-temperature (stage 7 lumped thermal model)', () => {
     expect(checkOvertemperature(part(340, 155), solvedWith(0.0149, 7, 0))).toBeNull()
   })
 
+  test('a hot board ambient lifts the checked temperature — own ambient_temperature still wins', () => {
+    // The same +35.5 °C-rise part that is safe at 25 °C…
+    expect(checkOvertemperature(part(340, 155), solvedWith(0.0149, 7, 0))).toBeNull()
+    // …crosses 155 °C inside a 130 °C enclosure: 130 + 35.46 = 165.5 °C, and it fires
+    // at the board ambient, not the 25 °C baseline (the gap this closes).
+    const hot = checkOvertemperature(part(340, 155), solvedWith(0.0149, 7, 0), 130)
+    expect(hot?.code).toBe('part-overtemperature')
+    expect(hot?.measured).toBeCloseTo(165.46, 1)
+    // A part's own ambient_temperature overrides the board ambient (precedence:
+    // own ?? project ?? 25). Pinned at 25 °C, the 130 °C board doesn't reach it.
+    const base = part(340, 155)
+    const withOwn = {
+      ...base,
+      parameters: {
+        ...base.parameters,
+        ambient_temperature: { value: { kind: 'scalar', amount: 25, unit: 'celsius' } },
+      },
+      // biome-ignore lint/suspicious/noExplicitAny: minimal test fixture
+    } as any
+    expect(checkOvertemperature(withOwn, solvedWith(0.0149, 7, 0), 130)).toBeNull()
+  })
+
   test('missing thermal ratings skip honestly (unknown, not infinite)', () => {
     expect(checkOvertemperature(part(undefined, 155), solvedWith(1, 5, 0))).toBeNull()
     expect(checkOvertemperature(part(340, undefined), solvedWith(1, 5, 0))).toBeNull()

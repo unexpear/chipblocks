@@ -84,8 +84,17 @@ const BJT_DEFINITIONS = new Set(['transistor_bjt_npn', 'transistor_bjt_pnp'])
  *
  * Only meaningful on a Solution with status 'solved'; for any other status
  * there are no reliable values to check, so an empty list is returned.
+ *
+ * projectAmbientC is the board-wide ambient the circuit was solved at; the
+ * over-temperature check needs it so its temperature matches the solve (a part
+ * in a hot enclosure runs hotter, and is likelier to fail, than the same part
+ * at 25 °C). A part's own ambient_temperature still overrides it.
  */
-export function detectFailures(world: World, solution: Solution): Failure[] {
+export function detectFailures(
+  world: World,
+  solution: Solution,
+  projectAmbientC?: number,
+): Failure[] {
   if (solution.status !== 'solved') return []
 
   const failures: Failure[] = []
@@ -128,7 +137,7 @@ export function detectFailures(world: World, solution: Solution): Failure[] {
     }
     // Thermal is generic: any part declaring a thermal resistance + max
     // operating temperature gets the lumped T = T_amb + P·θ_JA check (§ stage 7).
-    const overtemp = checkOvertemperature(inst, solution)
+    const overtemp = checkOvertemperature(inst, solution, projectAmbientC)
     if (overtemp !== null) failures.push(overtemp)
   }
 
@@ -509,12 +518,21 @@ export function checkCapacitorOvervoltage(inst: Instance, solution: Solution): F
  * Over-temperature check (stage 7, lumped thermal model). For any part that
  * declares BOTH thermal_resistance_junction_ambient (θ_JA) and
  * max_operating_temperature, compute the steady-state part temperature
- * T = 25 °C ambient + P·θ_JA from its real dissipated power (|I|·|V| across
- * its terminal pair — collector–emitter / drain–source for a transistor) and
+ * T = ambient + P·θ_JA from its real dissipated power (|I|·|V| across its
+ * terminal pair — collector–emitter / drain–source for a transistor) and
  * fire when it exceeds the declared maximum. Parts without the thermal
  * ratings skip honestly — the rating is "unknown," not "infinite."
+ *
+ * Ambient precedence mirrors the electro-thermal solve (electro-thermal.ts
+ * ambientOf), so the temperature checked here is the SAME one the solve, the
+ * readings, and the thermocouple landed on: a part's own ambient_temperature,
+ * else the board-wide projectAmbientC, else the 25 °C baseline.
  */
-export function checkOvertemperature(inst: Instance, solution: Solution): Failure | null {
+export function checkOvertemperature(
+  inst: Instance,
+  solution: Solution,
+  projectAmbientC?: number,
+): Failure | null {
   const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
   const maxTemperature = readScalarParam(inst, 'max_operating_temperature')
   if (thetaJa === undefined || thetaJa <= 0) return null
@@ -527,8 +545,9 @@ export function checkOvertemperature(inst: Instance, solution: Solution): Failur
 
   const watts = Math.abs(branch) * volts
   // A part can declare its own local ambient (a thermistor placed in a hot spot);
-  // default to the 25 °C baseline so every existing part is unchanged.
-  const ambient = readScalarParam(inst, 'ambient_temperature') ?? STANDARD_AMBIENT_C
+  // otherwise it sits in the board-wide ambient; with neither, the 25 °C baseline.
+  const ambient =
+    readScalarParam(inst, 'ambient_temperature') ?? projectAmbientC ?? STANDARD_AMBIENT_C
   const temperature = junctionTemperature(watts, thetaJa, ambient)
   if (temperature <= maxTemperature) return null
 

@@ -69,12 +69,20 @@ const LED_DEFINITIONS = new Set(['led', 'led_uv_algan', 'diode_laser'])
 /** 0.1 mA — above this an LED is visibly conducting (so: glowing). */
 const LIT_FLOOR_AMPS = 1e-4
 
-/** Map each instance id to its health, from a solved world. Empty if unsolved. */
-export function canvasHealth(world: World, solution: Solution): Map<string, NodeHealth> {
+/** Map each instance id to its health, from a solved world. Empty if unsolved.
+ *  projectAmbientC (the board ambient the world was solved at) flows into the
+ *  over-temperature check so its temperature matches the rest of the app. */
+export function canvasHealth(
+  world: World,
+  solution: Solution,
+  projectAmbientC?: number,
+): Map<string, NodeHealth> {
   const health = new Map<string, NodeHealth>()
   if (solution.status !== 'solved') return health
 
-  const failures = new Map(detectFailures(world, solution).map((f) => [f.source, f]))
+  const failures = new Map(
+    detectFailures(world, solution, projectAmbientC).map((f) => [f.source, f]),
+  )
   for (const inst of world.instances.values()) {
     const failure = failures.get(inst.id)
     if (failure) {
