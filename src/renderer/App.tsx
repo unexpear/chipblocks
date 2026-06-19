@@ -128,6 +128,7 @@ import {
 } from './part-defaults.ts'
 import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { type PartReading, partReadings } from './part-readings.ts'
+import { ProjectBrowser, type ProjectChoice } from './project-browser.tsx'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
 import {
   channelsForProbes,
@@ -164,7 +165,6 @@ import {
   roundedPathLength,
   samplePathPoints,
 } from './wire-path.ts'
-import { worldToFlow } from './world-to-flow.ts'
 import {
   type DeratingResult,
   deratingDashboard,
@@ -597,43 +597,62 @@ function canvasWorld(
  * page splits into App (provider) + Canvas (content).
  */
 export function App() {
+  // The startup screen gates the editor: pick a purpose + template (Unreal-style), then
+  // open the canvas seeded for that goal. Null = still on the browser.
+  const [project, setProject] = useState<ProjectChoice | null>(null)
+  if (project === null) {
+    return <ProjectBrowser onCreate={setProject} />
+  }
   return (
     <ReactFlowProvider>
-      <Canvas />
+      <Canvas project={project} />
     </ReactFlowProvider>
   )
 }
 
-function Canvas() {
+/** The parts a template drops onto a fresh canvas (placed, not yet wired). A template
+ *  not listed here opens a blank canvas — the relevant parts are in the palette. */
+const TEMPLATE_PARTS: Record<string, { def: string; x: number; y: number }[]> = {
+  'dc-motor': [
+    { def: 'power_source', x: 80, y: 180 },
+    { def: 'dc_motor', x: 380, y: 180 },
+    { def: 'ground', x: 80, y: 380 },
+  ],
+  electromagnet: [
+    { def: 'power_source', x: 80, y: 180 },
+    { def: 'electromagnet', x: 380, y: 180 },
+    { def: 'ground', x: 80, y: 380 },
+  ],
+  transformer: [{ def: 'transformer', x: 260, y: 220 }],
+  relay: [{ def: 'relay', x: 260, y: 220 }],
+  psu: [
+    { def: 'power_source', x: 80, y: 220 },
+    { def: 'transformer', x: 340, y: 220 },
+  ],
+  amp: [{ def: 'op_amp', x: 260, y: 220 }],
+  register: [{ def: 'logic_register_4bit', x: 240, y: 220 }],
+}
+
+function templateNodes(template: string): Node[] {
+  const parts = TEMPLATE_PARTS[template] ?? []
+  return parts.map((p, i) => ({
+    id: `${p.def}_${i + 1}`,
+    type: 'device',
+    position: { x: p.x, y: p.y },
+    data: { definition: p.def, label: `${p.def}_${i + 1}`, parameters: defaultParameters(p.def) },
+  }))
+}
+
+function Canvas({ project }: { project: ProjectChoice }) {
   const initial = useMemo(() => {
+    // The catalog world supplies the part + material DEFINITIONS (for the material
+    // dropdowns); the canvas itself starts from the chosen template's parts, not the
+    // catalog demo layout.
     const world = loadCatalogWorld()
-    const flow = worldToFlow(world)
-    const nodes: Node[] = flow.nodes.map((n) => ({
-      id: n.id,
-      type: 'device',
-      position: n.position,
-      data: {
-        definition: n.data.definition,
-        label: n.id,
-        parameters: n.data.parameters,
-        ...(n.data.rotation ? { rotation: n.data.rotation } : {}),
-      },
-    }))
-    // Wires start as bare connections (just the terminals they join); the canvas
-    // re-solve fills in current + length + resistance — the same path a later
-    // drop/edit takes. A wire is a connection, not a deletable block. The
-    // series-loop layout's hand-quality routing arrives as waypoints.
-    const baseEdges: Edge[] = flow.edges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      target: e.target,
-      sourceHandle: e.sourceHandle,
-      targetHandle: e.targetHandle,
-      type: 'net',
-      deletable: false,
-      label: e.showLabel ? e.label : undefined,
-      ...(e.waypoints ? { data: { waypoints: e.waypoints } } : {}),
-    }))
+    const nodes: Node[] = templateNodes(project.template)
+    // A fresh project starts unwired — the user draws the connections (or a richer
+    // wired starter lands later). The re-solve fills current/length/resistance.
+    const baseEdges: Edge[] = []
     // Catalog material ids for the Properties panel's material dropdown.
     const materials = [...world.definitions.values()]
       .filter((d) => (d as { kind?: string }).kind === 'material')
@@ -673,7 +692,7 @@ function Canvas() {
       materialResistivity,
       validMaterialsByDef,
     }
-  }, [])
+  }, [project.template])
 
   // Live React Flow state — nodes are draggable (S19-v3-3); setNodes/setEdges
   // also let the palette drop new parts and the user draw new wires.
@@ -704,7 +723,7 @@ function Canvas() {
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
   const { screenToFlowPosition, fitView, deleteElements } = useReactFlow()
-  const dropCount = useRef(0)
+  const dropCount = useRef(initial.nodes.length)
 
   // Frame the whole circuit on startup — but only AFTER the nodes have measured. React
   // Flow's `fitView` prop fires on mount before measurement, which lands the view zoomed
