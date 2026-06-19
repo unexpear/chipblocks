@@ -48,6 +48,7 @@ export function ToolbarItems({
   onProjectAmbient,
   onSolve,
   onScope,
+  onBode,
   onMath,
   onWorstCase,
   onGroup,
@@ -73,6 +74,7 @@ export function ToolbarItems({
   onProjectAmbient: (c: number) => void
   onSolve: () => void
   onScope: () => void
+  onBode: () => void
   onMath: () => void
   onWorstCase: () => void
   onGroup: () => void
@@ -312,6 +314,18 @@ export function ToolbarItems({
           ∿
         </span>
         <span style={{ fontSize: 11 }}>Scope</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={onBode}
+        title="Bode — the frequency response: pick an input source and an output node and see gain (dB) and phase vs frequency. Reads off the RC/filter corner, an amplifier's roll-off and phase margin, or a transmission line's quarter-wave resonances."
+        style={{ ...toolButton(false), flexDirection: 'row', gap: 6, padding: '8px 12px' }}
+      >
+        <span aria-hidden style={{ color: '#6ec0ff', fontSize: 13 }}>
+          ⌁
+        </span>
+        <span style={{ fontSize: 11 }}>Bode</span>
       </button>
 
       <button

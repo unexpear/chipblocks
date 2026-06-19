@@ -53,6 +53,7 @@ import {
   groupSelection,
   ungroupBlock,
 } from './blocks.ts'
+import { BodePanel } from './bode-panel.tsx'
 import { BUILTIN_BLOCKS } from './builtin-blocks.ts'
 import { CanvasScrollbars } from './canvas-scrollbars.tsx'
 import {
@@ -865,6 +866,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
     tools: { edge: 'top', group: 1 },
     properties: { edge: 'right', group: 2 },
     scope: { edge: 'bottom', group: 3 },
+    bode: { edge: 'bottom', group: 3 },
   })
   const [activeTab, setActiveTab] = useState<Record<number, string>>({})
   // Active tool: 'select' (move parts) or 'wire' (parts locked; drag draws wires).
@@ -977,6 +979,12 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // Math panel (S19-v3-63): the equations behind the current solution, derived
   // live from the same solved state the canvas shows.
   const [showMath, setShowMath] = useState(false)
+  const [bodeOpen, setBodeOpen] = useState(false)
+  const [bodeOutputNet, setBodeOutputNet] = useState('')
+  const [bodePicking, setBodePicking] = useState(false)
+  // The grounded world for the AC engine — same one the other solvers run on; memoized so
+  // the Bode sweep only re-runs when the circuit actually changes, not on every render.
+  const bodeWorld = useMemo(() => groundedComponent(solvedWorld), [solvedWorld])
   const mathView = useMemo(
     () =>
       showMath
@@ -1312,6 +1320,30 @@ function Canvas({ project }: { project: ProjectChoice }) {
       return false
     },
     [scopeOpen, tool],
+  )
+
+  // Bode output picking: while the Bode panel is in "pick" mode, a terminal click on the
+  // canvas sets the output node (resolved through the same grounded world the sweep uses),
+  // then leaves pick mode — the frequency-domain answer to the scope's probe clicks.
+  const onBodeProbeClick = useCallback(
+    (event: ReactMouseEvent): boolean => {
+      if (!bodeOpen || !bodePicking || tool !== 'select') return false
+      const handleEl = (event.target as Element).closest?.(
+        '.react-flow__handle',
+      ) as HTMLElement | null
+      const nodeId = handleEl?.dataset.nodeid
+      const handleId = handleEl?.dataset.handleid
+      if (nodeId === undefined || handleId === undefined) return false
+      const net = bodeWorld.instances
+        .get(nodeId)
+        ?.connects?.find((c) => c.terminal === handleId)?.net
+      if (net === undefined) return false
+      setBodeOutputNet(net)
+      setBodePicking(false)
+      event.stopPropagation()
+      return true
+    },
+    [bodeOpen, bodePicking, tool, bodeWorld],
   )
 
   // Each probeable PART's recorded-current key (S20-v3-3): which terminal's
@@ -2707,6 +2739,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
             }
             return
           }
+          if (onBodeProbeClick(event)) return
           if (onScopeProbeClick(event)) return
           onMeterClick(event)
           onWireClick(event)
@@ -3321,6 +3354,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                 onSolve={handleSolve}
                 onScope={runScope}
                 onMath={() => setShowMath((open) => !open)}
+                onBode={() => setBodeOpen((open) => !open)}
                 onWorstCase={runWorstCase}
                 onGroup={() => setGroupPrompt({ name: '', error: null })}
                 canGroup={selectedCount >= 2}
@@ -3426,8 +3460,27 @@ function Canvas({ project }: { project: ProjectChoice }) {
               </>
             ),
           },
+          bode: {
+            title: 'Bode',
+            visible: bodeOpen,
+            content: (
+              <BodePanel
+                world={bodeWorld}
+                temperaturesC={solvedTemperatures}
+                light={light}
+                onClose={() => {
+                  setBodeOpen(false)
+                  setBodePicking(false)
+                }}
+                outputNet={bodeOutputNet}
+                onOutputNet={setBodeOutputNet}
+                picking={bodePicking}
+                onPickToggle={() => setBodePicking((p) => !p)}
+              />
+            ),
+          },
         }
-        return panelGroups(panelLayout, ['parts', 'tools', 'properties', 'scope'], (id) =>
+        return panelGroups(panelLayout, ['parts', 'tools', 'properties', 'scope', 'bode'], (id) =>
           Boolean(registry[id]?.visible),
         ).map((g) => {
           const stored = activeTab[g.group]
