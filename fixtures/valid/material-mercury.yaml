@@ -1,0 +1,131 @@
+# Valid fixture: material definition for mercury (Hg, quicksilver).
+# The ONLY metal that is liquid at room temperature (melting point -38.83 C) — a dense,
+# silvery, mobile liquid conductor. That liquid-metal character is its whole electrical
+# value: it makes a self-healing, bounce-free, gravity-positioned contact. Historic and
+# legacy uses: the mercury TILT switch (a blob bridges two contacts when tipped), the
+# mercury-WETTED relay (bounce-free, low-resistance switching), the mercury-VAPOR and
+# fluorescent lamp (an arc through mercury vapor radiates UV that a phosphor converts to
+# visible light), thermometers/barometers, and the old mercury-cell battery. Mercury was
+# also the historic resistance standard — the 1908 "international ohm" was defined as the
+# resistance of a specified mercury column at 0 C.
+#
+# A modest conductor: ~57x the resistivity of copper, so a poor wire but a perfectly good
+# liquid contact. TOXICITY: mercury and its vapor are potent neurotoxins, and mercury is
+# RoHS-restricted — most consumer mercury devices (tilt switches, thermometers, vapor
+# lamps) have been phased out for safety/environmental reasons. Carried here as a real
+# Layer-0 material; see notes before assuming any device use is current-practice.
+#
+# MUST validate against definition.schema.json.
+kind: material
+id: mercury
+origin: builtin
+layer: material
+name: Mercury (Hg)
+description: The only metallic element liquid at room temperature (melting point -38.83 C, boiling 356.73 C) — a dense silvery liquid conductor. A modest conductor (~57x copper's resistivity) whose value is its LIQUID form — a self-healing, bounce-free, gravity-positioned electrical contact. Used historically in tilt switches, mercury-wetted relays, mercury-vapor and fluorescent lamps, thermometers, and mercury-cell batteries, and as the basis of the old "international ohm" resistance standard. Mercury and its vapor are toxic and RoHS-restricted; most consumer uses are phased out.
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+  - thermal_conduction
+properties:
+  resistivity:
+    value:
+      kind: condition_bound
+      amount: 9.61e-7
+      unit: ohm_meter
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Mercury electrical resistivity at 20 C
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed. (~96 nOhm-m at 20 C). Mercury was the historic resistance standard: the 1908 international ohm fixed a mercury column at ~94.1 nOhm-m at 0 C; literature values span ~9.4-9.8e-7 ohm-m over 0-25 C."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 13534
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Mercury density at 20 C
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed. (13.534 g/cm3 at 20 C) — one of the densest common liquids."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  melting_point:
+    value:
+      kind: scalar
+      amount: -38.83
+      unit: degC
+    provenance:
+      source_type: reference
+      title: Mercury melting point (liquid at room temperature)
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed. (-38.83 C / 234.32 K); the only metal liquid at standard room temperature."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  boiling_point:
+    value:
+      kind: scalar
+      amount: 356.73
+      unit: degC
+    provenance:
+      source_type: reference
+      title: Mercury boiling point
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed. (356.73 C / 629.88 K); the low boiling point is why mercury vapor forms readily — the basis of mercury-vapor / fluorescent lamps, and the toxicity hazard."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 8.3
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Mercury thermal conductivity at 20 C
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed. (~8.3 W/m-K) — low for a metal, consistent with its high resistivity (Wiedemann-Franz)."
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Mercury's electrical use rests entirely on being a LIQUID metal: it forms a contact
+  that flows back together (self-healing), does not bounce (no contact chatter), and
+  positions itself by gravity (the tilt switch). Legacy/again-noted devices: the mercury
+  tilt switch (a blob bridges two sealed contacts when tipped past an angle); the
+  mercury-wetted reed relay (contacts film-coated with mercury for bounce-free, very
+  low-resistance, long-life switching); the mercury-vapor and fluorescent lamp (a
+  low-pressure arc through mercury vapor emits 254 nm UV that a phosphor coating
+  re-emits as visible light); thermometers and barometers (thermal expansion / weight of
+  a dense liquid); and the mercury (zinc-mercuric-oxide) cell, a very flat-discharge
+  battery once used in hearing aids and watches.
+  TOXICITY / ENVIRONMENTAL: mercury is a cumulative neurotoxin and its vapor is
+  especially hazardous; it is restricted under RoHS and the Minamata Convention, and most
+  consumer mercury devices have been phased out and replaced (solid-state tilt sensors,
+  LED/electronic lamps, digital thermometers, alkaline/silver cells). Treat any mercury
+  device here as historical context, not a recommendation. Sources: CRC Handbook 102nd
+  ed.; the international-ohm resistance standard (1908).
