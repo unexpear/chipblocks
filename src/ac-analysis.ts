@@ -12,6 +12,7 @@ import {
   type MosfetSmallSignal,
   mosfetSmallSignalModel,
 } from './small-signal.ts'
+import { propagationDelayS } from './transmission-line-model.ts'
 
 /**
  * Small-signal AC (frequency-domain) analysis. Where the DC solver finds the
@@ -32,12 +33,16 @@ import {
  * resistance. BJT, MOSFET/JFET/CRD, and diode small-signal (forward, zener breakdown,
  * tunnel negative-resistance, latched Shockley/SCR), linearized at the DC operating
  * point (the same companion Jacobian the DC solver uses), are included, as are 2-winding
- * transformers (coupled inductances, V = jωL·I + jωM·I). Verified against the textbook
- * RC/CR first-order responses.
+ * transformers (coupled inductances, V = jωL·I + jωM·I). Transmission lines are stamped as
+ * a lossless 2-port (Y = ∓j·Y0·cot/csc of the electrical length θ = ω·τ = 2π·length/λ) —
+ * the frequency-domain view where the WAVELENGTH appears explicitly, so a quarter-wave line
+ * flips its load (Z_in = Z0²/Z_L) and half-wave resonances stand out. Verified against the
+ * textbook RC/CR first-order responses and the quarter-wave impedance transformer.
  *
- * KNOWN LIMITATIONS — this engine is test-only today (NOT yet wired to the canvas UI). It now models
- * every element a circuit can contain: R/C/L, sources, all shorts, BJT / MOSFET / JFET / CRD / diode
- * small-signal (all regimes), and the 2-winding transformer — all at temperature. The one structure
+ * This engine drives the canvas's Bode panel (bode-panel.tsx — pick an input source + output node,
+ * see gain/phase vs frequency). It models every element a circuit can contain: R/C/L, sources, all
+ * shorts, BJT / MOSFET / JFET / CRD / diode small-signal (all regimes), the 2-winding transformer,
+ * and the (lossless) transmission line — all at temperature. KNOWN LIMITATION: the one structure
  * still not handled is the CENTER-TAPPED transformer's tapped winding.
  */
 
@@ -275,6 +280,22 @@ function solveAtOmega(
       accumulate(c, a, -re, -im)
     }
   }
+  // Couple two differential ports (port 1 = a−b, port 2 = c−d) with a mutual admittance —
+  // the off-diagonal block of a 2-port Y-matrix (symmetric, Y12 = Y21). Used by the
+  // transmission line: a current at one port driven by the voltage at the other.
+  const stampCoupling = (a: number, b: number, c: number, d: number, re: number, im: number) => {
+    const acc = (i: number, j: number, sign: number) => {
+      if (i >= 0 && j >= 0) accumulate(i, j, sign * re, sign * im)
+    }
+    acc(a, c, 1)
+    acc(a, d, -1)
+    acc(b, c, -1)
+    acc(b, d, 1)
+    acc(c, a, 1)
+    acc(c, b, -1)
+    acc(d, a, -1)
+    acc(d, b, 1)
+  }
 
   for (const inst of world.instances.values()) {
     const ports = (inst.connects ?? []).map((conn) => idx(conn.net))
@@ -299,6 +320,33 @@ function solveAtOmega(
       const cb = inst.connects?.find((conn) => conn.terminal === 'coil_b')?.net
       if (coilR && coilR > 0 && ca !== undefined && cb !== undefined) {
         stampY(idx(ca), idx(cb), 1 / coilR, 0)
+      }
+    } else if (inst.definition === 'transmission_line') {
+      // Lossless line, frequency domain. Its electrical length θ = ω·τ = 2π·(length/λ) is
+      // where the WAVELENGTH shows up explicitly. The 2-port admittance matrix is
+      //   Y11 = Y22 = −j·Y0·cot θ,   Y12 = Y21 = +j·Y0·csc θ   (Y0 = 1/Z0),
+      // purely reactive (lossless). At θ = π/2 — a quarter wavelength — it flips the load:
+      // Z_in = Z0²/Z_L (a shorted far end looks open, an open far end looks shorted). Near a
+      // half-wave (θ = nπ) the lossless line is a transparent but infinite-Q resonance, so
+      // sin θ → 0 makes the admittances blow up — clamp it off exact zero to avoid a NaN.
+      const z0 = readScalarParam(inst, 'characteristic_impedance')
+      const length = readScalarParam(inst, 'length')
+      const vf = readScalarParam(inst, 'velocity_factor')
+      const netOf = (t: string) => inst.connects?.find((conn) => conn.terminal === t)?.net
+      const na = netOf('near_a')
+      const nb = netOf('near_b')
+      const fa = netOf('far_a')
+      const fb = netOf('far_b')
+      if (z0 && z0 > 0 && length !== undefined && vf && vf > 0 && na && nb && fa && fb) {
+        const theta = omega * propagationDelayS(length, vf)
+        let sin = Math.sin(theta)
+        if (Math.abs(sin) < 1e-12) sin = sin < 0 ? -1e-12 : 1e-12
+        const y0 = 1 / z0
+        const yDiag = (-y0 * Math.cos(theta)) / sin // −Y0·cot θ
+        const yCouple = y0 / sin // +Y0·csc θ
+        stampY(idx(na), idx(nb), 0, yDiag)
+        stampY(idx(fa), idx(fb), 0, yDiag)
+        stampCoupling(idx(na), idx(nb), idx(fa), idx(fb), 0, yCouple)
       }
     }
   }
