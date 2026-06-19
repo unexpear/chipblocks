@@ -59,6 +59,11 @@ parameters:
     units: percent
     required: false
     description: Capacitance tolerance as a percent of nominal.
+  initial_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: "The voltage already across the capacitor at t = 0 — SPICE's .ic initial condition, used by the transient solver to start the cap pre-charged (e.g. a charged body in an electrostatic-discharge model). Absent reads 0 V (starts uncharged). Steady-state DC ignores it, since a capacitor is an open circuit at DC."
 properties:
   capacitance:
     value:

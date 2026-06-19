@@ -1,0 +1,64 @@
+# Valid fixture: behavior registry entry for the TRIBOELECTRIC EFFECT — static
+# electricity, the oldest recorded electrical phenomenon (Thales of Miletus, ~600
+# BCE, amber rubbed with fur attracting straw; the word "electricity" descends from
+# elektron, Greek for amber). This is the FIRST electrostatic behavior in the
+# registry: previous behaviors move or store charge in a circuit; this one SEPARATES
+# charge by contact, the origin of a static charge before any circuit exists.
+#
+# The physics: when two dissimilar materials touch and separate, electrons transfer
+# from one to the other. Which way (and how strongly) is set by the TRIBOELECTRIC
+# SERIES, a ranking of materials by their tendency to give up electrons (become
+# positive: skin, glass, wool, fur) or capture them (become negative: PTFE, silicon,
+# amber, rubber). The separated charge Q sits on the body's small self-capacitance C
+# (a hand-sized object is only a few pF to its surroundings), so V = Q/C reaches
+# THOUSANDS of volts from a tiny charge — high voltage, minute stored energy
+# (E = 1/2 C V^2 ~ a fraction of a millijoule). That is why a static shock is a sharp
+# zap that stings but cannot light a bulb, and why it is modeled as the Human Body
+# Model (a small charged capacitance discharging through a series resistance).
+#
+# This is a PHENOMENON — the physics and math of static electricity — NOT a placeable
+# part. Its standard quantitative model is the Human Body Model (a small body
+# capacitance pre-charged to kilovolts discharging through a series resistance): the
+# static shock that destroys MOSFET gate oxides, reproducible from real parts (a
+# pre-charged capacitor via initial_voltage + a series resistor) without being its own
+# component. MUST validate against behavior.schema.json.
+kind: behavior
+id: triboelectric_charging
+origin: builtin
+layer: behavior
+name: "Triboelectric charging (contact electrification / static electricity)"
+description: "Static electricity: when two dissimilar materials touch and separate, electrons transfer between them, leaving one positive and the other negative. The direction is set by the triboelectric series (a ranking of materials by electron affinity). The separated charge Q sits on the body's tiny self-capacitance C, so V = Q/C reaches kilovolts from a minute charge — high voltage but very little stored energy (1/2 C V^2). The oldest recorded electrical effect (Thales' rubbed amber), and the source of the electrostatic discharge (ESD) that damages sensitive semiconductors."
+parameters_required:
+  - name: charge
+    type: quantity
+    units: coulomb
+    description: The net charge Q transferred/separated onto the body by contact and separation. Small in absolute terms (nanocoulombs) but, on a small self-capacitance, enough for kilovolts.
+  - name: self_capacitance
+    type: quantity
+    units: farad
+    description: The charged body's capacitance to its surroundings (a hand-sized object is only a few to a few hundred pF). With Q it fixes the body voltage V = Q/C and the stored energy 1/2 C V^2.
+evaluates: "V = charge / self_capacitance (the body voltage from the separated charge). Stored energy = 1/2 * self_capacitance * V^2. The triboelectric series sets the sign and rough magnitude of charge transferred when two named materials contact and separate."
+consequences: []
+law: triboelectric_effect
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  The first electrostatic (charge-SEPARATION) behavior, distinct from the circuit
+  behaviors that move charge (conducts_current) or store it on demand (stores_charge):
+  triboelectric charging is how a static charge comes to exist in the first place,
+  before any wired circuit. A phenomenon, not a placeable part: its standard
+  quantitative model is the Human Body Model — a small body capacitance pre-charged to
+  kilovolts (its self_capacitance holding the separated charge) discharging through a
+  series resistance. That model is reproducible from real parts (a pre-charged
+  capacitor via the capacitor's initial_voltage, plus a series resistor), so the
+  static-shock discharge is an honest RC pulse rather than a scripted spike, without
+  static electricity needing its own catalog component. Honest scope: the triboelectric series
+  ordering and the resulting sign/magnitude of Q are reference knowledge, not yet a
+  computed material-pair model (a future rung once a charged-by-rubbing material
+  interaction lands). Sources: triboelectric series (standard references, e.g. AIP /
+  materials handbooks); the Human Body Model per JEDEC JS-001 / MIL-STD-883 Method 3015.
