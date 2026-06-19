@@ -1,0 +1,46 @@
+# Valid fixture: behavior registry entry for producing a magnetic field — the
+# defining behavior of an electromagnet. A current in a wire makes a magnetic field
+# (Oersted, 1820); winding the wire into N turns concentrates it, and an iron core
+# multiplies it. This is the behavior that turns a coil into a useful electromagnet:
+# a relay coil, a solenoid, a lifting magnet, a motor winding.
+# Used by the electromagnet primitive.
+# MUST validate against behavior.schema.json.
+kind: behavior
+id: produces_magnetic_field
+origin: builtin
+layer: behavior
+name: "Produces a magnetic field (electromagnet)"
+description: "A current-carrying coil produces a magnetic field (Ampere's law). The driving strength is the magnetomotive force MMF = N * I (ampere-turns) — N turns each carry the current I, so the field is N times what a single wire makes. Inside a long, cored coil the flux density is B = mu_0 * mu_r * N * I / l, where mu_r is the core's relative permeability (about 1 for air, hundreds to thousands for soft iron) and l is the magnetic path length. The field is proportional to the current, so it switches on and off with the current and reverses when the current does — which is what lets an electromagnet actuate a relay, lift iron, or drive a motor."
+parameters_required:
+  - name: turns
+    type: quantity
+    units: dimensionless
+    description: N, the number of turns in the coil. The field scales with N (the ampere-turns are N * I).
+  - name: relative_permeability
+    type: quantity
+    units: dimensionless
+    description: mu_r of the core — about 1 for an air core, hundreds to thousands for soft iron. Multiplies the low-field flux density; real iron then saturates, which the device's saturation_flux_density rolls the field off toward.
+  - name: magnetic_path_length
+    type: quantity
+    units: metre
+    description: l, the length of the magnetic path around the core. A shorter path concentrates the field (B is inversely proportional to l).
+evaluates: "MMF = N * I; B = B_sat * tanh((mu_0 * mu_r * N * I / l) / B_sat); F_pull = B^2 * A / (2 * mu_0)"
+consequences: []
+law: amperes_law
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Surfaced as live readings (part-readings.ts) and a Math-panel card from the solved
+  coil current (electromagnet-model.ts): MMF = N * I (ampere-turns); the flux density
+  B = B_sat * tanh(B_linear / B_sat) with B_linear = mu_0 * mu_r * N * I / l (tesla,
+  rolling off into iron saturation); and the holding pull F = B^2 * A / (2 * mu_0)
+  (newtons, the Maxwell stress on an armature). The field lens draws B as a halo on the
+  coil body. Honest scope: tanh is a smooth stand-in for a real B-H curve (sharper knee
+  + hysteresis, not modeled); the pull is the zero-gap holding force (an air gap lowers
+  it); it assumes a long, uniformly wound coil. A magnetic-material core role carrying a
+  measured B-H curve is the further rung, noted rather than faked.

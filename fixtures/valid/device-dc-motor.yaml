@@ -1,0 +1,113 @@
+# Valid fixture: brushed DC motor — the workhorse that turns electricity into rotation
+# (the descendant of Faraday's 1821 rotation and the practical commutator motors of the
+# 1830s-70s). It is an ELECTROMECHANICAL device: electrically a winding (armature
+# resistance R_a, inductance L_a) carrying a speed-dependent back-EMF E = k*omega;
+# mechanically a rotor that the torque T = k*I spins up against friction and load.
+#
+# Why a motor draws a huge gulp of current at switch-on and then settles: at rest the
+# back-EMF is zero, so the only thing limiting current is the small winding resistance
+# (the stall current V/R_a). As it speeds up the back-EMF climbs and bucks the supply, so
+# the current falls — until at the no-load speed it draws just enough to overcome
+# friction. Load the shaft and it slows, the back-EMF drops, and it pulls more current to
+# make the extra torque. One constant k ties it all together: torque per amp (N*m/A) =
+# back-EMF per rad/s (V*s/rad), equal by energy conservation.
+#
+# Solved by both engines (motor-model.ts): at DC steady state the coupled equations
+# collapse to a single linear resistor R_eff = R_a + k^2/B (the effective resistance the
+# back-EMF presents), from which the speed, torque, back-EMF, shaft power and efficiency
+# are read; the transient solver carries the real spin-up (the armature is L_a + R_a + the
+# back-EMF source, and the rotor speed is integrated each step, so the inrush current
+# tapers as the motor comes up to speed).
+#
+# Honest scope: viscous friction only (no Coulomb/stiction); the linear DC model assumes
+# the load stays at or below the stall torque k*V/R_a (a heavier load would drive the
+# steady-state speed non-physically negative); brush voltage drop, armature reaction,
+# cogging and magnetic saturation are not modeled. The winding is a real material; the
+# magnets/commutator/bearings are lumped into the constants (k, B, J), not composed.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: dc_motor
+origin: builtin
+layer: primitive_device
+name: "DC motor (brushed)"
+description: "A brushed DC motor: a two-terminal electromechanical device that turns current into rotation. Its armature current makes a torque T = k*I; as it spins it generates a back-EMF E = k*omega that opposes the supply, so the faster it turns the less current it draws. At DC steady state it presents an effective resistance R_eff = R_a + k^2/B (far above the bare winding R_a), and reports its speed, torque, back-EMF, shaft power and efficiency; in the time domain the rotor spins up against its inertia, so the current rushes in at switch-on and tapers as the back-EMF rises. Reverse the terminal voltage to reverse the rotation."
+composition:
+  requires:
+    winding:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  winding:
+    type: material_ref
+    satisfies_role: winding
+    required: true
+    default:
+      value: copper
+    description: The conductor the armature is wound from. Must conduct; copper is the standard.
+  armature_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: R_a, the armature (winding) resistance. Sets the stall current V/R_a and the I^2*R_a copper loss.
+  motor_constant:
+    type: quantity
+    units: volt*second/radian
+    required: true
+    description: k — the motor constant. Torque per amp (N*m/A) AND back-EMF per rad/s (V*s/rad), equal in SI. Sets speed-per-volt and torque-per-amp.
+  viscous_friction:
+    type: quantity
+    units: newton*meter*second/radian
+    required: true
+    description: B, the viscous damping (bearing friction + windage). Sets the no-load speed and current; must be > 0 for a defined no-load operating point.
+  armature_inductance:
+    type: quantity
+    units: henry
+    required: true
+    description: L_a, the armature inductance. Sets the electrical time constant L_a/R_a (the current cannot jump at switch-on); used by the transient spin-up.
+  rotor_inertia:
+    type: quantity
+    units: kilogram*meter^2
+    required: true
+    description: J, the rotor's moment of inertia. Sets the mechanical spin-up time and so how long the inrush current lasts; used by the transient.
+  load_torque:
+    type: quantity
+    units: newton*meter
+    required: false
+    description: An external shaft load torque opposing rotation; 0 = free-running. Keep at or below the stall torque k*V/R_a (the linear DC model would otherwise show a non-physical negative speed).
+behaviors:
+  - electromechanical_coupling
+  - conducts_current
+  - has_inductance
+  - produces_joule_heat
+terminals:
+  terminal_positive:
+    description: The + lead. Current in here (with − on the other lead) spins the motor forward.
+  terminal_negative:
+    description: The − lead. Swapping the two leads reverses the rotation.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved by both engines (motor-model.ts). DC: the coupled steady-state equations reduce
+  to one linear element — the conductance of R_eff = R_a + k^2/B between the terminals (the
+  back-EMF raises the effective resistance), plus a constant load-current source — and the
+  branch current + the mechanical readings (speed, torque, back-EMF, shaft power,
+  efficiency) are derived from the solved terminal voltage (dc-solver.ts stampMotor +
+  motorSteadyState). Transient: the armature is the inductor companion (L_a, R_a) with the
+  back-EMF folded into the source as -gEq*k*omega, and the rotor speed omega is advanced
+  each backward-Euler step (motorSpeedStep), so the motor genuinely spins up and the
+  inrush current tapers. The k = back-EMF constant = torque constant identity is exact in
+  SI (energy conservation). Honest scope: viscous friction only; load <= stall torque for
+  the linear DC model; no brush drop / armature reaction / cogging / saturation; the
+  magnets, commutator and bearings are lumped into k, B and J rather than composed.
+  Sources: Faraday electromagnetic rotation (1821); standard DC-machine theory (Fitzgerald,
+  "Electric Machinery"; Hughes, "Electric Motors and Drives").

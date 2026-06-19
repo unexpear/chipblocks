@@ -1,7 +1,13 @@
 import type { World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
+import {
+  magneticPullForceNewtons,
+  magnetomotiveForceAmpereTurns,
+  solenoidFluxDensityTesla,
+} from '../electromagnet-model.ts'
 import { readScalarParam } from '../instance-params.ts'
 import { laserOpticalPowerW } from '../laser-model.ts'
+import { motorParamsFromInstance, motorSteadyState } from '../motor-model.ts'
 import { acrossVolts, bulbFilamentTemperatureC, junctionTemperature } from '../thermal-model.ts'
 import { junctionCapacitance } from '../varactor-model.ts'
 
@@ -29,6 +35,14 @@ export type PartReading = {
   power?: number
   opticalOutputW?: number
   junctionCapacitanceF?: number
+  magnetomotiveForceA?: number
+  magneticFluxDensityT?: number
+  magneticForceN?: number
+  speedRpm?: number
+  torqueNm?: number
+  backEmfV?: number
+  mechanicalPowerW?: number
+  efficiencyPercent?: number
   temperatureC?: number
   maxTemperatureC?: number
 }
@@ -102,6 +116,52 @@ export function partReadings(
       if (vj !== undefined && m !== undefined && anode !== undefined && cathode !== undefined) {
         const vJunction = (solution.nodes.get(anode) ?? 0) - (solution.nodes.get(cathode) ?? 0)
         reading.junctionCapacitanceF = junctionCapacitance(vJunction, cj0, vj, m)
+      }
+    }
+
+    // Electromagnet: a coil's defining output is its magnetic field. The MMF is N·I
+    // (ampere-turns); with a core (μ_r), path length and saturation the flux density is
+    // B (rolling off at the iron's B_sat); with a pole area, the pull is F = B²·A/2μ₀.
+    // `turns` is the electromagnet-only marker.
+    const turns = readScalarParam(inst, 'turns')
+    if (turns !== undefined && reading.current !== undefined) {
+      reading.magnetomotiveForceA = magnetomotiveForceAmpereTurns(turns, reading.current)
+      const relativePermeability = readScalarParam(inst, 'relative_permeability')
+      const pathLength = readScalarParam(inst, 'magnetic_path_length')
+      if (relativePermeability !== undefined && pathLength !== undefined) {
+        const fluxDensity = solenoidFluxDensityTesla(
+          turns,
+          reading.current,
+          relativePermeability,
+          pathLength,
+          readScalarParam(inst, 'saturation_flux_density'),
+        )
+        reading.magneticFluxDensityT = fluxDensity
+        const coreArea = readScalarParam(inst, 'core_area')
+        if (coreArea !== undefined) {
+          reading.magneticForceN = magneticPullForceNewtons(fluxDensity, coreArea)
+        }
+      }
+    }
+
+    // DC motor: behind its electrical R_eff is a spinning rotor — surface the mechanical
+    // operating point (speed, torque, back-EMF, shaft power, efficiency) from the solved
+    // terminal voltage. `motor_constant` is the motor-only marker.
+    const motorConstant = readScalarParam(inst, 'motor_constant')
+    if (motorConstant !== undefined) {
+      const motorParams = motorParamsFromInstance(inst)
+      const posNet = inst.connects?.find((c) => c.terminal === 'terminal_positive')?.net
+      const negNet = inst.connects?.find((c) => c.terminal === 'terminal_negative')?.net
+      if (motorParams !== undefined && posNet !== undefined && negNet !== undefined) {
+        const vAcross = (solution.nodes.get(posNet) ?? 0) - (solution.nodes.get(negNet) ?? 0)
+        const op = motorSteadyState(vAcross, motorParams)
+        reading.speedRpm = (op.speed * 60) / (2 * Math.PI)
+        reading.torqueNm = op.torque
+        reading.backEmfV = op.backEmf
+        reading.mechanicalPowerW = op.mechanicalPowerW
+        const electricalPowerW = Math.abs(vAcross * op.current)
+        reading.efficiencyPercent =
+          electricalPowerW > 0 ? (Math.abs(op.mechanicalPowerW) / electricalPowerW) * 100 : 0
       }
     }
 

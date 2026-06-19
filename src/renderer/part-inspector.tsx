@@ -458,6 +458,34 @@ export function PartInspector({
           {reading.junctionCapacitanceF !== undefined
             ? readingRow('Junction capacitance', formatEng(reading.junctionCapacitanceF, 'F'), null)
             : null}
+          {reading.magnetomotiveForceA !== undefined
+            ? readingRow(
+                'Magnetomotive force',
+                `${formatEng(reading.magnetomotiveForceA, 'A')}·turns`,
+                null,
+              )
+            : null}
+          {reading.magneticFluxDensityT !== undefined
+            ? readingRow('Magnetic field', formatEng(reading.magneticFluxDensityT, 'T'), null)
+            : null}
+          {reading.magneticForceN !== undefined
+            ? readingRow('Pull force', formatEng(reading.magneticForceN, 'N'), null)
+            : null}
+          {reading.speedRpm !== undefined
+            ? readingRow('Speed', `${Math.round(reading.speedRpm)} RPM`, null)
+            : null}
+          {reading.torqueNm !== undefined
+            ? readingRow('Torque', formatEng(reading.torqueNm, 'N·m'), null)
+            : null}
+          {reading.backEmfV !== undefined
+            ? readingRow('Back-EMF', formatEng(reading.backEmfV, 'V'), null)
+            : null}
+          {reading.mechanicalPowerW !== undefined
+            ? readingRow('Shaft power', formatEng(reading.mechanicalPowerW, 'W'), null)
+            : null}
+          {reading.efficiencyPercent !== undefined
+            ? readingRow('Efficiency', `${reading.efficiencyPercent.toFixed(0)}%`, null)
+            : null}
           {reading.temperatureC !== undefined
             ? readingRow(
                 'Temperature',

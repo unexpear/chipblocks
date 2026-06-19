@@ -1080,6 +1080,9 @@ function Canvas() {
     let pMax = 0
     const temp = new Map<string, number>()
     let tMaxC = 0
+    // An electromagnet's concentrated CORE field (a coil's halo comes from this, not
+    // from the per-wire current the way a straight wire's does).
+    const coilFieldTesla = new Map<string, number>()
     for (const [id, r] of readings) {
       if (typeof r.power === 'number' && r.power > 0) {
         power.set(id, r.power)
@@ -1089,13 +1092,28 @@ function Canvas() {
         temp.set(id, r.temperatureC)
         if (r.temperatureC > tMaxC) tMaxC = r.temperatureC
       }
+      if (typeof r.magneticFluxDensityT === 'number' && r.magneticFluxDensityT > 0) {
+        coilFieldTesla.set(id, r.magneticFluxDensityT)
+      }
     }
     // Field lens contour level, auto-ranged from the circuit's biggest current.
     const fieldTesla = fieldReferenceTesla(maxAbsAmps)
     // The temp lens measures warmth-rise FROM the board ambient, so a cool board in a
     // warm room reads calm (rise above the room, not above a fixed 25 °C).
     const ambientC = projectAmbientRef.current
-    return { lens, flow, vMin, vMax, power, pMax, temp, tMaxC, ambientC, fieldTesla }
+    return {
+      lens,
+      flow,
+      vMin,
+      vMax,
+      power,
+      pMax,
+      temp,
+      tMaxC,
+      ambientC,
+      fieldTesla,
+      coilFieldTesla,
+    }
   }, [edges, readings, lens, flow])
   const runScope = useCallback(() => {
     const { sources, positions } = lightCastInputs(nodes)
@@ -1341,7 +1359,9 @@ function Canvas() {
         inst.definition === 'incandescent_bulb' ||
         inst.definition === 'photoresistor' ||
         inst.definition === 'capacitor' ||
-        inst.definition === 'inductor'
+        inst.definition === 'inductor' ||
+        inst.definition === 'electromagnet' ||
+        inst.definition === 'dc_motor'
       ) {
         const c1 = inst.connects?.[0]
         const c2 = inst.connects?.[1]

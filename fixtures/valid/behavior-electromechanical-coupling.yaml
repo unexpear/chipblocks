@@ -1,0 +1,56 @@
+# Valid fixture: behavior registry entry for electromechanical coupling — the motor /
+# generator principle. A current-carrying conductor in a magnetic field feels a force
+# (the motor action, F = B*I*L, Faraday/Henry 1820s-30s), and a conductor MOVING in a
+# field generates a voltage (the back-EMF, Faraday's law). The two are the same coupling
+# seen from opposite ends, tied by one constant k: torque per amp (N*m/A) equals back-EMF
+# per rad/s (V*s/rad) by energy conservation (electrical power E*I = mechanical power
+# T*omega). This is what makes a DC motor spin and a DC generator generate.
+# Used by the DC motor primitive.
+# MUST validate against behavior.schema.json.
+kind: behavior
+id: electromechanical_coupling
+origin: builtin
+layer: behavior
+name: "Electromechanical coupling (motor / generator)"
+description: "Current and motion couple through a magnetic field. The armature current makes a torque T = k*I that spins the rotor; as the rotor turns it generates a back-EMF E = k*omega that opposes the supply. The SAME constant k is the torque constant (N*m/A) and the back-EMF constant (V*s/rad) — equal in SI because electrical power E*I must equal mechanical power T*omega. The rotor obeys Newton's law for rotation, J*dW/dt = T - B*omega - T_load, so it spins UP over time (its inertia J is why a motor draws a big inrush current at switch-on, tapering as the rising back-EMF chokes it back). At steady state the whole coupled system reduces to one effective resistance R_eff = R_a + k^2/B."
+parameters_required:
+  - name: motor_constant
+    type: quantity
+    units: volt*second/radian
+    description: k, the coupling constant — torque per amp (N*m/A) and back-EMF per rad/s (V*s/rad), numerically equal in SI.
+  - name: armature_resistance
+    type: quantity
+    units: ohm
+    description: R_a, the winding resistance. Sets the stall current V/R_a and the copper loss I^2*R_a.
+  - name: viscous_friction
+    type: quantity
+    units: newton*meter*second/radian
+    description: B, the viscous damping (bearings + windage). Sets the no-load speed and current; must be > 0 for a defined no-load operating point.
+  - name: rotor_inertia
+    type: quantity
+    units: kilogram*meter^2
+    description: J, the rotor's moment of inertia. Sets the mechanical spin-up time (and the inrush-current duration).
+evaluates: "T = k*I; E_back = k*omega; J*dW/dt = T - B*omega - T_load; R_eff = R_a + k^2/B"
+consequences: []
+law: motor_principle
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved by both engines (motor-model.ts). The DC solver collapses the coupled
+  steady-state equations to one LINEAR element — the conductance of R_eff = R_a + k^2/B
+  between the terminals (the back-EMF raises the effective resistance above R_a), plus a
+  constant current source for any mechanical load — then derives the speed, torque,
+  back-EMF, shaft power and efficiency from the solved terminal voltage. The transient
+  solver carries the real dynamics: the armature is an inductor (L_a) + R_a + the back-EMF
+  source, and the rotor speed omega is integrated each step (backward-Euler), so the motor
+  physically spins up and the inrush current tapers as the back-EMF rises. Honest scope:
+  viscous friction only (no Coulomb/stiction); a load above the stall torque would drive
+  the linear DC model to a non-physical negative speed (keep T_load <= k*V/R_a); brush
+  drop, armature reaction, cogging and magnetic saturation are not modeled. Sources:
+  Faraday / Henry electromagnetic rotation (1820s-30s); the standard DC-machine equations
+  (e.g. Fitzgerald, "Electric Machinery").

@@ -1,5 +1,11 @@
 import { createContext } from 'react'
+import { MU_0 } from '../electromagnet-model.ts'
 import { METRES_PER_PIXEL } from './wire-length.ts'
+
+// μ₀ (and the coil-field math) live in the shared electromagnet-model so the solvers
+// and the renderer use one source; re-exported here for the field-lens consumers
+// (net-edge) that import it from the lens.
+export { MU_0 }
 
 /**
  * Visualization lenses (S19-v3-50; field lens S19-v3-57) — the Stage 6
@@ -38,6 +44,9 @@ export type LensState = {
   ambientC: number
   /** Field lens contour level (tesla) — the outermost band edge. 0 = no current. */
   fieldTesla: number
+  /** Instance id → an electromagnet's concentrated CORE field B (tesla), from the part
+   *  readings — drives the coil-body field halo (a wire's halo comes from its current). */
+  coilFieldTesla: Map<string, number>
 }
 
 export const LensContext = createContext<LensState>({
@@ -51,6 +60,7 @@ export const LensContext = createContext<LensState>({
   tMaxC: 0,
   ambientC: 25,
   fieldTesla: 0,
+  coilFieldTesla: new Map(),
 })
 
 /** 5-stop blue→cyan→green→yellow→red scale (the classic voltage-map ramp). */
@@ -156,13 +166,6 @@ export function flowDuration(amps: number): number | null {
   const duration = 2 - 0.42 * Math.log10(magnitude / 1e-6)
   return Math.min(2, Math.max(0.3, duration))
 }
-
-/**
- * Vacuum permeability μ₀ (henry per metre). Since the 2019 SI redefinition it
- * is a measured constant, no longer exactly 4π×10⁻⁷ — CODATA gives
- * 1.25663706×10⁻⁶ H/m (the difference from 4π×10⁻⁷ is parts in 10⁹).
- */
-export const MU_0 = 1.25663706e-6
 
 /**
  * Magnetic-field lens (S19-v3-57). The math is Ampère's law for a long

@@ -43,6 +43,12 @@ import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { jfetMosfetParams } from './jfet-model.ts'
 import { ldrResistance, lightSensorCurrent } from './light.ts'
 import { limitMosfetStep, type MosfetParams, mosfetOperatingPoint } from './mosfet-model.ts'
+import {
+  motorEffectiveResistance,
+  motorLoadCurrentOffset,
+  motorParamsFromInstance,
+  motorSteadyState,
+} from './motor-model.ts'
 import { STANDARD_AMBIENT_C } from './thermal-model.ts'
 import {
   limitTunnelDiodeStep,
@@ -318,6 +324,8 @@ const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'power_source',
   'wire',
   'inductor',
+  'electromagnet',
+  'dc_motor',
   'resistor',
   'thermistor',
   'incandescent_bulb',
@@ -556,9 +564,11 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       if (fuseIsIntact(inst)) linearVoltageSources.push({ inst, kind: 'fuse' })
     } else if (inst.definition === 'wire') {
       linearVoltageSources.push({ inst, kind: 'wire' })
-    } else if (inst.definition === 'inductor') {
-      // DC steady state of v = L·di/dt is 0 V across the ideal inductance —
-      // an inductor conducts DC, dropping only its winding resistance.
+    } else if (inst.definition === 'inductor' || inst.definition === 'electromagnet') {
+      // DC steady state of v = L·di/dt is 0 V across the ideal inductance — an inductor
+      // (and an electromagnet, which is electrically a coil) conducts DC, dropping only
+      // its winding resistance. The electromagnet's magnetic field comes from this
+      // steady current; the inductance only matters in transient/AC.
       linearVoltageSources.push({ inst, kind: 'inductor' })
     }
   }
@@ -602,6 +612,11 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         const rGate = readScalarParam(inst, 'gate_cathode_resistance')
         if (gate !== undefined && cathode !== undefined && rGate !== undefined && rGate > 0)
           stampConductance(nodeIndex, M, gate, cathode, rGate)
+      } else if (inst.definition === 'dc_motor') {
+        // A DC motor is, at steady state, the linear resistor R_eff = R_a + k²/B (the
+        // back-EMF raises the effective resistance), plus a constant load-current source.
+        if (!stampMotor(inst, nodeIndex, M, b))
+          warnings.push(`Skipped DC motor '${inst.id}' (missing R_a / k / friction or connects)`)
       }
     }
     for (let s = 0; s < linearVoltageSources.length; s++) {
@@ -877,6 +892,14 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       // The device current IS the light-driven photocurrent it injects (the tiny
       // shunt current is negligible beside it).
       branches.set(inst.id, lightSensorCurrent(inst))
+    } else if (inst.definition === 'dc_motor') {
+      const p = motorParamsFromInstance(inst)
+      const posNet = inst.connects?.find((c) => c.terminal === 'terminal_positive')?.net
+      const negNet = inst.connects?.find((c) => c.terminal === 'terminal_negative')?.net
+      if (p !== undefined && posNet !== undefined && negNet !== undefined) {
+        const vAcross = (nodes.get(posNet) ?? 0) - (nodes.get(negNet) ?? 0)
+        branches.set(inst.id, motorSteadyState(vAcross, p).current)
+      }
     }
   }
   for (let s = 0; s < linearVoltageSources.length; s++) {
@@ -1983,6 +2006,36 @@ export function stampResistor(
   if (c1 === undefined || c2 === undefined) return false
 
   stampConductance(nodeIndex, M, c1.net, c2.net, R)
+  return true
+}
+
+/**
+ * A DC motor at steady state. The coupled electromechanical equations collapse to a
+ * single linear element: the conductance of R_eff = R_a + k²/B between its terminals
+ * (the back-EMF raises the effective resistance above the bare winding R_a), plus a
+ * constant current source for any mechanical load (which draws extra current, + to −).
+ */
+export function stampMotor(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
+  const p = motorParamsFromInstance(inst)
+  if (p === undefined) return false
+  const posNet = inst.connects?.find((c) => c.terminal === 'terminal_positive')?.net
+  const negNet = inst.connects?.find((c) => c.terminal === 'terminal_negative')?.net
+  if (posNet === undefined || negNet === undefined) return false
+  stampConductance(nodeIndex, M, posNet, negNet, motorEffectiveResistance(p))
+  const offset = motorLoadCurrentOffset(p)
+  if (offset !== 0) {
+    const iPos = nodeIndex.get(posNet)
+    const iNeg = nodeIndex.get(negNet)
+    if (iPos !== undefined) b.set([iPos, 0], (b.get([iPos, 0]) ?? 0) - offset)
+    if (iNeg !== undefined) b.set([iNeg, 0], (b.get([iNeg, 0]) ?? 0) + offset)
+  }
   return true
 }
 

@@ -1,0 +1,128 @@
+# Valid fixture: electromagnet — a coil wound on a core that becomes a magnet when
+# current flows (Sturgeon, 1824, building on Oersted's 1820 discovery that a current
+# deflects a compass). It is the same device as the inductor electrically — a coiled
+# conductor with self-inductance L and winding resistance — but here the MAGNETIC FIELD
+# is the point, not an incidental store of energy: it is what pulls a relay's armature,
+# lifts scrap iron, rings a doorbell, and turns a motor. The relay's coil IS one.
+#
+# What makes it an electromagnet rather than a plain inductor is the surfaced field, and
+# everything is tied to ONE geometry (turns N, core area A, path length l, permeability
+# mu_r), so nothing can disagree:
+#   magnetomotive force MMF = N * I                       (ampere-turns — N multiply the pull)
+#   core flux density    B   = B_sat * tanh(B_lin/B_sat)  where B_lin = mu_0*mu_r*N*I/l
+#                                                         (linear at low field, saturating in iron)
+#   self-inductance      L   = mu_0 * mu_r * N^2 * A / l   (DERIVED — same geometry as the field)
+#   holding pull         F   = B^2 * A / (2*mu_0)         (Maxwell stress on the armature)
+# so a few hundred turns over a short iron path turn a fraction of an amp into a strong,
+# switchable field — and a real pull on a piece of iron.
+#
+# Electrically it reuses the inductor solver exactly: at DC it conducts through its
+# winding resistance (di/dt = 0, no back-EMF); in transient the current ramps on the L/R
+# exponential; in AC its impedance is j*omega*L. The field, force, and Math card are
+# computed live from that solved coil current; the field lens shows the concentrated core
+# field as a halo on the coil body.
+#
+# Honest scope: the tanh saturation is a smooth stand-in for a real B-H curve (which has a
+# sharper knee and HYSTERESIS, not modeled); the force is the zero-gap HOLDING force (an
+# air gap lowers B and so the pull); the external field is treated as concentrated in the
+# core (the true external field is a weak dipole). A magnetic-material core role carrying a
+# measured B-H curve is the further rung, noted not faked.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: electromagnet
+origin: builtin
+layer: primitive_device
+name: Electromagnet
+description: "A coil of wire (optionally on an iron core) that produces a magnetic field when current flows — the field is the point: it actuates relays, lifts iron, and drives motors. Electrically it is an inductor (self-inductance L, winding resistance), so it conducts DC through its winding resistance, ramps its current on the L/R time constant, and impedes AC as j*omega*L. Its magnetic output is the magnetomotive force MMF = N*I (ampere-turns) and, with a core of relative permeability mu_r over a path length l, the flux density B = mu_0*mu_r*N*I/l (Ampere's law for a solenoid)."
+composition:
+  requires:
+    winding:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  winding:
+    type: material_ref
+    satisfies_role: winding
+    required: true
+    default:
+      value: copper
+    description: The conductor the coil is wound from. Must conduct; copper is the standard magnet wire.
+  turns:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: N, the number of turns. The field is set by the ampere-turns N*I — winding the wire into N turns multiplies the magnetic pull N-fold over a single straight wire.
+  relative_permeability:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: mu_r of the core — about 1 for an air core, hundreds to thousands for soft iron. Multiplies the field. An air gap lowers the effective value.
+  magnetic_path_length:
+    type: quantity
+    units: metre
+    required: true
+    description: l, the length of the magnetic path around the core. A shorter path concentrates the field (B is inversely proportional to l).
+  core_area:
+    type: quantity
+    units: m^2
+    required: true
+    description: A, the cross-sectional area of the core the flux passes through. ONE source of truth for two things — the self-inductance L = mu_0*mu_r*N^2*A/l (derived from the geometry, never declared, so L can never disagree with the field), and the pole area for the holding force F = B^2*A/(2*mu_0).
+  saturation_flux_density:
+    type: quantity
+    units: tesla
+    required: false
+    description: B_sat, where the core's iron saturates (~1.5-2 T for soft iron; ~2.1 T for pure iron). Above it B stops climbing with current — the field B is rolled off as B_sat*tanh(B_linear/B_sat). Absent = an ideal/air core that never saturates (the pure linear law).
+  winding_resistance:
+    type: quantity
+    units: ohm
+    required: false
+    description: DC resistance of the winding (the coiled wire's real R = rho*L/A). Drops voltage at DC and dissipates I^2*R heat; 0 / absent models an ideal coil.
+  current_rating:
+    type: quantity
+    units: ampere
+    required: false
+    description: Maximum continuous current before the magnet wire overheats (and the core nears saturation).
+behaviors:
+  - produces_magnetic_field
+  - has_inductance
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+terminals:
+  terminal_a:
+    description: One end of the winding.
+  terminal_b:
+    description: The other end of the winding.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Electrically identical to the inductor and solved by the SAME machinery in all three
+  engines (it shares the inductor's dispatch): the DC solver stamps it as a 0 V source in
+  series with winding_resistance (steady DC: di/dt = 0); the transient solver uses the
+  backward-Euler inductor companion so the current ramps on L/R and cannot jump; AC
+  analysis stamps j*omega*L. Crucially its inductance is NOT declared — it is derived from
+  the coil geometry (electromagnet-model.ts coilInductanceFromInstance ->
+  coilInductanceHenries: L = mu_0*mu_r*N^2*A/l), the same N, mu_r, A and l that set the
+  field, so L and B can never disagree. Its magnetic output is computed live from the
+  solved coil current and shown as part readings plus a Math-panel card: MMF = N*I
+  (ampere-turns); B = B_sat*tanh(B_lin/B_sat) with B_lin = mu_0*mu_r*N*I/l (tesla, rolling
+  off into iron saturation); holding pull F = B^2*A/(2*mu_0) (newtons). The field lens
+  draws the concentrated core field as a halo on the coil body, scaled toward saturation.
+  Honest scope: tanh is a smooth stand-in for a real B-H curve (sharper knee + HYSTERESIS,
+  not modeled); the pull is the zero-gap holding force (an air gap lowers it); no eddy /
+  end-leakage effects. The core is parameterized by relative_permeability + a saturation
+  flux density rather than a full magnetic-material role with a measured B-H curve (the
+  further rung), mirroring how the transformer parameterizes its core by a coupling
+  coefficient. Sources: Oersted (1820) current-deflects-compass; Sturgeon (1824) first
+  electromagnet; Ampere's law / the solenoid field + Maxwell stress (any electromagnetism
+  text, e.g. Griffiths).

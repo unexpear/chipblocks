@@ -4,7 +4,13 @@ import './canvas-animations.css'
 import { thermalSeverity } from '../thermal-model.ts'
 import { BlockNode } from './block-node.tsx'
 import { HealthContext } from './health.ts'
-import { LensContext, powerColor, thermalHotspotColor, thermalWarmthTint } from './lens.ts'
+import {
+  FIELD_COLOR,
+  LensContext,
+  powerColor,
+  thermalHotspotColor,
+  thermalWarmthTint,
+} from './lens.ts'
 import {
   fuseIntact,
   type Parameters,
@@ -521,6 +527,50 @@ function InductorGlyph() {
         strokeWidth={1.5}
       />
       {lead(62, W)}
+    </svg>
+  )
+}
+
+/** Electromagnet — the inductor coil wound on an iron CORE: the same coil humps plus
+ *  the two parallel core lines (the IEC iron-core marking) the field concentrates in. */
+function ElectromagnetGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>electromagnet</title>
+      {lead(0, 18)}
+      <path
+        d="M18 22 A5.5 5.5 0 0 1 29 22 A5.5 5.5 0 0 1 40 22 A5.5 5.5 0 0 1 51 22 A5.5 5.5 0 0 1 62 22"
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      {lead(62, W)}
+      <line x1={18} y1={27} x2={62} y2={27} stroke={STROKE} strokeWidth={1.4} />
+      <line x1={18} y1={29.5} x2={62} y2={29.5} stroke={STROKE} strokeWidth={1.4} />
+    </svg>
+  )
+}
+
+/** DC motor — the standard circle with "M" (IEC), a lead on each side (+ left, − right). */
+function MotorGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>DC motor</title>
+      {lead(0, 24)}
+      <circle cx={40} cy={MID} r={16} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <text
+        x={40}
+        y={MID}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={15}
+        fontWeight={700}
+        fill={STROKE}
+        fontFamily="system-ui, sans-serif"
+      >
+        M
+      </text>
+      {lead(56, W)}
     </svg>
   )
 }
@@ -1219,6 +1269,8 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   light_source: LightSourceGlyph,
   capacitor: CapacitorGlyph,
   inductor: InductorGlyph,
+  electromagnet: ElectromagnetGlyph,
+  dc_motor: MotorGlyph,
   led: LedGlyph,
   led_uv_algan: LedGlyph,
   incandescent_bulb: IncandescentBulbGlyph,
@@ -1295,6 +1347,8 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   light_source: [],
   capacitor: TWO('terminal_a', 'terminal_b'),
   inductor: TWO('terminal_a', 'terminal_b'),
+  electromagnet: TWO('terminal_a', 'terminal_b'),
+  dc_motor: TWO('terminal_positive', 'terminal_negative'),
   power_source: TWO('terminal_positive', 'terminal_negative'),
   led: TWO('anode', 'cathode'),
   led_uv_algan: TWO('anode', 'cathode'),
@@ -1582,6 +1636,12 @@ export function DeviceNode({ id, data }: NodeProps) {
             ? thermalHotspotColor(thermalSeverity(tempC, maxRatingC))
             : null) ?? thermalWarmthTint(tempC, lensState.tMaxC, lensState.ambientC))
         : null
+  // Field lens: an electromagnet concentrates a strong field in its core — show that as
+  // a field-colored glow scaled toward iron saturation (~2 T). The field is mostly
+  // INSIDE the core (the external field is a weak dipole), so this marks where the field
+  // concentrates; the exact tesla is in the part reading, not a giant external contour.
+  const coilField = lensState.lens === 'field' ? lensState.coilFieldTesla.get(id) : undefined
+  const coilFieldFraction = coilField !== undefined ? Math.min(1, coilField / 2.0) : 0
   const terminals = terminalsOf(definition, parameters)
   const updateNodeInternals = useUpdateNodeInternals()
   // After a rotation — or a lead-count change (a source's terminals are
@@ -1623,6 +1683,20 @@ export function DeviceNode({ id, data }: NodeProps) {
             inset: -5,
             borderRadius: 8,
             background: heat,
+            pointerEvents: 'none',
+          }}
+        />
+      ) : null}
+      {coilField !== undefined ? (
+        <div
+          aria-hidden
+          title={`Magnetic field ${coilField < 1 ? `${(coilField * 1000).toFixed(0)} mT` : `${coilField.toFixed(2)} T`} in the core`}
+          style={{
+            position: 'absolute',
+            inset: -(6 + 22 * coilFieldFraction),
+            borderRadius: '50%',
+            background: `radial-gradient(circle, ${FIELD_COLOR} 0%, transparent 68%)`,
+            opacity: 0.18 + 0.34 * coilFieldFraction,
             pointerEvents: 'none',
           }}
         />

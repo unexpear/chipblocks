@@ -1,6 +1,7 @@
 import type { Instance, World } from './cross-fk-validator.ts'
 import { solveDCRobust } from './dc-robust.ts'
 import { fuseIsIntact, relayCoilEnergized, switchIsClosed } from './dc-solver.ts'
+import { coilInductanceFromInstance } from './electromagnet-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { mathInstance as math } from './mathjs-instance.ts'
 import {
@@ -288,8 +289,8 @@ function solveAtOmega(
     } else if (inst.definition === 'capacitor') {
       const cap = readScalarParam(inst, 'capacitance')
       if (cap && cap > 0) stampY(a, c, 0, omega * cap)
-    } else if (inst.definition === 'inductor') {
-      const l = readScalarParam(inst, 'inductance')
+    } else if (inst.definition === 'inductor' || inst.definition === 'electromagnet') {
+      const l = coilInductanceFromInstance(inst)
       if (l && l > 0) stampY(a, c, 0, -1 / (omega * l))
     } else if (inst.definition === 'relay') {
       // The coil is a resistor across coil_a/coil_b (its contact is shorted separately, above).

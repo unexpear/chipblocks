@@ -7,9 +7,19 @@ import {
 } from '../dc-solver.ts'
 import { deriveSaturationCurrent, thermalVoltage } from '../diode-model.ts'
 import { resistanceAtTemperature } from '../electro-thermal.ts'
+import {
+  magneticPullForceNewtons,
+  magnetomotiveForceAmpereTurns,
+  solenoidFluxDensityTesla,
+} from '../electromagnet-model.ts'
 import { readScalarParam } from '../instance-params.ts'
 import { ldrResistance, lightSensorCurrent, sensorIlluminance } from '../light.ts'
 import { mosfetOperatingPoint } from '../mosfet-model.ts'
+import {
+  motorEffectiveResistance,
+  motorParamsFromInstance,
+  motorSteadyState,
+} from '../motor-model.ts'
 import { formatEng } from './units.ts'
 
 /**
@@ -672,6 +682,62 @@ function partCard(
     )
     if (current !== undefined) lines.push(`Carrying I = ${fmtA(Math.abs(current))}.`)
     return { id: inst.id, title: 'Inductor — settled, so plain wire', lines }
+  }
+  if (def === 'electromagnet') {
+    const turns = readScalarParam(inst, 'turns')
+    const relativePermeability = readScalarParam(inst, 'relative_permeability')
+    const pathLength = readScalarParam(inst, 'magnetic_path_length')
+    const saturation = readScalarParam(inst, 'saturation_flux_density')
+    const coreArea = readScalarParam(inst, 'core_area')
+    lines.push(
+      "An electromagnet is a coil: winding the wire into N turns multiplies its magnetic pull to N×I “ampere-turns” (Ampère's law). Electrically it is just an inductor — it conducts DC through its winding resistance and only pushes back when the current changes.",
+    )
+    if (turns !== undefined && current !== undefined) {
+      const mmf = magnetomotiveForceAmpereTurns(turns, current)
+      lines.push(
+        `Magnetomotive force = N·I = ${turns.toFixed(0)} turns × ${fmtA(Math.abs(current))} = ${mmf.toFixed(1)} ampere-turns.`,
+      )
+      if (relativePermeability !== undefined && pathLength !== undefined) {
+        const b = solenoidFluxDensityTesla(
+          turns,
+          current,
+          relativePermeability,
+          pathLength,
+          saturation,
+        )
+        const saturationNote =
+          saturation !== undefined
+            ? ` — rolled off toward the core's ${formatEng(saturation, 'T')} saturation`
+            : ''
+        lines.push(
+          `Core field B = μ₀·μ_r·N·I / length = ${formatEng(b, 'T')} (μ_r = ${relativePermeability.toFixed(0)}${saturationNote}).`,
+        )
+        if (coreArea !== undefined) {
+          const force = magneticPullForceNewtons(b, coreArea)
+          lines.push(
+            `Pull on an armature = B²·A / 2μ₀ = ${formatEng(force, 'N')} (the holding force across a ${formatEng(coreArea, 'm²')} pole).`,
+          )
+        }
+      }
+    }
+    return { id: inst.id, title: 'Electromagnet — a coil makes a field (N·I)', lines }
+  }
+  if (def === 'dc_motor') {
+    const motorParams = motorParamsFromInstance(inst)
+    const posNet = netOfTerminal(inst, 'terminal_positive')
+    const negNet = netOfTerminal(inst, 'terminal_negative')
+    lines.push(
+      'A DC motor spins because its current makes a torque (T = k·I). As it speeds up it generates a BACK-EMF (E = k·ω) that opposes the supply — so the faster it spins, the LESS current it draws. At steady state it behaves like a resistor R_eff = R_a + k²/B (much bigger than the bare winding R_a).',
+    )
+    if (motorParams !== undefined && posNet !== undefined && negNet !== undefined) {
+      const v = (solution.nodes.get(posNet) ?? 0) - (solution.nodes.get(negNet) ?? 0)
+      const op = motorSteadyState(v, motorParams)
+      lines.push(`R_eff = R_a + k²/B = ${formatEng(motorEffectiveResistance(motorParams), 'Ω')}.`)
+      lines.push(
+        `At ${fmtV(v)} across it: I = ${fmtA(op.current)}, spinning ${((op.speed * 60) / (2 * Math.PI)).toFixed(0)} RPM, making ${formatEng(op.torque, 'N·m')} of torque (back-EMF ${fmtV(op.backEmf)}).`,
+      )
+    }
+    return { id: inst.id, title: 'DC motor — back-EMF and torque', lines }
   }
   if (def === 'transistor_bjt_npn' || def === 'transistor_bjt_pnp') {
     const beta = readScalarParam(inst, 'forward_current_gain')

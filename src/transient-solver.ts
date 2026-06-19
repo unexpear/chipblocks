@@ -105,10 +105,12 @@ import {
   ZENER_BREAKDOWN_IDEALITY,
   zenerCompanionModel,
 } from './diode-model.ts'
+import { coilInductanceFromInstance } from './electromagnet-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { ldrResistance } from './light.ts'
 import { mathInstance as math } from './mathjs-instance.ts'
 import { limitMosfetStep, mosfetOperatingPoint } from './mosfet-model.ts'
+import { motorBackEmf, motorParamsFromInstance, motorSpeedStep } from './motor-model.ts'
 import { type ShockleyDiodeState, scrTarget, shockleyDiodeTarget } from './shockley-diode.ts'
 import {
   limitTunnelDiodeStep,
@@ -254,6 +256,27 @@ type InductorElement = {
   inductance: number // henries
   windingOhms: number // series winding resistance (DCR); 0 ⇒ ideal
   iPrev: number // current through (netA → netB) at the previous step
+}
+
+/** A DC motor resolved for the time loop — an inductor (L_a, R_a) carrying a
+ *  speed-dependent back-EMF, with the rotor speed ω integrated alongside the circuit so
+ *  it physically SPINS UP (the inrush current settling as it comes up to speed). */
+type MotorElement = {
+  id: string
+  termA: string // terminal_positive
+  termB: string // terminal_negative
+  netA: string
+  netB: string
+  iA: number | undefined
+  iB: number | undefined
+  armatureInductance: number // L_a (henries)
+  armatureOhms: number // R_a (ohms)
+  motorConstant: number // k (V·s/rad = N·m/A)
+  viscousFriction: number // B (N·m·s/rad)
+  rotorInertia: number // J (kg·m²)
+  loadTorque: number // T_load (N·m)
+  iPrev: number // armature current at the previous step
+  omega: number // rotor speed (rad/s) — the mechanical state
 }
 
 /** A transformer (two magnetically-coupled windings) resolved for the time loop. */
@@ -569,7 +592,9 @@ function stampTransientTunnel(
 }
 
 function resolveInductor(inst: Instance, nodeIndex: Map<string, number>): InductorElement | null {
-  const inductance = readScalarParam(inst, 'inductance')
+  // An electromagnet derives L from its geometry (μ₀·μ_r·N²·A/l — one source of truth
+  // with its field); a plain inductor uses its declared inductance.
+  const inductance = coilInductanceFromInstance(inst)
   if (inductance === undefined || inductance <= 0) return null
   if (inst.connects?.length !== 2) return null
   const c1 = inst.connects[0]
@@ -586,6 +611,35 @@ function resolveInductor(inst: Instance, nodeIndex: Map<string, number>): Induct
     inductance,
     windingOhms: readScalarParam(inst, 'winding_resistance') ?? 0,
     iPrev: readScalarParam(inst, 'initial_current') ?? 0,
+  }
+}
+
+function resolveMotor(inst: Instance, nodeIndex: Map<string, number>): MotorElement | null {
+  const p = motorParamsFromInstance(inst)
+  if (p === undefined) return null
+  const armatureInductance = readScalarParam(inst, 'armature_inductance')
+  const rotorInertia = readScalarParam(inst, 'rotor_inertia')
+  if (armatureInductance === undefined || armatureInductance <= 0) return null
+  if (rotorInertia === undefined || rotorInertia <= 0) return null
+  const pos = inst.connects?.find((c) => c.terminal === 'terminal_positive')
+  const neg = inst.connects?.find((c) => c.terminal === 'terminal_negative')
+  if (pos === undefined || neg === undefined) return null
+  return {
+    id: inst.id,
+    termA: pos.terminal,
+    termB: neg.terminal,
+    netA: pos.net,
+    netB: neg.net,
+    iA: nodeIndex.get(pos.net),
+    iB: nodeIndex.get(neg.net),
+    armatureInductance,
+    armatureOhms: p.armatureResistance,
+    motorConstant: p.motorConstant,
+    viscousFriction: p.viscousFriction,
+    rotorInertia,
+    loadTorque: p.loadTorque,
+    iPrev: 0,
+    omega: 0,
   }
 }
 
@@ -1030,6 +1084,48 @@ function stampInductorCompanion(
   }
 }
 
+/** The armature current a motor would carry this step, given the terminal voltage. The
+ *  motor is an inductor (L_a) + winding resistance (R_a) driven by (V − back-EMF). */
+function motorStepCurrent(motor: MotorElement, voltsAtoB: number, dt: number): number {
+  const denominator = motor.armatureInductance + motor.armatureOhms * dt
+  const emf = motorBackEmf(motor.motorConstant, motor.omega)
+  return (dt * (voltsAtoB - emf) + motor.armatureInductance * motor.iPrev) / denominator
+}
+
+/**
+ * Stamp a DC motor's backward-Euler companion. Electrically it is an inductor (L_a) in
+ * series with the winding resistance R_a and the speed-dependent back-EMF E = k·ω, so it
+ * is the inductor companion (conductance Δt/(L_a + R_a·Δt) + history current) with the
+ * back-EMF folded into the source current as an extra −gEq·E term.
+ */
+function stampMotorCompanion(
+  motor: MotorElement,
+  dt: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const denominator = motor.armatureInductance + motor.armatureOhms * dt
+  const gEq = dt / denominator
+  const iHist = (motor.armatureInductance * motor.iPrev) / denominator
+  const emf = motorBackEmf(motor.motorConstant, motor.omega)
+  const source = iHist - gEq * emf // current source flowing netA → netB
+  const { iA, iB } = motor
+  if (iA !== undefined) {
+    M.set([iA, iA], (M.get([iA, iA]) ?? 0) + gEq)
+    b.set([iA, 0], (b.get([iA, 0]) ?? 0) - source)
+  }
+  if (iB !== undefined) {
+    M.set([iB, iB], (M.get([iB, iB]) ?? 0) + gEq)
+    b.set([iB, 0], (b.get([iB, 0]) ?? 0) + source)
+  }
+  if (iA !== undefined && iB !== undefined) {
+    M.set([iA, iB], (M.get([iA, iB]) ?? 0) - gEq)
+    M.set([iB, iA], (M.get([iB, iA]) ?? 0) - gEq)
+  }
+}
+
 /**
  * Stamp a transformer's coupled backward-Euler companion: a 2×2 conductance block
  * across (primary, secondary) winding voltages plus per-winding history sources.
@@ -1318,6 +1414,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   const sources: TimedSource[] = []
   const caps: CapElement[] = []
   const inductors: InductorElement[] = []
+  const motors: MotorElement[] = []
   const transformers: TransformerElement[] = []
   const ctTransformers: CtTransformerElement[] = []
   const diodes: DiodeElement[] = []
@@ -1403,10 +1500,14 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const v = resolveVaractor(inst, nodeIndex)
       if (v !== null) caps.push(v)
       else warnings.push(`Skipped varactor '${inst.id}' (missing capacitance params or connects)`)
-    } else if (inst.definition === 'inductor') {
+    } else if (inst.definition === 'inductor' || inst.definition === 'electromagnet') {
       const ind = resolveInductor(inst, nodeIndex)
       if (ind !== null) inductors.push(ind)
-      else warnings.push(`Skipped inductor '${inst.id}' (missing inductance or connects)`)
+      else warnings.push(`Skipped ${inst.definition} '${inst.id}' (missing inductance or connects)`)
+    } else if (inst.definition === 'dc_motor') {
+      const motor = resolveMotor(inst, nodeIndex)
+      if (motor !== null) motors.push(motor)
+      else warnings.push(`Skipped DC motor '${inst.id}' (missing R_a / k / friction / L_a / J)`)
     } else if (inst.definition === 'transformer') {
       const tr = resolveTransformer(inst, nodeIndex, warnings)
       if (tr !== null) transformers.push(tr)
@@ -1603,6 +1704,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         stampFixedVoltage(ic.idx, undefined, ic.voltage, N + S + caps.length + k, M, b)
       }
       for (const ind of inductors) stampFixedCurrent(ind.iA, ind.iB, ind.iPrev, b)
+      for (const motor of motors) stampFixedCurrent(motor.iA, motor.iB, motor.iPrev, b)
       for (const tr of transformers) {
         stampFixedCurrent(tr.iPA, tr.iPB, tr.i1Prev, b)
         stampFixedCurrent(tr.iSA, tr.iSB, tr.i2Prev, b)
@@ -1616,6 +1718,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     } else {
       for (const cap of caps) stampCapacitorCompanion(cap, dt, M, b)
       for (const ind of inductors) stampInductorCompanion(ind, dt, M, b)
+      for (const motor of motors) stampMotorCompanion(motor, dt, M, b)
       for (const tr of transformers) stampTransformerCompanion(tr, dt, M, b)
       for (const tr of ctTransformers) stampCtTransformerCompanion(tr, dt, M, b)
     }
@@ -1845,6 +1948,14 @@ export function solveTransient(world: World, options: TransientOptions): Transie
           ? ind.iPrev // held: current through an inductor cannot jump
           : inductorStepCurrent(ind, volts(ind.netA) - volts(ind.netB), dt)
       through(ind.id, ind.termA, ind.termB, amps)
+    }
+
+    for (const motor of motors) {
+      const amps =
+        mode === 'initial'
+          ? motor.iPrev // the armature inductance holds the current — no jump at switch-on
+          : motorStepCurrent(motor, volts(motor.netA) - volts(motor.netB), dt)
+      through(motor.id, motor.termA, motor.termB, amps)
     }
 
     for (const tr of transformers) {
@@ -2109,6 +2220,22 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       // The converged step's current through the inductor — the value just
       // recorded (computed from the OLD iPrev), now becoming the history.
       ind.iPrev = currents.get(`${ind.id}/${ind.termA}`) ?? ind.iPrev
+    }
+    for (const motor of motors) {
+      // Commit this step's armature current, then advance the rotor: the current makes a
+      // torque k·I that, against inertia J and friction B, ramps the speed ω. The rising
+      // ω raises the back-EMF next step, which is what tapers the inrush current.
+      const amps = currents.get(`${motor.id}/${motor.termA}`) ?? motor.iPrev
+      motor.omega = motorSpeedStep(
+        motor.omega,
+        amps,
+        motor.motorConstant,
+        motor.viscousFriction,
+        motor.rotorInertia,
+        motor.loadTorque,
+        dt,
+      )
+      motor.iPrev = amps
     }
     for (const tr of transformers) {
       // Same: this step's winding currents from the companion at the OLD history.

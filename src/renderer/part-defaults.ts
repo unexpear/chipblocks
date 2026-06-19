@@ -71,6 +71,33 @@ const DEFAULTS: Record<string, Parameters> = {
     winding_resistance: scalar(32, 'ohm'),
     current_rating: scalar(0.135, 'ampere'),
   },
+  electromagnet: {
+    // A small DC electromagnet / relay-coil class: ~500 turns of fine copper on a
+    // soft-iron core (μ_r ~1000), ~0.25 cm² over an 8 cm path. The inductance is DERIVED
+    // from this geometry (L = µ₀·µ_r·N²·A/l ≈ 0.098 H), never declared — one source of
+    // truth with the field. A fraction of an amp drives it into iron saturation (~2 T)
+    // and a real pull on an armature.
+    turns: scalar(500, 'dimensionless'),
+    relative_permeability: scalar(1000, 'dimensionless'),
+    magnetic_path_length: scalar(0.08, 'metre'),
+    core_area: scalar(2.5e-5, 'm^2'),
+    saturation_flux_density: scalar(2.0, 'tesla'),
+    winding_resistance: scalar(40, 'ohm'),
+    current_rating: scalar(0.25, 'ampere'),
+    winding: { value: 'copper' },
+  },
+  dc_motor: {
+    // A small 12 V brushed DC motor (hobby / gearmotor class). R_a 2 Ω; motor constant
+    // k ≈ 0.02 V·s/rad (= N·m/A); light friction → ~5600 RPM no-load drawing ~0.15 A.
+    // Stalled it draws V/R_a = 6 A and makes k·6 = 0.12 N·m. L_a (armature inductance)
+    // and J (rotor inertia) set the spin-up — a fast electrical τ and a slower mechanical one.
+    armature_resistance: scalar(2, 'ohm'),
+    motor_constant: scalar(0.02, 'V*s/rad'),
+    viscous_friction: scalar(5e-6, 'N*m*s/rad'),
+    armature_inductance: scalar(1e-3, 'henry'),
+    rotor_inertia: scalar(1e-5, 'kg*m^2'),
+    load_torque: scalar(0, 'N*m'),
+  },
   transformer: {
     // Small EI mains transformer class, ~1:10 step-up from the low-voltage winding
     // (turns ratio ≈ √(L2/L1)); k 0.98 iron core; winding DCRs scale with turns.
@@ -548,6 +575,24 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     inductance: 'Bourns RLB1014-103KL, 10 mH radial-lead choke (the RLB0914 package is µH-only)',
     winding_resistance: '32 Ω max DC resistance (RLB1014-103KL datasheet)',
     current_rating: '135 mA rated current (RLB1014-103KL datasheet)',
+  },
+  electromagnet: {
+    turns: '~500 turns — small DC electromagnet / relay-coil class',
+    relative_permeability: 'soft-iron core μ_r ~1000 (effective μ_r is lower across an air gap)',
+    magnetic_path_length: '~8 cm magnetic path length (small coil)',
+    core_area: '~0.25 cm² core → derived L = µ₀µ_rN²A/l ≈ 0.098 H, and the pole area for the pull',
+    saturation_flux_density:
+      'soft iron saturates ~1.5–2 T (≈2.1 T pure iron); 2.0 T representative',
+    winding_resistance: '≈40 Ω fine-copper coil (relay / small-solenoid class)',
+    current_rating: '~0.25 A through fine magnet wire',
+  },
+  dc_motor: {
+    armature_resistance: 'small 12 V brushed motor, ~2 Ω winding (hobby / gearmotor class)',
+    motor_constant: 'k ≈ 0.02 V·s/rad = N·m/A → ~5600 RPM no-load at 12 V',
+    viscous_friction: 'damping set for ~0.15 A no-load current (bearing friction + windage)',
+    armature_inductance: '~1 mH armature inductance (electrical τ = L_a/R_a ≈ 0.5 ms)',
+    rotor_inertia: '~1e-5 kg·m² rotor inertia (mechanical spin-up ~50 ms)',
+    load_torque: 'external shaft load; 0 = free-running (keep ≤ the stall torque k·V/R_a)',
   },
   transformer: {
     primary_inductance: 'small EI mains transformer class, low-voltage winding',
@@ -1073,6 +1118,16 @@ export function primaryValue(
   if (definition === 'inductor') {
     const l = amountOf(parameters, 'inductance')
     return l === undefined ? null : formatEng(l, 'H')
+  }
+  if (definition === 'electromagnet') {
+    // Headline the turns — the magnetic identity (N·I sets the field), not the inductance.
+    const n = amountOf(parameters, 'turns')
+    return n === undefined ? null : `${n} turns`
+  }
+  if (definition === 'dc_motor') {
+    // Headline the motor constant k — speed-per-volt and torque-per-amp in one number.
+    const k = amountOf(parameters, 'motor_constant')
+    return k === undefined ? null : `k=${formatEng(k, 'V·s/rad')}`
   }
   if (definition === 'transformer' || definition === 'transformer_center_tapped') {
     // Headline the turns ratio n ≈ √(L2/L1), e.g. "1:10" for a step-up.

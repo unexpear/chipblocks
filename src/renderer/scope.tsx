@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { World } from '../cross-fk-validator.ts'
+import { coilInductanceFromInstance } from '../electromagnet-model.ts'
 import { readScalarParam } from '../instance-params.ts'
 import type { TransientResult } from '../transient-solver.ts'
 import { scopeCsv } from './scope-csv.ts'
@@ -49,8 +50,8 @@ export function scopeWindow(world: World): { timeStep: number; duration: number 
       if (ohms > 0) minResistorOhms = Math.min(minResistorOhms, ohms)
     } else if (inst.definition === 'capacitor') {
       maxFarads = Math.max(maxFarads, readScalarParam(inst, 'capacitance') ?? 0)
-    } else if (inst.definition === 'inductor') {
-      maxHenry = Math.max(maxHenry, readScalarParam(inst, 'inductance') ?? 0)
+    } else if (inst.definition === 'inductor' || inst.definition === 'electromagnet') {
+      maxHenry = Math.max(maxHenry, coilInductanceFromInstance(inst) ?? 0)
     } else if (
       inst.definition === 'transformer' ||
       inst.definition === 'transformer_center_tapped'
