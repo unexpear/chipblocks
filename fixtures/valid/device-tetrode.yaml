@@ -1,0 +1,152 @@
+# Valid fixture: tetrode (screen-grid tube, ~1926). The triode had a problem — the
+# control grid and the plate face each other across a gap, so they form a small
+# capacitance, and at radio frequencies that grid-to-plate capacitance fed the output
+# back to the input and made amplifiers oscillate. The fix (Schottky / Hull) was to add
+# a SECOND grid between the control grid and the plate, the SCREEN grid, held at a fixed
+# positive voltage. It does two things: it electrostatically SHIELDS the control grid
+# from the plate (killing the feedback capacitance), and it takes over the job of
+# accelerating the electrons. The consequence is the defining tetrode behaviour: the
+# plate current is set by the control grid + screen and becomes almost INDEPENDENT of
+# the plate voltage — a FLAT plate characteristic, i.e. a very high plate resistance
+# r_p, which gives much more voltage gain than a triode (the gain is g_m*R_load instead
+# of being dragged down by a low r_p).
+#
+# The plate current follows the screen-grid form of the Child-Langmuir law:
+#   I_p = perveance * (V_g1 + V_g2/mu_screen + V_plate/mu_plate)^1.5
+# with mu_screen the control-grid-to-screen factor (the main control after the screen,
+# which is fixed) and mu_plate the control-grid-to-PLATE factor, which is VERY large
+# (the screen shields the plate), so dI_p/dV_plate is tiny — the flat characteristic.
+# Solved as a transconductance device with three control voltages (g1, g2, plate); both
+# grids draw ~no current.
+#
+# Honest scope: the IDEALIZED flat characteristic only. A real tetrode has the famous
+# "kink" — a secondary-emission dip when the plate voltage falls below the screen
+# voltage — which this does NOT model; that kink is exactly what the PENTODE's
+# suppressor grid removes, so this model is the clean (kink-free) characteristic. Screen
+# current is taken as zero (a real screen intercepts ~10-20% of the cathode current),
+# and the cathode is assumed hot, the 3/2-power law idealized — all documented gaps.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: tetrode
+origin: builtin
+layer: primitive_device
+name: "Tetrode (screen-grid tube)"
+description: "A four-electrode vacuum tube: a triode with a second grid (the screen) between the control grid and the plate, held at a fixed positive voltage. The screen shields the control grid from the plate (removing the grid-plate feedback capacitance that made triode RF amplifiers unstable) and does the accelerating, so the plate current depends on the control grid + screen and is nearly independent of the plate voltage — a flat, high plate-resistance characteristic that gives more gain than a triode. Plate current follows the screen-grid Child-Langmuir law I_p = perveance*(V_g1 + V_g2/mu_screen + V_plate/mu_plate)^1.5, solved as a transconductance device."
+composition:
+  requires:
+    cathode:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    grid:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    screen:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    plate:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 4
+parameters:
+  cathode_material:
+    type: material_ref
+    satisfies_role: cathode
+    required: true
+    description: The hot cathode that emits the electrons (oxide-coated nickel or tungsten in real tubes). The catalog's tungsten stands in.
+  grid_material:
+    type: material_ref
+    satisfies_role: grid
+    required: true
+    description: The control grid (g1) — the input. A fine wire helix nearest the cathode. The catalog's copper stands in. Draws ~no current in normal (negative-grid) operation.
+  screen_material:
+    type: material_ref
+    satisfies_role: screen
+    required: true
+    description: The screen grid (g2) — held positive, it accelerates the electrons and shields the control grid from the plate. The catalog's copper stands in.
+  plate_material:
+    type: material_ref
+    satisfies_role: plate
+    required: true
+    description: The plate (anode) that collects the electrons. The catalog's copper stands in.
+  screen_amplification_factor:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: "mu_screen — the control-grid-to-screen amplification factor. With the screen held at a fixed voltage it sets how much of the screen voltage appears as effective accelerating voltage (V_g2/mu_screen)."
+  plate_amplification_factor:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: "mu_plate — the control-grid-to-PLATE amplification factor. It is VERY large (the screen shields the plate), so the plate barely affects the current (dI_p/dV_plate = g_m/mu_plate is tiny). This large mu_plate is the flat characteristic, and r_p = mu_plate/g_m is the high plate resistance."
+  reference_plate_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: The plate-cathode voltage of the rated operating point.
+  reference_grid_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: The control-grid-cathode voltage of the rated operating point (negative for class-A bias). The effective voltage V_g1 + V_g2/mu_screen + V_plate/mu_plate at the reference must be positive for the perveance to calibrate.
+  reference_screen_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: The screen-grid-cathode voltage of the rated operating point. In use the screen is wired to a positive supply (often through a screen resistor); its node voltage is read live.
+  plate_current_at_reference:
+    type: quantity
+    units: ampere
+    required: true
+    description: The plate current at the rated operating point. Sets the perveance.
+  max_plate_dissipation:
+    type: quantity
+    units: watt
+    required: false
+    description: Maximum plate dissipation; the over-dissipation check fires when the solved plate power exceeds it.
+  max_plate_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Maximum plate voltage (a reference rating).
+behaviors:
+  - thermionic_emission
+  - acts_as_transistor
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  plate:
+    description: The plate (anode) — collects the electrons. The amplified output.
+  grid:
+    description: The control grid (g1) — the input.
+  screen_grid:
+    description: The screen grid (g2) — held positive; accelerates and shields. Draws ~no current in this model.
+  cathode:
+    description: The hot cathode — the electron emitter and common reference.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved by the screen-grid Child-Langmuir law I_p = perveance*(V_g1 + V_g2/mu_screen +
+  V_plate/mu_plate)^1.5 through the DC and transient Newton companion loops
+  (vacuum-tube-model.ts screenGridTubeOperatingPoint), as a transconductance device with
+  three control terms (g_m control-grid, g_screen screen-grid, g_p plate; both grids draw
+  no current). The plate-dissipation failure check fires when |I_plate|*|V_plate-cathode|
+  exceeds max_plate_dissipation. Honest scope: the idealized flat characteristic only —
+  the tetrode KINK (secondary-emission dip when V_plate < V_screen) is NOT modeled (it is
+  what the pentode's suppressor grid removes); screen current is taken as zero (real
+  screens draw ~10-20% of the cathode current); the cathode is assumed hot and the 3/2
+  law idealized. Electrode materials are catalog stand-ins. The same model serves the
+  pentode (its suppressor grid is inert in the idealized curve). Sources: Schottky /
+  Hull screen-grid tube (~1919-1926); the screen-grid 3/2-power equation (Spangenberg,
+  "Vacuum Tubes", 1948).

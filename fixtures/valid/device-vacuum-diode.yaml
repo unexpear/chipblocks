@@ -1,0 +1,102 @@
+# Valid fixture: vacuum diode (the Fleming valve, 1904) — the FIRST electronic
+# component. A two-electrode thermionic valve: a hot cathode boils off electrons
+# (thermionic emission), and a plate (anode) collects them ONLY when it is positive,
+# so current flows one way — rectification. John Ambrose Fleming built it to detect
+# radio signals; it began the electronic age (everything before it merely moved or
+# stored electricity).
+#
+# The current is space-charge limited — the cloud of emitted electrons in front of the
+# cathode throttles the flow — giving the Child-Langmuir 3/2-power law I = perveance *
+# V^1.5 (V = plate - cathode, V > 0; ~0 in reverse). The device is parameterized by a
+# rated operating point (a plate current at a plate voltage), from which the perveance
+# is derived, the way a semiconductor diode is calibrated by V_F at I_F. Solved through
+# the same Newton-Raphson companion loop as the junction diodes (vacuum-tube-model.ts).
+#
+# Honest scope: the cathode is assumed HOT (heater powered) — the model works in the
+# space-charge-limited regime and does not solve the heater warm-up or the
+# temperature-limited (emission-starved) regime; those are a documented future rung
+# (see the thermionic_emission behavior). The two electrode materials are catalog
+# stand-ins (tungsten cathode, copper plate) — the conduction comes from the rated
+# point + the Child-Langmuir law, not their bulk properties.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: vacuum_diode
+origin: builtin
+layer: primitive_device
+name: "Vacuum diode (Fleming valve)"
+description: "A two-electrode thermionic valve and the first electronic component (Fleming, 1904). A hot cathode emits electrons that a positive plate collects; a negative plate collects none, so it rectifies. The space charge of the emitted electrons limits the current to the Child-Langmuir 3/2-power law I = perveance*V^1.5 (V = plate - cathode). Parameterized by a rated operating point (plate current at plate voltage), from which the perveance is derived, and solved through the same Newton companion loop as the junction diodes."
+composition:
+  requires:
+    cathode:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    plate:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  cathode_material:
+    type: material_ref
+    satisfies_role: cathode
+    required: true
+    description: The thermionic emitter — a hot cathode that boils off electrons. Real tubes use tungsten, thoriated tungsten, or an oxide-coated nickel cathode; the catalog's tungsten stands in. The emission comes from the rated point plus the Child-Langmuir law, not this material's bulk properties.
+  plate_material:
+    type: material_ref
+    satisfies_role: plate
+    required: true
+    description: The plate (anode) that collects the emitted electrons — a conductor (nickel, molybdenum, or graphite in real tubes). The catalog's copper stands in.
+  reference_plate_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: The plate-cathode voltage of the rated operating point. With plate_current_at_reference it fixes the perveance P = I_ref / V_ref^1.5 — a point read off the tube's plate characteristic, the way a diode is calibrated by V_F at I_F.
+  plate_current_at_reference:
+    type: quantity
+    units: ampere
+    required: true
+    description: The plate current at reference_plate_voltage. Sets the perveance (the tube's space-charge constant). Larger means a "stiffer" tube that passes more current at a given plate voltage.
+  max_plate_dissipation:
+    type: quantity
+    units: watt
+    required: false
+    description: Maximum plate (anode) dissipation. Above it the plate glows cherry-red, outgases, and eventually melts — the over-dissipation failure check fires when the solved plate power exceeds this.
+  max_plate_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: Peak inverse voltage the tube can block before reverse conduction / arcing. A reference rating for the rectifier role.
+behaviors:
+  - thermionic_emission
+  - acts_as_diode
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  plate:
+    description: The plate (anode) — collects electrons when positive. Polar; the tube conducts only plate-positive.
+  cathode:
+    description: The hot cathode — the electron emitter. Current returns here.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved by the Child-Langmuir space-charge law I = perveance*V^1.5 (V = plate -
+  cathode, V > 0; 0 in reverse) through the DC and transient Newton-Raphson companion
+  loops (vacuum-tube-model.ts vacuumDiodeCompanion, the same {conductance,
+  currentSource} shape as the Shockley companion). The perveance is derived from the
+  rated operating point (reference_plate_voltage + plate_current_at_reference). The
+  plate-dissipation failure check fires when |I_plate|*|V_plate-cathode| exceeds
+  max_plate_dissipation (the plate red-plates). Honest scope: the cathode is assumed
+  hot (space-charge-limited regime); the Richardson-Dushman emission step and the
+  heater warm-up are documented on the thermionic_emission behavior but not solved
+  (a temperature-limited regime + heater-to-cathode thermal model are a future rung).
+  The electrode materials are catalog stand-ins (tungsten cathode, copper plate).
+  Sources: Fleming's 1904 patent; Child (1911) / Langmuir space-charge law.

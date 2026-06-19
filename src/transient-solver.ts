@@ -72,7 +72,10 @@ import {
   resolveCrd,
   resolveJfet,
   resolveMosfet,
+  resolveScreenGridTube,
+  resolveTriode,
   resolveTunnelDiode,
+  type ScreenGridTube,
   SILICON_BANDGAP_EV,
   SOLVER_GMIN,
   stampBjtCompanion,
@@ -81,6 +84,9 @@ import {
   stampMosfetCompanion,
   stampPotentiometer,
   stampResistor,
+  stampScreenGridTubeCompanion,
+  stampTriodeCompanion,
+  type TriodeElement,
   type TunnelDiode,
 } from './dc-solver.ts'
 import { type DenseVector, lusolve, zerosMatrix, zerosVector } from './dense-linear.ts'
@@ -109,6 +115,14 @@ import {
   tunnelDiodeCompanion,
   tunnelDiodeCurrent,
 } from './tunnel-diode-model.ts'
+import {
+  childLangmuirCurrent,
+  gridTubeOperatingPoint,
+  limitVacuumStep,
+  perveanceFromOperatingPoint,
+  screenGridTubeOperatingPoint,
+  vacuumDiodeCompanion,
+} from './vacuum-tube-model.ts'
 import { type VaractorParams, varactorCapacitance, varactorCharge } from './varactor-model.ts'
 
 /** Newton-Raphson controls per time step (matches the DC solver's §20.6). */
@@ -311,6 +325,20 @@ type ZenerElement = DiodeElement & {
   zenerVoltage: number
   breakdownCurrent: number
   breakdownIdeality: number
+}
+
+/** A vacuum diode resolved for the per-step Newton loop — the Child-Langmuir
+ *  space-charge law I = perveance·V^1.5 (plate − cathode), the same {iP, iK, vGuess}
+ *  shape as a junction diode but with no junction temperature (a hot cathode is
+ *  assumed). */
+type VacuumDiodeElement = {
+  id: string
+  plateNet: string
+  cathodeNet: string
+  iP: number | undefined
+  iK: number | undefined
+  perveance: number
+  vGuess: number
 }
 
 function resolveSource(inst: Instance, nodeIndex: Map<string, number>): TimedSource | null {
@@ -1155,6 +1183,57 @@ function stampDiodeCompanion(
   }
 }
 
+/** Resolve a vacuum diode for the time loop — perveance from its rated operating
+ *  point, plus the plate/cathode nets and their matrix indices. No temperature law:
+ *  the cathode is assumed hot (space-charge limited). */
+function resolveVacuumDiode(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+): VacuumDiodeElement | null {
+  const plateNet = inst.connects?.find((c) => c.terminal === 'plate')?.net
+  const cathodeNet = inst.connects?.find((c) => c.terminal === 'cathode')?.net
+  if (plateNet === undefined || cathodeNet === undefined) return null
+  const refVoltage = readScalarParam(inst, 'reference_plate_voltage')
+  const refCurrent = readScalarParam(inst, 'plate_current_at_reference')
+  if (refVoltage === undefined || refCurrent === undefined) return null
+  if (refVoltage <= 0 || refCurrent <= 0) return null
+  return {
+    id: inst.id,
+    plateNet,
+    cathodeNet,
+    iP: nodeIndex.get(plateNet),
+    iK: nodeIndex.get(cathodeNet),
+    perveance: perveanceFromOperatingPoint(refCurrent, refVoltage),
+    vGuess: refVoltage,
+  }
+}
+
+/** Stamp a vacuum-diode Child-Langmuir companion at its plate-cathode voltage guess —
+ *  the same conductance + current-source stamp shape as a junction diode. */
+function stampVacuumDiodeCompanion(
+  vd: VacuumDiodeElement,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const { conductance: G, currentSource: iEq } = vacuumDiodeCompanion(vd.vGuess, vd.perveance)
+  const { iP, iK } = vd
+  const Gd = G + SOLVER_GMIN
+  if (iP !== undefined) {
+    M.set([iP, iP], (M.get([iP, iP]) ?? 0) + Gd)
+    b.set([iP, 0], (b.get([iP, 0]) ?? 0) - iEq)
+  }
+  if (iK !== undefined) {
+    M.set([iK, iK], (M.get([iK, iK]) ?? 0) + Gd)
+    b.set([iK, 0], (b.get([iK, 0]) ?? 0) + iEq)
+  }
+  if (iP !== undefined && iK !== undefined) {
+    M.set([iP, iK], (M.get([iP, iK]) ?? 0) - Gd)
+    M.set([iK, iP], (M.get([iK, iP]) ?? 0) - Gd)
+  }
+}
+
 /** Stamp a Zener's companion model — identical shape to stampDiodeCompanion, but
  *  zenerCompanionModel adds the reverse-breakdown branch so it clamps at V_Z. */
 function stampTransientZener(
@@ -1245,6 +1324,9 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   const tunnelDiodes: TunnelDiode[] = []
   const shockleyDiodes: ShockleyTransient[] = []
   const zeners: ZenerElement[] = []
+  const vacuumDiodes: VacuumDiodeElement[] = []
+  const triodes: TriodeElement[] = []
+  const screenTubes: ScreenGridTube[] = []
   const bjts: BjtElement[] = []
   const mosfets: MosfetElement[] = []
   // Resistors are stamped straight from the world each instant; for current
@@ -1372,6 +1454,21 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const td = resolveTunnelDiode(inst, tunnelThermalV)
       if (td !== null) tunnelDiodes.push(td)
       else warnings.push(`Skipped tunnel diode '${inst.id}' (missing parameters or anode/cathode)`)
+    } else if (inst.definition === 'vacuum_diode') {
+      const vd = resolveVacuumDiode(inst, nodeIndex)
+      if (vd !== null) vacuumDiodes.push(vd)
+      else warnings.push(`Skipped vacuum diode '${inst.id}' (missing rated operating point)`)
+    } else if (inst.definition === 'triode') {
+      const tri = resolveTriode(inst)
+      if (tri !== null) triodes.push(tri)
+      else warnings.push(`Skipped triode '${inst.id}' (missing μ / operating point / terminals)`)
+    } else if (inst.definition === 'tetrode' || inst.definition === 'pentode') {
+      const tube = resolveScreenGridTube(inst)
+      if (tube !== null) screenTubes.push(tube)
+      else
+        warnings.push(
+          `Skipped ${inst.definition} '${inst.id}' (missing μ / operating point / terminals)`,
+        )
     } else if (inst.definition === 'diode_shockley') {
       const sh = resolveShockleyTransient(inst, nodeIndex, vT)
       if (sh !== null) shockleyDiodes.push(sh)
@@ -1523,6 +1620,9 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       for (const tr of ctTransformers) stampCtTransformerCompanion(tr, dt, M, b)
     }
     for (const d of diodes) stampDiodeCompanion(d, d.thermalV, M, b)
+    for (const vd of vacuumDiodes) stampVacuumDiodeCompanion(vd, M, b)
+    for (const tri of triodes) stampTriodeCompanion(tri, nodeIndex, M, b)
+    for (const tube of screenTubes) stampScreenGridTubeCompanion(tube, nodeIndex, M, b)
     for (const td of tunnelDiodes) stampTransientTunnel(td, nodeIndex, M, b)
     for (const sh of shockleyDiodes) {
       if (sh.state === 'conducting') stampDiodeCompanion(sh.diode, sh.diode.thermalV, M, b)
@@ -1579,6 +1679,44 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         maxDelta = Math.max(maxDelta, Math.abs(next - td.vGuess))
         if (next !== vA - vC) anyLimited = true
         td.vGuess = next
+      }
+      for (const vd of vacuumDiodes) {
+        const vP = vd.plateNet === ground ? 0 : (nodes.get(vd.plateNet) ?? 0)
+        const vK = vd.cathodeNet === ground ? 0 : (nodes.get(vd.cathodeNet) ?? 0)
+        const next = limitVacuumStep(vP - vK, vd.vGuess)
+        maxDelta = Math.max(maxDelta, Math.abs(next - vd.vGuess))
+        if (next !== vP - vK) anyLimited = true
+        vd.vGuess = next
+      }
+      for (const tri of triodes) {
+        const vP = tri.plateNet === ground ? 0 : (nodes.get(tri.plateNet) ?? 0)
+        const vG = tri.gridNet === ground ? 0 : (nodes.get(tri.gridNet) ?? 0)
+        const vK = tri.cathodeNet === ground ? 0 : (nodes.get(tri.cathodeNet) ?? 0)
+        const nextVGK = limitVacuumStep(vG - vK, tri.vGK)
+        const nextVPK = limitVacuumStep(vP - vK, tri.vPK)
+        maxDelta = Math.max(maxDelta, Math.abs(nextVGK - tri.vGK), Math.abs(nextVPK - tri.vPK))
+        if (nextVGK !== vG - vK || nextVPK !== vP - vK) anyLimited = true
+        tri.vGK = nextVGK
+        tri.vPK = nextVPK
+      }
+      for (const tube of screenTubes) {
+        const vP = tube.plateNet === ground ? 0 : (nodes.get(tube.plateNet) ?? 0)
+        const vG1 = tube.gridNet === ground ? 0 : (nodes.get(tube.gridNet) ?? 0)
+        const vG2 = tube.screenNet === ground ? 0 : (nodes.get(tube.screenNet) ?? 0)
+        const vK = tube.cathodeNet === ground ? 0 : (nodes.get(tube.cathodeNet) ?? 0)
+        const nG1 = limitVacuumStep(vG1 - vK, tube.vG1K)
+        const nG2 = limitVacuumStep(vG2 - vK, tube.vG2K)
+        const nP = limitVacuumStep(vP - vK, tube.vPK)
+        maxDelta = Math.max(
+          maxDelta,
+          Math.abs(nG1 - tube.vG1K),
+          Math.abs(nG2 - tube.vG2K),
+          Math.abs(nP - tube.vPK),
+        )
+        if (nG1 !== vG1 - vK || nG2 !== vG2 - vK || nP !== vP - vK) anyLimited = true
+        tube.vG1K = nG1
+        tube.vG2K = nG2
+        tube.vPK = nP
       }
       for (const sh of shockleyDiodes) {
         if (sh.state !== 'conducting') continue
@@ -1764,6 +1902,35 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const v = volts(td.anodeNet) - volts(td.cathodeNet)
       through(td.inst.id, 'anode', 'cathode', tunnelDiodeCurrent(v, td.params))
     }
+    for (const vd of vacuumDiodes) {
+      const v = volts(vd.plateNet) - volts(vd.cathodeNet)
+      through(vd.id, 'plate', 'cathode', childLangmuirCurrent(v, vd.perveance))
+    }
+    for (const tri of triodes) {
+      const vPK = volts(tri.plateNet) - volts(tri.cathodeNet)
+      const vGK = volts(tri.gridNet) - volts(tri.cathodeNet)
+      const { plateCurrent } = gridTubeOperatingPoint(vPK, vGK, tri.perveance, tri.mu)
+      into.set(`${tri.inst.id}/plate`, plateCurrent)
+      into.set(`${tri.inst.id}/cathode`, -plateCurrent)
+      into.set(`${tri.inst.id}/grid`, 0) // the grid draws no current in normal operation
+    }
+    for (const tube of screenTubes) {
+      const vPK = volts(tube.plateNet) - volts(tube.cathodeNet)
+      const vG1K = volts(tube.gridNet) - volts(tube.cathodeNet)
+      const vG2K = volts(tube.screenNet) - volts(tube.cathodeNet)
+      const { plateCurrent } = screenGridTubeOperatingPoint(
+        vPK,
+        vG1K,
+        vG2K,
+        tube.perveance,
+        tube.screenMu,
+        tube.plateMu,
+      )
+      into.set(`${tube.inst.id}/plate`, plateCurrent)
+      into.set(`${tube.inst.id}/cathode`, -plateCurrent)
+      into.set(`${tube.inst.id}/grid`, 0) // both grids draw no current in this first rung
+      into.set(`${tube.inst.id}/screen_grid`, 0)
+    }
     for (const sh of shockleyDiodes) {
       const v = volts(sh.diode.anodeNet) - volts(sh.diode.cathodeNet)
       through(sh.inst.id, 'anode', 'cathode', shockleyTransientCurrent(sh, v))
@@ -1842,6 +2009,16 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     const at = (net: string) => (net === ground ? 0 : (seed.nodes.get(net) ?? 0))
     for (const d of diodes) d.vGuess = at(d.anodeNet) - at(d.cathodeNet)
     for (const td of tunnelDiodes) td.vGuess = at(td.anodeNet) - at(td.cathodeNet)
+    for (const vd of vacuumDiodes) vd.vGuess = at(vd.plateNet) - at(vd.cathodeNet)
+    for (const tri of triodes) {
+      tri.vGK = at(tri.gridNet) - at(tri.cathodeNet)
+      tri.vPK = at(tri.plateNet) - at(tri.cathodeNet)
+    }
+    for (const tube of screenTubes) {
+      tube.vG1K = at(tube.gridNet) - at(tube.cathodeNet)
+      tube.vG2K = at(tube.screenNet) - at(tube.cathodeNet)
+      tube.vPK = at(tube.plateNet) - at(tube.cathodeNet)
+    }
     // Only seed a CONDUCTING latch from the DC point; a blocking one keeps its safe off-guess (0),
     // so when it breaks over the Newton walk starts low and pnjlim climbs without overflowing.
     for (const sh of shockleyDiodes)

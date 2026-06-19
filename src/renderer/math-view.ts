@@ -359,6 +359,61 @@ function partCard(
     if (current !== undefined) lines.push(`Carrying I = ${fmtA(Math.abs(current))}.`)
     return { id: inst.id, title: 'Incandescent bulb — tungsten filament', lines }
   }
+  if (def === 'vacuum_diode') {
+    const refV = readScalarParam(inst, 'reference_plate_voltage')
+    const refI = readScalarParam(inst, 'plate_current_at_reference')
+    lines.push(
+      'A vacuum diode (Fleming valve) conducts by THERMIONIC EMISSION: a hot cathode boils off electrons that a positive plate collects. The space charge of that electron cloud limits the current to the Child-Langmuir law I = perveance·V^1.5 (V = plate − cathode); a negative plate collects nothing, so it rectifies — one-way conduction, the first electronic component.',
+    )
+    if (refV !== undefined && refI !== undefined) {
+      const perveance = refI / refV ** 1.5
+      lines.push(
+        `Calibrated to ${formatEng(refI, 'A')} at ${formatEng(refV, 'V')} → perveance P = ${perveance.toExponential(2)} A/V^1.5.`,
+      )
+    }
+    if (current !== undefined)
+      lines.push(`Carrying I = ${fmtA(Math.abs(current))} (plate → cathode).`)
+    return { id: inst.id, title: 'Vacuum diode — Child-Langmuir space charge', lines }
+  }
+  if (def === 'triode') {
+    const mu = readScalarParam(inst, 'amplification_factor')
+    lines.push(
+      'A triode (the de Forest Audion, 1906) is the first AMPLIFIER: a control grid between cathode and plate, drawing ~no current, sets the plate current through the effective voltage V_g + V_p/μ. The grid is μ times more effective than the plate, so a small grid swing makes a large plate swing — gain. I_p = perveance·(V_g + V_p/μ)^1.5 (Child-Langmuir).',
+    )
+    if (mu !== undefined) {
+      lines.push(
+        `Amplification factor μ = ${mu.toFixed(0)} (the grid is ${mu.toFixed(0)}× as effective as the plate at controlling the current); its transconductance g_m and plate resistance r_p obey μ = g_m·r_p.`,
+      )
+    }
+    if (current !== undefined) lines.push(`Plate current I_p = ${fmtA(Math.abs(current))}.`)
+    return { id: inst.id, title: 'Triode — grid-controlled plate current', lines }
+  }
+  if (def === 'tetrode') {
+    const screenMu = readScalarParam(inst, 'screen_amplification_factor')
+    lines.push(
+      'A tetrode adds a SCREEN grid (a second grid, held positive) between the control grid and the plate. The screen does the accelerating and SHIELDS the control grid from the plate, so the plate current is set by the control grid + screen and is nearly independent of the plate voltage — a FLAT plate characteristic (very high plate resistance r_p), which gives more voltage gain than a triode (A ≈ g_m·R_load). I_p = perveance·(V_g1 + V_g2/μ_screen + V_plate/μ_plate)^1.5.',
+    )
+    if (screenMu !== undefined) {
+      lines.push(
+        `The screen is ${screenMu.toFixed(0)}× less effective than the control grid at setting the current (μ_screen), and the plate far less still — the flat curve.`,
+      )
+    }
+    if (current !== undefined) lines.push(`Plate current I_p = ${fmtA(Math.abs(current))}.`)
+    return { id: inst.id, title: 'Tetrode — screen-grid (flat) characteristic', lines }
+  }
+  if (def === 'pentode') {
+    const screenMu = readScalarParam(inst, 'screen_amplification_factor')
+    lines.push(
+      'A pentode adds a THIRD grid — the suppressor (g3, usually tied to the cathode) — between the screen and the plate. It returns secondary electrons to the plate, removing the tetrode "kink," so the plate current stays flat and high-gain even when the plate voltage drops below the screen. Electrically it is the screen-grid tube without the kink: I_p = perveance·(V_g1 + V_g2/μ_screen + V_plate/μ_plate)^1.5, with a very high plate resistance r_p.',
+    )
+    if (screenMu !== undefined) {
+      lines.push(
+        `The screen is ${screenMu.toFixed(0)}× less effective than the control grid at setting the current (μ_screen); the plate far less still — the flat, kink-free curve.`,
+      )
+    }
+    if (current !== undefined) lines.push(`Plate current I_p = ${fmtA(Math.abs(current))}.`)
+    return { id: inst.id, title: 'Pentode — suppressor grid removes the kink', lines }
+  }
   if (def === 'photoresistor') {
     const r0 = readScalarParam(inst, 'reference_resistance')
     const e0 = readScalarParam(inst, 'reference_illuminance') ?? 10

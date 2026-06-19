@@ -214,6 +214,68 @@ const DEFAULTS: Record<string, Parameters> = {
     thermal_resistance_junction_ambient: scalar(80, 'kelvin_per_watt'),
     max_operating_temperature: scalar(125, 'celsius'),
   },
+  vacuum_diode: {
+    // 6AL5 / EB91-class small-signal vacuum rectifier (representative): its plate
+    // characteristic passes ~9.5 mA at 10 V → perveance ≈ 3e-4 A/V^1.5. Hot cathode
+    // assumed (the heater is documented, not modeled). ~1 W plate, ~330 V peak inverse.
+    reference_plate_voltage: scalar(10, 'volt'),
+    plate_current_at_reference: scalar(0.0095, 'ampere'),
+    max_plate_dissipation: scalar(1, 'watt'),
+    max_plate_voltage: scalar(330, 'volt'),
+    cathode_material: { value: 'tungsten' },
+    plate_material: { value: 'copper' },
+  },
+  triode: {
+    // 12AX7-class high-μ preamp triode (representative): μ = 100, calibrated at a
+    // 250 V plate / −2 V grid / 1.2 mA plate operating point → perveance ≈ 3.4e-3.
+    // Hot cathode assumed (heater documented, not modeled). ~1 W plate.
+    amplification_factor: scalar(100, 'dimensionless'),
+    reference_plate_voltage: scalar(250, 'volt'),
+    reference_grid_voltage: scalar(-2, 'volt'),
+    plate_current_at_reference: scalar(0.0012, 'ampere'),
+    max_plate_dissipation: scalar(1, 'watt'),
+    max_plate_voltage: scalar(330, 'volt'),
+    cathode_material: { value: 'tungsten' },
+    grid_material: { value: 'copper' },
+    plate_material: { value: 'copper' },
+  },
+  tetrode: {
+    // Small-signal screen-grid tube (representative): the control grid sets the current,
+    // the screen (~100 V) accelerates and shields the plate, so the plate barely affects
+    // the current (μ_plate ~2000 → a flat, high-r_p characteristic, higher gain than a
+    // triode). Calibrated at 250 V plate / −2 V grid / 100 V screen / 3 mA. Cathode hot.
+    screen_amplification_factor: scalar(20, 'dimensionless'),
+    plate_amplification_factor: scalar(2000, 'dimensionless'),
+    reference_plate_voltage: scalar(250, 'volt'),
+    reference_grid_voltage: scalar(-2, 'volt'),
+    reference_screen_voltage: scalar(100, 'volt'),
+    plate_current_at_reference: scalar(0.003, 'ampere'),
+    max_plate_dissipation: scalar(2, 'watt'),
+    max_plate_voltage: scalar(330, 'volt'),
+    cathode_material: { value: 'tungsten' },
+    grid_material: { value: 'copper' },
+    screen_material: { value: 'copper' },
+    plate_material: { value: 'copper' },
+  },
+  pentode: {
+    // EF86-class small-signal pentode (representative): the suppressor grid (tied to the
+    // cathode) returns secondary electrons and removes the tetrode kink, so it works
+    // cleanly even with the plate below the screen. Very high r_p (μ_plate ~4000) → high
+    // gain. Calibrated at 250 V plate / −2 V grid / 140 V screen / 3 mA. Cathode hot.
+    screen_amplification_factor: scalar(25, 'dimensionless'),
+    plate_amplification_factor: scalar(4000, 'dimensionless'),
+    reference_plate_voltage: scalar(250, 'volt'),
+    reference_grid_voltage: scalar(-2, 'volt'),
+    reference_screen_voltage: scalar(140, 'volt'),
+    plate_current_at_reference: scalar(0.003, 'ampere'),
+    max_plate_dissipation: scalar(1, 'watt'),
+    max_plate_voltage: scalar(330, 'volt'),
+    cathode_material: { value: 'tungsten' },
+    grid_material: { value: 'copper' },
+    screen_material: { value: 'copper' },
+    suppressor_material: { value: 'copper' },
+    plate_material: { value: 'copper' },
+  },
   switch_spst_toggle: {
     // Panel-mount SPST toggle (C&K 7101 class, matching the anchor switch
     // fixture): copper contacts, ~20 mΩ closed, 6 A, 125 V. Starts closed
@@ -582,6 +644,50 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     thermal_resistance_junction_ambient: 'small power package class (~80 K/W)',
     max_operating_temperature: 'SCR T_J max ~125 °C (class-typical)',
   },
+  vacuum_diode: {
+    reference_plate_voltage:
+      '6AL5 / EB91-class plate-characteristic point (~9.5 mA at 10 V; representative, medium confidence)',
+    plate_current_at_reference:
+      'small-signal vacuum-diode plate current (typical curve, not one exact datasheet)',
+    max_plate_dissipation: '~1 W plate dissipation, signal-diode tube class',
+    max_plate_voltage: '~330 V peak inverse, small vacuum-rectifier class',
+  },
+  triode: {
+    amplification_factor: '12AX7-class μ ≈ 100 (high-μ preamp triode; preamp triodes span ~20-100)',
+    reference_plate_voltage:
+      '12AX7 typical operating point ~250 V plate (datasheet, representative)',
+    reference_grid_voltage: '~-2 V grid bias at the 250 V point (12AX7 datasheet, representative)',
+    plate_current_at_reference:
+      '~1.2 mA plate current at that bias (12AX7 datasheet, representative)',
+    max_plate_dissipation: '12AX7 ~1 W per plate (datasheet)',
+    max_plate_voltage: '~330 V plate-voltage class (12AX7 design maximum)',
+  },
+  tetrode: {
+    screen_amplification_factor:
+      'control-grid-to-screen μ ~20 (screen-grid tube class, representative)',
+    plate_amplification_factor:
+      'control-grid-to-plate μ ~2000 → high r_p, the flat characteristic (representative, medium confidence)',
+    reference_plate_voltage:
+      'small-signal screen-grid tube operating point ~250 V plate (representative)',
+    reference_grid_voltage: '~-2 V control-grid bias (representative)',
+    reference_screen_voltage: '~100 V screen-grid supply (representative)',
+    plate_current_at_reference: '~3 mA plate current at that bias (representative)',
+    max_plate_dissipation: '~2 W plate dissipation, small screen-grid tube class',
+    max_plate_voltage: '~330 V plate-voltage class',
+  },
+  pentode: {
+    screen_amplification_factor:
+      'control-grid-to-screen μ ~25 (small-signal pentode class, representative)',
+    plate_amplification_factor:
+      'control-grid-to-plate μ ~4000 → very high r_p (EF86-class; representative, medium confidence)',
+    reference_plate_voltage:
+      'EF86-class small-signal pentode operating point ~250 V plate (representative)',
+    reference_grid_voltage: '~-2 V control-grid bias (representative)',
+    reference_screen_voltage: '~140 V screen-grid supply (representative)',
+    plate_current_at_reference: '~3 mA plate current at that bias (representative)',
+    max_plate_dissipation: 'EF86 ~1 W plate (small-signal pentode)',
+    max_plate_voltage: '~330 V plate-voltage class',
+  },
   switch_spst_toggle: {
     contact_resistance_closed: 'C&K 7101 class (~20 mΩ closed)',
     max_current: 'C&K 7101 (6 A)',
@@ -905,6 +1011,28 @@ export function primaryValue(
     if (w !== undefined) return formatEng(w, 'W')
     const r = amountOf(parameters, 'resistance')
     return r === undefined ? null : formatEng(r, 'Ω')
+  }
+  if (definition === 'vacuum_diode') {
+    // Headline the conduction point: plate current at the rated plate voltage.
+    const refV = amountOf(parameters, 'reference_plate_voltage')
+    const refI = amountOf(parameters, 'plate_current_at_reference')
+    if (refI !== undefined && refV !== undefined)
+      return `${formatEng(refI, 'A')} @ ${formatEng(refV, 'V')}`
+    return 'tube'
+  }
+  if (definition === 'triode') {
+    // Headline the amplification factor μ — the triode's defining spec.
+    const mu = amountOf(parameters, 'amplification_factor')
+    return mu === undefined ? 'triode' : `μ=${mu}`
+  }
+  if (definition === 'tetrode') {
+    // Headline the (high) control-grid-to-plate μ — the flat-characteristic / high-gain spec.
+    const mu = amountOf(parameters, 'plate_amplification_factor')
+    return mu === undefined ? 'tetrode' : `μ=${mu}`
+  }
+  if (definition === 'pentode') {
+    const mu = amountOf(parameters, 'plate_amplification_factor')
+    return mu === undefined ? 'pentode' : `μ=${mu}`
   }
   if (definition === 'photoresistor') {
     // Headline the LIVE resistance (computed from the light on it) plus the lux —

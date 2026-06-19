@@ -666,6 +666,130 @@ function BjtPnpGlyph() {
 /** Op-amp — the standard amplifier triangle pointing at the output, two inputs on the
  * left marked + (non-inverting) and − (inverting). On the canvas it is a block; this
  * glyph is just its palette face. */
+/** Vacuum diode (Fleming valve) — the glass envelope (circle) with a plate (anode)
+ *  bar up top and a heated-filament cathode (inverted V) below; plate lead out the
+ *  top, cathode lead out the bottom. The first electronic component. */
+function VacuumDiodeGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>vacuum diode (Fleming valve)</title>
+      <circle cx={40} cy={MID} r={14} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={0} x2={40} y2={14} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={31} y1={14} x2={49} y2={14} stroke={STROKE} strokeWidth={1.5} />
+      <polyline points="34,31 40,24 46,31" fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={31} x2={40} y2={44} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
+/** Triode (de Forest's Audion) — the vacuum diode plus a control GRID: a dashed line
+ *  across the middle (grid lead out the left) between the plate and the cathode. The
+ *  first amplifier. */
+function VacuumTriodeGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>triode (Audion)</title>
+      <circle cx={40} cy={MID} r={15} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={0} x2={40} y2={13} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={32} y1={13} x2={48} y2={13} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={0} y1={MID} x2={26} y2={MID} stroke={STROKE} strokeWidth={1.5} />
+      <line
+        x1={28}
+        y1={MID}
+        x2={52}
+        y2={MID}
+        stroke={STROKE}
+        strokeWidth={1.4}
+        strokeDasharray="3 2.5"
+      />
+      <polyline points="34,32 40,26 46,32" fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={32} x2={40} y2={44} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
+/** Tetrode — the triode plus a SCREEN grid: two dashed grids inside the envelope (the
+ *  control grid g1 out the left, the screen grid g2 out the right), between plate and
+ *  cathode. The screen flattens the plate characteristic. */
+function TetrodeGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>tetrode (screen-grid tube)</title>
+      <circle cx={40} cy={MID} r={15} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={0} x2={40} y2={11} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={32} y1={11} x2={48} y2={11} stroke={STROKE} strokeWidth={1.5} />
+      <line
+        x1={28}
+        y1={17}
+        x2={52}
+        y2={17}
+        stroke={STROKE}
+        strokeWidth={1.3}
+        strokeDasharray="3 2.5"
+      />
+      <line x1={52} y1={17} x2={W} y2={17} stroke={STROKE} strokeWidth={1.5} />
+      <line
+        x1={28}
+        y1={26}
+        x2={52}
+        y2={26}
+        stroke={STROKE}
+        strokeWidth={1.3}
+        strokeDasharray="3 2.5"
+      />
+      <line x1={0} y1={26} x2={28} y2={26} stroke={STROKE} strokeWidth={1.5} />
+      <polyline points="34,34 40,29 46,34" fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={34} x2={40} y2={44} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
+/** Pentode — the tetrode plus a third grid: the SUPPRESSOR (g3, between the screen and
+ *  the plate, usually tied to the cathode), which returns secondary electrons and so
+ *  removes the tetrode kink. Three dashed grids inside the envelope. */
+function PentodeGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>pentode</title>
+      <circle cx={40} cy={MID} r={16} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={0} x2={40} y2={8} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={32} y1={8} x2={48} y2={8} stroke={STROKE} strokeWidth={1.5} />
+      <line
+        x1={28}
+        y1={13}
+        x2={52}
+        y2={13}
+        stroke={STROKE}
+        strokeWidth={1.2}
+        strokeDasharray="3 2.5"
+      />
+      <line x1={0} y1={13} x2={28} y2={13} stroke={STROKE} strokeWidth={1.5} />
+      <line
+        x1={28}
+        y1={20}
+        x2={52}
+        y2={20}
+        stroke={STROKE}
+        strokeWidth={1.2}
+        strokeDasharray="3 2.5"
+      />
+      <line x1={52} y1={20} x2={W} y2={20} stroke={STROKE} strokeWidth={1.5} />
+      <line
+        x1={28}
+        y1={27}
+        x2={52}
+        y2={27}
+        stroke={STROKE}
+        strokeWidth={1.2}
+        strokeDasharray="3 2.5"
+      />
+      <line x1={0} y1={27} x2={28} y2={27} stroke={STROKE} strokeWidth={1.5} />
+      <polyline points="34,35 40,30 46,35" fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={35} x2={40} y2={44} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
 function OpAmpGlyph() {
   return (
     <svg width={W} height={H}>
@@ -1107,6 +1231,10 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   diode_schottky_al_si: SchottkyGlyph,
   diode_zener_silicon: ZenerGlyph,
   diode_constant_current: ConstantCurrentDiodeGlyph,
+  vacuum_diode: VacuumDiodeGlyph,
+  triode: VacuumTriodeGlyph,
+  tetrode: TetrodeGlyph,
+  pentode: PentodeGlyph,
   ground: GroundGlyph,
   wire: WireGlyph,
   transistor_bjt_npn: BjtNpnGlyph,
@@ -1183,6 +1311,34 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   diode_schottky_al_si: TWO('anode', 'cathode'),
   diode_zener_silicon: TWO('anode', 'cathode'),
   diode_constant_current: TWO('anode', 'cathode'),
+  // Vacuum diode: plate (anode) up top, the heated cathode below — a vertical valve.
+  vacuum_diode: [
+    { id: 'plate', position: Position.Top },
+    { id: 'cathode', position: Position.Bottom },
+  ],
+  // Triode: plate up top, the control grid in from the left, the cathode below.
+  triode: [
+    { id: 'plate', position: Position.Top },
+    { id: 'grid', position: Position.Left },
+    { id: 'cathode', position: Position.Bottom },
+  ],
+  // Tetrode: plate up top, control grid (g1) from the left, screen grid (g2) from the
+  // right, cathode below — the offsets line the side handles up with the two grids.
+  tetrode: [
+    { id: 'plate', position: Position.Top },
+    { id: 'grid', position: Position.Left, offset: 26 },
+    { id: 'screen_grid', position: Position.Right, offset: 17 },
+    { id: 'cathode', position: Position.Bottom },
+  ],
+  // Pentode: three grids — control (g1) + suppressor (g3) out the left, screen (g2) out
+  // the right — between plate (top) and cathode (bottom), offsets matching the glyph.
+  pentode: [
+    { id: 'plate', position: Position.Top },
+    { id: 'suppressor_grid', position: Position.Left, offset: 13 },
+    { id: 'screen_grid', position: Position.Right, offset: 20 },
+    { id: 'grid', position: Position.Left, offset: 27 },
+    { id: 'cathode', position: Position.Bottom },
+  ],
   switch_spst_toggle: TWO('terminal_in', 'terminal_out'),
   switch_spst_momentary: TWO('terminal_in', 'terminal_out'),
   switch_spdt: [

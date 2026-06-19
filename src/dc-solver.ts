@@ -51,6 +51,14 @@ import {
   tunnelDiodeCurrent,
   tunnelDiodeSaturationCurrent,
 } from './tunnel-diode-model.ts'
+import {
+  childLangmuirCurrent,
+  gridTubeOperatingPoint,
+  limitVacuumStep,
+  perveanceFromOperatingPoint,
+  screenGridTubeOperatingPoint,
+  vacuumDiodeCompanion,
+} from './vacuum-tube-model.ts'
 
 /**
  * A switch conducts only when closed. State lives on the instance as
@@ -169,6 +177,65 @@ export type ShockleyLed = {
 }
 
 /**
+ * A vacuum diode (Fleming valve) resolved for the Newton-Raphson solve. It conducts by
+ * the Child-Langmuir space-charge law I = perveance·V^1.5 (V = plate − cathode > 0; ~0
+ * in reverse, so it rectifies). Perveance is derived from a rated operating point; the
+ * cathode is assumed hot (space-charge limited, not emission limited).
+ */
+export type VacuumDiode = {
+  inst: Instance
+  plateNet: string
+  cathodeNet: string
+  perveance: number
+  /** Current Newton-Raphson voltage guess (plate − cathode). */
+  vGuess: number
+}
+
+/**
+ * A triode resolved for the Newton-Raphson solve. A 3-terminal grid tube: the grid
+ * (drawing ~no current, like a FET gate) modulates the plate current through the
+ * effective voltage V_g + V_p/μ, giving the Child-Langmuir plate current and the
+ * transconductance companion (g_m grid→plate, g_p plate→cathode) — the same shape as
+ * a MOSFET's, with grid/plate/cathode in place of gate/drain/source.
+ */
+export type TriodeElement = {
+  inst: Instance
+  plateNet: string
+  gridNet: string
+  cathodeNet: string
+  perveance: number
+  /** Amplification factor μ — the grid is μ× more effective than the plate. */
+  mu: number
+  /** Current NR bias guesses (volts): grid−cathode and plate−cathode. */
+  vGK: number
+  vPK: number
+}
+
+/**
+ * A screen-grid tube (tetrode or pentode) resolved for the Newton-Raphson solve. A
+ * second grid (the screen, held positive) shields the control grid from the plate, so
+ * the plate current is set by the control grid + screen and is nearly independent of
+ * the plate voltage — the flat characteristic. Solved as a transconductance device
+ * with THREE control voltages (g_m control-grid, g_screen screen-grid, g_p plate). A
+ * pentode reuses this (its suppressor grid is inert in the idealized model).
+ */
+export type ScreenGridTube = {
+  inst: Instance
+  plateNet: string
+  gridNet: string
+  screenNet: string
+  cathodeNet: string
+  perveance: number
+  /** Control-grid-to-screen μ (the main control) and control-grid-to-plate μ (large). */
+  screenMu: number
+  plateMu: number
+  /** Current NR bias guesses (volts): g1−cathode, g2−cathode, plate−cathode. */
+  vG1K: number
+  vG2K: number
+  vPK: number
+}
+
+/**
  * A tunnel (Esaki) diode resolved for the Newton-Raphson solve. Its companion conductance goes
  * NEGATIVE in the V_P..V_V region, so it is solved with a tight per-iteration voltage-step clamp.
  */
@@ -234,6 +301,11 @@ const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'diode_shockley',
   'scr',
   'diode_zener_silicon',
+  // Vacuum tubes (thermionic).
+  'vacuum_diode',
+  'triode',
+  'tetrode',
+  'pentode',
   // Magnetics, switches, protection.
   'transformer',
   'transformer_center_tapped',
@@ -324,6 +396,9 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   const bjts: BjtElement[] = []
   const mosfets: MosfetElement[] = []
   const zeners: ZenerElement[] = []
+  const vacuumDiodes: VacuumDiode[] = []
+  const triodes: TriodeElement[] = []
+  const screenTubes: ScreenGridTube[] = []
 
   for (const inst of world.instances.values()) {
     if (inst.definition === 'transistor_bjt_npn' || inst.definition === 'transistor_bjt_pnp') {
@@ -350,6 +425,26 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     if (inst.definition === 'diode_constant_current') {
       const fet = resolveCrd(inst, options?.temperaturesC?.get(inst.id))
       if (fet !== null) mosfets.push(fet)
+      continue
+    }
+    if (inst.definition === 'triode') {
+      // A 3-terminal grid tube — the grid controls the plate current (transconductance),
+      // the same companion shape as a MOSFET (gridTubeOperatingPoint).
+      const tri = resolveTriode(inst)
+      if (tri !== null) triodes.push(tri)
+      else warnings.push(`Skipped triode '${inst.id}' (missing μ / operating point / terminals)`)
+      continue
+    }
+    if (inst.definition === 'tetrode' || inst.definition === 'pentode') {
+      // A screen-grid tube — the screen shields the plate (flat characteristic). A
+      // pentode adds a suppressor grid that removes the tetrode kink; in the idealized
+      // (kink-free) model the two share one resolver (the suppressor is inert).
+      const tube = resolveScreenGridTube(inst)
+      if (tube !== null) screenTubes.push(tube)
+      else
+        warnings.push(
+          `Skipped ${inst.definition} '${inst.id}' (missing μ / operating point / terminals)`,
+        )
       continue
     }
     if (inst.definition === 'transformer') {
@@ -439,6 +534,12 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       const zener = resolveZener(inst, thermalV, options?.temperaturesC?.get(inst.id))
       if (zener !== null) zeners.push(zener)
       else warnings.push(`Skipped zener '${inst.id}' (missing zener_voltage or forward_voltage)`)
+    } else if (inst.definition === 'vacuum_diode') {
+      // Fleming valve — the Child-Langmuir space-charge law I = perveance·V^1.5,
+      // solved through the same Newton loop as the diodes (vacuumDiodeCompanion).
+      const vd = resolveVacuumDiode(inst)
+      if (vd !== null) vacuumDiodes.push(vd)
+      else warnings.push(`Skipped vacuum diode '${inst.id}' (missing rated operating point)`)
     } else if (
       inst.definition === 'switch_spst_toggle' ||
       inst.definition === 'switch_spst_momentary'
@@ -545,6 +646,15 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     for (const fet of mosfets) {
       stampMosfetCompanion(fet, nodeIndex, M, b)
     }
+    for (const vd of vacuumDiodes) {
+      stampVacuumDiodeCompanion(vd, nodeIndex, M, b)
+    }
+    for (const tri of triodes) {
+      stampTriodeCompanion(tri, nodeIndex, M, b)
+    }
+    for (const tube of screenTubes) {
+      stampScreenGridTubeCompanion(tube, nodeIndex, M, b)
+    }
 
     let x: DenseVector
     try {
@@ -581,6 +691,16 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       fet.vGS = sv(fet.gateNet) - sv(fet.sourceNet)
       fet.vDS = sv(fet.drainNet) - sv(fet.sourceNet)
     }
+    for (const vd of vacuumDiodes) vd.vGuess = sv(vd.plateNet) - sv(vd.cathodeNet)
+    for (const tri of triodes) {
+      tri.vGK = sv(tri.gridNet) - sv(tri.cathodeNet)
+      tri.vPK = sv(tri.plateNet) - sv(tri.cathodeNet)
+    }
+    for (const tube of screenTubes) {
+      tube.vG1K = sv(tube.gridNet) - sv(tube.cathodeNet)
+      tube.vG2K = sv(tube.screenNet) - sv(tube.cathodeNet)
+      tube.vPK = sv(tube.plateNet) - sv(tube.cathodeNet)
+    }
   }
 
   // Linear fast-path: no Shockley LEDs → a single solve (Sprint 14 behavior).
@@ -594,7 +714,10 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     tunnelDiodes.length === 0 &&
     zeners.length === 0 &&
     bjts.length === 0 &&
-    mosfets.length === 0
+    mosfets.length === 0 &&
+    vacuumDiodes.length === 0 &&
+    triodes.length === 0 &&
+    screenTubes.length === 0
   ) {
     solved = buildAndSolve()
     if (solved === null) return emptyResult('singular-matrix', ground, warnings)
@@ -665,6 +788,45 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         if (next !== vA - vC) anyLimited = true
         td.vGuess = next
       }
+      for (const vd of vacuumDiodes) {
+        const vP = vd.plateNet === ground ? 0 : (last.nodes.get(vd.plateNet) ?? 0)
+        const vK = vd.cathodeNet === ground ? 0 : (last.nodes.get(vd.cathodeNet) ?? 0)
+        // The Child-Langmuir 3/2 law is gentle — a plain voltage-step clamp is enough.
+        const next = limitVacuumStep(vP - vK, vd.vGuess)
+        maxDelta = Math.max(maxDelta, Math.abs(next - vd.vGuess))
+        if (next !== vP - vK) anyLimited = true
+        vd.vGuess = next
+      }
+      for (const tri of triodes) {
+        const vP = tri.plateNet === ground ? 0 : (last.nodes.get(tri.plateNet) ?? 0)
+        const vG = tri.gridNet === ground ? 0 : (last.nodes.get(tri.gridNet) ?? 0)
+        const vK = tri.cathodeNet === ground ? 0 : (last.nodes.get(tri.cathodeNet) ?? 0)
+        const nextVGK = limitVacuumStep(vG - vK, tri.vGK)
+        const nextVPK = limitVacuumStep(vP - vK, tri.vPK)
+        maxDelta = Math.max(maxDelta, Math.abs(nextVGK - tri.vGK), Math.abs(nextVPK - tri.vPK))
+        if (nextVGK !== vG - vK || nextVPK !== vP - vK) anyLimited = true
+        tri.vGK = nextVGK
+        tri.vPK = nextVPK
+      }
+      for (const tube of screenTubes) {
+        const vP = tube.plateNet === ground ? 0 : (last.nodes.get(tube.plateNet) ?? 0)
+        const vG1 = tube.gridNet === ground ? 0 : (last.nodes.get(tube.gridNet) ?? 0)
+        const vG2 = tube.screenNet === ground ? 0 : (last.nodes.get(tube.screenNet) ?? 0)
+        const vK = tube.cathodeNet === ground ? 0 : (last.nodes.get(tube.cathodeNet) ?? 0)
+        const nG1 = limitVacuumStep(vG1 - vK, tube.vG1K)
+        const nG2 = limitVacuumStep(vG2 - vK, tube.vG2K)
+        const nP = limitVacuumStep(vP - vK, tube.vPK)
+        maxDelta = Math.max(
+          maxDelta,
+          Math.abs(nG1 - tube.vG1K),
+          Math.abs(nG2 - tube.vG2K),
+          Math.abs(nP - tube.vPK),
+        )
+        if (nG1 !== vG1 - vK || nG2 !== vG2 - vK || nP !== vP - vK) anyLimited = true
+        tube.vG1K = nG1
+        tube.vG2K = nG2
+        tube.vPK = nP
+      }
       if (maxDelta < NR_VOLTAGE_TOLERANCE && !anyLimited) {
         converged = true
         break
@@ -732,6 +894,31 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   }
   for (const td of tunnelDiodes) {
     branches.set(td.inst.id, tunnelDiodeCurrent(td.vGuess, td.params))
+  }
+  // Vacuum diode: the Child-Langmuir plate current at the converged plate-cathode voltage.
+  for (const vd of vacuumDiodes) {
+    branches.set(vd.inst.id, childLangmuirCurrent(vd.vGuess, vd.perveance))
+  }
+  // Triode: the plate current at the converged grid + plate bias.
+  for (const tri of triodes) {
+    branches.set(
+      tri.inst.id,
+      gridTubeOperatingPoint(tri.vPK, tri.vGK, tri.perveance, tri.mu).plateCurrent,
+    )
+  }
+  // Screen-grid tube (tetrode/pentode): the plate current at the converged biases.
+  for (const tube of screenTubes) {
+    branches.set(
+      tube.inst.id,
+      screenGridTubeOperatingPoint(
+        tube.vPK,
+        tube.vG1K,
+        tube.vG2K,
+        tube.perveance,
+        tube.screenMu,
+        tube.plateMu,
+      ).plateCurrent,
+    )
   }
   // Zener: the device current from its two-branch companion at the converged
   // voltage (forward conduction, or the reverse breakdown current when clamping).
@@ -868,6 +1055,30 @@ export function resolveShockleyLed(
 }
 
 /**
+ * Resolve a vacuum diode to its Child-Langmuir element, or null without its rated
+ * operating point. The perveance P = I_ref / V_ref^1.5 is derived from the rated plate
+ * current at the rated plate voltage — a datasheet point, the way resolveShockleyLed
+ * derives I_S from V_F @ I_F. No temperature law: the cathode is assumed hot, so the
+ * current is space-charge limited, not emission limited (a documented first rung).
+ */
+export function resolveVacuumDiode(inst: Instance): VacuumDiode | null {
+  const refVoltage = readScalarParam(inst, 'reference_plate_voltage')
+  const refCurrent = readScalarParam(inst, 'plate_current_at_reference')
+  if (refVoltage === undefined || refCurrent === undefined) return null
+  if (refVoltage <= 0 || refCurrent <= 0) return null
+  const plate = inst.connects?.find((c) => c.terminal === 'plate')
+  const cathode = inst.connects?.find((c) => c.terminal === 'cathode')
+  if (plate === undefined || cathode === undefined) return null
+  return {
+    inst,
+    plateNet: plate.net,
+    cathodeNet: cathode.net,
+    perveance: perveanceFromOperatingPoint(refCurrent, refVoltage),
+    vGuess: refVoltage, // warm start at the rated plate voltage
+  }
+}
+
+/**
  * Resolve a Zener to the two-branch model, or null without forward_voltage +
  * zener_voltage. Forward I_S is calibrated like any silicon diode (V_F at a
  * reference current); the breakdown reference current is the datasheet knee
@@ -998,6 +1209,167 @@ function stampLedCompanion(
     thermalV,
   )
   stampJunctionCompanion(led.anodeNet, led.cathodeNet, conductance, currentSource, nodeIndex, M, b)
+}
+
+/** Stamp a vacuum-diode Child-Langmuir companion at its plate-cathode voltage guess. */
+function stampVacuumDiodeCompanion(
+  vd: VacuumDiode,
+  nodeIndex: Map<string, number>,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const { conductance, currentSource } = vacuumDiodeCompanion(vd.vGuess, vd.perveance)
+  stampJunctionCompanion(vd.plateNet, vd.cathodeNet, conductance, currentSource, nodeIndex, M, b)
+}
+
+/**
+ * Resolve a triode to its grid-tube element, or null without μ + a rated operating
+ * point + its three terminals. The perveance is derived from the reference point
+ * (plate current at a plate/grid bias) via the effective voltage V_g + V_p/μ, so the
+ * tube is specified by a datasheet bias point + μ. The reference point must be in
+ * conduction (V_eff > 0); a cut-off reference can't calibrate the perveance.
+ */
+export function resolveTriode(inst: Instance): TriodeElement | null {
+  const mu = readScalarParam(inst, 'amplification_factor')
+  const refVp = readScalarParam(inst, 'reference_plate_voltage')
+  const refVg = readScalarParam(inst, 'reference_grid_voltage')
+  const refIp = readScalarParam(inst, 'plate_current_at_reference')
+  if (mu === undefined || refVp === undefined || refVg === undefined || refIp === undefined)
+    return null
+  if (mu <= 0 || refIp <= 0) return null
+  const plate = inst.connects?.find((c) => c.terminal === 'plate')
+  const grid = inst.connects?.find((c) => c.terminal === 'grid')
+  const cathode = inst.connects?.find((c) => c.terminal === 'cathode')
+  if (plate === undefined || grid === undefined || cathode === undefined) return null
+  const perveance = perveanceFromOperatingPoint(refIp, refVg + refVp / mu)
+  if (perveance <= 0) return null // the reference bias must conduct (V_eff > 0)
+  return {
+    inst,
+    plateNet: plate.net,
+    gridNet: grid.net,
+    cathodeNet: cathode.net,
+    perveance,
+    mu,
+    vGK: refVg, // warm start at the rated bias
+    vPK: refVp,
+  }
+}
+
+/** Stamp a triode's transconductance companion at its bias guess — the same shape as
+ *  stampMosfetCompanion (grid→plate g_m, plate→cathode g_p), the grid drawing no current. */
+export function stampTriodeCompanion(
+  tri: TriodeElement,
+  nodeIndex: Map<string, number>,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const op = gridTubeOperatingPoint(tri.vPK, tri.vGK, tri.perveance, tri.mu)
+  const ieq = op.plateCurrent - op.gm * tri.vGK - op.gp * tri.vPK
+  const iGr = nodeIndex.get(tri.gridNet)
+  const iP = nodeIndex.get(tri.plateNet)
+  const iK = nodeIndex.get(tri.cathodeNet)
+  const add = (row: number | undefined, col: number | undefined, value: number) => {
+    if (row === undefined || col === undefined) return
+    M.set([row, col], (M.get([row, col]) ?? 0) + value)
+  }
+  add(iP, iGr, op.gm)
+  add(iP, iP, op.gp)
+  add(iP, iK, -(op.gm + op.gp))
+  add(iK, iGr, -op.gm)
+  add(iK, iP, -op.gp)
+  add(iK, iK, op.gm + op.gp)
+  if (iP !== undefined) b.set([iP, 0], (b.get([iP, 0]) ?? 0) - ieq)
+  if (iK !== undefined) b.set([iK, 0], (b.get([iK, 0]) ?? 0) + ieq)
+}
+
+/**
+ * Resolve a screen-grid tube (tetrode/pentode) to its element, or null without the two
+ * μ's + a rated operating point + its four terminals. The perveance is derived from the
+ * reference point via the effective voltage V_g1 + V_g2/μ_screen + V_plate/μ_plate; that
+ * reference point must be in conduction (V_eff > 0).
+ */
+export function resolveScreenGridTube(inst: Instance): ScreenGridTube | null {
+  const screenMu = readScalarParam(inst, 'screen_amplification_factor')
+  const plateMu = readScalarParam(inst, 'plate_amplification_factor')
+  const refVp = readScalarParam(inst, 'reference_plate_voltage')
+  const refVg = readScalarParam(inst, 'reference_grid_voltage')
+  const refVs = readScalarParam(inst, 'reference_screen_voltage')
+  const refIp = readScalarParam(inst, 'plate_current_at_reference')
+  if (
+    screenMu === undefined ||
+    plateMu === undefined ||
+    refVp === undefined ||
+    refVg === undefined ||
+    refVs === undefined ||
+    refIp === undefined
+  )
+    return null
+  if (screenMu <= 0 || plateMu <= 0 || refIp <= 0) return null
+  const plate = inst.connects?.find((c) => c.terminal === 'plate')
+  const grid = inst.connects?.find((c) => c.terminal === 'grid')
+  const screen = inst.connects?.find((c) => c.terminal === 'screen_grid')
+  const cathode = inst.connects?.find((c) => c.terminal === 'cathode')
+  if (plate === undefined || grid === undefined || screen === undefined || cathode === undefined)
+    return null
+  const perveance = perveanceFromOperatingPoint(refIp, refVg + refVs / screenMu + refVp / plateMu)
+  if (perveance <= 0) return null // the reference bias must conduct (V_eff > 0)
+  return {
+    inst,
+    plateNet: plate.net,
+    gridNet: grid.net,
+    screenNet: screen.net,
+    cathodeNet: cathode.net,
+    perveance,
+    screenMu,
+    plateMu,
+    vG1K: refVg,
+    vG2K: refVs,
+    vPK: refVp,
+  }
+}
+
+/** Stamp a screen-grid tube's companion at its bias — like the triode, with the screen
+ *  grid (g2) as a third control term; both grids draw no current. */
+export function stampScreenGridTubeCompanion(
+  tube: ScreenGridTube,
+  nodeIndex: Map<string, number>,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const op = screenGridTubeOperatingPoint(
+    tube.vPK,
+    tube.vG1K,
+    tube.vG2K,
+    tube.perveance,
+    tube.screenMu,
+    tube.plateMu,
+  )
+  const ieq = op.plateCurrent - op.gm * tube.vG1K - op.gScreen * tube.vG2K - op.gp * tube.vPK
+  const iG1 = nodeIndex.get(tube.gridNet)
+  const iG2 = nodeIndex.get(tube.screenNet)
+  const iP = nodeIndex.get(tube.plateNet)
+  const iK = nodeIndex.get(tube.cathodeNet)
+  const add = (row: number | undefined, col: number | undefined, value: number) => {
+    if (row === undefined || col === undefined) return
+    M.set([row, col], (M.get([row, col]) ?? 0) + value)
+  }
+  const gSum = op.gm + op.gScreen + op.gp
+  add(iP, iG1, op.gm)
+  add(iP, iG2, op.gScreen)
+  add(iP, iP, op.gp)
+  add(iP, iK, -gSum)
+  add(iK, iG1, -op.gm)
+  add(iK, iG2, -op.gScreen)
+  add(iK, iP, -op.gp)
+  add(iK, iK, gSum)
+  if (iP !== undefined) b.set([iP, 0], (b.get([iP, 0]) ?? 0) - ieq)
+  if (iK !== undefined) b.set([iK, 0], (b.get([iK, 0]) ?? 0) + ieq)
 }
 
 /**

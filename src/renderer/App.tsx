@@ -1307,6 +1307,14 @@ function Canvas() {
       } else if (inst.definition === 'diode_constant_current') {
         // A CRD is internally a JFET, so the solver records its current at the synthetic drain.
         info.set(id, { currentKey: `${id}/drain`, label: `${id} · I(anode→cathode)` })
+      } else if (inst.definition === 'vacuum_diode') {
+        info.set(id, { currentKey: `${id}/plate`, label: `${id} · I(plate→cathode)` })
+      } else if (
+        inst.definition === 'triode' ||
+        inst.definition === 'tetrode' ||
+        inst.definition === 'pentode'
+      ) {
+        info.set(id, { currentKey: `${id}/plate`, label: `${id} · I(plate)` })
       } else if (
         inst.definition === 'switch_spst_toggle' ||
         inst.definition === 'switch_spst_momentary'

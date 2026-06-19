@@ -1,0 +1,57 @@
+# Valid fixture: behavior registry entry for THERMIONIC EMISSION — a hot cathode
+# boiling off electrons, the electron source that makes every vacuum tube work. The
+# "Edison effect" (Edison noticed it in 1883 in his lamps), explained by Owen
+# Richardson in 1901 (Nobel Prize 1928). This is the bridge from the incandescent
+# lamp (a hot filament) to electronics: heat a metal hot enough and electrons gain
+# enough energy to escape its surface, forming a cloud that a positive plate can
+# collect.
+#
+# The physics: the emitted current density follows the Richardson-Dushman law
+#   J = A * T^2 * exp(-W / (k * T))
+# where T is the cathode temperature (K), W the work function (the energy needed to
+# free a surface electron, eV), k Boltzmann's constant, and A the Richardson constant
+# (~1.2e6 A/m^2*K^2 for an ideal metal; oxide-coated cathodes emit far more at lower
+# temperature, which is why real tubes use them). The freed electrons form a SPACE
+# CHARGE in front of the cathode; in a working tube that cloud — not the emission
+# itself — limits the collected plate current, to the Child-Langmuir 3/2-power law.
+#
+# Used by: the vacuum diode (and the triode / tetrode / pentode to come). The app's
+# tube models assume a HOT cathode and work in the space-charge-limited regime (the
+# Child-Langmuir law); this behavior documents the emission step that supplies the
+# electrons. MUST validate against behavior.schema.json.
+kind: behavior
+id: thermionic_emission
+origin: builtin
+layer: behavior
+name: "Thermionic emission (hot-cathode electron emission, Richardson-Dushman)"
+description: "A cathode heated white-hot boils off electrons — the electron source of every vacuum tube, and the bridge from the incandescent lamp to electronics. The emitted current density follows the Richardson-Dushman law J = A*T^2*exp(-W/(k*T)) (T the cathode temperature, W the work function). The freed electrons form a space-charge cloud that a positive plate collects; in a working tube that cloud limits the plate current to the Child-Langmuir 3/2-power law, not the emission itself. Known as the Edison effect (1883), explained by Richardson (1901)."
+parameters_required:
+  - name: temperature
+    type: quantity
+    units: kelvin
+    description: The cathode's absolute temperature T. Emission climbs steeply with it (the T^2 prefactor times a strong exponential), so a cathode must run white-hot (a tungsten cathode ~2500 K; an oxide-coated cathode ~1000 K) to emit usefully.
+  - name: work_function
+    type: quantity
+    units: electronvolt
+    description: The work function W — the energy needed to free an electron from the cathode surface. Lower is better (more emission at a given temperature). Tungsten is ~4.5 eV; thoriated tungsten ~2.6 eV; oxide-coated cathodes ~1 eV, the reason they emit copiously at dull-red heat.
+evaluates: "J = A * T^2 * exp(-W / (k*T)) where A is the Richardson constant (~1.2e6 A/m^2*K^2 for an ideal metal; effective A is lower for real surfaces), k = 8.617e-5 eV/K (Boltzmann), W in eV. The emitted electrons form a space charge; the collected plate current is then the Child-Langmuir space-charge-limited current I = perveance*V^1.5, not J itself."
+consequences: []
+law: thermionic_emission
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  The defining behavior of the vacuum-tube family — the electron source. The app's
+  tube devices (vacuum diode, and the grid tubes to come) assume the cathode is hot
+  and solve in the SPACE-CHARGE-LIMITED regime (the Child-Langmuir 3/2 law,
+  vacuum-tube-model.ts), where the electron cloud, not the raw emission, sets the
+  current; that is the normal operating regime of a tube. Honest scope: the emission
+  step itself (Richardson-Dushman) and the heater warm-up are documented here but not
+  solved — the temperature-limited regime (run out of emission at high current) and
+  the heater-to-cathode thermal model are a future rung, the same way the incandescent
+  bulb defers its thermal mass. Sources: Richardson, "The Emission of Electricity from
+  Hot Bodies" (1916); Dushman, Rev. Mod. Phys. (1930); the Edison effect (1883).

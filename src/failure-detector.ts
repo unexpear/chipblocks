@@ -51,6 +51,7 @@ export type FailureCode =
   | 'capacitor-reverse-polarity'
   | 'capacitor-overvoltage'
   | 'part-overtemperature'
+  | 'tube-plate-overdissipation'
 
 export type FailureSeverity = 'error'
 
@@ -81,6 +82,8 @@ const LED_DEFINITIONS = new Set(['led', 'led_uv_algan'])
 const DIODE_DEFINITIONS = new Set(['diode_silicon_rectifier', 'diode_schottky_al_si'])
 /** Bipolar transistors — collector-current overload + V_CEO breakdown. */
 const BJT_DEFINITIONS = new Set(['transistor_bjt_npn', 'transistor_bjt_pnp'])
+/** Vacuum tubes — plate dissipation overload (the plate red-plates and fails). */
+const VACUUM_TUBE_DEFINITIONS = new Set(['vacuum_diode', 'triode', 'tetrode', 'pentode'])
 
 /**
  * Walk the world's instances and compare each against its rating parameters
@@ -134,6 +137,9 @@ export function detectFailures(
     } else if (inst.definition === 'resistor') {
       const overpower = checkResistorOverpower(inst, solution)
       if (overpower !== null) failures.push(overpower)
+    } else if (VACUUM_TUBE_DEFINITIONS.has(inst.definition)) {
+      const overload = checkPlateDissipation(inst, solution)
+      if (overload !== null) failures.push(overload)
     } else if (inst.definition === 'capacitor') {
       const reversed = checkCapacitorReversePolarity(inst, solution)
       if (reversed !== null) failures.push(reversed)
@@ -574,6 +580,34 @@ export function checkOvertemperature(
     rated: maxTemperature,
     ratio: temperature / maxTemperature,
     units: 'celsius',
+    severity: 'error',
+  }
+}
+
+/**
+ * Vacuum-tube plate-dissipation check — a tube fails when its plate (anode) dissipates
+ * more than its rated plate dissipation: the plate glows cherry-red, outgases, and
+ * eventually melts. P = |I_plate|·|V_pk| from the solved plate current and plate-cathode
+ * voltage; fires when it exceeds max_plate_dissipation. A tube without the rating skips
+ * honestly — the rating is "unknown," not "infinite."
+ */
+export function checkPlateDissipation(inst: Instance, solution: Solution): Failure | null {
+  const maxDissipation = readScalarParam(inst, 'max_plate_dissipation')
+  if (maxDissipation === undefined || maxDissipation <= 0) return null
+  const branch = solution.branches.get(inst.id)
+  if (branch === undefined) return null
+  const volts = acrossVolts(inst, solution)
+  if (volts === undefined) return null
+  const watts = Math.abs(branch) * volts
+  if (watts <= maxDissipation) return null
+  return {
+    code: 'tube-plate-overdissipation',
+    source: inst.id,
+    kind: 'max_plate_dissipation',
+    measured: watts,
+    rated: maxDissipation,
+    ratio: watts / maxDissipation,
+    units: 'watt',
     severity: 'error',
   }
 }

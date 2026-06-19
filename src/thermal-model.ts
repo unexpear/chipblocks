@@ -288,8 +288,8 @@ export function acrossVolts(inst: ConnectsLike, solution: NodeVoltages): number 
   } else {
     const byTerminal = (names: string[]) => connects.find((c) => names.includes(c.terminal))?.net
     // A potentiometer's "across" is its full track (end to end); a transistor's
-    // is its conducting pair.
-    aNet = byTerminal(['collector', 'drain', 'anode', 'terminal_a'])
+    // is its conducting pair; a vacuum tube's is plate-to-cathode.
+    aNet = byTerminal(['collector', 'drain', 'anode', 'plate', 'terminal_a'])
     bNet = byTerminal(['emitter', 'source', 'cathode', 'terminal_b'])
   }
   if (aNet === undefined || bNet === undefined) return undefined
