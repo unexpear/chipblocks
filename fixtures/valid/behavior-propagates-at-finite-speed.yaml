@@ -1,0 +1,47 @@
+# Valid fixture: behavior registry entry for finite-speed propagation — the defining
+# behavior of a transmission line. A wire pair is not an instant connection: it has
+# distributed inductance and capacitance along its length, so a change at one end travels
+# to the other as a WAVE at a finite speed v = 1/sqrt(L'*C') (a fraction of the speed of
+# light), and the pair presents a characteristic impedance Z0 = sqrt(L'/C'). This is the
+# physics behind the Veritasium "when does the bulb light?" thought experiment: the energy
+# is in the fields, and the field/signal front moves at v, not instantly.
+# Used by the transmission line primitive.
+# MUST validate against behavior.schema.json.
+kind: behavior
+id: propagates_at_finite_speed
+origin: builtin
+layer: behavior
+name: "Propagates at a finite speed (transmission line)"
+description: "A wire pair carries a signal as a wave that travels at a finite speed, not instantly. From its distributed series inductance L' and shunt capacitance C' per unit length (the telegrapher's equations), the wave speed is v = 1/sqrt(L'*C') = c*velocity_factor and the line's characteristic impedance is Z0 = sqrt(L'/C'). So closing a switch sends a wave down the line: the far end stays quiet until it arrives after tau = length/v, the first gulp of current is set by Z0 (I0 = V/(R_src + Z0)), and the wave reflects at any mismatch (coefficient Gamma = (Z_load - Z0)/(Z_load + Z0)) and rings until it settles to the plain DC answer. The lumped (instant) circuit model is the settled, long-after-tau limit."
+parameters_required:
+  - name: characteristic_impedance
+    type: quantity
+    units: ohm
+    description: Z0 = sqrt(L'/C') — what limits the first gulp of current before any reflection returns. ~50-75 ohm for coax, ~300-600 ohm for open wire.
+  - name: velocity_factor
+    type: quantity
+    units: dimensionless
+    description: The wave speed as a fraction of c (v = c*velocity_factor); ~0.95-0.99 for open wire in air, ~0.66 for typical coax (the dielectric slows it).
+evaluates: "v = c*velocity_factor; tau = length/v; Z0 = sqrt(L'/C'); Gamma = (Z_load - Z0)/(Z_load + Z0)"
+consequences: []
+law: telegrapher_equations
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved in the TRANSIENT engine by Branin's method (the exact method of characteristics
+  for a lossless line, transmission-line-model.ts + transient-solver.ts): each end is a
+  conductance 1/Z0 in parallel with a current source carrying the wave that left the OTHER
+  end tau ago (E_near = v_far(t-tau) + Z0*i_far(t-tau), and the mirror); the solver holds
+  the past (voltage, current) at both ends and reads it back. At DC (constant in time) this
+  collapses to v_near = v_far, a pass-through, which the DC solver stamps as a near-short.
+  Honest scope: LOSSLESS only (no series R / shunt G loss, so no attenuation along the
+  line); a single uniform line (no taper); Z0 + velocity_factor are parameters, not yet
+  derived from the conductor geometry (Z0 = (eta0/pi)*acosh(D/d) for open wire is the
+  further rung); resolving the delay needs a transient time step smaller than tau. Sources:
+  Heaviside's telegrapher's equations; Branin (1967) "Transient analysis of lossless
+  transmission lines"; the Veritasium electricity videos for the intuition.

@@ -1,6 +1,7 @@
 import type { Instance } from '../cross-fk-validator.ts'
 import { readEnumParam, readScalarParam } from '../instance-params.ts'
 import { ldrResistance, lightSensorCurrent } from '../light.ts'
+import { propagationDelayS } from '../transmission-line-model.ts'
 import { formatEng } from './units.ts'
 
 /**
@@ -97,6 +98,27 @@ const DEFAULTS: Record<string, Parameters> = {
     armature_inductance: scalar(1e-3, 'henry'),
     rotor_inertia: scalar(1e-5, 'kg*m^2'),
     load_torque: scalar(0, 'N*m'),
+    // Design-it inputs: the same motor as an openable assembly. These derive k, R_a and
+    // J (the lumped values above) — chosen so the default design reproduces them: ferrite
+    // magnets across a small gap on a ~22 × 25 mm iron rotor, 500 turns of 21 AWG copper.
+    design_mode: { value: 'block' },
+    winding_turns: scalar(500, 'dimensionless'),
+    wire_gauge: scalar(21, 'dimensionless'),
+    magnet_remanence: scalar(0.4, 'tesla'),
+    core_relative_permeability: scalar(2000, 'dimensionless'),
+    magnet_length: scalar(0.005, 'meter'),
+    air_gap: scalar(0.0008, 'meter'),
+    rotor_diameter: scalar(0.022, 'meter'),
+    stack_length: scalar(0.025, 'meter'),
+    rotor_density: scalar(7800, 'kilogram/meter^3'),
+  },
+  transmission_line: {
+    // A ~300 m open-wire pair (Z₀ ≈ 300 Ω, velocity factor 0.95 → τ ≈ 1.05 µs end to end).
+    // Long enough that the wave delay is visible on the scope's µs timebase — close a
+    // switch and the far end stays dark for ~a microsecond before the wave lands.
+    characteristic_impedance: scalar(300, 'ohm'),
+    length: scalar(300, 'meter'),
+    velocity_factor: scalar(0.95, 'dimensionless'),
   },
   transformer: {
     // Small EI mains transformer class, ~1:10 step-up from the low-voltage winding
@@ -593,6 +615,11 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     armature_inductance: '~1 mH armature inductance (electrical τ = L_a/R_a ≈ 0.5 ms)',
     rotor_inertia: '~1e-5 kg·m² rotor inertia (mechanical spin-up ~50 ms)',
     load_torque: 'external shaft load; 0 = free-running (keep ≤ the stall torque k·V/R_a)',
+  },
+  transmission_line: {
+    characteristic_impedance: 'open two-wire line ~300 Ω (Z₀ = (η₀/π)·acosh(D/d))',
+    length: '~300 m → τ ≈ 1.05 µs end to end (visible on the µs timebase)',
+    velocity_factor: '~0.95 c for open wire in air; ~0.66 for typical coax',
   },
   transformer: {
     primary_inductance: 'small EI mains transformer class, low-voltage winding',
@@ -1128,6 +1155,15 @@ export function primaryValue(
     // Headline the motor constant k — speed-per-volt and torque-per-amp in one number.
     const k = amountOf(parameters, 'motor_constant')
     return k === undefined ? null : `k=${formatEng(k, 'V·s/rad')}`
+  }
+  if (definition === 'transmission_line') {
+    // Headline Z₀ and the end-to-end wave delay — the two numbers that define the line.
+    const z0 = amountOf(parameters, 'characteristic_impedance')
+    const length = amountOf(parameters, 'length')
+    const vf = amountOf(parameters, 'velocity_factor')
+    if (z0 === undefined) return null
+    const tau = length !== undefined && vf !== undefined ? propagationDelayS(length, vf) : undefined
+    return tau !== undefined ? `${formatEng(z0, 'Ω')} · ${formatEng(tau, 's')}` : formatEng(z0, 'Ω')
   }
   if (definition === 'transformer' || definition === 'transformer_center_tapped') {
     // Headline the turns ratio n ≈ √(L2/L1), e.g. "1:10" for a step-up.

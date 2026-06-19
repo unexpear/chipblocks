@@ -96,6 +96,7 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'inductor', label: 'Inductor' },
   { definition: 'electromagnet', label: 'Electromagnet' },
   { definition: 'dc_motor', label: 'DC Motor' },
+  { definition: 'transmission_line', label: 'T-Line' },
   { definition: 'transformer', label: 'Transformer' },
   { definition: 'transformer_center_tapped', label: 'CT Transformer' },
   { definition: 'diode_silicon_rectifier', label: 'Diode' },

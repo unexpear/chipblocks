@@ -1,0 +1,99 @@
+# Valid fixture: transmission line — a wire PAIR treated as a real distributed line, not an
+# instant connection. This is the part that lets the app run the "when does the bulb light?"
+# experiment (Veritasium): close a switch and the far end stays dark until the wave has run
+# the line. Every long pair of conductors IS one of these (the lamp cord, the mains run, the
+# coax, the PCB trace at high speed); the lumped wire we draw elsewhere is the short-line
+# limit where the delay is too small to see.
+#
+# A line has distributed series inductance L' and shunt capacitance C' along its length. A
+# change at one end travels to the other as a wave at speed v = 1/sqrt(L'*C') = c*velocity
+# factor (a fraction of light speed), and the pair presents a characteristic impedance
+# Z0 = sqrt(L'/C'). So at switch-on: the far end is quiet for tau = length/v; the first gulp
+# of current is set by Z0 (I0 = V/(R_src + Z0)), NOT by the load it cannot see yet; the wave
+# reflects at any mismatch (Gamma = (Z_load - Z0)/(Z_load + Z0)) and rings until it settles
+# to the plain DC answer. The energy travels in the FIELDS around the conductors (Poynting),
+# which is why the signal front, not the slow electron drift, sets the timing.
+#
+# Solved in the TRANSIENT engine by Branin's lossless method (transmission-line-model.ts +
+# transient-solver.ts): each end is a conductance 1/Z0 in parallel with a current source
+# carrying the wave that left the OTHER end tau ago; the solver holds the past (voltage,
+# current) at both ends and reads it back. At DC the line is a pass-through (v_near = v_far),
+# which the DC solver stamps as a near-short between each end's conductors.
+#
+# Honest scope: LOSSLESS only (no series-R / shunt-G loss, so no attenuation); one uniform
+# line (no taper, no branches); Z0 + velocity_factor are parameters, not yet derived from
+# the conductor geometry (Z0 = (eta0/pi)*acosh(D/d) for an open pair is the further rung);
+# the delay is only resolved when the transient time step is smaller than tau.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: transmission_line
+origin: builtin
+layer: primitive_device
+name: "Transmission line (wire pair)"
+description: "A pair of conductors carrying a signal as a wave at a finite speed, not instantly. It is defined by its characteristic impedance Z0 (what limits the first gulp of current before any reflection returns) and its propagation delay tau = length/v with v = c*velocity_factor. Drive one end and the far end stays quiet for tau, then turns on; the wave reflects at any impedance mismatch and rings until it settles to the DC answer. The near pair is one port, the far pair the other. Use it to see the delay, the Z0-limited inrush, and the settling that the lumped (instant-wire) model hides."
+composition:
+  requires:
+    conductor:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 4
+parameters:
+  conductor:
+    type: material_ref
+    satisfies_role: conductor
+    required: true
+    default:
+      value: copper
+    description: The metal the pair is made from. Must conduct; copper is the standard.
+  characteristic_impedance:
+    type: quantity
+    units: ohm
+    required: true
+    description: "Z0 = sqrt(L'/C') — the impedance the source sees before any reflection returns, so it sets the first gulp of current I0 = V/(R_src + Z0). ~50-75 ohm for coax, ~300-600 ohm for an open wire pair."
+  length:
+    type: quantity
+    units: meter
+    required: true
+    description: The physical length of the line. With the velocity factor it sets the propagation delay tau = length / (c * velocity_factor).
+  velocity_factor:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: "The wave speed as a fraction of c (v = c * velocity_factor). ~0.95-0.99 for an open pair in air; ~0.66 for typical coax, where the dielectric slows the wave."
+behaviors:
+  - propagates_at_finite_speed
+  - conducts_current
+terminals:
+  near_a:
+    description: The near (sending) port, conductor A — drive this against near_b.
+  near_b:
+    description: The near (sending) port, conductor B — the return of the near pair.
+  far_a:
+    description: The far (receiving) port, conductor A — the load sees the wave here after tau.
+  far_b:
+    description: The far (receiving) port, conductor B — the return of the far pair.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved in the TRANSIENT engine (transmission-line-model.ts + transient-solver.ts) by
+  Branin's method — the exact method of characteristics for a lossless line. Each end is a
+  conductance 1/Z0 in parallel with a current source carrying the wave that left the OTHER
+  end tau ago (E_near = v_far(t-tau) + Z0*i_far(t-tau), and the mirror); the solver keeps a
+  history of (voltage, current) at both ends and interpolates it back tau. Before tau has
+  elapsed the far end's source is zero, so the load stays dark until the wave lands; after,
+  reflections at any mismatch (Gamma = (Z_load - Z0)/(Z_load + Z0)) ring until the line
+  settles to v_near = v_far, the lumped DC answer (which the DC solver stamps as a
+  near-short). Honest scope: lossless (no attenuation), single uniform line, Z0 +
+  velocity_factor are parameters (not geometry-derived), and the delay needs dt < tau to
+  resolve. Sources: Heaviside's telegrapher's equations; F. H. Branin Jr. (1967),
+  "Transient analysis of lossless transmission lines," Proc. IEEE; the Veritasium
+  electricity videos for the field-energy intuition.

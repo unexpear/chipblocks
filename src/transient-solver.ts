@@ -112,6 +112,7 @@ import { mathInstance as math } from './mathjs-instance.ts'
 import { limitMosfetStep, mosfetOperatingPoint } from './mosfet-model.ts'
 import { motorBackEmf, motorParamsFromInstance, motorSpeedStep } from './motor-model.ts'
 import { type ShockleyDiodeState, scrTarget, shockleyDiodeTarget } from './shockley-diode.ts'
+import { propagationDelayS } from './transmission-line-model.ts'
 import {
   limitTunnelDiodeStep,
   tunnelDiodeCompanion,
@@ -277,6 +278,117 @@ type MotorElement = {
   loadTorque: number // T_load (N·m)
   iPrev: number // armature current at the previous step
   omega: number // rotor speed (rad/s) — the mechanical state
+}
+
+/** One past sample of a transmission line's two ends — read back τ ago (Branin). */
+type LineSample = { t: number; vN: number; iN: number; vF: number; iF: number }
+
+/**
+ * A transmission line resolved for the time loop (Branin's lossless method). Each end is
+ * a resistor Z₀ carrying a source = the wave that left the OTHER end τ ago; `history`
+ * holds the past (voltage, current) at both ends so the solve can read it back.
+ */
+type TransmissionLineElement = {
+  id: string
+  z0: number // characteristic impedance (Ω)
+  tau: number // propagation delay (s)
+  na: string // near port + terminal net
+  nb: string // near port − terminal net
+  fa: string // far port + terminal net
+  fb: string // far port − terminal net
+  iNa: number | undefined // matrix index of na (undefined ⇒ ground)
+  iNb: number | undefined
+  iFa: number | undefined
+  iFb: number | undefined
+  history: LineSample[]
+}
+
+/** A transmission line's two ends a time tTarget ago, linearly interpolated from its
+ *  history. Before the line was driven (tTarget earlier than any sample) it is at rest. */
+function sampleLineHistory(line: TransmissionLineElement, tTarget: number): Omit<LineSample, 't'> {
+  const h = line.history
+  // biome-ignore lint/style/noNonNullAssertion: indices guarded by length checks
+  if (h.length === 0 || tTarget <= h[0]!.t) return { vN: 0, iN: 0, vF: 0, iF: 0 }
+  for (let i = 1; i < h.length; i++) {
+    // biome-ignore lint/style/noNonNullAssertion: i in [1, h.length)
+    const b = h[i]!
+    if (b.t >= tTarget) {
+      // biome-ignore lint/style/noNonNullAssertion: i ≥ 1
+      const a = h[i - 1]!
+      const f = b.t > a.t ? (tTarget - a.t) / (b.t - a.t) : 0
+      return {
+        vN: a.vN + f * (b.vN - a.vN),
+        iN: a.iN + f * (b.iN - a.iN),
+        vF: a.vF + f * (b.vF - a.vF),
+        iF: a.iF + f * (b.iF - a.iF),
+      }
+    }
+  }
+  // biome-ignore lint/style/noNonNullAssertion: h.length ≥ 1 here
+  const last = h[h.length - 1]!
+  return { vN: last.vN, iN: last.iN, vF: last.vF, iF: last.iF }
+}
+
+/**
+ * Stamp a transmission line's Branin companion: each end is a conductance 1/Z₀ in
+ * parallel with a current source carrying the wave that left the OTHER end τ ago
+ * (E_near = v_far(t−τ) + Z₀·i_far(t−τ), and the mirror). Before τ has elapsed the far
+ * end has heard nothing, so its source is zero — the load stays dark until the wave lands.
+ */
+function stampTransmissionLineCompanion(
+  line: TransmissionLineElement,
+  t: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const past = sampleLineHistory(line, t - line.tau)
+  const eNear = past.vF + line.z0 * past.iF
+  const eFar = past.vN + line.z0 * past.iN
+  const g = 1 / line.z0
+  stampLinePort(line.iNa, line.iNb, g, eNear * g, M, b)
+  stampLinePort(line.iFa, line.iFb, g, eFar * g, M, b)
+}
+
+function stampLinePort(
+  iA: number | undefined,
+  iB: number | undefined,
+  g: number,
+  src: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  if (iA !== undefined) {
+    M.set([iA, iA], (M.get([iA, iA]) ?? 0) + g)
+    b.set([iA, 0], (b.get([iA, 0]) ?? 0) + src)
+  }
+  if (iB !== undefined) {
+    M.set([iB, iB], (M.get([iB, iB]) ?? 0) + g)
+    b.set([iB, 0], (b.get([iB, 0]) ?? 0) - src)
+  }
+  if (iA !== undefined && iB !== undefined) {
+    M.set([iA, iB], (M.get([iA, iB]) ?? 0) - g)
+    M.set([iB, iA], (M.get([iB, iA]) ?? 0) - g)
+  }
+}
+
+/** Commit this step's two-end (voltage, current) to a line's history — the wave that
+ *  will arrive at the OTHER end τ from now. Old samples (past t−τ) are pruned. */
+function recordLineSample(
+  line: TransmissionLineElement,
+  t: number,
+  nodes: Map<string, number>,
+): void {
+  const vN = (nodes.get(line.na) ?? 0) - (nodes.get(line.nb) ?? 0)
+  const vF = (nodes.get(line.fa) ?? 0) - (nodes.get(line.fb) ?? 0)
+  const past = sampleLineHistory(line, t - line.tau)
+  const iN = (vN - (past.vF + line.z0 * past.iF)) / line.z0
+  const iF = (vF - (past.vN + line.z0 * past.iN)) / line.z0
+  line.history.push({ t, vN, iN, vF, iF })
+  while (line.history.length > 2 && (line.history[1]?.t ?? t) < t - line.tau) line.history.shift()
 }
 
 /** A transformer (two magnetically-coupled windings) resolved for the time loop. */
@@ -642,6 +754,37 @@ function resolveMotor(inst: Instance, nodeIndex: Map<string, number>): MotorElem
     loadTorque: p.loadTorque,
     iPrev: 0,
     omega: 0,
+  }
+}
+
+function resolveTransmissionLine(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+): TransmissionLineElement | null {
+  const z0 = readScalarParam(inst, 'characteristic_impedance')
+  const length = readScalarParam(inst, 'length')
+  const velocityFactor = readScalarParam(inst, 'velocity_factor')
+  if (z0 === undefined || !(z0 > 0)) return null
+  if (length === undefined || velocityFactor === undefined || !(velocityFactor > 0)) return null
+  const net = (terminal: string) => inst.connects?.find((c) => c.terminal === terminal)?.net
+  const na = net('near_a')
+  const nb = net('near_b')
+  const fa = net('far_a')
+  const fb = net('far_b')
+  if (na === undefined || nb === undefined || fa === undefined || fb === undefined) return null
+  return {
+    id: inst.id,
+    z0,
+    tau: propagationDelayS(length, velocityFactor),
+    na,
+    nb,
+    fa,
+    fb,
+    iNa: nodeIndex.get(na),
+    iNb: nodeIndex.get(nb),
+    iFa: nodeIndex.get(fa),
+    iFb: nodeIndex.get(fb),
+    history: [],
   }
 }
 
@@ -1417,6 +1560,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   const caps: CapElement[] = []
   const inductors: InductorElement[] = []
   const motors: MotorElement[] = []
+  const lines: TransmissionLineElement[] = []
   const transformers: TransformerElement[] = []
   const ctTransformers: CtTransformerElement[] = []
   const diodes: DiodeElement[] = []
@@ -1510,6 +1654,10 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const motor = resolveMotor(inst, nodeIndex)
       if (motor !== null) motors.push(motor)
       else warnings.push(`Skipped DC motor '${inst.id}' (missing R_a / k / friction / L_a / J)`)
+    } else if (inst.definition === 'transmission_line') {
+      const line = resolveTransmissionLine(inst, nodeIndex)
+      if (line !== null) lines.push(line)
+      else warnings.push(`Skipped transmission line '${inst.id}' (missing Z₀ / length / connects)`)
     } else if (inst.definition === 'transformer') {
       const tr = resolveTransformer(inst, nodeIndex, warnings)
       if (tr !== null) transformers.push(tr)
@@ -1724,6 +1872,9 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       for (const tr of transformers) stampTransformerCompanion(tr, dt, M, b)
       for (const tr of ctTransformers) stampCtTransformerCompanion(tr, dt, M, b)
     }
+    // Transmission lines present Z₀ at each end in BOTH modes (at t = 0 their wave-sources
+    // are zero — the far end has heard nothing yet), so they stamp outside the if/else.
+    for (const line of lines) stampTransmissionLineCompanion(line, t, M, b)
     for (const d of diodes) stampDiodeCompanion(d, d.thermalV, M, b)
     for (const vd of vacuumDiodes) stampVacuumDiodeCompanion(vd, M, b)
     for (const tri of triodes) stampTriodeCompanion(tri, nodeIndex, M, b)
@@ -2164,6 +2315,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     nodes: initial.nodes,
     currents: recordCurrents(initial.nodes, initial.x, 'initial'),
   })
+  for (const line of lines) recordLineSample(line, 0, initial.nodes)
 
   // March forward with backward-Euler. Each step: converge the nonlinear solve
   // (warm-started from the previous operating point), record the sample WITH
@@ -2239,6 +2391,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       )
       motor.iPrev = amps
     }
+    for (const line of lines) recordLineSample(line, t, nodes)
     for (const tr of transformers) {
       // Same: this step's winding currents from the companion at the OLD history.
       const { g11, g12, g22, ih1, ih2 } = transformerStep(tr, dt)

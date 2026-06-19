@@ -576,6 +576,43 @@ function MotorGlyph() {
   )
 }
 
+/** Transmission line — a conductor PAIR (the two lines) in a box, with the near pair on
+ *  the left and the far pair on the right; Z₀ marks the characteristic impedance. */
+function TransmissionLineGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>transmission line</title>
+      <rect
+        x={18}
+        y={9}
+        width={44}
+        height={26}
+        rx={3}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <line x1={0} y1={14} x2={18} y2={14} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={0} y1={30} x2={18} y2={30} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={62} y1={14} x2={W} y2={14} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={62} y1={30} x2={W} y2={30} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={18} y1={14} x2={62} y2={14} stroke={STROKE} strokeWidth={1.2} />
+      <line x1={18} y1={30} x2={62} y2={30} stroke={STROKE} strokeWidth={1.2} />
+      <text
+        x={40}
+        y={22}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={9}
+        fill={STROKE}
+        fontFamily="system-ui, sans-serif"
+      >
+        Z₀
+      </text>
+    </svg>
+  )
+}
+
 /** Transformer — two facing winding columns with core lines between (IEC). */
 function TransformerGlyph() {
   return (
@@ -1272,6 +1309,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   inductor: InductorGlyph,
   electromagnet: ElectromagnetGlyph,
   dc_motor: MotorGlyph,
+  transmission_line: TransmissionLineGlyph,
   led: LedGlyph,
   led_uv_algan: LedGlyph,
   incandescent_bulb: IncandescentBulbGlyph,
@@ -1350,6 +1388,13 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   inductor: TWO('terminal_a', 'terminal_b'),
   electromagnet: TWO('terminal_a', 'terminal_b'),
   dc_motor: TWO('terminal_positive', 'terminal_negative'),
+  // A transmission line: the near pair on the left, the far pair on the right.
+  transmission_line: [
+    { id: 'near_a', position: Position.Left, offset: 14 },
+    { id: 'near_b', position: Position.Left, offset: 30 },
+    { id: 'far_a', position: Position.Right, offset: 14 },
+    { id: 'far_b', position: Position.Right, offset: 30 },
+  ],
   power_source: TWO('terminal_positive', 'terminal_negative'),
   led: TWO('anode', 'cathode'),
   led_uv_algan: TWO('anode', 'cathode'),

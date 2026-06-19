@@ -289,6 +289,9 @@ const SHOCKLEY_DIODE_DEFINITIONS = new Set([
  * maybe-wrong 'solved'. Keep in sync with the dispatch below; the test suite (which solves real
  * circuits and expects 'solved') guards against this set drifting out of date.
  */
+/** A transmission line's near-short at DC (a lossless line is a pass-through: v_near =
+ *  v_far). Small enough to be a short, large enough to stay well-conditioned. */
+const TLINE_DC_OHMS = 1e-4
 const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   ...SHOCKLEY_DIODE_DEFINITIONS,
   // Light-current sensors (LIGHT_CURRENT_DEFINITIONS, defined later in this file).
@@ -326,6 +329,7 @@ const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'inductor',
   'electromagnet',
   'dc_motor',
+  'transmission_line',
   'resistor',
   'thermistor',
   'incandescent_bulb',
@@ -617,6 +621,18 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         // back-EMF raises the effective resistance), plus a constant load-current source.
         if (!stampMotor(inst, nodeIndex, M, b))
           warnings.push(`Skipped DC motor '${inst.id}' (missing R_a / k / friction or connects)`)
+      } else if (inst.definition === 'transmission_line') {
+        // At DC a lossless line is a pass-through (v_near = v_far): a near-short between
+        // each end's conductors. The transient solver carries the propagation delay + Z₀.
+        const find = (terminal: string) => inst.connects?.find((c) => c.terminal === terminal)?.net
+        const na = find('near_a')
+        const fa = find('far_a')
+        const nb = find('near_b')
+        const fb = find('far_b')
+        if (na !== undefined && fa !== undefined)
+          stampConductance(nodeIndex, M, na, fa, TLINE_DC_OHMS)
+        if (nb !== undefined && fb !== undefined)
+          stampConductance(nodeIndex, M, nb, fb, TLINE_DC_OHMS)
       }
     }
     for (let s = 0; s < linearVoltageSources.length; s++) {
