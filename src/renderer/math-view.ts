@@ -12,6 +12,7 @@ import {
   magnetomotiveForceAmpereTurns,
   solenoidFluxDensityTesla,
 } from '../electromagnet-model.ts'
+import { electronDriftVelocityMS } from '../field-energy.ts'
 import { readEnumParam, readScalarParam } from '../instance-params.ts'
 import { ldrResistance, lightSensorCurrent, sensorIlluminance } from '../light.ts'
 import { mosfetOperatingPoint } from '../mosfet-model.ts'
@@ -21,6 +22,8 @@ import {
   motorParamsFromInstance,
   motorSteadyState,
 } from '../motor-model.ts'
+import { acrossVolts } from '../thermal-model.ts'
+import { awgAreaM2 } from '../wire-gauge.ts'
 import { formatEng } from './units.ts'
 
 /**
@@ -47,6 +50,9 @@ export type MathView = {
   solver: string[]
   parts: MathPartCard[]
   nets: MathNetRow[]
+  /** Where the energy actually flows — the field picture (Poynting) behind the numbers,
+   *  plus the (very slow) electron drift, reconciled with the lumped solve. */
+  fields: string[]
   /** Every unit symbol used above, written out — built from what ACTUALLY appears. */
   unitsKey: string[]
 }
@@ -143,6 +149,7 @@ export function buildMathView(
       ],
       parts: [],
       nets: [],
+      fields: [],
       unitsKey: [],
     }
   }
@@ -229,12 +236,48 @@ export function buildMathView(
     })
   }
 
+  // Where the energy actually flows — the FIELD picture behind the lumped numbers
+  // (Poynting), plus how slowly the electrons really drift. Reconciled with the solve.
+  const fields: string[] = []
+  let maxAbsAmps = 0
+  for (const i of solution.branches.values()) {
+    if (Math.abs(i) > maxAbsAmps) maxAbsAmps = Math.abs(i)
+  }
+  let maxPower = 0
+  let maxPowerId = ''
+  for (const inst of world.instances.values()) {
+    const branch = solution.branches.get(inst.id)
+    const volts = acrossVolts(inst, solution)
+    if (branch !== undefined && volts !== undefined) {
+      const p = Math.abs(branch * volts)
+      if (p > maxPower) {
+        maxPower = p
+        maxPowerId = inst.id
+      }
+    }
+  }
+  if (maxAbsAmps > 0) {
+    fields.push(
+      'Where the energy actually flows: NOT down the inside of the wire with the electrons, but through the electric + magnetic FIELDS in the space around it — the Poynting vector S = E×H. The wire just guides the fields.',
+    )
+    const driftMS = electronDriftVelocityMS(maxAbsAmps, awgAreaM2(22))
+    fields.push(
+      `The electrons themselves barely move: at ${fmtA(maxAbsAmps)} through a 22 AWG copper wire they drift at about ${(driftMS * 1000).toPrecision(2)} mm/s — far slower than you would guess, while the ENERGY arrives at nearly the speed of light.`,
+    )
+    if (maxPower > 0) {
+      fields.push(
+        `That ${formatEng(maxPower, 'W')} into ${maxPowerId} is energy flowing IN through the fields around it: integrate the Poynting vector over a surface enclosing it and ∮S·dA = V·I = ${formatEng(maxPower, 'W')} — the field picture and the circuit numbers are the SAME thing. Our solve is that picture in the slow, settled (low-frequency) limit.`,
+      )
+    }
+  }
+
   const unitsKey = unitsKeyFor([
     ...solver,
     ...parts.flatMap((p) => p.lines),
     ...nets.flatMap((n) => n.terms),
+    ...fields,
   ])
-  return { solver, parts, nets, unitsKey }
+  return { solver, parts, nets, fields, unitsKey }
 }
 
 function partCard(

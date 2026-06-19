@@ -87,7 +87,13 @@ import {
   nodeIdsInLasso,
   pointInPolygon,
 } from './lasso.ts'
-import { FIELD_COLOR, fieldReferenceTesla, LensContext, type LensMode } from './lens.ts'
+import {
+  ENERGY_COLOR,
+  FIELD_COLOR,
+  fieldReferenceTesla,
+  LensContext,
+  type LensMode,
+} from './lens.ts'
 import { materialCapabilities, validMaterialsByRole } from './material-roles.ts'
 import { MathPanel } from './math-panel.tsx'
 import { buildMathView } from './math-view.ts'
@@ -3186,6 +3192,36 @@ function Canvas({ project }: { project: ProjectChoice }) {
                   'T',
                 )} / ${formatEng(10 * lensState.fieldTesla, 'T')} (innermost) · Earth ≈ 25–65 µT`
               : 'no current flowing — no magnetic field to draw'}
+          </div>
+        ) : null}
+        {lens === 'energy' ? (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 12,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 35,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 7,
+              padding: '5px 12px',
+              maxWidth: 560,
+              background: light ? '#e8eaed' : '#141417',
+              border: light ? '1px solid #c4c8ce' : '1px solid #2a2a2f',
+              borderRadius: 6,
+              fontFamily: 'system-ui, sans-serif',
+              fontSize: 11,
+              color: light ? '#333' : '#cdd6e0',
+              pointerEvents: 'none',
+            }}
+          >
+            <span aria-hidden style={{ color: ENERGY_COLOR, fontWeight: 700 }}>
+              ↯
+            </span>
+            Energy flows IN to each load (and OUT of each source) through the FIELDS in the space
+            around it — the Poynting vector S = E×H. The power arrives from the surrounding space
+            (∮S·dA = V·I), not down the inside of the wire. Arrow size = the part’s power.
           </div>
         ) : null}
 

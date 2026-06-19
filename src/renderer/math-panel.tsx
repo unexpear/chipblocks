@@ -121,6 +121,23 @@ export function MathPanel({
         </div>
       ))}
 
+      {view.fields.length > 0 ? (
+        <>
+          <div style={{ fontWeight: 700, color: dimColor, margin: '12px 0 2px' }}>
+            Where the energy really flows
+          </div>
+          <div style={{ color: dimColor, fontSize: 11, marginBottom: 4 }}>
+            The numbers above are the circuit picture. Underneath, the energy is carried by the
+            fields in the space around the wires — the same total, seen the deeper way.
+          </div>
+          {view.fields.map((line) => (
+            <div key={line} style={{ padding: '2px 0' }}>
+              {line}
+            </div>
+          ))}
+        </>
+      ) : null}
+
       {view.unitsKey.length > 0 ? (
         <>
           <div style={{ fontWeight: 700, color: dimColor, margin: '12px 0 4px' }}>

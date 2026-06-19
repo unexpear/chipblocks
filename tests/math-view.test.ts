@@ -485,4 +485,24 @@ describe('buildMathView', () => {
     expect(coldText).not.toContain('Running at')
     expect(coldText).toContain(`k = ${formatEng(0.026, 'A')}/V²`)
   })
+
+  test('the fields section reframes the power as energy in the fields, and the slow electrons', () => {
+    const world = ohmLawCircuit()
+    const view = buildMathView(world, solveDC(world))
+    const text = view.fields.join(' ')
+    expect(text).toContain('Poynting') // energy is carried by the fields, not the electrons
+    expect(text).toContain('drift') // the carriers crawl
+    expect(text).toContain('mm/s')
+    expect(text).toContain('∮S·dA = V·I') // the field flux reconciles with the circuit numbers
+    expect(text).toContain('794 mW') // the real power, framed as field-energy flux (9 V / 101 Ω)
+  })
+
+  test('an unsolved circuit has no fields section (nothing to reframe)', () => {
+    const world = ohmLawCircuit()
+    world.nets.delete(
+      [...world.nets.keys()].find((id) => world.nets.get(id)?.type === 'ground') ?? '',
+    )
+    const view = buildMathView(world, solveDC(world))
+    expect(view.fields.length).toBe(0)
+  })
 })

@@ -23,7 +23,7 @@ export { MU_0 }
  * Pure color/speed math here (unit-tested); the canvas consumes it via context.
  */
 
-export type LensMode = 'none' | 'voltage' | 'power' | 'temp' | 'field'
+export type LensMode = 'none' | 'voltage' | 'power' | 'temp' | 'field' | 'energy'
 
 export type LensState = {
   lens: LensMode
@@ -207,3 +207,7 @@ export function fieldReferenceTesla(maxAbsAmps: number, targetPx = FIELD_TARGET_
  */
 export const FIELD_CONTOUR_MULTIPLIERS = [1, 3, 10] as const
 export const FIELD_COLOR = '#5ad8c8'
+
+/** Energy-flow lens: gold arrows of energy streaming from the surrounding fields INTO
+ *  each load (and OUT of each source) — the Poynting picture made visible. */
+export const ENERGY_COLOR = '#e8b84b'

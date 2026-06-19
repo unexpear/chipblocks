@@ -441,6 +441,22 @@ export function ToolbarItems({
       </button>
       <button
         type="button"
+        onClick={() => onLens(lens === 'energy' ? 'none' : 'energy')}
+        title="Energy-flow lens — gold arrows of energy streaming from the surrounding FIELDS into each load (and out of each source): the Poynting picture. Energy enters a part from the space around it (∮S·dA = V·I), not down the wire. Arrow size = the part's power."
+        style={{
+          ...toolButton(lens === 'energy'),
+          flexDirection: 'row',
+          gap: 6,
+          padding: '8px 10px',
+        }}
+      >
+        <span aria-hidden style={{ color: '#e8b84b', fontSize: 13 }}>
+          ↯
+        </span>
+        <span style={{ fontSize: 11 }}>Energy</span>
+      </button>
+      <button
+        type="button"
         onClick={() => onFlow(!flow)}
         title="Flow animation — march dashes along each wire in the solved current's direction, speed from its size"
         style={{ ...toolButton(flow), flexDirection: 'row', gap: 6, padding: '8px 10px' }}

@@ -5,6 +5,7 @@ import { thermalSeverity } from '../thermal-model.ts'
 import { BlockNode } from './block-node.tsx'
 import { HealthContext } from './health.ts'
 import {
+  ENERGY_COLOR,
   FIELD_COLOR,
   LensContext,
   powerColor,
@@ -1604,6 +1605,65 @@ export function DeviceGlyph({
   )
 }
 
+const ENERGY_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315]
+
+/**
+ * Energy-flow lens halo — gold arrows of energy streaming from the surrounding fields
+ * (the Poynting picture): INWARD onto a load (it absorbs energy out of the fields around
+ * it, not down the wire) and OUTWARD from a source. More power → bigger, brighter arrows.
+ */
+function EnergyFlowHalo({ fraction, into }: { fraction: number; into: boolean }) {
+  const pad = 24
+  const w = W + 2 * pad
+  const h = H + 2 * pad
+  const cx = w / 2
+  const cy = h / 2
+  const head = 5
+  return (
+    // biome-ignore lint/a11y/noSvgWithoutTitle: decorative energy-flow overlay, hidden from the accessibility tree
+    <svg
+      aria-hidden
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      style={{
+        position: 'absolute',
+        inset: -pad,
+        pointerEvents: 'none',
+        opacity: 0.3 + 0.5 * fraction,
+      }}
+    >
+      {ENERGY_ANGLES.map((deg) => {
+        const a = (deg * Math.PI) / 180
+        const ca = Math.cos(a)
+        const sa = Math.sin(a)
+        const pOut = { x: cx + 62 * ca, y: cy + 42 * sa }
+        const pIn = { x: cx + 48 * ca, y: cy + 30 * sa }
+        const tip = into ? pIn : pOut
+        const tail = into ? pOut : pIn
+        const dx = tip.x - tail.x
+        const dy = tip.y - tail.y
+        const len = Math.hypot(dx, dy) || 1
+        const ux = (dx / len) * head
+        const uy = (dy / len) * head
+        const rot = (vx: number, vy: number, ang: number) => ({
+          x: vx * Math.cos(ang) - vy * Math.sin(ang),
+          y: vx * Math.sin(ang) + vy * Math.cos(ang),
+        })
+        const b1 = rot(-ux, -uy, 0.5)
+        const b2 = rot(-ux, -uy, -0.5)
+        return (
+          <g key={deg} stroke={ENERGY_COLOR} strokeWidth={1.6} strokeLinecap="round" fill="none">
+            <line x1={tail.x} y1={tail.y} x2={tip.x} y2={tip.y} />
+            <line x1={tip.x} y1={tip.y} x2={tip.x + b1.x} y2={tip.y + b1.y} />
+            <line x1={tip.x} y1={tip.y} x2={tip.x + b2.x} y2={tip.y + b2.y} />
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
 /**
  * React Flow custom node: renders the standard symbol for the device kind (or
  * a labeled fallback box for kinds without a symbol yet) + left/right handles
@@ -1642,6 +1702,11 @@ export function DeviceNode({ id, data }: NodeProps) {
   // concentrates; the exact tesla is in the part reading, not a giant external contour.
   const coilField = lensState.lens === 'field' ? lensState.coilFieldTesla.get(id) : undefined
   const coilFieldFraction = coilField !== undefined ? Math.min(1, coilField / 2.0) : 0
+  // Energy-flow lens: the part's power, drawn as energy entering (a load) or leaving (a
+  // source) through the surrounding fields — the Poynting picture. Reuses the power map.
+  const energyW = lensState.lens === 'energy' ? lensState.power.get(id) : undefined
+  const energyFraction =
+    energyW !== undefined && lensState.pMax > 0 ? Math.min(1, energyW / lensState.pMax) : 0
   const terminals = terminalsOf(definition, parameters)
   const updateNodeInternals = useUpdateNodeInternals()
   // After a rotation — or a lead-count change (a source's terminals are
@@ -1700,6 +1765,9 @@ export function DeviceNode({ id, data }: NodeProps) {
             pointerEvents: 'none',
           }}
         />
+      ) : null}
+      {energyW !== undefined && energyW > 0 ? (
+        <EnergyFlowHalo fraction={energyFraction} into={definition !== 'power_source'} />
       ) : null}
       <div
         style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation}deg)` }}
