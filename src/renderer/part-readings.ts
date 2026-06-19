@@ -146,9 +146,9 @@ export function partReadings(
 
     // DC motor: behind its electrical R_eff is a spinning rotor — surface the mechanical
     // operating point (speed, torque, back-EMF, shaft power, efficiency) from the solved
-    // terminal voltage. `motor_constant` is the motor-only marker.
-    const motorConstant = readScalarParam(inst, 'motor_constant')
-    if (motorConstant !== undefined) {
+    // terminal voltage. Keyed on the definition so it works in both depths (a design-mode
+    // motor has no direct motor_constant — it derives one).
+    if (inst.definition === 'dc_motor') {
       const motorParams = motorParamsFromInstance(inst)
       const posNet = inst.connects?.find((c) => c.terminal === 'terminal_positive')?.net
       const negNet = inst.connects?.find((c) => c.terminal === 'terminal_negative')?.net

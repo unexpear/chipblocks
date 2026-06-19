@@ -615,12 +615,14 @@ function resolveInductor(inst: Instance, nodeIndex: Map<string, number>): Induct
 }
 
 function resolveMotor(inst: Instance, nodeIndex: Map<string, number>): MotorElement | null {
+  // motorParamsFromInstance is mode-aware: in "design" mode L_a comes through and J is
+  // derived from the rotor geometry, the same as k and R_a.
   const p = motorParamsFromInstance(inst)
   if (p === undefined) return null
-  const armatureInductance = readScalarParam(inst, 'armature_inductance')
-  const rotorInertia = readScalarParam(inst, 'rotor_inertia')
-  if (armatureInductance === undefined || armatureInductance <= 0) return null
-  if (rotorInertia === undefined || rotorInertia <= 0) return null
+  const armatureInductance = p.armatureInductance
+  const rotorInertia = p.rotorInertia
+  if (armatureInductance === undefined || !(armatureInductance > 0)) return null
+  if (rotorInertia === undefined || !(rotorInertia > 0)) return null
   const pos = inst.connects?.find((c) => c.terminal === 'terminal_positive')
   const neg = inst.connects?.find((c) => c.terminal === 'terminal_negative')
   if (pos === undefined || neg === undefined) return null

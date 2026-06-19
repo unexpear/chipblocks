@@ -633,14 +633,22 @@ const TEMPLATE_PARTS: Record<string, { def: string; x: number; y: number }[]> = 
   register: [{ def: 'logic_register_4bit', x: 240, y: 220 }],
 }
 
-function templateNodes(template: string): Node[] {
+function templateNodes(template: string, depth: 'block' | 'design'): Node[] {
   const parts = TEMPLATE_PARTS[template] ?? []
-  return parts.map((p, i) => ({
-    id: `${p.def}_${i + 1}`,
-    type: 'device',
-    position: { x: p.x, y: p.y },
-    data: { definition: p.def, label: `${p.def}_${i + 1}`, parameters: defaultParameters(p.def) },
-  }))
+  return parts.map((p, i) => {
+    const parameters = { ...defaultParameters(p.def) }
+    // The browser's "design it" choice opens a designable part (the motor) straight into
+    // its design mode, so its behaviour comes from the iron / magnets / winding.
+    if (depth === 'design' && parameters.design_mode !== undefined) {
+      parameters.design_mode = { value: 'design' }
+    }
+    return {
+      id: `${p.def}_${i + 1}`,
+      type: 'device',
+      position: { x: p.x, y: p.y },
+      data: { definition: p.def, label: `${p.def}_${i + 1}`, parameters },
+    }
+  })
 }
 
 function Canvas({ project }: { project: ProjectChoice }) {
@@ -649,7 +657,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
     // dropdowns); the canvas itself starts from the chosen template's parts, not the
     // catalog demo layout.
     const world = loadCatalogWorld()
-    const nodes: Node[] = templateNodes(project.template)
+    const nodes: Node[] = templateNodes(project.template, project.depth)
     // A fresh project starts unwired — the user draws the connections (or a richer
     // wired starter lands later). The re-solve fills current/length/resistance.
     const baseEdges: Edge[] = []
@@ -692,7 +700,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       materialResistivity,
       validMaterialsByDef,
     }
-  }, [project.template])
+  }, [project.template, project.depth])
 
   // Live React Flow state — nodes are draggable (S19-v3-3); setNodes/setEdges
   // also let the palette drop new parts and the user draw new wires.

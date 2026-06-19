@@ -1,5 +1,6 @@
 import type { Instance } from './cross-fk-validator.ts'
-import { readScalarParam } from './instance-params.ts'
+import { readEnumParam, readScalarParam } from './instance-params.ts'
+import { awgAreaM2, COPPER_RESISTIVITY_OHM_M } from './wire-gauge.ts'
 
 /**
  * Brushed DC motor — the electromechanical model. A motor is, electrically, a winding
@@ -15,8 +16,13 @@ import { readScalarParam } from './instance-params.ts'
  * so the motor presents an EFFECTIVE RESISTANCE R_eff to the circuit — larger than R_a,
  * because the back-EMF opposes the supply. A free-spinning motor (small friction B)
  * draws far less than its stalled current V/R_a; load it down and it draws more, up to
- * the stall current V/R_a at zero speed. This file is that steady-state operating point;
- * the spin-up over time is the transient rung.
+ * the stall current V/R_a at zero speed.
+ *
+ * TWO DEPTHS (design_mode): in "block" mode the lumped constants (k, R_a, B, L_a, J) are
+ * direct params — use the motor as a black box. In "design" mode k, R_a and J DERIVE from
+ * the real assembly — the magnet + core + air gap set the field, the winding (turns +
+ * wire gauge) + rotor geometry set the rest — so changing the iron, magnets or winding
+ * changes the behaviour (the "open it up and design it" view).
  */
 
 export type MotorParams = {
@@ -28,6 +34,10 @@ export type MotorParams = {
   viscousFriction: number
   /** External mechanical load torque T_load (N·m); 0 = free-running. */
   loadTorque: number
+  /** Armature inductance L_a (henries) — for the transient spin-up. */
+  armatureInductance?: number
+  /** Rotor moment of inertia J (kg·m²) — for the transient spin-up. */
+  rotorInertia?: number
 }
 
 export type MotorOperatingPoint = {
@@ -81,9 +91,141 @@ export function motorSteadyState(terminalVoltage: number, p: MotorParams): Motor
   }
 }
 
-/** Read a motor's parameters off an instance (undefined if an essential one is missing or
- *  non-physical — R_a and B must be > 0 for a well-defined steady state). */
+// --- design-it: derive the lumped constants from the real assembly ---
+
+/**
+ * Geometry/winding factor folding the pole count, parallel paths and winding
+ * distribution of a real DC machine (k = p·Z·Φ/2πa) into one number, so the simplified
+ * k = factor·N·B_gap·D·L below lands at a realistic value. Calibrated so the shipped
+ * design (≈0.34 T gap, 500 turns, a 22 × 25 mm rotor) gives k ≈ 0.02 V·s/rad.
+ */
+const MOTOR_CONSTANT_GEOMETRY = 0.216
+
+/**
+ * Air-gap flux density from a permanent magnet driving flux across the gap, through the
+ * core — a simplified PM load-line. The remanence B_r is cut by how much of the magnetic
+ * path is the (high-reluctance) air gap rather than the magnet (gapFactor), and by a poor
+ * core that leaks flux instead of carrying it (coreFactor → 1 for high-μ iron, → ~0 for
+ * an air / plastic core). Honest scope: ignores magnet recoil, leakage and saturation;
+ * directionally correct — a thicker magnet, smaller gap, or better iron → a stronger field.
+ */
+export function airGapFluxDensityTesla(
+  remanenceTesla: number,
+  magnetLengthM: number,
+  airGapM: number,
+  coreRelativePermeability: number,
+): number {
+  const path = magnetLengthM + airGapM
+  if (!(path > 0)) return 0
+  const gapFactor = magnetLengthM / path
+  const coreFactor =
+    coreRelativePermeability > 0 ? coreRelativePermeability / (coreRelativePermeability + 50) : 0
+  return Math.max(0, remanenceTesla) * gapFactor * coreFactor
+}
+
+/**
+ * Motor constant k (= torque & back-EMF constant) from the winding, field and rotor:
+ * k = factor·N·B_gap·D·L. More turns, a stronger air-gap field, or a bigger rotor
+ * (diameter × stack length) all raise the torque per amp.
+ */
+export function motorConstantFromDesign(
+  turns: number,
+  airGapFluxTesla: number,
+  rotorDiameterM: number,
+  stackLengthM: number,
+): number {
+  return MOTOR_CONSTANT_GEOMETRY * turns * airGapFluxTesla * rotorDiameterM * stackLengthM
+}
+
+/**
+ * Armature resistance from the winding — the wire law R = ρ·length/area. The wire is N
+ * turns, each ~2·(stack + diameter) long (once around the rotor), of the cross-section
+ * the gauge sets (copper). More turns or thinner wire → more resistance.
+ */
+export function armatureResistanceFromDesign(
+  turns: number,
+  rotorDiameterM: number,
+  stackLengthM: number,
+  wireAreaM2: number,
+): number {
+  if (!(wireAreaM2 > 0)) return Number.POSITIVE_INFINITY
+  const meanTurnLengthM = 2 * (stackLengthM + rotorDiameterM)
+  return (COPPER_RESISTIVITY_OHM_M * turns * meanTurnLengthM) / wireAreaM2
+}
+
+/**
+ * Rotor moment of inertia J = ½·m·r² for a solid cylinder, m = ρ·π·r²·L (a denser or
+ * fatter rotor takes longer to spin up). Sets the transient spin-up time.
+ */
+export function rotorInertiaFromDesign(
+  rotorDiameterM: number,
+  stackLengthM: number,
+  rotorDensity: number,
+): number {
+  const r = rotorDiameterM / 2
+  const mass = Math.max(0, rotorDensity) * Math.PI * r * r * Math.max(0, stackLengthM)
+  return 0.5 * mass * r * r
+}
+
+/**
+ * Derive the lumped constants from the design choices (the "design it" depth): the magnet
+ * + core + air gap set the air-gap field, and the winding (turns + gauge) + rotor geometry
+ * set k, R_a and J. Friction B and the armature inductance L_a stay direct specs (bearings
+ * and the full magnetic-circuit inductance are documented further rungs).
+ */
+function deriveMotorParams(inst: Instance): MotorParams | undefined {
+  const turns = readScalarParam(inst, 'winding_turns')
+  const gauge = readScalarParam(inst, 'wire_gauge')
+  const remanence = readScalarParam(inst, 'magnet_remanence')
+  const coreMu = readScalarParam(inst, 'core_relative_permeability')
+  const magnetLength = readScalarParam(inst, 'magnet_length')
+  const airGap = readScalarParam(inst, 'air_gap')
+  const diameter = readScalarParam(inst, 'rotor_diameter')
+  const stackLength = readScalarParam(inst, 'stack_length')
+  const rotorDensity = readScalarParam(inst, 'rotor_density')
+  const viscousFriction = readScalarParam(inst, 'viscous_friction')
+  if (
+    turns === undefined ||
+    gauge === undefined ||
+    remanence === undefined ||
+    coreMu === undefined ||
+    magnetLength === undefined ||
+    airGap === undefined ||
+    diameter === undefined ||
+    stackLength === undefined ||
+    rotorDensity === undefined ||
+    viscousFriction === undefined ||
+    !(turns > 0) ||
+    !(diameter > 0) ||
+    !(stackLength > 0) ||
+    !(viscousFriction > 0)
+  ) {
+    return undefined
+  }
+  const fluxDensity = airGapFluxDensityTesla(remanence, magnetLength, airGap, coreMu)
+  return {
+    armatureResistance: armatureResistanceFromDesign(
+      turns,
+      diameter,
+      stackLength,
+      awgAreaM2(gauge),
+    ),
+    motorConstant: motorConstantFromDesign(turns, fluxDensity, diameter, stackLength),
+    viscousFriction,
+    loadTorque: readScalarParam(inst, 'load_torque') ?? 0,
+    armatureInductance: readScalarParam(inst, 'armature_inductance') ?? 0.001,
+    rotorInertia: rotorInertiaFromDesign(diameter, stackLength, rotorDensity),
+  }
+}
+
+/**
+ * Read a motor's parameters off an instance. In "block" mode (the default) the lumped
+ * constants are direct params; in "design" mode they DERIVE from the real assembly
+ * (deriveMotorParams) — the iron, magnets and winding. Undefined when an essential one is
+ * missing or non-physical (R_a and B must be > 0 for a well-defined steady state).
+ */
 export function motorParamsFromInstance(inst: Instance): MotorParams | undefined {
+  if (readEnumParam(inst, 'design_mode') === 'design') return deriveMotorParams(inst)
   const armatureResistance = readScalarParam(inst, 'armature_resistance')
   const motorConstant = readScalarParam(inst, 'motor_constant')
   const viscousFriction = readScalarParam(inst, 'viscous_friction')
@@ -101,6 +243,8 @@ export function motorParamsFromInstance(inst: Instance): MotorParams | undefined
     motorConstant,
     viscousFriction,
     loadTorque: readScalarParam(inst, 'load_torque') ?? 0,
+    armatureInductance: readScalarParam(inst, 'armature_inductance') ?? 0,
+    rotorInertia: readScalarParam(inst, 'rotor_inertia') ?? 0,
   }
 }
 

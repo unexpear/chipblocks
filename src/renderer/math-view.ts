@@ -12,10 +12,11 @@ import {
   magnetomotiveForceAmpereTurns,
   solenoidFluxDensityTesla,
 } from '../electromagnet-model.ts'
-import { readScalarParam } from '../instance-params.ts'
+import { readEnumParam, readScalarParam } from '../instance-params.ts'
 import { ldrResistance, lightSensorCurrent, sensorIlluminance } from '../light.ts'
 import { mosfetOperatingPoint } from '../mosfet-model.ts'
 import {
+  airGapFluxDensityTesla,
   motorEffectiveResistance,
   motorParamsFromInstance,
   motorSteadyState,
@@ -729,6 +730,28 @@ function partCard(
     lines.push(
       'A DC motor spins because its current makes a torque (T = k·I). As it speeds up it generates a BACK-EMF (E = k·ω) that opposes the supply — so the faster it spins, the LESS current it draws. At steady state it behaves like a resistor R_eff = R_a + k²/B (much bigger than the bare winding R_a).',
     )
+    if (readEnumParam(inst, 'design_mode') === 'design' && motorParams !== undefined) {
+      const turns = readScalarParam(inst, 'winding_turns')
+      const gauge = readScalarParam(inst, 'wire_gauge')
+      const remanence = readScalarParam(inst, 'magnet_remanence')
+      const coreMu = readScalarParam(inst, 'core_relative_permeability')
+      const magnetLength = readScalarParam(inst, 'magnet_length')
+      const airGap = readScalarParam(inst, 'air_gap')
+      if (
+        remanence !== undefined &&
+        coreMu !== undefined &&
+        magnetLength !== undefined &&
+        airGap !== undefined
+      ) {
+        const bGap = airGapFluxDensityTesla(remanence, magnetLength, airGap, coreMu)
+        lines.push(
+          `Design it: the ${remanence.toFixed(2)} T magnets across the ${formatEng(airGap, 'm')} air gap make an air-gap field B_gap = ${bGap.toFixed(3)} T (a better core or a smaller gap makes more).`,
+        )
+        lines.push(
+          `From that, k = factor·N·B_gap·D·L = ${formatEng(motorParams.motorConstant, 'V·s/rad')}${turns !== undefined ? ` (${turns.toFixed(0)} turns)` : ''}, and the winding${gauge !== undefined ? ` (${gauge.toFixed(0)} AWG)` : ''} gives R_a = ${formatEng(motorParams.armatureResistance, 'Ω')} from R = ρ·length/area.`,
+        )
+      }
+    }
     if (motorParams !== undefined && posNet !== undefined && negNet !== undefined) {
       const v = (solution.nodes.get(posNet) ?? 0) - (solution.nodes.get(negNet) ?? 0)
       const op = motorSteadyState(v, motorParams)

@@ -79,6 +79,58 @@ parameters:
     units: newton*meter
     required: false
     description: An external shaft load torque opposing rotation; 0 = free-running. Keep at or below the stall torque k*V/R_a (the linear DC model would otherwise show a non-physical negative speed).
+  design_mode:
+    type: enum
+    required: false
+    allowed:
+      - block
+      - design
+    description: "Use the motor as a black box (block — the lumped k / R_a / J above are direct specs) or DESIGN it (design — k, R_a and J derive from the iron, magnets and winding below). Default block."
+  winding_turns:
+    type: quantity
+    units: dimensionless
+    required: false
+    description: "N, the number of armature turns (design mode). More turns raise both the torque-per-amp k and the resistance R_a."
+  wire_gauge:
+    type: quantity
+    units: dimensionless
+    required: false
+    description: "The armature wire gauge in AWG (design mode). Thicker wire (a lower number) lowers R_a; the cross-section follows the geometric AWG definition."
+  magnet_remanence:
+    type: quantity
+    units: tesla
+    required: false
+    description: "B_r, the stator magnet's remanence (design mode) — about 0.4 T for ferrite, 1.2 T for neodymium. Sets the air-gap field, and so k."
+  core_relative_permeability:
+    type: quantity
+    units: dimensionless
+    required: false
+    description: "mu_r of the core / pole iron (design mode). A high-permeability core carries the flux to the gap; a poor (low-mu) core leaks it, weakening the field."
+  magnet_length:
+    type: quantity
+    units: meter
+    required: false
+    description: "The magnet thickness along the magnetic path (design mode). A thicker magnet drives more field across the air gap."
+  air_gap:
+    type: quantity
+    units: meter
+    required: false
+    description: "g, the rotor-to-stator air gap (design mode). A smaller gap means a stronger air-gap field (less reluctance)."
+  rotor_diameter:
+    type: quantity
+    units: meter
+    required: false
+    description: "D, the rotor diameter (design mode). A bigger rotor raises the torque arm (k) and the inertia J."
+  stack_length:
+    type: quantity
+    units: meter
+    required: false
+    description: "L, the rotor stack length (design mode). A longer rotor raises k and J."
+  rotor_density:
+    type: quantity
+    units: kilogram/meter^3
+    required: false
+    description: "The rotor material's density (design mode), about 7800 kg/m^3 for iron. Sets the rotor mass and so its inertia J."
 behaviors:
   - electromechanical_coupling
   - conducts_current

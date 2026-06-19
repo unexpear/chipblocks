@@ -75,6 +75,21 @@ const MATERIAL_REF_KEYS = new Set([
   'gate_dielectric',
 ])
 
+/** Motor "design it" depth: the lumped values that DERIVE in design mode (so they are
+ *  hidden then), and the design inputs that only apply in design mode (hidden in block). */
+const MOTOR_BLOCK_ONLY = new Set(['armature_resistance', 'motor_constant', 'rotor_inertia'])
+const MOTOR_DESIGN_ONLY = new Set([
+  'winding_turns',
+  'wire_gauge',
+  'magnet_remanence',
+  'core_relative_permeability',
+  'magnet_length',
+  'air_gap',
+  'rotor_diameter',
+  'stack_length',
+  'rotor_density',
+])
+
 /**
  * LED emission-color presets. Picking one sets a CONSISTENT real LED — the
  * peak_wavelength (glow color), the semiconductor it would actually be made of,
@@ -390,6 +405,11 @@ export function PartInspector({
   // its real semiconductor) is set by the Color picker below, which keeps both in
   // step. So the LED panel offers Color, not raw material dropdowns.
   const hideMaterialRefs = LED_DEFINITIONS.has(selected.definition)
+  // A motor in "design it" mode shows its assembly (iron/magnets/winding) and hides the
+  // lumped values those derive; in "block" mode it shows the lumped specs and hides the
+  // assembly. Other parts ignore these sets (the keys are motor-only).
+  const isMotor = selected.definition === 'dc_motor'
+  const motorDesigning = isMotor && selected.parameters?.design_mode?.value === 'design'
   const entries = Object.entries(selected.parameters ?? {}).filter(
     ([key]) =>
       !(hideMaterialRefs && (key === 'n_side' || key === 'p_side')) &&
@@ -400,7 +420,9 @@ export function PartInspector({
       // from the solve — the user edits ambient_illuminance, not this.
       key !== 'incident_illuminance' &&
       // ambient_temperature has its own override row below (it inherits the board ambient).
-      key !== 'ambient_temperature',
+      key !== 'ambient_temperature' &&
+      !(motorDesigning && MOTOR_BLOCK_ONLY.has(key)) &&
+      !(isMotor && !motorDesigning && MOTOR_DESIGN_ONLY.has(key)),
   )
   const ownAmbientC = amountOf(selected.parameters, 'ambient_temperature')
   // Offer a per-part ambient override on parts whose behavior depends on temperature: a θ_JA
@@ -638,6 +660,22 @@ export function PartInspector({
                 </div>
                 {source ? <div style={sourceNote}>{source}</div> : null}
               </div>
+            )
+          }
+          if (key === 'design_mode' && typeof param.value === 'string') {
+            return (
+              <label key={`${selected.id}:${key}`} style={row}>
+                <span style={{ color: '#aab' }}>Depth</span>
+                <select
+                  value={param.value}
+                  onChange={(e) => onEnum(key, e.target.value)}
+                  className="nodrag"
+                  style={field}
+                >
+                  <option value="block">use as a block</option>
+                  <option value="design">design it</option>
+                </select>
+              </label>
             )
           }
           if (key === 'state' && typeof param.value === 'string') {
