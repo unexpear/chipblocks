@@ -3,6 +3,7 @@ import type { World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
 import { detectFailures } from '../failure-detector.ts'
 import { readScalarParam } from '../instance-params.ts'
+import { acrossVolts, bulbFilamentTemperatureC } from '../thermal-model.ts'
 
 /**
  * Per-part health for the canvas (Sprint 19) — drives the success / failure
@@ -63,6 +64,44 @@ export function wavelengthToColor(nm: number): string {
   return `rgb(${to255(r)}, ${to255(g)}, ${to255(b)})`
 }
 
+/** The Draper point (°C): a solid begins to glow visibly red around here, so a
+ *  filament cooler than this isn't lit yet (~798 K). */
+const DRAPER_POINT_C = 525
+
+/** Points on the blackbody (Planckian) locus as sRGB — Mitchell Charity's blackbody
+ *  color table — so a hot filament glows the REAL color for its temperature: dull
+ *  red, through amber, to warm white as it heats. */
+const BLACKBODY_LOCUS: { k: number; r: number; g: number; b: number }[] = [
+  { k: 1000, r: 255, g: 56, b: 0 },
+  { k: 1500, r: 255, g: 109, b: 0 },
+  { k: 2000, r: 255, g: 137, b: 18 },
+  { k: 2500, r: 255, g: 159, b: 69 },
+  { k: 3000, r: 255, g: 180, b: 107 },
+  { k: 3500, r: 255, g: 196, b: 137 },
+]
+
+/** The incandescent glow color (CSS rgb) for a filament at temperatureC, interpolated
+ *  along the blackbody locus — cooler/dimmer is redder, hotter is whiter. */
+export function incandescentColor(temperatureC: number): string {
+  const k = temperatureC + 273.15
+  const lo = BLACKBODY_LOCUS[0]
+  const hi = BLACKBODY_LOCUS[BLACKBODY_LOCUS.length - 1]
+  if (lo === undefined || hi === undefined) return 'rgb(255, 160, 80)'
+  if (k <= lo.k) return `rgb(${lo.r}, ${lo.g}, ${lo.b})`
+  if (k >= hi.k) return `rgb(${hi.r}, ${hi.g}, ${hi.b})`
+  for (let i = 1; i < BLACKBODY_LOCUS.length; i++) {
+    const a = BLACKBODY_LOCUS[i - 1]
+    const b = BLACKBODY_LOCUS[i]
+    if (a === undefined || b === undefined) continue
+    if (k <= b.k) {
+      const f = (k - a.k) / (b.k - a.k)
+      const mix = (x: number, y: number) => Math.round(x + (y - x) * f)
+      return `rgb(${mix(a.r, b.r)}, ${mix(a.g, b.g)}, ${mix(a.b, b.b)})`
+    }
+  }
+  return `rgb(${hi.r}, ${hi.g}, ${hi.b})`
+}
+
 // Light-emitting junctions that glow when conducting — LEDs and the laser diode (which emits like an
 // LED below its lasing threshold), each at its own peak wavelength.
 const LED_DEFINITIONS = new Set(['led', 'led_uv_algan', 'diode_laser'])
@@ -97,6 +136,20 @@ export function canvasHealth(
       if (current > LIT_FLOOR_AMPS) {
         const nm = readScalarParam(inst, 'peak_wavelength') ?? DEFAULT_LED_NM
         health.set(inst.id, { lit: true, glow: wavelengthToColor(nm) })
+      }
+    } else if (inst.definition === 'incandescent_bulb') {
+      // A bulb glows the color of its self-heated filament — radiation-cooled, so the
+      // temperature (and color) come from its real dissipation, then shift along the
+      // blackbody locus: dim → dull red, bright → warm white. Cooler than the Draper
+      // point it isn't visibly lit.
+      const branch = solution.branches.get(inst.id)
+      const volts = acrossVolts(inst, solution)
+      if (branch !== undefined && volts !== undefined) {
+        const ambient = readScalarParam(inst, 'ambient_temperature') ?? projectAmbientC
+        const filamentC = bulbFilamentTemperatureC(inst, Math.abs(branch) * volts, ambient)
+        if (filamentC !== undefined && filamentC > DRAPER_POINT_C) {
+          health.set(inst.id, { lit: true, glow: incandescentColor(filamentC) })
+        }
       }
     }
   }

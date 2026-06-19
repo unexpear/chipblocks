@@ -26,7 +26,12 @@
 import type { Instance, World } from './cross-fk-validator.ts'
 import type { Solution } from './dc-solver.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
-import { acrossVolts, junctionTemperature, STANDARD_AMBIENT_C } from './thermal-model.ts'
+import {
+  acrossVolts,
+  bulbFilamentTemperatureC,
+  junctionTemperature,
+  STANDARD_AMBIENT_C,
+} from './thermal-model.ts'
 
 // ---------------------------------------------------------------------------
 // Public API types
@@ -516,12 +521,15 @@ export function checkCapacitorOvervoltage(inst: Instance, solution: Solution): F
 
 /**
  * Over-temperature check (stage 7, lumped thermal model). For any part that
- * declares BOTH thermal_resistance_junction_ambient (θ_JA) and
- * max_operating_temperature, compute the steady-state part temperature
- * T = ambient + P·θ_JA from its real dissipated power (|I|·|V| across its
- * terminal pair — collector–emitter / drain–source for a transistor) and
- * fire when it exceeds the declared maximum. Parts without the thermal
- * ratings skip honestly — the rating is "unknown," not "infinite."
+ * declares max_operating_temperature, compute its steady-state temperature from
+ * its real dissipated power (|I|·|V| across its terminal pair — collector–emitter /
+ * drain–source for a transistor) and fire when it exceeds the declared maximum.
+ * Most parts use the conduction law T = ambient + P·θ_JA and need a θ_JA to be
+ * checked; an incandescent bulb instead uses its radiation-cooled filament law
+ * T = (T_amb⁴ + P/k)^¼ (it has no θ_JA) — the same temperatures the solve used, so
+ * over-driving a bulb past its rated filament temperature fires the real burnout.
+ * Parts without the thermal ratings skip honestly — the rating is "unknown," not
+ * "infinite."
  *
  * Ambient precedence mirrors the electro-thermal solve (electro-thermal.ts
  * ambientOf), so the temperature checked here is the SAME one the solve, the
@@ -533,9 +541,7 @@ export function checkOvertemperature(
   solution: Solution,
   projectAmbientC?: number,
 ): Failure | null {
-  const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
   const maxTemperature = readScalarParam(inst, 'max_operating_temperature')
-  if (thetaJa === undefined || thetaJa <= 0) return null
   if (maxTemperature === undefined) return null
 
   const branch = solution.branches.get(inst.id)
@@ -548,8 +554,17 @@ export function checkOvertemperature(
   // otherwise it sits in the board-wide ambient; with neither, the 25 °C baseline.
   const ambient =
     readScalarParam(inst, 'ambient_temperature') ?? projectAmbientC ?? STANDARD_AMBIENT_C
-  const temperature = junctionTemperature(watts, thetaJa, ambient)
-  if (temperature <= maxTemperature) return null
+  // A filament radiates its heat (T grows as P^¼); every other part conducts it
+  // through a θ_JA. A part with neither law (no θ_JA, not a bulb) isn't checkable.
+  let temperature: number | undefined
+  if (inst.definition === 'incandescent_bulb') {
+    temperature = bulbFilamentTemperatureC(inst, watts, ambient)
+  } else {
+    const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
+    if (thetaJa === undefined || thetaJa <= 0) return null
+    temperature = junctionTemperature(watts, thetaJa, ambient)
+  }
+  if (temperature === undefined || temperature <= maxTemperature) return null
 
   return {
     code: 'part-overtemperature',

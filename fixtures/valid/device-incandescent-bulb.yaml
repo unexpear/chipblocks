@@ -1,0 +1,123 @@
+# Valid fixture: incandescent light bulb (tungsten-filament lamp).
+# The oldest electrical light still worth modeling: a thin tungsten filament that
+# you wire INTO the circuit and run current through. It is fundamentally a
+# temperature-dependent resistor that gets so hot it glows — the electrical sibling
+# of the LED (which emits by a semiconductor junction) and the opposite of the NTC
+# thermistor (whose resistance FALLS as it warms).
+#
+# Two coupled physics, solved as one electro-thermal fixed point:
+#   1. Resistance rises with filament temperature, the tungsten power law
+#        R(T) = R_op * (T / T_op)^1.2          [T, T_op in kelvin]
+#      so the COLD filament is ~14x lower-resistance than the hot one. That is why a
+#      bulb pulls a big inrush current the instant it is switched on, before the
+#      filament has heated and its resistance climbed.
+#   2. The filament is RADIATION-cooled (Stefan-Boltzmann), not conduction-cooled:
+#        P = k * (T^4 - T_amb^4)   ->   T = (T_amb^4 + P/k)^(1/4)
+#      so its temperature climbs only as the FOURTH ROOT of power — halve the drive
+#      voltage and it barely dims (it just glows redder). k is pinned to the rated
+#      operating point, so a bulb at its rated voltage settles exactly at its rated
+#      power and filament temperature, and off-rated points fall out of the T^4 law.
+# Push it well over its rated voltage and the filament runs past its rated maximum
+# temperature -> the over-temperature check fires (the real burnout: an over-driven
+# bulb's filament evaporates and breaks).
+#
+# Non-polar, two terminals. The operating point is defined by `resistance` (the HOT
+# value, V_rated^2 / P_rated), `reference_temperature` (the filament's operating
+# temperature, where that resistance and the rated power hold), and `rated_power`.
+# The cold (ohmmeter) resistance is not stored — it falls out of the power law at
+# the ambient, the way a powered-off bulb actually reads.
+#
+# Honest gaps: tungsten R(T) is the n=1.2 power-law fit to the tabulated resistivity
+# ratios (Jones & Langmuir 1927 / CRC), the datasheet-grade first rung beside the
+# full table; the thermal balance is steady-state radiation with no thermal mass, so
+# the sub-second cold-start inrush SURGE is a documented future rung (the cold/hot
+# resistance split is modeled, the time-to-heat is not); a carbon-filament lamp
+# (resistance FALLS with temperature) or a halogen lamp (regenerative cycle) is
+# different physics and a sibling part. The filament is the catalog's real tungsten
+# material (melting point 3422 C, cited resistivity / TCR / density) — its
+# temperature DEPENDENCE comes from R_op + the power law, while tungsten's own
+# room-temperature properties live on the material.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: incandescent_bulb
+origin: builtin
+layer: primitive_device
+name: "Incandescent bulb (tungsten filament lamp)"
+description: "A two-terminal tungsten-filament lamp wired into the circuit: a temperature-dependent resistor that self-heats from its own current until the filament glows. Its resistance RISES with temperature by the tungsten power law R(T) = R_op*(T/T_op)^1.2 (so a cold filament is ~14x lower-resistance, the source of switch-on inrush), and the filament is radiation-cooled, T = (T_amb^4 + P/k)^(1/4), so its temperature climbs only as the fourth root of power. Solved as one electro-thermal fixed point; over-driving it past its rated filament temperature fires the over-temperature (burnout) check. Non-polar."
+composition:
+  requires:
+    filament_material:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  filament_material:
+    type: material_ref
+    satisfies_role: filament_material
+    required: true
+    description: The filament metal — TUNGSTEN (the catalog's tungsten material), whose 3422 C melting point (the highest of any metal) lets a drawn-and-coiled wire survive ~2700 K incandescence. The resistance behavior comes from `resistance` + the tungsten power law (the temperature dependence), with tungsten's own cited resistivity, TCR, and melting point carried on the material.
+  resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: "R_op, the HOT filament resistance at the operating temperature (reference_temperature) — equal to V_rated^2 / P_rated (e.g. 120 V, 60 W -> 240 ohm). The live resistance is recomputed from this each electro-thermal iteration via the tungsten power law at the filament's solved temperature; a powered-off bulb reads the COLD resistance, ~14x lower, which the law produces at the ambient."
+  reference_temperature:
+    type: quantity
+    units: celsius
+    required: true
+    description: "T_op, the filament's operating temperature — where `resistance` and `rated_power` hold and the radiation balance is pinned. A standard incandescent lamp filament runs ~2700 K (~2427 C); higher-wattage lamps run a little hotter, which is why they look whiter."
+  rated_power:
+    type: quantity
+    units: watt
+    required: true
+    description: "The electrical power the filament dissipates at its operating point (reference_temperature) — the lamp's nameplate wattage. Pins the radiation constant k = rated_power / (T_op^4 - T_amb_ref^4), so at rated drive the filament settles exactly here, and off-rated power gives T = (T_amb^4 + P/k)^(1/4)."
+  rated_voltage:
+    type: quantity
+    units: volt
+    required: false
+    description: "The nameplate operating voltage (= sqrt(rated_power * resistance)). Reference/headline only — the operating point is set by `resistance` + `rated_power`; the solver finds the actual voltage from the circuit."
+  max_operating_temperature:
+    type: quantity
+    units: celsius
+    required: false
+    description: "Filament temperature above which the lamp burns out (the over-temperature check fires). A lamp normally runs near its rated filament temperature; gross over-voltage drives it past this and the filament evaporates/breaks. Tungsten melts at 3422 C; filaments fail below that by evaporation, so this sits above the rated operating temperature but well under the melting point."
+behaviors:
+  - conducts_current
+  - has_resistance
+  - produces_joule_heat
+  - emits_thermal_radiation
+terminals:
+  terminal_a:
+    description: One end of the filament. Non-polar.
+  terminal_b:
+    description: The other end of the filament.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved as a resistor whose resistance is recomputed every electro-thermal
+  iteration from the tungsten power law R(T) = R_op*(T/T_op)^1.2 at the filament's
+  OWN temperature (resistanceAtTemperature -> tungstenResistance in
+  electro-thermal.ts) — the same fixed-point loop the thermistor and tempco resistor
+  use, but with a RISING (positive) coefficient. Unlike every other rated part, the
+  filament's temperature comes from RADIATION balance, not the lumped P*theta_JA law:
+  T = (T_amb^4 + P/k)^(1/4) (thermal-model.ts filamentTemperatureC), with k pinned to
+  rated_power at reference_temperature. The hot `resistance` doubles as the
+  warm-start so the cold-start solve seeds near the operating point and the steep
+  R(T) loop converges. The renderer reads the solved filament temperature to glow the
+  bulb along the color-temperature locus (dull red -> amber -> warm white) and to
+  fire the over-temperature burnout check.
+  Honest gaps: n=1.2 power-law tungsten R(T) (Jones & Langmuir 1927 / CRC tabulated
+  ratios are the refinement); steady-state radiation with no thermal mass (so the
+  sub-second inrush surge is a future rung — the cold/hot resistance split is
+  modeled, the time-to-heat is not); carbon-filament (negative coefficient) and
+  halogen (regenerative cycle) lamps are sibling parts. The filament uses the
+  catalog's real tungsten material (the highest-melting-point metal, cited).

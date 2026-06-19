@@ -248,6 +248,7 @@ const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'inductor',
   'resistor',
   'thermistor',
+  'incandescent_bulb',
   'photoresistor',
   'potentiometer',
   // Legitimately produce no DC stamp (not unsupported):
@@ -474,9 +475,12 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       // A thermistor stamps exactly like a resistor — its `resistance` is the
       // Beta-law value the electro-thermal loop already wrote for this temperature.
       // A photoresistor too — stampResistor reads its resistance from the light on it.
+      // An incandescent bulb the same — its `resistance` is the tungsten-law value
+      // the electro-thermal loop wrote for its self-heated filament temperature.
       if (
         inst.definition === 'resistor' ||
         inst.definition === 'thermistor' ||
+        inst.definition === 'incandescent_bulb' ||
         inst.definition === 'photoresistor'
       ) {
         const ok = stampResistor(inst, nodeIndex, M)
@@ -689,6 +693,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     if (
       inst.definition === 'resistor' ||
       inst.definition === 'thermistor' ||
+      inst.definition === 'incandescent_bulb' ||
       inst.definition === 'photoresistor'
     ) {
       const I = computeResistorCurrent(inst, nodes)

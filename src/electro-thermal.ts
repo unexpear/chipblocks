@@ -19,7 +19,12 @@
 import type { Instance, World } from './cross-fk-validator.ts'
 import { type Solution, type SolveOptions, solveDC } from './dc-solver.ts'
 import { readScalarParam } from './instance-params.ts'
-import { acrossVolts, junctionTemperature, STANDARD_AMBIENT_C } from './thermal-model.ts'
+import {
+  acrossVolts,
+  bulbFilamentTemperatureC,
+  junctionTemperature,
+  STANDARD_AMBIENT_C,
+} from './thermal-model.ts'
 import { solveTransient, type TransientOptions, type TransientResult } from './transient-solver.ts'
 
 export type ElectroThermalResult = {
@@ -40,6 +45,15 @@ const TEMPERATURE_TOLERANCE_C = 0.1
 const RESISTANCE_FLOOR_OHMS = 1e-9
 /** °C → K. */
 const CELSIUS_TO_KELVIN = 273.15
+/**
+ * Tungsten filament resistance exponent n in R(T) = R_op·(T/T_op)^n. Tungsten's
+ * resistivity climbs steeply and nonlinearly with temperature; over the lamp range
+ * (≈300 K cold to ≈2700 K incandescent) the power law with n ≈ 1.2 is the standard
+ * engineering fit to the tabulated tungsten resistivity ratios (Jones & Langmuir,
+ * GE Review 1927; CRC Handbook) — medium confidence, the honest first rung beside
+ * the full tabulated curve, as the thermistor's Beta is beside Steinhart–Hart.
+ */
+const TUNGSTEN_RESISTANCE_EXPONENT = 1.2
 
 /**
  * An NTC thermistor's resistance at temperature, the two-parameter Beta law:
@@ -61,6 +75,27 @@ export function thermistorResistance(inst: Instance, temperatureC: number): numb
 }
 
 /**
+ * A tungsten incandescent filament's resistance at temperature, the power law
+ *   R(T) = R_op·(T/T_op)^n        [T, T_op in kelvin, n ≈ 1.2]
+ * `resistance` is the HOT value R_op at the operating point `reference_temperature`
+ * (R_op = V_rated²/P_rated), so the cold resistance falls out ~14× lower — which is
+ * why a bulb pulls a large inrush the instant it is switched on, before the filament
+ * has heated. The opposite sign to the NTC thermistor: a filament's resistance RISES
+ * with temperature. Undefined when R_op is missing. (The tabulated Jones–Langmuir
+ * resistivity curve is the later-rung refinement; the n = 1.2 power law is the
+ * standard datasheet-grade fit.)
+ */
+export function tungstenResistance(inst: Instance, temperatureC: number): number | undefined {
+  const rOp = readScalarParam(inst, 'resistance')
+  if (rOp === undefined || rOp <= 0) return undefined
+  const tOpK =
+    (readScalarParam(inst, 'reference_temperature') ?? STANDARD_AMBIENT_C) + CELSIUS_TO_KELVIN
+  const tK = temperatureC + CELSIUS_TO_KELVIN
+  if (tK <= 0 || tOpK <= 0) return undefined
+  return rOp * (tK / tOpK) ** TUNGSTEN_RESISTANCE_EXPONENT
+}
+
+/**
  * A temperature-dependent part's resistance at temperature. The ONE place these
  * laws live — the solve loop and every display (Math panel) call it, so what the
  * user reads is what the solver used. A thermistor follows the exponential Beta
@@ -73,6 +108,7 @@ export function resistanceAtTemperature(
 ): number | undefined {
   if (temperatureC === undefined) return undefined
   if (inst.definition === 'thermistor') return thermistorResistance(inst, temperatureC)
+  if (inst.definition === 'incandescent_bulb') return tungstenResistance(inst, temperatureC)
   const alpha = readScalarParam(inst, 'temperature_coefficient')
   const baseResistance = readScalarParam(inst, 'resistance')
   if (alpha === undefined || baseResistance === undefined) return undefined
@@ -157,6 +193,23 @@ function computeTemperatures(
 ): Map<string, number> {
   const temperatures = new Map<string, number>()
   for (const inst of world.instances.values()) {
+    // An incandescent filament is RADIATION-cooled, not conduction-cooled: its
+    // temperature follows the Stefan–Boltzmann T⁴ balance from its real dissipation,
+    // not the linear T = ambient + P·θ_JA. (Self-limiting — T grows as P^¼ — which is
+    // also what keeps this fixed-point loop convergent for so steep an R(T).)
+    if (inst.definition === 'incandescent_bulb') {
+      const branch = solution.branches.get(inst.id)
+      const volts = acrossVolts(inst, solution)
+      if (branch !== undefined && volts !== undefined) {
+        const t = bulbFilamentTemperatureC(
+          inst,
+          Math.abs(branch) * volts,
+          ambientOf(inst, projectAmbientC),
+        )
+        if (t !== undefined) temperatures.set(inst.id, t)
+      }
+      continue
+    }
     // A θ_JA earns the self-heating term P·θ_JA on top of the ambient. A part with no θ_JA still takes
     // its placed ambient (placedAmbient: own ambient_temperature, or a non-baseline project ambient on a
     // temperature-following part); with neither it stays at 25 °C. (computeTransientTemperatures mirrors this.)
@@ -261,6 +314,33 @@ export type TransientThermalResult = {
 }
 
 /**
+ * A part's AVERAGE absorbed power over the settled record — the per-terminal ledger
+ * Σ v·i_into the solver records, time-averaged. Undefined for an unconnected part or
+ * a record with no settled samples. (Shared by the θ_JA self-heating and the bulb's
+ * radiative balance, so both heat from the same measured dissipation.)
+ */
+function averageAbsorbedPower(
+  inst: Instance,
+  result: TransientResult,
+  settleSeconds: number,
+): number | undefined {
+  const connects = inst.connects ?? []
+  if (connects.length === 0) return undefined
+  let sum = 0
+  let samples = 0
+  for (const point of result.series) {
+    if (point.time < settleSeconds || point.currents === undefined) continue
+    let power = 0
+    for (const c of connects) {
+      power += (point.nodes.get(c.net) ?? 0) * (point.currents.get(`${inst.id}/${c.terminal}`) ?? 0)
+    }
+    sum += power
+    samples++
+  }
+  return samples === 0 ? undefined : sum / samples
+}
+
+/**
  * Each θ_JA-rated part's temperature from its AVERAGE absorbed power over the
  * settled record — the exact per-terminal ledger Σ v·i_into the solver
  * records (the same numbers Tellegen's theorem balances), time-averaged.
@@ -279,6 +359,20 @@ function computeTransientTemperatures(
 ): Map<string, number> {
   const temperatures = new Map<string, number>()
   for (const inst of world.instances.values()) {
+    // An incandescent filament heats radiatively from its average dissipation —
+    // the time-domain mirror of the DC loop's Stefan–Boltzmann T⁴ balance.
+    if (inst.definition === 'incandescent_bulb') {
+      const power = averageAbsorbedPower(inst, result, settleSeconds)
+      if (power !== undefined) {
+        const t = bulbFilamentTemperatureC(
+          inst,
+          Math.max(0, power),
+          ambientOf(inst, projectAmbientC),
+        )
+        if (t !== undefined) temperatures.set(inst.id, t)
+      }
+      continue
+    }
     const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
     if (thetaJa === undefined || thetaJa <= 0) {
       // No self-heating, but a placed ambient still sets the part's temperature (mirrors the DC loop).
@@ -286,27 +380,13 @@ function computeTransientTemperatures(
       if (placed !== undefined) temperatures.set(inst.id, placed)
       continue
     }
-    const connects = inst.connects ?? []
-    if (connects.length === 0) continue
-
-    let sum = 0
-    let samples = 0
-    for (const point of result.series) {
-      if (point.time < settleSeconds || point.currents === undefined) continue
-      let power = 0
-      for (const c of connects) {
-        power +=
-          (point.nodes.get(c.net) ?? 0) * (point.currents.get(`${inst.id}/${c.terminal}`) ?? 0)
-      }
-      sum += power
-      samples++
-    }
-    if (samples === 0) continue
+    const power = averageAbsorbedPower(inst, result, settleSeconds)
+    if (power === undefined) continue
     // A passive part's average absorbed power can't be negative; clamp the
     // float dust so a reactive part reads ambient, not below it.
     temperatures.set(
       inst.id,
-      junctionTemperature(Math.max(0, sum / samples), thetaJa, ambientOf(inst, projectAmbientC)),
+      junctionTemperature(Math.max(0, power), thetaJa, ambientOf(inst, projectAmbientC)),
     )
   }
   return temperatures

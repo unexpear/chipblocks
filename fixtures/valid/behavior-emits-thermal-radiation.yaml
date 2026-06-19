@@ -1,0 +1,66 @@
+# Valid fixture: behavior registry entry for INCANDESCENCE — light emitted by a
+# body purely because it is hot (thermal / blackbody radiation). The SECOND optical
+# behavior in the registry, and a physically DISTINCT mechanism from emits_light:
+#   - emits_light  = electroluminescence: radiative recombination across a
+#                    direct-bandgap PN junction (the LED). Needs a semiconductor.
+#   - emits_thermal_radiation = incandescence: a hot body radiates a continuous
+#                    blackbody spectrum regardless of material (the tungsten lamp
+#                    filament, an electric stove element, the Sun). Needs only heat.
+# Claiming emits_light for a metal filament would be a physical falsehood — a
+# filament has no bandgap and no recombination; it glows because it is ~2700 K.
+#
+# The physics: any body at absolute temperature T radiates power per the
+# Stefan-Boltzmann law P = e * sigma * A * (T^4 - T_amb^4) across a continuous
+# spectrum whose peak wavelength is set by Wien's displacement law,
+# lambda_peak = b / T (b = 2.898e-3 m*K). As T climbs the body glows dull red
+# (~800 K, the Draper point where visible incandescence begins), through orange and
+# amber, to warm white (~2700 K, a lamp filament) — the color-temperature locus. The
+# VISIBLE fraction of that radiation rises steeply with T, which is why a hotter
+# filament is both brighter and whiter (and why incandescent lamps are inefficient:
+# at 2700 K most of the radiation is still infrared, not visible light).
+#
+# Used by: incandescent_bulb. Reusable by any future hot-emitter (heating-element
+# glow, an arc, a thermal IR source).
+# MUST validate against behavior.schema.json.
+kind: behavior
+id: emits_thermal_radiation
+origin: builtin
+layer: behavior
+name: "Emits thermal radiation (incandescence / blackbody emission)"
+description: "A body emits light purely because it is hot — incandescence. Unlike emits_light (electroluminescence at a semiconductor junction), this needs no bandgap: any material radiates a continuous blackbody spectrum once warm. Total radiated power follows the Stefan-Boltzmann law P = e*sigma*A*(T^4 - T_amb^4); the spectral peak follows Wien's law lambda_peak = b/T, so the glow shifts from dull red near the Draper point (~800 K) through orange and amber to warm white (~2700 K) as the body heats. The visible fraction rises steeply with temperature — why a hotter filament is brighter and whiter, and why incandescent lamps run hot to make visible light at all."
+parameters_required:
+  - name: temperature
+    type: quantity
+    units: kelvin
+    description: The radiating body's absolute temperature T. Sets both the total radiated power (T^4) and the spectral peak / perceived color (Wien's law). For a lamp filament this is its self-heated operating temperature, ~2700 K.
+  - name: emissivity
+    type: quantity
+    units: dimensionless
+    description: The surface emissivity e (0 to 1), the fraction of an ideal blackbody's emission the real surface radiates. Tungsten is ~0.35 in the visible/near-IR at filament temperatures; a perfect blackbody is 1.0.
+  - name: radiating_area
+    type: quantity
+    units: square_metre
+    description: The radiating surface area A. With e and sigma it sets the radiation constant k = e*sigma*A that closes the power balance P = k*(T^4 - T_amb^4).
+evaluates: "P_radiated = emissivity * sigma * radiating_area * (T^4 - T_amb^4) where sigma = 5.670374e-8 W/m^2*K^4 (Stefan-Boltzmann, NIST CODATA). Spectral peak: lambda_peak = b / T where b = 2.898e-3 m*K (Wien's displacement constant). Inverted for the steady temperature at a dissipated power: T = (T_amb^4 + P/k)^(1/4), k = emissivity*sigma*radiating_area."
+consequences: []
+law: thermal_radiation
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  The optical sibling of emits_light: emits_light is electroluminescence (a
+  semiconductor junction), emits_thermal_radiation is incandescence (a hot body).
+  The incandescent_bulb adopts THIS behavior, not emits_light — its tungsten
+  filament has no bandgap and emits by temperature alone. Modeled at the solver as
+  the radiation-cooled self-heating balance T = (T_amb^4 + P/k)^(1/4)
+  (thermal-model.ts filamentTemperatureC), with k pinned to the lamp's rated
+  operating point; the renderer reads the solved filament temperature to shift the
+  on-canvas glow along the color-temperature locus (dull red -> amber -> warm white).
+  Sources: Stefan-Boltzmann law + Wien's displacement law (NIST CODATA constants);
+  the Draper point (~798 K) for the onset of visible red heat. Honest gaps: the
+  perceived color is approximated from a few points on the Planckian locus, not a
+  full spectral integral; emissivity is taken wavelength-independent (grey body).

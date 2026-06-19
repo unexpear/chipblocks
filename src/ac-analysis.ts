@@ -279,7 +279,10 @@ function solveAtOmega(
     const ports = (inst.connects ?? []).map((conn) => idx(conn.net))
     if (ports.length < 2) continue
     const [a, c] = ports as [number, number]
-    if (inst.definition === 'resistor') {
+    if (inst.definition === 'resistor' || inst.definition === 'incandescent_bulb') {
+      // A bulb is linear at its operating point — a small AC signal sees the hot
+      // filament resistance (the electro-thermal-adjusted `resistance`); the filament
+      // can't thermally track the AC, so it's a plain resistor at that value.
       const r = readScalarParam(inst, 'resistance')
       if (r && r > 0) stampY(a, c, 1 / r, 0)
     } else if (inst.definition === 'capacitor') {

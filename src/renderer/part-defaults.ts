@@ -279,6 +279,20 @@ const DEFAULTS: Record<string, Parameters> = {
     thermal_resistance_junction_ambient: scalar(667, 'kelvin_per_watt'),
     max_operating_temperature: scalar(125, 'celsius'),
   },
+  incandescent_bulb: {
+    // 120 V / 60 W household incandescent. The HOT resistance is V²/P = 240 Ω at
+    // the ~2700 K (2427 °C) operating filament temperature; the tungsten power law
+    // puts the COLD (ohmmeter) resistance ~14× lower (~17 Ω), the source of switch-on
+    // inrush. The filament is radiation-cooled, so rated_power pins its T⁴ balance —
+    // at 120 V it settles right at 60 W / 2427 °C. max 2900 °C is the burnout line
+    // (well over the rated temperature, under tungsten's 3422 °C melting point).
+    resistance: scalar(240, 'ohm'),
+    reference_temperature: scalar(2427, 'celsius'),
+    rated_power: scalar(60, 'watt'),
+    rated_voltage: scalar(120, 'volt'),
+    max_operating_temperature: scalar(2900, 'celsius'),
+    filament_material: { value: 'tungsten' },
+  },
   photoresistor: {
     // GL5528 CdS photoresistor (the ubiquitous 5 mm hobbyist LDR): ~12 kΩ at
     // 10 lux, γ ≈ 0.6, ~1 MΩ dark. Starts in 100 lux (typical indoor light)
@@ -600,6 +614,15 @@ const PROVENANCE: Record<string, Record<string, string>> = {
       'derived: 1/δ, dissipation factor ~1.5 mW/°C in still air (Vishay NTCLE100E3)',
     max_operating_temperature: 'epoxy NTC bead operating class (~125 °C)',
   },
+  incandescent_bulb: {
+    resistance: 'hot filament R = V²/P = 120²/60 = 240 Ω at the 2700 K operating point',
+    reference_temperature:
+      'standard incandescent filament ~2700 K (~2427 °C); higher-wattage lamps run hotter (medium confidence)',
+    rated_power: '60 W household incandescent (nameplate)',
+    rated_voltage: '120 V household mains (nameplate; = √(P·R))',
+    max_operating_temperature:
+      'filament burnout above the rated temperature; tungsten melts 3422 °C, filaments fail below by evaporation (medium confidence)',
+  },
   photoresistor: {
     reference_resistance: '~12 kΩ at 10 lux (GL5528 CdS cell, 10–20 kΩ datasheet band)',
     reference_illuminance: '10 lux — the CdS datasheet reference point',
@@ -873,6 +896,15 @@ export function primaryValue(
   if (definition === 'thermistor') {
     const r = amountOf(parameters, 'resistance')
     return r === undefined ? 'NTC' : `${formatEng(r, 'Ω')} NTC`
+  }
+  if (definition === 'incandescent_bulb') {
+    // The nameplate (wattage · voltage) is what's printed on a bulb.
+    const w = amountOf(parameters, 'rated_power')
+    const v = amountOf(parameters, 'rated_voltage')
+    if (w !== undefined && v !== undefined) return `${formatEng(w, 'W')} · ${formatEng(v, 'V')}`
+    if (w !== undefined) return formatEng(w, 'W')
+    const r = amountOf(parameters, 'resistance')
+    return r === undefined ? null : formatEng(r, 'Ω')
   }
   if (definition === 'photoresistor') {
     // Headline the LIVE resistance (computed from the light on it) plus the lux —

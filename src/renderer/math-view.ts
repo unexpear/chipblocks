@@ -334,6 +334,31 @@ function partCard(
     if (current !== undefined) lines.push(`Carrying I = ${fmtA(Math.abs(current))}.`)
     return { id: inst.id, title: 'Thermistor — the Beta law', lines }
   }
+  if (def === 'incandescent_bulb') {
+    const rOp = readScalarParam(inst, 'resistance')
+    const tOp = readScalarParam(inst, 'reference_temperature')
+    const ratedW = readScalarParam(inst, 'rated_power')
+    lines.push(
+      'An incandescent bulb is a tungsten filament — a resistor that gets hot enough to glow. Its resistance RISES with temperature by the tungsten power law R(T) = R_op·(T/T₀)^1.2 (T in kelvin), the opposite of an NTC thermistor, so a COLD filament is ~14× lower-resistance — the big inrush the instant you switch it on.',
+    )
+    if (rOp !== undefined && tOp !== undefined) {
+      const cold = resistanceAtTemperature(inst, 25)
+      lines.push(
+        `Hot resistance R_op = ${formatEng(rOp, 'Ω')} at the ${tOp.toFixed(0)} °C operating temperature; cold (powered off) it reads ~${cold !== undefined ? formatEng(cold, 'Ω') : '—'}.`,
+      )
+    }
+    lines.push(
+      `The filament is radiation-cooled, not conduction-cooled: it sheds its power by the Stefan–Boltzmann law P = k·(T⁴ − T_amb⁴)${ratedW !== undefined ? ` (k pinned so it dissipates ${formatEng(ratedW, 'W')} at its operating temperature)` : ''}, so its temperature climbs only as the FOURTH ROOT of power — halve the drive and it barely dims, it just glows redder.`,
+    )
+    const hot = resistanceAtTemperature(inst, temperatureC)
+    if (hot !== undefined && temperatureC !== undefined) {
+      lines.push(
+        `Right now the filament sits at ${temperatureC.toFixed(0)} °C (its self-heated operating point), so R = ${formatEng(hot, 'Ω')} — the value the solver used.`,
+      )
+    }
+    if (current !== undefined) lines.push(`Carrying I = ${fmtA(Math.abs(current))}.`)
+    return { id: inst.id, title: 'Incandescent bulb — tungsten filament', lines }
+  }
   if (def === 'photoresistor') {
     const r0 = readScalarParam(inst, 'reference_resistance')
     const e0 = readScalarParam(inst, 'reference_illuminance') ?? 10

@@ -426,6 +426,21 @@ function PhotoresistorGlyph() {
   )
 }
 
+/** Incandescent bulb — IEC 60617: a circle (the glass envelope) with an internal
+ *  cross, the standard mark for an illuminating lamp. A two-terminal in-line part. */
+function IncandescentBulbGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>incandescent bulb</title>
+      {lead(0, 28)}
+      <circle cx={40} cy={MID} r={12} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={31.5} y1={MID - 8.5} x2={48.5} y2={MID + 8.5} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={31.5} y1={MID + 8.5} x2={48.5} y2={MID - 8.5} stroke={STROKE} strokeWidth={1.5} />
+      {lead(52, W)}
+    </svg>
+  )
+}
+
 /** Light source (lamp) — a sun: a bulb radiating rays in every direction. The
  *  emitter that casts the light an LDR's arrows receive. Environmental, no leads. */
 function LightSourceGlyph() {
@@ -1082,6 +1097,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   inductor: InductorGlyph,
   led: LedGlyph,
   led_uv_algan: LedGlyph,
+  incandescent_bulb: IncandescentBulbGlyph,
   diode_laser: LaserDiodeGlyph,
   diode_tunnel: TunnelDiodeGlyph,
   diode_shockley: ShockleyDiodeGlyph,
@@ -1138,6 +1154,7 @@ const TWO = (a: string, b: string) => [
 const TERMINALS: Record<string, { id: string; position: Position; offset?: number }[]> = {
   resistor: TWO('terminal_a', 'terminal_b'),
   thermistor: TWO('terminal_a', 'terminal_b'),
+  incandescent_bulb: TWO('terminal_a', 'terminal_b'),
   photoresistor: TWO('terminal_a', 'terminal_b'),
   // Photodiode: a polar diode (anode left, cathode right). Phototransistor: an
   // NPN with the base as its light input, so just collector (top) + emitter (bottom).

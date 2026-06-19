@@ -1,0 +1,134 @@
+# Valid fixture: material definition for tungsten (W, wolfram).
+# The refractory metal of choice for lamp filaments, vacuum-tube cathodes/grids,
+# X-ray targets, and welding electrodes. Its defining property is the HIGHEST
+# melting point of any metal (3422 C) — which is what lets a drawn-and-coiled
+# tungsten filament glow at ~2700 K for hundreds of hours without melting. It is a
+# good (not great) conductor, ~3x the resistivity of copper, with a strong positive
+# temperature coefficient of resistance: a tungsten filament's resistance climbs
+# ~14x from cold to its operating temperature, the origin of incandescent-lamp
+# inrush current.
+#
+# In AIR tungsten oxidizes rapidly to volatile WO3 above ~400-500 C, so its high-
+# temperature service is only in a VACUUM or inert-gas envelope (exactly the inside
+# of an incandescent bulb) — see notes. The lamp-filament emissivity is ~0.35 in the
+# visible/near-IR at incandescent temperatures (documented in notes; folded into the
+# bulb's radiation balance, not carried as a structured property here).
+#
+# MUST validate against definition.schema.json.
+kind: material
+id: tungsten
+origin: builtin
+layer: material
+name: Tungsten (W)
+description: Refractory metallic element with the highest melting point of any metal (3422 C), the standard material for incandescent-lamp filaments and vacuum-tube electrodes. A moderate conductor (~3x copper's resistivity) with a strong positive temperature coefficient of resistance, so a filament's resistance rises ~14x from cold to its ~2700 K operating temperature. Oxidizes rapidly in air above ~400 C, so its high-temperature use is confined to vacuum or inert-gas envelopes.
+composition:
+  uses: []
+enables:
+  - electrical_conduction
+  - thermal_conduction
+properties:
+  resistivity:
+    value:
+      kind: condition_bound
+      amount: 5.28e-8
+      unit: ohm_meter
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Tungsten electrical resistivity at 20 C
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed. (tungsten resistivity 52.8 nOhm-m at 20 C). Literature values span ~5.3-5.6e-8 ohm-m depending on purity and anneal."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  temperature_coefficient_of_resistance:
+    value:
+      kind: condition_bound
+      amount: 4.5e-3
+      unit: per_kelvin
+      conditions:
+        temperature_reference:
+          amount: 20
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Tungsten temperature coefficient of resistance near 20 C
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed.; standard physics references (alpha ~4.5e-3 /K). Consistent with the n=1.2 wide-range power-law fit used for the lamp filament: d(lnR)/dT = n/T = 1.2/293 K ~ 4.1e-3 /K."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  density:
+    value:
+      kind: condition_bound
+      amount: 19250
+      unit: kg_per_m3
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Tungsten density at 20 C
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed.; ASM Metals Handbook Vol. 2 (19.25 g/cm3)."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  melting_point:
+    value:
+      kind: scalar
+      amount: 3422
+      unit: degC
+    provenance:
+      source_type: reference
+      title: Tungsten melting point (highest of any metal)
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed. (3422 C / 3695 K); the highest melting point of all metallic elements."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 173
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Tungsten thermal conductivity at 20 C
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed. (~170-175 W/m-K near room temperature)."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+support:
+  model_status: defined
+  solver_status: not_applicable
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Tungsten's filament utility is the combination of the highest melting point of any
+  metal (3422 C), adequate ductility once doped (the "non-sag" AKS / potassium-bubble
+  tungsten that resists recrystallization creep), and a strong positive temperature
+  coefficient of resistance. The high TCR is why a cold filament is ~14x lower in
+  resistance than at its ~2700 K operating point — the source of incandescent-lamp
+  switch-on inrush, modeled on the incandescent_bulb device via the tungsten power
+  law R(T) = R_op*(T/T_op)^1.2 (electro-thermal.ts).
+  Air-oxidation caveat: in air tungsten starts to oxidize to WO3 above ~400 C,
+  oxidizes rapidly above ~600 C, and the oxide turns volatile above ~800 C — so its
+  high-temperature service (a glowing filament) is only inside a vacuum or inert-gas
+  (argon/nitrogen) envelope. A halogen lamp adds a trace halogen for the regenerative
+  tungsten-halogen cycle that redeposits evaporated tungsten.
+  Filament emissivity is ~0.35 in the visible/near-IR at incandescent temperatures
+  (it rises toward shorter wavelengths); this is folded into the bulb's Stefan-
+  Boltzmann radiation balance via the rated operating point, not carried as a
+  structured property here. Sources: CRC Handbook 102nd ed.; ASM Metals Handbook.

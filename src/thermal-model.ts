@@ -15,6 +15,9 @@
  * exist yet — that lands with the PCB layer, not before.
  */
 
+import type { Instance } from './cross-fk-validator.ts'
+import { readScalarParam } from './instance-params.ts'
+
 /** Standard datasheet ambient, °C (the 25 °C every θ_JA rating assumes). */
 export const STANDARD_AMBIENT_C = 25
 
@@ -28,6 +31,58 @@ export function junctionTemperature(
   ambientC: number = STANDARD_AMBIENT_C,
 ): number {
   return ambientC + watts * thetaJaKelvinPerWatt
+}
+
+/**
+ * An incandescent filament runs far hotter than a conduction-cooled part because
+ * it sheds its power almost entirely by RADIATION — the Stefan–Boltzmann law
+ *   P = k·(T⁴ − T_amb⁴)        [T in kelvin, k = ε·σ·A]
+ * (emissivity × the Stefan–Boltzmann constant × the radiating area). Inverted for
+ * the steady filament temperature at a dissipated power P:
+ *   T = (T_amb⁴ + P/k)^(1/4)
+ * so the temperature climbs only as the FOURTH ROOT of power — halve the drive and
+ * the filament barely dims, the hallmark of an incandescent lamp, and the opposite
+ * of the LINEAR T = ambient + P·θ_JA a conduction-cooled package follows. k is
+ * pinned to the rated operating point — at `ratedPowerW` the filament sits at
+ * `operatingTempC`, referenced to the 25 °C datasheet ambient — so the rated point
+ * is exact and every off-rated point falls out of the T⁴ law. Returns °C.
+ *
+ * Honest scope: pure radiation balance (the dominant term for a filament in a
+ * vacuum/inert-gas envelope), steady-state, no lead/gas conduction and no thermal
+ * mass — so the sub-second cold-start inrush surge is a documented future rung,
+ * the same thermal-mass increment this model defers for every part.
+ */
+export function filamentTemperatureC(
+  watts: number,
+  ratedPowerW: number,
+  operatingTempC: number,
+  ambientC: number = STANDARD_AMBIENT_C,
+): number {
+  const operatingK = operatingTempC + 273.15
+  const refAmbientK = STANDARD_AMBIENT_C + 273.15
+  const ambientK = ambientC + 273.15
+  const k = ratedPowerW / (operatingK ** 4 - refAmbientK ** 4)
+  return (ambientK ** 4 + Math.max(0, watts) / k) ** 0.25 - 273.15
+}
+
+/**
+ * The filament temperature for an incandescent_bulb instance dissipating `watts`,
+ * reading its rated operating point (rated_power at reference_temperature — the
+ * point where its hot `resistance` and that power hold). The ONE place the bulb's
+ * T(P) law is read from an instance, so the solve, the readings, the failure check,
+ * and the glow all land on the same temperature. Undefined when the rated point is
+ * missing or not above the 25 °C reference.
+ */
+export function bulbFilamentTemperatureC(
+  inst: Instance,
+  watts: number,
+  ambientC: number = STANDARD_AMBIENT_C,
+): number | undefined {
+  const ratedPower = readScalarParam(inst, 'rated_power')
+  const operatingTempC = readScalarParam(inst, 'reference_temperature')
+  if (ratedPower === undefined || ratedPower <= 0) return undefined
+  if (operatingTempC === undefined || operatingTempC <= STANDARD_AMBIENT_C) return undefined
+  return filamentTemperatureC(watts, ratedPower, operatingTempC, ambientC)
 }
 
 /**

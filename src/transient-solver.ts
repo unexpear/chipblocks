@@ -1273,6 +1273,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     if (
       inst.definition === 'resistor' ||
       inst.definition === 'thermistor' ||
+      inst.definition === 'incandescent_bulb' ||
       inst.definition === 'photoresistor'
     ) {
       const ohms =
@@ -1476,6 +1477,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       if (
         inst.definition === 'resistor' ||
         inst.definition === 'thermistor' ||
+        inst.definition === 'incandescent_bulb' ||
         inst.definition === 'photoresistor'
       )
         stampResistor(inst, nodeIndex, M)

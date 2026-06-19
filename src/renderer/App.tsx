@@ -1330,6 +1330,7 @@ function Canvas() {
       } else if (
         inst.definition === 'resistor' ||
         inst.definition === 'thermistor' ||
+        inst.definition === 'incandescent_bulb' ||
         inst.definition === 'photoresistor' ||
         inst.definition === 'capacitor' ||
         inst.definition === 'inductor'

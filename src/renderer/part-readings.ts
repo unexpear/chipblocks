@@ -2,7 +2,7 @@ import type { World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
 import { readScalarParam } from '../instance-params.ts'
 import { laserOpticalPowerW } from '../laser-model.ts'
-import { acrossVolts, junctionTemperature } from '../thermal-model.ts'
+import { acrossVolts, bulbFilamentTemperatureC, junctionTemperature } from '../thermal-model.ts'
 import { junctionCapacitance } from '../varactor-model.ts'
 
 /**
@@ -53,19 +53,23 @@ export function partReadings(
 
     if (reading.current !== undefined && reading.voltage !== undefined) {
       reading.power = reading.current * reading.voltage
+      // The part's real temperature from the electro-thermal solve. When no solve
+      // temperature is supplied (an analysis pass, or a bare solveDC) it falls back to
+      // the same law the solve would use, at the SAME ambient precedence: own
+      // ambient_temperature, else the board ambient, else the 25 °C default. Most parts
+      // self-heat through a θ_JA (conduction); an incandescent filament radiates, so it
+      // takes the Stefan–Boltzmann law instead (it has no θ_JA).
+      const ambient = readScalarParam(inst, 'ambient_temperature') ?? projectAmbientC
       const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
       if (thetaJa !== undefined && thetaJa > 0) {
-        // The part's real temperature from the electro-thermal solve — its ambient (own or the
-        // board's) plus self-heating. When no solve temperature is supplied (an analysis pass, or
-        // a bare solveDC) it falls back to the lumped law at the SAME ambient the solve would use:
-        // own ambient_temperature, else the board ambient, else junctionTemperature's 25 °C default.
         reading.temperatureC =
-          temperaturesC?.get(inst.id) ??
-          junctionTemperature(
-            reading.power,
-            thetaJa,
-            readScalarParam(inst, 'ambient_temperature') ?? projectAmbientC,
-          )
+          temperaturesC?.get(inst.id) ?? junctionTemperature(reading.power, thetaJa, ambient)
+      } else if (inst.definition === 'incandescent_bulb') {
+        const filamentC =
+          temperaturesC?.get(inst.id) ?? bulbFilamentTemperatureC(inst, reading.power, ambient)
+        if (filamentC !== undefined) reading.temperatureC = filamentC
+      }
+      if (reading.temperatureC !== undefined) {
         const maxTemperature = readScalarParam(inst, 'max_operating_temperature')
         if (maxTemperature !== undefined) reading.maxTemperatureC = maxTemperature
       }
