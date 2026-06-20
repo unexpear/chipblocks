@@ -309,6 +309,27 @@ export function NetEdge({
         })).filter((band) => band.radiusPx >= 0.75)
       : []
 
+  // Lens readout: the REAL number the active lens represents, shown right on the wire while
+  // the lens is on (not only on hover) — so a lens is the legible math, not just a wash of
+  // color. Voltage → the wire's solved potential (what its color encodes); Field → the real
+  // B at 1 cm; Flow → the solved current. Combine when several apply.
+  const lensReadouts: { text: string; color: string }[] = []
+  if (lensState.lens === 'voltage' && vSource !== null && vTarget !== null) {
+    lensReadouts.push({
+      text: formatEng((vSource + vTarget) / 2, 'V'),
+      color: voltageStroke ?? '#d6a23c',
+    })
+  }
+  if (lensState.lens === 'field' && amps !== null && lensState.fieldTesla > 0) {
+    lensReadouts.push({
+      text: formatEng((MU_0 * Math.abs(amps)) / (2 * Math.PI * 0.01), 'T'),
+      color: FIELD_COLOR,
+    })
+  }
+  if (lensState.flow && amps !== null && Math.abs(amps) > 1e-12) {
+    lensReadouts.push({ text: formatEng(Math.abs(amps), 'A'), color: '#9fd0ff' })
+  }
+
   return (
     <>
       {fieldBands.map((band) => (
@@ -395,6 +416,31 @@ export function NetEdge({
         }}
       />
       <EdgeLabelRenderer>
+        {lensReadouts.length > 0 && !hovered ? (
+          <div
+            className="nodrag nopan"
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - 13}px)`,
+              background: 'rgba(10,10,12,0.8)',
+              borderRadius: 3,
+              padding: '1px 5px',
+              fontSize: 9,
+              fontWeight: 600,
+              fontFamily: 'system-ui, sans-serif',
+              pointerEvents: 'none',
+              whiteSpace: 'nowrap',
+              display: 'flex',
+              gap: 5,
+            }}
+          >
+            {lensReadouts.map((r) => (
+              <span key={r.text} style={{ color: r.color }}>
+                {r.text}
+              </span>
+            ))}
+          </div>
+        ) : null}
         {hovered && label ? (
           <div
             className="nodrag nopan"

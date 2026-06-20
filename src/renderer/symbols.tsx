@@ -1937,6 +1937,14 @@ export function DeviceNode({ id, data }: NodeProps) {
         {lensState.lens === 'temp' && tempC !== undefined ? (
           <span style={{ color: '#e0a050', marginLeft: 5 }}>{tempC.toFixed(1)} °C</span>
         ) : null}
+        {lensState.lens === 'energy' && energyW !== undefined && energyW > 0 ? (
+          <span style={{ color: '#e8b84b', marginLeft: 5 }}>{formatEng(energyW, 'W')}</span>
+        ) : null}
+        {lensState.lens === 'field' && coilField !== undefined ? (
+          <span style={{ color: '#5ad8c8', marginLeft: 5 }}>
+            {coilField < 1 ? `${(coilField * 1000).toFixed(0)} mT` : `${coilField.toFixed(2)} T`}
+          </span>
+        ) : null}
         {health?.failed ? (
           <span title={health.note} style={{ marginLeft: 5 }}>
             💥

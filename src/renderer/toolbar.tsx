@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { LensMode } from './lens.ts'
 import { DeviceGlyph } from './symbols.tsx'
 import { WIRE_GAUGES } from './wire-length.ts'
@@ -386,101 +387,146 @@ export function ToolbarItems({
         <span style={{ fontSize: 11 }}>Margins</span>
       </button>
 
-      {/* Lenses (S19-v3-50): overlay the solved physics on the schematic. Voltage
-          and Power are exclusive color lenses (click again to turn off); Flow is
-          an independent current-animation toggle. */}
-      <button
-        type="button"
-        onClick={() => onLens(lens === 'voltage' ? 'none' : 'voltage')}
-        title="Voltage lens — color every wire by its solved potential (blue = lowest, red = highest)"
-        style={{
-          ...toolButton(lens === 'voltage'),
-          flexDirection: 'row',
-          gap: 6,
-          padding: '8px 10px',
-        }}
-      >
-        <span aria-hidden style={{ color: '#d6a23c', fontSize: 13 }}>
-          ◧
-        </span>
-        <span style={{ fontSize: 11 }}>Voltage</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => onLens(lens === 'power' ? 'none' : 'power')}
-        title="Power lens — heat-color every part by its real dissipated watts (the hot spots)"
-        style={{
-          ...toolButton(lens === 'power'),
-          flexDirection: 'row',
-          gap: 6,
-          padding: '8px 10px',
-        }}
-      >
-        <span aria-hidden style={{ color: '#e0594f', fontSize: 13 }}>
-          ♨
-        </span>
-        <span style={{ fontSize: 11 }}>Power</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => onLens(lens === 'temp' ? 'none' : 'temp')}
-        title="Temp lens — heat-color every part by its computed temperature (the board ambient + power × thermal resistance): the hotspots"
-        style={{
-          ...toolButton(lens === 'temp'),
-          flexDirection: 'row',
-          gap: 6,
-          padding: '8px 10px',
-        }}
-      >
-        <span aria-hidden style={{ color: '#e0a050', fontSize: 13 }}>
-          ℃
-        </span>
-        <span style={{ fontSize: 11 }}>Temp</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => onLens(lens === 'field' ? 'none' : 'field')}
-        title="Magnetic-field lens — bands around each wire sized by its real field, B = μ₀I/2πr from the solved current (the straight-wire law). Each band edge is a true field level; the legend states them, with Earth's ~25–65 µT for comparison. Per-wire fields only — neighboring wires' fields are not summed (full field solving is a future stage)."
-        style={{
-          ...toolButton(lens === 'field'),
-          flexDirection: 'row',
-          gap: 6,
-          padding: '8px 10px',
-        }}
-      >
-        <span aria-hidden style={{ color: '#5ad8c8', fontSize: 13 }}>
-          ◎
-        </span>
-        <span style={{ fontSize: 11 }}>Field</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => onLens(lens === 'energy' ? 'none' : 'energy')}
-        title="Energy-flow lens — gold arrows of energy streaming from the surrounding FIELDS into each load (and out of each source): the Poynting picture. Energy enters a part from the space around it (∮S·dA = V·I), not down the wire. Arrow size = the part's power."
-        style={{
-          ...toolButton(lens === 'energy'),
-          flexDirection: 'row',
-          gap: 6,
-          padding: '8px 10px',
-        }}
-      >
-        <span aria-hidden style={{ color: '#e8b84b', fontSize: 13 }}>
-          ↯
-        </span>
-        <span style={{ fontSize: 11 }}>Energy</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => onFlow(!flow)}
-        title="Flow animation — march dashes along each wire in the solved current's direction, speed from its size"
-        style={{ ...toolButton(flow), flexDirection: 'row', gap: 6, padding: '8px 10px' }}
-      >
-        <span aria-hidden style={{ color: '#9fd0ff', fontSize: 13 }}>
-          ≫
-        </span>
-        <span style={{ fontSize: 11 }}>Flow</span>
-      </button>
+      {/* Lenses (S19-v3-50; consolidated into one tabbed tool): overlay the solved physics
+          on the schematic. One color view at a time (Voltage / Power / Temp / Field / Energy),
+          plus the independent Flow current-animation toggle. */}
+      <LensTool lens={lens} onLens={onLens} flow={flow} onFlow={onFlow} />
     </>
+  )
+}
+
+const LENS_TABS: {
+  mode: Exclude<LensMode, 'none'>
+  label: string
+  icon: string
+  color: string
+  title: string
+}[] = [
+  {
+    mode: 'voltage',
+    label: 'Voltage',
+    icon: '◧',
+    color: '#d6a23c',
+    title: 'Voltage lens — color every wire by its solved potential (blue = lowest, red = highest)',
+  },
+  {
+    mode: 'power',
+    label: 'Power',
+    icon: '♨',
+    color: '#e0594f',
+    title: 'Power lens — heat-color every part by its real dissipated watts (the hot spots)',
+  },
+  {
+    mode: 'temp',
+    label: 'Temp',
+    icon: '℃',
+    color: '#e0a050',
+    title:
+      'Temp lens — heat-color every part by its computed temperature (board ambient + power × thermal resistance): the hotspots',
+  },
+  {
+    mode: 'field',
+    label: 'Field',
+    icon: '◎',
+    color: '#5ad8c8',
+    title:
+      'Magnetic-field lens — bands around each wire sized by its real field, B = μ₀I/2πr from the solved current. Per-wire fields only (full field solving is a future stage).',
+  },
+  {
+    mode: 'energy',
+    label: 'Energy',
+    icon: '↯',
+    color: '#e8b84b',
+    title:
+      'Energy-flow lens — gold arrows of energy streaming from the surrounding FIELDS into each load (and out of each source): the Poynting picture. Arrow size = the part’s power.',
+  },
+]
+
+/**
+ * The Lens tool — one button that expands to the lens tabs, so the six separate lens buttons
+ * become a single tidy control. One color view at a time (click again to turn off), plus the
+ * additive Flow current-animation toggle. The button shows whichever lens is active.
+ */
+function LensTool({
+  lens,
+  onLens,
+  flow,
+  onFlow,
+}: {
+  lens: LensMode
+  onLens: (lens: LensMode) => void
+  flow: boolean
+  onFlow: (flow: boolean) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const active = LENS_TABS.find((t) => t.mode === lens)
+  const anyOn = lens !== 'none' || flow
+  const tab = (on: boolean): React.CSSProperties => ({
+    ...toolButton(on),
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    gap: 6,
+    padding: '5px 9px',
+  })
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        title="Lenses — overlay the solved physics on the schematic: voltage, power, temperature, magnetic field, energy flow, and the current-flow animation. Pick one view at a time."
+        style={{ ...toolButton(anyOn), flexDirection: 'row', gap: 6, padding: '8px 10px' }}
+      >
+        <span aria-hidden style={{ color: active?.color ?? '#9fd0ff', fontSize: 13 }}>
+          {active?.icon ?? (flow ? '≫' : '◉')}
+        </span>
+        <span style={{ fontSize: 11 }}>
+          {active ? `Lens: ${active.label}` : flow ? 'Lens: Flow' : 'Lens'}
+        </span>
+        <span aria-hidden style={{ marginLeft: 'auto', fontSize: 9, color: '#778' }}>
+          {open ? '▾' : '▸'}
+        </span>
+      </button>
+      {open ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 6 }}>
+          <button
+            type="button"
+            onClick={() => onLens('none')}
+            title="Turn the color lens off"
+            style={tab(lens === 'none')}
+          >
+            <span aria-hidden style={{ color: '#778', fontSize: 13 }}>
+              ○
+            </span>
+            <span style={{ fontSize: 11 }}>Off</span>
+          </button>
+          {LENS_TABS.map((t) => (
+            <button
+              key={t.mode}
+              type="button"
+              onClick={() => onLens(lens === t.mode ? 'none' : t.mode)}
+              title={t.title}
+              style={tab(lens === t.mode)}
+            >
+              <span aria-hidden style={{ color: t.color, fontSize: 13 }}>
+                {t.icon}
+              </span>
+              <span style={{ fontSize: 11 }}>{t.label}</span>
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => onFlow(!flow)}
+            title="Flow animation — march dashes along each wire in the solved current's direction, speed from its size. Overlays on top of any color lens."
+            style={tab(flow)}
+          >
+            <span aria-hidden style={{ color: '#9fd0ff', fontSize: 13 }}>
+              ≫
+            </span>
+            <span style={{ fontSize: 11 }}>Flow{flow ? ' · on' : ''}</span>
+          </button>
+        </div>
+      ) : null}
+    </div>
   )
 }
 

@@ -1098,6 +1098,16 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // dissipated watts (for the heat halos) down to the edges/nodes.
   const [lens, setLens] = useState<LensMode>('none')
   const [flow, setFlow] = useState(false)
+  // One lens at a time: picking a color lens turns Flow off, and turning Flow on clears the
+  // color lens — so turning one on always turns off whatever was showing.
+  const selectLens = useCallback((next: LensMode) => {
+    setLens(next)
+    if (next !== 'none') setFlow(false)
+  }, [])
+  const selectFlow = useCallback((next: boolean) => {
+    setFlow(next)
+    if (next) setLens('none')
+  }, [])
   const lensState = useMemo(() => {
     let vMin = Number.POSITIVE_INFINITY
     let vMax = Number.NEGATIVE_INFINITY
@@ -3361,9 +3371,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
                 onClipboard={() => setShowClipboard((open) => !open)}
                 clipboardCount={clipboard.copies.length + (clipboard.cut !== null ? 1 : 0)}
                 lens={lens}
-                onLens={setLens}
+                onLens={selectLens}
                 flow={flow}
-                onFlow={setFlow}
+                onFlow={selectFlow}
               />
             ),
           },
