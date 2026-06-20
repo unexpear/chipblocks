@@ -1,8 +1,10 @@
 import { BaseEdge, EdgeLabelRenderer, type EdgeProps, useReactFlow } from '@xyflow/react'
 import {
+  createContext,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   useContext,
+  useEffect,
   useRef,
   useState,
 } from 'react'
@@ -49,7 +51,7 @@ import { roundedPathD, samplePathPoints } from './wire-path.ts'
 
 const LABEL_LIFT = 26
 
-type Point = { x: number; y: number }
+export type Point = { x: number; y: number }
 type Waypoint = Point & { id: string }
 
 const readWaypoints = (data: EdgeProps['data']): Waypoint[] =>
@@ -84,8 +86,48 @@ function nearestSegment(points: Point[], p: Point): number {
   return best
 }
 
+/** Part bounding boxes (flow coords), so each wire can tell whether it runs through a part
+ *  that isn't one of its own endpoints — App fills this from the live node positions. */
+export type PartBox = { id: string; x: number; y: number; w: number; h: number }
+export const PartBoxesContext = createContext<PartBox[]>([])
+
+/** Each wire reports its drawn path (flow coords) here so the crossings overlay can find where
+ *  wires cross — the wire knows its own rendered geometry; App collects them all. */
+export const WireGeomContext = createContext<(id: string, points: Point[]) => void>(() => {})
+
+const crossZ = (o: Point, a: Point, b: Point) =>
+  (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+
+/** Do segments p1p2 and p3p4 properly cross? */
+function segmentsCross(p1: Point, p2: Point, p3: Point, p4: Point): boolean {
+  const d1 = crossZ(p3, p4, p1)
+  const d2 = crossZ(p3, p4, p2)
+  const d3 = crossZ(p1, p2, p3)
+  const d4 = crossZ(p1, p2, p4)
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+}
+
+/** Does the segment a→b touch the axis-aligned box (an endpoint inside, or it crosses an edge)? */
+function segmentHitsBox(a: Point, b: Point, box: PartBox): boolean {
+  const inside = (p: Point) =>
+    p.x >= box.x && p.x <= box.x + box.w && p.y >= box.y && p.y <= box.y + box.h
+  if (inside(a) || inside(b)) return true
+  const tl = { x: box.x, y: box.y }
+  const tr = { x: box.x + box.w, y: box.y }
+  const br = { x: box.x + box.w, y: box.y + box.h }
+  const bl = { x: box.x, y: box.y + box.h }
+  return (
+    segmentsCross(a, b, tl, tr) ||
+    segmentsCross(a, b, tr, br) ||
+    segmentsCross(a, b, br, bl) ||
+    segmentsCross(a, b, bl, tl)
+  )
+}
+
 export function NetEdge({
   id,
+  source,
+  target,
   sourceX,
   sourceY,
   targetX,
@@ -98,6 +140,8 @@ export function NetEdge({
 }: EdgeProps) {
   const { setEdges, screenToFlowPosition } = useReactFlow()
   const lensState = useContext(LensContext)
+  const partBoxes = useContext(PartBoxesContext)
+  const reportGeom = useContext(WireGeomContext)
   const checkpointAction = useContext(CheckpointContext)
   const waypoints = readWaypoints(data)
   // The detail chip (net id · current · length · resistance) only pops up while
@@ -138,6 +182,29 @@ export function NetEdge({
   } else {
     labelX = (sourceX + targetX) / 2
     labelY = (sourceY + targetY) / 2
+  }
+
+  // Report this wire's drawn path so the crossings overlay can find where wires cross.
+  const geomKey = routePoints.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`).join(';')
+  // biome-ignore lint/correctness/useExhaustiveDependencies: geomKey already captures routePoints
+  useEffect(() => {
+    reportGeom(id, routePoints)
+  }, [reportGeom, id, geomKey])
+
+  // Wire-through-part collision: does a segment of the routed path cut through a part that
+  // is NOT one of this wire's two endpoints? (it touches those at the terminals by design.)
+  let collidesPart = false
+  for (let i = 0; i < routePoints.length - 1 && !collidesPart; i++) {
+    const a = routePoints[i]
+    const b = routePoints[i + 1]
+    if (!a || !b) continue
+    for (const box of partBoxes) {
+      if (box.id === source || box.id === target) continue
+      if (segmentHitsBox(a, b, box)) {
+        collidesPart = true
+        break
+      }
+    }
   }
 
   const amps = typeof data?.amps === 'number' ? data.amps : null
@@ -296,7 +363,11 @@ export function NetEdge({
     lensState.lens === 'voltage' && vSource !== null && vTarget !== null
       ? voltageColor((vSource + vTarget) / 2, lensState.vMin, lensState.vMax)
       : null
-  const edgeStyle = voltageStroke ? { ...style, stroke: voltageStroke, strokeWidth: 2.4 } : style
+  const edgeStyle = collidesPart
+    ? { ...style, stroke: '#e0654a', strokeWidth: 2.8, strokeDasharray: '6 4' }
+    : voltageStroke
+      ? { ...style, stroke: voltageStroke, strokeWidth: 2.4 }
+      : style
   const flowSeconds = lensState.flow && amps !== null ? flowDuration(amps) : null
   // Field lens: nested isofield bands — each band edge is the real distance at
   // which this wire's field equals that contour level (B = μ₀I/2πr inverted).
@@ -485,6 +556,21 @@ export function NetEdge({
                 💥 overheating {wirePeakC.toFixed(0)} °C (over {WIRE_INSULATION_MAX_C} °C)
               </div>
             ) : null}
+          </div>
+        ) : null}
+        {collidesPart ? (
+          <div
+            className="nodrag nopan"
+            title="This wire runs through a part — parts are solid. Double-click the wire to drop a corner and route it around."
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY + 13}px)`,
+              fontSize: 12,
+              pointerEvents: 'none',
+              filter: 'drop-shadow(0 0 2px #000)',
+            }}
+          >
+            ⛔
           </div>
         ) : null}
         {wireOverheating ? (

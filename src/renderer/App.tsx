@@ -119,7 +119,7 @@ import {
 } from './meter.tsx'
 import { type MonteCarloResult, monteCarloAnalysis } from './monte-carlo.ts'
 import { expandMultiLeadSources, multiLeadAliases } from './multi-tap-source.ts'
-import { edgeTypes } from './net-edge.tsx'
+import { edgeTypes, PartBoxesContext, type Point, WireGeomContext } from './net-edge.tsx'
 import { BLOCK_MIME, DEFINITION_MIME, Palette } from './palette.tsx'
 import { moveToEdge, type PanelLayout, panelGroups, stackOnto } from './panel-groups.ts'
 import {
@@ -155,6 +155,7 @@ import { type Tool, ToolbarItems } from './toolbar.tsx'
 import { CheckpointContext } from './undo-context.ts'
 import { checkpoint, emptyHistory, redo, undo } from './undo-history.ts'
 import { formatEng } from './units.ts'
+import { findWireCrossings, type WireCrossing, WireCrossingsOverlay } from './wire-crossings.tsx'
 import { type SelectedWire, WireInspector } from './wire-inspector.tsx'
 import {
   DEFAULT_WIRE_GAUGE_AWG,
@@ -712,6 +713,23 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // Live React Flow state — nodes are draggable (S19-v3-3); setNodes/setEdges
   // also let the palette drop new parts and the user draw new wires.
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes)
+  // Part collision: where each dragged part started, so a drop that lands on another part
+  // snaps back — parts are solid and can't occupy the same space.
+  const dragStartPos = useRef(new Map<string, { x: number; y: number }>())
+  // Live part boxes (flow coords) so each wire can tell whether it runs through a part.
+  const partBoxes = useMemo(
+    () =>
+      nodes
+        .filter((n) => n.type === 'device' || n.type === 'block')
+        .map((n) => ({
+          id: n.id,
+          x: n.position.x,
+          y: n.position.y,
+          w: n.measured?.width ?? 88,
+          h: n.measured?.height ?? 56,
+        })),
+    [nodes],
+  )
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges)
   // Per-part health (lit / overstressed) — drives the success/failure animations.
   const [health, setHealth] = useState(initial.health)
@@ -771,6 +789,101 @@ function Canvas({ project }: { project: ProjectChoice }) {
       undoHistory.current = checkpoint(undoHistory.current, snapshotCanvas(), tag, Date.now())
     },
     [snapshotCanvas],
+  )
+
+  // Wire-to-wire crossings: each wire reports its drawn path here; the overlay finds where two
+  // wires cross (an open dot), and a click JOINS them at a junction (a filled dot = one net).
+  const [wireGeoms, setWireGeoms] = useState(new Map<string, Point[]>())
+  const reportWireGeom = useCallback((wireId: string, points: Point[]) => {
+    setWireGeoms((prev) => {
+      const next = new Map(prev)
+      next.set(wireId, points)
+      return next
+    })
+  }, [])
+  const wireCrossings = useMemo(
+    () =>
+      findWireCrossings(
+        wireGeoms,
+        edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+      ),
+    [wireGeoms, edges],
+  )
+  const joinCrossing = useCallback(
+    (c: WireCrossing) => {
+      checkpointAction('join-wires')
+      const jid = `j_${crypto.randomUUID().slice(0, 8)}`
+      setNodes((ns) => [
+        ...ns,
+        {
+          id: jid,
+          type: 'junction',
+          position: { x: c.x - 7, y: c.y - 7 },
+          data: { fromCrossing: true },
+        },
+      ])
+      setEdges((es) => {
+        const ea = es.find((e) => e.id === c.edgeA)
+        const eb = es.find((e) => e.id === c.edgeB)
+        if (!ea || !eb) return es
+        const split = (e: Edge): Edge[] => [
+          {
+            ...e,
+            id: `${e.id}~a`,
+            target: jid,
+            targetHandle: 'tie',
+            data: { ...e.data, waypoints: [] },
+          },
+          {
+            ...e,
+            id: `${e.id}~b`,
+            source: jid,
+            sourceHandle: 'tie',
+            data: { ...e.data, waypoints: [] },
+          },
+        ]
+        return [
+          ...es.filter((e) => e.id !== c.edgeA && e.id !== c.edgeB),
+          ...split(ea),
+          ...split(eb),
+        ]
+      })
+    },
+    [checkpointAction, setNodes, setEdges],
+  )
+
+  // Un-join: clicking a crossing junction splits the wires back apart. The join encoded each
+  // original wire id as `<id>~a` / `<id>~b`, so pair the four segments by that prefix, merge each
+  // pair back into its original wire, and remove the junction — the open crossing returns.
+  const unjoinCrossing = useCallback(
+    (jid: string) => {
+      checkpointAction('split-wires')
+      setEdges((es) => {
+        const groups = new Map<string, Edge[]>()
+        for (const e of es) {
+          if (e.source !== jid && e.target !== jid) continue
+          const orig = e.id.replace(/~[ab]$/, '')
+          groups.set(orig, [...(groups.get(orig) ?? []), e])
+        }
+        const merged: Edge[] = []
+        for (const halves of groups.values()) {
+          if (halves.length !== 2) continue
+          const aHalf = halves.find((e) => e.target === jid)
+          const bHalf = halves.find((e) => e.source === jid)
+          if (!aHalf || !bHalf) continue
+          merged.push({
+            ...aHalf,
+            id: aHalf.id.replace(/~[ab]$/, ''),
+            target: bHalf.target,
+            targetHandle: bHalf.targetHandle ?? null,
+            data: { ...aHalf.data, waypoints: [] },
+          })
+        }
+        return [...es.filter((e) => e.source !== jid && e.target !== jid), ...merged]
+      })
+      setNodes((ns) => ns.filter((n) => n.id !== jid))
+    },
+    [checkpointAction, setEdges, setNodes],
   )
 
   // Save / Load (S19-v3-52). Save: the File menu asks, we answer with the
@@ -2781,100 +2894,160 @@ function Canvas({ project }: { project: ProjectChoice }) {
       >
         <HealthContext.Provider value={health}>
           <LensContext.Provider value={lensState}>
-            <CheckpointContext.Provider value={checkpointAction}>
-              <ReactFlow
-                colorMode={theme}
-                nodes={nodes}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onConnect={onConnect}
-                onReconnect={onReconnect}
-                onNodeDoubleClick={onNodeDoubleClick}
-                onNodeDragStart={() => checkpointAction('move')}
-                nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes}
-                nodesDraggable={tool === 'select'}
-                nodesConnectable={tool !== 'meter'}
-                // Click-to-connect is OUR gesture now (onWireClick, wire tool
-                // only, with corner routing); React Flow's built-in one would
-                // double-create — and it once let meter probes draw real wires.
-                connectOnClick={false}
-                connectionMode={ConnectionMode.Loose}
-                // Desktop-style selection (S19-v3-69): LEFT-drag on empty canvas
-                // draws a selection box (like desktop icons), so panning moves to
-                // the middle/right mouse buttons. Touching the box counts —
-                // SelectionMode.Partial — exactly how a desktop marquee behaves.
-                // In lasso mode the wrapper owns the pointer, so both are off.
-                selectionOnDrag={tool === 'select'}
-                panOnDrag={tool === 'lasso' ? false : [1, 2]}
-                selectionMode={SelectionMode.Partial}
-                // Windows-friendly multi-select: Ctrl+click (React Flow's default
-                // is the Meta key); Shift+drag box-select is the built-in default.
-                multiSelectionKeyCode={['Meta', 'Control']}
-                // Deletion is OUR keybind now (editable, supports combos) — see
-                // the keyboard-shortcuts effect above.
-                deleteKeyCode={null}
-                zoomOnDoubleClick={false}
-                // Effectively unbounded zoom (React Flow defaults stop at 0.5×–2×):
-                // the project's horizon runs from a full PC down to a transistor,
-                // so the canvas must zoom six orders of magnitude either way.
-                minZoom={0.001}
-                maxZoom={1000}
-                fitView
-                proOptions={{ hideAttribution: true }}
-              >
-                {/* Graph-paper grid: fine minor lines, with a bolder major line every 5th. */}
-                <Background
-                  id="grid-minor"
-                  variant={BackgroundVariant.Lines}
-                  gap={4}
-                  lineWidth={0.5}
-                  color={`${gridColor}55`}
-                />
-                <Background
-                  id="grid-major"
-                  variant={BackgroundVariant.Lines}
-                  gap={20}
-                  lineWidth={1}
-                  color={gridColor}
-                />
-                {/* Coordinate-graph axes through the origin + the four quadrants. */}
-                <CoordinateAxes light={light} />
-                <Controls />
-                <MeterProbes red={redProbe} black={blackProbe} />
-                {/* Scope channel probes (S19-v3-77): one colored clip per
-                    voltage channel. Wire clamps show in the channel chips. */}
-                {scopeOpen
-                  ? scopeProbes.map((p) => {
-                      if (p.kind !== 'terminal') return null
-                      // Color + CH number come from the probe's slot in the RESOLVED channel
-                      // list (what the traces and chips index), NOT its raw scopeProbes index —
-                      // an unresolved probe earlier in the list would otherwise shift this off,
-                      // so the on-canvas marker disagreed with the plotted trace. No channel
-                      // (the probe didn't resolve → no trace) ⇒ no marker.
-                      const ch = scopeChannels.findIndex((c) => c.key === scopeProbeKey(p))
-                      if (ch < 0) return null
-                      return (
-                        <ProbeMarker
-                          key={scopeProbeKey(p)}
-                          probe={{ nodeId: p.nodeId, handleId: p.handleId }}
-                          color={TRACE_COLORS[ch % TRACE_COLORS.length] ?? '#888'}
-                          label={`CH${ch + 1}`}
-                        />
+            <PartBoxesContext.Provider value={partBoxes}>
+              <WireGeomContext.Provider value={reportWireGeom}>
+                <CheckpointContext.Provider value={checkpointAction}>
+                  <ReactFlow
+                    colorMode={theme}
+                    nodes={nodes}
+                    edges={edges}
+                    onNodesChange={onNodesChange}
+                    onEdgesChange={onEdgesChange}
+                    onConnect={onConnect}
+                    onReconnect={onReconnect}
+                    onNodeDoubleClick={onNodeDoubleClick}
+                    onNodeClick={(_event, node) => {
+                      if (
+                        node.type === 'junction' &&
+                        (node.data as { fromCrossing?: boolean } | undefined)?.fromCrossing === true
+                      ) {
+                        unjoinCrossing(node.id)
+                      }
+                    }}
+                    onNodeDragStart={(_event, node) => {
+                      checkpointAction('move')
+                      dragStartPos.current = new Map(
+                        nodes
+                          .filter((n) => n.id === node.id || n.selected)
+                          .map((n) => [n.id, { x: n.position.x, y: n.position.y }]),
                       )
-                    })
-                  : null}
-                {pendingWire !== null ? (
-                  <PendingWirePreview
-                    pending={pendingWire}
-                    cursor={wireCursor}
-                    curved={wireStyle === 'curve'}
-                    curveRadius={wireCurveRadius}
-                  />
-                ) : null}
-              </ReactFlow>
-            </CheckpointContext.Provider>
+                    }}
+                    onNodeDragStop={(_event, node) => {
+                      if (node.type !== 'device' && node.type !== 'block') return
+                      setNodes((cur) => {
+                        const dragged = dragStartPos.current
+                        const box = (n: (typeof cur)[number]) => ({
+                          x: n.position.x,
+                          y: n.position.y,
+                          w: n.measured?.width ?? 88,
+                          h: n.measured?.height ?? 56,
+                        })
+                        const hit = (a: (typeof cur)[number], b: (typeof cur)[number]) => {
+                          const A = box(a)
+                          const B = box(b)
+                          const m = 6 // a little breathing room so parts never touch
+                          return (
+                            A.x < B.x + B.w + m &&
+                            A.x + A.w + m > B.x &&
+                            A.y < B.y + B.h + m &&
+                            A.y + A.h + m > B.y
+                          )
+                        }
+                        const isPart = (n: (typeof cur)[number]) =>
+                          n.type === 'device' || n.type === 'block'
+                        const collides = cur.some(
+                          (moved) =>
+                            dragged.has(moved.id) &&
+                            cur.some((o) => isPart(o) && !dragged.has(o.id) && hit(moved, o)),
+                        )
+                        if (!collides) return cur
+                        // overlap — snap every dragged part back to where it started
+                        return cur.map((n) => {
+                          const start = dragged.get(n.id)
+                          return start ? { ...n, position: start } : n
+                        })
+                      })
+                    }}
+                    nodeTypes={nodeTypes}
+                    edgeTypes={edgeTypes}
+                    nodesDraggable={tool === 'select'}
+                    nodesConnectable={tool !== 'meter'}
+                    // Click-to-connect is OUR gesture now (onWireClick, wire tool
+                    // only, with corner routing); React Flow's built-in one would
+                    // double-create — and it once let meter probes draw real wires.
+                    connectOnClick={false}
+                    connectionMode={ConnectionMode.Loose}
+                    // Desktop-style selection (S19-v3-69): LEFT-drag on empty canvas
+                    // draws a selection box (like desktop icons), so panning moves to
+                    // the middle/right mouse buttons. Touching the box counts —
+                    // SelectionMode.Partial — exactly how a desktop marquee behaves.
+                    // In lasso mode the wrapper owns the pointer, so both are off.
+                    selectionOnDrag={tool === 'select'}
+                    panOnDrag={tool === 'lasso' ? false : [1, 2]}
+                    selectionMode={SelectionMode.Partial}
+                    // Windows-friendly multi-select: Ctrl+click (React Flow's default
+                    // is the Meta key); Shift+drag box-select is the built-in default.
+                    multiSelectionKeyCode={['Meta', 'Control']}
+                    // Deletion is OUR keybind now (editable, supports combos) — see
+                    // the keyboard-shortcuts effect above.
+                    deleteKeyCode={null}
+                    zoomOnDoubleClick={false}
+                    // Effectively unbounded zoom (React Flow defaults stop at 0.5×–2×):
+                    // the project's horizon runs from a full PC down to a transistor,
+                    // so the canvas must zoom six orders of magnitude either way.
+                    minZoom={0.001}
+                    maxZoom={1000}
+                    fitView
+                    proOptions={{ hideAttribution: true }}
+                  >
+                    {/* Graph-paper grid: fine minor lines, with a bolder major line every 5th. */}
+                    <Background
+                      id="grid-minor"
+                      variant={BackgroundVariant.Lines}
+                      gap={4}
+                      lineWidth={0.5}
+                      color={`${gridColor}55`}
+                    />
+                    <Background
+                      id="grid-major"
+                      variant={BackgroundVariant.Lines}
+                      gap={20}
+                      lineWidth={1}
+                      color={gridColor}
+                    />
+                    {/* Coordinate-graph axes through the origin + the four quadrants. */}
+                    <CoordinateAxes light={light} />
+                    <Controls />
+                    <MeterProbes red={redProbe} black={blackProbe} />
+                    {/* Scope channel probes (S19-v3-77): one colored clip per
+                    voltage channel. Wire clamps show in the channel chips. */}
+                    {scopeOpen
+                      ? scopeProbes.map((p) => {
+                          if (p.kind !== 'terminal') return null
+                          // Color + CH number come from the probe's slot in the RESOLVED channel
+                          // list (what the traces and chips index), NOT its raw scopeProbes index —
+                          // an unresolved probe earlier in the list would otherwise shift this off,
+                          // so the on-canvas marker disagreed with the plotted trace. No channel
+                          // (the probe didn't resolve → no trace) ⇒ no marker.
+                          const ch = scopeChannels.findIndex((c) => c.key === scopeProbeKey(p))
+                          if (ch < 0) return null
+                          return (
+                            <ProbeMarker
+                              key={scopeProbeKey(p)}
+                              probe={{ nodeId: p.nodeId, handleId: p.handleId }}
+                              color={TRACE_COLORS[ch % TRACE_COLORS.length] ?? '#888'}
+                              label={`CH${ch + 1}`}
+                            />
+                          )
+                        })
+                      : null}
+                    {pendingWire !== null ? (
+                      <PendingWirePreview
+                        pending={pendingWire}
+                        cursor={wireCursor}
+                        curved={wireStyle === 'curve'}
+                        curveRadius={wireCurveRadius}
+                      />
+                    ) : null}
+                    <WireCrossingsOverlay
+                      crossings={wireCrossings}
+                      onJoin={joinCrossing}
+                      light={light}
+                    />
+                  </ReactFlow>
+                </CheckpointContext.Provider>
+              </WireGeomContext.Provider>
+            </PartBoxesContext.Provider>
           </LensContext.Provider>
         </HealthContext.Provider>
 
