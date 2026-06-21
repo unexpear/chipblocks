@@ -66,4 +66,19 @@ describe('panelGroups', () => {
     const bottom = groups.find((g) => g.edge === 'bottom')
     expect(bottom?.ids).toEqual(['properties']) // only the visible member remains
   })
+  test('a freshly-added panel (in order + visible, not yet in the layout) auto-docks bottom, not dropped', () => {
+    // The footgun: before, a panel with no placement was silently skipped, so a new registry
+    // entry showed nothing until you ALSO added it to the layout. Now it auto-docks.
+    const groups = panelGroups(initial, [...ORDER, 'newpanel'], all)
+    const auto = groups.find((g) => g.ids.includes('newpanel'))
+    expect(auto?.edge).toBe('bottom')
+    expect(auto?.group).toBe(4) // a fresh group above the existing ones (max 3 + 1)
+    expect(auto?.ids).toEqual(['newpanel'])
+  })
+  test('two unlisted panels each get their own fresh group (no collision)', () => {
+    const groups = panelGroups(initial, [...ORDER, 'a', 'b'], all)
+    const ga = groups.find((g) => g.ids.includes('a'))
+    const gb = groups.find((g) => g.ids.includes('b'))
+    expect(ga?.group).not.toBe(gb?.group)
+  })
 })

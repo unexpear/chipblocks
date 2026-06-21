@@ -48,10 +48,12 @@ export function panelGroups(
 ): PanelGroup[] {
   const groups: PanelGroup[] = []
   const byGroup = new Map<number, PanelGroup>()
+  // A panel not yet in the layout (a freshly-added registry entry) auto-docks at the bottom in
+  // its own group — so ADDING a panel needs only a registry entry, never a silent no-show.
+  let nextFreeGroup = freeGroup(layout)
   for (const id of order) {
     if (!isVisible(id)) continue
-    const place = layout[id]
-    if (!place) continue
+    const place: PanelPlacement = layout[id] ?? { edge: 'bottom', group: nextFreeGroup++ }
     const existing = byGroup.get(place.group)
     if (existing) {
       existing.ids.push(id)
