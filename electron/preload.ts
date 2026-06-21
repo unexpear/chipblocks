@@ -10,7 +10,11 @@ function subscribe<T>(channel: string, callback: (value: T) => void): void {
 }
 
 contextBridge.exposeInMainWorld('chipblocks', {
-  onTheme: (callback: (theme: 'light' | 'dark') => void) => subscribe('settings:theme', callback),
+  onTheme: (callback: (theme: string) => void) => subscribe('settings:theme', callback),
+  // Theme switcher: the renderer registers the theme list (from theme.ts) so the native
+  // Settings ▸ Theme menu builds itself, and the menu sends back the chosen theme id.
+  registerThemes: (themes: { id: string; label: string }[], active: string) =>
+    ipcRenderer.send('settings:register-themes', { themes, active }),
   onGridColor: (callback: (color: string) => void) => subscribe('settings:grid-color', callback),
   onGridColorCustom: (callback: () => void) => subscribe('settings:grid-color-custom', callback),
   // Save / Load (S19-v3-52): the File menu asks for the circuit, the renderer
@@ -34,4 +38,5 @@ contextBridge.exposeInMainWorld('chipblocks', {
   // Undo / redo (S19-v3-73): same shape — the renderer owns the history.
   onEditUndo: (callback: () => void) => subscribe('edit:undo', callback),
   onEditRedo: (callback: () => void) => subscribe('edit:redo', callback),
+  onEditSelectAll: (callback: () => void) => subscribe('edit:select-all', callback),
 })

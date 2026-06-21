@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { DeviceGlyph } from './symbols.tsx'
-import { THEME } from './theme.ts'
+import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
+import { useShortcuts } from './use-shortcuts.tsx'
 
 /**
  * Project browser (the startup screen) — the front door, modeled on Unreal's project
@@ -141,21 +142,23 @@ const CATEGORIES: Category[] = [
 ]
 
 const ACCENT = THEME.accentBlueDeep
-const ACCENT_TEXT = THEME.accentBlueSoft
-const BG = THEME.surfaceBase
-const PANEL = THEME.surfaceRaised
-const BORDER = THEME.borderSubtle
-const TEXT = THEME.textPrimary
-const MUTED = THEME.textMuted
 
-function Thumb({ glyph, size = 1 }: { glyph?: string | undefined; size?: number }) {
+function Thumb({
+  glyph,
+  size = 1,
+  light,
+}: {
+  glyph?: string | undefined
+  size?: number
+  light: boolean
+}) {
   return (
     <div
       style={{
         width: 40 * size,
         height: 40 * size,
         borderRadius: 6,
-        background: THEME.surfaceBase,
+        background: light ? THEME.white : THEME.surfaceBase,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -168,7 +171,15 @@ function Thumb({ glyph, size = 1 }: { glyph?: string | undefined; size?: number 
           <DeviceGlyph definition={glyph} />
         </div>
       ) : (
-        <span style={{ color: MUTED, fontSize: 20 * size, lineHeight: 1 }}>+</span>
+        <span
+          style={{
+            color: light ? THEME.borderStrong : THEME.textMuted,
+            fontSize: 20 * size,
+            lineHeight: 1,
+          }}
+        >
+          +
+        </span>
       )}
     </div>
   )
@@ -179,6 +190,23 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
   const [tplId, setTplId] = useState('dc-motor')
   const [depth, setDepth] = useState<'block' | 'design'>('design')
   const [name, setName] = useState('MyMotor')
+  const [light, setLight] = useState(() => isLight(loadTheme()))
+  useEffect(() => {
+    const onThemeChange = (event: Event) =>
+      setLight(isLight((event as CustomEvent<ThemeName>).detail))
+    window.addEventListener('chipblocks:theme', onThemeChange)
+    return () => window.removeEventListener('chipblocks:theme', onThemeChange)
+  }, [])
+  // In a light theme the surfaces/borders use the light tokens and text uses the dark ones —
+  // the same swap the editor does (the browser has no `light` flag of its own otherwise).
+  const BG = light ? THEME.textBright : THEME.surfaceBase
+  const PANEL = light ? THEME.white : THEME.surfaceRaised
+  const BORDER = light ? THEME.textPrimary : THEME.borderSubtle
+  const TEXT = light ? THEME.borderSubtle : THEME.textPrimary
+  const MUTED = light ? THEME.borderStrong : THEME.textMuted
+  const ACCENT_TEXT = light ? THEME.accentBlueDeep : THEME.accentBlueSoft
+  // Settings ▸ Shortcuts works here too (not only in the editor).
+  const { panel: shortcutsPanel } = useShortcuts(light)
 
   const category = useMemo(() => CATEGORIES.find((c) => c.id === catId), [catId])
   const template = useMemo(
@@ -329,12 +357,12 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                     border: t.featured
                       ? `2px solid ${ACCENT}`
                       : `1px solid ${on ? ACCENT : BORDER}`,
-                    background: on ? 'rgba(90,134,216,0.16)' : THEME.surfacePanel,
+                    background: on ? 'rgba(90,134,216,0.16)' : PANEL,
                     color: TEXT,
                     cursor: 'pointer',
                   }}
                 >
-                  <Thumb glyph={t.glyph} size={1.2} />
+                  <Thumb glyph={t.glyph} size={1.2} light={light} />
                   <span style={{ fontSize: 13, color: on ? ACCENT_TEXT : TEXT }}>{t.name}</span>
                 </button>
               )
@@ -372,7 +400,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
         >
           {template ? (
             <>
-              <Thumb glyph={template.glyph} size={1.7} />
+              <Thumb glyph={template.glyph} size={1.7} light={light} />
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '14px 0 0' }}>
                 <span style={{ fontSize: 17, fontWeight: 600 }}>{template.name}</span>
                 {template.featured ? (
@@ -444,7 +472,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                         <span
                           style={{
                             color: TEXT,
-                            background: THEME.surfaceBase,
+                            background: light ? THEME.white : THEME.surfaceBase,
                             border: `1px solid ${BORDER}`,
                             borderRadius: 6,
                             padding: '3px 8px',
@@ -507,7 +535,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
             padding: '7px 10px',
             borderRadius: 7,
             border: `1px solid ${BORDER}`,
-            background: THEME.surfaceBase,
+            background: light ? THEME.white : THEME.surfaceBase,
             color: TEXT,
             fontSize: 13,
             outline: 'none',
@@ -522,7 +550,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
             padding: '9px 20px',
             borderRadius: 7,
             border: `1px solid ${ACCENT}`,
-            background: template ? ACCENT : THEME.borderSubtle,
+            background: template ? ACCENT : BORDER,
             color: template ? THEME.surfaceDeep : MUTED,
             fontSize: 13.5,
             fontWeight: 600,
@@ -532,6 +560,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
           Create project
         </button>
       </div>
+      {shortcutsPanel}
     </div>
   )
 }

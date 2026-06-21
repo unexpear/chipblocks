@@ -19,7 +19,7 @@ import {
   useReactFlow,
   ViewportPortal,
 } from '@xyflow/react'
-import { THEME } from './theme.ts'
+import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
 import '@xyflow/react/dist/style.css'
 import './interactions.css'
 import {
@@ -81,7 +81,7 @@ import { DockablePanel, type TabDropTarget } from './dockable-panel.tsx'
 import { wireFlow } from './edge-currents.ts'
 import { computeFront } from './front-propagation.ts'
 import { canvasHealth, HealthContext, type NodeHealth } from './health.ts'
-import { DEFAULT_KEYBINDS, eventMatchesBinding, type Keybinds, mergeKeybinds } from './keybinds.ts'
+import { eventMatchesBinding } from './keybinds.ts'
 import {
   edgeIdsTouchingRegion,
   type LassoPoint,
@@ -160,7 +160,6 @@ import {
 } from './scope.tsx'
 import { extractXyPath, type FamilyStep, stepValues, withSourceVoltage } from './scope-family.ts'
 import { H_DIVISIONS, scopeRecordSteps, slowestHonestTimebase } from './scope-scales.ts'
-import { ShortcutsPanel } from './shortcuts-panel.tsx'
 import { type DeviceNodeData, nodeTypes } from './symbols.tsx'
 import { clampIndex, frameEdgeValues, frameLensRange } from './timeline.ts'
 import { TimelinePanel } from './timeline-panel.tsx'
@@ -168,6 +167,7 @@ import { type Tool, ToolbarItems } from './toolbar.tsx'
 import { CheckpointContext } from './undo-context.ts'
 import { checkpoint, emptyHistory, redo, undo } from './undo-history.ts'
 import { formatEng } from './units.ts'
+import { useShortcuts } from './use-shortcuts.tsx'
 import { findWireCrossings, type WireCrossing, WireCrossingsOverlay } from './wire-crossings.tsx'
 import { type SelectedWire, WireInspector } from './wire-inspector.tsx'
 import {
@@ -199,9 +199,10 @@ import { WorstCasePanel } from './worst-case-panel.tsx'
 declare global {
   interface Window {
     chipblocks?: {
-      onTheme: (callback: (theme: 'light' | 'dark') => void) => void
+      onTheme: (callback: (theme: string) => void) => void
       onGridColor: (callback: (color: string) => void) => void
       onGridColorCustom: (callback: () => void) => void
+      registerThemes?: (themes: { id: string; label: string }[], active: string) => void
       onSaveRequest: (callback: () => void) => void
       saveCircuitData: (text: string) => Promise<{ ok: boolean; path?: string }>
       onCircuitOpened: (callback: (text: string) => void) => void
@@ -213,6 +214,7 @@ declare global {
       onEditPaste?: (callback: () => void) => void
       onEditUndo?: (callback: () => void) => void
       onEditRedo?: (callback: () => void) => void
+      onEditSelectAll?: (callback: () => void) => void
     }
   }
 }
@@ -1028,17 +1030,24 @@ function Canvas({ project }: { project: ProjectChoice }) {
   const projectAmbientRef = useRef(projectAmbientC)
   // Appearance (S19-v3-37/38): light/dark theme + grid-line color, driven by the
   // native Settings menu over IPC; the menu's Custom… opens an in-canvas picker.
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark')
-  const [gridColor, setGridColor] = useState(THEME.borderStrong)
+  const [theme, setTheme] = useState<ThemeName>(loadTheme)
+  const [gridColor, setGridColor] = useState('#3a3a3f')
   const [showGridColorPicker, setShowGridColorPicker] = useState(false)
-  const light = theme === 'light'
+  const light = isLight(theme)
   // The native Settings menu (electron/main.ts) pushes appearance over IPC.
   useEffect(() => {
     const bridge = window.chipblocks
     if (bridge === undefined) return
-    bridge.onTheme((next) => setTheme(next))
     bridge.onGridColor((next) => setGridColor(next))
     bridge.onGridColorCustom(() => setShowGridColorPicker(true))
+  }, [])
+
+  // The theme switcher is wired at the app entry (main.tsx) so it works on every screen; the
+  // editor only needs to flip its light/dark styling when the chosen theme changes.
+  useEffect(() => {
+    const onThemeChange = (event: Event) => setTheme((event as CustomEvent<ThemeName>).detail)
+    window.addEventListener('chipblocks:theme', onThemeChange)
+    return () => window.removeEventListener('chipblocks:theme', onThemeChange)
   }, [])
 
   // The live re-solve: rebuild + solve the canvas, then push the new wire currents
@@ -2282,21 +2291,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // every canvas key runs through the user's keybinds — rotate, delete (we own
   // deletion so combos work; React Flow's deleteKeyCode is off), and opening
   // the Shortcuts panel. Keys are ignored while typing in a field.
-  const [keybinds, setKeybinds] = useState<Keybinds>(DEFAULT_KEYBINDS)
-  const [showShortcuts, setShowShortcuts] = useState(false)
-  useEffect(() => {
-    const bridge = window.chipblocks
-    if (bridge?.getKeybinds === undefined) return
-    void bridge.getKeybinds().then((saved) => setKeybinds(mergeKeybinds(saved)))
-    bridge.onShortcutsOpen?.(() => setShowShortcuts(true))
-  }, [])
-  // Panel edits apply immediately + persist via the main process (which also
-  // re-installs the menu so its accelerators show the new keys). Without the
-  // bridge (dev preview) they still apply for the session.
-  const applyKeybinds = useCallback((next: Keybinds) => {
-    setKeybinds(next)
-    void window.chipblocks?.setKeybinds?.(next)
-  }, [])
+  // Keybinds + the Shortcuts panel in one hook so the editor (keydown matching) and the project
+  // browser both open it from Settings ▸ Shortcuts; the open request is broadcast (main.tsx).
+  const { keybinds, isOpen: shortcutsOpen, panel: shortcutsPanel } = useShortcuts(light)
 
   // Clipboard (S19-v3-69): desktop-style copy/cut/paste with a Win+V-style
   // history — 15 copies, one cut at a time. Ctrl+V pastes the newest at the
@@ -2355,12 +2352,17 @@ function Canvas({ project }: { project: ProjectChoice }) {
 
   // The Edit menu's items arrive over IPC. Subscribe once; the ref always
   // points at the latest handlers (which close over live state).
+  const doSelectAll = () => {
+    setNodes((current) => current.map((n) => ({ ...n, selected: true })))
+    setEdges((current) => current.map((e) => ({ ...e, selected: true })))
+  }
   const editActions = useRef({
     copy: doCopy,
     cut: doCut,
     paste: () => doPaste(),
     undo: doUndo,
     redo: doRedo,
+    selectAll: doSelectAll,
   })
   editActions.current = {
     copy: doCopy,
@@ -2368,6 +2370,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
     paste: () => doPaste(),
     undo: doUndo,
     redo: doRedo,
+    selectAll: doSelectAll,
   }
   useEffect(() => {
     const bridge = window.chipblocks
@@ -2376,6 +2379,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
     bridge?.onEditPaste?.(() => editActions.current.paste())
     bridge?.onEditUndo?.(() => editActions.current.undo())
     bridge?.onEditRedo?.(() => editActions.current.redo())
+    bridge?.onEditSelectAll?.(() => editActions.current.selectAll())
   }, [])
 
   // Lasso (S19-v3-69): freeform selection. The wrapper owns the pointer
@@ -2503,15 +2507,14 @@ function Canvas({ project }: { project: ProjectChoice }) {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
-      if (showShortcuts) return // the panel owns the keyboard while open
+      if (shortcutsOpen) return // the panel owns the keyboard while open
       if (eventMatchesBinding(event, keybinds.shortcutsPanel)) {
-        setShowShortcuts(true)
+        window.dispatchEvent(new Event('chipblocks:shortcuts'))
         return
       }
       if (eventMatchesBinding(event, keybinds.selectAll)) {
         event.preventDefault()
-        setNodes((current) => current.map((n) => ({ ...n, selected: true })))
-        setEdges((current) => current.map((e) => ({ ...e, selected: true })))
+        editActions.current.selectAll()
         return
       }
       if (eventMatchesBinding(event, keybinds.undo)) {
@@ -2572,9 +2575,8 @@ function Canvas({ project }: { project: ProjectChoice }) {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [
     setNodes,
-    setEdges,
     keybinds,
-    showShortcuts,
+    shortcutsOpen,
     nodes,
     edges,
     deleteElements,
@@ -3078,7 +3080,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                   <WireGeomContext.Provider value={reportWireGeom}>
                     <CheckpointContext.Provider value={checkpointAction}>
                       <ReactFlow
-                        colorMode={theme}
+                        colorMode={light ? 'light' : 'dark'}
                         nodes={nodes}
                         edges={edges}
                         onNodesChange={onNodesChange}
@@ -3552,14 +3554,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
         ) : null}
 
         {/* Shortcuts panel — every key and control, viewable and editable. */}
-        {showShortcuts ? (
-          <ShortcutsPanel
-            binds={keybinds}
-            onChange={applyKeybinds}
-            onClose={() => setShowShortcuts(false)}
-            light={light}
-          />
-        ) : null}
+        {shortcutsPanel}
 
         {/* Field-lens legend — the true contour levels behind the bands. */}
         {lens === 'field' ? (

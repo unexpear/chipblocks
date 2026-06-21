@@ -129,7 +129,10 @@ function registerKeybindHandlers(window: BrowserWindow): void {
 // keybinds map.
 function installMenu(window: BrowserWindow): void {
   const sendGrid = (color: string) => window.webContents.send('settings:grid-color', color)
-  const template: MenuItemConstructorOptions[] = [
+  const buildTemplate = (
+    themes: { id: string; label: string }[],
+    active: string,
+  ): MenuItemConstructorOptions[] => [
     {
       label: 'File',
       submenu: [
@@ -204,7 +207,12 @@ function installMenu(window: BrowserWindow): void {
           click: () => window.webContents.send('edit:paste'),
         },
         { type: 'separator' },
-        { role: 'selectAll', label: 'Select All' },
+        {
+          label: 'Select All',
+          accelerator: keybinds.selectAll,
+          registerAccelerator: false,
+          click: () => window.webContents.send('edit:select-all'),
+        },
       ],
     },
     {
@@ -228,11 +236,13 @@ function installMenu(window: BrowserWindow): void {
       label: 'Settings',
       submenu: [
         {
-          label: 'Light mode',
-          type: 'checkbox',
-          checked: false,
-          click: (item) =>
-            window.webContents.send('settings:theme', item.checked ? 'light' : 'dark'),
+          label: 'Theme',
+          submenu: themes.map((entry) => ({
+            label: entry.label,
+            type: 'radio' as const,
+            checked: entry.id === active,
+            click: () => window.webContents.send('settings:theme', entry.id),
+          })),
         },
         { type: 'separator' },
         {
@@ -264,7 +274,16 @@ function installMenu(window: BrowserWindow): void {
       ],
     },
   ]
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+  const apply = (themes: { id: string; label: string }[], active: string): void =>
+    Menu.setApplicationMenu(Menu.buildFromTemplate(buildTemplate(themes, active)))
+  // Build now with a placeholder; the renderer registers the real list (from theme.ts) on
+  // start-up, so adding a theme there makes it appear here with no change to this file.
+  apply([{ id: 'midnight', label: 'Midnight' }], 'midnight')
+  ipcMain.on(
+    'settings:register-themes',
+    (_event, payload: { themes: { id: string; label: string }[]; active: string }) =>
+      apply(payload.themes, payload.active),
+  )
 }
 
 // ---------------------------------------------------------------------------
