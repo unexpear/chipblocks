@@ -26,6 +26,7 @@ import {
   thermalWarmthTint,
   voltageColor,
 } from './lens.ts'
+import type { FrameEdge } from './timeline.ts'
 import { CheckpointContext } from './undo-context.ts'
 import { formatEng } from './units.ts'
 import { formatLength, gaugeAreaM2 } from './wire-length.ts'
@@ -95,6 +96,10 @@ export const PartBoxesContext = createContext<PartBox[]>([])
  *  wires cross — the wire knows its own rendered geometry; App collects them all. */
 export const WireGeomContext = createContext<(id: string, points: Point[]) => void>(() => {})
 
+/** Timeline playback (Sprint 22): when a frame is active, each wire reads its flow +
+ *  voltage from that played-back instant instead of the steady solve. null = steady. */
+export const FrameEdgeContext = createContext<Map<string, FrameEdge> | null>(null)
+
 const crossZ = (o: Point, a: Point, b: Point) =>
   (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
 
@@ -143,6 +148,8 @@ export function NetEdge({
   const partBoxes = useContext(PartBoxesContext)
   const reportGeom = useContext(WireGeomContext)
   const checkpointAction = useContext(CheckpointContext)
+  // Timeline playback: this wire's values at the played-back instant (null = steady).
+  const fe = useContext(FrameEdgeContext)?.get(id) ?? null
   const waypoints = readWaypoints(data)
   // The detail chip (net id · current · length · resistance) only pops up while
   // the wire is hovered — keeps the schematic clean; the current arrows on the
@@ -207,14 +214,22 @@ export function NetEdge({
     }
   }
 
-  const amps = typeof data?.amps === 'number' ? data.amps : null
+  // Timeline playback overrides the electrical reads with the played-back frame's values;
+  // geometry (length, resistance) is the same at any instant, so it stays from the edge data.
+  const amps = fe
+    ? fe.carries
+      ? fe.amps
+      : null
+    : typeof data?.amps === 'number'
+      ? data.amps
+      : null
   const lengthM = typeof data?.lengthM === 'number' ? data.lengthM : null
   const ohms = typeof data?.ohms === 'number' ? data.ohms : null
   // Real solved I·R drop across this wire (it's a real element in the solve now).
-  const drop = typeof data?.drop === 'number' ? data.drop : null
+  const drop = fe ? fe.drop : typeof data?.drop === 'number' ? data.drop : null
   // The wire's two end potentials (volts) — for the point-by-point probe below.
-  const vSource = typeof data?.vSource === 'number' ? data.vSource : null
-  const vTarget = typeof data?.vTarget === 'number' ? data.vTarget : null
+  const vSource = fe ? fe.vSource : typeof data?.vSource === 'number' ? data.vSource : null
+  const vTarget = fe ? fe.vTarget : typeof data?.vTarget === 'number' ? data.vTarget : null
 
   // Thermal hot spot: a current-carrying wire's I²R heat peaks in its MIDDLE —
   // its ends are heat-sunk by the parts they connect to — so when a wire runs
@@ -368,7 +383,11 @@ export function NetEdge({
     : voltageStroke
       ? { ...style, stroke: voltageStroke, strokeWidth: 2.4 }
       : style
-  const flowSeconds = lensState.flow && amps !== null ? flowDuration(amps) : null
+  // During playback the flow dashes always show (the timeline IS a flow view); otherwise
+  // they follow the flow lens. Direction is the frame's sign when playing, else the steady arrow.
+  const showFlow = lensState.flow || fe !== null
+  const flowSeconds = showFlow && amps !== null ? flowDuration(amps) : null
+  const flowReverse = fe ? !fe.sourceToTarget : Boolean(markerStart)
   // Field lens: nested isofield bands — each band edge is the real distance at
   // which this wire's field equals that contour level (B = μ₀I/2πr inverted).
   const fieldBands =
@@ -420,8 +439,8 @@ export function NetEdge({
         id={id}
         path={path}
         style={edgeStyle}
-        {...(markerStart ? { markerStart } : {})}
-        {...(markerEnd ? { markerEnd } : {})}
+        {...(!fe && markerStart ? { markerStart } : {})}
+        {...(!fe && markerEnd ? { markerEnd } : {})}
       />
       {flowSeconds !== null ? (
         <path
@@ -434,9 +453,9 @@ export function NetEdge({
           strokeLinecap="round"
           style={{
             animationDuration: `${flowSeconds}s`,
-            // Dashes march toward the path's end; when the solved current flows
-            // the other way (the arrow sits at the source), march in reverse.
-            ...(markerStart ? { animationDirection: 'reverse' } : {}),
+            // Dashes march toward the path's end; when the current flows the other
+            // way (steady: arrow at source; playback: negative frame branch), reverse.
+            ...(flowReverse ? { animationDirection: 'reverse' } : {}),
             pointerEvents: 'none',
           }}
         />

@@ -34,6 +34,93 @@ const AMBIENT_PRESETS: { label: string; c: number }[] = [
   { label: 'Engine bay — 125 °C', c: 125 },
 ]
 
+/**
+ * THE TOOLBAR — edit this one list to reshape it (no logic to untangle):
+ *   • Reorder → move a line up or down.
+ *   • Rename  → change `label`.
+ *   • Restyle → change `icon` (any character or emoji) or `color`.
+ *   • Hide    → delete the line (or comment it out).
+ *   • Add     → copy a line, give it a fresh `id`, then point that id at a handler
+ *               in `actionHandlers` (inside ToolbarItems) and pass it from App.tsx.
+ * The lens views work the same way — see LENS_TABS below. Panels, the tool-mode
+ * buttons and the colour theme all follow this same edit-one-list pattern.
+ */
+export type ToolbarActionId =
+  | 'scope'
+  | 'timeline'
+  | 'bode'
+  | 'group'
+  | 'clipboard'
+  | 'math'
+  | 'margins'
+
+export type ToolbarAction = {
+  id: ToolbarActionId
+  label: string
+  /** Any single character or emoji — the button's glyph. */
+  icon: string
+  /** Glyph colour (CSS). Omit to inherit the default toolbar text colour. */
+  color?: string
+  title: string
+}
+
+export const TOOLBAR_ACTIONS: ToolbarAction[] = [
+  {
+    id: 'scope',
+    label: 'Scope',
+    icon: '∿',
+    color: '#6ec06e',
+    title: 'Scope — run the circuit through time and plot every node voltage as a waveform',
+  },
+  {
+    id: 'timeline',
+    label: 'Timeline',
+    icon: '⏱',
+    color: '#e0b070',
+    title:
+      'Timeline — replay the time simulation across the live circuit: watch the current flow, build, reverse and settle, and the voltages change at each instant. Scrub, step, or play; the physics never re-runs, only the view moves through the same solved result.',
+  },
+  {
+    id: 'bode',
+    label: 'Bode',
+    icon: '⌁',
+    color: '#6ec0ff',
+    title:
+      "Bode — the frequency response: pick an input source and an output node and see gain (dB) and phase vs frequency. Reads off the RC/filter corner, an amplifier's roll-off and phase margin, or a transmission line's quarter-wave resonances.",
+  },
+  {
+    id: 'group',
+    label: 'Group',
+    icon: '⧉',
+    color: '#a06ad8',
+    title:
+      "Group — turn the selected parts into ONE reusable block with terminals. Wires crossing the selection become the block's ports. The block is pure structure: the solver always computes the real parts inside (double-click the block to see them; Ungroup to edit).",
+  },
+  {
+    id: 'clipboard',
+    label: 'Clipboard',
+    icon: '📋',
+    title:
+      'Clipboard — the last 15 copies plus the one cut, like the Windows clipboard history. Click an item in the panel to paste it; Ctrl+V pastes the newest.',
+  },
+  {
+    id: 'math',
+    label: 'Math',
+    icon: 'Σ',
+    color: '#d6a23c',
+    title:
+      "Math — see every equation behind the current circuit: each part's law with the real numbers in it, and Kirchhoff's current law re-summed at every net (the checkmark is computed, not assumed)",
+  },
+  {
+    id: 'margins',
+    label: 'Margins',
+    icon: '±',
+    color: '#d6a23c',
+    title:
+      "Margins — the derating scorecard (how close each part runs to its limit now), the worst-case envelope over every part's ±tolerance, and Monte-Carlo (the realistic spread and what fraction of boards fail).",
+  },
+]
+
 export function ToolbarItems({
   tool,
   onTool,
@@ -49,6 +136,7 @@ export function ToolbarItems({
   onProjectAmbient,
   onSolve,
   onScope,
+  onTimeline,
   onBode,
   onMath,
   onWorstCase,
@@ -75,6 +163,7 @@ export function ToolbarItems({
   onProjectAmbient: (c: number) => void
   onSolve: () => void
   onScope: () => void
+  onTimeline: () => void
   onBode: () => void
   onMath: () => void
   onWorstCase: () => void
@@ -90,6 +179,17 @@ export function ToolbarItems({
   const wireActive = tool === 'wire'
   const meterActive = tool === 'meter'
   const lassoActive = tool === 'lasso'
+  // Each toolbar action id (from TOOLBAR_ACTIONS) wired to its handler. Add a button →
+  // add an entry here and in TOOLBAR_ACTIONS; rewire one → change it here.
+  const actionHandlers: Record<ToolbarActionId, () => void> = {
+    scope: onScope,
+    timeline: onTimeline,
+    bode: onBode,
+    group: onGroup,
+    clipboard: onClipboard,
+    math: onMath,
+    margins: onWorstCase,
+  }
   return (
     <>
       <button
@@ -305,87 +405,40 @@ export function ToolbarItems({
         </select>
       </div>
 
-      <button
-        type="button"
-        onClick={onScope}
-        title="Scope — run the circuit through time and plot every node voltage as a waveform"
-        style={{ ...toolButton(false), flexDirection: 'row', gap: 6, padding: '8px 12px' }}
-      >
-        <span aria-hidden style={{ color: '#6ec06e', fontSize: 13 }}>
-          ∿
-        </span>
-        <span style={{ fontSize: 11 }}>Scope</span>
-      </button>
-
-      <button
-        type="button"
-        onClick={onBode}
-        title="Bode — the frequency response: pick an input source and an output node and see gain (dB) and phase vs frequency. Reads off the RC/filter corner, an amplifier's roll-off and phase margin, or a transmission line's quarter-wave resonances."
-        style={{ ...toolButton(false), flexDirection: 'row', gap: 6, padding: '8px 12px' }}
-      >
-        <span aria-hidden style={{ color: '#6ec0ff', fontSize: 13 }}>
-          ⌁
-        </span>
-        <span style={{ fontSize: 11 }}>Bode</span>
-      </button>
-
-      <button
-        type="button"
-        onClick={onGroup}
-        disabled={!canGroup}
-        title="Group — turn the selected parts into ONE reusable block with terminals. Wires crossing the selection become the block's ports. The block is pure structure: the solver always computes the real parts inside (double-click the block to see them; Ungroup to edit)."
-        style={{
-          ...toolButton(false),
-          flexDirection: 'row',
-          gap: 6,
-          padding: '8px 12px',
-          opacity: canGroup ? 1 : 0.45,
-          cursor: canGroup ? 'pointer' : 'default',
-        }}
-      >
-        <span aria-hidden style={{ color: '#a06ad8', fontSize: 13 }}>
-          ⧉
-        </span>
-        <span style={{ fontSize: 11 }}>Group</span>
-      </button>
-
-      <button
-        type="button"
-        onClick={onClipboard}
-        title="Clipboard — the last 15 copies plus the one cut, like the Windows clipboard history. Click an item in the panel to paste it; Ctrl+V pastes the newest."
-        style={{ ...toolButton(false), flexDirection: 'row', gap: 6, padding: '8px 10px' }}
-      >
-        <span aria-hidden style={{ fontSize: 13 }}>
-          📋
-        </span>
-        <span style={{ fontSize: 11 }}>
-          Clipboard{clipboardCount > 0 ? ` (${clipboardCount})` : ''}
-        </span>
-      </button>
-
-      <button
-        type="button"
-        onClick={onMath}
-        title="Math — see every equation behind the current circuit: each part's law with the real numbers in it, and Kirchhoff's current law re-summed at every net (the checkmark is computed, not assumed)"
-        style={{ ...toolButton(false), flexDirection: 'row', gap: 6, padding: '8px 12px' }}
-      >
-        <span aria-hidden style={{ color: '#d6a23c', fontSize: 13 }}>
-          Σ
-        </span>
-        <span style={{ fontSize: 11 }}>Math</span>
-      </button>
-
-      <button
-        type="button"
-        onClick={onWorstCase}
-        title="Margins — the derating scorecard (how close each part runs to its limit now), the worst-case envelope over every part's ±tolerance, and Monte-Carlo (the realistic spread and what fraction of boards fail)."
-        style={{ ...toolButton(false), flexDirection: 'row', gap: 6, padding: '8px 12px' }}
-      >
-        <span aria-hidden style={{ color: '#d6a23c', fontSize: 13 }}>
-          ±
-        </span>
-        <span style={{ fontSize: 11 }}>Margins</span>
-      </button>
+      {/* The panel/tool buttons — rendered from TOOLBAR_ACTIONS (edit that list to
+          reorder, rename, restyle, hide, or add). Group is disabled until 2+ parts
+          are selected; Clipboard shows its count — the only two per-button extras. */}
+      {TOOLBAR_ACTIONS.map((action) => {
+        const disabled = action.id === 'group' && !canGroup
+        const label =
+          action.id === 'clipboard' && clipboardCount > 0
+            ? `${action.label} (${clipboardCount})`
+            : action.label
+        return (
+          <button
+            key={action.id}
+            type="button"
+            onClick={actionHandlers[action.id]}
+            disabled={disabled}
+            title={action.title}
+            style={{
+              ...toolButton(false),
+              flexDirection: 'row',
+              gap: 6,
+              padding: '8px 12px',
+              ...(disabled ? { opacity: 0.45, cursor: 'default' } : {}),
+            }}
+          >
+            <span
+              aria-hidden
+              style={{ fontSize: 13, ...(action.color ? { color: action.color } : {}) }}
+            >
+              {action.icon}
+            </span>
+            <span style={{ fontSize: 11 }}>{label}</span>
+          </button>
+        )
+      })}
 
       {/* Lenses (S19-v3-50; consolidated into one tabbed tool): overlay the solved physics
           on the schematic. One color view at a time (Voltage / Power / Temp / Field / Energy),

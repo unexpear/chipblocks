@@ -79,6 +79,7 @@ export function WireCrossingsOverlay({
   return (
     <ViewportPortal>
       {crossings.map((c) => (
+        // biome-ignore lint/a11y/useKeyWithClickEvents: a crossing marker is click-to-join; keyboard joining is future work
         // biome-ignore lint/a11y/noStaticElementInteractions: a crossing marker is a click target to join two wires; keyboard joining is future work
         <div
           key={c.key}
