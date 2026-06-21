@@ -1,5 +1,6 @@
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from '@xyflow/react'
 import { Fragment, useContext, useEffect } from 'react'
+import { THEME } from './theme.ts'
 import './canvas-animations.css'
 import { thermalSeverity } from '../thermal-model.ts'
 import { BlockNode } from './block-node.tsx'
@@ -39,7 +40,7 @@ import { formatEng } from './units.ts'
  * right=source handles so edges attach cleanly.
  */
 
-const STROKE = '#d0d0d0'
+const STROKE = THEME.textPrimary
 const W = 80
 const H = 44
 const MID = H / 2
@@ -1640,7 +1641,7 @@ export function DeviceGlyph({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        border: '1px solid #555',
+        border: `1px solid ${THEME.textFaint}`,
         borderRadius: 4,
         color: STROKE,
         fontSize: 10,
@@ -1848,7 +1849,12 @@ export function DeviceNode({ id, data }: NodeProps) {
                 position={t.position}
                 title={hoverLabel}
                 style={{
-                  background: polarity === '+' ? '#e0594f' : polarity === '−' ? '#5a86d8' : '#888',
+                  background:
+                    polarity === '+'
+                      ? THEME.statusDanger
+                      : polarity === '−'
+                        ? THEME.accentBlueDeep
+                        : THEME.textMuted,
                   width: polarity ? 9 : undefined,
                   height: polarity ? 9 : undefined,
                   ...(t.at !== undefined
@@ -1869,7 +1875,7 @@ export function DeviceNode({ id, data }: NodeProps) {
                     fontSize: 12,
                     fontWeight: 700,
                     lineHeight: 1,
-                    color: polarity === '+' ? '#ef6a55' : '#7fa6e6',
+                    color: polarity === '+' ? THEME.statusDanger : THEME.accentBlueSoft,
                     pointerEvents: 'none',
                   }}
                 >
@@ -1924,7 +1930,7 @@ export function DeviceNode({ id, data }: NodeProps) {
               right: 2,
               top: MID + 2,
               fontSize: 10,
-              color: '#8a93a0',
+              color: THEME.textMuted,
               pointerEvents: 'none',
             }}
           >
@@ -1938,25 +1944,25 @@ export function DeviceNode({ id, data }: NodeProps) {
           top: '100%',
           left: '50%',
           transform: 'translateX(-50%)',
-          color: '#999',
+          color: THEME.textMuted,
           fontSize: 9,
           whiteSpace: 'nowrap',
           pointerEvents: 'none',
         }}
       >
         {label}
-        {value ? <span style={{ color: '#7ab8ff', marginLeft: 5 }}>{value}</span> : null}
+        {value ? <span style={{ color: THEME.accentBlue, marginLeft: 5 }}>{value}</span> : null}
         {lensState.lens === 'power' && watts !== undefined && watts > 0 ? (
-          <span style={{ color: '#e0a050', marginLeft: 5 }}>{formatEng(watts, 'W')}</span>
+          <span style={{ color: THEME.lensTemp, marginLeft: 5 }}>{formatEng(watts, 'W')}</span>
         ) : null}
         {lensState.lens === 'temp' && tempC !== undefined ? (
-          <span style={{ color: '#e0a050', marginLeft: 5 }}>{tempC.toFixed(1)} °C</span>
+          <span style={{ color: THEME.lensTemp, marginLeft: 5 }}>{tempC.toFixed(1)} °C</span>
         ) : null}
         {lensState.lens === 'energy' && energyW !== undefined && energyW > 0 ? (
-          <span style={{ color: '#e8b84b', marginLeft: 5 }}>{formatEng(energyW, 'W')}</span>
+          <span style={{ color: THEME.lensEnergy, marginLeft: 5 }}>{formatEng(energyW, 'W')}</span>
         ) : null}
         {lensState.lens === 'field' && coilField !== undefined ? (
-          <span style={{ color: '#5ad8c8', marginLeft: 5 }}>
+          <span style={{ color: THEME.lensField, marginLeft: 5 }}>
             {coilField < 1 ? `${(coilField * 1000).toFixed(0)} mT` : `${coilField.toFixed(2)} T`}
           </span>
         ) : null}
@@ -1991,8 +1997,8 @@ function JunctionNode() {
           top: 7,
           width: 9,
           height: 9,
-          background: '#cdd6e0',
-          border: '1px solid #555',
+          background: THEME.textPrimary,
+          border: `1px solid ${THEME.textFaint}`,
         }}
       />
     </div>

@@ -1,5 +1,6 @@
 import { ViewportPortal } from '@xyflow/react'
 import type { Point } from './net-edge.tsx'
+import { THEME } from './theme.ts'
 
 /**
  * Wire-to-wire crossings (Sprint 22). Two wires that cross on the canvas are NOT connected —
@@ -95,8 +96,8 @@ export function WireCrossingsOverlay({
             width: 11,
             height: 11,
             borderRadius: '50%',
-            background: light ? '#f4f5f7' : '#0c0c0e',
-            border: `2px solid ${light ? '#7a828c' : '#9fb0c0'}`,
+            background: light ? THEME.textBright : THEME.surfaceDeep,
+            border: `2px solid ${light ? THEME.textMuted : THEME.textSoft}`,
             cursor: 'pointer',
             pointerEvents: 'all',
             zIndex: 6,

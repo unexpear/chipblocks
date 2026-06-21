@@ -1,4 +1,5 @@
 import type { MathView } from './math-view.ts'
+import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
 
 /**
@@ -17,9 +18,9 @@ export function MathPanel({
   onClose: () => void
   light: boolean
 }) {
-  const border = light ? '1px solid #c4c8ce' : '1px solid #2a2a2f'
-  const textColor = light ? '#333' : '#cdd6e0'
-  const dimColor = light ? '#667' : '#8a93a0'
+  const border = light ? `1px solid ${THEME.textPrimary}` : `1px solid ${THEME.borderSubtle}`
+  const textColor = light ? THEME.borderSubtle : THEME.textPrimary
+  const dimColor = light ? THEME.textFaint : THEME.textMuted
   return (
     <div
       className="nodrag nopan cb-hide-scrollbar"
@@ -32,7 +33,7 @@ export function MathPanel({
         width: 620,
         maxHeight: 'calc(100% - 32px)',
         overflowY: 'auto',
-        background: light ? '#f2f3f5' : '#141417',
+        background: light ? THEME.textBright : THEME.surfaceBase,
         border,
         borderRadius: 8,
         boxShadow: '0 10px 32px rgba(0,0,0,0.5)',
@@ -53,7 +54,7 @@ export function MathPanel({
             borderRadius: 4,
             cursor: 'pointer',
             fontSize: 11,
-            background: light ? '#fff' : '#1b1b1f',
+            background: light ? THEME.white : THEME.surfaceRaised,
             border,
             color: textColor,
           }}
@@ -110,9 +111,9 @@ export function MathPanel({
             <span style={{ marginLeft: 6 }}>
               → Σ = {formatEng(net.sumAmps, 'A')}{' '}
               {Math.abs(net.sumAmps) < 1e-9 ? (
-                <span style={{ color: '#6ec06e' }}>✓ balanced</span>
+                <span style={{ color: THEME.statusOk }}>✓ balanced</span>
               ) : (
-                <span style={{ color: '#e0594f' }}>⚠ NOT balanced</span>
+                <span style={{ color: THEME.statusDanger }}>⚠ NOT balanced</span>
               )}
             </span>
           ) : (

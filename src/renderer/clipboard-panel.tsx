@@ -1,4 +1,5 @@
 import type { ClipboardItem, ClipboardState } from './clipboard.ts'
+import { THEME } from './theme.ts'
 
 /**
  * Clipboard panel (S19-v3-69) — the Win+V idea for parts: every slot the
@@ -28,12 +29,12 @@ export function ClipboardPanel({
         width: 264,
         maxHeight: '70%',
         overflowY: 'auto',
-        background: light ? '#f6f7f9' : '#141417',
-        border: '1px solid #2e3340',
+        background: light ? THEME.textBright : THEME.surfaceBase,
+        border: `1px solid ${THEME.borderStrong}`,
         borderRadius: 8,
         padding: 10,
         fontFamily: 'system-ui, sans-serif',
-        color: light ? '#222' : '#cdd6e0',
+        color: light ? THEME.surfaceRaised : THEME.textPrimary,
         boxShadow: '0 6px 24px rgba(0,0,0,0.35)',
       }}
     >
@@ -62,9 +63,9 @@ export function ClipboardPanel({
           type="button"
           onClick={() => onPaste(clipboard.cut as ClipboardItem)}
           title="The one cut at a time — these parts were removed from the canvas and live only here until pasted (cutting again replaces them)"
-          style={{ ...slotButton(light), borderColor: '#d6a23c' }}
+          style={{ ...slotButton(light), borderColor: THEME.statusWarn }}
         >
-          <span style={{ color: '#d6a23c', marginRight: 6 }}>✂</span>
+          <span style={{ color: THEME.statusWarn, marginRight: 6 }}>✂</span>
           {clipboard.cut.label}
           <span style={{ marginLeft: 'auto', opacity: 0.6, fontSize: 10 }}>cut</span>
         </button>
@@ -97,9 +98,9 @@ function slotButton(light: boolean): React.CSSProperties {
     textAlign: 'left',
     fontSize: 11,
     fontFamily: 'system-ui, sans-serif',
-    color: light ? '#222' : '#cdd6e0',
-    background: light ? '#fff' : '#1b1b1f',
-    border: '1px solid #2a2a2f',
+    color: light ? THEME.surfaceRaised : THEME.textPrimary,
+    background: light ? THEME.white : THEME.surfaceRaised,
+    border: `1px solid ${THEME.borderSubtle}`,
     borderRadius: 6,
     padding: '6px 8px',
     marginBottom: 4,

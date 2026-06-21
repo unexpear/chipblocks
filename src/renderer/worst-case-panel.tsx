@@ -1,4 +1,5 @@
 import { MONTE_CARLO_DEFAULT_SAMPLES, type MonteCarloResult } from './monte-carlo.ts'
+import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
 import type {
   DeratingBand,
@@ -26,9 +27,9 @@ const QUANTITY_LABEL: Record<Quantity, string> = {
 }
 
 const BAND_COLOR: Record<DeratingBand, string> = {
-  safe: '#6ec06e',
-  caution: '#d6a23c',
-  critical: '#e0594f',
+  safe: THEME.statusOk,
+  caution: THEME.statusWarn,
+  critical: THEME.statusDanger,
 }
 
 const fmt = (q: Quantity, v: number): string =>
@@ -56,9 +57,9 @@ export function WorstCasePanel({
   onClose: () => void
   light: boolean
 }) {
-  const border = light ? '1px solid #c4c8ce' : '1px solid #2a2a2f'
-  const textColor = light ? '#333' : '#cdd6e0'
-  const dimColor = light ? '#667' : '#8a93a0'
+  const border = light ? `1px solid ${THEME.textPrimary}` : `1px solid ${THEME.borderSubtle}`
+  const textColor = light ? THEME.borderSubtle : THEME.textPrimary
+  const dimColor = light ? THEME.textFaint : THEME.textMuted
   const sectionTitleStyle: React.CSSProperties = {
     fontWeight: 700,
     color: dimColor,
@@ -93,7 +94,7 @@ export function WorstCasePanel({
         width: 560,
         maxHeight: 'calc(100% - 32px)',
         overflowY: 'auto',
-        background: light ? '#f2f3f5' : '#141417',
+        background: light ? THEME.textBright : THEME.surfaceBase,
         border,
         borderRadius: 8,
         boxShadow: '0 10px 32px rgba(0,0,0,0.5)',
@@ -114,7 +115,7 @@ export function WorstCasePanel({
             borderRadius: 4,
             cursor: 'pointer',
             fontSize: 11,
-            background: light ? '#fff' : '#1b1b1f',
+            background: light ? THEME.white : THEME.surfaceRaised,
             border,
             color: textColor,
           }}
@@ -164,7 +165,7 @@ export function WorstCasePanel({
                   style={{
                     flex: 1,
                     height: 9,
-                    background: light ? '#dfe2e6' : '#23262d',
+                    background: light ? THEME.textBright : THEME.surfaceRaised,
                     borderRadius: 4,
                     overflow: 'hidden',
                   }}
@@ -189,24 +190,24 @@ export function WorstCasePanel({
 
       {exceed.length > 0 ? (
         <>
-          <div style={{ fontWeight: 700, color: '#e0594f', margin: '12px 0 4px' }}>
+          <div style={{ fontWeight: 700, color: THEME.statusDanger, margin: '12px 0 4px' }}>
             ⚠ A corner EXCEEDS a rating
           </div>
-          {exceed.map((e) => findingLine(e, '#e0594f'))}
+          {exceed.map((e) => findingLine(e, THEME.statusDanger))}
         </>
       ) : null}
 
       {tight.length > 0 ? (
         <>
-          <div style={{ fontWeight: 700, color: '#d6a23c', margin: '12px 0 4px' }}>
+          <div style={{ fontWeight: 700, color: THEME.statusWarn, margin: '12px 0 4px' }}>
             Tight margin (worst corner past 80% of rating)
           </div>
-          {tight.map((e) => findingLine(e, '#d6a23c'))}
+          {tight.map((e) => findingLine(e, THEME.statusWarn))}
         </>
       ) : null}
 
       {result.swept && exceed.length === 0 && tight.length === 0 ? (
-        <div style={{ color: '#6ec06e', margin: '8px 0' }}>
+        <div style={{ color: THEME.statusOk, margin: '8px 0' }}>
           ✓ Every rated reading stays within its rating across all tolerance corners.
         </div>
       ) : null}
@@ -222,7 +223,7 @@ export function WorstCasePanel({
             <div style={{ fontWeight: 700 }}>{partId}</div>
             {entries.map((e) => {
               const spread = e.max - e.min
-              const color = e.exceedsRating ? '#e0594f' : textColor
+              const color = e.exceedsRating ? THEME.statusDanger : textColor
               return (
                 <div key={e.quantity} style={{ padding: '1px 0', color }}>
                   {QUANTITY_LABEL[e.quantity]}: {fmt(e.quantity, e.nominal)}{' '}
@@ -260,7 +261,7 @@ export function WorstCasePanel({
             cursor: monteCarloRunning || !result.swept ? 'default' : 'pointer',
             fontSize: 11,
             opacity: !result.swept ? 0.5 : 1,
-            background: light ? '#fff' : '#1b1b1f',
+            background: light ? THEME.white : THEME.surfaceRaised,
             border,
             color: textColor,
           }}
@@ -282,12 +283,12 @@ export function WorstCasePanel({
       ) : (
         <>
           {monteCarlo.worstExceedFraction > 0 ? (
-            <div style={{ color: '#e0594f', margin: '2px 0 6px' }}>
+            <div style={{ color: THEME.statusDanger, margin: '2px 0 6px' }}>
               Up to {(monteCarlo.worstExceedFraction * 100).toFixed(1)}% of {monteCarlo.samples}{' '}
               sampled boards breach a rating.
             </div>
           ) : (
-            <div style={{ color: '#6ec06e', margin: '2px 0 6px' }}>
+            <div style={{ color: THEME.statusOk, margin: '2px 0 6px' }}>
               ✓ 0 of {monteCarlo.samples} sampled boards breached a rating.
             </div>
           )}
@@ -301,7 +302,7 @@ export function WorstCasePanel({
                   (99%: [{fmt(s.quantity, s.p1)} … {fmt(s.quantity, s.p99)}])
                 </span>
                 {s.exceedFraction !== undefined && s.exceedFraction > 0 ? (
-                  <span style={{ color: '#e0594f' }}>
+                  <span style={{ color: THEME.statusDanger }}>
                     {' '}
                     · {(s.exceedFraction * 100).toFixed(1)}% over
                   </span>

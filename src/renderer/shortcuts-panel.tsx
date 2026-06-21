@@ -8,6 +8,7 @@ import {
   type KeybindAction,
   type Keybinds,
 } from './keybinds.ts'
+import { THEME } from './theme.ts'
 
 /**
  * The Shortcuts panel (S19-v3-62) — EVERY control in the app, in one place:
@@ -56,9 +57,9 @@ export function ShortcutsPanel({
     return () => window.removeEventListener('keydown', onKey, true)
   }, [capturing, binds, onChange])
 
-  const border = light ? '1px solid #c4c8ce' : '1px solid #2a2a2f'
-  const textColor = light ? '#333' : '#cdd6e0'
-  const dimColor = light ? '#667' : '#8a93a0'
+  const border = light ? `1px solid ${THEME.textPrimary}` : `1px solid ${THEME.borderSubtle}`
+  const textColor = light ? THEME.borderSubtle : THEME.textPrimary
+  const dimColor = light ? THEME.textFaint : THEME.textMuted
   const groups = [...new Set(FIXED_CONTROLS.map((c) => c.group))]
 
   return (
@@ -72,7 +73,7 @@ export function ShortcutsPanel({
         width: 560,
         maxHeight: 'calc(100% - 32px)',
         overflowY: 'auto',
-        background: light ? '#f2f3f5' : '#141417',
+        background: light ? THEME.textBright : THEME.surfaceBase,
         border,
         borderRadius: 8,
         boxShadow: '0 10px 32px rgba(0,0,0,0.5)',
@@ -111,7 +112,7 @@ export function ShortcutsPanel({
               padding: '2px 8px',
               borderRadius: 4,
               border,
-              background: light ? '#fff' : '#1b1b1f',
+              background: light ? THEME.white : THEME.surfaceRaised,
               fontFamily: 'ui-monospace, monospace',
               fontSize: 11,
             }}
@@ -131,7 +132,7 @@ export function ShortcutsPanel({
         </div>
       ))}
       {problem !== null ? (
-        <div style={{ color: '#e0594f', fontSize: 11, marginTop: 4 }}>{problem}</div>
+        <div style={{ color: THEME.statusDanger, fontSize: 11, marginTop: 4 }}>{problem}</div>
       ) : null}
       <button
         type="button"
@@ -167,8 +168,12 @@ function chipButton(light: boolean, active = false): React.CSSProperties {
     cursor: 'pointer',
     fontSize: 11,
     fontFamily: 'system-ui, sans-serif',
-    background: active ? '#24405f' : light ? '#fff' : '#1b1b1f',
-    border: active ? '1px solid #7ab8ff' : light ? '1px solid #c4c8ce' : '1px solid #2a2a2f',
-    color: active ? '#dde4ec' : light ? '#444' : '#aab3bd',
+    background: active ? THEME.surfaceActive : light ? THEME.white : THEME.surfaceRaised,
+    border: active
+      ? `1px solid ${THEME.accentBlue}`
+      : light
+        ? `1px solid ${THEME.textPrimary}`
+        : `1px solid ${THEME.borderSubtle}`,
+    color: active ? THEME.textBright : light ? THEME.borderStrong : THEME.textSoft,
   }
 }

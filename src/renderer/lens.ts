@@ -1,5 +1,6 @@
 import { createContext } from 'react'
 import { MU_0 } from '../electromagnet-model.ts'
+import { THEME } from './theme.ts'
 import { METRES_PER_PIXEL } from './wire-length.ts'
 
 // μ₀ (and the coil-field math) live in the shared electromagnet-model so the solvers
@@ -206,8 +207,8 @@ export function fieldReferenceTesla(maxAbsAmps: number, targetPx = FIELD_TARGET_
  * proportionally closer to the wire.
  */
 export const FIELD_CONTOUR_MULTIPLIERS = [1, 3, 10] as const
-export const FIELD_COLOR = '#5ad8c8'
+export const FIELD_COLOR = THEME.lensField
 
 /** Energy-flow lens: gold arrows of energy streaming from the surrounding fields INTO
  *  each load (and OUT of each source) — the Poynting picture made visible. */
-export const ENERGY_COLOR = '#e8b84b'
+export const ENERGY_COLOR = THEME.lensEnergy

@@ -9,6 +9,7 @@ import { type FamilyStep, familyExtent } from './scope-family.ts'
 import { amplitudeToDbRms, fftMagnitudes, spectrumPeak } from './scope-fft.ts'
 import { H_DIVISIONS, TIMEBASES, transformFor, V_DIVISIONS, VOLTS_PER_DIV } from './scope-scales.ts'
 import { alignSweep, autoLevel, type TriggerEdge, type TriggerMode } from './scope-trigger.ts'
+import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
 import { measureSeries } from './waveform-measure.ts'
 
@@ -91,14 +92,14 @@ export function fastestSourceHz(world: World): number {
 }
 
 export const TRACE_COLORS = [
-  '#e0594f',
-  '#5a86d8',
-  '#6ec06e',
-  '#d8a35a',
-  '#a06ad8',
-  '#5ad8c8',
-  '#d85a9a',
-  '#9ad85a',
+  THEME.statusDanger,
+  THEME.accentBlueDeep,
+  THEME.statusOk,
+  THEME.statusWarn,
+  THEME.accentPurple,
+  THEME.lensField,
+  THEME.accentPink,
+  THEME.accentLime,
 ]
 
 /**
@@ -226,9 +227,9 @@ export function mathResultUnit(
 const PLOT_W = 440
 const PLOT_H = 190
 const MARGIN = { left: 48, right: 10, top: 8, bottom: 20 }
-const TRIGGER_COLOR = '#d6a23c'
-const CURSOR_COLOR = '#9ecbff'
-const MATH_COLOR = '#e8e8e8'
+const TRIGGER_COLOR = THEME.statusWarn
+const CURSOR_COLOR = THEME.accentBlueSoft
+const MATH_COLOR = THEME.textBright
 const MATH_KEY = '__math__'
 const FFT_H = 110
 const INNER_W = PLOT_W - MARGIN.left - MARGIN.right
@@ -333,7 +334,7 @@ export function ScopePlot({
   ) => void
   onClearFamily: () => void
 }) {
-  const textColor = light ? '#556' : '#9aa'
+  const textColor = light ? THEME.textFaint : THEME.textSoft
   const [trigSource, setTrigSource] = useState('auto')
   const [levelText, setLevelText] = useState('auto')
   const [edge, setEdge] = useState<TriggerEdge>('rising')
@@ -442,9 +443,9 @@ export function ScopePlot({
 
   const controlStyle: React.CSSProperties = {
     fontSize: 10,
-    background: light ? '#fff' : '#1b1b1f',
-    color: light ? '#223' : '#cdd6e0',
-    border: '1px solid #2a2a2f',
+    background: light ? THEME.white : THEME.surfaceRaised,
+    color: light ? THEME.surfaceRaised : THEME.textPrimary,
+    border: `1px solid ${THEME.borderSubtle}`,
     borderRadius: 4,
     padding: '2px 4px',
   }
@@ -813,7 +814,7 @@ export function ScopePlot({
     URL.revokeObjectURL(url)
   }
 
-  const gridStroke = light ? '#d4d8de' : '#26262c'
+  const gridStroke = light ? THEME.textPrimary : THEME.surfaceRaised
 
   // Steady DC: every trace flat is CORRECT (nothing changes over time in a DC
   // circuit at rest) — but it reads as "broken" without saying so.
@@ -839,7 +840,11 @@ export function ScopePlot({
           ? '○ waiting'
           : '○ free'
   const statusColor =
-    held !== null ? '#7ab8ff' : sweep.triggerIndex !== null ? '#6ec06e' : '#d6a23c'
+    held !== null
+      ? THEME.accentBlue
+      : sweep.triggerIndex !== null
+        ? THEME.statusOk
+        : THEME.statusWarn
 
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif' }}>
@@ -1129,7 +1134,7 @@ export function ScopePlot({
       <svg
         width={PLOT_W}
         height={PLOT_H}
-        style={{ background: light ? '#fafbfc' : '#0e0e11', borderRadius: 4 }}
+        style={{ background: light ? THEME.textBright : THEME.surfaceDeep, borderRadius: 4 }}
         role="img"
         aria-label="Node voltages over time"
       >
@@ -1479,7 +1484,7 @@ export function ScopePlot({
           <svg
             width={PLOT_W}
             height={FFT_H}
-            style={{ background: light ? '#fafbfc' : '#0e0e11', borderRadius: 4 }}
+            style={{ background: light ? THEME.textBright : THEME.surfaceDeep, borderRadius: 4 }}
             role="img"
             aria-label="Frequency content of the trigger-source signal"
           >
@@ -1683,9 +1688,9 @@ export function ScopePlot({
               title={`CH${i + 1} vertical scale: ${channel.unit === 'A' ? 'amps' : 'volts'} per grid square (8 squares tall). Auto fits this channel's swing. Each channel centers on its own midpoint — the ▸ arrow at the left edge marks where ITS zero sits. The axis numbers follow the ▶ trigger-source channel. Rescaling redraws the same captured data (a vertical knob, not a re-acquire).`}
               style={{
                 fontSize: 9,
-                background: light ? '#fff' : '#1b1b1f',
+                background: light ? THEME.white : THEME.surfaceRaised,
                 color: 'inherit',
-                border: '1px solid #2a2a2f',
+                border: `1px solid ${THEME.borderSubtle}`,
                 borderRadius: 3,
                 padding: '0 2px',
               }}
@@ -1716,9 +1721,9 @@ export function ScopePlot({
               style={{
                 width: 34,
                 fontSize: 9,
-                background: light ? '#fff' : '#1b1b1f',
+                background: light ? THEME.white : THEME.surfaceRaised,
                 color: 'inherit',
-                border: '1px solid #2a2a2f',
+                border: `1px solid ${THEME.borderSubtle}`,
                 borderRadius: 3,
                 padding: '0 2px',
               }}
@@ -1772,9 +1777,9 @@ export function ScopePlot({
               title={`The math trace's vertical scale, in ${mathUnit ?? ''} per grid square. Auto fits its swing; its ▸ zero mark sits at the left edge like the channels'.`}
               style={{
                 fontSize: 9,
-                background: light ? '#fff' : '#1b1b1f',
+                background: light ? THEME.white : THEME.surfaceRaised,
                 color: 'inherit',
-                border: '1px solid #2a2a2f',
+                border: `1px solid ${THEME.borderSubtle}`,
                 borderRadius: 3,
                 padding: '0 2px',
               }}
@@ -1804,9 +1809,9 @@ export function ScopePlot({
               style={{
                 width: 34,
                 fontSize: 9,
-                background: light ? '#fff' : '#1b1b1f',
+                background: light ? THEME.white : THEME.surfaceRaised,
                 color: 'inherit',
-                border: '1px solid #2a2a2f',
+                border: `1px solid ${THEME.borderSubtle}`,
                 borderRadius: 3,
                 padding: '0 2px',
               }}

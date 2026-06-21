@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import { wireAmpacity } from '../thermal-model.ts'
+import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
 import { formatLength, gaugeAreaM2, WIRE_GAUGES, WIRE_MATERIALS } from './wire-length.ts'
 
@@ -27,9 +28,9 @@ const row: CSSProperties = {
   margin: '4px 0',
 }
 const field: CSSProperties = {
-  background: '#1a1a1e',
-  border: '1px solid #3a3a3f',
-  color: '#cdd6e0',
+  background: THEME.surfaceInput,
+  border: `1px solid ${THEME.borderStrong}`,
+  color: THEME.textPrimary,
   borderRadius: 3,
   padding: '2px 4px',
   fontSize: 11,
@@ -38,11 +39,11 @@ const sectionLabel: CSSProperties = {
   fontSize: 9,
   textTransform: 'uppercase',
   letterSpacing: 0.5,
-  color: '#667',
+  color: THEME.textFaint,
   marginTop: 8,
   marginBottom: 2,
 }
-const muted: CSSProperties = { color: '#9fb0c0' }
+const muted: CSSProperties = { color: THEME.textSoft }
 
 export function WireInspector({
   wire,
@@ -64,12 +65,12 @@ export function WireInspector({
     loadFrac === null
       ? undefined
       : loadFrac > 1
-        ? '#ff6b5e'
+        ? THEME.statusDanger
         : loadFrac > 0.7
-          ? '#e0a92e'
+          ? THEME.statusWarn
           : undefined
   return (
-    <div style={{ width: 170, fontSize: 11, color: '#cdd6e0' }}>
+    <div style={{ width: 170, fontSize: 11, color: THEME.textPrimary }}>
       <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>Wire</div>
       <div style={sectionLabel}>Gauge</div>
       <div style={row}>

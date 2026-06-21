@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { acSweep, phaseMargin } from '../ac-analysis.ts'
 import type { World } from '../cross-fk-validator.ts'
+import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
 
 /**
@@ -21,8 +22,8 @@ const GAIN_H = 128
 const PHASE_H = 116
 const PAD = { left: 52, right: 16, top: 12, bottom: 18 }
 const INNER_W = PLOT_W - PAD.left - PAD.right
-const GAIN_COLOR = '#6ec0ff'
-const PHASE_COLOR = '#e0a050'
+const GAIN_COLOR = THEME.accentBlueBright
+const PHASE_COLOR = THEME.lensTemp
 
 const RANGES: { label: string; lo: number; hi: number }[] = [
   { label: '1 Hz – 1 kHz', lo: 1, hi: 1e3 },
@@ -68,12 +69,12 @@ export function BodePanel({
   picking: boolean
   onPickToggle: () => void
 }) {
-  const text = light ? '#333' : '#cdd6e0'
-  const gridCol = light ? '#d2d6dc' : '#2c2c33'
-  const sub = light ? '#667' : '#8a93a0'
+  const text = light ? THEME.borderSubtle : THEME.textPrimary
+  const gridCol = light ? THEME.textPrimary : THEME.surfaceRaised
+  const sub = light ? THEME.textFaint : THEME.textMuted
   const fieldStyle: React.CSSProperties = {
-    background: light ? '#fff' : '#1a1a1e',
-    border: `1px solid ${light ? '#c4c8ce' : '#3a3a3f'}`,
+    background: light ? THEME.white : THEME.surfaceInput,
+    border: `1px solid ${light ? THEME.textPrimary : THEME.borderStrong}`,
     color: text,
     borderRadius: 3,
     fontSize: 11,
@@ -219,8 +220,12 @@ export function BodePanel({
                   : 'Pick the output by clicking a terminal on the canvas, like a scope probe'
               }
               style={{
-                background: picking ? '#24405f' : light ? '#fff' : '#1a1a1e',
-                border: `1px solid ${picking ? '#7ab8ff' : light ? '#c4c8ce' : '#3a3a3f'}`,
+                background: picking
+                  ? THEME.surfaceActive
+                  : light
+                    ? THEME.white
+                    : THEME.surfaceInput,
+                border: `1px solid ${picking ? THEME.accentBlue : light ? THEME.textPrimary : THEME.borderStrong}`,
                 color: text,
                 borderRadius: 3,
                 fontSize: 12,
@@ -252,8 +257,8 @@ export function BodePanel({
           onClick={onClose}
           style={{
             marginLeft: 'auto',
-            background: light ? '#e8eaed' : '#222',
-            border: `1px solid ${light ? '#c4c8ce' : '#3a3a3f'}`,
+            background: light ? THEME.textBright : THEME.surfaceRaised,
+            border: `1px solid ${light ? THEME.textPrimary : THEME.borderStrong}`,
             color: text,
             borderRadius: 4,
             fontSize: 11,
@@ -277,7 +282,7 @@ export function BodePanel({
         <svg
           width={PLOT_W}
           height={GAIN_H + PHASE_H}
-          style={{ background: light ? '#fafafa' : '#101013', borderRadius: 4 }}
+          style={{ background: light ? THEME.textBright : THEME.surfaceDeep, borderRadius: 4 }}
         >
           <title>Bode plot — gain and phase versus frequency</title>
           {/* decade gridlines, both stacks */}
@@ -364,7 +369,7 @@ export function BodePanel({
       )}
 
       {picking ? (
-        <div style={{ color: '#7ab8ff', fontSize: 11, fontWeight: 600 }}>
+        <div style={{ color: THEME.accentBlue, fontSize: 11, fontWeight: 600 }}>
           Click a terminal on the canvas to set the output node…
         </div>
       ) : null}
@@ -377,10 +382,10 @@ export function BodePanel({
                 style={{
                   color:
                     pm.phaseMarginDeg > 45
-                      ? '#6ec06e'
+                      ? THEME.statusOk
                       : pm.phaseMarginDeg > 0
-                        ? '#e0a050'
-                        : '#e0594f',
+                        ? THEME.lensTemp
+                        : THEME.statusDanger,
                   fontWeight: 700,
                 }}
               >

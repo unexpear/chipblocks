@@ -10,6 +10,7 @@ import { useEffect } from 'react'
 import type { BlockData } from './blocks.ts'
 import { edgeTypes } from './net-edge.tsx'
 import { nodeTypes } from './symbols.tsx'
+import { THEME } from './theme.ts'
 
 /**
  * The descend view (S19-v3-67): double-click a block and see the REAL circuit
@@ -44,7 +45,7 @@ export function BlockViewer({
   onClose: () => void
   light: boolean
 }) {
-  const border = light ? '1px solid #c4c8ce' : '1px solid #2a2a2f'
+  const border = light ? `1px solid ${THEME.textPrimary}` : `1px solid ${THEME.borderSubtle}`
   const nodes = block.nodes.map((n) => ({
     id: n.id,
     type: n.block ? 'block' : n.definition === 'junction' ? 'junction' : 'device',
@@ -90,19 +91,19 @@ export function BlockViewer({
         height: 440,
         display: 'flex',
         flexDirection: 'column',
-        background: light ? '#f2f3f5' : '#141417',
+        background: light ? THEME.textBright : THEME.surfaceBase,
         border,
         borderRadius: 8,
         boxShadow: '0 10px 32px rgba(0,0,0,0.5)',
         padding: 12,
         fontFamily: 'system-ui, sans-serif',
         fontSize: 12,
-        color: light ? '#333' : '#cdd6e0',
+        color: light ? THEME.borderSubtle : THEME.textPrimary,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <div style={{ fontSize: 14, fontWeight: 700 }}>{block.name} — inside the block</div>
-        <span style={{ color: light ? '#667' : '#8a93a0', fontSize: 11 }}>
+        <span style={{ color: light ? THEME.textFaint : THEME.textMuted, fontSize: 11 }}>
           the real parts; the solver computes THESE every time
         </span>
         <button
@@ -140,7 +141,7 @@ export function BlockViewer({
           </ReactFlow>
         </ReactFlowProvider>
       </div>
-      <div style={{ color: light ? '#667' : '#8a93a0', fontSize: 10, marginTop: 6 }}>
+      <div style={{ color: light ? THEME.textFaint : THEME.textMuted, fontSize: 10, marginTop: 6 }}>
         Ports:{' '}
         {block.ports.map((p) => p.label).join(' · ') || 'none — nothing wired across the boundary'}
       </div>
@@ -155,8 +156,8 @@ function viewerButton(light: boolean): React.CSSProperties {
     borderRadius: 4,
     cursor: 'pointer',
     fontSize: 11,
-    background: light ? '#fff' : '#1b1b1f',
-    border: light ? '1px solid #c4c8ce' : '1px solid #2a2a2f',
-    color: light ? '#444' : '#aab3bd',
+    background: light ? THEME.white : THEME.surfaceRaised,
+    border: light ? `1px solid ${THEME.textPrimary}` : `1px solid ${THEME.borderSubtle}`,
+    color: light ? THEME.borderStrong : THEME.textSoft,
   }
 }

@@ -19,6 +19,7 @@ import {
   useReactFlow,
   ViewportPortal,
 } from '@xyflow/react'
+import { THEME } from './theme.ts'
 import '@xyflow/react/dist/style.css'
 import './interactions.css'
 import {
@@ -216,9 +217,9 @@ declare global {
   }
 }
 
-const CURRENT = '#7ab8ff' // a live wire carrying current (solved)
-const IDLE = '#555' // a tap / no-current wire
-const DRAWN = '#8a93a0' // a user-drawn wire, not yet solved
+const CURRENT = THEME.accentBlue // a live wire carrying current (solved)
+const IDLE = THEME.textFaint // a tap / no-current wire
+const DRAWN = THEME.textMuted // a user-drawn wire, not yet solved
 
 type NodePosition = { x: number; y: number }
 
@@ -389,9 +390,23 @@ function PendingWirePreview({
       >
         <path d={path} fill="none" stroke={DRAWN} strokeWidth={1.6} strokeDasharray="6 4" />
         {pending.corners.map((c) => (
-          <circle key={c.id} cx={c.x} cy={c.y} r={3.5} fill="#7ab8ff" stroke="#0c0c0e" />
+          <circle
+            key={c.id}
+            cx={c.x}
+            cy={c.y}
+            r={3.5}
+            fill={THEME.accentBlue}
+            stroke={THEME.surfaceDeep}
+          />
         ))}
-        <circle cx={origin.x} cy={origin.y} r={4} fill="none" stroke="#7ab8ff" strokeWidth={1.5} />
+        <circle
+          cx={origin.x}
+          cy={origin.y}
+          r={4}
+          fill="none"
+          stroke={THEME.accentBlue}
+          strokeWidth={1.5}
+        />
       </svg>
     </ViewportPortal>
   )
@@ -406,9 +421,13 @@ function meterDialStyle(active: boolean, light: boolean): React.CSSProperties {
     fontSize: 11,
     fontWeight: 700,
     fontFamily: 'system-ui, sans-serif',
-    background: active ? '#24405f' : light ? '#f4f5f7' : '#1b1b1f',
-    border: active ? '1px solid #7ab8ff' : light ? '1px solid #c4c8ce' : '1px solid #2a2a2f',
-    color: active ? '#dde4ec' : light ? '#555' : '#9aa3ad',
+    background: active ? THEME.surfaceActive : light ? THEME.textBright : THEME.surfaceRaised,
+    border: active
+      ? `1px solid ${THEME.accentBlue}`
+      : light
+        ? `1px solid ${THEME.textPrimary}`
+        : `1px solid ${THEME.borderSubtle}`,
+    color: active ? THEME.textBright : light ? THEME.textFaint : THEME.textSoft,
   }
 }
 
@@ -1010,7 +1029,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // Appearance (S19-v3-37/38): light/dark theme + grid-line color, driven by the
   // native Settings menu over IPC; the menu's Custom… opens an in-canvas picker.
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
-  const [gridColor, setGridColor] = useState('#31363f')
+  const [gridColor, setGridColor] = useState(THEME.borderStrong)
   const [showGridColorPicker, setShowGridColorPicker] = useState(false)
   const light = theme === 'light'
   // The native Settings menu (electron/main.ts) pushes appearance over IPC.
@@ -1917,7 +1936,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       const amps = edges.find((e) => e.id === clampWire)?.data?.amps
       return {
         icon: 'Ⓐ',
-        iconColor: '#7ab8ff',
+        iconColor: THEME.accentBlue,
         text:
           typeof amps === 'number'
             ? `Clamp on wire: ${formatEng(amps, 'A')}`
@@ -1940,7 +1959,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       return { netRed, netBlack }
     }
     if (meterMode === 'ohms') {
-      const ohmsChip = (text: string) => ({ icon: 'Ω', iconColor: '#d6a23c', text })
+      const ohmsChip = (text: string) => ({ icon: 'Ω', iconColor: THEME.statusWarn, text })
       const nets = bothProbeNets()
       if (typeof nets === 'string') return ohmsChip(nets)
       if (ohmsReading === null) return ohmsChip('Resistance: OL — no conductive path (open loop)')
@@ -1953,7 +1972,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       return ohmsChip(`Resistance: ${displayCounts(ohmsReading, 'Ω')}${continuity}`)
     }
     if (meterMode === 'acvolts') {
-      const acChip = (text: string) => ({ icon: '∿', iconColor: '#5a86d8', text })
+      const acChip = (text: string) => ({ icon: '∿', iconColor: THEME.accentBlueDeep, text })
       const nets = bothProbeNets()
       if (typeof nets === 'string') return acChip(nets)
       const ac = acVoltsRms(solvedWorld, nets.netRed, nets.netBlack, projectAmbientRef.current)
@@ -1972,7 +1991,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       return acChip(`V~ (red − black): ${displayCounts(shownRms, 'V')} rms${hzText}${dutyText}`)
     }
     if (meterMode === 'diode') {
-      const diodeChip = (text: string) => ({ icon: '⏵', iconColor: '#6ec06e', text })
+      const diodeChip = (text: string) => ({ icon: '⏵', iconColor: THEME.statusOk, text })
       const nets = bothProbeNets()
       if (typeof nets === 'string') return diodeChip(nets)
       const result = diodeTest(solvedWorld, nets.netRed, nets.netBlack)
@@ -1986,7 +2005,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       )
     }
     if (meterMode === 'cap') {
-      const capChip = (text: string) => ({ icon: '⊣⊢', iconColor: '#a06ad8', text })
+      const capChip = (text: string) => ({ icon: '⊣⊢', iconColor: THEME.accentPurple, text })
       const nets = bothProbeNets()
       if (typeof nets === 'string') return capChip(nets)
       const result = capacitanceTest(solvedWorld, nets.netRed, nets.netBlack)
@@ -2008,7 +2027,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
     }
     if (meterMode === 'amps') {
       const spec = AMMETER_JACKS[meterJack]
-      const ampChip = (text: string) => ({ icon: 'A⎓', iconColor: '#7ab8ff', text })
+      const ampChip = (text: string) => ({ icon: 'A⎓', iconColor: THEME.accentBlue, text })
       const blownAt = blownFuses[meterJack]
       if (blownAt !== null) {
         return ampChip(
@@ -2030,7 +2049,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       )
     }
     if (meterMode === 'tempc') {
-      const tempChip = (text: string) => ({ icon: '°C', iconColor: '#e09f3e', text })
+      const tempChip = (text: string) => ({ icon: '°C', iconColor: THEME.statusWarn, text })
       if (redProbe === undefined) {
         return tempChip('Touch any terminal of a part with the red probe — it is the thermocouple')
       }
@@ -2046,7 +2065,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
         `${redProbe.nodeId}: 25.0 °C — ambient (no thermal rating declared on this part, so the model holds it at room temperature)`,
       )
     }
-    const voltChip = (text: string) => ({ icon: 'Ⓥ', iconColor: '#e0594f', text })
+    const voltChip = (text: string) => ({ icon: 'Ⓥ', iconColor: THEME.statusDanger, text })
     if (redProbe === undefined) return voltChip('Touch a terminal dot to place the red probe')
     const vRed = voltsAt(redProbe)
     const netRed = probeNets.get(`${redProbe.nodeId}/${redProbe.handleId}`)
@@ -2995,7 +3014,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       style={{
         width: '100vw',
         height: '100vh',
-        background: light ? '#eef0f3' : '#0c0c0e',
+        background: light ? THEME.textBright : THEME.surfaceDeep,
         overflow: 'hidden',
         display: 'grid',
         // Dock-grid: top/bottom bars span all columns; left/right panels fill the
@@ -3187,7 +3206,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                                 <ProbeMarker
                                   key={scopeProbeKey(p)}
                                   probe={{ nodeId: p.nodeId, handleId: p.handleId }}
-                                  color={TRACE_COLORS[ch % TRACE_COLORS.length] ?? '#888'}
+                                  color={TRACE_COLORS[ch % TRACE_COLORS.length] ?? THEME.textMuted}
                                   label={`CH${ch + 1}`}
                                 />
                               )
@@ -3221,7 +3240,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
             bottom: 8,
             right: 12,
             zIndex: 10,
-            color: '#667',
+            color: THEME.textFaint,
             fontSize: 11,
             fontFamily: 'system-ui, sans-serif',
             pointerEvents: 'none',
@@ -3250,7 +3269,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
             <path
               d={lassoPathD(lassoPoints.screen)}
               fill="rgba(160, 106, 216, 0.12)"
-              stroke="#a06ad8"
+              stroke={THEME.accentPurple}
               strokeWidth={1.5}
               strokeDasharray="6 4"
             />
@@ -3283,12 +3302,12 @@ function Canvas({ project }: { project: ProjectChoice }) {
               alignItems: 'center',
               gap: 7,
               padding: '5px 12px 5px 6px',
-              background: light ? '#e8eaed' : '#141417',
-              border: light ? '1px solid #c4c8ce' : '1px solid #2a2a2f',
+              background: light ? THEME.textBright : THEME.surfaceBase,
+              border: light ? `1px solid ${THEME.textPrimary}` : `1px solid ${THEME.borderSubtle}`,
               borderRadius: 6,
               fontFamily: 'system-ui, sans-serif',
               fontSize: 12,
-              color: light ? '#333' : '#dde4ec',
+              color: light ? THEME.borderSubtle : THEME.textBright,
               whiteSpace: 'nowrap',
             }}
           >
@@ -3394,7 +3413,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                     style={{
                       ...meterDialStyle(meterJack === jack, light),
                       fontSize: 9,
-                      ...(blownFuses[jack] !== null ? { color: '#e0594f' } : {}),
+                      ...(blownFuses[jack] !== null ? { color: THEME.statusDanger } : {}),
                     }}
                   >
                     {AMMETER_JACKS[jack].label}
@@ -3454,13 +3473,13 @@ function Canvas({ project }: { project: ProjectChoice }) {
               flexDirection: 'column',
               gap: 6,
               padding: '10px 14px',
-              background: light ? '#f2f3f5' : '#141417',
-              border: light ? '1px solid #c4c8ce' : '1px solid #2a2a2f',
+              background: light ? THEME.textBright : THEME.surfaceBase,
+              border: light ? `1px solid ${THEME.textPrimary}` : `1px solid ${THEME.borderSubtle}`,
               borderRadius: 8,
               boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
               fontFamily: 'system-ui, sans-serif',
               fontSize: 12,
-              color: light ? '#333' : '#cdd6e0',
+              color: light ? THEME.borderSubtle : THEME.textPrimary,
             }}
           >
             <div style={{ fontWeight: 700 }}>
@@ -3479,14 +3498,16 @@ function Canvas({ project }: { project: ProjectChoice }) {
               style={{
                 padding: '4px 8px',
                 borderRadius: 4,
-                border: light ? '1px solid #c4c8ce' : '1px solid #2a2a2f',
-                background: light ? '#fff' : '#1b1b1f',
-                color: light ? '#333' : '#dde4ec',
+                border: light
+                  ? `1px solid ${THEME.textPrimary}`
+                  : `1px solid ${THEME.borderSubtle}`,
+                background: light ? THEME.white : THEME.surfaceRaised,
+                color: light ? THEME.borderSubtle : THEME.textBright,
                 fontSize: 12,
               }}
             />
             {groupPrompt.error !== null ? (
-              <div style={{ color: '#e0594f', fontSize: 11 }}>{groupPrompt.error}</div>
+              <div style={{ color: THEME.statusDanger, fontSize: 11 }}>{groupPrompt.error}</div>
             ) : null}
             <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
               <button
@@ -3553,12 +3574,12 @@ function Canvas({ project }: { project: ProjectChoice }) {
               alignItems: 'center',
               gap: 7,
               padding: '5px 12px',
-              background: light ? '#e8eaed' : '#141417',
-              border: light ? '1px solid #c4c8ce' : '1px solid #2a2a2f',
+              background: light ? THEME.textBright : THEME.surfaceBase,
+              border: light ? `1px solid ${THEME.textPrimary}` : `1px solid ${THEME.borderSubtle}`,
               borderRadius: 6,
               fontFamily: 'system-ui, sans-serif',
               fontSize: 11,
-              color: light ? '#333' : '#cdd6e0',
+              color: light ? THEME.borderSubtle : THEME.textPrimary,
               pointerEvents: 'none',
               whiteSpace: 'nowrap',
             }}
@@ -3587,12 +3608,12 @@ function Canvas({ project }: { project: ProjectChoice }) {
               gap: 7,
               padding: '5px 12px',
               maxWidth: 560,
-              background: light ? '#e8eaed' : '#141417',
-              border: light ? '1px solid #c4c8ce' : '1px solid #2a2a2f',
+              background: light ? THEME.textBright : THEME.surfaceBase,
+              border: light ? `1px solid ${THEME.textPrimary}` : `1px solid ${THEME.borderSubtle}`,
               borderRadius: 6,
               fontFamily: 'system-ui, sans-serif',
               fontSize: 11,
-              color: light ? '#333' : '#cdd6e0',
+              color: light ? THEME.borderSubtle : THEME.textPrimary,
               pointerEvents: 'none',
             }}
           >
@@ -3619,13 +3640,13 @@ function Canvas({ project }: { project: ProjectChoice }) {
               alignItems: 'center',
               gap: 8,
               padding: '6px 10px',
-              background: light ? '#e8eaed' : '#141417',
-              border: light ? '1px solid #c4c8ce' : '1px solid #2a2a2f',
+              background: light ? THEME.textBright : THEME.surfaceBase,
+              border: light ? `1px solid ${THEME.textPrimary}` : `1px solid ${THEME.borderSubtle}`,
               borderRadius: 6,
               boxShadow: '0 6px 20px rgba(0,0,0,0.45)',
               fontFamily: 'system-ui, sans-serif',
               fontSize: 11,
-              color: light ? '#444' : '#aab',
+              color: light ? THEME.borderStrong : THEME.textSoft,
             }}
           >
             Grid color
@@ -3649,8 +3670,10 @@ function Canvas({ project }: { project: ProjectChoice }) {
               className="nodrag"
               style={{
                 background: 'none',
-                border: light ? '1px solid #c4c8ce' : '1px solid #3a3a3f',
-                color: light ? '#444' : '#9fb0c0',
+                border: light
+                  ? `1px solid ${THEME.textPrimary}`
+                  : `1px solid ${THEME.borderStrong}`,
+                color: light ? THEME.borderStrong : THEME.textSoft,
                 borderRadius: 3,
                 padding: '2px 8px',
                 fontSize: 11,
@@ -3799,8 +3822,10 @@ function Canvas({ project }: { project: ProjectChoice }) {
                   className="nodrag"
                   style={{
                     background: 'none',
-                    border: light ? '1px solid #c4c8ce' : '1px solid #3a3a3f',
-                    color: light ? '#444' : '#9fb0c0',
+                    border: light
+                      ? `1px solid ${THEME.textPrimary}`
+                      : `1px solid ${THEME.borderStrong}`,
+                    color: light ? THEME.borderStrong : THEME.textSoft,
                     borderRadius: 3,
                     padding: '2px 8px',
                     fontSize: 11,
@@ -3832,13 +3857,17 @@ function Canvas({ project }: { project: ProjectChoice }) {
                   className="nodrag"
                   title="Front mode — watch the charge propagate: it leaves the source and sweeps down the wires at finite speed (~2/3 c), reaching each part in the order the wire lengths set, slowed so you can see it. Play / scrub as usual; toggle off for the normal transient playback."
                   style={{
-                    background: frontMode ? '#24405f' : 'none',
+                    background: frontMode ? THEME.surfaceActive : 'none',
                     border: frontMode
-                      ? '1px solid #7ab8ff'
+                      ? `1px solid ${THEME.accentBlue}`
                       : light
-                        ? '1px solid #c4c8ce'
-                        : '1px solid #3a3a3f',
-                    color: frontMode ? '#9fd0ff' : light ? '#444' : '#9fb0c0',
+                        ? `1px solid ${THEME.textPrimary}`
+                        : `1px solid ${THEME.borderStrong}`,
+                    color: frontMode
+                      ? THEME.accentBlueSoft
+                      : light
+                        ? THEME.borderStrong
+                        : THEME.textSoft,
                     borderRadius: 3,
                     padding: '2px 8px',
                     fontSize: 11,
@@ -3855,8 +3884,10 @@ function Canvas({ project }: { project: ProjectChoice }) {
                   className="nodrag"
                   style={{
                     background: 'none',
-                    border: light ? '1px solid #c4c8ce' : '1px solid #3a3a3f',
-                    color: light ? '#444' : '#9fb0c0',
+                    border: light
+                      ? `1px solid ${THEME.textPrimary}`
+                      : `1px solid ${THEME.borderStrong}`,
+                    color: light ? THEME.borderStrong : THEME.textSoft,
                     borderRadius: 3,
                     padding: '2px 8px',
                     fontSize: 11,

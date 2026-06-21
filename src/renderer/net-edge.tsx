@@ -27,6 +27,7 @@ import {
   thermalWarmthTint,
   voltageColor,
 } from './lens.ts'
+import { THEME } from './theme.ts'
 import type { FrameEdge } from './timeline.ts'
 import { CheckpointContext } from './undo-context.ts'
 import { formatEng } from './units.ts'
@@ -234,7 +235,7 @@ export function NetEdge({
             d={energizedPath}
             pathLength={1}
             fill="none"
-            stroke="#7ab8ff"
+            stroke={THEME.accentBlue}
             strokeWidth={2.8}
             strokeDasharray={`${f} 1`}
             strokeLinecap="round"
@@ -426,7 +427,7 @@ export function NetEdge({
       ? voltageColor((vSource + vTarget) / 2, lensState.vMin, lensState.vMax)
       : null
   const edgeStyle = collidesPart
-    ? { ...style, stroke: '#e0654a', strokeWidth: 2.8, strokeDasharray: '6 4' }
+    ? { ...style, stroke: THEME.statusDanger, strokeWidth: 2.8, strokeDasharray: '6 4' }
     : voltageStroke
       ? { ...style, stroke: voltageStroke, strokeWidth: 2.4 }
       : style
@@ -454,7 +455,7 @@ export function NetEdge({
   if (lensState.lens === 'voltage' && vSource !== null && vTarget !== null) {
     lensReadouts.push({
       text: formatEng((vSource + vTarget) / 2, 'V'),
-      color: voltageStroke ?? '#d6a23c',
+      color: voltageStroke ?? THEME.statusWarn,
     })
   }
   if (lensState.lens === 'field' && amps !== null && lensState.fieldTesla > 0) {
@@ -464,7 +465,7 @@ export function NetEdge({
     })
   }
   if (lensState.flow && amps !== null && Math.abs(amps) > 1e-12) {
-    lensReadouts.push({ text: formatEng(Math.abs(amps), 'A'), color: '#9fd0ff' })
+    lensReadouts.push({ text: formatEng(Math.abs(amps), 'A'), color: THEME.accentBlueSoft })
   }
 
   return (
@@ -494,7 +495,7 @@ export function NetEdge({
           d={path}
           fill="none"
           className="cb-flow-dash"
-          stroke={voltageStroke ?? '#9fd0ff'}
+          stroke={voltageStroke ?? THEME.accentBlueSoft}
           strokeWidth={voltageStroke ? 2.4 : 1.8}
           strokeDasharray="7 5"
           strokeLinecap="round"
@@ -584,13 +585,13 @@ export function NetEdge({
             style={{
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - LABEL_LIFT}px)`,
-              background: '#0c0c0e',
-              border: '1px solid #3a3a3f',
+              background: THEME.surfaceDeep,
+              border: `1px solid ${THEME.borderStrong}`,
               borderRadius: 3,
               padding: '3px 5px',
               fontSize: 9,
               fontFamily: 'system-ui, sans-serif',
-              color: '#cdd6e0',
+              color: THEME.textPrimary,
               pointerEvents: 'none',
               whiteSpace: 'nowrap',
               textAlign: 'center',
@@ -598,17 +599,17 @@ export function NetEdge({
           >
             <div>{label}</div>
             {amps !== null ? (
-              <div style={{ color: '#7ab8ff', fontSize: 8, marginTop: 1 }}>
+              <div style={{ color: THEME.accentBlue, fontSize: 8, marginTop: 1 }}>
                 {formatEng(amps, 'A')}
               </div>
             ) : null}
             {lengthM !== null && ohms !== null ? (
-              <div style={{ color: '#8a93a0', fontSize: 8, marginTop: 1 }}>
+              <div style={{ color: THEME.textMuted, fontSize: 8, marginTop: 1 }}>
                 {formatLength(lengthM)} · {formatEng(ohms, 'Ω')}
               </div>
             ) : null}
             {drop !== null ? (
-              <div style={{ color: '#e0b070', fontSize: 8, marginTop: 1 }}>
+              <div style={{ color: THEME.accentTimeline, fontSize: 8, marginTop: 1 }}>
                 drop {formatEng(drop, 'V')}
               </div>
             ) : null}
@@ -618,7 +619,9 @@ export function NetEdge({
               </div>
             ) : null}
             {wireOverheating && wirePeakC !== null ? (
-              <div style={{ color: '#e0654a', fontSize: 8, marginTop: 1, fontWeight: 600 }}>
+              <div
+                style={{ color: THEME.statusDanger, fontSize: 8, marginTop: 1, fontWeight: 600 }}
+              >
                 💥 overheating {wirePeakC.toFixed(0)} °C (over {WIRE_INSULATION_MAX_C} °C)
               </div>
             ) : null}
@@ -633,7 +636,7 @@ export function NetEdge({
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY + 13}px)`,
               fontSize: 12,
               pointerEvents: 'none',
-              filter: 'drop-shadow(0 0 2px #000)',
+              filter: `drop-shadow(0 0 2px ${THEME.black})`,
             }}
           >
             ⛔
@@ -648,7 +651,7 @@ export function NetEdge({
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
               fontSize: 13,
               pointerEvents: 'none',
-              filter: 'drop-shadow(0 0 2px #000)',
+              filter: `drop-shadow(0 0 2px ${THEME.black})`,
             }}
           >
             💥
@@ -664,8 +667,8 @@ export function NetEdge({
                 width: 7,
                 height: 7,
                 borderRadius: '50%',
-                background: '#e0b070',
-                border: '1px solid #0c0c0e',
+                background: THEME.accentTimeline,
+                border: `1px solid ${THEME.surfaceDeep}`,
                 pointerEvents: 'none',
               }}
             />
@@ -674,20 +677,20 @@ export function NetEdge({
               style={{
                 position: 'absolute',
                 transform: `translate(-50%, -50%) translate(${probe.x}px, ${probe.y - 18}px)`,
-                background: '#0c0c0e',
-                border: '1px solid #e0b070',
+                background: THEME.surfaceDeep,
+                border: `1px solid ${THEME.accentTimeline}`,
                 borderRadius: 3,
                 padding: '2px 5px',
                 fontSize: 9,
                 fontFamily: 'system-ui, sans-serif',
-                color: '#e7c890',
+                color: THEME.statusWarn,
                 pointerEvents: 'none',
                 whiteSpace: 'nowrap',
                 textAlign: 'center',
               }}
             >
               <div>{`${probe.delta <= 0 ? 'drop' : 'rise'} ${formatEng(Math.abs(probe.delta), 'V')}`}</div>
-              <div style={{ fontSize: 8, color: '#b58a4a', marginTop: 1 }}>
+              <div style={{ fontSize: 8, color: THEME.statusWarn, marginTop: 1 }}>
                 {formatEng(probe.vHere, 'V', { signed: true })} here
               </div>
             </div>
@@ -705,8 +708,8 @@ export function NetEdge({
               width: 9,
               height: 9,
               borderRadius: '50%',
-              background: '#7ab8ff',
-              border: '1px solid #0c0c0e',
+              background: THEME.accentBlue,
+              border: `1px solid ${THEME.surfaceDeep}`,
               cursor: 'grab',
               pointerEvents: 'all',
             }}

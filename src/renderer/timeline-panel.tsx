@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { TransientResult } from '../transient-solver.ts'
+import { THEME } from './theme.ts'
 import { clampIndex } from './timeline.ts'
 import { formatEng } from './units.ts'
 
@@ -55,12 +56,12 @@ export function TimelinePanel({
     return () => cancelAnimationFrame(raf)
   }, [playing, speed, dir, len, onIndex])
 
-  const textColor = light ? '#556' : '#9aa'
+  const textColor = light ? THEME.textFaint : THEME.textSoft
   const controlStyle: React.CSSProperties = {
     fontSize: 12,
-    background: light ? '#fff' : '#1b1b1f',
-    color: light ? '#223' : '#cdd6e0',
-    border: '1px solid #2a2a2f',
+    background: light ? THEME.white : THEME.surfaceRaised,
+    color: light ? THEME.surfaceRaised : THEME.textPrimary,
+    border: `1px solid ${THEME.borderSubtle}`,
     borderRadius: 4,
     padding: '3px 8px',
     cursor: 'pointer',
@@ -137,14 +138,14 @@ export function TimelinePanel({
           className="nodrag"
           style={{
             ...controlStyle,
-            ...(dir < 0 ? { borderColor: '#7ab8ff', color: '#7ab8ff' } : {}),
+            ...(dir < 0 ? { borderColor: THEME.accentBlue, color: THEME.accentBlue } : {}),
           }}
           title="Reverse playback direction"
           onClick={() => setDir((d) => (d > 0 ? -1 : 1))}
         >
           ⇄
         </button>
-        <span style={{ width: 1, height: 18, background: '#2a2a2f', margin: '0 2px' }} />
+        <span style={{ width: 1, height: 18, background: THEME.borderSubtle, margin: '0 2px' }} />
         <button
           type="button"
           className="nodrag"

@@ -6,6 +6,7 @@ import {
   sourceTerminalCount,
 } from './part-defaults.ts'
 import type { PartReading } from './part-readings.ts'
+import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
 
 /**
@@ -56,9 +57,9 @@ const stepButton = (disabled: boolean): CSSProperties => ({
   width: 20,
   height: 20,
   borderRadius: 4,
-  border: '1px solid #2a2a2f',
-  background: '#1b1b1f',
-  color: disabled ? '#555' : '#cdd6e0',
+  border: `1px solid ${THEME.borderSubtle}`,
+  background: THEME.surfaceRaised,
+  color: disabled ? THEME.textFaint : THEME.textPrimary,
   cursor: disabled ? 'default' : 'pointer',
   fontSize: 12,
   lineHeight: 1,
@@ -306,9 +307,9 @@ const row: CSSProperties = {
   margin: '4px 0',
 }
 const field: CSSProperties = {
-  background: '#1a1a1e',
-  border: '1px solid #3a3a3f',
-  color: '#cdd6e0',
+  background: THEME.surfaceInput,
+  border: `1px solid ${THEME.borderStrong}`,
+  color: THEME.textPrimary,
   borderRadius: 3,
   padding: '2px 4px',
   fontSize: 11,
@@ -317,22 +318,22 @@ const sectionLabel: CSSProperties = {
   fontSize: 9,
   textTransform: 'uppercase',
   letterSpacing: 0.5,
-  color: '#667',
+  color: THEME.textFaint,
   marginTop: 8,
   marginBottom: 2,
 }
 const sourceNote: CSSProperties = {
   fontSize: 9,
-  color: '#667',
+  color: THEME.textFaint,
   margin: '-2px 0 4px',
   fontStyle: 'italic',
 }
 const deriveButton: CSSProperties = {
   marginTop: 6,
   width: '100%',
-  background: '#1a1a1e',
-  border: '1px solid #3a3a3f',
-  color: '#9fb0c0',
+  background: THEME.surfaceInput,
+  border: `1px solid ${THEME.borderStrong}`,
+  color: THEME.textSoft,
   borderRadius: 3,
   padding: '3px 4px',
   fontSize: 10,
@@ -378,7 +379,7 @@ function ScalarField({
         className="nodrag"
         style={{ ...field, width: 58, marginRight: 4 }}
       />
-      <span style={{ color: '#778', fontSize: 10 }}>{unit}</span>
+      <span style={{ color: THEME.textMuted, fontSize: 10 }}>{unit}</span>
     </span>
   )
 }
@@ -396,7 +397,7 @@ export function PartInspector({
 }: PartInspectorProps) {
   if (selected === null) {
     return (
-      <div style={{ width: 170, fontSize: 11, color: '#8089a0' }}>
+      <div style={{ width: 170, fontSize: 11, color: THEME.textMuted }}>
         Select a part to inspect + edit it.
       </div>
     )
@@ -455,8 +456,8 @@ export function PartInspector({
 
   return (
     <div style={{ width: 190, fontFamily: 'system-ui, sans-serif' }}>
-      <div style={{ fontSize: 12, color: '#cdd6e0' }}>{selected.id}</div>
-      <div style={{ fontSize: 10, color: '#778' }}>{selected.definition}</div>
+      <div style={{ fontSize: 12, color: THEME.textPrimary }}>{selected.id}</div>
+      <div style={{ fontSize: 10, color: THEME.textMuted }}>{selected.definition}</div>
 
       {reading ? (
         <>
@@ -527,7 +528,7 @@ export function PartInspector({
       {supportsAmbient ? (
         <div>
           <div style={row}>
-            <span style={{ color: '#aab' }}>Ambient (this part)</span>
+            <span style={{ color: THEME.textSoft }}>Ambient (this part)</span>
             <ScalarField
               value={ownAmbientC ?? projectAmbientC}
               unit="celsius"
@@ -545,7 +546,7 @@ export function PartInspector({
       {selected.definition === 'power_source' ? (
         <div>
           <label style={row}>
-            <span style={{ color: '#aab' }}>Source type</span>
+            <span style={{ color: THEME.textSoft }}>Source type</span>
             <select
               value={sourceType ? sourceType.label : 'custom'}
               onChange={(e) => {
@@ -576,7 +577,7 @@ export function PartInspector({
           {sourceType ? <div style={sourceNote}>{sourceType.source}</div> : null}
           {(amountOf(selected.parameters, 'ac_amplitude') ?? 0) > 0 ? (
             <label style={row}>
-              <span style={{ color: '#aab' }}>Waveform</span>
+              <span style={{ color: THEME.textSoft }}>Waveform</span>
               <select
                 value={currentWaveform(selected.parameters)}
                 onChange={(e) => onEnum('waveform', e.target.value)}
@@ -597,7 +598,7 @@ export function PartInspector({
               <div>
                 <div style={row}>
                   <span
-                    style={{ color: '#aab' }}
+                    style={{ color: THEME.textSoft }}
                     title="How many leads this source brings out. 2 = a plain source. 3–6 = a tapped stack: every lead going down drops one section of this voltage (a real tapped pack — 3 leads make a ± dual-rail supply). 1 = a supply rail whose return is through the circuit's ground."
                   >
                     Leads
@@ -612,7 +613,9 @@ export function PartInspector({
                     >
                       −
                     </button>
-                    <span style={{ color: '#cdd6e0', fontSize: 12, minWidth: 12 }}>{leads}</span>
+                    <span style={{ color: THEME.textPrimary, fontSize: 12, minWidth: 12 }}>
+                      {leads}
+                    </span>
                     <button
                       type="button"
                       className="nodrag"
@@ -639,7 +642,7 @@ export function PartInspector({
         </div>
       ) : null}
       {entries.length === 0 ? (
-        <div style={{ fontSize: 11, color: '#8089a0' }}>No editable values.</div>
+        <div style={{ fontSize: 11, color: THEME.textMuted }}>No editable values.</div>
       ) : (
         entries.map(([key, param]) => {
           const scalar = asScalar(param.value)
@@ -650,7 +653,7 @@ export function PartInspector({
             return (
               <div key={`${selected.id}:${key}`}>
                 <div style={row}>
-                  <span style={{ color: '#aab' }}>{humanize(key)}</span>
+                  <span style={{ color: THEME.textSoft }}>{humanize(key)}</span>
                   <ScalarField
                     value={scalar.amount}
                     unit={scalar.unit}
@@ -665,7 +668,7 @@ export function PartInspector({
           if (key === 'design_mode' && typeof param.value === 'string') {
             return (
               <label key={`${selected.id}:${key}`} style={row}>
-                <span style={{ color: '#aab' }}>Depth</span>
+                <span style={{ color: THEME.textSoft }}>Depth</span>
                 <select
                   value={param.value}
                   onChange={(e) => onEnum(key, e.target.value)}
@@ -681,7 +684,7 @@ export function PartInspector({
           if (key === 'state' && typeof param.value === 'string') {
             return (
               <label key={`${selected.id}:${key}`} style={row}>
-                <span style={{ color: '#aab' }}>{humanize(key)}</span>
+                <span style={{ color: THEME.textSoft }}>{humanize(key)}</span>
                 <select
                   value={param.value}
                   onChange={(e) => onEnum(key, e.target.value)}
@@ -703,7 +706,7 @@ export function PartInspector({
             const options = base.includes(current) ? base : [current, ...base]
             return (
               <label key={`${selected.id}:${key}`} style={row}>
-                <span style={{ color: '#aab' }}>{humanize(key)}</span>
+                <span style={{ color: THEME.textSoft }}>{humanize(key)}</span>
                 <select
                   value={current}
                   onChange={(e) => onMaterial(key, e.target.value)}
@@ -721,8 +724,8 @@ export function PartInspector({
           }
           return (
             <div key={`${selected.id}:${key}`} style={row}>
-              <span style={{ color: '#aab' }}>{humanize(key)}</span>
-              <span style={{ color: '#8089a0' }}>{String(param.value)}</span>
+              <span style={{ color: THEME.textSoft }}>{humanize(key)}</span>
+              <span style={{ color: THEME.textMuted }}>{String(param.value)}</span>
             </div>
           )
         })
@@ -742,7 +745,7 @@ export function PartInspector({
 
       {LED_DEFINITIONS.has(selected.definition) ? (
         <div style={row}>
-          <span style={{ color: '#aab' }}>Color</span>
+          <span style={{ color: THEME.textSoft }}>Color</span>
           <span style={{ display: 'flex', gap: 4 }}>
             {LED_COLORS.map((c) => (
               <button
@@ -762,7 +765,7 @@ export function PartInspector({
                   height: 16,
                   borderRadius: '50%',
                   background: c.css,
-                  border: '1px solid #3a3a3f',
+                  border: `1px solid ${THEME.borderStrong}`,
                   cursor: 'pointer',
                   padding: 0,
                 }}
@@ -779,11 +782,17 @@ export function PartInspector({
 function readingRow(label: string, text: string, hr: { text: string; over: boolean } | null) {
   return (
     <div style={row}>
-      <span style={{ color: '#aab' }}>{label}</span>
+      <span style={{ color: THEME.textSoft }}>{label}</span>
       <span style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
-        <span style={{ color: '#cdd6e0' }}>{text}</span>
+        <span style={{ color: THEME.textPrimary }}>{text}</span>
         {hr ? (
-          <span style={{ color: hr.over ? '#ff6a52' : '#6ec06e', fontSize: 9, marginLeft: 5 }}>
+          <span
+            style={{
+              color: hr.over ? THEME.statusDanger : THEME.statusOk,
+              fontSize: 9,
+              marginLeft: 5,
+            }}
+          >
             {hr.text}
           </span>
         ) : null}

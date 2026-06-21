@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { DeviceGlyph } from './symbols.tsx'
+import { THEME } from './theme.ts'
 
 /**
  * Project browser (the startup screen) — the front door, modeled on Unreal's project
@@ -139,13 +140,13 @@ const CATEGORIES: Category[] = [
   { id: 'system', label: 'System', sub: 'Coming soon', soon: true, templates: [] },
 ]
 
-const ACCENT = '#5a86d8'
-const ACCENT_TEXT = '#9db8ee'
-const BG = '#141417'
-const PANEL = '#1b1b1f'
-const BORDER = '#2a2a2f'
-const TEXT = '#cdd6e0'
-const MUTED = '#8a93a0'
+const ACCENT = THEME.accentBlueDeep
+const ACCENT_TEXT = THEME.accentBlueSoft
+const BG = THEME.surfaceBase
+const PANEL = THEME.surfaceRaised
+const BORDER = THEME.borderSubtle
+const TEXT = THEME.textPrimary
+const MUTED = THEME.textMuted
 
 function Thumb({ glyph, size = 1 }: { glyph?: string | undefined; size?: number }) {
   return (
@@ -154,7 +155,7 @@ function Thumb({ glyph, size = 1 }: { glyph?: string | undefined; size?: number 
         width: 40 * size,
         height: 40 * size,
         borderRadius: 6,
-        background: '#141417',
+        background: THEME.surfaceBase,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -328,7 +329,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                     border: t.featured
                       ? `2px solid ${ACCENT}`
                       : `1px solid ${on ? ACCENT : BORDER}`,
-                    background: on ? 'rgba(90,134,216,0.16)' : '#17171b',
+                    background: on ? 'rgba(90,134,216,0.16)' : THEME.surfacePanel,
                     color: TEXT,
                     cursor: 'pointer',
                   }}
@@ -443,7 +444,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                         <span
                           style={{
                             color: TEXT,
-                            background: '#141417',
+                            background: THEME.surfaceBase,
                             border: `1px solid ${BORDER}`,
                             borderRadius: 6,
                             padding: '3px 8px',
@@ -506,7 +507,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
             padding: '7px 10px',
             borderRadius: 7,
             border: `1px solid ${BORDER}`,
-            background: '#141417',
+            background: THEME.surfaceBase,
             color: TEXT,
             fontSize: 13,
             outline: 'none',
@@ -521,8 +522,8 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
             padding: '9px 20px',
             borderRadius: 7,
             border: `1px solid ${ACCENT}`,
-            background: template ? ACCENT : '#2a2a2f',
-            color: template ? '#0d1422' : MUTED,
+            background: template ? ACCENT : THEME.borderSubtle,
+            color: template ? THEME.surfaceDeep : MUTED,
             fontSize: 13.5,
             fontWeight: 600,
             cursor: template ? 'pointer' : 'default',

@@ -1,4 +1,5 @@
 import { useViewport } from '@xyflow/react'
+import { THEME } from './theme.ts'
 
 /**
  * Coordinate-graph overlay: the x and y axes through the origin (flow 0,0), the four
@@ -14,8 +15,8 @@ import { useViewport } from '@xyflow/react'
  */
 export function CoordinateAxes({ light }: { light: boolean }) {
   const { x, y, zoom } = useViewport()
-  const axisStroke = light ? '#9aa2b1' : '#485167'
-  const ink = light ? '#79818d' : '#6b7589'
+  const axisStroke = light ? THEME.textSoft : THEME.borderStrong
+  const ink = light ? THEME.textMuted : THEME.textFaint
   // The axes must span the canvas at any pan; a huge half-length around the origin
   // covers it, and the SVG clips to the pane bounds.
   const SPAN = 1_000_000

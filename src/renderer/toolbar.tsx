@@ -1,6 +1,7 @@
 import { Fragment, useState } from 'react'
 import type { LensMode } from './lens.ts'
 import { DeviceGlyph } from './symbols.tsx'
+import { THEME } from './theme.ts'
 import { WIRE_GAUGES } from './wire-length.ts'
 import { CURVE_SIZES } from './wire-path.ts'
 
@@ -69,14 +70,14 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
     id: 'scope',
     label: 'Scope',
     icon: '∿',
-    color: '#6ec06e',
+    color: THEME.statusOk,
     title: 'Scope — run the circuit through time and plot every node voltage as a waveform',
   },
   {
     id: 'timeline',
     label: 'Timeline',
     icon: '⏱',
-    color: '#e0b070',
+    color: THEME.accentTimeline,
     title:
       'Timeline — replay the time simulation across the live circuit: watch the current flow, build, reverse and settle, and the voltages change at each instant. Scrub, step, or play; the physics never re-runs, only the view moves through the same solved result.',
   },
@@ -84,7 +85,7 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
     id: 'bode',
     label: 'Bode',
     icon: '⌁',
-    color: '#6ec0ff',
+    color: THEME.accentBlueBright,
     title:
       "Bode — the frequency response: pick an input source and an output node and see gain (dB) and phase vs frequency. Reads off the RC/filter corner, an amplifier's roll-off and phase margin, or a transmission line's quarter-wave resonances.",
   },
@@ -92,7 +93,7 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
     id: 'group',
     label: 'Group',
     icon: '⧉',
-    color: '#a06ad8',
+    color: THEME.accentPurple,
     title:
       "Group — turn the selected parts into ONE reusable block with terminals. Wires crossing the selection become the block's ports. The block is pure structure: the solver always computes the real parts inside (double-click the block to see them; Ungroup to edit).",
   },
@@ -107,7 +108,7 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
     id: 'math',
     label: 'Math',
     icon: 'Σ',
-    color: '#d6a23c',
+    color: THEME.statusWarn,
     title:
       "Math — see every equation behind the current circuit: each part's law with the real numbers in it, and Kirchhoff's current law re-summed at every net (the checkmark is computed, not assumed)",
   },
@@ -115,7 +116,7 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
     id: 'margins',
     label: 'Margins',
     icon: '±',
-    color: '#d6a23c',
+    color: THEME.statusWarn,
     title:
       "Margins — the derating scorecard (how close each part runs to its limit now), the worst-case envelope over every part's ±tolerance, and Monte-Carlo (the realistic spread and what fraction of boards fail).",
   },
@@ -154,7 +155,7 @@ export const TOOL_MODES: ToolMode[] = [
     tool: 'lasso',
     label: 'Lasso',
     icon: '⟁',
-    color: '#c08ae0',
+    color: THEME.accentLasso,
     title:
       "Lasso — freeform selection: draw any shape around parts and everything whose middle is inside gets selected together (move, Group, copy, or cut them as one). Left-drag on empty canvas box-selects without this tool; the lasso is for shapes a box can't make.",
   },
@@ -162,7 +163,7 @@ export const TOOL_MODES: ToolMode[] = [
     tool: 'meter',
     label: 'Meter',
     icon: 'Ⓥ',
-    color: '#e0594f',
+    color: THEME.statusDanger,
     title:
       "Meter — touch terminal dots like multimeter probes: red then black reads between them (DC volts, AC volts rms, ohms, diode test, or capacitance — set by the dial on the readout); both probes on one part reads its current; touch a wire to clamp onto it and read its amps the clamp-meter way (senses the wire's magnetic field — nothing inserted, zero burden voltage, circuit untouched); HOLD freezes a reading to compare",
   },
@@ -278,7 +279,7 @@ export function ToolbarItems({
           title="Run the physics now — recompute every wire's current, length, and resistance"
           style={{ ...toolButton(false), flexDirection: 'row', gap: 6, padding: '8px 12px' }}
         >
-          <span aria-hidden style={{ color: '#7ab8ff', fontSize: 13 }}>
+          <span aria-hidden style={{ color: THEME.accentBlue, fontSize: 13 }}>
             ▶
           </span>
           <span style={{ fontSize: 11 }}>Solve</span>
@@ -289,7 +290,7 @@ export function ToolbarItems({
             display: 'flex',
             alignItems: 'center',
             gap: 5,
-            color: '#cdd6e0',
+            color: THEME.textPrimary,
             fontSize: 11,
             fontFamily: 'system-ui, sans-serif',
             cursor: 'pointer',
@@ -309,7 +310,12 @@ export function ToolbarItems({
       <div style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '0 2px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <span
-            style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5, color: '#778' }}
+            style={{
+              fontSize: 9,
+              textTransform: 'uppercase',
+              letterSpacing: 0.5,
+              color: THEME.textMuted,
+            }}
           >
             Ambient °C
           </span>
@@ -324,9 +330,9 @@ export function ToolbarItems({
             title="The whole board's ambient temperature (°C) — the environment every part sits in (a bench is 25 °C, a car's engine bay ~105 °C). Each part falls back to this unless you give it its own ambient_temperature. Drives R(T), junction-voltage drift, and the Temp lens."
             style={{
               width: 46,
-              background: '#1a1a1e',
-              border: '1px solid #3a3a3f',
-              color: '#cdd6e0',
+              background: THEME.surfaceInput,
+              border: `1px solid ${THEME.borderStrong}`,
+              color: THEME.textPrimary,
               borderRadius: 3,
               fontSize: 10,
               padding: '2px 3px',
@@ -341,9 +347,9 @@ export function ToolbarItems({
           }}
           title="Jump to a standard operating environment — the recognized JEDEC/AEC temperature grades (commercial, industrial, automotive). A value off the list reads ‘Custom’."
           style={{
-            background: '#1a1a1e',
-            border: '1px solid #3a3a3f',
-            color: '#cdd6e0',
+            background: THEME.surfaceInput,
+            border: `1px solid ${THEME.borderStrong}`,
+            color: THEME.textPrimary,
             borderRadius: 3,
             fontSize: 10,
             padding: '2px 3px',
@@ -412,21 +418,21 @@ const LENS_TABS: {
     mode: 'voltage',
     label: 'Voltage',
     icon: '◧',
-    color: '#d6a23c',
+    color: THEME.statusWarn,
     title: 'Voltage lens — color every wire by its solved potential (blue = lowest, red = highest)',
   },
   {
     mode: 'power',
     label: 'Power',
     icon: '♨',
-    color: '#e0594f',
+    color: THEME.statusDanger,
     title: 'Power lens — heat-color every part by its real dissipated watts (the hot spots)',
   },
   {
     mode: 'temp',
     label: 'Temp',
     icon: '℃',
-    color: '#e0a050',
+    color: THEME.lensTemp,
     title:
       'Temp lens — heat-color every part by its computed temperature (board ambient + power × thermal resistance): the hotspots',
   },
@@ -434,7 +440,7 @@ const LENS_TABS: {
     mode: 'field',
     label: 'Field',
     icon: '◎',
-    color: '#5ad8c8',
+    color: THEME.lensField,
     title:
       'Magnetic-field lens — bands around each wire sized by its real field, B = μ₀I/2πr from the solved current. Per-wire fields only (full field solving is a future stage).',
   },
@@ -442,7 +448,7 @@ const LENS_TABS: {
     mode: 'energy',
     label: 'Energy',
     icon: '↯',
-    color: '#e8b84b',
+    color: THEME.lensEnergy,
     title:
       'Energy-flow lens — gold arrows of energy streaming from the surrounding FIELDS into each load (and out of each source): the Poynting picture. Arrow size = the part’s power.',
   },
@@ -482,13 +488,13 @@ function LensTool({
         title="Lenses — overlay the solved physics on the schematic: voltage, power, temperature, magnetic field, energy flow, and the current-flow animation. Pick one view at a time."
         style={{ ...toolButton(anyOn), flexDirection: 'row', gap: 6, padding: '8px 10px' }}
       >
-        <span aria-hidden style={{ color: active?.color ?? '#9fd0ff', fontSize: 13 }}>
+        <span aria-hidden style={{ color: active?.color ?? THEME.accentBlueSoft, fontSize: 13 }}>
           {active?.icon ?? (flow ? '≫' : '◉')}
         </span>
         <span style={{ fontSize: 11 }}>
           {active ? `Lens: ${active.label}` : flow ? 'Lens: Flow' : 'Lens'}
         </span>
-        <span aria-hidden style={{ marginLeft: 'auto', fontSize: 9, color: '#778' }}>
+        <span aria-hidden style={{ marginLeft: 'auto', fontSize: 9, color: THEME.textMuted }}>
           {open ? '▾' : '▸'}
         </span>
       </button>
@@ -500,7 +506,7 @@ function LensTool({
             title="Turn the color lens off"
             style={tab(lens === 'none')}
           >
-            <span aria-hidden style={{ color: '#778', fontSize: 13 }}>
+            <span aria-hidden style={{ color: THEME.textMuted, fontSize: 13 }}>
               ○
             </span>
             <span style={{ fontSize: 11 }}>Off</span>
@@ -525,7 +531,7 @@ function LensTool({
             title="Flow animation — march dashes along each wire in the solved current's direction, speed from its size. Overlays on top of any color lens."
             style={tab(flow)}
           >
-            <span aria-hidden style={{ color: '#9fd0ff', fontSize: 13 }}>
+            <span aria-hidden style={{ color: THEME.accentBlueSoft, fontSize: 13 }}>
               ≫
             </span>
             <span style={{ fontSize: 11 }}>Flow{flow ? ' · on' : ''}</span>
@@ -621,7 +627,12 @@ function WireOptions({
       ) : null}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, paddingTop: 2 }}>
         <span
-          style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5, color: '#778' }}
+          style={{
+            fontSize: 9,
+            textTransform: 'uppercase',
+            letterSpacing: 0.5,
+            color: THEME.textMuted,
+          }}
         >
           Gauge
         </span>
@@ -631,9 +642,9 @@ function WireOptions({
           onChange={(event) => onWireGauge(Number(event.target.value))}
           title="The AWG gauge new wires are drawn at -- thinner wire is more resistance and heat. Each wire keeps its own gauge; change one later by selecting it."
           style={{
-            background: '#1a1a1e',
-            border: '1px solid #3a3a3f',
-            color: '#cdd6e0',
+            background: THEME.surfaceInput,
+            border: `1px solid ${THEME.borderStrong}`,
+            color: THEME.textPrimary,
             borderRadius: 3,
             fontSize: 10,
             padding: '2px 3px',
@@ -660,9 +671,9 @@ function toolButton(active: boolean): React.CSSProperties {
     padding: '6px 10px',
     borderRadius: 6,
     cursor: 'pointer',
-    background: active ? '#24405f' : '#1b1b1f',
-    border: active ? '1px solid #7ab8ff' : '1px solid #2a2a2f',
-    color: '#cdd6e0',
+    background: active ? THEME.surfaceActive : THEME.surfaceRaised,
+    border: active ? `1px solid ${THEME.accentBlue}` : `1px solid ${THEME.borderSubtle}`,
+    color: THEME.textPrimary,
     fontFamily: 'system-ui, sans-serif',
   }
 }

@@ -4,6 +4,7 @@ import { type Solution, solveDC } from '../dc-solver.ts'
 import { solveElectroThermal, solveTransientThermal, worldAtAmbient } from '../electro-thermal.ts'
 import { solveTransient } from '../transient-solver.ts'
 import { fastestSourceHz, scopeWindow } from './scope.tsx'
+import { THEME } from './theme.ts'
 import { measureSeries } from './waveform-measure.ts'
 
 /**
@@ -691,7 +692,7 @@ export function ProbeMarker({
           style={{
             fontSize: 8,
             fontWeight: 700,
-            color: '#fff',
+            color: THEME.white,
             background: color,
             borderRadius: 3,
             padding: '1px 4px',
@@ -706,8 +707,8 @@ export function ProbeMarker({
   )
 }
 
-export const PROBE_RED = '#e0594f'
-export const PROBE_BLACK = '#4a4f58'
+export const PROBE_RED = THEME.statusDanger
+export const PROBE_BLACK = THEME.borderStrong
 
 /** Both probe needles (rendered inside the ReactFlow viewport). */
 export function MeterProbes({

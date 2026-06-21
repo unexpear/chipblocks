@@ -2,6 +2,7 @@ import { Handle, type NodeProps, Position } from '@xyflow/react'
 import { useContext } from 'react'
 import { BLOCK_WIDTH, type BlockData, blockHeight } from './blocks.ts'
 import { HealthContext } from './health.ts'
+import { THEME } from './theme.ts'
 
 /**
  * A circuit block on the canvas (S19-v3-67) — ONE node showing only its name
@@ -31,15 +32,17 @@ export function BlockNode({ id, data }: NodeProps) {
         style={{
           position: 'absolute',
           inset: 0,
-          border: health?.failed ? '1.5px solid #e0594f' : '1.5px solid #8a93a0',
+          border: health?.failed
+            ? `1.5px solid ${THEME.statusDanger}`
+            : `1.5px solid ${THEME.textMuted}`,
           borderRadius: 6,
-          background: '#17171b',
+          background: THEME.surfacePanel,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
         }}
       >
-        <span style={{ color: '#dde4ec', fontSize: 11, fontWeight: 700 }}>{block.name}</span>
+        <span style={{ color: THEME.textBright, fontSize: 11, fontWeight: 700 }}>{block.name}</span>
       </div>
       {block.ports.map((port) => (
         <Handle
@@ -48,7 +51,7 @@ export function BlockNode({ id, data }: NodeProps) {
           type="source"
           position={port.side === 'left' ? Position.Left : Position.Right}
           title={`${port.label} — this port IS that internal terminal`}
-          style={{ top: port.offset, background: '#7ab8ff', width: 8, height: 8 }}
+          style={{ top: port.offset, background: THEME.accentBlue, width: 8, height: 8 }}
         />
       ))}
       <div
@@ -57,7 +60,7 @@ export function BlockNode({ id, data }: NodeProps) {
           top: '100%',
           left: '50%',
           transform: 'translateX(-50%)',
-          color: '#999',
+          color: THEME.textMuted,
           fontSize: 9,
           whiteSpace: 'nowrap',
           pointerEvents: 'none',

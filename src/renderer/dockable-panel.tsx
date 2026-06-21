@@ -4,6 +4,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   useState,
 } from 'react'
+import { THEME } from './theme.ts'
 import './canvas-animations.css'
 
 /**
@@ -52,7 +53,7 @@ export function DockablePanel({
   children: ReactNode
   light?: boolean
 }) {
-  const panelBorder = light ? '1px solid #c4c8ce' : '1px solid #2a2a2f'
+  const panelBorder = light ? `1px solid ${THEME.textPrimary}` : `1px solid ${THEME.borderSubtle}`
   const [floatAt, setFloatAt] = useState<{ x: number; y: number } | null>(null)
 
   // A tab is both a click target (activate) and a drag handle (stack / pop / move).
@@ -103,7 +104,7 @@ export function DockablePanel({
   const column = grouped || !horizontal
 
   const gripBase: CSSProperties = {
-    color: light ? '#555' : '#8a93a0',
+    color: light ? THEME.textFaint : THEME.textMuted,
     fontSize: 11,
     fontWeight: 600,
     fontFamily: 'system-ui, sans-serif',
@@ -117,9 +118,15 @@ export function DockablePanel({
     alignItems: 'center',
     gap: 4,
     padding: '5px 10px',
-    color: active ? (light ? '#111' : '#e6ebf2') : light ? '#888' : '#697079',
-    background: active ? (light ? '#dde0e4' : '#1c1c21') : 'transparent',
-    borderBottom: `2px solid ${active ? (light ? '#3577c8' : '#5b8cff') : 'transparent'}`,
+    color: active
+      ? light
+        ? THEME.surfaceDeep
+        : THEME.textBright
+      : light
+        ? THEME.textMuted
+        : THEME.textFaint,
+    background: active ? (light ? THEME.textBright : THEME.surfacePanel) : 'transparent',
+    borderBottom: `2px solid ${active ? (light ? THEME.accentBlueDeep : THEME.accentBlue) : 'transparent'}`,
   })
 
   return (
@@ -131,7 +138,7 @@ export function DockablePanel({
         alignItems: 'stretch',
         minHeight: 0,
         minWidth: 0,
-        background: light ? '#e8eaed' : '#141417',
+        background: light ? THEME.textBright : THEME.surfaceBase,
         border: panelBorder,
         boxShadow: floatAt ? '0 6px 20px rgba(0,0,0,0.5)' : 'none',
         opacity: floatAt ? 0.9 : 1,

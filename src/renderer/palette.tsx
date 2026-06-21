@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { DeviceGlyph } from './symbols.tsx'
+import { THEME } from './theme.ts'
 
 /**
  * Parts palette (Sprint 19 S19-v3-6; dockable in S19-v3-10). The placeable
@@ -41,7 +42,7 @@ export function BlockPaletteItems({
     <>
       <div
         style={{
-          color: '#8a93a0',
+          color: THEME.textMuted,
           fontSize: 10,
           fontFamily: 'system-ui, sans-serif',
           margin: '8px 2px 2px',
@@ -64,16 +65,16 @@ export function BlockPaletteItems({
             alignItems: 'center',
             gap: 6,
             padding: '6px 8px',
-            border: '1px solid #2a2a2f',
+            border: `1px solid ${THEME.borderSubtle}`,
             borderRadius: 6,
-            background: '#1b1b1f',
+            background: THEME.surfaceRaised,
             cursor: 'grab',
-            color: '#cdd6e0',
+            color: THEME.textPrimary,
             fontSize: 11,
             fontFamily: 'system-ui, sans-serif',
           }}
         >
-          <span aria-hidden style={{ color: '#a06ad8' }}>
+          <span aria-hidden style={{ color: THEME.accentPurple }}>
             ⧉
           </span>
           {block.name}
@@ -172,14 +173,14 @@ export function PaletteItems({ filter }: { filter?: string }) {
             alignItems: 'center',
             gap: 2,
             padding: '8px 6px',
-            border: '1px solid #2a2a2f',
+            border: `1px solid ${THEME.borderSubtle}`,
             borderRadius: 6,
-            background: '#1b1b1f',
+            background: THEME.surfaceRaised,
             cursor: 'grab',
           }}
         >
           <DeviceGlyph definition={part.definition} />
-          <span style={{ color: '#cdd6e0', fontSize: 11 }}>{part.label}</span>
+          <span style={{ color: THEME.textPrimary, fontSize: 11 }}>{part.label}</span>
         </div>
       ))}
     </>
@@ -207,10 +208,10 @@ export function Palette({ blocks }: { blocks: { id: string; name: string }[] }) 
           boxSizing: 'border-box',
           margin: '0 0 6px',
           padding: '5px 8px',
-          border: '1px solid #2a2a2f',
+          border: `1px solid ${THEME.borderSubtle}`,
           borderRadius: 6,
-          background: '#141417',
-          color: '#cdd6e0',
+          background: THEME.surfaceBase,
+          color: THEME.textPrimary,
           fontSize: 11,
           fontFamily: 'system-ui, sans-serif',
           outline: 'none',
