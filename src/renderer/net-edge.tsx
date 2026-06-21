@@ -14,6 +14,7 @@ import {
   WIRE_INSULATION_MAX_C,
   wireThermalProfile,
 } from '../thermal-model.ts'
+import { frontFraction, type WireFront } from './front-propagation.ts'
 import {
   FIELD_COLOR,
   FIELD_CONTOUR_MULTIPLIERS,
@@ -100,6 +101,15 @@ export const WireGeomContext = createContext<(id: string, points: Point[]) => vo
  *  voltage from that played-back instant instead of the steady solve. null = steady. */
 export const FrameEdgeContext = createContext<Map<string, FrameEdge> | null>(null)
 
+/** Travelling-charge front (Sprint 22): in front mode each wire reads how far the
+ *  propagation wave has swept it; partArrival dims the parts not yet reached. */
+export type FrontState = {
+  time: number
+  wires: Map<string, WireFront>
+  partArrival: Map<string, number>
+}
+export const FrontContext = createContext<FrontState | null>(null)
+
 const crossZ = (o: Point, a: Point, b: Point) =>
   (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
 
@@ -150,6 +160,8 @@ export function NetEdge({
   const checkpointAction = useContext(CheckpointContext)
   // Timeline playback: this wire's values at the played-back instant (null = steady).
   const fe = useContext(FrameEdgeContext)?.get(id) ?? null
+  // Travelling-charge front: when set, the wire shows the wave sweeping it (its own view).
+  const front = useContext(FrontContext)
   const waypoints = readWaypoints(data)
   // The detail chip (net id · current · length · resistance) only pops up while
   // the wire is hovered — keeps the schematic clean; the current arrows on the
@@ -197,6 +209,41 @@ export function NetEdge({
   useEffect(() => {
     reportGeom(id, routePoints)
   }, [reportGeom, id, geomKey])
+
+  // Travelling-charge front (Sprint 22): in front mode the wire shows only the portion the
+  // wave has swept — bright, growing from the end the front entered — over a dim base, so you
+  // watch the charge crawl down it. Its own view: no flow / voltage / lens readouts here.
+  if (front !== null) {
+    const fr = front.wires.get(id)
+    const f = fr?.reached ? frontFraction(fr, front.time) : 0
+    const energizedPoints = fr?.entryFromA === false ? [...routePoints].reverse() : routePoints
+    const energizedPath = curved
+      ? roundedPathD(energizedPoints, sweep)
+      : pathThrough(energizedPoints)
+    return (
+      <>
+        <path
+          d={path}
+          fill="none"
+          stroke="rgba(130,142,160,0.30)"
+          strokeWidth={1.6}
+          style={{ pointerEvents: 'none' }}
+        />
+        {f > 0 ? (
+          <path
+            d={energizedPath}
+            pathLength={1}
+            fill="none"
+            stroke="#7ab8ff"
+            strokeWidth={2.8}
+            strokeDasharray={`${f} 1`}
+            strokeLinecap="round"
+            style={{ pointerEvents: 'none' }}
+          />
+        ) : null}
+      </>
+    )
+  }
 
   // Wire-through-part collision: does a segment of the routed path cut through a part that
   // is NOT one of this wire's two endpoints? (it touches those at the terminals by design.)

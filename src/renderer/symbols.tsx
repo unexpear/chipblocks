@@ -12,6 +12,7 @@ import {
   thermalHotspotColor,
   thermalWarmthTint,
 } from './lens.ts'
+import { FrontContext } from './net-edge.tsx'
 import {
   fuseIntact,
   type Parameters,
@@ -1719,6 +1720,13 @@ export function DeviceNode({ id, data }: NodeProps) {
   const value = primaryValue(definition, parameters)
   const health = useContext(HealthContext).get(id)
   const lensState = useContext(LensContext)
+  // Travelling-charge front: dim the part until the wave reaches it, so it lights up in turn
+  // (the far bulb last). partArrival is its earliest terminal-arrival time; null = not in front mode.
+  const front = useContext(FrontContext)
+  const frontArrival = front?.partArrival.get(id)
+  const frontDimmed =
+    front !== null &&
+    (frontArrival === undefined || !Number.isFinite(frontArrival) || front.time < frontArrival)
   // Power lens: halo each part by its REAL dissipated watts (against the
   // circuit's hottest part). Temp lens: by how close its REAL temperature
   // (25 °C + P·θ_JA) sits to its OWN rated maximum — normal until the derating
@@ -1767,7 +1775,14 @@ export function DeviceNode({ id, data }: NodeProps) {
   return (
     <div
       className={health?.failed ? 'cb-shake' : undefined}
-      style={{ position: 'relative', width: W, height: H, fontFamily: 'system-ui, sans-serif' }}
+      style={{
+        position: 'relative',
+        width: W,
+        height: H,
+        fontFamily: 'system-ui, sans-serif',
+        opacity: frontDimmed ? 0.25 : 1,
+        transition: 'opacity 0.1s linear',
+      }}
     >
       {/* Success / failure feedback (health.ts): a lit LED glows warm; an
           overstressed part bursts once + keeps a danger ring. Behind the symbol

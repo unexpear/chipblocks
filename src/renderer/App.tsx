@@ -33,6 +33,7 @@ import {
 } from 'react'
 import type { Instance, World } from '../cross-fk-validator.ts'
 import type { Solution } from '../dc-solver.ts'
+import { fuseIsIntact, switchIsClosed } from '../dc-solver.ts'
 import { solveTransientThermal } from '../electro-thermal.ts'
 import { overcurrentFuseIds } from '../failure-detector.ts'
 import { readScalarParam } from '../instance-params.ts'
@@ -77,6 +78,7 @@ import { ClipboardPanel } from './clipboard-panel.tsx'
 import { CoordinateAxes } from './coordinate-axes.tsx'
 import { DockablePanel, type TabDropTarget } from './dockable-panel.tsx'
 import { wireFlow } from './edge-currents.ts'
+import { computeFront } from './front-propagation.ts'
 import { canvasHealth, HealthContext, type NodeHealth } from './health.ts'
 import { DEFAULT_KEYBINDS, eventMatchesBinding, type Keybinds, mergeKeybinds } from './keybinds.ts'
 import {
@@ -122,6 +124,8 @@ import { expandMultiLeadSources, multiLeadAliases } from './multi-tap-source.ts'
 import {
   edgeTypes,
   FrameEdgeContext,
+  FrontContext,
+  type FrontState,
   PartBoxesContext,
   type Point,
   WireGeomContext,
@@ -1078,6 +1082,8 @@ function Canvas({ project }: { project: ProjectChoice }) {
   const [timelineOpen, setTimelineOpen] = useState(false)
   const [timelineIndex, setTimelineIndex] = useState(0)
   const [timelineResult, setTimelineResult] = useState<TransientResult | null>(null)
+  // Travelling-charge front (Sprint 22): the spatial-propagation view toggle.
+  const [frontMode, setFrontMode] = useState(false)
   // One display-window's duration — the trigger aligns sweeps inside the
   // 3-window record (set alongside each scope run).
   const [scopeWindowSec, setScopeWindowSec] = useState(1e-3)
@@ -1250,17 +1256,92 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // The played-back instant: a point in the scope's transient record chosen by the playhead.
   // null = timeline closed, so the canvas shows the steady solve.
   const playbackFrame = useMemo(() => {
-    if (!timelineOpen || timelineResult === null || timelineResult.status !== 'solved') return null
+    if (!timelineOpen || frontMode || timelineResult === null || timelineResult.status !== 'solved')
+      return null
     const series = timelineResult.series
     if (series.length === 0) return null
     return series[clampIndex(timelineIndex, series.length)] ?? null
-  }, [timelineOpen, timelineResult, timelineIndex])
+  }, [timelineOpen, frontMode, timelineResult, timelineIndex])
   // Per-wire display values at that instant — fed to the wires (FrameEdgeContext) and the
   // lens range below, so flow + voltage follow the playhead without the physics re-solving.
   const frameEdges = useMemo(
     () => (playbackFrame ? frameEdgeValues(playbackFrame, edges, wireNets) : null),
     [playbackFrame, edges, wireNets],
   )
+  // Travelling-charge front (Sprint 22): the spatial turn-on wave. From the wire lengths + the
+  // net graph (a part bridges its terminals instantly), out from the source nets — WHEN the
+  // front first reaches every net + how it sweeps each wire.
+  const frontData = useMemo(() => {
+    const wires = edges.map((e) => ({
+      id: e.id,
+      netA: wireNets.get(e.id)?.netA,
+      netB: wireNets.get(e.id)?.netB,
+      lengthM: typeof e.data?.lengthM === 'number' ? e.data.lengthM : 0,
+    }))
+    const bridges: string[][] = []
+    const sourceNets: string[] = []
+    for (const inst of solvedWorld.instances.values()) {
+      if (inst.id.startsWith('wire_')) continue
+      const nets = (inst.connects ?? [])
+        .map((c) => c.net)
+        .filter((n): n is string => typeof n === 'string')
+      if (inst.definition === 'power_source') {
+        sourceNets.push(...nets)
+        continue
+      }
+      // An open switch or a blown fuse stops the wave — those terminals don't bridge.
+      const openSwitch =
+        (inst.definition === 'switch_spst_toggle' || inst.definition === 'switch_spst_momentary') &&
+        !switchIsClosed(inst)
+      const blownFuse = inst.definition === 'fuse' && !fuseIsIntact(inst)
+      if (!openSwitch && !blownFuse && nets.length >= 2) bridges.push(nets)
+    }
+    const result = computeFront({ wires, bridges, sourceNets })
+    // Each part's first-arrival = the earliest the front reaches any of its terminals.
+    const partArrival = new Map<string, number>()
+    for (const inst of solvedWorld.instances.values()) {
+      if (inst.id.startsWith('wire_')) continue
+      let earliest = Number.POSITIVE_INFINITY
+      for (const connect of inst.connects ?? []) {
+        const a = result.arrival.get(connect.net)
+        if (a !== undefined && a < earliest) earliest = a
+      }
+      partArrival.set(inst.id, earliest)
+    }
+    return { result, partArrival }
+  }, [edges, wireNets, solvedWorld])
+  // The front plays like a transient — a synthetic series of instants from 0 to the last
+  // arrival — so the timeline panel's play / scrub / step drive it with no new controls.
+  const frontSeries = useMemo<TransientResult>(() => {
+    const max = frontData.result.maxTime
+    if (!(max > 0)) {
+      return {
+        status: 'no-ground',
+        series: [],
+        ground: undefined,
+        warnings: ['No source to send a front from — drop a battery and wire it up.'],
+      }
+    }
+    const frames = 240
+    const series = Array.from({ length: frames }, (_, k) => ({
+      time: (k / (frames - 1)) * max,
+      nodes: new Map<string, number>(),
+      currents: new Map<string, number>(),
+    }))
+    return { status: 'solved', series, ground: undefined, warnings: [] }
+  }, [frontData])
+  // The front-time the playhead sits at (null when not in front mode) — drives the wire sweep.
+  const frontState = useMemo<FrontState | null>(() => {
+    if (!frontMode || !timelineOpen || frontSeries.series.length === 0) return null
+    const point = frontSeries.series[clampIndex(timelineIndex, frontSeries.series.length)]
+    return {
+      time: point?.time ?? 0,
+      wires: frontData.result.wires,
+      partArrival: frontData.partArrival,
+    }
+  }, [frontMode, timelineOpen, timelineIndex, frontSeries, frontData])
+  // The panel plays the transient normally, or the front sweep when front mode is on.
+  const displayResult = frontMode ? frontSeries : timelineResult
   const lensState = useMemo(() => {
     let vMin = Number.POSITIVE_INFINITY
     let vMax = Number.NEGATIVE_INFINITY
@@ -2973,161 +3054,163 @@ function Canvas({ project }: { project: ProjectChoice }) {
         <HealthContext.Provider value={health}>
           <LensContext.Provider value={lensState}>
             <FrameEdgeContext.Provider value={frameEdges}>
-              <PartBoxesContext.Provider value={partBoxes}>
-                <WireGeomContext.Provider value={reportWireGeom}>
-                  <CheckpointContext.Provider value={checkpointAction}>
-                    <ReactFlow
-                      colorMode={theme}
-                      nodes={nodes}
-                      edges={edges}
-                      onNodesChange={onNodesChange}
-                      onEdgesChange={onEdgesChange}
-                      onConnect={onConnect}
-                      onReconnect={onReconnect}
-                      onNodeDoubleClick={onNodeDoubleClick}
-                      onNodeClick={(_event, node) => {
-                        if (
-                          node.type === 'junction' &&
-                          (node.data as { fromCrossing?: boolean } | undefined)?.fromCrossing ===
-                            true
-                        ) {
-                          unjoinCrossing(node.id)
-                        }
-                      }}
-                      onNodeDragStart={(_event, node) => {
-                        checkpointAction('move')
-                        dragStartPos.current = new Map(
-                          nodes
-                            .filter((n) => n.id === node.id || n.selected)
-                            .map((n) => [n.id, { x: n.position.x, y: n.position.y }]),
-                        )
-                      }}
-                      onNodeDragStop={(_event, node) => {
-                        if (node.type !== 'device' && node.type !== 'block') return
-                        setNodes((cur) => {
-                          const dragged = dragStartPos.current
-                          const box = (n: (typeof cur)[number]) => ({
-                            x: n.position.x,
-                            y: n.position.y,
-                            w: n.measured?.width ?? 88,
-                            h: n.measured?.height ?? 56,
-                          })
-                          const hit = (a: (typeof cur)[number], b: (typeof cur)[number]) => {
-                            const A = box(a)
-                            const B = box(b)
-                            const m = 6 // a little breathing room so parts never touch
-                            return (
-                              A.x < B.x + B.w + m &&
-                              A.x + A.w + m > B.x &&
-                              A.y < B.y + B.h + m &&
-                              A.y + A.h + m > B.y
-                            )
+              <FrontContext.Provider value={frontState}>
+                <PartBoxesContext.Provider value={partBoxes}>
+                  <WireGeomContext.Provider value={reportWireGeom}>
+                    <CheckpointContext.Provider value={checkpointAction}>
+                      <ReactFlow
+                        colorMode={theme}
+                        nodes={nodes}
+                        edges={edges}
+                        onNodesChange={onNodesChange}
+                        onEdgesChange={onEdgesChange}
+                        onConnect={onConnect}
+                        onReconnect={onReconnect}
+                        onNodeDoubleClick={onNodeDoubleClick}
+                        onNodeClick={(_event, node) => {
+                          if (
+                            node.type === 'junction' &&
+                            (node.data as { fromCrossing?: boolean } | undefined)?.fromCrossing ===
+                              true
+                          ) {
+                            unjoinCrossing(node.id)
                           }
-                          const isPart = (n: (typeof cur)[number]) =>
-                            n.type === 'device' || n.type === 'block'
-                          const collides = cur.some(
-                            (moved) =>
-                              dragged.has(moved.id) &&
-                              cur.some((o) => isPart(o) && !dragged.has(o.id) && hit(moved, o)),
+                        }}
+                        onNodeDragStart={(_event, node) => {
+                          checkpointAction('move')
+                          dragStartPos.current = new Map(
+                            nodes
+                              .filter((n) => n.id === node.id || n.selected)
+                              .map((n) => [n.id, { x: n.position.x, y: n.position.y }]),
                           )
-                          if (!collides) return cur
-                          // overlap — snap every dragged part back to where it started
-                          return cur.map((n) => {
-                            const start = dragged.get(n.id)
-                            return start ? { ...n, position: start } : n
-                          })
-                        })
-                      }}
-                      nodeTypes={nodeTypes}
-                      edgeTypes={edgeTypes}
-                      nodesDraggable={tool === 'select'}
-                      nodesConnectable={tool !== 'meter'}
-                      // Click-to-connect is OUR gesture now (onWireClick, wire tool
-                      // only, with corner routing); React Flow's built-in one would
-                      // double-create — and it once let meter probes draw real wires.
-                      connectOnClick={false}
-                      connectionMode={ConnectionMode.Loose}
-                      // Desktop-style selection (S19-v3-69): LEFT-drag on empty canvas
-                      // draws a selection box (like desktop icons), so panning moves to
-                      // the middle/right mouse buttons. Touching the box counts —
-                      // SelectionMode.Partial — exactly how a desktop marquee behaves.
-                      // In lasso mode the wrapper owns the pointer, so both are off.
-                      selectionOnDrag={tool === 'select'}
-                      panOnDrag={tool === 'lasso' ? false : [1, 2]}
-                      selectionMode={SelectionMode.Partial}
-                      // Windows-friendly multi-select: Ctrl+click (React Flow's default
-                      // is the Meta key); Shift+drag box-select is the built-in default.
-                      multiSelectionKeyCode={['Meta', 'Control']}
-                      // Deletion is OUR keybind now (editable, supports combos) — see
-                      // the keyboard-shortcuts effect above.
-                      deleteKeyCode={null}
-                      zoomOnDoubleClick={false}
-                      // Effectively unbounded zoom (React Flow defaults stop at 0.5×–2×):
-                      // the project's horizon runs from a full PC down to a transistor,
-                      // so the canvas must zoom six orders of magnitude either way.
-                      minZoom={0.001}
-                      maxZoom={1000}
-                      fitView
-                      proOptions={{ hideAttribution: true }}
-                    >
-                      {/* Graph-paper grid: fine minor lines, with a bolder major line every 5th. */}
-                      <Background
-                        id="grid-minor"
-                        variant={BackgroundVariant.Lines}
-                        gap={4}
-                        lineWidth={0.5}
-                        color={`${gridColor}55`}
-                      />
-                      <Background
-                        id="grid-major"
-                        variant={BackgroundVariant.Lines}
-                        gap={20}
-                        lineWidth={1}
-                        color={gridColor}
-                      />
-                      {/* Coordinate-graph axes through the origin + the four quadrants. */}
-                      <CoordinateAxes light={light} />
-                      <Controls />
-                      <MeterProbes red={redProbe} black={blackProbe} />
-                      {/* Scope channel probes (S19-v3-77): one colored clip per
-                    voltage channel. Wire clamps show in the channel chips. */}
-                      {scopeOpen
-                        ? scopeProbes.map((p) => {
-                            if (p.kind !== 'terminal') return null
-                            // Color + CH number come from the probe's slot in the RESOLVED channel
-                            // list (what the traces and chips index), NOT its raw scopeProbes index —
-                            // an unresolved probe earlier in the list would otherwise shift this off,
-                            // so the on-canvas marker disagreed with the plotted trace. No channel
-                            // (the probe didn't resolve → no trace) ⇒ no marker.
-                            const ch = scopeChannels.findIndex((c) => c.key === scopeProbeKey(p))
-                            if (ch < 0) return null
-                            return (
-                              <ProbeMarker
-                                key={scopeProbeKey(p)}
-                                probe={{ nodeId: p.nodeId, handleId: p.handleId }}
-                                color={TRACE_COLORS[ch % TRACE_COLORS.length] ?? '#888'}
-                                label={`CH${ch + 1}`}
-                              />
+                        }}
+                        onNodeDragStop={(_event, node) => {
+                          if (node.type !== 'device' && node.type !== 'block') return
+                          setNodes((cur) => {
+                            const dragged = dragStartPos.current
+                            const box = (n: (typeof cur)[number]) => ({
+                              x: n.position.x,
+                              y: n.position.y,
+                              w: n.measured?.width ?? 88,
+                              h: n.measured?.height ?? 56,
+                            })
+                            const hit = (a: (typeof cur)[number], b: (typeof cur)[number]) => {
+                              const A = box(a)
+                              const B = box(b)
+                              const m = 6 // a little breathing room so parts never touch
+                              return (
+                                A.x < B.x + B.w + m &&
+                                A.x + A.w + m > B.x &&
+                                A.y < B.y + B.h + m &&
+                                A.y + A.h + m > B.y
+                              )
+                            }
+                            const isPart = (n: (typeof cur)[number]) =>
+                              n.type === 'device' || n.type === 'block'
+                            const collides = cur.some(
+                              (moved) =>
+                                dragged.has(moved.id) &&
+                                cur.some((o) => isPart(o) && !dragged.has(o.id) && hit(moved, o)),
                             )
+                            if (!collides) return cur
+                            // overlap — snap every dragged part back to where it started
+                            return cur.map((n) => {
+                              const start = dragged.get(n.id)
+                              return start ? { ...n, position: start } : n
+                            })
                           })
-                        : null}
-                      {pendingWire !== null ? (
-                        <PendingWirePreview
-                          pending={pendingWire}
-                          cursor={wireCursor}
-                          curved={wireStyle === 'curve'}
-                          curveRadius={wireCurveRadius}
+                        }}
+                        nodeTypes={nodeTypes}
+                        edgeTypes={edgeTypes}
+                        nodesDraggable={tool === 'select'}
+                        nodesConnectable={tool !== 'meter'}
+                        // Click-to-connect is OUR gesture now (onWireClick, wire tool
+                        // only, with corner routing); React Flow's built-in one would
+                        // double-create — and it once let meter probes draw real wires.
+                        connectOnClick={false}
+                        connectionMode={ConnectionMode.Loose}
+                        // Desktop-style selection (S19-v3-69): LEFT-drag on empty canvas
+                        // draws a selection box (like desktop icons), so panning moves to
+                        // the middle/right mouse buttons. Touching the box counts —
+                        // SelectionMode.Partial — exactly how a desktop marquee behaves.
+                        // In lasso mode the wrapper owns the pointer, so both are off.
+                        selectionOnDrag={tool === 'select'}
+                        panOnDrag={tool === 'lasso' ? false : [1, 2]}
+                        selectionMode={SelectionMode.Partial}
+                        // Windows-friendly multi-select: Ctrl+click (React Flow's default
+                        // is the Meta key); Shift+drag box-select is the built-in default.
+                        multiSelectionKeyCode={['Meta', 'Control']}
+                        // Deletion is OUR keybind now (editable, supports combos) — see
+                        // the keyboard-shortcuts effect above.
+                        deleteKeyCode={null}
+                        zoomOnDoubleClick={false}
+                        // Effectively unbounded zoom (React Flow defaults stop at 0.5×–2×):
+                        // the project's horizon runs from a full PC down to a transistor,
+                        // so the canvas must zoom six orders of magnitude either way.
+                        minZoom={0.001}
+                        maxZoom={1000}
+                        fitView
+                        proOptions={{ hideAttribution: true }}
+                      >
+                        {/* Graph-paper grid: fine minor lines, with a bolder major line every 5th. */}
+                        <Background
+                          id="grid-minor"
+                          variant={BackgroundVariant.Lines}
+                          gap={4}
+                          lineWidth={0.5}
+                          color={`${gridColor}55`}
                         />
-                      ) : null}
-                      <WireCrossingsOverlay
-                        crossings={wireCrossings}
-                        onJoin={joinCrossing}
-                        light={light}
-                      />
-                    </ReactFlow>
-                  </CheckpointContext.Provider>
-                </WireGeomContext.Provider>
-              </PartBoxesContext.Provider>
+                        <Background
+                          id="grid-major"
+                          variant={BackgroundVariant.Lines}
+                          gap={20}
+                          lineWidth={1}
+                          color={gridColor}
+                        />
+                        {/* Coordinate-graph axes through the origin + the four quadrants. */}
+                        <CoordinateAxes light={light} />
+                        <Controls />
+                        <MeterProbes red={redProbe} black={blackProbe} />
+                        {/* Scope channel probes (S19-v3-77): one colored clip per
+                    voltage channel. Wire clamps show in the channel chips. */}
+                        {scopeOpen
+                          ? scopeProbes.map((p) => {
+                              if (p.kind !== 'terminal') return null
+                              // Color + CH number come from the probe's slot in the RESOLVED channel
+                              // list (what the traces and chips index), NOT its raw scopeProbes index —
+                              // an unresolved probe earlier in the list would otherwise shift this off,
+                              // so the on-canvas marker disagreed with the plotted trace. No channel
+                              // (the probe didn't resolve → no trace) ⇒ no marker.
+                              const ch = scopeChannels.findIndex((c) => c.key === scopeProbeKey(p))
+                              if (ch < 0) return null
+                              return (
+                                <ProbeMarker
+                                  key={scopeProbeKey(p)}
+                                  probe={{ nodeId: p.nodeId, handleId: p.handleId }}
+                                  color={TRACE_COLORS[ch % TRACE_COLORS.length] ?? '#888'}
+                                  label={`CH${ch + 1}`}
+                                />
+                              )
+                            })
+                          : null}
+                        {pendingWire !== null ? (
+                          <PendingWirePreview
+                            pending={pendingWire}
+                            cursor={wireCursor}
+                            curved={wireStyle === 'curve'}
+                            curveRadius={wireCurveRadius}
+                          />
+                        ) : null}
+                        <WireCrossingsOverlay
+                          crossings={wireCrossings}
+                          onJoin={joinCrossing}
+                          light={light}
+                        />
+                      </ReactFlow>
+                    </CheckpointContext.Provider>
+                  </WireGeomContext.Provider>
+                </PartBoxesContext.Provider>
+              </FrontContext.Provider>
             </FrameEdgeContext.Provider>
           </LensContext.Provider>
         </HealthContext.Provider>
@@ -3581,8 +3664,12 @@ function Canvas({ project }: { project: ProjectChoice }) {
       </div>
 
       {(() => {
-        // The dock panels — each with its title, its live content, and whether it is
-        // shown now. Grouping (panel-groups.ts) collapses them into tabbed stacks.
+        // ── THE PANELS — edit this to add / reorder / rename a dockable panel ──
+        // Each entry is one panel: `title` (its tab name), `content` (its live UI), `visible`
+        // (whether it shows now). ADD a panel → add an entry here + its id to the `order` list
+        // passed to panelGroups below; that's all — it auto-docks at the bottom (an optional
+        // panelLayout entry above only sets a different default dock + tab-group). REORDER →
+        // reorder that list. RENAME → change `title`. Grouping (panel-groups.ts) tabs them up.
         const registry: Record<string, { title: string; content: ReactNode; visible: boolean }> = {
           parts: {
             title: 'Parts',
@@ -3731,11 +3818,37 @@ function Canvas({ project }: { project: ProjectChoice }) {
             content: (
               <>
                 <TimelinePanel
-                  result={timelineResult}
+                  result={displayResult}
                   index={timelineIndex}
                   onIndex={setTimelineIndex}
                   light={light}
                 />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFrontMode((m) => !m)
+                    setTimelineIndex(0)
+                  }}
+                  className="nodrag"
+                  title="Front mode — watch the charge propagate: it leaves the source and sweeps down the wires at finite speed (~2/3 c), reaching each part in the order the wire lengths set, slowed so you can see it. Play / scrub as usual; toggle off for the normal transient playback."
+                  style={{
+                    background: frontMode ? '#24405f' : 'none',
+                    border: frontMode
+                      ? '1px solid #7ab8ff'
+                      : light
+                        ? '1px solid #c4c8ce'
+                        : '1px solid #3a3a3f',
+                    color: frontMode ? '#9fd0ff' : light ? '#444' : '#9fb0c0',
+                    borderRadius: 3,
+                    padding: '2px 8px',
+                    fontSize: 11,
+                    cursor: 'pointer',
+                    marginTop: 6,
+                    marginRight: 6,
+                  }}
+                >
+                  ⚡ Front{frontMode ? ' · on' : ''}
+                </button>
                 <button
                   type="button"
                   onClick={() => setTimelineOpen(false)}
