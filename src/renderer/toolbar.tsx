@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import type { LensMode } from './lens.ts'
 import { DeviceGlyph } from './symbols.tsx'
 import { WIRE_GAUGES } from './wire-length.ts'
@@ -121,6 +121,53 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
   },
 ]
 
+/**
+ * THE TOOL MODES — the canvas-tool buttons (Wire / Lasso / Meter), edited the same one-list
+ * way as TOOLBAR_ACTIONS: reorder a line, rename `label`, restyle `icon` / `color`, delete to
+ * hide, or copy a line with a fresh `tool` to add one. Clicking a button turns that tool on;
+ * clicking it again returns to Select. Set `device` to draw a part symbol instead of a plain
+ * character (Wire shows the real wire symbol). Wire alone has an options sub-panel — WireOptions.
+ */
+export type ToolMode = {
+  /** The canvas tool this turns on (clicking the button again returns to Select). */
+  tool: Exclude<Tool, 'select'>
+  label: string
+  /** The button glyph — any character or emoji. */
+  icon: string
+  /** Draw a part symbol (a DeviceGlyph definition) instead of `icon` — Wire uses the wire symbol. */
+  device?: string
+  /** Glyph colour (CSS) for the `icon` character. */
+  color?: string
+  title: string
+}
+
+export const TOOL_MODES: ToolMode[] = [
+  {
+    tool: 'wire',
+    label: 'Wire',
+    icon: '╱',
+    device: 'wire',
+    title:
+      'Wire tool — works like a CAD line tool: click anywhere to start (a terminal dot, or open space — a junction dot is made there), click to drop corners, then click a terminal dot to finish, or double-click in space to end there. No holding (drag between dots also works). Esc or re-clicking the start abandons the wire.',
+  },
+  {
+    tool: 'lasso',
+    label: 'Lasso',
+    icon: '⟁',
+    color: '#c08ae0',
+    title:
+      "Lasso — freeform selection: draw any shape around parts and everything whose middle is inside gets selected together (move, Group, copy, or cut them as one). Left-drag on empty canvas box-selects without this tool; the lasso is for shapes a box can't make.",
+  },
+  {
+    tool: 'meter',
+    label: 'Meter',
+    icon: 'Ⓥ',
+    color: '#e0594f',
+    title:
+      "Meter — touch terminal dots like multimeter probes: red then black reads between them (DC volts, AC volts rms, ohms, diode test, or capacitance — set by the dial on the readout); both probes on one part reads its current; touch a wire to clamp onto it and read its amps the clamp-meter way (senses the wire's magnetic field — nothing inserted, zero burden voltage, circuit untouched); HOLD freezes a reading to compare",
+  },
+]
+
 export function ToolbarItems({
   tool,
   onTool,
@@ -176,9 +223,6 @@ export function ToolbarItems({
   flow: boolean
   onFlow: (flow: boolean) => void
 }) {
-  const wireActive = tool === 'wire'
-  const meterActive = tool === 'meter'
-  const lassoActive = tool === 'lasso'
   // Each toolbar action id (from TOOLBAR_ACTIONS) wired to its handler. Add a button →
   // add an entry here and in TOOLBAR_ACTIONS; rewire one → change it here.
   const actionHandlers: Record<ToolbarActionId, () => void> = {
@@ -192,131 +236,40 @@ export function ToolbarItems({
   }
   return (
     <>
-      <button
-        type="button"
-        onClick={() => onTool(wireActive ? 'select' : 'wire')}
-        title="Wire tool — works like a CAD line tool: click anywhere to start (a terminal dot, or open space — a junction dot is made there), click to drop corners, then click a terminal dot to finish, or double-click in space to end there. No holding (drag between dots also works). Esc or re-clicking the start abandons the wire."
-        style={toolButton(wireActive)}
-      >
-        <DeviceGlyph definition="wire" />
-        <span style={{ fontSize: 11 }}>Wire</span>
-      </button>
-      {wireActive ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <button
-            type="button"
-            onClick={() => onWireStyle('line')}
-            title="Straight segments with sharp corners. Honest physics: at DC a corner itself doesn't change a wire's resistance — the route's LENGTH sets R = ρL/A, and the length follows exactly what you draw."
-            style={{
-              ...toolButton(wireStyle === 'line'),
-              flexDirection: 'row',
-              gap: 6,
-              padding: '4px 10px',
-            }}
-          >
-            <span aria-hidden style={{ fontSize: 12 }}>
-              ⌐
-            </span>
-            <span style={{ fontSize: 11 }}>Line</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onWireStyle('curve')}
-            title="The same route with rounded corners (fillets). Slightly shorter than sharp corners — it cuts the corner — so slightly less resistance, measured for real. Sharp-corner effects BEYOND length (radio-frequency reflections, high-voltage field crowding at points) are real but live at future solver stages; they are documented, not faked."
-            style={{
-              ...toolButton(wireStyle === 'curve'),
-              flexDirection: 'row',
-              gap: 6,
-              padding: '4px 10px',
-            }}
-          >
-            <span aria-hidden style={{ fontSize: 12 }}>
-              ◠
-            </span>
-            <span style={{ fontSize: 11 }}>Curve</span>
-          </button>
-          {wireStyle === 'curve' ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 6 }}>
-              {CURVE_SIZES.map((size) => (
-                <button
-                  key={size.label}
-                  type="button"
-                  onClick={() => onCurveRadius(size.radiusPx)}
-                  title={`${size.hint} — the wire starts bending ${size.radiusPx} mm before each corner (clamped on short hops). A bigger sweep cuts more of the corner, so the wire is really shorter: less resistance, measured for real. Applies to wires drawn from now on; every wire keeps its own size.`}
-                  style={{
-                    ...toolButton(curveRadius === size.radiusPx),
-                    flexDirection: 'row',
-                    gap: 6,
-                    padding: '3px 8px',
-                  }}
-                >
-                  {/* biome-ignore lint/a11y/noSvgWithoutTitle: decorative curve-size icon; the button's title carries the text */}
-                  <svg aria-hidden width={22} height={14} viewBox="0 0 22 14">
-                    <path
-                      d={`M 1 13 L ${11 - size.radiusPx / 7} 13 Q 11 13 11 ${13 - size.radiusPx / 7} L 11 1`}
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={1.5}
-                    />
-                  </svg>
-                  <span style={{ fontSize: 10 }}>{size.label}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, paddingTop: 2 }}>
-            <span
-              style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5, color: '#778' }}
+      {TOOL_MODES.map((mode) => {
+        const active = tool === mode.tool
+        return (
+          <Fragment key={mode.tool}>
+            <button
+              type="button"
+              onClick={() => onTool(active ? 'select' : mode.tool)}
+              title={mode.title}
+              style={{ ...toolButton(active), flexDirection: 'row', gap: 6, padding: '8px 10px' }}
             >
-              Gauge
-            </span>
-            <select
-              className="nodrag"
-              value={wireGauge}
-              onChange={(event) => onWireGauge(Number(event.target.value))}
-              title="The AWG gauge new wires are drawn at -- thinner wire is more resistance and heat. Each wire keeps its own gauge; change one later by selecting it."
-              style={{
-                background: '#1a1a1e',
-                border: '1px solid #3a3a3f',
-                color: '#cdd6e0',
-                borderRadius: 3,
-                fontSize: 10,
-                padding: '2px 3px',
-              }}
-            >
-              {WIRE_GAUGES.map((g) => (
-                <option key={g.awg} value={g.awg}>
-                  {g.awg} AWG
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      ) : null}
-
-      <button
-        type="button"
-        onClick={() => onTool(lassoActive ? 'select' : 'lasso')}
-        title="Lasso — freeform selection: draw any shape around parts and everything whose middle is inside gets selected together (move, Group, copy, or cut them as one). Left-drag on empty canvas box-selects without this tool; the lasso is for shapes a box can't make."
-        style={{ ...toolButton(lassoActive), flexDirection: 'row', gap: 6, padding: '8px 10px' }}
-      >
-        <span aria-hidden style={{ color: '#c08ae0', fontSize: 13 }}>
-          ⟁
-        </span>
-        <span style={{ fontSize: 11 }}>Lasso</span>
-      </button>
-
-      <button
-        type="button"
-        onClick={() => onTool(meterActive ? 'select' : 'meter')}
-        title="Meter — touch terminal dots like multimeter probes: red then black reads between them (DC volts, AC volts rms, ohms, diode test, or capacitance — set by the dial on the readout); both probes on one part reads its current; touch a wire to clamp onto it and read its amps the clamp-meter way (senses the wire's magnetic field — nothing inserted, zero burden voltage, circuit untouched); HOLD freezes a reading to compare"
-        style={{ ...toolButton(meterActive), flexDirection: 'row', gap: 6, padding: '8px 10px' }}
-      >
-        <span aria-hidden style={{ color: '#e0594f', fontSize: 13 }}>
-          Ⓥ
-        </span>
-        <span style={{ fontSize: 11 }}>Meter</span>
-      </button>
+              {mode.device ? (
+                <DeviceGlyph definition={mode.device} />
+              ) : (
+                <span aria-hidden style={{ color: mode.color, fontSize: 13 }}>
+                  {mode.icon}
+                </span>
+              )}
+              <span style={{ fontSize: 11 }}>{mode.label}</span>
+            </button>
+            {/* Wire is the one tool with its own options (style + gauge), shown right under it while
+                it is on — the per-tool extra, like Group/Clipboard's extras in TOOLBAR_ACTIONS. */}
+            {mode.tool === 'wire' && active ? (
+              <WireOptions
+                wireStyle={wireStyle}
+                onWireStyle={onWireStyle}
+                curveRadius={curveRadius}
+                onCurveRadius={onCurveRadius}
+                wireGauge={wireGauge}
+                onWireGauge={onWireGauge}
+              />
+            ) : null}
+          </Fragment>
+        )
+      })}
 
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
         <button
@@ -579,6 +532,120 @@ function LensTool({
           </button>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+/**
+ * Wire's options sub-panel (line vs curve, the curve radius, and the gauge new wires draw at).
+ * Only the Wire tool has its own options, so it lives in its own component to keep the
+ * tool-mode list (TOOL_MODES) shallow — the toolbar renders it right under the Wire button.
+ */
+function WireOptions({
+  wireStyle,
+  onWireStyle,
+  curveRadius,
+  onCurveRadius,
+  wireGauge,
+  onWireGauge,
+}: {
+  wireStyle: WireStyle
+  onWireStyle: (style: WireStyle) => void
+  curveRadius: number
+  onCurveRadius: (radiusPx: number) => void
+  wireGauge: number
+  onWireGauge: (gaugeAwg: number) => void
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <button
+        type="button"
+        onClick={() => onWireStyle('line')}
+        title="Straight segments with sharp corners. Honest physics: at DC a corner itself doesn't change a wire's resistance — the route's LENGTH sets R = ρL/A, and the length follows exactly what you draw."
+        style={{
+          ...toolButton(wireStyle === 'line'),
+          flexDirection: 'row',
+          gap: 6,
+          padding: '4px 10px',
+        }}
+      >
+        <span aria-hidden style={{ fontSize: 12 }}>
+          ⌐
+        </span>
+        <span style={{ fontSize: 11 }}>Line</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => onWireStyle('curve')}
+        title="The same route with rounded corners (fillets). Slightly shorter than sharp corners — it cuts the corner — so slightly less resistance, measured for real. Sharp-corner effects BEYOND length (radio-frequency reflections, high-voltage field crowding at points) are real but live at future solver stages; they are documented, not faked."
+        style={{
+          ...toolButton(wireStyle === 'curve'),
+          flexDirection: 'row',
+          gap: 6,
+          padding: '4px 10px',
+        }}
+      >
+        <span aria-hidden style={{ fontSize: 12 }}>
+          ◠
+        </span>
+        <span style={{ fontSize: 11 }}>Curve</span>
+      </button>
+      {wireStyle === 'curve' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 6 }}>
+          {CURVE_SIZES.map((size) => (
+            <button
+              key={size.label}
+              type="button"
+              onClick={() => onCurveRadius(size.radiusPx)}
+              title={`${size.hint} — the wire starts bending ${size.radiusPx} mm before each corner (clamped on short hops). A bigger sweep cuts more of the corner, so the wire is really shorter: less resistance, measured for real. Applies to wires drawn from now on; every wire keeps its own size.`}
+              style={{
+                ...toolButton(curveRadius === size.radiusPx),
+                flexDirection: 'row',
+                gap: 6,
+                padding: '3px 8px',
+              }}
+            >
+              {/* biome-ignore lint/a11y/noSvgWithoutTitle: decorative curve-size icon; the button's title carries the text */}
+              <svg aria-hidden width={22} height={14} viewBox="0 0 22 14">
+                <path
+                  d={`M 1 13 L ${11 - size.radiusPx / 7} 13 Q 11 13 11 ${13 - size.radiusPx / 7} L 11 1`}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.5}
+                />
+              </svg>
+              <span style={{ fontSize: 10 }}>{size.label}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, paddingTop: 2 }}>
+        <span
+          style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5, color: '#778' }}
+        >
+          Gauge
+        </span>
+        <select
+          className="nodrag"
+          value={wireGauge}
+          onChange={(event) => onWireGauge(Number(event.target.value))}
+          title="The AWG gauge new wires are drawn at -- thinner wire is more resistance and heat. Each wire keeps its own gauge; change one later by selecting it."
+          style={{
+            background: '#1a1a1e',
+            border: '1px solid #3a3a3f',
+            color: '#cdd6e0',
+            borderRadius: 3,
+            fontSize: 10,
+            padding: '2px 3px',
+          }}
+        >
+          {WIRE_GAUGES.map((g) => (
+            <option key={g.awg} value={g.awg}>
+              {g.awg} AWG
+            </option>
+          ))}
+        </select>
+      </div>
     </div>
   )
 }
