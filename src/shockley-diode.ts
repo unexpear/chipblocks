@@ -69,9 +69,10 @@ export function scrTarget(
  * latch), and the carbon arc lamp (strikes at its ignition/breakover voltage, holds until the current
  * falls below the holding current — the same shockleyDiodeTarget logic). All store the latch as
  * device_state and flip it off the solved circuit; how a CONDUCTING one stamps differs by device (a
- * Shockley/SCR conducts as a forward diode, the arc as a fixed burning-voltage drop).
+ * Shockley/SCR conducts as a forward diode, the arc and neon/gas-discharge lamps as a fixed
+ * discharge-voltage drop).
  */
-const LATCHING_THYRISTORS = new Set(['diode_shockley', 'scr', 'arc_lamp'])
+const LATCHING_THYRISTORS = new Set(['diode_shockley', 'scr', 'arc_lamp', 'neon_lamp'])
 
 /** Each Shockley diode's current state from the world (blocking = off, at rest). */
 export function shockleyStatesOf(world: World): Map<string, ShockleyDiodeState> {

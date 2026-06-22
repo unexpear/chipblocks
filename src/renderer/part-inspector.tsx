@@ -512,6 +512,15 @@ export function PartInspector({
           {reading.efficiencyPercent !== undefined
             ? readingRow('Efficiency', `${reading.efficiencyPercent.toFixed(0)}%`, null)
             : null}
+          {reading.slipPercent !== undefined
+            ? readingRow('Slip', `${reading.slipPercent.toFixed(1)}%`, null)
+            : null}
+          {reading.startupCurrentA !== undefined
+            ? readingRow('Startup current', formatEng(reading.startupCurrentA, 'A'), null)
+            : null}
+          {reading.powerFactor !== undefined
+            ? readingRow('Power factor', reading.powerFactor.toFixed(2), null)
+            : null}
           {reading.luminousFluxLm !== undefined
             ? readingRow('Light output', formatEng(reading.luminousFluxLm, 'lm'), null)
             : null}

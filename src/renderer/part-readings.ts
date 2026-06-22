@@ -5,6 +5,10 @@ import {
   magnetomotiveForceAmpereTurns,
   solenoidFluxDensityTesla,
 } from '../electromagnet-model.ts'
+import {
+  inductionMotorOperatingPoint,
+  inductionMotorParamsFromInstance,
+} from '../induction-motor-model.ts'
 import { readEnumParam, readScalarParam } from '../instance-params.ts'
 import { laserOpticalPowerW } from '../laser-model.ts'
 import { arcLuminousFluxLumens } from '../light.ts'
@@ -49,6 +53,9 @@ export type PartReading = {
   backEmfV?: number
   generatedEmfV?: number
   luminousFluxLm?: number
+  slipPercent?: number
+  startupCurrentA?: number
+  powerFactor?: number
   mechanicalPowerW?: number
   efficiencyPercent?: number
   temperatureC?: number
@@ -190,13 +197,34 @@ export function partReadings(
       }
     }
 
-    // Arc lamp: once struck (the latch is conducting) it burns at its arc voltage; report the light
-    // it makes from that electrical power. Extinguished → no light (it is an open circuit).
-    if (inst.definition === 'arc_lamp' && readEnumParam(inst, 'device_state') === 'conducting') {
+    // Arc / neon discharge lamp: once struck (the latch is conducting) it burns at its discharge
+    // (arc / maintaining) voltage; report the light = efficacy × power. Extinguished → no light.
+    if (
+      (inst.definition === 'arc_lamp' || inst.definition === 'neon_lamp') &&
+      readEnumParam(inst, 'device_state') === 'conducting'
+    ) {
       const current = Math.abs(solution.branches.get(inst.id) ?? 0)
-      const arcVoltage = readScalarParam(inst, 'arc_voltage') ?? 0
+      const dischargeVoltage =
+        readScalarParam(inst, 'arc_voltage') ?? readScalarParam(inst, 'maintaining_voltage') ?? 0
       const efficacy = readScalarParam(inst, 'luminous_efficacy') ?? 0
-      reading.luminousFluxLm = arcLuminousFluxLumens(arcVoltage * current, efficacy)
+      reading.luminousFluxLm = arcLuminousFluxLumens(dischargeVoltage * current, efficacy)
+    }
+
+    // Induction motor: its per-phase steady-state operating point — slip, speed, torque, running +
+    // locked-rotor current, power, efficiency, power factor — computed at its nameplate supply.
+    if (inst.definition === 'induction_motor') {
+      const imParams = inductionMotorParamsFromInstance(inst)
+      if (imParams !== undefined) {
+        const op = inductionMotorOperatingPoint(imParams)
+        reading.current = op.statorCurrentRms
+        reading.speedRpm = op.rotorRpm
+        reading.torqueNm = op.torque
+        reading.mechanicalPowerW = op.mechanicalPowerW
+        reading.efficiencyPercent = op.efficiency * 100
+        reading.slipPercent = op.slip * 100
+        reading.startupCurrentA = op.startupCurrentRms
+        reading.powerFactor = op.powerFactor
+      }
     }
 
     if (reading.current !== undefined || reading.voltage !== undefined) {

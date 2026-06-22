@@ -313,6 +313,7 @@ const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'diode_shockley',
   'scr',
   'arc_lamp',
+  'neon_lamp',
   'diode_zener_silicon',
   // Vacuum tubes (thermionic).
   'vacuum_diode',
@@ -334,6 +335,7 @@ const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'electromagnet',
   'dc_motor',
   'generator',
+  'induction_motor',
   'transmission_line',
   'resistor',
   'thermistor',
@@ -545,8 +547,8 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         if (led !== null) shockleyLeds.push(led)
         else linearVoltageSources.push({ inst, kind: 'led' })
       }
-    } else if (inst.definition === 'arc_lamp') {
-      // A carbon arc — a latching discharge (struck/extinguished is the Shockley latch, settled in
+    } else if (inst.definition === 'arc_lamp' || inst.definition === 'neon_lamp') {
+      // A gas discharge (carbon arc / neon) — a latching discharge (struck/extinguished is the Shockley latch, settled in
       // solveWithRelays: it strikes at the breakover/ignition voltage, holds until the current drops
       // below the holding current). Once STRUCK it burns at a near-constant arc voltage (a fixed-drop
       // voltage source, kind 'arc'); EXTINGUISHED it is an open. The external ballast sets the current
@@ -642,6 +644,15 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
           warnings.push(
             `Skipped generator '${inst.id}' (missing k / R_a / drive speed or connects)`,
           )
+      } else if (inst.definition === 'induction_motor') {
+        // On DC an induction motor makes no torque — it is just its stator winding resistance R1.
+        // The AC operating point (slip, torque, running + locked-rotor current, efficiency, power
+        // factor) is the per-phase steady-state analysis surfaced in the readings + Math card.
+        const r1 = readScalarParam(inst, 'stator_resistance')
+        const aNet = inst.connects?.find((c) => c.terminal === 'terminal_a')?.net
+        const bNet = inst.connects?.find((c) => c.terminal === 'terminal_b')?.net
+        if (r1 !== undefined && r1 > 0 && aNet !== undefined && bNet !== undefined)
+          stampConductance(nodeIndex, M, aNet, bNet, r1)
       } else if (inst.definition === 'transmission_line') {
         // At DC a lossless line is a pass-through (v_near = v_far): a near-short between
         // each end's conductors. The transient solver carries the propagation delay + Z₀.
@@ -2257,7 +2268,7 @@ export function stampArc(
   // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
   b: any,
 ): boolean {
-  const V_arc = readScalarParam(inst, 'arc_voltage')
+  const V_arc = readScalarParam(inst, 'arc_voltage') ?? readScalarParam(inst, 'maintaining_voltage')
   if (V_arc === undefined) return false
   return findAndStampVoltageSource(inst, nodeIndex, auxIdx, V_arc, 'anode', 'cathode', M, b)
 }

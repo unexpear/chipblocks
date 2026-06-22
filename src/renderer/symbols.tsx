@@ -603,6 +603,42 @@ function GeneratorGlyph() {
   )
 }
 
+/** Three-phase induction (AC) motor — IEC: the machine circle with "M" over "3~" (3-phase AC),
+ *  distinguishing it from the DC motor's plain "M". A lead each side. */
+function InductionMotorGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>AC induction motor</title>
+      {lead(0, 24)}
+      <circle cx={40} cy={MID} r={16} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <text
+        x={40}
+        y={MID - 4}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={11}
+        fontWeight={700}
+        fill={STROKE}
+        fontFamily="system-ui, sans-serif"
+      >
+        M
+      </text>
+      <text
+        x={40}
+        y={MID + 7}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={8}
+        fill={STROKE}
+        fontFamily="system-ui, sans-serif"
+      >
+        3~
+      </text>
+      {lead(56, W)}
+    </svg>
+  )
+}
+
 /** Carbon arc lamp — two electrode rods facing across a small gap with the arc (a jagged spark)
  *  striking between them. A lead out each side (anode + / cathode −). */
 function ArcLampGlyph() {
@@ -618,6 +654,22 @@ function ArcLampGlyph() {
         stroke={STROKE}
         strokeWidth={1.2}
       />
+      {lead(54, W)}
+    </svg>
+  )
+}
+
+/** Neon / gas-discharge lamp — IEC: the gas-filled envelope (circle) with two electrodes and a
+ *  dot for the gas glow. A fluorescent tube is the same discharge plus a phosphor coating. */
+function NeonLampGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>neon lamp</title>
+      {lead(0, 26)}
+      <circle cx={40} cy={MID} r={14} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={35} y1={MID - 7} x2={35} y2={MID + 7} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={45} y1={MID - 7} x2={45} y2={MID + 7} stroke={STROKE} strokeWidth={1.5} />
+      <circle cx={40} cy={MID} r={2} fill={STROKE} stroke={STROKE} />
       {lead(54, W)}
     </svg>
   )
@@ -1357,9 +1409,11 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   electromagnet: ElectromagnetGlyph,
   dc_motor: MotorGlyph,
   generator: GeneratorGlyph,
+  induction_motor: InductionMotorGlyph,
   transmission_line: TransmissionLineGlyph,
   led: LedGlyph,
   arc_lamp: ArcLampGlyph,
+  neon_lamp: NeonLampGlyph,
   led_uv_algan: LedGlyph,
   incandescent_bulb: IncandescentBulbGlyph,
   diode_laser: LaserDiodeGlyph,
@@ -1438,7 +1492,9 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   electromagnet: TWO('terminal_a', 'terminal_b'),
   dc_motor: TWO('terminal_positive', 'terminal_negative'),
   generator: TWO('terminal_positive', 'terminal_negative'),
+  induction_motor: TWO('terminal_a', 'terminal_b'),
   arc_lamp: TWO('anode', 'cathode'),
+  neon_lamp: TWO('anode', 'cathode'),
   // A transmission line: the near pair on the left, the far pair on the right.
   transmission_line: [
     { id: 'near_a', position: Position.Left, offset: 14 },

@@ -87,6 +87,36 @@ const DEFAULTS: Record<string, Parameters> = {
     current_rating: scalar(0.25, 'ampere'),
     winding: { value: 'copper' },
   },
+  induction_motor: {
+    // A ~4 kW 4-pole 3-phase induction motor on a 400 V line (230 V per phase), 50 Hz. Per-phase
+    // equivalent circuit, representative values: R1 2 Ω, X1 4 Ω, R2 2 Ω, X2 4 Ω, Xm 80 Ω. At ~20 N·m
+    // load it runs near 1420 RPM (~5% slip) at ~0.85 power factor; the locked-rotor (start) current
+    // is several times the running current.
+    supply_voltage: scalar(230, 'volt'),
+    line_frequency: scalar(50, 'hertz'),
+    pole_count: scalar(4, 'dimensionless'),
+    stator_resistance: scalar(2, 'ohm'),
+    stator_reactance: scalar(4, 'ohm'),
+    rotor_resistance: scalar(2, 'ohm'),
+    rotor_reactance: scalar(4, 'ohm'),
+    magnetizing_reactance: scalar(80, 'ohm'),
+    load_torque: scalar(20, 'N*m'),
+    viscous_friction: scalar(0.002, 'N*m*s/rad'),
+    winding: { value: 'copper' },
+  },
+  neon_lamp: {
+    // A neon indicator (NE-2 class). It STRIKES at ~90 V, then glows at a ~65 V maintaining voltage,
+    // holding until the current drops below ~0.1 mA. Run it from a higher supply through a large
+    // BALLAST (~100 kΩ–1 MΩ) that sets the ~0.5 mA glow current. A dim orange indicator (~0.5 lm/W);
+    // a fluorescent tube is the same discharge + a phosphor, far more efficient (~60 lm/W). Starts dark.
+    maintaining_voltage: scalar(65, 'volt'),
+    breakover_voltage: scalar(90, 'volt'),
+    holding_current: scalar(0.0001, 'ampere'),
+    max_current: scalar(0.005, 'ampere'),
+    luminous_efficacy: scalar(0.5, 'lm/W'),
+    device_state: { value: 'blocking' },
+    electrodes: { value: 'copper' },
+  },
   arc_lamp: {
     // A small carbon arc lamp. It STRIKES once ~60 V appears across the gap, then burns at a
     // near-constant ~50 V (Ayrton), holding until the current drops below ~0.5 A. Run it from a
@@ -631,6 +661,25 @@ const PROVENANCE: Record<string, Record<string, string>> = {
       'soft iron saturates ~1.5–2 T (≈2.1 T pure iron); 2.0 T representative',
     winding_resistance: '≈40 Ω fine-copper coil (relay / small-solenoid class)',
     current_rating: '~0.25 A through fine magnet wire',
+  },
+  induction_motor: {
+    supply_voltage: 'per-phase RMS line voltage (230 V phase of a 400 V 3-phase line)',
+    line_frequency: '50 Hz mains (60 Hz elsewhere)',
+    pole_count: '4-pole → 1500 RPM synchronous at 50 Hz (120·f/poles)',
+    stator_resistance: 'representative per-phase R1 (~2 Ω) for a ~4 kW machine',
+    stator_reactance: 'representative stator leakage X1 (~4 Ω at 50 Hz)',
+    rotor_resistance: 'referred rotor R2 (~2 Ω) — sets the slip and starting torque',
+    rotor_reactance: 'referred rotor leakage X2 (~4 Ω)',
+    magnetizing_reactance: 'magnetizing branch Xm (~80 Ω), the no-load magnetizing current',
+    load_torque: 'shaft load (~20 N·m) for a ~4 kW class machine near rated slip',
+    viscous_friction: 'windage + bearing loss',
+  },
+  neon_lamp: {
+    maintaining_voltage: 'neon glow-discharge sustaining voltage ~60-65 V (NE-2)',
+    breakover_voltage: 'neon striking / ignition voltage ~90 V (NE-2)',
+    holding_current: '~0.1 mA minimum to sustain the glow',
+    max_current: '~few mA before the electrodes sputter (NE-2)',
+    luminous_efficacy: 'neon indicator is dim (~0.5 lm/W); a fluorescent tube reaches ~60 lm/W',
   },
   arc_lamp: {
     arc_voltage: 'carbon arc burns at ~40-55 V (Ayrton); 50 V representative',
@@ -1206,6 +1255,18 @@ export function primaryValue(
     // Headline the burning arc voltage — what it holds once struck.
     const v = amountOf(parameters, 'arc_voltage')
     return v === undefined ? null : `${formatEng(v, 'V')} arc`
+  }
+  if (definition === 'neon_lamp') {
+    // Headline the striking voltage — what it takes to light the discharge.
+    const v = amountOf(parameters, 'breakover_voltage')
+    return v === undefined ? null : `${formatEng(v, 'V')} strike`
+  }
+  if (definition === 'induction_motor') {
+    // Headline the synchronous speed (120·f/poles) — the field's rotation the rotor chases.
+    const f = amountOf(parameters, 'line_frequency')
+    const poles = amountOf(parameters, 'pole_count')
+    if (f === undefined || poles === undefined || poles <= 0) return null
+    return `${Math.round((120 * f) / poles)} RPM`
   }
   if (definition === 'transmission_line') {
     // Headline Z₀ and the end-to-end wave delay — the two numbers that define the line.

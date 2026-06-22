@@ -13,6 +13,10 @@ import {
   solenoidFluxDensityTesla,
 } from '../electromagnet-model.ts'
 import { electronDriftVelocityMS } from '../field-energy.ts'
+import {
+  inductionMotorOperatingPoint,
+  inductionMotorParamsFromInstance,
+} from '../induction-motor-model.ts'
 import { readEnumParam, readScalarParam } from '../instance-params.ts'
 import {
   arcLuminousFluxLumens,
@@ -854,6 +858,49 @@ function partCard(
       )
     }
     return { id: inst.id, title: 'Arc lamp — strike it, then it needs a ballast', lines }
+  }
+  if (def === 'neon_lamp') {
+    const struck = readEnumParam(inst, 'device_state') === 'conducting'
+    const strike = readScalarParam(inst, 'breakover_voltage')
+    const maintain = readScalarParam(inst, 'maintaining_voltage')
+    const efficacy = readScalarParam(inst, 'luminous_efficacy')
+    lines.push(
+      'A neon lamp is a gas discharge: the cold gas is an insulator, so it must STRIKE — at the striking voltage it ionizes into a glowing plasma, then holds at a lower maintaining voltage until the current drops too low. That strike-above-maintain gap is a hysteresis: with a resistor + capacitor it becomes a relaxation oscillator (charge up to the strike voltage, flash, fall to the maintaining voltage, repeat). Like the arc, the discharge cannot limit its own current — it needs a series ballast. A fluorescent tube is the same glow discharge in mercury vapour, whose ultraviolet light excites a phosphor coating to make efficient white light.',
+    )
+    const anode = netOfTerminal(inst, 'anode')
+    const cathode = netOfTerminal(inst, 'cathode')
+    if (struck && maintain !== undefined && anode !== undefined && cathode !== undefined) {
+      const current = Math.abs(solution.branches.get(inst.id) ?? 0)
+      const power = maintain * current
+      lines.push(
+        `Struck: it glows at ${fmtV(maintain)}, drawing ${fmtA(current)} (the ballast sets this) — ${formatEng(power, 'W')}${efficacy !== undefined ? `, about ${formatEng(arcLuminousFluxLumens(power, efficacy), 'lm')} of light` : ''}.`,
+      )
+    } else if (strike !== undefined) {
+      lines.push(
+        `Dark — it stays an open circuit until at least ${fmtV(strike)} appears across it to strike the discharge.`,
+      )
+    }
+    return { id: inst.id, title: 'Neon lamp — strike, glow, and the relaxation oscillator', lines }
+  }
+  if (def === 'induction_motor') {
+    const imParams = inductionMotorParamsFromInstance(inst)
+    lines.push(
+      'An induction motor has no electrical connection to its rotor. The 3-phase stator winding makes a magnetic field that ROTATES at the synchronous speed; the rotor is dragged along but always lags by the slip s — and that lag is exactly what induces the rotor currents that make the torque. At synchronous speed there is no lag, no induced current and no torque, so it must run a little slow, and slips more the harder it is loaded.',
+    )
+    if (imParams !== undefined) {
+      const op = inductionMotorOperatingPoint(imParams)
+      lines.push(
+        `Synchronous speed = 120·f/poles = ${op.synchronousRpm.toFixed(0)} RPM. Under its load it settles at ${(op.slip * 100).toFixed(1)}% slip → ${op.rotorRpm.toFixed(0)} RPM, developing ${formatEng(op.torque, 'N·m')} of torque.`,
+      )
+      lines.push(
+        `It draws ${fmtA(op.statorCurrentRms)} running at ${op.powerFactor.toFixed(2)} power factor, but ${fmtA(op.startupCurrentRms)} at standstill (the locked-rotor inrush, ~${(op.startupCurrentRms / Math.max(op.statorCurrentRms, 1e-9)).toFixed(1)}× the running current). ${formatEng(op.mechanicalPowerW, 'W')} of mechanical output, ${(op.efficiency * 100).toFixed(0)}% efficient.${op.stalled ? ' (The load exceeds the breakdown torque — it would stall.)' : ''}`,
+      )
+    }
+    return {
+      id: inst.id,
+      title: 'Induction motor — a rotating field drags the rotor (slip)',
+      lines,
+    }
   }
   if (def === 'transistor_bjt_npn' || def === 'transistor_bjt_pnp') {
     const beta = readScalarParam(inst, 'forward_current_gain')

@@ -1,0 +1,134 @@
+# Valid fixture: three-phase induction (asynchronous) motor — Nikola Tesla's rotating-field
+# machine (his 1888 polyphase patents), the workhorse that turned AC power into the world's
+# mechanical work. Most of the electricity used to do work passes through one of these.
+#
+# It has NO electrical connection to its rotor. A polyphase stator winding makes a magnetic field
+# that ROTATES at the synchronous speed n_s = 120*f/poles; the rotor (a shorted "squirrel cage") is
+# dragged along but always LAGS by the slip s = (n_s - n)/n_s. That lag is the whole point: it is
+# the relative motion that induces the rotor currents (Faraday) which, in the rotating field, make
+# the torque (Lorentz). At exactly synchronous speed there is no lag, no induced current and no
+# torque, so it must run a little slow, and slips more the harder it is loaded.
+#
+# Modeled by its per-phase equivalent circuit (Steinmetz), referred to the stator: the supply drives
+# R1 + jX1, then the parallel of the magnetizing jXm and the rotor branch R2/s + jX2. The R2/s term
+# carries the speed dependence — at standstill (s=1) the rotor branch is low-impedance, so the motor
+# gulps a big LOCKED-ROTOR (starting) current (typically 5-7x running) that tapers as it comes up to
+# speed. The torque T = 3*I2^2*(R2/s)/omega_s rises with slip to a breakdown (pull-out) torque, then
+# falls. The solver finds the operating slip where the developed torque meets the load
+# (induction-motor-model.ts) and reports the speed, torque, running + starting current, mechanical
+# power, efficiency and power factor.
+#
+# Honest scope: the steady-state per-phase analysis at the nameplate supply voltage + line frequency
+# (the way induction motors ARE analyzed). It is NOT yet a live load in the instantaneous
+# DC/transient solve (a time-domain dq / rotating-field model is the substantial next rung); in the
+# DC solve it appears only as its stator winding resistance R1 (on DC it makes no torque — it just
+# heats). A balanced THREE-phase machine is assumed; the single canvas AC source stands in for the
+# per-phase line voltage. A true 3-phase supply and the single-phase double-revolving-field machine
+# are refinements.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: induction_motor
+origin: builtin
+layer: primitive_device
+name: "AC induction motor (3-phase)"
+description: "A three-phase induction motor (Tesla, 1888). A polyphase stator winding makes a magnetic field that rotates at the synchronous speed, dragging a shorted squirrel-cage rotor that always lags by the slip — the lag is what induces the rotor currents that make the torque. Modeled by its per-phase equivalent circuit (Steinmetz): the solver finds the operating slip where the developed torque meets the load and reports the speed, torque, running and locked-rotor (starting) current, mechanical power, efficiency and power factor. Analyzed at its nameplate supply voltage and line frequency."
+composition:
+  requires:
+    winding:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  winding:
+    type: material_ref
+    satisfies_role: winding
+    required: true
+    default:
+      value: copper
+    description: The conductor the stator is wound from. Must conduct; copper is the standard.
+  supply_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: The per-phase RMS supply voltage. The motor is analyzed at this nameplate voltage. For a 400 V three-phase line the per-phase value is 230 V.
+  line_frequency:
+    type: quantity
+    units: hertz
+    required: true
+    description: The supply frequency. With the pole count it sets the synchronous speed n_s = 120*f/poles (1500 RPM for a 4-pole 50 Hz machine).
+  pole_count:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: The number of stator poles (even). Fewer poles spin faster; a 4-pole motor is synchronous at 1500 RPM on 50 Hz.
+  stator_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: R1, the per-phase stator winding resistance. Sets part of the copper loss, and the DC-solve resistance (on DC the motor is just this winding).
+  stator_reactance:
+    type: quantity
+    units: ohm
+    required: true
+    description: X1, the per-phase stator leakage reactance at the line frequency.
+  rotor_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: R2, the rotor resistance referred to the stator. It sets the slip and the starting torque — a higher R2 gives more starting torque but more running slip.
+  rotor_reactance:
+    type: quantity
+    units: ohm
+    required: true
+    description: X2, the rotor leakage reactance referred to the stator.
+  magnetizing_reactance:
+    type: quantity
+    units: ohm
+    required: true
+    description: Xm, the magnetizing reactance — the shunt branch that sets up the air-gap field and draws the no-load magnetizing current.
+  load_torque:
+    type: quantity
+    units: newton*meter
+    required: false
+    description: The shaft load torque opposing rotation. The motor settles at the slip where its developed torque equals this; beyond the breakdown torque it stalls.
+  viscous_friction:
+    type: quantity
+    units: newton*meter*second/radian
+    required: false
+    description: B, the windage + bearing loss. A small drag the developed torque must also overcome, lowering the efficiency a little.
+behaviors:
+  - electromechanical_coupling
+  - produces_magnetic_field
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  terminal_a:
+    description: One line terminal. Non-polar (AC). The single canvas AC source across the two terminals stands in for the per-phase line voltage of a balanced three-phase set.
+  terminal_b:
+    description: The other line terminal.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Modeled by its per-phase equivalent circuit (Steinmetz), referred to the stator (V1 across
+  R1 + jX1, then jXm in parallel with R2/s + jX2 — induction-motor-model.ts). The solver computes
+  the Thevenin equivalent seen by the rotor branch, then finds the operating slip where the
+  developed torque T = 3*V_th^2*(R2/s) / (omega_s*((R_th + R2/s)^2 + (X_th + X2)^2)) equals the load
+  + friction, on the stable branch below the breakdown slip; from it the speed, running stator
+  current, power factor, locked-rotor (starting) current at s=1, mechanical power, efficiency and
+  slip are read. Synchronous speed omega_s = 4*pi*f/poles. Honest scope: a steady-state per-phase
+  analysis at the nameplate supply (the standard method); NOT yet a live load in the instantaneous
+  DC/transient solve (a time-domain dq / rotating-field model is the substantial next rung), so in
+  the DC solve it appears only as its stator resistance R1 (no torque on DC). A balanced three-phase
+  machine is assumed (the single canvas AC source = the per-phase line voltage); a true 3-phase
+  supply and the single-phase double-revolving-field machine are refinements. Sources: Tesla's 1888
+  polyphase patents; the Steinmetz equivalent circuit; Fitzgerald, "Electric Machinery"; Chapman,
+  "Electric Machinery Fundamentals".
