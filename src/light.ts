@@ -91,6 +91,15 @@ export function lightSensorCurrent(inst: Instance): number {
   return photocurrent
 }
 
+/**
+ * The luminous flux (lumens) a driven emitter radiates from its electrical power, at a luminous
+ * efficacy (lm/W): Φ = efficacy · P. The carbon arc is a fierce but inefficient emitter
+ * (~10-20 lm/W), so a few-hundred-watt arc still makes thousands of lumens — searchlight territory.
+ */
+export function arcLuminousFluxLumens(arcPowerW: number, luminousEfficacyLmPerW: number): number {
+  return Math.max(0, arcPowerW) * Math.max(0, luminousEfficacyLmPerW)
+}
+
 /** A point light source placed on the canvas: a position (px) and a luminous
  *  intensity (candela). */
 export interface LightSource {

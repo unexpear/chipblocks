@@ -1,0 +1,119 @@
+# Valid fixture: carbon arc lamp — the FIRST practical electric light. Humphry Davy showed the
+# arc in 1802; the Yablochkov "candle" (1876) and Charles Brush's arc-lighting systems (1879) lit
+# streets and squares a decade before the incandescent bulb was practical. Two carbon electrodes
+# are touched together to draw current, then pulled slightly apart — the gap ionizes into a
+# brilliant, fierce plasma arc.
+#
+# Electrically a gas discharge with two distinctive traits the model captures:
+#   1. it must STRIKE — the cold gap is an insulator, so nothing flows until the voltage reaches
+#      the ignition (breakover) voltage, when it breaks down into a conducting plasma; and
+#   2. once lit it burns at a low, near-constant ARC VOLTAGE and LATCHES on, staying lit until the
+#      current falls below a holding current. Because the burning voltage barely changes with
+#      current (and in truth FALLS as current rises — Ayrton's negative-resistance characteristic),
+#      the arc cannot limit its own current, so it needs a series BALLAST or the current runs away.
+#
+# The strike + hold are the same bistable latch as the Shockley diode / SCR (device_state, settled
+# in solveWithRelays — strike at breakover_voltage, hold until holding_current). Once struck it is
+# stamped as a fixed arc_voltage drop (dc-solver.ts stampArc), the external ballast setting the
+# current; extinguished it is an open. The light it makes is luminous_efficacy times the arc power
+# (light.ts arcLuminousFluxLumens), from a crater near carbon's sublimation temperature.
+#
+# Honest scope: a constant burning voltage (the Ayrton current-dependent fall V = V_min + b/I, the
+# real negative resistance, is the documented next rung); the strike is abstracted as a voltage
+# threshold (real arcs strike by touching + separating the carbons, or a higher gap breakdown); DC
+# only (an AC arc re-strikes each half-cycle); electrode consumption (the carbons burn down) and
+# casting light onto the photo-sensors are refinements. The carbon electrodes are a tungsten catalog
+# stand-in (no carbon material yet); the arc physics comes from the parameters, not the electrodes.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: arc_lamp
+origin: builtin
+layer: primitive_device
+name: "Carbon arc lamp"
+description: "The first practical electric light (Davy 1802; Yablochkov 1876; Brush 1879). Two carbon electrodes draw a brilliant plasma arc. It must STRIKE (the cold gap blocks until the ignition voltage), then burns at a low near-constant arc voltage and LATCHES on until the current drops below its holding current. The arc cannot limit its own current, so it needs a series ballast. Modeled as the Shockley strike/hold latch plus a fixed arc-voltage drop once struck; the light is the luminous efficacy times the arc power."
+composition:
+  requires:
+    electrodes:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  electrodes:
+    type: material_ref
+    satisfies_role: electrodes
+    required: true
+    default:
+      value: tungsten
+    description: The arc electrodes. Real arc lamps use carbon rods; the catalog's tungsten (a refractory conductor) stands in until a carbon material lands. The arc physics comes from the parameters below, not the electrode bulk properties.
+  arc_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: The near-constant voltage the struck arc burns at (a carbon arc holds ~40-55 V). Stamped as a fixed drop once struck, the ballast setting the current. The real falling characteristic V = V_min + b/I is the documented next rung.
+  breakover_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: The ignition (strike) voltage — the arc stays dark until at least this appears across the gap, then breaks down into a conducting plasma. A model abstraction of striking (real arcs strike by touching + separating the carbons, or a much higher gap breakdown).
+  holding_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: The minimum current that sustains the arc. Below it the ionized column collapses and the arc extinguishes (the latch turns off).
+  max_current:
+    type: quantity
+    units: ampere
+    required: false
+    description: The electrode current rating. Above it the carbons erode and overheat fast — the over-current failure check fires, the symptom of running without enough ballast.
+  luminous_efficacy:
+    type: quantity
+    units: lm/W
+    required: false
+    description: Light produced per watt of arc power (a carbon arc is ~10-20 lm/W). The luminous flux is this times the arc power V*I.
+  arc_temperature:
+    type: quantity
+    units: kelvin
+    required: false
+    description: The arc crater temperature (a carbon arc's positive crater runs ~3800 K, near carbon's sublimation point) — why it is blinding and burns the electrodes away.
+  device_state:
+    type: enum
+    required: false
+    allowed:
+      - blocking
+      - conducting
+    description: The latch state — blocking (extinguished, an open) or conducting (struck, burning). Starts blocking; the discrete-state solve strikes it at breakover_voltage and extinguishes it below holding_current.
+behaviors:
+  - emits_light
+  - conducts_current
+  - produces_joule_heat
+  - emits_thermal_radiation
+terminals:
+  anode:
+    description: The + electrode (the positive crater — the hotter, brighter one in a DC arc). Current in here.
+  cathode:
+    description: The - electrode. Current returns here.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  The strike + hold are the Shockley/SCR bistable latch (shockley-diode.ts LATCHING_THYRISTORS):
+  device_state flips in the discrete-state fixed point (solveWithRelays) — blocking -> conducting at
+  breakover_voltage (the open-circuit voltage across the gap reaching the strike threshold), and
+  conducting -> blocking when the current drops below holding_current. A CONDUCTING arc is stamped as
+  a fixed arc_voltage drop anode -> cathode (dc-solver.ts stampArc, the same fixed-drop mechanism the
+  LED's V_F uses), so the external ballast sets the current; an EXTINGUISHED arc is omitted (an open).
+  The branch current is the stamp's auxiliary variable. Light = luminous_efficacy * arc_voltage *
+  current (light.ts arcLuminousFluxLumens). Honest scope: a constant burning voltage (the Ayrton
+  negative-resistance fall V = V_min + b/I is the next rung); the strike is a voltage-threshold
+  abstraction; DC only (AC re-striking each half-cycle, electrode burn-down, and casting light onto
+  the photo-sensors are refinements); the carbon electrodes are a tungsten stand-in. Sources: Davy's
+  1802 arc; the Yablochkov candle (1876); Brush arc lighting (1879); Hertha Ayrton, "The Electric
+  Arc" (1902) for the arc characteristic; Cobine, "Gaseous Conductors" for discharge physics.

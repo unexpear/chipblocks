@@ -578,6 +578,51 @@ function MotorGlyph() {
   )
 }
 
+/** DC generator (dynamo) — the standard circle with "G" (IEC), a lead each side (+ left,
+ *  − right). The dual of the motor's "M": the same machine, driven the other way. */
+function GeneratorGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>DC generator</title>
+      {lead(0, 24)}
+      <circle cx={40} cy={MID} r={16} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <text
+        x={40}
+        y={MID}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={15}
+        fontWeight={700}
+        fill={STROKE}
+        fontFamily="system-ui, sans-serif"
+      >
+        G
+      </text>
+      {lead(56, W)}
+    </svg>
+  )
+}
+
+/** Carbon arc lamp — two electrode rods facing across a small gap with the arc (a jagged spark)
+ *  striking between them. A lead out each side (anode + / cathode −). */
+function ArcLampGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>arc lamp</title>
+      {lead(0, 26)}
+      <line x1={26} y1={MID} x2={37} y2={MID} stroke={STROKE} strokeWidth={3} />
+      <line x1={43} y1={MID} x2={54} y2={MID} stroke={STROKE} strokeWidth={3} />
+      <polyline
+        points={`37,${MID} 39,${MID - 5} 40.5,${MID + 4} 42,${MID - 4} 43,${MID}`}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.2}
+      />
+      {lead(54, W)}
+    </svg>
+  )
+}
+
 /** Transmission line — a conductor PAIR (the two lines) in a box, with the near pair on
  *  the left and the far pair on the right; Z₀ marks the characteristic impedance. */
 function TransmissionLineGlyph() {
@@ -1311,8 +1356,10 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   inductor: InductorGlyph,
   electromagnet: ElectromagnetGlyph,
   dc_motor: MotorGlyph,
+  generator: GeneratorGlyph,
   transmission_line: TransmissionLineGlyph,
   led: LedGlyph,
+  arc_lamp: ArcLampGlyph,
   led_uv_algan: LedGlyph,
   incandescent_bulb: IncandescentBulbGlyph,
   diode_laser: LaserDiodeGlyph,
@@ -1390,6 +1437,8 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   inductor: TWO('terminal_a', 'terminal_b'),
   electromagnet: TWO('terminal_a', 'terminal_b'),
   dc_motor: TWO('terminal_positive', 'terminal_negative'),
+  generator: TWO('terminal_positive', 'terminal_negative'),
+  arc_lamp: TWO('anode', 'cathode'),
   // A transmission line: the near pair on the left, the far pair on the right.
   transmission_line: [
     { id: 'near_a', position: Position.Left, offset: 14 },

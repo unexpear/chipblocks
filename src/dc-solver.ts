@@ -44,6 +44,9 @@ import { jfetMosfetParams } from './jfet-model.ts'
 import { ldrResistance, lightSensorCurrent } from './light.ts'
 import { limitMosfetStep, type MosfetParams, mosfetOperatingPoint } from './mosfet-model.ts'
 import {
+  generatorEmf,
+  generatorOperatingPoint,
+  generatorParamsFromInstance,
   motorEffectiveResistance,
   motorLoadCurrentOffset,
   motorParamsFromInstance,
@@ -309,6 +312,7 @@ const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'diode_tunnel',
   'diode_shockley',
   'scr',
+  'arc_lamp',
   'diode_zener_silicon',
   // Vacuum tubes (thermionic).
   'vacuum_diode',
@@ -329,6 +333,7 @@ const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'inductor',
   'electromagnet',
   'dc_motor',
+  'generator',
   'transmission_line',
   'resistor',
   'thermistor',
@@ -402,6 +407,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     | 'transformer_secondary'
     | 'transformer_ct_half_a'
     | 'transformer_ct_half_b'
+    | 'arc'
   const linearVoltageSources: Array<{ inst: Instance; kind: VsLikeKind }> = []
   const shockleyLeds: ShockleyLed[] = []
   const tunnelDiodes: TunnelDiode[] = []
@@ -539,6 +545,14 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         if (led !== null) shockleyLeds.push(led)
         else linearVoltageSources.push({ inst, kind: 'led' })
       }
+    } else if (inst.definition === 'arc_lamp') {
+      // A carbon arc — a latching discharge (struck/extinguished is the Shockley latch, settled in
+      // solveWithRelays: it strikes at the breakover/ignition voltage, holds until the current drops
+      // below the holding current). Once STRUCK it burns at a near-constant arc voltage (a fixed-drop
+      // voltage source, kind 'arc'); EXTINGUISHED it is an open. The external ballast sets the current
+      // (a negative-resistance fall V = V_min + b/I is the documented next rung).
+      if (readEnumParam(inst, 'device_state') === 'conducting')
+        linearVoltageSources.push({ inst, kind: 'arc' })
     } else if (inst.definition === 'diode_zener_silicon') {
       // Forward Shockley conduction PLUS reverse-breakdown regulation, solved
       // through the same Newton loop as the LEDs (zenerCompanionModel clamps the
@@ -621,6 +635,13 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         // back-EMF raises the effective resistance), plus a constant load-current source.
         if (!stampMotor(inst, nodeIndex, M, b))
           warnings.push(`Skipped DC motor '${inst.id}' (missing R_a / k / friction or connects)`)
+      } else if (inst.definition === 'generator') {
+        // A generator spun at a fixed speed is a Thévenin source — EMF E = k·ω behind R_a —
+        // stamped as its Norton equivalent (1/R_a + a current source E/R_a out of the +).
+        if (!stampGenerator(inst, nodeIndex, M, b))
+          warnings.push(
+            `Skipped generator '${inst.id}' (missing k / R_a / drive speed or connects)`,
+          )
       } else if (inst.definition === 'transmission_line') {
         // At DC a lossless line is a pass-through (v_near = v_far): a near-short between
         // each end's conductors. The transient solver carries the propagation delay + Z₀.
@@ -657,6 +678,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         ok = stampCtHalfDC(inst, nodeIndex, auxIdx, 'a', M, b)
       else if (kind === 'transformer_ct_half_b')
         ok = stampCtHalfDC(inst, nodeIndex, auxIdx, 'b', M, b)
+      else if (kind === 'arc') ok = stampArc(inst, nodeIndex, auxIdx, M, b)
       if (!ok)
         warnings.push(
           `Skipped ${kind} stamp for instance '${inst.id}' (missing V or terminal connects)`,
@@ -915,6 +937,14 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       if (p !== undefined && posNet !== undefined && negNet !== undefined) {
         const vAcross = (nodes.get(posNet) ?? 0) - (nodes.get(negNet) ?? 0)
         branches.set(inst.id, motorSteadyState(vAcross, p).current)
+      }
+    } else if (inst.definition === 'generator') {
+      const p = generatorParamsFromInstance(inst)
+      const posNet = inst.connects?.find((c) => c.terminal === 'terminal_positive')?.net
+      const negNet = inst.connects?.find((c) => c.terminal === 'terminal_negative')?.net
+      if (p !== undefined && posNet !== undefined && negNet !== undefined) {
+        const vAcross = (nodes.get(posNet) ?? 0) - (nodes.get(negNet) ?? 0)
+        branches.set(inst.id, generatorOperatingPoint(vAcross, p).current)
       }
     }
   }
@@ -2056,6 +2086,37 @@ export function stampMotor(
 }
 
 /**
+ * A DC generator (dynamo) spun at a fixed speed: a Thévenin source — the EMF E = k·ω behind
+ * the armature resistance R_a — stamped as its Norton equivalent (conductance 1/R_a between
+ * the terminals + a current source E/R_a pushing current OUT of the + terminal, into the
+ * external circuit). The same {conductance, current-source} shape as the motor's load offset,
+ * but here the current is the GENERATED one, not a draw.
+ */
+export function stampGenerator(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
+  const p = generatorParamsFromInstance(inst)
+  if (p === undefined) return false
+  const posNet = inst.connects?.find((c) => c.terminal === 'terminal_positive')?.net
+  const negNet = inst.connects?.find((c) => c.terminal === 'terminal_negative')?.net
+  if (posNet === undefined || negNet === undefined) return false
+  stampConductance(nodeIndex, M, posNet, negNet, p.armatureResistance)
+  const nortonCurrent = generatorEmf(p) / p.armatureResistance
+  if (nortonCurrent !== 0) {
+    const iPos = nodeIndex.get(posNet)
+    const iNeg = nodeIndex.get(negNet)
+    if (iPos !== undefined) b.set([iPos, 0], (b.get([iPos, 0]) ?? 0) + nortonCurrent)
+    if (iNeg !== undefined) b.set([iNeg, 0], (b.get([iNeg, 0]) ?? 0) - nortonCurrent)
+  }
+  return true
+}
+
+/**
  * A real pot's wiper end resistance (Ω): the track never reaches exactly 0 Ω
  * at the travel limits, so each segment is floored here and is never an ideal
  * short. Small enough to be invisible mid-travel.
@@ -2178,6 +2239,27 @@ export function stampLED(
   const V_F = readScalarParam(inst, 'forward_voltage')
   if (V_F === undefined) return false
   return findAndStampVoltageSource(inst, nodeIndex, auxIdx, V_F, 'anode', 'cathode', M, b)
+}
+
+/**
+ * A struck carbon arc's contribution: it burns at a near-constant arc voltage, so it stamps as a
+ * fixed voltage DROP (arc_voltage) from anode to cathode — exactly the LED's fixed-V_F stamp, but
+ * the drop is the arc's burning voltage, not a junction forward voltage. The external ballast sets
+ * the current; an extinguished arc is never stamped (it is omitted, an open circuit). The
+ * current-dependent fall V = V_min + b/I (negative resistance) is a documented next rung.
+ */
+export function stampArc(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  auxIdx: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
+  const V_arc = readScalarParam(inst, 'arc_voltage')
+  if (V_arc === undefined) return false
+  return findAndStampVoltageSource(inst, nodeIndex, auxIdx, V_arc, 'anode', 'cathode', M, b)
 }
 
 /**

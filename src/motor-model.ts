@@ -277,3 +277,97 @@ export function motorSpeedStep(
     (speedPrev + (dt * drivingTorque) / rotorInertia) / (1 + (dt * viscousFriction) / rotorInertia)
   )
 }
+
+// === generator (dynamo): the SAME machine driven the other way ===
+//
+// A generator is a motor run backwards: instead of feeding it voltage and reading rotation,
+// a prime mover SPINS it and you read the electricity it makes. The same constant k that was
+// the motor's back-EMF/torque constant is the generator's EMF constant — spun at speed ω it
+// generates E = k·ω across the armature resistance R_a. So a generator is a Thévenin source:
+// EMF E behind R_a. Drive it at a regulated speed (the first-rung assumption — a governed
+// prime mover holds ω constant), connect a load, and the terminal voltage droops from the
+// open-circuit E as it delivers current. The prime mover supplies torque T = k·I (the
+// electrical reaction) + B·ω (friction) — energy in (T·ω) = electrical out + I²R_a + B·ω².
+// Honest scope: fixed drive speed (the spin-up from rest, the armature inductance L_a, and a
+// fixed-torque-prime-mover speed that sags under load are documented further rungs); the
+// magnets/commutator/bearings are lumped into k and B, not composed (same as the motor).
+
+const RAD_PER_SEC_PER_RPM = (2 * Math.PI) / 60
+
+export type GeneratorParams = {
+  /** Machine constant k — EMF constant (V·s/rad) AND torque constant (N·m/A), equal in SI. */
+  machineConstant: number
+  /** Armature (winding) resistance R_a, ohms — sets the terminal-voltage droop under load. */
+  armatureResistance: number
+  /** Prime-mover drive speed ω, rad/s (held constant by a governed prime mover). */
+  driveSpeed: number
+  /** Viscous friction B (N·m·s/rad) — windage/bearing loss; sets the drive torque + efficiency. */
+  viscousFriction: number
+}
+
+export type GeneratorOperatingPoint = {
+  /** Generated EMF E = k·ω (V) — the open-circuit terminal voltage. */
+  emf: number
+  /** Current delivered out of the + terminal (A): I = (E − V_terminal)/R_a. */
+  current: number
+  /** Electrical power delivered to the load, V·I (W). */
+  electricalPowerW: number
+  /** Drive torque the prime mover must supply, T = k·I + B·ω (N·m). */
+  driveTorque: number
+  /** Mechanical power in, T·ω (W). */
+  mechanicalPowerW: number
+  /** Efficiency = electrical out / mechanical in (0..1). */
+  efficiency: number
+}
+
+/**
+ * Read a generator's parameters off an instance. drive_speed is given in RPM (the intuitive
+ * unit for a shaft) and converted to rad/s here. Undefined when an essential one is missing
+ * or non-physical (R_a must be > 0 for a defined terminal voltage).
+ */
+export function generatorParamsFromInstance(inst: Instance): GeneratorParams | undefined {
+  const machineConstant = readScalarParam(inst, 'machine_constant')
+  const armatureResistance = readScalarParam(inst, 'armature_resistance')
+  const driveSpeedRpm = readScalarParam(inst, 'drive_speed')
+  const viscousFriction = readScalarParam(inst, 'viscous_friction')
+  if (
+    machineConstant === undefined ||
+    armatureResistance === undefined ||
+    driveSpeedRpm === undefined ||
+    viscousFriction === undefined ||
+    !(armatureResistance > 0)
+  ) {
+    return undefined
+  }
+  return {
+    machineConstant,
+    armatureResistance,
+    driveSpeed: driveSpeedRpm * RAD_PER_SEC_PER_RPM,
+    viscousFriction,
+  }
+}
+
+/** Generated EMF E = k·ω (V) — the dynamo's open-circuit terminal voltage. */
+export function generatorEmf(p: GeneratorParams): number {
+  return p.machineConstant * p.driveSpeed
+}
+
+/**
+ * The generator's operating point from the solved terminal voltage. Spun at a fixed ω it is
+ * a Thévenin source (EMF E = k·ω behind R_a), so it delivers I = (E − V)/R_a — the terminal
+ * voltage V having drooped below the open-circuit E under load. The prime mover supplies the
+ * reaction torque k·I plus friction B·ω, so the mechanical power in is T·ω and the efficiency
+ * is the electrical power out over it (the rest is I²R_a copper loss + B·ω² friction loss).
+ */
+export function generatorOperatingPoint(
+  terminalVoltage: number,
+  p: GeneratorParams,
+): GeneratorOperatingPoint {
+  const emf = generatorEmf(p)
+  const current = (emf - terminalVoltage) / p.armatureResistance
+  const electricalPowerW = terminalVoltage * current
+  const driveTorque = p.machineConstant * current + p.viscousFriction * p.driveSpeed
+  const mechanicalPowerW = driveTorque * p.driveSpeed
+  const efficiency = mechanicalPowerW > 0 ? electricalPowerW / mechanicalPowerW : 0
+  return { emf, current, electricalPowerW, driveTorque, mechanicalPowerW, efficiency }
+}

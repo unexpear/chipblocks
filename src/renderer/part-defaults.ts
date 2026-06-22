@@ -87,6 +87,30 @@ const DEFAULTS: Record<string, Parameters> = {
     current_rating: scalar(0.25, 'ampere'),
     winding: { value: 'copper' },
   },
+  arc_lamp: {
+    // A small carbon arc lamp. It STRIKES once ~60 V appears across the gap, then burns at a
+    // near-constant ~50 V (Ayrton), holding until the current drops below ~0.5 A. Run it from a
+    // ~70 V+ supply through a BALLAST that sets the current — without one it runs away. ~15 lm/W,
+    // a ~3800 K crater. Starts extinguished (device_state blocking).
+    arc_voltage: scalar(50, 'volt'),
+    breakover_voltage: scalar(60, 'volt'),
+    holding_current: scalar(0.5, 'ampere'),
+    max_current: scalar(12, 'ampere'),
+    luminous_efficacy: scalar(15, 'lm/W'),
+    arc_temperature: scalar(3800, 'kelvin'),
+    device_state: { value: 'blocking' },
+    electrodes: { value: 'tungsten' },
+  },
+  generator: {
+    // A small bench dynamo (~12 V class). Spun at 3000 RPM with k = 0.04 V·s/rad it makes
+    // E = k·ω ≈ 12.6 V open-circuit; R_a 1.5 Ω → ~8.4 A into a short. Light friction sets a
+    // small windage loss (used by the drive-torque + efficiency readings).
+    machine_constant: scalar(0.04, 'V*s/rad'),
+    armature_resistance: scalar(1.5, 'ohm'),
+    drive_speed: scalar(3000, 'rpm'),
+    viscous_friction: scalar(1e-5, 'N*m*s/rad'),
+    winding: { value: 'copper' },
+  },
   dc_motor: {
     // A small 12 V brushed DC motor (hobby / gearmotor class). R_a 2 Ω; motor constant
     // k ≈ 0.02 V·s/rad (= N·m/A); light friction → ~5600 RPM no-load drawing ~0.15 A.
@@ -607,6 +631,21 @@ const PROVENANCE: Record<string, Record<string, string>> = {
       'soft iron saturates ~1.5–2 T (≈2.1 T pure iron); 2.0 T representative',
     winding_resistance: '≈40 Ω fine-copper coil (relay / small-solenoid class)',
     current_rating: '~0.25 A through fine magnet wire',
+  },
+  arc_lamp: {
+    arc_voltage: 'carbon arc burns at ~40-55 V (Ayrton); 50 V representative',
+    breakover_voltage:
+      'ignition threshold — a model abstraction (real arcs strike by electrode contact or a higher gap breakdown)',
+    holding_current: '~0.5 A minimum to sustain the ionized column',
+    max_current: '~12 A electrode rating (above it the carbons erode / overheat fast)',
+    luminous_efficacy: 'carbon arc ~10-20 lm/W; 15 representative',
+    arc_temperature: 'carbon-arc positive crater ~3800 K (near carbon sublimation)',
+  },
+  generator: {
+    machine_constant: 'k ≈ 0.04 V·s/rad = N·m/A → E = k·ω ≈ 12.6 V at 3000 RPM',
+    armature_resistance: 'small bench dynamo, ~1.5 Ω winding (short-circuit ~8.4 A)',
+    drive_speed: 'prime-mover speed 3000 RPM (a governed/regulated drive holds it constant)',
+    viscous_friction: 'windage/bearing loss — sets the drive torque + efficiency reading',
   },
   dc_motor: {
     armature_resistance: 'small 12 V brushed motor, ~2 Ω winding (hobby / gearmotor class)',
@@ -1155,6 +1194,18 @@ export function primaryValue(
     // Headline the motor constant k — speed-per-volt and torque-per-amp in one number.
     const k = amountOf(parameters, 'motor_constant')
     return k === undefined ? null : `k=${formatEng(k, 'V·s/rad')}`
+  }
+  if (definition === 'generator') {
+    // Headline the open-circuit EMF E = k·ω it makes at its drive speed.
+    const k = amountOf(parameters, 'machine_constant')
+    const rpm = amountOf(parameters, 'drive_speed')
+    if (k === undefined || rpm === undefined) return null
+    return formatEng((k * rpm * 2 * Math.PI) / 60, 'V')
+  }
+  if (definition === 'arc_lamp') {
+    // Headline the burning arc voltage — what it holds once struck.
+    const v = amountOf(parameters, 'arc_voltage')
+    return v === undefined ? null : `${formatEng(v, 'V')} arc`
   }
   if (definition === 'transmission_line') {
     // Headline Z₀ and the end-to-end wave delay — the two numbers that define the line.

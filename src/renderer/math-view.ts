@@ -14,10 +14,17 @@ import {
 } from '../electromagnet-model.ts'
 import { electronDriftVelocityMS } from '../field-energy.ts'
 import { readEnumParam, readScalarParam } from '../instance-params.ts'
-import { ldrResistance, lightSensorCurrent, sensorIlluminance } from '../light.ts'
+import {
+  arcLuminousFluxLumens,
+  ldrResistance,
+  lightSensorCurrent,
+  sensorIlluminance,
+} from '../light.ts'
 import { mosfetOperatingPoint } from '../mosfet-model.ts'
 import {
   airGapFluxDensityTesla,
+  generatorOperatingPoint,
+  generatorParamsFromInstance,
   motorEffectiveResistance,
   motorParamsFromInstance,
   motorSteadyState,
@@ -804,6 +811,49 @@ function partCard(
       )
     }
     return { id: inst.id, title: 'DC motor — back-EMF and torque', lines }
+  }
+  if (def === 'generator') {
+    const genParams = generatorParamsFromInstance(inst)
+    const posNet = netOfTerminal(inst, 'terminal_positive')
+    const negNet = netOfTerminal(inst, 'terminal_negative')
+    lines.push(
+      'A generator is a motor run backwards: a prime mover SPINS it at a speed ω, and it generates an EMF E = k·ω (the same machine constant k). Electrically it is a voltage source E behind the winding resistance R_a, so the terminal voltage droops as it delivers current: V = E − I·R_a.',
+    )
+    if (genParams !== undefined && posNet !== undefined && negNet !== undefined) {
+      const v = (solution.nodes.get(posNet) ?? 0) - (solution.nodes.get(negNet) ?? 0)
+      const op = generatorOperatingPoint(v, genParams)
+      lines.push(
+        `Spun at ${((genParams.driveSpeed * 60) / (2 * Math.PI)).toFixed(0)} RPM: E = k·ω = ${fmtV(op.emf)} (open-circuit). Delivering ${fmtA(op.current)}, the terminal sits at ${fmtV(v)} — the other ${fmtV(op.emf - v)} drops across R_a = ${formatEng(genParams.armatureResistance, 'Ω')}.`,
+      )
+      lines.push(
+        `The prime mover supplies T = k·I + B·ω = ${formatEng(op.driveTorque, 'N·m')}, so ${formatEng(op.mechanicalPowerW, 'W')} of mechanical power goes in and ${formatEng(op.electricalPowerW, 'W')} comes out electrically (${(op.efficiency * 100).toFixed(0)}% efficient).`,
+      )
+    }
+    return { id: inst.id, title: 'Generator — spin it, make EMF (E = k·ω)', lines }
+  }
+  if (def === 'arc_lamp') {
+    const struck = readEnumParam(inst, 'device_state') === 'conducting'
+    const arcV = readScalarParam(inst, 'arc_voltage')
+    const strike = readScalarParam(inst, 'breakover_voltage')
+    const efficacy = readScalarParam(inst, 'luminous_efficacy')
+    const tempK = readScalarParam(inst, 'arc_temperature')
+    lines.push(
+      'A carbon arc is a gas discharge: the cold gap is an insulator, so it must STRIKE — once the voltage across it reaches the ignition (breakover) voltage it breaks down into a conducting plasma, then burns at a low, near-constant arc voltage and stays lit until the current falls below its holding current. Because that burning voltage barely changes with current, the arc cannot limit itself — it needs a series ballast, or the current runs away.',
+    )
+    const anode = netOfTerminal(inst, 'anode')
+    const cathode = netOfTerminal(inst, 'cathode')
+    if (struck && arcV !== undefined && anode !== undefined && cathode !== undefined) {
+      const current = Math.abs(solution.branches.get(inst.id) ?? 0)
+      const power = arcV * current
+      lines.push(
+        `Struck: it burns at ${fmtV(arcV)}, drawing ${fmtA(current)} (the ballast sets this) — ${formatEng(power, 'W')} of arc power${efficacy !== undefined ? `, about ${formatEng(arcLuminousFluxLumens(power, efficacy), 'lm')} of light` : ''}${tempK !== undefined ? ` from a ~${tempK.toFixed(0)} K crater` : ''}.`,
+      )
+    } else if (strike !== undefined) {
+      lines.push(
+        `Not struck — it stays dark until at least ${fmtV(strike)} appears across the gap to ignite it.`,
+      )
+    }
+    return { id: inst.id, title: 'Arc lamp — strike it, then it needs a ballast', lines }
   }
   if (def === 'transistor_bjt_npn' || def === 'transistor_bjt_pnp') {
     const beta = readScalarParam(inst, 'forward_current_gain')

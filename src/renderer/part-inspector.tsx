@@ -494,6 +494,9 @@ export function PartInspector({
           {reading.magneticForceN !== undefined
             ? readingRow('Pull force', formatEng(reading.magneticForceN, 'N'), null)
             : null}
+          {reading.generatedEmfV !== undefined
+            ? readingRow('EMF (no-load)', formatEng(reading.generatedEmfV, 'V'), null)
+            : null}
           {reading.speedRpm !== undefined
             ? readingRow('Speed', `${Math.round(reading.speedRpm)} RPM`, null)
             : null}
@@ -508,6 +511,9 @@ export function PartInspector({
             : null}
           {reading.efficiencyPercent !== undefined
             ? readingRow('Efficiency', `${reading.efficiencyPercent.toFixed(0)}%`, null)
+            : null}
+          {reading.luminousFluxLm !== undefined
+            ? readingRow('Light output', formatEng(reading.luminousFluxLm, 'lm'), null)
             : null}
           {reading.temperatureC !== undefined
             ? readingRow(

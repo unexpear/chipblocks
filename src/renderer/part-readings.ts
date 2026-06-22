@@ -5,9 +5,15 @@ import {
   magnetomotiveForceAmpereTurns,
   solenoidFluxDensityTesla,
 } from '../electromagnet-model.ts'
-import { readScalarParam } from '../instance-params.ts'
+import { readEnumParam, readScalarParam } from '../instance-params.ts'
 import { laserOpticalPowerW } from '../laser-model.ts'
-import { motorParamsFromInstance, motorSteadyState } from '../motor-model.ts'
+import { arcLuminousFluxLumens } from '../light.ts'
+import {
+  generatorOperatingPoint,
+  generatorParamsFromInstance,
+  motorParamsFromInstance,
+  motorSteadyState,
+} from '../motor-model.ts'
 import { acrossVolts, bulbFilamentTemperatureC, junctionTemperature } from '../thermal-model.ts'
 import { junctionCapacitance } from '../varactor-model.ts'
 
@@ -41,6 +47,8 @@ export type PartReading = {
   speedRpm?: number
   torqueNm?: number
   backEmfV?: number
+  generatedEmfV?: number
+  luminousFluxLm?: number
   mechanicalPowerW?: number
   efficiencyPercent?: number
   temperatureC?: number
@@ -163,6 +171,32 @@ export function partReadings(
         reading.efficiencyPercent =
           electricalPowerW > 0 ? (Math.abs(op.mechanicalPowerW) / electricalPowerW) * 100 : 0
       }
+    }
+
+    // Generator (dynamo): the same machine spun the other way — surface the generated EMF,
+    // drive speed/torque, mechanical power in and efficiency from the solved terminal voltage.
+    if (inst.definition === 'generator') {
+      const genParams = generatorParamsFromInstance(inst)
+      const posNet = inst.connects?.find((c) => c.terminal === 'terminal_positive')?.net
+      const negNet = inst.connects?.find((c) => c.terminal === 'terminal_negative')?.net
+      if (genParams !== undefined && posNet !== undefined && negNet !== undefined) {
+        const vAcross = (solution.nodes.get(posNet) ?? 0) - (solution.nodes.get(negNet) ?? 0)
+        const op = generatorOperatingPoint(vAcross, genParams)
+        reading.generatedEmfV = op.emf
+        reading.speedRpm = (genParams.driveSpeed * 60) / (2 * Math.PI)
+        reading.torqueNm = op.driveTorque
+        reading.mechanicalPowerW = op.mechanicalPowerW
+        reading.efficiencyPercent = op.efficiency * 100
+      }
+    }
+
+    // Arc lamp: once struck (the latch is conducting) it burns at its arc voltage; report the light
+    // it makes from that electrical power. Extinguished → no light (it is an open circuit).
+    if (inst.definition === 'arc_lamp' && readEnumParam(inst, 'device_state') === 'conducting') {
+      const current = Math.abs(solution.branches.get(inst.id) ?? 0)
+      const arcVoltage = readScalarParam(inst, 'arc_voltage') ?? 0
+      const efficacy = readScalarParam(inst, 'luminous_efficacy') ?? 0
+      reading.luminousFluxLm = arcLuminousFluxLumens(arcVoltage * current, efficacy)
     }
 
     if (reading.current !== undefined || reading.voltage !== undefined) {

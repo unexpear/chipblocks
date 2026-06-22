@@ -1,0 +1,96 @@
+# Valid fixture: DC generator (dynamo) — turns rotation back into electricity, the inverse of
+# the motor and the heart of every power station. Spin its armature in a magnetic field and
+# Faraday induction makes an EMF E = k*omega across the winding; connect a load and it delivers
+# current. It is the SAME machine as the brushed DC motor (the same constant k), just driven the
+# other way round — mechanical power in, electrical out. (Faraday's 1831 induction; Pixii's 1832
+# magneto; the Siemens/Wheatstone self-excited dynamo of 1866; the Gramme ring of 1871.)
+#
+# Modeled as a Thevenin source — the generated EMF E = k*omega behind the armature resistance
+# R_a — so the terminal voltage droops from its open-circuit E as the load draws current
+# (V = E - I*R_a). Solved by both engines through the same Norton stamp (motor-model.ts
+# generatorOperatingPoint), conductance 1/R_a plus a current source E/R_a out of the + terminal.
+# The prime mover must supply torque T = k*I + B*omega, so the mechanical power in (T*omega)
+# equals the electrical power out plus the I^2*R_a copper loss plus the B*omega^2 friction loss.
+#
+# Honest scope: the prime mover holds a FIXED drive speed (a governed/regulated drive) — the
+# spin-up from rest, the armature inductance L_a, and a fixed-torque prime mover whose speed sags
+# under load are documented further rungs; the magnets, commutator and bearings are lumped into k
+# and B, not composed (the same lumping the motor uses). Self-excitation (a dynamo bootstrapping
+# its own field from remanence) is a field-winding model, also a further rung.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: generator
+origin: builtin
+layer: primitive_device
+name: "DC generator (dynamo)"
+description: "A DC generator (dynamo) — a two-terminal electromechanical device that turns rotation into electricity, the inverse of the motor. A prime mover spins its armature at a speed omega and it generates an EMF E = k*omega (the same machine constant k as the motor) behind the armature resistance R_a, so it is a Thevenin source whose terminal voltage V = E - I*R_a droops as it delivers current to a load. It reports the generated EMF, drive speed, drive torque, mechanical power in, electrical power out and efficiency. Spinning it the other way reverses the output polarity."
+composition:
+  requires:
+    winding:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  winding:
+    type: material_ref
+    satisfies_role: winding
+    required: true
+    default:
+      value: copper
+    description: The conductor the armature is wound from. Must conduct; copper is the standard.
+  machine_constant:
+    type: quantity
+    units: volt*second/radian
+    required: true
+    description: k, the machine constant. EMF per rad/s (V*s/rad) AND torque per amp (N*m/A), equal in SI by energy conservation. Sets the generated voltage per unit speed, E = k*omega.
+  armature_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: R_a, the armature (winding) resistance. Sets the terminal-voltage droop under load (V = E - I*R_a) and the I^2*R_a copper loss; the short-circuit current is E/R_a.
+  drive_speed:
+    type: quantity
+    units: rpm
+    required: true
+    description: The speed the prime mover spins the generator, in RPM. With k it fixes the generated EMF E = k*omega. A governed prime mover is assumed to hold it constant under load.
+  viscous_friction:
+    type: quantity
+    units: newton*meter*second/radian
+    required: true
+    description: B, the viscous damping (bearing friction + windage). Sets the friction loss B*omega^2, and so the drive torque and efficiency; it is not part of the electrical solve.
+behaviors:
+  - provides_emf
+  - electromechanical_coupling
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  terminal_positive:
+    description: The + output lead. Current is delivered out of here into the load. Reversing the rotation reverses the polarity.
+  terminal_negative:
+    description: The - output lead. The delivered current returns here.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Solved by both engines (motor-model.ts generatorOperatingPoint). The dynamo spun at a fixed
+  speed is a Thevenin source — the generated EMF E = k*omega behind the armature resistance R_a —
+  stamped as its Norton equivalent (conductance 1/R_a between the terminals + a current source
+  E/R_a pushing current out of the + terminal) in the DC solver (stampGenerator) and, identically
+  every step, in the transient solver (it has no state at a fixed drive speed, so it stamps the
+  same Norton at t = 0 and after). The delivered current is I = (E - V)/R_a from the solved
+  terminal voltage, and the mechanical readings (drive torque T = k*I + B*omega, mechanical power
+  in T*omega, electrical power out V*I, efficiency) are derived from it. The k = EMF constant =
+  torque constant identity is exact in SI (energy conservation). Honest scope: a fixed drive
+  speed (no spin-up, no L_a, no load-induced speed sag); viscous friction only; the
+  magnets/commutator/bearings lumped into k and B; no self-excitation. Sources: Faraday
+  electromagnetic induction (1831); Pixii magneto (1832); Siemens/Wheatstone self-excited dynamo
+  (1866); standard DC-machine theory (Fitzgerald, "Electric Machinery"; Hughes, "Electric Motors
+  and Drives").

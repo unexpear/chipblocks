@@ -110,7 +110,13 @@ import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { ldrResistance } from './light.ts'
 import { mathInstance as math } from './mathjs-instance.ts'
 import { limitMosfetStep, mosfetOperatingPoint } from './mosfet-model.ts'
-import { motorBackEmf, motorParamsFromInstance, motorSpeedStep } from './motor-model.ts'
+import {
+  generatorEmf,
+  generatorParamsFromInstance,
+  motorBackEmf,
+  motorParamsFromInstance,
+  motorSpeedStep,
+} from './motor-model.ts'
 import { type ShockleyDiodeState, scrTarget, shockleyDiodeTarget } from './shockley-diode.ts'
 import { propagationDelayS } from './transmission-line-model.ts'
 import {
@@ -278,6 +284,21 @@ type MotorElement = {
   loadTorque: number // T_load (N·m)
   iPrev: number // armature current at the previous step
   omega: number // rotor speed (rad/s) — the mechanical state
+}
+
+/** A DC generator (dynamo) resolved for the time loop. Spun at a fixed speed it is a constant
+ *  Thévenin source (EMF E = k·ω behind R_a), so — unlike the motor — it has NO state to
+ *  integrate; it stamps the same Norton every step, like a resistor with a current source. */
+type GeneratorElement = {
+  id: string
+  termA: string // terminal_positive
+  termB: string // terminal_negative
+  netA: string
+  netB: string
+  iA: number | undefined
+  iB: number | undefined
+  armatureOhms: number // R_a (ohms)
+  emf: number // E = k·ω (volts), constant at the fixed drive speed
 }
 
 /** One past sample of a transmission line's two ends — read back τ ago (Branin). */
@@ -754,6 +775,25 @@ function resolveMotor(inst: Instance, nodeIndex: Map<string, number>): MotorElem
     loadTorque: p.loadTorque,
     iPrev: 0,
     omega: 0,
+  }
+}
+
+function resolveGenerator(inst: Instance, nodeIndex: Map<string, number>): GeneratorElement | null {
+  const p = generatorParamsFromInstance(inst)
+  if (p === undefined) return null
+  const pos = inst.connects?.find((c) => c.terminal === 'terminal_positive')
+  const neg = inst.connects?.find((c) => c.terminal === 'terminal_negative')
+  if (pos === undefined || neg === undefined) return null
+  return {
+    id: inst.id,
+    termA: pos.terminal,
+    termB: neg.terminal,
+    netA: pos.net,
+    netB: neg.net,
+    iA: nodeIndex.get(pos.net),
+    iB: nodeIndex.get(neg.net),
+    armatureOhms: p.armatureResistance,
+    emf: generatorEmf(p),
   }
 }
 
@@ -1560,6 +1600,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   const caps: CapElement[] = []
   const inductors: InductorElement[] = []
   const motors: MotorElement[] = []
+  const generators: GeneratorElement[] = []
   const lines: TransmissionLineElement[] = []
   const transformers: TransformerElement[] = []
   const ctTransformers: CtTransformerElement[] = []
@@ -1654,6 +1695,11 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const motor = resolveMotor(inst, nodeIndex)
       if (motor !== null) motors.push(motor)
       else warnings.push(`Skipped DC motor '${inst.id}' (missing R_a / k / friction / L_a / J)`)
+    } else if (inst.definition === 'generator') {
+      const gen = resolveGenerator(inst, nodeIndex)
+      if (gen !== null) generators.push(gen)
+      else
+        warnings.push(`Skipped generator '${inst.id}' (missing k / R_a / drive speed / connects)`)
     } else if (inst.definition === 'transmission_line') {
       const line = resolveTransmissionLine(inst, nodeIndex)
       if (line !== null) lines.push(line)
@@ -1875,6 +1921,11 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     // Transmission lines present Z₀ at each end in BOTH modes (at t = 0 their wave-sources
     // are zero — the far end has heard nothing yet), so they stamp outside the if/else.
     for (const line of lines) stampTransmissionLineCompanion(line, t, M, b)
+    // A generator spun at a fixed speed is a constant Thévenin (EMF E behind R_a): stamp its
+    // Norton (g = 1/R_a, current source E/R_a out of +) every step — the same port stamp the
+    // line uses — since it has no state and is identical at t = 0 and after.
+    for (const gen of generators)
+      stampLinePort(gen.iA, gen.iB, 1 / gen.armatureOhms, gen.emf / gen.armatureOhms, M, b)
     for (const d of diodes) stampDiodeCompanion(d, d.thermalV, M, b)
     for (const vd of vacuumDiodes) stampVacuumDiodeCompanion(vd, M, b)
     for (const tri of triodes) stampTriodeCompanion(tri, nodeIndex, M, b)
@@ -2109,6 +2160,12 @@ export function solveTransient(world: World, options: TransientOptions): Transie
           ? motor.iPrev // the armature inductance holds the current — no jump at switch-on
           : motorStepCurrent(motor, volts(motor.netA) - volts(motor.netB), dt)
       through(motor.id, motor.termA, motor.termB, amps)
+    }
+
+    for (const gen of generators) {
+      // Delivered current I = (E − V_terminal)/R_a — the same in both modes (no state).
+      const v = volts(gen.netA) - volts(gen.netB)
+      through(gen.id, gen.termA, gen.termB, (gen.emf - v) / gen.armatureOhms)
     }
 
     for (const tr of transformers) {

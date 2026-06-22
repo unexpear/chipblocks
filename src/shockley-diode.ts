@@ -64,11 +64,14 @@ export function scrTarget(
 }
 
 /**
- * The latching-thyristor family the discrete-state loop settles: the gateless Shockley diode and the
- * gated SCR (whose anode-cathode path is the same bistable latch). Both store the latch as
- * device_state and flip it off the solved circuit.
+ * The latching family the discrete-state loop settles by a breakover/strike voltage + holding-current
+ * dropout: the gateless Shockley diode, the gated SCR (whose anode-cathode path is the same bistable
+ * latch), and the carbon arc lamp (strikes at its ignition/breakover voltage, holds until the current
+ * falls below the holding current — the same shockleyDiodeTarget logic). All store the latch as
+ * device_state and flip it off the solved circuit; how a CONDUCTING one stamps differs by device (a
+ * Shockley/SCR conducts as a forward diode, the arc as a fixed burning-voltage drop).
  */
-const LATCHING_THYRISTORS = new Set(['diode_shockley', 'scr'])
+const LATCHING_THYRISTORS = new Set(['diode_shockley', 'scr', 'arc_lamp'])
 
 /** Each Shockley diode's current state from the world (blocking = off, at rest). */
 export function shockleyStatesOf(world: World): Map<string, ShockleyDiodeState> {

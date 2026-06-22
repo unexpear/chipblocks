@@ -1736,7 +1736,8 @@ function Canvas({ project }: { project: ProjectChoice }) {
         inst.definition === 'capacitor' ||
         inst.definition === 'inductor' ||
         inst.definition === 'electromagnet' ||
-        inst.definition === 'dc_motor'
+        inst.definition === 'dc_motor' ||
+        inst.definition === 'generator'
       ) {
         const c1 = inst.connects?.[0]
         const c2 = inst.connects?.[1]
