@@ -1,4 +1,5 @@
 import type { World } from '../cross-fk-validator.ts'
+import { crtParamsFromInstance, deflectionFraction, gridBrightness } from '../crt-model.ts'
 import type { Solution } from '../dc-solver.ts'
 import {
   magneticPullForceNewtons,
@@ -56,6 +57,9 @@ export type PartReading = {
   slipPercent?: number
   startupCurrentA?: number
   powerFactor?: number
+  brightnessPercent?: number
+  spotXPercent?: number
+  spotYPercent?: number
   mechanicalPowerW?: number
   efficiencyPercent?: number
   temperatureC?: number
@@ -203,11 +207,12 @@ export function partReadings(
       (inst.definition === 'arc_lamp' || inst.definition === 'neon_lamp') &&
       readEnumParam(inst, 'device_state') === 'conducting'
     ) {
-      const current = Math.abs(solution.branches.get(inst.id) ?? 0)
-      const dischargeVoltage =
-        readScalarParam(inst, 'arc_voltage') ?? readScalarParam(inst, 'maintaining_voltage') ?? 0
       const efficacy = readScalarParam(inst, 'luminous_efficacy') ?? 0
-      reading.luminousFluxLm = arcLuminousFluxLumens(dischargeVoltage * current, efficacy)
+      // Light tracks the REAL burning power (the solved V × I): for a falling carbon arc the burning
+      // voltage is the relaxed V_min + B/I, the solved drop already in reading.power — not the flat
+      // parameter. For a constant-drop arc/neon the solved drop equals the parameter, so this is the
+      // same number as before.
+      reading.luminousFluxLm = arcLuminousFluxLumens(reading.power ?? 0, efficacy)
     }
 
     // Induction motor: its per-phase steady-state operating point — slip, speed, torque, running +
@@ -227,9 +232,74 @@ export function partReadings(
       }
     }
 
+    // CRT: the electron gun's beam (the EHT load + brightness) and where the X/Y deflection lands the
+    // spot on the screen, from the solved anode + deflection voltages.
+    if (inst.definition === 'crt') {
+      const crtParams = crtParamsFromInstance(inst)
+      const net = (t: string) => inst.connects?.find((c) => c.terminal === t)?.net
+      const cathode = net('cathode')
+      const anode = net('anode')
+      if (crtParams !== undefined && cathode !== undefined && anode !== undefined) {
+        const vCathode = solution.nodes.get(cathode) ?? 0
+        const ehtVoltage = (solution.nodes.get(anode) ?? 0) - vCathode
+        const brightness = gridBrightness(crtParams.gridBias, crtParams.gridCutoffVoltage)
+        reading.voltage = ehtVoltage
+        reading.current = crtParams.beamCurrent * brightness
+        reading.brightnessPercent = brightness * 100
+        const xNet = net('x_deflect')
+        const yNet = net('y_deflect')
+        const vX = xNet !== undefined ? (solution.nodes.get(xNet) ?? 0) - vCathode : 0
+        const vY = yNet !== undefined ? (solution.nodes.get(yNet) ?? 0) - vCathode : 0
+        const sens = crtParams.deflectionSensitivity
+        reading.spotXPercent =
+          deflectionFraction(vX, sens, ehtVoltage, crtParams.ratedAnodeVoltage) * 100
+        reading.spotYPercent =
+          deflectionFraction(vY, sens, ehtVoltage, crtParams.ratedAnodeVoltage) * 100
+      }
+    }
+
     if (reading.current !== undefined || reading.voltage !== undefined) {
       readings.set(inst.id, reading)
     }
   }
   return readings
+}
+
+export type CrtSpot = { x: number; y: number }
+
+/**
+ * The CRT spot's locus over a transient run — the live trace (the next rung past the single DC spot).
+ * For each solved instant it reads the X/Y deflection-plate voltages and the anode (EHT) from that
+ * frame's node voltages and turns them into a screen position with the SAME deflection law the DC spot
+ * uses (deflectionFraction). So an X-ramp + a Y-signal draws the waveform, and two sines draw a
+ * Lissajous figure — exactly what a real scope tube does. Points are screen fractions (−1..1 across /
+ * up); brightness is the constant level the grid bias sets. Empty when the id isn't a resolvable CRT.
+ */
+export function crtSpotTrace(
+  world: World,
+  instanceId: string,
+  series: readonly { nodes: Map<string, number> }[],
+): { points: CrtSpot[]; brightness: number } {
+  const inst = world.instances.get(instanceId)
+  const p = inst === undefined ? undefined : crtParamsFromInstance(inst)
+  if (inst === undefined || p === undefined) return { points: [], brightness: 0 }
+  const net = (t: string) => inst.connects?.find((c) => c.terminal === t)?.net
+  const anodeNet = net('anode')
+  const cathodeNet = net('cathode')
+  if (anodeNet === undefined || cathodeNet === undefined) return { points: [], brightness: 0 }
+  const xNet = net('x_deflect')
+  const yNet = net('y_deflect')
+  const brightness = gridBrightness(p.gridBias, p.gridCutoffVoltage)
+  const points = series.map(({ nodes }) => {
+    const at = (n: string | undefined) => (n === undefined ? 0 : (nodes.get(n) ?? 0))
+    const vCathode = at(cathodeNet)
+    const vAnode = at(anodeNet) - vCathode
+    const vX = xNet === undefined ? 0 : at(xNet) - vCathode
+    const vY = yNet === undefined ? 0 : at(yNet) - vCathode
+    return {
+      x: deflectionFraction(vX, p.deflectionSensitivity, vAnode, p.ratedAnodeVoltage),
+      y: deflectionFraction(vY, p.deflectionSensitivity, vAnode, p.ratedAnodeVoltage),
+    }
+  })
+  return { points, brightness }
 }

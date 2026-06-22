@@ -10,9 +10,17 @@
 import { describe, expect, test } from 'vitest'
 import type { World } from '../src/cross-fk-validator.ts'
 import { solveWithRelays } from '../src/relay.ts'
+import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
 import { type PartReading, partReadings } from '../src/renderer/part-readings.ts'
+import { solveTransient } from '../src/transient-solver.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
+const g = (s: string, sh: string, t: string, th: string) => ({
+  source: s,
+  sourceHandle: sh,
+  target: t,
+  targetHandle: th,
+})
 
 /**
  * V+(supply) → R(ballastOhms) → neon.anode; neon.cathode → GND. Returns the settled latch state, the
@@ -132,5 +140,51 @@ describe('neon lamp — glow voltage + light', () => {
   test('a dark lamp makes no light', () => {
     const r = solveNeon(80, 50000, 'blocking')
     expect(r.reading?.luminousFluxLm ?? 0).toBe(0)
+  })
+})
+
+describe('neon lamp — relaxation oscillator (transient latch)', () => {
+  test('a neon across an RC fires repeatedly — charge, strike, dump the cap, recharge', () => {
+    // 120 V → R(1 MΩ) → node; the cap (1 nF) + the neon both sit from that node to ground. The cap
+    // charges toward 120 V; at the 90 V strike the neon fires and dumps it to ~65 V, then — the 1 MΩ
+    // can't feed the holding current — it goes out and recharges: the classic neon relaxation oscillator.
+    const nodes: CanvasNode[] = [
+      {
+        id: 'src',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(120, 'volt'), internal_resistance: scalar(0, 'ohm') },
+      },
+      { id: 'rch', definition: 'resistor', parameters: { resistance: scalar(1000000, 'ohm') } },
+      { id: 'cap', definition: 'capacitor', parameters: { capacitance: scalar(1e-9, 'farad') } },
+      {
+        id: 'ne',
+        definition: 'neon_lamp',
+        parameters: {
+          maintaining_voltage: scalar(65, 'volt'),
+          breakover_voltage: scalar(90, 'volt'),
+          holding_current: scalar(0.0001, 'ampere'),
+          device_state: { value: 'blocking' },
+        },
+      },
+      { id: 'gnd', definition: 'ground' },
+    ]
+    const edges = [
+      g('src', 'terminal_positive', 'rch', 'terminal_a'),
+      g('src', 'terminal_negative', 'gnd', 'reference_terminal'),
+      g('rch', 'terminal_b', 'ne', 'anode'),
+      g('ne', 'cathode', 'gnd', 'reference_terminal'),
+      g('cap', 'terminal_a', 'ne', 'anode'),
+      g('cap', 'terminal_b', 'gnd', 'reference_terminal'),
+    ]
+    const world = canvasToWorld(nodes, edges)
+    const result = solveTransient(world, { timeStep: 1e-5, duration: 6e-3 })
+    expect(result.status).toBe('solved')
+    const current = result.series.map((s) => Math.abs(s.currents?.get('ne/anode') ?? 0))
+    // The neon glow is a mA-scale current; a strike is a rising edge above ~10 µA (dark = exactly 0).
+    let strikes = 0
+    for (let k = 1; k < current.length; k++) {
+      if ((current[k - 1] ?? 0) <= 1e-5 && (current[k] ?? 0) > 1e-5) strikes++
+    }
+    expect(strikes).toBeGreaterThanOrEqual(2) // it oscillates — fires again and again, not just once
   })
 })

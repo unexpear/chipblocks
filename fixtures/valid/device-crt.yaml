@@ -1,0 +1,106 @@
+# Valid fixture: cathode-ray tube (CRT) — Karl Ferdinand Braun's tube (1897), the screen behind
+# every oscilloscope, radar and television of the 20th century. A heated cathode emits electrons; a
+# high positive ANODE voltage (the EHT, kilovolts) accelerates them into a fine beam; a control GRID
+# (biased negative) throttles the beam current and so the brightness; two pairs of DEFLECTION plates,
+# X and Y, bend the beam; and a PHOSPHOR screen glows where it lands.
+#
+# Electrostatic deflection bends the beam in proportion to the deflection voltage and INVERSELY to
+# the accelerating (anode) voltage — D = (L*l / 2*s) * V_deflect / V_anode — so a stiffer (higher-EHT)
+# beam deflects less. The geometry is folded into a deflection_sensitivity (screen-fraction per volt,
+# at a rated anode voltage), with the 1/V_anode term kept explicit.
+#
+# Modeled (crt-model.ts): the electron gun is a fixed beam-current load on the anode (EHT), the grid
+# bias setting the brightness; the X/Y deflection plates are high-impedance inputs (they set up a
+# field, not a current). The solver reads the anode + deflection voltages and reports the EHT, beam
+# current, brightness and the spot's screen position (drawn live on a little screen in the panel).
+#
+# Honest scope: the brightness is set by a grid-bias PROPERTY (a wired video grid modulating the beam
+# over time is a refinement); the spot sweeps a LIVE TRACE over a transient run (the deflection plates
+# solve each time-step; the spot's locus is read back); electrostatic deflection only (a TV's magnetic deflection
+# yoke, plus focus, astigmatism, the heater warm-up and the Child-Langmuir anode-current law are
+# further rungs); the phosphor + glass envelope are not yet catalog materials (the gun electrodes are
+# a tungsten stand-in). Sources: Braun (1897); standard cathode-ray-tube / electron-optics texts.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: crt
+origin: builtin
+layer: primitive_device
+name: "Cathode-ray tube (CRT)"
+description: "A cathode-ray tube (Braun, 1897). A heated cathode emits electrons, a high anode voltage (the EHT) accelerates them into a beam, a grid bias sets the brightness, and X/Y deflection plates bend the beam onto a phosphor screen. Electrostatic deflection is proportional to the deflection voltage and inversely to the anode voltage, so a higher EHT deflects the spot less. The gun is a fixed beam-current load on the EHT; the deflection plates are high-impedance inputs. Reports the EHT, beam current, brightness and the spot position (drawn on a little screen in the panel)."
+composition:
+  requires:
+    electrodes:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  electrodes:
+    type: material_ref
+    satisfies_role: electrodes
+    required: true
+    default:
+      value: tungsten
+    description: The electron-gun electrodes. Real guns use an oxide-coated or thoriated-tungsten cathode; the catalog's tungsten stands in. The phosphor screen + glass envelope are not yet catalog materials — the behaviour comes from the parameters.
+  beam_current:
+    type: quantity
+    units: ampere
+    required: true
+    description: The beam current at full brightness — the load the gun draws from the anode (EHT). A CRT beam is small, ~0.1-1 mA.
+  grid_bias:
+    type: quantity
+    units: volt
+    required: true
+    description: The grid-cathode bias that sets the brightness. 0 V gives full beam; driving it down to the cutoff bias blanks the beam (dark). Negative in normal use.
+  grid_cutoff_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: The negative grid bias that just blanks the beam (cutoff). Between it and 0 V the brightness rises from dark to full.
+  deflection_sensitivity:
+    type: quantity
+    units: 1/volt
+    required: true
+    description: The electrostatic deflection sensitivity — the spot displacement as a fraction of the screen half-width per volt of deflection, at the rated anode voltage. The real deflection scales as 1/V_anode, so a higher EHT deflects less.
+  rated_anode_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: The anode (EHT) accelerating voltage the deflection sensitivity is specified at. A small CRT runs ~2 kV; televisions use 10-25 kV.
+behaviors:
+  - thermionic_emission
+  - emits_light
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  cathode:
+    description: The electron source (the heated cathode). The beam current returns here; it is the reference the grid bias and deflection voltages are measured against.
+  anode:
+    description: The accelerating anode (the EHT, kilovolts positive). It supplies the beam current.
+  x_deflect:
+    description: The horizontal deflection input. Its voltage (relative to the cathode) moves the spot left/right. High-impedance — it draws essentially no current.
+  y_deflect:
+    description: The vertical deflection input. Its voltage moves the spot up/down. High-impedance.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Modeled in crt-model.ts. The electron gun is a fixed beam-current load on the anode (EHT) — the
+  beam_current rating times the grid-bias brightness (1 at 0 V, 0 at the cutoff bias) — stamped
+  (dc-solver.ts stampCrt) as a current source anode -> cathode; the X/Y deflection plates are
+  high-impedance inputs (a large resistance to the cathode). The spot position is the electrostatic
+  deflectionFraction = sensitivity * V_deflect * (rated_anode / actual_anode), clamped to the screen
+  edge, read post-solve from the deflection + anode voltages and drawn on a little graticule screen in
+  the Properties panel. Honest scope: a grid-bias brightness PROPERTY (a wired video grid is a
+  refinement); a live trace over a transient run (the spot's locus over time, read post-solve);
+  electrostatic deflection only (magnetic deflection, focus, astigmatism, the heater warm-up and the
+  Child-Langmuir anode-current law are further rungs); the gun electrodes are a tungsten stand-in and
+  the phosphor + glass are not yet catalog materials. Sources: Braun (1897); standard cathode-ray-tube
+  / electron-optics references (Parker, "Electronics"; Spangenberg, "Vacuum Tubes").

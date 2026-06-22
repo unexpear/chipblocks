@@ -296,6 +296,9 @@ export type PartInspectorProps = {
   onDeriveResistance: () => void
   /** The board-wide ambient (°C) a part inherits when it sets no ambient_temperature of its own. */
   projectAmbientC: number
+  /** A CRT's spot positions over the scope's transient run (screen fractions, −1..1) — the live
+   *  trace. Present once the scope has run; absent → the inspector shows the single DC spot. */
+  spotTrace?: { points: { x: number; y: number }[]; brightness: number } | undefined
 }
 
 const row: CSSProperties = {
@@ -394,6 +397,7 @@ export function PartInspector({
   onMaterial,
   onDeriveResistance,
   projectAmbientC,
+  spotTrace,
 }: PartInspectorProps) {
   if (selected === null) {
     return (
@@ -524,6 +528,76 @@ export function PartInspector({
           {reading.luminousFluxLm !== undefined
             ? readingRow('Light output', formatEng(reading.luminousFluxLm, 'lm'), null)
             : null}
+          {reading.brightnessPercent !== undefined
+            ? readingRow('Brightness', `${Math.round(reading.brightnessPercent)}%`, null)
+            : null}
+          {reading.spotXPercent !== undefined
+            ? readingRow('Spot X', `${reading.spotXPercent.toFixed(0)}%`, null)
+            : null}
+          {reading.spotYPercent !== undefined
+            ? readingRow('Spot Y', `${reading.spotYPercent.toFixed(0)}%`, null)
+            : null}
+          {reading.spotXPercent !== undefined && reading.spotYPercent !== undefined ? (
+            <div style={{ margin: '8px 2px' }}>
+              <svg width={140} height={108} aria-label="CRT screen — the beam's landing spot">
+                <title>CRT screen</title>
+                <rect
+                  x={1}
+                  y={1}
+                  width={138}
+                  height={106}
+                  rx={6}
+                  fill={THEME.surfaceDeep}
+                  stroke={THEME.borderSubtle}
+                />
+                <line
+                  x1={70}
+                  y1={8}
+                  x2={70}
+                  y2={100}
+                  stroke={THEME.borderSubtle}
+                  strokeWidth={0.5}
+                />
+                <line
+                  x1={12}
+                  y1={54}
+                  x2={128}
+                  y2={54}
+                  stroke={THEME.borderSubtle}
+                  strokeWidth={0.5}
+                />
+                {spotTrace && spotTrace.points.length > 1 ? (
+                  <>
+                    <polyline
+                      points={spotTrace.points
+                        .map((p) => `${70 + p.x * 58},${54 - p.y * 46}`)
+                        .join(' ')}
+                      fill="none"
+                      stroke={THEME.accentLime}
+                      strokeWidth={1}
+                      strokeLinejoin="round"
+                      opacity={Math.max(0.2, spotTrace.brightness * 0.7)}
+                    />
+                    <circle
+                      cx={70 + (spotTrace.points.at(-1)?.x ?? 0) * 58}
+                      cy={54 - (spotTrace.points.at(-1)?.y ?? 0) * 46}
+                      r={3}
+                      fill={THEME.accentLime}
+                      opacity={Math.max(0.3, spotTrace.brightness)}
+                    />
+                  </>
+                ) : (
+                  <circle
+                    cx={70 + (reading.spotXPercent / 100) * 58}
+                    cy={54 - (reading.spotYPercent / 100) * 46}
+                    r={4}
+                    fill={THEME.accentLime}
+                    opacity={Math.max(0.12, (reading.brightnessPercent ?? 100) / 100)}
+                  />
+                )}
+              </svg>
+            </div>
+          ) : null}
           {reading.temperatureC !== undefined
             ? readingRow(
                 'Temperature',

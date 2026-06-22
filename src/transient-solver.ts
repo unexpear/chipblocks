@@ -53,8 +53,10 @@
  * saturation), relays, fuses, potentiometers, thermistors, and photoresistors are handled too.
  */
 
+import { ayrtonArcVoltage } from './arc-model.ts'
 import { bjtCurrents } from './bjt-model.ts'
 import type { Instance, World } from './cross-fk-validator.ts'
+import { CRT_DEFLECTION_INPUT_OHMS, crtParamsFromInstance, gridBrightness } from './crt-model.ts'
 import { solveDCRobust } from './dc-robust.ts'
 import {
   assignNodeIndices,
@@ -632,6 +634,105 @@ function shockleyTransientCurrent(sh: ShockleyTransient, vAcross: number): numbe
   return sh.state === 'conducting'
     ? diodeCurrent(vAcross, sh.diode.saturationCurrent, sh.diode.idealityFactor, sh.diode.thermalV)
     : 0
+}
+
+/** A struck gas-discharge lamp's stiffness (S): a large conductance + a matched current source make a
+ *  near-fixed maintaining-voltage drop (~0.5 Ω series) — the same fixed-drop model the DC solver uses
+ *  for the arc / neon, but stampable each step without an auxiliary current. */
+const GAS_DISCHARGE_CONDUCTANCE = 2
+
+/** A gas-discharge lamp (carbon arc / neon) in the time loop: a latching discharge. Struck, it holds
+ *  at its maintaining (arc) voltage; the latch flips off the solved voltage + current between steps
+ *  (strike at breakover, extinguish below the holding current), so a neon across an RC becomes a
+ *  relaxation oscillator and an arc on AC re-strikes each half-cycle. */
+type GasDischargeTransient = {
+  inst: Instance
+  anodeNet: string
+  cathodeNet: string
+  iA: number | undefined
+  iB: number | undefined
+  maintainingVoltage: number
+  baseVoltage: number
+  ayrtonCoefficient: number
+  breakoverVoltage: number
+  holdingCurrent: number
+  state: ShockleyDiodeState
+}
+
+function resolveGasDischargeTransient(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+): GasDischargeTransient | null {
+  const maintainingVoltage =
+    readScalarParam(inst, 'arc_voltage') ?? readScalarParam(inst, 'maintaining_voltage')
+  const breakoverVoltage = readScalarParam(inst, 'breakover_voltage')
+  const holdingCurrent = readScalarParam(inst, 'holding_current')
+  if (
+    maintainingVoltage === undefined ||
+    breakoverVoltage === undefined ||
+    holdingCurrent === undefined
+  ) {
+    return null
+  }
+  const anodeNet = inst.connects?.find((c) => c.terminal === 'anode')?.net
+  const cathodeNet = inst.connects?.find((c) => c.terminal === 'cathode')?.net
+  if (anodeNet === undefined || cathodeNet === undefined) return null
+  const state: ShockleyDiodeState =
+    readEnumParam(inst, 'device_state') === 'conducting' ? 'conducting' : 'blocking'
+  const ayrtonCoefficient = readScalarParam(inst, 'ayrton_coefficient') ?? 0
+  return {
+    inst,
+    anodeNet,
+    cathodeNet,
+    iA: nodeIndex.get(anodeNet),
+    iB: nodeIndex.get(cathodeNet),
+    maintainingVoltage,
+    baseVoltage: maintainingVoltage,
+    ayrtonCoefficient,
+    breakoverVoltage,
+    holdingCurrent,
+    state,
+  }
+}
+
+/** A CRT in the time loop: the electron gun is a beam-current load anode→cathode (here a constant set
+ *  by the grid-bias property), and the X/Y plates are high-impedance leak inputs. Linear — no Newton,
+ *  no latch. The spot sweeps because the deflection NODE voltages move over time; the trace is read
+ *  back from the series afterwards (part-readings.crtSpotTrace), as the DC spot is read post-solve. */
+type CrtTransient = {
+  inst: Instance
+  anodeNet: string
+  cathodeNet: string
+  xNet: string | undefined
+  yNet: string | undefined
+  iAnode: number | undefined
+  iCathode: number | undefined
+  iX: number | undefined
+  iY: number | undefined
+  beamCurrent: number
+}
+
+function resolveCrtTransient(inst: Instance, nodeIndex: Map<string, number>): CrtTransient | null {
+  const p = crtParamsFromInstance(inst)
+  if (p === undefined) return null
+  const net = (t: string) => inst.connects?.find((c) => c.terminal === t)?.net
+  const anodeNet = net('anode')
+  const cathodeNet = net('cathode')
+  if (anodeNet === undefined || cathodeNet === undefined) return null
+  const xNet = net('x_deflect')
+  const yNet = net('y_deflect')
+  return {
+    inst,
+    anodeNet,
+    cathodeNet,
+    xNet,
+    yNet,
+    iAnode: nodeIndex.get(anodeNet),
+    iCathode: nodeIndex.get(cathodeNet),
+    iX: xNet !== undefined ? nodeIndex.get(xNet) : undefined,
+    iY: yNet !== undefined ? nodeIndex.get(yNet) : undefined,
+    beamCurrent: p.beamCurrent * gridBrightness(p.gridBias, p.gridCutoffVoltage),
+  }
 }
 
 /**
@@ -1607,6 +1708,8 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   const diodes: DiodeElement[] = []
   const tunnelDiodes: TunnelDiode[] = []
   const shockleyDiodes: ShockleyTransient[] = []
+  const gasLamps: GasDischargeTransient[] = []
+  const crts: CrtTransient[] = []
   const zeners: ZenerElement[] = []
   const vacuumDiodes: VacuumDiodeElement[] = []
   const triodes: TriodeElement[] = []
@@ -1775,6 +1878,18 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const sh = resolveShockleyTransient(inst, nodeIndex, vT)
       if (sh !== null) shockleyDiodes.push(sh)
       else warnings.push(`Skipped SCR '${inst.id}' (missing parameters or terminals)`)
+    } else if (inst.definition === 'arc_lamp' || inst.definition === 'neon_lamp') {
+      const lamp = resolveGasDischargeTransient(inst, nodeIndex)
+      if (lamp !== null) gasLamps.push(lamp)
+      else
+        warnings.push(
+          `Skipped gas-discharge lamp '${inst.id}' (missing parameters or anode/cathode)`,
+        )
+    } else if (inst.definition === 'crt') {
+      const crt = resolveCrtTransient(inst, nodeIndex)
+      if (crt !== null) crts.push(crt)
+      else
+        warnings.push(`Skipped CRT '${inst.id}' (missing beam/deflection params or anode/cathode)`)
     } else if (inst.definition === 'wire') {
       const short = resolveShort(
         inst,
@@ -1931,6 +2046,22 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     for (const tri of triodes) stampTriodeCompanion(tri, nodeIndex, M, b)
     for (const tube of screenTubes) stampScreenGridTubeCompanion(tube, nodeIndex, M, b)
     for (const td of tunnelDiodes) stampTransientTunnel(td, nodeIndex, M, b)
+    for (const lamp of gasLamps)
+      if (lamp.state === 'conducting')
+        stampLinePort(
+          lamp.iA,
+          lamp.iB,
+          GAS_DISCHARGE_CONDUCTANCE,
+          GAS_DISCHARGE_CONDUCTANCE * lamp.maintainingVoltage,
+          M,
+          b,
+        )
+    for (const crt of crts) {
+      const gLeak = 1 / CRT_DEFLECTION_INPUT_OHMS
+      if (crt.iX !== undefined) stampLinePort(crt.iX, crt.iCathode, gLeak, 0, M, b)
+      if (crt.iY !== undefined) stampLinePort(crt.iY, crt.iCathode, gLeak, 0, M, b)
+      stampFixedCurrent(crt.iAnode, crt.iCathode, crt.beamCurrent, b)
+    }
     for (const sh of shockleyDiodes) {
       if (sh.state === 'conducting') stampDiodeCompanion(sh.diode, sh.diode.thermalV, M, b)
       // An SCR's gate-cathode resistance is always present (the gate current path).
@@ -2256,6 +2387,23 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const v = volts(sh.diode.anodeNet) - volts(sh.diode.cathodeNet)
       through(sh.inst.id, 'anode', 'cathode', shockleyTransientCurrent(sh, v))
     }
+    for (const lamp of gasLamps) {
+      const v = volts(lamp.anodeNet) - volts(lamp.cathodeNet)
+      const current =
+        lamp.state === 'conducting' ? GAS_DISCHARGE_CONDUCTANCE * (v - lamp.maintainingVoltage) : 0
+      through(lamp.inst.id, 'anode', 'cathode', current)
+    }
+    for (const crt of crts) {
+      // Beam current anode→cathode + the tiny X/Y leak currents; the four sum to zero (device KCL).
+      const vX = (crt.xNet !== undefined ? volts(crt.xNet) : 0) - volts(crt.cathodeNet)
+      const vY = (crt.yNet !== undefined ? volts(crt.yNet) : 0) - volts(crt.cathodeNet)
+      const iX = crt.xNet !== undefined ? vX / CRT_DEFLECTION_INPUT_OHMS : 0
+      const iY = crt.yNet !== undefined ? vY / CRT_DEFLECTION_INPUT_OHMS : 0
+      into.set(`${crt.inst.id}/anode`, crt.beamCurrent)
+      if (crt.xNet !== undefined) into.set(`${crt.inst.id}/x_deflect`, iX)
+      if (crt.yNet !== undefined) into.set(`${crt.inst.id}/y_deflect`, iY)
+      into.set(`${crt.inst.id}/cathode`, -(crt.beamCurrent + iX + iY))
+    }
 
     for (const z of zeners) {
       // The two-branch device current at the converged voltage — forward, or the
@@ -2425,6 +2573,25 @@ export function solveTransient(world: World, options: TransientOptions): Transie
         )
       } else {
         sh.state = shockleyDiodeTarget(sh.state, v, i, sh.breakoverVoltage, sh.holdingCurrent)
+      }
+    }
+    for (const lamp of gasLamps) {
+      // The discharge latch flips off this step's voltage + current: strike at breakover, extinguish
+      // below the holding current. With an RC (neon) that switching is a relaxation oscillator; on AC
+      // (arc) it re-strikes each half-cycle.
+      const v = (nodes.get(lamp.anodeNet) ?? 0) - (nodes.get(lamp.cathodeNet) ?? 0)
+      const i =
+        lamp.state === 'conducting' ? GAS_DISCHARGE_CONDUCTANCE * (v - lamp.maintainingVoltage) : 0
+      lamp.state = shockleyDiodeTarget(lamp.state, v, i, lamp.breakoverVoltage, lamp.holdingCurrent)
+      // A carbon arc (a positive ayrton_coefficient) FALLS as it burns harder: relax its maintaining
+      // voltage to V_min + B/I off this step's current for the next step (the time step damps it).
+      if (lamp.ayrtonCoefficient > 0 && lamp.state === 'conducting') {
+        lamp.maintainingVoltage = ayrtonArcVoltage(
+          lamp.baseVoltage,
+          lamp.ayrtonCoefficient,
+          i,
+          lamp.holdingCurrent,
+        )
       }
     }
     for (const ind of inductors) {

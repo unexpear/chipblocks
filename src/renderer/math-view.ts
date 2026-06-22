@@ -1,4 +1,5 @@
 import type { Instance, World } from '../cross-fk-validator.ts'
+import { crtParamsFromInstance, deflectionFraction, gridBrightness } from '../crt-model.ts'
 import {
   potentiometerSegments,
   resolveMosfet,
@@ -901,6 +902,33 @@ function partCard(
       title: 'Induction motor — a rotating field drags the rotor (slip)',
       lines,
     }
+  }
+  if (def === 'crt') {
+    const crtParams = crtParamsFromInstance(inst)
+    lines.push(
+      'A cathode-ray tube paints with electrons: a hot cathode emits them, a high anode voltage (the EHT, kilovolts) accelerates them into a beam, the grid bias throttles the beam current (brightness), and two pairs of deflection plates bend the beam onto a phosphor screen that glows where it lands. Electrostatic deflection is proportional to the deflection voltage and INVERSELY to the anode voltage — D = (geometry)·V_deflect/V_anode — so a stiffer (higher-EHT) beam deflects less.',
+    )
+    const cathode = netOfTerminal(inst, 'cathode')
+    const anode = netOfTerminal(inst, 'anode')
+    if (crtParams !== undefined && cathode !== undefined && anode !== undefined) {
+      const vC = solution.nodes.get(cathode) ?? 0
+      const eht = (solution.nodes.get(anode) ?? 0) - vC
+      const brightness = gridBrightness(crtParams.gridBias, crtParams.gridCutoffVoltage)
+      const xNet = netOfTerminal(inst, 'x_deflect')
+      const yNet = netOfTerminal(inst, 'y_deflect')
+      const vX = xNet !== undefined ? (solution.nodes.get(xNet) ?? 0) - vC : 0
+      const vY = yNet !== undefined ? (solution.nodes.get(yNet) ?? 0) - vC : 0
+      const sens = crtParams.deflectionSensitivity
+      const sx = deflectionFraction(vX, sens, eht, crtParams.ratedAnodeVoltage) * 100
+      const sy = deflectionFraction(vY, sens, eht, crtParams.ratedAnodeVoltage) * 100
+      lines.push(
+        `EHT = ${fmtV(eht)} accelerating the beam; the grid bias gives ${(brightness * 100).toFixed(0)}% brightness, drawing ${fmtA(crtParams.beamCurrent * brightness)}.`,
+      )
+      lines.push(
+        `Deflection: ${fmtV(vX)} on X → ${sx.toFixed(0)}% across, ${fmtV(vY)} on Y → ${sy.toFixed(0)}% up (of the screen half-width; clamped at the edge).`,
+      )
+    }
+    return { id: inst.id, title: 'CRT — accelerate a beam, bend it, light a phosphor', lines }
   }
   if (def === 'transistor_bjt_npn' || def === 'transistor_bjt_pnp') {
     const beta = readScalarParam(inst, 'forward_current_gain')

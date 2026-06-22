@@ -10,14 +10,19 @@
 import { describe, expect, test } from 'vitest'
 import { solveDC } from '../src/dc-solver.ts'
 import {
+  type BlockPort,
+  blockLayout,
   blockPortAliases,
   bubbleBlockHealth,
   type CanvasEdgeLike,
   type CanvasNodeLike,
   cloneBlockData,
+  edgeTouchesPort,
   flattenBlocks,
   groupSelection,
+  movePortAlongEdge,
   ungroupBlock,
+  withoutOffsets,
 } from '../src/renderer/blocks.ts'
 import { canvasToWorld } from '../src/renderer/canvas-to-world.ts'
 
@@ -297,5 +302,88 @@ describe('flattening, bubbling, aliases, cloning', () => {
       block.nodes[0]?.parameters as Record<string, { value: { amount: number } }> | undefined
     )?.threshold_voltage?.value.amount
     expect(originalVth).toBe(-2.5)
+  })
+})
+
+describe('blockLayout — pins live on the four edges (a chip-style perimeter)', () => {
+  const port = (id: string, side: BlockPort['side']): BlockPort => ({
+    id,
+    label: id,
+    side,
+    inner: { nodeId: id, handleId: 'x' },
+  })
+
+  test('auto-distributes user pins centered on whichever edge each is assigned', () => {
+    const ports = [port('a', 'left'), port('b', 'left'), port('c', 'right'), port('d', 'top')]
+    const { height, placed } = blockLayout(ports)
+    // every pin lands ON its declared edge — never floating
+    expect(placed.length).toBe(4)
+    for (const pl of placed) expect(pl.side).toBe(ports.find((p) => p.id === pl.port.id)?.side)
+    // the box grows for the busiest vertical side (2 left pins)
+    expect(height).toBeGreaterThan(44)
+    // the two left pins are distinct and centered on the height
+    const left = placed.filter((p) => p.side === 'left').map((p) => p.coord)
+    expect(left.length).toBe(2)
+    expect(left[0]).not.toBe(left[1])
+    expect(((left[0] ?? 0) + (left[1] ?? 0)) / 2).toBeCloseTo(height / 2, 3)
+    // a lone right pin sits at the vertical center
+    expect(placed.find((p) => p.side === 'right')?.coord).toBeCloseTo(height / 2, 3)
+  })
+
+  test('a hand-laid block (every pin has an offset — the built-ins) keeps its exact positions', () => {
+    const a: BlockPort = { ...port('a', 'left'), offset: 14 }
+    const b: BlockPort = { ...port('b', 'left'), offset: 32 }
+    const { placed } = blockLayout([a, b])
+    expect(placed.find((p) => p.port.id === 'a')?.coord).toBe(14)
+    expect(placed.find((p) => p.port.id === 'b')?.coord).toBe(32)
+  })
+})
+
+describe('movePortAlongEdge — reorder pins within one edge', () => {
+  const port = (id: string, side: BlockPort['side']): BlockPort => ({
+    id,
+    label: id,
+    side,
+    inner: { nodeId: id, handleId: 'x' },
+  })
+
+  test('moves a pin up among its same-side pins', () => {
+    const out = movePortAlongEdge([port('a', 'left'), port('b', 'left')], 'b', -1)
+    expect(out.map((p) => p.id)).toEqual(['b', 'a'])
+  })
+
+  test('is a no-op at the end of an edge', () => {
+    const out = movePortAlongEdge([port('a', 'left'), port('b', 'left')], 'a', -1)
+    expect(out.map((p) => p.id)).toEqual(['a', 'b'])
+  })
+
+  test('skips pins on OTHER edges — reorders within the same edge only', () => {
+    const out = movePortAlongEdge(
+      [port('a', 'left'), port('x', 'right'), port('b', 'left')],
+      'b',
+      -1,
+    )
+    expect(out.map((p) => p.id)).toEqual(['b', 'x', 'a']) // b swaps with a, skipping the right pin x
+  })
+
+  test('withoutOffsets drops the legacy hand-laid offsets (→ auto-distribute)', () => {
+    const out = withoutOffsets([{ ...port('a', 'left'), offset: 14 }])
+    expect(out[0]?.offset).toBeUndefined()
+  })
+})
+
+describe('edgeTouchesPort — removing a pin drops the wire attached to it', () => {
+  const e = (source: string, sourceHandle: string, target: string, targetHandle: string) => ({
+    source,
+    sourceHandle,
+    target,
+    targetHandle,
+  })
+
+  test('matches a wire on the pin, either end; ignores other pins and other blocks', () => {
+    expect(edgeTouchesPort(e('b1', 'port_1', 'r1', 'a'), 'b1', 'port_1')).toBe(true) // source end
+    expect(edgeTouchesPort(e('r1', 'a', 'b1', 'port_1'), 'b1', 'port_1')).toBe(true) // target end
+    expect(edgeTouchesPort(e('b1', 'port_2', 'r1', 'a'), 'b1', 'port_1')).toBe(false) // a different pin
+    expect(edgeTouchesPort(e('b2', 'port_1', 'r1', 'a'), 'b1', 'port_1')).toBe(false) // a different block
   })
 })

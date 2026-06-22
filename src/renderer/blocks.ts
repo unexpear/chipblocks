@@ -18,13 +18,24 @@ import type { Parameters } from './part-defaults.ts'
  * the real internal terminal.
  */
 
+/** A block pin's power role — a chip marks its supply pins; signal pins stay plain. */
+export type PinKind = 'signal' | 'power_positive' | 'power_negative'
+/** Which edge of the block box a pin sits on — a real chip's perimeter (QFP-style). */
+export type PinSide = 'left' | 'right' | 'top' | 'bottom'
+
 export type BlockPort = {
   id: string
   /** Human label — the internal terminal it IS (e.g. "mn1 · gate"). */
   label: string
-  side: 'left' | 'right'
-  /** Vertical offset (px) for the handle on the block box. */
-  offset: number
+  /** User-given pin name (e.g. "VCC", "OUT"); falls back to the label. */
+  name?: string
+  /** Power pins render with +/− (a chip DOES mark its supply pins); signal pins stay plain. */
+  kind?: PinKind
+  /** Which EDGE of the block box the pin sits on — a real chip's perimeter pins (QFP-style). */
+  side: PinSide
+  /** Legacy hand-laid position (px along the edge) — only the BUILT-IN blocks set it; user-grouped
+   *  blocks leave it unset and auto-distribute on the edges (blockLayout). */
+  offset?: number
   inner: { nodeId: string; handleId: string }
 }
 
@@ -106,15 +117,100 @@ export function edgeInsideSelection(
   return selectedIds.has(edge.source) && selectedIds.has(edge.target)
 }
 
-export const BLOCK_WIDTH = 96
 const PORT_SPACING = 18
-const PORT_TOP = 14
+const PORT_PAD = 18
+const BLOCK_MIN_W = 96
+const BLOCK_MIN_H = 44
 
-/** Block box height grows with the busier side's port count. */
-export function blockHeight(ports: BlockPort[]): number {
-  const left = ports.filter((p) => p.side === 'left').length
-  const right = ports.length - left
-  return Math.max(44, PORT_TOP + PORT_SPACING * Math.max(left, right) + 6)
+/** A pin's resolved place on the block box: which edge, and the px coordinate along that edge. */
+export type PlacedPort = { port: BlockPort; side: BlockPort['side']; coord: number }
+
+/**
+ * Lay the pins out on the block's FOUR edges, like a real chip's perimeter pins. Each side's pins are
+ * evenly spaced and CENTERED along that edge; the box grows so the busiest left/right side sets the
+ * height and the busiest top/bottom side sets the width. Pure + recomputed every render — so a pin
+ * always sits ON an edge: reassign its side and it simply re-places itself, never floating.
+ */
+export function blockLayout(ports: BlockPort[]): {
+  width: number
+  height: number
+  placed: PlacedPort[]
+} {
+  // A hand-laid block (every pin carries an explicit offset — the built-ins) keeps its exact layout;
+  // a user-grouped block (no offsets) auto-distributes on the four edges, centered per side.
+  if (ports.length > 0 && ports.every((p) => typeof p.offset === 'number')) {
+    const height = Math.max(BLOCK_MIN_H, Math.max(...ports.map((p) => p.offset ?? 0)) + PORT_PAD)
+    return {
+      width: BLOCK_MIN_W,
+      height,
+      placed: ports.map((port) => ({ port, side: port.side, coord: port.offset ?? 0 })),
+    }
+  }
+  const bySide: Record<BlockPort['side'], BlockPort[]> = {
+    left: [],
+    right: [],
+    top: [],
+    bottom: [],
+  }
+  for (const p of ports) bySide[p.side].push(p)
+  const vMax = Math.max(bySide.left.length, bySide.right.length)
+  const hMax = Math.max(bySide.top.length, bySide.bottom.length)
+  const height = Math.max(BLOCK_MIN_H, vMax * PORT_SPACING + PORT_PAD)
+  const width = Math.max(BLOCK_MIN_W, hMax * PORT_SPACING + PORT_PAD)
+  const placed: PlacedPort[] = []
+  for (const side of ['left', 'right', 'top', 'bottom'] as const) {
+    const list = bySide[side]
+    const along = side === 'left' || side === 'right' ? height : width
+    const start = along / 2 - ((list.length - 1) * PORT_SPACING) / 2
+    list.forEach((port, i) => {
+      placed.push({ port, side, coord: start + i * PORT_SPACING })
+    })
+  }
+  return { width, height, placed }
+}
+
+/** Drop the legacy hand-laid offsets so the block auto-distributes (after any pinout edit). */
+export function withoutOffsets(ports: BlockPort[]): BlockPort[] {
+  return ports.map(({ offset: _offset, ...rest }) => rest)
+}
+
+/** Move a pin up/down (dir −1 / +1) AMONG ITS SAME-SIDE pins — reordering that one edge. */
+export function movePortAlongEdge(ports: BlockPort[], portId: string, dir: -1 | 1): BlockPort[] {
+  const idx = ports.findIndex((p) => p.id === portId)
+  const side = ports[idx]?.side
+  if (idx < 0 || side === undefined) return ports
+  let swap = -1
+  for (let i = idx + dir; i >= 0 && i < ports.length; i += dir) {
+    if (ports[i]?.side === side) {
+      swap = i
+      break
+    }
+  }
+  const a = ports[idx]
+  const b = ports[swap]
+  if (swap < 0 || !a || !b) return ports
+  const out = [...ports]
+  out[idx] = b
+  out[swap] = a
+  return out
+}
+
+/** Does this wire attach to the given block PIN? Used to drop the wire when its pin is removed (it
+ *  would otherwise dangle on a handle that no longer exists). */
+export function edgeTouchesPort(
+  edge: {
+    source: string
+    sourceHandle?: string | null
+    target: string
+    targetHandle?: string | null
+  },
+  blockId: string,
+  portId: string,
+): boolean {
+  return (
+    (edge.source === blockId && edge.sourceHandle === portId) ||
+    (edge.target === blockId && edge.targetHandle === portId)
+  )
 }
 
 const edgeData = (edge: CanvasEdgeLike): BlockInnerEdge => ({
@@ -171,7 +267,6 @@ export function groupSelection(
       id: `port_${ports.length + 1}`,
       label: `${nodeId} · ${handleId.replace(/_/g, ' ')}`,
       side,
-      offset: 0, // assigned after all ports are known
       inner: { nodeId, handleId },
     }
     ports.push(port)
@@ -189,19 +284,13 @@ export function groupSelection(
       : { ...edge, target: blockId, targetHandle: port.id }
   })
 
-  // Stack each side's ports top-down in inner-terminal y order.
-  for (const side of ['left', 'right'] as const) {
-    const sidePorts = ports
-      .filter((p) => p.side === side)
-      .sort((a, b) => {
-        const ya = inner.find((n) => n.id === a.inner.nodeId)?.position.y ?? 0
-        const yb = inner.find((n) => n.id === b.inner.nodeId)?.position.y ?? 0
-        return ya - yb
-      })
-    sidePorts.forEach((p, i) => {
-      p.offset = PORT_TOP + i * PORT_SPACING
-    })
-  }
+  // Order the pins by their internal-terminal y, so blockLayout stacks each edge sensibly. Positions
+  // are computed at render (blockLayout), so a pin always lands centered on its edge — never floating.
+  ports.sort((a, b) => {
+    const ya = inner.find((n) => n.id === a.inner.nodeId)?.position.y ?? 0
+    const yb = inner.find((n) => n.id === b.inner.nodeId)?.position.y ?? 0
+    return ya - yb
+  })
 
   const block: BlockData = {
     name,

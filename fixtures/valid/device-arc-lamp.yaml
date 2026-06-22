@@ -18,11 +18,12 @@
 # current; extinguished it is an open. The light it makes is luminous_efficacy times the arc power
 # (light.ts arcLuminousFluxLumens), from a crater near carbon's sublimation temperature.
 #
-# Honest scope: a constant burning voltage (the Ayrton current-dependent fall V = V_min + b/I, the
-# real negative resistance, is the documented next rung); the strike is abstracted as a voltage
-# threshold (real arcs strike by touching + separating the carbons, or a higher gap breakdown); DC
-# only (an AC arc re-strikes each half-cycle); electrode consumption (the carbons burn down) and
-# casting light onto the photo-sensors are refinements. The carbon electrodes are a tungsten catalog
+# Honest scope: the Ayrton current-dependent fall V = V_min + B/I (the real negative resistance) is
+# modeled — solveWithRelays relaxes the burning voltage from the solved current (an under-ballasted
+# arc that cannot burn steadily simply does not settle); the strike is abstracted as a voltage
+# threshold (real arcs strike by touching + separating the carbons, or a higher gap breakdown); the
+# AC re-striking each half-cycle now runs in the transient latch; electrode consumption (the carbons
+# burn down) and casting light onto the photo-sensors are refinements. The carbon electrodes are a tungsten catalog
 # stand-in (no carbon material yet); the arc physics comes from the parameters, not the electrodes.
 #
 # MUST validate against definition.schema.json.
@@ -53,7 +54,12 @@ parameters:
     type: quantity
     units: volt
     required: true
-    description: The near-constant voltage the struck arc burns at (a carbon arc holds ~40-55 V). Stamped as a fixed drop once struck, the ballast setting the current. The real falling characteristic V = V_min + b/I is the documented next rung.
+    description: The asymptotic minimum burning voltage V_min — what the arc falls toward at high current (a carbon arc holds ~40-55 V). The actual burning voltage is V_min + B/I (see ayrton_coefficient); with no coefficient it is a flat drop. The ballast sets the current.
+  ayrton_coefficient:
+    type: quantity
+    units: "V·A"
+    required: false
+    description: Ayrton's coefficient B in the falling characteristic V = V_min + B/I — the arc burns higher at low current and falls toward V_min as the current climbs (its negative resistance, dV/dI = −B/I²). About 48 V·A for a short carbon arc (Ayrton 1902, B = c + d·ℓ). Absent or zero gives the flat constant-voltage arc.
   breakover_voltage:
     type: quantity
     units: volt
@@ -111,9 +117,9 @@ notes: |
   a fixed arc_voltage drop anode -> cathode (dc-solver.ts stampArc, the same fixed-drop mechanism the
   LED's V_F uses), so the external ballast sets the current; an EXTINGUISHED arc is omitted (an open).
   The branch current is the stamp's auxiliary variable. Light = luminous_efficacy * arc_voltage *
-  current (light.ts arcLuminousFluxLumens). Honest scope: a constant burning voltage (the Ayrton
-  negative-resistance fall V = V_min + b/I is the next rung); the strike is a voltage-threshold
-  abstraction; DC only (AC re-striking each half-cycle, electrode burn-down, and casting light onto
-  the photo-sensors are refinements); the carbon electrodes are a tungsten stand-in. Sources: Davy's
+  current (light.ts arcLuminousFluxLumens). Honest scope: the Ayrton negative-resistance fall
+  V = V_min + B/I is modeled (the fixed point relaxes the burning voltage from the solved current);
+  the strike is a voltage-threshold abstraction; AC re-striking each half-cycle runs in the transient latch (electrode burn-down and
+  casting light onto the photo-sensors are refinements); the carbon electrodes are a tungsten stand-in. Sources: Davy's
   1802 arc; the Yablochkov candle (1876); Brush arc lighting (1879); Hertha Ayrton, "The Electric
   Arc" (1902) for the arc characteristic; Cobine, "Gaseous Conductors" for discharge physics.

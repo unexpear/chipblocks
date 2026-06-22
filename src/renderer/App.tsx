@@ -4,6 +4,7 @@ import {
   BackgroundVariant,
   type Connection,
   ConnectionMode,
+  ControlButton,
   Controls,
   type Edge,
   MarkerType,
@@ -43,17 +44,22 @@ import { type RelayState, solveWithRelays } from '../relay.ts'
 import type { ShockleyDiodeState } from '../shockley-diode.ts'
 import { STANDARD_AMBIENT_C } from '../thermal-model.ts'
 import type { TransientResult } from '../transient-solver.ts'
+import { type AddableTerminal, BlockInspector, type BlockPortPatch } from './block-inspector.tsx'
 import { BlockViewer } from './block-viewer.tsx'
 import {
   type BlockData,
   type CanvasEdgeLike as BlockEdgeLike,
   type CanvasNodeLike as BlockNodeLike,
+  type BlockPort,
   blockPortAliases,
   bubbleBlockHealth,
   cloneBlockData,
+  edgeTouchesPort,
   flattenBlocks,
   groupSelection,
+  movePortAlongEdge,
   ungroupBlock,
+  withoutOffsets,
 } from './blocks.ts'
 import { BodePanel } from './bode-panel.tsx'
 import { BUILTIN_BLOCKS } from './builtin-blocks.ts'
@@ -145,7 +151,7 @@ import {
   toggledSwitch,
 } from './part-defaults.ts'
 import { PartInspector, type SelectedPart } from './part-inspector.tsx'
-import { type PartReading, partReadings } from './part-readings.ts'
+import { type CrtSpot, crtSpotTrace, type PartReading, partReadings } from './part-readings.ts'
 import { ProjectBrowser, type ProjectChoice } from './project-browser.tsx'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
 import {
@@ -160,7 +166,7 @@ import {
 } from './scope.tsx'
 import { extractXyPath, type FamilyStep, stepValues, withSourceVoltage } from './scope-family.ts'
 import { H_DIVISIONS, scopeRecordSteps, slowestHonestTimebase } from './scope-scales.ts'
-import { type DeviceNodeData, nodeTypes } from './symbols.tsx'
+import { type DeviceNodeData, nodeTypes, terminalsOf } from './symbols.tsx'
 import { clampIndex, frameEdgeValues, frameLensRange } from './timeline.ts'
 import { TimelinePanel } from './timeline-panel.tsx'
 import { type Tool, ToolbarItems } from './toolbar.tsx'
@@ -692,6 +698,9 @@ function templateNodes(template: string, depth: 'block' | 'design'): Node[] {
   })
 }
 
+/** Snap-to-grid step (px) — parts align to the 20 px major grid (the bold lines) when snap is on. */
+const SNAP_GRID: [number, number] = [20, 20]
+
 function Canvas({ project }: { project: ProjectChoice }) {
   const initial = useMemo(() => {
     // The catalog world supplies the part + material DEFINITIONS (for the material
@@ -1018,6 +1027,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
   const [activeTab, setActiveTab] = useState<Record<number, string>>({})
   // Active tool: 'select' (move parts) or 'wire' (parts locked; drag draws wires).
   const [tool, setTool] = useState<Tool>('select')
+  // Snap-to-grid (optional): OFF by default — placement stays free, the way it has always worked —
+  // and toggled from the canvas controls. When on, dragged AND dropped parts align to SNAP_GRID.
+  const [snapToGrid, setSnapToGrid] = useState(false)
   // Active physics (S19-v3-14): re-solve + refresh every wire's current/length/
   // resistance from the live canvas. Always-on recomputes on every change (the
   // default); turn it off and hit Solve to batch big edits without the PC
@@ -1105,6 +1117,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // Scope (time-domain view): run the canvas circuit through solveTransient over
   // an auto-picked window and show every node voltage as a waveform.
   const [scopeResult, setScopeResult] = useState<TransientResult | null>(null)
+  const [crtTraces, setCrtTraces] = useState<
+    Map<string, { points: CrtSpot[]; brightness: number }>
+  >(new Map())
   // Timeline playback (Sprint 22): the panel open + the playhead's position in the
   // scope's transient record (a possibly-fractional index while playing).
   const [timelineOpen, setTimelineOpen] = useState(false)
@@ -1477,6 +1492,13 @@ function Canvas({ project }: { project: ProjectChoice }) {
       ...thermal.result,
       warnings: [...thermal.result.warnings, ...thermal.warnings],
     })
+    // CRT live traces (the spot's locus over this run) for any tube in the circuit — the inspector's
+    // screen draws them instead of the single DC spot once the scope has run.
+    const traces = new Map<string, { points: CrtSpot[]; brightness: number }>()
+    for (const [id, inst] of world.instances) {
+      if (inst.definition === 'crt') traces.set(id, crtSpotTrace(world, id, thermal.result.series))
+    }
+    setCrtTraces(traces)
   }, [nodes, edges, scopeSecPerDiv])
 
   // Trace a family (S20-v3-4): one solver run per stepped value of the chosen
@@ -2600,13 +2622,20 @@ function Canvas({ project }: { project: ProjectChoice }) {
   const onDrop = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
       event.preventDefault()
+      const snap = (p: { x: number; y: number }) =>
+        snapToGrid
+          ? {
+              x: Math.round(p.x / SNAP_GRID[0]) * SNAP_GRID[0],
+              y: Math.round(p.y / SNAP_GRID[1]) * SNAP_GRID[1],
+            }
+          : p
       const blockSourceId = event.dataTransfer.getData(BLOCK_MIME)
       if (blockSourceId) {
         const source = nodes.find((n) => n.id === blockSourceId)
         const block = (source?.data as { block?: BlockData } | undefined)?.block
         if (!block) return
         checkpointAction('drop')
-        const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+        const position = snap(screenToFlowPosition({ x: event.clientX, y: event.clientY }))
         dropCount.current += 1
         const id = `block_${dropCount.current}`
         const clone = cloneBlockData(block, String(dropCount.current))
@@ -2627,7 +2656,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       const builtinBlock = BUILTIN_BLOCKS[definition]
       if (builtinBlock) {
         checkpointAction('drop')
-        const blockPos = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+        const blockPos = snap(screenToFlowPosition({ x: event.clientX, y: event.clientY }))
         dropCount.current += 1
         const block = structuredClone(builtinBlock)
         setNodes((current) =>
@@ -2641,7 +2670,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
         return
       }
       checkpointAction('drop')
-      const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      const position = snap(screenToFlowPosition({ x: event.clientX, y: event.clientY }))
       dropCount.current += 1
       const id = `${definition}_${dropCount.current}`
       // A dropped part gets real, cited default values (S19-v3-20) so it is a
@@ -2655,8 +2684,99 @@ function Canvas({ project }: { project: ProjectChoice }) {
         }),
       )
     },
-    [screenToFlowPosition, setNodes, nodes, checkpointAction],
+    [screenToFlowPosition, setNodes, nodes, checkpointAction, snapToGrid],
   )
+
+  // Edit a block's pin (name / power-type / which edge). Changing the SIDE drops any legacy hand-laid
+  // offsets so the pin re-distributes onto its new edge (a built-in block then auto-lays-out too).
+  const onEditBlockPort = useCallback(
+    (blockId: string, portId: string, patch: BlockPortPatch) => {
+      checkpointAction('edit-pins')
+      setNodes((cur) =>
+        cur.map((n) => {
+          if (n.id !== blockId) return n
+          const block = (n.data as { block?: BlockData }).block
+          if (!block) return n
+          const edited = block.ports.map((p) => (p.id === portId ? { ...p, ...patch } : p))
+          // Changing a side needs the auto-distribute layout, so drop the legacy offsets; name/kind
+          // keep them (a built-in block's hand-laid look survives a rename).
+          const ports = patch.side !== undefined ? withoutOffsets(edited) : edited
+          return { ...n, data: { ...n.data, block: { ...block, ports } } }
+        }),
+      )
+    },
+    [setNodes, checkpointAction],
+  )
+
+  // Declare a pin by exposing an internal terminal — even before it's wired. A new pin has no offset,
+  // so the block auto-distributes (withoutOffsets clears any legacy ones too).
+  const onAddBlockPort = useCallback(
+    (blockId: string, nodeId: string, handleId: string) => {
+      checkpointAction('add-pin')
+      setNodes((cur) =>
+        cur.map((n) => {
+          if (n.id !== blockId) return n
+          const block = (n.data as { block?: BlockData }).block
+          if (!block) return n
+          const newPort: BlockPort = {
+            id: `port_${crypto.randomUUID().slice(0, 8)}`,
+            label: `${nodeId} · ${handleId.replace(/_/g, ' ')}`,
+            side: 'left',
+            inner: { nodeId, handleId },
+          }
+          const ports = withoutOffsets([...block.ports, newPort])
+          return { ...n, data: { ...n.data, block: { ...block, ports } } }
+        }),
+      )
+    },
+    [setNodes, checkpointAction],
+  )
+
+  // Reorder a pin up/down within its edge.
+  const onReorderBlockPort = useCallback(
+    (blockId: string, portId: string, dir: -1 | 1) => {
+      checkpointAction('reorder-pins')
+      setNodes((cur) =>
+        cur.map((n) => {
+          if (n.id !== blockId) return n
+          const block = (n.data as { block?: BlockData }).block
+          if (!block) return n
+          const ports = withoutOffsets(movePortAlongEdge(block.ports, portId, dir))
+          return { ...n, data: { ...n.data, block: { ...block, ports } } }
+        }),
+      )
+    },
+    [setNodes, checkpointAction],
+  )
+
+  // Remove a pin — and drop any external wire attached to it (it would otherwise dangle on a handle
+  // that no longer exists). Undoable, so a mis-click is one Undo away.
+  const onRemoveBlockPort = useCallback(
+    (blockId: string, portId: string) => {
+      checkpointAction('remove-pin')
+      setNodes((cur) =>
+        cur.map((n) => {
+          if (n.id !== blockId) return n
+          const block = (n.data as { block?: BlockData }).block
+          if (!block) return n
+          const ports = block.ports.filter((p) => p.id !== portId)
+          return { ...n, data: { ...n.data, block: { ...block, ports } } }
+        }),
+      )
+      setEdges((cur) => cur.filter((e) => !edgeTouchesPort(e, blockId, portId)))
+    },
+    [setNodes, setEdges, checkpointAction],
+  )
+
+  // Zoom to the SELECTED parts (or fit all if none) — precise framing, easier than the wheel.
+  const zoomToSelection = useCallback(() => {
+    const sel = nodes.filter((n) => n.selected).map((n) => ({ id: n.id }))
+    fitView(
+      sel.length > 0
+        ? { nodes: sel, duration: 300, padding: 0.6, maxZoom: 8 }
+        : { duration: 300, maxZoom: 2 },
+    )
+  }, [nodes, fitView])
 
   // The AWG gauge new wires take (the toolbar picker sets it); each wire keeps its
   // own, editable later by selecting it. Declared above both wire-creation paths.
@@ -2978,6 +3098,27 @@ function Canvas({ project }: { project: ProjectChoice }) {
         parameters: (selectedNode.data as DeviceNodeData).parameters,
       }
     : null
+  // A selected circuit BLOCK → the pinout editor (instead of the part properties).
+  const selectedBlock =
+    selectedNode?.type === 'block' ? (selectedNode.data as { block?: BlockData }).block : undefined
+  // The block's internal terminals NOT yet exposed as pins — offered in the "add pin" picker so a
+  // pinout can be pre-defined before anything is wired out.
+  const availableTerminals: AddableTerminal[] = !selectedBlock
+    ? []
+    : selectedBlock.nodes
+        .flatMap((inner) =>
+          (inner.block
+            ? inner.block.ports.map((p) => p.id)
+            : terminalsOf(inner.definition, inner.parameters).map((t) => t.id)
+          ).map((handleId) => ({ nodeId: inner.id, handleId })),
+        )
+        .filter(
+          (t) =>
+            !selectedBlock.ports.some(
+              (p) => p.inner.nodeId === t.nodeId && p.inner.handleId === t.handleId,
+            ),
+        )
+        .map((t) => ({ ...t, label: `${t.nodeId} · ${t.handleId.replace(/_/g, ' ')}` }))
   // A selected wire (and no part) feeds the wire-gauge inspector instead.
   const selectedEdge = edges.find((e) => e.selected)
   const selectedWire: SelectedWire | null =
@@ -3173,6 +3314,8 @@ function Canvas({ project }: { project: ProjectChoice }) {
                         maxZoom={1000}
                         fitView
                         proOptions={{ hideAttribution: true }}
+                        snapToGrid={snapToGrid}
+                        snapGrid={SNAP_GRID}
                       >
                         {/* Graph-paper grid: fine minor lines, with a bolder major line every 5th. */}
                         <Background
@@ -3191,7 +3334,29 @@ function Canvas({ project }: { project: ProjectChoice }) {
                         />
                         {/* Coordinate-graph axes through the origin + the four quadrants. */}
                         <CoordinateAxes light={light} />
-                        <Controls />
+                        <Controls>
+                          <ControlButton
+                            onClick={() => setSnapToGrid((s) => !s)}
+                            title={
+                              snapToGrid
+                                ? 'Snap to grid: ON — parts align to the grid (click for free placement)'
+                                : 'Snap to grid: OFF — free placement (click to snap parts to the grid)'
+                            }
+                            style={
+                              snapToGrid
+                                ? { background: THEME.accentBlue, color: THEME.textBright }
+                                : undefined
+                            }
+                          >
+                            #
+                          </ControlButton>
+                          <ControlButton
+                            onClick={zoomToSelection}
+                            title="Zoom to selection — frames the selected parts (fits all if none selected)"
+                          >
+                            ⊙
+                          </ControlButton>
+                        </Controls>
                         <MeterProbes red={redProbe} black={blackProbe} />
                         {/* Scope channel probes (S19-v3-77): one colored clip per
                     voltage channel. Wire clamps show in the channel chips. */}
@@ -3747,10 +3912,20 @@ function Canvas({ project }: { project: ProjectChoice }) {
                 onGauge={(gaugeAwg) => onEditWireGauge(selectedWire.id, gaugeAwg)}
                 onMaterial={(material) => onEditWireMaterial(selectedWire.id, material)}
               />
+            ) : selectedBlock && selectedNode ? (
+              <BlockInspector
+                ports={selectedBlock.ports}
+                available={availableTerminals}
+                onEditPort={(portId, patch) => onEditBlockPort(selectedNode.id, portId, patch)}
+                onAddPort={(nodeId, handleId) => onAddBlockPort(selectedNode.id, nodeId, handleId)}
+                onReorderPort={(portId, dir) => onReorderBlockPort(selectedNode.id, portId, dir)}
+                onRemovePort={(portId) => onRemoveBlockPort(selectedNode.id, portId)}
+              />
             ) : (
               <PartInspector
                 selected={selectedPart}
                 reading={selectedPart ? readings.get(selectedPart.id) : undefined}
+                spotTrace={selectedPart ? crtTraces.get(selectedPart.id) : undefined}
                 materials={initial.materials}
                 projectAmbientC={projectAmbientC}
                 validMaterials={
@@ -3814,6 +3989,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                   onClick={() => {
                     setScopeResult(null)
                     setScopeRefusal(null)
+                    setCrtTraces(new Map())
                   }}
                   className="nodrag"
                   style={{

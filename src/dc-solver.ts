@@ -23,6 +23,7 @@
 
 import { type BjtParams, bjtCompanion, bjtCurrents } from './bjt-model.ts'
 import type { Instance, Net, World } from './cross-fk-validator.ts'
+import { CRT_DEFLECTION_INPUT_OHMS, crtParamsFromInstance, gridBrightness } from './crt-model.ts'
 import { type DenseVector, lusolve, zerosMatrix, zerosVector } from './dense-linear.ts'
 import {
   companionModel,
@@ -336,6 +337,7 @@ const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'dc_motor',
   'generator',
   'induction_motor',
+  'crt',
   'transmission_line',
   'resistor',
   'thermistor',
@@ -653,6 +655,11 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         const bNet = inst.connects?.find((c) => c.terminal === 'terminal_b')?.net
         if (r1 !== undefined && r1 > 0 && aNet !== undefined && bNet !== undefined)
           stampConductance(nodeIndex, M, aNet, bNet, r1)
+      } else if (inst.definition === 'crt') {
+        // A CRT's electron gun is a fixed beam-current load on the anode (EHT); the X/Y deflection
+        // plates are high-impedance inputs. The spot position + brightness are read post-solve.
+        if (!stampCrt(inst, nodeIndex, M, b))
+          warnings.push(`Skipped CRT '${inst.id}' (missing beam/deflection params or connects)`)
       } else if (inst.definition === 'transmission_line') {
         // At DC a lossless line is a pass-through (v_near = v_far): a near-short between
         // each end's conductors. The transient solver carries the propagation delay + Z₀.
@@ -2271,6 +2278,40 @@ export function stampArc(
   const V_arc = readScalarParam(inst, 'arc_voltage') ?? readScalarParam(inst, 'maintaining_voltage')
   if (V_arc === undefined) return false
   return findAndStampVoltageSource(inst, nodeIndex, auxIdx, V_arc, 'anode', 'cathode', M, b)
+}
+
+/**
+ * A CRT's electrical load: the electron gun draws a beam current from the anode (EHT) to the cathode
+ * — the beam-current rating times the grid-bias brightness — and the X/Y deflection plates are
+ * high-impedance inputs (a large resistance to the cathode). Linear, no Newton; the spot position and
+ * brightness are derived post-solve from the deflection + anode voltages (crt-model.ts).
+ */
+export function stampCrt(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
+  const p = crtParamsFromInstance(inst)
+  if (p === undefined) return false
+  const net = (t: string) => inst.connects?.find((c) => c.terminal === t)?.net
+  const cathode = net('cathode')
+  const anode = net('anode')
+  if (cathode === undefined || anode === undefined) return false
+  const xDef = net('x_deflect')
+  const yDef = net('y_deflect')
+  if (xDef !== undefined) stampConductance(nodeIndex, M, xDef, cathode, CRT_DEFLECTION_INPUT_OHMS)
+  if (yDef !== undefined) stampConductance(nodeIndex, M, yDef, cathode, CRT_DEFLECTION_INPUT_OHMS)
+  const beamCurrent = p.beamCurrent * gridBrightness(p.gridBias, p.gridCutoffVoltage)
+  if (beamCurrent !== 0) {
+    const iAnode = nodeIndex.get(anode)
+    const iCathode = nodeIndex.get(cathode)
+    if (iAnode !== undefined) b.set([iAnode, 0], (b.get([iAnode, 0]) ?? 0) - beamCurrent)
+    if (iCathode !== undefined) b.set([iCathode, 0], (b.get([iCathode, 0]) ?? 0) + beamCurrent)
+  }
+  return true
 }
 
 /**

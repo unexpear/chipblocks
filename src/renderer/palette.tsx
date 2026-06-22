@@ -118,6 +118,7 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'triode', label: 'Triode' },
   { definition: 'tetrode', label: 'Tetrode' },
   { definition: 'pentode', label: 'Pentode' },
+  { definition: 'crt', label: 'CRT' },
   { definition: 'transistor_bjt_npn', label: 'NPN' },
   { definition: 'transistor_bjt_pnp', label: 'PNP' },
   { definition: 'transistor_mosfet_nmos', label: 'NMOS' },

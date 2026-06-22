@@ -21,8 +21,8 @@
 # luminous_efficacy, ~60 lm/W vs neon's ~0.5).
 #
 # Honest scope: a constant maintaining voltage (the slight negative-resistance fall is the documented
-# next rung); the strike is a voltage threshold; DC only (the relaxation oscillator + AC operation
-# need the transient latch, the same next rung as the arc); the phosphor + the neon/mercury gas fills
+# next rung); the strike is a voltage threshold; the relaxation oscillator + AC operation now run in
+# the transient latch (a neon across an RC flashes); the phosphor + the neon/mercury gas fills
 # are an efficacy/colour choice, not yet catalog materials (the electrodes are a copper stand-in).
 #
 # MUST validate against definition.schema.json.
@@ -106,8 +106,8 @@ notes: |
   mechanism the arc and the LED use), so the external ballast sets the current; a DARK lamp is an open.
   Light = luminous_efficacy * maintaining_voltage * current (light.ts arcLuminousFluxLumens). Honest
   scope: a constant maintaining voltage (the slight negative-resistance fall is the next rung); the
-  strike is a voltage threshold; DC only (the relaxation oscillator + AC operation need the transient
-  latch, the same next rung as the arc); a fluorescent tube is the same discharge with a phosphor
+  strike is a voltage threshold; the relaxation oscillator + AC operation run in the transient latch
+  (a neon across an RC flashes); a fluorescent tube is the same discharge with a phosphor
   (model it by a higher efficacy); the gas fills + phosphor are not yet catalog materials and the
   electrodes are a copper stand-in. Sources: Ramsay & Travers (neon, 1898); Georges Claude (neon
   lamps / signs, ~1910); standard glow-discharge physics (Cobine, "Gaseous Conductors").

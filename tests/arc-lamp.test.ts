@@ -10,9 +10,17 @@
 import { describe, expect, test } from 'vitest'
 import type { World } from '../src/cross-fk-validator.ts'
 import { solveWithRelays } from '../src/relay.ts'
+import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
 import { type PartReading, partReadings } from '../src/renderer/part-readings.ts'
+import { solveTransient } from '../src/transient-solver.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
+const g = (s: string, sh: string, t: string, th: string) => ({
+  source: s,
+  sourceHandle: sh,
+  target: t,
+  targetHandle: th,
+})
 
 /**
  * V+(supply) → R(ballastOhms) → arc.anode; arc.cathode → GND. Returns the settled latch state, the
@@ -23,7 +31,13 @@ function solveArc(
   supply: number,
   ballastOhms: number,
   startState: 'blocking' | 'conducting',
-): { latch: string | undefined; current: number; reading: PartReading | undefined } {
+  ayrtonCoeff?: number,
+): {
+  latch: string | undefined
+  current: number
+  reading: PartReading | undefined
+  settled: boolean
+} {
   const world: World = {
     definitions: new Map(),
     instances: new Map(),
@@ -86,6 +100,7 @@ function solveArc(
       holding_current: scalar(0.5, 'ampere'),
       luminous_efficacy: scalar(15, 'lm/W'),
       device_state: { value: startState },
+      ...(ayrtonCoeff === undefined ? {} : { ayrton_coefficient: scalar(ayrtonCoeff, 'V·A') }),
     },
     connects: [
       { net: 'anode', terminal: 'anode', of: 'arc' },
@@ -97,6 +112,7 @@ function solveArc(
     latch: result.shockleyStates.get('arc'),
     current: Math.abs(result.solution.branches.get('arc') ?? 0),
     reading: partReadings(world, result.solution).get('arc'),
+    settled: result.relaysSettled,
   }
 }
 
@@ -149,5 +165,115 @@ describe('arc lamp — without a ballast the current runs away', () => {
     const r = solveArc(80, 0.1, 'conducting')
     expect(r.latch).toBe('conducting')
     expect(r.current).toBeGreaterThan(100)
+  })
+})
+
+describe('arc lamp — the Ayrton fall (V = V_min + B/I, negative resistance)', () => {
+  test('the burning voltage falls as the current rises, settling on V = V_min + B/I', () => {
+    // V_min 50 V, Ayrton coefficient B = 48 V·A (Ayrton 1902). A 5 Ω ballast burns it hard (~13 A); a
+    // 10 Ω ballast softer (~6 A). More current → LESS voltage — the arc's defining negative resistance,
+    // settled by the discrete-state fixed point (no negative conductance ever stamped into the matrix).
+    const hot = solveArc(120, 5, 'conducting', 48)
+    const cool = solveArc(120, 10, 'conducting', 48)
+    expect(hot.settled).toBe(true) // a well-ballasted arc finds a steady burn
+    expect(cool.settled).toBe(true)
+    expect(hot.current).toBeGreaterThan(cool.current) // stiffer ballast → more current
+    expect(hot.reading?.voltage ?? 0).toBeLessThan(cool.reading?.voltage ?? 0) // …and lower voltage
+    // each lands on the Ayrton curve V = 50 + 48/I
+    expect(hot.reading?.voltage ?? 0).toBeCloseTo(50 + 48 / hot.current, 0)
+    expect(cool.reading?.voltage ?? 0).toBeCloseTo(50 + 48 / cool.current, 0)
+  })
+
+  test('with no Ayrton coefficient it still burns at the flat arc voltage (the earlier model)', () => {
+    const r = solveArc(80, 10, 'conducting') // no B → constant 50 V
+    expect(r.reading?.voltage ?? 0).toBeCloseTo(50, 1)
+  })
+
+  test('the fall carries into the transient — a falling arc settles to LESS current than a flat one', () => {
+    // Same 120 V DC through a 10 Ω ballast, marched to steady state. The falling arc (B = 48) lifts
+    // above V_min at finite current, so it burns higher and draws LESS than the flat (B = 0) arc.
+    const steadyCurrent = (ayrton: number) => {
+      const nodes: CanvasNode[] = [
+        {
+          id: 'src',
+          definition: 'power_source',
+          parameters: {
+            nominal_voltage: scalar(120, 'volt'),
+            internal_resistance: scalar(0, 'ohm'),
+          },
+        },
+        { id: 'r', definition: 'resistor', parameters: { resistance: scalar(10, 'ohm') } },
+        {
+          id: 'arc',
+          definition: 'arc_lamp',
+          parameters: {
+            arc_voltage: scalar(50, 'volt'),
+            breakover_voltage: scalar(60, 'volt'),
+            holding_current: scalar(0.5, 'ampere'),
+            device_state: { value: 'conducting' },
+            ...(ayrton > 0 ? { ayrton_coefficient: scalar(ayrton, 'V·A') } : {}),
+          },
+        },
+        { id: 'gnd', definition: 'ground' },
+      ]
+      const edges = [
+        g('src', 'terminal_positive', 'r', 'terminal_a'),
+        g('src', 'terminal_negative', 'gnd', 'reference_terminal'),
+        g('r', 'terminal_b', 'arc', 'anode'),
+        g('arc', 'cathode', 'gnd', 'reference_terminal'),
+      ]
+      const result = solveTransient(canvasToWorld(nodes, edges), { timeStep: 1e-4, duration: 2e-2 })
+      return Math.abs(result.series.at(-1)?.currents?.get('arc/anode') ?? 0)
+    }
+    const flat = steadyCurrent(0)
+    const falling = steadyCurrent(48)
+    expect(flat).toBeGreaterThan(1) // both arcs are burning
+    expect(falling).toBeGreaterThan(1)
+    expect(falling).toBeLessThan(flat) // the Ayrton lift draws less current
+  })
+})
+
+describe('arc lamp — AC re-striking (transient latch)', () => {
+  test('on AC through a ballast it conducts on the positive peaks and re-strikes each cycle', () => {
+    // 120 V peak, 50 Hz → R(10 Ω) → arc; the arc strikes when the line tops the 60 V breakover, burns
+    // at 50 V, and goes out as the line falls — re-striking on the next positive half-cycle.
+    const nodes: CanvasNode[] = [
+      {
+        id: 'ac',
+        definition: 'power_source',
+        parameters: {
+          nominal_voltage: scalar(0, 'volt'),
+          ac_amplitude: scalar(120, 'volt'),
+          frequency: scalar(50, 'hertz'),
+          internal_resistance: scalar(0, 'ohm'),
+        },
+      },
+      { id: 'r', definition: 'resistor', parameters: { resistance: scalar(10, 'ohm') } },
+      {
+        id: 'arc',
+        definition: 'arc_lamp',
+        parameters: {
+          arc_voltage: scalar(50, 'volt'),
+          breakover_voltage: scalar(60, 'volt'),
+          holding_current: scalar(0.5, 'ampere'),
+          device_state: { value: 'blocking' },
+        },
+      },
+      { id: 'gnd', definition: 'ground' },
+    ]
+    const edges = [
+      g('ac', 'terminal_positive', 'r', 'terminal_a'),
+      g('ac', 'terminal_negative', 'gnd', 'reference_terminal'),
+      g('r', 'terminal_b', 'arc', 'anode'),
+      g('arc', 'cathode', 'gnd', 'reference_terminal'),
+    ]
+    const world = canvasToWorld(nodes, edges)
+    const result = solveTransient(world, { timeStep: 1e-4, duration: 5e-2 }) // ~2.5 cycles at 50 Hz
+    expect(result.status).toBe('solved')
+    const current = result.series.map((s) => Math.abs(s.currents?.get('arc/anode') ?? 0))
+    expect(Math.max(...current)).toBeGreaterThan(1) // strikes + conducts on the positive peaks
+    expect(Math.min(...current)).toBeLessThan(0.01) // dark on the negative half-cycles
+    const half = Math.floor(current.length / 2)
+    expect(Math.max(...current.slice(half))).toBeGreaterThan(1) // re-strikes — not just the first cycle
   })
 })

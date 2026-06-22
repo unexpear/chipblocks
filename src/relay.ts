@@ -12,6 +12,7 @@
  * thermal runaway uses, rather than picking an arbitrary state.
  */
 
+import { arcVoltageTargets, ayrtonArcBaseVoltages, worldWithArcVoltages } from './arc-model.ts'
 import type { Instance, World } from './cross-fk-validator.ts'
 import {
   type ElectroThermalOptions,
@@ -81,8 +82,16 @@ function worldWithRelayStates(world: World, states: Map<string, RelayState>): Wo
 export function solveWithRelays(world: World, options?: ElectroThermalOptions): RelaySolveResult {
   let relayStates = relayStatesOf(world)
   let shockleyStates = shockleyStatesOf(world)
+  // The carbon arc's burning voltage is a CONTINUOUS state settled in the same fixed point: it relaxes
+  // to V_min + B/I off the solved current (arc-model.ts). Starts at V_min; only falling arcs (a
+  // positive ayrton_coefficient) appear here, so a flat constant-drop arc adds nothing.
+  const arcBaseVoltages = ayrtonArcBaseVoltages(world)
+  let arcVoltages = new Map(arcBaseVoltages)
   const composed = () =>
-    worldWithRelayStates(worldWithShockleyStates(world, shockleyStates), relayStates)
+    worldWithArcVoltages(
+      worldWithRelayStates(worldWithShockleyStates(world, shockleyStates), relayStates),
+      arcVoltages,
+    )
   let result = solveElectroThermal(composed(), options)
   if (relayStates.size === 0 && shockleyStates.size === 0) {
     return { ...result, relayStates, shockleyStates, relaysSettled: true }
@@ -92,7 +101,8 @@ export function solveWithRelays(world: World, options?: ElectroThermalOptions): 
   for (let i = 0; i < MAX_RELAY_ITERATIONS; i++) {
     const relayTargets = relayCoilTargets(composed(), result.solution)
     const shockleyTargets = shockleyDiodeTargets(composed(), result.solution)
-    if (relayTargets.size === 0 && shockleyTargets.size === 0) {
+    const arcTargets = arcVoltageTargets(composed(), result.solution, arcBaseVoltages, arcVoltages)
+    if (relayTargets.size === 0 && shockleyTargets.size === 0 && arcTargets.size === 0) {
       relaysSettled = true
       break
     }
@@ -103,6 +113,10 @@ export function solveWithRelays(world: World, options?: ElectroThermalOptions): 
     if (shockleyTargets.size > 0) {
       shockleyStates = new Map(shockleyStates)
       for (const [id, target] of shockleyTargets) shockleyStates.set(id, target)
+    }
+    if (arcTargets.size > 0) {
+      arcVoltages = new Map(arcVoltages)
+      for (const [id, v] of arcTargets) arcVoltages.set(id, v)
     }
     result = solveElectroThermal(composed(), options)
   }

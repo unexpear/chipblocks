@@ -675,6 +675,22 @@ function NeonLampGlyph() {
   )
 }
 
+/** Cathode-ray tube — the electron gun at the narrow neck (left, cathode + anode leads) widening to
+ *  the phosphor screen face (right), with the X/Y deflection inputs out the right. */
+function CrtGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>cathode-ray tube</title>
+      <line x1={0} y1={14} x2={16} y2={14} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={0} y1={30} x2={16} y2={30} stroke={STROKE} strokeWidth={1.5} />
+      <path d="M16 14 L16 30 L62 38 L62 6 Z" fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={62} y1={14} x2={W} y2={14} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={62} y1={30} x2={W} y2={30} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={11} y1={MID - 4} x2={11} y2={MID + 4} stroke={STROKE} strokeWidth={2} />
+    </svg>
+  )
+}
+
 /** Transmission line — a conductor PAIR (the two lines) in a box, with the near pair on
  *  the left and the far pair on the right; Z₀ marks the characteristic impedance. */
 function TransmissionLineGlyph() {
@@ -1414,6 +1430,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   led: LedGlyph,
   arc_lamp: ArcLampGlyph,
   neon_lamp: NeonLampGlyph,
+  crt: CrtGlyph,
   led_uv_algan: LedGlyph,
   incandescent_bulb: IncandescentBulbGlyph,
   diode_laser: LaserDiodeGlyph,
@@ -1495,6 +1512,13 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   induction_motor: TWO('terminal_a', 'terminal_b'),
   arc_lamp: TWO('anode', 'cathode'),
   neon_lamp: TWO('anode', 'cathode'),
+  // A CRT: the electron gun (cathode + anode) on the left, the X/Y deflection inputs on the right.
+  crt: [
+    { id: 'cathode', position: Position.Left, offset: 14 },
+    { id: 'anode', position: Position.Left, offset: 30 },
+    { id: 'x_deflect', position: Position.Right, offset: 14 },
+    { id: 'y_deflect', position: Position.Right, offset: 30 },
+  ],
   // A transmission line: the near pair on the left, the far pair on the right.
   transmission_line: [
     { id: 'near_a', position: Position.Left, offset: 14 },
@@ -1617,24 +1641,23 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
 const FALLBACK_TERMINALS = TWO('terminal_a', 'terminal_b')
 
 /**
- * Polarity marker drawn at a terminal's handle, so a polarized part's + / − (or
- * an LED/diode's anode/cathode, where anode is the + side) is obvious when
- * wiring — otherwise both handles are identical dots and the loop is easy to wire
- * backwards or leave open.
+ * Polarity marker drawn at a terminal's handle, ONLY for parts that wear a +/− marking IN REAL LIFE:
+ * a battery / supply / motor (its marked + and − terminals) and the polarized aluminum electrolytic
+ * capacitor. Every other part shows its polarity through the SYMBOL itself — a diode's bar, an LED's
+ * flat, a vacuum tube's named electrodes (plate / grid / cathode), an SCR's anode/cathode — so it gets
+ * NO +/− label, exactly as the real component is unmarked. (Marking anode/cathode/plate put a stray,
+ * sometimes mispositioned +/− on parts that never carry one.)
  */
 const TERMINAL_POLARITY: Record<string, '+' | '−'> = {
   terminal_positive: '+',
-  anode: '+',
   terminal_negative: '−',
-  cathode: '−',
 }
 
 /**
- * Polarity for a terminal on a specific device. The global map covers terminals
- * whose NAME carries polarity (anode, terminal_positive, …); the capacitor is
- * polarized per-device — the canvas part is a real aluminum electrolytic, whose
- * terminal_a is the + lead and terminal_b the − (reversing one is a real failure
- * mode, checked by the failure detector).
+ * Polarity for a terminal on a specific device. The global map covers the named +/− terminals
+ * (terminal_positive / terminal_negative — a battery / supply / motor). The aluminum electrolytic
+ * capacitor is polarized per-device: its terminal_a is the + lead and terminal_b the − (reversing one
+ * is a real failure mode, checked by the failure detector).
  */
 function polarityOf(definition: string, terminalId: string): '+' | '−' | undefined {
   if (definition === 'capacitor') {

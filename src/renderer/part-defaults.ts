@@ -104,6 +104,18 @@ const DEFAULTS: Record<string, Parameters> = {
     viscous_friction: scalar(0.002, 'N*m*s/rad'),
     winding: { value: 'copper' },
   },
+  crt: {
+    // A small cathode-ray tube (oscilloscope class). The electron gun draws ~0.1 mA from a 2 kV
+    // anode (EHT); the grid bias (−10 V against a −50 V cutoff) sets ~80% brightness. Deflection
+    // sensitivity ~0.02 of the screen half-width per volt at 2 kV — so ~50 V deflects the spot to the
+    // edge (a higher EHT stiffens the beam, deflecting less). Wire X/Y sources to move the spot.
+    beam_current: scalar(0.0001, 'ampere'),
+    grid_bias: scalar(-10, 'volt'),
+    grid_cutoff_voltage: scalar(-50, 'volt'),
+    deflection_sensitivity: scalar(0.02, '1/volt'),
+    rated_anode_voltage: scalar(2000, 'volt'),
+    electrodes: { value: 'tungsten' },
+  },
   neon_lamp: {
     // A neon indicator (NE-2 class). It STRIKES at ~90 V, then glows at a ~65 V maintaining voltage,
     // holding until the current drops below ~0.1 mA. Run it from a higher supply through a large
@@ -118,11 +130,12 @@ const DEFAULTS: Record<string, Parameters> = {
     electrodes: { value: 'copper' },
   },
   arc_lamp: {
-    // A small carbon arc lamp. It STRIKES once ~60 V appears across the gap, then burns at a
-    // near-constant ~50 V (Ayrton), holding until the current drops below ~0.5 A. Run it from a
+    // A small carbon arc lamp. It STRIKES once ~60 V appears across the gap, then burns on the Ayrton
+    // curve V = V_min + B/I — ~50 V at high current, rising as the current falls — until below ~0.5 A. Run it from a
     // ~70 V+ supply through a BALLAST that sets the current — without one it runs away. ~15 lm/W,
     // a ~3800 K crater. Starts extinguished (device_state blocking).
     arc_voltage: scalar(50, 'volt'),
+    ayrton_coefficient: scalar(48, 'V·A'),
     breakover_voltage: scalar(60, 'volt'),
     holding_current: scalar(0.5, 'ampere'),
     max_current: scalar(12, 'ampere'),
@@ -674,6 +687,13 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     load_torque: 'shaft load (~20 N·m) for a ~4 kW class machine near rated slip',
     viscous_friction: 'windage + bearing loss',
   },
+  crt: {
+    beam_current: 'CRT beam current ~0.1-1 mA (oscilloscope / TV electron gun)',
+    grid_bias: 'grid bias that sets the brightness (0 = full beam, cutoff = blanked)',
+    grid_cutoff_voltage: 'grid cutoff bias ~−30 to −70 V (the bias that blanks the beam)',
+    deflection_sensitivity: 'electrostatic deflection, screen-fraction per volt at the rated EHT',
+    rated_anode_voltage: '~2 kV anode (EHT) for a small CRT; TVs use 10-25 kV',
+  },
   neon_lamp: {
     maintaining_voltage: 'neon glow-discharge sustaining voltage ~60-65 V (NE-2)',
     breakover_voltage: 'neon striking / ignition voltage ~90 V (NE-2)',
@@ -682,7 +702,10 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     luminous_efficacy: 'neon indicator is dim (~0.5 lm/W); a fluorescent tube reaches ~60 lm/W',
   },
   arc_lamp: {
-    arc_voltage: 'carbon arc burns at ~40-55 V (Ayrton); 50 V representative',
+    arc_voltage:
+      'carbon arc burns at ~40-55 V (Ayrton); 50 V representative V_min (high-current asymptote)',
+    ayrton_coefficient:
+      'Ayrton (1902) falling characteristic V = V_min + B/I; B = c + d·ℓ ≈ 48 V·A for a short carbon arc — condition-dependent, medium confidence',
     breakover_voltage:
       'ignition threshold — a model abstraction (real arcs strike by electrode contact or a higher gap breakdown)',
     holding_current: '~0.5 A minimum to sustain the ionized column',
@@ -1260,6 +1283,11 @@ export function primaryValue(
     // Headline the striking voltage — what it takes to light the discharge.
     const v = amountOf(parameters, 'breakover_voltage')
     return v === undefined ? null : `${formatEng(v, 'V')} strike`
+  }
+  if (definition === 'crt') {
+    // Headline the anode (EHT) accelerating voltage.
+    const v = amountOf(parameters, 'rated_anode_voltage')
+    return v === undefined ? null : `${formatEng(v, 'V')} EHT`
   }
   if (definition === 'induction_motor') {
     // Headline the synchronous speed (120·f/poles) — the field's rotation the rotor chases.
