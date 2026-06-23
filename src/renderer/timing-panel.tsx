@@ -5,7 +5,8 @@ import { THEME } from './theme.ts'
  * Timing panel (rung 3c) — the static-timing readout for a clocked circuit. It shows the max clock
  * frequency the design can run at, the critical register-to-register path, and the slack / violations.
  * The gate delays and the critical path are REAL (summed from the transistors via timing-graph.ts);
- * the flip-flop's own t_cq / setup / hold are estimated from a reference gate delay (stated below).
+ * the flip-flop's own t_cq / setup / hold are traced too — its master-slave latch depths × a real NAND
+ * delay (the conservative worst-case path), via flipFlopTiming (stated below).
  */
 
 const fmtFreq = (hz: number): string => {
@@ -79,8 +80,9 @@ export function TimingPanel({
           )
         : row('Hold', 'ok')}
       <div style={{ fontSize: 9, color: THEME.textFaint, marginTop: 4, lineHeight: 1.4 }}>
-        Gate delays + the critical path are real (from the transistors). The flip-flop's own
-        clock-to-Q / setup / hold are estimated from a reference gate delay.
+        Gate delays + the critical path are real (from the transistors). The flip-flop's clock-to-Q
+        / setup / hold are traced from its master-slave latch depths × a real NAND delay (worst
+        case).
       </div>
     </div>
   )

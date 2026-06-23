@@ -1,8 +1,16 @@
 import { describe, expect, test } from 'vitest'
 import type { BlockData } from '../src/renderer/blocks.ts'
-import { D_FLIPFLOP_BLOCK, INVERTER_BLOCK, NAND2_BLOCK } from '../src/renderer/builtin-blocks.ts'
+import {
+  D_FLIPFLOP_BLOCK,
+  D_LATCH_BLOCK,
+  INVERTER_BLOCK,
+  NAND2_BLOCK,
+  NOR2_BLOCK,
+} from '../src/renderer/builtin-blocks.ts'
 import {
   characterizeGate,
+  flipFlopTiming,
+  forwardDepth,
   gateDelay,
   isClockedBlock,
   isSequentialBlock,
@@ -42,6 +50,11 @@ describe('characterizeGate — real R_on + input C from the gate transistors', (
     const c = characterizeGate(NAND2_BLOCK, 5)
     expect(c.inputCapacitance.get('a')).toBeCloseTo(120e-12, 13)
     expect(c.inputCapacitance.get('b')).toBeCloseTo(120e-12, 13)
+  })
+
+  test('a NOR sums its SERIES PMOS pull-up — ~2× the inverter pull-up', () => {
+    // NOR pull-up = two PMOS in series → 2 × 64.5 Ω ≈ 129 Ω (the old single-transistor count gave 64.5)
+    expect(characterizeGate(NOR2_BLOCK, 5).outputResistance).toBeCloseTo(129, 0)
   })
 })
 
@@ -124,5 +137,35 @@ describe('traceTimingPaths — register → gates → register', () => {
     expect(report.maxFrequency).toBeGreaterThan(50e6)
     expect(report.maxFrequency).toBeLessThan(120e6)
     expect(report.setupViolated).toBe(false)
+  })
+})
+
+describe('flip-flop timing traced from its real master-slave internals', () => {
+  test('a D latch has a finite forward depth E→Q and D→Q — the cross-couple does not loop', () => {
+    const eq = forwardDepth(D_LATCH_BLOCK, 'e', 'q')
+    const dq = forwardDepth(D_LATCH_BLOCK, 'd', 'q')
+    // a real path of a few NAND stages through the latch — feedback-guarded, so finite, not Infinity
+    expect(eq).toBeGreaterThanOrEqual(2)
+    expect(eq).toBeLessThanOrEqual(6)
+    expect(dq).toBeGreaterThanOrEqual(2)
+    expect(dq).toBeLessThanOrEqual(6)
+  })
+
+  test('an unreachable port pair has depth 0 (no path), not Infinity', () => {
+    expect(forwardDepth(D_LATCH_BLOCK, 'q', 'd')).toBe(0)
+  })
+
+  test('flipFlopTiming gives real positive clock-to-Q / setup / hold from the NAND + inverter delays', () => {
+    const t = flipFlopTiming(5, { wireCapacitance: 5e-12, defaultInputCapacitance: 120e-12 })
+    expect(t.clockToQ).toBeGreaterThan(0)
+    expect(t.setup).toBeGreaterThan(0)
+    expect(t.hold).toBeGreaterThan(0)
+    // depth × one real NAND delay → discrete-2N7000 ns-scale, not ps (IC) or ms (absurd)
+    expect(t.clockToQ).toBeLessThan(1e-6)
+    expect(t.clockToQ).toBeGreaterThan(1e-12)
+    // clock-to-Q and setup are each (latch depth) × the SAME single NAND delay
+    const nandFromCq = t.clockToQ / forwardDepth(D_LATCH_BLOCK, 'e', 'q')
+    const nandFromSetup = t.setup / forwardDepth(D_LATCH_BLOCK, 'd', 'q')
+    expect(nandFromCq).toBeCloseTo(nandFromSetup, 15)
   })
 })

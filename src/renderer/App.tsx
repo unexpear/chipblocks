@@ -63,7 +63,7 @@ import {
   withoutOffsets,
 } from './blocks.ts'
 import { BodePanel } from './bode-panel.tsx'
-import { BUILTIN_BLOCKS, INVERTER_BLOCK } from './builtin-blocks.ts'
+import { BUILTIN_BLOCKS } from './builtin-blocks.ts'
 import { CanvasScrollbars } from './canvas-scrollbars.tsx'
 import {
   type CanvasEdge,
@@ -177,7 +177,12 @@ import { H_DIVISIONS, scopeRecordSteps, slowestHonestTimebase } from './scope-sc
 import { type DeviceNodeData, nodeTypes, terminalsOf } from './symbols.tsx'
 import { clampIndex, frameEdgeValues, frameLensRange } from './timeline.ts'
 import { TimelinePanel } from './timeline-panel.tsx'
-import { gateDelay, isClockedBlock, isSequentialBlock, traceTimingPaths } from './timing-graph.ts'
+import {
+  flipFlopTiming,
+  isClockedBlock,
+  isSequentialBlock,
+  traceTimingPaths,
+} from './timing-graph.ts'
 import { TimingPanel } from './timing-panel.tsx'
 import { type Tool, ToolbarItems } from './toolbar.tsx'
 import { CheckpointContext } from './undo-context.ts'
@@ -819,7 +824,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
   )
   // Static timing (rung 3): the design's max clock frequency + critical register-to-register path,
   // from the REAL gate delays (timing-graph traces the paths and sums each gate's delay from its
-  // transistors). The flip-flop's own t_cq / setup / hold are estimated off a reference gate delay.
+  // transistors). The flip-flop's own t_cq / setup / hold are traced from its master-slave latches.
   const timing = useMemo(() => {
     const supplyVoltage = live ? live.threshold * 2 : 5
     let clockPeriod = Number.POSITIVE_INFINITY
@@ -831,13 +836,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
       )
       if (f !== undefined && f > 0) clockPeriod = Math.min(clockPeriod, 1 / f)
     }
-    const refDelay = gateDelay(INVERTER_BLOCK, supplyVoltage, [120e-12], 5e-12)
-    const registerTiming = { clockToQ: 3 * refDelay, setup: 1.5 * refDelay, hold: 0.5 * refDelay }
-    const paths = traceTimingPaths(nodes, edges, {
-      supplyVoltage,
-      wireCapacitance: 5e-12,
-      defaultInputCapacitance: 120e-12,
-    })
+    const timingOpts = { wireCapacitance: 5e-12, defaultInputCapacitance: 120e-12 }
+    const registerTiming = flipFlopTiming(supplyVoltage, timingOpts)
+    const paths = traceTimingPaths(nodes, edges, { supplyVoltage, ...timingOpts })
     const report = analyzeTiming(paths, registerTiming, clockPeriod, 0)
     const hasRegisters = nodes.some((n) => {
       const data = n.data as { definition?: string; block?: BlockData }
