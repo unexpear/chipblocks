@@ -5,6 +5,7 @@ import {
   type SavedNode,
   type SavedWire,
 } from './circuit-file.ts'
+import { buildNets, endpointKey } from './output-contention.ts'
 import { defaultParameters } from './part-defaults.ts'
 
 /**
@@ -280,7 +281,7 @@ export function parseSpiceNetlist(text: string): SpiceImportResult {
     usedIds.add(id)
     return id
   }
-  const GROUND_KEY = ' gnd'
+  const GROUND_KEY = ' gnd'
   const netKey = (net: string): string => {
     const low = net.toLowerCase()
     return low === '0' || low === 'gnd' || low === 'gnd!' ? GROUND_KEY : low
@@ -377,4 +378,237 @@ export function parseSpiceNetlist(text: string): SpiceImportResult {
     unsupported,
     warnings,
   }
+}
+
+// --- SPICE export (rung 2): the canvas → a netlist, the reverse of parseSpiceNetlist ----------------
+
+export type SpiceExportResult = {
+  netlist: string
+  /** Parts with no SPICE equivalent — listed and marked with a comment, never silently dropped. */
+  unsupported: string[]
+  warnings: string[]
+}
+
+const amountOf = (node: SavedNode, key: string): number | undefined => {
+  const params = node.parameters as Record<string, { value?: { amount?: number } }> | undefined
+  return params?.[key]?.value?.amount
+}
+
+/** A number → a tidy SPICE value with an engineering suffix (470 → "470", 1e-7 → "100n"). */
+export function formatSpiceValue(n: number): string {
+  if (!Number.isFinite(n) || n === 0) return '0'
+  const scales: [number, string][] = [
+    [1e12, 'T'],
+    [1e9, 'G'],
+    [1e6, 'Meg'],
+    [1e3, 'k'],
+    [1, ''],
+    [1e-3, 'm'],
+    [1e-6, 'u'],
+    [1e-9, 'n'],
+    [1e-12, 'p'],
+    [1e-15, 'f'],
+  ]
+  const abs = Math.abs(n)
+  for (const [factor, suffix] of scales) {
+    if (abs >= factor) return `${Number((n / factor).toPrecision(6))}${suffix}`
+  }
+  return n.toExponential()
+}
+
+type ExportCard = { prefix: string; terminals: string[] } & (
+  | { kind: 'passive'; valueKey: string }
+  | { kind: 'source' }
+  | { kind: 'model'; model: string; modelType: string }
+)
+
+// The catalog parts that round-trip to SPICE (the same set import handles). Model names are chosen so
+// re-importing recovers the same part — the diode heuristic reads ZENER / SCHOTTKY / LED / TUNNEL.
+const EXPORT_CARDS: Record<string, ExportCard> = {
+  resistor: {
+    prefix: 'R',
+    terminals: ['terminal_a', 'terminal_b'],
+    kind: 'passive',
+    valueKey: 'resistance',
+  },
+  capacitor: {
+    prefix: 'C',
+    terminals: ['terminal_a', 'terminal_b'],
+    kind: 'passive',
+    valueKey: 'capacitance',
+  },
+  inductor: {
+    prefix: 'L',
+    terminals: ['terminal_a', 'terminal_b'],
+    kind: 'passive',
+    valueKey: 'inductance',
+  },
+  power_source: {
+    prefix: 'V',
+    terminals: ['terminal_positive', 'terminal_negative'],
+    kind: 'source',
+  },
+  diode_silicon_rectifier: {
+    prefix: 'D',
+    terminals: ['anode', 'cathode'],
+    kind: 'model',
+    model: 'DSILICON',
+    modelType: 'D',
+  },
+  diode_schottky_al_si: {
+    prefix: 'D',
+    terminals: ['anode', 'cathode'],
+    kind: 'model',
+    model: 'SCHOTTKY',
+    modelType: 'D',
+  },
+  diode_zener_silicon: {
+    prefix: 'D',
+    terminals: ['anode', 'cathode'],
+    kind: 'model',
+    model: 'ZENER',
+    modelType: 'D',
+  },
+  diode_tunnel: {
+    prefix: 'D',
+    terminals: ['anode', 'cathode'],
+    kind: 'model',
+    model: 'TUNNEL',
+    modelType: 'D',
+  },
+  led: {
+    prefix: 'D',
+    terminals: ['anode', 'cathode'],
+    kind: 'model',
+    model: 'LED',
+    modelType: 'D',
+  },
+  transistor_bjt_npn: {
+    prefix: 'Q',
+    terminals: ['collector', 'base', 'emitter'],
+    kind: 'model',
+    model: 'QNPN',
+    modelType: 'NPN',
+  },
+  transistor_bjt_pnp: {
+    prefix: 'Q',
+    terminals: ['collector', 'base', 'emitter'],
+    kind: 'model',
+    model: 'QPNP',
+    modelType: 'PNP',
+  },
+  transistor_mosfet_nmos: {
+    prefix: 'M',
+    terminals: ['drain', 'gate', 'source'],
+    kind: 'model',
+    model: 'MNMOS',
+    modelType: 'NMOS',
+  },
+  transistor_mosfet_pmos: {
+    prefix: 'M',
+    terminals: ['drain', 'gate', 'source'],
+    kind: 'model',
+    model: 'MPMOS',
+    modelType: 'PMOS',
+  },
+}
+
+/**
+ * Serialize a CircuitFile to a SPICE netlist — the reverse of parseSpiceNetlist. Parts SPICE cannot
+ * express (motors, tubes, transformers, switches, …) are listed in `unsupported` and marked with a
+ * comment in the deck, never silently dropped. Nets are numbered; a net touching a ground part is 0.
+ */
+export function serializeSpiceNetlist(circuit: CircuitFile): SpiceExportResult {
+  const unsupported: string[] = []
+  const warnings: string[] = []
+  const { rootOf } = buildNets(circuit.wires)
+
+  const groundRoots = new Set<string>()
+  for (const node of circuit.nodes) {
+    if (node.definition !== 'ground') continue
+    const root = rootOf(endpointKey(node.id, 'reference_terminal'))
+    if (root !== undefined) groundRoots.add(root)
+  }
+
+  const netNameByRoot = new Map<string, string>()
+  let netCounter = 0
+  const netOf = (nodeId: string, handle: string): string => {
+    const root = rootOf(endpointKey(nodeId, handle))
+    if (root === undefined) {
+      netCounter += 1
+      return `n${netCounter}` // an unwired terminal — its own floating net
+    }
+    if (groundRoots.has(root)) return '0'
+    const existing = netNameByRoot.get(root)
+    if (existing !== undefined) return existing
+    netCounter += 1
+    const name = String(netCounter)
+    netNameByRoot.set(root, name)
+    return name
+  }
+
+  const counts = new Map<string, number>()
+  const nextName = (prefix: string): string => {
+    const n = (counts.get(prefix) ?? 0) + 1
+    counts.set(prefix, n)
+    return `${prefix}${n}`
+  }
+
+  const cards: string[] = []
+  const comments: string[] = []
+  const models = new Map<string, string>()
+  let mosfetExported = false
+  let modelDeviceExported = false
+
+  for (const node of circuit.nodes) {
+    if (node.definition === 'ground' || node.definition === 'junction') continue
+    const card = EXPORT_CARDS[node.definition]
+    if (card === undefined) {
+      unsupported.push(`${node.id} (${node.definition})`)
+      comments.push(`* ${node.id} (${node.definition}): no SPICE equivalent — omitted`)
+      continue
+    }
+    const name = nextName(card.prefix)
+    const nets = card.terminals.map((t) => netOf(node.id, t))
+    if (card.kind === 'passive') {
+      const value = amountOf(node, card.valueKey)
+      if (value === undefined) {
+        warnings.push(`${node.id}: no ${card.valueKey} value — omitted.`)
+        continue
+      }
+      cards.push(`${name} ${nets.join(' ')} ${formatSpiceValue(value)}`)
+    } else if (card.kind === 'source') {
+      const dc = amountOf(node, 'nominal_voltage') ?? 0
+      const ac = amountOf(node, 'ac_amplitude') ?? 0
+      const freq = amountOf(node, 'frequency') ?? 0
+      const drive =
+        ac > 0
+          ? `SIN(${formatSpiceValue(dc)} ${formatSpiceValue(ac)} ${formatSpiceValue(freq)})`
+          : `DC ${formatSpiceValue(dc)}`
+      cards.push(`${name} ${nets.join(' ')} ${drive}`)
+    } else {
+      modelDeviceExported = true
+      if (card.prefix === 'M') {
+        mosfetExported = true
+        cards.push(`${name} ${nets.join(' ')} ${nets[2] ?? '0'} ${card.model}`) // bulk tied to source
+      } else {
+        cards.push(`${name} ${nets.join(' ')} ${card.model}`)
+      }
+      models.set(card.model, `.model ${card.model} ${card.modelType}`)
+    }
+  }
+
+  if (modelDeviceExported) {
+    warnings.push(
+      'Transistor / diode .model lines carry the device TYPE only — the cited fine-parameters are not written into the netlist.',
+    )
+  }
+  if (mosfetExported) {
+    warnings.push(
+      'MOSFET bulk nodes were tied to source on export (ChipBlocks has no separate bulk terminal).',
+    )
+  }
+
+  const lines = ['* ChipBlocks netlist export', ...cards, ...models.values(), ...comments, '.end']
+  return { netlist: lines.join('\n'), unsupported, warnings }
 }

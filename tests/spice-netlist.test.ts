@@ -1,6 +1,17 @@
 import { describe, expect, test } from 'vitest'
-import { deserializeCircuit, type SavedNode } from '../src/renderer/circuit-file.ts'
-import { parseSpiceNetlist, parseSpiceValue } from '../src/renderer/spice-netlist.ts'
+import {
+  CIRCUIT_FILE_FORMAT,
+  CIRCUIT_FILE_VERSION,
+  type CircuitFile,
+  deserializeCircuit,
+  type SavedNode,
+} from '../src/renderer/circuit-file.ts'
+import {
+  formatSpiceValue,
+  parseSpiceNetlist,
+  parseSpiceValue,
+  serializeSpiceNetlist,
+} from '../src/renderer/spice-netlist.ts'
 
 const amountOf = (node: SavedNode | undefined, key: string): number | undefined => {
   const params = node?.parameters as Record<string, { value?: { amount?: number } }> | undefined
@@ -144,5 +155,89 @@ R1 1 0 1k
     expect(amountOf(v1, 'nominal_voltage')).toBe(0)
     expect(amountOf(v1, 'ac_amplitude')).toBe(5)
     expect(amountOf(v1, 'frequency')).toBe(60)
+  })
+})
+
+describe('formatSpiceValue — tidy engineering output', () => {
+  test('common values get a clean suffix', () => {
+    expect(formatSpiceValue(470)).toBe('470')
+    expect(formatSpiceValue(4700)).toBe('4.7k')
+    expect(formatSpiceValue(1e6)).toBe('1Meg')
+    expect(formatSpiceValue(1e-7)).toBe('100n')
+    expect(formatSpiceValue(0.01)).toBe('10m')
+    expect(formatSpiceValue(0)).toBe('0')
+  })
+})
+
+describe('serializeSpiceNetlist — canvas → netlist', () => {
+  const defs = (nodes: SavedNode[]) => nodes.map((n) => n.definition).sort()
+
+  test('round-trips a parsed netlist back to the same circuit', () => {
+    const deck = '* RC\nV1 in 0 DC 5\nR1 in out 1k\nC1 out 0 100n\n.end'
+    const first = parseSpiceNetlist(deck).circuit
+    const netlist = serializeSpiceNetlist(first).netlist
+    const second = parseSpiceNetlist(netlist).circuit
+    expect(defs(second.nodes)).toEqual(defs(first.nodes)) // resistor, capacitor, power_source, ground
+    expect(
+      amountOf(
+        second.nodes.find((n) => n.definition === 'resistor'),
+        'resistance',
+      ),
+    ).toBeCloseTo(1000, 6)
+    expect(
+      amountOf(
+        second.nodes.find((n) => n.definition === 'capacitor'),
+        'capacitance',
+      ),
+    ).toBeCloseTo(1e-7, 12)
+    expect(
+      amountOf(
+        second.nodes.find((n) => n.definition === 'power_source'),
+        'nominal_voltage',
+      ),
+    ).toBe(5)
+  })
+
+  test('a ground-connected net exports as 0', () => {
+    const netlist = serializeSpiceNetlist(
+      parseSpiceNetlist('* t\nV1 1 0 5\nR1 1 0 1k\n.end').circuit,
+    ).netlist
+    expect(/(^|\s)0(\s|$)/m.test(netlist)).toBe(true) // ground net 0 is referenced
+    expect(/R1 .*1k/.test(netlist)).toBe(true)
+  })
+
+  test('a part with no SPICE equivalent is reported, not invented', () => {
+    const circuit: CircuitFile = {
+      format: CIRCUIT_FILE_FORMAT,
+      version: CIRCUIT_FILE_VERSION,
+      nodes: [
+        { id: 'X1', definition: 'dc_motor', x: 0, y: 0 },
+        {
+          id: 'R9',
+          definition: 'resistor',
+          x: 0,
+          y: 0,
+          parameters: { resistance: { value: { kind: 'scalar', amount: 220, unit: 'ohm' } } },
+        },
+      ],
+      wires: [],
+    }
+    const result = serializeSpiceNetlist(circuit)
+    expect(result.unsupported.some((u) => u.includes('dc_motor'))).toBe(true)
+    expect(result.netlist).toContain('no SPICE equivalent')
+    expect(/R1 .*220/.test(result.netlist)).toBe(true) // the resistor still exports
+  })
+
+  test('a diode exports with a re-importable model', () => {
+    const circuit: CircuitFile = {
+      format: CIRCUIT_FILE_FORMAT,
+      version: CIRCUIT_FILE_VERSION,
+      nodes: [{ id: 'D1', definition: 'diode_zener_silicon', x: 0, y: 0 }],
+      wires: [],
+    }
+    const netlist = serializeSpiceNetlist(circuit).netlist
+    expect(netlist).toContain('.model ZENER D')
+    const back = parseSpiceNetlist(netlist).circuit
+    expect(back.nodes.some((n) => n.definition === 'diode_zener_silicon')).toBe(true)
   })
 })

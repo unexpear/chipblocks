@@ -99,7 +99,7 @@ import {
   mergeHealth,
   type NodeHealth,
 } from './health.ts'
-import { ImportReportCard, type NetlistImportReport } from './import-report.tsx'
+import { type NetlistReport, NetlistReportCard } from './import-report.tsx'
 import { eventMatchesBinding } from './keybinds.ts'
 import {
   edgeIdsTouchingRegion,
@@ -180,7 +180,7 @@ import {
 } from './scope.tsx'
 import { extractXyPath, type FamilyStep, stepValues, withSourceVoltage } from './scope-family.ts'
 import { H_DIVISIONS, scopeRecordSteps, slowestHonestTimebase } from './scope-scales.ts'
-import { parseSpiceNetlist } from './spice-netlist.ts'
+import { parseSpiceNetlist, serializeSpiceNetlist } from './spice-netlist.ts'
 import { type DeviceNodeData, nodeTypes, terminalsOf } from './symbols.tsx'
 import { clampIndex, frameEdgeValues, frameLensRange } from './timeline.ts'
 import { TimelinePanel } from './timeline-panel.tsx'
@@ -235,6 +235,8 @@ declare global {
       saveCircuitData: (text: string) => Promise<{ ok: boolean; path?: string }>
       onCircuitOpened: (callback: (text: string) => void) => void
       onNetlistOpened?: (callback: (text: string) => void) => void
+      onExportNetlistRequest?: (callback: () => void) => void
+      saveNetlistData?: (text: string) => Promise<{ ok: boolean; path?: string }>
       getKeybinds?: () => Promise<Record<string, string>>
       setKeybinds?: (binds: Record<string, string>) => Promise<Record<string, string>>
       onShortcutsOpen?: (callback: () => void) => void
@@ -1056,7 +1058,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
   )
 
   // The import-netlist report (rung 1b): what converted, what did not — shown until dismissed.
-  const [importReport, setImportReport] = useState<NetlistImportReport | null>(null)
+  const [netlistReport, setNetlistReport] = useState<NetlistReport | null>(null)
 
   // Save / Load (S19-v3-52). Save: the File menu asks, we answer with the
   // serialized circuit (parts + values + wires — never solved data). Re-registers
@@ -1071,6 +1073,26 @@ function Canvas({ project }: { project: ProjectChoice }) {
         projectAmbientRef.current,
       )
       void bridge.saveCircuitData(JSON.stringify(file, null, 2))
+    })
+  }, [nodes, edges])
+
+  // Export (rung 2): serialize the canvas to a CircuitFile, then to a SPICE netlist; hand the text to
+  // the main process to write, and show the report — what exported, what has no SPICE equivalent.
+  useEffect(() => {
+    const bridge = window.chipblocks
+    if (bridge?.onExportNetlistRequest === undefined) return
+    bridge.onExportNetlistRequest(() => {
+      const file = serializeCircuit(
+        nodes.map((n) => ({ id: n.id, position: n.position, data: n.data as DeviceNodeData })),
+        edges,
+        projectAmbientRef.current,
+      )
+      const { netlist, unsupported, warnings } = serializeSpiceNetlist(file)
+      const count =
+        file.nodes.filter((n) => n.definition !== 'ground' && n.definition !== 'junction').length -
+        unsupported.length
+      void bridge.saveNetlistData?.(netlist)
+      setNetlistReport({ kind: 'export', count, unsupported, warnings })
     })
   }, [nodes, edges])
 
@@ -1117,7 +1139,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       setEdges(flow.edges)
       dropCount.current = maxIdSuffix(circuit.nodes)
       window.setTimeout(() => fitView({ padding: 0.15 }), 80)
-      setImportReport({ imported: circuit.nodes.length, unsupported, warnings })
+      setNetlistReport({ kind: 'import', count: circuit.nodes.length, unsupported, warnings })
     })
   }, [setNodes, setEdges, fitView, checkpointAction])
 
@@ -3543,8 +3565,8 @@ function Canvas({ project }: { project: ProjectChoice }) {
           {alwaysOn ? '' : ' · physics paused — hit Solve'}
         </div>
 
-        {importReport !== null ? (
-          <ImportReportCard report={importReport} onDismiss={() => setImportReport(null)} />
+        {netlistReport !== null ? (
+          <NetlistReportCard report={netlistReport} onDismiss={() => setNetlistReport(null)} />
         ) : null}
 
         {/* The lasso trail — drawn in wrapper coordinates while dragging. */}

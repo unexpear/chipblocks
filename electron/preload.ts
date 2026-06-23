@@ -26,6 +26,11 @@ contextBridge.exposeInMainWorld('chipblocks', {
   onCircuitOpened: (callback: (text: string) => void) => subscribe('file:opened', callback),
   // Import Netlist (rung 1b): a netlist file's raw text arrives; the renderer parses it.
   onNetlistOpened: (callback: (text: string) => void) => subscribe('file:netlist-opened', callback),
+  // Export Netlist (rung 2): the File menu asks; the renderer answers with the SPICE text.
+  onExportNetlistRequest: (callback: () => void) =>
+    subscribe('file:export-netlist-request', callback),
+  saveNetlistData: (text: string): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('file:save-netlist', text),
   // Shortcuts (S19-v3-62): the renderer panel reads + edits the keybinds the
   // main process persists; the Shortcuts menu opens the panel over IPC.
   getKeybinds: (): Promise<Record<string, string>> => ipcRenderer.invoke('keybinds:get'),

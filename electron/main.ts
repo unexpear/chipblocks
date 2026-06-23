@@ -109,6 +109,25 @@ function registerSaveHandler(window: BrowserWindow): void {
   })
 }
 
+function registerNetlistExportHandler(window: BrowserWindow): void {
+  // The renderer answers an export request with the SPICE netlist text; we pick a file and write it.
+  ipcMain.removeHandler('file:save-netlist')
+  ipcMain.handle('file:save-netlist', async (_event, text: string) => {
+    const picked = await dialog.showSaveDialog(window, {
+      filters: NETLIST_FILTERS,
+      defaultPath: 'circuit.cir',
+    })
+    if (picked.canceled || picked.filePath === undefined) return { ok: false }
+    try {
+      await writeFile(picked.filePath, text, 'utf8')
+    } catch (error) {
+      dialog.showErrorBox('Could not export netlist', `Writing the file failed: ${String(error)}`)
+      return { ok: false }
+    }
+    return { ok: true, path: picked.filePath }
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Keyboard shortcuts (S19-v3-62). The bindings live in ONE file in the app's
 // data folder; the renderer's Shortcuts panel reads and edits them over IPC,
@@ -185,6 +204,10 @@ function installMenu(window: BrowserWindow): void {
             pendingSaveAs = true
             window.webContents.send('file:save-request')
           },
+        },
+        {
+          label: 'Export Netlist…',
+          click: () => window.webContents.send('file:export-netlist-request'),
         },
         { type: 'separator' },
         { role: 'quit', label: 'Exit' },
@@ -402,6 +425,7 @@ function createWindow(): void {
   hardenNavigation(window, devUrl)
   installMenu(window)
   registerSaveHandler(window)
+  registerNetlistExportHandler(window)
   registerKeybindHandlers(window)
 }
 
