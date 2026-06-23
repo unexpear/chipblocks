@@ -72,7 +72,12 @@ import {
   groundedComponent,
 } from './canvas-to-world.ts'
 import { loadCatalogWorld } from './catalog-loader.ts'
-import { deserializeCircuit, maxIdSuffix, serializeCircuit } from './circuit-file.ts'
+import {
+  type CircuitFile,
+  deserializeCircuit,
+  maxIdSuffix,
+  serializeCircuit,
+} from './circuit-file.ts'
 import {
   type ClipboardItem,
   emptyClipboard,
@@ -94,6 +99,7 @@ import {
   mergeHealth,
   type NodeHealth,
 } from './health.ts'
+import { ImportReportCard, type NetlistImportReport } from './import-report.tsx'
 import { eventMatchesBinding } from './keybinds.ts'
 import {
   edgeIdsTouchingRegion,
@@ -174,6 +180,7 @@ import {
 } from './scope.tsx'
 import { extractXyPath, type FamilyStep, stepValues, withSourceVoltage } from './scope-family.ts'
 import { H_DIVISIONS, scopeRecordSteps, slowestHonestTimebase } from './scope-scales.ts'
+import { parseSpiceNetlist } from './spice-netlist.ts'
 import { type DeviceNodeData, nodeTypes, terminalsOf } from './symbols.tsx'
 import { clampIndex, frameEdgeValues, frameLensRange } from './timeline.ts'
 import { TimelinePanel } from './timeline-panel.tsx'
@@ -227,6 +234,7 @@ declare global {
       onSaveRequest: (callback: () => void) => void
       saveCircuitData: (text: string) => Promise<{ ok: boolean; path?: string }>
       onCircuitOpened: (callback: (text: string) => void) => void
+      onNetlistOpened?: (callback: (text: string) => void) => void
       getKeybinds?: () => Promise<Record<string, string>>
       setKeybinds?: (binds: Record<string, string>) => Promise<Record<string, string>>
       onShortcutsOpen?: (callback: () => void) => void
@@ -243,6 +251,51 @@ declare global {
 const CURRENT = THEME.accentBlue // a live wire carrying current (solved)
 const IDLE = THEME.textFaint // a tap / no-current wire
 const DRAWN = THEME.textMuted // a user-drawn wire, not yet solved
+
+/**
+ * Map a loaded / imported CircuitFile to the canvas's React Flow nodes + edges. Shared by Open (a
+ * .chipblocks file) and Import (a parsed netlist) so the two paths build the canvas identically.
+ */
+function circuitFileToFlow(file: CircuitFile) {
+  const nodes = file.nodes.map((n) => ({
+    id: n.id,
+    type: (n.definition === 'block'
+      ? 'block'
+      : n.definition === 'junction'
+        ? 'junction'
+        : 'device') as 'block' | 'junction' | 'device',
+    position: { x: n.x, y: n.y },
+    data: {
+      definition: n.definition,
+      label: n.block?.name ?? n.id,
+      ...(n.rotation ? { rotation: n.rotation } : {}),
+      ...(n.parameters ? { parameters: n.parameters } : {}),
+      ...(n.block ? { block: n.block } : {}),
+    },
+  }))
+  const edges = file.wires.map((w) => ({
+    id: w.id,
+    source: w.source,
+    sourceHandle: w.sourceHandle,
+    target: w.target,
+    targetHandle: w.targetHandle,
+    type: 'net',
+    deletable: true,
+    style: { stroke: DRAWN },
+    ...(w.waypoints || w.curved || typeof w.gaugeAwg === 'number' || typeof w.material === 'string'
+      ? {
+          data: {
+            ...(w.waypoints ? { waypoints: w.waypoints } : {}),
+            ...(w.curved ? { curved: true } : {}),
+            ...(typeof w.curveRadius === 'number' ? { curveRadius: w.curveRadius } : {}),
+            ...(typeof w.gaugeAwg === 'number' ? { gaugeAwg: w.gaugeAwg } : {}),
+            ...(typeof w.material === 'string' ? { material: w.material } : {}),
+          },
+        }
+      : {}),
+  }))
+  return { nodes, edges }
+}
 
 type NodePosition = { x: number; y: number }
 
@@ -1002,6 +1055,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
     [checkpointAction, setEdges, setNodes],
   )
 
+  // The import-netlist report (rung 1b): what converted, what did not — shown until dismissed.
+  const [importReport, setImportReport] = useState<NetlistImportReport | null>(null)
+
   // Save / Load (S19-v3-52). Save: the File menu asks, we answer with the
   // serialized circuit (parts + values + wires — never solved data). Re-registers
   // on every change so the answer always reflects the current canvas.
@@ -1037,53 +1093,31 @@ function Canvas({ project }: { project: ProjectChoice }) {
           : STANDARD_AMBIENT_C
       projectAmbientRef.current = loadedAmbient
       setProjectAmbientC(loadedAmbient)
-      setNodes(
-        result.file.nodes.map((n) => ({
-          id: n.id,
-          type:
-            n.definition === 'block'
-              ? 'block'
-              : n.definition === 'junction'
-                ? 'junction'
-                : 'device',
-          position: { x: n.x, y: n.y },
-          data: {
-            definition: n.definition,
-            label: n.block?.name ?? n.id,
-            ...(n.rotation ? { rotation: n.rotation } : {}),
-            ...(n.parameters ? { parameters: n.parameters } : {}),
-            ...(n.block ? { block: n.block } : {}),
-          },
-        })),
-      )
-      setEdges(
-        result.file.wires.map((w) => ({
-          id: w.id,
-          source: w.source,
-          sourceHandle: w.sourceHandle,
-          target: w.target,
-          targetHandle: w.targetHandle,
-          type: 'net',
-          deletable: true,
-          style: { stroke: DRAWN },
-          ...(w.waypoints ||
-          w.curved ||
-          typeof w.gaugeAwg === 'number' ||
-          typeof w.material === 'string'
-            ? {
-                data: {
-                  ...(w.waypoints ? { waypoints: w.waypoints } : {}),
-                  ...(w.curved ? { curved: true } : {}),
-                  ...(typeof w.curveRadius === 'number' ? { curveRadius: w.curveRadius } : {}),
-                  ...(typeof w.gaugeAwg === 'number' ? { gaugeAwg: w.gaugeAwg } : {}),
-                  ...(typeof w.material === 'string' ? { material: w.material } : {}),
-                },
-              }
-            : {}),
-        })),
-      )
+      const flow = circuitFileToFlow(result.file)
+      setNodes(flow.nodes)
+      setEdges(flow.edges)
       dropCount.current = maxIdSuffix(result.file.nodes)
       window.setTimeout(() => fitView({ padding: 0.15 }), 80)
+    })
+  }, [setNodes, setEdges, fitView, checkpointAction])
+
+  // Import (rung 1b): a SPICE netlist arrives as raw text; parse it to a CircuitFile, drop it on the
+  // canvas exactly the way Open does, and surface the report — what converted, what didn't, what we
+  // assumed. A netlist carries no board ambient, so it loads at the standard 25 °C.
+  useEffect(() => {
+    const bridge = window.chipblocks
+    if (bridge?.onNetlistOpened === undefined) return
+    bridge.onNetlistOpened((text) => {
+      const { circuit, unsupported, warnings } = parseSpiceNetlist(text)
+      checkpointAction('import netlist')
+      projectAmbientRef.current = STANDARD_AMBIENT_C
+      setProjectAmbientC(STANDARD_AMBIENT_C)
+      const flow = circuitFileToFlow(circuit)
+      setNodes(flow.nodes)
+      setEdges(flow.edges)
+      dropCount.current = maxIdSuffix(circuit.nodes)
+      window.setTimeout(() => fitView({ padding: 0.15 }), 80)
+      setImportReport({ imported: circuit.nodes.length, unsupported, warnings })
     })
   }, [setNodes, setEdges, fitView, checkpointAction])
 
@@ -3508,6 +3542,10 @@ function Canvas({ project }: { project: ProjectChoice }) {
             : ''}
           {alwaysOn ? '' : ' · physics paused — hit Solve'}
         </div>
+
+        {importReport !== null ? (
+          <ImportReportCard report={importReport} onDismiss={() => setImportReport(null)} />
+        ) : null}
 
         {/* The lasso trail — drawn in wrapper coordinates while dragging. */}
         {lassoPoints !== null ? (

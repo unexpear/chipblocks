@@ -1,0 +1,97 @@
+import { THEME } from './theme.ts'
+
+export type NetlistImportReport = {
+  imported: number
+  /** Source lines that map to no real catalog part — listed verbatim, never silently dropped. */
+  unsupported: string[]
+  /** Mapped, but with a stated assumption (a defaulted model, an ignored bulk node, auto-layout…). */
+  warnings: string[]
+}
+
+/**
+ * The report shown after importing a netlist: how many parts converted, which lines could not (listed
+ * verbatim, per the anti-placeholder rule), and the assumptions made. A dismissible overlay — there is
+ * no in-app modal system, and it never blocks the canvas.
+ */
+export function ImportReportCard({
+  report,
+  onDismiss,
+}: {
+  report: NetlistImportReport
+  onDismiss: () => void
+}) {
+  const section = (title: string, items: string[], color: string) =>
+    items.length === 0 ? null : (
+      <div style={{ marginTop: 10 }}>
+        <div style={{ color, fontWeight: 600, marginBottom: 3 }}>
+          {title} ({items.length})
+        </div>
+        <ul style={{ margin: 0, paddingLeft: 16, color: THEME.textSoft, lineHeight: 1.5 }}>
+          {items.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      </div>
+    )
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 56,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 1000,
+        width: 480,
+        maxWidth: '90vw',
+        maxHeight: '72vh',
+        overflowY: 'auto',
+        padding: '14px 16px',
+        borderRadius: 8,
+        background: THEME.surfacePanel,
+        border: `1px solid ${THEME.borderStrong}`,
+        boxShadow: '0 10px 30px rgba(0, 0, 0, 0.4)',
+        fontSize: 12,
+        color: THEME.textPrimary,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+          gap: 12,
+        }}
+      >
+        <span style={{ fontWeight: 700, fontSize: 13 }}>
+          Imported {report.imported} part{report.imported === 1 ? '' : 's'} from the netlist
+        </span>
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss"
+          style={{
+            border: 'none',
+            background: 'transparent',
+            color: THEME.textMuted,
+            cursor: 'pointer',
+            fontSize: 18,
+            lineHeight: 1,
+            padding: 0,
+          }}
+        >
+          ×
+        </button>
+      </div>
+      {report.unsupported.length === 0 && report.warnings.length === 0 ? (
+        <div style={{ marginTop: 6, color: THEME.textSoft }}>Everything converted cleanly.</div>
+      ) : null}
+      {section(
+        'Could not convert — left out of the circuit',
+        report.unsupported,
+        THEME.statusDanger,
+      )}
+      {section('Notes', report.warnings, THEME.statusWarn)}
+    </div>
+  )
+}

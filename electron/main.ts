@@ -25,6 +25,10 @@ const moduleDir = dirname(fileURLToPath(import.meta.url))
 // ---------------------------------------------------------------------------
 
 const CIRCUIT_FILTERS = [{ name: 'ChipBlocks Circuit', extensions: ['chipblocks'] }]
+const NETLIST_FILTERS = [
+  { name: 'SPICE netlist', extensions: ['cir', 'net', 'sp', 'spice', 'ckt'] },
+  { name: 'All files', extensions: ['*'] },
+]
 
 /** The file the window is working on (drives plain Save + the window title). */
 let currentCircuitPath: string | null = null
@@ -57,6 +61,26 @@ async function openCircuit(window: BrowserWindow): Promise<void> {
   }
   window.webContents.send('file:opened', text)
   setCircuitPath(window, path)
+}
+
+async function importNetlist(window: BrowserWindow): Promise<void> {
+  const picked = await dialog.showOpenDialog(window, {
+    filters: NETLIST_FILTERS,
+    properties: ['openFile'],
+  })
+  const path = picked.filePaths[0]
+  if (picked.canceled || path === undefined) return
+  let text: string
+  try {
+    text = await readFile(path, 'utf8')
+  } catch (error) {
+    dialog.showErrorBox('Could not import netlist', `Reading the file failed: ${String(error)}`)
+    return
+  }
+  // The renderer parses the netlist and shows the conversion report. An import is a NEW unsaved
+  // circuit (not the opened .chipblocks file), so clear the current path → Save asks for a location.
+  window.webContents.send('file:netlist-opened', text)
+  setCircuitPath(window, null)
 }
 
 function registerSaveHandler(window: BrowserWindow): void {
@@ -140,6 +164,10 @@ function installMenu(window: BrowserWindow): void {
           label: 'Open Circuit…',
           accelerator: keybinds.openCircuit,
           click: () => void openCircuit(window),
+        },
+        {
+          label: 'Import Netlist…',
+          click: () => void importNetlist(window),
         },
         { type: 'separator' },
         {
