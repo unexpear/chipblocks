@@ -47,6 +47,7 @@ const AMBIENT_PRESETS: { label: string; c: number }[] = [
  * buttons and the colour theme all follow this same edit-one-list pattern.
  */
 export type ToolbarActionId =
+  | 'addPart'
   | 'scope'
   | 'timeline'
   | 'bode'
@@ -66,6 +67,14 @@ export type ToolbarAction = {
 }
 
 export const TOOLBAR_ACTIONS: ToolbarAction[] = [
+  {
+    id: 'addPart',
+    label: 'Add Part',
+    icon: '＋',
+    color: THEME.accentBlue,
+    title:
+      'Add Part — open a searchable list of every part (like KiCad’s Choose Symbol); pick one and it drops at the centre of the view, ready to drag into place. The parts palette still works too.',
+  },
   {
     id: 'scope',
     label: 'Scope',
@@ -183,6 +192,7 @@ export function ToolbarItems({
   projectAmbientC,
   onProjectAmbient,
   onSolve,
+  onAddPart,
   onScope,
   onTimeline,
   onBode,
@@ -210,6 +220,7 @@ export function ToolbarItems({
   projectAmbientC: number
   onProjectAmbient: (c: number) => void
   onSolve: () => void
+  onAddPart: () => void
   onScope: () => void
   onTimeline: () => void
   onBode: () => void
@@ -227,6 +238,7 @@ export function ToolbarItems({
   // Each toolbar action id (from TOOLBAR_ACTIONS) wired to its handler. Add a button →
   // add an entry here and in TOOLBAR_ACTIONS; rewire one → change it here.
   const actionHandlers: Record<ToolbarActionId, () => void> = {
+    addPart: onAddPart,
     scope: onScope,
     timeline: onTimeline,
     bode: onBode,

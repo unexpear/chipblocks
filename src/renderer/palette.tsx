@@ -84,7 +84,7 @@ export function BlockPaletteItems({
   )
 }
 
-const PARTS: { definition: string; label: string }[] = [
+export const PARTS: { definition: string; label: string }[] = [
   { definition: 'power_source', label: 'Source' },
   { definition: 'resistor', label: 'Resistor' },
   { definition: 'potentiometer', label: 'Pot' },

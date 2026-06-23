@@ -88,6 +88,7 @@ import {
   withCut,
 } from './clipboard.ts'
 import { ClipboardPanel } from './clipboard-panel.tsx'
+import { ContextMenu } from './context-menu.tsx'
 import { CoordinateAxes } from './coordinate-axes.tsx'
 import { DockablePanel, type TabDropTarget } from './dockable-panel.tsx'
 import { wireFlow } from './edge-currents.ts'
@@ -101,6 +102,7 @@ import {
 } from './health.ts'
 import { type NetlistReport, NetlistReportCard } from './import-report.tsx'
 import { eventMatchesBinding } from './keybinds.ts'
+import { parseKicadSchematic } from './kicad-schematic.ts'
 import {
   edgeIdsTouchingRegion,
   type LassoPoint,
@@ -165,10 +167,12 @@ import {
   toggledSwitch,
 } from './part-defaults.ts'
 import { PartInspector, type SelectedPart } from './part-inspector.tsx'
+import { PartPicker } from './part-picker.tsx'
 import { type CrtSpot, crtSpotTrace, type PartReading, partReadings } from './part-readings.ts'
 import { ProjectBrowser, type ProjectChoice } from './project-browser.tsx'
 import { ProjectHub } from './project-hub.tsx'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
+import { SchematicHierarchy } from './schematic-hierarchy.tsx'
 import {
   channelsForProbes,
   fastestSourceHz,
@@ -948,6 +952,15 @@ function Canvas({ project }: { project: ProjectChoice }) {
   nodesRef.current = nodes
   const { screenToFlowPosition, fitView, deleteElements } = useReactFlow()
   const dropCount = useRef(initial.nodes.length)
+  // The Add-Part pop-up (the KiCad-style Choose-a-part dialog) — open state lives here.
+  const [pickerOpen, setPickerOpen] = useState(false)
+  // The canvas part's right-click menu — its screen position, or null when closed.
+  const [canvasMenu, setCanvasMenu] = useState<{
+    x: number
+    y: number
+    kind: 'part' | 'pane'
+    flow?: { x: number; y: number }
+  } | null>(null)
 
   // Frame the whole circuit on startup — but only AFTER the nodes have measured. React
   // Flow's `fitView` prop fires on mount before measurement, which lands the view zoomed
@@ -1150,7 +1163,11 @@ function Canvas({ project }: { project: ProjectChoice }) {
     const bridge = window.chipblocks
     if (bridge?.onNetlistOpened === undefined) return
     bridge.onNetlistOpened((text) => {
-      const { circuit, unsupported, warnings } = parseSpiceNetlist(text)
+      // SPICE and KiCad both arrive on this channel; tell them apart by the file's own header.
+      const isKicad = text.trimStart().startsWith('(kicad_sch')
+      const { circuit, unsupported, warnings } = isKicad
+        ? parseKicadSchematic(text)
+        : parseSpiceNetlist(text)
       checkpointAction('import netlist')
       projectAmbientRef.current = STANDARD_AMBIENT_C
       setProjectAmbientC(STANDARD_AMBIENT_C)
@@ -1167,9 +1184,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // Dock panels + their tab-stack grouping (Sprint 21). Each panel starts on its own
   // edge; dragging one onto another stacks them into a tabbed group (panel-groups.ts).
   const [panelLayout, setPanelLayout] = useState<PanelLayout>({
-    parts: { edge: 'left', group: 0 },
+    hierarchy: { edge: 'left', group: 0 },
+    properties: { edge: 'left', group: 2 },
     tools: { edge: 'top', group: 1 },
-    properties: { edge: 'right', group: 2 },
     scope: { edge: 'bottom', group: 3 },
     timeline: { edge: 'bottom', group: 3 },
     bode: { edge: 'bottom', group: 3 },
@@ -2504,7 +2521,11 @@ function Canvas({ project }: { project: ProjectChoice }) {
   }, [nodes, edges, deleteElements, checkpointAction])
 
   const doPaste = useCallback(
-    (item?: ClipboardItem, placement: 'cursor' | 'center' = 'cursor') => {
+    (
+      item?: ClipboardItem,
+      placement: 'cursor' | 'center' = 'cursor',
+      at?: { x: number; y: number },
+    ) => {
       const chosen = item ?? latestItem(clipboard)
       if (chosen === null || chosen.nodes.length === 0) return
       checkpointAction('paste')
@@ -2512,7 +2533,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
         x: window.innerWidth / 2,
         y: window.innerHeight / 2,
       })
-      const target = placement === 'cursor' ? (lastCursorFlow.current ?? center) : center
+      const target = at ?? (placement === 'cursor' ? (lastCursorFlow.current ?? center) : center)
       dropCount.current += 1
       const pasted = materializeItem(chosen, `p${dropCount.current}`, target)
       setNodes((current) => [
@@ -2524,6 +2545,39 @@ function Canvas({ project }: { project: ProjectChoice }) {
     [clipboard, screenToFlowPosition, setNodes, setEdges, checkpointAction],
   )
 
+  // Rotate / delete / duplicate the current selection — shared by the keyboard shortcuts and the
+  // Schematic Hierarchy's right-click menu, so there is one implementation of each.
+  const doRotate = useCallback(() => {
+    if (!nodes.some((n) => n.selected)) return
+    checkpointAction('rotate')
+    setNodes((current) =>
+      current.map((node) =>
+        node.selected
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                rotation: (((node.data?.rotation as number) ?? 0) + 90) % 360,
+              },
+            }
+          : node,
+      ),
+    )
+  }, [nodes, setNodes, checkpointAction])
+  const doDelete = useCallback(() => {
+    const doomedNodes = nodes.filter((n) => n.selected)
+    const doomedEdges = edges.filter((e) => e.selected)
+    if (doomedNodes.length === 0 && doomedEdges.length === 0) return
+    checkpointAction('delete')
+    void deleteElements({ nodes: doomedNodes, edges: doomedEdges })
+  }, [nodes, edges, deleteElements, checkpointAction])
+  // Centre + zoom the view on a part — the Hierarchy's "Locate" navigates to it.
+  const doLocate = useCallback(
+    (id: string) => {
+      void fitView({ nodes: [{ id }], duration: 400, maxZoom: 1.2 })
+    },
+    [fitView],
+  )
   // The Edit menu's items arrive over IPC. Subscribe once; the ref always
   // points at the latest handlers (which close over live state).
   const doSelectAll = () => {
@@ -2717,50 +2771,19 @@ function Canvas({ project }: { project: ProjectChoice }) {
         return
       }
       if (eventMatchesBinding(event, keybinds.rotate)) {
-        if (!nodes.some((n) => n.selected)) return
-        checkpointAction('rotate')
-        setNodes((current) =>
-          current.map((node) =>
-            node.selected
-              ? {
-                  ...node,
-                  data: {
-                    ...node.data,
-                    rotation: (((node.data?.rotation as number) ?? 0) + 90) % 360,
-                  },
-                }
-              : node,
-          ),
-        )
+        doRotate()
         return
       }
       if (
         eventMatchesBinding(event, keybinds.delete) ||
         eventMatchesBinding(event, keybinds.deleteAlt)
       ) {
-        const doomedNodes = nodes.filter((n) => n.selected)
-        const doomedEdges = edges.filter((e) => e.selected)
-        if (doomedNodes.length === 0 && doomedEdges.length === 0) return
-        checkpointAction('delete')
-        void deleteElements({ nodes: doomedNodes, edges: doomedEdges })
+        doDelete()
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [
-    setNodes,
-    keybinds,
-    shortcutsOpen,
-    nodes,
-    edges,
-    deleteElements,
-    doCopy,
-    doCut,
-    doPaste,
-    doUndo,
-    doRedo,
-    checkpointAction,
-  ])
+  }, [keybinds, shortcutsOpen, doRotate, doDelete, doCopy, doCut, doPaste, doUndo, doRedo])
 
   const onDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -2836,6 +2859,60 @@ function Canvas({ project }: { project: ProjectChoice }) {
       )
     },
     [screenToFlowPosition, setNodes, nodes, checkpointAction, snapToGrid],
+  )
+
+  // Place a part from the Add-Part pop-up — the same node-creation as a drop, but centred in the
+  // current view (there is no drag) and selected, so it is ready to move.
+  const placePart = useCallback(
+    (definition: string) => {
+      checkpointAction('add part')
+      const raw = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+      const position = snapToGrid
+        ? {
+            x: Math.round(raw.x / SNAP_GRID[0]) * SNAP_GRID[0],
+            y: Math.round(raw.y / SNAP_GRID[1]) * SNAP_GRID[1],
+          }
+        : raw
+      dropCount.current += 1
+      const id = `${definition}_${dropCount.current}`
+      const builtin = BUILTIN_BLOCKS[definition]
+      if (builtin) {
+        const block = structuredClone(builtin)
+        setNodes((current) =>
+          current
+            .map((n) => ({ ...n, selected: false }))
+            .concat({
+              id,
+              type: 'block',
+              position,
+              data: { definition: 'block', label: block.name, block },
+              selected: true,
+            }),
+        )
+        return
+      }
+      setNodes((current) =>
+        current
+          .map((n) => ({ ...n, selected: false }))
+          .concat({
+            id,
+            type: 'device',
+            position,
+            data: { definition, label: id, parameters: defaultParameters(definition) },
+            selected: true,
+          }),
+      )
+    },
+    [screenToFlowPosition, setNodes, checkpointAction, snapToGrid],
+  )
+
+  // Select a part by id from the Schematic Hierarchy outline — sets it selected (which fills the
+  // Properties panel) and deselects the rest.
+  const selectNodeById = useCallback(
+    (id: string) => {
+      setNodes((current) => current.map((n) => ({ ...n, selected: n.id === id })))
+    },
+    [setNodes],
   )
 
   // Edit a block's pin (name / power-type / which edge). Changing the SIDE drops any legacy hand-laid
@@ -3399,6 +3476,21 @@ function Canvas({ project }: { project: ProjectChoice }) {
                             unjoinCrossing(node.id)
                           }
                         }}
+                        onNodeContextMenu={(event, node) => {
+                          if (node.type !== 'device' && node.type !== 'block') return
+                          event.preventDefault()
+                          selectNodeById(node.id)
+                          setCanvasMenu({ x: event.clientX, y: event.clientY, kind: 'part' })
+                        }}
+                        onPaneContextMenu={(event) => {
+                          event.preventDefault()
+                          setCanvasMenu({
+                            x: event.clientX,
+                            y: event.clientY,
+                            kind: 'pane',
+                            flow: screenToFlowPosition({ x: event.clientX, y: event.clientY }),
+                          })
+                        }}
                         onNodeDragStart={(_event, node) => {
                           checkpointAction('move')
                           dragStartPos.current = new Map(
@@ -3458,7 +3550,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                         // SelectionMode.Partial — exactly how a desktop marquee behaves.
                         // In lasso mode the wrapper owns the pointer, so both are off.
                         selectionOnDrag={tool === 'select'}
-                        panOnDrag={tool === 'lasso' ? false : [1, 2]}
+                        panOnDrag={tool === 'lasso' ? false : [1]}
                         selectionMode={SelectionMode.Partial}
                         // Windows-friendly multi-select: Ctrl+click (React Flow's default
                         // is the Meta key); Shift+drag box-select is the built-in default.
@@ -3587,6 +3679,33 @@ function Canvas({ project }: { project: ProjectChoice }) {
 
         {netlistReport !== null ? (
           <NetlistReportCard report={netlistReport} onDismiss={() => setNetlistReport(null)} />
+        ) : null}
+        {pickerOpen ? <PartPicker onPick={placePart} onClose={() => setPickerOpen(false)} /> : null}
+        {canvasMenu !== null ? (
+          <ContextMenu
+            x={canvasMenu.x}
+            y={canvasMenu.y}
+            onClose={() => setCanvasMenu(null)}
+            items={
+              canvasMenu.kind === 'part'
+                ? [
+                    { label: 'Copy', shortcut: 'Ctrl+C', action: doCopy },
+                    { label: 'Rotate', shortcut: 'R', action: doRotate },
+                    { label: 'Delete', shortcut: 'Del', action: doDelete, danger: true },
+                  ]
+                : [
+                    {
+                      label: 'Paste',
+                      shortcut: 'Ctrl+V',
+                      action: () => doPaste(undefined, 'cursor', canvasMenu.flow),
+                      disabled: latestItem(clipboard) === null,
+                    },
+                    { label: 'Add Part', action: () => setPickerOpen(true) },
+                    { label: 'Select All', shortcut: 'Ctrl+A', action: doSelectAll },
+                    { label: 'Open Clipboard', action: () => setShowClipboard(true) },
+                  ]
+            }
+          />
         ) : null}
 
         {/* The lasso trail — drawn in wrapper coordinates while dragging. */}
@@ -4019,9 +4138,29 @@ function Canvas({ project }: { project: ProjectChoice }) {
         // panelLayout entry above only sets a different default dock + tab-group). REORDER →
         // reorder that list. RENAME → change `title`. Grouping (panel-groups.ts) tabs them up.
         const registry: Record<string, { title: string; content: ReactNode; visible: boolean }> = {
+          hierarchy: {
+            title: 'Hierarchy',
+            visible: true,
+            content: (
+              <SchematicHierarchy
+                nodes={nodes
+                  .filter((n) => (n.data as { definition?: string }).definition !== 'junction')
+                  .map((n) => ({
+                    id: n.id,
+                    definition: (n.data as { definition?: string }).definition ?? '',
+                    blockName: (n.data as { block?: { name?: string } }).block?.name,
+                    selected: n.selected === true,
+                  }))}
+                onSelect={selectNodeById}
+                onCopy={doCopy}
+                onDelete={doDelete}
+                onLocate={doLocate}
+              />
+            ),
+          },
           parts: {
             title: 'Parts',
-            visible: true,
+            visible: false,
             content: (
               <Palette
                 blocks={nodes
@@ -4051,6 +4190,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                 projectAmbientC={projectAmbientC}
                 onProjectAmbient={onProjectAmbient}
                 onSolve={handleSolve}
+                onAddPart={() => setPickerOpen(true)}
                 onScope={runScope}
                 onTimeline={() => setTimelineOpen((open) => !open)}
                 onMath={() => setShowMath((open) => !open)}
@@ -4267,11 +4407,12 @@ function Canvas({ project }: { project: ProjectChoice }) {
             ),
           },
         }
-        return panelGroups(
+        const groups = panelGroups(
           panelLayout,
-          ['parts', 'tools', 'properties', 'scope', 'timeline', 'bode', 'timing'],
+          ['hierarchy', 'parts', 'tools', 'properties', 'scope', 'timeline', 'bode', 'timing'],
           (id) => Boolean(registry[id]?.visible),
-        ).map((g) => {
+        )
+        const renderGroup = (g: (typeof groups)[number]) => {
           const stored = activeTab[g.group]
           const active = stored && g.ids.includes(stored) ? stored : g.ids[0]
           const def = active ? registry[active] : undefined
@@ -4292,6 +4433,33 @@ function Canvas({ project }: { project: ProjectChoice }) {
               {def.content}
             </DockablePanel>
           )
+        }
+        // One stack per edge fills its dock-grid cell as before; two or more on the same edge share
+        // the cell, laid down the edge (left/right → a column, top/bottom → a row) — so the new left
+        // dock reads Hierarchy then Properties, KiCad-style.
+        const dockEdges = ['left', 'right', 'top', 'bottom'] as const
+        return dockEdges.flatMap((edge) => {
+          const here = groups.filter((g) => g.edge === edge)
+          if (here.length === 0) return []
+          if (here.length === 1) {
+            const only = renderGroup(here[0] as (typeof groups)[number])
+            return only ? [only] : []
+          }
+          return [
+            <div
+              key={edge}
+              style={{
+                gridArea: edge,
+                display: 'flex',
+                flexDirection: edge === 'top' || edge === 'bottom' ? 'row' : 'column',
+                minHeight: 0,
+                minWidth: 0,
+                gap: 6,
+              }}
+            >
+              {here.map((g) => renderGroup(g))}
+            </div>,
+          ]
         })
       })()}
     </div>

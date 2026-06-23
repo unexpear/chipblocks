@@ -98,7 +98,9 @@ export function DockablePanel({
         zIndex: 30,
         pointerEvents: 'none',
       }
-    : { gridArea: edge, position: 'relative', zIndex: 20 }
+    : // gridArea fills the cell when this is the only stack on its edge; flex makes it share the cell
+      // (ignored by the grid, honoured inside App's flex wrapper) when two stacks dock to one edge.
+      { gridArea: edge, flex: '1 1 0', minHeight: 0, minWidth: 0, position: 'relative', zIndex: 20 }
   // A single panel keeps its original toolbar shape (grip on the edge); a stack always
   // reads top-down: tab bar, then the active tab's content.
   const column = grouped || !horizontal

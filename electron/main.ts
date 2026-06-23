@@ -26,7 +26,9 @@ const moduleDir = dirname(fileURLToPath(import.meta.url))
 
 const CIRCUIT_FILTERS = [{ name: 'ChipBlocks Circuit', extensions: ['chipblocks'] }]
 const NETLIST_FILTERS = [
+  { name: 'Schematic / netlist', extensions: ['cir', 'net', 'sp', 'spice', 'ckt', 'kicad_sch'] },
   { name: 'SPICE netlist', extensions: ['cir', 'net', 'sp', 'spice', 'ckt'] },
+  { name: 'KiCad schematic', extensions: ['kicad_sch'] },
   { name: 'All files', extensions: ['*'] },
 ]
 
@@ -185,7 +187,7 @@ function installMenu(window: BrowserWindow): void {
           click: () => void openCircuit(window),
         },
         {
-          label: 'Import Netlist…',
+          label: 'Import Netlist / Schematic…',
           click: () => void importNetlist(window),
         },
         { type: 'separator' },
