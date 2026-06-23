@@ -6,9 +6,20 @@
  *
  * This file is built in steps: (1) a generic S-expression parser + helpers [done], (2) extract the
  * schematic elements — placed symbols, wires, junctions, labels [done], (3) resolve each symbol's
- * absolute pin coordinates from the library definition + the instance's rotation/mirror [next],
- * (4) geometric net extraction, (5) map lib ids → catalog parts. Coordinates are millimetres.
+ * absolute pin coordinates from the library definition + the instance's rotation/mirror [done], (4)
+ * geometric net extraction by coordinate coincidence [done], (5) map lib ids → catalog parts and
+ * emit a CircuitFile so the sheet opens on the canvas [done]. Coordinates are millimetres.
  */
+
+import {
+  CIRCUIT_FILE_FORMAT,
+  CIRCUIT_FILE_VERSION,
+  type CircuitFile,
+  type SavedNode,
+  type SavedWire,
+} from './circuit-file.ts'
+import { defaultParameters, type Parameters } from './part-defaults.ts'
+import { parseSpiceValue } from './spice-netlist.ts'
 
 export type SExpr = string | number | SExpr[]
 
@@ -99,8 +110,8 @@ export type KicadSymbol = {
 }
 export type KicadWire = { a: Point; b: Point }
 export type KicadLabel = { text: string } & Point
-/** A library symbol's pin in its own local frame: (x, y) is the connection point, plus the pin number. */
-export type LibPin = { number: string; x: number; y: number; angle: number }
+/** A library symbol's pin in its own local frame: (x, y) is the connection point, plus the pin number + name. */
+export type LibPin = { number: string; name: string; x: number; y: number; angle: number }
 export type KicadSchematic = {
   symbols: KicadSymbol[]
   wires: KicadWire[]
@@ -141,6 +152,7 @@ export function extractLibSymbols(sch: SExpr[]): Map<string, LibPin[]> {
         if (at === undefined) continue
         pins.push({
           number: str(childNamed(pin, 'number')?.[1]),
+          name: str(childNamed(pin, 'name')?.[1]),
           x: num(at[1]),
           y: num(at[2]),
           angle: num(at[3]),
@@ -201,4 +213,408 @@ export function extractSchematic(text: string): KicadSchematic {
   })
 
   return { symbols, wires, junctions, labels, libPins: extractLibSymbols(sch) }
+}
+
+// --- geometric net extraction (the net-builder) --------------------------------------------------
+
+/** A device pin resolved to its absolute sheet position. */
+export type ResolvedPin = {
+  reference: string
+  value: string
+  libId: string
+  pinNumber: string
+  pinName: string
+  x: number
+  y: number
+}
+
+/** One extracted net: the device pins on it, plus a name if a label / power port sits on it. */
+export type KicadNet = {
+  pins: { reference: string; pinNumber: string; pinName: string }[]
+  name: string | undefined
+}
+
+/**
+ * Place a library pin's LOCAL coordinates onto the sheet for a placed symbol. KiCad draws library
+ * symbols Y-up but the sheet is Y-down, so the base orientation already flips Y; each rotation is
+ * that flip composed with a rotation (calibrated against real files — a placed resistor's pins must
+ * land exactly on the wires it joins). A mirror flips one axis in the symbol's own frame first.
+ */
+function transformPin(sym: KicadSymbol, px: number, py: number): { x: number; y: number } {
+  // Per-angle offset, calibrated against real files (a consistent 90° rotation family on KiCad's
+  // Y-down sheet): 0 → (px,−py), 90 → (−py,−px), 180 → (−px,py), 270 → (py,px).
+  const angle = ((Math.round(sym.at.angle) % 360) + 360) % 360
+  let ox: number
+  let oy: number
+  if (angle === 90) {
+    ox = -py
+    oy = -px
+  } else if (angle === 180) {
+    ox = -px
+    oy = py
+  } else if (angle === 270) {
+    ox = py
+    oy = px
+  } else {
+    ox = px
+    oy = -py
+  }
+  // Mirror is applied AFTER the rotation (also calibrated): mirror x flips the Y output, mirror y
+  // flips the X output.
+  if (sym.mirror === 'x') oy = -oy
+  else if (sym.mirror === 'y') ox = -ox
+  return { x: sym.at.x + ox, y: sym.at.y + oy }
+}
+
+/** A power port (power:+5V, power:GND, …) names a net; it is not a device. */
+const isPowerPort = (libId: string) => libId.startsWith('power:')
+
+/**
+ * Resolve every DEVICE pin to its absolute sheet position. Power ports are skipped here — they name
+ * nets rather than carry current, and are folded in by buildNets.
+ */
+export function resolvePinPositions(sch: KicadSchematic): ResolvedPin[] {
+  const out: ResolvedPin[] = []
+  for (const sym of sch.symbols) {
+    if (isPowerPort(sym.libId)) continue
+    const pins = sch.libPins.get(sym.libId)
+    if (pins === undefined) continue
+    for (const pin of pins) {
+      const at = transformPin(sym, pin.x, pin.y)
+      out.push({
+        reference: sym.reference,
+        value: sym.value,
+        libId: sym.libId,
+        pinNumber: pin.number,
+        pinName: pin.name,
+        x: at.x,
+        y: at.y,
+      })
+    }
+  }
+  return out
+}
+
+/**
+ * Build the electrical nets from the page geometry — KiCad has no net names, so connectivity is
+ * pure coincidence: a pin exactly on a wire end, wires meeting at a junction, and (the teleport)
+ * any two labels / power ports that share a name. A union-find over quantized points (0.01 mm grid)
+ * merges them; each connected group that holds ≥ 1 device pin is a net.
+ */
+const EPS = 0.02
+
+/** Whether point (px,py) lies on the wire segment a→b (KiCad wires are axis-aligned, with the rare
+ *  diagonal handled too) — so a pin landing partway along a wire connects, as KiCad treats it. */
+function onSegment(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): boolean {
+  if (Math.abs(ay - by) < EPS) {
+    return Math.abs(py - ay) < EPS && px >= Math.min(ax, bx) - EPS && px <= Math.max(ax, bx) + EPS
+  }
+  if (Math.abs(ax - bx) < EPS) {
+    return Math.abs(px - ax) < EPS && py >= Math.min(ay, by) - EPS && py <= Math.max(ay, by) + EPS
+  }
+  const cross = (px - ax) * (by - ay) - (py - ay) * (bx - ax)
+  if (Math.abs(cross) > EPS) return false
+  const dot = (px - ax) * (bx - ax) + (py - ay) * (by - ay)
+  const len2 = (bx - ax) ** 2 + (by - ay) ** 2
+  return dot >= -EPS && dot <= len2 + EPS
+}
+
+export function buildNets(sch: KicadSchematic): KicadNet[] {
+  const key = (x: number, y: number) => `${Math.round(x * 100)},${Math.round(y * 100)}`
+
+  const parent = new Map<string, string>()
+  const ensure = (k: string) => {
+    if (!parent.has(k)) parent.set(k, k)
+  }
+  const find = (k: string): string => {
+    ensure(k)
+    let root = k
+    while (parent.get(root) !== root) root = parent.get(root) as string
+    let cur = k
+    while (parent.get(cur) !== root) {
+      const next = parent.get(cur) as string
+      parent.set(cur, root)
+      cur = next
+    }
+    return root
+  }
+  const union = (a: string, b: string) => {
+    const ra = find(a)
+    const rb = find(b)
+    if (ra !== rb) parent.set(ra, rb)
+  }
+
+  // Every connection point on the page: wire ends, junctions, device pins, power ports, labels.
+  const pins = resolvePinPositions(sch)
+  const points: { x: number; y: number; key: string }[] = []
+  const seen = new Set<string>()
+  const addPoint = (x: number, y: number) => {
+    const k = key(x, y)
+    ensure(k)
+    if (!seen.has(k)) {
+      seen.add(k)
+      points.push({ x, y, key: k })
+    }
+  }
+  for (const w of sch.wires) {
+    addPoint(w.a.x, w.a.y)
+    addPoint(w.b.x, w.b.y)
+  }
+  for (const j of sch.junctions) addPoint(j.x, j.y)
+  for (const p of pins) addPoint(p.x, p.y)
+  for (const sym of sch.symbols) if (isPowerPort(sym.libId)) addPoint(sym.at.x, sym.at.y)
+  for (const l of sch.labels) addPoint(l.x, l.y)
+
+  // A wire ties its two ends into one net AND swallows any point lying along it (a pin landing
+  // partway down a wire, or a wire ending on another's middle — both connect in KiCad).
+  for (const w of sch.wires) {
+    union(key(w.a.x, w.a.y), key(w.b.x, w.b.y))
+    for (const pt of points) {
+      if (onSegment(pt.x, pt.y, w.a.x, w.a.y, w.b.x, w.b.y)) union(pt.key, key(w.a.x, w.a.y))
+    }
+  }
+
+  // Device pins, grouped by the point they land on.
+  const pinsAt = new Map<string, { reference: string; pinNumber: string; pinName: string }[]>()
+  for (const p of pins) {
+    const k = key(p.x, p.y)
+    const entry = { reference: p.reference, pinNumber: p.pinNumber, pinName: p.pinName }
+    const list = pinsAt.get(k)
+    if (list) list.push(entry)
+    else pinsAt.set(k, [entry])
+  }
+
+  // Named connections: same-named labels merge, and every same-valued power port merges (the rail).
+  // The name also rides along to label the net for the user.
+  const named = new Map<string, string[]>()
+  const addNamed = (name: string, k: string) => {
+    ensure(k)
+    const list = named.get(name)
+    if (list) list.push(k)
+    else named.set(name, [k])
+  }
+  for (const l of sch.labels) addNamed(l.text, key(l.x, l.y))
+  for (const sym of sch.symbols) {
+    if (isPowerPort(sym.libId)) addNamed(sym.value, key(sym.at.x, sym.at.y))
+  }
+  const nameOfKey = new Map<string, string>()
+  for (const [name, keys] of named) {
+    for (const k of keys) {
+      nameOfKey.set(k, name)
+      union(keys[0] as string, k)
+    }
+  }
+
+  // Collect components that hold device pins → nets, naming each from any label/port in it.
+  const byRoot = new Map<string, KicadNet>()
+  for (const [k, list] of pinsAt) {
+    const root = find(k)
+    const net = byRoot.get(root) ?? { pins: [], name: undefined }
+    net.pins.push(...list)
+    byRoot.set(root, net)
+  }
+  for (const [k, name] of nameOfKey) {
+    const net = byRoot.get(find(k))
+    if (net && net.name === undefined) net.name = name
+  }
+  return [...byRoot.values()]
+}
+
+// --- CircuitFile mapping (step 5 — open a KiCad sheet on the canvas) ------------------------------
+
+/** mm → px when placing a KiCad sheet onto our canvas. */
+const KICAD_SCALE = 4
+
+/** Net names meaning ground → our Ground part (the 0 V reference), not a plain net label. */
+const GROUND_NAMES = new Set([
+  'gnd',
+  'gnda',
+  'gndd',
+  'agnd',
+  'dgnd',
+  'pgnd',
+  'ground',
+  'earth',
+  'vss',
+  '0',
+])
+
+/** KiCad's lib_id alone doesn't say NPN vs PNP / N vs P — guess from a few common part numbers. */
+const PNP_PARTS = ['bc557', 'bc556', 'bc558', 'bc327', '2n3906', '2n2907', 'a1015', '2sa', 'tip42']
+const isPnp = (text: string) => text.includes('pnp') || PNP_PARTS.some((p) => text.includes(p))
+const isPmos = (text: string) => /p.?mos|p_?ch/.test(text)
+
+/** Map a KiCad lib_id → our catalog definition (+ which scalar its value sets). undefined = a part we
+ *  do not model (IC, connector, regulator, …): reported to the user, never silently faked. */
+function mapDefinition(
+  libId: string,
+  value: string,
+): { def: string; valueParam?: 'resistance' | 'capacitance' | 'inductance' } | undefined {
+  const name = (libId.split(':').pop() ?? libId).toLowerCase()
+  const lid = libId.toLowerCase()
+  const blurb = `${name} ${value}`.toLowerCase()
+  if (/^r(_small|_us)?$/.test(name) || name === 'resistor')
+    return { def: 'resistor', valueParam: 'resistance' }
+  if (name.includes('potentiometer') || name.includes('pot')) return { def: 'potentiometer' }
+  if (/^c(_small|_polarized.*)?$/.test(name) || name.startsWith('cap') || name === 'capacitor')
+    return { def: 'capacitor', valueParam: 'capacitance' }
+  if (/^l(_small)?$/.test(name) || name === 'inductor')
+    return { def: 'inductor', valueParam: 'inductance' }
+  if (name.includes('led')) return { def: 'led' }
+  if (
+    lid.startsWith('diode:') ||
+    /^d(_.*)?$/.test(name) ||
+    name.includes('diode') ||
+    name.includes('zener')
+  )
+    return { def: name.includes('zener') ? 'diode_zener_silicon' : 'diode_silicon_rectifier' }
+  if (lid.startsWith('transistor_bjt'))
+    return { def: isPnp(blurb) ? 'transistor_bjt_pnp' : 'transistor_bjt_npn' }
+  if (lid.startsWith('transistor_fet') || /mosfet|nmos|pmos/.test(name))
+    return { def: isPmos(blurb) ? 'transistor_mosfet_pmos' : 'transistor_mosfet_nmos' }
+  if (lid.startsWith('switch:') || /^sw_/.test(name))
+    return { def: name.includes('push') ? 'switch_spst_momentary' : 'switch_spst_toggle' }
+  return undefined
+}
+
+/** Map a KiCad pin (number + name) → our terminal id for a device, by name where it matters (a
+ *  diode's anode/cathode, a transistor's B/C/E) and by pin order otherwise. */
+function mapTerminal(def: string, pinNumber: string, pinName: string): string {
+  const n = pinName.trim().toLowerCase()
+  if (def === 'led' || def.startsWith('diode')) {
+    if (n.startsWith('a') || n === '+') return 'anode'
+    if (n.startsWith('k') || n.startsWith('c') || n === '-') return 'cathode'
+    return pinNumber === '2' ? 'anode' : 'cathode' // KiCad diode: pin 1 = K, pin 2 = A
+  }
+  if (def.startsWith('transistor_bjt')) {
+    if (n.startsWith('b')) return 'base'
+    if (n.startsWith('c')) return 'collector'
+    if (n.startsWith('e')) return 'emitter'
+    return pinNumber === '1' ? 'base' : pinNumber === '2' ? 'collector' : 'emitter'
+  }
+  if (def.startsWith('transistor_mosfet') || def.startsWith('transistor_jfet')) {
+    if (n.startsWith('g')) return 'gate'
+    if (n.startsWith('d')) return 'drain'
+    if (n.startsWith('s')) return 'source'
+    return pinNumber === '1' ? 'drain' : pinNumber === '2' ? 'gate' : 'source'
+  }
+  if (def === 'potentiometer')
+    return pinNumber === '1' ? 'terminal_a' : pinNumber === '3' ? 'terminal_b' : 'wiper'
+  if (def.startsWith('switch')) return pinNumber === '1' ? 'terminal_in' : 'terminal_out'
+  return pinNumber === '1' ? 'terminal_a' : 'terminal_b' // 2-terminal symmetric (R / C / L / …)
+}
+
+export type KicadImportResult = {
+  circuit: CircuitFile
+  /** Parts we do not model (ICs, connectors, …) — reported, never faked. */
+  unsupported: string[]
+  /** Mapped, but with a stated assumption (a guessed transistor polarity, …). */
+  warnings: string[]
+}
+
+/**
+ * Build a CircuitFile from a KiCad schematic — step 5, what actually opens the sheet on our canvas.
+ * Each placeable part maps to a catalog device (unmodeled parts are reported, not faked); the
+ * geometric nets become connections — a ground net via Ground parts, a named rail via net labels
+ * (the teleport), a plain local net via direct wires.
+ */
+export function parseKicadSchematic(text: string): KicadImportResult {
+  const sch = extractSchematic(text)
+  const nets = buildNets(sch)
+  const unsupported: string[] = []
+  const warnings: string[] = []
+
+  const symByRef = new Map<string, KicadSymbol>()
+  const defByRef = new Map<string, string>()
+  const nodes: SavedNode[] = []
+  for (const sym of sch.symbols) {
+    if (isPowerPort(sym.libId)) continue
+    symByRef.set(sym.reference, sym)
+    const mapping = mapDefinition(sym.libId, sym.value)
+    if (mapping === undefined) {
+      unsupported.push(`${sym.reference || sym.libId} (${sym.libId})`)
+      continue
+    }
+    defByRef.set(sym.reference, mapping.def)
+    if (mapping.def.includes('transistor')) {
+      warnings.push(`${sym.reference}: ${mapping.def} — polarity inferred from the part name`)
+    }
+    const params = { ...defaultParameters(mapping.def) } as Parameters
+    if (mapping.valueParam !== undefined) {
+      const v = parseSpiceValue(sym.value)
+      if (v !== undefined && Number.isFinite(v) && v > 0) {
+        const unit =
+          mapping.valueParam === 'resistance'
+            ? 'ohm'
+            : mapping.valueParam === 'capacitance'
+              ? 'farad'
+              : 'henry'
+        params[mapping.valueParam] = { value: { kind: 'scalar', amount: v, unit } }
+      }
+    }
+    nodes.push({
+      id: sym.reference || `${mapping.def}_${nodes.length + 1}`,
+      definition: mapping.def,
+      x: Math.round(sym.at.x * KICAD_SCALE),
+      y: Math.round(sym.at.y * KICAD_SCALE),
+      parameters: params,
+    })
+  }
+
+  const wires: SavedWire[] = []
+  let wireN = 0
+  let anchorN = 0
+  const addWire = (source: string, sourceHandle: string, target: string, targetHandle: string) => {
+    wireN += 1
+    wires.push({ id: `w_${wireN}`, source, sourceHandle, target, targetHandle })
+  }
+  for (const net of nets) {
+    const conns = net.pins
+      .filter((p) => defByRef.has(p.reference))
+      .map((p) => ({
+        id: p.reference,
+        terminal: mapTerminal(defByRef.get(p.reference) as string, p.pinNumber, p.pinName),
+      }))
+    if (conns.length === 0) continue
+    const isGround = net.name !== undefined && GROUND_NAMES.has(net.name.toLowerCase())
+    const named = net.name !== undefined && !isGround
+
+    if (!isGround && !named) {
+      // A plain local net: connect the pins directly (a star from the first).
+      const hub = conns[0] as { id: string; terminal: string }
+      for (let i = 1; i < conns.length; i += 1) {
+        const c = conns[i] as { id: string; terminal: string }
+        addWire(hub.id, hub.terminal, c.id, c.terminal)
+      }
+      continue
+    }
+    // Ground or a named rail → an anchor per pin (Ground part / net label), teleport-merged.
+    const labelName = net.name as string
+    for (const c of conns) {
+      anchorN += 1
+      const sym = symByRef.get(c.id) as KicadSymbol
+      const anchorId = isGround ? `gnd_${anchorN}` : `netlabel_${anchorN}`
+      nodes.push({
+        id: anchorId,
+        definition: isGround ? 'ground' : 'net_label',
+        x: Math.round(sym.at.x * KICAD_SCALE) + 48,
+        y: Math.round(sym.at.y * KICAD_SCALE) + 48,
+        ...(isGround ? {} : { parameters: { net_name: { value: labelName } } as Parameters }),
+      })
+      addWire(c.id, c.terminal, anchorId, 'reference_terminal')
+    }
+  }
+
+  return {
+    circuit: { format: CIRCUIT_FILE_FORMAT, version: CIRCUIT_FILE_VERSION, nodes, wires },
+    unsupported: [...new Set(unsupported)], // a multi-unit IC places once per unit — report it once
+    warnings,
+  }
 }

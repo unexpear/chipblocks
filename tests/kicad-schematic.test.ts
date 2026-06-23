@@ -95,8 +95,8 @@ describe('extractSchematic — the structural layer', () => {
       (symbol (lib_id "Device:R") (at 100 50 0)))`
     const sch = extractSchematic(text)
     expect(sch.libPins.get('Device:R')).toEqual([
-      { number: '1', x: 0, y: 3.81, angle: 270 },
-      { number: '2', x: 0, y: -3.81, angle: 90 },
+      { number: '1', name: '~', x: 0, y: 3.81, angle: 270 },
+      { number: '2', name: '~', x: 0, y: -3.81, angle: 90 },
     ])
     // the placed instance is extracted separately from the library definition
     expect(sch.symbols).toHaveLength(1)
