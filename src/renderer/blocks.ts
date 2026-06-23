@@ -22,6 +22,23 @@ import type { Parameters } from './part-defaults.ts'
 export type PinKind = 'signal' | 'power_positive' | 'power_negative'
 /** Which edge of the block box a pin sits on — a real chip's perimeter (QFP-style). */
 export type PinSide = 'left' | 'right' | 'top' | 'bottom'
+/**
+ * A pin's signal direction / drive type — the basis of the output-combining (driver-contention)
+ * rules from real logic chips. The three OUTPUT kinds are push-pull (actively drives high AND low —
+ * a normal output), open-collector / open-drain (pulls low only; meant to share a wire via a
+ * pull-up), and tri-state (can switch to high-Z to share a bus). Inputs and unspecified pins never
+ * drive, so they never contend.
+ */
+export type DriveKind = 'input' | 'push_pull' | 'open_collector' | 'tristate'
+const OUTPUT_DRIVES: ReadonlySet<DriveKind> = new Set<DriveKind>([
+  'push_pull',
+  'open_collector',
+  'tristate',
+])
+/** Is this pin an output (a driver)? Only outputs can contend when wired to the same net. */
+export function isOutputDrive(drive: DriveKind | undefined): drive is DriveKind {
+  return drive !== undefined && OUTPUT_DRIVES.has(drive)
+}
 
 export type BlockPort = {
   id: string
@@ -31,6 +48,11 @@ export type BlockPort = {
   name?: string
   /** Power pins render with +/− (a chip DOES mark its supply pins); signal pins stay plain. */
   kind?: PinKind
+  /** Signal direction / drive type — the basis of the output-combining (driver-contention) checks. */
+  drive?: DriveKind
+  /** For a tri-state OUTPUT pin: which pin enables it (a pin id on this block) + its active level. The
+   *  live check counts how many tri-states on a shared bus are enabled at once (≥2 = real contention). */
+  enable?: { pin: string; activeHigh: boolean }
   /** Which EDGE of the block box the pin sits on — a real chip's perimeter pins (QFP-style). */
   side: PinSide
   /** Legacy hand-laid position (px along the edge) — only the BUILT-IN blocks set it; user-grouped

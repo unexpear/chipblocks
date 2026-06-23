@@ -52,7 +52,9 @@ export function BlockNode({ id, data }: NodeProps) {
           inset: 0,
           border: health?.failed
             ? `1.5px solid ${THEME.statusDanger}`
-            : `1.5px solid ${THEME.textMuted}`,
+            : health?.warned
+              ? `1.5px solid ${THEME.statusWarn}`
+              : `1.5px solid ${THEME.textMuted}`,
           borderRadius: 6,
           background: THEME.surfacePanel,
           display: 'flex',
@@ -120,6 +122,10 @@ export function BlockNode({ id, data }: NodeProps) {
         {health?.failed ? (
           <span title={health.note} style={{ marginLeft: 5 }}>
             💥
+          </span>
+        ) : health?.warned ? (
+          <span title={health.note} style={{ marginLeft: 5 }}>
+            ⚠️
           </span>
         ) : null}
       </div>

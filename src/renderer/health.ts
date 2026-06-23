@@ -4,6 +4,7 @@ import type { Solution } from '../dc-solver.ts'
 import { detectFailures } from '../failure-detector.ts'
 import { readScalarParam } from '../instance-params.ts'
 import { acrossVolts, bulbFilamentTemperatureC } from '../thermal-model.ts'
+import type { ContentionFinding } from './output-contention.ts'
 
 /**
  * Per-part health for the canvas (Sprint 19) — drives the success / failure
@@ -18,6 +19,8 @@ export type NodeHealth = {
   /** A lit LED's emission color (CSS rgb), mapped from its peak_wavelength. */
   glow?: string
   failed?: boolean
+  /** A non-fatal caution (e.g. a shared-bus output combination that needs care) — amber, no burst. */
+  warned?: boolean
   note?: string
 }
 
@@ -158,3 +161,47 @@ export function canvasHealth(
 
 /** Health by node id, read by each DeviceNode to render its glow / burst. */
 export const HealthContext = createContext<Map<string, NodeHealth>>(new Map())
+
+/**
+ * Map output-contention findings (output-contention.ts) onto per-block health. A push-pull
+ * contention is a real fault — a dead short — so it `failed`s (the block bursts); the shared-bus
+ * cautions (open-collector / tri-state) `warned` (an amber flag, no burst). Each involved block
+ * carries the finding's message as its note.
+ */
+export function contentionHealth(findings: ContentionFinding[]): Map<string, NodeHealth> {
+  const map = new Map<string, NodeHealth>()
+  for (const finding of findings) {
+    for (const { nodeId } of finding.pins) {
+      if (finding.severity === 'error') map.set(nodeId, { failed: true, note: finding.message })
+      else if (map.get(nodeId)?.failed !== true)
+        map.set(nodeId, { warned: true, note: finding.message })
+    }
+  }
+  return map
+}
+
+/** Overlay one health map on another (the structural contention pass on top of the solved health),
+ *  combining notes and letting a hard `failed` win over a softer `warned`. */
+export function mergeHealth(
+  base: Map<string, NodeHealth>,
+  overlay: Map<string, NodeHealth>,
+): Map<string, NodeHealth> {
+  if (overlay.size === 0) return base
+  const out = new Map(base)
+  for (const [id, oh] of overlay) {
+    const bh = out.get(id)
+    if (bh === undefined) {
+      out.set(id, oh)
+      continue
+    }
+    const failed = bh.failed === true || oh.failed === true
+    out.set(id, {
+      ...bh,
+      ...oh,
+      failed,
+      warned: (bh.warned === true || oh.warned === true) && !failed,
+      note: [bh.note, oh.note].filter(Boolean).join(' · '),
+    })
+  }
+  return out
+}

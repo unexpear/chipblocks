@@ -573,6 +573,7 @@ const DEFAULTS: Record<string, Parameters> = {
     gate_dielectric: { value: 'silicon_dioxide' },
     thermal_resistance_junction_ambient: scalar(312.5, 'kelvin_per_watt'),
     max_operating_temperature: scalar(150, 'celsius'),
+    gate_capacitance: scalar(60e-12, 'farad'),
   },
   transistor_mosfet_pmos: {
     // BS250 (TO-92 P-channel) — the 2N7000's standard complement. k derived the
@@ -592,6 +593,7 @@ const DEFAULTS: Record<string, Parameters> = {
     gate_dielectric: { value: 'silicon_dioxide' },
     thermal_resistance_junction_ambient: scalar(178.6, 'kelvin_per_watt'),
     max_operating_temperature: scalar(150, 'celsius'),
+    gate_capacitance: scalar(60e-12, 'farad'),
   },
   transistor_jfet_n_channel: {
     // 2N5457 (N-JFET) datasheet typicals: V_GS(off) ~ -1.5 V, I_DSS ~ 3 mA →
@@ -969,6 +971,7 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     max_gate_source_voltage: '2N7000 V_GS ±20 V absolute max — beyond it the gate oxide ruptures',
     thermal_resistance_junction_ambient: 'derived: (150−25) °C / 0.4 W TO-92 power rating',
     max_operating_temperature: '2N7000 T_J max 150 °C (datasheet)',
+    gate_capacitance: '2N7000 C_iss 60 pF typical (datasheet, V_GS=0, V_DS=25 V, 1 MHz)',
   },
   transistor_mosfet_pmos: {
     threshold_voltage: 'BS250 V_GS(th) −2.5 V class (−1 to −3.5 V range, datasheet)',
@@ -982,6 +985,7 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     max_gate_source_voltage: 'BS250 V_GS ±20 V absolute max — gate-oxide limit',
     thermal_resistance_junction_ambient: 'derived: (150−25) °C / 0.7 W TO-92 power rating',
     max_operating_temperature: 'BS250 T_J max 150 °C (datasheet)',
+    gate_capacitance: 'BS250P C_iss 60 pF max (Diodes DS33014, V_GS=0, V_DS=−10 V, 1 MHz)',
   },
   transistor_jfet_n_channel: {
     pinch_off_voltage: '2N5457 V_GS(off) ~ −1.5 V typical (−0.5 to −6 V range, onsemi datasheet)',

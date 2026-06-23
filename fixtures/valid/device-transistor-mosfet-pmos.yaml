@@ -107,6 +107,11 @@ parameters:
     units: celsius
     required: false
     description: Maximum junction operating temperature for the stage-7 thermal check.
+  gate_capacitance:
+    type: quantity
+    units: farad
+    required: false
+    description: "Input capacitance C_iss — the gate load a driver charges through its on-resistance, so it sets switching SPEED. A gate's propagation delay is t_pd ≈ ln2·R_on·C_load. BS250 class ~60 pF (datasheet, V_GS=0, V_DS=−10 V, 1 MHz)."
 behaviors:
   - acts_as_transistor
   - conducts_current
@@ -128,7 +133,8 @@ extensions:
 notes: |
   Identical Level-1 physics to the NMOS, evaluated in the mirrored frame
   (mosfet-model.ts flips signs once, in one place, with tests pinning the
-  mirror). Same honest gaps as the NMOS: no body diode, gate capacitance, or
-  avalanche yet. P-channel mobility is lower than n-channel in silicon, which
+  mirror). Same as the NMOS: gate capacitance is now modeled (one lumped input
+  capacitance, the gate_capacitance parameter); the body diode and avalanche
+  remain honest gaps. P-channel mobility is lower than n-channel in silicon, which
   is why a comparable PMOS (BS250 vs 2N7000) carries a smaller k — visible in
   the cited canvas defaults.

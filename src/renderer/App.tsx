@@ -42,6 +42,7 @@ import { readScalarParam } from '../instance-params.ts'
 import { LIGHT_SENSOR_DEFINITIONS, type LightSource, worldWithCastLight } from '../light.ts'
 import { type RelayState, solveWithRelays } from '../relay.ts'
 import type { ShockleyDiodeState } from '../shockley-diode.ts'
+import { analyzeTiming } from '../static-timing.ts'
 import { STANDARD_AMBIENT_C } from '../thermal-model.ts'
 import type { TransientResult } from '../transient-solver.ts'
 import { type AddableTerminal, BlockInspector, type BlockPortPatch } from './block-inspector.tsx'
@@ -62,7 +63,7 @@ import {
   withoutOffsets,
 } from './blocks.ts'
 import { BodePanel } from './bode-panel.tsx'
-import { BUILTIN_BLOCKS } from './builtin-blocks.ts'
+import { BUILTIN_BLOCKS, INVERTER_BLOCK } from './builtin-blocks.ts'
 import { CanvasScrollbars } from './canvas-scrollbars.tsx'
 import {
   type CanvasEdge,
@@ -86,7 +87,13 @@ import { CoordinateAxes } from './coordinate-axes.tsx'
 import { DockablePanel, type TabDropTarget } from './dockable-panel.tsx'
 import { wireFlow } from './edge-currents.ts'
 import { computeFront } from './front-propagation.ts'
-import { canvasHealth, HealthContext, type NodeHealth } from './health.ts'
+import {
+  canvasHealth,
+  contentionHealth,
+  HealthContext,
+  mergeHealth,
+  type NodeHealth,
+} from './health.ts'
 import { eventMatchesBinding } from './keybinds.ts'
 import {
   edgeIdsTouchingRegion,
@@ -137,6 +144,7 @@ import {
   type Point,
   WireGeomContext,
 } from './net-edge.tsx'
+import { detectOutputContention, type LiveLevels } from './output-contention.ts'
 import { BLOCK_MIME, DEFINITION_MIME, Palette } from './palette.tsx'
 import { moveToEdge, type PanelLayout, panelGroups, stackOnto } from './panel-groups.ts'
 import {
@@ -169,6 +177,8 @@ import { H_DIVISIONS, scopeRecordSteps, slowestHonestTimebase } from './scope-sc
 import { type DeviceNodeData, nodeTypes, terminalsOf } from './symbols.tsx'
 import { clampIndex, frameEdgeValues, frameLensRange } from './timeline.ts'
 import { TimelinePanel } from './timeline-panel.tsx'
+import { gateDelay, isClockedBlock, isSequentialBlock, traceTimingPaths } from './timing-graph.ts'
+import { TimingPanel } from './timing-panel.tsx'
 import { type Tool, ToolbarItems } from './toolbar.tsx'
 import { CheckpointContext } from './undo-context.ts'
 import { checkpoint, emptyHistory, redo, undo } from './undo-history.ts'
@@ -478,6 +488,7 @@ function solveCanvas(
   health: Map<string, NodeHealth>
   readings: Map<string, PartReading>
   terminalVolts: Map<string, number>
+  live: LiveLevels | undefined
   world: World
   solution: Solution
   temperaturesC: Map<string, number>
@@ -561,12 +572,19 @@ function solveCanvas(
     const inner = terminalVolts.get(alias.inner)
     if (inner !== undefined) terminalVolts.set(alias.outer, inner)
   }
+  const supplyVolts = logicThreshold(world)
   return {
     edges,
     health,
     readings: partReadings(world, solution, thermal.temperaturesC),
     // Every wired terminal's live voltage — what the multimeter probes read.
     terminalVolts,
+    // Tri-state enable levels for the output-contention check (undefined with no supply → no logic
+    // threshold, so a tri-state bus stays a caution rather than a false pass/fail).
+    live:
+      supplyVolts === undefined
+        ? undefined
+        : { terminalVoltages: terminalVolts, threshold: supplyVolts },
     // The solved circuit itself — the meter's Ω mode re-solves it powered-off,
     // and the Math panel shows the equations behind this exact solution.
     world,
@@ -583,6 +601,18 @@ function solveCanvas(
     shockleyStates: thermal.shockleyStates,
     relaysSettled: thermal.relaysSettled,
   }
+}
+
+/** The logic high/low threshold (≈ Vcc/2) for the tri-state enable check — half the largest power
+ *  source voltage. Undefined when there's no supply (then enable levels can't be judged → caution). */
+function logicThreshold(world: World): number | undefined {
+  let vcc = 0
+  for (const inst of world.instances.values()) {
+    if (inst.definition !== 'power_source') continue
+    const v = Math.abs(readScalarParam(inst, 'nominal_voltage') ?? 0)
+    if (v > vcc) vcc = v
+  }
+  return vcc > 0 ? vcc / 2 : undefined
 }
 
 /**
@@ -739,6 +769,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       health: solved.health,
       readings: solved.readings,
       terminalVolts: solved.terminalVolts,
+      live: solved.live,
       world: solved.world,
       solution: solved.solution,
       temperaturesC: solved.temperaturesC,
@@ -775,6 +806,48 @@ function Canvas({ project }: { project: ProjectChoice }) {
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges)
   // Per-part health (lit / overstressed) — drives the success/failure animations.
   const [health, setHealth] = useState(initial.health)
+  const [live, setLive] = useState(initial.live)
+  // Output / driver-contention runs off the live nodes+edges (so it updates the instant you wire or
+  // retype a pin); the tri-state rule also reads each enable's level from the latest solve (`live`).
+  const contentionFindings = useMemo(
+    () => detectOutputContention(nodes, edges, live),
+    [nodes, edges, live],
+  )
+  const shownHealth = useMemo(
+    () => mergeHealth(health, contentionHealth(contentionFindings)),
+    [health, contentionFindings],
+  )
+  // Static timing (rung 3): the design's max clock frequency + critical register-to-register path,
+  // from the REAL gate delays (timing-graph traces the paths and sums each gate's delay from its
+  // transistors). The flip-flop's own t_cq / setup / hold are estimated off a reference gate delay.
+  const timing = useMemo(() => {
+    const supplyVoltage = live ? live.threshold * 2 : 5
+    let clockPeriod = Number.POSITIVE_INFINITY
+    for (const n of nodes) {
+      if ((n.data as { definition?: string })?.definition !== 'power_source') continue
+      const f = readScalarParam(
+        { parameters: (n.data as DeviceNodeData).parameters } as Instance,
+        'frequency',
+      )
+      if (f !== undefined && f > 0) clockPeriod = Math.min(clockPeriod, 1 / f)
+    }
+    const refDelay = gateDelay(INVERTER_BLOCK, supplyVoltage, [120e-12], 5e-12)
+    const registerTiming = { clockToQ: 3 * refDelay, setup: 1.5 * refDelay, hold: 0.5 * refDelay }
+    const paths = traceTimingPaths(nodes, edges, {
+      supplyVoltage,
+      wireCapacitance: 5e-12,
+      defaultInputCapacitance: 120e-12,
+    })
+    const report = analyzeTiming(paths, registerTiming, clockPeriod, 0)
+    const hasRegisters = nodes.some((n) => {
+      const data = n.data as { definition?: string; block?: BlockData }
+      return (
+        isSequentialBlock(data?.definition ?? '') ||
+        (data?.block ? isClockedBlock(data.block) : false)
+      )
+    })
+    return { report, hasRegisters, clockDetected: Number.isFinite(clockPeriod) }
+  }, [nodes, edges, live])
   const [readings, setReadings] = useState(initial.readings)
   const [terminalVolts, setTerminalVolts] = useState(initial.terminalVolts)
   // The latest solved World — Ω mode re-solves it powered-off between the probes.
@@ -1070,6 +1143,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       setEdges(solved.edges)
       setHealth(solved.health)
       setReadings(solved.readings)
+      setLive(solved.live)
       setTerminalVolts(solved.terminalVolts)
       setSolvedWorld(solved.world)
       setSolution(solved.solution)
@@ -2697,7 +2771,16 @@ function Canvas({ project }: { project: ProjectChoice }) {
           if (n.id !== blockId) return n
           const block = (n.data as { block?: BlockData }).block
           if (!block) return n
-          const edited = block.ports.map((p) => (p.id === portId ? { ...p, ...patch } : p))
+          const edited = block.ports.map((p) => {
+            if (p.id !== portId) return p
+            const next = { ...p, ...patch }
+            // An enable with an empty pin id is the "(no enable)" choice — drop the field entirely.
+            if (next.enable?.pin === '') {
+              const { enable: _enable, ...rest } = next
+              return rest
+            }
+            return next
+          })
           // Changing a side needs the auto-distribute layout, so drop the legacy offsets; name/kind
           // keep them (a built-in block's hand-laid look survives a rename).
           const ports = patch.side !== undefined ? withoutOffsets(edited) : edited
@@ -3214,7 +3297,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
           overflow: 'hidden',
         }}
       >
-        <HealthContext.Provider value={health}>
+        <HealthContext.Provider value={shownHealth}>
           <LensContext.Provider value={lensState}>
             <FrameEdgeContext.Provider value={frameEdges}>
               <FrontContext.Provider value={frontState}>
@@ -4091,10 +4174,21 @@ function Canvas({ project }: { project: ProjectChoice }) {
               />
             ),
           },
+          timing: {
+            title: 'Timing',
+            visible: timing.hasRegisters,
+            content: (
+              <TimingPanel
+                report={timing.report}
+                clockDetected={timing.clockDetected}
+                light={light}
+              />
+            ),
+          },
         }
         return panelGroups(
           panelLayout,
-          ['parts', 'tools', 'properties', 'scope', 'timeline', 'bode'],
+          ['parts', 'tools', 'properties', 'scope', 'timeline', 'bode', 'timing'],
           (id) => Boolean(registry[id]?.visible),
         ).map((g) => {
           const stored = activeTab[g.group]

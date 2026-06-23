@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import type { BlockPort, PinKind, PinSide } from './blocks.ts'
+import type { BlockPort, DriveKind, PinKind, PinSide } from './blocks.ts'
 import { THEME } from './theme.ts'
 
 /**
@@ -36,6 +36,8 @@ export type BlockPortPatch = {
   name?: string
   kind?: PinKind
   side?: PinSide
+  drive?: DriveKind
+  enable?: { pin: string; activeHigh: boolean }
 }
 
 /** An internal terminal that isn't a pin yet — offered in the "add pin" picker. */
@@ -153,6 +155,56 @@ export function BlockInspector({
               <option value="bottom">bottom</option>
             </select>
           </div>
+          <select
+            value={port.drive ?? 'input'}
+            onChange={(e) => onEditPort(port.id, { drive: e.target.value as DriveKind })}
+            style={{ ...field, width: '100%' }}
+            title="Signal direction / drive type — the basis of the output-combining (driver-contention) checks"
+          >
+            <option value="input">input</option>
+            <option value="push_pull">output: push-pull (normal)</option>
+            <option value="open_collector">output: open-collector / drain</option>
+            <option value="tristate">output: tri-state</option>
+          </select>
+          {port.drive === 'tristate' ? (
+            <div style={{ display: 'flex', gap: 4 }}>
+              <select
+                value={port.enable?.pin ?? ''}
+                onChange={(e) =>
+                  onEditPort(port.id, {
+                    enable: { pin: e.target.value, activeHigh: port.enable?.activeHigh ?? true },
+                  })
+                }
+                style={{ ...field, flex: 1 }}
+                title="Which pin enables this tri-state output — lets the live check count how many drive the bus at once"
+              >
+                <option value="">(no enable set)</option>
+                {ports
+                  .filter((p) => p.id !== port.id)
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      en: {p.name ?? p.label}
+                    </option>
+                  ))}
+              </select>
+              <select
+                value={port.enable?.activeHigh === false ? 'low' : 'high'}
+                onChange={(e) => {
+                  if (port.enable) {
+                    onEditPort(port.id, {
+                      enable: { pin: port.enable.pin, activeHigh: e.target.value === 'high' },
+                    })
+                  }
+                }}
+                disabled={port.enable === undefined}
+                style={{ ...field, width: 64 }}
+                title="Is the output enabled when the enable pin is HIGH or LOW?"
+              >
+                <option value="high">on=hi</option>
+                <option value="low">on=lo</option>
+              </select>
+            </div>
+          ) : null}
         </div>
       ))}
       {available.length > 0 ? (

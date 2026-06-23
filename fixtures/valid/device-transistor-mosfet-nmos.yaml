@@ -115,6 +115,11 @@ parameters:
     units: celsius
     required: false
     description: Maximum junction operating temperature. The stage-7 thermal check fires when the computed steady-state temperature exceeds it.
+  gate_capacitance:
+    type: quantity
+    units: farad
+    required: false
+    description: "Input capacitance C_iss — the gate load a driver charges through its on-resistance, so it sets switching SPEED. A gate's propagation delay is t_pd ≈ ln2·R_on·C_load. 2N7000 class ~60 pF (datasheet, V_GS=0, V_DS=25 V, 1 MHz)."
 behaviors:
   - acts_as_transistor
   - conducts_current
@@ -141,7 +146,10 @@ notes: |
   mobility law (T/T₀)^−1.5 and V_th drifts by threshold_temperature_coefficient —
   the two oppose, giving the real zero-temperature-coefficient (ZTC) bias point.
   Honest gaps, stated: the body diode every discrete MOSFET carries from source
-  to drain is NOT yet modeled (matters for inductive freewheeling); neither are
-  gate capacitance (switching speed) nor avalanche. Body effect does not apply —
+  to drain is NOT yet modeled (matters for inductive freewheeling), nor is
+  avalanche. Gate capacitance IS now modeled — one lumped input capacitance
+  C_iss (the gate_capacitance parameter), enough for switching-speed /
+  propagation-delay estimates (t_pd ≈ ln2·R_on·C_load), not split into the
+  separate C_gs/C_gd a full charge model would carry. Body effect does not apply —
   the body is tied to the source by construction in this three-terminal
   device, so V_SB = 0 exactly. The PMOS variant is the polarity mirror.
