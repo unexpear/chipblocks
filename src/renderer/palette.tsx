@@ -150,6 +150,7 @@ const PARTS: { definition: string; label: string }[] = [
   { definition: 'fuse', label: 'Fuse' },
   { definition: 'relay', label: 'Relay' },
   { definition: 'ground', label: 'Ground' },
+  { definition: 'net_label', label: 'Net Label' },
 ]
 
 export function PaletteItems({ filter }: { filter?: string }) {

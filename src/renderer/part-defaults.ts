@@ -22,6 +22,11 @@ export type Parameters = NonNullable<Instance['parameters']>
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
 
 const DEFAULTS: Record<string, Parameters> = {
+  // A net label / power port — a named tie point; every label that shares this name is
+  // ONE electrical net (a teleporting rail / bus), so wires needn't be drawn between them.
+  net_label: {
+    net_name: { value: '+5V' },
+  },
   resistor: {
     // 470 Ω — E12 standard, sized so the 9 V default battery drives the 2 V
     // default LED at ~15 mA: safely under its 20 mA rating, so a dropped

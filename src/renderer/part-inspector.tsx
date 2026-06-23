@@ -811,6 +811,20 @@ export function PartInspector({
               </label>
             )
           }
+          if (key === 'net_name') {
+            return (
+              <label key={`${selected.id}:${key}`} style={row}>
+                <span style={{ color: THEME.textSoft }}>Net name</span>
+                <input
+                  type="text"
+                  value={String(param.value ?? '')}
+                  onChange={(e) => onEnum('net_name', e.target.value)}
+                  className="nodrag"
+                  style={{ ...field, maxWidth: 112 }}
+                />
+              </label>
+            )
+          }
           return (
             <div key={`${selected.id}:${key}`} style={row}>
               <span style={{ color: THEME.textSoft }}>{humanize(key)}</span>

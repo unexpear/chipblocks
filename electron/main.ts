@@ -295,6 +295,19 @@ function installMenu(window: BrowserWindow): void {
             click: () => window.webContents.send('settings:theme', entry.id),
           })),
         },
+        {
+          label: 'Symbol Style',
+          submenu: [
+            {
+              label: 'US / IEEE-315 (default)',
+              click: () => window.webContents.send('settings:symbol-style', 'ieee'),
+            },
+            {
+              label: 'IEC (KiCad style)',
+              click: () => window.webContents.send('settings:symbol-style', 'iec'),
+            },
+          ],
+        },
         { type: 'separator' },
         {
           label: 'Grid color',

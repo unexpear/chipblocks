@@ -11,6 +11,9 @@ function subscribe<T>(channel: string, callback: (value: T) => void): void {
 
 contextBridge.exposeInMainWorld('chipblocks', {
   onTheme: (callback: (theme: string) => void) => subscribe('settings:theme', callback),
+  // Symbol-style switcher: the native Settings ▸ Symbol Style menu sends 'ieee' / 'iec'.
+  onSymbolStyle: (callback: (style: string) => void) =>
+    subscribe('settings:symbol-style', callback),
   // Theme switcher: the renderer registers the theme list (from theme.ts) so the native
   // Settings ▸ Theme menu builds itself, and the menu sends back the chosen theme id.
   registerThemes: (themes: { id: string; label: string }[], active: string) =>

@@ -52,6 +52,11 @@ const scalarParam = (amount: number, unit: string) => ({ value: { kind: 'scalar'
 
 export function canvasToWorld(nodes: CanvasNode[], edges: CanvasEdge[]): World {
   const instances = new Map<string, Instance>()
+  // Net labels (power ports) are pure tie points — valid wire endpoints that carry no
+  // current, so no instance is stamped and they never enter the solver. A NAMED one ties
+  // every same-named label into ONE net below (the teleport); a blank one is local only.
+  const netLabels = new Set<string>()
+  const netLabelName = new Map<string, string>()
   for (const node of nodes) {
     // A junction is a pure tie point, not an electrical element: every wire
     // touching its handle resolves to ONE net below (netForPoint), which is
@@ -62,6 +67,15 @@ export function canvasToWorld(nodes: CanvasNode[], edges: CanvasEdge[]): World {
     // carries no current. The casting pre-pass reads it from the canvas nodes
     // (positions + intensity); it never enters the circuit world.
     if (node.definition === 'light_source') continue
+    // A net label: record it as an endpoint, and its (trimmed) name as the teleport key.
+    if (node.definition === 'net_label') {
+      netLabels.add(node.id)
+      const named = node.parameters?.net_name?.value
+      if (typeof named === 'string' && named.trim().length > 0) {
+        netLabelName.set(node.id, named.trim())
+      }
+      continue
+    }
     instances.set(node.id, {
       id: node.id,
       kind_ref: 'primitive_device',
@@ -80,6 +94,8 @@ export function canvasToWorld(nodes: CanvasNode[], edges: CanvasEdge[]): World {
   // and BOTH get pinned to 0 V. Without this, each ground made its own net and
   // the solver pinned only the first — the rest floated at an arbitrary offset.
   let groundNetId: string | undefined
+  // net name → its shared net id, so every label of that name resolves to one net (the rail).
+  const labelNets = new Map<string, string>()
 
   // One net per distinct connection point — except grounds, which all collapse
   // to the single shared net above. A handle shared by several wires resolves to
@@ -90,19 +106,29 @@ export function canvasToWorld(nodes: CanvasNode[], edges: CanvasEdge[]): World {
     if (existing !== undefined) return existing
 
     const grounded = instances.get(instance)?.definition === 'ground'
+    // A named net label shares ONE net with every same-named label — the teleport —
+    // just as every ground shares the single 0 V net.
+    const labelName = netLabelName.get(instance)
+    const shared = grounded
+      ? groundNetId
+      : labelName !== undefined
+        ? labelNets.get(labelName)
+        : undefined
     let id: string
-    if (grounded && groundNetId !== undefined) {
-      id = groundNetId
+    if (shared !== undefined) {
+      id = shared
     } else {
       netCount += 1
       id = `net_${netCount}`
       if (grounded) groundNetId = id
+      else if (labelName !== undefined) labelNets.set(labelName, id)
     }
     pointNet.set(key, id)
 
     let net = nets.get(id)
     if (net === undefined) {
-      net = { id, kind: 'net', members: [], ...(grounded ? { type: 'ground' } : {}) }
+      const type = grounded ? 'ground' : labelName !== undefined ? 'net_label' : undefined
+      net = { id, kind: 'net', members: [], ...(type ? { type } : {}) }
       nets.set(id, net)
     }
     net.members.push({ instance, terminal })
@@ -116,7 +142,7 @@ export function canvasToWorld(nodes: CanvasNode[], edges: CanvasEdge[]): World {
   }
 
   let wireCount = 0
-  const isEndpoint = (id: string) => instances.has(id) || junctions.has(id)
+  const isEndpoint = (id: string) => instances.has(id) || junctions.has(id) || netLabels.has(id)
   for (const edge of edges) {
     if (!edge.sourceHandle || !edge.targetHandle) continue // need both terminals
     if (!isEndpoint(edge.source) || !isEndpoint(edge.target)) continue

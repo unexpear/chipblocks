@@ -1,5 +1,6 @@
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from '@xyflow/react'
 import { Fragment, useContext, useEffect } from 'react'
+import { SymbolStyleContext } from './symbol-style.tsx'
 import { THEME } from './theme.ts'
 import './canvas-animations.css'
 import { thermalSeverity } from '../thermal-model.ts'
@@ -49,29 +50,115 @@ const lead = (x1: number, x2: number) => (
   <line x1={x1} y1={MID} x2={x2} y2={MID} stroke={STROKE} strokeWidth={1.5} />
 )
 
+// Resistor colour-code (IEC 60062): the digit colours 0–9, plus gold / silver for the small
+// multipliers and the tolerance band.
+const BAND_COLORS = [
+  '#2b2b2b', // 0 black
+  '#7a4a2a', // 1 brown
+  '#d23b2a', // 2 red
+  '#e0852a', // 3 orange
+  '#e6c92e', // 4 yellow
+  '#3a9a4a', // 5 green
+  '#3a6ad2', // 6 blue
+  '#9a4ad2', // 7 violet
+  '#9a9a9a', // 8 grey
+  '#f0f0f0', // 9 white
+]
+const GOLD = '#c9a24a'
+const SILVER = '#c4c4c4'
+
+/** The real 4-band colour code (digit, digit, ×multiplier, tolerance) for a resistance + tolerance —
+ *  so 1 kΩ reads brown-black-red-gold, exactly like the physical part. Exported for the regression
+ *  test that proves every resistor value gets its own correct, independent code. */
+export function resistorBands(ohms: number, tolerancePercent: number): string[] {
+  if (!Number.isFinite(ohms) || ohms <= 0) return []
+  let exponent = Math.floor(Math.log10(ohms)) - 1
+  let digits = Math.round(ohms / 10 ** exponent)
+  if (digits >= 100) {
+    digits = Math.round(digits / 10)
+    exponent += 1
+  }
+  const color = (i: number): string => BAND_COLORS[i] ?? '#2b2b2b'
+  const mult = exponent === -1 ? GOLD : exponent === -2 ? SILVER : color(exponent)
+  const tol =
+    tolerancePercent <= 1
+      ? color(1)
+      : tolerancePercent <= 2
+        ? color(2)
+        : tolerancePercent <= 5
+          ? GOLD
+          : SILVER
+  return [color(Math.floor(digits / 10)), color(digits % 10), mult, tol]
+}
+
+const scalarAmount = (parameters: Parameters | undefined, key: string): number | undefined =>
+  (parameters as Record<string, { value?: { amount?: number } }> | undefined)?.[key]?.value?.amount
+
+const stringValue = (parameters: Parameters | undefined, key: string): string | undefined => {
+  const value = (parameters as Record<string, { value?: unknown }> | undefined)?.[key]?.value
+  return typeof value === 'string' ? value : undefined
+}
+
 /** The shared IEEE 315 zigzag resistor track (two leads + the zigzag body). Used
  *  by the resistor and every resistor-family part (potentiometer, thermistor,
  *  LDR) so the whole family reads as one symbol under the adopted US/IEEE-315
  *  standard — change the body here and they all follow. */
-const ResistorTrack = () => (
-  <>
-    {lead(0, 18)}
-    <polyline
-      points="18,22 23,12 31,32 39,12 47,32 55,12 62,22"
-      fill="none"
-      stroke={STROKE}
-      strokeWidth={1.5}
-    />
-    {lead(62, W)}
-  </>
-)
+const ResistorTrack = () => {
+  const style = useContext(SymbolStyleContext)
+  return (
+    <>
+      {lead(0, 18)}
+      {style === 'iec' ? (
+        <rect x={18} y={14} width={44} height={16} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      ) : (
+        <polyline
+          points="18,22 23,12 31,32 39,12 47,32 55,12 62,22"
+          fill="none"
+          stroke={STROKE}
+          strokeWidth={1.5}
+        />
+      )}
+      {lead(62, W)}
+    </>
+  )
+}
 
-/** Resistor — IEEE 315 zigzag. */
-function ResistorGlyph() {
+/** Resistor — IEEE 315 zigzag, or (in IEC mode) the rectangle body painted with its real colour-code
+ *  bands, computed from the resistance + tolerance so it reads like the physical part. */
+function ResistorGlyph({
+  resistanceOhms,
+  tolerancePercent = 5,
+}: {
+  resistanceOhms?: number | undefined
+  tolerancePercent?: number | undefined
+} = {}) {
+  const style = useContext(SymbolStyleContext)
+  // A placed part passes its real resistance; the palette preview (no value) shows the 470 Ω default.
+  const bands = style === 'iec' ? resistorBands(resistanceOhms ?? 470, tolerancePercent) : []
   return (
     <svg width={W} height={H}>
       <title>resistor</title>
       <ResistorTrack />
+      {(bands.length === 4
+        ? [
+            { k: 'd1', x: 24, c: bands[0] },
+            { k: 'd2', x: 30, c: bands[1] },
+            { k: 'mult', x: 36, c: bands[2] },
+            { k: 'tol', x: 52, c: bands[3] },
+          ]
+        : []
+      ).map((b) => (
+        <rect
+          key={b.k}
+          x={b.x}
+          y={15}
+          width={4}
+          height={14}
+          fill={b.c}
+          stroke="#00000088"
+          strokeWidth={0.3}
+        />
+      ))}
     </svg>
   )
 }
@@ -811,6 +898,40 @@ function GroundGlyph() {
       <line x1={W / 2 - 14} y1={20} x2={W / 2 + 14} y2={20} stroke={STROKE} strokeWidth={1.5} />
       <line x1={W / 2 - 9} y1={26} x2={W / 2 + 9} y2={26} stroke={STROKE} strokeWidth={1.5} />
       <line x1={W / 2 - 4} y1={32} x2={W / 2 + 4} y2={32} stroke={STROKE} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
+/** Net label / power port — a named tag on a short stalk down to its single terminal. Every
+ *  label sharing a name is the SAME net (a teleporting rail), so +5V here ties to +5V there
+ *  with no drawn wire. The name on the tag is the net; the dedicated Ground part stays the 0 V
+ *  reference (a label is pure connectivity, not a voltage source). */
+function NetLabelGlyph({ name }: { name: string }) {
+  const text = name.length > 7 ? `${name.slice(0, 6)}…` : name
+  return (
+    <svg width={W} height={H}>
+      <title>net label</title>
+      <rect
+        x={W / 2 - 24}
+        y={5}
+        width={48}
+        height={20}
+        rx={4}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={1.5}
+      />
+      <text
+        x={W / 2}
+        y={19}
+        textAnchor="middle"
+        fontSize={11}
+        fill={STROKE}
+        fontFamily="system-ui, sans-serif"
+      >
+        {text}
+      </text>
+      <line x1={W / 2} y1={25} x2={W / 2} y2={40} stroke={STROKE} strokeWidth={1.5} />
     </svg>
   )
 }
@@ -1637,6 +1758,8 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
     { id: 'secondary_b', position: Position.Right, offset: 34 },
   ],
   ground: [{ id: 'reference_terminal', position: Position.Top }],
+  // The tag sits up top; its single terminal hangs below on the stalk, where a wire joins it.
+  net_label: [{ id: 'reference_terminal', position: Position.Bottom }],
 }
 const FALLBACK_TERMINALS = TWO('terminal_a', 'terminal_b')
 
@@ -1758,6 +1881,19 @@ export function DeviceGlyph({
       )
     }
     return <DcSourceGlyph rotation={rotation} />
+  }
+  // The resistor (IEC mode) paints its real colour-code bands from its resistance + tolerance.
+  if (definition === 'resistor') {
+    return (
+      <ResistorGlyph
+        resistanceOhms={scalarAmount(parameters, 'resistance')}
+        tolerancePercent={scalarAmount(parameters, 'tolerance_percent')}
+      />
+    )
+  }
+  // A net label shows its net name on the tag (the palette preview, with no value, shows the default).
+  if (definition === 'net_label') {
+    return <NetLabelGlyph name={stringValue(parameters, 'net_name') ?? '+5V'} />
   }
   const Glyph = GLYPHS[definition]
   if (Glyph) return <Glyph />
