@@ -167,6 +167,7 @@ import {
 import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { type CrtSpot, crtSpotTrace, type PartReading, partReadings } from './part-readings.ts'
 import { ProjectBrowser, type ProjectChoice } from './project-browser.tsx'
+import { ProjectHub } from './project-hub.tsx'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
 import {
   channelsForProbes,
@@ -240,6 +241,7 @@ declare global {
       getKeybinds?: () => Promise<Record<string, string>>
       setKeybinds?: (binds: Record<string, string>) => Promise<Record<string, string>>
       onShortcutsOpen?: (callback: () => void) => void
+      onSymbolStyle?: (callback: (style: 'ieee' | 'iec') => void) => void
       onEditCopy?: (callback: () => void) => void
       onEditCut?: (callback: () => void) => void
       onEditPaste?: (callback: () => void) => void
@@ -734,11 +736,29 @@ function canvasWorld(
  * page splits into App (provider) + Canvas (content).
  */
 export function App() {
-  // The startup screen gates the editor: pick a purpose + template (Unreal-style), then
-  // open the canvas seeded for that goal. Null = still on the browser.
+  // Two gates before the editor: the project browser (pick a purpose + template, Unreal-style),
+  // then the project hub (KiCad-style — the project's files + the tools that work on it). Null
+  // project = on the browser; project set but not yet in the editor = on the hub.
   const [project, setProject] = useState<ProjectChoice | null>(null)
+  const [inEditor, setInEditor] = useState(false)
   if (project === null) {
-    return <ProjectBrowser onCreate={setProject} />
+    return (
+      <ProjectBrowser
+        onCreate={(choice) => {
+          setProject(choice)
+          setInEditor(false)
+        }}
+      />
+    )
+  }
+  if (!inEditor) {
+    return (
+      <ProjectHub
+        project={project}
+        onOpenEditor={() => setInEditor(true)}
+        onBack={() => setProject(null)}
+      />
+    )
   }
   return (
     <ReactFlowProvider>
