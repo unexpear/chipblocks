@@ -754,6 +754,378 @@ export const RIPPLE_CARRY_2BIT: BlockData = rippleCarryAdder(2)
 export const RIPPLE_CARRY_4BIT: BlockData = rippleCarryAdder(4)
 
 /**
+ * ADDER / SUBTRACTOR (N-bit) — the heart of a calculator: a ripple-carry adder that can also
+ * SUBTRACT. Each B bit first passes through an XOR with a shared SUB control line, and SUB also
+ * drives the lowest carry-in. SUB=0 leaves B alone with Cin=0 (A + B); SUB=1 inverts every B bit and
+ * adds 1, which is two's-complement negation (A + ~B + 1 = A − B). Inputs A0..A(N-1), B0..B(N-1), the
+ * SUB mode bit, and a shared V+/GND; outputs S0..S(N-1) and the carry/borrow-out (on subtract,
+ * Cout=1 means no borrow, A ≥ B). Descend to see the full-adders and the SUB XOR gates, again for
+ * their gates, again for the transistors.
+ */
+function addSubtractor(bits: number): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  for (let i = 0; i < bits; i++) {
+    nodes.push({
+      id: `fa${i}`,
+      definition: 'block',
+      x: 40,
+      y: 30 + i * 360,
+      block: FULL_ADDER_BLOCK,
+    })
+    nodes.push({ id: `x${i}`, definition: 'block', x: -380, y: 70 + i * 360, block: XOR_BLOCK })
+    // each B bit is XOR'd with SUB, then drives this cell's full-adder B input
+    edges.push({
+      id: `xb${i}`,
+      source: `x${i}`,
+      sourceHandle: 'out',
+      target: `fa${i}`,
+      targetHandle: 'b',
+    })
+    // every XOR shares its full-adder's rails
+    edges.push({
+      id: `xv${i}`,
+      source: `x${i}`,
+      sourceHandle: 'v_dd',
+      target: `fa${i}`,
+      targetHandle: 'v_dd',
+    })
+    edges.push({
+      id: `xg${i}`,
+      source: `x${i}`,
+      sourceHandle: 'gnd',
+      target: `fa${i}`,
+      targetHandle: 'gnd',
+    })
+    if (i > 0) {
+      const prev = i - 1
+      // carry ripples up one bit; V+/GND chain across the cells; SUB chains across the XORs
+      edges.push({
+        id: `carry${i}`,
+        source: `fa${prev}`,
+        sourceHandle: 'cout',
+        target: `fa${i}`,
+        targetHandle: 'cin',
+      })
+      edges.push({
+        id: `vdd${i}`,
+        source: `fa${prev}`,
+        sourceHandle: 'v_dd',
+        target: `fa${i}`,
+        targetHandle: 'v_dd',
+      })
+      edges.push({
+        id: `gnd${i}`,
+        source: `fa${prev}`,
+        sourceHandle: 'gnd',
+        target: `fa${i}`,
+        targetHandle: 'gnd',
+      })
+      edges.push({
+        id: `sub${i}`,
+        source: `x${prev}`,
+        sourceHandle: 'b',
+        target: `x${i}`,
+        targetHandle: 'b',
+      })
+    }
+  }
+  // SUB also drives the lowest carry-in (the +1 of two's-complement): fa0.cin joins the SUB net.
+  edges.push({ id: 'cinsub', source: 'fa0', sourceHandle: 'cin', target: 'x0', targetHandle: 'b' })
+
+  // Left ports: each bit's A and B, then the SUB mode bit and ground.
+  let left = 14
+  for (let i = 0; i < bits; i++) {
+    ports.push({
+      id: `a${i}`,
+      label: `A${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `fa${i}`, handleId: 'a' },
+    })
+    left += 18
+    ports.push({
+      id: `b${i}`,
+      label: `B${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `x${i}`, handleId: 'a' },
+    })
+    left += 18
+  }
+  ports.push({
+    id: 'sub',
+    label: 'SUB',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'x0', handleId: 'b' },
+  })
+  left += 18
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'fa0', handleId: 'gnd' },
+  })
+  // Right ports: each bit's sum output, then the carry/borrow-out and V+.
+  let right = 14
+  for (let i = 0; i < bits; i++) {
+    ports.push({
+      id: `s${i}`,
+      label: `S${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: `fa${i}`, handleId: 'sum' },
+    })
+    right += 18
+  }
+  ports.push({
+    id: 'cout',
+    label: 'Cout',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: `fa${bits - 1}`, handleId: 'cout' },
+  })
+  right += 18
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'fa0', handleId: 'v_dd' },
+  })
+  return { name: `${bits}-bit Calculator`, origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** A 4-bit calculator — a ripple-carry adder/subtractor; the SUB pin picks add (0) or subtract (1). */
+export const CALCULATOR_4BIT: BlockData = addSubtractor(4)
+
+/**
+ * SEVEN-SEGMENT DISPLAY — a single alarm-clock-style digit. Seven LED segments (a–g) in the classic
+ * figure-8, each behind a current-limiting resistor, all sharing a COMMON cathode. Drive a segment's
+ * pin HIGH (with COMMON tied to ground) and that segment lights; the right combination spells a digit.
+ * On the canvas it renders as the lit figure-8 (display: 'seven_segment'), but underneath it is
+ * genuinely fourteen real parts — descend to see the seven LEDs and their resistors.
+ */
+const SEG_RESISTOR: Parameters = {
+  ...defaultParameters('resistor'),
+  resistance: scalar(330, 'ohm'),
+}
+const SEGMENT_IDS = ['a', 'b', 'c', 'd', 'e', 'f', 'g'] as const
+
+function sevenSegmentDisplay(): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const leftSlot = { offset: 14 }
+  const rightSlot = { offset: 14 }
+  SEGMENT_IDS.forEach((seg, i) => {
+    nodes.push({
+      id: `r_${seg}`,
+      definition: 'resistor',
+      x: -220,
+      y: i * 70,
+      parameters: SEG_RESISTOR,
+    })
+    nodes.push({
+      id: `led_${seg}`,
+      definition: 'led',
+      x: 40,
+      y: i * 70,
+      parameters: defaultParameters('led'),
+    })
+    // segment input → resistor → LED anode; every cathode chains into the one common net
+    edges.push({
+      id: `rl_${seg}`,
+      source: `r_${seg}`,
+      sourceHandle: 'terminal_b',
+      target: `led_${seg}`,
+      targetHandle: 'anode',
+    })
+    const prev = SEGMENT_IDS[i - 1]
+    if (prev) {
+      edges.push({
+        id: `cc_${seg}`,
+        source: `led_${prev}`,
+        sourceHandle: 'cathode',
+        target: `led_${seg}`,
+        targetHandle: 'cathode',
+      })
+    }
+    const onLeft = i < 4
+    const slot = onLeft ? leftSlot : rightSlot
+    ports.push({
+      id: `seg_${seg}`,
+      label: seg.toUpperCase(),
+      side: onLeft ? 'left' : 'right',
+      offset: slot.offset,
+      inner: { nodeId: `r_${seg}`, handleId: 'terminal_a' },
+    })
+    slot.offset += 18
+  })
+  ports.push({
+    id: 'common',
+    label: 'GND',
+    side: 'right',
+    offset: rightSlot.offset,
+    inner: { nodeId: 'led_a', handleId: 'cathode' },
+  })
+  return { name: '7-Seg', display: 'seven_segment', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** A single seven-segment digit — seven real LED+resistor segments behind the figure-8 face. */
+export const SEVEN_SEGMENT_DISPLAY: BlockData = sevenSegmentDisplay()
+
+/**
+ * BINARY → SEVEN-SEGMENT DECODER (hex) — turns a 4-bit number (D0..D3) into the seven segment lines
+ * (a..g) that spell that value 0–F: the chip inside a digital readout. Built as a 4-to-16 one-hot
+ * decoder feeding an OR plane (a ROM/PLA in gates) — every input combination drives its own minterm
+ * line, and each segment ORs the lines where it is lit. Correct by construction from the table below.
+ * Real + complete (it flattens to gates, then transistors), but it IS ~100 gates, so a wired
+ * calculator → decoder → display chain is a "press Solve" circuit, not a snappy live one.
+ */
+// Active-high segment patterns a,b,c,d,e,f,g for hex 0–F on a common-cathode display.
+const HEX_7SEG = [
+  '1111110',
+  '0110000',
+  '1101101',
+  '1111001',
+  '0110011',
+  '1011011',
+  '1011111',
+  '1110000',
+  '1111111',
+  '1111011',
+  '1110111',
+  '0011111',
+  '1001110',
+  '0111101',
+  '1001111',
+  '1000111',
+]
+
+function binaryToSevenSegment(): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const netTerminals = new Map<string, { node: string; h: string }[]>()
+  let gateN = 0
+  let netN = 0
+  let edgeN = 0
+  const join = (net: string, node: string, h: string) => {
+    const arr = netTerminals.get(net) ?? []
+    arr.push({ node, h })
+    netTerminals.set(net, arr)
+  }
+  const freshNet = () => `n${netN++}`
+  // Place a 2-input gate, wire its rails to the shared V+/GND nets, return its (fresh) output net.
+  const gate2 = (block: BlockData, netA: string, netB: string, x: number, y: number): string => {
+    const id = `g${gateN++}`
+    nodes.push({ id, definition: 'block', x, y, block })
+    join(netA, id, 'a')
+    join(netB, id, 'b')
+    join('VDD', id, 'v_dd')
+    join('GND', id, 'gnd')
+    const out = freshNet()
+    join(out, id, 'out')
+    return out
+  }
+  const notGate = (netIn: string, x: number, y: number): string => {
+    const id = `g${gateN++}`
+    nodes.push({ id, definition: 'block', x, y, block: INVERTER_BLOCK })
+    join(netIn, id, 'in')
+    join('VDD', id, 'v_dd')
+    join('GND', id, 'gnd')
+    const out = freshNet()
+    join(out, id, 'out')
+    return out
+  }
+  const andAll = (ins: string[], x: number): string =>
+    ins.reduce((acc, n, i) => gate2(AND_BLOCK, acc, n, x, i * 90))
+  const orAll = (ins: string[], y: number): string =>
+    ins.reduce((acc, n, i) => gate2(OR_BLOCK, acc, n, 1500 + i * 70, y))
+
+  // Input nets D0..D3 and their inverters (so each minterm can AND the bit or its complement).
+  const d = ['nD0', 'nD1', 'nD2', 'nD3']
+  const dInv = d.map((n, i) => notGate(n, -240, i * 90))
+  // 16 minterm lines: AND4 of the four inputs in the polarity that selects exactly that value.
+  const minterm: string[] = []
+  for (let v = 0; v < 16; v++) {
+    const ins: string[] = []
+    for (let i = 0; i < 4; i++) {
+      const lit = d[i] ?? 'nD0'
+      const inv = dInv[i] ?? lit
+      ins.push(((v >> i) & 1) === 1 ? lit : inv)
+    }
+    minterm.push(andAll(ins, 120 + v * 80))
+  }
+  // 7 segment OR planes: each segment ORs the minterm lines where it is lit.
+  const segNet: string[] = []
+  for (let s = 0; s < 7; s++) {
+    const on = minterm.filter((_, v) => (HEX_7SEG[v] ?? '').charAt(s) === '1')
+    segNet.push(on.length > 0 ? orAll(on, s * 220) : freshNet())
+  }
+
+  // Emit one star of edges per net (terminal 0 → each other terminal makes them one node).
+  for (const terms of netTerminals.values()) {
+    const first = terms[0]
+    if (!first) continue
+    for (let i = 1; i < terms.length; i++) {
+      const t = terms[i]
+      if (t) {
+        edges.push({
+          id: `e${edgeN++}`,
+          source: first.node,
+          sourceHandle: first.h,
+          target: t.node,
+          targetHandle: t.h,
+        })
+      }
+    }
+  }
+
+  const ports: BlockData['ports'] = []
+  const innerOf = (net: string) => {
+    const first = netTerminals.get(net)?.[0]
+    return first ? { nodeId: first.node, handleId: first.h } : undefined
+  }
+  let lOff = 14
+  for (let i = 0; i < 4; i++) {
+    const inner = innerOf(`nD${i}`)
+    if (inner) {
+      ports.push({ id: `d${i}`, label: `D${i}`, side: 'left', offset: lOff, inner })
+      lOff += 18
+    }
+  }
+  const gndInner = innerOf('GND')
+  if (gndInner) ports.push({ id: 'gnd', label: 'GND', side: 'left', offset: lOff, inner: gndInner })
+  const segLabels = ['a', 'b', 'c', 'd', 'e', 'f', 'g']
+  let rOff = 14
+  for (let s = 0; s < 7; s++) {
+    const inner = innerOf(segNet[s] ?? '')
+    if (inner) {
+      ports.push({
+        id: `seg_${segLabels[s]}`,
+        label: (segLabels[s] ?? '').toUpperCase(),
+        side: 'right',
+        offset: rOff,
+        inner,
+      })
+      rOff += 18
+    }
+  }
+  const vddInner = innerOf('VDD')
+  if (vddInner)
+    ports.push({ id: 'v_dd', label: 'V+', side: 'right', offset: rOff, inner: vddInner })
+
+  return { name: 'Hex→7seg', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** A binary→hex-seven-segment decoder — 4 bits in (D0..D3), 7 segment lines out (a..g). */
+export const HEX_DECODER_7SEG: BlockData = binaryToSevenSegment()
+
+/**
  * SR LATCH — the first SEQUENTIAL element, two cross-coupled NOR gates. Each gate's output
  * feeds the other's input, and that feedback is where a circuit stops being a pure function of
  * its inputs and starts REMEMBERING. S=1 sets Q high; R=1 resets it low; S=R=0 holds whatever
@@ -1148,10 +1520,13 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   logic_full_adder: FULL_ADDER_BLOCK,
   logic_adder_2bit: RIPPLE_CARRY_2BIT,
   logic_adder_4bit: RIPPLE_CARRY_4BIT,
+  logic_calculator_4bit: CALCULATOR_4BIT,
+  logic_decoder_7seg: HEX_DECODER_7SEG,
   logic_sr_latch: SR_LATCH_BLOCK,
   logic_d_latch: D_LATCH_BLOCK,
   logic_d_flipflop: D_FLIPFLOP_BLOCK,
   logic_register_4bit: REGISTER_4BIT,
+  display_seven_segment: SEVEN_SEGMENT_DISPLAY,
   darlington_npn: DARLINGTON_BLOCK,
   photo_darlington: PHOTO_DARLINGTON_BLOCK,
 }

@@ -34,11 +34,89 @@ function labelStyle(side: BlockPort['side'], coord: number): CSSProperties {
   return { bottom: 4, left: coord, transform: 'translateX(-50%)' }
 }
 
+const SEGMENT_ORDER = ['a', 'b', 'c', 'd', 'e', 'f', 'g'] as const
+type SegGeom = { l: number; r: number; t: number; m: number; b: number; p: number }
+/** Each segment's two endpoints in the digit box (l/r/t/m/b edges, p = corner inset). */
+const SEG_LINE: Record<
+  (typeof SEGMENT_ORDER)[number],
+  (g: SegGeom) => [number, number, number, number]
+> = {
+  a: ({ l, r, t, p }) => [l + p, t, r - p, t],
+  b: ({ r, t, m, p }) => [r, t + p, r, m - p],
+  c: ({ r, m, b, p }) => [r, m + p, r, b - p],
+  d: ({ l, r, b, p }) => [l + p, b, r - p, b],
+  e: ({ l, m, b, p }) => [l, m + p, l, b - p],
+  f: ({ l, t, m, p }) => [l, t + p, l, m - p],
+  g: ({ l, r, m, p }) => [l + p, m, r - p, m],
+}
+
+/** The figure-8 face of a seven-segment display: each segment lit in its LED's real colour, or dim. */
+function SevenSegmentFace({
+  width,
+  height,
+  segments,
+}: {
+  width: number
+  height: number
+  segments: Record<string, { on: boolean; color: string }>
+}) {
+  const dw = width * 0.42
+  const dh = height * 0.74
+  const l = (width - dw) / 2
+  const t = (height - dh) / 2
+  const geom: SegGeom = { l, r: l + dw, t, m: t + dh / 2, b: t + dh, p: Math.min(dw, dh) * 0.07 }
+  const stroke = Math.max(3, dw * 0.13)
+  return (
+    // biome-ignore lint/a11y/noSvgWithoutTitle: decorative digit face, hidden from the accessibility tree
+    <svg
+      aria-hidden
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+    >
+      {SEGMENT_ORDER.map((seg) => {
+        const [x1, y1, x2, y2] = SEG_LINE[seg](geom)
+        const on = segments[seg]?.on === true
+        const color = segments[seg]?.color ?? THEME.statusDanger
+        return (
+          <line
+            key={seg}
+            x1={x1}
+            y1={y1}
+            x2={x2}
+            y2={y2}
+            stroke={on ? color : THEME.borderStrong}
+            strokeWidth={stroke}
+            strokeLinecap="round"
+            opacity={on ? 1 : 0.5}
+            style={on ? { filter: `drop-shadow(0 0 3px ${color})` } : undefined}
+          />
+        )
+      })}
+    </svg>
+  )
+}
+
 export function BlockNode({ id, data }: NodeProps) {
   const block = (data as { block?: BlockData }).block
-  const health = useContext(HealthContext).get(id)
+  const healthMap = useContext(HealthContext)
+  const health = healthMap.get(id)
   if (!block) return null
   const { width, height, placed } = blockLayout(block.ports)
+  // A seven-segment display reads its seven inner LEDs' solved lit-state (namespaced after flatten).
+  const segments: Record<string, { on: boolean; color: string }> | null =
+    block.display === 'seven_segment'
+      ? Object.fromEntries(
+          SEGMENT_ORDER.map((seg) => {
+            const segHealth = healthMap.get(`${id}.led_${seg}`)
+            return [
+              seg,
+              { on: segHealth?.lit === true, color: segHealth?.glow ?? THEME.statusDanger },
+            ]
+          }),
+        )
+      : null
   return (
     <div
       className={health?.failed ? 'cb-shake' : undefined}
@@ -62,7 +140,13 @@ export function BlockNode({ id, data }: NodeProps) {
           justifyContent: 'center',
         }}
       >
-        <span style={{ color: THEME.textBright, fontSize: 11, fontWeight: 700 }}>{block.name}</span>
+        {segments ? (
+          <SevenSegmentFace width={width} height={height} segments={segments} />
+        ) : (
+          <span style={{ color: THEME.textBright, fontSize: 11, fontWeight: 700 }}>
+            {block.name}
+          </span>
+        )}
       </div>
       {placed.map(({ port, side, coord }) => {
         const look = pinLook(port.kind)

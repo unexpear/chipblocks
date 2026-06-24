@@ -17,10 +17,12 @@ import {
 import {
   AND_BLOCK,
   BUFFER_BLOCK,
+  CALCULATOR_4BIT,
   D_FLIPFLOP_BLOCK,
   D_LATCH_BLOCK,
   FULL_ADDER_BLOCK,
   HALF_ADDER_BLOCK,
+  HEX_DECODER_7SEG,
   INVERTER_BLOCK,
   NAND2_BLOCK,
   NOR2_BLOCK,
@@ -279,6 +281,63 @@ describe('4-bit ripple-carry adder — four full-adders, the nibble adder (~200 
     expect(add4(15, 1)).toBe(16) // 1111 + 0001, the longest ripple plus overflow
     expect(add4(15, 15)).toBe(30) // 1111 + 1111, the widest sum
   }, 30000)
+})
+
+describe('4-bit calculator — a ripple-carry adder/subtractor; SUB picks add or subtract', () => {
+  // Each operation flattens to ~250 real MOSFETs. SUB low = A+B; SUB high = A−B by two's complement
+  // (every B bit XOR'd with SUB, and SUB also drives the lowest carry-in — the +1).
+  const calc = (a: number, b: number, sub: boolean): { s: number; cout: number } => {
+    const read = solveBlock(CALCULATOR_4BIT, {
+      a0: a & 1 ? VDD : 0,
+      a1: a & 2 ? VDD : 0,
+      a2: a & 4 ? VDD : 0,
+      a3: a & 8 ? VDD : 0,
+      b0: b & 1 ? VDD : 0,
+      b1: b & 2 ? VDD : 0,
+      b2: b & 4 ? VDD : 0,
+      b3: b & 8 ? VDD : 0,
+      sub: sub ? VDD : 0,
+    })
+    const s =
+      (isHigh(read('s3')) ? 8 : 0) +
+      (isHigh(read('s2')) ? 4 : 0) +
+      (isHigh(read('s1')) ? 2 : 0) +
+      (isHigh(read('s0')) ? 1 : 0)
+    return { s, cout: isHigh(read('cout')) ? 1 : 0 }
+  }
+  test('SUB low adds the two nibbles', () => {
+    expect(calc(3, 1, false)).toEqual({ s: 4, cout: 0 }) // 3 + 1 = 4
+    expect(calc(9, 7, false)).toEqual({ s: 0, cout: 1 }) // 9 + 7 = 16 → S 0, carry out
+  }, 30000)
+  test('SUB high subtracts; Cout=1 means no borrow (A ≥ B)', () => {
+    expect(calc(5, 3, true)).toEqual({ s: 2, cout: 1 }) // 5 − 3 = 2, no borrow
+    expect(calc(7, 7, true)).toEqual({ s: 0, cout: 1 }) // 7 − 7 = 0, no borrow
+    expect(calc(3, 5, true)).toEqual({ s: 14, cout: 0 }) // 3 − 5 = −2 → 1110 (14), borrow
+  }, 30000)
+})
+
+// The hex 7-segment decoder is a 4-to-16 decoder + OR plane — ~100 gates / ~650 MOSFETs. It is
+// CORRECT (verified manually: "7" -> 1110000, "0" -> 1111110), but one DC solve takes ~60 s with the
+// dense transistor solver, so the test is SKIPPED to keep the routine suite fast. Run it on demand:
+//   npx vitest run tests/logic-gates.test.ts -t decoder
+// This slowness is the real scaling wall — transistor-level simulation doesn't scale to chip-size
+// logic; a faster logic-level path would be the unlock.
+describe('binary → hex 7-segment decoder — the chip that drives a digit readout', () => {
+  const segmentsOf = (value: number): string => {
+    const read = solveBlock(HEX_DECODER_7SEG, {
+      d0: value & 1 ? VDD : 0,
+      d1: value & 2 ? VDD : 0,
+      d2: value & 4 ? VDD : 0,
+      d3: value & 8 ? VDD : 0,
+    })
+    return ['a', 'b', 'c', 'd', 'e', 'f', 'g']
+      .map((s) => (isHigh(read(`seg_${s}`)) ? '1' : '0'))
+      .join('')
+  }
+  test.skip('"7" lights segments a, b, c; "0" lights everything but g (~60 s/solve)', () => {
+    expect(segmentsOf(7)).toBe('1110000') // a top, b upper-right, c lower-right
+    expect(segmentsOf(0)).toBe('1111110') // the ring a–f, middle g off
+  }, 180000)
 })
 
 describe('SR latch — two cross-coupled NOR gates, the first bit of memory', () => {

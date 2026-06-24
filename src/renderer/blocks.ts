@@ -91,6 +91,10 @@ export type BlockData = {
   nodes: BlockInnerNode[]
   edges: BlockInnerEdge[]
   ports: BlockPort[]
+  /** A special on-canvas rendering for this block instead of the plain box. `seven_segment` draws a
+   *  figure-8 digit whose segments light from the block's seven inner `led_<a..g>` parts. Still a
+   *  normal block underneath: it flattens to those real LEDs for the solver. */
+  display?: 'seven_segment'
 }
 
 /** The minimal canvas shapes this module exchanges with App (React Flow-ish). */
