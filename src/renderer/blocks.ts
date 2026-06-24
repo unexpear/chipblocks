@@ -430,6 +430,7 @@ export function ungroupBlock(
 export function flattenBlocks(
   nodes: CanvasNodeLike[],
   edges: CanvasEdgeLike[],
+  stopAt?: (block: BlockData) => boolean,
 ): {
   nodes: CanvasNodeLike[]
   edges: CanvasEdgeLike[]
@@ -442,7 +443,9 @@ export function flattenBlocks(
 
   for (const node of nodes) {
     const block = node.data.block
-    if (!block) {
+    // stopAt lets a caller treat certain blocks (e.g. logic gates) as LEAVES — kept whole instead of
+    // expanded to their transistors, so the logic simulator can evaluate them as boolean gates.
+    if (!block || stopAt?.(block)) {
       flatNodes.push(node)
       continue
     }
@@ -473,8 +476,8 @@ export function flattenBlocks(
           }
         : {}),
     }))
-    // Recurse — a block inside a block flattens the same way.
-    const expanded = flattenBlocks(innerNodes, innerEdges)
+    // Recurse — a block inside a block flattens the same way (carrying the same stop predicate).
+    const expanded = flattenBlocks(innerNodes, innerEdges, stopAt)
     flatNodes.push(...expanded.nodes)
     flatEdges.push(...expanded.edges)
     for (const port of block.ports) {
