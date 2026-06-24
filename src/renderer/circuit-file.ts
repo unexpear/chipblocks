@@ -1,5 +1,6 @@
 import type { BlockData } from './blocks.ts'
 import type { Parameters } from './part-defaults.ts'
+import type { SheetSettings } from './sheet-frame.tsx'
 
 /**
  * Circuit file format (S19-v3-52) — Save/Load, the first half of the
@@ -52,6 +53,8 @@ export type CircuitFile = {
   version: typeof CIRCUIT_FILE_VERSION
   /** The board-wide ambient (°C) parts inherit; absent ⇒ the 25 °C default (older files). */
   projectAmbientC?: number
+  /** The drawing sheet — page size + ISO 7200 title-block fields; absent ⇒ the default A4 sheet. */
+  sheet?: SheetSettings
   nodes: SavedNode[]
   wires: SavedWire[]
 }
@@ -97,11 +100,13 @@ export function serializeCircuit(
   nodes: CanvasNodeLike[],
   edges: CanvasEdgeLike[],
   projectAmbientC?: number,
+  sheet?: SheetSettings,
 ): CircuitFile {
   return {
     format: CIRCUIT_FILE_FORMAT,
     version: CIRCUIT_FILE_VERSION,
     ...(typeof projectAmbientC === 'number' ? { projectAmbientC } : {}),
+    ...(sheet ? { sheet } : {}),
     nodes: nodes.map((n) => {
       const parameters = persistableParameters(n.data.parameters)
       return {
@@ -188,9 +193,20 @@ export function deserializeCircuit(text: string): DeserializeResult {
   // projectAmbientC drives the solve temperature; if present it must be a finite number.
   // A malformed one is DROPPED — not a reason to reject the whole circuit — so the returned
   // type is honest (a number or absent) and the loader falls back to the 25 °C default.
-  const { projectAmbientC, ...rest } = file
+  const { projectAmbientC, sheet, ...rest } = file
+  const base = rest as CircuitFile
   const ambientOk = typeof projectAmbientC === 'number' && Number.isFinite(projectAmbientC)
-  return { ok: true, file: (ambientOk ? file : rest) as CircuitFile }
+  // A malformed sheet (not an object) is dropped, not a reason to reject the circuit; the loader
+  // merges what survives over the default sheet, so a partial/old one still loads.
+  const sheetOk = typeof sheet === 'object' && sheet !== null
+  return {
+    ok: true,
+    file: {
+      ...base,
+      ...(ambientOk ? { projectAmbientC: projectAmbientC as number } : {}),
+      ...(sheetOk ? { sheet: sheet as SheetSettings } : {}),
+    },
+  }
 }
 
 /**

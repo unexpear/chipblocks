@@ -70,6 +70,35 @@ describe('serialize → deserialize round-trip', () => {
     if (good.ok) expect(good.file.projectAmbientC).toBe(40)
   })
 
+  test('round-trips the drawing sheet; an older file without one reads undefined', () => {
+    const sheet = {
+      size: 'A3' as const,
+      orientation: 'portrait' as const,
+      title: 'SpO2 Sensor',
+      company: 'ChipBlocks',
+      rev: 'B',
+      date: '2026-06-24',
+      comment: 'tutorial',
+    }
+    const withSheet = deserializeCircuit(
+      JSON.stringify(serializeCircuit(nodes, edges, undefined, sheet)),
+    )
+    expect(withSheet.ok).toBe(true)
+    if (withSheet.ok) expect(withSheet.file.sheet).toEqual(sheet)
+    // No sheet written → loads as undefined; the app keeps the current/default sheet.
+    const without = deserializeCircuit(JSON.stringify(serializeCircuit(nodes, edges)))
+    expect(without.ok).toBe(true)
+    if (without.ok) expect(without.file.sheet).toBeUndefined()
+    // A malformed sheet (not an object) is dropped, not ridden through; the circuit still loads.
+    for (const value of ['big', null, 42]) {
+      const r = deserializeCircuit(
+        JSON.stringify({ ...serializeCircuit(nodes, edges), sheet: value }),
+      )
+      expect(r.ok).toBe(true)
+      if (r.ok) expect(r.file.sheet).toBeUndefined()
+    }
+  })
+
   test('keeps everything the user built; drops solved data', () => {
     const file = serializeCircuit(nodes, edges)
     const text = JSON.stringify(file, null, 2)

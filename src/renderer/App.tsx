@@ -155,6 +155,7 @@ import {
   WireGeomContext,
 } from './net-edge.tsx'
 import { detectOutputContention, type LiveLevels } from './output-contention.ts'
+import { PageSettings } from './page-settings.tsx'
 import { BLOCK_MIME, DEFINITION_MIME, Palette } from './palette.tsx'
 import { moveToEdge, type PanelLayout, panelGroups, stackOnto } from './panel-groups.ts'
 import {
@@ -187,6 +188,7 @@ import {
 } from './scope.tsx'
 import { extractXyPath, type FamilyStep, stepValues, withSourceVoltage } from './scope-family.ts'
 import { H_DIVISIONS, scopeRecordSteps, slowestHonestTimebase } from './scope-scales.ts'
+import { DEFAULT_SHEET, SheetFrame, type SheetSettings } from './sheet-frame.tsx'
 import { parseSpiceNetlist, serializeSpiceNetlist } from './spice-netlist.ts'
 import { type DeviceNodeData, nodeTypes, terminalsOf } from './symbols.tsx'
 import { clampIndex, frameEdgeValues, frameLensRange } from './timeline.ts'
@@ -957,6 +959,12 @@ function Canvas({ project }: { project: ProjectChoice }) {
   const dropCount = useRef(initial.nodes.length)
   // The Add-Part pop-up (the KiCad-style Choose-a-part dialog) — open state lives here.
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [sheetSettings, setSheetSettings] = useState<SheetSettings>(DEFAULT_SHEET)
+  const [showSheet, setShowSheet] = useState(true)
+  const [pageSettingsOpen, setPageSettingsOpen] = useState(false)
+  // The save handler (registered with [nodes, edges] deps) reads the latest sheet via this ref.
+  const sheetSettingsRef = useRef(sheetSettings)
+  sheetSettingsRef.current = sheetSettings
   // The canvas part's right-click menu — its screen position, or null when closed.
   const [canvasMenu, setCanvasMenu] = useState<{
     x: number
@@ -1107,6 +1115,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
         nodes.map((n) => ({ id: n.id, position: n.position, data: n.data as DeviceNodeData })),
         edges,
         projectAmbientRef.current,
+        sheetSettingsRef.current,
       )
       void bridge.saveCircuitData(JSON.stringify(file, null, 2))
     })
@@ -1151,6 +1160,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
           : STANDARD_AMBIENT_C
       projectAmbientRef.current = loadedAmbient
       setProjectAmbientC(loadedAmbient)
+      // Restore the saved drawing sheet (page size + title block); an older file has none → keep the
+      // current sheet. Merge over the default so a partial/old sheet still fills every field.
+      if (result.file.sheet) setSheetSettings({ ...DEFAULT_SHEET, ...result.file.sheet })
       const flow = circuitFileToFlow(result.file)
       setNodes(flow.nodes)
       setEdges(flow.edges)
@@ -3811,6 +3823,14 @@ function Canvas({ project }: { project: ProjectChoice }) {
                           lineWidth={1}
                           color={gridColor}
                         />
+                        {/* The drawing sheet (page frame + ISO zone grid + title block), behind parts. */}
+                        {showSheet ? (
+                          <SheetFrame
+                            settings={sheetSettings}
+                            projectName={project.name}
+                            light={light}
+                          />
+                        ) : null}
                         {/* Coordinate-graph axes through the origin + the four quadrants. */}
                         <CoordinateAxes light={light} />
                         <Controls>
@@ -3908,6 +3928,15 @@ function Canvas({ project }: { project: ProjectChoice }) {
           <NetlistReportCard report={netlistReport} onDismiss={() => setNetlistReport(null)} />
         ) : null}
         {pickerOpen ? <PartPicker onPick={placePart} onClose={() => setPickerOpen(false)} /> : null}
+        {pageSettingsOpen ? (
+          <PageSettings
+            settings={sheetSettings}
+            showSheet={showSheet}
+            onChange={setSheetSettings}
+            onToggleSheet={setShowSheet}
+            onClose={() => setPageSettingsOpen(false)}
+          />
+        ) : null}
         {canvasMenu !== null ? (
           <ContextMenu
             x={canvasMenu.x}
@@ -3930,6 +3959,11 @@ function Canvas({ project }: { project: ProjectChoice }) {
                     { label: 'Add Part', action: () => setPickerOpen(true) },
                     { label: 'Select All', shortcut: 'Ctrl+A', action: doSelectAll },
                     { label: 'Open Clipboard', action: () => setShowClipboard(true) },
+                    {
+                      label: showSheet ? 'Hide Drawing Sheet' : 'Show Drawing Sheet',
+                      action: () => setShowSheet((s) => !s),
+                    },
+                    { label: 'Page Settings…', action: () => setPageSettingsOpen(true) },
                   ]
             }
           />
