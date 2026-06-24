@@ -82,6 +82,8 @@ type Topology = {
   bjts: BjtAcModel[]
   mosfets: MosfetAcModel[]
   diodes: DiodeAcModel[]
+  /** Standalone CCCS parts: a 0 V control-current sense (one branch unknown each) + the f·I output. */
+  cccs: Instance[]
 }
 
 const BJT_DEFINITIONS = new Set(['transistor_bjt_npn', 'transistor_bjt_pnp'])
@@ -159,6 +161,11 @@ function buildTopology(world: World, temperaturesC?: Map<string, number>): Topol
     const pair = acShortPair(inst)
     if (pair !== null) shorts.push(pair)
   }
+
+  // Standalone CCCS parts: each adds one branch unknown (its 0 V control-current sense).
+  const cccs = [...world.instances.values()].filter(
+    (i) => i.definition === 'cccs' && i.connects?.length === 4,
+  )
 
   // 2-winding transformers: coupled inductances, stamped via two branch currents (no matrix
   // inversion, so any 0 < k < 1 is fine). M = k·√(L1·L2). The center-tapped variant's tapped
@@ -241,10 +248,11 @@ function buildTopology(world: World, temperaturesC?: Map<string, number>): Topol
     vsources,
     shorts,
     transformers,
-    dim: nodeIndex.size + vsources.length + shorts.length + 2 * transformers.length,
+    dim: nodeIndex.size + vsources.length + shorts.length + 2 * transformers.length + cccs.length,
     bjts,
     mosfets,
     diodes,
+    cccs,
   }
 }
 
@@ -348,6 +356,24 @@ function solveAtOmega(
         stampY(idx(fa), idx(fb), 0, yDiag)
         stampCoupling(idx(na), idx(nb), idx(fa), idx(fb), 0, yCouple)
       }
+    } else if (inst.definition === 'vccs') {
+      // A VCCS: output current g·(v_cP − v_cN) — the same real transconductance stamp the
+      // MOSFET uses, on its own control pair. g is frequency-independent (im = 0).
+      const g = readScalarParam(inst, 'transconductance')
+      const net = (term: string) => inst.connects?.find((conn) => conn.terminal === term)?.net
+      const oP = net('output_positive')
+      const oN = net('output_negative')
+      const cP = net('control_positive')
+      const cN = net('control_negative')
+      if (g !== undefined && oP && oN && cP && cN) {
+        const stamp = (i: number, j: number, v: number) => {
+          if (i >= 0 && j >= 0) accumulate(i, j, v, 0)
+        }
+        stamp(idx(oP), idx(cP), -g)
+        stamp(idx(oP), idx(cN), g)
+        stamp(idx(oN), idx(cP), g)
+        stamp(idx(oN), idx(cN), -g)
+      }
     }
   }
 
@@ -412,6 +438,36 @@ function solveAtOmega(
     accumulate(branchP, branchS, 0, -omega * m)
     accumulate(branchS, branchP, 0, -omega * m)
     accumulate(branchS, branchS, 0, -omega * l2)
+  })
+
+  // Standalone CCCS: a 0 V control-current sense (a branch unknown, like a short) measures
+  // I_control, and the output sources f·I_control. f is real (frequency-independent), so this
+  // is the same structure as the DC stamp, in the complex matrix.
+  topo.cccs.forEach((inst, k) => {
+    const branch =
+      nodeIndex.size + vsources.length + shorts.length + 2 * topo.transformers.length + k
+    const net = (term: string) => inst.connects?.find((conn) => conn.terminal === term)?.net
+    const cP = net('control_positive')
+    const cN = net('control_negative')
+    const oP = net('output_positive')
+    const oN = net('output_negative')
+    const f = readScalarParam(inst, 'current_gain') ?? 0
+    const iCP = cP ? idx(cP) : -1
+    const iCN = cN ? idx(cN) : -1
+    const iOP = oP ? idx(oP) : -1
+    const iON = oN ? idx(oN) : -1
+    // The 0 V sense pins v_cP = v_cN; its branch current IS I_control.
+    if (iCP >= 0) {
+      accumulate(iCP, branch, 1, 0)
+      accumulate(branch, iCP, 1, 0)
+    }
+    if (iCN >= 0) {
+      accumulate(iCN, branch, -1, 0)
+      accumulate(branch, iCN, -1, 0)
+    }
+    // Output current source f·I_control out of output_positive.
+    if (iOP >= 0) accumulate(iOP, branch, -f, 0)
+    if (iON >= 0) accumulate(iON, branch, f, 0)
   })
 
   // Transistors: the hybrid-pi small-signal model at the operating point — the 2-port

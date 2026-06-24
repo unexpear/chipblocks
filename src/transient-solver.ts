@@ -81,6 +81,7 @@ import {
   SILICON_BANDGAP_EV,
   SOLVER_GMIN,
   stampBjtCompanion,
+  stampCccs,
   stampConductance,
   stampLightCurrentSource,
   stampMosfetCompanion,
@@ -88,6 +89,7 @@ import {
   stampResistor,
   stampScreenGridTubeCompanion,
   stampTriodeCompanion,
+  stampVccs,
   type TriodeElement,
   type TunnelDiode,
 } from './dc-solver.ts'
@@ -1963,6 +1965,12 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     }
   }
   const S = sources.length
+  // Standalone CCCS parts each need one aux branch (the 0 V control-current sense). They
+  // sit right after the sources, so the capacitor / IC aux block shifts past them by C.
+  const cccsList = [...world.instances.values()].filter(
+    (inst) => inst.definition === 'cccs' && inst.connects?.length === 4,
+  )
+  const C = cccsList.length
 
   // Solve one instant at time t with the diodes linearized at their current
   // guesses. 'initial' holds each capacitor at its initial condition (a
@@ -1975,7 +1983,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     t: number,
   ): { nodes: Map<string, number>; x: number[][] } | null => {
     const extraAux = mode === 'initial' ? caps.length + icList.length : 0
-    const size = N + S + extraAux
+    const size = N + S + C + extraAux
     const M = zerosMatrix(size)
     const b = zerosVector(size)
 
@@ -1991,6 +1999,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       )
         stampResistor(inst, nodeIndex, M)
       else if (inst.definition === 'potentiometer') stampPotentiometer(inst, nodeIndex, M)
+      else if (inst.definition === 'vccs') stampVccs(inst, nodeIndex, M)
       else if (LIGHT_CURRENT_DEFINITIONS.has(inst.definition)) {
         // A photodiode / phototransistor injects its constant light-driven current.
         const [from, to] = lightCurrentTerminals(inst.definition)
@@ -2002,17 +2011,23 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       const src = sources[s]!
       stampTimedSource(src, sourceVoltageAt(src, t), N + s, M, b)
     }
+    // Each CCCS: its 0 V control-current sense (an aux branch at N+S+i) plus the f·I_c
+    // output coupling — time-independent, so the same DC stamp serves at every step.
+    for (let i = 0; i < C; i++) {
+      // biome-ignore lint/style/noNonNullAssertion: i is bound by C
+      stampCccs(cccsList[i]!, nodeIndex, N + S + i, M, b)
+    }
     if (mode === 'initial') {
       for (let j = 0; j < caps.length; j++) {
         // biome-ignore lint/style/noNonNullAssertion: j is bound by caps.length
         const cap = caps[j]!
-        stampFixedVoltage(cap.iA, cap.iB, cap.vPrev, N + S + j, M, b)
+        stampFixedVoltage(cap.iA, cap.iB, cap.vPrev, N + S + C + j, M, b)
       }
       for (let k = 0; k < icList.length; k++) {
         // biome-ignore lint/style/noNonNullAssertion: k is bound by icList.length
         const ic = icList[k]!
         // hard-pin this net to its t = 0 initial-condition value (released for t > 0)
-        stampFixedVoltage(ic.idx, undefined, ic.voltage, N + S + caps.length + k, M, b)
+        stampFixedVoltage(ic.idx, undefined, ic.voltage, N + S + C + caps.length + k, M, b)
       }
       for (const ind of inductors) stampFixedCurrent(ind.iA, ind.iB, ind.iPrev, b)
       for (const motor of motors) stampFixedCurrent(motor.iA, motor.iB, motor.iPrev, b)
@@ -2245,6 +2260,29 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       through(src.id, src.termP, src.termN, x[N + s]?.[0] ?? 0)
     }
 
+    // Dependent sources: a VCCS sources g·V_control out of output_positive; a CCCS sources
+    // f·I_c, where I_c is its sense aux current at N+S+i.
+    for (const inst of world.instances.values()) {
+      if (inst.definition !== 'vccs') continue
+      const g = readScalarParam(inst, 'transconductance')
+      const cp = inst.connects?.find((c) => c.terminal === 'control_positive')?.net
+      const cn = inst.connects?.find((c) => c.terminal === 'control_negative')?.net
+      if (g !== undefined && cp !== undefined && cn !== undefined)
+        through(inst.id, 'output_positive', 'output_negative', g * (volts(cp) - volts(cn)))
+    }
+    for (let i = 0; i < C; i++) {
+      // biome-ignore lint/style/noNonNullAssertion: i is bound by C
+      const cccs = cccsList[i]!
+      const iAux = x[N + S + i]?.[0] ?? 0
+      through(cccs.id, 'control_positive', 'control_negative', iAux)
+      through(
+        cccs.id,
+        'output_positive',
+        'output_negative',
+        (readScalarParam(cccs, 'current_gain') ?? 0) * iAux,
+      )
+    }
+
     for (const r of resistors) {
       through(r.id, r.termA, r.termB, (volts(r.netA) - volts(r.netB)) / r.ohms)
     }
@@ -2267,7 +2305,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
       if (mode === 'initial') {
         // At t = 0 the capacitor is held by a fixed-voltage stamp; its
         // auxiliary variable is the exact current the hold supplies.
-        through(cap.id, cap.termA, cap.termB, x[N + S + j]?.[0] ?? 0)
+        through(cap.id, cap.termA, cap.termB, x[N + S + C + j]?.[0] ?? 0)
       } else {
         // The backward-Euler companion's current at this step, from the OLD
         // history (vPrev is updated only after recording).

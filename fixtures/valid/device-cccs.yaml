@@ -1,0 +1,67 @@
+# Valid fixture: current-controlled current source (CCCS).
+# An idealized circuit-theory primitive: a four-terminal dependent source whose
+# output current is proportional to the current sensed through its control
+# terminals, I_out = f * I_control. f is the (dimensionless) current gain. The
+# control terminals are an ideal current sense — a zero-volt series path through
+# which the controlling current flows.
+#
+# This is one of the four controlled sources of circuit theory (the SPICE F
+# element). It is the element that models a bipolar transistor (collector current
+# beta times the base current) — the same beta*I_B relationship the solver already
+# stamps inside the BJT model, now a first-class part.
+#
+# Solved by the DC engine (dc-solver.ts: stampCccs): a 0 V series sense source
+# measures the controlling current (an auxiliary branch current), and the output
+# current is that branch current times f. No builtin numeric default on f — it is
+# application specific (like a transistor's beta); the cited canvas drop default
+# lives in part-defaults.ts, and per-instance values override.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: cccs
+origin: builtin
+layer: primitive_device
+name: "Current-controlled current source (CCCS)"
+description: "An ideal four-terminal dependent source: the current driven through its output is proportional to the current sensed through its control terminals, I_out = f * I_control, where f is the dimensionless current gain. The control terminals are an ideal current sense (a zero-volt series path the controlling current flows through). One of the four controlled sources of circuit theory; it models the bipolar transistor's collector-from-base current gain."
+composition:
+  requires:
+    terminals:
+      kind: interface
+      min_count: 4
+parameters:
+  current_gain:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: "Current gain f (dimensionless) — the ratio of the sourced output current to the sensed control current, I_out = f * I_control. Application-specific; no builtin default (set per instance / canvas default)."
+behaviors:
+  - conducts_current
+terminals:
+  output_positive:
+    description: "Output terminal the controlled current exits into the external circuit (the source convention: + is the terminal current leaves from)."
+  output_negative:
+    description: "Output return terminal; the controlled current returns here."
+  control_positive:
+    description: "Current-sense input the controlling current enters (in series with the controlling branch). The control path is a zero-volt short, so it does not disturb the sensed branch."
+  control_negative:
+    description: "Current-sense output the controlling current leaves."
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  An idealized circuit-theory element — the current-controlled current source, one
+  of the four controlled sources (E/F/G/H in SPICE; this is F). Solved by the DC
+  engine (dc-solver.ts: stampCccs): a 0 V series sense source on the control pair
+  measures the controlling current I_control as an auxiliary branch current (the same
+  augmented-MNA trick the voltage source uses), and the output sources f * I_control
+  — the beta*I_B current gain the solver already used inside the BJT model, now
+  exposed as its own part. No builtin default on f (application specific, like a
+  transistor's beta); the canvas drop default lives in part-defaults.ts. Reference:
+  the controlled-source primitives in any standard circuits text (e.g. Nilsson &
+  Riedel, "Electric Circuits"; Sedra & Smith, "Microelectronic Circuits"). Now
+  solved in all three engines: DC, transient (backward-Euler), and AC small-signal,
+  all sharing the one stampCccs.

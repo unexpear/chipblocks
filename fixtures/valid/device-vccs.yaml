@@ -1,0 +1,67 @@
+# Valid fixture: voltage-controlled current source (VCCS).
+# An idealized circuit-theory primitive (like the power source's ideal EMF): a
+# four-terminal dependent source whose output current is proportional to the
+# voltage sensed across its control terminals, I_out = g * V_control. g is the
+# transconductance (siemens = A/V). The control terminals are an ideal voltage
+# sense — infinite input impedance, no current drawn.
+#
+# This is one of the four controlled sources of circuit theory (the SPICE G
+# element). It is the element that models a transconductance amplifier and the
+# small-signal behavior of a FET (drain current set by gate voltage) — the same
+# g_m the solver already stamps inside the MOSFET model, now a first-class part.
+#
+# Solved by the DC engine (dc-solver.ts: stampVccs) as a pure transconductance:
+# the control voltage couples into the output current with no operating-point
+# offset (it is linear). No builtin numeric default on g — it is application
+# specific (like a transistor's beta); the cited canvas drop default lives in
+# part-defaults.ts, and per-instance values override.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: vccs
+origin: builtin
+layer: primitive_device
+name: "Voltage-controlled current source (VCCS)"
+description: "An ideal four-terminal dependent source: the current driven through its output is proportional to the voltage sensed across its control terminals, I_out = g * V_control, where g is the transconductance (siemens, A/V). The control terminals are an ideal voltage sense (infinite input impedance, no current drawn). One of the four controlled sources of circuit theory; it models a transconductance amplifier and the small-signal behavior of a field-effect transistor."
+composition:
+  requires:
+    terminals:
+      kind: interface
+      min_count: 4
+parameters:
+  transconductance:
+    type: quantity
+    units: siemens
+    required: true
+    description: "Transconductance g (siemens = A/V) — the proportionality between the sensed control voltage and the sourced output current, I_out = g * V_control. Application-specific; no builtin default (set per instance / canvas default)."
+behaviors:
+  - conducts_current
+terminals:
+  output_positive:
+    description: "Output terminal the controlled current exits into the external circuit (the source convention: + is the terminal current leaves from)."
+  output_negative:
+    description: "Output return terminal; the controlled current returns here."
+  control_positive:
+    description: "Non-inverting voltage-sense input. The control voltage is V[control_positive] - V[control_negative]; draws no current (ideal sense)."
+  control_negative:
+    description: "Inverting voltage-sense input."
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  An idealized circuit-theory element — the voltage-controlled current source, one
+  of the four controlled sources (E/F/G/H in SPICE; this is G). Solved by the DC
+  engine (dc-solver.ts: stampVccs) as a pure transconductance: I_out =
+  g * (V[control_positive] - V[control_negative]), stamped the same way a MOSFET's
+  g_m couples its gate voltage into the drain current (the small-signal VCCS the
+  solver already used internally, now exposed as its own part). The control terminals
+  are an ideal voltage sense (no input current). No builtin default on g (application
+  specific, like a transistor's beta); the canvas drop default lives in
+  part-defaults.ts. Reference: the controlled-source primitives in any standard
+  circuits text (e.g. Nilsson & Riedel, "Electric Circuits"; Sedra & Smith,
+  "Microelectronic Circuits"). Now solved in all three engines: DC, transient
+  (backward-Euler), and AC small-signal, all sharing the one stampVccs.
