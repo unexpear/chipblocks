@@ -1135,6 +1135,34 @@ function OpAmpGlyph() {
   )
 }
 
+/** A dependent (controlled) source — a diamond (vs the circle of an independent source) with the
+ *  current-source arrow: control sense leads on the left, the controlled output on the right. The
+ *  letter marks which control: 'g' = transconductance (VCCS, I = g·V), 'f' = current gain (CCCS,
+ *  I = f·I). 4 terminals: control_positive/negative (left), output_positive/negative (right). */
+function DependentCurrentGlyph({ label }: { label: string }) {
+  return (
+    <svg width={W} height={H}>
+      <title>{label === 'g' ? 'VCCS' : 'CCCS'}</title>
+      <line x1={0} y1={14} x2={23} y2={20} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={0} y1={30} x2={23} y2={24} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={57} y1={20} x2={80} y2={14} stroke={STROKE} strokeWidth={1.5} />
+      <line x1={57} y1={24} x2={80} y2={30} stroke={STROKE} strokeWidth={1.5} />
+      <polygon points="40,7 57,22 40,37 23,22" fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <line x1={40} y1={32} x2={40} y2={14} stroke={STROKE} strokeWidth={1.3} />
+      <polyline points="36,19 40,13 44,19" fill="none" stroke={STROKE} strokeWidth={1.3} />
+      <text x={7} y={13} fontSize={9} fill={STROKE} fontFamily="system-ui, sans-serif">
+        {label}
+      </text>
+    </svg>
+  )
+}
+function VccsGlyph() {
+  return <DependentCurrentGlyph label="g" />
+}
+function CccsGlyph() {
+  return <DependentCurrentGlyph label="f" />
+}
+
 /** NOT gate (CMOS inverter) — the standard triangle with the inversion bubble at its tip.
  *  On the canvas it is a block; this glyph is its palette face. */
 function NotGateGlyph() {
@@ -1578,6 +1606,8 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   transistor_jfet_n_channel: JfetNGlyph,
   transistor_jfet_p_channel: JfetPGlyph,
   op_amp: OpAmpGlyph,
+  vccs: VccsGlyph,
+  cccs: CccsGlyph,
   logic_not: NotGateGlyph,
   logic_nand: NandGateGlyph,
   logic_nor: NorGateGlyph,
@@ -1648,6 +1678,20 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
     { id: 'far_b', position: Position.Right, offset: 30 },
   ],
   power_source: TWO('terminal_positive', 'terminal_negative'),
+  // Dependent sources — control sense on the left (offsets 14/30), the controlled output on the
+  // right (14/30): a 4-terminal part you wire the control across (VCCS) or in series with (CCCS).
+  vccs: [
+    { id: 'control_positive', position: Position.Left, offset: 14 },
+    { id: 'control_negative', position: Position.Left, offset: 30 },
+    { id: 'output_positive', position: Position.Right, offset: 14 },
+    { id: 'output_negative', position: Position.Right, offset: 30 },
+  ],
+  cccs: [
+    { id: 'control_positive', position: Position.Left, offset: 14 },
+    { id: 'control_negative', position: Position.Left, offset: 30 },
+    { id: 'output_positive', position: Position.Right, offset: 14 },
+    { id: 'output_negative', position: Position.Right, offset: 30 },
+  ],
   led: TWO('anode', 'cathode'),
   led_uv_algan: TWO('anode', 'cathode'),
   diode_laser: TWO('anode', 'cathode'),

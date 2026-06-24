@@ -344,6 +344,10 @@ const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'incandescent_bulb',
   'photoresistor',
   'potentiometer',
+  // Dependent (controlled) sources — the standalone VCCS/CCCS (the same controlled
+  // sources that model active devices: a BJT is a CCCS, a FET a VCCS).
+  'vccs',
+  'cccs',
   // Legitimately produce no DC stamp (not unsupported):
   'capacitor', // an open circuit at DC
   'ground', // the reference-node marker — defines a net, no device to stamp
@@ -412,6 +416,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
     | 'transformer_ct_half_a'
     | 'transformer_ct_half_b'
     | 'arc'
+    | 'cccs'
   const linearVoltageSources: Array<{ inst: Instance; kind: VsLikeKind }> = []
   const shockleyLeds: ShockleyLed[] = []
   const tunnelDiodes: TunnelDiode[] = []
@@ -517,6 +522,13 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       if (wired('coil_a') && wired('coil_b')) {
         linearVoltageSources.push({ inst, kind: 'relay_coil' })
       }
+      continue
+    }
+    if (inst.definition === 'cccs') {
+      // A current-controlled current source — 4 terminals: a control-current sense (a 0 V
+      // branch) plus the f·I_c output. The sense needs an aux branch current, so it rides
+      // the linear-voltage-source pass (kind 'cccs'), like the transformer windings.
+      if (inst.connects?.length === 4) linearVoltageSources.push({ inst, kind: 'cccs' })
       continue
     }
     // The SCR is the one 3-terminal device dispatched in this section (its anode-cathode latch plus
@@ -672,6 +684,11 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
           stampConductance(nodeIndex, M, na, fa, TLINE_DC_OHMS)
         if (nb !== undefined && fb !== undefined)
           stampConductance(nodeIndex, M, nb, fb, TLINE_DC_OHMS)
+      } else if (inst.definition === 'vccs') {
+        // A voltage-controlled current source: I = g·V_control out of output_positive.
+        // Linear (constant g), so it stamps here with the resistors — no aux branch.
+        if (!stampVccs(inst, nodeIndex, M))
+          warnings.push(`Skipped VCCS '${inst.id}' (missing transconductance or connects)`)
       }
     }
     for (let s = 0; s < linearVoltageSources.length; s++) {
@@ -680,6 +697,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       const auxIdx = N + s
       let ok = false
       if (kind === 'power_source') ok = stampVoltageSource(inst, nodeIndex, auxIdx, M, b)
+      else if (kind === 'cccs') ok = stampCccs(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'led') ok = stampLED(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'switch') ok = stampClosedSwitch(inst, nodeIndex, auxIdx, M, b)
       else if (kind === 'switch_spdt') ok = stampSpdt(inst, nodeIndex, auxIdx, M, b)
@@ -964,13 +982,24 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
         const vAcross = (nodes.get(posNet) ?? 0) - (nodes.get(negNet) ?? 0)
         branches.set(inst.id, generatorOperatingPoint(vAcross, p).current)
       }
+    } else if (inst.definition === 'vccs') {
+      // Reported current = the output current it sources, g·V_control.
+      const g = readScalarParam(inst, 'transconductance')
+      const cp = inst.connects?.find((c) => c.terminal === 'control_positive')?.net
+      const cn = inst.connects?.find((c) => c.terminal === 'control_negative')?.net
+      if (g !== undefined && cp !== undefined && cn !== undefined)
+        branches.set(inst.id, g * ((nodes.get(cp) ?? 0) - (nodes.get(cn) ?? 0)))
     }
   }
   for (let s = 0; s < linearVoltageSources.length; s++) {
     // biome-ignore lint/style/noNonNullAssertion: s is bound by the array length
-    const { inst } = linearVoltageSources[s]!
+    const { inst, kind } = linearVoltageSources[s]!
     const I_aux = xArr[N + s]?.[0]
-    if (typeof I_aux === 'number') branches.set(inst.id, I_aux)
+    if (typeof I_aux !== 'number') continue
+    // A CCCS's aux current is its CONTROL current I_c; the device's reported current is the
+    // OUTPUT it sources, f·I_c. Every other branch reports its own aux current directly.
+    if (kind === 'cccs') branches.set(inst.id, (readScalarParam(inst, 'current_gain') ?? 0) * I_aux)
+    else branches.set(inst.id, I_aux)
   }
   // Shockley LED current from the diode equation at the converged voltage.
   for (const led of shockleyLeds) {
@@ -1898,6 +1927,93 @@ export function stampMosfetCompanion(
   add(iS, iS, op.gm + op.gds)
   if (iD !== undefined) b.set([iD, 0], (b.get([iD, 0]) ?? 0) - ieq)
   if (iS !== undefined) b.set([iS, 0], (b.get([iS, 0]) ?? 0) + ieq)
+}
+
+/**
+ * Stamp a voltage-controlled current source (VCCS). The output current
+ *   I_out = g·(V[control_positive] − V[control_negative])
+ * is sourced out of output_positive and returns at output_negative; g is the
+ * transconductance (siemens). The control terminals are an ideal voltage sense
+ * (they draw no current), so they appear only as columns — the same Norton form
+ * the MOSFET's g_m uses, generalized to a separate control pair. Linear (constant
+ * g), so there is no operating-point offset on the RHS.
+ */
+export function stampVccs(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+): boolean {
+  const g = readScalarParam(inst, 'transconductance')
+  if (g === undefined) return false
+  const net = (t: string) => inst.connects?.find((c) => c.terminal === t)?.net
+  const outP = net('output_positive')
+  const outN = net('output_negative')
+  const ctrlP = net('control_positive')
+  const ctrlN = net('control_negative')
+  if (outP === undefined || outN === undefined || ctrlP === undefined || ctrlN === undefined)
+    return false
+  const iOutP = nodeIndex.get(outP)
+  const iOutN = nodeIndex.get(outN)
+  const iCtrlP = nodeIndex.get(ctrlP)
+  const iCtrlN = nodeIndex.get(ctrlN)
+  const add = (row: number | undefined, col: number | undefined, value: number) => {
+    if (row === undefined || col === undefined) return
+    M.set([row, col], (M.get([row, col]) ?? 0) + value)
+  }
+  // g·(V_ctrlP − V_ctrlN) leaves output_positive into the circuit and returns at
+  // output_negative (the source convention: + is the terminal current exits from).
+  add(iOutP, iCtrlP, -g)
+  add(iOutP, iCtrlN, g)
+  add(iOutN, iCtrlP, g)
+  add(iOutN, iCtrlN, -g)
+  return true
+}
+
+/**
+ * Stamp a current-controlled current source (CCCS). A 0 V series sense source
+ * (the aux branch at auxIdx) measures the controlling current
+ *   I_c = current in at control_positive, out at control_negative,
+ * and the output current
+ *   I_out = f·I_c
+ * is sourced out of output_positive, returning at output_negative; f is the
+ * dimensionless current gain.
+ */
+export function stampCccs(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  auxIdx: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): boolean {
+  const f = readScalarParam(inst, 'current_gain')
+  if (f === undefined) return false
+  // The control input is a 0 V sense source from control_positive to control_negative;
+  // its branch current (the aux unknown at auxIdx) IS the controlling current I_c.
+  const ok = findAndStampVoltageSource(
+    inst,
+    nodeIndex,
+    auxIdx,
+    0,
+    'control_positive',
+    'control_negative',
+    M,
+    b,
+  )
+  if (!ok) return false
+  const net = (t: string) => inst.connects?.find((c) => c.terminal === t)?.net
+  const outP = net('output_positive')
+  const outN = net('output_negative')
+  if (outP === undefined || outN === undefined) return false
+  const iOutP = nodeIndex.get(outP)
+  const iOutN = nodeIndex.get(outN)
+  // Output current f·I_c (I_c = the aux branch current) leaves output_positive and
+  // returns at output_negative.
+  if (iOutP !== undefined) M.set([iOutP, auxIdx], (M.get([iOutP, auxIdx]) ?? 0) - f)
+  if (iOutN !== undefined) M.set([iOutN, auxIdx], (M.get([iOutN, auxIdx]) ?? 0) + f)
+  return true
 }
 
 // ---------------------------------------------------------------------------

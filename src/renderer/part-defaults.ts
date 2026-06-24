@@ -63,6 +63,17 @@ const DEFAULTS: Record<string, Parameters> = {
     // out). 1 = a supply rail lead whose return is bonded to ground.
     terminal_count: scalar(2, 'count'),
   },
+  vccs: {
+    // Transconductance g (siemens = A/V). 1 mS is a usable small-signal starting
+    // value; an ideal controlled source has no canonical g (like a transistor's
+    // beta), so this is an editable default, not a cited physical constant.
+    transconductance: scalar(0.001, 'siemens'),
+  },
+  cccs: {
+    // Current gain f (dimensionless). 10 is a usable starting value (beta-like);
+    // edited per use, like a transistor's current gain.
+    current_gain: scalar(10, 'dimensionless'),
+  },
   capacitor: {
     // 100 µF aluminum electrolytic, 16 V class — a standard E12 value. With the
     // default 470 Ω resistor, τ = R·C ≈ 47 ms: a charging curve the Scope shows well.
@@ -1166,6 +1177,14 @@ export function primaryValue(
     if (ac > 0 && f > 0) return `${formatEng(ac, 'V')}~ ${formatEng(f, 'Hz')}`
     const v = amountOf(parameters, 'nominal_voltage')
     return v === undefined ? null : `${v} V`
+  }
+  if (definition === 'vccs') {
+    const g = amountOf(parameters, 'transconductance')
+    return g === undefined ? null : `g=${formatEng(g, 'S')}`
+  }
+  if (definition === 'cccs') {
+    const f = amountOf(parameters, 'current_gain')
+    return f === undefined ? null : `f=${f}`
   }
   if (definition === 'led' || definition === 'led_uv_algan') {
     const v = amountOf(parameters, 'forward_voltage')

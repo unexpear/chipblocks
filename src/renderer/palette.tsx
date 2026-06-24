@@ -128,6 +128,8 @@ export const PARTS: { definition: string; label: string }[] = [
   { definition: 'darlington_npn', label: 'Darlington' },
   { definition: 'photo_darlington', label: 'Photo-Darl.' },
   { definition: 'op_amp', label: 'Op-Amp' },
+  { definition: 'vccs', label: 'VCCS' },
+  { definition: 'cccs', label: 'CCCS' },
   { definition: 'logic_not', label: 'NOT' },
   { definition: 'logic_nand', label: 'NAND' },
   { definition: 'logic_nor', label: 'NOR' },
