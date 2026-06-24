@@ -18,6 +18,7 @@ import {
   useNodesInitialized,
   useNodesState,
   useReactFlow,
+  useUpdateNodeInternals,
   ViewportPortal,
 } from '@xyflow/react'
 import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
@@ -59,6 +60,7 @@ import {
   flattenBlocks,
   groupSelection,
   movePortAlongEdge,
+  type PinSide,
   ungroupBlock,
   withoutOffsets,
 } from './blocks.ts'
@@ -951,6 +953,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
   const { screenToFlowPosition, fitView, deleteElements } = useReactFlow()
+  const updateNodeInternals = useUpdateNodeInternals()
   const dropCount = useRef(initial.nodes.length)
   // The Add-Part pop-up (the KiCad-style Choose-a-part dialog) — open state lives here.
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -2941,8 +2944,20 @@ function Canvas({ project }: { project: ProjectChoice }) {
           return { ...n, data: { ...n.data, block: { ...block, ports } } }
         }),
       )
+      // Moving a pin to a new edge relocates its handle. Any corners the user dropped on the wires
+      // into it were laid out for the OLD spot, so they would now cross back over the block. Reset
+      // those wires to the straight run to the pin's new side — we never invent a routed path (that
+      // stays the user's to draw); updateNodeInternals (the effect below) then walks the wire's end
+      // onto the new handle, so the wire follows the pin instead of tangling.
+      if (patch.side !== undefined) {
+        setEdges((cur) =>
+          cur.map((e) =>
+            edgeTouchesPort(e, blockId, portId) ? { ...e, data: { ...e.data, waypoints: [] } } : e,
+          ),
+        )
+      }
     },
-    [setNodes, checkpointAction],
+    [setNodes, setEdges, checkpointAction],
   )
 
   // Declare a pin by exposing an internal terminal — even before it's wired. A new pin has no offset,
@@ -3004,6 +3019,218 @@ function Canvas({ project }: { project: ProjectChoice }) {
     },
     [setNodes, setEdges, checkpointAction],
   )
+
+  // React Flow caches each handle's measured position; when a block's pins move to new edges (or get
+  // reordered / added / removed, or an undo restores a different layout) it won't re-read them on its
+  // own, so wires would keep pointing at the pins' old spots. Re-measure whenever any block's pin
+  // layout changes — keyed on a signature of every block's pin sides + order, so a plain drag doesn't.
+  const blockPinSignature = nodes
+    .map((n) => {
+      if (n.type !== 'block') return ''
+      const block = (n.data as { block?: BlockData }).block
+      return block ? `${n.id}#${block.ports.map((p) => `${p.id}.${p.side}`).join(',')}` : n.id
+    })
+    .join('|')
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure exactly when a pin layout changes
+  useEffect(() => {
+    for (const n of nodes) {
+      if (n.type === 'block') updateNodeInternals(n.id)
+    }
+  }, [blockPinSignature, updateNodeInternals])
+
+  // DEV-only control surface for the AI to drive the app over CDP. There is no UI — the AI can't see
+  // the Electron window, so these hidden hooks on window.__chip expose the React-internal handlers it
+  // needs (raw CDP can click the DOM but can't reach onEditBlockPort). Stripped from production by the
+  // DEV guard; nodesRef/handlers are stable, so the surface is attached once and reads live state.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    const mkBlock = (id: string, x: number, portId: string, side: PinSide): Node => {
+      const block: BlockData = {
+        name: id,
+        origin: { x, y: 260 },
+        nodes: [
+          {
+            id: 'r',
+            definition: 'resistor',
+            x: 0,
+            y: 0,
+            parameters: defaultParameters('resistor'),
+          },
+        ],
+        edges: [],
+        ports: [{ id: portId, label: `${id} pin`, side, inner: { nodeId: 'r', handleId: 'a' } }],
+      }
+      return {
+        id,
+        type: 'block',
+        position: { x, y: 260 },
+        data: { definition: 'block', label: id, block },
+      } as Node
+    }
+    const api = {
+      // Inject two blocks joined by a hand-cornered wire — the pin-move re-route scenario.
+      setupReroute() {
+        checkpointAction('dev: wired blocks')
+        setNodes((cur) => [
+          ...cur.filter((n) => n.id !== 'BLKA' && n.id !== 'BLKB'),
+          mkBlock('BLKA', 200, 'pa', 'right'),
+          mkBlock('BLKB', 540, 'pb', 'left'),
+        ])
+        const wire: Edge = {
+          id: 'we',
+          type: 'net',
+          source: 'BLKA',
+          sourceHandle: 'pa',
+          target: 'BLKB',
+          targetHandle: 'pb',
+          data: { waypoints: [{ id: 'wp', x: 370, y: 420 }] },
+        }
+        setEdges((cur) => [...cur.filter((e) => e.id !== 'we'), wire])
+      },
+      // Move a block's pin to its next edge via the REAL handler (defaults to the BLKB test block).
+      flipPin(blockId = 'BLKB') {
+        const target = nodesRef.current.find((n) => n.id === blockId)
+        const port = (target?.data as { block?: BlockData }).block?.ports[0]
+        if (!port) return
+        const order: PinSide[] = ['left', 'top', 'right', 'bottom']
+        const next = order[(order.indexOf(port.side) + 1) % order.length] ?? 'left'
+        onEditBlockPort(blockId, port.id, { side: next })
+      },
+      // Force React Flow to re-measure every block's handles — needed after bulk-injecting blocks so
+      // their wires actually render (the handle measurement that edges depend on).
+      remeasure() {
+        for (const n of nodesRef.current) {
+          if (n.type === 'block') updateNodeInternals(n.id)
+        }
+      },
+      // Light a seven-segment digit in the real app: drop the display + a 5 V source + ground, wiring
+      // the listed segments HIGH (default = the segments of a "7"). Proves the figure-8 lights up.
+      showDigit(litSegs = ['a', 'b', 'c']) {
+        checkpointAction('dev: show digit')
+        const supplyParams = {
+          nominal_voltage: { value: { kind: 'scalar', amount: 5, unit: 'volt' } },
+          internal_resistance: { value: { kind: 'scalar', amount: 0, unit: 'ohm' } },
+        }
+        setNodes((cur) => [
+          ...cur.filter((n) => n.id !== 'DISP' && n.id !== 'V5' && n.id !== 'DGND'),
+          {
+            id: 'DISP',
+            type: 'block',
+            position: { x: 440, y: 200 },
+            data: {
+              definition: 'display_seven_segment',
+              label: 'DISP',
+              block: BUILTIN_BLOCKS.display_seven_segment,
+            },
+          } as Node,
+          {
+            id: 'V5',
+            type: 'device',
+            position: { x: 160, y: 200 },
+            data: { definition: 'power_source', label: 'V5', parameters: supplyParams },
+          } as Node,
+          {
+            id: 'DGND',
+            type: 'device',
+            position: { x: 160, y: 380 },
+            data: { definition: 'ground', label: 'DGND' },
+          } as Node,
+        ])
+        setEdges((cur) => [
+          ...cur.filter((e) => !e.id.startsWith('wd_')),
+          {
+            id: 'wd_common',
+            type: 'net',
+            source: 'DISP',
+            sourceHandle: 'common',
+            target: 'DGND',
+            targetHandle: 'reference_terminal',
+          } as Edge,
+          {
+            id: 'wd_vn',
+            type: 'net',
+            source: 'V5',
+            sourceHandle: 'terminal_negative',
+            target: 'DGND',
+            targetHandle: 'reference_terminal',
+          } as Edge,
+          ...litSegs.map(
+            (seg) =>
+              ({
+                id: `wd_${seg}`,
+                type: 'net',
+                source: 'V5',
+                sourceHandle: 'terminal_positive',
+                target: 'DISP',
+                targetHandle: `seg_${seg}`,
+              }) as Edge,
+          ),
+        ])
+      },
+      // Read the canvas as DATA so the AI can ASSERT behaviour over CDP without a screenshot: nodes
+      // (with each block's pin sides + position) and edges (endpoints + how many hand-laid corners).
+      state() {
+        return {
+          nodes: nodesRef.current.map((n) => {
+            const block = (n.data as { block?: BlockData }).block
+            return {
+              id: n.id,
+              type: n.type,
+              x: Math.round(n.position.x),
+              y: Math.round(n.position.y),
+              ...(block
+                ? { ports: block.ports.map((p) => ({ id: p.id, side: p.side, name: p.name })) }
+                : {}),
+            }
+          }),
+          edges: edgesRef.current.map((e) => {
+            const wp = (e.data as { waypoints?: unknown[] } | undefined)?.waypoints
+            return {
+              id: e.id,
+              source: e.source,
+              sourceHandle: e.sourceHandle,
+              target: e.target,
+              targetHandle: e.targetHandle,
+              corners: Array.isArray(wp) ? wp.length : 0,
+            }
+          }),
+        }
+      },
+      // Read the RENDER itself (DOM, not a screenshot): each handle's measured side + screen centre,
+      // and each wire's drawn end-point — so the AI can assert e.g. a wire's end sits ON its pin.
+      dom() {
+        const handles = [...document.querySelectorAll('.react-flow__handle')].map((h) => {
+          const r = h.getBoundingClientRect()
+          return {
+            node: h.closest('.react-flow__node')?.getAttribute('data-id') ?? null,
+            id: h.getAttribute('data-handleid'),
+            side: h.getAttribute('data-handlepos'),
+            x: Math.round(r.x + r.width / 2),
+            y: Math.round(r.y + r.height / 2),
+          }
+        })
+        const edges = [...document.querySelectorAll('.react-flow__edge')].map((e) => {
+          const p = e.querySelector('path.react-flow__edge-path') as SVGPathElement | null
+          let end: { x: number; y: number } | null = null
+          if (p) {
+            const m = p.getScreenCTM()
+            const pt = p.getPointAtLength(p.getTotalLength())
+            if (m) {
+              const s = pt.matrixTransform(m)
+              end = { x: Math.round(s.x), y: Math.round(s.y) }
+            }
+          }
+          return { id: e.getAttribute('data-id'), end }
+        })
+        return { handles, edges }
+      },
+    }
+    const w = window as unknown as { __chip?: typeof api | undefined }
+    w.__chip = api
+    return () => {
+      w.__chip = undefined
+    }
+  }, [setNodes, setEdges, onEditBlockPort, checkpointAction, updateNodeInternals])
 
   // Zoom to the SELECTED parts (or fit all if none) — precise framing, easier than the wheel.
   const zoomToSelection = useCallback(() => {
