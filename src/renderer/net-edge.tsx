@@ -1,4 +1,4 @@
-import { BaseEdge, EdgeLabelRenderer, type EdgeProps, useReactFlow } from '@xyflow/react'
+import { BaseEdge, EdgeLabelRenderer, type EdgeProps, Position, useReactFlow } from '@xyflow/react'
 import {
   createContext,
   type MouseEvent as ReactMouseEvent,
@@ -27,6 +27,7 @@ import {
   thermalWarmthTint,
   voltageColor,
 } from './lens.ts'
+import { type Dir, orthogonalRoute } from './orthogonal-route.ts'
 import { THEME } from './theme.ts'
 import type { FrameEdge } from './timeline.ts'
 import { CheckpointContext } from './undo-context.ts'
@@ -94,6 +95,20 @@ function nearestSegment(points: Point[], p: Point): number {
 export type PartBox = { id: string; x: number; y: number; w: number; h: number }
 export const PartBoxesContext = createContext<PartBox[]>([])
 
+/** Turn the orthogonal auto-router ON for plain (un-routed) wires — ON in the descend view, OFF on the
+ *  main canvas, where the user routes wires by hand (the canvas never invents a path that wasn't drawn). */
+export const AutoRouteContext = createContext<boolean>(false)
+
+/** Which way a wire leaves a pin = which edge of the part the handle sits on. */
+const posToDir = (p: Position | undefined): Dir =>
+  p === Position.Left
+    ? 'left'
+    : p === Position.Top
+      ? 'up'
+      : p === Position.Bottom
+        ? 'down'
+        : 'right'
+
 /** Each wire reports its drawn path (flow coords) here so the crossings overlay can find where
  *  wires cross — the wire knows its own rendered geometry; App collects them all. */
 export const WireGeomContext = createContext<(id: string, points: Point[]) => void>(() => {})
@@ -148,6 +163,8 @@ export function NetEdge({
   sourceY,
   targetX,
   targetY,
+  sourcePosition,
+  targetPosition,
   label,
   style,
   markerStart,
@@ -157,6 +174,7 @@ export function NetEdge({
   const { setEdges, screenToFlowPosition } = useReactFlow()
   const lensState = useContext(LensContext)
   const partBoxes = useContext(PartBoxesContext)
+  const autoRoute = useContext(AutoRouteContext)
   const reportGeom = useContext(WireGeomContext)
   const checkpointAction = useContext(CheckpointContext)
   // Timeline playback: this wire's values at the played-back instant (null = steady).
@@ -183,13 +201,29 @@ export function NetEdge({
   // straight segments, or quadratic fillets when drawn with the curve subtool
   // (the same per-wire sweep size wire-path.ts measures). Plain: the straight
   // segment the physics measures — nothing invented.
+  // A plain wire (no hand-dropped corners) auto-routes orthogonally AROUND the parts when the auto-router
+  // is on (the descend view); otherwise it stays the straight segment the user drew on the canvas.
+  const laneRaw = data?.lane
+  const autoCorners: Point[] =
+    waypoints.length === 0 && autoRoute
+      ? orthogonalRoute(
+          { x: sourceX, y: sourceY },
+          posToDir(sourcePosition),
+          { x: targetX, y: targetY },
+          posToDir(targetPosition),
+          partBoxes.filter((b) => b.id !== source && b.id !== target),
+          { lane: typeof laneRaw === 'number' ? laneRaw : 0 },
+        )
+      : []
   const routePoints: Point[] =
     waypoints.length > 0
       ? [{ x: sourceX, y: sourceY }, ...waypoints, { x: targetX, y: targetY }]
-      : [
-          { x: sourceX, y: sourceY },
-          { x: targetX, y: targetY },
-        ]
+      : autoCorners.length > 0
+        ? [{ x: sourceX, y: sourceY }, ...autoCorners, { x: targetX, y: targetY }]
+        : [
+            { x: sourceX, y: sourceY },
+            { x: targetX, y: targetY },
+          ]
   const sweep = typeof data?.curveRadius === 'number' ? data.curveRadius : undefined
   const curved = data?.curved === true && waypoints.length > 0
   const path = curved ? roundedPathD(routePoints, sweep) : pathThrough(routePoints)

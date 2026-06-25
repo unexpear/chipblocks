@@ -146,6 +146,7 @@ import {
 import { type MonteCarloResult, monteCarloAnalysis } from './monte-carlo.ts'
 import { expandMultiLeadSources, multiLeadAliases } from './multi-tap-source.ts'
 import {
+  AutoRouteContext,
   edgeTypes,
   FrameEdgeContext,
   FrontContext,
@@ -342,14 +343,17 @@ function drawnWire(
     }
   },
   positions: Map<string, NodePosition>,
+  routedPath?: Point[],
 ): { lengthM: number; ohms: number } {
   const from = positions.get(edge.source)
   const to = positions.get(edge.target)
+  const waypoints = Array.isArray(edge.data?.waypoints) ? (edge.data.waypoints as PathPoint[]) : []
   let drawnPixels = 0
-  if (from && to) {
-    const waypoints = Array.isArray(edge.data?.waypoints)
-      ? (edge.data.waypoints as PathPoint[])
-      : []
+  if (waypoints.length === 0 && routedPath && routedPath.length >= 2) {
+    // An auto-routed wire: measure the ACTUAL routed path it draws around the parts, so a wire that
+    // bends the long way is a genuinely longer wire — the picture and the resistance agree.
+    drawnPixels = polylineLength(routedPath)
+  } else if (from && to) {
     if (waypoints.length > 0) {
       const points = [from, ...waypoints, to]
       const sweep = typeof edge.data?.curveRadius === 'number' ? edge.data.curveRadius : undefined
@@ -553,6 +557,7 @@ function solveCanvas(
   nodeList: Node[],
   edgeList: Edge[],
   projectAmbientC?: number,
+  routedGeoms?: Map<string, Point[]>,
 ): {
   edges: Edge[]
   health: Map<string, NodeHealth>
@@ -567,7 +572,7 @@ function solveCanvas(
   shockleyStates: Map<string, ShockleyDiodeState>
   relaysSettled: boolean
 } {
-  const { world: rawWorld, drawn, leadAliases } = canvasWorld(nodeList, edgeList)
+  const { world: rawWorld, drawn, leadAliases } = canvasWorld(nodeList, edgeList, routedGeoms)
   // Light casting (S21-v3-8): a light_source part throws light onto the sensors
   // around it, falling off with distance (E = I/d²). Fold each sensor's incident
   // illuminance — its own ambient plus the cast from every source at its canvas
@@ -694,6 +699,7 @@ function logicThreshold(world: World): number | undefined {
 function canvasWorld(
   nodeList: Node[],
   edgeList: Edge[],
+  routedGeoms?: Map<string, Point[]>,
 ): {
   world: World
   drawn: Map<string, { lengthM: number; ohms: number }>
@@ -718,7 +724,9 @@ function canvasWorld(
   const drawn = new Map<string, { lengthM: number; ohms: number }>(
     flatEdges.map((e) => [
       e.id,
-      e.data?.internalBond === true ? { lengthM: 0, ohms: 0 } : drawnWire(e, positions),
+      e.data?.internalBond === true
+        ? { lengthM: 0, ohms: 0 }
+        : drawnWire(e, positions, routedGeoms?.get(e.id)),
     ]),
   )
   const canvasEdges: CanvasEdge[] = flatEdges.map((e) => ({
@@ -1212,6 +1220,10 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // Snap-to-grid (optional): OFF by default — placement stays free, the way it has always worked —
   // and toggled from the canvas controls. When on, dragged AND dropped parts align to SNAP_GRID.
   const [snapToGrid, setSnapToGrid] = useState(false)
+  // Opt-in canvas auto-router (default OFF — routing belongs to the user). ON: plain wires (no
+  // hand-dropped corners) route themselves as straight H/V lines around the parts, and carry the
+  // resistance of that ACTUAL routed length (fed back in via the reported wire geometry below).
+  const [autoRouteWires, setAutoRouteWires] = useState(false)
   // Active physics (S19-v3-14): re-solve + refresh every wire's current/length/
   // resistance from the live canvas. Always-on recomputes on every change (the
   // default); turn it off and hit Solve to batch big edits without the PC
@@ -1244,11 +1256,21 @@ function Canvas({ project }: { project: ProjectChoice }) {
     return () => window.removeEventListener('chipblocks:theme', onThemeChange)
   }, [])
 
+  // Stable refs so the live re-solve can read the auto-route toggle + the wires' CURRENT routed
+  // geometry without being re-created every time that geometry changes.
+  const wireGeomsRef = useRef(wireGeoms)
+  wireGeomsRef.current = wireGeoms
+  const autoRouteWiresRef = useRef(autoRouteWires)
+  autoRouteWiresRef.current = autoRouteWires
+
   // The live re-solve: rebuild + solve the canvas, then push the new wire currents
   // AND the new part health. Stable identity (only setters in deps).
   const reSolve = useCallback(
     (nodeList: Node[], edgeList: Edge[]) => {
-      const solved = solveCanvas(nodeList, edgeList, projectAmbientRef.current)
+      // When auto-routing is on, hand the solve each wire's actual routed path so its resistance is
+      // the routed length, not the straight-line distance (closes the draw-but-don't-measure gap).
+      const routed = autoRouteWiresRef.current ? wireGeomsRef.current : undefined
+      const solved = solveCanvas(nodeList, edgeList, projectAmbientRef.current, routed)
       setEdges(solved.edges)
       setHealth(solved.health)
       setReadings(solved.readings)
@@ -2389,6 +2411,15 @@ function Canvas({ project }: { project: ProjectChoice }) {
     reSolve(nodes, edgesRef.current)
   }, [alwaysOn, nodes, topology, reSolve])
 
+  // Auto-router physics: when a wire's routed geometry changes (a part moved → it re-routed) or the
+  // auto-route toggle flips, re-solve so each wire's resistance tracks its ACTUAL routed length. Live
+  // solve only; the routed geometry is reported deduped, so this settles in one extra solve — no loop.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `wireGeoms` is the re-run trigger (read via the ref inside reSolve, not in the body)
+  useEffect(() => {
+    if (!alwaysOn || !autoRouteWires) return
+    reSolve(nodesRef.current, edgesRef.current)
+  }, [alwaysOn, autoRouteWires, wireGeoms, reSolve])
+
   // A fuse blows when its solved current exceeds its rating: flip the offending
   // fuses to 'blown' (a persistent state on the node), which re-solves them OPEN
   // — the circuit goes dark. The LED-overcurrent check, but the response is a
@@ -3130,7 +3161,8 @@ function Canvas({ project }: { project: ProjectChoice }) {
             type: 'block',
             position: { x: 440, y: 200 },
             data: {
-              definition: 'display_seven_segment',
+              // a generic 'block' node (like a palette drop) so double-click descends into it
+              definition: 'block',
               label: 'DISP',
               block: BUILTIN_BLOCKS.display_seven_segment,
             },
@@ -3177,6 +3209,328 @@ function Canvas({ project }: { project: ProjectChoice }) {
                 targetHandle: `seg_${seg}`,
               }) as Edge,
           ),
+        ])
+      },
+      // Light a multi-digit display of ANY shipped size in the real app: drop it + a 5 V source +
+      // ground, spelling a "7" on the first digit, a "0" on the last, and a decimal point + comma in the
+      // first gap. Proves any size's figure-8s, point, and comma light from real per-leg current.
+      show3Digit(digits = 3) {
+        checkpointAction('dev: show display')
+        const def = `display_seven_segment_${digits}`
+        const block = BUILTIN_BLOCKS[def]
+        if (!block) return
+        const last = digits - 1
+        const litPins = [
+          'seg_d0_a',
+          'seg_d0_b',
+          'seg_d0_c',
+          `seg_d${last}_a`,
+          `seg_d${last}_b`,
+          `seg_d${last}_c`,
+          `seg_d${last}_d`,
+          `seg_d${last}_e`,
+          `seg_d${last}_f`,
+          'dp_0',
+          'comma_0',
+        ]
+        const supplyParams = {
+          nominal_voltage: { value: { kind: 'scalar', amount: 5, unit: 'volt' } },
+          internal_resistance: { value: { kind: 'scalar', amount: 0, unit: 'ohm' } },
+        }
+        setNodes((cur) => [
+          ...cur.filter((n) => n.id !== 'DISP3' && n.id !== 'V53' && n.id !== 'DGND3'),
+          {
+            id: 'DISP3',
+            type: 'block',
+            position: { x: 440, y: 200 },
+            data: {
+              definition: def,
+              label: 'DISP3',
+              block,
+            },
+          } as Node,
+          {
+            id: 'V53',
+            type: 'device',
+            position: { x: 120, y: 200 },
+            data: { definition: 'power_source', label: 'V53', parameters: supplyParams },
+          } as Node,
+          {
+            id: 'DGND3',
+            type: 'device',
+            position: { x: 120, y: 380 },
+            data: { definition: 'ground', label: 'DGND3' },
+          } as Node,
+        ])
+        setEdges((cur) => [
+          ...cur.filter((e) => !e.id.startsWith('w3_')),
+          {
+            id: 'w3_common',
+            type: 'net',
+            source: 'DISP3',
+            sourceHandle: 'common',
+            target: 'DGND3',
+            targetHandle: 'reference_terminal',
+          } as Edge,
+          {
+            id: 'w3_vn',
+            type: 'net',
+            source: 'V53',
+            sourceHandle: 'terminal_negative',
+            target: 'DGND3',
+            targetHandle: 'reference_terminal',
+          } as Edge,
+          ...litPins.map(
+            (pin) =>
+              ({
+                id: `w3_${pin}`,
+                type: 'net',
+                source: 'V53',
+                sourceHandle: 'terminal_positive',
+                target: 'DISP3',
+                targetHandle: pin,
+              }) as Edge,
+          ),
+        ])
+      },
+      // Drop a powered SRAM word in the real app and WRITE all four bits to 1 (every BL high via one
+      // supply, every BL̄ low to ground, the word line HIGH). Proves the live solver converges on the
+      // 24-transistor cross-coupled memory and the chip drops + renders.
+      showSram() {
+        checkpointAction('dev: show sram')
+        const supplyParams = {
+          nominal_voltage: { value: { kind: 'scalar', amount: 5, unit: 'volt' } },
+          internal_resistance: { value: { kind: 'scalar', amount: 0, unit: 'ohm' } },
+        }
+        setNodes((cur) => [
+          ...cur.filter((n) => !['SRAMW', 'SV', 'SWL', 'SBL', 'SG'].includes(n.id)),
+          {
+            id: 'SRAMW',
+            type: 'block',
+            position: { x: 520, y: 240 },
+            data: {
+              definition: 'memory_sram_word_4bit',
+              label: 'SRAMW',
+              block: BUILTIN_BLOCKS.memory_sram_word_4bit,
+            },
+          } as Node,
+          {
+            id: 'SV',
+            type: 'device',
+            position: { x: 140, y: 150 },
+            data: { definition: 'power_source', label: 'V+', parameters: supplyParams },
+          } as Node,
+          {
+            id: 'SWL',
+            type: 'device',
+            position: { x: 140, y: 280 },
+            data: { definition: 'power_source', label: 'WL', parameters: supplyParams },
+          } as Node,
+          {
+            id: 'SBL',
+            type: 'device',
+            position: { x: 140, y: 410 },
+            data: { definition: 'power_source', label: 'BL', parameters: supplyParams },
+          } as Node,
+          {
+            id: 'SG',
+            type: 'device',
+            position: { x: 140, y: 540 },
+            data: { definition: 'ground', label: 'GND' },
+          } as Node,
+        ])
+        setEdges((cur) => [
+          ...cur.filter((e) => !e.id.startsWith('sw_')),
+          {
+            id: 'sw_vp',
+            type: 'net',
+            source: 'SV',
+            sourceHandle: 'terminal_positive',
+            target: 'SRAMW',
+            targetHandle: 'v_dd',
+          } as Edge,
+          {
+            id: 'sw_vn',
+            type: 'net',
+            source: 'SV',
+            sourceHandle: 'terminal_negative',
+            target: 'SG',
+            targetHandle: 'reference_terminal',
+          } as Edge,
+          {
+            id: 'sw_g',
+            type: 'net',
+            source: 'SRAMW',
+            sourceHandle: 'gnd',
+            target: 'SG',
+            targetHandle: 'reference_terminal',
+          } as Edge,
+          {
+            id: 'sw_wlp',
+            type: 'net',
+            source: 'SWL',
+            sourceHandle: 'terminal_positive',
+            target: 'SRAMW',
+            targetHandle: 'wl',
+          } as Edge,
+          {
+            id: 'sw_wln',
+            type: 'net',
+            source: 'SWL',
+            sourceHandle: 'terminal_negative',
+            target: 'SG',
+            targetHandle: 'reference_terminal',
+          } as Edge,
+          {
+            id: 'sw_bln',
+            type: 'net',
+            source: 'SBL',
+            sourceHandle: 'terminal_negative',
+            target: 'SG',
+            targetHandle: 'reference_terminal',
+          } as Edge,
+          ...[0, 1, 2, 3].flatMap((i) => [
+            {
+              id: `sw_blp${i}`,
+              type: 'net',
+              source: 'SBL',
+              sourceHandle: 'terminal_positive',
+              target: 'SRAMW',
+              targetHandle: `bl${i}`,
+            } as Edge,
+            {
+              id: `sw_blb${i}`,
+              type: 'net',
+              source: 'SRAMW',
+              sourceHandle: `blb${i}`,
+              target: 'SG',
+              targetHandle: 'reference_terminal',
+            } as Edge,
+          ]),
+        ])
+      },
+      // Show the BARE display's honest behaviour side by side: the LEFT one is driven straight off 5 V
+      // with NO resistor (its LEDs over-current and BURST); the RIGHT one is driven through real 330 Ω
+      // resistors (it lights a safe "7"). Proves the bare part needs external current limiting, like the
+      // real component, and that the resistors are what make the shipped module safe.
+      showBare() {
+        checkpointAction('dev: show bare display')
+        const src = (rInternal: number) => ({
+          nominal_voltage: { value: { kind: 'scalar', amount: 5, unit: 'volt' } },
+          internal_resistance: { value: { kind: 'scalar', amount: rInternal, unit: 'ohm' } },
+        })
+        const res330 = { resistance: { value: { kind: 'scalar', amount: 330, unit: 'ohm' } } }
+        const segs = ['a', 'b', 'c'] // a "7"
+        const bare = BUILTIN_BLOCKS.display_seven_segment_bare
+        setNodes((cur) => [
+          ...cur.filter((n) => !n.id.startsWith('BARE')),
+          {
+            id: 'BARE_RAW',
+            type: 'block',
+            position: { x: 360, y: 180 },
+            data: {
+              definition: 'display_seven_segment_bare',
+              label: 'raw — no resistors',
+              block: bare,
+            },
+          } as Node,
+          {
+            id: 'BARE_VRAW',
+            type: 'device',
+            position: { x: 140, y: 200 },
+            data: { definition: 'power_source', label: '5V', parameters: src(1) },
+          } as Node,
+          {
+            id: 'BARE_OK',
+            type: 'block',
+            position: { x: 820, y: 180 },
+            data: { definition: 'display_seven_segment_bare', label: 'with 330Ω', block: bare },
+          } as Node,
+          {
+            id: 'BARE_VOK',
+            type: 'device',
+            position: { x: 1100, y: 200 },
+            data: { definition: 'power_source', label: '5V', parameters: src(0) },
+          } as Node,
+          ...segs.map(
+            (s, i) =>
+              ({
+                id: `BARE_R${s}`,
+                type: 'device',
+                position: { x: 1000, y: 120 + i * 70 },
+                data: { definition: 'resistor', label: '330Ω', parameters: res330 },
+              }) as Node,
+          ),
+          {
+            id: 'BARE_GND',
+            type: 'device',
+            position: { x: 140, y: 420 },
+            data: { definition: 'ground', label: 'GND' },
+          } as Node,
+        ])
+        setEdges((cur) => [
+          ...cur.filter((e) => !e.id.startsWith('wb_')),
+          {
+            id: 'wb_raw_common',
+            type: 'net',
+            source: 'BARE_RAW',
+            sourceHandle: 'common',
+            target: 'BARE_GND',
+            targetHandle: 'reference_terminal',
+          } as Edge,
+          {
+            id: 'wb_vraw_n',
+            type: 'net',
+            source: 'BARE_VRAW',
+            sourceHandle: 'terminal_negative',
+            target: 'BARE_GND',
+            targetHandle: 'reference_terminal',
+          } as Edge,
+          ...segs.map(
+            (s) =>
+              ({
+                id: `wb_raw_${s}`,
+                type: 'net',
+                source: 'BARE_VRAW',
+                sourceHandle: 'terminal_positive',
+                target: 'BARE_RAW',
+                targetHandle: `seg_${s}`,
+              }) as Edge,
+          ),
+          {
+            id: 'wb_ok_common',
+            type: 'net',
+            source: 'BARE_OK',
+            sourceHandle: 'common',
+            target: 'BARE_GND',
+            targetHandle: 'reference_terminal',
+          } as Edge,
+          {
+            id: 'wb_vok_n',
+            type: 'net',
+            source: 'BARE_VOK',
+            sourceHandle: 'terminal_negative',
+            target: 'BARE_GND',
+            targetHandle: 'reference_terminal',
+          } as Edge,
+          ...segs.flatMap((s) => [
+            {
+              id: `wb_okv_${s}`,
+              type: 'net',
+              source: 'BARE_VOK',
+              sourceHandle: 'terminal_positive',
+              target: `BARE_R${s}`,
+              targetHandle: 'terminal_a',
+            } as Edge,
+            {
+              id: `wb_okr_${s}`,
+              type: 'net',
+              source: `BARE_R${s}`,
+              sourceHandle: 'terminal_b',
+              target: 'BARE_OK',
+              targetHandle: `seg_${s}`,
+            } as Edge,
+          ]),
         ])
       },
       // Read the canvas as DATA so the AI can ASSERT behaviour over CDP without a screenshot: nodes
@@ -3694,208 +4048,229 @@ function Canvas({ project }: { project: ProjectChoice }) {
           <LensContext.Provider value={lensState}>
             <FrameEdgeContext.Provider value={frameEdges}>
               <FrontContext.Provider value={frontState}>
-                <PartBoxesContext.Provider value={partBoxes}>
-                  <WireGeomContext.Provider value={reportWireGeom}>
-                    <CheckpointContext.Provider value={checkpointAction}>
-                      <ReactFlow
-                        colorMode={light ? 'light' : 'dark'}
-                        nodes={nodes}
-                        edges={edges}
-                        onNodesChange={onNodesChange}
-                        onEdgesChange={onEdgesChange}
-                        onConnect={onConnect}
-                        onReconnect={onReconnect}
-                        onNodeDoubleClick={onNodeDoubleClick}
-                        onNodeClick={(_event, node) => {
-                          if (
-                            node.type === 'junction' &&
-                            (node.data as { fromCrossing?: boolean } | undefined)?.fromCrossing ===
-                              true
-                          ) {
-                            unjoinCrossing(node.id)
-                          }
-                        }}
-                        onNodeContextMenu={(event, node) => {
-                          if (node.type !== 'device' && node.type !== 'block') return
-                          event.preventDefault()
-                          selectNodeById(node.id)
-                          setCanvasMenu({ x: event.clientX, y: event.clientY, kind: 'part' })
-                        }}
-                        onPaneContextMenu={(event) => {
-                          event.preventDefault()
-                          setCanvasMenu({
-                            x: event.clientX,
-                            y: event.clientY,
-                            kind: 'pane',
-                            flow: screenToFlowPosition({ x: event.clientX, y: event.clientY }),
-                          })
-                        }}
-                        onNodeDragStart={(_event, node) => {
-                          checkpointAction('move')
-                          dragStartPos.current = new Map(
-                            nodes
-                              .filter((n) => n.id === node.id || n.selected)
-                              .map((n) => [n.id, { x: n.position.x, y: n.position.y }]),
-                          )
-                        }}
-                        onNodeDragStop={(_event, node) => {
-                          if (node.type !== 'device' && node.type !== 'block') return
-                          setNodes((cur) => {
-                            const dragged = dragStartPos.current
-                            const box = (n: (typeof cur)[number]) => ({
-                              x: n.position.x,
-                              y: n.position.y,
-                              w: n.measured?.width ?? 88,
-                              h: n.measured?.height ?? 56,
-                            })
-                            const hit = (a: (typeof cur)[number], b: (typeof cur)[number]) => {
-                              const A = box(a)
-                              const B = box(b)
-                              const m = 6 // a little breathing room so parts never touch
-                              return (
-                                A.x < B.x + B.w + m &&
-                                A.x + A.w + m > B.x &&
-                                A.y < B.y + B.h + m &&
-                                A.y + A.h + m > B.y
-                              )
+                <AutoRouteContext.Provider value={autoRouteWires}>
+                  <PartBoxesContext.Provider value={partBoxes}>
+                    <WireGeomContext.Provider value={reportWireGeom}>
+                      <CheckpointContext.Provider value={checkpointAction}>
+                        <ReactFlow
+                          colorMode={light ? 'light' : 'dark'}
+                          nodes={nodes}
+                          edges={edges}
+                          onNodesChange={onNodesChange}
+                          onEdgesChange={onEdgesChange}
+                          onConnect={onConnect}
+                          onReconnect={onReconnect}
+                          onNodeDoubleClick={onNodeDoubleClick}
+                          onNodeClick={(_event, node) => {
+                            if (
+                              node.type === 'junction' &&
+                              (node.data as { fromCrossing?: boolean } | undefined)
+                                ?.fromCrossing === true
+                            ) {
+                              unjoinCrossing(node.id)
                             }
-                            const isPart = (n: (typeof cur)[number]) =>
-                              n.type === 'device' || n.type === 'block'
-                            const collides = cur.some(
-                              (moved) =>
-                                dragged.has(moved.id) &&
-                                cur.some((o) => isPart(o) && !dragged.has(o.id) && hit(moved, o)),
-                            )
-                            if (!collides) return cur
-                            // overlap — snap every dragged part back to where it started
-                            return cur.map((n) => {
-                              const start = dragged.get(n.id)
-                              return start ? { ...n, position: start } : n
+                          }}
+                          onNodeContextMenu={(event, node) => {
+                            if (node.type !== 'device' && node.type !== 'block') return
+                            event.preventDefault()
+                            selectNodeById(node.id)
+                            setCanvasMenu({ x: event.clientX, y: event.clientY, kind: 'part' })
+                          }}
+                          onPaneContextMenu={(event) => {
+                            event.preventDefault()
+                            setCanvasMenu({
+                              x: event.clientX,
+                              y: event.clientY,
+                              kind: 'pane',
+                              flow: screenToFlowPosition({ x: event.clientX, y: event.clientY }),
                             })
-                          })
-                        }}
-                        nodeTypes={nodeTypes}
-                        edgeTypes={edgeTypes}
-                        nodesDraggable={tool === 'select'}
-                        nodesConnectable={tool !== 'meter'}
-                        // Click-to-connect is OUR gesture now (onWireClick, wire tool
-                        // only, with corner routing); React Flow's built-in one would
-                        // double-create — and it once let meter probes draw real wires.
-                        connectOnClick={false}
-                        connectionMode={ConnectionMode.Loose}
-                        // Desktop-style selection (S19-v3-69): LEFT-drag on empty canvas
-                        // draws a selection box (like desktop icons), so panning moves to
-                        // the middle/right mouse buttons. Touching the box counts —
-                        // SelectionMode.Partial — exactly how a desktop marquee behaves.
-                        // In lasso mode the wrapper owns the pointer, so both are off.
-                        selectionOnDrag={tool === 'select'}
-                        panOnDrag={tool === 'lasso' ? false : [1]}
-                        selectionMode={SelectionMode.Partial}
-                        // Windows-friendly multi-select: Ctrl+click (React Flow's default
-                        // is the Meta key); Shift+drag box-select is the built-in default.
-                        multiSelectionKeyCode={['Meta', 'Control']}
-                        // Deletion is OUR keybind now (editable, supports combos) — see
-                        // the keyboard-shortcuts effect above.
-                        deleteKeyCode={null}
-                        zoomOnDoubleClick={false}
-                        // Effectively unbounded zoom (React Flow defaults stop at 0.5×–2×):
-                        // the project's horizon runs from a full PC down to a transistor,
-                        // so the canvas must zoom six orders of magnitude either way.
-                        minZoom={0.001}
-                        maxZoom={1000}
-                        fitView
-                        proOptions={{ hideAttribution: true }}
-                        snapToGrid={snapToGrid}
-                        snapGrid={SNAP_GRID}
-                      >
-                        {/* Graph-paper grid: fine minor lines, with a bolder major line every 5th. */}
-                        <Background
-                          id="grid-minor"
-                          variant={BackgroundVariant.Lines}
-                          gap={4}
-                          lineWidth={0.5}
-                          color={`${gridColor}55`}
-                        />
-                        <Background
-                          id="grid-major"
-                          variant={BackgroundVariant.Lines}
-                          gap={20}
-                          lineWidth={1}
-                          color={gridColor}
-                        />
-                        {/* The drawing sheet (page frame + ISO zone grid + title block), behind parts. */}
-                        {showSheet ? (
-                          <SheetFrame
-                            settings={sheetSettings}
-                            projectName={project.name}
+                          }}
+                          onNodeDragStart={(_event, node) => {
+                            checkpointAction('move')
+                            dragStartPos.current = new Map(
+                              nodes
+                                .filter((n) => n.id === node.id || n.selected)
+                                .map((n) => [n.id, { x: n.position.x, y: n.position.y }]),
+                            )
+                          }}
+                          onNodeDragStop={(_event, node) => {
+                            if (node.type !== 'device' && node.type !== 'block') return
+                            setNodes((cur) => {
+                              const dragged = dragStartPos.current
+                              const box = (n: (typeof cur)[number]) => ({
+                                x: n.position.x,
+                                y: n.position.y,
+                                w: n.measured?.width ?? 88,
+                                h: n.measured?.height ?? 56,
+                              })
+                              const hit = (a: (typeof cur)[number], b: (typeof cur)[number]) => {
+                                const A = box(a)
+                                const B = box(b)
+                                const m = 6 // a little breathing room so parts never touch
+                                return (
+                                  A.x < B.x + B.w + m &&
+                                  A.x + A.w + m > B.x &&
+                                  A.y < B.y + B.h + m &&
+                                  A.y + A.h + m > B.y
+                                )
+                              }
+                              const isPart = (n: (typeof cur)[number]) =>
+                                n.type === 'device' || n.type === 'block'
+                              const collides = cur.some(
+                                (moved) =>
+                                  dragged.has(moved.id) &&
+                                  cur.some((o) => isPart(o) && !dragged.has(o.id) && hit(moved, o)),
+                              )
+                              if (!collides) return cur
+                              // overlap — snap every dragged part back to where it started
+                              return cur.map((n) => {
+                                const start = dragged.get(n.id)
+                                return start ? { ...n, position: start } : n
+                              })
+                            })
+                          }}
+                          nodeTypes={nodeTypes}
+                          edgeTypes={edgeTypes}
+                          nodesDraggable={tool === 'select'}
+                          nodesConnectable={tool !== 'meter'}
+                          // Click-to-connect is OUR gesture now (onWireClick, wire tool
+                          // only, with corner routing); React Flow's built-in one would
+                          // double-create — and it once let meter probes draw real wires.
+                          connectOnClick={false}
+                          connectionMode={ConnectionMode.Loose}
+                          // Desktop-style selection (S19-v3-69): LEFT-drag on empty canvas
+                          // draws a selection box (like desktop icons), so panning moves to
+                          // the middle/right mouse buttons. Touching the box counts —
+                          // SelectionMode.Partial — exactly how a desktop marquee behaves.
+                          // In lasso mode the wrapper owns the pointer, so both are off.
+                          selectionOnDrag={tool === 'select'}
+                          panOnDrag={tool === 'lasso' ? false : [1]}
+                          selectionMode={SelectionMode.Partial}
+                          // Windows-friendly multi-select: Ctrl+click (React Flow's default
+                          // is the Meta key); Shift+drag box-select is the built-in default.
+                          multiSelectionKeyCode={['Meta', 'Control']}
+                          // Deletion is OUR keybind now (editable, supports combos) — see
+                          // the keyboard-shortcuts effect above.
+                          deleteKeyCode={null}
+                          zoomOnDoubleClick={false}
+                          // Effectively unbounded zoom (React Flow defaults stop at 0.5×–2×):
+                          // the project's horizon runs from a full PC down to a transistor,
+                          // so the canvas must zoom six orders of magnitude either way.
+                          minZoom={0.001}
+                          maxZoom={1000}
+                          fitView
+                          proOptions={{ hideAttribution: true }}
+                          snapToGrid={snapToGrid}
+                          snapGrid={SNAP_GRID}
+                        >
+                          {/* Graph-paper grid: fine minor lines, with a bolder major line every 5th. */}
+                          <Background
+                            id="grid-minor"
+                            variant={BackgroundVariant.Lines}
+                            gap={4}
+                            lineWidth={0.5}
+                            color={`${gridColor}55`}
+                          />
+                          <Background
+                            id="grid-major"
+                            variant={BackgroundVariant.Lines}
+                            gap={20}
+                            lineWidth={1}
+                            color={gridColor}
+                          />
+                          {/* The drawing sheet (page frame + ISO zone grid + title block), behind parts. */}
+                          {showSheet ? (
+                            <SheetFrame
+                              settings={sheetSettings}
+                              projectName={project.name}
+                              light={light}
+                            />
+                          ) : null}
+                          {/* Coordinate-graph axes through the origin + the four quadrants. */}
+                          <CoordinateAxes light={light} />
+                          <Controls>
+                            <ControlButton
+                              onClick={() => setSnapToGrid((s) => !s)}
+                              title={
+                                snapToGrid
+                                  ? 'Snap to grid: ON — parts align to the grid (click for free placement)'
+                                  : 'Snap to grid: OFF — free placement (click to snap parts to the grid)'
+                              }
+                              style={
+                                snapToGrid
+                                  ? { background: THEME.accentBlue, color: THEME.textBright }
+                                  : undefined
+                              }
+                            >
+                              #
+                            </ControlButton>
+                            <ControlButton
+                              onClick={() => setAutoRouteWires((v) => !v)}
+                              title={
+                                autoRouteWires
+                                  ? 'Auto-route wires: ON — plain wires route as straight lines around the parts (click for straight point-to-point wires)'
+                                  : 'Auto-route wires: OFF — wires run straight, you route them by hand (click to auto-route them around the parts)'
+                              }
+                              style={
+                                autoRouteWires
+                                  ? { background: THEME.accentBlue, color: THEME.textBright }
+                                  : undefined
+                              }
+                            >
+                              ∟
+                            </ControlButton>
+                            <ControlButton
+                              onClick={zoomToSelection}
+                              title="Zoom to selection — frames the selected parts (fits all if none selected)"
+                            >
+                              ⊙
+                            </ControlButton>
+                          </Controls>
+                          <MeterProbes red={redProbe} black={blackProbe} />
+                          {/* Scope channel probes (S19-v3-77): one colored clip per
+                    voltage channel. Wire clamps show in the channel chips. */}
+                          {scopeOpen
+                            ? scopeProbes.map((p) => {
+                                if (p.kind !== 'terminal') return null
+                                // Color + CH number come from the probe's slot in the RESOLVED channel
+                                // list (what the traces and chips index), NOT its raw scopeProbes index —
+                                // an unresolved probe earlier in the list would otherwise shift this off,
+                                // so the on-canvas marker disagreed with the plotted trace. No channel
+                                // (the probe didn't resolve → no trace) ⇒ no marker.
+                                const ch = scopeChannels.findIndex(
+                                  (c) => c.key === scopeProbeKey(p),
+                                )
+                                if (ch < 0) return null
+                                return (
+                                  <ProbeMarker
+                                    key={scopeProbeKey(p)}
+                                    probe={{ nodeId: p.nodeId, handleId: p.handleId }}
+                                    color={
+                                      TRACE_COLORS[ch % TRACE_COLORS.length] ?? THEME.textMuted
+                                    }
+                                    label={`CH${ch + 1}`}
+                                  />
+                                )
+                              })
+                            : null}
+                          {pendingWire !== null ? (
+                            <PendingWirePreview
+                              pending={pendingWire}
+                              cursor={wireCursor}
+                              curved={wireStyle === 'curve'}
+                              curveRadius={wireCurveRadius}
+                            />
+                          ) : null}
+                          <WireCrossingsOverlay
+                            crossings={wireCrossings}
+                            onJoin={joinCrossing}
                             light={light}
                           />
-                        ) : null}
-                        {/* Coordinate-graph axes through the origin + the four quadrants. */}
-                        <CoordinateAxes light={light} />
-                        <Controls>
-                          <ControlButton
-                            onClick={() => setSnapToGrid((s) => !s)}
-                            title={
-                              snapToGrid
-                                ? 'Snap to grid: ON — parts align to the grid (click for free placement)'
-                                : 'Snap to grid: OFF — free placement (click to snap parts to the grid)'
-                            }
-                            style={
-                              snapToGrid
-                                ? { background: THEME.accentBlue, color: THEME.textBright }
-                                : undefined
-                            }
-                          >
-                            #
-                          </ControlButton>
-                          <ControlButton
-                            onClick={zoomToSelection}
-                            title="Zoom to selection — frames the selected parts (fits all if none selected)"
-                          >
-                            ⊙
-                          </ControlButton>
-                        </Controls>
-                        <MeterProbes red={redProbe} black={blackProbe} />
-                        {/* Scope channel probes (S19-v3-77): one colored clip per
-                    voltage channel. Wire clamps show in the channel chips. */}
-                        {scopeOpen
-                          ? scopeProbes.map((p) => {
-                              if (p.kind !== 'terminal') return null
-                              // Color + CH number come from the probe's slot in the RESOLVED channel
-                              // list (what the traces and chips index), NOT its raw scopeProbes index —
-                              // an unresolved probe earlier in the list would otherwise shift this off,
-                              // so the on-canvas marker disagreed with the plotted trace. No channel
-                              // (the probe didn't resolve → no trace) ⇒ no marker.
-                              const ch = scopeChannels.findIndex((c) => c.key === scopeProbeKey(p))
-                              if (ch < 0) return null
-                              return (
-                                <ProbeMarker
-                                  key={scopeProbeKey(p)}
-                                  probe={{ nodeId: p.nodeId, handleId: p.handleId }}
-                                  color={TRACE_COLORS[ch % TRACE_COLORS.length] ?? THEME.textMuted}
-                                  label={`CH${ch + 1}`}
-                                />
-                              )
-                            })
-                          : null}
-                        {pendingWire !== null ? (
-                          <PendingWirePreview
-                            pending={pendingWire}
-                            cursor={wireCursor}
-                            curved={wireStyle === 'curve'}
-                            curveRadius={wireCurveRadius}
-                          />
-                        ) : null}
-                        <WireCrossingsOverlay
-                          crossings={wireCrossings}
-                          onJoin={joinCrossing}
-                          light={light}
-                        />
-                      </ReactFlow>
-                    </CheckpointContext.Provider>
-                  </WireGeomContext.Provider>
-                </PartBoxesContext.Provider>
+                        </ReactFlow>
+                      </CheckpointContext.Provider>
+                    </WireGeomContext.Provider>
+                  </PartBoxesContext.Provider>
+                </AutoRouteContext.Provider>
               </FrontContext.Provider>
             </FrameEdgeContext.Provider>
           </LensContext.Provider>

@@ -92,9 +92,21 @@ export type BlockData = {
   edges: BlockInnerEdge[]
   ports: BlockPort[]
   /** A special on-canvas rendering for this block instead of the plain box. `seven_segment` draws a
-   *  figure-8 digit whose segments light from the block's seven inner `led_<a..g>` parts. Still a
-   *  normal block underneath: it flattens to those real LEDs for the solver. */
-  display?: 'seven_segment'
+   *  figure-8 digit whose segments light from the block's seven inner `led_<a..g>` parts;
+   *  `seven_segment_multi` draws `digits` such digits with a decimal point + comma between each pair.
+   *  Still a normal block underneath: it flattens to those real LED+resistor legs for the solver. */
+  display?: 'seven_segment' | 'seven_segment_multi'
+  /** For `seven_segment_multi`: how many figure-8 digits the face draws (with a point + comma between
+   *  each adjacent pair). The real LED+resistor hardware inside scales with this. */
+  digits?: number
+  /** For a `seven_segment` module whose LEDs live one level down inside a nested BARE display sub-block:
+   *  the sub-block's node id (e.g. `core`), so the face reads `<id>.<ledPath>.led_<seg>`. Absent ⇒ the
+   *  LEDs are inline at `<id>.led_<seg>` (the bare display itself). The multi-digit face always reads its
+   *  digits from `digit<d>` bare sub-blocks. */
+  ledPath?: string
+  /** An intrinsic on-canvas box size (px). Overrides the pin-count-derived sizing so a wide multi-digit
+   *  display face isn't squeezed into the default narrow box. Only the display blocks set it. */
+  size?: { width: number; height: number }
 }
 
 /** The minimal canvas shapes this module exchanges with App (React Flow-ish). */
@@ -157,14 +169,18 @@ export type PlacedPort = { port: BlockPort; side: BlockPort['side']; coord: numb
  * height and the busiest top/bottom side sets the width. Pure + recomputed every render — so a pin
  * always sits ON an edge: reassign its side and it simply re-places itself, never floating.
  */
-export function blockLayout(ports: BlockPort[]): {
+export function blockLayout(
+  ports: BlockPort[],
+  size?: { width: number; height: number },
+): {
   width: number
   height: number
   placed: PlacedPort[]
 } {
   // A hand-laid block (every pin carries an explicit offset — the built-ins) keeps its exact layout;
-  // a user-grouped block (no offsets) auto-distributes on the four edges, centered per side.
-  if (ports.length > 0 && ports.every((p) => typeof p.offset === 'number')) {
+  // a user-grouped block (no offsets) auto-distributes on the four edges, centered per side. A block
+  // with an intrinsic size (a display face) always auto-distributes within that fixed box.
+  if (!size && ports.length > 0 && ports.every((p) => typeof p.offset === 'number')) {
     const height = Math.max(BLOCK_MIN_H, Math.max(...ports.map((p) => p.offset ?? 0)) + PORT_PAD)
     return {
       width: BLOCK_MIN_W,
@@ -181,8 +197,8 @@ export function blockLayout(ports: BlockPort[]): {
   for (const p of ports) bySide[p.side].push(p)
   const vMax = Math.max(bySide.left.length, bySide.right.length)
   const hMax = Math.max(bySide.top.length, bySide.bottom.length)
-  const height = Math.max(BLOCK_MIN_H, vMax * PORT_SPACING + PORT_PAD)
-  const width = Math.max(BLOCK_MIN_W, hMax * PORT_SPACING + PORT_PAD)
+  const height = size?.height ?? Math.max(BLOCK_MIN_H, vMax * PORT_SPACING + PORT_PAD)
+  const width = size?.width ?? Math.max(BLOCK_MIN_W, hMax * PORT_SPACING + PORT_PAD)
   const placed: PlacedPort[] = []
   for (const side of ['left', 'right', 'top', 'bottom'] as const) {
     const list = bySide[side]

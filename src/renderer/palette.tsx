@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { DIGIT_DISPLAY_SIZES } from './builtin-blocks.ts'
 import { DeviceGlyph } from './symbols.tsx'
 import { THEME } from './theme.ts'
 
@@ -145,10 +146,23 @@ export const PARTS: { definition: string; label: string }[] = [
   { definition: 'logic_calculator_4bit', label: 'Calc ±' },
   { definition: 'logic_decoder_7seg', label: '7seg Dec' },
   { definition: 'display_seven_segment', label: '7-Seg' },
+  { definition: 'display_seven_segment_bare', label: '7-Seg Bare' },
+  // One palette item per size in DIGIT_DISPLAY_SIZES — edit that list to add/remove a display version.
+  // The shipped module (with resistors) and the bare raw version (LEDs only) of each.
+  ...DIGIT_DISPLAY_SIZES.map((n) => ({
+    definition: `display_seven_segment_${n}`,
+    label: `${n}-Digit`,
+  })),
+  ...DIGIT_DISPLAY_SIZES.map((n) => ({
+    definition: `display_seven_segment_bare_${n}`,
+    label: `${n}-Digit Bare`,
+  })),
   { definition: 'logic_sr_latch', label: 'SR Latch' },
   { definition: 'logic_d_latch', label: 'D Latch' },
   { definition: 'logic_d_flipflop', label: 'D Flip-Flop' },
   { definition: 'logic_register_4bit', label: '4-bit Reg' },
+  { definition: 'memory_sram_cell', label: 'SRAM Cell' },
+  { definition: 'memory_sram_word_4bit', label: 'SRAM 4-bit' },
   { definition: 'switch_spst_toggle', label: 'Switch' },
   { definition: 'switch_spst_momentary', label: 'Button' },
   { definition: 'switch_spdt', label: 'SPDT' },

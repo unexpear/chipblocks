@@ -67,15 +67,21 @@ export function findWireCrossings(geoms: Map<string, Point[]>, edges: WireMeta[]
   return out
 }
 
-/** Hollow markers at each un-joined crossing; clicking one joins the two wires. */
+/**
+ * Hollow markers at each un-joined crossing. On the canvas, clicking one joins the two wires.
+ * In the descend view it runs `readOnly` — the inside of a block is the real circuit shown
+ * read-only (you edit via Ungroup), so the dot just reads "crossing, NOT connected" with no join.
+ */
 export function WireCrossingsOverlay({
   crossings,
   onJoin,
   light,
+  readOnly = false,
 }: {
   crossings: WireCrossing[]
   onJoin: (crossing: WireCrossing) => void
   light: boolean
+  readOnly?: boolean
 }) {
   return (
     <ViewportPortal>
@@ -86,10 +92,15 @@ export function WireCrossingsOverlay({
           key={c.key}
           className="nodrag nopan"
           onClick={(event) => {
+            if (readOnly) return
             event.stopPropagation()
             onJoin(c)
           }}
-          title="These wires cross but are NOT connected (open dot). Click to JOIN them into one node."
+          title={
+            readOnly
+              ? 'These wires cross but are NOT connected (open dot) — the real inside of the block.'
+              : 'These wires cross but are NOT connected (open dot). Click to JOIN them into one node.'
+          }
           style={{
             position: 'absolute',
             transform: `translate(-50%, -50%) translate(${c.x}px, ${c.y}px)`,
@@ -98,7 +109,7 @@ export function WireCrossingsOverlay({
             borderRadius: '50%',
             background: light ? THEME.textBright : THEME.surfaceDeep,
             border: `2px solid ${light ? THEME.textMuted : THEME.textSoft}`,
-            cursor: 'pointer',
+            cursor: readOnly ? 'default' : 'pointer',
             pointerEvents: 'all',
             zIndex: 6,
           }}

@@ -17,6 +17,14 @@ import { isInternalNavigation } from './navigation.ts'
 // Reconstruct __dirname under ESM output (package.json is type: module).
 const moduleDir = dirname(fileURLToPath(import.meta.url))
 
+// Dev-only, env-gated: open a Chrome DevTools Protocol endpoint so the REAL window can be driven +
+// screenshotted over CDP for verification. No effect in production (the env var is never set there);
+// the switches must be appended before the app is ready.
+if (process.env.CHIP_DEBUG_PORT) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env.CHIP_DEBUG_PORT)
+  app.commandLine.appendSwitch('remote-allow-origins', '*')
+}
+
 // ---------------------------------------------------------------------------
 // Save / Load (S19-v3-52). The renderer holds the circuit; the main process
 // owns the file dialogs + disk I/O. Open validates HERE (a bad file gets a

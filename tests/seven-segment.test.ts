@@ -74,8 +74,9 @@ function ledCurrents(driven: string[]): Record<string, number> {
   )
   const solution = solveDCRobust(world)
   const out: Record<string, number> = {}
+  // The shipped display nests a bare display in its `core` sub-block, so its LEDs live one level down.
   for (const seg of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) {
-    out[seg] = Math.abs(solution.branches.get(`d.led_${seg}`) ?? 0)
+    out[seg] = Math.abs(solution.branches.get(`d.core.led_${seg}`) ?? 0)
   }
   return out
 }

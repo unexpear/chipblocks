@@ -63,6 +63,7 @@ export function PartPicker({
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: a modal backdrop click-to-close, standard
+    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click-to-close; Escape handled by the keydown handler
     <div
       onClick={onClose}
       style={{
@@ -167,6 +168,7 @@ export function PartPicker({
                 const active = i === selectedIndex
                 return (
                   // biome-ignore lint/a11y/noStaticElementInteractions: a selectable list row, keyboard handled at the dialog
+                  // biome-ignore lint/a11y/useKeyWithClickEvents: a selectable list row, keyboard handled at the dialog
                   <div
                     key={part.definition}
                     data-active={active}

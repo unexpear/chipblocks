@@ -114,9 +114,12 @@ export const OPAMP_BLOCK: BlockData = {
   ],
 }
 
-// Logic-process MOSFETs: lower thresholds than the discrete 2N7000 / BS250 power parts
-// (the cited defaults supply the ratings + thermal), tuned to the values proven to switch
-// cleanly in the CMOS inverter test — the transistors of a 5 V logic gate.
+// The gates' (and the SRAM's) transistors are REAL, specific discrete parts — the 2N7000 (NMOS) and
+// BS250 (PMOS), the classic TO-92 pair you build 5 V logic from. These pin each part's datasheet-derived
+// values (V_th 2.1 / −2.5 V, k 26 / 6.2 mA/V² — the SAME numbers part-defaults.ts derives from each
+// datasheet's I_D(on) point), so a gate's truth table falls out of those exact parts actually switching,
+// not a tuned fit. (A fabricated IC would use on-chip FETs in place of the TO-92 discretes — a later
+// fidelity step; the part number then becomes the cell, not the 2N7000.)
 const LOGIC_NMOS: Parameters = {
   ...defaultParameters('transistor_mosfet_nmos'),
   threshold_voltage: scalar(2.1, 'volt'),
@@ -916,7 +919,12 @@ const SEG_RESISTOR: Parameters = {
 const SEGMENT_IDS = ['a', 'b', 'c', 'd', 'e', 'f', 'g'] as const
 
 function sevenSegmentDisplay(): BlockData {
-  const nodes: BlockData['nodes'] = []
+  // The shipped module IS a real bare seven-segment display (the `core` sub-block) plus one
+  // current-limiting resistor per segment — descend to see exactly that. Each segment pin → its
+  // resistor → the bare display's matching segment pin.
+  const nodes: BlockData['nodes'] = [
+    { id: 'core', definition: 'block', x: 280, y: 0, block: bareSevenSegment() },
+  ]
   const edges: BlockData['edges'] = []
   const ports: BlockData['ports'] = []
   const leftSlot = { offset: 14 }
@@ -925,24 +933,70 @@ function sevenSegmentDisplay(): BlockData {
     nodes.push({
       id: `r_${seg}`,
       definition: 'resistor',
-      x: -220,
+      x: 0,
       y: i * 70,
       parameters: SEG_RESISTOR,
     })
+    edges.push({
+      id: `rl_${seg}`,
+      source: `r_${seg}`,
+      sourceHandle: 'terminal_b',
+      target: 'core',
+      targetHandle: `seg_${seg}`,
+    })
+    const onLeft = i < 4
+    const slot = onLeft ? leftSlot : rightSlot
+    ports.push({
+      id: `seg_${seg}`,
+      label: seg.toUpperCase(),
+      side: onLeft ? 'left' : 'right',
+      offset: slot.offset,
+      inner: { nodeId: `r_${seg}`, handleId: 'terminal_a' },
+    })
+    slot.offset += 18
+  })
+  ports.push({
+    id: 'common',
+    label: 'GND',
+    side: 'right',
+    offset: rightSlot.offset,
+    inner: { nodeId: 'core', handleId: 'common' },
+  })
+  return {
+    name: '7-Seg',
+    display: 'seven_segment',
+    ledPath: 'core',
+    origin: { x: 0, y: 0 },
+    nodes,
+    edges,
+    ports,
+  }
+}
+
+/** A single seven-segment digit — a real bare display behind seven current-limiting resistors. */
+export const SEVEN_SEGMENT_DISPLAY: BlockData = sevenSegmentDisplay()
+
+/**
+ * BARE SEVEN-SEGMENT DISPLAY — the REAL raw component, exactly like a seven-segment display you buy:
+ * seven LED segments (a–g) in the figure-8 on a shared common cathode, with its diffuser look but NO
+ * built-in resistors. You MUST add an external current-limiting resistor per segment — drive a segment
+ * straight off 5 V and the LED over-currents and dies, just like the real part. The shipped
+ * `display_seven_segment` is THIS plus the resistors (a safe drop-and-go module); this is the part that
+ * sits underneath it. Each segment pin connects straight to its LED's anode.
+ */
+function bareSevenSegment(): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const leftSlot = { offset: 14 }
+  const rightSlot = { offset: 14 }
+  SEGMENT_IDS.forEach((seg, i) => {
     nodes.push({
       id: `led_${seg}`,
       definition: 'led',
       x: 40,
       y: i * 70,
       parameters: defaultParameters('led'),
-    })
-    // segment input → resistor → LED anode; every cathode chains into the one common net
-    edges.push({
-      id: `rl_${seg}`,
-      source: `r_${seg}`,
-      sourceHandle: 'terminal_b',
-      target: `led_${seg}`,
-      targetHandle: 'anode',
     })
     const prev = SEGMENT_IDS[i - 1]
     if (prev) {
@@ -961,7 +1015,7 @@ function sevenSegmentDisplay(): BlockData {
       label: seg.toUpperCase(),
       side: onLeft ? 'left' : 'right',
       offset: slot.offset,
-      inner: { nodeId: `r_${seg}`, handleId: 'terminal_a' },
+      inner: { nodeId: `led_${seg}`, handleId: 'anode' },
     })
     slot.offset += 18
   })
@@ -972,11 +1026,154 @@ function sevenSegmentDisplay(): BlockData {
     offset: rightSlot.offset,
     inner: { nodeId: 'led_a', handleId: 'cathode' },
   })
-  return { name: '7-Seg', display: 'seven_segment', origin: { x: 0, y: 0 }, nodes, edges, ports }
+  return {
+    name: '7-Seg Bare',
+    display: 'seven_segment',
+    origin: { x: 0, y: 0 },
+    nodes,
+    edges,
+    ports,
+  }
 }
 
-/** A single seven-segment digit — seven real LED+resistor segments behind the figure-8 face. */
-export const SEVEN_SEGMENT_DISPLAY: BlockData = sevenSegmentDisplay()
+/** The bare seven-segment display — seven real LEDs, common cathode, NO resistors (add them externally). */
+export const SEVEN_SEGMENT_BARE: BlockData = bareSevenSegment()
+
+/**
+ * MULTI-DIGIT SEVEN-SEGMENT DISPLAY (parameterized) — `digitCount` figure-8 digits side by side, with a
+ * decimal point AND a comma between each adjacent pair, so it reads a number like 1.5 or 1,5 (US point
+ * / EU comma). It is REAL hardware exactly like a real seven-segment display: every segment, point, and
+ * comma is a genuine LED behind its own current-limiting resistor (330 Ω, ~9 mA off 5 V), all sharing
+ * ONE common cathode — the on-canvas face only READS each LED's solved lit-state, it does not fake it.
+ * Drive a segment's pin HIGH (with COMMON to ground) to light it. Flattens to 7·N + 2·(N−1) real
+ * LED+resistor legs; descend to see every one. Any digit count works — see DIGIT_DISPLAY_SIZES.
+ */
+export function multiDigitDisplay(digitCount: number, withResistors = true): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+
+  // Each digit IS a real bare seven-segment display (its own seven LEDs + common cathode); the commons
+  // chain onto one shared return. With resistors (the shipped module) a current-limiting resistor sits
+  // between each segment pin and the bare digit; bare, the pin connects straight to it.
+  for (let d = 0; d < digitCount; d++) {
+    nodes.push({
+      id: `digit${d}`,
+      definition: 'block',
+      x: d * 900,
+      y: 0,
+      block: bareSevenSegment(),
+    })
+    if (d > 0) {
+      edges.push({
+        id: `cc_d${d}`,
+        source: `digit${d - 1}`,
+        sourceHandle: 'common',
+        target: `digit${d}`,
+        targetHandle: 'common',
+      })
+    }
+    SEGMENT_IDS.forEach((seg, i) => {
+      const side = d % 2 === 0 ? 'top' : 'bottom'
+      if (withResistors) {
+        const rid = `r_d${d}_${seg}`
+        nodes.push({
+          id: rid,
+          definition: 'resistor',
+          x: d * 900 - 260,
+          y: i * 70,
+          parameters: SEG_RESISTOR,
+        })
+        edges.push({
+          id: `rl_d${d}_${seg}`,
+          source: rid,
+          sourceHandle: 'terminal_b',
+          target: `digit${d}`,
+          targetHandle: `seg_${seg}`,
+        })
+        ports.push({
+          id: `seg_d${d}_${seg}`,
+          label: `${d}${seg.toUpperCase()}`,
+          side,
+          inner: { nodeId: rid, handleId: 'terminal_a' },
+        })
+      } else {
+        ports.push({
+          id: `seg_d${d}_${seg}`,
+          label: `${d}${seg.toUpperCase()}`,
+          side,
+          inner: { nodeId: `digit${d}`, handleId: `seg_${seg}` },
+        })
+      }
+    })
+  }
+
+  // A decimal point (left edge) + a comma (right edge) between each adjacent pair — each its own LED
+  // (+ a resistor when shipped), cathode tied onto the shared common.
+  const addSeparator = (
+    ledId: string,
+    portId: string,
+    label: string,
+    side: 'left' | 'right',
+    x: number,
+    y: number,
+  ) => {
+    nodes.push({ id: ledId, definition: 'led', x, y, parameters: defaultParameters('led') })
+    edges.push({
+      id: `cc_${ledId}`,
+      source: ledId,
+      sourceHandle: 'cathode',
+      target: 'digit0',
+      targetHandle: 'common',
+    })
+    if (withResistors) {
+      const rid = `r_${ledId}`
+      nodes.push({ id: rid, definition: 'resistor', x: x - 240, y, parameters: SEG_RESISTOR })
+      edges.push({
+        id: `rl_${ledId}`,
+        source: rid,
+        sourceHandle: 'terminal_b',
+        target: ledId,
+        targetHandle: 'anode',
+      })
+      ports.push({ id: portId, label, side, inner: { nodeId: rid, handleId: 'terminal_a' } })
+    } else {
+      ports.push({ id: portId, label, side, inner: { nodeId: ledId, handleId: 'anode' } })
+    }
+  }
+  for (let s = 0; s < digitCount - 1; s++) {
+    addSeparator(`led_dp_${s}`, `dp_${s}`, `.${s}`, 'left', 2400 + s * 200, 0)
+    addSeparator(`led_comma_${s}`, `comma_${s}`, `,${s}`, 'right', 2400 + s * 200, 70)
+  }
+
+  ports.push({
+    id: 'common',
+    label: 'GND',
+    side: 'right',
+    inner: { nodeId: 'digit0', handleId: 'common' },
+  })
+
+  return {
+    name: withResistors ? `${digitCount}-Digit` : `${digitCount}-Digit Bare`,
+    display: 'seven_segment_multi',
+    digits: digitCount,
+    size: { width: digitCount * 110, height: 140 },
+    origin: { x: 0, y: 0 },
+    nodes,
+    edges,
+    ports,
+  }
+}
+
+/**
+ * Numeric display sizes shipped to the palette. EDIT THIS LIST to offer another size — any digit count
+ * works, and the builder, the on-canvas face, AND the real LED+resistor hardware inside all scale with
+ * it (a 6-digit version is genuinely 6×7 + 10 real LEDs, descend to verify).
+ */
+export const DIGIT_DISPLAY_SIZES = [3, 4, 6] as const
+
+/** The three-digit readout (the calculator's default) — real LED+resistor legs behind three figure-8s. */
+export const THREE_DIGIT_DISPLAY: BlockData = multiDigitDisplay(3)
 
 /**
  * BINARY → SEVEN-SEGMENT DECODER (hex) — turns a 4-bit number (D0..D3) into the seven segment lines
@@ -1394,6 +1591,124 @@ function dRegister(bits: number): BlockData {
 export const REGISTER_4BIT: BlockData = dRegister(4)
 
 /**
+ * SRAM BIT CELL (6T) — the static memory bit, the cell a CPU's CACHE is built from. Two CMOS
+ * inverters wired nose-to-tail (each drives the other's input) latch one bit on the complementary
+ * nodes Q / Q̄, and hold it with no clock for as long as the rails stay powered. Two NMOS ACCESS
+ * transistors, both gated by the WORD LINE (WL), connect Q / Q̄ to the two BIT LINES (BL, BL̄): raise
+ * WL and force the bit lines to WRITE; raise WL with the bit lines free to READ. Real all the way
+ * down — it flattens to six MOSFETs (two inverters + two access).
+ */
+export const SRAM_CELL_BLOCK: BlockData = {
+  name: 'SRAM',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'inv1', definition: 'block', x: 120, y: 60, block: INVERTER_BLOCK },
+    { id: 'inv2', definition: 'block', x: 400, y: 60, block: INVERTER_BLOCK },
+    { id: 'a1', definition: 'transistor_mosfet_nmos', x: 0, y: 220, parameters: LOGIC_NMOS },
+    { id: 'a2', definition: 'transistor_mosfet_nmos', x: 520, y: 220, parameters: LOGIC_NMOS },
+  ],
+  edges: [
+    // cross-couple: each inverter drives the other's input (Q = inv1.out, Q̄ = inv2.out)
+    { id: 'q_to_inv2', source: 'inv1', sourceHandle: 'out', target: 'inv2', targetHandle: 'in' },
+    { id: 'qb_to_inv1', source: 'inv2', sourceHandle: 'out', target: 'inv1', targetHandle: 'in' },
+    // shared rails between the two inverters
+    { id: 'vdd', source: 'inv1', sourceHandle: 'v_dd', target: 'inv2', targetHandle: 'v_dd' },
+    { id: 'gnd', source: 'inv1', sourceHandle: 'gnd', target: 'inv2', targetHandle: 'gnd' },
+    // access transistors: source on the storage node, gate on the shared word line
+    { id: 'a1_q', source: 'a1', sourceHandle: 'source', target: 'inv1', targetHandle: 'out' },
+    { id: 'a2_qb', source: 'a2', sourceHandle: 'source', target: 'inv2', targetHandle: 'out' },
+    { id: 'wl', source: 'a1', sourceHandle: 'gate', target: 'a2', targetHandle: 'gate' },
+  ],
+  ports: [
+    { id: 'wl', label: 'WL', side: 'left', offset: 14, inner: { nodeId: 'a1', handleId: 'gate' } },
+    { id: 'bl', label: 'BL', side: 'left', offset: 36, inner: { nodeId: 'a1', handleId: 'drain' } },
+    {
+      id: 'blb',
+      label: 'BLB',
+      side: 'left',
+      offset: 58,
+      inner: { nodeId: 'a2', handleId: 'drain' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 18,
+      inner: { nodeId: 'inv1', handleId: 'v_dd' },
+    },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'right',
+      offset: 40,
+      inner: { nodeId: 'inv1', handleId: 'gnd' },
+    },
+  ],
+}
+
+/**
+ * SRAM WORD — a row of `bits` SRAM cells sharing one WORD LINE and the supply rails, with each cell's
+ * BIT LINES (BL/BL̄) brought out per bit. Raise WL and drive the bit-line pairs to store a whole word
+ * at once; this is the row a memory's address decoder selects. Flattens to `bits`×6 real MOSFETs, so
+ * keep it small — a real cache is millions of these (the [[transistor-sim-scaling-wall]]).
+ */
+function sramWord(bits: number): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  for (let i = 0; i < bits; i++) {
+    nodes.push({ id: `bit${i}`, definition: 'block', x: i * 280, y: 0, block: SRAM_CELL_BLOCK })
+    ports.push({
+      id: `bl${i}`,
+      label: `BL${i}`,
+      side: 'top',
+      inner: { nodeId: `bit${i}`, handleId: 'bl' },
+    })
+    ports.push({
+      id: `blb${i}`,
+      label: `BLB${i}`,
+      side: 'bottom',
+      inner: { nodeId: `bit${i}`, handleId: 'blb' },
+    })
+    if (i > 0) {
+      edges.push({
+        id: `wl_${i}`,
+        source: `bit${i - 1}`,
+        sourceHandle: 'wl',
+        target: `bit${i}`,
+        targetHandle: 'wl',
+      })
+      edges.push({
+        id: `vdd_${i}`,
+        source: `bit${i - 1}`,
+        sourceHandle: 'v_dd',
+        target: `bit${i}`,
+        targetHandle: 'v_dd',
+      })
+      edges.push({
+        id: `gnd_${i}`,
+        source: `bit${i - 1}`,
+        sourceHandle: 'gnd',
+        target: `bit${i}`,
+        targetHandle: 'gnd',
+      })
+    }
+  }
+  ports.push({ id: 'wl', label: 'WL', side: 'left', inner: { nodeId: 'bit0', handleId: 'wl' } })
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    inner: { nodeId: 'bit0', handleId: 'v_dd' },
+  })
+  ports.push({ id: 'gnd', label: 'GND', side: 'right', inner: { nodeId: 'bit0', handleId: 'gnd' } })
+  return { name: `SRAM ${bits}b`, origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** A four-bit SRAM word — four 6T cells on a shared word line; stores one nibble. */
+export const SRAM_WORD_4BIT: BlockData = sramWord(4)
+
+/**
  * DARLINGTON pair — two NPN BJTs cascaded: the first's emitter drives the second's base, the
  * collectors tied. The composite acts as one transistor with β ≈ β1·β2 (a few thousand) and a
  * DOUBLED base-emitter drop (~1.3 V, two junctions). Flattens to the two real BJTs. Ports: the
@@ -1526,7 +1841,21 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   logic_d_latch: D_LATCH_BLOCK,
   logic_d_flipflop: D_FLIPFLOP_BLOCK,
   logic_register_4bit: REGISTER_4BIT,
+  memory_sram_cell: SRAM_CELL_BLOCK,
+  memory_sram_word_4bit: SRAM_WORD_4BIT,
   display_seven_segment: SEVEN_SEGMENT_DISPLAY,
+  display_seven_segment_bare: SEVEN_SEGMENT_BARE,
+  // Every multi-digit size in DIGIT_DISPLAY_SIZES — the shipped module (with resistors) and the bare
+  // raw version (LEDs only), both from the one parameterized generator.
+  ...Object.fromEntries(
+    DIGIT_DISPLAY_SIZES.map((n) => [`display_seven_segment_${n}`, multiDigitDisplay(n)]),
+  ),
+  ...Object.fromEntries(
+    DIGIT_DISPLAY_SIZES.map((n) => [
+      `display_seven_segment_bare_${n}`,
+      multiDigitDisplay(n, false),
+    ]),
+  ),
   darlington_npn: DARLINGTON_BLOCK,
   photo_darlington: PHOTO_DARLINGTON_BLOCK,
 }
