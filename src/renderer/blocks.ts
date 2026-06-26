@@ -302,7 +302,13 @@ export function groupSelection(
   // Selection bounding box → the block node's position and the port sides.
   const minX = Math.min(...inner.map((n) => n.position.x))
   const minY = Math.min(...inner.map((n) => n.position.y))
+  const maxX = Math.max(...inner.map((n) => n.position.x))
+  const maxY = Math.max(...inner.map((n) => n.position.y))
   const centerX = inner.reduce((s, n) => s + n.position.x, 0) / inner.length
+  const centerY = inner.reduce((s, n) => s + n.position.y, 0) / inner.length
+  // Half-extents normalize the side test so a wide-but-short selection doesn't shove every pin to top/bottom.
+  const halfW = (maxX - minX) / 2
+  const halfH = (maxY - minY) / 2
 
   // Ports: one per distinct INTERNAL terminal touched by a boundary wire.
   const ports: BlockPort[] = []
@@ -312,7 +318,13 @@ export function groupSelection(
     const existing = portByTerminal.get(key)
     if (existing) return existing
     const node = inner.find((n) => n.id === nodeId)
-    const side: 'left' | 'right' = (node?.position.x ?? centerX) <= centerX ? 'left' : 'right'
+    // Spread pins across all FOUR edges by where the terminal sits in the selection — each lands on the
+    // nearest edge of the bounding box (a part on top exits on the top edge, etc.), instead of every pin
+    // cramming onto left/right. Users can still drag any pin to another edge afterwards (onEditBlockPort).
+    const dx = ((node?.position.x ?? centerX) - centerX) / (halfW || 1)
+    const dy = ((node?.position.y ?? centerY) - centerY) / (halfH || 1)
+    const side: BlockPort['side'] =
+      Math.abs(dx) >= Math.abs(dy) ? (dx <= 0 ? 'left' : 'right') : dy <= 0 ? 'top' : 'bottom'
     const port: BlockPort = {
       id: `port_${ports.length + 1}`,
       label: `${nodeId} · ${handleId.replace(/_/g, ' ')}`,
@@ -334,13 +346,15 @@ export function groupSelection(
       : { ...edge, target: blockId, targetHandle: port.id }
   })
 
-  // Order the pins by their internal-terminal y, so blockLayout stacks each edge sensibly. Positions
-  // are computed at render (blockLayout), so a pin always lands centered on its edge — never floating.
-  ports.sort((a, b) => {
-    const ya = inner.find((n) => n.id === a.inner.nodeId)?.position.y ?? 0
-    const yb = inner.find((n) => n.id === b.inner.nodeId)?.position.y ?? 0
-    return ya - yb
-  })
+  // Order each edge's pins by position ALONG that edge (left/right by y, top/bottom by x), so blockLayout
+  // stacks them in the order they sit in the circuit — never floating or scrambled.
+  const alongCoord = (p: BlockPort) => {
+    const node = inner.find((n) => n.id === p.inner.nodeId)
+    return p.side === 'left' || p.side === 'right'
+      ? (node?.position.y ?? 0)
+      : (node?.position.x ?? 0)
+  }
+  ports.sort((a, b) => alongCoord(a) - alongCoord(b))
 
   const block: BlockData = {
     name,
