@@ -22,6 +22,10 @@ import type { Parameters } from './part-defaults.ts'
 export type PinKind = 'signal' | 'power_positive' | 'power_negative'
 /** Which edge of the block box a pin sits on — a real chip's perimeter (QFP-style). */
 export type PinSide = 'left' | 'right' | 'top' | 'bottom'
+
+/** A standard logic-gate symbol the block can wear on the canvas (IEEE distinctive shape). The block
+ *  still flattens to its real transistors for the solver — the shape is just the canonical logic face. */
+export type GateSymbol = 'and' | 'or' | 'nand' | 'nor' | 'xor' | 'xnor' | 'not' | 'buffer'
 /**
  * A pin's signal direction / drive type — the basis of the output-combining (driver-contention)
  * rules from real logic chips. The three OUTPUT kinds are push-pull (actively drives high AND low —
@@ -107,6 +111,10 @@ export type BlockData = {
   /** An intrinsic on-canvas box size (px). Overrides the pin-count-derived sizing so a wide multi-digit
    *  display face isn't squeezed into the default narrow box. Only the display blocks set it. */
   size?: { width: number; height: number }
+  /** Draw this block as a standard logic-gate symbol (the IEEE distinctive shape) instead of the plain
+   *  box — inputs left, output right, V+/GND top/bottom. Still flattens to its real inner parts for the
+   *  solver; the shape is only the on-canvas face (an OR can be built many ways — this is the logic face). */
+  symbol?: GateSymbol
 }
 
 /** The minimal canvas shapes this module exchanges with App (React Flow-ish). */

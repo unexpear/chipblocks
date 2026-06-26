@@ -1,6 +1,7 @@
 import { Handle, type NodeProps, Position } from '@xyflow/react'
 import { type CSSProperties, Fragment, useContext } from 'react'
 import { type BlockData, type BlockPort, blockLayout } from './blocks.ts'
+import { GateFace, gateLayout } from './gate-symbol.tsx'
 import { HealthContext } from './health.ts'
 import { THEME } from './theme.ts'
 
@@ -211,7 +212,10 @@ export function BlockNode({ id, data }: NodeProps) {
   const healthMap = useContext(HealthContext)
   const health = healthMap.get(id)
   if (!block) return null
-  const { width, height, placed } = blockLayout(block.ports, block.size)
+  // A logic gate wears its standard symbol (canonical pin layout); every other block keeps the box layout.
+  const { width, height, placed } = block.symbol
+    ? gateLayout(block.ports)
+    : blockLayout(block.ports, block.size)
   // A seven-segment display reads its inner LEDs' solved lit-state (namespaced after flatten).
   const readSeg = (key: string): LitSeg => {
     const h = healthMap.get(key)
@@ -254,19 +258,33 @@ export function BlockNode({ id, data }: NodeProps) {
         style={{
           position: 'absolute',
           inset: 0,
-          border: health?.failed
-            ? `1.5px solid ${THEME.statusDanger}`
-            : health?.warned
-              ? `1.5px solid ${THEME.statusWarn}`
-              : `1.5px solid ${THEME.textMuted}`,
+          border: block.symbol
+            ? 'none'
+            : health?.failed
+              ? `1.5px solid ${THEME.statusDanger}`
+              : health?.warned
+                ? `1.5px solid ${THEME.statusWarn}`
+                : `1.5px solid ${THEME.textMuted}`,
           borderRadius: 6,
-          background: THEME.surfacePanel,
+          background: block.symbol ? 'transparent' : THEME.surfacePanel,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
         }}
       >
-        {digitsMulti && sepsMulti ? (
+        {block.symbol ? (
+          <GateFace
+            symbol={block.symbol}
+            inputCoords={placed.filter((p) => p.side === 'left').map((p) => p.coord)}
+            stroke={
+              health?.failed
+                ? THEME.statusDanger
+                : health?.warned
+                  ? THEME.statusWarn
+                  : THEME.textPrimary
+            }
+          />
+        ) : digitsMulti && sepsMulti ? (
           <MultiDigitFace width={width} height={height} digits={digitsMulti} seps={sepsMulti} />
         ) : segments ? (
           <SevenSegmentFace width={width} height={height} segments={segments} />
@@ -286,6 +304,8 @@ export function BlockNode({ id, data }: NodeProps) {
               ? ' (− power)'
               : ''
         const text = `${look.glyph}${look.glyph && port.name ? ' ' : ''}${port.name ?? ''}`
+        // a gate wears only its power labels (V+/GND); the shape itself names the in/out pins
+        const showLabel = !block.symbol || port.id === 'v_dd' || port.id === 'gnd'
         return (
           <Fragment key={port.id}>
             <Handle
@@ -300,7 +320,7 @@ export function BlockNode({ id, data }: NodeProps) {
                 height: 9,
               }}
             />
-            {text ? (
+            {text && showLabel ? (
               <div
                 style={{
                   position: 'absolute',

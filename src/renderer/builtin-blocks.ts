@@ -140,6 +140,7 @@ const LOGIC_PMOS: Parameters = {
  */
 export const INVERTER_BLOCK: BlockData = {
   name: 'NOT',
+  symbol: 'not',
   origin: { x: 0, y: 0 },
   nodes: [
     { id: 'pmos', definition: 'transistor_mosfet_pmos', x: 120, y: 30, parameters: LOGIC_PMOS },
@@ -192,6 +193,7 @@ export const INVERTER_BLOCK: BlockData = {
  */
 export const NAND2_BLOCK: BlockData = {
   name: 'NAND',
+  symbol: 'nand',
   origin: { x: 0, y: 0 },
   nodes: [
     { id: 'p_a', definition: 'transistor_mosfet_pmos', x: 60, y: 30, parameters: LOGIC_PMOS },
@@ -252,6 +254,7 @@ export const NAND2_BLOCK: BlockData = {
  */
 export const NOR2_BLOCK: BlockData = {
   name: 'NOR',
+  symbol: 'nor',
   origin: { x: 0, y: 0 },
   nodes: [
     { id: 'p_a', definition: 'transistor_mosfet_pmos', x: 130, y: 30, parameters: LOGIC_PMOS },
@@ -313,6 +316,7 @@ export const NOR2_BLOCK: BlockData = {
  */
 export const AND_BLOCK: BlockData = {
   name: 'AND',
+  symbol: 'and',
   origin: { x: 0, y: 0 },
   nodes: [
     { id: 'nand', definition: 'block', x: 40, y: 60, block: NAND2_BLOCK },
@@ -354,6 +358,7 @@ export const AND_BLOCK: BlockData = {
  *  a NOR in front instead of a NAND. */
 export const OR_BLOCK: BlockData = {
   name: 'OR',
+  symbol: 'or',
   origin: { x: 0, y: 0 },
   nodes: [
     { id: 'nor', definition: 'block', x: 40, y: 60, block: NOR2_BLOCK },
@@ -398,6 +403,7 @@ export const OR_BLOCK: BlockData = {
  */
 export const XOR_BLOCK: BlockData = {
   name: 'XOR',
+  symbol: 'xor',
   origin: { x: 0, y: 0 },
   nodes: [
     { id: 'g1', definition: 'block', x: 40, y: 30, block: NAND2_BLOCK },
@@ -458,6 +464,7 @@ export const XOR_BLOCK: BlockData = {
  */
 export const XNOR_BLOCK: BlockData = {
   name: 'XNOR',
+  symbol: 'xnor',
   origin: { x: 0, y: 0 },
   nodes: [
     { id: 'xor', definition: 'block', x: 40, y: 60, block: XOR_BLOCK },
@@ -502,6 +509,7 @@ export const XNOR_BLOCK: BlockData = {
  */
 export const BUFFER_BLOCK: BlockData = {
   name: 'Buffer',
+  symbol: 'buffer',
   origin: { x: 0, y: 0 },
   nodes: [
     { id: 'inv1', definition: 'block', x: 40, y: 60, block: INVERTER_BLOCK },
