@@ -771,14 +771,30 @@ const isLogicFidelity = (n: Node): boolean => {
   return f === 'logic' || f === 'behaviour'
 }
 const ANALOG_PASSIVE = new Set(['power_source', 'ground', 'junction'])
+// A logic block's OUTPUT pins (it DRIVES these). Used to classify a logic↔analog boundary: an output
+// pin means the logic drives the analog; any other (input) pin means the analog drives the logic.
+const LOGIC_OUTPUT_HANDLES = new Set([
+  'out',
+  'q',
+  'qbar',
+  'q_bar',
+  'sum',
+  'carry',
+  'cout',
+  'c_out',
+  'carry_out',
+  'borrow',
+])
 
 /**
  * Mixed-fidelity solve — the hand-off (complexity-layer #3). A canvas with BOTH logic-tagged blocks and
  * real analog parts: the logic engine resolves the digital blocks to 0/1, and wherever a logic OUTPUT
  * drives a real analog load we splice in a real voltage source (0 or Vdd) at that wire, then run the full
  * analog solve on the rest. So a logic gate can drive a transistor stage or light an LED — the gate is
- * fast 0/1, the load is real physics, and the wire between carries an actual 5 V. (Analog→logic and
- * feedback across the boundary are the next refinements; today the logic side drives the analog side.)
+ * fast 0/1, the load is real physics, and the wire between carries an actual 5 V. BOTH directions work:
+ * an analog node driving a logic INPUT is read back as a 0/1 (a virtual source in the logic view), and
+ * the two solves ITERATE so each side sees the other's boundary values — combinational mixing settles in
+ * a couple of passes (feedback loops are capped).
  */
 function solveCanvasMixed(
   nodeList: Node[],
@@ -789,11 +805,6 @@ function solveCanvasMixed(
 ): ReturnType<typeof solveCanvas> {
   const nodeById = new Map(nodeList.map((n) => [n.id, n]))
   const logicIds = new Set(nodeList.filter(isLogicFidelity).map((n) => n.id))
-  const logic = simulateLogic(
-    nodeList as unknown as BlockNodeLike[],
-    edgeList as unknown as BlockEdgeLike[],
-    state,
-  )
   let vdd = 5
   for (const n of nodeList) {
     const data = n.data as DeviceNodeData
@@ -813,50 +824,142 @@ function solveCanvasMixed(
     const def = (nodeById.get(id)?.data as DeviceNodeData | undefined)?.definition
     return def !== undefined && !ANALOG_PASSIVE.has(def)
   }
-  const boundaryNodes: Node[] = []
-  const analogEdges: Edge[] = []
+  // Classify each logic↔real-analog boundary by the logic pin's ROLE: an OUTPUT pin → the logic DRIVES
+  // the analog (inject its 0/Vdd as a source); any other (input) pin → the analog DRIVES the logic (read
+  // its level back as a 0/1). Then ITERATE the two solves so each side sees the other's boundary values —
+  // a couple of passes settle combinational mixing (feedback loops are capped).
+  type MixBoundary = {
+    id: string
+    logicId: string
+    logicHandle: string
+    analogId: string
+    analogHandle: string
+    output: boolean
+  }
+  const boundaries: MixBoundary[] = []
   for (const e of edgeList) {
     const sL = logicIds.has(e.source)
     const tL = logicIds.has(e.target)
-    if (sL && tL) continue // internal to the logic domain — the logic engine owns it
-    if (!sL && !tL) {
-      analogEdges.push(e) // internal to the analog domain (incl. a source feeding analog)
-      continue
-    }
-    // one logic end, one not. A source/ground feeding a logic pin is a digital input the logic engine
-    // already reads — drop that wire from the analog solve. Only a logic pin meeting a REAL load crosses.
-    if (!isRealLoad(sL ? e.target : e.source)) continue
-    const v = logic.value(sL ? e.source : e.target, (sL ? e.sourceHandle : e.targetHandle) ?? '')
-    if (v === undefined) continue // logic side undriven (analog→logic) — not handled yet
-    const bsId = `__bs_${e.id}`
-    boundaryNodes.push({
-      id: bsId,
-      type: 'device',
-      position: { x: 0, y: 0 },
-      data: { definition: 'power_source', label: '', parameters: supply(v ? vdd : 0) },
-    } as Node)
-    analogEdges.push(
-      (sL
-        ? { ...e, source: bsId, sourceHandle: 'terminal_positive' }
-        : { ...e, target: bsId, targetHandle: 'terminal_positive' }) as Edge,
-    )
-    if (ground) {
-      analogEdges.push({
-        id: `__bsg_${e.id}`,
-        type: 'net',
-        source: bsId,
-        sourceHandle: 'terminal_negative',
-        target: ground.id,
-        targetHandle: 'reference_terminal',
-      } as Edge)
-    }
+    if (sL === tL) continue
+    const analogId = sL ? e.target : e.source
+    if (!isRealLoad(analogId)) continue
+    const logicHandle = (sL ? e.sourceHandle : e.targetHandle) ?? ''
+    boundaries.push({
+      id: e.id,
+      logicId: sL ? e.source : e.target,
+      logicHandle,
+      analogId,
+      analogHandle: (sL ? e.targetHandle : e.sourceHandle) ?? '',
+      output: LOGIC_OUTPUT_HANDLES.has(logicHandle.toLowerCase()),
+    })
   }
-  const solved = solveCanvas(
-    [...nodeList.filter((n) => !logicIds.has(n.id)), ...boundaryNodes],
-    analogEdges,
-    projectAmbientC,
-    routedGeoms,
+  const reverse = boundaries.filter((b) => !b.output) // analog → logic INPUT
+  const reverseIds = new Set(reverse.map((b) => b.id))
+
+  // analog→logic boundary id → the 0/1 the analog side currently drives into the logic.
+  const atl = new Map<string, boolean>()
+  let logic = simulateLogic(
+    nodeList as unknown as BlockNodeLike[],
+    edgeList as unknown as BlockEdgeLike[],
+    state,
   )
+  let solved = solveCanvas([], [], projectAmbientC, routedGeoms)
+  for (let iter = 0; ; iter++) {
+    // LOGIC VIEW: a virtual 0/Vdd source at each analog→logic boundary (so the logic input reads the
+    // analog level), with the original boundary wire removed.
+    const vsNodes: Node[] = []
+    const vsEdges: Edge[] = []
+    for (const b of reverse) {
+      const vsId = `__vs_${b.id}`
+      vsNodes.push({
+        id: vsId,
+        type: 'device',
+        position: { x: 0, y: 0 },
+        data: {
+          definition: 'power_source',
+          label: '',
+          parameters: supply(atl.get(b.id) ? vdd : 0),
+        },
+      } as Node)
+      vsEdges.push({
+        id: `__vse_${b.id}`,
+        type: 'net',
+        source: vsId,
+        sourceHandle: 'terminal_positive',
+        target: b.logicId,
+        targetHandle: b.logicHandle,
+      } as Edge)
+      if (ground) {
+        vsEdges.push({
+          id: `__vsg_${b.id}`,
+          type: 'net',
+          source: vsId,
+          sourceHandle: 'terminal_negative',
+          target: ground.id,
+          targetHandle: 'reference_terminal',
+        } as Edge)
+      }
+    }
+    logic = simulateLogic(
+      [...nodeList, ...vsNodes] as unknown as BlockNodeLike[],
+      [...edgeList.filter((e) => !reverseIds.has(e.id)), ...vsEdges] as unknown as BlockEdgeLike[],
+      state,
+    )
+    // ANALOG CANVAS: logic blocks removed; a real source at each logic→analog boundary (the logic
+    // output's 0/Vdd); analog→logic wires dropped (the analog part drives its own pin, read below).
+    const boundaryNodes: Node[] = []
+    const analogEdges: Edge[] = []
+    for (const e of edgeList) {
+      const sL = logicIds.has(e.source)
+      const tL = logicIds.has(e.target)
+      if (sL && tL) continue
+      if (!sL && !tL) {
+        analogEdges.push(e)
+        continue
+      }
+      if (!isRealLoad(sL ? e.target : e.source)) continue // logic↔passive (source/ground): drop
+      if (reverseIds.has(e.id)) continue // analog→logic: read after, don't inject
+      const v = logic.value(sL ? e.source : e.target, (sL ? e.sourceHandle : e.targetHandle) ?? '')
+      const bsId = `__bs_${e.id}`
+      boundaryNodes.push({
+        id: bsId,
+        type: 'device',
+        position: { x: 0, y: 0 },
+        data: { definition: 'power_source', label: '', parameters: supply(v ? vdd : 0) },
+      } as Node)
+      analogEdges.push(
+        (sL
+          ? { ...e, source: bsId, sourceHandle: 'terminal_positive' }
+          : { ...e, target: bsId, targetHandle: 'terminal_positive' }) as Edge,
+      )
+      if (ground) {
+        analogEdges.push({
+          id: `__bsg_${e.id}`,
+          type: 'net',
+          source: bsId,
+          sourceHandle: 'terminal_negative',
+          target: ground.id,
+          targetHandle: 'reference_terminal',
+        } as Edge)
+      }
+    }
+    solved = solveCanvas(
+      [...nodeList.filter((n) => !logicIds.has(n.id)), ...boundaryNodes],
+      analogEdges,
+      projectAmbientC,
+      routedGeoms,
+    )
+    // READ the analog level at each analog→logic boundary → next round's virtual-source bits.
+    const next = new Map<string, boolean>()
+    for (const b of reverse) {
+      const av = solved.terminalVolts.get(`${b.analogId}/${b.analogHandle}`)
+      if (av !== undefined) next.set(b.id, av >= vdd / 2)
+    }
+    const settled = next.size === atl.size && [...next].every(([k, v]) => atl.get(k) === v)
+    atl.clear()
+    for (const [k, v] of next) atl.set(k, v)
+    if (settled || reverse.length === 0 || iter >= 4) break
+  }
   // The digital side's own port voltages (0/Vdd), so the logic blocks read out too.
   const terminalVolts = new Map(solved.terminalVolts)
   for (const n of nodeList) {
@@ -3804,6 +3907,112 @@ function Canvas({ project }: { project: ProjectChoice }) {
           reset: step(false, true),
           hold0: step(false, false),
         })
+      },
+      handoffReverseProbe() {
+        // DEV (verify reverse hand-off): a TRANSISTOR inverter (analog) drives a LOGIC NOT gate's input.
+        // The logic gate must read the analog level as 0/1 → logicOut = NOT(NOT(in)) = in.
+        const supply = (v: number) => ({
+          nominal_voltage: { value: { kind: 'scalar', amount: v, unit: 'volt' } },
+          internal_resistance: { value: { kind: 'scalar', amount: 0, unit: 'ohm' } },
+        })
+        const build = (srcV: number) => {
+          const nodes = [
+            {
+              id: 'T',
+              type: 'block',
+              position: { x: 280, y: 180 },
+              data: { definition: 'block', label: 'INVt', block: BUILTIN_BLOCKS.logic_not },
+            },
+            {
+              id: 'N',
+              type: 'block',
+              position: { x: 480, y: 180 },
+              data: {
+                definition: 'block',
+                label: 'NOTl',
+                block: BUILTIN_BLOCKS.logic_not,
+                fidelity: 'logic',
+              },
+            },
+            {
+              id: 'vin',
+              type: 'device',
+              position: { x: 80, y: 180 },
+              data: { definition: 'power_source', label: 'in', parameters: supply(srcV) },
+            },
+            {
+              id: 'vp',
+              type: 'device',
+              position: { x: 80, y: 60 },
+              data: { definition: 'power_source', label: 'V+', parameters: supply(5) },
+            },
+            {
+              id: 'g',
+              type: 'device',
+              position: { x: 80, y: 340 },
+              data: { definition: 'ground', label: 'GND' },
+            },
+          ]
+          const edges = [
+            {
+              id: 'win',
+              source: 'vin',
+              sourceHandle: 'terminal_positive',
+              target: 'T',
+              targetHandle: 'in',
+            },
+            {
+              id: 'wpT',
+              source: 'vp',
+              sourceHandle: 'terminal_positive',
+              target: 'T',
+              targetHandle: 'v_dd',
+            },
+            {
+              id: 'wgT',
+              source: 'T',
+              sourceHandle: 'gnd',
+              target: 'g',
+              targetHandle: 'reference_terminal',
+            },
+            { id: 'chain', source: 'T', sourceHandle: 'out', target: 'N', targetHandle: 'in' },
+            {
+              id: 'wpN',
+              source: 'vp',
+              sourceHandle: 'terminal_positive',
+              target: 'N',
+              targetHandle: 'v_dd',
+            },
+            {
+              id: 'wgN',
+              source: 'N',
+              sourceHandle: 'gnd',
+              target: 'g',
+              targetHandle: 'reference_terminal',
+            },
+            {
+              id: 'winn',
+              source: 'vin',
+              sourceHandle: 'terminal_negative',
+              target: 'g',
+              targetHandle: 'reference_terminal',
+            },
+            {
+              id: 'wpn',
+              source: 'vp',
+              sourceHandle: 'terminal_negative',
+              target: 'g',
+              targetHandle: 'reference_terminal',
+            },
+          ]
+          const solved = solveCanvasDispatch(nodes as unknown as Node[], edges as unknown as Edge[])
+          const r = (k: string) => {
+            const v = solved.terminalVolts.get(k)
+            return v === undefined ? null : Math.round(v)
+          }
+          return { transistorOut: r('T/out'), logicOut: r('N/out') }
+        }
+        return JSON.stringify({ in_5: build(5), in_0: build(0) })
       },
       handoffProbe() {
         // DEV (verify hand-off #3): a LOGIC and-gate drives a TRANSISTOR inverter across one wire; read
