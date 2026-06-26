@@ -411,5 +411,100 @@ export function routeAllWires(
       (Math.abs(b.from.x - b.to.x) + Math.abs(b.from.y - b.to.y)),
   )
   for (const w of order) out.set(w.id, routeOne(w.from, w.to))
-  return out
+  // Neatness pass: spread the parallel runs that share a channel onto evenly-spaced tracks (the step that
+  // makes the batch read as organized rather than a bundle of overlapping wires). nudgeRoutes is hoisted.
+  const ids = [...out.keys()]
+  const nudged = nudgeRoutes(
+    ids.map((id) => out.get(id) ?? []),
+    { gap: Math.max(6, Math.round(G / 2)) },
+  )
+  const result = new Map<string, Pt[]>()
+  ids.forEach((wid, i) => {
+    result.set(wid, nudged[i] ?? out.get(wid) ?? [])
+  })
+  return result
+}
+
+type NudgeSeg = { path: number; i: number; coord: number; lo: number; hi: number }
+
+/**
+ * NUDGING pass — the neatness step from orthogonal connector routing (see AUTO-ROUTER-RESEARCH.md). Takes
+ * a batch of already-routed orthogonal paths and SPREADS the parallel runs that share a channel onto
+ * evenly-spaced tracks, centered on the bundle, so wires stop stacking on top of each other (the thing
+ * that makes routing read as "organized"). Only INTERIOR segments move — never the two pin endpoints —
+ * and shifting a run is pure geometry: move its two corners to the new track coordinate and the
+ * perpendicular connectors stretch to follow, so every path stays orthogonal. One pass per axis.
+ */
+export function nudgeRoutes(paths: Pt[][], opts: { gap?: number; tol?: number } = {}): Pt[][] {
+  const gap = opts.gap ?? 8
+  const tol = opts.tol ?? 1
+  const out = paths.map((p) => p.map((pt) => ({ x: pt.x, y: pt.y })))
+  // Collect the INTERIOR segments on one axis — never i=0 or the last segment (those touch the real pins).
+  const collect = (horiz: boolean): NudgeSeg[] => {
+    const segs: NudgeSeg[] = []
+    out.forEach((p, pi) => {
+      for (let i = 1; i <= p.length - 3; i++) {
+        const a = p[i] as Pt
+        const b = p[i + 1] as Pt
+        if (horiz && a.y === b.y && a.x !== b.x)
+          segs.push({ path: pi, i, coord: a.y, lo: Math.min(a.x, b.x), hi: Math.max(a.x, b.x) })
+        else if (!horiz && a.x === b.x && a.y !== b.y)
+          segs.push({ path: pi, i, coord: a.x, lo: Math.min(a.y, b.y), hi: Math.max(a.y, b.y) })
+      }
+    })
+    return segs
+  }
+  const nudgeAxis = (horiz: boolean) => {
+    const segs = collect(horiz)
+    // Union-find segments that share a track (same coord within tol AND overlapping extent) into bundles.
+    const parent = segs.map((_, i) => i)
+    const find = (x: number): number => {
+      let r = x
+      while (parent[r] !== r) r = parent[r] as number
+      let c = x
+      while (parent[c] !== r) {
+        const n = parent[c] as number
+        parent[c] = r
+        c = n
+      }
+      return r
+    }
+    for (let i = 0; i < segs.length; i++) {
+      for (let j = i + 1; j < segs.length; j++) {
+        const a = segs[i] as NudgeSeg
+        const b = segs[j] as NudgeSeg
+        if (Math.abs(a.coord - b.coord) <= tol && a.lo < b.hi - tol && b.lo < a.hi - tol)
+          parent[find(i)] = find(j)
+      }
+    }
+    const bundles = new Map<number, number[]>()
+    segs.forEach((_, i) => {
+      const r = find(i)
+      const arr = bundles.get(r)
+      if (arr) arr.push(i)
+      else bundles.set(r, [i])
+    })
+    for (const idxs of bundles.values()) {
+      if (idxs.length < 2) continue
+      const base = idxs.reduce((s, i) => s + (segs[i] as NudgeSeg).coord, 0) / idxs.length
+      idxs.sort((a, b) => (segs[a] as NudgeSeg).path - (segs[b] as NudgeSeg).path)
+      idxs.forEach((idx, k) => {
+        const s = segs[idx] as NudgeSeg
+        const target = base + (k - (idxs.length - 1) / 2) * gap
+        const p = out[s.path] as Pt[]
+        const a = p[s.i] as Pt
+        const b = p[s.i + 1] as Pt
+        if (horiz) {
+          a.y = target
+          b.y = target
+        } else {
+          a.x = target
+          b.x = target
+        }
+      })
+    }
+  }
+  nudgeAxis(true)
+  nudgeAxis(false)
+  return out.map((p) => simplifyPath(p))
 }
