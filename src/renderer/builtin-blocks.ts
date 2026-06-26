@@ -987,6 +987,110 @@ function bcdAdderChain(digits: number): BlockData {
 export const BCD_ADDER_10: BlockData = bcdAdderChain(10)
 
 /**
+ * Brick ③a — a controlled BCD nine's-complementer for one digit. SUB=0 passes the digit straight
+ * through; SUB=1 outputs 9 − digit. Subtraction A − B is then A + ninescomp(B) + 1 (ten's complement),
+ * so the very same adder does both add and subtract. Pure gates:
+ *   o0 = d0 XOR sub;  o1 = d1;  o2 = d2 XOR (sub AND d1);  o3 = sub ? NOR(d3,d2,d1) : d3.
+ */
+function bcdComplementerDigit(): BlockData {
+  const node = (
+    id: string,
+    block: BlockData,
+    x: number,
+    y: number,
+  ): BlockData['nodes'][number] => ({
+    id,
+    definition: 'block',
+    x,
+    y,
+    block,
+  })
+  const edge = (
+    id: string,
+    s: string,
+    sh: string,
+    t: string,
+    th: string,
+  ): BlockData['edges'][number] => ({
+    id,
+    source: s,
+    sourceHandle: sh,
+    target: t,
+    targetHandle: th,
+  })
+  const nodes: BlockData['nodes'] = [
+    node('x0', XOR_BLOCK, 40, 30),
+    node('notsub', INVERTER_BLOCK, 40, 180),
+    node('buf1', BUFFER_BLOCK, 40, 330),
+    node('and2', AND_BLOCK, 40, 480),
+    node('x2', XOR_BLOCK, 320, 480),
+    node('ordd', OR_BLOCK, 40, 630),
+    node('nor3', NOR2_BLOCK, 320, 630),
+    node('a3a', AND_BLOCK, 40, 780),
+    node('a3b', AND_BLOCK, 320, 780),
+    node('or3', OR_BLOCK, 600, 780),
+  ]
+  const powered = ['notsub', 'buf1', 'and2', 'x2', 'ordd', 'nor3', 'a3a', 'a3b', 'or3']
+  const edges: BlockData['edges'] = [
+    // sub fans out (anchored at x0.b): NOT sub, the AND for o2, the AND for o3's complement branch
+    edge('sub1', 'x0', 'b', 'notsub', 'in'),
+    edge('sub2', 'x0', 'b', 'and2', 'a'),
+    edge('sub3', 'x0', 'b', 'a3b', 'a'),
+    // d1 fans out (anchored at buf1.in): the o2 AND, the o3 NOR
+    edge('d1a', 'buf1', 'in', 'and2', 'b'),
+    edge('d1b', 'buf1', 'in', 'nor3', 'b'),
+    // d2 fans out (anchored at x2.a): the o3 OR-term
+    edge('d2a', 'x2', 'a', 'ordd', 'b'),
+    // d3 fans out (anchored at ordd.a): the o3 pass-through AND
+    edge('d3a', 'ordd', 'a', 'a3a', 'b'),
+    // internal logic
+    edge('i1', 'notsub', 'out', 'a3a', 'a'), // o3 pass branch = notsub AND d3
+    edge('i2', 'and2', 'out', 'x2', 'b'), // o2 = d2 XOR (sub AND d1)
+    edge('i3', 'ordd', 'out', 'nor3', 'a'), // NOR(d3|d2, d1) = comp3
+    edge('i4', 'nor3', 'out', 'a3b', 'b'), // o3 comp branch = sub AND comp3
+    edge('i5', 'a3a', 'out', 'or3', 'a'),
+    edge('i6', 'a3b', 'out', 'or3', 'b'),
+    // shared V+ / GND from x0 to every other gate
+    ...powered.map((n, k) => edge(`vdd${k}`, 'x0', 'v_dd', n, 'v_dd')),
+    ...powered.map((n, k) => edge(`gnd${k}`, 'x0', 'gnd', n, 'gnd')),
+  ]
+  const ports: BlockData['ports'] = [
+    { id: 'd0', label: 'D0', side: 'left', offset: 14, inner: { nodeId: 'x0', handleId: 'a' } },
+    { id: 'd1', label: 'D1', side: 'left', offset: 32, inner: { nodeId: 'buf1', handleId: 'in' } },
+    { id: 'd2', label: 'D2', side: 'left', offset: 50, inner: { nodeId: 'x2', handleId: 'a' } },
+    { id: 'd3', label: 'D3', side: 'left', offset: 68, inner: { nodeId: 'ordd', handleId: 'a' } },
+    { id: 'sub', label: 'SUB', side: 'left', offset: 86, inner: { nodeId: 'x0', handleId: 'b' } },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 104,
+      inner: { nodeId: 'x0', handleId: 'gnd' },
+    },
+    { id: 'o0', label: 'O0', side: 'right', offset: 14, inner: { nodeId: 'x0', handleId: 'out' } },
+    {
+      id: 'o1',
+      label: 'O1',
+      side: 'right',
+      offset: 32,
+      inner: { nodeId: 'buf1', handleId: 'out' },
+    },
+    { id: 'o2', label: 'O2', side: 'right', offset: 50, inner: { nodeId: 'x2', handleId: 'out' } },
+    { id: 'o3', label: 'O3', side: 'right', offset: 68, inner: { nodeId: 'or3', handleId: 'out' } },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 86,
+      inner: { nodeId: 'x0', handleId: 'v_dd' },
+    },
+  ]
+  return { name: 'BCD 9s-Comp', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+export const BCD_COMPLEMENTER_DIGIT: BlockData = bcdComplementerDigit()
+
+/**
  * ADDER / SUBTRACTOR (N-bit) — the heart of a calculator: a ripple-carry adder that can also
  * SUBTRACT. Each B bit first passes through an XOR with a shared SUB control line, and SUB also
  * drives the lowest carry-in. SUB=0 leaves B alone with Cin=0 (A + B); SUB=1 inverts every B bit and
