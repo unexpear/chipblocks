@@ -1780,6 +1780,95 @@ function binaryToSevenSegment(): BlockData {
 export const HEX_DECODER_7SEG: BlockData = binaryToSevenSegment()
 
 /**
+ * Brick ⑧ — the calculator's decoder bank: one hex→7-seg decoder per digit (0-9 read the same as hex
+ * 0-9). Takes the 40-bit BCD result and turns it into 70 segment lines — seg_<a..g>_<0..9> — ready to
+ * drive ten seven-segment displays. Digit d's four bits (d=0 is the ones place) feed decoder d; that
+ * decoder's a..g lines become this bank's seg_*_d outputs. Pure logic; the logic→display hand-off lights
+ * the real LEDs downstream.
+ */
+function bcdDecoderBank(digits: number): BlockData {
+  const node = (
+    id: string,
+    block: BlockData,
+    x: number,
+    y: number,
+  ): BlockData['nodes'][number] => ({
+    id,
+    definition: 'block',
+    x,
+    y,
+    block,
+  })
+  const edge = (
+    id: string,
+    s: string,
+    sh: string,
+    t: string,
+    th: string,
+  ): BlockData['edges'][number] => ({
+    id,
+    source: s,
+    sourceHandle: sh,
+    target: t,
+    targetHandle: th,
+  })
+  const nodes: BlockData['nodes'] = Array.from({ length: digits }, (_, d) =>
+    node(`dec${d}`, HEX_DECODER_7SEG, d * 420, 30),
+  )
+  const edges: BlockData['edges'] = []
+  for (let d = 1; d < digits; d++) {
+    edges.push(edge(`vdd${d}`, 'dec0', 'v_dd', `dec${d}`, 'v_dd'))
+    edges.push(edge(`gnd${d}`, 'dec0', 'gnd', `dec${d}`, 'gnd'))
+  }
+  const ports: BlockData['ports'] = []
+  let left = 14
+  for (let d = 0; d < digits; d++) {
+    for (let i = 0; i < 4; i++) {
+      ports.push({
+        id: `d${d * 4 + i}`,
+        label: `D${d}.${i}`,
+        side: 'left',
+        offset: left,
+        inner: { nodeId: `dec${d}`, handleId: `d${i}` },
+      })
+      left += 18
+    }
+  }
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'dec0', handleId: 'gnd' },
+  })
+  const segs = ['a', 'b', 'c', 'd', 'e', 'f', 'g']
+  let right = 14
+  for (let d = 0; d < digits; d++) {
+    for (const s of segs) {
+      ports.push({
+        id: `seg_${s}_${d}`,
+        label: `${s.toUpperCase()}${d}`,
+        side: 'right',
+        offset: right,
+        inner: { nodeId: `dec${d}`, handleId: `seg_${s}` },
+      })
+      right += 18
+    }
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'dec0', handleId: 'v_dd' },
+  })
+  return { name: `${digits}-digit Decoder`, origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The calculator's 10-digit display decoder: 40 BCD bits in, 70 segment lines out (seg_<a..g>_<0..9>). */
+export const BCD_DECODER_10: BlockData = bcdDecoderBank(10)
+
+/**
  * SR LATCH — the first SEQUENTIAL element, two cross-coupled NOR gates. Each gate's output
  * feeds the other's input, and that feedback is where a circuit stops being a pure function of
  * its inputs and starts REMEMBERING. S=1 sets Q high; R=1 resets it low; S=R=0 holds whatever
