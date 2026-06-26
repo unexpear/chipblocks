@@ -113,6 +113,11 @@ const posToDir = (p: Position | undefined): Dir =>
  *  wires cross — the wire knows its own rendered geometry; App collects them all. */
 export const WireGeomContext = createContext<(id: string, points: Point[]) => void>(() => {})
 
+/** GLOBAL auto-route (the congestion-aware engine): App routes the whole batch on one grid and publishes
+ *  each wire's path here. A wire prefers its global path (spread into clean lanes) over self-routing; the
+ *  endpoints it reports back are still the real pins, so App's route map keyed on endpoints converges. */
+export const GlobalRoutesContext = createContext<Map<string, Point[]> | null>(null)
+
 /** Optional, visual-only dull net colour per edge id (empty when colour-coding is off). App computes it
  *  from the nets; the wire tints its stroke so connected wires share a colour and crossings differ. */
 export const WireColorContext = createContext<Map<string, string>>(new Map())
@@ -180,6 +185,7 @@ export function NetEdge({
   const partBoxes = useContext(PartBoxesContext)
   const autoRoute = useContext(AutoRouteContext)
   const reportGeom = useContext(WireGeomContext)
+  const globalRoutes = useContext(GlobalRoutesContext)
   const netStroke = useContext(WireColorContext).get(id)
   const checkpointAction = useContext(CheckpointContext)
   // Timeline playback: this wire's values at the played-back instant (null = steady).
@@ -209,8 +215,12 @@ export function NetEdge({
   // A plain wire (no hand-dropped corners) auto-routes orthogonally AROUND the parts when the auto-router
   // is on (the descend view); otherwise it stays the straight segment the user drew on the canvas.
   const laneRaw = data?.lane
+  // The GLOBAL router's path for this wire (App routed the whole batch together). Use its MIDDLE corners
+  // with the CURRENT pin endpoints, so the wire always meets the real pins even if the route map lags a
+  // pin move by a frame. When present it wins over the per-wire self-router (which only sees one wire).
+  const globalPath = waypoints.length === 0 && autoRoute ? (globalRoutes?.get(id) ?? null) : null
   const autoCorners: Point[] =
-    waypoints.length === 0 && autoRoute
+    waypoints.length === 0 && autoRoute && !globalPath
       ? orthogonalRoute(
           { x: sourceX, y: sourceY },
           posToDir(sourcePosition),
@@ -226,12 +236,14 @@ export function NetEdge({
   const routePoints: Point[] =
     waypoints.length > 0
       ? [{ x: sourceX, y: sourceY }, ...waypoints, { x: targetX, y: targetY }]
-      : autoCorners.length > 0
-        ? [{ x: sourceX, y: sourceY }, ...autoCorners, { x: targetX, y: targetY }]
-        : [
-            { x: sourceX, y: sourceY },
-            { x: targetX, y: targetY },
-          ]
+      : globalPath && globalPath.length >= 2
+        ? [{ x: sourceX, y: sourceY }, ...globalPath.slice(1, -1), { x: targetX, y: targetY }]
+        : autoCorners.length > 0
+          ? [{ x: sourceX, y: sourceY }, ...autoCorners, { x: targetX, y: targetY }]
+          : [
+              { x: sourceX, y: sourceY },
+              { x: targetX, y: targetY },
+            ]
   const sweep = typeof data?.curveRadius === 'number' ? data.curveRadius : undefined
   const curved = data?.curved === true && waypoints.length > 0
   // Straight orthogonal wire (or a hand-curved one). Crossings are marked by the open dot, not a hop.
