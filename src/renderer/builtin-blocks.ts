@@ -1214,6 +1214,71 @@ function bcdAddSubtract(digits: number): BlockData {
 export const BCD_ALU_10: BlockData = bcdAddSubtract(10)
 
 /**
+ * The calculator's single-digit ALU CELL: one controlled nine's-complementer feeding one BCD digit-adder
+ * — A ± B for ONE decimal digit, with a carry in/out, so a row of these TILES into the full adder/
+ * subtractor (see tileRow) instead of being one 120-pin mega-block. Pins are placed for clean tiling:
+ * carry CIN on the left, COUT on the right (the ripple runs straight along the row); A/B/SUB on top (the
+ * input bus), the sum digit + rails on the bottom (toward the displays). Same circuit as one slice of
+ * BCD_ALU_10, but as a real placeable cell. Pins carry no offsets, so they auto-spread on their edges.
+ */
+function bcdAluCell(): BlockData {
+  const node = (
+    id: string,
+    block: BlockData,
+    x: number,
+    y: number,
+  ): BlockData['nodes'][number] => ({ id, definition: 'block', x, y, block })
+  const edge = (
+    id: string,
+    s: string,
+    sh: string,
+    t: string,
+    th: string,
+  ): BlockData['edges'][number] => ({
+    id,
+    source: s,
+    sourceHandle: sh,
+    target: t,
+    targetHandle: th,
+  })
+  const nodes: BlockData['nodes'] = [
+    node('comp', BCD_COMPLEMENTER_DIGIT, 40, 30),
+    node('add', BCD_ADDER_BLOCK, 360, 30),
+  ]
+  const edges: BlockData['edges'] = [
+    edge('cb0', 'comp', 'o0', 'add', 'b0'),
+    edge('cb1', 'comp', 'o1', 'add', 'b1'),
+    edge('cb2', 'comp', 'o2', 'add', 'b2'),
+    edge('cb3', 'comp', 'o3', 'add', 'b3'),
+    edge('vdd', 'add', 'v_dd', 'comp', 'v_dd'),
+    edge('gnd', 'add', 'gnd', 'comp', 'gnd'),
+  ]
+  const ports: BlockData['ports'] = [
+    { id: 'cin', label: 'Cin', side: 'left', inner: { nodeId: 'add', handleId: 'cin' } },
+    { id: 'cout', label: 'Cout', side: 'right', inner: { nodeId: 'add', handleId: 'cout' } },
+    { id: 'a0', label: 'A0', side: 'top', inner: { nodeId: 'add', handleId: 'a0' } },
+    { id: 'a1', label: 'A1', side: 'top', inner: { nodeId: 'add', handleId: 'a1' } },
+    { id: 'a2', label: 'A2', side: 'top', inner: { nodeId: 'add', handleId: 'a2' } },
+    { id: 'a3', label: 'A3', side: 'top', inner: { nodeId: 'add', handleId: 'a3' } },
+    { id: 'b0', label: 'B0', side: 'top', inner: { nodeId: 'comp', handleId: 'd0' } },
+    { id: 'b1', label: 'B1', side: 'top', inner: { nodeId: 'comp', handleId: 'd1' } },
+    { id: 'b2', label: 'B2', side: 'top', inner: { nodeId: 'comp', handleId: 'd2' } },
+    { id: 'b3', label: 'B3', side: 'top', inner: { nodeId: 'comp', handleId: 'd3' } },
+    { id: 'sub', label: 'SUB', side: 'top', inner: { nodeId: 'comp', handleId: 'sub' } },
+    { id: 's0', label: 'S0', side: 'bottom', inner: { nodeId: 'add', handleId: 's0' } },
+    { id: 's1', label: 'S1', side: 'bottom', inner: { nodeId: 'add', handleId: 's1' } },
+    { id: 's2', label: 'S2', side: 'bottom', inner: { nodeId: 'add', handleId: 's2' } },
+    { id: 's3', label: 'S3', side: 'bottom', inner: { nodeId: 'add', handleId: 's3' } },
+    { id: 'v_dd', label: 'V+', side: 'bottom', inner: { nodeId: 'add', handleId: 'v_dd' } },
+    { id: 'gnd', label: 'GND', side: 'bottom', inner: { nodeId: 'add', handleId: 'gnd' } },
+  ]
+  return { name: 'BCD ALU Cell', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** One placeable digit-slice of the calculator's ALU — tile ten in a row to get BCD_ALU_10, cleanly. */
+export const BCD_ALU_CELL: BlockData = bcdAluCell()
+
+/**
  * ADDER / SUBTRACTOR (N-bit) — the heart of a calculator: a ripple-carry adder that can also
  * SUBTRACT. Each B bit first passes through an XOR with a shared SUB control line, and SUB also
  * drives the lowest carry-in. SUB=0 leaves B alone with Cin=0 (A + B); SUB=1 inverts every B bit and
@@ -2382,7 +2447,13 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   logic_adder_2bit: RIPPLE_CARRY_2BIT,
   logic_adder_4bit: RIPPLE_CARRY_4BIT,
   logic_calculator_4bit: CALCULATOR_4BIT,
+  logic_bcd_adder: BCD_ADDER_BLOCK,
+  logic_bcd_adder_10: BCD_ADDER_10,
+  logic_bcd_complementer: BCD_COMPLEMENTER_DIGIT,
+  logic_bcd_alu_10: BCD_ALU_10,
+  logic_bcd_alu_cell: BCD_ALU_CELL,
   logic_decoder_7seg: HEX_DECODER_7SEG,
+  logic_bcd_decoder_10: BCD_DECODER_10,
   logic_sr_latch: SR_LATCH_BLOCK,
   logic_d_latch: D_LATCH_BLOCK,
   logic_d_flipflop: D_FLIPFLOP_BLOCK,
