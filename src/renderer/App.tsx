@@ -773,7 +773,10 @@ function solveCanvasDispatch(
   projectAmbientC?: number,
   routedGeoms?: Map<string, Point[]>,
 ): ReturnType<typeof solveCanvas> {
-  const anyLogic = nodeList.some((n) => (n.data as DeviceNodeData).fidelity === 'logic')
+  const anyLogic = nodeList.some((n) => {
+    const f = (n.data as DeviceNodeData).fidelity
+    return f === 'logic' || f === 'behaviour'
+  })
   return anyLogic
     ? solveCanvasLogic(nodeList, edgeList, projectAmbientC, routedGeoms)
     : solveCanvas(nodeList, edgeList, projectAmbientC, routedGeoms)
@@ -3548,6 +3551,21 @@ function Canvas({ project }: { project: ProjectChoice }) {
       select(id: string) {
         setNodes((cur) => cur.map((n) => ({ ...n, selected: n.id === id })))
       },
+      dropBlock(key: string, id: string) {
+        const block = BUILTIN_BLOCKS[key]
+        if (!block) return
+        setNodes((cur) =>
+          [
+            ...cur.filter((n) => n.id !== id),
+            {
+              id,
+              type: 'block',
+              position: { x: 420, y: 240 },
+              data: { definition: 'block', label: block.name, block },
+            } as Node,
+          ].map((n) => ({ ...n, selected: n.id === id })),
+        )
+      },
       showSram() {
         checkpointAction('dev: show sram')
         const supplyParams = {
@@ -5128,6 +5146,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
             ) : selectedBlock && selectedNode ? (
               <BlockInspector
                 ports={selectedBlock.ports}
+                block={selectedBlock}
                 available={availableTerminals}
                 fidelity={(selectedNode.data as DeviceNodeData).fidelity ?? 'transistor'}
                 onFidelity={(f) => onSetFidelity(selectedNode.id, f)}

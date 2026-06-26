@@ -1883,7 +1883,7 @@ export function terminalsOf(
 /** Simulation fidelity for a block (the complexity-layer system). 'transistor' = the full analog
  *  per-MOSFET solve (default); 'logic' = the fast 0/1 logic engine. A generated 'behaviour' model is a
  *  later layer. The block is the SAME circuit either way — this only picks how detailed the math runs. */
-export type Fidelity = 'transistor' | 'logic'
+export type Fidelity = 'transistor' | 'logic' | 'behaviour'
 
 export type DeviceNodeData = {
   definition: string
