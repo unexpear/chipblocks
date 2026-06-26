@@ -567,6 +567,23 @@ export function bubbleBlockHealth<T extends { failed?: boolean; note?: string }>
  * pairs for every block on the canvas (recursing into nested blocks is not
  * needed — only top-level ports are probeable handles).
  */
+/** Resolve a block port to the REAL flattened terminal it maps to, DESCENDING through nested sub-blocks
+ *  (e.g. AND.out → its inverter sub-block's out → that inverter's pmos drain). The flatten namespaces
+ *  nested ids the same way (`a.b.c`), so the resolved key lines up with the world instance's terminal. */
+function resolveBlockPortTerminal(block: BlockData, handleId: string, prefix: string): string {
+  const port = block.ports.find((p) => p.id === handleId)
+  if (!port) return `${prefix}/${handleId}`
+  const inner = block.nodes.find((n) => n.id === port.inner.nodeId)
+  if (inner?.block) {
+    return resolveBlockPortTerminal(
+      inner.block,
+      port.inner.handleId,
+      `${prefix}.${port.inner.nodeId}`,
+    )
+  }
+  return `${prefix}.${port.inner.nodeId}/${port.inner.handleId}`
+}
+
 export function blockPortAliases(nodes: CanvasNodeLike[]): { outer: string; inner: string }[] {
   const aliases: { outer: string; inner: string }[] = []
   for (const node of nodes) {
@@ -575,7 +592,7 @@ export function blockPortAliases(nodes: CanvasNodeLike[]): { outer: string; inne
     for (const port of block.ports) {
       aliases.push({
         outer: `${node.id}/${port.id}`,
-        inner: `${node.id}.${port.inner.nodeId}/${port.inner.handleId}`,
+        inner: resolveBlockPortTerminal(block, port.id, node.id),
       })
     }
   }
