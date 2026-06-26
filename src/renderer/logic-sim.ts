@@ -60,8 +60,17 @@ function sourceIsHigh(params: Parameters | undefined): boolean {
 /**
  * Evaluate a canvas of digital blocks as 0/1 logic. Flattens to gates (not transistors), discovers
  * the nets, seeds the ones driven by sources/ground, then sweeps the gates until everything settles.
+ *
+ * `state` (optional) makes it SEQUENTIAL: a held net→bit map the caller persists across solves. A
+ * feedback loop (a latch's cross-coupled outputs) is seeded from it so the loop HOLDS its stored bit
+ * instead of going undefined, and the settled result is written back — so a latch holds its value, and a
+ * clocked flip-flop / register updates when its clock is toggled and the canvas re-solved.
  */
-export function simulateLogic(nodes: CanvasNodeLike[], edges: CanvasEdgeLike[]): LogicResult {
+export function simulateLogic(
+  nodes: CanvasNodeLike[],
+  edges: CanvasEdgeLike[],
+  state?: Map<string, boolean>,
+): LogicResult {
   const flat = flattenBlocks(nodes, edges, isLogicGate)
 
   // Union-find over terminals → nets (which terminals are wired together).
@@ -119,8 +128,13 @@ export function simulateLogic(nodes: CanvasNodeLike[], edges: CanvasEdgeLike[]):
   // Sweep the gates until nothing changes: combinational logic settles in ≤ depth sweeps; a feedback
   // loop either settles or trips the cap (→ settled=false) instead of spinning forever.
   const value = new Map(fixed)
+  // Sequential seed: give feedback nets their held bit (a latch can't start without one); a source-driven
+  // (fixed) net always wins, so real inputs still override the stored state.
+  if (state) {
+    for (const [net, bit] of state) if (!value.has(net)) value.set(net, bit)
+  }
   let settled = true
-  const maxSweeps = gates.length + 2
+  const maxSweeps = gates.length * 2 + 2
   for (let sweep = 0; ; sweep++) {
     let changed = false
     for (const g of gates) {
@@ -131,11 +145,24 @@ export function simulateLogic(nodes: CanvasNodeLike[], edges: CanvasEdgeLike[]):
         changed = true
       }
     }
-    if (!changed) break
+    if (!changed) {
+      // Settled — unless a feedback loop never started (its output is still undriven, with no held
+      // state to seed it). Kick one to a deterministic 0 (a real latch powers up to SOME state) and
+      // keep sweeping; the latch resolves from there.
+      const stuck = gates.find((g) => !value.has(g.out))
+      if (stuck === undefined) break
+      value.set(stuck.out, false)
+      changed = true
+    }
     if (sweep >= maxSweeps) {
       settled = false
       break
     }
+  }
+
+  // Persist the settled bits so the next solve holds this state (the memory in a latch / flip-flop).
+  if (state) {
+    for (const [net, bit] of value) state.set(net, bit)
   }
 
   return {
@@ -165,6 +192,7 @@ export function digitalSeed(
   nodes: CanvasNodeLike[],
   edges: CanvasEdgeLike[],
   world: World,
+  state?: Map<string, boolean>,
 ): Map<string, number> | undefined {
   const gateFlat = flattenBlocks(nodes, edges, isLogicGate)
   const gates = gateFlat.nodes.filter(
@@ -172,7 +200,7 @@ export function digitalSeed(
   )
   if (gates.length === 0) return undefined
 
-  const logic = simulateLogic(nodes, edges)
+  const logic = simulateLogic(nodes, edges, state)
   // Vdd: the strongest supply on the canvas (digital logic swings 0..Vdd); default the CMOS-ish 5 V.
   let vdd = 5
   for (const node of nodes) {

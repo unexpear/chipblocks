@@ -697,12 +697,14 @@ function solveCanvasLogic(
   edgeList: Edge[],
   projectAmbientC?: number,
   routedGeoms?: Map<string, Point[]>,
+  state?: Map<string, boolean>,
 ): ReturnType<typeof solveCanvas> {
   const { world, leadAliases } = canvasWorld(nodeList, edgeList, routedGeoms)
   const seed = digitalSeed(
     nodeList as unknown as BlockNodeLike[],
     edgeList as unknown as BlockEdgeLike[],
     world,
+    state,
   )
   if (seed === undefined) return solveCanvas(nodeList, edgeList, projectAmbientC, routedGeoms)
   const solution: Solution = {
@@ -783,12 +785,14 @@ function solveCanvasMixed(
   edgeList: Edge[],
   projectAmbientC?: number,
   routedGeoms?: Map<string, Point[]>,
+  state?: Map<string, boolean>,
 ): ReturnType<typeof solveCanvas> {
   const nodeById = new Map(nodeList.map((n) => [n.id, n]))
   const logicIds = new Set(nodeList.filter(isLogicFidelity).map((n) => n.id))
   const logic = simulateLogic(
     nodeList as unknown as BlockNodeLike[],
     edgeList as unknown as BlockEdgeLike[],
+    state,
   )
   let vdd = 5
   for (const n of nodeList) {
@@ -896,6 +900,7 @@ function solveCanvasDispatch(
   edgeList: Edge[],
   projectAmbientC?: number,
   routedGeoms?: Map<string, Point[]>,
+  state?: Map<string, boolean>,
 ): ReturnType<typeof solveCanvas> {
   if (!nodeList.some(isLogicFidelity)) {
     return solveCanvas(nodeList, edgeList, projectAmbientC, routedGeoms)
@@ -904,8 +909,8 @@ function solveCanvasDispatch(
     (n) => !isLogicFidelity(n) && !ANALOG_PASSIVE.has((n.data as DeviceNodeData).definition),
   )
   return hasAnalogLoad
-    ? solveCanvasMixed(nodeList, edgeList, projectAmbientC, routedGeoms)
-    : solveCanvasLogic(nodeList, edgeList, projectAmbientC, routedGeoms)
+    ? solveCanvasMixed(nodeList, edgeList, projectAmbientC, routedGeoms, state)
+    : solveCanvasLogic(nodeList, edgeList, projectAmbientC, routedGeoms, state)
 }
 
 /** The logic high/low threshold (≈ Vcc/2) for the tri-state enable check — half the largest power
@@ -1510,6 +1515,10 @@ function Canvas({ project }: { project: ProjectChoice }) {
   wireGeomsRef.current = wireGeoms
   const autoRouteWiresRef = useRef(autoRouteWires)
   autoRouteWiresRef.current = autoRouteWires
+  // Sequential logic: the held bit of every latch / flip-flop, persisted across re-solves so state stays
+  // put — toggling a clock source + re-solving advances it. Keyed by net, so a different circuit's nets
+  // simply don't match (no stale seeding).
+  const logicStateRef = useRef(new Map<string, boolean>())
 
   // The live re-solve: rebuild + solve the canvas, then push the new wire currents
   // AND the new part health. Stable identity (only setters in deps).
@@ -1518,7 +1527,13 @@ function Canvas({ project }: { project: ProjectChoice }) {
       // When auto-routing is on, hand the solve each wire's actual routed path so its resistance is
       // the routed length, not the straight-line distance (closes the draw-but-don't-measure gap).
       const routed = autoRouteWiresRef.current ? wireGeomsRef.current : undefined
-      const solved = solveCanvasDispatch(nodeList, edgeList, projectAmbientRef.current, routed)
+      const solved = solveCanvasDispatch(
+        nodeList,
+        edgeList,
+        projectAmbientRef.current,
+        routed,
+        logicStateRef.current,
+      )
       setEdges(solved.edges)
       setHealth(solved.health)
       setReadings(solved.readings)
@@ -3672,6 +3687,120 @@ function Canvas({ project }: { project: ProjectChoice }) {
           logic_1_0: run(0, true),
           transistor_1_1: run(5, false),
           transistor_1_0: run(0, false),
+        })
+      },
+      sequentialProbe() {
+        // DEV (verify sequential): an SR latch tagged logic, driven set/hold/reset/hold through a
+        // persistent state map (like reSolve's). Q must HOLD between sets — stored state across solves.
+        const supply = (v: number) => ({
+          nominal_voltage: { value: { kind: 'scalar', amount: v, unit: 'volt' } },
+          internal_resistance: { value: { kind: 'scalar', amount: 0, unit: 'ohm' } },
+        })
+        const state = new Map<string, boolean>()
+        const step = (sHigh: boolean, rHigh: boolean) => {
+          const nodes = [
+            {
+              id: 'L',
+              type: 'block',
+              position: { x: 300, y: 180 },
+              data: {
+                definition: 'block',
+                label: 'SR',
+                block: BUILTIN_BLOCKS.logic_sr_latch,
+                fidelity: 'logic',
+              },
+            },
+            {
+              id: 'g',
+              type: 'device',
+              position: { x: 80, y: 340 },
+              data: { definition: 'ground', label: 'GND' },
+            },
+            {
+              id: 'vs',
+              type: 'device',
+              position: { x: 80, y: 220 },
+              data: { definition: 'power_source', label: 'S', parameters: supply(sHigh ? 5 : 0) },
+            },
+            {
+              id: 'vr',
+              type: 'device',
+              position: { x: 80, y: 120 },
+              data: { definition: 'power_source', label: 'R', parameters: supply(rHigh ? 5 : 0) },
+            },
+            {
+              id: 'vp',
+              type: 'device',
+              position: { x: 80, y: 40 },
+              data: { definition: 'power_source', label: 'V+', parameters: supply(5) },
+            },
+          ]
+          const edges = [
+            {
+              id: 'es',
+              source: 'vs',
+              sourceHandle: 'terminal_positive',
+              target: 'L',
+              targetHandle: 's',
+            },
+            {
+              id: 'er',
+              source: 'vr',
+              sourceHandle: 'terminal_positive',
+              target: 'L',
+              targetHandle: 'r',
+            },
+            {
+              id: 'ep',
+              source: 'vp',
+              sourceHandle: 'terminal_positive',
+              target: 'L',
+              targetHandle: 'v_dd',
+            },
+            {
+              id: 'eg',
+              source: 'L',
+              sourceHandle: 'gnd',
+              target: 'g',
+              targetHandle: 'reference_terminal',
+            },
+            {
+              id: 'esn',
+              source: 'vs',
+              sourceHandle: 'terminal_negative',
+              target: 'g',
+              targetHandle: 'reference_terminal',
+            },
+            {
+              id: 'ern',
+              source: 'vr',
+              sourceHandle: 'terminal_negative',
+              target: 'g',
+              targetHandle: 'reference_terminal',
+            },
+            {
+              id: 'epn',
+              source: 'vp',
+              sourceHandle: 'terminal_negative',
+              target: 'g',
+              targetHandle: 'reference_terminal',
+            },
+          ]
+          const solved = solveCanvasDispatch(
+            nodes as unknown as Node[],
+            edges as unknown as Edge[],
+            undefined,
+            undefined,
+            state,
+          )
+          const q = solved.terminalVolts.get('L/q')
+          return q === undefined ? null : Math.round(q)
+        }
+        return JSON.stringify({
+          set: step(true, false),
+          hold1: step(false, false),
+          reset: step(false, true),
+          hold0: step(false, false),
         })
       },
       handoffProbe() {
