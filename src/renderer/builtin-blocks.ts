@@ -765,6 +765,116 @@ export const RIPPLE_CARRY_2BIT: BlockData = rippleCarryAdder(2)
 export const RIPPLE_CARRY_4BIT: BlockData = rippleCarryAdder(4)
 
 /**
+ * BCD single-digit adder — brick ① of the decimal calculator. Adds two BCD digits A, B (each 0–9) plus a
+ * carry-in the REAL way: a 4-bit binary add, then the decimal "+6 correction" when the binary sum exceeds
+ * 9 — so 7 + 5 reads 12 (digit 2, carry 1), not the binary 0xC. Built from two 4-bit adders + three
+ * correction gates; descend to the gates, descend again to the transistors.
+ *   correction = Cout₁ OR (S3 AND (S2 OR S1));  digit = binary-sum + (correction ? 6 : 0);  carry = correction.
+ */
+function bcdDigitAdder(): BlockData {
+  const nodes: BlockData['nodes'] = [
+    { id: 'add1', definition: 'block', x: 40, y: 30, block: RIPPLE_CARRY_4BIT },
+    { id: 'or1', definition: 'block', x: 460, y: 30, block: OR_BLOCK },
+    { id: 'and1', definition: 'block', x: 680, y: 30, block: AND_BLOCK },
+    { id: 'or2', definition: 'block', x: 900, y: 30, block: OR_BLOCK },
+    { id: 'add2', definition: 'block', x: 40, y: 440, block: RIPPLE_CARRY_4BIT },
+  ]
+  const edges: BlockData['edges'] = [
+    // correction = Cout₁ OR (S3 AND (S2 OR S1))
+    { id: 'c1', source: 'add1', sourceHandle: 's2', target: 'or1', targetHandle: 'a' },
+    { id: 'c2', source: 'add1', sourceHandle: 's1', target: 'or1', targetHandle: 'b' },
+    { id: 'c3', source: 'add1', sourceHandle: 's3', target: 'and1', targetHandle: 'a' },
+    { id: 'c4', source: 'or1', sourceHandle: 'out', target: 'and1', targetHandle: 'b' },
+    { id: 'c5', source: 'add1', sourceHandle: 'cout', target: 'or2', targetHandle: 'a' },
+    { id: 'c6', source: 'and1', sourceHandle: 'out', target: 'or2', targetHandle: 'b' },
+    // add2 = binary sum (add1.s0..s3) + (correction ? 0110 : 0000)
+    { id: 'd0', source: 'add1', sourceHandle: 's0', target: 'add2', targetHandle: 'a0' },
+    { id: 'd1', source: 'add1', sourceHandle: 's1', target: 'add2', targetHandle: 'a1' },
+    { id: 'd2', source: 'add1', sourceHandle: 's2', target: 'add2', targetHandle: 'a2' },
+    { id: 'd3', source: 'add1', sourceHandle: 's3', target: 'add2', targetHandle: 'a3' },
+    { id: 'e1', source: 'or2', sourceHandle: 'out', target: 'add2', targetHandle: 'b1' },
+    { id: 'e2', source: 'or2', sourceHandle: 'out', target: 'add2', targetHandle: 'b2' },
+    // the +6 word's zero bits + add2's carry-in tie to ground (logic 0)
+    { id: 'z0', source: 'add2', sourceHandle: 'b0', target: 'add1', targetHandle: 'gnd' },
+    { id: 'z3', source: 'add2', sourceHandle: 'b3', target: 'add1', targetHandle: 'gnd' },
+    { id: 'zc', source: 'add2', sourceHandle: 'cin', target: 'add1', targetHandle: 'gnd' },
+    // shared V+ / GND across every sub-block
+    { id: 'p2', source: 'add1', sourceHandle: 'v_dd', target: 'add2', targetHandle: 'v_dd' },
+    { id: 'p3', source: 'add1', sourceHandle: 'v_dd', target: 'or1', targetHandle: 'v_dd' },
+    { id: 'p4', source: 'add1', sourceHandle: 'v_dd', target: 'and1', targetHandle: 'v_dd' },
+    { id: 'p5', source: 'add1', sourceHandle: 'v_dd', target: 'or2', targetHandle: 'v_dd' },
+    { id: 'q2', source: 'add1', sourceHandle: 'gnd', target: 'add2', targetHandle: 'gnd' },
+    { id: 'q3', source: 'add1', sourceHandle: 'gnd', target: 'or1', targetHandle: 'gnd' },
+    { id: 'q4', source: 'add1', sourceHandle: 'gnd', target: 'and1', targetHandle: 'gnd' },
+    { id: 'q5', source: 'add1', sourceHandle: 'gnd', target: 'or2', targetHandle: 'gnd' },
+  ]
+  const ports: BlockData['ports'] = []
+  let left = 14
+  for (let i = 0; i < 4; i++) {
+    ports.push({
+      id: `a${i}`,
+      label: `A${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: 'add1', handleId: `a${i}` },
+    })
+    left += 18
+    ports.push({
+      id: `b${i}`,
+      label: `B${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: 'add1', handleId: `b${i}` },
+    })
+    left += 18
+  }
+  ports.push({
+    id: 'cin',
+    label: 'Cin',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'add1', handleId: 'cin' },
+  })
+  left += 18
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'add1', handleId: 'gnd' },
+  })
+  let right = 14
+  for (let i = 0; i < 4; i++) {
+    ports.push({
+      id: `s${i}`,
+      label: `S${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: 'add2', handleId: `s${i}` },
+    })
+    right += 18
+  }
+  ports.push({
+    id: 'cout',
+    label: 'Cout',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'or2', handleId: 'out' },
+  })
+  right += 18
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'add1', handleId: 'v_dd' },
+  })
+  return { name: 'BCD Adder', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+export const BCD_ADDER_BLOCK: BlockData = bcdDigitAdder()
+
+/**
  * ADDER / SUBTRACTOR (N-bit) — the heart of a calculator: a ripple-carry adder that can also
  * SUBTRACT. Each B bit first passes through an XOR with a shared SUB control line, and SUB also
  * drives the lowest carry-in. SUB=0 leaves B alone with Cin=0 (A + B); SUB=1 inverts every B bit and
