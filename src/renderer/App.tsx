@@ -121,6 +121,7 @@ import {
   LensContext,
   type LensMode,
 } from './lens.ts'
+import { digitalSeed } from './logic-sim.ts'
 import { materialCapabilities, validMaterialsByRole } from './material-roles.ts'
 import { MathPanel } from './math-panel.tsx'
 import { buildMathView } from './math-view.ts'
@@ -192,7 +193,7 @@ import { extractXyPath, type FamilyStep, stepValues, withSourceVoltage } from '.
 import { H_DIVISIONS, scopeRecordSteps, slowestHonestTimebase } from './scope-scales.ts'
 import { DEFAULT_SHEET, SheetFrame, type SheetSettings } from './sheet-frame.tsx'
 import { parseSpiceNetlist, serializeSpiceNetlist } from './spice-netlist.ts'
-import { type DeviceNodeData, nodeTypes, terminalsOf } from './symbols.tsx'
+import { type DeviceNodeData, type Fidelity, nodeTypes, terminalsOf } from './symbols.tsx'
 import { clampIndex, frameEdgeValues, frameLensRange } from './timeline.ts'
 import { TimelinePanel } from './timeline-panel.tsx'
 import {
@@ -684,6 +685,100 @@ function solveCanvas(
   }
 }
 
+/**
+ * Logic-fidelity solve (complexity-layer #1): a digital canvas resolved as 0/1 by the fast logic engine
+ * instead of the slow per-MOSFET MNA. We still build the real world so each gate port maps to its real
+ * net, but skip the Newton solve — `digitalSeed` pins every gate port to 0 or Vdd, and that IS the
+ * answer at this layer. No currents, temperatures, or device health (those are transistor-fidelity facts
+ * you see when you DESCEND into a gate). Falls back to the full solve if the canvas has no real gates.
+ */
+function solveCanvasLogic(
+  nodeList: Node[],
+  edgeList: Edge[],
+  projectAmbientC?: number,
+  routedGeoms?: Map<string, Point[]>,
+): ReturnType<typeof solveCanvas> {
+  const { world, leadAliases } = canvasWorld(nodeList, edgeList, routedGeoms)
+  const seed = digitalSeed(
+    nodeList as unknown as BlockNodeLike[],
+    edgeList as unknown as BlockEdgeLike[],
+    world,
+  )
+  if (seed === undefined) return solveCanvas(nodeList, edgeList, projectAmbientC, routedGeoms)
+  const solution: Solution = {
+    status: 'solved',
+    nodes: seed,
+    branches: new Map(),
+    ground: undefined,
+    warnings: [],
+    iterations: 0,
+    converged: true,
+  }
+  const terminalVolts = terminalVoltages(world, solution)
+  for (const alias of leadAliases) {
+    const inner = terminalVolts.get(alias.inner)
+    if (inner !== undefined) terminalVolts.set(alias.outer, inner)
+  }
+  for (const alias of blockPortAliases(nodeList as unknown as BlockNodeLike[])) {
+    const inner = terminalVolts.get(alias.inner)
+    if (inner !== undefined) terminalVolts.set(alias.outer, inner)
+  }
+  const supplyVolts = logicThreshold(world)
+  const edges = edgeList.map(
+    (edge) =>
+      ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: edge.sourceHandle ?? null,
+        targetHandle: edge.targetHandle ?? null,
+        type: 'net',
+        deletable: true,
+        label: edge.label,
+        ...(edge.selected !== undefined ? { selected: edge.selected } : {}),
+        data: {
+          ...(Array.isArray(edge.data?.waypoints) ? { waypoints: edge.data.waypoints } : {}),
+          ...(edge.data?.curved === true ? { curved: true } : {}),
+          ...(typeof edge.data?.curveRadius === 'number'
+            ? { curveRadius: edge.data.curveRadius }
+            : {}),
+        },
+      }) as Edge,
+  )
+  return {
+    edges,
+    health: new Map(),
+    readings: new Map(),
+    terminalVolts,
+    live:
+      supplyVolts === undefined
+        ? undefined
+        : { terminalVoltages: terminalVolts, threshold: supplyVolts },
+    world,
+    solution,
+    temperaturesC: new Map(),
+    thermalConverged: true,
+    relayStates: new Map(),
+    shockleyStates: new Map(),
+    relaysSettled: true,
+  }
+}
+
+/** Pick the solve engine from the blocks' fidelity tag: any `logic`-tagged block runs the canvas through
+ *  the fast logic engine (complexity-layer #1); otherwise the full transistor solve. Mixing the two on
+ *  one wire is the hand-off layer, still to come — for now a logic tag means "solve this digitally". */
+function solveCanvasDispatch(
+  nodeList: Node[],
+  edgeList: Edge[],
+  projectAmbientC?: number,
+  routedGeoms?: Map<string, Point[]>,
+): ReturnType<typeof solveCanvas> {
+  const anyLogic = nodeList.some((n) => (n.data as DeviceNodeData).fidelity === 'logic')
+  return anyLogic
+    ? solveCanvasLogic(nodeList, edgeList, projectAmbientC, routedGeoms)
+    : solveCanvas(nodeList, edgeList, projectAmbientC, routedGeoms)
+}
+
 /** The logic high/low threshold (≈ Vcc/2) for the tri-state enable check — half the largest power
  *  source voltage. Undefined when there's no supply (then enable levels can't be judged → caution). */
 function logicThreshold(world: World): number | undefined {
@@ -864,7 +959,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
     for (const def of world.definitions.values()) {
       validMaterialsByDef.set(def.id, validMaterialsByRole(def, caps))
     }
-    const solved = solveCanvas(nodes, baseEdges)
+    const solved = solveCanvasDispatch(nodes, baseEdges)
     return {
       nodes,
       edges: solved.edges,
@@ -1294,7 +1389,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       // When auto-routing is on, hand the solve each wire's actual routed path so its resistance is
       // the routed length, not the straight-line distance (closes the draw-but-don't-measure gap).
       const routed = autoRouteWiresRef.current ? wireGeomsRef.current : undefined
-      const solved = solveCanvas(nodeList, edgeList, projectAmbientRef.current, routed)
+      const solved = solveCanvasDispatch(nodeList, edgeList, projectAmbientRef.current, routed)
       setEdges(solved.edges)
       setHealth(solved.health)
       setReadings(solved.readings)
@@ -3027,6 +3122,16 @@ function Canvas({ project }: { project: ProjectChoice }) {
     [setNodes, setEdges, checkpointAction],
   )
 
+  // Set a block's simulation fidelity (complexity-layer #1): logic = the fast 0/1 engine, transistor =
+  // the full analog solve. A data-only change; the live re-solve effect picks it up like any pin edit.
+  const onSetFidelity = useCallback(
+    (id: string, fidelity: Fidelity) => {
+      checkpointAction('set-fidelity')
+      setNodes((cur) => cur.map((n) => (n.id === id ? { ...n, data: { ...n.data, fidelity } } : n)))
+    },
+    [setNodes, checkpointAction],
+  )
+
   // Declare a pin by exposing an internal terminal — even before it's wired. A new pin has no offset,
   // so the block auto-distributes (withoutOffsets clears any legacy ones too).
   const onAddBlockPort = useCallback(
@@ -3320,6 +3425,129 @@ function Canvas({ project }: { project: ProjectChoice }) {
       // Drop a powered SRAM word in the real app and WRITE all four bits to 1 (every BL high via one
       // supply, every BL̄ low to ground, the word line HIGH). Proves the live solver converges on the
       // 24-transistor cross-coupled memory and the chip drops + renders.
+      fidelityProbe() {
+        // DEV (verify complexity-layer #1): solve a wired AND at both fidelities + both input combos and
+        // report each output — logic should match transistor, computed by the fast engine.
+        const supply = (v: number) => ({
+          nominal_voltage: { value: { kind: 'scalar', amount: v, unit: 'volt' } },
+          internal_resistance: { value: { kind: 'scalar', amount: 0, unit: 'ohm' } },
+        })
+        const baseNodes = [
+          {
+            id: 'FA',
+            type: 'block',
+            position: { x: 300, y: 180 },
+            data: { definition: 'block', label: 'NAND', block: BUILTIN_BLOCKS.logic_nand },
+          },
+          {
+            id: 'va',
+            type: 'device',
+            position: { x: 80, y: 120 },
+            data: { definition: 'power_source', label: 'a', parameters: supply(5) },
+          },
+          {
+            id: 'vb',
+            type: 'device',
+            position: { x: 80, y: 240 },
+            data: { definition: 'power_source', label: 'b', parameters: supply(5) },
+          },
+          {
+            id: 'vdd',
+            type: 'device',
+            position: { x: 80, y: 40 },
+            data: { definition: 'power_source', label: 'V+', parameters: supply(5) },
+          },
+          {
+            id: 'gnd',
+            type: 'device',
+            position: { x: 80, y: 360 },
+            data: { definition: 'ground', label: 'GND' },
+          },
+        ]
+        const edges = [
+          {
+            id: 'wa',
+            type: 'net',
+            source: 'va',
+            sourceHandle: 'terminal_positive',
+            target: 'FA',
+            targetHandle: 'a',
+          },
+          {
+            id: 'wb',
+            type: 'net',
+            source: 'vb',
+            sourceHandle: 'terminal_positive',
+            target: 'FA',
+            targetHandle: 'b',
+          },
+          {
+            id: 'wd',
+            type: 'net',
+            source: 'vdd',
+            sourceHandle: 'terminal_positive',
+            target: 'FA',
+            targetHandle: 'v_dd',
+          },
+          {
+            id: 'wg',
+            type: 'net',
+            source: 'FA',
+            sourceHandle: 'gnd',
+            target: 'gnd',
+            targetHandle: 'reference_terminal',
+          },
+          {
+            id: 'wan',
+            type: 'net',
+            source: 'va',
+            sourceHandle: 'terminal_negative',
+            target: 'gnd',
+            targetHandle: 'reference_terminal',
+          },
+          {
+            id: 'wbn',
+            type: 'net',
+            source: 'vb',
+            sourceHandle: 'terminal_negative',
+            target: 'gnd',
+            targetHandle: 'reference_terminal',
+          },
+          {
+            id: 'wdn',
+            type: 'net',
+            source: 'vdd',
+            sourceHandle: 'terminal_negative',
+            target: 'gnd',
+            targetHandle: 'reference_terminal',
+          },
+        ]
+        const run = (bVolts: number, logic: boolean) => {
+          const ns = baseNodes.map((n) => {
+            if (n.id === 'vb') return { ...n, data: { ...n.data, parameters: supply(bVolts) } }
+            if (logic && n.id === 'FA')
+              return { ...n, data: { ...n.data, fidelity: 'logic' as const } }
+            return n
+          })
+          const t0 = performance.now()
+          const solved = solveCanvasDispatch(ns as unknown as Node[], edges as unknown as Edge[])
+          const out = solved.terminalVolts.get('FA/out')
+          return {
+            out: out === undefined ? null : Math.round(out * 100) / 100,
+            status: solved.solution.status,
+            ms: Math.round(performance.now() - t0),
+          }
+        }
+        return JSON.stringify({
+          logic_1_1: run(5, true),
+          logic_1_0: run(0, true),
+          transistor_1_1: run(5, false),
+          transistor_1_0: run(0, false),
+        })
+      },
+      select(id: string) {
+        setNodes((cur) => cur.map((n) => ({ ...n, selected: n.id === id })))
+      },
       showSram() {
         checkpointAction('dev: show sram')
         const supplyParams = {
@@ -4901,6 +5129,8 @@ function Canvas({ project }: { project: ProjectChoice }) {
               <BlockInspector
                 ports={selectedBlock.ports}
                 available={availableTerminals}
+                fidelity={(selectedNode.data as DeviceNodeData).fidelity ?? 'transistor'}
+                onFidelity={(f) => onSetFidelity(selectedNode.id, f)}
                 onEditPort={(portId, patch) => onEditBlockPort(selectedNode.id, portId, patch)}
                 onAddPort={(nodeId, handleId) => onAddBlockPort(selectedNode.id, nodeId, handleId)}
                 onReorderPort={(portId, dir) => onReorderBlockPort(selectedNode.id, portId, dir)}

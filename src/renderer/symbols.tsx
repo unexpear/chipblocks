@@ -1880,11 +1880,18 @@ export function terminalsOf(
   return TERMINALS[definition] ?? FALLBACK_TERMINALS
 }
 
+/** Simulation fidelity for a block (the complexity-layer system). 'transistor' = the full analog
+ *  per-MOSFET solve (default); 'logic' = the fast 0/1 logic engine. A generated 'behaviour' model is a
+ *  later layer. The block is the SAME circuit either way — this only picks how detailed the math runs. */
+export type Fidelity = 'transistor' | 'logic'
+
 export type DeviceNodeData = {
   definition: string
   label: string
   rotation?: number
   parameters?: Parameters
+  /** Which engine simulates this block; absent ⇒ 'transistor'. */
+  fidelity?: Fidelity
 }
 
 /**

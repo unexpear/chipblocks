@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import type { BlockPort, DriveKind, PinKind, PinSide } from './blocks.ts'
+import type { Fidelity } from './symbols.tsx'
 import { THEME } from './theme.ts'
 
 /**
@@ -30,6 +31,22 @@ const arrow: CSSProperties = {
   cursor: 'pointer',
 }
 const remove: CSSProperties = { ...arrow, color: THEME.statusDanger }
+const fidelityBtn: CSSProperties = {
+  flex: 1,
+  background: THEME.surfaceInput,
+  border: `1px solid ${THEME.borderStrong}`,
+  color: THEME.textSoft,
+  borderRadius: 3,
+  fontSize: 10,
+  padding: '3px 0',
+  cursor: 'pointer',
+}
+const fidelityActive: CSSProperties = {
+  ...fidelityBtn,
+  background: THEME.accentBlue,
+  color: THEME.textBright,
+  borderColor: THEME.accentBlue,
+}
 const SIDE_ORDER: Record<PinSide, number> = { left: 0, right: 1, top: 2, bottom: 3 }
 
 export type BlockPortPatch = {
@@ -46,6 +63,8 @@ export type AddableTerminal = { nodeId: string; handleId: string; label: string 
 export function BlockInspector({
   ports,
   available,
+  fidelity,
+  onFidelity,
   onEditPort,
   onAddPort,
   onReorderPort,
@@ -53,6 +72,8 @@ export function BlockInspector({
 }: {
   ports: BlockPort[]
   available: AddableTerminal[]
+  fidelity: Fidelity
+  onFidelity: (f: Fidelity) => void
   onEditPort: (portId: string, patch: BlockPortPatch) => void
   onAddPort: (nodeId: string, handleId: string) => void
   onReorderPort: (portId: string, dir: -1 | 1) => void
@@ -63,6 +84,23 @@ export function BlockInspector({
   const sorted = [...ports].sort((a, b) => SIDE_ORDER[a.side] - SIDE_ORDER[b.side])
   return (
     <div style={{ width: 188, fontSize: 11, color: THEME.textSoft }}>
+      <div style={{ fontWeight: 700, color: THEME.textBright, marginBottom: 2 }}>Simulate as</div>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 3 }}>
+        {(['transistor', 'logic'] as const).map((f) => (
+          <button
+            key={f}
+            type="button"
+            onClick={() => onFidelity(f)}
+            style={fidelity === f ? fidelityActive : fidelityBtn}
+          >
+            {f === 'transistor' ? 'Transistor' : 'Logic'}
+          </button>
+        ))}
+      </div>
+      <div style={{ fontSize: 9, color: THEME.textFaint, marginBottom: 8 }}>
+        Logic = fast 0/1 (the gates' truth table). Transistor = the full analog circuit. Same
+        circuit inside either way — descend to see it.
+      </div>
       <div style={{ fontWeight: 700, color: THEME.textBright, marginBottom: 2 }}>
         Pins ({ports.length})
       </div>
