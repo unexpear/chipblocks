@@ -1091,6 +1091,129 @@ function bcdComplementerDigit(): BlockData {
 export const BCD_COMPLEMENTER_DIGIT: BlockData = bcdComplementerDigit()
 
 /**
+ * Brick ③b — the calculator's add/subtract ALU. Ten controlled nine's-complementers sit in front of the
+ * 10-digit adder, all driven by one SUB line that also feeds the adder's carry-in. SUB=0 → result = A + B.
+ * SUB=1 → result = A + ninescomp(B) + 1 = A − B (ten's complement): Cout=1 means A ≥ B (the result is the
+ * true difference); Cout=0 means A < B (the result is the ten's complement of the magnitude — a negative,
+ * for the control unit to flag). One adder, both operations.
+ */
+function bcdAddSubtract(digits: number): BlockData {
+  const node = (
+    id: string,
+    block: BlockData,
+    x: number,
+    y: number,
+  ): BlockData['nodes'][number] => ({
+    id,
+    definition: 'block',
+    x,
+    y,
+    block,
+  })
+  const edge = (
+    id: string,
+    s: string,
+    sh: string,
+    t: string,
+    th: string,
+  ): BlockData['edges'][number] => ({
+    id,
+    source: s,
+    sourceHandle: sh,
+    target: t,
+    targetHandle: th,
+  })
+  const nodes: BlockData['nodes'] = [
+    node('add', BCD_ADDER_10, 1400, 30),
+    ...Array.from({ length: digits }, (_, d) =>
+      node(`comp${d}`, BCD_COMPLEMENTER_DIGIT, 40, 30 + d * 1100),
+    ),
+  ]
+  const edges: BlockData['edges'] = []
+  for (let d = 0; d < digits; d++) {
+    for (let i = 0; i < 4; i++) {
+      edges.push(edge(`cb${d}_${i}`, `comp${d}`, `o${i}`, 'add', `b${d * 4 + i}`))
+    }
+  }
+  // one SUB line drives every complementer + the adder's carry-in (anchored at comp0.sub)
+  for (let d = 1; d < digits; d++) edges.push(edge(`sub${d}`, 'comp0', 'sub', `comp${d}`, 'sub'))
+  edges.push(edge('subcin', 'comp0', 'sub', 'add', 'cin'))
+  for (let d = 0; d < digits; d++) {
+    edges.push(edge(`vdd${d}`, 'add', 'v_dd', `comp${d}`, 'v_dd'))
+    edges.push(edge(`gnd${d}`, 'add', 'gnd', `comp${d}`, 'gnd'))
+  }
+  const ports: BlockData['ports'] = []
+  let left = 14
+  for (let d = 0; d < digits; d++) {
+    for (let i = 0; i < 4; i++) {
+      ports.push({
+        id: `a${d * 4 + i}`,
+        label: `A${d}.${i}`,
+        side: 'left',
+        offset: left,
+        inner: { nodeId: 'add', handleId: `a${d * 4 + i}` },
+      })
+      left += 18
+      ports.push({
+        id: `b${d * 4 + i}`,
+        label: `B${d}.${i}`,
+        side: 'left',
+        offset: left,
+        inner: { nodeId: `comp${d}`, handleId: `d${i}` },
+      })
+      left += 18
+    }
+  }
+  ports.push({
+    id: 'sub',
+    label: 'SUB',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'comp0', handleId: 'sub' },
+  })
+  left += 18
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'add', handleId: 'gnd' },
+  })
+  let right = 14
+  for (let d = 0; d < digits; d++) {
+    for (let i = 0; i < 4; i++) {
+      ports.push({
+        id: `s${d * 4 + i}`,
+        label: `S${d}.${i}`,
+        side: 'right',
+        offset: right,
+        inner: { nodeId: 'add', handleId: `s${d * 4 + i}` },
+      })
+      right += 18
+    }
+  }
+  ports.push({
+    id: 'cout',
+    label: 'Cout',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'add', handleId: 'cout' },
+  })
+  right += 18
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'add', handleId: 'v_dd' },
+  })
+  return { name: `${digits}-digit BCD ALU`, origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The calculator's adder/subtractor: A ± B over 10 decimal digits, selected by the SUB line. */
+export const BCD_ALU_10: BlockData = bcdAddSubtract(10)
+
+/**
  * ADDER / SUBTRACTOR (N-bit) — the heart of a calculator: a ripple-carry adder that can also
  * SUBTRACT. Each B bit first passes through an XOR with a shared SUB control line, and SUB also
  * drives the lowest carry-in. SUB=0 leaves B alone with Cin=0 (A + B); SUB=1 inverts every B bit and
