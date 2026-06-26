@@ -113,6 +113,10 @@ const posToDir = (p: Position | undefined): Dir =>
  *  wires cross — the wire knows its own rendered geometry; App collects them all. */
 export const WireGeomContext = createContext<(id: string, points: Point[]) => void>(() => {})
 
+/** Optional, visual-only dull net colour per edge id (empty when colour-coding is off). App computes it
+ *  from the nets; the wire tints its stroke so connected wires share a colour and crossings differ. */
+export const WireColorContext = createContext<Map<string, string>>(new Map())
+
 /** Timeline playback (Sprint 22): when a frame is active, each wire reads its flow +
  *  voltage from that played-back instant instead of the steady solve. null = steady. */
 export const FrameEdgeContext = createContext<Map<string, FrameEdge> | null>(null)
@@ -176,6 +180,7 @@ export function NetEdge({
   const partBoxes = useContext(PartBoxesContext)
   const autoRoute = useContext(AutoRouteContext)
   const reportGeom = useContext(WireGeomContext)
+  const netStroke = useContext(WireColorContext).get(id)
   const checkpointAction = useContext(CheckpointContext)
   // Timeline playback: this wire's values at the played-back instant (null = steady).
   const fe = useContext(FrameEdgeContext)?.get(id) ?? null
@@ -212,7 +217,10 @@ export function NetEdge({
           { x: targetX, y: targetY },
           posToDir(targetPosition),
           partBoxes.filter((b) => b.id !== source && b.id !== target),
-          { lane: typeof laneRaw === 'number' ? laneRaw : 0 },
+          {
+            lane: typeof laneRaw === 'number' ? laneRaw : 0,
+            selfBoxes: partBoxes.filter((b) => b.id === source || b.id === target),
+          },
         )
       : []
   const routePoints: Point[] =
@@ -226,6 +234,7 @@ export function NetEdge({
           ]
   const sweep = typeof data?.curveRadius === 'number' ? data.curveRadius : undefined
   const curved = data?.curved === true && waypoints.length > 0
+  // Straight orthogonal wire (or a hand-curved one). Crossings are marked by the open dot, not a hop.
   const path = curved ? roundedPathD(routePoints, sweep) : pathThrough(routePoints)
   let labelX: number
   let labelY: number
@@ -464,7 +473,9 @@ export function NetEdge({
     ? { ...style, stroke: THEME.statusDanger, strokeWidth: 2.8, strokeDasharray: '6 4' }
     : voltageStroke
       ? { ...style, stroke: voltageStroke, strokeWidth: 2.4 }
-      : style
+      : netStroke
+        ? { ...style, stroke: netStroke }
+        : style
   // During playback the flow dashes always show (the timeline IS a flow view); otherwise
   // they follow the flow lens. Direction is the frame's sign when playing, else the steady arrow.
   const showFlow = lensState.flow || fe !== null

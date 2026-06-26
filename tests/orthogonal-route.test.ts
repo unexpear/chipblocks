@@ -110,6 +110,29 @@ describe('orthogonal router — GUARANTEED part-free routing (A* fallback)', () 
   })
 })
 
+describe('orthogonal router — never cuts through its own endpoint parts', () => {
+  // The wrap-around / feedback case (an SRAM cell's cross-couple leg): the wire leaves the RIGHT part
+  // going right and has to reach the LEFT part's left side, so the cheap straight "L" would run back
+  // through BOTH parts. Passing them as `selfBoxes` makes the body detour around them.
+  const src: Box = { x: 100, y: 0, w: 40, h: 40 }
+  const tgt: Box = { x: 0, y: 0, w: 40, h: 40 }
+  const from: Pt = { x: 140, y: 20 } // right edge of src
+  const to: Pt = { x: 0, y: 20 } // left edge of tgt
+
+  test('with selfBoxes the body routes AROUND both endpoint parts', () => {
+    const wp = orthogonalRoute(from, 'right', to, 'left', [], { selfBoxes: [src, tgt] })
+    const full = [from, ...wp, to]
+    expect(allOrthogonal(full)).toBe(true)
+    expect(hitsAny(full, [src, tgt])).toBe(false)
+  })
+
+  test('without selfBoxes the body is free to cut back through them (why selfBoxes is needed)', () => {
+    const wp = orthogonalRoute(from, 'right', to, 'left', [])
+    const full = [from, ...wp, to]
+    expect(hitsAny(full, [src, tgt])).toBe(true)
+  })
+})
+
 describe('orthogonal router — wires take real space (no overlap)', () => {
   test('two wires sharing the same horizontal track overlap', () => {
     const a: Pt[] = [

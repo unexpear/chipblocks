@@ -217,21 +217,28 @@ export function orthogonalRoute(
   to: Pt,
   toDir: Dir,
   obstacles: Box[],
-  opts: { stub?: number; lane?: number; laneGap?: number; margin?: number } = {},
+  opts: { stub?: number; lane?: number; laneGap?: number; margin?: number; selfBoxes?: Box[] } = {},
 ): Pt[] {
   const stub = opts.stub ?? 14
   const off = (opts.lane ?? 0) * (opts.laneGap ?? 8)
   const margin = opts.margin ?? 12
+  // The wire BODY must also stay out of its own two parts (source + target). A wire connects only at
+  // their pins — it must never cut across their bodies — so the body avoids every box INCLUDING those
+  // two; only the short perpendicular pin stubs (which leave each part outward) may touch them. Skipping
+  // this is what let a wrap-around wire (e.g. an SRAM cell's feedback leg) cut straight back through its
+  // own inverters.
+  const selfBoxes = opts.selfBoxes ?? []
+  const bodyObstacles = selfBoxes.length > 0 ? [...obstacles, ...selfBoxes] : obstacles
   // Leave each pin perpendicular to its edge by a short stub, so the wire meets the part squarely.
   const a: Pt = { x: from.x + STEP[fromDir].x * stub, y: from.y + STEP[fromDir].y * stub }
   const b: Pt = { x: to.x + STEP[toDir].x * stub, y: to.y + STEP[toDir].y * stub }
   const midX = (a.x + b.x) / 2 + off
   const midY = (a.y + b.y) / 2 + off
 
-  const aboveY = Math.min(a.y, b.y, ...obstacles.map((o) => o.y)) - margin - off
-  const belowY = Math.max(a.y, b.y, ...obstacles.map((o) => o.y + o.h)) + margin + off
-  const leftX = Math.min(a.x, b.x, ...obstacles.map((o) => o.x)) - margin - off
-  const rightX = Math.max(a.x, b.x, ...obstacles.map((o) => o.x + o.w)) + margin + off
+  const aboveY = Math.min(a.y, b.y, ...bodyObstacles.map((o) => o.y)) - margin - off
+  const belowY = Math.max(a.y, b.y, ...bodyObstacles.map((o) => o.y + o.h)) + margin + off
+  const leftX = Math.min(a.x, b.x, ...bodyObstacles.map((o) => o.x)) - margin - off
+  const rightX = Math.max(a.x, b.x, ...bodyObstacles.map((o) => o.x + o.w)) + margin + off
 
   // Candidates, cheapest (fewest corners) first. The detours route fully around the obstacle field.
   const candidates: Pt[][] = isHorizontal(fromDir)
@@ -248,13 +255,16 @@ export function orthogonalRoute(
         [a, { x: rightX, y: a.y }, { x: rightX, y: b.y }, b], // detour around the right
       ]
 
+  // The pin stubs (from→a, b→to) leave each part perpendicular, so they only need to clear OTHER parts;
+  // the wire body (a…b) must clear every box, including its own two endpoints.
+  const stubsClear = !pathHitsAny([from, a], obstacles) && !pathHitsAny([b, to], obstacles)
   for (const mid of candidates) {
-    if (!pathHitsAny([from, ...mid, to], obstacles)) return simplifyPath(mid)
+    if (stubsClear && !pathHitsAny(mid, bodyObstacles)) return simplifyPath(mid)
   }
   // None of the cheap shapes stayed clear. A wire must NEVER cross a part, so find a guaranteed
   // part-free route around everything (A* on the Hanan grid). Only if even that fails (truly boxed in,
   // or too dense to search) do we fall back to the least-bad channel.
-  const around = gridRouteAround(a, b, obstacles, margin + off)
-  if (around && !pathHitsAny([from, ...around, to], obstacles)) return simplifyPath(around)
+  const around = gridRouteAround(a, b, bodyObstacles, margin + off)
+  if (around && stubsClear && !pathHitsAny(around, bodyObstacles)) return simplifyPath(around)
   return simplifyPath(candidates[1] as Pt[])
 }

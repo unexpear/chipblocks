@@ -100,6 +100,53 @@ export function roundedPathD(points: PathPoint[], radius = CURVE_RADIUS_PX): str
   return d
 }
 
+/**
+ * SVG path for a wire that HOPS over the wires it crosses without connecting — the classic schematic
+ * crossover. At each `hop` point that lands on one of this wire's segments, the straight run is replaced
+ * by a small semicircular bump (a cubic Bézier ≈ a semicircle) so the wire reads as passing OVER the one
+ * underneath, not joining it. The bump always rises to a consistent side (up for a horizontal run, left
+ * for a vertical one). With no hops it's just the straight polyline.
+ */
+export function hopPath(points: PathPoint[], hops: PathPoint[], radius = 5): string {
+  const first = points[0]
+  if (!first) return ''
+  const plain = () => points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x},${p.y}`).join(' ')
+  if (hops.length === 0) return plain()
+  const K = (4 / 3) * radius // cubic control offset that approximates a semicircle
+  let d = `M ${first.x},${first.y}`
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]
+    const b = points[i]
+    if (!a || !b) continue
+    const len = distance(a, b)
+    if (len === 0) continue
+    const ux = (b.x - a.x) / len
+    const uy = (b.y - a.y) / len
+    // unit perpendicular, forced to a consistent side (up; left for a vertical run)
+    let px = uy
+    let py = -ux
+    if (py > 0 || (py === 0 && px > 0)) {
+      px = -px
+      py = -py
+    }
+    const onSeg = hops
+      .map((h) => {
+        const t = (h.x - a.x) * ux + (h.y - a.y) * uy // distance along a→b
+        const perp = Math.abs((h.x - a.x) * uy - (h.y - a.y) * ux) // distance off the line
+        return { t, perp }
+      })
+      .filter((o) => o.perp <= 1 && o.t > radius && o.t < len - radius)
+      .sort((m, n) => m.t - n.t)
+    for (const o of onSeg) {
+      const p1 = { x: a.x + ux * (o.t - radius), y: a.y + uy * (o.t - radius) }
+      const p2 = { x: a.x + ux * (o.t + radius), y: a.y + uy * (o.t + radius) }
+      d += ` L ${p1.x},${p1.y} C ${p1.x + px * K},${p1.y + py * K} ${p2.x + px * K},${p2.y + py * K} ${p2.x},${p2.y}`
+    }
+    d += ` L ${b.x},${b.y}`
+  }
+  return d
+}
+
 /** Numeric arc length of one quadratic Bézier (sampled — 16 segments). */
 function quadraticLength(p0: PathPoint, control: PathPoint, p2: PathPoint): number {
   const STEPS = 16
