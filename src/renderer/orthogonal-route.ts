@@ -268,3 +268,148 @@ export function orthogonalRoute(
   if (around && stubsClear && !pathHitsAny(around, bodyObstacles)) return simplifyPath(around)
   return simplifyPath(candidates[1] as Pt[])
 }
+
+export type WireReq = { id: string; from: Pt; to: Pt }
+
+/**
+ * GLOBAL router — routes a whole BATCH of wires together on ONE shared uniform grid, so they spread into
+ * parallel tracks instead of piling into the same channel (the failure of routing each wire alone, where
+ * 200 wires funnel through the same gap and read as a tangle). Each wire is A* on the grid; a cell's cost
+ * RISES with how many already-routed wires use it (congestion), so later wires detour into free lanes — a
+ * flow-field idea from game crowd navigation. A turn cost keeps runs straight; obstacle cells are
+ * hard-avoided so a wire never crosses a part. Scales by a fixed grid STEP (not the Hanan lattice, which
+ * explodes on dense boards).
+ *
+ * Endpoints snap to the grid (pass grid-aligned points, or stitch the real pin on with a stub). Returns
+ * each wire id → its waypoint path. Returns an EMPTY map if the board is too big to grid cheaply — the
+ * signal for the caller to fall back to per-wire routing.
+ */
+export function routeAllWires(
+  wires: WireReq[],
+  obstacles: Box[],
+  opts: {
+    grid?: number
+    clearance?: number
+    turnCost?: number
+    congestionCost?: number
+    maxCells?: number
+  } = {},
+): Map<string, Pt[]> {
+  const out = new Map<string, Pt[]>()
+  if (wires.length === 0) return out
+  const G = opts.grid ?? 16
+  const clearance = opts.clearance ?? 10
+  const turnCost = opts.turnCost ?? G * 2
+  const congestionCost = opts.congestionCost ?? G * 4
+  const xs: number[] = []
+  const ys: number[] = []
+  for (const w of wires) {
+    xs.push(w.from.x, w.to.x)
+    ys.push(w.from.y, w.to.y)
+  }
+  for (const o of obstacles) {
+    xs.push(o.x - clearance, o.x + o.w + clearance)
+    ys.push(o.y - clearance, o.y + o.h + clearance)
+  }
+  const pad = G * 2
+  const minX = Math.min(...xs) - pad
+  const minY = Math.min(...ys) - pad
+  const cols = Math.ceil((Math.max(...xs) + pad - minX) / G) + 1
+  const rows = Math.ceil((Math.max(...ys) + pad - minY) / G) + 1
+  if (cols * rows > (opts.maxCells ?? 250000)) return out
+  const cx = (x: number) => Math.round((x - minX) / G)
+  const cy = (y: number) => Math.round((y - minY) / G)
+  const ptAt = (ix: number, iy: number): Pt => ({ x: minX + ix * G, y: minY + iy * G })
+  const inb = (ix: number, iy: number) => ix >= 0 && ix < cols && iy >= 0 && iy < rows
+  const ci = (ix: number, iy: number) => iy * cols + ix
+  const blocked = new Uint8Array(cols * rows)
+  for (const o of obstacles) {
+    const x0 = Math.max(0, cx(o.x - clearance))
+    const x1 = Math.min(cols - 1, cx(o.x + o.w + clearance))
+    const y0 = Math.max(0, cy(o.y - clearance))
+    const y1 = Math.min(rows - 1, cy(o.y + o.h + clearance))
+    for (let iy = y0; iy <= y1; iy++) for (let ix = x0; ix <= x1; ix++) blocked[ci(ix, iy)] = 1
+  }
+  const usage = new Float32Array(cols * rows)
+  const DX = [1, -1, 0, 0]
+  const DY = [0, 0, 1, -1]
+
+  const routeOne = (from: Pt, to: Pt): Pt[] => {
+    const sx = cx(from.x)
+    const sy = cy(from.y)
+    const tx = cx(to.x)
+    const ty = cy(to.y)
+    if (!inb(sx, sy) || !inb(tx, ty)) return [from, to]
+    blocked[ci(sx, sy)] = 0
+    blocked[ci(tx, ty)] = 0
+    const skey = (ix: number, iy: number, d: number) => (iy * cols + ix) * 5 + d
+    const startK = skey(sx, sy, 4) // d=4 = no direction yet (the start)
+    const gScore = new Map<number, number>([[startK, 0]])
+    const came = new Map<number, number>()
+    const hMan = (ix: number, iy: number) => (Math.abs(ix - tx) + Math.abs(iy - ty)) * G
+    const open: { k: number; ix: number; iy: number; d: number; f: number }[] = [
+      { k: startK, ix: sx, iy: sy, d: 4, f: hMan(sx, sy) },
+    ]
+    let goalK = -1
+    while (open.length > 0) {
+      let b = 0
+      for (let i = 1; i < open.length; i++)
+        if ((open[i] as { f: number }).f < (open[b] as { f: number }).f) b = i
+      const cur = open.splice(b, 1)[0] as { k: number; ix: number; iy: number; d: number }
+      if (cur.ix === tx && cur.iy === ty) {
+        goalK = cur.k
+        break
+      }
+      const cg = gScore.get(cur.k) ?? Number.POSITIVE_INFINITY
+      for (let di = 0; di < 4; di++) {
+        const nx = cur.ix + (DX[di] as number)
+        const ny = cur.iy + (DY[di] as number)
+        if (!inb(nx, ny) || blocked[ci(nx, ny)]) continue
+        const turn = cur.d !== 4 && cur.d !== di ? turnCost : 0
+        const tentative = cg + G + turn + congestionCost * (usage[ci(nx, ny)] as number)
+        const nk = skey(nx, ny, di)
+        if (tentative < (gScore.get(nk) ?? Number.POSITIVE_INFINITY)) {
+          gScore.set(nk, tentative)
+          came.set(nk, cur.k)
+          open.push({ k: nk, ix: nx, iy: ny, d: di, f: tentative + hMan(nx, ny) })
+        }
+      }
+    }
+    if (goalK < 0) return [from, to]
+    const cells: Pt[] = []
+    let k = goalK
+    while (k !== startK) {
+      const cell = Math.floor(k / 5)
+      cells.unshift(ptAt(cell % cols, Math.floor(cell / cols)))
+      const prev = came.get(k)
+      if (prev === undefined) break
+      k = prev
+    }
+    cells.unshift(ptAt(sx, sy))
+    for (const c of cells) {
+      const j = ci(cx(c.x), cy(c.y))
+      usage[j] = (usage[j] ?? 0) + 1
+    }
+    // Stitch the EXACT pin endpoints back on (the grid snapped them up to half a cell) and rectilinearize
+    // any diagonal the snap introduced, so the path connects the real pins with clean right angles.
+    const raw = [from, ...cells, to]
+    const rect: Pt[] = []
+    for (let i = 0; i < raw.length; i++) {
+      const c = raw[i] as Pt
+      rect.push(c)
+      const n = raw[i + 1]
+      if (n && c.x !== n.x && c.y !== n.y) rect.push({ x: n.x, y: c.y })
+    }
+    return simplifyPath(rect)
+  }
+
+  // Shortest wires first: local hops claim their lanes before long hauls sweep the board.
+  const order = [...wires].sort(
+    (a, b) =>
+      Math.abs(a.from.x - a.to.x) +
+      Math.abs(a.from.y - a.to.y) -
+      (Math.abs(b.from.x - b.to.x) + Math.abs(b.from.y - b.to.y)),
+  )
+  for (const w of order) out.set(w.id, routeOne(w.from, w.to))
+  return out
+}
