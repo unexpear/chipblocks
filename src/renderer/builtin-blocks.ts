@@ -875,6 +875,118 @@ function bcdDigitAdder(): BlockData {
 export const BCD_ADDER_BLOCK: BlockData = bcdDigitAdder()
 
 /**
+ * Brick ② — an N-digit BCD adder: N single-digit BCD adders in a chain, the decimal carry rippling from
+ * the least-significant digit up to the most, exactly like the binary ripple-carry adder chains full
+ * cells. Ports are flat: digit d occupies bits a/b/s [4d .. 4d+3], d=0 is the rightmost (ones) digit;
+ * Cin feeds digit 0 (0 for add, 1 for subtract's ten's-complement) and Cout is the overflow past N digits.
+ */
+function bcdAdderChain(digits: number): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  for (let d = 0; d < digits; d++) {
+    nodes.push({
+      id: `bcd${d}`,
+      definition: 'block',
+      x: 40,
+      y: 30 + d * 700,
+      block: BCD_ADDER_BLOCK,
+    })
+    if (d > 0) {
+      edges.push({
+        id: `carry${d}`,
+        source: `bcd${d - 1}`,
+        sourceHandle: 'cout',
+        target: `bcd${d}`,
+        targetHandle: 'cin',
+      })
+      edges.push({
+        id: `vdd${d}`,
+        source: `bcd${d - 1}`,
+        sourceHandle: 'v_dd',
+        target: `bcd${d}`,
+        targetHandle: 'v_dd',
+      })
+      edges.push({
+        id: `gnd${d}`,
+        source: `bcd${d - 1}`,
+        sourceHandle: 'gnd',
+        target: `bcd${d}`,
+        targetHandle: 'gnd',
+      })
+    }
+  }
+  let left = 14
+  for (let d = 0; d < digits; d++) {
+    for (let i = 0; i < 4; i++) {
+      ports.push({
+        id: `a${d * 4 + i}`,
+        label: `A${d}.${i}`,
+        side: 'left',
+        offset: left,
+        inner: { nodeId: `bcd${d}`, handleId: `a${i}` },
+      })
+      left += 18
+      ports.push({
+        id: `b${d * 4 + i}`,
+        label: `B${d}.${i}`,
+        side: 'left',
+        offset: left,
+        inner: { nodeId: `bcd${d}`, handleId: `b${i}` },
+      })
+      left += 18
+    }
+  }
+  ports.push({
+    id: 'cin',
+    label: 'Cin',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'bcd0', handleId: 'cin' },
+  })
+  left += 18
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'bcd0', handleId: 'gnd' },
+  })
+  let right = 14
+  for (let d = 0; d < digits; d++) {
+    for (let i = 0; i < 4; i++) {
+      ports.push({
+        id: `s${d * 4 + i}`,
+        label: `S${d}.${i}`,
+        side: 'right',
+        offset: right,
+        inner: { nodeId: `bcd${d}`, handleId: `s${i}` },
+      })
+      right += 18
+    }
+  }
+  ports.push({
+    id: 'cout',
+    label: 'Cout',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: `bcd${digits - 1}`, handleId: 'cout' },
+  })
+  right += 18
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'bcd0', handleId: 'v_dd' },
+  })
+  return { name: `${digits}-digit BCD Adder`, origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The calculator's full-width adder: 10 decimal digits (0 … 9 999 999 999), Cout marks overflow. */
+export const BCD_ADDER_10: BlockData = bcdAdderChain(10)
+
+/**
  * ADDER / SUBTRACTOR (N-bit) — the heart of a calculator: a ripple-carry adder that can also
  * SUBTRACT. Each B bit first passes through an XOR with a shared SUB control line, and SUB also
  * drives the lowest carry-in. SUB=0 leaves B alone with Cin=0 (A + B); SUB=1 inverts every B bit and
