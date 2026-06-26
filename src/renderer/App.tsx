@@ -1519,6 +1519,8 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // put — toggling a clock source + re-solving advances it. Keyed by net, so a different circuit's nets
   // simply don't match (no stale seeding).
   const logicStateRef = useRef(new Map<string, boolean>())
+  const terminalVoltsRef = useRef(terminalVolts)
+  terminalVoltsRef.current = terminalVolts
 
   // The live re-solve: rebuild + solve the canvas, then push the new wire currents
   // AND the new part health. Stable identity (only setters in deps).
@@ -3951,6 +3953,117 @@ function Canvas({ project }: { project: ProjectChoice }) {
           ].map((n) => ({ ...n, selected: n.id === id })),
         )
       },
+      readTerminal(key: string) {
+        const v = terminalVoltsRef.current.get(key)
+        return v === undefined ? null : Math.round(v * 100) / 100
+      },
+      latchStep(sHigh: boolean, rHigh: boolean) {
+        // DEV (verify sequential on the REAL canvas): inject a wired SR latch + sources, then run the
+        // actual reSolve (which threads logicStateRef). Step the sources and read Q from the app's own
+        // solved terminalVolts — Q must hold between sets, proving state persists across real re-solves.
+        const supply = (v: number) => ({
+          nominal_voltage: { value: { kind: 'scalar', amount: v, unit: 'volt' } },
+          internal_resistance: { value: { kind: 'scalar', amount: 0, unit: 'ohm' } },
+        })
+        const nodes = [
+          {
+            id: 'L',
+            type: 'block',
+            position: { x: 440, y: 240 },
+            data: {
+              definition: 'block',
+              label: 'SR',
+              block: BUILTIN_BLOCKS.logic_sr_latch,
+              fidelity: 'logic',
+            },
+          },
+          {
+            id: 'g',
+            type: 'device',
+            position: { x: 160, y: 440 },
+            data: { definition: 'ground', label: 'GND' },
+          },
+          {
+            id: 'vs',
+            type: 'device',
+            position: { x: 160, y: 300 },
+            data: { definition: 'power_source', label: 'S', parameters: supply(sHigh ? 5 : 0) },
+          },
+          {
+            id: 'vr',
+            type: 'device',
+            position: { x: 160, y: 200 },
+            data: { definition: 'power_source', label: 'R', parameters: supply(rHigh ? 5 : 0) },
+          },
+          {
+            id: 'vp',
+            type: 'device',
+            position: { x: 160, y: 100 },
+            data: { definition: 'power_source', label: 'V+', parameters: supply(5) },
+          },
+        ] as unknown as Node[]
+        const edges = [
+          {
+            id: 'es',
+            type: 'net',
+            source: 'vs',
+            sourceHandle: 'terminal_positive',
+            target: 'L',
+            targetHandle: 's',
+          },
+          {
+            id: 'er',
+            type: 'net',
+            source: 'vr',
+            sourceHandle: 'terminal_positive',
+            target: 'L',
+            targetHandle: 'r',
+          },
+          {
+            id: 'ep',
+            type: 'net',
+            source: 'vp',
+            sourceHandle: 'terminal_positive',
+            target: 'L',
+            targetHandle: 'v_dd',
+          },
+          {
+            id: 'eg',
+            type: 'net',
+            source: 'L',
+            sourceHandle: 'gnd',
+            target: 'g',
+            targetHandle: 'reference_terminal',
+          },
+          {
+            id: 'esn',
+            type: 'net',
+            source: 'vs',
+            sourceHandle: 'terminal_negative',
+            target: 'g',
+            targetHandle: 'reference_terminal',
+          },
+          {
+            id: 'ern',
+            type: 'net',
+            source: 'vr',
+            sourceHandle: 'terminal_negative',
+            target: 'g',
+            targetHandle: 'reference_terminal',
+          },
+          {
+            id: 'epn',
+            type: 'net',
+            source: 'vp',
+            sourceHandle: 'terminal_negative',
+            target: 'g',
+            targetHandle: 'reference_terminal',
+          },
+        ] as unknown as Edge[]
+        setNodes(() => nodes)
+        setEdges(() => edges)
+        reSolve(nodes, edges)
+      },
       showSram() {
         checkpointAction('dev: show sram')
         const supplyParams = {
@@ -4252,7 +4365,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
     return () => {
       w.__chip = undefined
     }
-  }, [setNodes, setEdges, onEditBlockPort, checkpointAction, updateNodeInternals])
+  }, [setNodes, setEdges, onEditBlockPort, checkpointAction, updateNodeInternals, reSolve])
 
   // Zoom to the SELECTED parts (or fit all if none) — precise framing, easier than the wheel.
   const zoomToSelection = useCallback(() => {
