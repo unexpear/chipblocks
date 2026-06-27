@@ -1329,6 +1329,7 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
     'keq',
     'kclr',
     'kpm',
+    'kdot',
   ]
   const lineFor = (k: string | number): string => {
     if (typeof k === 'number') return `k${k}`
@@ -1343,13 +1344,19 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
         return 'kdiv'
       case '=':
         return 'keq'
+      case 'n':
+        return 'kpm'
+      case '.':
+        return 'kdot'
       default:
         return 'kclr'
     }
   }
   // Press a key sequence; for ×/÷ the press starts a sequencer and raises BUSY — keep clocking (no key)
   // until BUSY clears, then the result is captured. Returns the final display + error flag.
-  const runCalc = (keys: Array<string | number>): { display: number; error: boolean } => {
+  const runCalc = (
+    keys: Array<string | number>,
+  ): { display: number; value: number; sig: number; fent: number; error: boolean } => {
     const state = new Map<string, boolean>()
     const solve = (active: string, clk: boolean) => {
       const nodes: CanvasNodeLike[] = [
@@ -1374,12 +1381,23 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
       let display = 0
       for (let d = 0; d < 10; d++) {
         let dig = 0
-        for (let b = 0; b < 4; b++) if (r.value('C', `entry${d * 4 + b}`) === true) dig |= 1 << b
+        for (let b = 0; b < 4; b++) if (r.value('C', `display${d * 4 + b}`) === true) dig |= 1 << b
         display += dig * 10 ** d
       }
-      return { display, error: r.value('C', 'error') === true, busy: r.value('C', 'busy') === true }
+      let fent = 0
+      for (let b = 0; b < 4; b++) if (r.value('C', `f_ent${b}`) === true) fent |= 1 << b
+      const neg = r.value('C', 'neg') === true
+      const signed = neg ? -display : display
+      return {
+        display: signed,
+        sig: display,
+        fent,
+        value: signed / 10 ** fent,
+        error: r.value('C', 'error') === true,
+        busy: r.value('C', 'busy') === true,
+      }
     }
-    let last = { display: 0, error: false, busy: false }
+    let last = { display: 0, sig: 0, fent: 0, value: 0, error: false, busy: false }
     for (const k of keys) {
       const line = lineFor(k)
       solve(line, false)
@@ -1391,7 +1409,13 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
         guard++
       }
     }
-    return { display: last.display, error: last.error }
+    return {
+      display: last.display,
+      value: last.value,
+      sig: last.sig,
+      fent: last.fent,
+      error: last.error,
+    }
   }
 
   test('12 + 34 = 46', () => {
@@ -1420,4 +1444,35 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
       error: false,
     })
   }, 120000)
+
+  test('subtraction can go negative: 3 − 5 = −2', () => {
+    expect(runCalc(['c', 3, '-', 5, '='])).toMatchObject({ display: -2, error: false })
+  }, 60000)
+
+  test('positive subtraction still works: 12 − 5 = 7', () => {
+    expect(runCalc(['c', 1, 2, '-', 5, '='])).toMatchObject({ display: 7 })
+  }, 60000)
+
+  test('chaining off a negative: 3 − 5 = then + 5 = 3', () => {
+    expect(runCalc(['c', 3, '-', 5, '=', '+', 5, '='])).toMatchObject({ display: 3 })
+  }, 60000)
+
+  test('the ± key negates the entry: 5 ± shows −5', () => {
+    expect(runCalc(['c', 5, 'n'])).toMatchObject({ display: -5 })
+  }, 60000)
+
+  test('± then arithmetic: 5 ± + 3 = −2', () => {
+    expect(runCalc(['c', 5, 'n', '+', 3, '='])).toMatchObject({ display: -2 })
+  }, 60000)
+
+  // Floating point — step 3: typing a "." switches to fractional entry, and a real point-position
+  // counter (f_ent) records how many digits are fractional. The significand stays a plain integer;
+  // value = significand / 10^f_ent. (Decimal +/− and ×/÷ — alignment + scaling — come next.)
+  test('decimal entry: the point-position counter tracks the radix', () => {
+    expect(runCalc(['c', 1, '.', 5])).toMatchObject({ sig: 15, fent: 1, value: 1.5 })
+    expect(runCalc(['c', '.', 5])).toMatchObject({ sig: 5, fent: 1, value: 0.5 })
+    expect(runCalc(['c', 1, 2, '.', 3, 4])).toMatchObject({ sig: 1234, fent: 2, value: 12.34 })
+    expect(runCalc(['c', 1, 2])).toMatchObject({ sig: 12, fent: 0, value: 12 })
+    expect(runCalc(['c', 0, '.', 2, 5])).toMatchObject({ sig: 25, fent: 2, value: 0.25 })
+  }, 60000)
 })

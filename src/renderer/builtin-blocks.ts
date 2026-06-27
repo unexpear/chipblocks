@@ -2489,6 +2489,7 @@ function buildKeypadEncoder(): BlockData {
     'keq',
     'kclr',
     'kpm',
+    'kdot',
   ]
   keys.forEach((k, i) => {
     nodes.push({ id: `b_${k}`, definition: 'block', x: 0, y: 30 + i * 160, block: BUFFER_BLOCK })
@@ -2519,6 +2520,9 @@ function buildKeypadEncoder(): BlockData {
   outRef.is_eq = bufOut('keq')
   outRef.is_clr = bufOut('kclr')
   outRef.is_pm = bufOut('kpm')
+  // The decimal point is its own class line — it touches NO digit/op plane, so it never enters a
+  // number or starts arithmetic; it only tells the entry register to switch to fractional placement.
+  outRef.is_dot = bufOut('kdot')
   edges.push(...chainRails(railIds, 'enc'))
   let left = 14
   for (const k of keys) {
@@ -2538,7 +2542,20 @@ function buildKeypadEncoder(): BlockData {
     offset: left,
     inner: { nodeId: 'b_k0', handleId: 'gnd' },
   })
-  const outs = ['d0', 'd1', 'd2', 'd3', 'digit', 'op0', 'op1', 'is_op', 'is_eq', 'is_clr', 'is_pm']
+  const outs = [
+    'd0',
+    'd1',
+    'd2',
+    'd3',
+    'digit',
+    'op0',
+    'op1',
+    'is_op',
+    'is_eq',
+    'is_clr',
+    'is_pm',
+    'is_dot',
+  ]
   let right = 14
   for (const o of outs) {
     const ref = outRef[o]
@@ -2993,7 +3010,7 @@ function buildCalcControlFsm(): BlockData {
     })
   }
 
-  const inputs = ['digit', 'isop', 'iseq', 'isclr', 'op0', 'op1']
+  const inputs = ['digit', 'isop', 'iseq', 'isclr', 'op0', 'op1', 'isdp']
   inputs.forEach((s, i) => {
     nodes.push({
       id: `buf_${s}`,
@@ -3006,7 +3023,7 @@ function buildCalcControlFsm(): BlockData {
   })
   const IN = (s: string): LogicRef => ({ node: `buf_${s}`, handle: 'out' })
 
-  const stateFFs = ['f', 'v', 'op0r', 'op1r']
+  const stateFFs = ['f', 'v', 'op0r', 'op1r', 'dp']
   stateFFs.forEach((s, i) => {
     nodes.push({
       id: `ff_${s}`,
@@ -3029,9 +3046,13 @@ function buildCalcControlFsm(): BlockData {
   const V = Q('v')
   const OP0R = Q('op0r')
   const OP1R = Q('op1r')
+  const ISDP = IN('isdp') // a "." was pressed this cycle
+  const DP = Q('dp') // a "." has been seen in the current number (fractional-entry mode)
 
-  // control outputs (Mealy)
-  const entryNew = buildExpr(['and', DIGIT, F], ctx)
+  // control outputs (Mealy). A leading "." also starts a fresh number (entry_new), so ".5" clears
+  // any stale entry first; it carries no digit (keypad=0), it just zeroes the register and arms
+  // fractional mode for the digits that follow.
+  const entryNew = buildExpr(['and', ['or', DIGIT, ISDP], F], ctx)
   const entryAppend = buildExpr(['and', DIGIT, ['not', F]], ctx)
   const accFromEntry = buildExpr(['and', ISOP, ['not', V]], ctx)
   const opOrEq = buildExpr(['or', ISOP, ISEQ], ctx)
@@ -3043,16 +3064,21 @@ function buildCalcControlFsm(): BlockData {
 
   // next-state logic
   const setf1 = buildExpr(['or', ['or', ISCLR, ISOP], ISEQ], ctx)
-  const fNext = buildExpr(['or', setf1, ['and', F, ['not', DIGIT]]], ctx)
+  // FRESH clears on the first digit OR the first "." of a number (so a leading "." begins entry).
+  const fNext = buildExpr(['or', setf1, ['and', F, ['and', ['not', DIGIT], ['not', ISDP]]]], ctx)
   const vNext = buildExpr(['or', ISOP, ['and', V, ['and', ['not', ISEQ], ['not', ISCLR]]]], ctx)
   const holdOp: LogicExpr = ['and', ['not', ISOP], ['not', ISCLR]]
   const op0Next = buildExpr(['or', ['and', ISOP, OP0], ['and', OP0R, holdOp]], ctx)
   const op1Next = buildExpr(['or', ['and', ISOP, OP1], ['and', OP1R, holdOp]], ctx)
 
+  // dp_seen: born on "." (is_dp), lives until the entry session ends (setf1 = clr|op|eq clears it),
+  // so the next number starts in integer mode.
+  const dpNext = buildExpr(['or', ISDP, ['and', DP, ['not', setf1]]], ctx)
   link(fNext, { node: 'ff_f', handle: 'd' })
   link(vNext, { node: 'ff_v', handle: 'd' })
   link(op0Next, { node: 'ff_op0r', handle: 'd' })
   link(op1Next, { node: 'ff_op1r', handle: 'd' })
+  link(dpNext, { node: 'ff_dp', handle: 'd' })
   for (let i = 1; i < stateFFs.length; i++) {
     const target = stateFFs[i]
     if (target === undefined) continue
@@ -3104,6 +3130,7 @@ function buildCalcControlFsm(): BlockData {
     ['st_opvalid', V],
     ['st_op0', OP0R],
     ['st_op1', OP1R],
+    ['dp', DP],
   ]
   let right = 14
   for (const [id, ref] of outPorts) {
@@ -3486,6 +3513,7 @@ function buildCalculatorAddSub(): BlockData {
   e('enc', 'is_clr', 'fsm', 'isclr')
   e('enc', 'op0', 'fsm', 'op0')
   e('enc', 'op1', 'fsm', 'op1')
+  e('enc', 'is_dot', 'fsm', 'isdp') // drive the FSM's new decimal-point input (unused here → 0)
   // encoder digit value → entry register's keypad
   for (let b = 0; b < 4; b++) e('enc', `d${b}`, 'ent', `keypad${b}`)
   // FSM → entry register control
@@ -3530,6 +3558,7 @@ function buildCalculatorAddSub(): BlockData {
     'keq',
     'kclr',
     'kpm',
+    'kdot',
   ]
   let left = 14
   for (const k of keys) {
@@ -4351,6 +4380,7 @@ function buildCalculator(): BlockData {
     { id: 'alu', definition: 'block', x: 11000, y: 0, block: BCD_ALU_10 },
     { id: 'mul', definition: 'block', x: 11000, y: 32000, block: MULTIPLIER_10 },
     { id: 'div', definition: 'block', x: 11000, y: 64000, block: DIVIDER_10 },
+    { id: 'nalu', definition: 'block', x: 16000, y: 0, block: BCD_ALU_10 }, // negate: 0 − ENTRY = −ENTRY
   ]
   const edges: BlockData['edges'] = []
   let ei = 0
@@ -4358,8 +4388,11 @@ function buildCalculator(): BlockData {
     edges.push({ id: `c${ei++}`, source: s, sourceHandle: sh, target: t, targetHandle: th })
   }
   const ctx: ExprCtx = { nodes, edges, ids: [], n: 0 }
-  const rail: string[] = ['enc', 'fsm', 'ctrl', 'ent', 'acc', 'alu', 'mul', 'div']
+  const rail: string[] = ['enc', 'fsm', 'ctrl', 'ent', 'acc', 'alu', 'mul', 'div', 'nalu']
   const link = (from: LogicRef, to: LogicRef) => e(from.node, from.handle, to.node, to.handle)
+  const LOW: LogicRef = { node: 'enc', handle: 'gnd' }
+  const HIGH: LogicRef = { node: 'enc', handle: 'v_dd' }
+  const tie = (node: string, port: string, ref: LogicRef) => link(ref, { node, handle: port })
   let mi = 0
   const newMux = (sel: LogicRef, x: LogicRef, y: LogicRef): LogicRef => {
     const id = `rm${mi}`
@@ -4385,6 +4418,7 @@ function buildCalculator(): BlockData {
   e('enc', 'is_clr', 'fsm', 'isclr')
   e('enc', 'op0', 'fsm', 'op0')
   e('enc', 'op1', 'fsm', 'op1')
+  e('enc', 'is_dot', 'fsm', 'isdp')
   for (let b = 0; b < 4; b++) e('enc', `d${b}`, 'ent', `keypad${b}`)
   // FSM → controller; controller → sequencers
   e('fsm', 'compute', 'ctrl', 'compute')
@@ -4424,9 +4458,19 @@ function buildCalculator(): BlockData {
     ctx,
   )
   const load = buildExpr(['or', computeAddSub, { node: 'ctrl', handle: 'capture' }], ctx)
-  link(load, { node: 'ent', handle: 'compute' })
+  // negate ALU: 0 − ENTRY = −ENTRY (ten's complement) — for the ± key and the signed display
+  tie('nalu', 'sub', HIGH)
+  for (let i = 0; i < 40; i++) {
+    tie('nalu', `a${i}`, LOW)
+    e('ent', `entry${i}`, 'nalu', `b${i}`)
+  }
+  // ± (kpm) negates the entry → ENTRY loads −ENTRY; so ENTRY loads on (load OR is_pm), ACC only on load
+  link(buildExpr(['or', load, { node: 'enc', handle: 'is_pm' }], ctx), {
+    node: 'ent',
+    handle: 'compute',
+  })
   link(load, { node: 'acc', handle: 'compute' })
-  // result mux per bit: alu_mul ? product : (alu_div ? quotient : ALU sum) → both registers' result input
+  // result mux per bit: alu_mul ? product : (alu_div ? quotient : ALU sum); ENTRY also takes −ENTRY on ±
   for (let i = 0; i < 40; i++) {
     const m1 = newMux(
       { node: 'fsm', handle: 'alu_div' },
@@ -4438,7 +4482,12 @@ function buildCalculator(): BlockData {
       { node: 'mul', handle: `product${i}` },
       m1,
     )
-    link(m2, { node: 'ent', handle: `result${i}` })
+    const entResult = newMux(
+      { node: 'enc', handle: 'is_pm' },
+      { node: 'nalu', handle: `s${i}` },
+      m2,
+    )
+    link(entResult, { node: 'ent', handle: `result${i}` })
     link(m2, { node: 'acc', handle: `result${i}` })
   }
   // clear the divider's sticky div-by-zero error on any new key activity (clear / operator / digit)
@@ -4453,8 +4502,45 @@ function buildCalculator(): BlockData {
     ),
     { node: 'div', handle: 'clear' },
   )
+  // signed display: a ten's-complement value is negative when its top digit (bits 36..39) is >= 5;
+  // then the displayed magnitude is −value (= nalu.s). NEG is the minus-sign indicator.
+  const isNeg = buildExpr(
+    [
+      'or',
+      { node: 'ent', handle: 'entry39' },
+      [
+        'and',
+        { node: 'ent', handle: 'entry38' },
+        ['or', { node: 'ent', handle: 'entry37' }, { node: 'ent', handle: 'entry36' }],
+      ],
+    ],
+    ctx,
+  )
+  const display: LogicRef[] = []
+  for (let i = 0; i < 40; i++) {
+    display.push(
+      newMux(isNeg, { node: 'nalu', handle: `s${i}` }, { node: 'ent', handle: `entry${i}` }),
+    )
+  }
+  // F_ent — the ENTRY register's decimal-point position (floating point): a 4-bit up-counter holding
+  // how many of the 10 significand digits are fractional. The point sits between digit F−1 and digit
+  // F; value = significand × 10^−F. It resets to 0 at the start of a number (entry_new or clear) and
+  // counts up once per digit typed AFTER the "." (an entry_append while dp_seen). The significand
+  // register itself is unchanged — floating point is the integer significand we already have PLUS this
+  // position counter, so 1,5 means 15 (F=0), 1.5 (F=1) or 0.15 (F=2) depending only on F.
+  nodes.push({ id: 'fent', definition: 'block', x: 18000, y: 0, block: COUNTER_UP_EN_4 })
+  rail.push('fent')
+  for (let b = 0; b < 4; b++) tie('fent', `l${b}`, LOW)
+  link(
+    buildExpr(['or', { node: 'fsm', handle: 'entry_new' }, { node: 'fsm', handle: 'clear' }], ctx),
+    { node: 'fent', handle: 'load' },
+  )
+  link(
+    buildExpr(['and', { node: 'fsm', handle: 'entry_append' }, { node: 'fsm', handle: 'dp' }], ctx),
+    { node: 'fent', handle: 'en' },
+  )
   // shared clock
-  for (const blk of ['ent', 'acc', 'ctrl', 'mul', 'div']) e('fsm', 'clk', blk, 'clk')
+  for (const blk of ['ent', 'acc', 'ctrl', 'mul', 'div', 'fent']) e('fsm', 'clk', blk, 'clk')
   rail.push(...ctx.ids)
   edges.push(...chainRails(rail, 'calc'))
 
@@ -4477,6 +4563,7 @@ function buildCalculator(): BlockData {
     'keq',
     'kclr',
     'kpm',
+    'kdot',
   ]
   let left = 14
   for (const k of keys) {
@@ -4506,6 +4593,7 @@ function buildCalculator(): BlockData {
   })
   let right = 14
   for (let i = 0; i < 40; i++) {
+    // raw ten's-complement value (internal / for chaining)
     ports.push({
       id: `entry${i}`,
       label: `E${i}`,
@@ -4513,8 +4601,28 @@ function buildCalculator(): BlockData {
       offset: right,
       inner: { nodeId: 'ent', handleId: `entry${i}` },
     })
-    right += 6
+    right += 4
+    // the signed DISPLAY magnitude (what the 7-seg shows)
+    const d = display[i]
+    if (d !== undefined) {
+      ports.push({
+        id: `display${i}`,
+        label: `D${i}`,
+        side: 'right',
+        offset: right,
+        inner: { nodeId: d.node, handleId: d.handle },
+      })
+      right += 4
+    }
   }
+  ports.push({
+    id: 'neg',
+    label: 'NEG',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: isNeg.node, handleId: isNeg.handle },
+  })
+  right += 12
   ports.push({
     id: 'error',
     label: 'ERR',
@@ -4531,6 +4639,17 @@ function buildCalculator(): BlockData {
     inner: { nodeId: 'ctrl', handleId: 'busy' },
   })
   right += 12
+  // F_ent — the entry's decimal-point position (how many of the displayed digits are fractional).
+  for (let b = 0; b < 4; b++) {
+    ports.push({
+      id: `f_ent${b}`,
+      label: `FE${b}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: 'fent', handleId: `q${b}` },
+    })
+    right += 8
+  }
   ports.push({
     id: 'v_dd',
     label: 'V+',
