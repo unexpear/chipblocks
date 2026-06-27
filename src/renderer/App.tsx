@@ -205,7 +205,7 @@ import {
   traceTimingPaths,
 } from './timing-graph.ts'
 import { TimingPanel } from './timing-panel.tsx'
-import { type Tool, ToolbarItems } from './toolbar.tsx'
+import { type ConnectMode, type Tool, ToolbarItems } from './toolbar.tsx'
 import { CheckpointContext } from './undo-context.ts'
 import { checkpoint, emptyHistory, redo, undo } from './undo-history.ts'
 import { formatEng } from './units.ts'
@@ -510,6 +510,147 @@ function PendingWirePreview({
         />
       </svg>
     </ViewportPortal>
+  )
+}
+
+type ConnectAnchor = { nodeId: string; handleId: string }
+
+/**
+ * Connect tool — the dots for every point you can wire to. Mirrors PendingWirePreview's trick of
+ * reading each handle's absolute position from useInternalNode. One marker per handle (part pin,
+ * block port, junction); clicking it picks that point (first = start, second = end). The pending
+ * start lights up; queued pairs (Batch mode) are drawn as faint dashed lines so you can see what's
+ * about to route before you press Route all.
+ */
+function ConnectPointsOverlay({
+  nodes,
+  start,
+  queue,
+  onPick,
+}: {
+  nodes: { id: string }[]
+  start: ConnectAnchor | null
+  queue: { from: ConnectAnchor; to: ConnectAnchor }[]
+  onPick: (nodeId: string, handleId: string) => void
+}) {
+  return (
+    <ViewportPortal>
+      {/* biome-ignore lint/a11y/noSvgWithoutTitle: decorative queued-pair preview lines */}
+      <svg
+        width={1}
+        height={1}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          overflow: 'visible',
+          pointerEvents: 'none',
+        }}
+        aria-hidden
+      >
+        {queue.map((pair) => (
+          <QueuedConnectLine
+            key={`${pair.from.nodeId}:${pair.from.handleId}>${pair.to.nodeId}:${pair.to.handleId}`}
+            from={pair.from}
+            to={pair.to}
+          />
+        ))}
+      </svg>
+      {nodes.map((n) => (
+        <NodeConnectPoints key={n.id} nodeId={n.id} start={start} onPick={onPick} />
+      ))}
+    </ViewportPortal>
+  )
+}
+
+/** Absolute flow position of one handle on a node (its centre), or null if not measured yet. */
+function connectHandlePos(
+  node: ReturnType<typeof useInternalNode>,
+  handleId: string,
+): { x: number; y: number } | null {
+  const bounds = node?.internals.handleBounds
+  const handle =
+    bounds?.source?.find((h) => h.id === handleId) ?? bounds?.target?.find((h) => h.id === handleId)
+  if (!node || !handle) return null
+  return {
+    x: node.internals.positionAbsolute.x + handle.x + handle.width / 2,
+    y: node.internals.positionAbsolute.y + handle.y + handle.height / 2,
+  }
+}
+
+/** Every connectable dot for one node — one clickable marker per handle. */
+function NodeConnectPoints({
+  nodeId,
+  start,
+  onPick,
+}: {
+  nodeId: string
+  start: ConnectAnchor | null
+  onPick: (nodeId: string, handleId: string) => void
+}) {
+  const node = useInternalNode(nodeId)
+  const bounds = node?.internals.handleBounds
+  if (!node || !bounds) return null
+  const seen = new Set<string>()
+  const handles = [...(bounds.source ?? []), ...(bounds.target ?? [])].filter((h) => {
+    if (h.id === null || h.id === undefined || seen.has(h.id)) return false
+    seen.add(h.id)
+    return true
+  })
+  return (
+    <>
+      {handles.map((h) => {
+        const handleId = h.id as string
+        const x = node.internals.positionAbsolute.x + h.x + h.width / 2
+        const y = node.internals.positionAbsolute.y + h.y + h.height / 2
+        const isStart = start?.nodeId === nodeId && start?.handleId === handleId
+        return (
+          <button
+            type="button"
+            key={handleId}
+            className="nodrag nopan"
+            title={`Connect: ${nodeId} · ${handleId}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              onPick(nodeId, handleId)
+            }}
+            style={{
+              position: 'absolute',
+              left: x - 7,
+              top: y - 7,
+              width: 14,
+              height: 14,
+              padding: 0,
+              borderRadius: '50%',
+              background: isStart ? THEME.accentBlue : 'rgba(56,139,253,0.22)',
+              border: `2px solid ${isStart ? THEME.accentBlueBright : THEME.accentBlue}`,
+              cursor: 'pointer',
+              boxShadow: isStart ? '0 0 0 3px rgba(56,139,253,0.35)' : 'none',
+            }}
+          />
+        )
+      })}
+    </>
+  )
+}
+
+/** One queued start→end pair, drawn as a faint dashed line (Batch mode preview). */
+function QueuedConnectLine({ from, to }: { from: ConnectAnchor; to: ConnectAnchor }) {
+  const fromNode = useInternalNode(from.nodeId)
+  const toNode = useInternalNode(to.nodeId)
+  const a = connectHandlePos(fromNode, from.handleId)
+  const b = connectHandlePos(toNode, to.handleId)
+  if (a === null || b === null) return null
+  return (
+    <line
+      x1={a.x}
+      y1={a.y}
+      x2={b.x}
+      y2={b.y}
+      stroke={THEME.statusOk}
+      strokeWidth={1.6}
+      strokeDasharray="5 4"
+    />
   )
 }
 
@@ -1575,6 +1716,18 @@ function Canvas({ project }: { project: ProjectChoice }) {
   const [activeTab, setActiveTab] = useState<Record<number, string>>({})
   // Active tool: 'select' (move parts) or 'wire' (parts locked; drag draws wires).
   const [tool, setTool] = useState<Tool>('select')
+  // Connect tool (pick a start point, pick an end point, the auto-router lays the wire). It marks
+  // every connectable point on the canvas; `connectStart` is the first point picked (null = none
+  // pending). Single mode routes each pair immediately; Batch queues pairs in `connectQueue` and
+  // routes them all on "Route all". Both just add plain (corner-less) edges, so the SAME global
+  // auto-router that the Wire tool relies on routes them — no second router.
+  const [connectMode, setConnectMode] = useState<ConnectMode>('single')
+  const [connectStart, setConnectStart] = useState<{ nodeId: string; handleId: string } | null>(
+    null,
+  )
+  const [connectQueue, setConnectQueue] = useState<
+    { from: { nodeId: string; handleId: string }; to: { nodeId: string; handleId: string } }[]
+  >([])
   // Snap-to-grid (optional): OFF by default — placement stays free, the way it has always worked —
   // and toggled from the canvas controls. When on, dragged AND dropped parts align to SNAP_GRID.
   const [snapToGrid, setSnapToGrid] = useState(false)
@@ -4790,7 +4943,15 @@ function Canvas({ project }: { project: ProjectChoice }) {
     return () => {
       w.__chip = undefined
     }
-  }, [setNodes, setEdges, onEditBlockPort, checkpointAction, updateNodeInternals, reSolve, setAutoRouteWires])
+  }, [
+    setNodes,
+    setEdges,
+    onEditBlockPort,
+    checkpointAction,
+    updateNodeInternals,
+    reSolve,
+    setAutoRouteWires,
+  ])
 
   // Zoom to the SELECTED parts (or fit all if none) — precise framing, easier than the wheel.
   const zoomToSelection = useCallback(() => {
@@ -4853,6 +5014,10 @@ function Canvas({ project }: { project: ProjectChoice }) {
       setWireCursor(null)
     }
   }, [tool])
+  // Leaving the Connect tool drops a half-made connection (the queue is kept — re-enter to finish it).
+  useEffect(() => {
+    if (tool !== 'connect') setConnectStart(null)
+  }, [tool])
   useEffect(() => {
     if (pendingWire === null) return
     const onKey = (event: KeyboardEvent) => {
@@ -4861,6 +5026,14 @@ function Canvas({ project }: { project: ProjectChoice }) {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [pendingWire, keybinds.cancelWire])
+  useEffect(() => {
+    if (connectStart === null) return
+    const onKey = (event: KeyboardEvent) => {
+      if (eventMatchesBinding(event, keybinds.cancelWire)) setConnectStart(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [connectStart, keybinds.cancelWire])
   const finishWire = useCallback(
     (end: WireAnchor, corners: { id: string; x: number; y: number }[]) => {
       if (pendingWire === null) return
@@ -4905,6 +5078,85 @@ function Canvas({ project }: { project: ProjectChoice }) {
       setPendingWire(null)
     },
     [pendingWire, wireStyle, wireCurveRadius, wireGauge, setEdges, setNodes, checkpointAction],
+  )
+  // Connect tool — pick a start point, pick an end point, the auto-router lays the wire. The edge
+  // is plain (no hand-dropped corners), so the SAME global router the Wire tool relies on routes
+  // it; turning autoRouteWires on makes sure that router actually runs. No second router.
+  const connectEdgeParams = useCallback(
+    (from: ConnectAnchor, to: ConnectAnchor) => ({
+      source: from.nodeId,
+      sourceHandle: from.handleId,
+      target: to.nodeId,
+      targetHandle: to.handleId,
+      type: 'net',
+      deletable: true,
+      style: { stroke: DRAWN },
+      data: { gaugeAwg: wireGauge },
+    }),
+    [wireGauge],
+  )
+  const routeConnectQueue = useCallback(() => {
+    if (connectQueue.length === 0) return
+    checkpointAction('wire')
+    setEdges((current) =>
+      connectQueue.reduce(
+        (acc, pair) => addEdge(connectEdgeParams(pair.from, pair.to), acc),
+        current,
+      ),
+    )
+    setConnectQueue([])
+    setConnectStart(null)
+    setAutoRouteWires(true)
+  }, [connectQueue, connectEdgeParams, setEdges, checkpointAction])
+  const clearConnectQueue = useCallback(() => {
+    setConnectQueue([])
+    setConnectStart(null)
+  }, [])
+  // First pick = the start (it lights up); second pick = the end. Re-picking the start cancels.
+  // Single mode routes the pair now; Batch queues it (Route all routes the whole queue at once).
+  const onPickConnectPoint = useCallback(
+    (nodeId: string, handleId: string) => {
+      if (connectStart === null) {
+        setConnectStart({ nodeId, handleId })
+        return
+      }
+      if (connectStart.nodeId === nodeId && connectStart.handleId === handleId) {
+        setConnectStart(null)
+        return
+      }
+      const from = connectStart
+      const to = { nodeId, handleId }
+      if (connectMode === 'batch') {
+        setConnectQueue((q) => [...q, { from, to }])
+        setConnectStart(null)
+        return
+      }
+      checkpointAction('wire')
+      setEdges((current) => addEdge(connectEdgeParams(from, to), current))
+      setAutoRouteWires(true)
+      setConnectStart(null)
+    },
+    [connectStart, connectMode, connectEdgeParams, setEdges, checkpointAction],
+  )
+  // A click on empty canvas with the Connect tool active cancels a half-made connection. A marker
+  // handles its own pick (it stops propagation); a stray click straight on a real handle still
+  // works as a pick, for robustness.
+  const onConnectClick = useCallback(
+    (event: ReactMouseEvent) => {
+      if (tool !== 'connect') return
+      const target = event.target as Element
+      const handleEl = target.closest?.('.react-flow__handle') as HTMLElement | null
+      if (handleEl !== null) {
+        const nodeId = handleEl.dataset.nodeid
+        const handleId = handleEl.dataset.handleid
+        if (nodeId !== undefined && handleId !== undefined) onPickConnectPoint(nodeId, handleId)
+        return
+      }
+      if (target.closest?.('.react-flow__pane') !== null && connectStart !== null) {
+        setConnectStart(null)
+      }
+    },
+    [tool, connectStart, onPickConnectPoint],
   )
   const onWireClick = useCallback(
     (event: ReactMouseEvent) => {
@@ -5212,6 +5464,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
           if (onScopeProbeClick(event)) return
           onMeterClick(event)
           onWireClick(event)
+          onConnectClick(event)
         }}
         onDoubleClickCapture={onWireDoubleClick}
         onMouseMove={(event) => {
@@ -5478,6 +5731,14 @@ function Canvas({ project }: { project: ProjectChoice }) {
                                   cursor={wireCursor}
                                   curved={wireStyle === 'curve'}
                                   curveRadius={wireCurveRadius}
+                                />
+                              ) : null}
+                              {tool === 'connect' ? (
+                                <ConnectPointsOverlay
+                                  nodes={nodes}
+                                  start={connectStart}
+                                  queue={connectQueue}
+                                  onPick={onPickConnectPoint}
                                 />
                               ) : null}
                               <WireCrossingsOverlay
@@ -6062,6 +6323,11 @@ function Canvas({ project }: { project: ProjectChoice }) {
                 onLens={selectLens}
                 flow={flow}
                 onFlow={selectFlow}
+                connectMode={connectMode}
+                onConnectMode={setConnectMode}
+                connectQueueCount={connectQueue.length}
+                onRouteConnectQueue={routeConnectQueue}
+                onClearConnectQueue={clearConnectQueue}
               />
             ),
           },

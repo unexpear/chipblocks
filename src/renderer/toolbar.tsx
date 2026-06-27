@@ -19,7 +19,8 @@ import { CURVE_SIZES } from './wire-path.ts'
  *    then hit Solve.
  */
 
-export type Tool = 'select' | 'wire' | 'meter' | 'lasso'
+export type Tool = 'select' | 'wire' | 'meter' | 'lasso' | 'connect'
+export type ConnectMode = 'single' | 'batch'
 export type WireStyle = 'line' | 'curve'
 
 /**
@@ -161,6 +162,14 @@ export const TOOL_MODES: ToolMode[] = [
       'Wire tool — works like a CAD line tool: click anywhere to start (a terminal dot, or open space — a junction dot is made there), click to drop corners, then click a terminal dot to finish, or double-click in space to end there. No holding (drag between dots also works). Esc or re-clicking the start abandons the wire.',
   },
   {
+    tool: 'connect',
+    label: 'Connect',
+    icon: '🔗',
+    color: THEME.accentBlueBright,
+    title:
+      'Connect tool — the app marks EVERY point you can wire to (part pins, block ports, junction dots). Click a start dot, then an end dot, and the auto-router lays a neat wire between them — you pick the endpoints, it figures out the path. Single mode routes each wire as you go; Batch mode lets you mark many pairs first, then "Route all" routes them together for the cleanest result. Esc cancels a half-made connection.',
+  },
+  {
     tool: 'lasso',
     label: 'Lasso',
     icon: '⟁',
@@ -206,6 +215,11 @@ export function ToolbarItems({
   onLens,
   flow,
   onFlow,
+  connectMode,
+  onConnectMode,
+  connectQueueCount,
+  onRouteConnectQueue,
+  onClearConnectQueue,
 }: {
   tool: Tool
   onTool: (tool: Tool) => void
@@ -234,6 +248,11 @@ export function ToolbarItems({
   onLens: (lens: LensMode) => void
   flow: boolean
   onFlow: (flow: boolean) => void
+  connectMode: ConnectMode
+  onConnectMode: (mode: ConnectMode) => void
+  connectQueueCount: number
+  onRouteConnectQueue: () => void
+  onClearConnectQueue: () => void
 }) {
   // Each toolbar action id (from TOOLBAR_ACTIONS) wired to its handler. Add a button →
   // add an entry here and in TOOLBAR_ACTIONS; rewire one → change it here.
@@ -278,6 +297,15 @@ export function ToolbarItems({
                 onCurveRadius={onCurveRadius}
                 wireGauge={wireGauge}
                 onWireGauge={onWireGauge}
+              />
+            ) : null}
+            {mode.tool === 'connect' && active ? (
+              <ConnectOptions
+                connectMode={connectMode}
+                onConnectMode={onConnectMode}
+                queueCount={connectQueueCount}
+                onRouteQueue={onRouteConnectQueue}
+                onClearQueue={onClearConnectQueue}
               />
             ) : null}
           </Fragment>
@@ -669,6 +697,97 @@ function WireOptions({
           ))}
         </select>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Connect's options sub-panel — the Single / Batch switch and (in Batch) the Route-all + Clear
+ * buttons for the queued pairs. Mirrors WireOptions: only the Connect tool has its own options, so
+ * they live here and the toolbar renders them right under the Connect button.
+ */
+function ConnectOptions({
+  connectMode,
+  onConnectMode,
+  queueCount,
+  onRouteQueue,
+  onClearQueue,
+}: {
+  connectMode: ConnectMode
+  onConnectMode: (mode: ConnectMode) => void
+  queueCount: number
+  onRouteQueue: () => void
+  onClearQueue: () => void
+}) {
+  const queueButton = (enabled: boolean): React.CSSProperties => ({
+    ...toolButton(false),
+    flexDirection: 'row',
+    gap: 6,
+    padding: '4px 10px',
+    ...(enabled ? {} : { opacity: 0.45, cursor: 'default' }),
+  })
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <button
+        type="button"
+        onClick={() => onConnectMode('single')}
+        title="Single — each wire routes the moment you pick its two endpoints. Best for one or a few connections."
+        style={{
+          ...toolButton(connectMode === 'single'),
+          flexDirection: 'row',
+          gap: 6,
+          padding: '4px 10px',
+        }}
+      >
+        <span aria-hidden style={{ fontSize: 12 }}>
+          •→•
+        </span>
+        <span style={{ fontSize: 11 }}>Single</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => onConnectMode('batch')}
+        title="Batch — mark several start→end pairs first; nothing routes until you press Route all, so the auto-router can lay them all together for the cleanest, least-crossing result."
+        style={{
+          ...toolButton(connectMode === 'batch'),
+          flexDirection: 'row',
+          gap: 6,
+          padding: '4px 10px',
+        }}
+      >
+        <span aria-hidden style={{ fontSize: 12 }}>
+          ≣
+        </span>
+        <span style={{ fontSize: 11 }}>Batch</span>
+      </button>
+      {connectMode === 'batch' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 6 }}>
+          <button
+            type="button"
+            onClick={onRouteQueue}
+            disabled={queueCount === 0}
+            title="Route every queued pair now — the auto-router lays them all in one pass."
+            style={queueButton(queueCount > 0)}
+          >
+            <span aria-hidden style={{ color: THEME.accentBlue, fontSize: 12 }}>
+              ▶
+            </span>
+            <span style={{ fontSize: 11 }}>Route all ({queueCount})</span>
+          </button>
+          <button
+            type="button"
+            onClick={onClearQueue}
+            disabled={queueCount === 0}
+            title="Forget the queued pairs without routing them."
+            style={queueButton(queueCount > 0)}
+          >
+            <span aria-hidden style={{ color: THEME.textMuted, fontSize: 12 }}>
+              ✕
+            </span>
+            <span style={{ fontSize: 11 }}>Clear</span>
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }
