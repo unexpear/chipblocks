@@ -51,6 +51,9 @@ const MIDNIGHT = {
   lensTemp: '#e0a050',
   lensField: '#5ad8c8',
   lensEnergy: '#e8b84b',
+  // wires — the default canvas wire colour (a drawn/unsolved wire). Bright enough to read clearly
+  // on the dark canvas; solved wires recolour to the live/idle accents on top of this.
+  wire: '#c0cde0',
 }
 
 export type Palette = typeof MIDNIGHT

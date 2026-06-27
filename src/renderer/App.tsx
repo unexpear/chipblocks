@@ -272,7 +272,7 @@ declare global {
 
 const CURRENT = THEME.accentBlue // a live wire carrying current (solved)
 const IDLE = THEME.textFaint // a tap / no-current wire
-const DRAWN = THEME.textMuted // a user-drawn wire, not yet solved
+const DRAWN = THEME.wire // a user-drawn wire, not yet solved
 
 /**
  * Map a loaded / imported CircuitFile to the canvas's React Flow nodes + edges. Shared by Open (a

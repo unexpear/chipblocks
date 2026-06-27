@@ -487,7 +487,7 @@ export function NetEdge({
       ? { ...style, stroke: voltageStroke, strokeWidth: 2.4 }
       : netStroke
         ? { ...style, stroke: netStroke }
-        : style
+        : { ...style, stroke: style?.stroke ?? THEME.wire } // never fall through to React Flow's dim #3e3e3e default
   // During playback the flow dashes always show (the timeline IS a flow view); otherwise
   // they follow the flow lens. Direction is the frame's sign when playing, else the steady arrow.
   const showFlow = lensState.flow || fe !== null
