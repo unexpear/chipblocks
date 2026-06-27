@@ -68,7 +68,13 @@ function pathHitsAny(points: Pt[], obstacles: Box[]): boolean {
  * fewer corners. Returns [a, …corners, b], or null if even this can't get around (fully boxed in) or the
  * grid is too large to search cheaply (the caller then falls back to the heuristic). Exported for tests.
  */
-export function gridRouteAround(a: Pt, b: Pt, obstacles: Box[], margin = 12): Pt[] | null {
+export function gridRouteAround(
+  a: Pt,
+  b: Pt,
+  obstacles: Box[],
+  margin = 12,
+  maxNodes = 4096,
+): Pt[] | null {
   if (a.x === b.x && a.y === b.y) return [a]
   const xsSet = new Set<number>([a.x, b.x])
   const ysSet = new Set<number>([a.y, b.y])
@@ -80,7 +86,7 @@ export function gridRouteAround(a: Pt, b: Pt, obstacles: Box[], margin = 12): Pt
   }
   const xs = [...xsSet].sort((p, q) => p - q)
   const ys = [...ysSet].sort((p, q) => p - q)
-  if (xs.length * ys.length > 4096) return null // too dense to A* cheaply — let the caller fall back
+  if (xs.length * ys.length > maxNodes) return null // too dense to A* cheaply — let the caller fall back
   const startIx = xs.indexOf(a.x)
   const startIy = ys.indexOf(a.y)
   const goalIx = xs.indexOf(b.x)
@@ -272,17 +278,19 @@ export function orthogonalRoute(
 export type WireReq = { id: string; from: Pt; to: Pt }
 
 /**
- * GLOBAL router — routes a whole BATCH of wires together on ONE shared uniform grid, so they spread into
- * parallel tracks instead of piling into the same channel (the failure of routing each wire alone, where
- * 200 wires funnel through the same gap and read as a tangle). Each wire is A* on the grid; a cell's cost
- * RISES with how many already-routed wires use it (congestion), so later wires detour into free lanes — a
- * flow-field idea from game crowd navigation. A turn cost keeps runs straight; obstacle cells are
- * hard-avoided so a wire never crosses a part. Scales by a fixed grid STEP (not the Hanan lattice, which
- * explodes on dense boards).
+ * GLOBAL router — routes a whole BATCH of wires, then NUDGES the parallel runs apart (per the orthogonal
+ * connector routing of AUTO-ROUTER-RESEARCH.md). Each wire is routed on its OWN bounded Hanan VISIBILITY
+ * lattice — the lines through nearby part edges + the two pins, within the wire's bounding box + a margin
+ * — with a HEAVY bend penalty, so runs come out long and straight with few corners (not the stair-steps a
+ * uniform grid gives) and never cross a part. Spreading the bundles is nudgeRoutes' job, not the A*'s.
  *
- * Endpoints snap to the grid (pass grid-aligned points, or stitch the real pin on with a stub). Returns
- * each wire id → its waypoint path. Returns an EMPTY map if the board is too big to grid cheaply — the
- * signal for the caller to fall back to per-wire routing.
+ * A bounded lattice is ~100-200 nodes even on a dense board, so the linear-scan A* stays fast (~35ms for
+ * ~260 wires) without a heap. Safety: a wall-clock guard + per-wire expansion cap bound the worst case; a
+ * strict fallback chain (margin-double → full-board gridRouteAround → box-checked L) NEVER emits a raw
+ * diagonal that could cut a part; and after nudging, any path pushed through a part reverts to its routed
+ * (part-free) version. If the time budget blows, it returns the wires routed SO FAR (a partial map); a
+ * wire that's truly boxed in gets an empty path. Either way net-edge fills any wire missing a good global
+ * path with the strict per-edge router — so the whole batch is never thrown away over a few hard wires.
  */
 export function routeAllWires(
   wires: WireReq[],
@@ -290,108 +298,114 @@ export function routeAllWires(
   opts: {
     grid?: number
     clearance?: number
-    turnCost?: number
-    congestionCost?: number
-    maxCells?: number
+    bendCost?: number
+    bbMargin?: number
+    maxNodes?: number
+    timeBudgetMs?: number
   } = {},
 ): Map<string, Pt[]> {
   const out = new Map<string, Pt[]>()
   if (wires.length === 0) return out
   const G = opts.grid ?? 16
   const clearance = opts.clearance ?? 10
-  const turnCost = opts.turnCost ?? G * 2
-  const congestionCost = opts.congestionCost ?? G * 4
-  const xs: number[] = []
-  const ys: number[] = []
-  for (const w of wires) {
-    xs.push(w.from.x, w.to.x)
-    ys.push(w.from.y, w.to.y)
-  }
-  for (const o of obstacles) {
-    xs.push(o.x - clearance, o.x + o.w + clearance)
-    ys.push(o.y - clearance, o.y + o.h + clearance)
-  }
-  const pad = G * 2
-  const minX = Math.min(...xs) - pad
-  const minY = Math.min(...ys) - pad
-  const cols = Math.ceil((Math.max(...xs) + pad - minX) / G) + 1
-  const rows = Math.ceil((Math.max(...ys) + pad - minY) / G) + 1
-  if (cols * rows > (opts.maxCells ?? 250000)) return out
-  const cx = (x: number) => Math.round((x - minX) / G)
-  const cy = (y: number) => Math.round((y - minY) / G)
-  const ptAt = (ix: number, iy: number): Pt => ({ x: minX + ix * G, y: minY + iy * G })
-  const inb = (ix: number, iy: number) => ix >= 0 && ix < cols && iy >= 0 && iy < rows
-  const ci = (ix: number, iy: number) => iy * cols + ix
-  const blocked = new Uint8Array(cols * rows)
-  for (const o of obstacles) {
-    const x0 = Math.max(0, cx(o.x - clearance))
-    const x1 = Math.min(cols - 1, cx(o.x + o.w + clearance))
-    const y0 = Math.max(0, cy(o.y - clearance))
-    const y1 = Math.min(rows - 1, cy(o.y + o.h + clearance))
-    for (let iy = y0; iy <= y1; iy++) for (let ix = x0; ix <= x1; ix++) blocked[ci(ix, iy)] = 1
-  }
-  const usage = new Float32Array(cols * rows)
-  const DX = [1, -1, 0, 0]
+  const bendCost = opts.bendCost ?? G * 8 // HEAVY — prefer one long run over two short ones (the clean look)
+  const bbMargin0 = opts.bbMargin ?? 80
+  const maxNodes = opts.maxNodes ?? 8192
+  const timeBudget = opts.timeBudgetMs ?? 800
+  const nowMs = (): number =>
+    typeof performance !== 'undefined' && performance.now ? performance.now() : 0
+  const t0 = nowMs()
+  const DX = [1, -1, 0, 0] // dir codes: 0=right 1=left 2=down 3=up 4=start
   const DY = [0, 0, 1, -1]
 
-  const routeOne = (from: Pt, to: Pt): Pt[] => {
-    const sx = cx(from.x)
-    const sy = cy(from.y)
-    const tx = cx(to.x)
-    const ty = cy(to.y)
-    if (!inb(sx, sy) || !inb(tx, ty)) return [from, to]
-    blocked[ci(sx, sy)] = 0
-    blocked[ci(tx, ty)] = 0
-    const skey = (ix: number, iy: number, d: number) => (iy * cols + ix) * 5 + d
-    const startK = skey(sx, sy, 4) // d=4 = no direction yet (the start)
+  // Route ONE wire on its OWN bounded Hanan visibility lattice (the lines through nearby part edges + the
+  // two pins, within the wire's bbox + margin). Heavy bend penalty → long straight runs, few corners. Only
+  // LOCAL obstacles are checked (the path lives in the bbox); the caller re-validates against all of them.
+  const routeBounded = (from: Pt, to: Pt, bbMargin: number): Pt[] | null => {
+    const loX = Math.min(from.x, to.x) - bbMargin
+    const hiX = Math.max(from.x, to.x) + bbMargin
+    const loY = Math.min(from.y, to.y) - bbMargin
+    const hiY = Math.max(from.y, to.y) + bbMargin
+    const local = obstacles.filter(
+      (o) =>
+        o.x - clearance < hiX &&
+        o.x + o.w + clearance > loX &&
+        o.y - clearance < hiY &&
+        o.y + o.h + clearance > loY,
+    )
+    const cX = (x: number) => Math.round(Math.min(hiX, Math.max(loX, x)))
+    const cY = (y: number) => Math.round(Math.min(hiY, Math.max(loY, y)))
+    const xsSet = new Set<number>([cX(from.x), cX(to.x)])
+    const ysSet = new Set<number>([cY(from.y), cY(to.y)])
+    for (const o of local) {
+      xsSet.add(cX(o.x - clearance))
+      xsSet.add(cX(o.x + o.w + clearance))
+      ysSet.add(cY(o.y - clearance))
+      ysSet.add(cY(o.y + o.h + clearance))
+    }
+    const xs = [...xsSet].sort((p, q) => p - q)
+    const ys = [...ysSet].sort((p, q) => p - q)
+    const W = xs.length
+    const H = ys.length
+    if (W * H > maxNodes) return null
+    const six = xs.indexOf(cX(from.x))
+    const siy = ys.indexOf(cY(from.y))
+    const tix = xs.indexOf(cX(to.x))
+    const tiy = ys.indexOf(cY(to.y))
+    if (six < 0 || siy < 0 || tix < 0 || tiy < 0) return null
+    const at = (ix: number, iy: number): Pt => ({ x: xs[ix] as number, y: ys[iy] as number })
+    const clear = (p: Pt, q: Pt) => !local.some((o) => segmentHitsBox(p, q, o))
+    const tgt = at(tix, tiy)
+    const skey = (ix: number, iy: number, d: number) => (iy * W + ix) * 5 + d
+    const startK = skey(six, siy, 4)
     const gScore = new Map<number, number>([[startK, 0]])
     const came = new Map<number, number>()
-    const hMan = (ix: number, iy: number) => (Math.abs(ix - tx) + Math.abs(iy - ty)) * G
+    const hh = (p: Pt) => Math.abs(p.x - tgt.x) + Math.abs(p.y - tgt.y)
     const open: { k: number; ix: number; iy: number; d: number; f: number }[] = [
-      { k: startK, ix: sx, iy: sy, d: 4, f: hMan(sx, sy) },
+      { k: startK, ix: six, iy: siy, d: 4, f: hh(at(six, siy)) },
     ]
     let goalK = -1
+    let expansions = 0
     while (open.length > 0) {
+      if (++expansions > 20000) return null // one hard wire can't stall the batch
       let b = 0
       for (let i = 1; i < open.length; i++)
         if ((open[i] as { f: number }).f < (open[b] as { f: number }).f) b = i
       const cur = open.splice(b, 1)[0] as { k: number; ix: number; iy: number; d: number }
-      if (cur.ix === tx && cur.iy === ty) {
+      if (cur.ix === tix && cur.iy === tiy) {
         goalK = cur.k
         break
       }
       const cg = gScore.get(cur.k) ?? Number.POSITIVE_INFINITY
+      const cp = at(cur.ix, cur.iy)
       for (let di = 0; di < 4; di++) {
         const nx = cur.ix + (DX[di] as number)
         const ny = cur.iy + (DY[di] as number)
-        if (!inb(nx, ny) || blocked[ci(nx, ny)]) continue
-        const turn = cur.d !== 4 && cur.d !== di ? turnCost : 0
-        const tentative = cg + G + turn + congestionCost * (usage[ci(nx, ny)] as number)
+        if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue
+        const np = at(nx, ny)
+        if (!clear(cp, np)) continue
+        const bend = cur.d !== 4 && cur.d !== di ? bendCost : 0
+        const tentative = cg + Math.abs(np.x - cp.x) + Math.abs(np.y - cp.y) + bend
         const nk = skey(nx, ny, di)
         if (tentative < (gScore.get(nk) ?? Number.POSITIVE_INFINITY)) {
           gScore.set(nk, tentative)
           came.set(nk, cur.k)
-          open.push({ k: nk, ix: nx, iy: ny, d: di, f: tentative + hMan(nx, ny) })
+          open.push({ k: nk, ix: nx, iy: ny, d: di, f: tentative + hh(np) })
         }
       }
     }
-    if (goalK < 0) return [from, to]
+    if (goalK < 0) return null
     const cells: Pt[] = []
     let k = goalK
     while (k !== startK) {
       const cell = Math.floor(k / 5)
-      cells.unshift(ptAt(cell % cols, Math.floor(cell / cols)))
+      cells.unshift(at(cell % W, Math.floor(cell / W)))
       const prev = came.get(k)
-      if (prev === undefined) break
+      if (prev === undefined) return null
       k = prev
     }
-    cells.unshift(ptAt(sx, sy))
-    for (const c of cells) {
-      const j = ci(cx(c.x), cy(c.y))
-      usage[j] = (usage[j] ?? 0) + 1
-    }
-    // Stitch the EXACT pin endpoints back on (the grid snapped them up to half a cell) and rectilinearize
-    // any diagonal the snap introduced, so the path connects the real pins with clean right angles.
+    cells.unshift(at(six, siy))
+    // Stitch the EXACT pins back on + rectilinearize any snap diagonal so the wire meets the real pins.
     const raw = [from, ...cells, to]
     const rect: Pt[] = []
     for (let i = 0; i < raw.length; i++) {
@@ -403,6 +417,30 @@ export function routeAllWires(
     return simplifyPath(rect)
   }
 
+  // Strict fallback chain — NEVER a raw [from,to] (that could be a diagonal cutting through a part).
+  const routeFallback = (from: Pt, to: Pt): Pt[] => {
+    for (const m of [bbMargin0 * 2, bbMargin0 * 4]) {
+      const p = routeBounded(from, to, m)
+      if (p && !pathHitsAny(p, obstacles)) return p
+    }
+    // Full-board Hanan A* — a HIGH cap (1M) because this runs only in the rare fallback; the old 16384
+    // cap was below a dense board's (~2N)² grid, so this "guaranteed part-free" rung went dead exactly
+    // when needed and hard wires silently degraded to part-cutting Ls.
+    const around = gridRouteAround(from, to, obstacles, clearance, 1_000_000)
+    if (around) {
+      const s = simplifyPath(around)
+      if (!pathHitsAny(s, obstacles)) return s
+    }
+    const lh = simplifyPath([from, { x: to.x, y: from.y }, to])
+    if (!pathHitsAny(lh, obstacles)) return lh
+    const lv = simplifyPath([from, { x: from.x, y: to.y }, to])
+    if (!pathHitsAny(lv, obstacles)) return lv
+    // Truly boxed in (e.g. a pin strictly inside another part). Return an EMPTY path — net-edge reads that
+    // as "route me per-wire" and falls back to the strict per-edge router. We NEVER return a path that
+    // cuts a part, not even an orthogonal one.
+    return []
+  }
+
   // Shortest wires first: local hops claim their lanes before long hauls sweep the board.
   const order = [...wires].sort(
     (a, b) =>
@@ -410,17 +448,22 @@ export function routeAllWires(
       Math.abs(a.from.y - a.to.y) -
       (Math.abs(b.from.x - b.to.x) + Math.abs(b.from.y - b.to.y)),
   )
-  for (const w of order) out.set(w.id, routeOne(w.from, w.to))
-  // Neatness pass: spread the parallel runs that share a channel onto evenly-spaced tracks (the step that
-  // makes the batch read as organized rather than a bundle of overlapping wires). nudgeRoutes is hoisted.
+  for (const w of order) {
+    if (nowMs() - t0 > timeBudget) break // budget blown → keep the wires already routed; net-edge fills the rest per-wire
+    let path = routeBounded(w.from, w.to, bbMargin0)
+    if (!path || pathHitsAny(path, obstacles)) path = routeFallback(w.from, w.to)
+    out.set(w.id, path)
+  }
+
+  // Neatness: spread the parallel runs sharing a channel onto evenly-spaced tracks. Keep a pre-nudge copy
+  // so a path the (obstacle-unaware) nudge pushes through a part is reverted to its routed, part-free run.
   const ids = [...out.keys()]
-  const nudged = nudgeRoutes(
-    ids.map((id) => out.get(id) ?? []),
-    { gap: Math.max(6, Math.round(G / 2)) },
-  )
+  const preNudge = ids.map((id) => out.get(id) ?? [])
+  const nudged = nudgeRoutes(preNudge, { gap: Math.max(6, Math.round(G / 2)) })
   const result = new Map<string, Pt[]>()
   ids.forEach((wid, i) => {
-    result.set(wid, nudged[i] ?? out.get(wid) ?? [])
+    const np = nudged[i] ?? (preNudge[i] as Pt[])
+    result.set(wid, pathHitsAny(np, obstacles) ? (preNudge[i] as Pt[]) : np)
   })
   return result
 }
