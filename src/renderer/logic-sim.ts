@@ -99,6 +99,16 @@ export function simulateLogic(
   for (const e of flat.edges) {
     union(key(e.source, e.sourceHandle ?? ''), key(e.target, e.targetHandle ?? ''))
   }
+  // A CLOSED switch CONDUCTS — union its two terminals so a logic level passes across it (an OPEN switch
+  // leaves them on separate nets, an open circuit). Same closed-state rule as dc-solver's switchIsClosed
+  // (`state` !== 'open'). This is what lets a real-switch keypad drive logic inputs.
+  for (const node of flat.nodes) {
+    const def = node.data.definition
+    if (def !== 'switch_spst_toggle' && def !== 'switch_spst_momentary') continue
+    const stateVal = (node.data.parameters as Record<string, { value?: unknown }> | undefined)
+      ?.state?.value
+    if (stateVal !== 'open') union(key(node.id, 'terminal_in'), key(node.id, 'terminal_out'))
+  }
   const netOf = (n: string, h: string) => find(ensure(key(n, h)))
 
   // Driven nets (sources / ground) + the gate list.

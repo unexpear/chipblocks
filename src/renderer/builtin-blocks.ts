@@ -1829,6 +1829,7 @@ function binaryToSevenSegment(): BlockData {
         label: (segLabels[s] ?? '').toUpperCase(),
         side: 'right',
         offset: rOff,
+        drive: 'push_pull', // a CMOS segment driver — an OUTPUT that pushes the LED's anode to V+/0
         inner,
       })
       rOff += 18
@@ -1915,6 +1916,7 @@ function bcdDecoderBank(digits: number): BlockData {
         label: `${s.toUpperCase()}${d}`,
         side: 'right',
         offset: right,
+        drive: 'push_pull', // CMOS segment-driver OUTPUT → drives the real LED display downstream
         inner: { nodeId: `dec${d}`, handleId: `seg_${s}` },
       })
       right += 18
@@ -2201,6 +2203,2347 @@ function dRegister(bits: number): BlockData {
 /** A 4-bit register — four flip-flops latching a nibble on one clock edge. */
 export const REGISTER_4BIT: BlockData = dRegister(4)
 
+/** A 10-digit BCD register — 40 D flip-flops (4 bits × 10 decimal digits): the calculator's accumulator /
+ *  entry store, latching a whole 10-digit number on one clock edge. ~1360 MOSFETs; descend for the
+ *  flip-flops. The control unit (calc-control.ts) sequences loads into this; bit b carries digit
+ *  floor(b/4)'s weight 2^(b%4), matching the flat BCD port order the ALU and decoders use. */
+export const BCD_REGISTER_10: BlockData = { ...dRegister(40), name: 'BCD Register (10-digit)' }
+
+// --- Stage 2 control-unit sub-blocks — the real gate building blocks the calculator's datapath + FSM
+// need, each composed from the existing AND/OR/NOT/NAND/D-flip-flop gates and verified by its own test. ---
+
+/** Chain V+ and GND across a list of sub-block ids so they share one supply — the standard gate-network
+ *  rail wiring. Returns the rail edges (v_dd↔v_dd, gnd↔gnd between neighbours). */
+function chainRails(ids: string[], prefix: string): BlockData['edges'] {
+  const edges: BlockData['edges'] = []
+  for (let i = 1; i < ids.length; i++) {
+    const prev = ids[i - 1]
+    const here = ids[i]
+    if (prev === undefined || here === undefined) continue
+    edges.push({
+      id: `${prefix}_vdd${i}`,
+      source: prev,
+      sourceHandle: 'v_dd',
+      target: here,
+      targetHandle: 'v_dd',
+    })
+    edges.push({
+      id: `${prefix}_gnd${i}`,
+      source: prev,
+      sourceHandle: 'gnd',
+      target: here,
+      targetHandle: 'gnd',
+    })
+  }
+  return edges
+}
+
+/**
+ * 2:1 MUX (one bit) — OUT = SEL ? X : Y, the select element a datapath uses to choose which value flows
+ * on. Real gates: OUT = (X AND SEL) OR (Y AND NOT SEL). Descend for the AND/OR/NOT.
+ */
+export const MUX2_1BIT: BlockData = {
+  name: '2:1 Mux',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'inv', definition: 'block', x: 40, y: 30, block: INVERTER_BLOCK },
+    { id: 'ax', definition: 'block', x: 280, y: 30, block: AND_BLOCK },
+    { id: 'ay', definition: 'block', x: 280, y: 260, block: AND_BLOCK },
+    { id: 'oo', definition: 'block', x: 540, y: 150, block: OR_BLOCK },
+  ],
+  edges: [
+    { id: 'sel_ax', source: 'inv', sourceHandle: 'in', target: 'ax', targetHandle: 'b' }, // SEL also gates X
+    { id: 'nsel_ay', source: 'inv', sourceHandle: 'out', target: 'ay', targetHandle: 'b' }, // NOT SEL gates Y
+    { id: 'ax_or', source: 'ax', sourceHandle: 'out', target: 'oo', targetHandle: 'a' },
+    { id: 'ay_or', source: 'ay', sourceHandle: 'out', target: 'oo', targetHandle: 'b' },
+    ...chainRails(['inv', 'ax', 'ay', 'oo'], 'mux'),
+  ],
+  ports: [
+    { id: 'x', label: 'X', side: 'left', offset: 14, inner: { nodeId: 'ax', handleId: 'a' } },
+    { id: 'y', label: 'Y', side: 'left', offset: 36, inner: { nodeId: 'ay', handleId: 'a' } },
+    { id: 'sel', label: 'SEL', side: 'left', offset: 58, inner: { nodeId: 'inv', handleId: 'in' } },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 80,
+      inner: { nodeId: 'inv', handleId: 'gnd' },
+    },
+    {
+      id: 'out',
+      label: 'OUT',
+      side: 'right',
+      offset: 14,
+      inner: { nodeId: 'oo', handleId: 'out' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 36,
+      inner: { nodeId: 'inv', handleId: 'v_dd' },
+    },
+  ],
+}
+
+/** N-bit 2:1 bus mux — picks bus X or bus Y onto OUT under one shared SEL: the datapath's value-router
+ *  (e.g. load the ENTRY register from the keypad shift OR clear it; show ACC vs ENTRY on the display). */
+function busMux(bits: number): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  for (let i = 0; i < bits; i++) {
+    nodes.push({ id: `m${i}`, definition: 'block', x: 40, y: 30 + i * 220, block: MUX2_1BIT })
+  }
+  for (let i = 1; i < bits; i++) {
+    edges.push({
+      id: `sel${i}`,
+      source: 'm0',
+      sourceHandle: 'sel',
+      target: `m${i}`,
+      targetHandle: 'sel',
+    })
+    edges.push({
+      id: `vdd${i}`,
+      source: 'm0',
+      sourceHandle: 'v_dd',
+      target: `m${i}`,
+      targetHandle: 'v_dd',
+    })
+    edges.push({
+      id: `gnd${i}`,
+      source: 'm0',
+      sourceHandle: 'gnd',
+      target: `m${i}`,
+      targetHandle: 'gnd',
+    })
+  }
+  let left = 14
+  for (let i = 0; i < bits; i++) {
+    ports.push({
+      id: `x${i}`,
+      label: `X${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `m${i}`, handleId: 'x' },
+    })
+    left += 16
+  }
+  for (let i = 0; i < bits; i++) {
+    ports.push({
+      id: `y${i}`,
+      label: `Y${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `m${i}`, handleId: 'y' },
+    })
+    left += 16
+  }
+  ports.push({
+    id: 'sel',
+    label: 'SEL',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'm0', handleId: 'sel' },
+  })
+  left += 16
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'm0', handleId: 'gnd' },
+  })
+  let right = 14
+  for (let i = 0; i < bits; i++) {
+    ports.push({
+      id: `out${i}`,
+      label: `O${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: `m${i}`, handleId: 'out' },
+    })
+    right += 16
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'm0', handleId: 'v_dd' },
+  })
+  return { name: `${bits}-bit 2:1 Mux`, origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** A 4-bit 2:1 bus mux (one BCD digit wide) — the reusable datapath router. */
+export const BUS_MUX_4: BlockData = busMux(4)
+
+/**
+ * EDGE DETECT (rising-edge one-shot) — PULSE = IN AND NOT(IN one clock ago). A D flip-flop samples IN on
+ * each clock; ANDing "IN now" with "NOT IN last clock" stays HIGH for exactly one clock after IN rises,
+ * so a HELD key fires the control unit ONCE, not continuously. Descend for the flip-flop / NOT / AND.
+ */
+export const EDGE_DETECT_BLOCK: BlockData = {
+  name: 'Edge Detect',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'ff', definition: 'block', x: 40, y: 30, block: D_FLIPFLOP_BLOCK },
+    { id: 'inv', definition: 'block', x: 420, y: 30, block: INVERTER_BLOCK },
+    { id: 'and', definition: 'block', x: 640, y: 30, block: AND_BLOCK },
+  ],
+  edges: [
+    { id: 'in_and', source: 'ff', sourceHandle: 'd', target: 'and', targetHandle: 'a' }, // IN also feeds the AND
+    { id: 'q_inv', source: 'ff', sourceHandle: 'q', target: 'inv', targetHandle: 'in' }, // last sample → NOT
+    { id: 'ninv_and', source: 'inv', sourceHandle: 'out', target: 'and', targetHandle: 'b' }, // NOT(last) → AND
+    ...chainRails(['ff', 'inv', 'and'], 'ed'),
+  ],
+  ports: [
+    { id: 'in', label: 'IN', side: 'left', offset: 14, inner: { nodeId: 'ff', handleId: 'd' } },
+    { id: 'clk', label: 'CLK', side: 'left', offset: 36, inner: { nodeId: 'ff', handleId: 'clk' } },
+    { id: 'gnd', label: 'GND', side: 'left', offset: 58, inner: { nodeId: 'ff', handleId: 'gnd' } },
+    {
+      id: 'pulse',
+      label: 'PULSE',
+      side: 'right',
+      offset: 14,
+      inner: { nodeId: 'and', handleId: 'out' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 36,
+      inner: { nodeId: 'ff', handleId: 'v_dd' },
+    },
+  ],
+}
+
+/** OR-reduce a list of input refs into one output via a chain of 2-input OR gates. Returns the gate
+ *  nodes, the wiring edges, the gate ids (for rail-chaining), and the final output ref. Needs ≥1 input. */
+function orReduce(
+  ins: { node: string; handle: string }[],
+  prefix: string,
+  x: number,
+): {
+  nodes: BlockData['nodes']
+  edges: BlockData['edges']
+  ids: string[]
+  out: { node: string; handle: string }
+} {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ids: string[] = []
+  let acc = ins[0]
+  if (acc === undefined) throw new Error('orReduce needs at least one input')
+  for (let i = 1; i < ins.length; i++) {
+    const inp = ins[i]
+    if (inp === undefined) continue
+    const id = `${prefix}_or${i}`
+    nodes.push({ id, definition: 'block', x, y: 30 + i * 160, block: OR_BLOCK })
+    ids.push(id)
+    edges.push({
+      id: `${prefix}_a${i}`,
+      source: acc.node,
+      sourceHandle: acc.handle,
+      target: id,
+      targetHandle: 'a',
+    })
+    edges.push({
+      id: `${prefix}_b${i}`,
+      source: inp.node,
+      sourceHandle: inp.handle,
+      target: id,
+      targetHandle: 'b',
+    })
+    acc = { node: id, handle: 'out' }
+  }
+  return { nodes, edges, ids, out: acc }
+}
+
+/**
+ * KEYPAD ENCODER — turns the one-hot keypad (17 key lines) into the compact binary the control unit reads:
+ * the pressed DIGIT as 4-bit BCD (D0..D3) via an OR-plane, a DIGIT line ("some digit was pressed"), the
+ * pressed operator as a 2-bit code (OP0/OP1: +=00, −=01, ×=10, ÷=11) with an IS_OP line, and the EQUALS /
+ * CLEAR / ± class lines. Each input is buffered, then ORed into its output bits. Descend for the gates.
+ */
+function buildKeypadEncoder(): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const railIds: string[] = []
+  const keys = [
+    'k0',
+    'k1',
+    'k2',
+    'k3',
+    'k4',
+    'k5',
+    'k6',
+    'k7',
+    'k8',
+    'k9',
+    'kadd',
+    'ksub',
+    'kmul',
+    'kdiv',
+    'keq',
+    'kclr',
+    'kpm',
+  ]
+  keys.forEach((k, i) => {
+    nodes.push({ id: `b_${k}`, definition: 'block', x: 0, y: 30 + i * 160, block: BUFFER_BLOCK })
+    railIds.push(`b_${k}`)
+  })
+  const bufOut = (k: string) => ({ node: `b_${k}`, handle: 'out' })
+  const planes: { name: string; ins: string[] }[] = [
+    { name: 'd0', ins: ['k1', 'k3', 'k5', 'k7', 'k9'] }, // bit 0 set on odd digits
+    { name: 'd1', ins: ['k2', 'k3', 'k6', 'k7'] },
+    { name: 'd2', ins: ['k4', 'k5', 'k6', 'k7'] },
+    { name: 'd3', ins: ['k8', 'k9'] },
+    { name: 'digit', ins: ['k0', 'k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'k7', 'k8', 'k9'] },
+    { name: 'op0', ins: ['ksub', 'kdiv'] }, // op-code bit 0
+    { name: 'op1', ins: ['kmul', 'kdiv'] }, // op-code bit 1
+    { name: 'is_op', ins: ['kadd', 'ksub', 'kmul', 'kdiv'] },
+  ]
+  const outRef: Record<string, { node: string; handle: string }> = {}
+  let col = 400
+  for (const p of planes) {
+    const t = orReduce(p.ins.map(bufOut), `t_${p.name}`, col)
+    nodes.push(...t.nodes)
+    edges.push(...t.edges)
+    railIds.push(...t.ids)
+    outRef[p.name] = t.out
+    col += 280
+  }
+  // EQUALS / CLEAR / ± pass straight through their buffers (no OR needed)
+  outRef.is_eq = bufOut('keq')
+  outRef.is_clr = bufOut('kclr')
+  outRef.is_pm = bufOut('kpm')
+  edges.push(...chainRails(railIds, 'enc'))
+  let left = 14
+  for (const k of keys) {
+    ports.push({
+      id: k,
+      label: k.toUpperCase(),
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `b_${k}`, handleId: 'in' },
+    })
+    left += 12
+  }
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'b_k0', handleId: 'gnd' },
+  })
+  const outs = ['d0', 'd1', 'd2', 'd3', 'digit', 'op0', 'op1', 'is_op', 'is_eq', 'is_clr', 'is_pm']
+  let right = 14
+  for (const o of outs) {
+    const ref = outRef[o]
+    if (ref === undefined) continue
+    ports.push({
+      id: o,
+      label: o.toUpperCase(),
+      side: 'right',
+      offset: right,
+      inner: { nodeId: ref.node, handleId: ref.handle },
+    })
+    right += 12
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'b_k0', handleId: 'v_dd' },
+  })
+  return { name: 'Keypad Encoder', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The keypad encoder (one-hot 17 keys → BCD digit + op code + class lines). */
+export const KEYPAD_ENCODER_BLOCK: BlockData = buildKeypadEncoder()
+
+/**
+ * LOADABLE DOWN-COUNTER — the ×/÷ micro-sequencer's loop counter. On a clock with LOAD high it latches
+ * the value on L0..L; with LOAD low it counts DOWN by one (a real ripple decrementer: bit 0 always flips,
+ * higher bits flip when every lower bit was already 0). TC ("terminal count") goes high at zero, so the
+ * control unit knows the loop is done. Built from flip-flops + a decrementer (NOT/XOR/AND) + load-muxes +
+ * a NOR zero-detector. Descend for the gates.
+ */
+function buildDownCounter(bits: number, withEnable = false, countUp = false): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const rail: string[] = []
+  for (let i = 0; i < bits; i++) {
+    nodes.push({
+      id: `ff${i}`,
+      definition: 'block',
+      x: 1200,
+      y: 30 + i * 400,
+      block: D_FLIPFLOP_BLOCK,
+    })
+    rail.push(`ff${i}`)
+  }
+  // ±1 unit: new0 = NOT q0 (toggle bit 0) for both. The carry/borrow into bit 1+ is q_i for an UP-counter
+  // (count+1) or NOT q_i for a DOWN-counter (count−1); new_i = q_i XOR carry; carry_i = (q_i or NOT q_i) AND carry.
+  nodes.push({ id: 'd_inv0', definition: 'block', x: 200, y: 30, block: INVERTER_BLOCK })
+  rail.push('d_inv0')
+  edges.push({
+    id: 'q0_inv0',
+    source: 'ff0',
+    sourceHandle: 'q',
+    target: 'd_inv0',
+    targetHandle: 'in',
+  })
+  const newRef: { node: string; handle: string }[] = [{ node: 'd_inv0', handle: 'out' }]
+  let borrow = countUp ? { node: 'ff0', handle: 'q' } : { node: 'd_inv0', handle: 'out' }
+  for (let i = 1; i < bits; i++) {
+    nodes.push({ id: `d_x${i}`, definition: 'block', x: 200, y: 30 + i * 400, block: XOR_BLOCK })
+    rail.push(`d_x${i}`)
+    edges.push({
+      id: `q${i}_x`,
+      source: `ff${i}`,
+      sourceHandle: 'q',
+      target: `d_x${i}`,
+      targetHandle: 'a',
+    })
+    edges.push({
+      id: `bor${i}_x`,
+      source: borrow.node,
+      sourceHandle: borrow.handle,
+      target: `d_x${i}`,
+      targetHandle: 'b',
+    })
+    newRef.push({ node: `d_x${i}`, handle: 'out' })
+    if (i < bits - 1) {
+      // next carry/borrow = (UP: q_i, DOWN: NOT q_i) AND current carry/borrow
+      let chainIn: { node: string; handle: string }
+      if (countUp) {
+        chainIn = { node: `ff${i}`, handle: 'q' }
+      } else {
+        nodes.push({
+          id: `d_inv${i}`,
+          definition: 'block',
+          x: 400,
+          y: 30 + i * 400,
+          block: INVERTER_BLOCK,
+        })
+        rail.push(`d_inv${i}`)
+        edges.push({
+          id: `q${i}_inv`,
+          source: `ff${i}`,
+          sourceHandle: 'q',
+          target: `d_inv${i}`,
+          targetHandle: 'in',
+        })
+        chainIn = { node: `d_inv${i}`, handle: 'out' }
+      }
+      nodes.push({
+        id: `d_and${i}`,
+        definition: 'block',
+        x: 600,
+        y: 30 + i * 400,
+        block: AND_BLOCK,
+      })
+      rail.push(`d_and${i}`)
+      edges.push({
+        id: `inv${i}_and`,
+        source: chainIn.node,
+        sourceHandle: chainIn.handle,
+        target: `d_and${i}`,
+        targetHandle: 'a',
+      })
+      edges.push({
+        id: `bor${i}_and`,
+        source: borrow.node,
+        sourceHandle: borrow.handle,
+        target: `d_and${i}`,
+        targetHandle: 'b',
+      })
+      borrow = { node: `d_and${i}`, handle: 'out' }
+    }
+  }
+  // load/enable muxes: D_i = LOAD ? L_i : (withEnable ? (EN ? new_i : q_i) : new_i)
+  for (let i = 0; i < bits; i++) {
+    nodes.push({ id: `mx${i}`, definition: 'block', x: 800, y: 30 + i * 400, block: MUX2_1BIT })
+    rail.push(`mx${i}`)
+    const nr = newRef[i]
+    let yRef = nr
+    if (withEnable && nr !== undefined) {
+      // enable-mux: EN ? decremented : hold (the flip-flop's own q)
+      nodes.push({ id: `em${i}`, definition: 'block', x: 640, y: 30 + i * 400, block: MUX2_1BIT })
+      rail.push(`em${i}`)
+      edges.push({
+        id: `new${i}_em`,
+        source: nr.node,
+        sourceHandle: nr.handle,
+        target: `em${i}`,
+        targetHandle: 'x',
+      })
+      edges.push({
+        id: `q${i}_em`,
+        source: `ff${i}`,
+        sourceHandle: 'q',
+        target: `em${i}`,
+        targetHandle: 'y',
+      })
+      yRef = { node: `em${i}`, handle: 'out' }
+    }
+    if (yRef !== undefined) {
+      edges.push({
+        id: `new${i}_mx`,
+        source: yRef.node,
+        sourceHandle: yRef.handle,
+        target: `mx${i}`,
+        targetHandle: 'y',
+      })
+    }
+    edges.push({
+      id: `mx${i}_ff`,
+      source: `mx${i}`,
+      sourceHandle: 'out',
+      target: `ff${i}`,
+      targetHandle: 'd',
+    })
+  }
+  for (let i = 1; i < bits; i++) {
+    edges.push({
+      id: `selsh${i}`,
+      source: 'mx0',
+      sourceHandle: 'sel',
+      target: `mx${i}`,
+      targetHandle: 'sel',
+    })
+    edges.push({
+      id: `clksh${i}`,
+      source: 'ff0',
+      sourceHandle: 'clk',
+      target: `ff${i}`,
+      targetHandle: 'clk',
+    })
+    if (withEnable) {
+      edges.push({
+        id: `ensh${i}`,
+        source: 'em0',
+        sourceHandle: 'sel',
+        target: `em${i}`,
+        targetHandle: 'sel',
+      })
+    }
+  }
+  // TC = NOT(OR all q) — high exactly when the count is zero
+  const tc = orReduce(
+    Array.from({ length: bits }, (_, i) => ({ node: `ff${i}`, handle: 'q' })),
+    'tc',
+    1000,
+  )
+  nodes.push(...tc.nodes)
+  edges.push(...tc.edges)
+  rail.push(...tc.ids)
+  nodes.push({ id: 'tc_inv', definition: 'block', x: 1100, y: 0, block: INVERTER_BLOCK })
+  rail.push('tc_inv')
+  edges.push({
+    id: 'tc_or_inv',
+    source: tc.out.node,
+    sourceHandle: tc.out.handle,
+    target: 'tc_inv',
+    targetHandle: 'in',
+  })
+  edges.push(...chainRails(rail, 'cnt'))
+  let left = 14
+  for (let i = 0; i < bits; i++) {
+    ports.push({
+      id: `l${i}`,
+      label: `L${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `mx${i}`, handleId: 'x' },
+    })
+    left += 14
+  }
+  ports.push({
+    id: 'load',
+    label: 'LOAD',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'mx0', handleId: 'sel' },
+  })
+  left += 14
+  if (withEnable) {
+    ports.push({
+      id: 'en',
+      label: 'EN',
+      side: 'left',
+      offset: left,
+      inner: { nodeId: 'em0', handleId: 'sel' },
+    })
+    left += 14
+  }
+  ports.push({
+    id: 'clk',
+    label: 'CLK',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'ff0', handleId: 'clk' },
+  })
+  left += 14
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'ff0', handleId: 'gnd' },
+  })
+  let right = 14
+  for (let i = 0; i < bits; i++) {
+    ports.push({
+      id: `q${i}`,
+      label: `Q${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: `ff${i}`, handleId: 'q' },
+    })
+    right += 14
+  }
+  ports.push({
+    id: 'tc',
+    label: 'TC',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'tc_inv', handleId: 'out' },
+  })
+  right += 14
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'ff0', handleId: 'v_dd' },
+  })
+  return { name: `${bits}-bit Down Counter`, origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** A 4-bit loadable down-counter — enough to count a BCD digit's worth of ×/÷ iterations. */
+export const DOWN_COUNTER_4: BlockData = buildDownCounter(4)
+
+/** A 4-bit loadable down-counter with a count-enable (holds when EN is low) — the ×/÷ loop counters. */
+export const DOWN_COUNTER_EN_4: BlockData = buildDownCounter(4, true)
+
+/** A 4-bit loadable UP-counter with a count-enable — divide's quotient-digit counter (how many times
+ *  the divisor fits). Same circuit as the down-counter but with a carry chain instead of a borrow chain. */
+export const COUNTER_UP_EN_4: BlockData = buildDownCounter(4, true, true)
+
+/**
+ * SIGN FLIP-FLOP (toggle / T flip-flop) — holds the running result sign (0 = +, 1 = −). On a clock it
+ * keeps the sign when TOGGLE is low and FLIPS it when TOGGLE is high, because D = SIGN XOR TOGGLE. That one
+ * XOR is the whole sign rule: press ± → toggle once; for × or ÷ → toggle by the second number's sign, so
+ * SIGN becomes (first sign) XOR (second sign) — negative×negative = positive, etc. Descend for the gates.
+ */
+export const SIGN_FF_BLOCK: BlockData = {
+  name: 'Sign FF',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'ff', definition: 'block', x: 360, y: 30, block: D_FLIPFLOP_BLOCK },
+    { id: 'xt', definition: 'block', x: 40, y: 30, block: XOR_BLOCK },
+  ],
+  edges: [
+    { id: 'q_xor', source: 'ff', sourceHandle: 'q', target: 'xt', targetHandle: 'a' }, // current sign → XOR
+    { id: 'xor_d', source: 'xt', sourceHandle: 'out', target: 'ff', targetHandle: 'd' }, // D = sign XOR toggle
+    ...chainRails(['xt', 'ff'], 'sgn'),
+  ],
+  ports: [
+    {
+      id: 'toggle',
+      label: 'TOGGLE',
+      side: 'left',
+      offset: 14,
+      inner: { nodeId: 'xt', handleId: 'b' },
+    },
+    { id: 'clk', label: 'CLK', side: 'left', offset: 36, inner: { nodeId: 'ff', handleId: 'clk' } },
+    { id: 'gnd', label: 'GND', side: 'left', offset: 58, inner: { nodeId: 'xt', handleId: 'gnd' } },
+    {
+      id: 'sign',
+      label: 'SIGN',
+      side: 'right',
+      offset: 14,
+      inner: { nodeId: 'ff', handleId: 'q' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 36,
+      inner: { nodeId: 'xt', handleId: 'v_dd' },
+    },
+  ],
+}
+
+type LogicRef = { node: string; handle: string }
+type LogicExpr =
+  | LogicRef
+  | ['not', LogicExpr]
+  | ['and', LogicExpr, LogicExpr]
+  | ['or', LogicExpr, LogicExpr]
+  | ['xor', LogicExpr, LogicExpr]
+
+interface ExprCtx {
+  nodes: BlockData['nodes']
+  edges: BlockData['edges']
+  ids: string[]
+  n: number
+}
+
+const BIN_GATE: Record<'and' | 'or' | 'xor', BlockData> = {
+  and: AND_BLOCK,
+  or: OR_BLOCK,
+  xor: XOR_BLOCK,
+}
+
+/** Compile a boolean expression tree into REAL gates (AND/OR/NOT/XOR blocks), appending the gate nodes +
+ *  wiring edges to ctx and returning the output net. Leaves are nets ({node,handle}) already in the circuit
+ *  (an input buffer's out, a flip-flop's q). Lets the control FSM be written as readable equations. */
+function buildExpr(expr: LogicExpr, ctx: ExprCtx): LogicRef {
+  if (!Array.isArray(expr)) return expr
+  const k = ctx.n++
+  const id = `g${k}`
+  if (expr[0] === 'not') {
+    const a = buildExpr(expr[1], ctx)
+    ctx.nodes.push({
+      id,
+      definition: 'block',
+      x: (k % 12) * 160,
+      y: Math.floor(k / 12) * 200,
+      block: INVERTER_BLOCK,
+    })
+    ctx.ids.push(id)
+    ctx.edges.push({
+      id: `g${k}a`,
+      source: a.node,
+      sourceHandle: a.handle,
+      target: id,
+      targetHandle: 'in',
+    })
+    return { node: id, handle: 'out' }
+  }
+  const a = buildExpr(expr[1], ctx)
+  const b = buildExpr(expr[2], ctx)
+  ctx.nodes.push({
+    id,
+    definition: 'block',
+    x: (k % 12) * 160,
+    y: Math.floor(k / 12) * 200,
+    block: BIN_GATE[expr[0]],
+  })
+  ctx.ids.push(id)
+  ctx.edges.push({
+    id: `g${k}a`,
+    source: a.node,
+    sourceHandle: a.handle,
+    target: id,
+    targetHandle: 'a',
+  })
+  ctx.edges.push({
+    id: `g${k}b`,
+    source: b.node,
+    sourceHandle: b.handle,
+    target: id,
+    targetHandle: 'b',
+  })
+  return { node: id, handle: 'out' }
+}
+
+/**
+ * CALCULATOR CONTROL FSM — the brain. A real clocked state machine: four state flip-flops hold FRESH (the
+ * next digit starts a new entry), OPVALID (an operator is pending), and the 2-bit latched OP. Combinational
+ * gate logic (built from the equations below) reads those + the keypad encoder's lines (DIGIT / ISOP / ISEQ
+ * / ISCLR / op code) and drives the datapath each cycle:
+ *   ENTRY_NEW    = DIGIT and FRESH                 (start a new number)
+ *   ENTRY_APPEND = DIGIT and not FRESH             (shift ×10, insert digit)
+ *   ACC_FROM_ENTRY = ISOP and not OPVALID          (first operator: copy entry to the accumulator)
+ *   COMPUTE      = (ISOP or ISEQ) and OPVALID and not FRESH   (do ACC <op> ENTRY)
+ *   ALU_ADD/SUB/MUL/DIV = decode of the LATCHED op (the one being executed)
+ * Next state: FRESH set by clear/op/equals and cleared by a digit; OPVALID set by an operator, cleared by
+ * equals/clear; OP latches the new op on an operator press. Mealy outputs (valid the cycle the key is
+ * pressed, before the edge) — the datapath registers latch on the same edge.
+ *
+ * DATAPATH CONTRACT (load-bearing): on COMPUTE the ALU result is written to BOTH the accumulator AND the
+ * entry/display register. The displayed value is therefore the running result, so an operator pressed after
+ * '=' continues from it correctly — ACC_FROM_ENTRY (which fires because OPVALID is 0 after '=') copies that
+ * displayed result back into the accumulator. A datapath that instead left the entry holding the stale
+ * second operand would give the wrong answer (e.g. 2×3=+4= → 7 instead of 10). Proven end-to-end in
+ * calc-control-blocks.test.ts ("calculator end-to-end"). Descend for the gates.
+ */
+function buildCalcControlFsm(): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const rail: string[] = []
+  const ctx: ExprCtx = { nodes, edges, ids: [], n: 0 }
+  let li = 0
+  const link = (from: LogicRef, to: LogicRef) => {
+    edges.push({
+      id: `lnk${li++}`,
+      source: from.node,
+      sourceHandle: from.handle,
+      target: to.node,
+      targetHandle: to.handle,
+    })
+  }
+
+  const inputs = ['digit', 'isop', 'iseq', 'isclr', 'op0', 'op1']
+  inputs.forEach((s, i) => {
+    nodes.push({
+      id: `buf_${s}`,
+      definition: 'block',
+      x: -300,
+      y: 30 + i * 200,
+      block: BUFFER_BLOCK,
+    })
+    rail.push(`buf_${s}`)
+  })
+  const IN = (s: string): LogicRef => ({ node: `buf_${s}`, handle: 'out' })
+
+  const stateFFs = ['f', 'v', 'op0r', 'op1r']
+  stateFFs.forEach((s, i) => {
+    nodes.push({
+      id: `ff_${s}`,
+      definition: 'block',
+      x: 2600,
+      y: 30 + i * 400,
+      block: D_FLIPFLOP_BLOCK,
+    })
+    rail.push(`ff_${s}`)
+  })
+  const Q = (s: string): LogicRef => ({ node: `ff_${s}`, handle: 'q' })
+
+  const DIGIT = IN('digit')
+  const ISOP = IN('isop')
+  const ISEQ = IN('iseq')
+  const ISCLR = IN('isclr')
+  const OP0 = IN('op0')
+  const OP1 = IN('op1')
+  const F = Q('f')
+  const V = Q('v')
+  const OP0R = Q('op0r')
+  const OP1R = Q('op1r')
+
+  // control outputs (Mealy)
+  const entryNew = buildExpr(['and', DIGIT, F], ctx)
+  const entryAppend = buildExpr(['and', DIGIT, ['not', F]], ctx)
+  const accFromEntry = buildExpr(['and', ISOP, ['not', V]], ctx)
+  const opOrEq = buildExpr(['or', ISOP, ISEQ], ctx)
+  const compute = buildExpr(['and', ['and', opOrEq, V], ['not', F]], ctx)
+  const aluAdd = buildExpr(['and', ['not', OP0R], ['not', OP1R]], ctx)
+  const aluSub = buildExpr(['and', OP0R, ['not', OP1R]], ctx)
+  const aluMul = buildExpr(['and', ['not', OP0R], OP1R], ctx)
+  const aluDiv = buildExpr(['and', OP0R, OP1R], ctx)
+
+  // next-state logic
+  const setf1 = buildExpr(['or', ['or', ISCLR, ISOP], ISEQ], ctx)
+  const fNext = buildExpr(['or', setf1, ['and', F, ['not', DIGIT]]], ctx)
+  const vNext = buildExpr(['or', ISOP, ['and', V, ['and', ['not', ISEQ], ['not', ISCLR]]]], ctx)
+  const holdOp: LogicExpr = ['and', ['not', ISOP], ['not', ISCLR]]
+  const op0Next = buildExpr(['or', ['and', ISOP, OP0], ['and', OP0R, holdOp]], ctx)
+  const op1Next = buildExpr(['or', ['and', ISOP, OP1], ['and', OP1R, holdOp]], ctx)
+
+  link(fNext, { node: 'ff_f', handle: 'd' })
+  link(vNext, { node: 'ff_v', handle: 'd' })
+  link(op0Next, { node: 'ff_op0r', handle: 'd' })
+  link(op1Next, { node: 'ff_op1r', handle: 'd' })
+  for (let i = 1; i < stateFFs.length; i++) {
+    const target = stateFFs[i]
+    if (target === undefined) continue
+    link({ node: 'ff_f', handle: 'clk' }, { node: `ff_${target}`, handle: 'clk' })
+  }
+
+  rail.push(...ctx.ids)
+  edges.push(...chainRails(rail, 'fsm'))
+
+  let left = 14
+  for (const s of inputs) {
+    ports.push({
+      id: s,
+      label: s.toUpperCase(),
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `buf_${s}`, handleId: 'in' },
+    })
+    left += 14
+  }
+  ports.push({
+    id: 'clk',
+    label: 'CLK',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'ff_f', handleId: 'clk' },
+  })
+  left += 14
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'ff_f', handleId: 'gnd' },
+  })
+
+  const outPorts: Array<[string, LogicRef]> = [
+    ['entry_new', entryNew],
+    ['entry_append', entryAppend],
+    ['acc_from_entry', accFromEntry],
+    ['compute', compute],
+    ['op_latch', ISOP],
+    ['clear', ISCLR],
+    ['alu_add', aluAdd],
+    ['alu_sub', aluSub],
+    ['alu_mul', aluMul],
+    ['alu_div', aluDiv],
+    ['st_fresh', F],
+    ['st_opvalid', V],
+    ['st_op0', OP0R],
+    ['st_op1', OP1R],
+  ]
+  let right = 14
+  for (const [id, ref] of outPorts) {
+    ports.push({
+      id,
+      label: id.toUpperCase(),
+      side: 'right',
+      offset: right,
+      inner: { nodeId: ref.node, handleId: ref.handle },
+    })
+    right += 12
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'ff_f', handleId: 'v_dd' },
+  })
+
+  return { name: 'Calculator Control FSM', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The calculator's control unit, as a real clocked gate FSM (replaces the old code reducer). */
+export const CALC_CONTROL_FSM: BlockData = buildCalcControlFsm()
+
+/**
+ * ENTRY REGISTER (10-digit BCD, the displayed "X" register) — the number you're typing, and after '=' the
+ * displayed result. Real flip-flops with a per-bit priority mux on the D input, clocked once per keypress:
+ *   CLEAR     → 0
+ *   COMPUTE   → the ALU result (load result0..39)        [the DATAPATH CONTRACT: result also lands here]
+ *   a digit   → ENTRY_NEW: digit goes in the ones place, rest 0; ENTRY_APPEND: shift every digit up one
+ *               place (digit p ← digit p−1) and drop the new BCD digit (keypad0..3) into the ones place
+ *   otherwise → hold
+ * All inputs are buffered for clean fan-out; "0" comes from the gnd rail. Descend for the gates.
+ */
+function buildEntryRegister(digits: number): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const rail: string[] = []
+  let mi = 0
+  let ei = 0
+  const ffId = (p: number, b: number) => `e_${p}_${b}`
+  const link = (from: LogicRef, to: LogicRef) => {
+    edges.push({
+      id: `el${ei++}`,
+      source: from.node,
+      sourceHandle: from.handle,
+      target: to.node,
+      targetHandle: to.handle,
+    })
+  }
+  const mux = (sel: LogicRef, x: LogicRef, y: LogicRef): LogicRef => {
+    const id = `mx${mi}`
+    nodes.push({
+      id,
+      definition: 'block',
+      x: 1200 + (mi % 8) * 500,
+      y: Math.floor(mi / 8) * 250,
+      block: MUX2_1BIT,
+    })
+    mi++
+    rail.push(id)
+    link(sel, { node: id, handle: 'sel' })
+    link(x, { node: id, handle: 'x' })
+    link(y, { node: id, handle: 'y' })
+    return { node: id, handle: 'out' }
+  }
+
+  for (let p = 0; p < digits; p++) {
+    for (let b = 0; b < 4; b++) {
+      nodes.push({
+        id: ffId(p, b),
+        definition: 'block',
+        x: 6000,
+        y: (p * 4 + b) * 220,
+        block: D_FLIPFLOP_BLOCK,
+      })
+      rail.push(ffId(p, b))
+    }
+  }
+  const LOW: LogicRef = { node: ffId(0, 0), handle: 'gnd' }
+  const Q = (p: number, b: number): LogicRef => ({ node: ffId(p, b), handle: 'q' })
+
+  // buffered inputs
+  const ctrl = ['entry_new', 'entry_append', 'compute', 'clear']
+  ctrl.forEach((c, i) => {
+    nodes.push({ id: `cb_${c}`, definition: 'block', x: -500, y: i * 200, block: BUFFER_BLOCK })
+    rail.push(`cb_${c}`)
+  })
+  const C = (c: string): LogicRef => ({ node: `cb_${c}`, handle: 'out' })
+  for (let b = 0; b < 4; b++) {
+    nodes.push({
+      id: `kp_${b}`,
+      definition: 'block',
+      x: -500,
+      y: 900 + b * 200,
+      block: BUFFER_BLOCK,
+    })
+    rail.push(`kp_${b}`)
+  }
+  for (let i = 0; i < digits * 4; i++) {
+    nodes.push({ id: `rb_${i}`, definition: 'block', x: -1000, y: i * 200, block: BUFFER_BLOCK })
+    rail.push(`rb_${i}`)
+  }
+  const KP = (b: number): LogicRef => ({ node: `kp_${b}`, handle: 'out' })
+  const RB = (i: number): LogicRef => ({ node: `rb_${i}`, handle: 'out' })
+
+  // digitpress = entry_new OR entry_append
+  nodes.push({ id: 'dp_or', definition: 'block', x: -200, y: 1800, block: OR_BLOCK })
+  rail.push('dp_or')
+  link(C('entry_new'), { node: 'dp_or', handle: 'a' })
+  link(C('entry_append'), { node: 'dp_or', handle: 'b' })
+  const DIGITPRESS: LogicRef = { node: 'dp_or', handle: 'out' }
+
+  for (let p = 0; p < digits; p++) {
+    for (let b = 0; b < 4; b++) {
+      const i = p * 4 + b
+      const digitVal = p === 0 ? KP(b) : mux(C('entry_append'), Q(p - 1, b), LOW)
+      const m1 = mux(DIGITPRESS, digitVal, Q(p, b)) // digit press (shift/insert) vs hold
+      const m2 = mux(C('compute'), RB(i), m1) // compute result vs the above
+      const m3 = mux(C('clear'), LOW, m2) // clear vs the above
+      link(m3, { node: ffId(p, b), handle: 'd' })
+    }
+  }
+
+  // shared clock
+  for (let p = 0; p < digits; p++) {
+    for (let b = 0; b < 4; b++) {
+      if (p === 0 && b === 0) continue
+      link({ node: ffId(0, 0), handle: 'clk' }, { node: ffId(p, b), handle: 'clk' })
+    }
+  }
+  edges.push(...chainRails(rail, 'ereg'))
+
+  let left = 14
+  for (const c of ctrl) {
+    ports.push({
+      id: c,
+      label: c.toUpperCase(),
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `cb_${c}`, handleId: 'in' },
+    })
+    left += 12
+  }
+  for (let b = 0; b < 4; b++) {
+    ports.push({
+      id: `keypad${b}`,
+      label: `K${b}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `kp_${b}`, handleId: 'in' },
+    })
+    left += 12
+  }
+  ports.push({
+    id: 'clk',
+    label: 'CLK',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: ffId(0, 0), handleId: 'clk' },
+  })
+  left += 12
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: ffId(0, 0), handleId: 'gnd' },
+  })
+  for (let i = 0; i < digits * 4; i++) {
+    ports.push({
+      id: `result${i}`,
+      label: `R${i}`,
+      side: 'left',
+      offset: left + 12 + i * 4,
+      inner: { nodeId: `rb_${i}`, handleId: 'in' },
+    })
+  }
+  let right = 14
+  for (let i = 0; i < digits * 4; i++) {
+    const p = Math.floor(i / 4)
+    const b = i % 4
+    ports.push({
+      id: `entry${i}`,
+      label: `E${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: ffId(p, b), handleId: 'q' },
+    })
+    right += 8
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: ffId(0, 0), handleId: 'v_dd' },
+  })
+  return { name: `${digits}-digit Entry Register`, origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The calculator's 10-digit entry/display register. */
+export const ENTRY_REGISTER_10: BlockData = buildEntryRegister(10)
+
+/**
+ * ACCUMULATOR (10-digit BCD, the "Y" register) — holds the running left operand. Per-bit priority mux,
+ * clocked once per keypress:
+ *   CLEAR          → 0
+ *   COMPUTE        → the ALU result (result0..39)
+ *   ACC_FROM_ENTRY → copy the entry register (entry0..39) — the first operand, or (after '=') the
+ *                    displayed result, so a chained calculation continues correctly
+ *   otherwise      → hold
+ * Entry/result data ports map straight onto the mux inputs (no buffers needed — one fan-out each); the
+ * broadly-fanned control lines are buffered. Descend for the gates.
+ */
+function buildAccRegister(digits: number): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const rail: string[] = []
+  let mi = 0
+  let ei = 0
+  const ffId = (p: number, b: number) => `a_${p}_${b}`
+  const link = (from: LogicRef, to: LogicRef) => {
+    edges.push({
+      id: `al${ei++}`,
+      source: from.node,
+      sourceHandle: from.handle,
+      target: to.node,
+      targetHandle: to.handle,
+    })
+  }
+  for (let p = 0; p < digits; p++) {
+    for (let b = 0; b < 4; b++) {
+      nodes.push({
+        id: ffId(p, b),
+        definition: 'block',
+        x: 6000,
+        y: (p * 4 + b) * 220,
+        block: D_FLIPFLOP_BLOCK,
+      })
+      rail.push(ffId(p, b))
+    }
+  }
+  const LOW: LogicRef = { node: ffId(0, 0), handle: 'gnd' }
+  const Q = (p: number, b: number): LogicRef => ({ node: ffId(p, b), handle: 'q' })
+  const ctrl = ['clear', 'compute', 'acc_from_entry']
+  ctrl.forEach((c, i) => {
+    nodes.push({ id: `cb_${c}`, definition: 'block', x: -500, y: i * 200, block: BUFFER_BLOCK })
+    rail.push(`cb_${c}`)
+  })
+  const C = (c: string): LogicRef => ({ node: `cb_${c}`, handle: 'out' })
+  const newMux = (): string => {
+    const id = `mx${mi}`
+    nodes.push({
+      id,
+      definition: 'block',
+      x: 1200 + (mi % 8) * 500,
+      y: Math.floor(mi / 8) * 250,
+      block: MUX2_1BIT,
+    })
+    mi++
+    rail.push(id)
+    return id
+  }
+
+  let left = 14
+  let right = 14
+  for (let p = 0; p < digits; p++) {
+    for (let b = 0; b < 4; b++) {
+      const i = p * 4 + b
+      const m1 = newMux() // ACC_FROM_ENTRY ? entry_i : hold ; entry_i maps onto m1.x
+      link(C('acc_from_entry'), { node: m1, handle: 'sel' })
+      link(Q(p, b), { node: m1, handle: 'y' })
+      const m2 = newMux() // COMPUTE ? result_i : m1 ; result_i maps onto m2.x
+      link(C('compute'), { node: m2, handle: 'sel' })
+      link({ node: m1, handle: 'out' }, { node: m2, handle: 'y' })
+      const m3 = newMux() // CLEAR ? 0 : m2
+      link(C('clear'), { node: m3, handle: 'sel' })
+      link(LOW, { node: m3, handle: 'x' })
+      link({ node: m2, handle: 'out' }, { node: m3, handle: 'y' })
+      link({ node: m3, handle: 'out' }, { node: ffId(p, b), handle: 'd' })
+      ports.push({
+        id: `entry${i}`,
+        label: `Y${i}`,
+        side: 'left',
+        offset: 200 + i * 8,
+        inner: { nodeId: m1, handleId: 'x' },
+      })
+      ports.push({
+        id: `result${i}`,
+        label: `R${i}`,
+        side: 'left',
+        offset: 600 + i * 8,
+        inner: { nodeId: m2, handleId: 'x' },
+      })
+      ports.push({
+        id: `acc${i}`,
+        label: `A${i}`,
+        side: 'right',
+        offset: right,
+        inner: { nodeId: ffId(p, b), handleId: 'q' },
+      })
+      right += 8
+    }
+  }
+  for (let p = 0; p < digits; p++) {
+    for (let b = 0; b < 4; b++) {
+      if (p === 0 && b === 0) continue
+      link({ node: ffId(0, 0), handle: 'clk' }, { node: ffId(p, b), handle: 'clk' })
+    }
+  }
+  edges.push(...chainRails(rail, 'areg'))
+  for (const c of ctrl) {
+    ports.push({
+      id: c,
+      label: c.toUpperCase(),
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `cb_${c}`, handleId: 'in' },
+    })
+    left += 12
+  }
+  ports.push({
+    id: 'clk',
+    label: 'CLK',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: ffId(0, 0), handleId: 'clk' },
+  })
+  left += 12
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: ffId(0, 0), handleId: 'gnd' },
+  })
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: ffId(0, 0), handleId: 'v_dd' },
+  })
+  return { name: `${digits}-digit Accumulator`, origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The calculator's 10-digit accumulator register. */
+export const ACC_REGISTER_10: BlockData = buildAccRegister(10)
+
+/**
+ * CALCULATOR (add/subtract core) — the whole +/− machine wired from real blocks: the keypad encoder feeds
+ * the control FSM (class lines) and the entry register (the pressed digit); the FSM drives both registers;
+ * the accumulator and entry feed the BCD ALU (ACC = A, ENTRY = B, SUB from the FSM), and the ALU result
+ * goes back into BOTH registers (the contract). One shared clock: each keypress = one clock edge advances
+ * the FSM and the datapath together. ENTRY0..39 is the displayed value. ×/÷ need the micro-sequencer (next
+ * stage); this proves digit entry + + / − end-to-end on real gates. Descend for the whole datapath.
+ */
+function buildCalculatorAddSub(): BlockData {
+  const nodes: BlockData['nodes'] = [
+    { id: 'enc', definition: 'block', x: 0, y: 0, block: KEYPAD_ENCODER_BLOCK },
+    { id: 'fsm', definition: 'block', x: 2400, y: 0, block: CALC_CONTROL_FSM },
+    { id: 'ent', definition: 'block', x: 5000, y: 0, block: ENTRY_REGISTER_10 },
+    { id: 'acc', definition: 'block', x: 5000, y: 12000, block: ACC_REGISTER_10 },
+    { id: 'alu', definition: 'block', x: 9000, y: 0, block: BCD_ALU_10 },
+  ]
+  const edges: BlockData['edges'] = []
+  let ei = 0
+  const e = (s: string, sh: string, t: string, th: string) => {
+    edges.push({ id: `w${ei++}`, source: s, sourceHandle: sh, target: t, targetHandle: th })
+  }
+  // encoder class lines → FSM
+  e('enc', 'digit', 'fsm', 'digit')
+  e('enc', 'is_op', 'fsm', 'isop')
+  e('enc', 'is_eq', 'fsm', 'iseq')
+  e('enc', 'is_clr', 'fsm', 'isclr')
+  e('enc', 'op0', 'fsm', 'op0')
+  e('enc', 'op1', 'fsm', 'op1')
+  // encoder digit value → entry register's keypad
+  for (let b = 0; b < 4; b++) e('enc', `d${b}`, 'ent', `keypad${b}`)
+  // FSM → entry register control
+  e('fsm', 'entry_new', 'ent', 'entry_new')
+  e('fsm', 'entry_append', 'ent', 'entry_append')
+  e('fsm', 'compute', 'ent', 'compute')
+  e('fsm', 'clear', 'ent', 'clear')
+  // FSM → accumulator control
+  e('fsm', 'acc_from_entry', 'acc', 'acc_from_entry')
+  e('fsm', 'compute', 'acc', 'compute')
+  e('fsm', 'clear', 'acc', 'clear')
+  // datapath buses
+  for (let i = 0; i < 40; i++) {
+    e('ent', `entry${i}`, 'alu', `b${i}`) // ENTRY → ALU B
+    e('ent', `entry${i}`, 'acc', `entry${i}`) // ENTRY → ACC (ACC_FROM_ENTRY copy source)
+    e('acc', `acc${i}`, 'alu', `a${i}`) // ACC → ALU A
+    e('alu', `s${i}`, 'ent', `result${i}`) // result → ENTRY
+    e('alu', `s${i}`, 'acc', `result${i}`) // result → ACC
+  }
+  e('fsm', 'alu_sub', 'alu', 'sub')
+  // shared clock: FSM clk fans to both registers
+  e('fsm', 'clk', 'ent', 'clk')
+  e('fsm', 'clk', 'acc', 'clk')
+  edges.push(...chainRails(['enc', 'fsm', 'ent', 'acc', 'alu'], 'calc'))
+
+  const ports: BlockData['ports'] = []
+  const keys = [
+    'k0',
+    'k1',
+    'k2',
+    'k3',
+    'k4',
+    'k5',
+    'k6',
+    'k7',
+    'k8',
+    'k9',
+    'kadd',
+    'ksub',
+    'kmul',
+    'kdiv',
+    'keq',
+    'kclr',
+    'kpm',
+  ]
+  let left = 14
+  for (const k of keys) {
+    ports.push({
+      id: k,
+      label: k.toUpperCase(),
+      side: 'left',
+      offset: left,
+      inner: { nodeId: 'enc', handleId: k },
+    })
+    left += 12
+  }
+  ports.push({
+    id: 'clk',
+    label: 'CLK',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'fsm', handleId: 'clk' },
+  })
+  left += 12
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'enc', handleId: 'gnd' },
+  })
+  let right = 14
+  for (let i = 0; i < 40; i++) {
+    ports.push({
+      id: `entry${i}`,
+      label: `E${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: 'ent', handleId: `entry${i}` },
+    })
+    right += 8
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'enc', handleId: 'v_dd' },
+  })
+  return { name: 'Calculator (add/subtract)', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The add/subtract calculator wired from real blocks (encoder + FSM + registers + ALU). */
+export const CALCULATOR_ADDSUB: BlockData = buildCalculatorAddSub()
+
+/**
+ * MULTIPLY SEQUENCER (the ×/÷ micro-controller's control FSM) — runs digit-serial shift-add multiply as a
+ * real clocked state machine. Six one-hot state flip-flops (idle = none set, so power-up is clean):
+ *   INIT   → clear the product, load the multiplier into the shift register, load the outer counter (10)
+ *   SHIFTP → product ×10 (shift up, insert 0), load the inner counter with the multiplier's top digit
+ *   ADD    → while inner counter ≠ 0: product += A, inner−−   (one add per clock)
+ *   SHIFTB → multiplier ×10 (bring the next digit to the top), outer−−
+ *   CHECK  → outer ≠ 0 ? back to SHIFTP : DONE
+ *   DONE   → product holds the answer; pulse DONE, then back to idle
+ * Drives the reused registers/counters/ALU (built elsewhere) via its control outputs. Inputs: START and the
+ * two counters' terminal-count lines. Logic compiled from equations by buildExpr. Descend for the gates.
+ */
+function buildMultiplySequencer(): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const rail: string[] = []
+  const ctx: ExprCtx = { nodes, edges, ids: [], n: 0 }
+  let li = 0
+  const link = (from: LogicRef, to: LogicRef) => {
+    edges.push({
+      id: `ms${li++}`,
+      source: from.node,
+      sourceHandle: from.handle,
+      target: to.node,
+      targetHandle: to.handle,
+    })
+  }
+  const inputs = ['start', 'inner_tc', 'outer_tc']
+  inputs.forEach((s, i) => {
+    nodes.push({ id: `ib_${s}`, definition: 'block', x: -300, y: i * 200, block: BUFFER_BLOCK })
+    rail.push(`ib_${s}`)
+  })
+  const IN = (s: string): LogicRef => ({ node: `ib_${s}`, handle: 'out' })
+  const states = ['init', 'shiftp', 'add', 'shiftb', 'check', 'done']
+  states.forEach((s, i) => {
+    nodes.push({ id: `s_${s}`, definition: 'block', x: 2200, y: i * 400, block: D_FLIPFLOP_BLOCK })
+    rail.push(`s_${s}`)
+  })
+  const Q = (s: string): LogicRef => ({ node: `s_${s}`, handle: 'q' })
+  const START = IN('start')
+  const ITC = IN('inner_tc')
+  const OTC = IN('outer_tc')
+  const INIT = Q('init')
+  const SHIFTP = Q('shiftp')
+  const ADD = Q('add')
+  const SHIFTB = Q('shiftb')
+  const CHECK = Q('check')
+  const DONE = Q('done')
+
+  const anyState = buildExpr(
+    ['or', ['or', ['or', INIT, SHIFTP], ['or', ADD, SHIFTB]], ['or', CHECK, DONE]],
+    ctx,
+  )
+  const IDLE = buildExpr(['not', anyState], ctx)
+  const addActive = buildExpr(['and', ADD, ['not', ITC]], ctx) // ADD and still counting → do an add
+
+  // next-state (one-hot)
+  link(buildExpr(['and', IDLE, START], ctx), { node: 's_init', handle: 'd' })
+  link(buildExpr(['or', INIT, ['and', CHECK, ['not', OTC]]], ctx), {
+    node: 's_shiftp',
+    handle: 'd',
+  })
+  link(buildExpr(['or', SHIFTP, addActive], ctx), { node: 's_add', handle: 'd' })
+  link(buildExpr(['and', ADD, ITC], ctx), { node: 's_shiftb', handle: 'd' })
+  link(SHIFTB, { node: 's_check', handle: 'd' })
+  link(buildExpr(['and', CHECK, OTC], ctx), { node: 's_done', handle: 'd' })
+  for (let i = 1; i < states.length; i++) {
+    const s = states[i]
+    if (s === undefined) continue
+    link({ node: 's_init', handle: 'clk' }, { node: `s_${s}`, handle: 'clk' })
+  }
+  rail.push(...ctx.ids)
+  edges.push(...chainRails(rail, 'mseq'))
+
+  let left = 14
+  for (const s of inputs) {
+    ports.push({
+      id: s,
+      label: s.toUpperCase(),
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `ib_${s}`, handleId: 'in' },
+    })
+    left += 14
+  }
+  ports.push({
+    id: 'clk',
+    label: 'CLK',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 's_init', handleId: 'clk' },
+  })
+  left += 14
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 's_init', handleId: 'gnd' },
+  })
+  // control outputs (several share a state line)
+  const out: Array<[string, LogicRef]> = [
+    ['p_clear', INIT],
+    ['b_load', INIT],
+    ['outer_load', INIT],
+    ['p_shift', SHIFTP],
+    ['inner_load', SHIFTP],
+    ['p_add', addActive],
+    ['inner_dec', addActive],
+    ['b_shift', SHIFTB],
+    ['outer_dec', SHIFTB],
+    ['done', DONE],
+  ]
+  let right = 14
+  for (const [id, ref] of out) {
+    ports.push({
+      id,
+      label: id.toUpperCase(),
+      side: 'right',
+      offset: right,
+      inner: { nodeId: ref.node, handleId: ref.handle },
+    })
+    right += 12
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 's_init', handleId: 'v_dd' },
+  })
+  return { name: 'Multiply Sequencer', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The control FSM that sequences digit-serial multiply (and, reused, divide). */
+export const MULTIPLY_SEQUENCER: BlockData = buildMultiplySequencer()
+
+/**
+ * MULTIPLIER (A × B, 10-digit BCD) — the sequencer driving a real datapath that REUSES existing blocks:
+ *   • product register P  = an entry register with keypad pinned to 0 (clear / ×10-shift / load ALU result)
+ *   • multiplier register = an entry register with keypad pinned to 0 (load B, then ×10-shift each digit)
+ *   • two enable-down-counters (inner = current digit's count, outer = the 10 digit positions)
+ *   • the BCD ALU computing P + A
+ * The sequencer's control lines drive them; the counters' terminal-count lines feed back to the sequencer;
+ * the multiplier register's top digit (bits 36–39) loads the inner counter. Pulse START, clock until DONE,
+ * read PRODUCT. ~digit-serial shift-add. Descend for the whole datapath.
+ */
+function buildMultiplier(): BlockData {
+  const nodes: BlockData['nodes'] = [
+    { id: 'seq', definition: 'block', x: 0, y: 0, block: MULTIPLY_SEQUENCER },
+    { id: 'preg', definition: 'block', x: 3000, y: 0, block: ENTRY_REGISTER_10 },
+    { id: 'breg', definition: 'block', x: 3000, y: 14000, block: ENTRY_REGISTER_10 },
+    { id: 'inner', definition: 'block', x: 7000, y: 0, block: DOWN_COUNTER_EN_4 },
+    { id: 'outer', definition: 'block', x: 7000, y: 6000, block: DOWN_COUNTER_EN_4 },
+    { id: 'alu', definition: 'block', x: 10000, y: 0, block: BCD_ALU_10 },
+  ]
+  const edges: BlockData['edges'] = []
+  let ei = 0
+  const e = (s: string, sh: string, t: string, th: string) => {
+    edges.push({ id: `m${ei++}`, source: s, sourceHandle: sh, target: t, targetHandle: th })
+  }
+  const LOW = { node: 'preg', handle: 'gnd' }
+  const HIGH = { node: 'preg', handle: 'v_dd' }
+  const tie = (node: string, port: string, ref: { node: string; handle: string }) => {
+    e(ref.node, ref.handle, node, port)
+  }
+  // sequencer → product register (clear / shift / add-result)
+  e('seq', 'p_clear', 'preg', 'clear')
+  e('seq', 'p_shift', 'preg', 'entry_append')
+  e('seq', 'p_add', 'preg', 'compute')
+  tie('preg', 'entry_new', LOW) // unused
+  for (let b = 0; b < 4; b++) tie('preg', `keypad${b}`, LOW)
+  // sequencer → multiplier register (load B via compute / shift)
+  e('seq', 'b_load', 'breg', 'compute')
+  e('seq', 'b_shift', 'breg', 'entry_append')
+  tie('breg', 'clear', LOW)
+  tie('breg', 'entry_new', LOW)
+  for (let b = 0; b < 4; b++) tie('breg', `keypad${b}`, LOW)
+  // ALU: a = P (preg.entry), b = A (input), sub = 0 (add); result → preg.result
+  tie('alu', 'sub', LOW)
+  for (let i = 0; i < 40; i++) {
+    e('preg', `entry${i}`, 'alu', `a${i}`)
+    e('alu', `s${i}`, 'preg', `result${i}`)
+  }
+  // multiplier register's MSD (digit 9 = bits 36–39) → inner counter load value
+  for (let b = 0; b < 4; b++) e('breg', `entry${36 + b}`, 'inner', `l${b}`)
+  // inner counter
+  e('seq', 'inner_load', 'inner', 'load')
+  e('seq', 'inner_dec', 'inner', 'en')
+  e('inner', 'tc', 'seq', 'inner_tc')
+  // outer counter: load the constant 10 (1010)
+  tie('outer', 'l0', LOW)
+  tie('outer', 'l1', HIGH)
+  tie('outer', 'l2', LOW)
+  tie('outer', 'l3', HIGH)
+  e('seq', 'outer_load', 'outer', 'load')
+  e('seq', 'outer_dec', 'outer', 'en')
+  e('outer', 'tc', 'seq', 'outer_tc')
+  // shared clock
+  e('seq', 'clk', 'preg', 'clk')
+  e('seq', 'clk', 'breg', 'clk')
+  e('seq', 'clk', 'inner', 'clk')
+  e('seq', 'clk', 'outer', 'clk')
+  edges.push(...chainRails(['seq', 'preg', 'breg', 'inner', 'outer', 'alu'], 'mul'))
+
+  const ports: BlockData['ports'] = []
+  let left = 14
+  for (let i = 0; i < 40; i++) {
+    ports.push({
+      id: `a${i}`,
+      label: `A${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: 'alu', handleId: `b${i}` },
+    })
+    left += 6
+  }
+  for (let i = 0; i < 40; i++) {
+    ports.push({
+      id: `b${i}`,
+      label: `B${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: 'breg', handleId: `result${i}` },
+    })
+    left += 6
+  }
+  ports.push({
+    id: 'start',
+    label: 'START',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'seq', handleId: 'start' },
+  })
+  left += 12
+  ports.push({
+    id: 'clk',
+    label: 'CLK',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'seq', handleId: 'clk' },
+  })
+  left += 12
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'preg', handleId: 'gnd' },
+  })
+  let right = 14
+  for (let i = 0; i < 40; i++) {
+    ports.push({
+      id: `product${i}`,
+      label: `P${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: 'preg', handleId: `entry${i}` },
+    })
+    right += 6
+  }
+  ports.push({
+    id: 'done',
+    label: 'DONE',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'seq', handleId: 'done' },
+  })
+  right += 12
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'preg', handleId: 'v_dd' },
+  })
+  return { name: 'Multiplier (A × B)', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** A × B over 10 BCD digits, as a real clocked datapath (sequencer + reused registers/counters/ALU). */
+export const MULTIPLIER_10: BlockData = buildMultiplier()
+
+/**
+ * DIVIDE SEQUENCER (the ÷ control FSM) — long division, digit-serial, as a real clocked machine. Seven
+ * one-hot states (idle = none set):
+ *   INIT     → clear quotient + remainder, load the dividend, set the outer counter (10)
+ *   BRINGDOWN→ remainder = remainder×10 + the dividend's top digit; reset the quotient-digit counter to 0
+ *   SUBTRACT → while remainder ≥ divisor (the ALU's carry-out on R−B): remainder −= divisor, quotient digit ++
+ *   STOREQ   → quotient = quotient×10 + this digit's count
+ *   SHIFTA   → dividend ×10 (next digit to the top), outer −−
+ *   CHECK    → more digits ? BRINGDOWN : DONE
+ *   DONE     → quotient holds the answer (remainder holds the remainder)
+ * Inputs: START, COUT (remainder ≥ divisor), OUTER_TC. Logic compiled by buildExpr. Descend for the gates.
+ */
+function buildDivideSequencer(): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const rail: string[] = []
+  const ctx: ExprCtx = { nodes, edges, ids: [], n: 0 }
+  let li = 0
+  const link = (from: LogicRef, to: LogicRef) => {
+    edges.push({
+      id: `ds${li++}`,
+      source: from.node,
+      sourceHandle: from.handle,
+      target: to.node,
+      targetHandle: to.handle,
+    })
+  }
+  const inputs = ['start', 'cout', 'outer_tc', 'divzero', 'clear']
+  inputs.forEach((s, i) => {
+    nodes.push({ id: `ib_${s}`, definition: 'block', x: -300, y: i * 200, block: BUFFER_BLOCK })
+    rail.push(`ib_${s}`)
+  })
+  const IN = (s: string): LogicRef => ({ node: `ib_${s}`, handle: 'out' })
+  const states = ['init', 'bringdown', 'subtract', 'storeq', 'shifta', 'check', 'done']
+  states.forEach((s, i) => {
+    nodes.push({ id: `s_${s}`, definition: 'block', x: 2200, y: i * 400, block: D_FLIPFLOP_BLOCK })
+    rail.push(`s_${s}`)
+  })
+  // a latched error flag (divide by zero), not a one-hot state
+  nodes.push({
+    id: 's_error',
+    definition: 'block',
+    x: 2200,
+    y: states.length * 400,
+    block: D_FLIPFLOP_BLOCK,
+  })
+  rail.push('s_error')
+  const Q = (s: string): LogicRef => ({ node: `s_${s}`, handle: 'q' })
+  const START = IN('start')
+  const COUT = IN('cout')
+  const OTC = IN('outer_tc')
+  const DIVZERO = IN('divzero')
+  const CLEAR = IN('clear')
+  const ERROR: LogicRef = { node: 's_error', handle: 'q' }
+  const INIT = Q('init')
+  const BRINGDOWN = Q('bringdown')
+  const SUBTRACT = Q('subtract')
+  const STOREQ = Q('storeq')
+  const SHIFTA = Q('shifta')
+  const CHECK = Q('check')
+  const DONE = Q('done')
+
+  const anyState = buildExpr(
+    [
+      'or',
+      ['or', ['or', INIT, BRINGDOWN], ['or', SUBTRACT, STOREQ]],
+      ['or', ['or', SHIFTA, CHECK], DONE],
+    ],
+    ctx,
+  )
+  const IDLE = buildExpr(['not', anyState], ctx)
+  const subActive = buildExpr(['and', SUBTRACT, COUT], ctx) // remainder ≥ divisor → subtract + count up
+
+  link(buildExpr(['and', IDLE, START], ctx), { node: 's_init', handle: 'd' })
+  // from INIT: a zero divisor skips the loop and finishes immediately (error); else start the first digit
+  link(buildExpr(['or', ['and', INIT, ['not', DIVZERO]], ['and', CHECK, ['not', OTC]]], ctx), {
+    node: 's_bringdown',
+    handle: 'd',
+  })
+  link(buildExpr(['or', BRINGDOWN, subActive], ctx), { node: 's_subtract', handle: 'd' })
+  link(buildExpr(['and', SUBTRACT, ['not', COUT]], ctx), { node: 's_storeq', handle: 'd' })
+  link(STOREQ, { node: 's_shifta', handle: 'd' })
+  link(SHIFTA, { node: 's_check', handle: 'd' })
+  link(buildExpr(['or', ['and', CHECK, OTC], ['and', INIT, DIVZERO]], ctx), {
+    node: 's_done',
+    handle: 'd',
+  })
+  // error flag: latch the zero-divisor verdict at INIT, hold otherwise — but CLEAR forces it back to 0
+  link(
+    buildExpr(
+      ['or', ['and', INIT, DIVZERO], ['and', ['and', ERROR, ['not', INIT]], ['not', CLEAR]]],
+      ctx,
+    ),
+    { node: 's_error', handle: 'd' },
+  )
+  for (let i = 1; i < states.length; i++) {
+    const s = states[i]
+    if (s === undefined) continue
+    link({ node: 's_init', handle: 'clk' }, { node: `s_${s}`, handle: 'clk' })
+  }
+  link({ node: 's_init', handle: 'clk' }, { node: 's_error', handle: 'clk' })
+  rail.push(...ctx.ids)
+  edges.push(...chainRails(rail, 'dseq'))
+
+  let left = 14
+  for (const s of inputs) {
+    ports.push({
+      id: s,
+      label: s.toUpperCase(),
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `ib_${s}`, handleId: 'in' },
+    })
+    left += 14
+  }
+  ports.push({
+    id: 'clk',
+    label: 'CLK',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 's_init', handleId: 'clk' },
+  })
+  left += 14
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 's_init', handleId: 'gnd' },
+  })
+  const out: Array<[string, LogicRef]> = [
+    ['r_clear', INIT],
+    ['q_clear', INIT],
+    ['a_load', INIT],
+    ['outer_load', INIT],
+    ['r_bringdown', BRINGDOWN],
+    ['count_load0', BRINGDOWN],
+    ['r_sub', subActive],
+    ['count_inc', subActive],
+    ['q_store', STOREQ],
+    ['a_shift', SHIFTA],
+    ['outer_dec', SHIFTA],
+    ['done', DONE],
+    ['error', ERROR],
+  ]
+  let right = 14
+  for (const [id, ref] of out) {
+    ports.push({
+      id,
+      label: id.toUpperCase(),
+      side: 'right',
+      offset: right,
+      inner: { nodeId: ref.node, handleId: ref.handle },
+    })
+    right += 12
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 's_init', handleId: 'v_dd' },
+  })
+  return { name: 'Divide Sequencer', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The control FSM that sequences digit-serial long division. */
+export const DIVIDE_SEQUENCER: BlockData = buildDivideSequencer()
+
+/**
+ * DIVIDER (A ÷ B, 10-digit BCD) — the divide sequencer driving a reused datapath:
+ *   • dividend register A = an entry register (keypad 0) — load A, then ×10-shift each digit, read its top
+ *     digit (bits 36–39) as the digit being brought down
+ *   • remainder register R = an entry register whose keypad is A's top digit, so entry_append does
+ *     R = R×10 + digit (bring-down); compute loads the ALU's R−B (subtract)
+ *   • quotient register Q = an entry register whose keypad is the up-counter, so entry_append does
+ *     Q = Q×10 + count
+ *   • the up-counter (quotient digit) + the outer down-counter (10 digit positions)
+ *   • the BCD ALU computing R − B; its carry-out is "R ≥ B" feeding the sequencer's COUT
+ * Pulse START, clock until DONE, read QUOTIENT (REMAINDER also exposed). Descend for the whole datapath.
+ */
+function buildDivider(): BlockData {
+  const nodes: BlockData['nodes'] = [
+    { id: 'seq', definition: 'block', x: 0, y: 0, block: DIVIDE_SEQUENCER },
+    { id: 'areg', definition: 'block', x: 3000, y: 0, block: ENTRY_REGISTER_10 },
+    { id: 'rreg', definition: 'block', x: 3000, y: 14000, block: ENTRY_REGISTER_10 },
+    { id: 'qreg', definition: 'block', x: 3000, y: 28000, block: ENTRY_REGISTER_10 },
+    { id: 'count', definition: 'block', x: 7000, y: 0, block: COUNTER_UP_EN_4 },
+    { id: 'outer', definition: 'block', x: 7000, y: 6000, block: DOWN_COUNTER_EN_4 },
+    { id: 'alu', definition: 'block', x: 10000, y: 0, block: BCD_ALU_10 },
+  ]
+  const edges: BlockData['edges'] = []
+  let ei = 0
+  const e = (s: string, sh: string, t: string, th: string) => {
+    edges.push({ id: `d${ei++}`, source: s, sourceHandle: sh, target: t, targetHandle: th })
+  }
+  const LOW = { node: 'areg', handle: 'gnd' }
+  const HIGH = { node: 'areg', handle: 'v_dd' }
+  const tie = (node: string, port: string, ref: { node: string; handle: string }) => {
+    e(ref.node, ref.handle, node, port)
+  }
+  // sequencer → registers/counters
+  e('seq', 'r_clear', 'rreg', 'clear')
+  e('seq', 'r_bringdown', 'rreg', 'entry_append')
+  e('seq', 'r_sub', 'rreg', 'compute')
+  e('seq', 'q_clear', 'qreg', 'clear')
+  e('seq', 'q_store', 'qreg', 'entry_append')
+  e('seq', 'a_load', 'areg', 'compute')
+  e('seq', 'a_shift', 'areg', 'entry_append')
+  e('seq', 'outer_load', 'outer', 'load')
+  e('seq', 'outer_dec', 'outer', 'en')
+  e('seq', 'count_load0', 'count', 'load')
+  e('seq', 'count_inc', 'count', 'en')
+  // data paths
+  for (let b = 0; b < 4; b++) {
+    e('areg', `entry${36 + b}`, 'rreg', `keypad${b}`) // dividend's top digit → R bring-down
+    e('count', `q${b}`, 'qreg', `keypad${b}`) // quotient-digit count → Q store
+  }
+  for (let i = 0; i < 40; i++) {
+    e('rreg', `entry${i}`, 'alu', `a${i}`) // R → ALU a
+    e('alu', `s${i}`, 'rreg', `result${i}`) // ALU (R−B) → R compute-load
+  }
+  e('alu', 'cout', 'seq', 'cout') // R ≥ B
+  e('outer', 'tc', 'seq', 'outer_tc') // 10 digits done → finish
+  // constants / unused controls
+  tie('alu', 'sub', HIGH) // subtract
+  tie('areg', 'entry_new', LOW)
+  tie('areg', 'clear', LOW)
+  for (let b = 0; b < 4; b++) tie('areg', `keypad${b}`, LOW) // dividend shifts inserting 0
+  tie('rreg', 'entry_new', LOW)
+  tie('qreg', 'entry_new', LOW)
+  for (let b = 0; b < 4; b++) tie('count', `l${b}`, LOW) // up-counter loads 0
+  tie('outer', 'l0', LOW)
+  tie('outer', 'l1', HIGH)
+  tie('outer', 'l2', LOW)
+  tie('outer', 'l3', HIGH) // outer loads 10
+  // zero-divisor detector: NOR of all B bits → divzero (so the sequencer can finish with an error)
+  const bz = orReduce(
+    Array.from({ length: 40 }, (_, i) => ({ node: 'alu', handle: `b${i}` })),
+    'bz',
+    13000,
+  )
+  nodes.push(...bz.nodes)
+  edges.push(...bz.edges)
+  nodes.push({ id: 'bzero_inv', definition: 'block', x: 13600, y: 0, block: INVERTER_BLOCK })
+  e(bz.out.node, bz.out.handle, 'bzero_inv', 'in')
+  e('bzero_inv', 'out', 'seq', 'divzero')
+  // shared clock
+  for (const blk of ['areg', 'rreg', 'qreg', 'count', 'outer']) e('seq', 'clk', blk, 'clk')
+  edges.push(
+    ...chainRails(
+      ['seq', 'areg', 'rreg', 'qreg', 'count', 'outer', 'alu', ...bz.ids, 'bzero_inv'],
+      'div',
+    ),
+  )
+
+  const ports: BlockData['ports'] = []
+  let left = 14
+  for (let i = 0; i < 40; i++) {
+    ports.push({
+      id: `a${i}`,
+      label: `A${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: 'areg', handleId: `result${i}` },
+    })
+    left += 6
+  }
+  for (let i = 0; i < 40; i++) {
+    ports.push({
+      id: `b${i}`,
+      label: `B${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: 'alu', handleId: `b${i}` },
+    })
+    left += 6
+  }
+  ports.push({
+    id: 'start',
+    label: 'START',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'seq', handleId: 'start' },
+  })
+  left += 12
+  ports.push({
+    id: 'clear',
+    label: 'CLR',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'seq', handleId: 'clear' },
+  })
+  left += 12
+  ports.push({
+    id: 'clk',
+    label: 'CLK',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'seq', handleId: 'clk' },
+  })
+  left += 12
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'areg', handleId: 'gnd' },
+  })
+  let right = 14
+  for (let i = 0; i < 40; i++) {
+    ports.push({
+      id: `quotient${i}`,
+      label: `Q${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: 'qreg', handleId: `entry${i}` },
+    })
+    right += 6
+  }
+  for (let i = 0; i < 40; i++) {
+    ports.push({
+      id: `remainder${i}`,
+      label: `R${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: 'rreg', handleId: `entry${i}` },
+    })
+    right += 6
+  }
+  ports.push({
+    id: 'done',
+    label: 'DONE',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'seq', handleId: 'done' },
+  })
+  right += 12
+  ports.push({
+    id: 'error',
+    label: 'ERR',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'seq', handleId: 'error' },
+  })
+  right += 12
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'areg', handleId: 'v_dd' },
+  })
+  return { name: 'Divider (A ÷ B)', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** A ÷ B over 10 BCD digits, as a real clocked datapath (sequencer + reused registers/counters/ALU). */
+export const DIVIDER_10: BlockData = buildDivider()
+
+/**
+ * ×/÷ BUSY HANDSHAKE — the bridge between the single-cycle main FSM and the multi-cycle multiply/divide
+ * sequencers. When the main FSM raises COMPUTE with a ×/÷ op, this pulses the matching sequencer's START
+ * and latches BUSY; BUSY holds (so the main FSM parks and ignores keys) until the sequencer raises DONE,
+ * at which point CAPTURE pulses (to write the product/quotient into the registers) and BUSY clears.
+ *   START_MUL = COMPUTE and IS_MUL and not BUSY ; START_DIV = COMPUTE and IS_DIV and not BUSY
+ *   BUSY'     = START_MUL or START_DIV or (BUSY and not SEQ_DONE)
+ *   CAPTURE   = BUSY and SEQ_DONE
+ * Descend for the flip-flop + gates.
+ */
+function buildMuldivController(): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const rail: string[] = []
+  const ctx: ExprCtx = { nodes, edges, ids: [], n: 0 }
+  let li = 0
+  const link = (from: LogicRef, to: LogicRef) => {
+    edges.push({
+      id: `mc${li++}`,
+      source: from.node,
+      sourceHandle: from.handle,
+      target: to.node,
+      targetHandle: to.handle,
+    })
+  }
+  const inputs = ['compute', 'is_mul', 'is_div', 'seq_done']
+  inputs.forEach((s, i) => {
+    nodes.push({ id: `ib_${s}`, definition: 'block', x: -300, y: i * 200, block: BUFFER_BLOCK })
+    rail.push(`ib_${s}`)
+  })
+  const IN = (s: string): LogicRef => ({ node: `ib_${s}`, handle: 'out' })
+  nodes.push({ id: 'ff_busy', definition: 'block', x: 2200, y: 0, block: D_FLIPFLOP_BLOCK })
+  rail.push('ff_busy')
+  const BUSY: LogicRef = { node: 'ff_busy', handle: 'q' }
+  const COMPUTE = IN('compute')
+  const ISMUL = IN('is_mul')
+  const ISDIV = IN('is_div')
+  const SEQDONE = IN('seq_done')
+
+  const startMul = buildExpr(['and', ['and', COMPUTE, ISMUL], ['not', BUSY]], ctx)
+  const startDiv = buildExpr(['and', ['and', COMPUTE, ISDIV], ['not', BUSY]], ctx)
+  const capture = buildExpr(['and', BUSY, SEQDONE], ctx)
+  link(buildExpr(['or', ['or', startMul, startDiv], ['and', BUSY, ['not', SEQDONE]]], ctx), {
+    node: 'ff_busy',
+    handle: 'd',
+  })
+  rail.push(...ctx.ids)
+  edges.push(...chainRails(rail, 'mdc'))
+
+  let left = 14
+  for (const s of inputs) {
+    ports.push({
+      id: s,
+      label: s.toUpperCase(),
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `ib_${s}`, handleId: 'in' },
+    })
+    left += 14
+  }
+  ports.push({
+    id: 'clk',
+    label: 'CLK',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'ff_busy', handleId: 'clk' },
+  })
+  left += 14
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'ff_busy', handleId: 'gnd' },
+  })
+  const out: Array<[string, LogicRef]> = [
+    ['start_mul', startMul],
+    ['start_div', startDiv],
+    ['capture', capture],
+    ['busy', BUSY],
+  ]
+  let right = 14
+  for (const [id, ref] of out) {
+    ports.push({
+      id,
+      label: id.toUpperCase(),
+      side: 'right',
+      offset: right,
+      inner: { nodeId: ref.node, handleId: ref.handle },
+    })
+    right += 12
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'ff_busy', handleId: 'v_dd' },
+  })
+  return { name: 'Mul/Div Controller', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The ×/÷ busy-handshake controller (start the sequencer, hold BUSY until done, then capture). */
+export const MULDIV_CONTROLLER: BlockData = buildMuldivController()
+
+/**
+ * CALCULATOR (the whole 4-function machine, real gates all the way down) — encoder + control FSM +
+ * ×/÷ busy-controller + ENTRY/ACC registers + the +/− ALU + the multiplier + the divider, wired together.
+ *   • +/− run as one combinational ALU pass on COMPUTE.
+ *   • × and ÷ run as clocked loops: the FSM's COMPUTE with a ×/÷ op makes the controller START the matching
+ *     sequencer and hold BUSY; the calc keeps clocking until the sequencer's DONE, then CAPTURE writes the
+ *     result back. (Drive it: press a key = one clock, then keep clocking while BUSY.)
+ *   • A 3-way result mux feeds the registers: ALU sum (+/−) / product (×) / quotient (÷), chosen by the
+ *     latched op; the register load fires on (COMPUTE·(+|−)) OR CAPTURE.
+ * Outputs: ENTRY0..39 (the displayed value), ERROR (divide by zero), BUSY. ~9000 gates. Descend for it all.
+ */
+function buildCalculator(): BlockData {
+  const nodes: BlockData['nodes'] = [
+    { id: 'enc', definition: 'block', x: 0, y: 0, block: KEYPAD_ENCODER_BLOCK },
+    { id: 'fsm', definition: 'block', x: 2400, y: 0, block: CALC_CONTROL_FSM },
+    { id: 'ctrl', definition: 'block', x: 5000, y: 0, block: MULDIV_CONTROLLER },
+    { id: 'ent', definition: 'block', x: 7200, y: 0, block: ENTRY_REGISTER_10 },
+    { id: 'acc', definition: 'block', x: 7200, y: 16000, block: ACC_REGISTER_10 },
+    { id: 'alu', definition: 'block', x: 11000, y: 0, block: BCD_ALU_10 },
+    { id: 'mul', definition: 'block', x: 11000, y: 32000, block: MULTIPLIER_10 },
+    { id: 'div', definition: 'block', x: 11000, y: 64000, block: DIVIDER_10 },
+  ]
+  const edges: BlockData['edges'] = []
+  let ei = 0
+  const e = (s: string, sh: string, t: string, th: string) => {
+    edges.push({ id: `c${ei++}`, source: s, sourceHandle: sh, target: t, targetHandle: th })
+  }
+  const ctx: ExprCtx = { nodes, edges, ids: [], n: 0 }
+  const rail: string[] = ['enc', 'fsm', 'ctrl', 'ent', 'acc', 'alu', 'mul', 'div']
+  const link = (from: LogicRef, to: LogicRef) => e(from.node, from.handle, to.node, to.handle)
+  let mi = 0
+  const newMux = (sel: LogicRef, x: LogicRef, y: LogicRef): LogicRef => {
+    const id = `rm${mi}`
+    nodes.push({
+      id,
+      definition: 'block',
+      x: 14000 + (mi % 8) * 400,
+      y: Math.floor(mi / 8) * 200,
+      block: MUX2_1BIT,
+    })
+    mi++
+    rail.push(id)
+    link(sel, { node: id, handle: 'sel' })
+    link(x, { node: id, handle: 'x' })
+    link(y, { node: id, handle: 'y' })
+    return { node: id, handle: 'out' }
+  }
+
+  // encoder → FSM + entry-digit
+  e('enc', 'digit', 'fsm', 'digit')
+  e('enc', 'is_op', 'fsm', 'isop')
+  e('enc', 'is_eq', 'fsm', 'iseq')
+  e('enc', 'is_clr', 'fsm', 'isclr')
+  e('enc', 'op0', 'fsm', 'op0')
+  e('enc', 'op1', 'fsm', 'op1')
+  for (let b = 0; b < 4; b++) e('enc', `d${b}`, 'ent', `keypad${b}`)
+  // FSM → controller; controller → sequencers
+  e('fsm', 'compute', 'ctrl', 'compute')
+  e('fsm', 'alu_mul', 'ctrl', 'is_mul')
+  e('fsm', 'alu_div', 'ctrl', 'is_div')
+  e('ctrl', 'start_mul', 'mul', 'start')
+  e('ctrl', 'start_div', 'div', 'start')
+  // operands: ACC → a, ENTRY → b, for the ALU and both sequencers; ENTRY → ACC (copy source)
+  for (let i = 0; i < 40; i++) {
+    e('acc', `acc${i}`, 'alu', `a${i}`)
+    e('acc', `acc${i}`, 'mul', `a${i}`)
+    e('acc', `acc${i}`, 'div', `a${i}`)
+    e('ent', `entry${i}`, 'alu', `b${i}`)
+    e('ent', `entry${i}`, 'mul', `b${i}`)
+    e('ent', `entry${i}`, 'div', `b${i}`)
+    e('ent', `entry${i}`, 'acc', `entry${i}`)
+  }
+  e('fsm', 'alu_sub', 'alu', 'sub')
+  // FSM → register control
+  e('fsm', 'entry_new', 'ent', 'entry_new')
+  e('fsm', 'entry_append', 'ent', 'entry_append')
+  e('fsm', 'clear', 'ent', 'clear')
+  e('fsm', 'acc_from_entry', 'acc', 'acc_from_entry')
+  e('fsm', 'clear', 'acc', 'clear')
+  // seq_done = mul.done OR div.done → controller
+  link(buildExpr(['or', { node: 'mul', handle: 'done' }, { node: 'div', handle: 'done' }], ctx), {
+    node: 'ctrl',
+    handle: 'seq_done',
+  })
+  // register result-load = (COMPUTE and a +/− op) OR CAPTURE
+  const computeAddSub = buildExpr(
+    [
+      'and',
+      { node: 'fsm', handle: 'compute' },
+      ['or', { node: 'fsm', handle: 'alu_add' }, { node: 'fsm', handle: 'alu_sub' }],
+    ],
+    ctx,
+  )
+  const load = buildExpr(['or', computeAddSub, { node: 'ctrl', handle: 'capture' }], ctx)
+  link(load, { node: 'ent', handle: 'compute' })
+  link(load, { node: 'acc', handle: 'compute' })
+  // result mux per bit: alu_mul ? product : (alu_div ? quotient : ALU sum) → both registers' result input
+  for (let i = 0; i < 40; i++) {
+    const m1 = newMux(
+      { node: 'fsm', handle: 'alu_div' },
+      { node: 'div', handle: `quotient${i}` },
+      { node: 'alu', handle: `s${i}` },
+    )
+    const m2 = newMux(
+      { node: 'fsm', handle: 'alu_mul' },
+      { node: 'mul', handle: `product${i}` },
+      m1,
+    )
+    link(m2, { node: 'ent', handle: `result${i}` })
+    link(m2, { node: 'acc', handle: `result${i}` })
+  }
+  // clear the divider's sticky div-by-zero error on any new key activity (clear / operator / digit)
+  link(
+    buildExpr(
+      [
+        'or',
+        ['or', { node: 'fsm', handle: 'clear' }, { node: 'fsm', handle: 'op_latch' }],
+        { node: 'enc', handle: 'digit' },
+      ],
+      ctx,
+    ),
+    { node: 'div', handle: 'clear' },
+  )
+  // shared clock
+  for (const blk of ['ent', 'acc', 'ctrl', 'mul', 'div']) e('fsm', 'clk', blk, 'clk')
+  rail.push(...ctx.ids)
+  edges.push(...chainRails(rail, 'calc'))
+
+  const ports: BlockData['ports'] = []
+  const keys = [
+    'k0',
+    'k1',
+    'k2',
+    'k3',
+    'k4',
+    'k5',
+    'k6',
+    'k7',
+    'k8',
+    'k9',
+    'kadd',
+    'ksub',
+    'kmul',
+    'kdiv',
+    'keq',
+    'kclr',
+    'kpm',
+  ]
+  let left = 14
+  for (const k of keys) {
+    ports.push({
+      id: k,
+      label: k.toUpperCase(),
+      side: 'left',
+      offset: left,
+      inner: { nodeId: 'enc', handleId: k },
+    })
+    left += 12
+  }
+  ports.push({
+    id: 'clk',
+    label: 'CLK',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'fsm', handleId: 'clk' },
+  })
+  left += 12
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'enc', handleId: 'gnd' },
+  })
+  let right = 14
+  for (let i = 0; i < 40; i++) {
+    ports.push({
+      id: `entry${i}`,
+      label: `E${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: 'ent', handleId: `entry${i}` },
+    })
+    right += 6
+  }
+  ports.push({
+    id: 'error',
+    label: 'ERR',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'div', handleId: 'error' },
+  })
+  right += 12
+  ports.push({
+    id: 'busy',
+    label: 'BUSY',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'ctrl', handleId: 'busy' },
+  })
+  right += 12
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'enc', handleId: 'v_dd' },
+  })
+  return { name: 'Calculator', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The complete 4-function calculator, every gate real (encoder + FSM + registers + ALU + multiplier + divider). */
+export const CALCULATOR: BlockData = buildCalculator()
+
 /**
  * SRAM BIT CELL (6T) — the static memory bit, the cell a CPU's CACHE is built from. Two CMOS
  * inverters wired nose-to-tail (each drives the other's input) latch one bit on the complementary
@@ -2458,6 +4801,7 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   logic_d_latch: D_LATCH_BLOCK,
   logic_d_flipflop: D_FLIPFLOP_BLOCK,
   logic_register_4bit: REGISTER_4BIT,
+  logic_register_bcd: BCD_REGISTER_10,
   memory_sram_cell: SRAM_CELL_BLOCK,
   memory_sram_word_4bit: SRAM_WORD_4BIT,
   display_seven_segment: SEVEN_SEGMENT_DISPLAY,

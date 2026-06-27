@@ -16,6 +16,7 @@ import {
 } from '../src/renderer/blocks.ts'
 import {
   AND_BLOCK,
+  BCD_REGISTER_10,
   BUFFER_BLOCK,
   CALCULATOR_4BIT,
   D_FLIPFLOP_BLOCK,
@@ -750,4 +751,18 @@ describe('4-bit register — four flip-flops latching a whole word on one clock 
     expect(isLow(qAt(2, 0.0007))).toBe(true) // Q2 = 0
     expect(isHigh(qAt(3, 0.0007))).toBe(true) // Q3 = 1
   }, 60000)
+})
+
+describe('BCD register (10-digit) — the calculator’s 40-bit operand store', () => {
+  // Same generator as the 4-bit register (proven above), instantiated at 40 bits = 10 decimal digits
+  // × 4. Structural check (no slow 1360-MOSFET solve): the right flip-flop count and flat port map.
+  test('is 40 D flip-flops with D0..D39 in and Q0..Q39 out (4 bits per decimal digit)', () => {
+    const reg = BCD_REGISTER_10
+    expect(reg.nodes.filter((n) => n.block === D_FLIPFLOP_BLOCK)).toHaveLength(40)
+    expect(reg.ports.filter((p) => /^d\d+$/.test(p.id))).toHaveLength(40)
+    expect(reg.ports.filter((p) => /^q\d+$/.test(p.id))).toHaveLength(40)
+    expect(reg.ports.some((p) => p.id === 'clk')).toBe(true)
+    expect(reg.ports.some((p) => p.id === 'v_dd')).toBe(true)
+    expect(reg.ports.some((p) => p.id === 'gnd')).toBe(true)
+  })
 })
