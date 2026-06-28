@@ -179,6 +179,20 @@ export type TransientOptions = {
    * sits at the metastable midpoint), so a cold transient cannot converge.
    */
   initialVoltages?: Map<string, number>
+  /**
+   * Co-simulation pre-hook, fired at the TOP of each march step (after t = k·Δt is known, before the
+   * step solves) with the step index, its time, and the PREVIOUS committed step's node voltages. The
+   * mixed-signal driver uses it to advance the digital (logic-fidelity) sub-circuit one clock and stash
+   * the voltage its outputs should drive onto the analog boundary nets this step. No-op when absent.
+   */
+  onStepBegin?: (step: number, t: number, prevNodes: Map<string, number>) => void
+  /**
+   * Co-simulation source override: consulted for each timed source before sourceVoltageAt. Returning a
+   * number forces that source to the given voltage this step (the digital→analog video bridge — a
+   * char-gen output driving the CRT grid through a real Thévenin source); undefined keeps the source's
+   * own waveform. It only READS a value onStepBegin already computed, so it is safe inside the Newton loop.
+   */
+  externalSourceV?: (sourceId: string) => number | undefined
 }
 
 export type TransientPoint = {
@@ -228,13 +242,20 @@ type TimedSource = {
   frequency: number // hertz
   rInternal: number // ohms (series internal resistance)
   /**
-   * 'sine' (default) or 'square' — the clock shape. A square source swings
+   * 'sine' (default), 'square', or 'sawtooth' — the waveform. A square source swings
    * offset ± amplitude at exact 50 % duty, the function-generator convention
    * (a 0–5 V logic clock is offset 2.5 V, amplitude 2.5 V). Edges land within
    * one time step — the solver's stated time resolution, same idealization a
-   * SPICE pulse source makes when rise/fall default to one print step.
+   * SPICE pulse source makes when rise/fall default to one print step. A sawtooth
+   * ramps offset−amplitude → offset+amplitude over each period then snaps back —
+   * the deflection sweep of a CRT (the ramp draws a line; the snap is the retrace).
+   * A staircase holds `steps` discrete levels across the period (offset−amplitude →
+   * offset+amplitude) — a stepped vertical sweep, so a few-line raster sits flat per
+   * scanline instead of shearing (a real staircase-generator / stepped-deflection sweep).
    */
-  waveform: 'sine' | 'square'
+  waveform: 'sine' | 'square' | 'sawtooth' | 'staircase'
+  /** Staircase only: how many held levels per period (e.g. one per scanline). Default 8. */
+  steps?: number
 }
 
 /** A capacitor resolved for the time loop. */
@@ -507,6 +528,7 @@ function resolveSource(inst: Instance, nodeIndex: Map<string, number>): TimedSou
   const pNet = inst.connects?.find((c) => c.terminal === 'terminal_positive')?.net
   const nNet = inst.connects?.find((c) => c.terminal === 'terminal_negative')?.net
   if (pNet === undefined || nNet === undefined) return null
+  const steps = readScalarParam(inst, 'staircase_steps')
   return {
     id: inst.id,
     termP: 'terminal_positive',
@@ -517,12 +539,36 @@ function resolveSource(inst: Instance, nodeIndex: Map<string, number>): TimedSou
     amplitude: readScalarParam(inst, 'ac_amplitude') ?? 0,
     frequency: readScalarParam(inst, 'frequency') ?? 0,
     rInternal: readScalarParam(inst, 'internal_resistance') ?? 0,
-    waveform: readEnumParam(inst, 'waveform') === 'square' ? 'square' : 'sine',
+    waveform:
+      readEnumParam(inst, 'waveform') === 'square'
+        ? 'square'
+        : readEnumParam(inst, 'waveform') === 'sawtooth'
+          ? 'sawtooth'
+          : readEnumParam(inst, 'waveform') === 'staircase'
+            ? 'staircase'
+            : 'sine',
+    ...(steps !== undefined ? { steps } : {}),
   }
 }
 
 function sourceVoltageAt(src: TimedSource, t: number): number {
   if (src.amplitude === 0) return src.dcOffset
+  if (src.waveform === 'sawtooth') {
+    // A rising ramp from −amplitude to +amplitude over each period, snapping back at the
+    // period boundary — a CRT deflection sweep (the ramp draws the line; the snap is the retrace).
+    const phase = src.frequency * t
+    const frac = phase - Math.floor(phase)
+    return src.dcOffset + src.amplitude * (2 * frac - 1)
+  }
+  if (src.waveform === 'staircase') {
+    // `steps` discrete levels held across the period (−amplitude → +amplitude), centered per band —
+    // a stepped vertical sweep that holds each scanline flat (no shear on a coarse raster).
+    const n = Math.max(2, Math.round(src.steps ?? 8))
+    const phase = src.frequency * t
+    const frac = phase - Math.floor(phase)
+    const level = Math.min(n - 1, Math.floor(frac * n))
+    return src.dcOffset + src.amplitude * ((2 * (level + 0.5)) / n - 1)
+  }
   const swing = Math.sin(2 * Math.PI * src.frequency * t)
   if (src.waveform === 'square') {
     // sign(sin) gives an exact 50 % duty cycle; the t = 0 edge starts HIGH.
@@ -2009,7 +2055,8 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     for (let s = 0; s < S; s++) {
       // biome-ignore lint/style/noNonNullAssertion: s is bound by S
       const src = sources[s]!
-      stampTimedSource(src, sourceVoltageAt(src, t), N + s, M, b)
+      const overrideV = options.externalSourceV?.(src.id)
+      stampTimedSource(src, overrideV ?? sourceVoltageAt(src, t), N + s, M, b)
     }
     // Each CCCS: its 0 V control-current sense (an aux branch at N+S+i) plus the f·I_c
     // output coupling — time-independent, so the same DC stamp serves at every step.
@@ -2567,6 +2614,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   const steps = Math.round(duration / dt)
   for (let k = 1; k <= steps; k++) {
     const t = k * dt
+    options.onStepBegin?.(k, t, series[series.length - 1]?.nodes ?? new Map<string, number>())
     const solved = solveConverged('step', t)
     if (solved === 'singular') return { status: 'singular-matrix', series, ground, warnings }
     if (solved === 'no-convergence') {

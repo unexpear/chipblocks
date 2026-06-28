@@ -84,6 +84,8 @@ terminals:
     description: The horizontal deflection input. Its voltage (relative to the cathode) moves the spot left/right. High-impedance — it draws essentially no current.
   y_deflect:
     description: The vertical deflection input. Its voltage moves the spot up/down. High-impedance.
+  grid:
+    description: The control-grid VIDEO input (the Z-axis) — its voltage relative to the cathode modulates the beam current, and so the spot brightness, point by point, the way a television paints its picture. 0 V gives full beam; at or below the cutoff bias the beam is blanked (dark). High-impedance. Leave it unwired and the static grid_bias property sets a constant brightness (the oscilloscope case).
 support:
   model_status: defined
   solver_status: builtin_simple

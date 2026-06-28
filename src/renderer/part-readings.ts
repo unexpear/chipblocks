@@ -265,15 +265,17 @@ export function partReadings(
   return readings
 }
 
-export type CrtSpot = { x: number; y: number }
+export type CrtSpot = { x: number; y: number; i: number }
 
 /**
  * The CRT spot's locus over a transient run — the live trace (the next rung past the single DC spot).
  * For each solved instant it reads the X/Y deflection-plate voltages and the anode (EHT) from that
  * frame's node voltages and turns them into a screen position with the SAME deflection law the DC spot
  * uses (deflectionFraction). So an X-ramp + a Y-signal draws the waveform, and two sines draw a
- * Lissajous figure — exactly what a real scope tube does. Points are screen fractions (−1..1 across /
- * up); brightness is the constant level the grid bias sets. Empty when the id isn't a resolvable CRT.
+ * Lissajous figure — exactly what a real scope tube does. Each point also carries i = the beam
+ * INTENSITY 0..1 at that instant: if a VIDEO signal is wired to the grid it is that grid voltage's
+ * brightness (the Z-axis that paints a raster TV point by point), else the constant grid-bias level.
+ * Points are screen fractions (−1..1 across / up). Empty when the id isn't a resolvable CRT.
  */
 export function crtSpotTrace(
   world: World,
@@ -289,6 +291,8 @@ export function crtSpotTrace(
   if (anodeNet === undefined || cathodeNet === undefined) return { points: [], brightness: 0 }
   const xNet = net('x_deflect')
   const yNet = net('y_deflect')
+  const gridNet = net('grid')
+  // brightness = the static grid-bias level — the DC spot, and the fallback when no video is wired.
   const brightness = gridBrightness(p.gridBias, p.gridCutoffVoltage)
   const points = series.map(({ nodes }) => {
     const at = (n: string | undefined) => (n === undefined ? 0 : (nodes.get(n) ?? 0))
@@ -296,10 +300,29 @@ export function crtSpotTrace(
     const vAnode = at(anodeNet) - vCathode
     const vX = xNet === undefined ? 0 : at(xNet) - vCathode
     const vY = yNet === undefined ? 0 : at(yNet) - vCathode
+    // INTENSITY at this instant: a video wired to the grid sets the brightness point-by-point (the
+    // way a TV paints each spot); with nothing wired it is the constant grid-bias level.
+    const i =
+      gridNet === undefined
+        ? brightness
+        : gridBrightness(at(gridNet) - vCathode, p.gridCutoffVoltage)
     return {
       x: deflectionFraction(vX, p.deflectionSensitivity, vAnode, p.ratedAnodeVoltage),
       y: deflectionFraction(vY, p.deflectionSensitivity, vAnode, p.ratedAnodeVoltage),
+      i,
     }
   })
   return { points, brightness }
+}
+
+/** Every CRT in a world → its live beam trace over a transient run. One place the scope, the CRT-TV
+ *  raster demo, the timeline scrub, and the mixed-signal co-sim all share (one trace per tube). */
+export function buildCrtTraces(
+  world: World,
+  series: readonly { nodes: Map<string, number> }[],
+): Map<string, { points: CrtSpot[]; brightness: number }> {
+  const traces = new Map<string, { points: CrtSpot[]; brightness: number }>()
+  for (const [id, inst] of world.instances)
+    if (inst.definition === 'crt') traces.set(id, crtSpotTrace(world, id, series))
+  return traces
 }

@@ -5,7 +5,7 @@ import { THEME } from './theme.ts'
 import './canvas-animations.css'
 import { thermalSeverity } from '../thermal-model.ts'
 import { BlockNode } from './block-node.tsx'
-import { HealthContext } from './health.ts'
+import { CrtScreenContext, HealthContext } from './health.ts'
 import {
   ENERGY_COLOR,
   FIELD_COLOR,
@@ -774,6 +774,121 @@ function CrtGlyph() {
       <line x1={62} y1={14} x2={W} y2={14} stroke={STROKE} strokeWidth={1.5} />
       <line x1={62} y1={30} x2={W} y2={30} stroke={STROKE} strokeWidth={1.5} />
       <line x1={11} y1={MID - 4} x2={11} y2={MID + 4} stroke={STROKE} strokeWidth={2} />
+    </svg>
+  )
+}
+
+/**
+ * A live CRT phosphor SCREEN, drawn from the REAL solved beam. `spot` is the DC landing point and
+ * `trace` is the beam's locus over a transient run (both screen-fractions −1..1, straight out of
+ * crtSpotTrace / the deflection law). Green phosphor with a real glow; the whole swept path stays lit
+ * (long-persistence phosphor) with the live spot brightest. Nothing is painted that the real
+ * deflection voltages didn't put there — wire a sweep + a signal and it draws that signal.
+ */
+export function CrtScreen({
+  w,
+  h,
+  spot,
+  brightness,
+  trace,
+}: {
+  w: number
+  h: number
+  spot: { x: number; y: number }
+  brightness: number
+  trace?: readonly { x: number; y: number; i: number }[]
+}) {
+  const cx = w / 2
+  const cy = h / 2
+  const sx = (w / 2) * 0.84
+  const sy = (h / 2) * 0.84
+  const px = (fx: number) => cx + fx * sx
+  const py = (fy: number) => cy - fy * sy
+  const phosphor = THEME.accentLime
+  const glow = (blurPx: number) => ({ filter: `drop-shadow(0 0 ${blurPx}px ${phosphor})` })
+  // Raster (a TV) vs vector (a scope): if the beam INTENSITY is modulated over the run — a video on
+  // the grid — paint the picture point-by-point; if it is ~constant, draw the connected trace.
+  let iMin = 1
+  let iMax = 0
+  if (trace) {
+    for (const p of trace) {
+      if (p.i < iMin) iMin = p.i
+      if (p.i > iMax) iMax = p.i
+    }
+  }
+  const raster = trace !== undefined && trace.length > 1 && iMax - iMin > 0.15
+  const dot = Math.max(1.3, h * 0.02)
+  const last = trace && trace.length > 0 ? trace[trace.length - 1] : undefined
+  const beam = last ?? { x: spot.x, y: spot.y }
+  return (
+    // biome-ignore lint/a11y/noSvgWithoutTitle: the screen is decorative; the CRT node carries the label
+    <svg width={w} height={h} aria-hidden style={{ display: 'block' }}>
+      <rect
+        x={0.5}
+        y={0.5}
+        width={w - 1}
+        height={h - 1}
+        rx={Math.min(10, h * 0.12)}
+        fill={THEME.surfaceDeep}
+        stroke={THEME.borderStrong}
+      />
+      {raster ? (
+        // The TV picture: every beam sample lit by its REAL intensity (the grid video paints it as
+        // the beam scans). Dark samples (beam blanked) are skipped, so the lit pixels form the image.
+        trace?.map((p, idx) =>
+          p.i > 0.06 ? (
+            <rect
+              // biome-ignore lint/suspicious/noArrayIndexKey: a fixed-order beam-sample sequence
+              key={idx}
+              x={px(p.x) - dot / 2}
+              y={py(p.y) - dot / 2}
+              width={dot}
+              height={dot}
+              fill={phosphor}
+              opacity={p.i}
+            />
+          ) : null,
+        )
+      ) : (
+        <>
+          <line
+            x1={cx}
+            y1={h * 0.08}
+            x2={cx}
+            y2={h * 0.92}
+            stroke={THEME.borderSubtle}
+            strokeWidth={0.5}
+          />
+          <line
+            x1={w * 0.08}
+            y1={cy}
+            x2={w * 0.92}
+            y2={cy}
+            stroke={THEME.borderSubtle}
+            strokeWidth={0.5}
+          />
+          {trace && trace.length > 1 ? (
+            <polyline
+              points={trace.map((p) => `${px(p.x)},${py(p.y)}`).join(' ')}
+              fill="none"
+              stroke={phosphor}
+              strokeWidth={1.4}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              opacity={Math.max(0.25, brightness * 0.85)}
+              style={glow(2)}
+            />
+          ) : null}
+          <circle
+            cx={px(beam.x)}
+            cy={py(beam.y)}
+            r={Math.max(2, h * 0.04)}
+            fill={phosphor}
+            opacity={Math.max(0.3, brightness)}
+            style={glow(4)}
+          />
+        </>
+      )}
     </svg>
   )
 }
@@ -1624,6 +1739,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   logic_d_latch: LatchGlyph,
   logic_d_flipflop: LatchGlyph,
   logic_register_4bit: LatchGlyph,
+  logic_register_bcd: LatchGlyph,
   transformer: TransformerGlyph,
   transformer_center_tapped: CtTransformerGlyph,
 }
@@ -1665,10 +1781,13 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   neon_lamp: TWO('anode', 'cathode'),
   // A CRT: the electron gun (cathode + anode) on the left, the X/Y deflection inputs on the right.
   crt: [
-    { id: 'cathode', position: Position.Left, offset: 14 },
-    { id: 'anode', position: Position.Left, offset: 30 },
-    { id: 'x_deflect', position: Position.Right, offset: 14 },
-    { id: 'y_deflect', position: Position.Right, offset: 30 },
+    // Spread down the screen's two side edges (the CRT renders as a 124×88 screen, not the 80×44 box).
+    { id: 'cathode', position: Position.Left, offset: 24 },
+    { id: 'anode', position: Position.Left, offset: 62 },
+    { id: 'x_deflect', position: Position.Right, offset: 24 },
+    { id: 'y_deflect', position: Position.Right, offset: 62 },
+    // The grid (video / Z-axis) enters from the bottom — the TV's brightness/video input.
+    { id: 'grid', position: Position.Bottom, offset: 62 },
   ],
   // A transmission line: the near pair on the left, the far pair on the right.
   transmission_line: [
@@ -1892,6 +2011,9 @@ export type DeviceNodeData = {
   parameters?: Parameters
   /** Which engine simulates this block; absent ⇒ 'transistor'. */
   fidelity?: Fidelity
+  /** Calculator keypad button: the key this switch types ('0'..'9', '+', '-', '*', '/', '=', 'C', '±').
+   *  Clicking the switch feeds this key to the calculator's control unit. */
+  calcKey?: string
 }
 
 /**
@@ -2035,6 +2157,13 @@ export function DeviceNode({ id, data }: NodeProps) {
   const { definition, label, rotation = 0, parameters } = data as DeviceNodeData
   const value = primaryValue(definition, parameters)
   const health = useContext(HealthContext).get(id)
+  // A CRT renders as a real phosphor SCREEN on the canvas (not the tiny tube glyph): a wide TV face
+  // showing its solved beam locus (crtScreen.trace) + the live spot, read from CrtScreenContext. The
+  // 5:2-ish width gives a raster enough horizontal room to resolve text (a row of characters).
+  const crtScreen = useContext(CrtScreenContext).get(id)
+  const isCrtScreen = definition === 'crt'
+  const boxW = isCrtScreen ? 240 : W
+  const boxH = isCrtScreen ? 88 : H
   const lensState = useContext(LensContext)
   // Travelling-charge front: dim the part until the wave reaches it, so it lights up in turn
   // (the far bulb last). partArrival is its earliest terminal-arrival time; null = not in front mode.
@@ -2093,8 +2222,8 @@ export function DeviceNode({ id, data }: NodeProps) {
       className={health?.failed ? 'cb-shake' : undefined}
       style={{
         position: 'relative',
-        width: W,
-        height: H,
+        width: boxW,
+        height: boxH,
         fontFamily: 'system-ui, sans-serif',
         opacity: frontDimmed ? 0.25 : 1,
         transition: 'opacity 0.1s linear',
@@ -2146,7 +2275,12 @@ export function DeviceNode({ id, data }: NodeProps) {
         <EnergyFlowHalo fraction={energyFraction} into={definition !== 'power_source'} />
       ) : null}
       <div
-        style={{ position: 'relative', width: W, height: H, transform: `rotate(${rotation}deg)` }}
+        style={{
+          position: 'relative',
+          width: boxW,
+          height: boxH,
+          transform: `rotate(${rotation}deg)`,
+        }}
       >
         {/* One handle per terminal; id = terminal name. connectionMode="loose"
             (App) lets any terminal wire to any terminal. Ground = one top stem. */}
@@ -2200,11 +2334,21 @@ export function DeviceNode({ id, data }: NodeProps) {
             </Fragment>
           )
         })}
-        <DeviceGlyph
-          definition={definition}
-          rotation={rotation}
-          {...(parameters ? { parameters } : {})}
-        />
+        {isCrtScreen ? (
+          <CrtScreen
+            w={boxW}
+            h={boxH}
+            spot={crtScreen?.spot ?? { x: 0, y: 0 }}
+            brightness={crtScreen?.brightness ?? 0}
+            {...(crtScreen?.trace ? { trace: crtScreen.trace } : {})}
+          />
+        ) : (
+          <DeviceGlyph
+            definition={definition}
+            rotation={rotation}
+            {...(parameters ? { parameters } : {})}
+          />
+        )}
         {/* Tap stubs (S19-v3-74): each tap lead pops radially out of the
             circle's rim to its dot, so the extra terminals read as part of
             the symbol. A 1-lead source marks its hidden return-through-ground. */}
@@ -2320,4 +2464,42 @@ function JunctionNode() {
   )
 }
 
-export const nodeTypes = { device: DeviceNode, junction: JunctionNode, block: BlockNode }
+/** A calculator KEYCAP — a real, labeled push-key you click to type. Not part of the solved circuit (no
+ *  terminals); clicking it feeds its key to the control unit (App's onNodeClick reads data.calcKey). It is
+ *  placed non-draggable so a click presses it instead of moving it. */
+function KeycapNode({ data }: NodeProps) {
+  const d = data as DeviceNodeData
+  const isOp = d.calcKey !== undefined && ['+', '-', '*', '/', '='].includes(d.calcKey)
+  return (
+    <div
+      className="cb-keycap"
+      title={`Calculator key ${d.label ?? ''} — click to press`}
+      style={{
+        width: 60,
+        height: 60,
+        borderRadius: 10,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 28,
+        fontWeight: 700,
+        lineHeight: 1,
+        color: isOp ? THEME.surfaceDeep : THEME.textBright,
+        background: isOp ? THEME.accentBlue : THEME.surfaceRaised,
+        border: `2px solid ${isOp ? THEME.accentBlueDeep : THEME.borderStrong}`,
+        boxShadow: `0 4px 0 ${isOp ? THEME.accentBlueDeep : THEME.borderStrong}`,
+        cursor: 'pointer',
+        userSelect: 'none',
+      }}
+    >
+      {d.label}
+    </div>
+  )
+}
+
+export const nodeTypes = {
+  device: DeviceNode,
+  junction: JunctionNode,
+  block: BlockNode,
+  keycap: KeycapNode,
+}

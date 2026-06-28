@@ -2853,6 +2853,9 @@ export const DOWN_COUNTER_EN_4: BlockData = buildDownCounter(4, true)
  *  the divisor fits). Same circuit as the down-counter but with a carry chain instead of a borrow chain. */
 export const COUNTER_UP_EN_4: BlockData = buildDownCounter(4, true, true)
 
+/** A 3-bit loadable UP-counter with a count-enable — the char-gen's dot (0..7) and line (0..7) counters. */
+export const COUNTER_UP_EN_3: BlockData = buildDownCounter(3, true, true)
+
 /**
  * SIGN FLIP-FLOP (toggle / T flip-flop) — holds the running result sign (0 = +, 1 = −). On a clock it
  * keeps the sign when TOGGLE is low and FLIPS it when TOGGLE is high, because D = SIGN XOR TOGGLE. That one
@@ -4890,6 +4893,290 @@ export const PHOTO_DARLINGTON_BLOCK: BlockData = {
     },
   ],
 }
+
+/**
+ * CHARACTER-GENERATOR SCAN COUNTERS — three real synchronous up-counters, all clocked by the master
+ * pixel clock, that track where the raster beam is: DOT (0..7, the pixel column within a character
+ * cell), CHAR (0..15, which of the 16 character slots along the scanline), and LINE (0..7, the raster
+ * row within the character). The cascade is SYNCHRONOUS, not ripple: CHAR counts only when DOT is at
+ * its maximum (a combinational AND of DOT's bits used as the count-enable), and LINE only when DOT and
+ * CHAR are both at maximum (the end of a scanline). So one pixel clock advances DOT every tick, CHAR
+ * every 8 ticks, LINE every 128 ticks — exactly the order a TV beam paints (left to right across all
+ * chars, then the next scanline down). CLR (a synchronous clear = load 0) gives a deterministic
+ * power-up. Descend for the counters, and into them for the flip-flops + carry gates.
+ */
+function buildCharGenScan(): BlockData {
+  const nodes: BlockData['nodes'] = [
+    { id: 'dot', definition: 'block', x: 0, y: 0, block: COUNTER_UP_EN_3 },
+    { id: 'char', definition: 'block', x: 2400, y: 0, block: COUNTER_UP_EN_4 },
+    { id: 'line', definition: 'block', x: 4800, y: 0, block: COUNTER_UP_EN_3 },
+  ]
+  const edges: BlockData['edges'] = []
+  let ei = 0
+  const e = (s: string, sh: string, t: string, th: string) =>
+    edges.push({ id: `cs${ei++}`, source: s, sourceHandle: sh, target: t, targetHandle: th })
+  const LOW = { node: 'dot', handle: 'gnd' }
+  const HIGH = { node: 'dot', handle: 'v_dd' }
+
+  // Free-running counters: the load value is 0, so CLR (= LOAD high) loads zero — a clean reset.
+  for (const [c, bits] of [
+    ['dot', 3],
+    ['char', 4],
+    ['line', 3],
+  ] as const)
+    for (let i = 0; i < bits; i++) e(LOW.node, LOW.handle, c, `l${i}`)
+
+  // DOT always counts; CHAR/LINE enables are the synchronous carries (combinational ANDs of the bits).
+  e(HIGH.node, HIGH.handle, 'dot', 'en')
+  const ctx: ExprCtx = { nodes: [], edges: [], ids: [], n: 0 }
+  const dq = (i: number): LogicRef => ({ node: 'dot', handle: `q${i}` })
+  const cq = (i: number): LogicRef => ({ node: 'char', handle: `q${i}` })
+  const dotMax = buildExpr(['and', ['and', dq(0), dq(1)], dq(2)], ctx)
+  const charMax = buildExpr(['and', ['and', ['and', cq(0), cq(1)], cq(2)], cq(3)], ctx)
+  const lineEn = buildExpr(['and', dotMax, charMax], ctx)
+  nodes.push(...ctx.nodes)
+  edges.push(...ctx.edges)
+  e(dotMax.node, dotMax.handle, 'char', 'en')
+  e(lineEn.node, lineEn.handle, 'line', 'en')
+
+  // Shared pixel clock + shared synchronous clear across all three counters.
+  e('dot', 'clk', 'char', 'clk')
+  e('dot', 'clk', 'line', 'clk')
+  e('dot', 'load', 'char', 'load')
+  e('dot', 'load', 'line', 'load')
+  edges.push(...chainRails(['dot', 'char', 'line', ...ctx.ids], 'cs'))
+
+  const ports: BlockData['ports'] = [
+    {
+      id: 'clk',
+      label: 'CLK',
+      side: 'left',
+      offset: 14,
+      inner: { nodeId: 'dot', handleId: 'clk' },
+    },
+    {
+      id: 'clr',
+      label: 'CLR',
+      side: 'left',
+      offset: 28,
+      inner: { nodeId: 'dot', handleId: 'load' },
+    },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 42,
+      inner: { nodeId: 'dot', handleId: 'gnd' },
+    },
+  ]
+  let right = 14
+  const out = (id: string, label: string, nodeId: string, handleId: string) => {
+    ports.push({ id, label, side: 'right', offset: right, inner: { nodeId, handleId } })
+    right += 14
+  }
+  for (let i = 0; i < 3; i++) out(`dot${i}`, `DOT${i}`, 'dot', `q${i}`)
+  for (let i = 0; i < 4; i++) out(`char${i}`, `CHAR${i}`, 'char', `q${i}`)
+  for (let i = 0; i < 3; i++) out(`line${i}`, `LINE${i}`, 'line', `q${i}`)
+  out('v_dd', 'V+', 'dot', 'v_dd')
+  return { name: 'Char-Gen Scan', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The character generator's scan counters: dot 0..7, char 0..15, line 0..7 (synchronous cascade). */
+export const CHARGEN_SCAN: BlockData = buildCharGenScan()
+
+/**
+ * One-hot decode of SOME addresses of a bus: for each requested index it builds the minterm (an AND of
+ * the address bits, inverted where the index bit is 0). Returns index → its minterm net. Only the
+ * indices asked for are built (a ROM needs minterms only for addresses that carry data).
+ */
+function oneHotSel(
+  bits: LogicRef[],
+  indices: number[],
+  ctx: ExprCtx,
+  _prefix: string,
+): Map<number, LogicRef> {
+  const out = new Map<number, LogicRef>()
+  for (const idx of indices) {
+    const b0 = bits[0]
+    if (b0 === undefined) continue
+    let expr: LogicExpr = (idx & 1) === 1 ? b0 : ['not', b0]
+    for (let i = 1; i < bits.length; i++) {
+      const bi = bits[i]
+      if (bi === undefined) continue
+      expr = ['and', expr, (idx >> i) & 1 ? bi : ['not', bi]]
+    }
+    out.set(idx, buildExpr(expr, ctx))
+  }
+  return out
+}
+
+/** OR a set of minterms into one net (an OR-plane row); 0 terms → constant LOW, 1 term → itself. */
+function orOf(terms: LogicRef[], low: LogicRef, ctx: ExprCtx, prefix: string): LogicRef {
+  if (terms.length === 0) return low
+  const first = terms[0]
+  if (terms.length === 1 && first !== undefined) return first
+  const r = orReduce(terms, prefix, 0)
+  ctx.nodes.push(...r.nodes)
+  ctx.edges.push(...r.edges)
+  ctx.ids.push(...r.ids)
+  return r.out
+}
+
+const mustGet = (m: Map<number, LogicRef>, k: number): LogicRef => {
+  const v = m.get(k)
+  if (v === undefined) throw new Error(`one-hot line ${k} not built`)
+  return v
+}
+
+// 5×7 glyphs for the eight characters HELLO WORLD needs. Each row is 5 columns, left to right; '#'
+// is a lit dot. Bit d of a row = column d from the LEFT (dot 0 = leftmost), matching the beam's
+// left-to-right sweep. Standard 5×7 dot-matrix forms.
+const GLYPH_ART: Record<number, string[]> = {
+  1: ['#...#', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'], // H
+  2: ['#####', '#....', '#....', '####.', '#....', '#....', '#####'], // E
+  3: ['#....', '#....', '#....', '#....', '#....', '#....', '#####'], // L
+  4: ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'], // O
+  5: ['#...#', '#...#', '#...#', '#.#.#', '#.#.#', '##.##', '#...#'], // W
+  6: ['####.', '#...#', '#...#', '####.', '##...', '#.#..', '#..##'], // R
+  7: ['####.', '#...#', '#...#', '#...#', '#...#', '#...#', '####.'], // D
+}
+const rowVal = (s: string): number => {
+  let v = 0
+  for (let i = 0; i < s.length; i++) if (s[i] === '#') v |= 1 << i
+  return v
+}
+// code → 8 rows (line 0..6 = the glyph, line 7 = blank inter-row gap). code 0 = space (all dark).
+const GLYPH: Record<number, number[]> = { 0: [0, 0, 0, 0, 0, 0, 0, 0] }
+for (const c of [1, 2, 3, 4, 5, 6, 7]) {
+  const art = GLYPH_ART[c]
+  if (art !== undefined) GLYPH[c] = [...art.map(rowVal), 0]
+}
+
+// The 16 character slots → glyph codes: H E L L O _ W O R L D, then 5 blanks. (1=H 2=E 3=L 4=O 5=W
+// 6=R 7=D, 0=space.) The MESSAGE ROM realizes this map in gates.
+const MESSAGE_CODES = [1, 2, 3, 3, 4, 0, 5, 4, 6, 3, 7, 0, 0, 0, 0, 0]
+
+/**
+ * The golden-model video bit the character generator should emit at a given scan position — the spec
+ * its real gate ROMs are tested against. The beam paints the glyph pixel for the character in that
+ * slot, and stays dark in the inter-character spacing (dot ≥ 5) and the inter-line gap (line ≥ 7).
+ */
+export function charGenExpectedVideo(dot: number, char: number, line: number): 0 | 1 {
+  if (dot > 4 || line > 6) return 0
+  const code = MESSAGE_CODES[char] ?? 0
+  return ((((GLYPH[code] ?? [])[line] ?? 0) >> dot) & 1) === 1 ? 1 : 0
+}
+
+/**
+ * CHARACTER GENERATOR — a real clocked digital circuit (all gates, descend to MOSFETs) that turns the
+ * raster scan into a one-bit VIDEO stream spelling HELLO WORLD, the way an MC6845-era CRT controller +
+ * font ROM does. Built on CHARGEN_SCAN (the dot/char/line counters); on top sit three combinational
+ * ROMs/decoders, all real AND-OR gate planes:
+ *   • MESSAGE ROM  — char slot (0..15) → a 3-bit character CODE (H E L L O _ W O R L D, then blanks).
+ *   • FONT ROM     — {code, line} → the 8-bit glyph ROW bitmap (5 lit columns + 3 blank spacing).
+ *   • COLUMN MUX   — the dot counter selects ONE bit of that row → the serial VIDEO output.
+ * Because the dot/char/line counters are phase-locked to the same pixel clock the analog X/Y sweeps
+ * use, the glyph bit emitted at pixel p lands exactly where the beam is at pixel p. The 'video' port is
+ * the digital→analog bridge into the CRT grid (the co-sim drives it). Descend for the ROM gate planes.
+ */
+function buildCharGen(): BlockData {
+  const nodes: BlockData['nodes'] = [
+    { id: 'scan', definition: 'block', x: 0, y: 0, block: CHARGEN_SCAN },
+  ]
+  const edges: BlockData['edges'] = []
+  const ctx: ExprCtx = { nodes: [], edges: [], ids: [], n: 0 }
+  const LOW: LogicRef = { node: 'scan', handle: 'gnd' }
+  const charB = (i: number): LogicRef => ({ node: 'scan', handle: `char${i}` })
+  const lineB = (i: number): LogicRef => ({ node: 'scan', handle: `line${i}` })
+  const dotB = (i: number): LogicRef => ({ node: 'scan', handle: `dot${i}` })
+
+  // MESSAGE ROM: the 16 character slots → 3-bit glyph codes (MESSAGE_CODES).
+  const charsNeeded = MESSAGE_CODES.map((_, c) => c).filter((c) => MESSAGE_CODES[c] !== 0)
+  const charOH = oneHotSel([charB(0), charB(1), charB(2), charB(3)], charsNeeded, ctx, 'ch')
+  const code = [0, 1, 2].map((j) =>
+    orOf(
+      charsNeeded.filter((c) => ((MESSAGE_CODES[c] ?? 0) >> j) & 1).map((c) => mustGet(charOH, c)),
+      LOW,
+      ctx,
+      `code${j}`,
+    ),
+  )
+
+  // FONT ROM: (code 0..7, line 0..7) → 8-bit row. Shared one-hot decode of code + line; each lit
+  // (code,line) cell is one AND, then each row bit is an OR-plane over the cells where it is lit.
+  const codesNeeded = [1, 2, 3, 4, 5, 6, 7]
+  const linesNeeded = [0, 1, 2, 3, 4, 5, 6]
+  const codeOH = oneHotSel(code, codesNeeded, ctx, 'co')
+  const lineOH = oneHotSel([lineB(0), lineB(1), lineB(2)], linesNeeded, ctx, 'lo')
+  const cell = new Map<string, LogicRef>()
+  for (const c of codesNeeded)
+    for (const l of linesNeeded)
+      if (((GLYPH[c] ?? [])[l] ?? 0) !== 0)
+        cell.set(`${c}_${l}`, buildExpr(['and', mustGet(codeOH, c), mustGet(lineOH, l)], ctx))
+  const row = [0, 1, 2, 3, 4, 5, 6, 7].map((d) => {
+    const terms: LogicRef[] = []
+    for (const c of codesNeeded)
+      for (const l of linesNeeded) {
+        const cl = cell.get(`${c}_${l}`)
+        if (cl !== undefined && (((GLYPH[c] ?? [])[l] ?? 0) >> d) & 1) terms.push(cl)
+      }
+    return orOf(terms, LOW, ctx, `row${d}`)
+  })
+
+  // COLUMN MUX: the dot counter selects one of the 8 row bits → the serial VIDEO bit.
+  const dotOH = oneHotSel([dotB(0), dotB(1), dotB(2)], [0, 1, 2, 3, 4, 5, 6, 7], ctx, 'do')
+  const sel = [0, 1, 2, 3, 4, 5, 6, 7].map((d) =>
+    buildExpr(['and', row[d] ?? LOW, mustGet(dotOH, d)], ctx),
+  )
+  const video = orOf(sel, LOW, ctx, 'vid')
+
+  nodes.push(...ctx.nodes)
+  edges.push(...ctx.edges)
+  edges.push(...chainRails(['scan', ...ctx.ids], 'cg'))
+
+  const ports: BlockData['ports'] = [
+    {
+      id: 'clk',
+      label: 'CLK',
+      side: 'left',
+      offset: 14,
+      inner: { nodeId: 'scan', handleId: 'clk' },
+    },
+    {
+      id: 'clr',
+      label: 'CLR',
+      side: 'left',
+      offset: 28,
+      inner: { nodeId: 'scan', handleId: 'clr' },
+    },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 42,
+      inner: { nodeId: 'scan', handleId: 'gnd' },
+    },
+    {
+      id: 'video',
+      label: 'VIDEO',
+      side: 'right',
+      offset: 14,
+      drive: 'push_pull',
+      inner: { nodeId: video.node, handleId: video.handle },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'right',
+      offset: 28,
+      inner: { nodeId: 'scan', handleId: 'v_dd' },
+    },
+  ]
+  return { name: 'Character Generator', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The HELLO WORLD character generator: scan counters + message/font ROMs + column mux → video bit. */
+export const CHAR_GEN: BlockData = buildCharGen()
 
 /** Built-in blocks droppable from the palette, keyed by their palette definition id.
  *  The palette lists these like parts; App's drop handler turns one into a block node

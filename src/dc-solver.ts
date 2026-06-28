@@ -2418,8 +2418,13 @@ export function stampCrt(
   if (cathode === undefined || anode === undefined) return false
   const xDef = net('x_deflect')
   const yDef = net('y_deflect')
+  const grid = net('grid')
   if (xDef !== undefined) stampConductance(nodeIndex, M, xDef, cathode, CRT_DEFLECTION_INPUT_OHMS)
   if (yDef !== undefined) stampConductance(nodeIndex, M, yDef, cathode, CRT_DEFLECTION_INPUT_OHMS)
+  // The control grid is a high-impedance VIDEO input (the Z-axis) — like the deflection plates it
+  // sets up a field, drawing essentially no current; stamped so its net is solvable, then its solved
+  // voltage modulates the spot brightness (read post-solve in part-readings / crtSpotTrace).
+  if (grid !== undefined) stampConductance(nodeIndex, M, grid, cathode, CRT_DEFLECTION_INPUT_OHMS)
   const beamCurrent = p.beamCurrent * gridBrightness(p.gridBias, p.gridCutoffVoltage)
   if (beamCurrent !== 0) {
     const iAnode = nodeIndex.get(anode)

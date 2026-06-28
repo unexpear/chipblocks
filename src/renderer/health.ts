@@ -162,6 +162,18 @@ export function canvasHealth(
 /** Health by node id, read by each DeviceNode to render its glow / burst. */
 export const HealthContext = createContext<Map<string, NodeHealth>>(new Map())
 
+/** A CRT's live beam, read by its DeviceNode to draw the screen: the DC landing spot, the brightness
+ *  (0..1, from the grid bias) and — after a transient run — the beam's locus over time. All are
+ *  screen-fractions (−1..1) straight from the real deflection law (crtSpotTrace), never painted. */
+export type CrtScreenData = {
+  spot: { x: number; y: number }
+  brightness: number
+  /** The beam locus over the last transient run; i = per-point intensity 0..1 (the video / Z-axis,
+   *  so a raster TV's grid-modulated picture paints, not just a constant-brightness scope trace). */
+  trace?: readonly { x: number; y: number; i: number }[]
+}
+export const CrtScreenContext = createContext<Map<string, CrtScreenData>>(new Map())
+
 /**
  * Map output-contention findings (output-contention.ts) onto per-block health. A push-pull
  * contention is a real fault — a dead short — so it `failed`s (the block bursts); the shared-bus
