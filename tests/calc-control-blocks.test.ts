@@ -1356,7 +1356,14 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
   // until BUSY clears, then the result is captured. Returns the final display + error flag.
   const runCalc = (
     keys: Array<string | number>,
-  ): { display: number; value: number; sig: number; fent: number; error: boolean } => {
+  ): {
+    display: number
+    value: number
+    sig: number
+    fent: number
+    error: boolean
+    neg: boolean
+  } => {
     // Compile the harness ONCE (constant topology; default levels clk LOW, every key LOW, V+ HIGH),
     // then stepLogic overrides the clock + the pressed key each cycle — the App.tsx fast path, so the
     // multi-cycle ×/÷ runs in a fraction of the old re-flatten-every-cycle time.
@@ -1401,9 +1408,10 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
         value: signed / 10 ** fent,
         error: r.value('C', 'error') === true,
         busy: r.value('C', 'busy') === true,
+        neg,
       }
     }
-    let last = { display: 0, sig: 0, fent: 0, value: 0, error: false, busy: false }
+    let last = { display: 0, sig: 0, fent: 0, value: 0, error: false, busy: false, neg: false }
     for (const k of keys) {
       const line = lineFor(k)
       solve(line, false)
@@ -1421,6 +1429,7 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
       sig: last.sig,
       fent: last.fent,
       error: last.error,
+      neg: last.neg,
     }
   }
 
@@ -1482,75 +1491,144 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
     expect(runCalc(['c', 0, '.', 2, 5])).toMatchObject({ sig: 25, fent: 2, value: 0.25 })
   }, 60000)
 
-  // OVERFLOW → E (real gates): the calc is SIGNED ten's-complement (range ≈ ±5e9), so a result that
-  // leaves the range — a sign flip on +/−, or a magnitude product that can't show positive — raises the
-  // sticky error E, like ÷0. Operands kept under 5e9 so they read positive.
-  test('add overflow (sign flip): 4000000000 + 4000000000 → E', () => {
-    expect(
-      runCalc(['c', 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, '+', 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, '=']),
-    ).toMatchObject({ error: true })
+  // TRUE 10-DIGIT RANGE + OVERFLOW → E (real gates): the calc is SIGN-MAGNITUDE — an UNSIGNED 10-digit
+  // magnitude (0..9,999,999,999) plus an explicit sign bit — so the whole 10-digit range is usable. A +/−
+  // overflows only on a true >10-digit carry (same-sign sum); a difference never overflows; a × overflows
+  // on an >10-digit product; ÷0 errors. A digit string is spread as numbers.
+  const D = (s: string): number[] => s.split('').map(Number)
+
+  test('the lead’s case — a big add no longer wraps to E: 4000000000 + 4000000000 = 8000000000', () => {
+    expect(runCalc(['c', ...D('4000000000'), '+', ...D('4000000000'), '='])).toMatchObject({
+      display: 8000000000,
+      error: false,
+    })
+  }, 60000)
+
+  test('full range, still in bounds: 5000000000 + 4000000000 = 9000000000', () => {
+    expect(runCalc(['c', ...D('5000000000'), '+', ...D('4000000000'), '='])).toMatchObject({
+      display: 9000000000,
+      error: false,
+    })
+  }, 60000)
+
+  test('one below the 10-digit ceiling is fine: 9999999998 + 1 = 9999999999', () => {
+    expect(runCalc(['c', ...D('9999999998'), '+', 1, '='])).toMatchObject({
+      display: 9999999999,
+      error: false,
+    })
+  }, 60000)
+
+  test('a true 10-digit carry overflows: 9999999999 + 1 → E', () => {
+    expect(runCalc(['c', ...D('9999999999'), '+', 1, '='])).toMatchObject({ error: true })
   }, 60000)
 
   test('add that stays in range does NOT overflow: 2000000000 + 2000000000 = 4000000000', () => {
-    expect(
-      runCalc(['c', 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, '+', 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, '=']),
-    ).toMatchObject({ display: 4000000000, error: false })
+    expect(runCalc(['c', ...D('2000000000'), '+', ...D('2000000000'), '='])).toMatchObject({
+      display: 4000000000,
+      error: false,
+    })
   }, 60000)
 
   test('subtraction in range never overflows: 1 − 9 = −8', () => {
     expect(runCalc(['c', 1, '-', 9, '='])).toMatchObject({ display: -8, error: false })
   }, 60000)
 
-  test('subtraction can overflow (sign flip): −4000000000 − 4000000000 → E', () => {
-    expect(
-      runCalc(['c', 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'n', '-', 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, '=']),
-    ).toMatchObject({ error: true })
+  test('a large negative sum is now representable: −4000000000 − 4000000000 = −8000000000', () => {
+    expect(runCalc(['c', ...D('4000000000'), 'n', '-', ...D('4000000000'), '='])).toMatchObject({
+      display: -8000000000,
+      error: false,
+    })
+  }, 60000)
+
+  test('a negative sum past 10 digits still overflows: −6000000000 − 5000000000 → E', () => {
+    expect(runCalc(['c', ...D('6000000000'), 'n', '-', ...D('5000000000'), '='])).toMatchObject({
+      error: true,
+    })
+  }, 60000)
+
+  test('a difference never overflows: 9999999999 − 9999999999 = 0', () => {
+    expect(runCalc(['c', ...D('9999999999'), '-', ...D('9999999999'), '='])).toMatchObject({
+      display: 0,
+      error: false,
+      neg: false,
+    })
+  }, 60000)
+
+  test('the ± key preserves the magnitude across the full range: 9999999999 ± = −9999999999', () => {
+    expect(runCalc(['c', ...D('9999999999'), 'n'])).toMatchObject({
+      display: -9999999999,
+      error: false,
+    })
+  }, 60000)
+
+  test('a full-range negative via subtraction: 0 − 9999999999 = −9999999999', () => {
+    expect(runCalc(['c', 0, '-', ...D('9999999999'), '='])).toMatchObject({
+      display: -9999999999,
+      error: false,
+    })
   }, 60000)
 
   test('multiply overflow past 10 digits raises the error: 4000000000 × 3 → E', () => {
-    expect(runCalc(['c', 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, '*', 3, '='])).toMatchObject({ error: true })
+    expect(runCalc(['c', ...D('4000000000'), '*', 3, '='])).toMatchObject({ error: true })
+  }, 120000)
+
+  test('an 11-digit product overflows: 5000000000 × 2 → E', () => {
+    expect(runCalc(['c', ...D('5000000000'), '*', 2, '='])).toMatchObject({ error: true })
+  }, 120000)
+
+  test('a product that fills 10 digits does NOT overflow: 3333333333 × 3 = 9999999999', () => {
+    expect(runCalc(['c', ...D('3333333333'), '*', 3, '='])).toMatchObject({
+      display: 9999999999,
+      error: false,
+    })
   }, 120000)
 
   test('a product that stays in range does NOT overflow: 2000000000 × 2 = 4000000000', () => {
-    expect(runCalc(['c', 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, '*', 2, '='])).toMatchObject({
+    expect(runCalc(['c', ...D('2000000000'), '*', 2, '='])).toMatchObject({
       display: 4000000000,
       error: false,
     })
   }, 120000)
 
+  // −0 GUARD: a zero result is always +0 (the sign-suppress NOR taps the FINAL muxed magnitude, so ×/÷
+  // by zero can't sneak a minus through either).
+  test('subtracting equals gives +0, not −0: 5 − 5 = 0 (neg false)', () => {
+    expect(runCalc(['c', 5, '-', 5, '='])).toMatchObject({ display: 0, error: false, neg: false })
+  }, 60000)
+
+  test('−0 guard through multiply: −5 × 0 = 0 (neg false)', () => {
+    expect(runCalc(['c', 5, 'n', '*', 0, '='])).toMatchObject({
+      display: 0,
+      error: false,
+      neg: false,
+    })
+  }, 120000)
+
+  test('−0 guard through divide: −0 ÷ 5 = 0 (neg false)', () => {
+    expect(runCalc(['c', 0, 'n', '/', 5, '='])).toMatchObject({
+      display: 0,
+      error: false,
+      neg: false,
+    })
+  }, 120000)
+
+  // repeat-equals + chaining must keep the sign right across the new range
+  test('a replayed add can overflow: 5000000000 + 4000000000 = = → E', () => {
+    expect(runCalc(['c', ...D('5000000000'), '+', ...D('4000000000'), '=', '='])).toMatchObject({
+      error: true,
+    })
+  }, 60000)
+
+  test('repeat-equals on a negative result: 5 − 7 = = → −2 then −9', () => {
+    expect(runCalc(['c', 5, '-', 7, '='])).toMatchObject({ display: -2, error: false })
+    expect(runCalc(['c', 5, '-', 7, '=', '='])).toMatchObject({ display: -9, error: false })
+  }, 60000)
+
   test('overflow error is not sticky — a fresh calculation clears it', () => {
-    expect(
-      runCalc([
-        'c',
-        4,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        '+',
-        4,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        '=',
-        'c',
-        6,
-        '+',
-        1,
-        '=',
-      ]),
-    ).toMatchObject({ display: 7, error: false })
+    expect(runCalc(['c', ...D('9999999999'), '+', 1, '=', 'c', 6, '+', 1, '='])).toMatchObject({
+      display: 7,
+      error: false,
+    })
   }, 60000)
 
   // REPEAT-EQUALS (real gates): a bare '=' replays the last op + operand on the shown value.

@@ -4425,7 +4425,7 @@ function buildCalculator(): BlockData {
     { id: 'alu', definition: 'block', x: 11000, y: 0, block: BCD_ALU_10 },
     { id: 'mul', definition: 'block', x: 11000, y: 32000, block: MULTIPLIER_10 },
     { id: 'div', definition: 'block', x: 11000, y: 64000, block: DIVIDER_10 },
-    { id: 'nalu', definition: 'block', x: 16000, y: 0, block: BCD_ALU_10 }, // negate: 0 − ENTRY = −ENTRY
+    { id: 'rnalu', definition: 'block', x: 16000, y: 0, block: BCD_ALU_10 }, // negate the ALU result: 0 − aluS = B−A (the |A|<|B| difference case)
   ]
   const edges: BlockData['edges'] = []
   let ei = 0
@@ -4433,7 +4433,7 @@ function buildCalculator(): BlockData {
     edges.push({ id: `c${ei++}`, source: s, sourceHandle: sh, target: t, targetHandle: th })
   }
   const ctx: ExprCtx = { nodes, edges, ids: [], n: 0 }
-  const rail: string[] = ['enc', 'fsm', 'ctrl', 'ent', 'acc', 'alu', 'mul', 'div', 'nalu']
+  const rail: string[] = ['enc', 'fsm', 'ctrl', 'ent', 'acc', 'alu', 'mul', 'div', 'rnalu']
   const link = (from: LogicRef, to: LogicRef) => e(from.node, from.handle, to.node, to.handle)
   const LOW: LogicRef = { node: 'enc', handle: 'gnd' }
   const HIGH: LogicRef = { node: 'enc', handle: 'v_dd' }
@@ -4566,7 +4566,23 @@ function buildCalculator(): BlockData {
     }
     e('ent', `entry${i}`, 'acc', `entry${i}`)
   }
-  link(effSub, { node: 'alu', handle: 'sub' })
+  // ── SIGN-MAGNITUDE sign tracking. Each number is an UNSIGNED 10-digit magnitude + an explicit sign
+  // bit (Se = ENTRY, Sa = ACC), so the full ±9,999,999,999 range is usable (the ten's-complement
+  // half-range is gone). Slopd = the saved last-operand sign for repeat-equals (parallels lopd).
+  nodes.push({ id: 'Se', definition: 'block', x: 24000, y: 0, block: D_FLIPFLOP_BLOCK })
+  nodes.push({ id: 'Sa', definition: 'block', x: 24000, y: 1000, block: D_FLIPFLOP_BLOCK })
+  nodes.push({ id: 'Slopd', definition: 'block', x: 24000, y: 2000, block: D_FLIPFLOP_BLOCK })
+  // operand signs mirror the magnitude muxes (same REPLAY_SEL): normally A = ACC, B = ENTRY; on a
+  // REPLAY A = ENTRY (the shown result), B = the saved last operand.
+  const Asign = newMux(REPLAY_SEL, { node: 'Se', handle: 'q' }, { node: 'Sa', handle: 'q' })
+  const Bsign = newMux(REPLAY_SEL, { node: 'Slopd', handle: 'q' }, { node: 'Se', handle: 'q' })
+  // subtracting B = adding (−B); the ALU adds when the effective signs match, subtracts when they differ.
+  const effBsign = buildExpr(['xor', Bsign, effSub], ctx)
+  const sameSign = buildExpr(['not', ['xor', Asign, effBsign]], ctx)
+  const diffSign = buildExpr(['xor', Asign, effBsign], ctx)
+  link(diffSign, { node: 'alu', handle: 'sub' }) // same sign → A+B ; diff sign → A−B (cout = |A|≥|B|)
+  // diff sign AND |A|<|B| → the ALU gave the ten's-complement of (B−A); negate it (rnalu) for the magnitude.
+  const needNegate = buildExpr(['and', diffSign, ['not', { node: 'alu', handle: 'cout' }]], ctx)
   // FSM → register control
   e('fsm', 'entry_new', 'ent', 'entry_new')
   e('fsm', 'entry_append', 'ent', 'entry_append')
@@ -4593,34 +4609,64 @@ function buildCalculator(): BlockData {
     ['or', ['or', computeAddSub, { node: 'ctrl', handle: 'capture' }], loadReplayAddSub],
     ctx,
   )
-  // negate ALU: 0 − ENTRY = −ENTRY (ten's complement) — for the ± key and the signed display
-  tie('nalu', 'sub', HIGH)
+  // result-negate ALU: 0 − aluS = (B−A) magnitude, for the diff-sign |A|<|B| case (needNegate).
+  tie('rnalu', 'sub', HIGH)
   for (let i = 0; i < 40; i++) {
-    tie('nalu', `a${i}`, LOW)
-    e('ent', `entry${i}`, 'nalu', `b${i}`)
+    tie('rnalu', `a${i}`, LOW)
+    e('alu', `s${i}`, 'rnalu', `b${i}`)
   }
-  // ± (kpm) negates the entry → ENTRY loads −ENTRY; so ENTRY loads on (load OR is_pm), ACC only on load
-  link(buildExpr(['or', load, { node: 'enc', handle: 'is_pm' }], ctx), {
-    node: 'ent',
-    handle: 'compute',
-  })
+  // magnitude registers load on result-load ONLY; the ± key now touches just the sign bit (Se), never
+  // the magnitude. The SAME result bus feeds BOTH ENTRY and ACC.
+  link(load, { node: 'ent', handle: 'compute' })
   link(load, { node: 'acc', handle: 'compute' })
-  // result mux per bit: alu_mul ? product : (alu_div ? quotient : ALU sum); ENTRY also takes −ENTRY on ±
+  // result-magnitude mux per bit: eff_mul ? product : (eff_div ? quotient : (needNegate ? B−A : A±B)).
+  const resultMag: LogicRef[] = []
   for (let i = 0; i < 40; i++) {
-    const m1 = newMux(
-      effDiv,
-      { node: 'div', handle: `quotient${i}` },
+    const addsub = newMux(
+      needNegate,
+      { node: 'rnalu', handle: `s${i}` },
       { node: 'alu', handle: `s${i}` },
     )
+    const m1 = newMux(effDiv, { node: 'div', handle: `quotient${i}` }, addsub)
     const m2 = newMux(effMul, { node: 'mul', handle: `product${i}` }, m1)
-    const entResult = newMux(
-      { node: 'enc', handle: 'is_pm' },
-      { node: 'nalu', handle: `s${i}` },
-      m2,
-    )
-    link(entResult, { node: 'ent', handle: `result${i}` })
+    resultMag.push(m2)
+    link(m2, { node: 'ent', handle: `result${i}` })
     link(m2, { node: 'acc', handle: `result${i}` })
   }
+  // resultIsZero = NOR over the FINAL muxed magnitude (NOT the ALU output — for ×/÷ the ALU still computes
+  // a nonzero subtract that would falsely clear this and emit −0). Forbids −0 for every op.
+  const orAll = (refs: LogicRef[]): LogicRef =>
+    refs.reduce((acc, r) => buildExpr(['or', acc, r], ctx))
+  const resultIsZero = buildExpr(['not', orAll(resultMag)], ctx)
+  // result SIGN: ×/÷ = XOR of operand signs ; +/− = A's sign (or B's when |A|<|B| on a difference).
+  const rawAddSubSign = newMux(needNegate, effBsign, Asign)
+  const xorSign = buildExpr(['xor', Asign, Bsign], ctx)
+  const addsubSign = buildExpr(['and', rawAddSubSign, ['not', resultIsZero]], ctx)
+  const muldivSign = buildExpr(['and', xorSign, ['not', resultIsZero]], ctx)
+  const resultSign = newMux(effMul, muldivSign, newMux(effDiv, muldivSign, addsubSign))
+  // SIGN REGISTERS (priority clear > load > {is_pm | acc_from_entry} > entry_new > hold):
+  //   Se: ± toggles it, a fresh number zeroes it, a result loads the result sign.
+  //   Sa: ← ENTRY's sign when an operator copies ENTRY→ACC; a result loads the result sign.
+  //   Slopd: ← ENTRY's sign on the first '=' (CAP_EQ), held otherwise (so chained replays keep it).
+  const seHold = newMux({ node: 'fsm', handle: 'entry_new' }, LOW, { node: 'Se', handle: 'q' })
+  const sePm = newMux(
+    { node: 'enc', handle: 'is_pm' },
+    buildExpr(['not', { node: 'Se', handle: 'q' }], ctx),
+    seHold,
+  )
+  const seLoad = newMux(load, resultSign, sePm)
+  link(newMux({ node: 'fsm', handle: 'clear' }, LOW, seLoad), { node: 'Se', handle: 'd' })
+  const saCopy = newMux(
+    { node: 'fsm', handle: 'acc_from_entry' },
+    { node: 'Se', handle: 'q' },
+    { node: 'Sa', handle: 'q' },
+  )
+  const saLoad = newMux(load, resultSign, saCopy)
+  link(newMux({ node: 'fsm', handle: 'clear' }, LOW, saLoad), { node: 'Sa', handle: 'd' })
+  link(newMux(CAP_EQ, { node: 'Se', handle: 'q' }, { node: 'Slopd', handle: 'q' }), {
+    node: 'Slopd',
+    handle: 'd',
+  })
   // Any new key activity (clear / operator / digit) clears the sticky error — both the divider's own
   // div-by-zero latch and the top-level error latch (below), so the two never desync.
   const anyNewKey = buildExpr(
@@ -4632,55 +4678,22 @@ function buildCalculator(): BlockData {
     ctx,
   )
   link(anyNewKey, { node: 'div', handle: 'clear' })
-  // TOP-LEVEL STICKY ERROR (the "E"): raised when a result can't be represented, not just on ÷0. The
-  // calc is SIGNED ten's-complement (a top digit ≥5 reads as negative, so the range is about ±5e9), so
-  // the right add/subtract overflow test is a SIGN FLIP — NOT a raw carry-out, which also fires on
-  // ordinary negative arithmetic (e.g. −2+5). ADD overflows when two same-sign operands give a
-  // different-sign result; SUB (a + −b) when opposite-sign operands do. MUL overflows when the magnitude
-  // product can't be shown as a positive value — >10 digits (the multiplier's own latch) OR top digit
-  // ≥5. ÷0 is the divider's error. CLEAR DOMINATES the latch's D so any new key truly clears it.
+  // TOP-LEVEL STICKY ERROR (the "E"): a result that can't be shown. Magnitudes are now UNSIGNED, so an
+  // add/subtract overflows only when two same-sign operands carry out of the top digit (a TRUE >10-digit
+  // sum); a difference never overflows. A × overflows when the product needs >10 digits. ÷0 is the
+  // divider's error. CLEAR DOMINATES the latch's D so any new key truly clears it.
   nodes.push({ id: 'ff_err', definition: 'block', x: 22000, y: 0, block: D_FLIPFLOP_BLOCK })
   rail.push('ff_err')
-  // top digit (bits 36..39) ≥ 5 — the same condition the signed display uses for "negative".
-  const topGE5 = (node: string, base: string): LogicRef =>
-    buildExpr(
-      [
-        'or',
-        { node, handle: `${base}39` },
-        [
-          'and',
-          { node, handle: `${base}38` },
-          ['or', { node, handle: `${base}37` }, { node, handle: `${base}36` }],
-        ],
-      ],
-      ctx,
-    )
-  // Signs of the EFFECTIVE operands — read off the ALU's a/b inputs (which carry the replay muxes), so a
-  // replayed op is checked too. The op + sample are effective as well (a bare '=' replay still latches E).
-  const signA = topGE5('alu', 'a') // operand A sign
-  const signB = topGE5('alu', 'b') // operand B sign
-  const signR = topGE5('alu', 's') // +/- result sign
-  const resFlip = buildExpr(['xor', signR, signA], ctx)
   const addSubSample = buildExpr(['or', computeAddSub, loadReplayAddSub], ctx)
   const addSubOvf = buildExpr(
-    [
-      'and',
-      addSubSample,
-      [
-        'or',
-        // ADD: same-sign operands, result sign flipped
-        ['and', effAdd, ['and', ['not', ['xor', signA, signB]], resFlip]],
-        // SUB (a + −b): opposite-sign operands, result sign flipped
-        ['and', effSub, ['and', ['xor', signA, signB], resFlip]],
-      ],
-    ],
+    ['and', addSubSample, ['and', sameSign, { node: 'alu', handle: 'cout' }]],
     ctx,
   )
   const mulOvf = buildExpr(
     [
       'and',
       ['and', { node: 'ctrl', handle: 'capture' }, effMul],
-      ['or', { node: 'mul', handle: 'overflow' }, topGE5('mul', 'product')],
+      { node: 'mul', handle: 'overflow' },
     ],
     ctx,
   )
@@ -4689,26 +4702,14 @@ function buildCalculator(): BlockData {
     buildExpr(['and', ['not', anyNewKey], ['or', newErr, { node: 'ff_err', handle: 'q' }]], ctx),
     { node: 'ff_err', handle: 'd' },
   )
-  // signed display: a ten's-complement value is negative when its top digit (bits 36..39) is >= 5;
-  // then the displayed magnitude is −value (= nalu.s). NEG is the minus-sign indicator.
-  const isNeg = buildExpr(
-    [
-      'or',
-      { node: 'ent', handle: 'entry39' },
-      [
-        'and',
-        { node: 'ent', handle: 'entry38' },
-        ['or', { node: 'ent', handle: 'entry37' }, { node: 'ent', handle: 'entry36' }],
-      ],
-    ],
-    ctx,
-  )
+  // sign-magnitude display: the shown digits ARE the ENTRY magnitude directly; NEG is the explicit sign
+  // (Se), suppressed when the magnitude is zero so a bare 0 never shows a minus.
+  const entryBits: LogicRef[] = []
+  for (let i = 0; i < 40; i++) entryBits.push({ node: 'ent', handle: `entry${i}` })
+  const meIsZero = buildExpr(['not', orAll(entryBits)], ctx)
+  const negOut = buildExpr(['and', { node: 'Se', handle: 'q' }, ['not', meIsZero]], ctx)
   const display: LogicRef[] = []
-  for (let i = 0; i < 40; i++) {
-    display.push(
-      newMux(isNeg, { node: 'nalu', handle: `s${i}` }, { node: 'ent', handle: `entry${i}` }),
-    )
-  }
+  for (let i = 0; i < 40; i++) display.push({ node: 'ent', handle: `entry${i}` })
   // F_ent — the ENTRY register's decimal-point position (floating point): a 4-bit up-counter holding
   // how many of the 10 significand digits are fractional. The point sits between digit F−1 and digit
   // F; value = significand × 10^−F. It resets to 0 at the start of a number (entry_new or clear) and
@@ -4739,9 +4740,12 @@ function buildCalculator(): BlockData {
     'lop0',
     'lop1',
     'replayActive',
+    'Se',
+    'Sa',
+    'Slopd',
   ])
     e('fsm', 'clk', blk, 'clk')
-  rail.push('lopd', 'lop0', 'lop1', 'replayActive')
+  rail.push('lopd', 'lop0', 'lop1', 'replayActive', 'Se', 'Sa', 'Slopd')
   rail.push(...ctx.ids)
   edges.push(...chainRails(rail, 'calc'))
 
@@ -4794,7 +4798,7 @@ function buildCalculator(): BlockData {
   })
   let right = 14
   for (let i = 0; i < 40; i++) {
-    // raw ten's-complement value (internal / for chaining)
+    // the entry magnitude (internal / for chaining; same bits the display shows)
     ports.push({
       id: `entry${i}`,
       label: `E${i}`,
@@ -4803,7 +4807,7 @@ function buildCalculator(): BlockData {
       inner: { nodeId: 'ent', handleId: `entry${i}` },
     })
     right += 4
-    // the signed DISPLAY magnitude (what the 7-seg shows)
+    // the DISPLAY magnitude (what the 7-seg shows) — sign is the separate NEG port
     const d = display[i]
     if (d !== undefined) {
       ports.push({
@@ -4821,7 +4825,7 @@ function buildCalculator(): BlockData {
     label: 'NEG',
     side: 'right',
     offset: right,
-    inner: { nodeId: isNeg.node, handleId: isNeg.handle },
+    inner: { nodeId: negOut.node, handleId: negOut.handle },
   })
   right += 12
   ports.push({
