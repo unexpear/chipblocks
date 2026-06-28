@@ -45,7 +45,7 @@ import { type RelayState, solveWithRelays } from '../relay.ts'
 import type { ShockleyDiodeState } from '../shockley-diode.ts'
 import { analyzeTiming } from '../static-timing.ts'
 import { STANDARD_AMBIENT_C } from '../thermal-model.ts'
-import type { TransientResult } from '../transient-solver.ts'
+import { solveTransient, type TransientResult } from '../transient-solver.ts'
 import { type AddableTerminal, BlockInspector, type BlockPortPatch } from './block-inspector.tsx'
 import { BlockViewer } from './block-viewer.tsx'
 import {
@@ -59,13 +59,14 @@ import {
   edgeTouchesPort,
   flattenBlocks,
   groupSelection,
+  isOutputDrive,
   movePortAlongEdge,
   type PinSide,
   ungroupBlock,
   withoutOffsets,
 } from './blocks.ts'
 import { BodePanel } from './bode-panel.tsx'
-import { BUILTIN_BLOCKS } from './builtin-blocks.ts'
+import { BUILTIN_BLOCKS, CALCULATOR, CHAR_GEN } from './builtin-blocks.ts'
 import { CanvasScrollbars } from './canvas-scrollbars.tsx'
 import {
   type CanvasEdge,
@@ -96,6 +97,8 @@ import { DockablePanel, type TabDropTarget } from './dockable-panel.tsx'
 import { wireFlow } from './edge-currents.ts'
 import { computeFront } from './front-propagation.ts'
 import {
+  CrtScreenContext,
+  type CrtScreenData,
   canvasHealth,
   contentionHealth,
   HealthContext,
@@ -176,7 +179,7 @@ import {
 } from './part-defaults.ts'
 import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { PartPicker } from './part-picker.tsx'
-import { type CrtSpot, crtSpotTrace, type PartReading, partReadings } from './part-readings.ts'
+import { buildCrtTraces, type CrtSpot, type PartReading, partReadings } from './part-readings.ts'
 import { ProjectBrowser, type ProjectChoice } from './project-browser.tsx'
 import { ProjectHub } from './project-hub.tsx'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
@@ -196,6 +199,7 @@ import { H_DIVISIONS, scopeRecordSteps, slowestHonestTimebase } from './scope-sc
 import { DEFAULT_SHEET, SheetFrame, type SheetSettings } from './sheet-frame.tsx'
 import { parseSpiceNetlist, serializeSpiceNetlist } from './spice-netlist.ts'
 import { type DeviceNodeData, type Fidelity, nodeTypes, terminalsOf } from './symbols.tsx'
+import { tileRow } from './tiling.ts'
 import { clampIndex, frameEdgeValues, frameLensRange } from './timeline.ts'
 import { TimelinePanel } from './timeline-panel.tsx'
 import {
@@ -273,6 +277,80 @@ declare global {
 const CURRENT = THEME.accentBlue // a live wire carrying current (solved)
 const IDLE = THEME.textFaint // a tap / no-current wire
 const DRAWN = THEME.wire // a user-drawn wire, not yet solved
+
+// A 0-internal-resistance DC source at v volts — for driving a logic input / rail to a fixed level from
+// code (the calculator feeds its result bits into the decoder this way).
+const dcSource = (v: number) => ({
+  nominal_voltage: { value: { kind: 'scalar', amount: v, unit: 'volt' } },
+  internal_resistance: { value: { kind: 'scalar', amount: 0, unit: 'ohm' } },
+})
+
+// The calculator keypad → the real CALCULATOR block's one-hot key inputs (the inverse of the test
+// oracle's lineFor). The brain is the gate FSM; a press just asserts one key line for one clock edge.
+const CALC_KEYS = [
+  'k0',
+  'k1',
+  'k2',
+  'k3',
+  'k4',
+  'k5',
+  'k6',
+  'k7',
+  'k8',
+  'k9',
+  'kadd',
+  'ksub',
+  'kmul',
+  'kdiv',
+  'keq',
+  'kclr',
+  'kpm',
+  'kdot',
+] as const
+const KEY_PORT: Record<string, string> = {
+  '0': 'k0',
+  '1': 'k1',
+  '2': 'k2',
+  '3': 'k3',
+  '4': 'k4',
+  '5': 'k5',
+  '6': 'k6',
+  '7': 'k7',
+  '8': 'k8',
+  '9': 'k9',
+  '+': 'kadd',
+  '-': 'ksub',
+  '*': 'kmul',
+  '/': 'kdiv',
+  '=': 'keq',
+  C: 'kclr',
+  CE: 'kclr',
+  '±': 'kpm',
+  '.': 'kdot',
+}
+
+/** Decode the real CALCULATOR block's outputs (read from a logic solve) into the shown value — the
+ *  signed BCD magnitude on display0..39 scaled by the f_ent decimal-point position. Mirrors the test
+ *  oracle's readback so the on-screen number matches the gate result exactly. */
+function decodeCalc(r: ReturnType<typeof simulateLogic>): {
+  value: number
+  sig: number
+  fent: number
+  negative: boolean
+  error: boolean
+} {
+  let sig = 0
+  for (let d = 0; d < 10; d++) {
+    let dig = 0
+    for (let b = 0; b < 4; b++) if (r.value('calc', `display${d * 4 + b}`) === true) dig |= 1 << b
+    sig += dig * 10 ** d
+  }
+  let fent = 0
+  for (let b = 0; b < 4; b++) if (r.value('calc', `f_ent${b}`) === true) fent |= 1 << b
+  const negative = r.value('calc', 'neg') === true
+  const error = r.value('calc', 'error') === true
+  return { sig, fent, negative, error, value: (negative ? -sig : sig) / 10 ** fent }
+}
 
 /**
  * Map a loaded / imported CircuitFile to the canvas's React Flow nodes + edges. Shared by Open (a
@@ -986,14 +1064,21 @@ function solveCanvasMixed(
     if (sL === tL) continue
     const analogId = sL ? e.target : e.source
     if (!isRealLoad(analogId)) continue
+    const logicId = sL ? e.source : e.target
     const logicHandle = (sL ? e.sourceHandle : e.targetHandle) ?? ''
+    // Is the logic pin an OUTPUT (logic drives the analog → inject its 0/Vdd) or an input (analog drives
+    // the logic → read it back)? Prefer the port's declared drive (push-pull/open-collector/tri-state),
+    // falling back to a known output name — so a decoder's seg_* drivers count, not just out/q/sum.
+    const port = (
+      nodeById.get(logicId)?.data as { block?: BlockData } | undefined
+    )?.block?.ports.find((p) => p.id === logicHandle)
     boundaries.push({
       id: e.id,
-      logicId: sL ? e.source : e.target,
+      logicId,
       logicHandle,
       analogId,
       analogHandle: (sL ? e.targetHandle : e.sourceHandle) ?? '',
-      output: LOGIC_OUTPUT_HANDLES.has(logicHandle.toLowerCase()),
+      output: isOutputDrive(port?.drive) || LOGIC_OUTPUT_HANDLES.has(logicHandle.toLowerCase()),
     })
   }
   const reverse = boundaries.filter((b) => !b.output) // analog → logic INPUT
@@ -1136,6 +1221,240 @@ function solveCanvasMixed(
       }) as Edge,
   )
   return { ...solved, edges, terminalVolts }
+}
+
+/**
+ * MIXED-SIGNAL CO-SIMULATION — a logic-fidelity digital sub-circuit (a character generator) and an
+ * analog transient circuit (a CRT) running TOGETHER over time, signals crossing the boundary every
+ * step. The classic SPICE-plus-event-engine technique, here strictly one-way (digital → analog) for
+ * the char-gen → CRT-grid video path, so there is no algebraic loop:
+ *   • SPLIT the canvas at the logic↔analog boundary. The digital block stays at LOGIC fidelity (never
+ *     flattened to its ~hundreds of transistors — that is the whole point: it dodges the scaling wall).
+ *   • SPLICE a real voltage source (the gate's Thévenin output) onto each boundary net the digital side
+ *     drives — here the CRT control grid (a high-impedance Z-axis input that draws ~no current back, so
+ *     the digital decision is never loaded by the analog solve).
+ *   • MARCH the BARE transient solver. At the TOP of each step the digital advances ONE pixel clock —
+ *     a CLK-low then CLK-high logic solve over a persistent state map (one master-slave edge = one
+ *     count) — and the video bit it produces is stashed as the grid voltage (lit = 0 V, blank = past
+ *     cutoff). The analog step then solves with the grid held there, painting that pixel. Because the
+ *     scan clock is derived from the step index, the glyph pixel and the beam position stay phase-locked.
+ * Runs BARE solveTransient, NOT solveTransientThermal (the thermal wrapper re-marches the series, which
+ * would re-clock the counters — and a logic-fidelity char-gen dissipates nothing in the CRT anyway).
+ */
+function solveTransientCoSim(
+  nodeList: Node[],
+  edgeList: Edge[],
+  options: { timeStep: number; duration: number },
+): { result: TransientResult; traces: Map<string, { points: CrtSpot[]; brightness: number }> } {
+  const nodeById = new Map(nodeList.map((n) => [n.id, n]))
+  const defOf = (id: string) => (nodeById.get(id)?.data as DeviceNodeData | undefined)?.definition
+  const logicIds = new Set(nodeList.filter(isLogicFidelity).map((n) => n.id))
+  let vdd = 5
+  for (const n of nodeList) {
+    const amt = (
+      (n.data as DeviceNodeData).parameters as
+        | { nominal_voltage?: { value?: { amount?: number } } }
+        | undefined
+    )?.nominal_voltage?.value?.amount
+    if (defOf(n.id) === 'power_source' && typeof amt === 'number' && amt > vdd) vdd = amt
+  }
+  const isRealLoad = (id: string) =>
+    !logicIds.has(id) && defOf(id) !== undefined && !ANALOG_PASSIVE.has(defOf(id) as string)
+
+  // BOUNDARIES: a logic OUTPUT pin wired to a real analog load — the digital→analog video crossing.
+  type Bridge = { edgeId: string; srcId: string; logicId: string; logicHandle: string }
+  const bridges: Bridge[] = []
+  for (const e of edgeList) {
+    const sL = logicIds.has(e.source)
+    const tL = logicIds.has(e.target)
+    if (sL === tL) continue
+    const analogId = sL ? e.target : e.source
+    if (!isRealLoad(analogId)) continue
+    const logicId = sL ? e.source : e.target
+    const logicHandle = (sL ? e.sourceHandle : e.targetHandle) ?? ''
+    const port = (
+      nodeById.get(logicId)?.data as { block?: BlockData } | undefined
+    )?.block?.ports.find((p) => p.id === logicHandle)
+    if (!(isOutputDrive(port?.drive) || LOGIC_OUTPUT_HANDLES.has(logicHandle.toLowerCase())))
+      continue
+    bridges.push({ edgeId: e.id, srcId: `__grid_${e.id}`, logicId, logicHandle })
+  }
+
+  // SPLIT: the logic component = everything reachable from the logic blocks over non-bridge edges (the
+  // char-gen + its clock/clear/V+ sources + the digital ground). Requires the analog + digital sides to
+  // meet ONLY at the bridge (a separate analog ground — the real mixed-signal split-ground convention).
+  const bridgeEdges = new Set(bridges.map((b) => b.edgeId))
+  const adj = new Map<string, string[]>()
+  const link = (a: string, b: string) => {
+    const l = adj.get(a)
+    if (l) l.push(b)
+    else adj.set(a, [b])
+  }
+  for (const e of edgeList) {
+    if (bridgeEdges.has(e.id)) continue
+    link(e.source, e.target)
+    link(e.target, e.source)
+  }
+  const logicComp = new Set<string>(logicIds)
+  const queue = [...logicIds]
+  while (queue.length > 0) {
+    const id = queue.pop() as string
+    for (const nb of adj.get(id) ?? [])
+      if (!logicComp.has(nb)) {
+        logicComp.add(nb)
+        queue.push(nb)
+      }
+  }
+
+  const analogNodesRaw = nodeList.filter((n) => !logicComp.has(n.id))
+  const analogGround = analogNodesRaw.find((n) => defOf(n.id) === 'ground')
+  const crtNode = analogNodesRaw.find((n) => defOf(n.id) === 'crt')
+  const cutoff =
+    (
+      (crtNode?.data as DeviceNodeData | undefined)?.parameters as
+        | { grid_cutoff_voltage?: { value?: { amount?: number } } }
+        | undefined
+    )?.grid_cutoff_voltage?.value?.amount ?? -50
+  const V_LIT = 0
+  const V_BLANK = 1.2 * cutoff // safely past cutoff → beam blanked (dark)
+
+  // The spliced grid sources (the gate's real Thévenin output: a small output resistance; the grid is
+  // high-Z so its exact value is immaterial). Their voltage is overridden each step by externalSourceV.
+  const sv = (amount: number, unit = 'volt') => ({
+    value: { kind: 'scalar' as const, amount, unit },
+  })
+  const spliceNodes: Node[] = bridges.map(
+    (b) =>
+      ({
+        id: b.srcId,
+        type: 'device',
+        position: { x: 0, y: 0 },
+        data: {
+          definition: 'power_source',
+          label: '',
+          parameters: { nominal_voltage: sv(V_BLANK), internal_resistance: sv(200, 'ohm') },
+        },
+      }) as Node,
+  )
+  const analogEdges: Edge[] = []
+  for (const e of edgeList) {
+    if (bridgeEdges.has(e.id)) continue
+    if (logicComp.has(e.source) || logicComp.has(e.target)) continue
+    analogEdges.push(e)
+  }
+  for (const b of bridges) {
+    const e = edgeList.find((x) => x.id === b.edgeId)
+    if (e === undefined) continue
+    const analogIsSource = !logicIds.has(e.source)
+    const analogId = analogIsSource ? e.source : e.target
+    const analogHandle = (analogIsSource ? e.sourceHandle : e.targetHandle) ?? ''
+    analogEdges.push({
+      id: `__ge_${b.edgeId}`,
+      type: 'net',
+      source: b.srcId,
+      sourceHandle: 'terminal_positive',
+      target: analogId,
+      targetHandle: analogHandle,
+    } as Edge)
+    if (analogGround)
+      analogEdges.push({
+        id: `__gg_${b.edgeId}`,
+        type: 'net',
+        source: b.srcId,
+        sourceHandle: 'terminal_negative',
+        target: analogGround.id,
+        targetHandle: 'reference_terminal',
+      } as Edge)
+  }
+
+  const analogNodes = [...analogNodesRaw, ...spliceNodes]
+  const { sources, positions } = lightCastInputs(analogNodes)
+  const analogWorld = groundedComponent(
+    worldWithCastLight(canvasWorld(analogNodes, analogEdges).world, positions, sources),
+  )
+
+  // The digital side runs through simulateLogic each step. Find its clock + clear sources (toggled in
+  // the logic view by clock phase); the persistent state map is the flip-flops' memory across the run.
+  const logicNodes = nodeList.filter((n) => logicComp.has(n.id))
+  const logicEdges = edgeList.filter(
+    (e) => !bridgeEdges.has(e.id) && logicComp.has(e.source) && logicComp.has(e.target),
+  )
+  const findSrcFor = (handle: string): string | undefined => {
+    for (const e of edgeList) {
+      if (logicIds.has(e.source) && e.sourceHandle === handle && defOf(e.target) === 'power_source')
+        return e.target
+      if (logicIds.has(e.target) && e.targetHandle === handle && defOf(e.source) === 'power_source')
+        return e.source
+    }
+    return undefined
+  }
+  const clkSourceId = findSrcFor('clk')
+  const clrSourceId = findSrcFor('clr')
+  const state = new Map<string, boolean>()
+  const setLevel = (ns: Node[], id: string | undefined, hi: boolean): Node[] =>
+    id === undefined
+      ? ns
+      : ns.map((n) =>
+          n.id === id
+            ? ({
+                ...n,
+                data: { ...n.data, parameters: { nominal_voltage: sv(hi ? vdd : 0) } },
+              } as Node)
+            : n,
+        )
+  const logicSolve = (clkHigh: boolean, clrHigh: boolean) => {
+    let ns = setLevel(logicNodes, clkSourceId, clkHigh)
+    ns = setLevel(ns, clrSourceId, clrHigh)
+    return simulateLogic(
+      ns as unknown as BlockNodeLike[],
+      logicEdges as unknown as BlockEdgeLike[],
+      state,
+    )
+  }
+
+  const stash = new Map<string, number>()
+  const readVideo = (r: ReturnType<typeof simulateLogic>) => {
+    for (const b of bridges)
+      stash.set(b.srcId, r.value(b.logicId, b.logicHandle) === true ? V_LIT : V_BLANK)
+  }
+  // Reset the counters to a known top-left start (CLR = load 0), then sample pixel 0 for the t=0 frame.
+  logicSolve(false, true)
+  readVideo(logicSolve(true, true))
+
+  const result = solveTransient(analogWorld, {
+    timeStep: options.timeStep,
+    duration: options.duration,
+    onStepBegin: () => {
+      logicSolve(false, false) // CLK low — the master grabs the next count
+      readVideo(logicSolve(true, false)) // CLK high — Q updates; sample this pixel's video bit
+    },
+    externalSourceV: (id: string) => stash.get(id),
+  })
+  return { result, traces: buildCrtTraces(analogWorld, result.series) }
+}
+
+/**
+ * Transient sibling of solveCanvasDispatch. A canvas with BOTH a logic-fidelity block AND a real analog
+ * load (the char-gen + the CRT) → the mixed-signal CO-SIMULATION; otherwise the unchanged analog path
+ * (build the world + solveTransientThermal). Returns a TransientResult + the CRT beam traces either way,
+ * so every transient entry point (scope, CRT demos, timeline) can route through one function.
+ */
+function solveTransientDispatch(
+  nodeList: Node[],
+  edgeList: Edge[],
+  options: { timeStep: number; duration: number; projectAmbientC?: number },
+): { result: TransientResult; traces: Map<string, { points: CrtSpot[]; brightness: number }> } {
+  const hasLogic = nodeList.some(isLogicFidelity)
+  const hasAnalogLoad = nodeList.some(
+    (n) => !isLogicFidelity(n) && !ANALOG_PASSIVE.has((n.data as DeviceNodeData).definition ?? ''),
+  )
+  if (hasLogic && hasAnalogLoad) return solveTransientCoSim(nodeList, edgeList, options)
+  const { sources, positions } = lightCastInputs(nodeList)
+  const world = groundedComponent(
+    worldWithCastLight(canvasWorld(nodeList, edgeList).world, positions, sources),
+  )
+  const thermal = solveTransientThermal(world, options)
+  return { result: thermal.result, traces: buildCrtTraces(world, thermal.result.series) }
 }
 
 /** Pick the solve engine from the blocks' fidelity tags (complexity-layer system): no logic tags → the
@@ -1837,12 +2156,16 @@ function Canvas({ project }: { project: ProjectChoice }) {
       // When auto-routing is on, hand the solve each wire's actual routed path so its resistance is
       // the routed length, not the straight-line distance (closes the draw-but-don't-measure gap).
       const routed = autoRouteWiresRef.current ? wireGeomsRef.current : undefined
+      const solveStart = performance.now()
       const solved = solveCanvasDispatch(
         nodeList,
         edgeList,
         projectAmbientRef.current,
         routed,
         logicStateRef.current,
+      )
+      ;(window as unknown as { __solveMs?: number }).__solveMs = Math.round(
+        performance.now() - solveStart,
       )
       setEdges(solved.edges)
       setHealth(solved.health)
@@ -1898,6 +2221,17 @@ function Canvas({ project }: { project: ProjectChoice }) {
   const [crtTraces, setCrtTraces] = useState<
     Map<string, { points: CrtSpot[]; brightness: number }>
   >(new Map())
+  // The per-CRT beam data the canvas reads (CrtScreenContext) so a CRT draws its REAL screen on the
+  // canvas: the beam locus + brightness from the last transient run (crtSpotTrace), with the latest
+  // point as the live spot. Empty until a scope/timeline run fills crtTraces.
+  const crtScreens = useMemo(() => {
+    const m = new Map<string, CrtScreenData>()
+    for (const [id, t] of crtTraces) {
+      const last = t.points.at(-1)
+      m.set(id, { spot: last ?? { x: 0, y: 0 }, brightness: t.brightness, trace: t.points })
+    }
+    return m
+  }, [crtTraces])
   // Timeline playback (Sprint 22): the panel open + the playhead's position in the
   // scope's transient record (a possibly-fractional index while playing).
   const [timelineOpen, setTimelineOpen] = useState(false)
@@ -2272,11 +2606,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
     })
     // CRT live traces (the spot's locus over this run) for any tube in the circuit — the inspector's
     // screen draws them instead of the single DC spot once the scope has run.
-    const traces = new Map<string, { points: CrtSpot[]; brightness: number }>()
-    for (const [id, inst] of world.instances) {
-      if (inst.definition === 'crt') traces.set(id, crtSpotTrace(world, id, thermal.result.series))
-    }
-    setCrtTraces(traces)
+    setCrtTraces(buildCrtTraces(world, thermal.result.series))
   }, [nodes, edges, scopeSecPerDiv])
 
   // Trace a family (S20-v3-4): one solver run per stepped value of the chosen
@@ -3412,6 +3742,276 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // Drop a part from the palette → a new node at the drop point (S19-v3-6).
   // Dropping a BLOCK places an independent copy: internals cloned with fresh
   // ids, parameters deep-copied so each copy is editable on its own.
+  // The calculator's BRAIN is the REAL gate circuit (the CALCULATOR block — keypad encoder + control
+  // FSM + entry/acc registers + BCD ALU + ×/÷ sequencers, builtin-blocks.ts). calcSolve clocks it on a
+  // standalone logic-only harness (no analog LEDs — fast): assert the active key line, set the clock,
+  // and run simulateLogic over logicStateRef.current (the persistent flip-flop memory the canvas
+  // re-solve also threads, so the two share one state). One press = a CLK-low solve then a CLK-high
+  // solve — the proven runCalc protocol (calc-control-blocks.test.ts).
+  const calcSolve = useCallback((active: string, clk: boolean) => {
+    const nodes: Record<string, unknown>[] = [
+      { id: 'calc', position: { x: 0, y: 0 }, data: { definition: 'block', block: CALCULATOR } },
+      {
+        id: 'h_vp',
+        position: { x: 0, y: 0 },
+        data: { definition: 'power_source', parameters: dcSource(5) },
+      },
+      { id: 'h_g', position: { x: 0, y: 0 }, data: { definition: 'ground' } },
+      {
+        id: 'h_clk',
+        position: { x: 0, y: 0 },
+        data: { definition: 'power_source', parameters: dcSource(clk ? 5 : 0) },
+      },
+      ...CALC_KEYS.map((k) => ({
+        id: `h_${k}`,
+        position: { x: 0, y: 0 },
+        data: { definition: 'power_source', parameters: dcSource(k === active ? 5 : 0) },
+      })),
+    ]
+    const edges: Record<string, unknown>[] = [
+      {
+        id: 'h_eclk',
+        source: 'h_clk',
+        sourceHandle: 'terminal_positive',
+        target: 'calc',
+        targetHandle: 'clk',
+      },
+      {
+        id: 'h_eclkn',
+        source: 'h_clk',
+        sourceHandle: 'terminal_negative',
+        target: 'h_g',
+        targetHandle: 'reference_terminal',
+      },
+      {
+        id: 'h_ep',
+        source: 'h_vp',
+        sourceHandle: 'terminal_positive',
+        target: 'calc',
+        targetHandle: 'v_dd',
+      },
+      {
+        id: 'h_epn',
+        source: 'h_vp',
+        sourceHandle: 'terminal_negative',
+        target: 'h_g',
+        targetHandle: 'reference_terminal',
+      },
+      {
+        id: 'h_eg',
+        source: 'calc',
+        sourceHandle: 'gnd',
+        target: 'h_g',
+        targetHandle: 'reference_terminal',
+      },
+      ...CALC_KEYS.flatMap((k) => [
+        {
+          id: `h_e_${k}`,
+          source: `h_${k}`,
+          sourceHandle: 'terminal_positive',
+          target: 'calc',
+          targetHandle: k,
+        },
+        {
+          id: `h_en_${k}`,
+          source: `h_${k}`,
+          sourceHandle: 'terminal_negative',
+          target: 'h_g',
+          targetHandle: 'reference_terminal',
+        },
+      ]),
+    ]
+    return simulateLogic(
+      nodes as unknown as BlockNodeLike[],
+      edges as unknown as BlockEdgeLike[],
+      logicStateRef.current,
+    )
+  }, [])
+  // Press a key: clock the real FSM once (CLK-low then CLK-high), then free-run the clock while a ×/÷
+  // sequencer is BUSY (read busy from the SYNCHRONOUS solve return), release the key, and re-solve the
+  // canvas so the real decoder + seven-segment LEDs show the result.
+  const pressCalcKey = useCallback(
+    (key: string) => {
+      const port = KEY_PORT[key]
+      if (port === undefined) return
+      checkpointAction('calc key')
+      calcSolve(port, false) // CLK low: Mealy control settles, the master latches grab D
+      let r = calcSolve(port, true) // CLK high: the FSM + registers commit (one press = one rising edge)
+      let guard = 0
+      while (r.value('calc', 'busy') === true && guard++ < 300) {
+        calcSolve('none', false)
+        r = calcSolve('none', true) // free-run the clock while the ×/÷ sequencer works
+      }
+      r = calcSolve('none', false) // release: the gate result is now stable on the display ports
+      // Drive the on-canvas decoders from the REAL gate result (display{n} = the signed-magnitude BCD
+      // bit). Setting these sources triggers the light always-on solve, which lights the LEDs. The
+      // ~9000-gate calculator itself runs ONLY here (the harness), never on the canvas — so the canvas
+      // stays a light decoder+display chain (no transistor-flatten of the whole machine on every render).
+      setNodes((cur) =>
+        cur.map((n) => {
+          const m = /^calcin_(\d+)$/.exec(n.id)
+          if (m === null) return n
+          const hi = r.value('calc', `display${m[1]}`) === true
+          return { ...n, data: { ...n.data, parameters: dcSource(hi ? 5 : 0) } }
+        }),
+      )
+    },
+    [calcSolve, setNodes, checkpointAction],
+  )
+  // Drop the whole calculator: a real momentary-switch keypad + ten per-digit BCD decoders + seven-
+  // segment displays. The BRAIN is the real CALCULATOR gate circuit — pressCalcKey clocks it in a
+  // logic harness (off-canvas, so its ~9000 gates never transistor-flatten on every render) and drives
+  // these decoders from its gate output, so the decimal result lights the LEDs. No code in the loop.
+  const placeCalculator = useCallback(() => {
+    const decoder = BUILTIN_BLOCKS.logic_decoder_7seg
+    const display = BUILTIN_BLOCKS.display_seven_segment
+    if (!decoder || !display) return
+    checkpointAction('calculator')
+    logicStateRef.current = new Map<string, boolean>() // power-on: clear the flip-flop memory
+    const COL = 280 // column pitch: one decoder + display per decimal digit, fed by the CALC block
+    const nodes: Record<string, unknown>[] = [
+      {
+        id: 'calc_vp',
+        type: 'device',
+        position: { x: -440, y: 1120 },
+        data: { definition: 'power_source', label: 'V+', parameters: dcSource(5) },
+      },
+      {
+        id: 'calc_g',
+        type: 'device',
+        position: { x: -320, y: 1120 },
+        data: { definition: 'ground', label: 'GND' },
+      },
+    ]
+    const edges: Record<string, unknown>[] = [
+      {
+        id: 'calc_vpn',
+        type: 'net',
+        source: 'calc_vp',
+        sourceHandle: 'terminal_negative',
+        target: 'calc_g',
+        targetHandle: 'reference_terminal',
+      },
+    ]
+    // One tidy COLUMN per decimal digit — the display on top, its own hex decoder right below it, the
+    // digit's four input sources at the bottom — so every wire stays inside its column (no fan-out bus).
+    // Digit 9 (most significant) is leftmost, so the row reads left-to-right as a normal number.
+    for (let d = 0; d < 10; d++) {
+      const cx = (9 - d) * COL
+      nodes.push({
+        id: `calc_disp${d}`,
+        type: 'block',
+        position: { x: cx, y: 60 },
+        data: { definition: 'display_seven_segment', label: `${d}`, block: display },
+      })
+      nodes.push({
+        id: `calc_dec${d}`,
+        type: 'block',
+        position: { x: cx, y: 540 },
+        data: { definition: 'block', label: `dec${d}`, block: decoder, fidelity: 'logic' },
+      })
+      for (const s of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) {
+        edges.push({
+          id: `calc_sg_${s}_${d}`,
+          type: 'net',
+          source: `calc_dec${d}`,
+          sourceHandle: `seg_${s}`,
+          target: `calc_disp${d}`,
+          targetHandle: `seg_${s}`,
+        })
+      }
+      edges.push({
+        id: `calc_dc${d}`,
+        type: 'net',
+        source: `calc_disp${d}`,
+        sourceHandle: 'common',
+        target: 'calc_g',
+        targetHandle: 'reference_terminal',
+      })
+      edges.push({
+        id: `calc_decvp${d}`,
+        type: 'net',
+        source: 'calc_vp',
+        sourceHandle: 'terminal_positive',
+        target: `calc_dec${d}`,
+        targetHandle: 'v_dd',
+      })
+      edges.push({
+        id: `calc_decg${d}`,
+        type: 'net',
+        source: `calc_dec${d}`,
+        sourceHandle: 'gnd',
+        target: 'calc_g',
+        targetHandle: 'reference_terminal',
+      })
+      // Each digit's four decoder inputs are driven by a source that pressCalcKey sets from the REAL
+      // calculator's gate output (display{d*4+i}, the signed-magnitude BCD bit). Power-up = 0.
+      for (let i = 0; i < 4; i++) {
+        const bit = d * 4 + i
+        nodes.push({
+          id: `calcin_${bit}`,
+          type: 'device',
+          position: { x: cx, y: 1040 + i * 90 },
+          data: { definition: 'power_source', label: '', parameters: dcSource(0) },
+        })
+        edges.push({
+          id: `calcin_e${bit}`,
+          type: 'net',
+          source: `calcin_${bit}`,
+          sourceHandle: 'terminal_positive',
+          target: `calc_dec${d}`,
+          targetHandle: `d${i}`,
+        })
+        edges.push({
+          id: `calcin_g${bit}`,
+          type: 'net',
+          source: `calcin_${bit}`,
+          sourceHandle: 'terminal_negative',
+          target: 'calc_g',
+          targetHandle: 'reference_terminal',
+        })
+      }
+    }
+    // The real keypad — momentary-switch parts, each tagged with the key it types.
+    const layout: string[][] = [
+      ['7', '8', '9', '/'],
+      ['4', '5', '6', '*'],
+      ['1', '2', '3', '-'],
+      ['0', 'C', '=', '+'],
+    ]
+    const idMap: Record<string, string> = {
+      '/': 'div',
+      '*': 'mul',
+      '-': 'sub',
+      '+': 'add',
+      '=': 'eq',
+    }
+    const labelOf = (k: string) => (k === '/' ? '÷' : k === '*' ? '×' : k === '-' ? '−' : k)
+    layout.forEach((row, r) => {
+      row.forEach((k, c) => {
+        nodes.push({
+          id: `calckey_${idMap[k] ?? k}`,
+          type: 'keycap',
+          draggable: false, // a key is pressed (clicked), never dragged
+          // Keypad to the RIGHT of the digit columns, clear of the per-column wiring on the left.
+          position: { x: 2800 + c * 90, y: 80 + r * 90 },
+          data: { definition: 'keycap', label: labelOf(k), calcKey: k },
+        })
+      })
+    })
+    nodes.push({
+      id: 'calckey_pm',
+      type: 'keycap',
+      draggable: false,
+      position: { x: 2800, y: 80 + 4 * 90 },
+      data: { definition: 'keycap', label: '±', calcKey: '±' },
+    })
+    setNodes(() => nodes as unknown as Node[])
+    setEdges(() => edges as unknown as Edge[])
+    setAutoRouteWires(true) // route the many decoder/display wires into clean lanes, not a tangle
+    reSolve(nodes as unknown as Node[], edges as unknown as Edge[])
+  }, [setNodes, setEdges, checkpointAction, reSolve])
+
   const onDrop = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
       event.preventDefault()
@@ -3444,6 +4044,11 @@ function Canvas({ project }: { project: ProjectChoice }) {
       }
       const definition = event.dataTransfer.getData(DEFINITION_MIME)
       if (!definition) return
+      // The calculator isn't a single part — it lays out the whole appliance (keypad + decoder + displays).
+      if (definition === 'calculator') {
+        placeCalculator()
+        return
+      }
       // A built-in (e.g. the op-amp) drops as a block node — a fresh deep copy that
       // descends + flattens to its real transistors like any user-grouped block.
       const builtinBlock = BUILTIN_BLOCKS[definition]
@@ -3477,7 +4082,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
         }),
       )
     },
-    [screenToFlowPosition, setNodes, nodes, checkpointAction, snapToGrid],
+    [screenToFlowPosition, setNodes, nodes, checkpointAction, snapToGrid, placeCalculator],
   )
 
   // Place a part from the Add-Part pop-up — the same node-creation as a drop, but centred in the
@@ -3694,6 +4299,263 @@ function Canvas({ project }: { project: ProjectChoice }) {
       } as Node
     }
     const api = {
+      // Inject a wired CRT — an EHT anode source + two AC deflection sources (X, Y at a 3:2 frequency
+      // ratio → a Lissajous) — and run the REAL transient so the tube draws its real trace on its
+      // on-canvas screen. For the CDP screenshot of the CRT screen; the trace is solved, not painted.
+      showCrt() {
+        checkpointAction('dev: show crt')
+        const sv = (amount: number) => ({
+          value: { kind: 'scalar' as const, amount, unit: 'volt' },
+        })
+        const r0 = { value: { kind: 'scalar' as const, amount: 0, unit: 'ohm' } }
+        const ac = (amp: number, freq: number) => ({
+          nominal_voltage: sv(0),
+          ac_amplitude: sv(amp),
+          frequency: { value: { kind: 'scalar' as const, amount: freq, unit: 'hertz' } },
+          internal_resistance: r0,
+        })
+        const crtNodes = [
+          {
+            id: 'CRT',
+            type: 'device',
+            position: { x: 560, y: 280 },
+            data: { definition: 'crt', label: 'CRT', parameters: defaultParameters('crt') },
+          },
+          {
+            id: 'VANODE',
+            type: 'device',
+            position: { x: 220, y: 120 },
+            data: {
+              definition: 'power_source',
+              label: 'EHT',
+              parameters: { nominal_voltage: sv(2000), internal_resistance: r0 },
+            },
+          },
+          {
+            id: 'VX',
+            type: 'device',
+            position: { x: 220, y: 320 },
+            data: { definition: 'power_source', label: 'X', parameters: ac(40, 300) },
+          },
+          {
+            id: 'VY',
+            type: 'device',
+            position: { x: 220, y: 500 },
+            data: { definition: 'power_source', label: 'Y', parameters: ac(40, 200) },
+          },
+          {
+            id: 'CGND',
+            type: 'device',
+            position: { x: 220, y: 660 },
+            data: { definition: 'ground', label: 'gnd' },
+          },
+        ] as Node[]
+        const w2 = (id: string, s: string, sh: string, t: string, th: string): Edge => ({
+          id,
+          type: 'net',
+          source: s,
+          sourceHandle: sh,
+          target: t,
+          targetHandle: th,
+        })
+        const crtEdges: Edge[] = [
+          w2('ec_an', 'VANODE', 'terminal_positive', 'CRT', 'anode'),
+          w2('ec_ang', 'VANODE', 'terminal_negative', 'CGND', 'reference_terminal'),
+          w2('ec_ca', 'CRT', 'cathode', 'CGND', 'reference_terminal'),
+          w2('ec_x', 'VX', 'terminal_positive', 'CRT', 'x_deflect'),
+          w2('ec_xg', 'VX', 'terminal_negative', 'CGND', 'reference_terminal'),
+          w2('ec_y', 'VY', 'terminal_positive', 'CRT', 'y_deflect'),
+          w2('ec_yg', 'VY', 'terminal_negative', 'CGND', 'reference_terminal'),
+        ]
+        setNodes(crtNodes)
+        setEdges(crtEdges)
+        const { sources, positions } = lightCastInputs(crtNodes)
+        const world = groundedComponent(
+          worldWithCastLight(canvasWorld(crtNodes, crtEdges).world, positions, sources),
+        )
+        const windowSec = scopeWindow(world).duration
+        const steps = scopeRecordSteps(windowSec * 3, fastestSourceHz(world))
+        if (steps === 'span-too-wide') return
+        const thermal = solveTransientThermal(world, {
+          timeStep: (windowSec * 3) / steps,
+          duration: windowSec * 3,
+          projectAmbientC: projectAmbientRef.current,
+        })
+        setCrtTraces(buildCrtTraces(world, thermal.result.series))
+      },
+      // Inject a CRT driven as a TELEVISION: real sweep generators raster-scan the beam (X = a fast
+      // sawtooth = the line sweep, Y = a slow sawtooth = the field sweep) while a real VIDEO signal on
+      // the grid modulates the beam brightness — here a square wave that paints horizontal bars (a test
+      // pattern). Proves the raster + grid-intensity mechanism; the character generator (text) is next.
+      showCrtTv() {
+        checkpointAction('dev: crt tv raster')
+        const sv = (amount: number) => ({
+          value: { kind: 'scalar' as const, amount, unit: 'volt' },
+        })
+        const hz = (n: number) => ({ value: { kind: 'scalar' as const, amount: n, unit: 'hertz' } })
+        const r0 = { value: { kind: 'scalar' as const, amount: 0, unit: 'ohm' } }
+        const fV = 60
+        const lines = 24
+        const fX = lines * fV
+        const wave = (wf: string, amp: number, freq: number, off = 0) => ({
+          nominal_voltage: sv(off),
+          ac_amplitude: sv(amp),
+          frequency: hz(freq),
+          waveform: { value: wf },
+          internal_resistance: r0,
+        })
+        const dev = (id: string, x: number, y: number, def: string, parameters?: unknown) =>
+          ({
+            id,
+            type: 'device',
+            position: { x, y },
+            data: parameters
+              ? { definition: def, label: id, parameters }
+              : { definition: def, label: id },
+          }) as Node
+        const crtNodes = [
+          dev('CRT', 600, 280, 'crt', defaultParameters('crt')),
+          dev('VANODE', 220, 100, 'power_source', {
+            nominal_voltage: sv(2000),
+            internal_resistance: r0,
+          }),
+          dev('VX', 220, 240, 'power_source', wave('sawtooth', 50, fX)),
+          dev('VY', 220, 380, 'power_source', wave('sawtooth', 50, fV)),
+          dev('VGRID', 220, 520, 'power_source', wave('square', 25, fV * 6, -25)),
+          dev('CGND', 220, 660, 'ground'),
+        ]
+        const w2 = (id: string, s: string, sh: string, t: string, th: string): Edge => ({
+          id,
+          type: 'net',
+          source: s,
+          sourceHandle: sh,
+          target: t,
+          targetHandle: th,
+        })
+        const crtEdges: Edge[] = [
+          w2('r_an', 'VANODE', 'terminal_positive', 'CRT', 'anode'),
+          w2('r_ang', 'VANODE', 'terminal_negative', 'CGND', 'reference_terminal'),
+          w2('r_ca', 'CRT', 'cathode', 'CGND', 'reference_terminal'),
+          w2('r_x', 'VX', 'terminal_positive', 'CRT', 'x_deflect'),
+          w2('r_xg', 'VX', 'terminal_negative', 'CGND', 'reference_terminal'),
+          w2('r_y', 'VY', 'terminal_positive', 'CRT', 'y_deflect'),
+          w2('r_yg', 'VY', 'terminal_negative', 'CGND', 'reference_terminal'),
+          w2('r_g', 'VGRID', 'terminal_positive', 'CRT', 'grid'),
+          w2('r_gg', 'VGRID', 'terminal_negative', 'CGND', 'reference_terminal'),
+        ]
+        setNodes(crtNodes)
+        setEdges(crtEdges)
+        const { sources, positions } = lightCastInputs(crtNodes)
+        const world = groundedComponent(
+          worldWithCastLight(canvasWorld(crtNodes, crtEdges).world, positions, sources),
+        )
+        const duration = 1 / fV
+        const steps = lines * 80
+        const thermal = solveTransientThermal(world, {
+          timeStep: duration / steps,
+          duration,
+          projectAmbientC: projectAmbientRef.current,
+        })
+        setCrtTraces(buildCrtTraces(world, thermal.result.series))
+      },
+      // MIXED-SIGNAL CO-SIM: a real digital character generator (logic fidelity) wired to the analog
+      // CRT, co-simulated so its video paints HELLO WORLD on the tube. The char-gen's video pin drives
+      // the CRT grid; the dispatch detects the mixed canvas and runs the interleaved co-sim.
+      showCharGen() {
+        checkpointAction('dev: char-gen co-sim (HELLO WORLD)')
+        const sv = (amount: number) => ({
+          value: { kind: 'scalar' as const, amount, unit: 'volt' },
+        })
+        const hz = (n: number) => ({ value: { kind: 'scalar' as const, amount: n, unit: 'hertz' } })
+        const r0 = { value: { kind: 'scalar' as const, amount: 0, unit: 'ohm' } }
+        const fV = 60
+        const fX = 8 * fV // 8 scanlines per field
+        const saw = (amp: number, freq: number) => ({
+          nominal_voltage: sv(0),
+          ac_amplitude: sv(amp),
+          frequency: hz(freq),
+          waveform: { value: 'sawtooth' },
+          internal_resistance: r0,
+        })
+        const dev = (id: string, x: number, y: number, def: string, parameters?: unknown) =>
+          ({
+            id,
+            type: 'device',
+            position: { x, y },
+            data: parameters
+              ? { definition: def, label: id, parameters }
+              : { definition: def, label: id },
+          }) as Node
+        const charGen = {
+          id: 'CHARGEN',
+          type: 'device',
+          position: { x: 120, y: 160 },
+          data: { definition: 'block', label: 'CHARGEN', block: CHAR_GEN, fidelity: 'logic' },
+        } as Node
+        const nodes: Node[] = [
+          charGen,
+          dev('CRT', 760, 360, 'crt', defaultParameters('crt')),
+          dev('VANODE', 380, 140, 'power_source', {
+            nominal_voltage: sv(2000),
+            internal_resistance: r0,
+          }),
+          dev('VX', 380, 280, 'power_source', saw(50, fX)),
+          dev('VY', 380, 420, 'power_source', {
+            // A stepped vertical sweep — one held level per scanline (no shear). The small amplitude
+            // packs the 8 lines into a banner whose dot pitch matches the horizontal, so the glyphs
+            // read at a normal 5:7 aspect instead of stretched tall. NEGATIVE = a descending scan
+            // (line 0 at the TOP), the real top-to-bottom raster order, so glyphs aren't upside down.
+            nominal_voltage: sv(0),
+            ac_amplitude: sv(-8.5),
+            frequency: hz(fV),
+            waveform: { value: 'staircase' },
+            staircase_steps: { value: { kind: 'scalar' as const, amount: 8, unit: 'count' } },
+            internal_resistance: r0,
+          }),
+          dev('CGND', 380, 560, 'ground'),
+          dev('PIXCLK', 120, 380, 'power_source', {
+            nominal_voltage: sv(0),
+            internal_resistance: r0,
+          }),
+          dev('CLR', 120, 500, 'power_source', { nominal_voltage: sv(0), internal_resistance: r0 }),
+          dev('VDD', 120, 620, 'power_source', { nominal_voltage: sv(5), internal_resistance: r0 }),
+          dev('DGND', 120, 740, 'ground'),
+        ]
+        const w2 = (id: string, s: string, sh: string, t: string, th: string): Edge => ({
+          id,
+          type: 'net',
+          source: s,
+          sourceHandle: sh,
+          target: t,
+          targetHandle: th,
+        })
+        const edges: Edge[] = [
+          w2('br_video', 'CHARGEN', 'video', 'CRT', 'grid'), // the digital→analog video bridge
+          w2('a_an', 'VANODE', 'terminal_positive', 'CRT', 'anode'),
+          w2('a_ang', 'VANODE', 'terminal_negative', 'CGND', 'reference_terminal'),
+          w2('a_ca', 'CRT', 'cathode', 'CGND', 'reference_terminal'),
+          w2('a_x', 'VX', 'terminal_positive', 'CRT', 'x_deflect'),
+          w2('a_xg', 'VX', 'terminal_negative', 'CGND', 'reference_terminal'),
+          w2('a_y', 'VY', 'terminal_positive', 'CRT', 'y_deflect'),
+          w2('a_yg', 'VY', 'terminal_negative', 'CGND', 'reference_terminal'),
+          w2('d_clk', 'PIXCLK', 'terminal_positive', 'CHARGEN', 'clk'),
+          w2('d_clkn', 'PIXCLK', 'terminal_negative', 'DGND', 'reference_terminal'),
+          w2('d_clr', 'CLR', 'terminal_positive', 'CHARGEN', 'clr'),
+          w2('d_clrn', 'CLR', 'terminal_negative', 'DGND', 'reference_terminal'),
+          w2('d_vdd', 'VDD', 'terminal_positive', 'CHARGEN', 'v_dd'),
+          w2('d_vddn', 'VDD', 'terminal_negative', 'DGND', 'reference_terminal'),
+          w2('d_gnd', 'CHARGEN', 'gnd', 'DGND', 'reference_terminal'),
+        ]
+        setNodes(nodes)
+        setEdges(edges)
+        const dt = 1 / fV / 1024 // 1024 pixels (16 char slots × 8 dots) × 8 lines per field
+        const { traces } = solveTransientDispatch(nodes, edges, {
+          timeStep: dt,
+          duration: dt * 1024,
+          projectAmbientC: projectAmbientRef.current,
+        })
+        setCrtTraces(traces)
+      },
       // Inject two blocks joined by a hand-cornered wire — the pin-move re-route scenario.
       setupReroute() {
         checkpointAction('dev: wired blocks')
@@ -3725,9 +4587,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       // Force React Flow to re-measure every block's handles — needed after bulk-injecting blocks so
       // their wires actually render (the handle measurement that edges depend on).
       remeasure() {
-        for (const n of nodesRef.current) {
-          if (n.type === 'block') updateNodeInternals(n.id)
-        }
+        for (const n of nodesRef.current) updateNodeInternals(n.id)
       },
       // Light a seven-segment digit in the real app: drop the display + a 5 V source + ground, wiring
       // the listed segments HIGH (default = the segments of a "7"). Proves the figure-8 lights up.
@@ -4535,6 +5395,205 @@ function Canvas({ project }: { project: ProjectChoice }) {
         reSolve(nodes as unknown as Node[], edges as unknown as Edge[])
         return JSON.stringify({ expected: sub ? (((a - b) % 1e10) + 1e10) % 1e10 : (a + b) % 1e10 })
       },
+      placeCalc() {
+        placeCalculator()
+        return 'placed'
+      },
+      pressKey(key: string) {
+        pressCalcKey(key)
+        return api.calcRead()
+      },
+      calcRead() {
+        // Read the live result straight off the REAL CALCULATOR gates (no reducer): one settle at CLK
+        // low, then decode display/neg/error/f_ent the way the test oracle does.
+        const { value, error } = decodeCalc(calcSolve('none', false))
+        return JSON.stringify({ value, error })
+      },
+      calcTiled(a: number, b: number, sub: boolean) {
+        // DEV (overhaul payoff): the calculator as TEN tiled ALU cells (no 120-pin mega-block) + a per-
+        // digit decoder + display, then flip the global router on — the wiring should be clean lanes, not a
+        // tangle. Cells are LSD-LEFT so the carry chain is short neighbour hops (the row reads ones-first).
+        const supply = (v: number) => ({
+          nominal_voltage: { value: { kind: 'scalar', amount: v, unit: 'volt' } },
+          internal_resistance: { value: { kind: 'scalar', amount: 0, unit: 'ohm' } },
+        })
+        const digitBit = (n: number, d: number, i: number) =>
+          ((Math.floor(n / 10 ** d) % 10) >> i) & 1
+        const COLW = 240
+        const aluCell = BUILTIN_BLOCKS.logic_bcd_alu_cell
+        if (!aluCell) return '{}'
+        const tiled = tileRow({
+          cell: aluCell,
+          count: 10,
+          prefix: 'cell',
+          x0: 120,
+          y0: 80,
+          pitch: COLW,
+          chain: [{ from: 'cout', to: 'cin' }],
+          bus: ['sub', 'v_dd', 'gnd'],
+        })
+        const idAt = tiled.idAt
+        const nodes: Record<string, unknown>[] = [
+          ...tiled.nodes.map(
+            (n) =>
+              ({
+                ...n,
+                data: { ...(n.data as Record<string, unknown>), fidelity: 'logic' },
+              }) as Record<string, unknown>,
+          ),
+          {
+            id: 'vp',
+            type: 'device',
+            position: { x: 120, y: 1320 },
+            data: { definition: 'power_source', label: 'V+', parameters: supply(5) },
+          },
+          {
+            id: 'g',
+            type: 'device',
+            position: { x: 320, y: 1320 },
+            data: { definition: 'ground', label: 'GND' },
+          },
+        ]
+        for (let d = 0; d < 10; d++) {
+          nodes.push({
+            id: `dec${d}`,
+            type: 'block',
+            position: { x: 120 + d * COLW, y: 460 },
+            data: {
+              definition: 'block',
+              label: `7s${d}`,
+              block: BUILTIN_BLOCKS.logic_decoder_7seg,
+              fidelity: 'logic',
+            },
+          })
+          nodes.push({
+            id: `disp${d}`,
+            type: 'block',
+            position: { x: 120 + d * COLW, y: 880 },
+            data: {
+              definition: 'display_seven_segment',
+              label: `${d}`,
+              block: BUILTIN_BLOCKS.display_seven_segment,
+            },
+          })
+        }
+        const rail = (hi: boolean) =>
+          hi ? { t: 'vp', th: 'terminal_positive' } : { t: 'g', th: 'reference_terminal' }
+        const cinT = rail(sub) // ten's-complement +1 when subtracting, 0 when adding
+        const edges: Record<string, unknown>[] = [...(tiled.edges as Record<string, unknown>[])]
+        edges.push({
+          id: 'subsrc',
+          type: 'net',
+          source: idAt(0),
+          sourceHandle: 'sub',
+          target: cinT.t,
+          targetHandle: cinT.th,
+        })
+        edges.push({
+          id: 'vddsrc',
+          type: 'net',
+          source: 'vp',
+          sourceHandle: 'terminal_positive',
+          target: idAt(0),
+          targetHandle: 'v_dd',
+        })
+        edges.push({
+          id: 'gndsrc',
+          type: 'net',
+          source: idAt(0),
+          sourceHandle: 'gnd',
+          target: 'g',
+          targetHandle: 'reference_terminal',
+        })
+        edges.push({
+          id: 'cin0',
+          type: 'net',
+          source: idAt(0),
+          sourceHandle: 'cin',
+          target: cinT.t,
+          targetHandle: cinT.th,
+        })
+        edges.push({
+          id: 'vpn',
+          type: 'net',
+          source: 'vp',
+          sourceHandle: 'terminal_negative',
+          target: 'g',
+          targetHandle: 'reference_terminal',
+        })
+        for (let d = 0; d < 10; d++) {
+          for (let i = 0; i < 4; i++) {
+            const at = rail(digitBit(a, d, i) === 1)
+            const bt = rail(digitBit(b, d, i) === 1)
+            edges.push({
+              id: `a${d}_${i}`,
+              type: 'net',
+              source: idAt(d),
+              sourceHandle: `a${i}`,
+              target: at.t,
+              targetHandle: at.th,
+            })
+            edges.push({
+              id: `b${d}_${i}`,
+              type: 'net',
+              source: idAt(d),
+              sourceHandle: `b${i}`,
+              target: bt.t,
+              targetHandle: bt.th,
+            })
+            edges.push({
+              id: `sd${d}_${i}`,
+              type: 'net',
+              source: idAt(d),
+              sourceHandle: `s${i}`,
+              target: `dec${d}`,
+              targetHandle: `d${i}`,
+            })
+          }
+          edges.push({
+            id: `decv${d}`,
+            type: 'net',
+            source: 'vp',
+            sourceHandle: 'terminal_positive',
+            target: `dec${d}`,
+            targetHandle: 'v_dd',
+          })
+          edges.push({
+            id: `decg${d}`,
+            type: 'net',
+            source: `dec${d}`,
+            sourceHandle: 'gnd',
+            target: 'g',
+            targetHandle: 'reference_terminal',
+          })
+          for (const s of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) {
+            edges.push({
+              id: `seg${s}${d}`,
+              type: 'net',
+              source: `dec${d}`,
+              sourceHandle: `seg_${s}`,
+              target: `disp${d}`,
+              targetHandle: `seg_${s}`,
+            })
+          }
+          edges.push({
+            id: `dispc${d}`,
+            type: 'net',
+            source: `disp${d}`,
+            sourceHandle: 'common',
+            target: 'g',
+            targetHandle: 'reference_terminal',
+          })
+        }
+        setNodes(() => nodes as unknown as Node[])
+        setEdges(() => edges as unknown as Edge[])
+        setAutoRouteWires(true)
+        reSolve(nodes as unknown as Node[], edges as unknown as Edge[])
+        return JSON.stringify({
+          expected: sub ? (((a - b) % 1e10) + 1e10) % 1e10 : (a + b) % 1e10,
+          cells: 10,
+        })
+      },
       latchStep(sHigh: boolean, rHigh: boolean) {
         // DEV (verify sequential on the REAL canvas): inject a wired SR latch + sources, then run the
         // actual reSolve (which threads logicStateRef). Step the sources and read Q from the app's own
@@ -4950,7 +6009,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
     checkpointAction,
     updateNodeInternals,
     reSolve,
-    setAutoRouteWires,
+    placeCalculator,
+    pressCalcKey,
+    calcSolve,
   ])
 
   // Zoom to the SELECTED parts (or fit all if none) — precise framing, easier than the wheel.
@@ -5492,270 +6553,284 @@ function Canvas({ project }: { project: ProjectChoice }) {
         }}
       >
         <HealthContext.Provider value={shownHealth}>
-          <LensContext.Provider value={lensState}>
-            <FrameEdgeContext.Provider value={frameEdges}>
-              <FrontContext.Provider value={frontState}>
-                <AutoRouteContext.Provider value={autoRouteWires}>
-                  <GlobalRoutesContext.Provider value={globalRoutes}>
-                    <PartBoxesContext.Provider value={partBoxes}>
-                      <WireGeomContext.Provider value={reportWireGeom}>
-                        <WireColorContext.Provider value={netColorByEdge}>
-                          <CheckpointContext.Provider value={checkpointAction}>
-                            <ReactFlow
-                              colorMode={light ? 'light' : 'dark'}
-                              nodes={nodes}
-                              edges={edges}
-                              onNodesChange={onNodesChange}
-                              onEdgesChange={onEdgesChange}
-                              onConnect={onConnect}
-                              onReconnect={onReconnect}
-                              onNodeDoubleClick={onNodeDoubleClick}
-                              onNodeClick={(_event, node) => {
-                                if (
-                                  node.type === 'junction' &&
-                                  (node.data as { fromCrossing?: boolean } | undefined)
-                                    ?.fromCrossing === true
-                                ) {
-                                  unjoinCrossing(node.id)
-                                }
-                              }}
-                              onNodeContextMenu={(event, node) => {
-                                if (node.type !== 'device' && node.type !== 'block') return
-                                event.preventDefault()
-                                selectNodeById(node.id)
-                                setCanvasMenu({ x: event.clientX, y: event.clientY, kind: 'part' })
-                              }}
-                              onPaneContextMenu={(event) => {
-                                event.preventDefault()
-                                setCanvasMenu({
-                                  x: event.clientX,
-                                  y: event.clientY,
-                                  kind: 'pane',
-                                  flow: screenToFlowPosition({
+          <CrtScreenContext.Provider value={crtScreens}>
+            <LensContext.Provider value={lensState}>
+              <FrameEdgeContext.Provider value={frameEdges}>
+                <FrontContext.Provider value={frontState}>
+                  <AutoRouteContext.Provider value={autoRouteWires}>
+                    <GlobalRoutesContext.Provider value={globalRoutes}>
+                      <PartBoxesContext.Provider value={partBoxes}>
+                        <WireGeomContext.Provider value={reportWireGeom}>
+                          <WireColorContext.Provider value={netColorByEdge}>
+                            <CheckpointContext.Provider value={checkpointAction}>
+                              <ReactFlow
+                                colorMode={light ? 'light' : 'dark'}
+                                nodes={nodes}
+                                edges={edges}
+                                onNodesChange={onNodesChange}
+                                onEdgesChange={onEdgesChange}
+                                onConnect={onConnect}
+                                onReconnect={onReconnect}
+                                onNodeDoubleClick={onNodeDoubleClick}
+                                onNodeClick={(_event, node) => {
+                                  // A calculator keypad button (a real momentary switch tagged with its key):
+                                  // clicking it types that key into the control unit and re-solves the display.
+                                  const calcKey = (node.data as DeviceNodeData).calcKey
+                                  if (typeof calcKey === 'string') {
+                                    pressCalcKey(calcKey)
+                                    return
+                                  }
+                                  if (
+                                    node.type === 'junction' &&
+                                    (node.data as { fromCrossing?: boolean } | undefined)
+                                      ?.fromCrossing === true
+                                  ) {
+                                    unjoinCrossing(node.id)
+                                  }
+                                }}
+                                onNodeContextMenu={(event, node) => {
+                                  if (node.type !== 'device' && node.type !== 'block') return
+                                  event.preventDefault()
+                                  selectNodeById(node.id)
+                                  setCanvasMenu({
                                     x: event.clientX,
                                     y: event.clientY,
-                                  }),
-                                })
-                              }}
-                              onNodeDragStart={(_event, node) => {
-                                checkpointAction('move')
-                                dragStartPos.current = new Map(
-                                  nodes
-                                    .filter((n) => n.id === node.id || n.selected)
-                                    .map((n) => [n.id, { x: n.position.x, y: n.position.y }]),
-                                )
-                              }}
-                              onNodeDragStop={(_event, node) => {
-                                if (node.type !== 'device' && node.type !== 'block') return
-                                setNodes((cur) => {
-                                  const dragged = dragStartPos.current
-                                  const box = (n: (typeof cur)[number]) => ({
-                                    x: n.position.x,
-                                    y: n.position.y,
-                                    w: n.measured?.width ?? 88,
-                                    h: n.measured?.height ?? 56,
+                                    kind: 'part',
                                   })
-                                  const hit = (
-                                    a: (typeof cur)[number],
-                                    b: (typeof cur)[number],
-                                  ) => {
-                                    const A = box(a)
-                                    const B = box(b)
-                                    const m = 6 // a little breathing room so parts never touch
-                                    return (
-                                      A.x < B.x + B.w + m &&
-                                      A.x + A.w + m > B.x &&
-                                      A.y < B.y + B.h + m &&
-                                      A.y + A.h + m > B.y
-                                    )
-                                  }
-                                  const isPart = (n: (typeof cur)[number]) =>
-                                    n.type === 'device' || n.type === 'block'
-                                  const collides = cur.some(
-                                    (moved) =>
-                                      dragged.has(moved.id) &&
-                                      cur.some(
-                                        (o) => isPart(o) && !dragged.has(o.id) && hit(moved, o),
-                                      ),
+                                }}
+                                onPaneContextMenu={(event) => {
+                                  event.preventDefault()
+                                  setCanvasMenu({
+                                    x: event.clientX,
+                                    y: event.clientY,
+                                    kind: 'pane',
+                                    flow: screenToFlowPosition({
+                                      x: event.clientX,
+                                      y: event.clientY,
+                                    }),
+                                  })
+                                }}
+                                onNodeDragStart={(_event, node) => {
+                                  checkpointAction('move')
+                                  dragStartPos.current = new Map(
+                                    nodes
+                                      .filter((n) => n.id === node.id || n.selected)
+                                      .map((n) => [n.id, { x: n.position.x, y: n.position.y }]),
                                   )
-                                  if (!collides) return cur
-                                  // overlap — snap every dragged part back to where it started
-                                  return cur.map((n) => {
-                                    const start = dragged.get(n.id)
-                                    return start ? { ...n, position: start } : n
+                                }}
+                                onNodeDragStop={(_event, node) => {
+                                  if (node.type !== 'device' && node.type !== 'block') return
+                                  setNodes((cur) => {
+                                    const dragged = dragStartPos.current
+                                    const box = (n: (typeof cur)[number]) => ({
+                                      x: n.position.x,
+                                      y: n.position.y,
+                                      w: n.measured?.width ?? 88,
+                                      h: n.measured?.height ?? 56,
+                                    })
+                                    const hit = (
+                                      a: (typeof cur)[number],
+                                      b: (typeof cur)[number],
+                                    ) => {
+                                      const A = box(a)
+                                      const B = box(b)
+                                      const m = 6 // a little breathing room so parts never touch
+                                      return (
+                                        A.x < B.x + B.w + m &&
+                                        A.x + A.w + m > B.x &&
+                                        A.y < B.y + B.h + m &&
+                                        A.y + A.h + m > B.y
+                                      )
+                                    }
+                                    const isPart = (n: (typeof cur)[number]) =>
+                                      n.type === 'device' || n.type === 'block'
+                                    const collides = cur.some(
+                                      (moved) =>
+                                        dragged.has(moved.id) &&
+                                        cur.some(
+                                          (o) => isPart(o) && !dragged.has(o.id) && hit(moved, o),
+                                        ),
+                                    )
+                                    if (!collides) return cur
+                                    // overlap — snap every dragged part back to where it started
+                                    return cur.map((n) => {
+                                      const start = dragged.get(n.id)
+                                      return start ? { ...n, position: start } : n
+                                    })
                                   })
-                                })
-                              }}
-                              nodeTypes={nodeTypes}
-                              edgeTypes={edgeTypes}
-                              nodesDraggable={tool === 'select'}
-                              nodesConnectable={tool !== 'meter'}
-                              // Click-to-connect is OUR gesture now (onWireClick, wire tool
-                              // only, with corner routing); React Flow's built-in one would
-                              // double-create — and it once let meter probes draw real wires.
-                              connectOnClick={false}
-                              connectionMode={ConnectionMode.Loose}
-                              // Desktop-style selection (S19-v3-69): LEFT-drag on empty canvas
-                              // draws a selection box (like desktop icons), so panning moves to
-                              // the middle/right mouse buttons. Touching the box counts —
-                              // SelectionMode.Partial — exactly how a desktop marquee behaves.
-                              // In lasso mode the wrapper owns the pointer, so both are off.
-                              selectionOnDrag={tool === 'select'}
-                              panOnDrag={tool === 'lasso' ? false : [1]}
-                              selectionMode={SelectionMode.Partial}
-                              // Windows-friendly multi-select: Ctrl+click (React Flow's default
-                              // is the Meta key); Shift+drag box-select is the built-in default.
-                              multiSelectionKeyCode={['Meta', 'Control']}
-                              // Deletion is OUR keybind now (editable, supports combos) — see
-                              // the keyboard-shortcuts effect above.
-                              deleteKeyCode={null}
-                              zoomOnDoubleClick={false}
-                              // Effectively unbounded zoom (React Flow defaults stop at 0.5×–2×):
-                              // the project's horizon runs from a full PC down to a transistor,
-                              // so the canvas must zoom six orders of magnitude either way.
-                              minZoom={0.001}
-                              maxZoom={1000}
-                              fitView
-                              proOptions={{ hideAttribution: true }}
-                              snapToGrid={snapToGrid}
-                              snapGrid={SNAP_GRID}
-                            >
-                              {/* Graph-paper grid: fine minor lines, with a bolder major line every 5th. */}
-                              <Background
-                                id="grid-minor"
-                                variant={BackgroundVariant.Lines}
-                                gap={4}
-                                lineWidth={0.5}
-                                color={`${gridColor}55`}
-                              />
-                              <Background
-                                id="grid-major"
-                                variant={BackgroundVariant.Lines}
-                                gap={20}
-                                lineWidth={1}
-                                color={gridColor}
-                              />
-                              {/* The drawing sheet (page frame + ISO zone grid + title block), behind parts. */}
-                              {showSheet ? (
-                                <SheetFrame
-                                  settings={sheetSettings}
-                                  projectName={project.name}
+                                }}
+                                nodeTypes={nodeTypes}
+                                edgeTypes={edgeTypes}
+                                nodesDraggable={tool === 'select'}
+                                nodesConnectable={tool !== 'meter'}
+                                // Click-to-connect is OUR gesture now (onWireClick, wire tool
+                                // only, with corner routing); React Flow's built-in one would
+                                // double-create — and it once let meter probes draw real wires.
+                                connectOnClick={false}
+                                connectionMode={ConnectionMode.Loose}
+                                // Desktop-style selection (S19-v3-69): LEFT-drag on empty canvas
+                                // draws a selection box (like desktop icons), so panning moves to
+                                // the middle/right mouse buttons. Touching the box counts —
+                                // SelectionMode.Partial — exactly how a desktop marquee behaves.
+                                // In lasso mode the wrapper owns the pointer, so both are off.
+                                selectionOnDrag={tool === 'select'}
+                                panOnDrag={tool === 'lasso' ? false : [1]}
+                                selectionMode={SelectionMode.Partial}
+                                // Windows-friendly multi-select: Ctrl+click (React Flow's default
+                                // is the Meta key); Shift+drag box-select is the built-in default.
+                                multiSelectionKeyCode={['Meta', 'Control']}
+                                // Deletion is OUR keybind now (editable, supports combos) — see
+                                // the keyboard-shortcuts effect above.
+                                deleteKeyCode={null}
+                                zoomOnDoubleClick={false}
+                                // Effectively unbounded zoom (React Flow defaults stop at 0.5×–2×):
+                                // the project's horizon runs from a full PC down to a transistor,
+                                // so the canvas must zoom six orders of magnitude either way.
+                                minZoom={0.001}
+                                maxZoom={1000}
+                                fitView
+                                proOptions={{ hideAttribution: true }}
+                                snapToGrid={snapToGrid}
+                                snapGrid={SNAP_GRID}
+                              >
+                                {/* Graph-paper grid: fine minor lines, with a bolder major line every 5th. */}
+                                <Background
+                                  id="grid-minor"
+                                  variant={BackgroundVariant.Lines}
+                                  gap={4}
+                                  lineWidth={0.5}
+                                  color={`${gridColor}55`}
+                                />
+                                <Background
+                                  id="grid-major"
+                                  variant={BackgroundVariant.Lines}
+                                  gap={20}
+                                  lineWidth={1}
+                                  color={gridColor}
+                                />
+                                {/* The drawing sheet (page frame + ISO zone grid + title block), behind parts. */}
+                                {showSheet ? (
+                                  <SheetFrame
+                                    settings={sheetSettings}
+                                    projectName={project.name}
+                                    light={light}
+                                  />
+                                ) : null}
+                                {/* Coordinate-graph axes through the origin + the four quadrants. */}
+                                <CoordinateAxes light={light} />
+                                <Controls>
+                                  <ControlButton
+                                    onClick={() => setSnapToGrid((s) => !s)}
+                                    title={
+                                      snapToGrid
+                                        ? 'Snap to grid: ON — parts align to the grid (click for free placement)'
+                                        : 'Snap to grid: OFF — free placement (click to snap parts to the grid)'
+                                    }
+                                    style={
+                                      snapToGrid
+                                        ? { background: THEME.accentBlue, color: THEME.textBright }
+                                        : undefined
+                                    }
+                                  >
+                                    #
+                                  </ControlButton>
+                                  <ControlButton
+                                    onClick={() => setAutoRouteWires((v) => !v)}
+                                    title={
+                                      autoRouteWires
+                                        ? 'Auto-route wires: ON — plain wires route as straight lines around the parts (click for straight point-to-point wires)'
+                                        : 'Auto-route wires: OFF — wires run straight, you route them by hand (click to auto-route them around the parts)'
+                                    }
+                                    style={
+                                      autoRouteWires
+                                        ? { background: THEME.accentBlue, color: THEME.textBright }
+                                        : undefined
+                                    }
+                                  >
+                                    ∟
+                                  </ControlButton>
+                                  <ControlButton
+                                    onClick={() => setColorWires((v) => !v)}
+                                    title={
+                                      colorWires
+                                        ? 'Colour wires for tracing: ON — each wire has its own dull shade so you can follow it end to end (visual only; click for plain wires)'
+                                        : 'Colour wires for tracing: OFF — plain wires (click to give each wire its own dull shade so you can trace it, visual only)'
+                                    }
+                                    style={
+                                      colorWires
+                                        ? { background: THEME.accentBlue, color: THEME.textBright }
+                                        : undefined
+                                    }
+                                  >
+                                    🎨
+                                  </ControlButton>
+                                  <ControlButton
+                                    onClick={zoomToSelection}
+                                    title="Zoom to selection — frames the selected parts (fits all if none selected)"
+                                  >
+                                    ⊙
+                                  </ControlButton>
+                                </Controls>
+                                <MeterProbes red={redProbe} black={blackProbe} />
+                                {/* Scope channel probes (S19-v3-77): one colored clip per
+                    voltage channel. Wire clamps show in the channel chips. */}
+                                {scopeOpen
+                                  ? scopeProbes.map((p) => {
+                                      if (p.kind !== 'terminal') return null
+                                      // Color + CH number come from the probe's slot in the RESOLVED channel
+                                      // list (what the traces and chips index), NOT its raw scopeProbes index —
+                                      // an unresolved probe earlier in the list would otherwise shift this off,
+                                      // so the on-canvas marker disagreed with the plotted trace. No channel
+                                      // (the probe didn't resolve → no trace) ⇒ no marker.
+                                      const ch = scopeChannels.findIndex(
+                                        (c) => c.key === scopeProbeKey(p),
+                                      )
+                                      if (ch < 0) return null
+                                      return (
+                                        <ProbeMarker
+                                          key={scopeProbeKey(p)}
+                                          probe={{ nodeId: p.nodeId, handleId: p.handleId }}
+                                          color={
+                                            TRACE_COLORS[ch % TRACE_COLORS.length] ??
+                                            THEME.textMuted
+                                          }
+                                          label={`CH${ch + 1}`}
+                                        />
+                                      )
+                                    })
+                                  : null}
+                                {pendingWire !== null ? (
+                                  <PendingWirePreview
+                                    pending={pendingWire}
+                                    cursor={wireCursor}
+                                    curved={wireStyle === 'curve'}
+                                    curveRadius={wireCurveRadius}
+                                  />
+                                ) : null}
+                                {tool === 'connect' ? (
+                                  <ConnectPointsOverlay
+                                    nodes={nodes}
+                                    start={connectStart}
+                                    queue={connectQueue}
+                                    onPick={onPickConnectPoint}
+                                  />
+                                ) : null}
+                                <WireCrossingsOverlay
+                                  crossings={wireCrossings}
+                                  onJoin={joinCrossing}
                                   light={light}
                                 />
-                              ) : null}
-                              {/* Coordinate-graph axes through the origin + the four quadrants. */}
-                              <CoordinateAxes light={light} />
-                              <Controls>
-                                <ControlButton
-                                  onClick={() => setSnapToGrid((s) => !s)}
-                                  title={
-                                    snapToGrid
-                                      ? 'Snap to grid: ON — parts align to the grid (click for free placement)'
-                                      : 'Snap to grid: OFF — free placement (click to snap parts to the grid)'
-                                  }
-                                  style={
-                                    snapToGrid
-                                      ? { background: THEME.accentBlue, color: THEME.textBright }
-                                      : undefined
-                                  }
-                                >
-                                  #
-                                </ControlButton>
-                                <ControlButton
-                                  onClick={() => setAutoRouteWires((v) => !v)}
-                                  title={
-                                    autoRouteWires
-                                      ? 'Auto-route wires: ON — plain wires route as straight lines around the parts (click for straight point-to-point wires)'
-                                      : 'Auto-route wires: OFF — wires run straight, you route them by hand (click to auto-route them around the parts)'
-                                  }
-                                  style={
-                                    autoRouteWires
-                                      ? { background: THEME.accentBlue, color: THEME.textBright }
-                                      : undefined
-                                  }
-                                >
-                                  ∟
-                                </ControlButton>
-                                <ControlButton
-                                  onClick={() => setColorWires((v) => !v)}
-                                  title={
-                                    colorWires
-                                      ? 'Colour wires for tracing: ON — each wire has its own dull shade so you can follow it end to end (visual only; click for plain wires)'
-                                      : 'Colour wires for tracing: OFF — plain wires (click to give each wire its own dull shade so you can trace it, visual only)'
-                                  }
-                                  style={
-                                    colorWires
-                                      ? { background: THEME.accentBlue, color: THEME.textBright }
-                                      : undefined
-                                  }
-                                >
-                                  🎨
-                                </ControlButton>
-                                <ControlButton
-                                  onClick={zoomToSelection}
-                                  title="Zoom to selection — frames the selected parts (fits all if none selected)"
-                                >
-                                  ⊙
-                                </ControlButton>
-                              </Controls>
-                              <MeterProbes red={redProbe} black={blackProbe} />
-                              {/* Scope channel probes (S19-v3-77): one colored clip per
-                    voltage channel. Wire clamps show in the channel chips. */}
-                              {scopeOpen
-                                ? scopeProbes.map((p) => {
-                                    if (p.kind !== 'terminal') return null
-                                    // Color + CH number come from the probe's slot in the RESOLVED channel
-                                    // list (what the traces and chips index), NOT its raw scopeProbes index —
-                                    // an unresolved probe earlier in the list would otherwise shift this off,
-                                    // so the on-canvas marker disagreed with the plotted trace. No channel
-                                    // (the probe didn't resolve → no trace) ⇒ no marker.
-                                    const ch = scopeChannels.findIndex(
-                                      (c) => c.key === scopeProbeKey(p),
-                                    )
-                                    if (ch < 0) return null
-                                    return (
-                                      <ProbeMarker
-                                        key={scopeProbeKey(p)}
-                                        probe={{ nodeId: p.nodeId, handleId: p.handleId }}
-                                        color={
-                                          TRACE_COLORS[ch % TRACE_COLORS.length] ?? THEME.textMuted
-                                        }
-                                        label={`CH${ch + 1}`}
-                                      />
-                                    )
-                                  })
-                                : null}
-                              {pendingWire !== null ? (
-                                <PendingWirePreview
-                                  pending={pendingWire}
-                                  cursor={wireCursor}
-                                  curved={wireStyle === 'curve'}
-                                  curveRadius={wireCurveRadius}
-                                />
-                              ) : null}
-                              {tool === 'connect' ? (
-                                <ConnectPointsOverlay
-                                  nodes={nodes}
-                                  start={connectStart}
-                                  queue={connectQueue}
-                                  onPick={onPickConnectPoint}
-                                />
-                              ) : null}
-                              <WireCrossingsOverlay
-                                crossings={wireCrossings}
-                                onJoin={joinCrossing}
-                                light={light}
-                              />
-                            </ReactFlow>
-                          </CheckpointContext.Provider>
-                        </WireColorContext.Provider>
-                      </WireGeomContext.Provider>
-                    </PartBoxesContext.Provider>
-                  </GlobalRoutesContext.Provider>
-                </AutoRouteContext.Provider>
-              </FrontContext.Provider>
-            </FrameEdgeContext.Provider>
-          </LensContext.Provider>
+                              </ReactFlow>
+                            </CheckpointContext.Provider>
+                          </WireColorContext.Provider>
+                        </WireGeomContext.Provider>
+                      </PartBoxesContext.Provider>
+                    </GlobalRoutesContext.Provider>
+                  </AutoRouteContext.Provider>
+                </FrontContext.Provider>
+              </FrameEdgeContext.Provider>
+            </LensContext.Provider>
+          </CrtScreenContext.Provider>
         </HealthContext.Provider>
 
         <div

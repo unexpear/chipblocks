@@ -2205,7 +2205,7 @@ export const REGISTER_4BIT: BlockData = dRegister(4)
 
 /** A 10-digit BCD register — 40 D flip-flops (4 bits × 10 decimal digits): the calculator's accumulator /
  *  entry store, latching a whole 10-digit number on one clock edge. ~1360 MOSFETs; descend for the
- *  flip-flops. The control unit (calc-control.ts) sequences loads into this; bit b carries digit
+ *  flip-flops. The control unit (CALC_CONTROL_FSM) sequences loads into this; bit b carries digit
  *  floor(b/4)'s weight 2^(b%4), matching the flat BCD port order the ALU and decoders use. */
 export const BCD_REGISTER_10: BlockData = { ...dRegister(40), name: 'BCD Register (10-digit)' }
 
