@@ -4455,6 +4455,48 @@ function buildCalculator(): BlockData {
     link(y, { node: id, handle: 'y' })
     return { node: id, handle: 'out' }
   }
+  const orAll = (refs: LogicRef[]): LogicRef =>
+    refs.reduce((acc, r) => buildExpr(['or', acc, r], ctx))
+  // 4-bit binary subtract a − b → { diff[4], borrow } ; borrow-out = (a < b).
+  const sub4 = (a: LogicRef[], b: LogicRef[]): { diff: LogicRef[]; borrow: LogicRef } => {
+    const diff: LogicRef[] = []
+    let bin: LogicRef = LOW
+    for (let i = 0; i < 4; i++) {
+      const ai = a[i] ?? LOW
+      const bi = b[i] ?? LOW
+      diff.push(buildExpr(['xor', ['xor', ai, bi], bin], ctx))
+      bin = buildExpr(
+        ['or', ['or', ['and', ['not', ai], bi], ['and', ['not', ai], bin]], ['and', bi, bin]],
+        ctx,
+      )
+    }
+    return { diff, borrow: bin }
+  }
+  // BARREL-SHIFT a 10-digit BCD magnitude UP by dF digit positions (×10^dF): 4 log-stages (shift 1,2,4,8
+  // digits = 4,8,16,32 bits), each gated by a dF bit; bits pushed past the top digit become overflow.
+  const shiftUp = (
+    inRefs: LogicRef[],
+    dfBits: LogicRef[],
+  ): { out: LogicRef[]; overflow: LogicRef } => {
+    let cur = inRefs
+    let ovf: LogicRef = LOW
+    for (let s = 0; s < 4; s++) {
+      const shiftBits = 4 * (1 << s)
+      const sel = dfBits[s] ?? LOW
+      ovf = buildExpr(
+        ['or', ovf, buildExpr(['and', sel, orAll(cur.slice(40 - shiftBits))], ctx)],
+        ctx,
+      )
+      const next: LogicRef[] = []
+      for (let i = 0; i < 40; i++) {
+        const from = i - shiftBits
+        const lower = from >= 0 ? (cur[from] ?? LOW) : LOW
+        next.push(newMux(sel, lower, cur[i] ?? LOW))
+      }
+      cur = next
+    }
+    return { out: cur, overflow: ovf }
+  }
 
   // encoder → FSM + entry-digit
   e('enc', 'digit', 'fsm', 'digit')
@@ -4547,8 +4589,10 @@ function buildCalculator(): BlockData {
   e('ctrl', 'start_mul', 'mul', 'start')
   e('ctrl', 'start_div', 'div', 'start')
   // operands: normally A = ACC, B = ENTRY; on a REPLAY A = ENTRY (the shown result) and B = the saved
-  // last operand. Per-bit muxes select, wired to the ALU + both sequencers; the overflow sign check
-  // reads them back off the ALU's a/b inputs. ENTRY → ACC stays the acc_from_entry copy source.
+  // last operand. The raw magnitude muxes feed the multiplier + divider directly; the ALU instead gets
+  // the DECIMAL-ALIGNED operands (built below). ENTRY → ACC stays the acc_from_entry copy source.
+  const aSel: LogicRef[] = []
+  const bSel: LogicRef[] = []
   for (let i = 0; i < 40; i++) {
     const a = newMux(
       REPLAY_SEL,
@@ -4560,12 +4604,47 @@ function buildCalculator(): BlockData {
       { node: 'lopd', handle: `entry${i}` },
       { node: 'ent', handle: `entry${i}` },
     )
-    for (const blk of ['alu', 'mul', 'div']) {
+    aSel.push(a)
+    bSel.push(b)
+    for (const blk of ['mul', 'div']) {
       link(a, { node: blk, handle: `a${i}` })
       link(b, { node: blk, handle: `b${i}` })
     }
     e('ent', `entry${i}`, 'acc', `entry${i}`)
   }
+  // ── FLOATING-POINT ALIGNMENT for +/−: each number carries a 4-bit point position F (Fe = the fent
+  // counter; Fa = ACC's, NEW; Flopd = the saved last operand's, NEW). Before the ALU, shift the
+  // smaller-F operand's magnitude UP so both share F = max(Fa,Fb); the multiplier/divider keep the raw
+  // magnitudes. The point lands at the larger F. A digit pushed past the top → precision lost → E.
+  for (let b = 0; b < 4; b++) {
+    nodes.push({ id: `Fa${b}`, definition: 'block', x: 26000, y: b * 800, block: D_FLIPFLOP_BLOCK })
+    nodes.push({
+      id: `Flopd${b}`,
+      definition: 'block',
+      x: 27000,
+      y: b * 800,
+      block: D_FLIPFLOP_BLOCK,
+    })
+  }
+  const Fe: LogicRef[] = [0, 1, 2, 3].map((b) => ({ node: 'fent', handle: `q${b}` }))
+  const Faeff = [0, 1, 2, 3].map((b) =>
+    newMux(REPLAY_SEL, Fe[b] ?? LOW, { node: `Fa${b}`, handle: 'q' }),
+  )
+  const Fbeff = [0, 1, 2, 3].map((b) =>
+    newMux(REPLAY_SEL, { node: `Flopd${b}`, handle: 'q' }, Fe[b] ?? LOW),
+  )
+  const { diff: diffAB, borrow: lessAB } = sub4(Faeff, Fbeff) // lessAB = (Fa < Fb)
+  const { diff: diffBA } = sub4(Fbeff, Faeff)
+  const dF = [0, 1, 2, 3].map((b) => newMux(lessAB, diffBA[b] ?? LOW, diffAB[b] ?? LOW)) // |Fa−Fb|
+  const shifterIn = aSel.map((a, i) => newMux(lessAB, a, bSel[i] ?? LOW)) // the smaller-F magnitude
+  const { out: shifted, overflow: shiftOverflow } = shiftUp(shifterIn, dF)
+  for (let i = 0; i < 40; i++) {
+    link(newMux(lessAB, shifted[i] ?? LOW, aSel[i] ?? LOW), { node: 'alu', handle: `a${i}` })
+    link(newMux(lessAB, bSel[i] ?? LOW, shifted[i] ?? LOW), { node: 'alu', handle: `b${i}` })
+  }
+  const resultF_addsub = [0, 1, 2, 3].map((b) => newMux(lessAB, Fbeff[b] ?? LOW, Faeff[b] ?? LOW)) // max
+  // a ×/÷ with any decimal operand isn't aligned yet → refuse (E) rather than lie (lands in later steps).
+  const fNonzero = buildExpr(['or', orAll(Faeff), orAll(Fbeff)], ctx)
   // ── SIGN-MAGNITUDE sign tracking. Each number is an UNSIGNED 10-digit magnitude + an explicit sign
   // bit (Se = ENTRY, Sa = ACC), so the full ±9,999,999,999 range is usable (the ten's-complement
   // half-range is gone). Slopd = the saved last-operand sign for repeat-equals (parallels lopd).
@@ -4609,6 +4688,21 @@ function buildCalculator(): BlockData {
     ['or', ['or', computeAddSub, { node: 'ctrl', handle: 'capture' }], loadReplayAddSub],
     ctx,
   )
+  // result point position: +/− → max(Fa,Fb) for now (×/÷ point math lands in later steps). Loaded into
+  // Fe (the fent counter, below) and Fa on a result. Fa ← Fe on acc_from_entry; Flopd ← Fe on CAP_EQ.
+  const resultF = resultF_addsub
+  for (let b = 0; b < 4; b++) {
+    const faCopy = newMux({ node: 'fsm', handle: 'acc_from_entry' }, Fe[b] ?? LOW, {
+      node: `Fa${b}`,
+      handle: 'q',
+    })
+    const faLoad = newMux(load, resultF[b] ?? LOW, faCopy)
+    link(newMux({ node: 'fsm', handle: 'clear' }, LOW, faLoad), { node: `Fa${b}`, handle: 'd' })
+    link(newMux(CAP_EQ, Fe[b] ?? LOW, { node: `Flopd${b}`, handle: 'q' }), {
+      node: `Flopd${b}`,
+      handle: 'd',
+    })
+  }
   // result-negate ALU: 0 − aluS = (B−A) magnitude, for the diff-sign |A|<|B| case (needNegate).
   tie('rnalu', 'sub', HIGH)
   for (let i = 0; i < 40; i++) {
@@ -4635,8 +4729,6 @@ function buildCalculator(): BlockData {
   }
   // resultIsZero = NOR over the FINAL muxed magnitude (NOT the ALU output — for ×/÷ the ALU still computes
   // a nonzero subtract that would falsely clear this and emit −0). Forbids −0 for every op.
-  const orAll = (refs: LogicRef[]): LogicRef =>
-    refs.reduce((acc, r) => buildExpr(['or', acc, r], ctx))
   const resultIsZero = buildExpr(['not', orAll(resultMag)], ctx)
   // result SIGN: ×/÷ = XOR of operand signs ; +/− = A's sign (or B's when |A|<|B| on a difference).
   const rawAddSubSign = newMux(needNegate, effBsign, Asign)
@@ -4697,7 +4789,21 @@ function buildCalculator(): BlockData {
     ],
     ctx,
   )
-  const newErr = buildExpr(['or', ['or', addSubOvf, mulOvf], { node: 'div', handle: 'error' }], ctx)
+  // FP errors: precision lost during +/− alignment (a digit shifted off the top), plus a not-yet-built
+  // decimal × or ÷ (refuse with E rather than show a wrong scale — the point math lands in later steps).
+  const shiftOvfErr = buildExpr(['and', addSubSample, shiftOverflow], ctx)
+  const mdDecimalGuard = buildExpr(
+    ['and', ['and', { node: 'ctrl', handle: 'capture' }, ['or', effMul, effDiv]], fNonzero],
+    ctx,
+  )
+  const newErr = buildExpr(
+    [
+      'or',
+      ['or', ['or', addSubOvf, shiftOvfErr], ['or', mulOvf, mdDecimalGuard]],
+      { node: 'div', handle: 'error' },
+    ],
+    ctx,
+  )
   link(
     buildExpr(['and', ['not', anyNewKey], ['or', newErr, { node: 'ff_err', handle: 'q' }]], ctx),
     { node: 'ff_err', handle: 'd' },
@@ -4718,9 +4824,14 @@ function buildCalculator(): BlockData {
   // position counter, so 1,5 means 15 (F=0), 1.5 (F=1) or 0.15 (F=2) depending only on F.
   nodes.push({ id: 'fent', definition: 'block', x: 18000, y: 0, block: COUNTER_UP_EN_4 })
   rail.push('fent')
-  for (let b = 0; b < 4; b++) tie('fent', `l${b}`, LOW)
+  // fent loads 0 at the start of a number (entry_new|clear) and loads the result's F on a compute (load).
+  for (let b = 0; b < 4; b++)
+    link(newMux(load, resultF[b] ?? LOW, LOW), { node: 'fent', handle: `l${b}` })
   link(
-    buildExpr(['or', { node: 'fsm', handle: 'entry_new' }, { node: 'fsm', handle: 'clear' }], ctx),
+    buildExpr(
+      ['or', ['or', { node: 'fsm', handle: 'entry_new' }, { node: 'fsm', handle: 'clear' }], load],
+      ctx,
+    ),
     { node: 'fent', handle: 'load' },
   )
   link(
@@ -4743,9 +4854,18 @@ function buildCalculator(): BlockData {
     'Se',
     'Sa',
     'Slopd',
+    'Fa0',
+    'Fa1',
+    'Fa2',
+    'Fa3',
+    'Flopd0',
+    'Flopd1',
+    'Flopd2',
+    'Flopd3',
   ])
     e('fsm', 'clk', blk, 'clk')
   rail.push('lopd', 'lop0', 'lop1', 'replayActive', 'Se', 'Sa', 'Slopd')
+  rail.push('Fa0', 'Fa1', 'Fa2', 'Fa3', 'Flopd0', 'Flopd1', 'Flopd2', 'Flopd3')
   rail.push(...ctx.ids)
   edges.push(...chainRails(rail, 'calc'))
 

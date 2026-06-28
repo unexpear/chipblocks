@@ -1657,4 +1657,65 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
   test('a new operator after = is NOT a replay (chains the result): 2 × 3 = + 4 = → 10', () => {
     expect(runCalc(['c', 2, '*', 3, '=', '+', 4, '='])).toMatchObject({ display: 10 })
   }, 120000)
+
+  // DECIMAL +/− (floating point): each number carries a point position F; the smaller-F operand is
+  // aligned (shifted up) to F=max before the ALU. Asserting fent (the result's F) too, because the
+  // integer cases all have F=0 and would pass even with a broken aligner. (× and ÷ with decimals are
+  // not aligned yet → they raise E for now, until those increments land.)
+  test('aligned decimal add, both operand orders: 2.30+1.5 and 1.5+2.30 = 3.8', () => {
+    expect(runCalc(['c', 2, '.', 3, 0, '+', 1, '.', 5, '='])).toMatchObject({ value: 3.8, fent: 2 })
+    expect(runCalc(['c', 1, '.', 5, '+', 2, '.', 3, 0, '='])).toMatchObject({ value: 3.8, fent: 2 })
+  }, 60000)
+
+  test('aligned decimal subtract: 3.75 − 1.5 = 2.25', () => {
+    expect(runCalc(['c', 3, '.', 7, 5, '-', 1, '.', 5, '='])).toMatchObject({
+      value: 2.25,
+      fent: 2,
+    })
+  }, 60000)
+
+  test('aligned decimal subtract going negative: 1.5 − 3.75 = −2.25', () => {
+    expect(runCalc(['c', 1, '.', 5, '-', 3, '.', 7, 5, '='])).toMatchObject({
+      value: -2.25,
+      fent: 2,
+    })
+  }, 60000)
+
+  test('equal-F decimal subtract: 0.5 − 2.0 = −1.5', () => {
+    expect(runCalc(['c', 0, '.', 5, '-', 2, '.', 0, '='])).toMatchObject({ value: -1.5, fent: 1 })
+  }, 60000)
+
+  test('negate then aligned add: 1.5 ± + 0.25 = −1.25', () => {
+    expect(runCalc(['c', 1, '.', 5, 'n', '+', 0, '.', 2, 5, '='])).toMatchObject({
+      value: -1.25,
+      fent: 2,
+    })
+  }, 60000)
+
+  test('repeat-equals keeps the point: 1.5 + 2.3 = = → 3.8 then 6.1', () => {
+    expect(runCalc(['c', 1, '.', 5, '+', 2, '.', 3, '='])).toMatchObject({ value: 3.8, fent: 1 })
+    expect(runCalc(['c', 1, '.', 5, '+', 2, '.', 3, '=', '='])).toMatchObject({
+      value: 6.1,
+      fent: 1,
+    })
+  }, 60000)
+
+  test('alignment that loses a digit off the top raises E: 1234567890 + 0.5 → E', () => {
+    expect(runCalc(['c', 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '+', 0, '.', 5, '='])).toMatchObject({
+      error: true,
+    })
+  }, 60000)
+
+  test('integer add still has no point (F=0): 12 + 34 = 46, fent 0', () => {
+    expect(runCalc(['c', 1, 2, '+', 3, 4, '='])).toMatchObject({ value: 46, fent: 0 })
+  }, 60000)
+
+  // ×/÷ with a decimal operand is not aligned yet — refuse with E rather than lie (added in later steps).
+  test('decimal multiply is not supported yet → E: 1.5 × 2.5', () => {
+    expect(runCalc(['c', 1, '.', 5, '*', 2, '.', 5, '='])).toMatchObject({ error: true })
+  }, 120000)
+
+  test('decimal divide is not supported yet → E: 1.5 ÷ 0.5', () => {
+    expect(runCalc(['c', 1, '.', 5, '/', 0, '.', 5, '='])).toMatchObject({ error: true })
+  }, 120000)
 })
