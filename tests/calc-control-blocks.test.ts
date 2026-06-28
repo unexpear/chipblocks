@@ -26,7 +26,7 @@ import {
   MUX2_1BIT,
   SIGN_FF_BLOCK,
 } from '../src/renderer/builtin-blocks.ts'
-import { simulateLogic } from '../src/renderer/logic-sim.ts'
+import { compileLogic, simulateLogic, stepLogic } from '../src/renderer/logic-sim.ts'
 
 const supply = (volts: number) => ({
   nominal_voltage: { value: { kind: 'scalar', amount: volts, unit: 'volt' } },
@@ -1357,27 +1357,33 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
   const runCalc = (
     keys: Array<string | number>,
   ): { display: number; value: number; sig: number; fent: number; error: boolean } => {
+    // Compile the harness ONCE (constant topology; default levels clk LOW, every key LOW, V+ HIGH),
+    // then stepLogic overrides the clock + the pressed key each cycle — the App.tsx fast path, so the
+    // multi-cycle ×/÷ runs in a fraction of the old re-flatten-every-cycle time.
+    const harnessNodes: CanvasNodeLike[] = [
+      { id: 'C', position: { x: 0, y: 0 }, data: { definition: 'block', block: CALCULATOR } },
+      src('vp', true),
+      gnd('g'),
+      src('vclk', false),
+      ...ALLKEYS.map((key) => src(`s_${key}`, false)),
+    ]
+    const harnessEdges: CanvasEdgeLike[] = [
+      w('eclk', 'vclk', 'terminal_positive', 'C', 'clk'),
+      w('ep', 'vp', 'terminal_positive', 'C', 'v_dd'),
+      w('eg', 'C', 'gnd', 'g', 'reference_terminal'),
+      w('eclkn', 'vclk', 'terminal_negative', 'g', 'reference_terminal'),
+      w('epn', 'vp', 'terminal_negative', 'g', 'reference_terminal'),
+      ...ALLKEYS.flatMap((key) => [
+        w(`e_${key}`, `s_${key}`, 'terminal_positive', 'C', key),
+        w(`en_${key}`, `s_${key}`, 'terminal_negative', 'g', 'reference_terminal'),
+      ]),
+    ]
+    const compiled = compileLogic(harnessNodes, harnessEdges)
     const state = new Map<string, boolean>()
     const solve = (active: string, clk: boolean) => {
-      const nodes: CanvasNodeLike[] = [
-        { id: 'C', position: { x: 0, y: 0 }, data: { definition: 'block', block: CALCULATOR } },
-        src('vp', true),
-        gnd('g'),
-        src('vclk', clk),
-      ]
-      const edges: CanvasEdgeLike[] = [
-        w('eclk', 'vclk', 'terminal_positive', 'C', 'clk'),
-        w('ep', 'vp', 'terminal_positive', 'C', 'v_dd'),
-        w('eg', 'C', 'gnd', 'g', 'reference_terminal'),
-        w('eclkn', 'vclk', 'terminal_negative', 'g', 'reference_terminal'),
-        w('epn', 'vp', 'terminal_negative', 'g', 'reference_terminal'),
-      ]
-      for (const key of ALLKEYS) {
-        nodes.push(src(`s_${key}`, key === active))
-        edges.push(w(`e_${key}`, `s_${key}`, 'terminal_positive', 'C', key))
-        edges.push(w(`en_${key}`, `s_${key}`, 'terminal_negative', 'g', 'reference_terminal'))
-      }
-      const r = simulateLogic(nodes, edges, state)
+      const overrides = new Map<string, boolean>([['vclk', clk]])
+      if (active !== 'none') overrides.set(`s_${active}`, true)
+      const r = stepLogic(compiled, overrides, state)
       let display = 0
       for (let d = 0; d < 10; d++) {
         let dig = 0
@@ -1474,5 +1480,76 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
     expect(runCalc(['c', 1, 2, '.', 3, 4])).toMatchObject({ sig: 1234, fent: 2, value: 12.34 })
     expect(runCalc(['c', 1, 2])).toMatchObject({ sig: 12, fent: 0, value: 12 })
     expect(runCalc(['c', 0, '.', 2, 5])).toMatchObject({ sig: 25, fent: 2, value: 0.25 })
+  }, 60000)
+
+  // OVERFLOW → E (real gates): the calc is SIGNED ten's-complement (range ≈ ±5e9), so a result that
+  // leaves the range — a sign flip on +/−, or a magnitude product that can't show positive — raises the
+  // sticky error E, like ÷0. Operands kept under 5e9 so they read positive.
+  test('add overflow (sign flip): 4000000000 + 4000000000 → E', () => {
+    expect(
+      runCalc(['c', 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, '+', 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, '=']),
+    ).toMatchObject({ error: true })
+  }, 60000)
+
+  test('add that stays in range does NOT overflow: 2000000000 + 2000000000 = 4000000000', () => {
+    expect(
+      runCalc(['c', 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, '+', 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, '=']),
+    ).toMatchObject({ display: 4000000000, error: false })
+  }, 60000)
+
+  test('subtraction in range never overflows: 1 − 9 = −8', () => {
+    expect(runCalc(['c', 1, '-', 9, '='])).toMatchObject({ display: -8, error: false })
+  }, 60000)
+
+  test('subtraction can overflow (sign flip): −4000000000 − 4000000000 → E', () => {
+    expect(
+      runCalc(['c', 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'n', '-', 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, '=']),
+    ).toMatchObject({ error: true })
+  }, 60000)
+
+  test('multiply overflow past 10 digits raises the error: 4000000000 × 3 → E', () => {
+    expect(runCalc(['c', 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, '*', 3, '='])).toMatchObject({ error: true })
+  }, 120000)
+
+  test('a product that stays in range does NOT overflow: 2000000000 × 2 = 4000000000', () => {
+    expect(runCalc(['c', 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, '*', 2, '='])).toMatchObject({
+      display: 4000000000,
+      error: false,
+    })
+  }, 120000)
+
+  test('overflow error is not sticky — a fresh calculation clears it', () => {
+    expect(
+      runCalc([
+        'c',
+        4,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        '+',
+        4,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        '=',
+        'c',
+        6,
+        '+',
+        1,
+        '=',
+      ]),
+    ).toMatchObject({ display: 7, error: false })
   }, 60000)
 })

@@ -58,19 +58,22 @@ function sourceIsHigh(params: Parameters | undefined): boolean {
 }
 
 /**
- * Evaluate a canvas of digital blocks as 0/1 logic. Flattens to gates (not transistors), discovers
- * the nets, seeds the ones driven by sources/ground, then sweeps the gates until everything settles.
- *
- * `state` (optional) makes it SEQUENTIAL: a held net→bit map the caller persists across solves. A
- * feedback loop (a latch's cross-coupled outputs) is seeded from it so the loop HOLDS its stored bit
- * instead of going undefined, and the settled result is written back — so a latch holds its value, and a
- * clocked flip-flop / register updates when its clock is toggled and the canvas re-solved.
+ * A canvas compiled to a reusable logic circuit — the expensive part (flattenBlocks over the whole
+ * block hierarchy + the union-find net resolution + the resolved gate list) done ONCE. stepLogic then
+ * re-runs only the cheap sweep with fresh source levels, so a clocked block driven over many cycles
+ * (the calculator's ×/÷ sequencer) doesn't re-flatten ~9000 gates every clock.
  */
-export function simulateLogic(
-  nodes: CanvasNodeLike[],
-  edges: CanvasEdgeLike[],
-  state?: Map<string, boolean>,
-): LogicResult {
+export type CompiledLogic = {
+  gates: { fn: LogicSpec['fn']; ins: string[]; out: string }[]
+  /** Fixed-net seeds in node order. `nodeId` present ⇒ an overridable power-source positive net
+   *  (`high` is its compile-time level); absent ⇒ a hard-fixed net (ground ref / source negative). */
+  seeds: { net: string; high: boolean; nodeId?: string }[]
+  /** Resolve a top-level (nodeId, handle) to its net — for reading outputs back. */
+  portNet: (nodeId: string, handle: string) => string
+}
+
+/** Flatten + net-resolve a canvas once (see CompiledLogic). The heavy work; pair with stepLogic. */
+export function compileLogic(nodes: CanvasNodeLike[], edges: CanvasEdgeLike[]): CompiledLogic {
   const flat = flattenBlocks(nodes, edges, isLogicGate)
 
   // Union-find over terminals → nets (which terminals are wired together).
@@ -111,9 +114,10 @@ export function simulateLogic(
   }
   const netOf = (n: string, h: string) => find(ensure(key(n, h)))
 
-  // Driven nets (sources / ground) + the gate list.
-  const fixed = new Map<string, boolean>()
-  const gates: { fn: LogicSpec['fn']; ins: string[]; out: string }[] = []
+  // Driven-net seeds (sources / ground) + the gate list — built in node order so a step re-seeds them
+  // in exactly the order the original single-shot solve did.
+  const seeds: CompiledLogic['seeds'] = []
+  const gates: CompiledLogic['gates'] = []
   for (const node of flat.nodes) {
     const block = node.data.block
     if (block && isLogicGate(block)) {
@@ -128,11 +132,39 @@ export function simulateLogic(
       continue
     }
     if (node.data.definition === 'ground') {
-      fixed.set(netOf(node.id, 'reference_terminal'), false)
+      seeds.push({ net: netOf(node.id, 'reference_terminal'), high: false })
     } else if (node.data.definition === 'power_source') {
-      fixed.set(netOf(node.id, 'terminal_positive'), sourceIsHigh(node.data.parameters))
-      fixed.set(netOf(node.id, 'terminal_negative'), false)
+      seeds.push({
+        net: netOf(node.id, 'terminal_positive'),
+        high: sourceIsHigh(node.data.parameters),
+        nodeId: node.id,
+      })
+      seeds.push({ net: netOf(node.id, 'terminal_negative'), high: false })
     }
+  }
+  const portNet = (nodeId: string, handle: string): string => {
+    const target = flat.portTarget.get(`${nodeId}/${handle}`)
+    return target ? netOf(target.nodeId, target.handleId) : netOf(nodeId, handle)
+  }
+  return { gates, seeds, portNet }
+}
+
+/**
+ * Run one settle of a compiled circuit. `sourceOverrides` (nodeId → level) overrides specific power
+ * sources for THIS step (e.g. the clock + the pressed key); omitted sources keep their compile-time
+ * level. `state` is the persistent flip-flop memory (seeded, then written back). Identical semantics to
+ * simulateLogic — which is exactly compileLogic + one stepLogic with no overrides.
+ */
+export function stepLogic(
+  compiled: CompiledLogic,
+  sourceOverrides?: Map<string, boolean>,
+  state?: Map<string, boolean>,
+): LogicResult {
+  // Re-seed the driven nets FRESH each step (a released key reads 0, never its old held value); a
+  // source-driven net always wins over stored state.
+  const fixed = new Map<string, boolean>()
+  for (const s of compiled.seeds) {
+    fixed.set(s.net, s.nodeId !== undefined ? (sourceOverrides?.get(s.nodeId) ?? s.high) : s.high)
   }
 
   // Sweep the gates until nothing changes: combinational logic settles in ≤ depth sweeps; a feedback
@@ -144,6 +176,7 @@ export function simulateLogic(
     for (const [net, bit] of state) if (!value.has(net)) value.set(net, bit)
   }
   let settled = true
+  const gates = compiled.gates
   const maxSweeps = gates.length * 2 + 2
   for (let sweep = 0; ; sweep++) {
     let changed = false
@@ -177,12 +210,21 @@ export function simulateLogic(
 
   return {
     settled,
-    value: (nodeId, handle) => {
-      const target = flat.portTarget.get(`${nodeId}/${handle}`)
-      const net = target ? netOf(target.nodeId, target.handleId) : netOf(nodeId, handle)
-      return value.get(net)
-    },
+    value: (nodeId, handle) => value.get(compiled.portNet(nodeId, handle)),
   }
+}
+
+/**
+ * Evaluate a canvas of digital blocks as 0/1 logic. Flattens to gates (not transistors), discovers the
+ * nets, seeds the ones driven by sources/ground, then sweeps the gates until everything settles —
+ * compileLogic + one stepLogic. `state` makes it sequential (a held net→bit map the caller persists).
+ */
+export function simulateLogic(
+  nodes: CanvasNodeLike[],
+  edges: CanvasEdgeLike[],
+  state?: Map<string, boolean>,
+): LogicResult {
+  return stepLogic(compileLogic(nodes, edges), undefined, state)
 }
 
 /**

@@ -3780,6 +3780,7 @@ function buildMultiplier(): BlockData {
   const tie = (node: string, port: string, ref: { node: string; handle: string }) => {
     e(ref.node, ref.handle, node, port)
   }
+  const ctx: ExprCtx = { nodes, edges, ids: [], n: 0 }
   // sequencer → product register (clear / shift / add-result)
   e('seq', 'p_clear', 'preg', 'clear')
   e('seq', 'p_shift', 'preg', 'entry_append')
@@ -3817,7 +3818,40 @@ function buildMultiplier(): BlockData {
   e('seq', 'clk', 'breg', 'clk')
   e('seq', 'clk', 'inner', 'clk')
   e('seq', 'clk', 'outer', 'clk')
-  edges.push(...chainRails(['seq', 'preg', 'breg', 'inner', 'outer', 'alu'], 'mul'))
+  // OVERFLOW latch: the true product needs more than 10 digits when, during an accumulate, P+A carries
+  // out of the top digit (alu.cout on a p_add) OR a nonzero MSD is about to be ×10-shifted off the top
+  // (p_shift with preg's top digit set). Sticky across the run; reset at each multiply's INIT (p_clear).
+  // Real gates — descend to see them.
+  nodes.push({ id: 'ovf', definition: 'block', x: 10000, y: 12000, block: D_FLIPFLOP_BLOCK })
+  const pTop = buildExpr(
+    [
+      'or',
+      ['or', { node: 'preg', handle: 'entry36' }, { node: 'preg', handle: 'entry37' }],
+      ['or', { node: 'preg', handle: 'entry38' }, { node: 'preg', handle: 'entry39' }],
+    ],
+    ctx,
+  )
+  const ovfNow = buildExpr(
+    [
+      'or',
+      ['and', { node: 'alu', handle: 'cout' }, { node: 'seq', handle: 'p_add' }],
+      ['and', { node: 'seq', handle: 'p_shift' }, pTop],
+    ],
+    ctx,
+  )
+  const ovfD = buildExpr(
+    [
+      'or',
+      ovfNow,
+      ['and', { node: 'ovf', handle: 'q' }, ['not', { node: 'seq', handle: 'p_clear' }]],
+    ],
+    ctx,
+  )
+  e(ovfD.node, ovfD.handle, 'ovf', 'd')
+  e('seq', 'clk', 'ovf', 'clk')
+  edges.push(
+    ...chainRails(['seq', 'preg', 'breg', 'inner', 'outer', 'alu', 'ovf', ...ctx.ids], 'mul'),
+  )
 
   const ports: BlockData['ports'] = []
   let left = 14
@@ -3881,6 +3915,14 @@ function buildMultiplier(): BlockData {
     side: 'right',
     offset: right,
     inner: { nodeId: 'seq', handleId: 'done' },
+  })
+  right += 12
+  ports.push({
+    id: 'overflow',
+    label: 'OVF',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'ovf', handleId: 'q' },
   })
   right += 12
   ports.push({
@@ -4493,17 +4535,74 @@ function buildCalculator(): BlockData {
     link(entResult, { node: 'ent', handle: `result${i}` })
     link(m2, { node: 'acc', handle: `result${i}` })
   }
-  // clear the divider's sticky div-by-zero error on any new key activity (clear / operator / digit)
-  link(
+  // Any new key activity (clear / operator / digit) clears the sticky error — both the divider's own
+  // div-by-zero latch and the top-level error latch (below), so the two never desync.
+  const anyNewKey = buildExpr(
+    [
+      'or',
+      ['or', { node: 'fsm', handle: 'clear' }, { node: 'fsm', handle: 'op_latch' }],
+      { node: 'enc', handle: 'digit' },
+    ],
+    ctx,
+  )
+  link(anyNewKey, { node: 'div', handle: 'clear' })
+  // TOP-LEVEL STICKY ERROR (the "E"): raised when a result can't be represented, not just on ÷0. The
+  // calc is SIGNED ten's-complement (a top digit ≥5 reads as negative, so the range is about ±5e9), so
+  // the right add/subtract overflow test is a SIGN FLIP — NOT a raw carry-out, which also fires on
+  // ordinary negative arithmetic (e.g. −2+5). ADD overflows when two same-sign operands give a
+  // different-sign result; SUB (a + −b) when opposite-sign operands do. MUL overflows when the magnitude
+  // product can't be shown as a positive value — >10 digits (the multiplier's own latch) OR top digit
+  // ≥5. ÷0 is the divider's error. CLEAR DOMINATES the latch's D so any new key truly clears it.
+  nodes.push({ id: 'ff_err', definition: 'block', x: 22000, y: 0, block: D_FLIPFLOP_BLOCK })
+  rail.push('ff_err')
+  // top digit (bits 36..39) ≥ 5 — the same condition the signed display uses for "negative".
+  const topGE5 = (node: string, base: string): LogicRef =>
     buildExpr(
       [
         'or',
-        ['or', { node: 'fsm', handle: 'clear' }, { node: 'fsm', handle: 'op_latch' }],
-        { node: 'enc', handle: 'digit' },
+        { node, handle: `${base}39` },
+        [
+          'and',
+          { node, handle: `${base}38` },
+          ['or', { node, handle: `${base}37` }, { node, handle: `${base}36` }],
+        ],
       ],
       ctx,
-    ),
-    { node: 'div', handle: 'clear' },
+    )
+  const signA = topGE5('acc', 'acc') // operand A (accumulator) sign
+  const signB = topGE5('ent', 'entry') // operand B (entry) sign
+  const signR = topGE5('alu', 's') // +/- result sign
+  const resFlip = buildExpr(['xor', signR, signA], ctx)
+  const addSubOvf = buildExpr(
+    [
+      'and',
+      computeAddSub,
+      [
+        'or',
+        // ADD: same-sign operands, result sign flipped
+        [
+          'and',
+          { node: 'fsm', handle: 'alu_add' },
+          ['and', ['not', ['xor', signA, signB]], resFlip],
+        ],
+        // SUB (a + −b): opposite-sign operands, result sign flipped
+        ['and', { node: 'fsm', handle: 'alu_sub' }, ['and', ['xor', signA, signB], resFlip]],
+      ],
+    ],
+    ctx,
+  )
+  const mulOvf = buildExpr(
+    [
+      'and',
+      ['and', { node: 'ctrl', handle: 'capture' }, { node: 'fsm', handle: 'alu_mul' }],
+      ['or', { node: 'mul', handle: 'overflow' }, topGE5('mul', 'product')],
+    ],
+    ctx,
+  )
+  const newErr = buildExpr(['or', ['or', addSubOvf, mulOvf], { node: 'div', handle: 'error' }], ctx)
+  link(
+    buildExpr(['and', ['not', anyNewKey], ['or', newErr, { node: 'ff_err', handle: 'q' }]], ctx),
+    { node: 'ff_err', handle: 'd' },
   )
   // signed display: a ten's-complement value is negative when its top digit (bits 36..39) is >= 5;
   // then the displayed magnitude is −value (= nalu.s). NEG is the minus-sign indicator.
@@ -4543,7 +4642,8 @@ function buildCalculator(): BlockData {
     { node: 'fent', handle: 'en' },
   )
   // shared clock
-  for (const blk of ['ent', 'acc', 'ctrl', 'mul', 'div', 'fent']) e('fsm', 'clk', blk, 'clk')
+  for (const blk of ['ent', 'acc', 'ctrl', 'mul', 'div', 'fent', 'ff_err'])
+    e('fsm', 'clk', blk, 'clk')
   rail.push(...ctx.ids)
   edges.push(...chainRails(rail, 'calc'))
 
@@ -4631,7 +4731,7 @@ function buildCalculator(): BlockData {
     label: 'ERR',
     side: 'right',
     offset: right,
-    inner: { nodeId: 'div', handleId: 'error' },
+    inner: { nodeId: 'ff_err', handleId: 'q' },
   })
   right += 12
   ports.push({

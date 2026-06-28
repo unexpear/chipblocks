@@ -124,7 +124,13 @@ import {
   LensContext,
   type LensMode,
 } from './lens.ts'
-import { digitalSeed, simulateLogic } from './logic-sim.ts'
+import {
+  type CompiledLogic,
+  compileLogic,
+  digitalSeed,
+  simulateLogic,
+  stepLogic,
+} from './logic-sim.ts'
 import { materialCapabilities, validMaterialsByRole } from './material-roles.ts'
 import { MathPanel } from './math-panel.tsx'
 import { buildMathView } from './math-view.ts'
@@ -351,6 +357,83 @@ function decodeCalc(r: ReturnType<typeof simulateLogic>): {
   const error = r.value('calc', 'error') === true
   return { sig, fent, negative, error, value: (negative ? -sig : sig) / 10 ** fent }
 }
+
+// The logic-only harness that runs the real CALCULATOR gate circuit (no analog LEDs). CONSTANT
+// topology — built once with every source at its default level (clock LOW, all keys LOW, V+ HIGH);
+// pressCalcKey compileLogic's it ONCE (cached) and stepLogic overrides the clock + the pressed key
+// each cycle, so the ×/÷ busy loop re-uses the one flatten instead of re-expanding ~9000 gates a cycle.
+const CALC_HARNESS_NODES: Record<string, unknown>[] = [
+  { id: 'calc', position: { x: 0, y: 0 }, data: { definition: 'block', block: CALCULATOR } },
+  {
+    id: 'h_vp',
+    position: { x: 0, y: 0 },
+    data: { definition: 'power_source', parameters: dcSource(5) },
+  },
+  { id: 'h_g', position: { x: 0, y: 0 }, data: { definition: 'ground' } },
+  {
+    id: 'h_clk',
+    position: { x: 0, y: 0 },
+    data: { definition: 'power_source', parameters: dcSource(0) },
+  },
+  ...CALC_KEYS.map((k) => ({
+    id: `h_${k}`,
+    position: { x: 0, y: 0 },
+    data: { definition: 'power_source', parameters: dcSource(0) },
+  })),
+]
+const CALC_HARNESS_EDGES: Record<string, unknown>[] = [
+  {
+    id: 'h_eclk',
+    source: 'h_clk',
+    sourceHandle: 'terminal_positive',
+    target: 'calc',
+    targetHandle: 'clk',
+  },
+  {
+    id: 'h_eclkn',
+    source: 'h_clk',
+    sourceHandle: 'terminal_negative',
+    target: 'h_g',
+    targetHandle: 'reference_terminal',
+  },
+  {
+    id: 'h_ep',
+    source: 'h_vp',
+    sourceHandle: 'terminal_positive',
+    target: 'calc',
+    targetHandle: 'v_dd',
+  },
+  {
+    id: 'h_epn',
+    source: 'h_vp',
+    sourceHandle: 'terminal_negative',
+    target: 'h_g',
+    targetHandle: 'reference_terminal',
+  },
+  {
+    id: 'h_eg',
+    source: 'calc',
+    sourceHandle: 'gnd',
+    target: 'h_g',
+    targetHandle: 'reference_terminal',
+  },
+  ...CALC_KEYS.flatMap((k) => [
+    {
+      id: `h_e_${k}`,
+      source: `h_${k}`,
+      sourceHandle: 'terminal_positive',
+      target: 'calc',
+      targetHandle: k,
+    },
+    {
+      id: `h_en_${k}`,
+      source: `h_${k}`,
+      sourceHandle: 'terminal_negative',
+      target: 'h_g',
+      targetHandle: 'reference_terminal',
+    },
+  ]),
+]
 
 /**
  * Map a loaded / imported CircuitFile to the canvas's React Flow nodes + edges. Shared by Open (a
@@ -3744,88 +3827,21 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // ids, parameters deep-copied so each copy is editable on its own.
   // The calculator's BRAIN is the REAL gate circuit (the CALCULATOR block — keypad encoder + control
   // FSM + entry/acc registers + BCD ALU + ×/÷ sequencers, builtin-blocks.ts). calcSolve clocks it on a
-  // standalone logic-only harness (no analog LEDs — fast): assert the active key line, set the clock,
-  // and run simulateLogic over logicStateRef.current (the persistent flip-flop memory the canvas
-  // re-solve also threads, so the two share one state). One press = a CLK-low solve then a CLK-high
-  // solve — the proven runCalc protocol (calc-control-blocks.test.ts).
+  // standalone logic-only harness (no analog LEDs — fast). The harness topology is CONSTANT, so it is
+  // compileLogic'd ONCE (cached) and each cycle stepLogic only re-seeds the clock + the pressed key and
+  // re-sweeps over logicStateRef.current (the persistent flip-flop memory the canvas re-solve also
+  // threads) — the proven runCalc protocol, fast even for the multi-cycle ×/÷ busy loop.
+  const calcCompiledRef = useRef<CompiledLogic | null>(null)
   const calcSolve = useCallback((active: string, clk: boolean) => {
-    const nodes: Record<string, unknown>[] = [
-      { id: 'calc', position: { x: 0, y: 0 }, data: { definition: 'block', block: CALCULATOR } },
-      {
-        id: 'h_vp',
-        position: { x: 0, y: 0 },
-        data: { definition: 'power_source', parameters: dcSource(5) },
-      },
-      { id: 'h_g', position: { x: 0, y: 0 }, data: { definition: 'ground' } },
-      {
-        id: 'h_clk',
-        position: { x: 0, y: 0 },
-        data: { definition: 'power_source', parameters: dcSource(clk ? 5 : 0) },
-      },
-      ...CALC_KEYS.map((k) => ({
-        id: `h_${k}`,
-        position: { x: 0, y: 0 },
-        data: { definition: 'power_source', parameters: dcSource(k === active ? 5 : 0) },
-      })),
-    ]
-    const edges: Record<string, unknown>[] = [
-      {
-        id: 'h_eclk',
-        source: 'h_clk',
-        sourceHandle: 'terminal_positive',
-        target: 'calc',
-        targetHandle: 'clk',
-      },
-      {
-        id: 'h_eclkn',
-        source: 'h_clk',
-        sourceHandle: 'terminal_negative',
-        target: 'h_g',
-        targetHandle: 'reference_terminal',
-      },
-      {
-        id: 'h_ep',
-        source: 'h_vp',
-        sourceHandle: 'terminal_positive',
-        target: 'calc',
-        targetHandle: 'v_dd',
-      },
-      {
-        id: 'h_epn',
-        source: 'h_vp',
-        sourceHandle: 'terminal_negative',
-        target: 'h_g',
-        targetHandle: 'reference_terminal',
-      },
-      {
-        id: 'h_eg',
-        source: 'calc',
-        sourceHandle: 'gnd',
-        target: 'h_g',
-        targetHandle: 'reference_terminal',
-      },
-      ...CALC_KEYS.flatMap((k) => [
-        {
-          id: `h_e_${k}`,
-          source: `h_${k}`,
-          sourceHandle: 'terminal_positive',
-          target: 'calc',
-          targetHandle: k,
-        },
-        {
-          id: `h_en_${k}`,
-          source: `h_${k}`,
-          sourceHandle: 'terminal_negative',
-          target: 'h_g',
-          targetHandle: 'reference_terminal',
-        },
-      ]),
-    ]
-    return simulateLogic(
-      nodes as unknown as BlockNodeLike[],
-      edges as unknown as BlockEdgeLike[],
-      logicStateRef.current,
-    )
+    if (calcCompiledRef.current === null) {
+      calcCompiledRef.current = compileLogic(
+        CALC_HARNESS_NODES as unknown as BlockNodeLike[],
+        CALC_HARNESS_EDGES as unknown as BlockEdgeLike[],
+      )
+    }
+    const overrides = new Map<string, boolean>([['h_clk', clk]])
+    if (active !== 'none') overrides.set(`h_${active}`, true)
+    return stepLogic(calcCompiledRef.current, overrides, logicStateRef.current)
   }, [])
   // Press a key: clock the real FSM once (CLK-low then CLK-high), then free-run the clock while a ×/÷
   // sequencer is BUSY (read busy from the SYNCHRONOUS solve return), release the key, and re-solve the
