@@ -1552,4 +1552,31 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
       ]),
     ).toMatchObject({ display: 7, error: false })
   }, 60000)
+
+  // REPEAT-EQUALS (real gates): a bare '=' replays the last op + operand on the shown value.
+  test('repeat equals replays the last add: 5 + 3 =, ==, === → 8, 11, 14', () => {
+    expect(runCalc(['c', 5, '+', 3, '='])).toMatchObject({ display: 8 })
+    expect(runCalc(['c', 5, '+', 3, '=', '='])).toMatchObject({ display: 11 })
+    expect(runCalc(['c', 5, '+', 3, '=', '=', '='])).toMatchObject({ display: 14 })
+  }, 60000)
+
+  test('a new number then = applies the last op to it: 5 + 3 = 7 = → 10', () => {
+    expect(runCalc(['c', 5, '+', 3, '=', 7, '='])).toMatchObject({ display: 10 })
+  }, 60000)
+
+  test('repeat equals replays a multiply: 2 × 3 = = → 18', () => {
+    expect(runCalc(['c', 2, '*', 3, '=', '='])).toMatchObject({ display: 18 })
+  }, 120000)
+
+  test('a new number then = applies the last multiply: 2 × 3 = 7 = → 21', () => {
+    expect(runCalc(['c', 2, '*', 3, '=', 7, '='])).toMatchObject({ display: 21 })
+  }, 120000)
+
+  test('repeat equals replays a divide: 100 ÷ 2 = = → 25', () => {
+    expect(runCalc(['c', 1, 0, 0, '/', 2, '=', '='])).toMatchObject({ display: 25 })
+  }, 120000)
+
+  test('a new operator after = is NOT a replay (chains the result): 2 × 3 = + 4 = → 10', () => {
+    expect(runCalc(['c', 2, '*', 3, '=', '+', 4, '='])).toMatchObject({ display: 10 })
+  }, 120000)
 })

@@ -4465,23 +4465,108 @@ function buildCalculator(): BlockData {
   e('enc', 'op1', 'fsm', 'op1')
   e('enc', 'is_dot', 'fsm', 'isdp')
   for (let b = 0; b < 4; b++) e('enc', `d${b}`, 'ent', `keypad${b}`)
-  // FSM → controller; controller → sequencers
-  e('fsm', 'compute', 'ctrl', 'compute')
-  e('fsm', 'alu_mul', 'ctrl', 'is_mul')
-  e('fsm', 'alu_div', 'ctrl', 'is_div')
+  // ── REPEAT-EQUALS (real gates): a bare '=' replays the last operation. Capture the op + the 2nd
+  // operand on the FIRST '=' (op pending), and on a later bare '=' (no op pending) re-run
+  // result <lastOp> lastOperand. Real registers + a held replay-mode flip-flop, NO code.
+  const CAP_EQ = buildExpr(
+    ['and', { node: 'enc', handle: 'is_eq' }, { node: 'fsm', handle: 'st_opvalid' }],
+    ctx,
+  )
+  const REPLAY = buildExpr(
+    ['and', { node: 'enc', handle: 'is_eq' }, ['not', { node: 'fsm', handle: 'st_opvalid' }]],
+    ctx,
+  )
+  // REPLAY is a one-cycle Mealy pulse; a ×/÷ runs MANY cycles, so HOLD a replay-active flip-flop across
+  // the busy window (else the operand muxes revert mid-sequence and the result corrupts). The unified
+  // REPLAY_SEL (pulse OR held) drives every replay mux for the whole sequence.
+  nodes.push({
+    id: 'replayActive',
+    definition: 'block',
+    x: 20000,
+    y: 8000,
+    block: D_FLIPFLOP_BLOCK,
+  })
+  link(
+    buildExpr(
+      [
+        'or',
+        REPLAY,
+        ['and', { node: 'replayActive', handle: 'q' }, { node: 'ctrl', handle: 'busy' }],
+      ],
+      ctx,
+    ),
+    { node: 'replayActive', handle: 'd' },
+  )
+  const REPLAY_SEL = buildExpr(['or', REPLAY, { node: 'replayActive', handle: 'q' }], ctx)
+  // LAST-OP: two recirculating D-FFs, loaded with the latched op on CAP_EQ.
+  nodes.push({ id: 'lop0', definition: 'block', x: 20000, y: 9000, block: D_FLIPFLOP_BLOCK })
+  nodes.push({ id: 'lop1', definition: 'block', x: 20000, y: 10000, block: D_FLIPFLOP_BLOCK })
+  link(newMux(CAP_EQ, { node: 'fsm', handle: 'st_op0' }, { node: 'lop0', handle: 'q' }), {
+    node: 'lop0',
+    handle: 'd',
+  })
+  link(newMux(CAP_EQ, { node: 'fsm', handle: 'st_op1' }, { node: 'lop1', handle: 'q' }), {
+    node: 'lop1',
+    handle: 'd',
+  })
+  // LAST-OPERAND: latch ENTRY (the 2nd operand) on CAP_EQ — an ENTRY_REGISTER_10 used as a plain latch.
+  nodes.push({ id: 'lopd', definition: 'block', x: 20000, y: 11000, block: ENTRY_REGISTER_10 })
+  tie('lopd', 'entry_new', LOW)
+  tie('lopd', 'entry_append', LOW)
+  tie('lopd', 'clear', LOW)
+  for (let b = 0; b < 4; b++) tie('lopd', `keypad${b}`, LOW)
+  link(CAP_EQ, { node: 'lopd', handle: 'compute' })
+  for (let i = 0; i < 40; i++) e('ent', `entry${i}`, 'lopd', `result${i}`)
+  // Effective op = the latched-op decode while replaying, else the FSM's op (same 2-bit code as the FSM:
+  // +=00, −=01, ×=10, ÷=11).
+  const rAdd = buildExpr(
+    ['and', ['not', { node: 'lop0', handle: 'q' }], ['not', { node: 'lop1', handle: 'q' }]],
+    ctx,
+  )
+  const rSub = buildExpr(
+    ['and', { node: 'lop0', handle: 'q' }, ['not', { node: 'lop1', handle: 'q' }]],
+    ctx,
+  )
+  const rMul = buildExpr(
+    ['and', ['not', { node: 'lop0', handle: 'q' }], { node: 'lop1', handle: 'q' }],
+    ctx,
+  )
+  const rDiv = buildExpr(['and', { node: 'lop0', handle: 'q' }, { node: 'lop1', handle: 'q' }], ctx)
+  const effAdd = newMux(REPLAY_SEL, rAdd, { node: 'fsm', handle: 'alu_add' })
+  const effSub = newMux(REPLAY_SEL, rSub, { node: 'fsm', handle: 'alu_sub' })
+  const effMul = newMux(REPLAY_SEL, rMul, { node: 'fsm', handle: 'alu_mul' })
+  const effDiv = newMux(REPLAY_SEL, rDiv, { node: 'fsm', handle: 'alu_div' })
+
+  // FSM (or a replay) → controller; controller → sequencers
+  link(buildExpr(['or', { node: 'fsm', handle: 'compute' }, REPLAY], ctx), {
+    node: 'ctrl',
+    handle: 'compute',
+  })
+  link(effMul, { node: 'ctrl', handle: 'is_mul' })
+  link(effDiv, { node: 'ctrl', handle: 'is_div' })
   e('ctrl', 'start_mul', 'mul', 'start')
   e('ctrl', 'start_div', 'div', 'start')
-  // operands: ACC → a, ENTRY → b, for the ALU and both sequencers; ENTRY → ACC (copy source)
+  // operands: normally A = ACC, B = ENTRY; on a REPLAY A = ENTRY (the shown result) and B = the saved
+  // last operand. Per-bit muxes select, wired to the ALU + both sequencers; the overflow sign check
+  // reads them back off the ALU's a/b inputs. ENTRY → ACC stays the acc_from_entry copy source.
   for (let i = 0; i < 40; i++) {
-    e('acc', `acc${i}`, 'alu', `a${i}`)
-    e('acc', `acc${i}`, 'mul', `a${i}`)
-    e('acc', `acc${i}`, 'div', `a${i}`)
-    e('ent', `entry${i}`, 'alu', `b${i}`)
-    e('ent', `entry${i}`, 'mul', `b${i}`)
-    e('ent', `entry${i}`, 'div', `b${i}`)
+    const a = newMux(
+      REPLAY_SEL,
+      { node: 'ent', handle: `entry${i}` },
+      { node: 'acc', handle: `acc${i}` },
+    )
+    const b = newMux(
+      REPLAY_SEL,
+      { node: 'lopd', handle: `entry${i}` },
+      { node: 'ent', handle: `entry${i}` },
+    )
+    for (const blk of ['alu', 'mul', 'div']) {
+      link(a, { node: blk, handle: `a${i}` })
+      link(b, { node: blk, handle: `b${i}` })
+    }
     e('ent', `entry${i}`, 'acc', `entry${i}`)
   }
-  e('fsm', 'alu_sub', 'alu', 'sub')
+  link(effSub, { node: 'alu', handle: 'sub' })
   // FSM → register control
   e('fsm', 'entry_new', 'ent', 'entry_new')
   e('fsm', 'entry_append', 'ent', 'entry_append')
@@ -4502,7 +4587,12 @@ function buildCalculator(): BlockData {
     ],
     ctx,
   )
-  const load = buildExpr(['or', computeAddSub, { node: 'ctrl', handle: 'capture' }], ctx)
+  // load result → ENTRY+ACC on a normal +/− compute, a ×/÷ capture, OR a replayed +/−.
+  const loadReplayAddSub = buildExpr(['and', REPLAY, ['or', effAdd, effSub]], ctx)
+  const load = buildExpr(
+    ['or', ['or', computeAddSub, { node: 'ctrl', handle: 'capture' }], loadReplayAddSub],
+    ctx,
+  )
   // negate ALU: 0 − ENTRY = −ENTRY (ten's complement) — for the ± key and the signed display
   tie('nalu', 'sub', HIGH)
   for (let i = 0; i < 40; i++) {
@@ -4518,15 +4608,11 @@ function buildCalculator(): BlockData {
   // result mux per bit: alu_mul ? product : (alu_div ? quotient : ALU sum); ENTRY also takes −ENTRY on ±
   for (let i = 0; i < 40; i++) {
     const m1 = newMux(
-      { node: 'fsm', handle: 'alu_div' },
+      effDiv,
       { node: 'div', handle: `quotient${i}` },
       { node: 'alu', handle: `s${i}` },
     )
-    const m2 = newMux(
-      { node: 'fsm', handle: 'alu_mul' },
-      { node: 'mul', handle: `product${i}` },
-      m1,
-    )
+    const m2 = newMux(effMul, { node: 'mul', handle: `product${i}` }, m1)
     const entResult = newMux(
       { node: 'enc', handle: 'is_pm' },
       { node: 'nalu', handle: `s${i}` },
@@ -4569,24 +4655,23 @@ function buildCalculator(): BlockData {
       ],
       ctx,
     )
-  const signA = topGE5('acc', 'acc') // operand A (accumulator) sign
-  const signB = topGE5('ent', 'entry') // operand B (entry) sign
+  // Signs of the EFFECTIVE operands — read off the ALU's a/b inputs (which carry the replay muxes), so a
+  // replayed op is checked too. The op + sample are effective as well (a bare '=' replay still latches E).
+  const signA = topGE5('alu', 'a') // operand A sign
+  const signB = topGE5('alu', 'b') // operand B sign
   const signR = topGE5('alu', 's') // +/- result sign
   const resFlip = buildExpr(['xor', signR, signA], ctx)
+  const addSubSample = buildExpr(['or', computeAddSub, loadReplayAddSub], ctx)
   const addSubOvf = buildExpr(
     [
       'and',
-      computeAddSub,
+      addSubSample,
       [
         'or',
         // ADD: same-sign operands, result sign flipped
-        [
-          'and',
-          { node: 'fsm', handle: 'alu_add' },
-          ['and', ['not', ['xor', signA, signB]], resFlip],
-        ],
+        ['and', effAdd, ['and', ['not', ['xor', signA, signB]], resFlip]],
         // SUB (a + −b): opposite-sign operands, result sign flipped
-        ['and', { node: 'fsm', handle: 'alu_sub' }, ['and', ['xor', signA, signB], resFlip]],
+        ['and', effSub, ['and', ['xor', signA, signB], resFlip]],
       ],
     ],
     ctx,
@@ -4594,7 +4679,7 @@ function buildCalculator(): BlockData {
   const mulOvf = buildExpr(
     [
       'and',
-      ['and', { node: 'ctrl', handle: 'capture' }, { node: 'fsm', handle: 'alu_mul' }],
+      ['and', { node: 'ctrl', handle: 'capture' }, effMul],
       ['or', { node: 'mul', handle: 'overflow' }, topGE5('mul', 'product')],
     ],
     ctx,
@@ -4642,8 +4727,21 @@ function buildCalculator(): BlockData {
     { node: 'fent', handle: 'en' },
   )
   // shared clock
-  for (const blk of ['ent', 'acc', 'ctrl', 'mul', 'div', 'fent', 'ff_err'])
+  for (const blk of [
+    'ent',
+    'acc',
+    'ctrl',
+    'mul',
+    'div',
+    'fent',
+    'ff_err',
+    'lopd',
+    'lop0',
+    'lop1',
+    'replayActive',
+  ])
     e('fsm', 'clk', blk, 'clk')
+  rail.push('lopd', 'lop0', 'lop1', 'replayActive')
   rail.push(...ctx.ids)
   edges.push(...chainRails(rail, 'calc'))
 
