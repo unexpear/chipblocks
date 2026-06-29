@@ -1711,8 +1711,26 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
   }, 60000)
 
   // ×/÷ with a decimal operand is not aligned yet — refuse with E rather than lie (added in later steps).
-  test('decimal multiply is not supported yet → E: 1.5 × 2.5', () => {
-    expect(runCalc(['c', 1, '.', 5, '*', 2, '.', 5, '='])).toMatchObject({ error: true })
+  test('decimal multiply lines up the point: 1.5 × 2.5 = 3.75', () => {
+    expect(runCalc(['c', 1, '.', 5, '*', 2, '.', 5, '='])).toMatchObject({ value: 3.75, fent: 2 })
+  }, 120000)
+
+  test('decimal multiply keeps trailing zeros: 0.25 × 4 = 1.00', () => {
+    expect(runCalc(['c', 0, '.', 2, 5, '*', 4, '='])).toMatchObject({ value: 1, fent: 2, sig: 100 })
+  }, 120000)
+
+  test('one decimal operand: 2.5 × 2 = 5.0', () => {
+    expect(runCalc(['c', 2, '.', 5, '*', 2, '='])).toMatchObject({ value: 5, fent: 1 })
+  }, 120000)
+
+  test('integer multiply still has no point: 12 × 34 = 408 (F0)', () => {
+    expect(runCalc(['c', 1, 2, '*', 3, 4, '='])).toMatchObject({ value: 408, fent: 0 })
+  }, 120000)
+
+  test('a product needing >10 fractional places overflows: 0.000001 × 0.00001 → E', () => {
+    expect(runCalc(['c', 0, '.', 0, 0, 0, 0, 0, 1, '*', 0, '.', 0, 0, 0, 0, 1, '='])).toMatchObject(
+      { error: true },
+    )
   }, 120000)
 
   test('decimal divide is not supported yet → E: 1.5 ÷ 0.5', () => {

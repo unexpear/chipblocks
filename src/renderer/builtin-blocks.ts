@@ -4539,6 +4539,18 @@ function buildCalculator(): BlockData {
     }
     return { diff, borrow: bin }
   }
+  // 4-bit binary add a + b → { sum[4], carry } (the 5th bit). Used for the multiply point position Fa+Fb.
+  const add4 = (a: LogicRef[], b: LogicRef[]): { sum: LogicRef[]; carry: LogicRef } => {
+    const sum: LogicRef[] = []
+    let cin: LogicRef = LOW
+    for (let i = 0; i < 4; i++) {
+      const ai = a[i] ?? LOW
+      const bi = b[i] ?? LOW
+      sum.push(buildExpr(['xor', ['xor', ai, bi], cin], ctx))
+      cin = buildExpr(['or', ['or', ['and', ai, bi], ['and', ai, cin]], ['and', bi, cin]], ctx)
+    }
+    return { sum, carry: cin }
+  }
   // BARREL-SHIFT a 10-digit BCD magnitude UP by dF digit positions (×10^dF): 4 log-stages (shift 1,2,4,8
   // digits = 4,8,16,32 bits), each gated by a dF bit; bits pushed past the top digit become overflow.
   const shiftUp = (
@@ -4710,8 +4722,18 @@ function buildCalculator(): BlockData {
     link(newMux(lessAB, bSel[i] ?? LOW, shifted[i] ?? LOW), { node: 'alu', handle: `b${i}` })
   }
   const resultF_addsub = [0, 1, 2, 3].map((b) => newMux(lessAB, Fbeff[b] ?? LOW, Faeff[b] ?? LOW)) // max
-  // a ×/÷ with any decimal operand isn't aligned yet → refuse (E) rather than lie (lands in later steps).
+  // a ÷ with any decimal operand isn't supported yet → refuse (E) rather than lie (lands in the ÷ step).
   const fNonzero = buildExpr(['or', orAll(Faeff), orAll(Fbeff)], ctx)
+  // multiply point position = Fa + Fb (5-bit, carry kept); >10 fractional places can't be shown → E.
+  const { sum: Fsum, carry: Fcarry } = add4(Faeff, Fbeff)
+  const fSumGt10 = buildExpr(
+    [
+      'or',
+      Fcarry,
+      ['and', Fsum[3] ?? LOW, ['or', Fsum[2] ?? LOW, ['and', Fsum[1] ?? LOW, Fsum[0] ?? LOW]]],
+    ],
+    ctx,
+  )
   // ── SIGN-MAGNITUDE sign tracking. Each number is an UNSIGNED 10-digit magnitude + an explicit sign
   // bit (Se = ENTRY, Sa = ACC), so the full ±9,999,999,999 range is usable (the ten's-complement
   // half-range is gone). Slopd = the saved last-operand sign for repeat-equals (parallels lopd).
@@ -4757,7 +4779,7 @@ function buildCalculator(): BlockData {
   )
   // result point position: +/− → max(Fa,Fb) for now (×/÷ point math lands in later steps). Loaded into
   // Fe (the fent counter, below) and Fa on a result. Fa ← Fe on acc_from_entry; Flopd ← Fe on CAP_EQ.
-  const resultF = resultF_addsub
+  const resultF = [0, 1, 2, 3].map((b) => newMux(effMul, Fsum[b] ?? LOW, resultF_addsub[b] ?? LOW)) // × → Fa+Fb ; +/− → max(Fa,Fb) ; (÷ point math lands later)
   for (let b = 0; b < 4; b++) {
     const faCopy = newMux({ node: 'fsm', handle: 'acc_from_entry' }, Fe[b] ?? LOW, {
       node: `Fa${b}`,
@@ -4856,17 +4878,21 @@ function buildCalculator(): BlockData {
     ],
     ctx,
   )
-  // FP errors: precision lost during +/− alignment (a digit shifted off the top), plus a not-yet-built
-  // decimal × or ÷ (refuse with E rather than show a wrong scale — the point math lands in later steps).
+  // FP errors: precision lost during +/− alignment (a digit shifted off the top); a × whose point would
+  // need >10 fractional places (Fa+Fb>10); and a not-yet-built decimal ÷ (refuse with E until that step).
   const shiftOvfErr = buildExpr(['and', addSubSample, shiftOverflow], ctx)
-  const mdDecimalGuard = buildExpr(
-    ['and', ['and', { node: 'ctrl', handle: 'capture' }, ['or', effMul, effDiv]], fNonzero],
+  const mulFovf = buildExpr(
+    ['and', ['and', { node: 'ctrl', handle: 'capture' }, effMul], fSumGt10],
+    ctx,
+  )
+  const divDecimalGuard = buildExpr(
+    ['and', ['and', { node: 'ctrl', handle: 'capture' }, effDiv], fNonzero],
     ctx,
   )
   const newErr = buildExpr(
     [
       'or',
-      ['or', ['or', addSubOvf, shiftOvfErr], ['or', mulOvf, mdDecimalGuard]],
+      ['or', ['or', addSubOvf, shiftOvfErr], ['or', mulOvf, ['or', mulFovf, divDecimalGuard]]],
       { node: 'div', handle: 'error' },
     ],
     ctx,
