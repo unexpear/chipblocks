@@ -5722,6 +5722,97 @@ export const DOT_MATRIX_MUX_8X8: BlockData = dotMatrixMultiplexed(8, 8)
 export const DOT_MATRIX_MUX_16X16: BlockData = dotMatrixMultiplexed(16, 16)
 
 /**
+ * ACTIVE-MATRIX PIXEL (2T1C) — the AMOLED/TFT cell that makes HIGH-RESOLUTION screens physically
+ * possible, and the #1 piece a passive matrix is missing. Unlike passive multiplexing (one row lit at a
+ * time, dimmed by the duty cycle so it caps at a few hundred rows), each pixel here holds its OWN
+ * brightness: a SELECT transistor (NMOS) passes the column DATA onto a storage CAPACITOR when its row is
+ * addressed; the cap holds that voltage on the gate of a DRIVE transistor (PMOS), which keeps sourcing
+ * the LED's current — at a brightness SET BY the stored voltage (real analog grey) — even after the row
+ * is deselected and the scanner moves on. So every pixel stays lit all frame and the row count is no
+ * longer limited by the scan duty cycle. Two real MOSFETs + a real capacitor + a real LED. Descend to see.
+ */
+function buildActiveMatrixPixel(): BlockData {
+  const nodes: BlockData['nodes'] = [
+    {
+      id: 'msel',
+      definition: 'transistor_mosfet_nmos',
+      x: 0,
+      y: 0,
+      parameters: defaultParameters('transistor_mosfet_nmos'),
+    },
+    {
+      id: 'mdrv',
+      definition: 'transistor_mosfet_pmos',
+      x: 300,
+      y: 0,
+      parameters: defaultParameters('transistor_mosfet_pmos'),
+    },
+    {
+      id: 'cs',
+      definition: 'capacitor',
+      x: 150,
+      y: 160,
+      parameters: defaultParameters('capacitor'),
+    },
+    { id: 'led', definition: 'led', x: 300, y: 220, parameters: defaultParameters('led') },
+  ]
+  const edges: BlockData['edges'] = [
+    // storage node: select transistor's source → drive transistor's gate → capacitor top plate
+    { id: 'p_a1', source: 'msel', sourceHandle: 'source', target: 'mdrv', targetHandle: 'gate' },
+    {
+      id: 'p_a2',
+      source: 'msel',
+      sourceHandle: 'source',
+      target: 'cs',
+      targetHandle: 'terminal_a',
+    },
+    // the drive transistor sources the LED's current; cap bottom plate + LED cathode share ground
+    { id: 'p_drv', source: 'mdrv', sourceHandle: 'drain', target: 'led', targetHandle: 'anode' },
+    {
+      id: 'p_gnd',
+      source: 'cs',
+      sourceHandle: 'terminal_b',
+      target: 'led',
+      targetHandle: 'cathode',
+    },
+  ]
+  const ports: BlockData['ports'] = [
+    {
+      id: 'scan',
+      label: 'SCAN',
+      side: 'left',
+      offset: 14,
+      inner: { nodeId: 'msel', handleId: 'gate' },
+    },
+    {
+      id: 'data',
+      label: 'DATA',
+      side: 'left',
+      offset: 36,
+      inner: { nodeId: 'msel', handleId: 'drain' },
+    },
+    {
+      id: 'vdd',
+      label: 'V+',
+      side: 'top',
+      offset: 18,
+      inner: { nodeId: 'mdrv', handleId: 'source' },
+    },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'bottom',
+      offset: 18,
+      inner: { nodeId: 'led', handleId: 'cathode' },
+    },
+  ]
+  return { name: 'Active-Matrix Pixel (2T1C)', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** One AMOLED/TFT active-matrix pixel — select + drive MOSFETs, a storage cap, and the LED. */
+export const ACTIVE_MATRIX_PIXEL: BlockData = buildActiveMatrixPixel()
+
+/**
  * ROW SCANNER — the controller that makes a multiplexed matrix show a whole picture. A real synchronous
  * up-counter (always counting) tracks the current row; a binary→one-hot decoder then drives EXACTLY that
  * one row line HIGH (every other low). One clock tick advances to the next row; run it fast and the rows
@@ -6384,6 +6475,7 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   dot_matrix_rgb_7x7: DOT_MATRIX_RGB_7X7,
   dot_matrix_mux_8x8: DOT_MATRIX_MUX_8X8,
   dot_matrix_mux_16x16: DOT_MATRIX_MUX_16X16,
+  active_matrix_pixel: ACTIVE_MATRIX_PIXEL,
   row_scanner_8: ROW_SCANNER_8,
   row_scanner_16: ROW_SCANNER_16,
   display_seven_segment_bare: SEVEN_SEGMENT_BARE,
