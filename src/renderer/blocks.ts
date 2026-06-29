@@ -99,7 +99,7 @@ export type BlockData = {
    *  figure-8 digit whose segments light from the block's seven inner `led_<a..g>` parts;
    *  `seven_segment_multi` draws `digits` such digits with a decimal point + comma between each pair.
    *  Still a normal block underneath: it flattens to those real LED+resistor legs for the solver. */
-  display?: 'seven_segment' | 'seven_segment_multi'
+  display?: 'seven_segment' | 'seven_segment_multi' | 'separator'
   /** For `seven_segment_multi`: how many figure-8 digits the face draws (with a point + comma between
    *  each adjacent pair). The real LED+resistor hardware inside scales with this. */
   digits?: number

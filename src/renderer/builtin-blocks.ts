@@ -1498,6 +1498,73 @@ function sevenSegmentDisplay(): BlockData {
 /** A single seven-segment digit — a real bare display behind seven current-limiting resistors. */
 export const SEVEN_SEGMENT_DISPLAY: BlockData = sevenSegmentDisplay()
 
+/** A tiny standalone display separator — a decimal-point LED + a thousands-comma LED on one common
+ *  cathode, each behind a current-limiting resistor. It sits in its OWN small block between calculator
+ *  digits (not crammed onto a digit); drive seg_dp / seg_comma high to light the point / comma. */
+function displaySeparator(): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const segs = ['dp', 'comma'] as const
+  segs.forEach((seg, i) => {
+    nodes.push({
+      id: `led_${seg}`,
+      definition: 'led',
+      x: 40,
+      y: i * 70,
+      parameters: defaultParameters('led'),
+    })
+    nodes.push({
+      id: `r_${seg}`,
+      definition: 'resistor',
+      x: 0,
+      y: i * 70,
+      parameters: SEG_RESISTOR,
+    })
+    edges.push({
+      id: `rl_${seg}`,
+      source: `r_${seg}`,
+      sourceHandle: 'terminal_b',
+      target: `led_${seg}`,
+      targetHandle: 'anode',
+    })
+    if (i > 0)
+      edges.push({
+        id: `cc_${seg}`,
+        source: 'led_dp',
+        sourceHandle: 'cathode',
+        target: `led_${seg}`,
+        targetHandle: 'cathode',
+      })
+    ports.push({
+      id: `seg_${seg}`,
+      label: seg.toUpperCase(),
+      side: 'left',
+      offset: 14 + i * 18,
+      inner: { nodeId: `r_${seg}`, handleId: 'terminal_a' },
+    })
+  })
+  ports.push({
+    id: 'common',
+    label: 'GND',
+    side: 'right',
+    offset: 14,
+    inner: { nodeId: 'led_dp', handleId: 'cathode' },
+  })
+  return {
+    name: 'Separator',
+    display: 'separator',
+    size: { width: 36, height: 120 },
+    origin: { x: 0, y: 0 },
+    nodes,
+    edges,
+    ports,
+  }
+}
+
+/** A tiny decimal-point + comma separator module, placed between calculator digits. */
+export const DISPLAY_SEPARATOR: BlockData = displaySeparator()
+
 /**
  * BARE SEVEN-SEGMENT DISPLAY — the REAL raw component, exactly like a seven-segment display you buy:
  * seven LED segments (a–g) in the figure-8 on a shared common cathode, with its diffuser look but NO
@@ -5533,6 +5600,7 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   memory_sram_cell: SRAM_CELL_BLOCK,
   memory_sram_word_4bit: SRAM_WORD_4BIT,
   display_seven_segment: SEVEN_SEGMENT_DISPLAY,
+  display_separator: DISPLAY_SEPARATOR,
   display_seven_segment_bare: SEVEN_SEGMENT_BARE,
   // Every multi-digit size in DIGIT_DISPLAY_SIZES — the shipped module (with resistors) and the bare
   // raw version (LEDs only), both from the one parameterized generator.

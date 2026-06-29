@@ -3859,16 +3859,39 @@ function Canvas({ project }: { project: ProjectChoice }) {
         r = calcSolve('none', true) // free-run the clock while the ×/÷ sequencer works
       }
       r = calcSolve('none', false) // release: the gate result is now stable on the display ports
-      // Drive the on-canvas decoders from the REAL gate result (display{n} = the signed-magnitude BCD
-      // bit). Setting these sources triggers the light always-on solve, which lights the LEDs. The
-      // ~9000-gate calculator itself runs ONLY here (the harness), never on the canvas — so the canvas
-      // stays a light decoder+display chain (no transistor-flatten of the whole machine on every render).
+      // Drive the on-canvas display from the REAL gate result. calcin_{bit} = the magnitude BCD bit;
+      // calcblk_{d} blanks a leading-zero digit (the decoder's BI line); calcdp_{d} lights the decimal
+      // point at the radix (digit F); calccomma_{d} lights a thousands comma. F and the digit values come
+      // straight off the gates; the comma grouping + blanking is display formatting (like a real chip's
+      // display driver). The ~9000-gate calculator runs ONLY here (the harness), never on the canvas.
+      let F = 0
+      for (let b = 0; b < 4; b++) if (r.value('calc', `f_ent${b}`) === true) F |= 1 << b
+      const digOf = (d: number) => {
+        let v = 0
+        for (let b = 0; b < 4; b++) if (r.value('calc', `display${d * 4 + b}`) === true) v |= 1 << b
+        return v
+      }
+      let hiNonzero = -1
+      for (let d = 0; d < 10; d++) if (digOf(d) !== 0) hiNonzero = d
+      const msdInt = Math.max(F, hiNonzero) // highest shown integer digit (keep the ones place even if 0)
+      const lvl = (nid: string): number | null => {
+        let m = /^calcin_(\d+)$/.exec(nid)
+        if (m?.[1] !== undefined) return r.value('calc', `display${m[1]}`) === true ? 5 : 0
+        m = /^calcblk_(\d+)$/.exec(nid)
+        if (m?.[1] !== undefined) return Number(m[1]) > msdInt ? 5 : 0 // blank leading zeros
+        m = /^calcdp_(\d+)$/.exec(nid)
+        if (m?.[1] !== undefined) return F >= 1 && Number(m[1]) === F ? 5 : 0 // point right of digit F
+        m = /^calccomma_(\d+)$/.exec(nid)
+        if (m?.[1] !== undefined) {
+          const d = Number(m[1])
+          return d > F && (d - F) % 3 === 0 && d <= msdInt ? 5 : 0 // thousands grouping
+        }
+        return null
+      }
       setNodes((cur) =>
         cur.map((n) => {
-          const m = /^calcin_(\d+)$/.exec(n.id)
-          if (m === null) return n
-          const hi = r.value('calc', `display${m[1]}`) === true
-          return { ...n, data: { ...n.data, parameters: dcSource(hi ? 5 : 0) } }
+          const v = lvl(n.id)
+          return v === null ? n : { ...n, data: { ...n.data, parameters: dcSource(v) } }
         }),
       )
     },
@@ -3881,7 +3904,8 @@ function Canvas({ project }: { project: ProjectChoice }) {
   const placeCalculator = useCallback(() => {
     const decoder = BUILTIN_BLOCKS.logic_decoder_7seg
     const display = BUILTIN_BLOCKS.display_seven_segment
-    if (!decoder || !display) return
+    const separator = BUILTIN_BLOCKS.display_separator
+    if (!decoder || !display || !separator) return
     checkpointAction('calculator')
     logicStateRef.current = new Map<string, boolean>() // power-on: clear the flip-flop memory
     const COL = 280 // column pitch: one decoder + display per decimal digit, fed by the CALC block
@@ -3936,14 +3960,8 @@ function Canvas({ project }: { project: ProjectChoice }) {
           targetHandle: `seg_${s}`,
         })
       }
-      edges.push({
-        id: `calc_dc${d}`,
-        type: 'net',
-        source: `calc_disp${d}`,
-        sourceHandle: 'common',
-        target: 'calc_g',
-        targetHandle: 'reference_terminal',
-      })
+      // (the display common is driven by the per-digit blank source below — 0 V shows, 5 V blanks the
+      // whole digit by reverse-biasing every segment — so it is NOT tied straight to ground here.)
       edges.push({
         id: `calc_decvp${d}`,
         type: 'net',
@@ -3987,6 +4005,50 @@ function Canvas({ project }: { project: ProjectChoice }) {
           targetHandle: 'reference_terminal',
         })
       }
+      // Blanking + decimal-point + comma sources for this digit (driven by pressCalcKey from F): the
+      // decoder's BI line blanks a leading zero; the display's dp / comma LEDs light the point + grouping.
+      const sep = (sfx: string, port: string, target: string, dx: number) => {
+        nodes.push({
+          id: `calc${sfx}_${d}`,
+          type: 'device',
+          position: { x: cx + dx, y: 470 },
+          data: { definition: 'power_source', label: '', parameters: dcSource(0) },
+        })
+        edges.push({
+          id: `calc${sfx}_e${d}`,
+          type: 'net',
+          source: `calc${sfx}_${d}`,
+          sourceHandle: 'terminal_positive',
+          target,
+          targetHandle: port,
+        })
+        edges.push({
+          id: `calc${sfx}_g${d}`,
+          type: 'net',
+          source: `calc${sfx}_${d}`,
+          sourceHandle: 'terminal_negative',
+          target: 'calc_g',
+          targetHandle: 'reference_terminal',
+        })
+      }
+      sep('blk', 'common', `calc_disp${d}`, -150)
+      // the decimal point + comma sit in their OWN small block, to the right of this digit
+      nodes.push({
+        id: `calc_sep${d}`,
+        type: 'block',
+        position: { x: cx + 140, y: 100 },
+        data: { definition: 'display_separator', label: '', block: separator },
+      })
+      edges.push({
+        id: `calc_sepc${d}`,
+        type: 'net',
+        source: `calc_sep${d}`,
+        sourceHandle: 'common',
+        target: 'calc_g',
+        targetHandle: 'reference_terminal',
+      })
+      sep('dp', 'seg_dp', `calc_sep${d}`, 150)
+      sep('comma', 'seg_comma', `calc_sep${d}`, 150)
     }
     // The real keypad — momentary-switch parts, each tagged with the key it types.
     const layout: string[][] = [

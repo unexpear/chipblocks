@@ -207,6 +207,56 @@ function SevenSegmentFace({
   )
 }
 
+/** A tiny standalone separator face — a decimal point and a comma LED, sitting in their own small block
+ *  between calculator digits. Shows at most one (the calculator lights either the dp or the comma). */
+function SeparatorFace({
+  width,
+  height,
+  dp,
+  comma,
+}: {
+  width: number
+  height: number
+  dp: LitSeg
+  comma: LitSeg
+}) {
+  const cx = width / 2
+  const cy = height * 0.74
+  const r = Math.max(2.5, Math.min(width, height) * 0.16)
+  return (
+    // biome-ignore lint/a11y/noSvgWithoutTitle: decorative separator face, hidden from the accessibility tree
+    <svg
+      aria-hidden
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+    >
+      {dp.on && (
+        <circle
+          cx={cx}
+          cy={cy}
+          r={r}
+          fill={dp.color}
+          style={{ filter: `drop-shadow(0 0 3px ${dp.color})` }}
+        />
+      )}
+      {comma.on && (
+        <>
+          <circle cx={cx} cy={cy} r={r} fill={comma.color} />
+          <path
+            d={`M ${cx} ${cy} L ${cx - r} ${cy + r * 2.4}`}
+            stroke={comma.color}
+            strokeWidth={r}
+            strokeLinecap="round"
+            style={{ filter: `drop-shadow(0 0 3px ${comma.color})` }}
+          />
+        </>
+      )}
+    </svg>
+  )
+}
+
 export function BlockNode({ id, data }: NodeProps) {
   const block = (data as { block?: BlockData }).block
   const healthMap = useContext(HealthContext)
@@ -227,6 +277,12 @@ export function BlockNode({ id, data }: NodeProps) {
       ? Object.fromEntries(
           SEGMENT_ORDER.map((seg) => [seg, readSeg(`${id}.${ledPrefix}led_${seg}`)]),
         )
+      : null
+  // A standalone separator module (display='separator') — a decimal point + a comma LED, drawn between
+  // calculator digits so the point/comma sit in their own small block, not crammed onto a digit.
+  const sep: { dp: LitSeg; comma: LitSeg } | null =
+    block.display === 'separator'
+      ? { dp: readSeg(`${id}.led_dp`), comma: readSeg(`${id}.led_comma`) }
       : null
   // The multi-digit display reads N×7 segments plus a point + comma between each adjacent pair — N from
   // the block's own `digits`, so any size renders from the one face.
@@ -288,6 +344,8 @@ export function BlockNode({ id, data }: NodeProps) {
           <MultiDigitFace width={width} height={height} digits={digitsMulti} seps={sepsMulti} />
         ) : segments ? (
           <SevenSegmentFace width={width} height={height} segments={segments} />
+        ) : sep ? (
+          <SeparatorFace width={width} height={height} dp={sep.dp} comma={sep.comma} />
         ) : (
           <span style={{ color: THEME.textBright, fontSize: 11, fontWeight: 700 }}>
             {block.name}
