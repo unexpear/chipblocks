@@ -5908,6 +5908,152 @@ export function buildFrameBuffer(image: readonly (readonly boolean[])[]): BlockD
 }
 
 /**
+ * WRITABLE FRAME BUFFER — like buildFrameBuffer, but the picture is WRITTEN in at runtime, not hardwired.
+ * One loadable register per row — a real counter with its count disabled (EN tied low), so it only LOADS
+ * on demand, a clean parallel-load register. A write port (one-hot write address + a column-data bus +
+ * write-enable) latches the addressed row's register on the clock; every other row holds. The scanner's
+ * one-hot READ address reads any row back out through the one-hot read mux. So you can paint a new picture
+ * into real flip-flop memory and the scanner displays it — a real RAM frame buffer.
+ */
+export function buildWritableFrameBuffer(rows: number, cols: number): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  let ei = 0
+  const e = (s: string, sh: string, t: string, th: string) =>
+    edges.push({ id: `wfb${ei++}`, source: s, sourceHandle: sh, target: t, targetHandle: th })
+  for (let r = 0; r < rows; r++) {
+    nodes.push({
+      id: `reg_${r}`,
+      definition: 'block',
+      x: 1000,
+      y: r * 260,
+      block: buildDownCounter(cols, true),
+    })
+    nodes.push({ id: `raddr_${r}`, definition: 'block', x: 0, y: r * 260, block: BUFFER_BLOCK })
+    nodes.push({ id: `waddr_${r}`, definition: 'block', x: 240, y: r * 260, block: BUFFER_BLOCK })
+  }
+  for (let c = 0; c < cols; c++)
+    nodes.push({
+      id: `wdata_${c}`,
+      definition: 'block',
+      x: 500,
+      y: c * 120 - 400,
+      block: BUFFER_BLOCK,
+    })
+  nodes.push({ id: 'webuf', definition: 'block', x: 500, y: 600, block: BUFFER_BLOCK })
+  const LOW = { node: 'reg_0', handle: 'gnd' }
+  const ctx: ExprCtx = { nodes: [], edges: [], ids: [], n: 0 }
+  const we: LogicRef = { node: 'webuf', handle: 'out' }
+  for (let r = 0; r < rows; r++) {
+    e(LOW.node, LOW.handle, `reg_${r}`, 'en') // count disabled → a load-only register
+    for (let c = 0; c < cols; c++) e(`wdata_${c}`, 'out', `reg_${r}`, `l${c}`) // write-data bus → load inputs
+    const waddr: LogicRef = { node: `waddr_${r}`, handle: 'out' }
+    const loadEn = buildExpr(['and', we, waddr], ctx) // load this row only when WE and its write address
+    e(loadEn.node, loadEn.handle, `reg_${r}`, 'load')
+    if (r > 0) e('reg_0', 'clk', `reg_${r}`, 'clk')
+  }
+  const colRefs: LogicRef[] = []
+  for (let c = 0; c < cols; c++) {
+    let colOut: LogicRef | null = null
+    for (let r = 0; r < rows; r++) {
+      const rd: LogicRef = { node: `raddr_${r}`, handle: 'out' }
+      const q: LogicRef = { node: `reg_${r}`, handle: `q${c}` }
+      const term = buildExpr(['and', rd, q], ctx)
+      colOut = colOut === null ? term : buildExpr(['or', colOut, term], ctx)
+    }
+    if (colOut !== null) colRefs.push(colOut)
+  }
+  nodes.push(...ctx.nodes)
+  edges.push(...ctx.edges)
+  const railIds = [
+    ...Array.from({ length: rows }, (_, r) => `reg_${r}`),
+    ...Array.from({ length: rows }, (_, r) => `raddr_${r}`),
+    ...Array.from({ length: rows }, (_, r) => `waddr_${r}`),
+    ...Array.from({ length: cols }, (_, c) => `wdata_${c}`),
+    'webuf',
+    ...ctx.ids,
+  ]
+  edges.push(...chainRails(railIds, 'wfb'))
+  const ports: BlockData['ports'] = [
+    {
+      id: 'clk',
+      label: 'CLK',
+      side: 'left',
+      offset: 14,
+      inner: { nodeId: 'reg_0', handleId: 'clk' },
+    },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 28,
+      inner: { nodeId: 'reg_0', handleId: 'gnd' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'left',
+      offset: 42,
+      inner: { nodeId: 'reg_0', handleId: 'v_dd' },
+    },
+    { id: 'we', label: 'WE', side: 'left', offset: 56, inner: { nodeId: 'webuf', handleId: 'in' } },
+  ]
+  let loff = 76
+  for (let r = 0; r < rows; r++) {
+    ports.push({
+      id: `rd_addr_${r}`,
+      label: `RA${r}`,
+      side: 'left',
+      offset: loff,
+      inner: { nodeId: `raddr_${r}`, handleId: 'in' },
+    })
+    loff += 14
+  }
+  for (let r = 0; r < rows; r++) {
+    ports.push({
+      id: `wr_addr_${r}`,
+      label: `WA${r}`,
+      side: 'left',
+      offset: loff,
+      inner: { nodeId: `waddr_${r}`, handleId: 'in' },
+    })
+    loff += 14
+  }
+  let toff = 14
+  for (let c = 0; c < cols; c++) {
+    ports.push({
+      id: `wr_data_${c}`,
+      label: `WD${c}`,
+      side: 'top',
+      offset: toff,
+      inner: { nodeId: `wdata_${c}`, handleId: 'in' },
+    })
+    toff += 14
+  }
+  let roff = 14
+  for (let c = 0; c < cols; c++) {
+    const ref = colRefs[c]
+    if (ref === undefined) continue
+    ports.push({
+      id: `col_${c}`,
+      label: `C${c}`,
+      side: 'right',
+      offset: roff,
+      drive: 'push_pull',
+      inner: { nodeId: ref.node, handleId: ref.handle },
+    })
+    roff += 14
+  }
+  return {
+    name: `${rows}×${cols} Writable Frame Buffer`,
+    origin: { x: 0, y: 0 },
+    nodes,
+    edges,
+    ports,
+  }
+}
+
+/**
  * GLYPH ROM — a real combinational character generator: a 3-bit character code in (0 = blank, 1=H 2=E
  * 3=L 4=O 5=W 6=R 7=D) lights the matching 5×7 glyph on its `px_<r>_<c>` outputs. Built straight from the
  * font table in gates (a one-hot code decode + a per-pixel OR of the codes that light it) — wire its
