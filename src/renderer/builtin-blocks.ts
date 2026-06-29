@@ -4187,7 +4187,7 @@ export const DIVIDE_SEQUENCER: BlockData = buildDivideSequencer()
  *   • the BCD ALU computing R − B; its carry-out is "R ≥ B" feeding the sequencer's COUT
  * Pulse START, clock until DONE, read QUOTIENT (REMAINDER also exposed). Descend for the whole datapath.
  */
-function buildDivider(): BlockData {
+function buildDivider(extraFractional = 0): BlockData {
   const nodes: BlockData['nodes'] = [
     { id: 'seq', definition: 'block', x: 0, y: 0, block: DIVIDE_SEQUENCER },
     { id: 'areg', definition: 'block', x: 3000, y: 0, block: ENTRY_REGISTER_10 },
@@ -4207,6 +4207,7 @@ function buildDivider(): BlockData {
   const tie = (node: string, port: string, ref: { node: string; handle: string }) => {
     e(ref.node, ref.handle, node, port)
   }
+  const ctx: ExprCtx = { nodes, edges, ids: [], n: 0 }
   // sequencer → registers/counters
   e('seq', 'r_clear', 'rreg', 'clear')
   e('seq', 'r_bringdown', 'rreg', 'entry_append')
@@ -4238,10 +4239,9 @@ function buildDivider(): BlockData {
   tie('rreg', 'entry_new', LOW)
   tie('qreg', 'entry_new', LOW)
   for (let b = 0; b < 4; b++) tie('count', `l${b}`, LOW) // up-counter loads 0
-  tie('outer', 'l0', LOW)
-  tie('outer', 'l1', HIGH)
-  tie('outer', 'l2', LOW)
-  tie('outer', 'l3', HIGH) // outer loads 10
+  // outer loads 10 dividend digits + K extra fractional bring-downs (K=0 → integer, K=4 → 4 dp for the calc)
+  const outerLoad = 10 + extraFractional
+  for (let b = 0; b < 4; b++) tie('outer', `l${b}`, ((outerLoad >> b) & 1) === 1 ? HIGH : LOW)
   // zero-divisor detector: NOR of all B bits → divzero (so the sequencer can finish with an error)
   const bz = orReduce(
     Array.from({ length: 40 }, (_, i) => ({ node: 'alu', handle: `b${i}` })),
@@ -4253,11 +4253,45 @@ function buildDivider(): BlockData {
   nodes.push({ id: 'bzero_inv', definition: 'block', x: 13600, y: 0, block: INVERTER_BLOCK })
   e(bz.out.node, bz.out.handle, 'bzero_inv', 'in')
   e('bzero_inv', 'out', 'seq', 'divzero')
+  // QUOTIENT-OVERFLOW latch: with K extra fractional bring-downs an integer quotient of 7+ digits would
+  // shift its top digits off the 10-digit Q register. Catch a nonzero top digit AT the STOREQ shift and
+  // latch it (sticky, cleared with the quotient) so the calculator shows E, not a silently truncated answer.
+  nodes.push({ id: 'qovf', definition: 'block', x: 7000, y: 32000, block: D_FLIPFLOP_BLOCK })
+  const qTop = buildExpr(
+    [
+      'or',
+      ['or', { node: 'qreg', handle: 'entry36' }, { node: 'qreg', handle: 'entry37' }],
+      ['or', { node: 'qreg', handle: 'entry38' }, { node: 'qreg', handle: 'entry39' }],
+    ],
+    ctx,
+  )
+  const qovfNow = buildExpr(['and', { node: 'seq', handle: 'q_store' }, qTop], ctx)
+  const qovfD = buildExpr(
+    [
+      'or',
+      qovfNow,
+      ['and', { node: 'qovf', handle: 'q' }, ['not', { node: 'seq', handle: 'q_clear' }]],
+    ],
+    ctx,
+  )
+  e(qovfD.node, qovfD.handle, 'qovf', 'd')
   // shared clock
-  for (const blk of ['areg', 'rreg', 'qreg', 'count', 'outer']) e('seq', 'clk', blk, 'clk')
+  for (const blk of ['areg', 'rreg', 'qreg', 'count', 'outer', 'qovf']) e('seq', 'clk', blk, 'clk')
   edges.push(
     ...chainRails(
-      ['seq', 'areg', 'rreg', 'qreg', 'count', 'outer', 'alu', ...bz.ids, 'bzero_inv'],
+      [
+        'seq',
+        'areg',
+        'rreg',
+        'qreg',
+        'count',
+        'outer',
+        'alu',
+        'qovf',
+        ...bz.ids,
+        'bzero_inv',
+        ...ctx.ids,
+      ],
       'div',
     ),
   )
@@ -4353,6 +4387,14 @@ function buildDivider(): BlockData {
   })
   right += 12
   ports.push({
+    id: 'overflow',
+    label: 'OVF',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'qovf', handleId: 'q' },
+  })
+  right += 12
+  ports.push({
     id: 'v_dd',
     label: 'V+',
     side: 'right',
@@ -4364,6 +4406,10 @@ function buildDivider(): BlockData {
 
 /** A ÷ B over 10 BCD digits, as a real clocked datapath (sequencer + reused registers/counters/ALU). */
 export const DIVIDER_10: BlockData = buildDivider()
+
+/** The same divider with K=4 extra fractional bring-down steps — the calculator's decimal divider (the
+ *  quotient carries 4 extra low digits; the calculator normalizes trailing zeros + tracks the point). */
+export const DIVIDER_10_FP: BlockData = buildDivider(4)
 
 /**
  * ×/÷ BUSY HANDSHAKE — the bridge between the single-cycle main FSM and the multi-cycle multiply/divide
@@ -4491,7 +4537,7 @@ function buildCalculator(): BlockData {
     { id: 'acc', definition: 'block', x: 7200, y: 16000, block: ACC_REGISTER_10 },
     { id: 'alu', definition: 'block', x: 11000, y: 0, block: BCD_ALU_10 },
     { id: 'mul', definition: 'block', x: 11000, y: 32000, block: MULTIPLIER_10 },
-    { id: 'div', definition: 'block', x: 11000, y: 64000, block: DIVIDER_10 },
+    { id: 'div', definition: 'block', x: 11000, y: 64000, block: DIVIDER_10_FP },
     { id: 'rnalu', definition: 'block', x: 16000, y: 0, block: BCD_ALU_10 }, // negate the ALU result: 0 − aluS = B−A (the |A|<|B| difference case)
   ]
   const edges: BlockData['edges'] = []
@@ -4722,8 +4768,6 @@ function buildCalculator(): BlockData {
     link(newMux(lessAB, bSel[i] ?? LOW, shifted[i] ?? LOW), { node: 'alu', handle: `b${i}` })
   }
   const resultF_addsub = [0, 1, 2, 3].map((b) => newMux(lessAB, Fbeff[b] ?? LOW, Faeff[b] ?? LOW)) // max
-  // a ÷ with any decimal operand isn't supported yet → refuse (E) rather than lie (lands in the ÷ step).
-  const fNonzero = buildExpr(['or', orAll(Faeff), orAll(Fbeff)], ctx)
   // multiply point position = Fa + Fb (5-bit, carry kept); >10 fractional places can't be shown → E.
   const { sum: Fsum, carry: Fcarry } = add4(Faeff, Fbeff)
   const fSumGt10 = buildExpr(
@@ -4732,6 +4776,35 @@ function buildCalculator(): BlockData {
       Fcarry,
       ['and', Fsum[3] ?? LOW, ['or', Fsum[2] ?? LOW, ['and', Fsum[1] ?? LOW, Fsum[0] ?? LOW]]],
     ],
+    ctx,
+  )
+  // ── DECIMAL ÷: the divider runs K=4 extra fractional bring-downs, so its quotient carries up to 4 extra
+  // low digits and the result point F = Fa − Fb + K. Normalize away trailing zeros (100/4 → 25, not
+  // 25.0000) and refuse (E) if the result would need <0 or >10 fractional places.
+  const fourVec: LogicRef[] = [LOW, LOW, HIGH, LOW] // binary 4
+  const oneVec: LogicRef[] = [HIGH, LOW, LOW, LOW] // binary 1
+  const { sum: FaPlus4 } = add4(Faeff, fourVec)
+  const { diff: rawDivF, borrow: divFNeg } = sub4(FaPlus4, Fbeff) // (Fa+4) − Fb ; borrow ⟹ result F < 0
+  const normalizeDown = (q: LogicRef[], f: LogicRef[]): { q: LogicRef[]; f: LogicRef[] } => {
+    let cq = q
+    let cf = f
+    for (let s = 0; s < 4; s++) {
+      const d0zero = buildExpr(['not', orAll(cq.slice(0, 4))], ctx) // low BCD digit is 0
+      const doShift = buildExpr(['and', d0zero, orAll(cf)], ctx) // … and F>0 → drop it (÷10), F−−
+      const nq: LogicRef[] = []
+      for (let i = 0; i < 40; i++)
+        nq.push(newMux(doShift, i + 4 < 40 ? (cq[i + 4] ?? LOW) : LOW, cq[i] ?? LOW))
+      const { diff: fdec } = sub4(cf, oneVec)
+      cf = [0, 1, 2, 3].map((b) => newMux(doShift, fdec[b] ?? LOW, cf[b] ?? LOW))
+      cq = nq
+    }
+    return { q: cq, f: cf }
+  }
+  const divQ: LogicRef[] = []
+  for (let i = 0; i < 40; i++) divQ.push({ node: 'div', handle: `quotient${i}` })
+  const { q: normQ, f: normF } = normalizeDown(divQ, rawDivF)
+  const divFGt10 = buildExpr(
+    ['and', normF[3] ?? LOW, ['or', normF[2] ?? LOW, ['and', normF[1] ?? LOW, normF[0] ?? LOW]]],
     ctx,
   )
   // ── SIGN-MAGNITUDE sign tracking. Each number is an UNSIGNED 10-digit magnitude + an explicit sign
@@ -4779,7 +4852,9 @@ function buildCalculator(): BlockData {
   )
   // result point position: +/− → max(Fa,Fb) for now (×/÷ point math lands in later steps). Loaded into
   // Fe (the fent counter, below) and Fa on a result. Fa ← Fe on acc_from_entry; Flopd ← Fe on CAP_EQ.
-  const resultF = [0, 1, 2, 3].map((b) => newMux(effMul, Fsum[b] ?? LOW, resultF_addsub[b] ?? LOW)) // × → Fa+Fb ; +/− → max(Fa,Fb) ; (÷ point math lands later)
+  const resultF = [0, 1, 2, 3].map((b) =>
+    newMux(effDiv, normF[b] ?? LOW, newMux(effMul, Fsum[b] ?? LOW, resultF_addsub[b] ?? LOW)),
+  ) // ÷ → (Fa−Fb+K) normalized ; × → Fa+Fb ; +/− → max(Fa,Fb)
   for (let b = 0; b < 4; b++) {
     const faCopy = newMux({ node: 'fsm', handle: 'acc_from_entry' }, Fe[b] ?? LOW, {
       node: `Fa${b}`,
@@ -4810,7 +4885,7 @@ function buildCalculator(): BlockData {
       { node: 'rnalu', handle: `s${i}` },
       { node: 'alu', handle: `s${i}` },
     )
-    const m1 = newMux(effDiv, { node: 'div', handle: `quotient${i}` }, addsub)
+    const m1 = newMux(effDiv, normQ[i] ?? LOW, addsub) // ÷ → the trailing-zero-normalized quotient
     const m2 = newMux(effMul, { node: 'mul', handle: `product${i}` }, m1)
     resultMag.push(m2)
     link(m2, { node: 'ent', handle: `result${i}` })
@@ -4885,15 +4960,17 @@ function buildCalculator(): BlockData {
     ['and', ['and', { node: 'ctrl', handle: 'capture' }, effMul], fSumGt10],
     ctx,
   )
-  const divDecimalGuard = buildExpr(
-    ['and', ['and', { node: 'ctrl', handle: 'capture' }, effDiv], fNonzero],
+  // ÷ errors: a result needing <0 or >10 fractional places (divFNeg / divFGt10), plus the divider's own
+  // quotient-overflow (a >10-digit integer quotient) and ÷0 (div.error).
+  const divResultErr = buildExpr(
+    ['and', ['and', { node: 'ctrl', handle: 'capture' }, effDiv], ['or', divFNeg, divFGt10]],
     ctx,
   )
   const newErr = buildExpr(
     [
       'or',
-      ['or', ['or', addSubOvf, shiftOvfErr], ['or', mulOvf, ['or', mulFovf, divDecimalGuard]]],
-      { node: 'div', handle: 'error' },
+      ['or', ['or', addSubOvf, shiftOvfErr], ['or', mulOvf, ['or', mulFovf, divResultErr]]],
+      ['or', { node: 'div', handle: 'error' }, { node: 'div', handle: 'overflow' }],
     ],
     ctx,
   )

@@ -1733,7 +1733,43 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
     )
   }, 120000)
 
-  test('decimal divide is not supported yet → E: 1.5 ÷ 0.5', () => {
-    expect(runCalc(['c', 1, '.', 5, '/', 0, '.', 5, '='])).toMatchObject({ error: true })
+  test('decimal divide: 10 ÷ 4 = 2.5', () => {
+    expect(runCalc(['c', 1, 0, '/', 4, '='])).toMatchObject({ value: 2.5, fent: 1, sig: 25 })
+  }, 120000)
+
+  test('decimal divide truncates (not rounds): 1 ÷ 3 = 0.3333', () => {
+    expect(runCalc(['c', 1, '/', 3, '='])).toMatchObject({ value: 0.3333, fent: 4, sig: 3333 })
+  }, 120000)
+
+  test('decimal divide: 1 ÷ 8 = 0.125', () => {
+    expect(runCalc(['c', 1, '/', 8, '='])).toMatchObject({ value: 0.125, fent: 3 })
+  }, 120000)
+
+  test('decimal operands divide: 1.5 ÷ 0.5 = 3', () => {
+    expect(runCalc(['c', 1, '.', 5, '/', 0, '.', 5, '='])).toMatchObject({ value: 3, fent: 0 })
+  }, 120000)
+
+  test('divisor with more decimals: 6 ÷ 1.5 = 4', () => {
+    expect(runCalc(['c', 6, '/', 1, '.', 5, '='])).toMatchObject({ value: 4, fent: 0 })
+  }, 120000)
+
+  test('integer divide collapses the trailing zeros: 100 ÷ 4 = 25 (no point)', () => {
+    expect(runCalc(['c', 1, 0, 0, '/', 4, '='])).toMatchObject({ value: 25, fent: 0 })
+  }, 120000)
+
+  test('a signed decimal divide: −10 ÷ 4 = −2.5', () => {
+    expect(runCalc(['c', 1, 0, 'n', '/', 4, '='])).toMatchObject({ value: -2.5, fent: 1 })
+  }, 120000)
+
+  test('a quotient past 10 integer digits overflows: 9999999999 ÷ 1 → E', () => {
+    expect(runCalc(['c', 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, '/', 1, '='])).toMatchObject({ error: true })
+  }, 120000)
+
+  test('dividing by a tiny number needs too many places → E: 1 ÷ 0.00001', () => {
+    expect(runCalc(['c', 1, '/', 0, '.', 0, 0, 0, 0, 1, '='])).toMatchObject({ error: true })
+  }, 120000)
+
+  test('decimal divide by zero is still an error: 1.5 ÷ 0 → E', () => {
+    expect(runCalc(['c', 1, '.', 5, '/', 0, '='])).toMatchObject({ error: true })
   }, 120000)
 })
