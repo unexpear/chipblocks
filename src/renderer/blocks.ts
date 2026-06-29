@@ -99,10 +99,13 @@ export type BlockData = {
    *  figure-8 digit whose segments light from the block's seven inner `led_<a..g>` parts;
    *  `seven_segment_multi` draws `digits` such digits with a decimal point + comma between each pair.
    *  Still a normal block underneath: it flattens to those real LED+resistor legs for the solver. */
-  display?: 'seven_segment' | 'seven_segment_multi' | 'separator'
+  display?: 'seven_segment' | 'seven_segment_multi' | 'separator' | 'dot_matrix'
   /** For `seven_segment_multi`: how many figure-8 digits the face draws (with a point + comma between
    *  each adjacent pair). The real LED+resistor hardware inside scales with this. */
   digits?: number
+  /** For `dot_matrix`: the LED grid size. The face reads each pixel's inner `led_<r>_<c>` lit state. */
+  rows?: number
+  cols?: number
   /** For a `seven_segment` module whose LEDs live one level down inside a nested BARE display sub-block:
    *  the sub-block's node id (e.g. `core`), so the face reads `<id>.<ledPath>.led_<seg>`. Absent ⇒ the
    *  LEDs are inline at `<id>.led_<seg>` (the bare display itself). The multi-digit face always reads its

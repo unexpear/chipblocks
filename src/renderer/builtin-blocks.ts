@@ -5549,6 +5549,165 @@ for (const c of [1, 2, 3, 4, 5, 6, 7]) {
 const MESSAGE_CODES = [1, 2, 3, 3, 4, 0, 5, 4, 6, 3, 7, 0, 0, 0, 0, 0]
 
 /**
+ * DOT-MATRIX LED DISPLAY — a real rows×cols grid of LEDs, the coarse ancestor of a pixel screen. Each
+ * pixel is a genuine LED behind a current-limiting resistor, all sharing one common cathode; drive a
+ * pixel's `px_<r>_<c>` pin high (with COMMON to ground) to light it. The on-canvas face only READS each
+ * LED's solved lit-state — no faking. Scale it up (more rows/cols, RGB per pixel) toward a real display.
+ */
+function dotMatrix(rows: number, cols: number): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const off = { left: 14, right: 14 }
+  let prev: string | null = null
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const led = `led_${r}_${c}`
+      const res = `r_${r}_${c}`
+      nodes.push({
+        id: res,
+        definition: 'resistor',
+        x: c * 220,
+        y: r * 160,
+        parameters: SEG_RESISTOR,
+      })
+      nodes.push({
+        id: led,
+        definition: 'led',
+        x: c * 220 + 120,
+        y: r * 160,
+        parameters: defaultParameters('led'),
+      })
+      edges.push({
+        id: `rl_${r}_${c}`,
+        source: res,
+        sourceHandle: 'terminal_b',
+        target: led,
+        targetHandle: 'anode',
+      })
+      if (prev !== null)
+        edges.push({
+          id: `cc_${r}_${c}`,
+          source: prev,
+          sourceHandle: 'cathode',
+          target: led,
+          targetHandle: 'cathode',
+        })
+      prev = led
+      const side: 'left' | 'right' = c * 2 < cols ? 'left' : 'right'
+      ports.push({
+        id: `px_${r}_${c}`,
+        label: `${r}${c}`,
+        side,
+        offset: off[side],
+        inner: { nodeId: res, handleId: 'terminal_a' },
+      })
+      off[side] += 7
+    }
+  }
+  ports.push({
+    id: 'common',
+    label: 'GND',
+    side: 'bottom',
+    offset: 24,
+    inner: { nodeId: 'led_0_0', handleId: 'cathode' },
+  })
+  return {
+    name: `${rows}×${cols} Dot Matrix`,
+    display: 'dot_matrix',
+    rows,
+    cols,
+    size: { width: cols * 26 + 36, height: rows * 24 + 28 },
+    origin: { x: 0, y: 0 },
+    nodes,
+    edges,
+    ports,
+  }
+}
+
+/** A 7-row × 5-column dot-matrix LED display — one character cell, the classic 5×7 form. */
+export const DOT_MATRIX_5X7: BlockData = dotMatrix(7, 5)
+
+/**
+ * GLYPH ROM — a real combinational character generator: a 3-bit character code in (0 = blank, 1=H 2=E
+ * 3=L 4=O 5=W 6=R 7=D) lights the matching 5×7 glyph on its `px_<r>_<c>` outputs. Built straight from the
+ * font table in gates (a one-hot code decode + a per-pixel OR of the codes that light it) — wire its
+ * pixel outputs to a DOT_MATRIX to make a character display, exactly as a real text display drives its panel.
+ */
+function buildGlyphRom(rows: number, cols: number): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ctx: ExprCtx = { nodes, edges, ids: [], n: 0 }
+  for (let i = 0; i < 3; i++)
+    nodes.push({ id: `cinv${i}`, definition: 'block', x: -400, y: i * 300, block: INVERTER_BLOCK })
+  const LOW: LogicRef = { node: 'cinv0', handle: 'gnd' }
+  // a code bit's true value is the inverter's input net (= the code port); its complement is the output.
+  const bit = (i: number, set: boolean): LogicRef =>
+    set ? { node: `cinv${i}`, handle: 'in' } : { node: `cinv${i}`, handle: 'out' }
+  const codeOH: LogicRef[] = []
+  for (let k = 0; k < 8; k++)
+    codeOH.push(
+      buildExpr(
+        ['and', ['and', bit(0, (k & 1) === 1), bit(1, (k & 2) === 2)], bit(2, (k & 4) === 4)],
+        ctx,
+      ),
+    )
+  const ports: BlockData['ports'] = []
+  let rOff = 14
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const lit: LogicRef[] = []
+      for (let k = 0; k < 8; k++)
+        if ((((GLYPH[k] ?? [])[r] ?? 0) >> c) & 1) {
+          const oh = codeOH[k]
+          if (oh !== undefined) lit.push(oh)
+        }
+      const pixel = lit.length > 0 ? lit.reduce((a, b) => buildExpr(['or', a, b], ctx)) : LOW
+      ports.push({
+        id: `px_${r}_${c}`,
+        label: `${r}${c}`,
+        side: 'right',
+        offset: rOff,
+        drive: 'push_pull', // a CMOS pixel driver — the logic→analog bridge needs an OUTPUT-driven pin
+        inner: { nodeId: pixel.node, handleId: pixel.handle },
+      })
+      rOff += 7
+    }
+  }
+  edges.push(...chainRails(['cinv0', 'cinv1', 'cinv2', ...ctx.ids], 'gr'))
+  let lOff = 14
+  for (let i = 0; i < 3; i++) {
+    ports.push({
+      id: `code${i}`,
+      label: `C${i}`,
+      side: 'left',
+      offset: lOff,
+      inner: { nodeId: `cinv${i}`, handleId: 'in' },
+    })
+    lOff += 18
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'left',
+    offset: lOff,
+    inner: { nodeId: 'cinv0', handleId: 'v_dd' },
+  })
+  lOff += 18
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: lOff,
+    inner: { nodeId: 'cinv0', handleId: 'gnd' },
+  })
+  return { name: 'Glyph ROM (5×7)', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** A 5×7 character generator ROM — a 3-bit code in, the glyph's 35 pixels out. Drive a DOT_MATRIX_5X7. */
+export const GLYPH_ROM_5X7: BlockData = buildGlyphRom(7, 5)
+
+/**
  * The golden-model video bit the character generator should emit at a given scan position — the spec
  * its real gate ROMs are tested against. The beam paints the glyph pixel for the character in that
  * slot, and stays dark in the inter-character spacing (dot ≥ 5) and the inter-line gap (line ≥ 7).
@@ -5704,6 +5863,8 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   memory_sram_word_4bit: SRAM_WORD_4BIT,
   display_seven_segment: SEVEN_SEGMENT_DISPLAY,
   display_separator: DISPLAY_SEPARATOR,
+  dot_matrix_5x7: DOT_MATRIX_5X7,
+  glyph_rom_5x7: GLYPH_ROM_5X7,
   display_seven_segment_bare: SEVEN_SEGMENT_BARE,
   // Every multi-digit size in DIGIT_DISPLAY_SIZES — the shipped module (with resistors) and the bare
   // raw version (LEDs only), both from the one parameterized generator.

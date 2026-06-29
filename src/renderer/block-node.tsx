@@ -207,6 +207,47 @@ function SevenSegmentFace({
   )
 }
 
+/** A dot-matrix LED screen face — a grid of dots, each lit in its real LED's colour or dim. */
+function DotMatrixFace({
+  width,
+  height,
+  matrix,
+}: {
+  width: number
+  height: number
+  matrix: LitSeg[][]
+}) {
+  const rows = matrix.length
+  const cols = matrix[0]?.length ?? 1
+  const cw = width / cols
+  const ch = height / rows
+  const rad = Math.max(1.6, Math.min(cw, ch) * 0.36)
+  return (
+    // biome-ignore lint/a11y/noSvgWithoutTitle: decorative LED-grid face, hidden from the accessibility tree
+    <svg
+      aria-hidden
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+    >
+      {matrix.flatMap((row, ri) =>
+        row.map((px, ci) => (
+          <circle
+            key={`px-${ri}-${ci}`}
+            cx={cw * (ci + 0.5)}
+            cy={ch * (ri + 0.5)}
+            r={rad}
+            fill={px.on ? px.color : THEME.borderStrong}
+            opacity={px.on ? 1 : 0.22}
+            style={px.on ? { filter: `drop-shadow(0 0 3px ${px.color})` } : undefined}
+          />
+        )),
+      )}
+    </svg>
+  )
+}
+
 /** A tiny standalone separator face — a decimal point and a comma LED, sitting in their own small block
  *  between calculator digits. Shows at most one (the calculator lights either the dp or the comma). */
 function SeparatorFace({
@@ -284,6 +325,13 @@ export function BlockNode({ id, data }: NodeProps) {
     block.display === 'separator'
       ? { dp: readSeg(`${id}.led_dp`), comma: readSeg(`${id}.led_comma`) }
       : null
+  // A dot-matrix LED screen (display='dot_matrix') — read each pixel's inner LED lit-state into a grid.
+  const matrix: LitSeg[][] | null =
+    block.display === 'dot_matrix'
+      ? Array.from({ length: block.rows ?? 7 }, (_, r) =>
+          Array.from({ length: block.cols ?? 5 }, (_, c) => readSeg(`${id}.led_${r}_${c}`)),
+        )
+      : null
   // The multi-digit display reads N×7 segments plus a point + comma between each adjacent pair — N from
   // the block's own `digits`, so any size renders from the one face.
   const digitCount = block.display === 'seven_segment_multi' ? (block.digits ?? 3) : 0
@@ -346,6 +394,8 @@ export function BlockNode({ id, data }: NodeProps) {
           <SevenSegmentFace width={width} height={height} segments={segments} />
         ) : sep ? (
           <SeparatorFace width={width} height={height} dp={sep.dp} comma={sep.comma} />
+        ) : matrix ? (
+          <DotMatrixFace width={width} height={height} matrix={matrix} />
         ) : (
           <span style={{ color: THEME.textBright, fontSize: 11, fontWeight: 700 }}>
             {block.name}

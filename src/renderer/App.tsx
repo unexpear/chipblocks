@@ -5309,6 +5309,122 @@ function Canvas({ project }: { project: ProjectChoice }) {
         const v = terminalVoltsRef.current.get(key)
         return v === undefined ? null : Math.round(v * 100) / 100
       },
+      charScreen(text: string) {
+        // DEV: a real dot-matrix character SCREEN — per letter, one glyph ROM (logic) + one 5×7 LED
+        // matrix (analog), the ROM's 35 pixels wired to the matrix, driven by a 3-bit code. The logic
+        // core hands off to the analog LED grid (exactly like a real text display drives its panel).
+        const supply = (v: number) => ({
+          nominal_voltage: { value: { kind: 'scalar', amount: v, unit: 'volt' } },
+          internal_resistance: { value: { kind: 'scalar', amount: 0, unit: 'ohm' } },
+        })
+        const CODE: Record<string, number> = { H: 1, E: 2, L: 3, O: 4, W: 5, R: 6, D: 7, ' ': 0 }
+        const codes = [...text.toUpperCase()].map((ch) => CODE[ch] ?? 0)
+        const rom = BUILTIN_BLOCKS.glyph_rom_5x7
+        const mat = BUILTIN_BLOCKS.dot_matrix_5x7
+        if (!rom || !mat) return 'no blocks'
+        const nodes: Record<string, unknown>[] = [
+          {
+            id: 'scr_vp',
+            type: 'device',
+            position: { x: -220, y: 0 },
+            data: { definition: 'power_source', label: 'V+', parameters: supply(5) },
+          },
+          {
+            id: 'scr_g',
+            type: 'device',
+            position: { x: -220, y: 140 },
+            data: { definition: 'ground', label: 'GND' },
+          },
+        ]
+        const edges: Record<string, unknown>[] = [
+          {
+            id: 'scr_vpn',
+            type: 'net',
+            source: 'scr_vp',
+            sourceHandle: 'terminal_negative',
+            target: 'scr_g',
+            targetHandle: 'reference_terminal',
+          },
+        ]
+        codes.forEach((code, i) => {
+          const x = i * 210
+          nodes.push({
+            id: `mat${i}`,
+            type: 'block',
+            position: { x, y: 0 },
+            data: { definition: 'block', label: 'Matrix', block: mat },
+          })
+          nodes.push({
+            id: `rom${i}`,
+            type: 'block',
+            position: { x, y: 380 },
+            data: { definition: 'block', label: 'ROM', block: rom, fidelity: 'logic' },
+          })
+          for (let r = 0; r < 7; r++)
+            for (let c = 0; c < 5; c++)
+              edges.push({
+                id: `epx${i}_${r}_${c}`,
+                type: 'net',
+                source: `rom${i}`,
+                sourceHandle: `px_${r}_${c}`,
+                target: `mat${i}`,
+                targetHandle: `px_${r}_${c}`,
+              })
+          edges.push({
+            id: `emc${i}`,
+            type: 'net',
+            source: `mat${i}`,
+            sourceHandle: 'common',
+            target: 'scr_g',
+            targetHandle: 'reference_terminal',
+          })
+          edges.push({
+            id: `erv${i}`,
+            type: 'net',
+            source: 'scr_vp',
+            sourceHandle: 'terminal_positive',
+            target: `rom${i}`,
+            targetHandle: 'v_dd',
+          })
+          edges.push({
+            id: `erg${i}`,
+            type: 'net',
+            source: `rom${i}`,
+            sourceHandle: 'gnd',
+            target: 'scr_g',
+            targetHandle: 'reference_terminal',
+          })
+          for (let b = 0; b < 3; b++) {
+            const hi = ((code >> b) & 1) === 1
+            nodes.push({
+              id: `cs${i}_${b}`,
+              type: 'device',
+              position: { x: x - 90, y: 380 + b * 70 },
+              data: { definition: 'power_source', label: '', parameters: supply(hi ? 5 : 0) },
+            })
+            edges.push({
+              id: `ecs${i}_${b}`,
+              type: 'net',
+              source: `cs${i}_${b}`,
+              sourceHandle: 'terminal_positive',
+              target: `rom${i}`,
+              targetHandle: `code${b}`,
+            })
+            edges.push({
+              id: `ecsn${i}_${b}`,
+              type: 'net',
+              source: `cs${i}_${b}`,
+              sourceHandle: 'terminal_negative',
+              target: 'scr_g',
+              targetHandle: 'reference_terminal',
+            })
+          }
+        })
+        setNodes(() => nodes as unknown as Node[])
+        setEdges(() => edges as unknown as Edge[])
+        reSolve(nodes as unknown as Node[], edges as unknown as Edge[])
+        return JSON.stringify({ chars: codes.length })
+      },
       calcShow(a: number, b: number, sub: boolean) {
         // DEV (brick 8 visible): wire the BCD ALU -> decoder bank -> ten seven-segment displays and run
         // the REAL solve, so the digits light with a +/- b. Logic core hands off to the analog displays.
