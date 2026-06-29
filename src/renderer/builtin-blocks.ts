@@ -5708,6 +5708,97 @@ function buildGlyphRom(rows: number, cols: number): BlockData {
 export const GLYPH_ROM_5X7: BlockData = buildGlyphRom(7, 5)
 
 /**
+ * FULL-COLOUR dot-matrix LED display — like the mono one, but every pixel is THREE real LEDs (a red
+ * ~640 nm, a green ~525 nm, a blue ~465 nm) sharing one common cathode, each with its own `px_<r>_<c>_<rgb>`
+ * pin. Light any combination and the colours add (R+G = yellow, R+G+B = white) — exactly an RGB subpixel,
+ * the same idea as an LED video wall or an OLED panel, just coarse. The face mixes each pixel's lit LEDs.
+ */
+function dotMatrixRGB(rows: number, cols: number): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const CH: [string, number][] = [
+    ['r', 640],
+    ['g', 525],
+    ['b', 465],
+  ]
+  const ledNm = (nm: number): Parameters => ({
+    ...defaultParameters('led'),
+    peak_wavelength: { value: { kind: 'scalar', amount: nm, unit: 'nanometer' } },
+  })
+  const off = { left: 14, right: 14 }
+  let prev: string | null = null
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      for (const [ch, nm] of CH) {
+        const led = `led_${r}_${c}_${ch}`
+        const res = `rr_${r}_${c}_${ch}`
+        nodes.push({
+          id: res,
+          definition: 'resistor',
+          x: c * 280 + 'rgb'.indexOf(ch) * 60,
+          y: r * 160,
+          parameters: SEG_RESISTOR,
+        })
+        nodes.push({
+          id: led,
+          definition: 'led',
+          x: c * 280 + 'rgb'.indexOf(ch) * 60 + 120,
+          y: r * 160,
+          parameters: ledNm(nm),
+        })
+        edges.push({
+          id: `rl_${r}_${c}_${ch}`,
+          source: res,
+          sourceHandle: 'terminal_b',
+          target: led,
+          targetHandle: 'anode',
+        })
+        if (prev !== null)
+          edges.push({
+            id: `cc_${r}_${c}_${ch}`,
+            source: prev,
+            sourceHandle: 'cathode',
+            target: led,
+            targetHandle: 'cathode',
+          })
+        prev = led
+        const side: 'left' | 'right' = c * 2 < cols ? 'left' : 'right'
+        ports.push({
+          id: `px_${r}_${c}_${ch}`,
+          label: `${r}${c}${ch}`,
+          side,
+          offset: off[side],
+          inner: { nodeId: res, handleId: 'terminal_a' },
+        })
+        off[side] += 4
+      }
+    }
+  }
+  ports.push({
+    id: 'common',
+    label: 'GND',
+    side: 'bottom',
+    offset: 24,
+    inner: { nodeId: 'led_0_0_r', handleId: 'cathode' },
+  })
+  return {
+    name: `${rows}×${cols} RGB Matrix`,
+    display: 'dot_matrix_rgb',
+    rows,
+    cols,
+    size: { width: cols * 28 + 36, height: rows * 24 + 28 },
+    origin: { x: 0, y: 0 },
+    nodes,
+    edges,
+    ports,
+  }
+}
+
+/** A 7-row × 7-column full-COLOUR dot-matrix LED display — RGB subpixels, the path to a colour panel. */
+export const DOT_MATRIX_RGB_7X7: BlockData = dotMatrixRGB(7, 7)
+
+/**
  * The golden-model video bit the character generator should emit at a given scan position — the spec
  * its real gate ROMs are tested against. The beam paints the glyph pixel for the character in that
  * slot, and stays dark in the inter-character spacing (dot ≥ 5) and the inter-line gap (line ≥ 7).
@@ -5865,6 +5956,7 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   display_separator: DISPLAY_SEPARATOR,
   dot_matrix_5x7: DOT_MATRIX_5X7,
   glyph_rom_5x7: GLYPH_ROM_5X7,
+  dot_matrix_rgb_7x7: DOT_MATRIX_RGB_7X7,
   display_seven_segment_bare: SEVEN_SEGMENT_BARE,
   // Every multi-digit size in DIGIT_DISPLAY_SIZES — the shipped module (with resistors) and the bare
   // raw version (LEDs only), both from the one parameterized generator.

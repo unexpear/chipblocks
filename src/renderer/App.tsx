@@ -5425,6 +5425,84 @@ function Canvas({ project }: { project: ProjectChoice }) {
         reSolve(nodes as unknown as Node[], edges as unknown as Edge[])
         return JSON.stringify({ chars: codes.length })
       },
+      colorBars() {
+        // DEV: SMPTE-style colour bars on the full-COLOUR RGB matrix — each column a colour, driven from
+        // three real colour rails (R/G/B at 5 V). The subpixels add: red+green = yellow, all three = white.
+        const supply = (v: number) => ({
+          nominal_voltage: { value: { kind: 'scalar', amount: v, unit: 'volt' } },
+          internal_resistance: { value: { kind: 'scalar', amount: 0, unit: 'ohm' } },
+        })
+        const mat = BUILTIN_BLOCKS.dot_matrix_rgb_7x7
+        if (!mat) return 'no block'
+        const BARS = ['rgb', 'rg', 'gb', 'g', 'rb', 'r', 'b'] // White Yellow Cyan Green Magenta Red Blue
+        const nodes: Record<string, unknown>[] = [
+          {
+            id: 'cb_mat',
+            type: 'block',
+            position: { x: 0, y: 0 },
+            data: { definition: 'block', label: 'RGB Screen', block: mat },
+          },
+          {
+            id: 'cb_g',
+            type: 'device',
+            position: { x: -260, y: 300 },
+            data: { definition: 'ground', label: 'GND' },
+          },
+          {
+            id: 'cb_r',
+            type: 'device',
+            position: { x: -260, y: 0 },
+            data: { definition: 'power_source', label: 'R', parameters: supply(5) },
+          },
+          {
+            id: 'cb_gr',
+            type: 'device',
+            position: { x: -260, y: 100 },
+            data: { definition: 'power_source', label: 'G', parameters: supply(5) },
+          },
+          {
+            id: 'cb_b',
+            type: 'device',
+            position: { x: -260, y: 200 },
+            data: { definition: 'power_source', label: 'B', parameters: supply(5) },
+          },
+        ]
+        const railNode: Record<string, string> = { r: 'cb_r', g: 'cb_gr', b: 'cb_b' }
+        const edges: Record<string, unknown>[] = [
+          {
+            id: 'cb_mg',
+            type: 'net',
+            source: 'cb_mat',
+            sourceHandle: 'common',
+            target: 'cb_g',
+            targetHandle: 'reference_terminal',
+          },
+        ]
+        for (const ch of ['r', 'g', 'b'])
+          edges.push({
+            id: `cb_${ch}n`,
+            type: 'net',
+            source: railNode[ch],
+            sourceHandle: 'terminal_negative',
+            target: 'cb_g',
+            targetHandle: 'reference_terminal',
+          })
+        for (let r = 0; r < 7; r++)
+          for (let c = 0; c < 7; c++)
+            for (const ch of BARS[c] ?? '')
+              edges.push({
+                id: `cbp_${r}_${c}_${ch}`,
+                type: 'net',
+                source: railNode[ch],
+                sourceHandle: 'terminal_positive',
+                target: 'cb_mat',
+                targetHandle: `px_${r}_${c}_${ch}`,
+              })
+        setNodes(() => nodes as unknown as Node[])
+        setEdges(() => edges as unknown as Edge[])
+        reSolve(nodes as unknown as Node[], edges as unknown as Edge[])
+        return 'colour bars'
+      },
       calcShow(a: number, b: number, sub: boolean) {
         // DEV (brick 8 visible): wire the BCD ALU -> decoder bank -> ten seven-segment displays and run
         // the REAL solve, so the digits light with a +/- b. Logic core hands off to the analog displays.
