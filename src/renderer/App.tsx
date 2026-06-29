@@ -2136,7 +2136,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // Opt-in canvas auto-router (default OFF — routing belongs to the user). ON: plain wires (no
   // hand-dropped corners) route themselves as straight H/V lines around the parts, and carry the
   // resistance of that ACTUAL routed length (fed back in via the reported wire geometry below).
-  const [autoRouteWires, setAutoRouteWires] = useState(false)
+  // Default ON: wires route themselves as clean orthogonal (right-angle) lanes around the parts — never a
+  // diagonal tangle. The toolbar toggle can turn it off for hand-drawn paths.
+  const [autoRouteWires, setAutoRouteWires] = useState(true)
   // Active physics (S19-v3-14): re-solve + refresh every wire's current/length/
   // resistance from the live canvas. Always-on recomputes on every change (the
   // default); turn it off and hit Solve to batch big edits without the PC
@@ -5322,6 +5324,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
         const rom = BUILTIN_BLOCKS.glyph_rom_5x7
         const mat = BUILTIN_BLOCKS.dot_matrix_5x7
         if (!rom || !mat) return 'no blocks'
+        setAutoRouteWires(true) // clean orthogonal lanes, not a diagonal tangle
         const nodes: Record<string, unknown>[] = [
           {
             id: 'scr_vp',
@@ -5434,6 +5437,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
         })
         const mat = BUILTIN_BLOCKS.dot_matrix_rgb_7x7
         if (!mat) return 'no block'
+        setAutoRouteWires(true) // clean orthogonal lanes, not a diagonal tangle
         const BARS = ['rgb', 'rg', 'gb', 'g', 'rb', 'r', 'b'] // White Yellow Cyan Green Magenta Red Blue
         const nodes: Record<string, unknown>[] = [
           {
@@ -5513,6 +5517,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
         })
         const mat = BUILTIN_BLOCKS.dot_matrix_rgb_7x7
         if (!mat) return 'no block'
+        setAutoRouteWires(true) // route the wires into clean orthogonal lanes, not a diagonal tangle
         const BARS = ['rgb', 'rg', 'gb', 'g', 'rb', 'r', 'b'] // W Y C G M R B per column
         const VROW = [2.3, 2.6, 2.9, 3.3, 3.8, 4.3, 5.0] // dim → bright per row
         const nodes: Record<string, unknown>[] = [
