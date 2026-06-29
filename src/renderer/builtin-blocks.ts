@@ -5722,6 +5722,92 @@ export const DOT_MATRIX_MUX_8X8: BlockData = dotMatrixMultiplexed(8, 8)
 export const DOT_MATRIX_MUX_16X16: BlockData = dotMatrixMultiplexed(16, 16)
 
 /**
+ * ROW SCANNER — the controller that makes a multiplexed matrix show a whole picture. A real synchronous
+ * up-counter (always counting) tracks the current row; a binary→one-hot decoder then drives EXACTLY that
+ * one row line HIGH (every other low). One clock tick advances to the next row; run it fast and the rows
+ * blur together by persistence-of-vision into a steady image — and only-one-row-high is precisely what a
+ * passive matrix needs to stay ghost-free. CLR (a synchronous load of 0) powers up cleanly at row 0. Its
+ * row outputs are push-pull so they drive the analog matrix's row lines directly. Descend for the
+ * counter + the decode gates, and into the counter for the flip-flops.
+ */
+function buildRowScanner(rows: number): BlockData {
+  const bits = Math.max(1, Math.ceil(Math.log2(rows)))
+  const counterBlock = bits <= 3 ? COUNTER_UP_EN_3 : COUNTER_UP_EN_4
+  const nodes: BlockData['nodes'] = [
+    { id: 'cnt', definition: 'block', x: 0, y: 0, block: counterBlock },
+  ]
+  const edges: BlockData['edges'] = []
+  let ei = 0
+  const e = (s: string, sh: string, t: string, th: string) =>
+    edges.push({ id: `rs${ei++}`, source: s, sourceHandle: sh, target: t, targetHandle: th })
+  // Free-running: always count; load value 0 (so a CLR pulse loads row 0).
+  e('cnt', 'v_dd', 'cnt', 'en')
+  for (let i = 0; i < bits; i++) e('cnt', 'gnd', 'cnt', `l${i}`)
+  // Binary→one-hot decode: row r is HIGH exactly when the counter holds the value r.
+  const ctx: ExprCtx = { nodes: [], edges: [], ids: [], n: 0 }
+  const cq = (i: number): LogicRef => ({ node: 'cnt', handle: `q${i}` })
+  const rowRefs: LogicRef[] = []
+  for (let r = 0; r < rows; r++) {
+    let expr: LogicExpr = (r >> 0) & 1 ? cq(0) : ['not', cq(0)]
+    for (let i = 1; i < bits; i++) expr = ['and', expr, (r >> i) & 1 ? cq(i) : ['not', cq(i)]]
+    rowRefs.push(buildExpr(expr, ctx))
+  }
+  nodes.push(...ctx.nodes)
+  edges.push(...ctx.edges)
+  edges.push(...chainRails(['cnt', ...ctx.ids], 'rs'))
+  const ports: BlockData['ports'] = [
+    {
+      id: 'clk',
+      label: 'CLK',
+      side: 'left',
+      offset: 14,
+      inner: { nodeId: 'cnt', handleId: 'clk' },
+    },
+    {
+      id: 'clr',
+      label: 'CLR',
+      side: 'left',
+      offset: 28,
+      inner: { nodeId: 'cnt', handleId: 'load' },
+    },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 42,
+      inner: { nodeId: 'cnt', handleId: 'gnd' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'left',
+      offset: 56,
+      inner: { nodeId: 'cnt', handleId: 'v_dd' },
+    },
+  ]
+  let yoff = 14
+  for (let r = 0; r < rows; r++) {
+    const ref = rowRefs[r]
+    if (ref === undefined) continue
+    ports.push({
+      id: `row_${r}`,
+      label: `R${r}`,
+      side: 'right',
+      offset: yoff,
+      drive: 'push_pull',
+      inner: { nodeId: ref.node, handleId: ref.handle },
+    })
+    yoff += 14
+  }
+  return { name: `${rows}-row Scanner`, origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** An 8-row scanner — clock it and it lights matrix rows 0,1,…,7,0,… one at a time. */
+export const ROW_SCANNER_8: BlockData = buildRowScanner(8)
+/** A 16-row scanner for the 16×16 multiplexed matrix. */
+export const ROW_SCANNER_16: BlockData = buildRowScanner(16)
+
+/**
  * GLYPH ROM — a real combinational character generator: a 3-bit character code in (0 = blank, 1=H 2=E
  * 3=L 4=O 5=W 6=R 7=D) lights the matching 5×7 glyph on its `px_<r>_<c>` outputs. Built straight from the
  * font table in gates (a one-hot code decode + a per-pixel OR of the codes that light it) — wire its
@@ -6052,6 +6138,8 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   dot_matrix_rgb_7x7: DOT_MATRIX_RGB_7X7,
   dot_matrix_mux_8x8: DOT_MATRIX_MUX_8X8,
   dot_matrix_mux_16x16: DOT_MATRIX_MUX_16X16,
+  row_scanner_8: ROW_SCANNER_8,
+  row_scanner_16: ROW_SCANNER_16,
   display_seven_segment_bare: SEVEN_SEGMENT_BARE,
   // Every multi-digit size in DIGIT_DISPLAY_SIZES — the shipped module (with resistors) and the bare
   // raw version (LEDs only), both from the one parameterized generator.
