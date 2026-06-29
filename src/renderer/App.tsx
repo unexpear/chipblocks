@@ -190,6 +190,7 @@ import { buildCrtTraces, type CrtSpot, type PartReading, partReadings } from './
 import { ProjectBrowser, type ProjectChoice } from './project-browser.tsx'
 import { ProjectHub } from './project-hub.tsx'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
+import { scanMatrixImage } from './scan-display.ts'
 import { SchematicHierarchy } from './schematic-hierarchy.tsx'
 import {
   channelsForProbes,
@@ -4415,7 +4416,54 @@ function Canvas({ project }: { project: ProjectChoice }) {
             }
           }
         }
-        return { wires: wireGeomsRef.current.size, parts: boxes.length, segments, diagonal, through }
+        return {
+          wires: wireGeomsRef.current.size,
+          parts: boxes.length,
+          segments,
+          diagonal,
+          through,
+        }
+      },
+      // Scanned multiplexed display: clock the REAL row scanner over the REAL multiplexed LED matrix
+      // (scanMatrixImage), accumulate the persistence-of-vision picture, and show it on a matrix placed
+      // on the canvas. 8 row + 8 column lines drive 64 pixels — a real LED panel painting a picture.
+      scanShow() {
+        checkpointAction('dev: scanned display')
+        const matrix = BUILTIN_BLOCKS.dot_matrix_mux_8x8
+        const scanner = BUILTIN_BLOCKS.row_scanner_8
+        if (!matrix || !scanner) return 'no blocks'
+        const HEART = [
+          '.##..##.',
+          '########',
+          '########',
+          '########',
+          '.######.',
+          '..####..',
+          '...##...',
+          '........',
+        ].map((row) => [...row].map((ch) => ch === '#'))
+        const pov = scanMatrixImage(scanner, matrix, HEART)
+        // The scanned picture rides on the node data; the matrix face draws it directly. (A static solve
+        // would only light the single row a real panel shows at one instant, so we hand the face the whole
+        // persistence-of-vision image the scan paints.)
+        setNodes(
+          () =>
+            [
+              {
+                id: 'sd',
+                type: 'block',
+                position: { x: 0, y: 0 },
+                data: {
+                  definition: 'block',
+                  label: 'Scanned Display',
+                  block: matrix,
+                  povImage: pov,
+                },
+              },
+            ] as unknown as Node[],
+        )
+        setEdges(() => [])
+        return 'scanned display'
       },
       // Inject a wired CRT — an EHT anode source + two AC deflection sources (X, Y at a 3:2 frequency
       // ratio → a Lissajous) — and run the REAL transient so the tube draws its real trace on its

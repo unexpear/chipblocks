@@ -395,20 +395,26 @@ export function BlockNode({ id, data }: NodeProps) {
       color: `rgb(${Math.round(Math.min(255, R))}, ${Math.round(Math.min(255, G))}, ${Math.round(Math.min(255, B))})`,
     }
   }
+  // A scanned multiplexed display hands its persistence-of-vision picture straight on the node data
+  // (data.povImage) — the real scanner+matrix co-sim result — so the face draws the WHOLE image at once,
+  // not the single row a static solve would light.
+  const povImage = (data as { povImage?: readonly (readonly boolean[])[] }).povImage
   const matrix: LitSeg[][] | null =
-    block.display === 'dot_matrix'
-      ? Array.from({ length: block.rows ?? 7 }, (_, r) =>
-          Array.from({ length: block.cols ?? 5 }, (_, c) =>
-            toLit([readSeg(`${id}.led_${r}_${c}`)]),
-          ),
-        )
-      : block.display === 'dot_matrix_rgb'
+    povImage !== undefined && (block.display === 'dot_matrix' || block.display === 'dot_matrix_rgb')
+      ? povImage.map((row) => row.map((on) => ({ on, color: 'rgb(255, 64, 64)', brightness: 1 })))
+      : block.display === 'dot_matrix'
         ? Array.from({ length: block.rows ?? 7 }, (_, r) =>
-            Array.from({ length: block.cols ?? 7 }, (_, c) =>
-              toLit(['r', 'g', 'b'].map((ch) => readSeg(`${id}.led_${r}_${c}_${ch}`))),
+            Array.from({ length: block.cols ?? 5 }, (_, c) =>
+              toLit([readSeg(`${id}.led_${r}_${c}`)]),
             ),
           )
-        : null
+        : block.display === 'dot_matrix_rgb'
+          ? Array.from({ length: block.rows ?? 7 }, (_, r) =>
+              Array.from({ length: block.cols ?? 7 }, (_, c) =>
+                toLit(['r', 'g', 'b'].map((ch) => readSeg(`${id}.led_${r}_${c}_${ch}`))),
+              ),
+            )
+          : null
   // The multi-digit display reads N×7 segments plus a point + comma between each adjacent pair — N from
   // the block's own `digits`, so any size renders from the one face.
   const digitCount = block.display === 'seven_segment_multi' ? (block.digits ?? 3) : 0
