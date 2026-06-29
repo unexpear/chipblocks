@@ -5629,6 +5629,99 @@ function dotMatrix(rows: number, cols: number): BlockData {
 export const DOT_MATRIX_5X7: BlockData = dotMatrix(7, 5)
 
 /**
+ * A real MULTIPLEXED LED matrix — the way an ACTUAL LED dot-matrix panel is wired. Instead of one pin
+ * per pixel (R×C pins — an unroutable wire explosion at any real size), the pixels share ROW lines and
+ * COLUMN lines: R row pins + C column pins. LED(r,c)'s anode sits on row r's shared line, its cathode on
+ * column c's shared line (through that column's single current-limiting resistor). Light pixel (r,c) by
+ * driving row r HIGH and column c LOW. Only ONE row is driven at a time (a scan controller cycles them
+ * fast); persistence-of-vision merges the rows into a whole picture, and that single-row-active rule is
+ * exactly what keeps a passive matrix free of sneak-path ghosting. 16×16 = 32 pins instead of 256.
+ */
+function dotMatrixMultiplexed(rows: number, cols: number): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++)
+      nodes.push({
+        id: `led_${r}_${c}`,
+        definition: 'led',
+        x: c * 180 + 60,
+        y: r * 120,
+        parameters: defaultParameters('led'),
+      })
+  for (let c = 0; c < cols; c++)
+    nodes.push({
+      id: `colres_${c}`,
+      definition: 'resistor',
+      x: c * 180 + 60,
+      y: rows * 120,
+      parameters: SEG_RESISTOR,
+    })
+  // Row lines: chain each row's LED anodes into one shared net; the row pin taps the first LED.
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols - 1; c++)
+      edges.push({
+        id: `rowlink_${r}_${c}`,
+        source: `led_${r}_${c}`,
+        sourceHandle: 'anode',
+        target: `led_${r}_${c + 1}`,
+        targetHandle: 'anode',
+      })
+    ports.push({
+      id: `row_${r}`,
+      label: `R${r}`,
+      side: 'left',
+      offset: 18 + r * 24,
+      inner: { nodeId: `led_${r}_0`, handleId: 'anode' },
+    })
+  }
+  // Column lines: chain each column's LED cathodes together into that column's resistor; the column pin
+  // taps the resistor's free end (so the one resistor limits every pixel that column lights).
+  for (let c = 0; c < cols; c++) {
+    for (let r = 0; r < rows - 1; r++)
+      edges.push({
+        id: `collink_${r}_${c}`,
+        source: `led_${r}_${c}`,
+        sourceHandle: 'cathode',
+        target: `led_${r + 1}_${c}`,
+        targetHandle: 'cathode',
+      })
+    edges.push({
+      id: `colres_link_${c}`,
+      source: `led_${rows - 1}_${c}`,
+      sourceHandle: 'cathode',
+      target: `colres_${c}`,
+      targetHandle: 'terminal_b',
+    })
+    ports.push({
+      id: `col_${c}`,
+      label: `C${c}`,
+      side: 'bottom',
+      offset: 18 + c * 28,
+      inner: { nodeId: `colres_${c}`, handleId: 'terminal_a' },
+    })
+  }
+  return {
+    name: `${rows}×${cols} LED Matrix (muxed)`,
+    display: 'dot_matrix',
+    rows,
+    cols,
+    size: { width: cols * 28 + 48, height: rows * 24 + 40 },
+    origin: { x: 0, y: 0 },
+    nodes,
+    edges,
+    ports,
+  }
+}
+
+/** An 8×8 multiplexed LED matrix — 16 pins (8 row + 8 column) drive 64 pixels. */
+export const DOT_MATRIX_MUX_8X8: BlockData = dotMatrixMultiplexed(8, 8)
+
+/** A 16×16 multiplexed LED matrix — 32 pins drive 256 pixels (vs 256 per-pixel pins un-muxed). */
+export const DOT_MATRIX_MUX_16X16: BlockData = dotMatrixMultiplexed(16, 16)
+
+/**
  * GLYPH ROM — a real combinational character generator: a 3-bit character code in (0 = blank, 1=H 2=E
  * 3=L 4=O 5=W 6=R 7=D) lights the matching 5×7 glyph on its `px_<r>_<c>` outputs. Built straight from the
  * font table in gates (a one-hot code decode + a per-pixel OR of the codes that light it) — wire its
@@ -5957,6 +6050,8 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   dot_matrix_5x7: DOT_MATRIX_5X7,
   glyph_rom_5x7: GLYPH_ROM_5X7,
   dot_matrix_rgb_7x7: DOT_MATRIX_RGB_7X7,
+  dot_matrix_mux_8x8: DOT_MATRIX_MUX_8X8,
+  dot_matrix_mux_16x16: DOT_MATRIX_MUX_16X16,
   display_seven_segment_bare: SEVEN_SEGMENT_BARE,
   // Every multi-digit size in DIGIT_DISPLAY_SIZES — the shipped module (with resistors) and the bare
   // raw version (LEDs only), both from the one parameterized generator.
