@@ -53,6 +53,7 @@ import {
   type CanvasEdgeLike as BlockEdgeLike,
   type CanvasNodeLike as BlockNodeLike,
   type BlockPort,
+  blockLayout,
   blockPortAliases,
   bubbleBlockHealth,
   cloneBlockData,
@@ -1773,13 +1774,20 @@ function Canvas({ project }: { project: ProjectChoice }) {
     () =>
       nodes
         .filter((n) => n.type === 'device' || n.type === 'block')
-        .map((n) => ({
-          id: n.id,
-          x: n.position.x,
-          y: n.position.y,
-          w: n.measured?.width ?? 88,
-          h: n.measured?.height ?? 56,
-        })),
+        .map((n) => {
+          // React Flow hasn't measured a freshly-dropped node yet, so n.measured is undefined. Fall
+          // back to the block's OWN layout size (a 7x7 matrix is ~200px wide, NOT the old 88x56 default)
+          // so the router treats the real footprint as an obstacle and routes AROUND it, not through it.
+          const block = (n.data as { block?: BlockData }).block
+          const laid = block ? blockLayout(block.ports, block.size) : undefined
+          return {
+            id: n.id,
+            x: n.position.x,
+            y: n.position.y,
+            w: n.measured?.width ?? laid?.width ?? 88,
+            h: n.measured?.height ?? laid?.height ?? 56,
+          }
+        }),
     [nodes],
   )
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges)
@@ -4379,6 +4387,36 @@ function Canvas({ project }: { project: ProjectChoice }) {
       } as Node
     }
     const api = {
+      // Audit the REAL drawn wire geometry against the REAL part boxes (ground truth — no DOM/timing/regex):
+      // how many drawn wire segments run diagonally, and how many cut through a part's interior (a >10px
+      // margin ignores the legitimate landing on a pin sitting on a part edge).
+      wireAudit() {
+        const M = 10
+        const boxes = partBoxesRef.current
+        let segments = 0
+        let diagonal = 0
+        let through = 0
+        for (const pts of wireGeomsRef.current.values()) {
+          for (let i = 0; i + 1 < pts.length; i++) {
+            const a = pts[i]
+            const b = pts[i + 1]
+            if (!a || !b) continue
+            segments++
+            if (Math.abs(b.x - a.x) > 2 && Math.abs(b.y - a.y) > 2) diagonal++
+            const x0 = Math.min(a.x, b.x)
+            const x1 = Math.max(a.x, b.x)
+            const y0 = Math.min(a.y, b.y)
+            const y1 = Math.max(a.y, b.y)
+            for (const bx of boxes) {
+              if (x1 > bx.x + M && x0 < bx.x + bx.w - M && y1 > bx.y + M && y0 < bx.y + bx.h - M) {
+                through++
+                break
+              }
+            }
+          }
+        }
+        return { wires: wireGeomsRef.current.size, parts: boxes.length, segments, diagonal, through }
+      },
       // Inject a wired CRT — an EHT anode source + two AC deflection sources (X, Y at a 3:2 frequency
       // ratio → a Lissajous) — and run the REAL transient so the tube draws its real trace on its
       // on-canvas screen. For the CDP screenshot of the CRT screen; the trace is solved, not painted.
