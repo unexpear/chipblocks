@@ -6,8 +6,12 @@
  */
 
 import { describe, expect, test } from 'vitest'
-import { DOT_MATRIX_MUX_8X8, ROW_SCANNER_8 } from '../src/renderer/builtin-blocks.ts'
-import { scanMatrixImage } from '../src/renderer/scan-display.ts'
+import {
+  buildFrameBuffer,
+  DOT_MATRIX_MUX_8X8,
+  ROW_SCANNER_8,
+} from '../src/renderer/builtin-blocks.ts'
+import { scanMatrixFromBuffer, scanMatrixImage } from '../src/renderer/scan-display.ts'
 
 // A recognizable 8×8 picture — an X / diamond outline.
 const X = [
@@ -37,5 +41,12 @@ describe('scanned multiplexed display — scanner + matrix co-sim paints a whole
   test('every lit pixel of the picture is accounted for across the full scan', () => {
     const pov = scanMatrixImage(ROW_SCANNER_8, DOT_MATRIX_MUX_8X8, X)
     expect(pov.flat().filter(Boolean).length).toBe(X.flat().filter(Boolean).length)
+  })
+
+  test('real all the way down: the picture read from a FRAME BUFFER (flip-flop memory) reproduces it', () => {
+    // The image lives in real flip-flops; the scanner's one-hot address reads each row out of memory and
+    // the matrix lights it — no bitmap handed to the co-sim, just hardware reading hardware.
+    const fb = buildFrameBuffer(X)
+    expect(scanMatrixFromBuffer(ROW_SCANNER_8, fb, DOT_MATRIX_MUX_8X8, 8, 8)).toEqual(X)
   })
 })

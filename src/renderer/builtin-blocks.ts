@@ -5808,6 +5808,106 @@ export const ROW_SCANNER_8: BlockData = buildRowScanner(8)
 export const ROW_SCANNER_16: BlockData = buildRowScanner(16)
 
 /**
+ * FRAME BUFFER — real memory holding the picture. One register per row (real D flip-flops via dRegister)
+ * stores that row's column bits; the picture is loaded on the clock — each register's data inputs are
+ * tied to its row of the image, so a clock latches the whole picture into the flip-flops. The scanner's
+ * one-hot ROW ADDRESS reads the addressed row's bits back out onto the column lines through a one-hot
+ * read mux (col c = OR over rows of address_r AND register_r.bit_c). So the scanner reads the picture out
+ * of real flip-flops, row by row — the image lives in hardware, not a bitmap. Descend for the registers +
+ * the read mux, and into a register for the flip-flops.
+ */
+export function buildFrameBuffer(image: readonly (readonly boolean[])[]): BlockData {
+  const rows = image.length
+  const cols = image[0]?.length ?? 0
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  let ei = 0
+  const e = (s: string, sh: string, t: string, th: string) =>
+    edges.push({ id: `fb${ei++}`, source: s, sourceHandle: sh, target: t, targetHandle: th })
+  for (let r = 0; r < rows; r++) {
+    nodes.push({ id: `reg_${r}`, definition: 'block', x: 600, y: r * 240, block: dRegister(cols) })
+    nodes.push({ id: `addr_${r}`, definition: 'block', x: 0, y: r * 240, block: BUFFER_BLOCK })
+  }
+  const HIGH = { node: 'reg_0', handle: 'v_dd' }
+  const LOW = { node: 'reg_0', handle: 'gnd' }
+  // Load the picture: tie each register's data inputs to its image row; share the clock across rows.
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const lvl = image[r]?.[c] ? HIGH : LOW
+      e(lvl.node, lvl.handle, `reg_${r}`, `d${c}`)
+    }
+    if (r > 0) e('reg_0', 'clk', `reg_${r}`, 'clk')
+  }
+  // One-hot read mux: col c = OR over rows of (address_r AND register_r.q_c).
+  const ctx: ExprCtx = { nodes: [], edges: [], ids: [], n: 0 }
+  const colRefs: LogicRef[] = []
+  for (let c = 0; c < cols; c++) {
+    let colOut: LogicRef | null = null
+    for (let r = 0; r < rows; r++) {
+      const addr: LogicRef = { node: `addr_${r}`, handle: 'out' }
+      const q: LogicRef = { node: `reg_${r}`, handle: `q${c}` }
+      const term = buildExpr(['and', addr, q], ctx)
+      colOut = colOut === null ? term : buildExpr(['or', colOut, term], ctx)
+    }
+    if (colOut !== null) colRefs.push(colOut)
+  }
+  nodes.push(...ctx.nodes)
+  edges.push(...ctx.edges)
+  const regIds = Array.from({ length: rows }, (_, r) => `reg_${r}`)
+  const addrIds = Array.from({ length: rows }, (_, r) => `addr_${r}`)
+  edges.push(...chainRails([...regIds, ...addrIds, ...ctx.ids], 'fb'))
+  const ports: BlockData['ports'] = [
+    {
+      id: 'clk',
+      label: 'CLK',
+      side: 'left',
+      offset: 14,
+      inner: { nodeId: 'reg_0', handleId: 'clk' },
+    },
+    {
+      id: 'gnd',
+      label: 'GND',
+      side: 'left',
+      offset: 28,
+      inner: { nodeId: 'reg_0', handleId: 'gnd' },
+    },
+    {
+      id: 'v_dd',
+      label: 'V+',
+      side: 'left',
+      offset: 42,
+      inner: { nodeId: 'reg_0', handleId: 'v_dd' },
+    },
+  ]
+  let loff = 60
+  for (let r = 0; r < rows; r++) {
+    ports.push({
+      id: `addr_${r}`,
+      label: `A${r}`,
+      side: 'left',
+      offset: loff,
+      inner: { nodeId: `addr_${r}`, handleId: 'in' },
+    })
+    loff += 14
+  }
+  let roff = 14
+  for (let c = 0; c < cols; c++) {
+    const ref = colRefs[c]
+    if (ref === undefined) continue
+    ports.push({
+      id: `col_${c}`,
+      label: `C${c}`,
+      side: 'right',
+      offset: roff,
+      drive: 'push_pull',
+      inner: { nodeId: ref.node, handleId: ref.handle },
+    })
+    roff += 14
+  }
+  return { name: `${rows}×${cols} Frame Buffer`, origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/**
  * GLYPH ROM — a real combinational character generator: a 3-bit character code in (0 = blank, 1=H 2=E
  * 3=L 4=O 5=W 6=R 7=D) lights the matching 5×7 glyph on its `px_<r>_<c>` outputs. Built straight from the
  * font table in gates (a one-hot code decode + a per-pixel OR of the codes that light it) — wire its

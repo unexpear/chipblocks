@@ -67,7 +67,7 @@ import {
   withoutOffsets,
 } from './blocks.ts'
 import { BodePanel } from './bode-panel.tsx'
-import { BUILTIN_BLOCKS, CALCULATOR, CHAR_GEN } from './builtin-blocks.ts'
+import { BUILTIN_BLOCKS, buildFrameBuffer, CALCULATOR, CHAR_GEN } from './builtin-blocks.ts'
 import { CanvasScrollbars } from './canvas-scrollbars.tsx'
 import {
   type CanvasEdge,
@@ -190,7 +190,7 @@ import { buildCrtTraces, type CrtSpot, type PartReading, partReadings } from './
 import { ProjectBrowser, type ProjectChoice } from './project-browser.tsx'
 import { ProjectHub } from './project-hub.tsx'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
-import { scanMatrixImage } from './scan-display.ts'
+import { scanMatrixFromBuffer } from './scan-display.ts'
 import { SchematicHierarchy } from './schematic-hierarchy.tsx'
 import {
   channelsForProbes,
@@ -4442,7 +4442,10 @@ function Canvas({ project }: { project: ProjectChoice }) {
           '...##...',
           '........',
         ].map((row) => [...row].map((ch) => ch === '#'))
-        const pov = scanMatrixImage(scanner, matrix, HEART)
+        // The picture lives in a real frame buffer (flip-flop memory); the scanner reads it out row by
+        // row and the matrix lights it — real all the way down, no bitmap driving the panel.
+        const frameBuffer = buildFrameBuffer(HEART)
+        const pov = scanMatrixFromBuffer(scanner, frameBuffer, matrix, 8, 8)
         // The scanned picture rides on the node data; the matrix face draws it directly. (A static solve
         // would only light the single row a real panel shows at one instant, so we hand the face the whole
         // persistence-of-vision image the scan paints.)

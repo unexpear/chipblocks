@@ -174,3 +174,94 @@ export function scanMatrixImage(
   }
   return pov
 }
+
+/**
+ * Like scanMatrixImage, but the picture comes from a real FRAME BUFFER (flip-flop memory) instead of a
+ * bitmap — real all the way down. The scanner + frame buffer are wired into one clocked digital circuit
+ * (the scanner's one-hot row select addresses the frame buffer); each step the frame buffer reads the
+ * addressed row's column bits out of its flip-flops, and the matrix lights those columns. Accumulating
+ * over a scan gives the persistence-of-vision image — read out of real hardware, not handed in as data.
+ */
+export function scanMatrixFromBuffer(
+  scanner: BlockData,
+  frameBuffer: BlockData,
+  matrix: BlockData,
+  rows: number,
+  cols: number,
+): boolean[][] {
+  const w = (id: string, s: string, sh: string, t: string, th: string): CanvasEdgeLike => ({
+    id,
+    source: s,
+    sourceHandle: sh,
+    target: t,
+    targetHandle: th,
+  })
+  const nodes: CanvasNodeLike[] = [
+    { id: 'scan', position: { x: 0, y: 0 }, data: { definition: 'block', block: scanner } },
+    { id: 'fb', position: { x: 0, y: 0 }, data: { definition: 'block', block: frameBuffer } },
+    {
+      id: 'vp',
+      position: { x: 0, y: 0 },
+      data: { definition: 'power_source', parameters: supply(5) },
+    },
+    {
+      id: 'clk',
+      position: { x: 0, y: 0 },
+      data: { definition: 'power_source', parameters: supply(0) },
+    },
+    {
+      id: 'clr',
+      position: { x: 0, y: 0 },
+      data: { definition: 'power_source', parameters: supply(0) },
+    },
+    { id: 'g', position: { x: 0, y: 0 }, data: { definition: 'ground' } },
+  ]
+  const edges: CanvasEdgeLike[] = [
+    w('e_clk', 'clk', 'terminal_positive', 'scan', 'clk'),
+    w('e_clkf', 'clk', 'terminal_positive', 'fb', 'clk'),
+    w('e_clkn', 'clk', 'terminal_negative', 'g', 'reference_terminal'),
+    w('e_clr', 'clr', 'terminal_positive', 'scan', 'clr'),
+    w('e_clrn', 'clr', 'terminal_negative', 'g', 'reference_terminal'),
+    w('e_vp', 'vp', 'terminal_positive', 'scan', 'v_dd'),
+    w('e_vpf', 'vp', 'terminal_positive', 'fb', 'v_dd'),
+    w('e_vpn', 'vp', 'terminal_negative', 'g', 'reference_terminal'),
+    w('e_gs', 'scan', 'gnd', 'g', 'reference_terminal'),
+    w('e_gf', 'fb', 'gnd', 'g', 'reference_terminal'),
+    // the scanner's one-hot row select IS the frame buffer's read address
+    ...Array.from({ length: rows }, (_, r) =>
+      w(`e_addr${r}`, 'scan', `row_${r}`, 'fb', `addr_${r}`),
+    ),
+  ]
+  const compiled = compileLogic(nodes, edges)
+  const state = new Map<string, boolean>()
+  const step = (clk: boolean, clr: boolean) =>
+    stepLogic(
+      compiled,
+      new Map<string, boolean>([
+        ['clk', clk],
+        ['clr', clr],
+      ]),
+      state,
+    )
+  const activeRow = (res: ReturnType<typeof stepLogic>): number => {
+    for (let i = 0; i < rows; i++) if (res.value('scan', `row_${i}`) === true) return i
+    return -1
+  }
+  const readCols = (res: ReturnType<typeof stepLogic>): boolean[] =>
+    Array.from({ length: cols }, (_, c) => res.value('fb', `col_${c}`) === true)
+  step(false, true)
+  let sres = step(true, true)
+  const pov: boolean[][] = Array.from({ length: rows }, () =>
+    Array.from({ length: cols }, () => false),
+  )
+  for (let s = 0; s < rows; s++) {
+    const r = activeRow(sres)
+    const rowPat = readCols(sres) // the frame buffer's stored bits for the addressed row
+    const povRow = pov[r]
+    if (r >= 0 && r < rows && povRow)
+      for (const c of solveMatrixRow(matrix, r, rowPat, cols)) povRow[c] = true
+    step(false, false)
+    sres = step(true, false)
+  }
+  return pov
+}
