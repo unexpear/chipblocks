@@ -1,5 +1,5 @@
 import { Handle, type NodeProps, Position } from '@xyflow/react'
-import { type CSSProperties, Fragment, useContext } from 'react'
+import { type CSSProperties, Fragment, useContext, useId } from 'react'
 import { type BlockData, type BlockPort, blockLayout } from './blocks.ts'
 import { GateFace, gateLayout } from './gate-symbol.tsx'
 import { HealthContext } from './health.ts'
@@ -217,11 +217,21 @@ function DotMatrixFace({
   height: number
   matrix: LitSeg[][]
 }) {
+  const bloomId = useId()
   const rows = matrix.length
   const cols = matrix[0]?.length ?? 1
   const cw = width / cols
   const ch = height / rows
-  const rad = Math.max(1.6, Math.min(cw, ch) * 0.36)
+  const cell = Math.min(cw, ch)
+  const coreR = Math.max(1.3, cell * 0.34)
+  const glowR = Math.max(2, cell * 0.58)
+  const blur = Math.max(0.7, cell * 0.26)
+  // Lit pixels, flattened once so the off-dots / glow / core layers all iterate the same set.
+  const lit = matrix.flatMap((row, ri) =>
+    row.map((px, ci) => ({ px, ri, ci })).filter((p) => p.px.on),
+  )
+  const cx = (ci: number) => cw * (ci + 0.5)
+  const cy = (ri: number) => ch * (ri + 0.5)
   return (
     // biome-ignore lint/a11y/noSvgWithoutTitle: decorative LED-grid face, hidden from the accessibility tree
     <svg
@@ -231,19 +241,46 @@ function DotMatrixFace({
       viewBox={`0 0 ${width} ${height}`}
       style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
     >
+      <defs>
+        {/* Bloom — a real LED screen's pixels glow as soft points whose halos overlap and blend, so the
+            picture reads smooth instead of as hard dots. The blur reaches into neighbouring cells. */}
+        <filter id={bloomId} x="-30%" y="-30%" width="160%" height="160%">
+          <feGaussianBlur stdDeviation={blur} />
+        </filter>
+      </defs>
+      {/* Unlit pixels: faint dark dots, so the panel still reads as a screen where it's dark. */}
       {matrix.flatMap((row, ri) =>
-        row.map((px, ci) => (
-          <circle
-            key={`px-${ri}-${ci}`}
-            cx={cw * (ci + 0.5)}
-            cy={ch * (ri + 0.5)}
-            r={rad}
-            fill={px.on ? px.color : THEME.borderStrong}
-            opacity={px.on ? 1 : 0.22}
-            style={px.on ? { filter: `drop-shadow(0 0 3px ${px.color})` } : undefined}
-          />
-        )),
+        row.map((px, ci) =>
+          px.on ? null : (
+            <circle
+              key={`off-${ri}-${ci}`}
+              cx={cx(ci)}
+              cy={cy(ri)}
+              r={coreR * 0.78}
+              fill={THEME.borderStrong}
+              opacity={0.22}
+            />
+          ),
+        ),
       )}
+      {/* Glow layer: each lit pixel's halo, blurred so adjacent pixels melt together into a smooth image
+          (a dim pixel carries a darker colour, so its bloom is fainter — the grey levels show through). */}
+      <g filter={`url(#${bloomId})`}>
+        {lit.map(({ px, ri, ci }) => (
+          <circle
+            key={`glow-${ri}-${ci}`}
+            cx={cx(ci)}
+            cy={cy(ri)}
+            r={glowR}
+            fill={px.color}
+            opacity={0.8}
+          />
+        ))}
+      </g>
+      {/* Core layer: the bright, defined pixel centre sitting on top of its own halo. */}
+      {lit.map(({ px, ri, ci }) => (
+        <circle key={`core-${ri}-${ci}`} cx={cx(ci)} cy={cy(ri)} r={coreR} fill={px.color} />
+      ))}
     </svg>
   )
 }

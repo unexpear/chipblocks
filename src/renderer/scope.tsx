@@ -8,6 +8,7 @@ import { cursorReadout, interpolateSeries } from './scope-cursors.ts'
 import { type FamilyStep, familyExtent } from './scope-family.ts'
 import { amplitudeToDbRms, fftMagnitudes, spectrumPeak } from './scope-fft.ts'
 import { H_DIVISIONS, TIMEBASES, transformFor, V_DIVISIONS, VOLTS_PER_DIV } from './scope-scales.ts'
+import { smoothTrace } from './scope-smooth.ts'
 import { alignSweep, autoLevel, type TriggerEdge, type TriggerMode } from './scope-trigger.ts'
 import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
@@ -1346,12 +1347,11 @@ export function ScopePlot({
                     stroke={TRACE_COLORS[i % TRACE_COLORS.length]}
                     strokeWidth={1}
                     opacity={0.1 + 0.18 * ((gi + 1) / ghosts.length)}
-                    points={ghost.points
-                      .map(
-                        (p) =>
-                          `${x(p.time - ghostTZero)},${yFor(channel.key)(channelValue(channel, p))}`,
-                      )
-                      .join(' ')}
+                    points={smoothTrace(
+                      ghost.points,
+                      (p) => x(p.time - ghostTZero),
+                      (p) => yFor(channel.key)(channelValue(channel, p)),
+                    )}
                   />
                 ) : null,
               )
@@ -1364,9 +1364,11 @@ export function ScopePlot({
                   fill="none"
                   stroke={TRACE_COLORS[i % TRACE_COLORS.length]}
                   strokeWidth={channel.key === sweep.sourceKey ? 2 : 1.4}
-                  points={points
-                    .map((p) => `${x(p.time - tZero)},${yChannel(channelValue(channel, p))}`)
-                    .join(' ')}
+                  points={smoothTrace(
+                    points,
+                    (p) => x(p.time - tZero),
+                    (p) => yChannel(channelValue(channel, p)),
+                  )}
                 />
               )
             })}
@@ -1376,9 +1378,11 @@ export function ScopePlot({
                 stroke={MATH_COLOR}
                 strokeWidth={1.4}
                 strokeDasharray="7 3"
-                points={points
-                  .map((p) => `${x(p.time - tZero)},${yFor(MATH_KEY)(mathValueAt(p))}`)
-                  .join(' ')}
+                points={smoothTrace(
+                  points,
+                  (p) => x(p.time - tZero),
+                  (p) => yFor(MATH_KEY)(mathValueAt(p)),
+                )}
               />
             ) : null}
           </g>
