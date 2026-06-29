@@ -51,7 +51,7 @@ const SEG_LINE: Record<
   g: ({ l, r, m, p }) => [l + p, m, r - p, m],
 }
 
-type LitSeg = { on: boolean; color: string }
+type LitSeg = { on: boolean; color: string; brightness?: number }
 
 /**
  * Three figure-8 digits side by side, each segment lit from its real LED's solved state — plus a
@@ -310,7 +310,11 @@ export function BlockNode({ id, data }: NodeProps) {
   // A seven-segment display reads its inner LEDs' solved lit-state (namespaced after flatten).
   const readSeg = (key: string): LitSeg => {
     const h = healthMap.get(key)
-    return { on: h?.lit === true, color: h?.glow ?? THEME.statusDanger }
+    return {
+      on: h?.lit === true,
+      color: h?.glow ?? THEME.statusDanger,
+      brightness: h?.brightness ?? 1,
+    }
   }
   const ledPrefix = block.ledPath ? `${block.ledPath}.` : ''
   const segments: Record<string, LitSeg> | null =
@@ -332,30 +336,39 @@ export function BlockNode({ id, data }: NodeProps) {
     const m = /(\d+)\D+(\d+)\D+(\d+)/.exec(s)
     return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [200, 60, 60]
   }
-  const mixPixel = (subs: LitSeg[]): LitSeg => {
+  // A pixel's shown colour folds in each LED's BRIGHTNESS (from its real forward current), so a dimly-
+  // driven pixel reads as a darker dot — true grey/shaded levels, not just on/off. An RGB pixel ADDS its
+  // three brightness-weighted subpixels (R+G = yellow, all three = white; a dim red + bright green leans
+  // green). At full drive every brightness is 1, so a solid display looks exactly as before.
+  const toLit = (subs: LitSeg[]): LitSeg => {
     let R = 0
     let G = 0
     let B = 0
     let any = false
-    for (const s of subs)
-      if (s.on) {
-        const [r, g, b] = parseRgb(s.color)
-        R += r
-        G += g
-        B += b
-        any = true
-      }
-    return { on: any, color: `rgb(${Math.min(255, R)}, ${Math.min(255, G)}, ${Math.min(255, B)})` }
+    for (const s of subs) {
+      const k = s.on ? (s.brightness ?? 1) : 0
+      const [r, g, b] = parseRgb(s.color)
+      R += r * k
+      G += g * k
+      B += b * k
+      if (s.on) any = true
+    }
+    return {
+      on: any,
+      color: `rgb(${Math.round(Math.min(255, R))}, ${Math.round(Math.min(255, G))}, ${Math.round(Math.min(255, B))})`,
+    }
   }
   const matrix: LitSeg[][] | null =
     block.display === 'dot_matrix'
       ? Array.from({ length: block.rows ?? 7 }, (_, r) =>
-          Array.from({ length: block.cols ?? 5 }, (_, c) => readSeg(`${id}.led_${r}_${c}`)),
+          Array.from({ length: block.cols ?? 5 }, (_, c) =>
+            toLit([readSeg(`${id}.led_${r}_${c}`)]),
+          ),
         )
       : block.display === 'dot_matrix_rgb'
         ? Array.from({ length: block.rows ?? 7 }, (_, r) =>
             Array.from({ length: block.cols ?? 7 }, (_, c) =>
-              mixPixel(['r', 'g', 'b'].map((ch) => readSeg(`${id}.led_${r}_${c}_${ch}`))),
+              toLit(['r', 'g', 'b'].map((ch) => readSeg(`${id}.led_${r}_${c}_${ch}`))),
             ),
           )
         : null

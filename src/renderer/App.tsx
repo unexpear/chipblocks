@@ -5503,6 +5503,77 @@ function Canvas({ project }: { project: ProjectChoice }) {
         reSolve(nodes as unknown as Node[], edges as unknown as Edge[])
         return 'colour bars'
       },
+      colorGrid() {
+        // DEV: GREY LEVELS — a 7×7 grid, each column a colour, each row a brightness. Each row is driven
+        // at a different VOLTAGE (2.3 V → 5 V), so its LEDs draw a different current and glow at a
+        // different brightness — a real shaded ramp, not just on/off. Full colour, dark to bright.
+        const supply = (v: number) => ({
+          nominal_voltage: { value: { kind: 'scalar', amount: v, unit: 'volt' } },
+          internal_resistance: { value: { kind: 'scalar', amount: 0, unit: 'ohm' } },
+        })
+        const mat = BUILTIN_BLOCKS.dot_matrix_rgb_7x7
+        if (!mat) return 'no block'
+        const BARS = ['rgb', 'rg', 'gb', 'g', 'rb', 'r', 'b'] // W Y C G M R B per column
+        const VROW = [2.3, 2.6, 2.9, 3.3, 3.8, 4.3, 5.0] // dim → bright per row
+        const nodes: Record<string, unknown>[] = [
+          {
+            id: 'cg_mat',
+            type: 'block',
+            position: { x: 0, y: 0 },
+            data: { definition: 'block', label: 'RGB Screen', block: mat },
+          },
+          {
+            id: 'cg_g',
+            type: 'device',
+            position: { x: -260, y: 500 },
+            data: { definition: 'ground', label: 'GND' },
+          },
+        ]
+        const edges: Record<string, unknown>[] = [
+          {
+            id: 'cg_mg',
+            type: 'net',
+            source: 'cg_mat',
+            sourceHandle: 'common',
+            target: 'cg_g',
+            targetHandle: 'reference_terminal',
+          },
+        ]
+        for (let row = 0; row < 7; row++) {
+          nodes.push({
+            id: `cg_r${row}`,
+            type: 'device',
+            position: { x: -260, y: row * 70 },
+            data: {
+              definition: 'power_source',
+              label: `${VROW[row]}V`,
+              parameters: supply(VROW[row] ?? 5),
+            },
+          })
+          edges.push({
+            id: `cg_rn${row}`,
+            type: 'net',
+            source: `cg_r${row}`,
+            sourceHandle: 'terminal_negative',
+            target: 'cg_g',
+            targetHandle: 'reference_terminal',
+          })
+          for (let col = 0; col < 7; col++)
+            for (const ch of BARS[col] ?? '')
+              edges.push({
+                id: `cgp_${row}_${col}_${ch}`,
+                type: 'net',
+                source: `cg_r${row}`,
+                sourceHandle: 'terminal_positive',
+                target: 'cg_mat',
+                targetHandle: `px_${row}_${col}_${ch}`,
+              })
+        }
+        setNodes(() => nodes as unknown as Node[])
+        setEdges(() => edges as unknown as Edge[])
+        reSolve(nodes as unknown as Node[], edges as unknown as Edge[])
+        return 'colour grid'
+      },
       calcShow(a: number, b: number, sub: boolean) {
         // DEV (brick 8 visible): wire the BCD ALU -> decoder bank -> ten seven-segment displays and run
         // the REAL solve, so the digits light with a +/- b. Logic core hands off to the analog displays.

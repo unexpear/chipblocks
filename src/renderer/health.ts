@@ -18,6 +18,9 @@ export type NodeHealth = {
   lit?: boolean
   /** A lit LED's emission color (CSS rgb), mapped from its peak_wavelength. */
   glow?: string
+  /** A lit LED's brightness 0..1 from its REAL forward current — lets a dot-matrix render grey/shaded
+   *  levels (a dimly-driven pixel reads dark). 1.0 at normal operating current. */
+  brightness?: number
   failed?: boolean
   /** A non-fatal caution (e.g. a shared-bus output combination that needs care) — amber, no burst. */
   warned?: boolean
@@ -138,7 +141,12 @@ export function canvasHealth(
       const current = Math.abs(solution.branches.get(inst.id) ?? 0)
       if (current > LIT_FLOOR_AMPS) {
         const nm = readScalarParam(inst, 'peak_wavelength') ?? DEFAULT_LED_NM
-        health.set(inst.id, { lit: true, glow: wavelengthToColor(nm) })
+        // brightness from the REAL forward current: full at ~40% of the max rated current (a normal
+        // operating point), with a perceptual gamma so a dimly-driven LED reads right. A solid-on display
+        // (5 V through its resistor) lands at ≥ this, so it stays full-bright; only a dimmed pixel greys.
+        const iFull = (readScalarParam(inst, 'max_forward_current') ?? 0.02) * 0.4
+        const brightness = Math.min(1, (current / iFull) ** 0.6)
+        health.set(inst.id, { lit: true, glow: wavelengthToColor(nm), brightness })
       }
     } else if (inst.definition === 'incandescent_bulb') {
       // A bulb glows the color of its self-heated filament — radiation-cooled, so the
