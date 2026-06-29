@@ -228,7 +228,7 @@ describe('Full adder — A + B + Cin -> SUM, Cout (two half-adders + an OR)', ()
     expect([isLow(o.sum), isHigh(o.cout)]).toEqual([true, true]) // 1+1+0 = 2 -> sum 0, cout 1 (HA1 carry)
     o = fa(H, H, H)
     expect([isHigh(o.sum), isHigh(o.cout)]).toEqual([true, true]) // 1+1+1 = 3 -> sum 1, cout 1
-  }, 45000)
+  })
 })
 
 describe('2-bit ripple-carry adder — two full-adders, the carry rippling bit to bit', () => {
@@ -250,7 +250,7 @@ describe('2-bit ripple-carry adder — two full-adders, the carry rippling bit t
     }
     expect(add2(2, 1)).toBe(3) // 2 + 1 = 3, no carry past bit 0
     expect(add2(3, 1)).toBe(4) // 3 + 1 = 4, carry ripples bit 0 -> bit 1 -> Cout
-  }, 120000)
+  })
 })
 
 describe('4-bit ripple-carry adder — four full-adders, the nibble adder (~200 transistors)', () => {
@@ -281,7 +281,7 @@ describe('4-bit ripple-carry adder — four full-adders, the nibble adder (~200 
     expect(add4(9, 7)).toBe(16) // 1001 + 0111, carry ripples all the way to Cout
     expect(add4(15, 1)).toBe(16) // 1111 + 0001, the longest ripple plus overflow
     expect(add4(15, 15)).toBe(30) // 1111 + 1111, the widest sum
-  }, 30000)
+  })
 })
 
 describe('4-bit calculator — a ripple-carry adder/subtractor; SUB picks add or subtract', () => {
@@ -309,12 +309,12 @@ describe('4-bit calculator — a ripple-carry adder/subtractor; SUB picks add or
   test('SUB low adds the two nibbles', () => {
     expect(calc(3, 1, false)).toEqual({ s: 4, cout: 0 }) // 3 + 1 = 4
     expect(calc(9, 7, false)).toEqual({ s: 0, cout: 1 }) // 9 + 7 = 16 → S 0, carry out
-  }, 30000)
+  })
   test('SUB high subtracts; Cout=1 means no borrow (A ≥ B)', () => {
     expect(calc(5, 3, true)).toEqual({ s: 2, cout: 1 }) // 5 − 3 = 2, no borrow
     expect(calc(7, 7, true)).toEqual({ s: 0, cout: 1 }) // 7 − 7 = 0, no borrow
     expect(calc(3, 5, true)).toEqual({ s: 14, cout: 0 }) // 3 − 5 = −2 → 1110 (14), borrow
-  }, 30000)
+  })
 })
 
 // The hex 7-segment decoder is a 4-to-16 decoder + OR plane — ~100 gates / ~650 MOSFETs. It is
@@ -338,7 +338,7 @@ describe('binary → hex 7-segment decoder — the chip that drives a digit read
   test.skip('"7" lights segments a, b, c; "0" lights everything but g (~60 s/solve)', () => {
     expect(segmentsOf(7)).toBe('1110000') // a top, b upper-right, c lower-right
     expect(segmentsOf(0)).toBe('1111110') // the ring a–f, middle g off
-  }, 180000)
+  }, 600000)
 })
 
 describe('SR latch — two cross-coupled NOR gates, the first bit of memory', () => {
@@ -425,7 +425,7 @@ describe('SR latch memory — the hold state, proven over time', () => {
   test('Q stays HIGH after a set pulse and LOW after a reset pulse (same S=R=0 hold)', () => {
     expect(isHigh(qInHoldAfter('s'))).toBe(true) // set, then released -> Q remembers 1
     expect(isLow(qInHoldAfter('r'))).toBe(true) // reset, then released -> Q remembers 0
-  }, 60000)
+  })
 })
 
 describe('Gated D latch — transparent when enabled, holds when not (no forbidden state)', () => {
@@ -664,7 +664,7 @@ describe('D flip-flop — captures D on the rising clock edge (master-slave)', (
       result.series.find((p) => p.time >= t)?.nodes.get(qNet ?? '') ?? Number.NaN
     expect(isLow(qAt(0.00025))).toBe(true) // clock-low window before the first edge: still 0
     expect(isHigh(qAt(0.00075))).toBe(true) // after the rising edge: D = 1 captured
-  }, 60000)
+  })
 })
 
 describe('4-bit register — four flip-flops latching a whole word on one clock edge', () => {
@@ -750,7 +750,7 @@ describe('4-bit register — four flip-flops latching a whole word on one clock 
     expect(isHigh(qAt(1, 0.0007))).toBe(true) // Q1 = 1
     expect(isLow(qAt(2, 0.0007))).toBe(true) // Q2 = 0
     expect(isHigh(qAt(3, 0.0007))).toBe(true) // Q3 = 1
-  }, 60000)
+  })
 })
 
 describe('BCD register (10-digit) — the calculator’s 40-bit operand store', () => {

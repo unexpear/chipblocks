@@ -1073,11 +1073,11 @@ describe('multiplier — A × B on real gates (sequencer + reused datapath)', ()
   // A multi-cycle gate-level multiply runs ~40 clocked solves; allow plenty of time under full-suite load.
   test('12 × 12 = 144', () => {
     expect(runMul(12, 12)).toMatchObject({ product: 144, done: true })
-  }, 30000)
+  })
 
   test('7 × 8 = 56', () => {
     expect(runMul(7, 8)).toMatchObject({ product: 56, done: true })
-  }, 30000)
+  })
 })
 
 describe('divide sequencer — the ÷ control FSM steps through its states', () => {
@@ -1217,19 +1217,19 @@ describe('divider — A ÷ B on real gates (sequencer + reused datapath)', () =>
 
   test('100 ÷ 4 = 25', () => {
     expect(runDiv(100, 4)).toMatchObject({ quotient: 25, remainder: 0, done: true })
-  }, 30000)
+  })
 
   test('56 ÷ 8 = 7', () => {
     expect(runDiv(56, 8)).toMatchObject({ quotient: 7, remainder: 0, done: true })
-  }, 30000)
+  })
 
   test('17 ÷ 5 = 3 remainder 2', () => {
     expect(runDiv(17, 5)).toMatchObject({ quotient: 3, remainder: 2, done: true, error: false })
-  }, 30000)
+  })
 
   test('divide by zero finishes immediately with the error flag set', () => {
     expect(runDiv(5, 0)).toMatchObject({ done: true, error: true })
-  }, 30000)
+  })
 })
 
 describe('×/÷ busy handshake — start the sequencer, hold BUSY until done, then capture', () => {
@@ -1435,19 +1435,19 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
 
   test('12 + 34 = 46', () => {
     expect(runCalc(['c', 1, 2, '+', 3, 4, '='])).toMatchObject({ display: 46, error: false })
-  }, 60000)
+  })
 
   test('12 × 34 = 408', () => {
     expect(runCalc(['c', 1, 2, '*', 3, 4, '='])).toMatchObject({ display: 408, error: false })
-  }, 120000)
+  })
 
   test('100 ÷ 4 = 25', () => {
     expect(runCalc(['c', 1, 0, 0, '/', 4, '='])).toMatchObject({ display: 25, error: false })
-  }, 120000)
+  })
 
   test('5 ÷ 0 = Error', () => {
     expect(runCalc(['c', 5, '/', 0, '='])).toMatchObject({ error: true })
-  }, 60000)
+  })
 
   test('the divide-by-zero error is not sticky — it clears on the next op/clear', () => {
     expect(runCalc(['c', 5, '/', 0, '=', 'c', 6, '+', 1, '='])).toMatchObject({
@@ -1458,27 +1458,27 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
       display: 7,
       error: false,
     })
-  }, 120000)
+  })
 
   test('subtraction can go negative: 3 − 5 = −2', () => {
     expect(runCalc(['c', 3, '-', 5, '='])).toMatchObject({ display: -2, error: false })
-  }, 60000)
+  })
 
   test('positive subtraction still works: 12 − 5 = 7', () => {
     expect(runCalc(['c', 1, 2, '-', 5, '='])).toMatchObject({ display: 7 })
-  }, 60000)
+  })
 
   test('chaining off a negative: 3 − 5 = then + 5 = 3', () => {
     expect(runCalc(['c', 3, '-', 5, '=', '+', 5, '='])).toMatchObject({ display: 3 })
-  }, 60000)
+  })
 
   test('the ± key negates the entry: 5 ± shows −5', () => {
     expect(runCalc(['c', 5, 'n'])).toMatchObject({ display: -5 })
-  }, 60000)
+  })
 
   test('± then arithmetic: 5 ± + 3 = −2', () => {
     expect(runCalc(['c', 5, 'n', '+', 3, '='])).toMatchObject({ display: -2 })
-  }, 60000)
+  })
 
   // Floating point — step 3: typing a "." switches to fractional entry, and a real point-position
   // counter (f_ent) records how many digits are fractional. The significand stays a plain integer;
@@ -1489,7 +1489,7 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
     expect(runCalc(['c', 1, 2, '.', 3, 4])).toMatchObject({ sig: 1234, fent: 2, value: 12.34 })
     expect(runCalc(['c', 1, 2])).toMatchObject({ sig: 12, fent: 0, value: 12 })
     expect(runCalc(['c', 0, '.', 2, 5])).toMatchObject({ sig: 25, fent: 2, value: 0.25 })
-  }, 60000)
+  })
 
   // TRUE 10-DIGIT RANGE + OVERFLOW → E (real gates): the calc is SIGN-MAGNITUDE — an UNSIGNED 10-digit
   // magnitude (0..9,999,999,999) plus an explicit sign bit — so the whole 10-digit range is usable. A +/−
@@ -1502,49 +1502,49 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
       display: 8000000000,
       error: false,
     })
-  }, 60000)
+  })
 
   test('full range, still in bounds: 5000000000 + 4000000000 = 9000000000', () => {
     expect(runCalc(['c', ...D('5000000000'), '+', ...D('4000000000'), '='])).toMatchObject({
       display: 9000000000,
       error: false,
     })
-  }, 60000)
+  })
 
   test('one below the 10-digit ceiling is fine: 9999999998 + 1 = 9999999999', () => {
     expect(runCalc(['c', ...D('9999999998'), '+', 1, '='])).toMatchObject({
       display: 9999999999,
       error: false,
     })
-  }, 60000)
+  })
 
   test('a true 10-digit carry overflows: 9999999999 + 1 → E', () => {
     expect(runCalc(['c', ...D('9999999999'), '+', 1, '='])).toMatchObject({ error: true })
-  }, 60000)
+  })
 
   test('add that stays in range does NOT overflow: 2000000000 + 2000000000 = 4000000000', () => {
     expect(runCalc(['c', ...D('2000000000'), '+', ...D('2000000000'), '='])).toMatchObject({
       display: 4000000000,
       error: false,
     })
-  }, 60000)
+  })
 
   test('subtraction in range never overflows: 1 − 9 = −8', () => {
     expect(runCalc(['c', 1, '-', 9, '='])).toMatchObject({ display: -8, error: false })
-  }, 60000)
+  })
 
   test('a large negative sum is now representable: −4000000000 − 4000000000 = −8000000000', () => {
     expect(runCalc(['c', ...D('4000000000'), 'n', '-', ...D('4000000000'), '='])).toMatchObject({
       display: -8000000000,
       error: false,
     })
-  }, 60000)
+  })
 
   test('a negative sum past 10 digits still overflows: −6000000000 − 5000000000 → E', () => {
     expect(runCalc(['c', ...D('6000000000'), 'n', '-', ...D('5000000000'), '='])).toMatchObject({
       error: true,
     })
-  }, 60000)
+  })
 
   test('a difference never overflows: 9999999999 − 9999999999 = 0', () => {
     expect(runCalc(['c', ...D('9999999999'), '-', ...D('9999999999'), '='])).toMatchObject({
@@ -1552,49 +1552,49 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
       error: false,
       neg: false,
     })
-  }, 60000)
+  })
 
   test('the ± key preserves the magnitude across the full range: 9999999999 ± = −9999999999', () => {
     expect(runCalc(['c', ...D('9999999999'), 'n'])).toMatchObject({
       display: -9999999999,
       error: false,
     })
-  }, 60000)
+  })
 
   test('a full-range negative via subtraction: 0 − 9999999999 = −9999999999', () => {
     expect(runCalc(['c', 0, '-', ...D('9999999999'), '='])).toMatchObject({
       display: -9999999999,
       error: false,
     })
-  }, 60000)
+  })
 
   test('multiply overflow past 10 digits raises the error: 4000000000 × 3 → E', () => {
     expect(runCalc(['c', ...D('4000000000'), '*', 3, '='])).toMatchObject({ error: true })
-  }, 120000)
+  })
 
   test('an 11-digit product overflows: 5000000000 × 2 → E', () => {
     expect(runCalc(['c', ...D('5000000000'), '*', 2, '='])).toMatchObject({ error: true })
-  }, 120000)
+  })
 
   test('a product that fills 10 digits does NOT overflow: 3333333333 × 3 = 9999999999', () => {
     expect(runCalc(['c', ...D('3333333333'), '*', 3, '='])).toMatchObject({
       display: 9999999999,
       error: false,
     })
-  }, 120000)
+  })
 
   test('a product that stays in range does NOT overflow: 2000000000 × 2 = 4000000000', () => {
     expect(runCalc(['c', ...D('2000000000'), '*', 2, '='])).toMatchObject({
       display: 4000000000,
       error: false,
     })
-  }, 120000)
+  })
 
   // −0 GUARD: a zero result is always +0 (the sign-suppress NOR taps the FINAL muxed magnitude, so ×/÷
   // by zero can't sneak a minus through either).
   test('subtracting equals gives +0, not −0: 5 − 5 = 0 (neg false)', () => {
     expect(runCalc(['c', 5, '-', 5, '='])).toMatchObject({ display: 0, error: false, neg: false })
-  }, 60000)
+  })
 
   test('−0 guard through multiply: −5 × 0 = 0 (neg false)', () => {
     expect(runCalc(['c', 5, 'n', '*', 0, '='])).toMatchObject({
@@ -1602,7 +1602,7 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
       error: false,
       neg: false,
     })
-  }, 120000)
+  })
 
   test('−0 guard through divide: −0 ÷ 5 = 0 (neg false)', () => {
     expect(runCalc(['c', 0, 'n', '/', 5, '='])).toMatchObject({
@@ -1610,53 +1610,53 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
       error: false,
       neg: false,
     })
-  }, 120000)
+  })
 
   // repeat-equals + chaining must keep the sign right across the new range
   test('a replayed add can overflow: 5000000000 + 4000000000 = = → E', () => {
     expect(runCalc(['c', ...D('5000000000'), '+', ...D('4000000000'), '=', '='])).toMatchObject({
       error: true,
     })
-  }, 60000)
+  })
 
   test('repeat-equals on a negative result: 5 − 7 = = → −2 then −9', () => {
     expect(runCalc(['c', 5, '-', 7, '='])).toMatchObject({ display: -2, error: false })
     expect(runCalc(['c', 5, '-', 7, '=', '='])).toMatchObject({ display: -9, error: false })
-  }, 60000)
+  })
 
   test('overflow error is not sticky — a fresh calculation clears it', () => {
     expect(runCalc(['c', ...D('9999999999'), '+', 1, '=', 'c', 6, '+', 1, '='])).toMatchObject({
       display: 7,
       error: false,
     })
-  }, 60000)
+  })
 
   // REPEAT-EQUALS (real gates): a bare '=' replays the last op + operand on the shown value.
   test('repeat equals replays the last add: 5 + 3 =, ==, === → 8, 11, 14', () => {
     expect(runCalc(['c', 5, '+', 3, '='])).toMatchObject({ display: 8 })
     expect(runCalc(['c', 5, '+', 3, '=', '='])).toMatchObject({ display: 11 })
     expect(runCalc(['c', 5, '+', 3, '=', '=', '='])).toMatchObject({ display: 14 })
-  }, 60000)
+  })
 
   test('a new number then = applies the last op to it: 5 + 3 = 7 = → 10', () => {
     expect(runCalc(['c', 5, '+', 3, '=', 7, '='])).toMatchObject({ display: 10 })
-  }, 60000)
+  })
 
   test('repeat equals replays a multiply: 2 × 3 = = → 18', () => {
     expect(runCalc(['c', 2, '*', 3, '=', '='])).toMatchObject({ display: 18 })
-  }, 120000)
+  })
 
   test('a new number then = applies the last multiply: 2 × 3 = 7 = → 21', () => {
     expect(runCalc(['c', 2, '*', 3, '=', 7, '='])).toMatchObject({ display: 21 })
-  }, 120000)
+  })
 
   test('repeat equals replays a divide: 100 ÷ 2 = = → 25', () => {
     expect(runCalc(['c', 1, 0, 0, '/', 2, '=', '='])).toMatchObject({ display: 25 })
-  }, 120000)
+  })
 
   test('a new operator after = is NOT a replay (chains the result): 2 × 3 = + 4 = → 10', () => {
     expect(runCalc(['c', 2, '*', 3, '=', '+', 4, '='])).toMatchObject({ display: 10 })
-  }, 120000)
+  })
 
   // DECIMAL +/− (floating point): each number carries a point position F; the smaller-F operand is
   // aligned (shifted up) to F=max before the ALU. Asserting fent (the result's F) too, because the
@@ -1665,32 +1665,32 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
   test('aligned decimal add, both operand orders: 2.30+1.5 and 1.5+2.30 = 3.8', () => {
     expect(runCalc(['c', 2, '.', 3, 0, '+', 1, '.', 5, '='])).toMatchObject({ value: 3.8, fent: 2 })
     expect(runCalc(['c', 1, '.', 5, '+', 2, '.', 3, 0, '='])).toMatchObject({ value: 3.8, fent: 2 })
-  }, 60000)
+  })
 
   test('aligned decimal subtract: 3.75 − 1.5 = 2.25', () => {
     expect(runCalc(['c', 3, '.', 7, 5, '-', 1, '.', 5, '='])).toMatchObject({
       value: 2.25,
       fent: 2,
     })
-  }, 60000)
+  })
 
   test('aligned decimal subtract going negative: 1.5 − 3.75 = −2.25', () => {
     expect(runCalc(['c', 1, '.', 5, '-', 3, '.', 7, 5, '='])).toMatchObject({
       value: -2.25,
       fent: 2,
     })
-  }, 60000)
+  })
 
   test('equal-F decimal subtract: 0.5 − 2.0 = −1.5', () => {
     expect(runCalc(['c', 0, '.', 5, '-', 2, '.', 0, '='])).toMatchObject({ value: -1.5, fent: 1 })
-  }, 60000)
+  })
 
   test('negate then aligned add: 1.5 ± + 0.25 = −1.25', () => {
     expect(runCalc(['c', 1, '.', 5, 'n', '+', 0, '.', 2, 5, '='])).toMatchObject({
       value: -1.25,
       fent: 2,
     })
-  }, 60000)
+  })
 
   test('repeat-equals keeps the point: 1.5 + 2.3 = = → 3.8 then 6.1', () => {
     expect(runCalc(['c', 1, '.', 5, '+', 2, '.', 3, '='])).toMatchObject({ value: 3.8, fent: 1 })
@@ -1698,78 +1698,78 @@ describe('CALCULATOR — the whole 4-function machine, end-to-end on real gates'
       value: 6.1,
       fent: 1,
     })
-  }, 60000)
+  })
 
   test('alignment that loses a digit off the top raises E: 1234567890 + 0.5 → E', () => {
     expect(runCalc(['c', 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '+', 0, '.', 5, '='])).toMatchObject({
       error: true,
     })
-  }, 60000)
+  })
 
   test('integer add still has no point (F=0): 12 + 34 = 46, fent 0', () => {
     expect(runCalc(['c', 1, 2, '+', 3, 4, '='])).toMatchObject({ value: 46, fent: 0 })
-  }, 60000)
+  })
 
   // ×/÷ with a decimal operand is not aligned yet — refuse with E rather than lie (added in later steps).
   test('decimal multiply lines up the point: 1.5 × 2.5 = 3.75', () => {
     expect(runCalc(['c', 1, '.', 5, '*', 2, '.', 5, '='])).toMatchObject({ value: 3.75, fent: 2 })
-  }, 120000)
+  })
 
   test('decimal multiply keeps trailing zeros: 0.25 × 4 = 1.00', () => {
     expect(runCalc(['c', 0, '.', 2, 5, '*', 4, '='])).toMatchObject({ value: 1, fent: 2, sig: 100 })
-  }, 120000)
+  })
 
   test('one decimal operand: 2.5 × 2 = 5.0', () => {
     expect(runCalc(['c', 2, '.', 5, '*', 2, '='])).toMatchObject({ value: 5, fent: 1 })
-  }, 120000)
+  })
 
   test('integer multiply still has no point: 12 × 34 = 408 (F0)', () => {
     expect(runCalc(['c', 1, 2, '*', 3, 4, '='])).toMatchObject({ value: 408, fent: 0 })
-  }, 120000)
+  })
 
   test('a product needing >10 fractional places overflows: 0.000001 × 0.00001 → E', () => {
     expect(runCalc(['c', 0, '.', 0, 0, 0, 0, 0, 1, '*', 0, '.', 0, 0, 0, 0, 1, '='])).toMatchObject(
       { error: true },
     )
-  }, 120000)
+  })
 
   test('decimal divide: 10 ÷ 4 = 2.5', () => {
     expect(runCalc(['c', 1, 0, '/', 4, '='])).toMatchObject({ value: 2.5, fent: 1, sig: 25 })
-  }, 120000)
+  })
 
   test('decimal divide truncates (not rounds): 1 ÷ 3 = 0.3333', () => {
     expect(runCalc(['c', 1, '/', 3, '='])).toMatchObject({ value: 0.3333, fent: 4, sig: 3333 })
-  }, 120000)
+  })
 
   test('decimal divide: 1 ÷ 8 = 0.125', () => {
     expect(runCalc(['c', 1, '/', 8, '='])).toMatchObject({ value: 0.125, fent: 3 })
-  }, 120000)
+  })
 
   test('decimal operands divide: 1.5 ÷ 0.5 = 3', () => {
     expect(runCalc(['c', 1, '.', 5, '/', 0, '.', 5, '='])).toMatchObject({ value: 3, fent: 0 })
-  }, 120000)
+  })
 
   test('divisor with more decimals: 6 ÷ 1.5 = 4', () => {
     expect(runCalc(['c', 6, '/', 1, '.', 5, '='])).toMatchObject({ value: 4, fent: 0 })
-  }, 120000)
+  })
 
   test('integer divide collapses the trailing zeros: 100 ÷ 4 = 25 (no point)', () => {
     expect(runCalc(['c', 1, 0, 0, '/', 4, '='])).toMatchObject({ value: 25, fent: 0 })
-  }, 120000)
+  })
 
   test('a signed decimal divide: −10 ÷ 4 = −2.5', () => {
     expect(runCalc(['c', 1, 0, 'n', '/', 4, '='])).toMatchObject({ value: -2.5, fent: 1 })
-  }, 120000)
+  })
 
   test('a quotient past 10 integer digits overflows: 9999999999 ÷ 1 → E', () => {
     expect(runCalc(['c', 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, '/', 1, '='])).toMatchObject({ error: true })
-  }, 120000)
+  })
 
   test('dividing by a tiny number needs too many places → E: 1 ÷ 0.00001', () => {
     expect(runCalc(['c', 1, '/', 0, '.', 0, 0, 0, 0, 1, '='])).toMatchObject({ error: true })
-  }, 120000)
+  })
 
   test('decimal divide by zero is still an error: 1.5 ÷ 0 → E', () => {
     expect(runCalc(['c', 1, '.', 5, '/', 0, '='])).toMatchObject({ error: true })
-  }, 120000)
+  })
 })

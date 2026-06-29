@@ -82,7 +82,7 @@ describe('char-gen video output (step 4)', () => {
     }
     expect(mismatches).toBe(0)
     expect(litSeen).toBeGreaterThan(100) // the letters really do light a lot of pixels
-  }, 60000)
+  })
 
   test('the golden glyph model spells recognizable letters (font sanity)', () => {
     // The gate-vs-model equality is proven by the full-field test; this just confirms the model itself

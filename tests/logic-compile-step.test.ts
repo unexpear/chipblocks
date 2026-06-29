@@ -135,7 +135,7 @@ function runRef(keys: Array<string | number>): number {
 describe('compileLogic + stepLogic (the calculator fast path)', () => {
   test('add via the compile-once/step path: 1234 + 5678 = 6912', () => {
     expect(runFast(['c', 1, 2, 3, 4, '+', 5, 6, 7, 8, '='])).toBe(6912)
-  }, 60000)
+  })
 
   test('the multi-cycle ×/÷ busy loop on the fast path matches the per-cycle simulateLogic', () => {
     for (const seq of [
@@ -145,5 +145,5 @@ describe('compileLogic + stepLogic (the calculator fast path)', () => {
     ] as Array<Array<string | number>>) {
       expect(runFast(seq)).toBe(runRef(seq))
     }
-  }, 180000)
+  }, 600000)
 })

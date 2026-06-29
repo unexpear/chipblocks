@@ -193,5 +193,5 @@ describe('char-gen ⇄ CRT co-simulation (step 6)', () => {
     // And the beam actually swept a 2-D raster while the video played.
     const xs = points.map((p) => p.x)
     expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(0.5)
-  }, 60000)
+  })
 })

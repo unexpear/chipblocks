@@ -176,7 +176,7 @@ describe('single gates — every gate, full truth table from real transistors', 
           fails.push(`${name}(${fmt(bits)})=${out.toFixed(2)}V want ${exp ? 'HI' : 'LO'}`)
       }
       expect(fails).toEqual([])
-    }, 30000)
+    })
   }
 })
 
@@ -192,7 +192,7 @@ describe('same-type 2-gate compounds — a gate feeding the same gate', () => {
           fails.push(`${name}→${name}(${fmt(bits)})=${out.toFixed(2)}V want ${exp ? 'HI' : 'LO'}`)
       }
       expect(fails).toEqual([])
-    }, 90000)
+    })
   }
 })
 
@@ -213,6 +213,6 @@ describe('different-type 2-gate compounds — every ordered pair of distinct gat
             fails.push(`${n1}→${n2}(${fmt(bits)})=${out.toFixed(2)}V want ${exp ? 'HI' : 'LO'}`)
         }
         expect(fails).toEqual([])
-      }, 90000)
+      })
     }
 })
