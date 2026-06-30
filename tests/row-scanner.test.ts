@@ -9,7 +9,7 @@
 
 import { describe, expect, test } from 'vitest'
 import type { CanvasEdgeLike, CanvasNodeLike } from '../src/renderer/blocks.ts'
-import { ROW_SCANNER_8 } from '../src/renderer/builtin-blocks.ts'
+import { ROW_SCANNER_8, ROW_SCANNER_32 } from '../src/renderer/builtin-blocks.ts'
 import { compileLogic, stepLogic } from '../src/renderer/logic-sim.ts'
 
 const supply = (v: number) => ({
@@ -96,5 +96,49 @@ describe('row scanner — a real clocked counter + one-hot decoder cycles the ro
       )
       expect(high.length).toBe(1)
     }
+  })
+})
+
+describe('wider scanner — the counter width scales the row count (a 32-row panel)', () => {
+  const rows = 32
+  const s32: CanvasNodeLike[] = [
+    { id: 'scan', position: { x: 0, y: 0 }, data: { definition: 'block', block: ROW_SCANNER_32 } },
+    src('vp', 5),
+    src('clk', 0),
+    src('clr', 0),
+    { id: 'g', position: { x: 0, y: 0 }, data: { definition: 'ground' } },
+  ]
+  const active = (r: ReturnType<typeof stepLogic>): number => {
+    let hi = -1
+    let count = 0
+    for (let i = 0; i < rows; i++)
+      if (r.value('scan', `row_${i}`) === true) {
+        hi = i
+        count++
+      }
+    return count === 1 ? hi : -1
+  }
+
+  test('CLR loads row 0, then one-hot advances through all 32 rows and wraps — not capped at 16', () => {
+    const compiled = compileLogic(s32, edges) // same clk/clr/V+/gnd wiring as the 8-row scanner
+    const state = new Map<string, boolean>()
+    const step = (clk: boolean, clr: boolean) =>
+      stepLogic(
+        compiled,
+        new Map<string, boolean>([
+          ['clk', clk],
+          ['clr', clr],
+        ]),
+        state,
+      )
+    step(false, true)
+    expect(active(step(true, true))).toBe(0)
+    const seq: number[] = []
+    for (let i = 0; i < rows; i++) {
+      step(false, false)
+      seq.push(active(step(true, false)))
+    }
+    // 1,2,…,31, wrap to 0 — and `active` returns -1 unless EXACTLY one row is high (no ghosting) the whole way
+    expect(seq).toEqual([...Array.from({ length: rows - 1 }, (_, i) => i + 1), 0])
   })
 })

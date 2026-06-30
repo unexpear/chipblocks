@@ -5823,7 +5823,10 @@ export const ACTIVE_MATRIX_PIXEL: BlockData = buildActiveMatrixPixel()
  */
 function buildRowScanner(rows: number): BlockData {
   const bits = Math.max(1, Math.ceil(Math.log2(rows)))
-  const counterBlock = bits <= 3 ? COUNTER_UP_EN_3 : COUNTER_UP_EN_4
+  // Reuse the cached 3/4-bit up-counters for the common 8/16-row panels; build a wider one for taller
+  // panels (a 5-bit counter scans 32 rows, 6-bit 64, …) so the scanner is not capped at 16.
+  const counterBlock =
+    bits <= 3 ? COUNTER_UP_EN_3 : bits === 4 ? COUNTER_UP_EN_4 : buildDownCounter(bits, true, true)
   const nodes: BlockData['nodes'] = [
     { id: 'cnt', definition: 'block', x: 0, y: 0, block: counterBlock },
   ]
@@ -5897,6 +5900,8 @@ function buildRowScanner(rows: number): BlockData {
 export const ROW_SCANNER_8: BlockData = buildRowScanner(8)
 /** A 16-row scanner for the 16×16 multiplexed matrix. */
 export const ROW_SCANNER_16: BlockData = buildRowScanner(16)
+/** A 32-row scanner (5-bit counter) — the same circuit scaled up, for taller multiplexed panels. */
+export const ROW_SCANNER_32: BlockData = buildRowScanner(32)
 
 /**
  * FRAME BUFFER — real memory holding the picture. One register per row (real D flip-flops via dRegister)
@@ -6503,6 +6508,7 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   active_matrix_pixel: ACTIVE_MATRIX_PIXEL,
   row_scanner_8: ROW_SCANNER_8,
   row_scanner_16: ROW_SCANNER_16,
+  row_scanner_32: ROW_SCANNER_32,
   display_seven_segment_bare: SEVEN_SEGMENT_BARE,
   // Every multi-digit size in DIGIT_DISPLAY_SIZES — the shipped module (with resistors) and the bare
   // raw version (LEDs only), both from the one parameterized generator.
