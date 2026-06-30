@@ -5999,6 +5999,31 @@ export function buildFrameBuffer(image: readonly (readonly boolean[])[]): BlockD
 }
 
 /**
+ * GREY (multi-bit) FRAME BUFFER — colour depth on an on/off LED matrix the real way: BIT-PLANES. A grey
+ * image (0–1 per pixel) is quantised to `bits` bits and split into `bits` separate 1-bit frame buffers,
+ * plane k holding bit k of every pixel. Shown by Binary-Code-Modulation PWM — plane k is displayed 2^k as
+ * long as plane 0 — so the eye integrates the planes into one grey level (see scanGreyImage). Each plane
+ * is a real buildFrameBuffer (real flip-flops); no pixel ever stores an "analog" value. Returned LSB-first.
+ */
+export function buildGreyFrameBuffers(
+  image: readonly (readonly number[])[],
+  bits: number,
+): BlockData[] {
+  const cols = image[0]?.length ?? 0
+  const maxLevel = (1 << bits) - 1
+  return Array.from({ length: bits }, (_, k) =>
+    buildFrameBuffer(
+      image.map((row) =>
+        Array.from({ length: cols }, (_, c) => {
+          const level = Math.max(0, Math.min(maxLevel, Math.round((row[c] ?? 0) * maxLevel)))
+          return ((level >> k) & 1) === 1
+        }),
+      ),
+    ),
+  )
+}
+
+/**
  * WRITABLE FRAME BUFFER — like buildFrameBuffer, but the picture is WRITTEN in at runtime, not hardwired.
  * One loadable register per row — a real counter with its count disabled (EN tied low), so it only LOADS
  * on demand, a clean parallel-load register. A write port (one-hot write address + a column-data bus +

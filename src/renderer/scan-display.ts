@@ -30,14 +30,13 @@ const supply = (v: number) => ({
   internal_resistance: { value: { kind: 'scalar', amount: 0, unit: 'ohm' } },
 })
 
-/** Solve the analog matrix with ONE row driven high and the given columns pulled low; return the
- *  indices of the columns whose pixel actually lights in that row. */
-function solveMatrixRow(
+/** Solve the analog matrix with ONE row driven high and `litCols` pulled low together; report whether the
+ *  nonlinear solve converged and which of those columns' pixels actually light. */
+function solveColumns(
   matrix: BlockData,
   activeRow: number,
-  rowPattern: readonly boolean[],
-  cols: number,
-): number[] {
+  litCols: readonly number[],
+): { converged: boolean; lit: number[] } {
   const nodes: CanvasNodeLike[] = [
     { id: 'd', position: { x: 0, y: 0 }, data: { definition: 'block', block: matrix } },
     { id: 'g', position: { x: 0, y: 0 }, data: { definition: 'ground' } },
@@ -63,15 +62,14 @@ function solveMatrixRow(
       targetHandle: 'reference_terminal',
     },
   ]
-  for (let c = 0; c < cols; c++)
-    if (rowPattern[c])
-      edges.push({
-        id: `e_col_${c}`,
-        source: 'd',
-        sourceHandle: `col_${c}`,
-        target: 'g',
-        targetHandle: 'reference_terminal',
-      })
+  for (const c of litCols)
+    edges.push({
+      id: `e_col_${c}`,
+      source: 'd',
+      sourceHandle: `col_${c}`,
+      target: 'g',
+      targetHandle: 'reference_terminal',
+    })
   const flat = flattenBlocks(nodes, edges)
   const world = canvasToWorld(
     flat.nodes.map((n) => ({
@@ -89,12 +87,37 @@ function solveMatrixRow(
   )
   const sol = solveDCRobust(world)
   const lit: number[] = []
-  for (let c = 0; c < cols; c++) {
+  for (const c of litCols) {
     const led = flat.nodes.find(
       (n) => n.data.definition === 'led' && n.id.endsWith(`led_${activeRow}_${c}`),
     )
     if (led && Math.abs(sol.branches.get(led.id) ?? 0) > LIT) lit.push(c)
   }
+  return { converged: sol.converged, lit }
+}
+
+/**
+ * Light one scanned row: the columns whose pixel conducts when `activeRow` is driven high and the
+ * `rowPattern` columns are pulled low. Normally one full-row solve — but Newton can fail to converge on
+ * some mixed on/off column patterns (it hits its iteration cap and gives a collapsed, all-dark answer), so
+ * when the full-row solve does NOT converge we fall back to solving each lit column on its own. The matrix
+ * columns are independent — the driven row line is held at the supply voltage (zero source resistance), so
+ * each pixel is its own series LED + resistor — making a per-column solve EXACT for this circuit and always
+ * convergent. It is a decomposition of the same real circuit, not an approximation.
+ */
+function solveMatrixRow(
+  matrix: BlockData,
+  activeRow: number,
+  rowPattern: readonly boolean[],
+  cols: number,
+): number[] {
+  const litCols: number[] = []
+  for (let c = 0; c < cols; c++) if (rowPattern[c]) litCols.push(c)
+  if (litCols.length === 0) return []
+  const whole = solveColumns(matrix, activeRow, litCols)
+  if (whole.converged) return whole.lit
+  const lit: number[] = []
+  for (const c of litCols) if (solveColumns(matrix, activeRow, [c]).lit.includes(c)) lit.push(c)
   return lit
 }
 
@@ -264,4 +287,37 @@ export function scanMatrixFromBuffer(
     sres = step(true, false)
   }
   return pov
+}
+
+/**
+ * Scan a multi-bit GREY image out of real BIT-PLANE frame buffers and reconstruct the brightness the eye
+ * sees. `planes` are LSB-first 1-bit frame buffers (from buildGreyFrameBuffers); each is scanned over the
+ * real matrix exactly like a 1-bit picture. Binary-Code-Modulation weights plane k by 2^k — in a real
+ * frame it is lit 2^k as long — and the eye integrates the planes, so grey[r][c] = Σ_k (plane k lit)·2^k /
+ * (2^bits − 1), a brightness in 0–1. Real all the way down: real flip-flops, real scanner, real LED grid;
+ * the 2^k weighting models the eye integrating the PWM exactly as the row loop models persistence of vision.
+ */
+export function scanGreyImage(
+  scanner: BlockData,
+  planes: readonly BlockData[],
+  matrix: BlockData,
+  rows: number,
+  cols: number,
+): number[][] {
+  const bits = planes.length
+  const maxLevel = (1 << bits) - 1
+  const grey: number[][] = Array.from({ length: rows }, () => Array.from({ length: cols }, () => 0))
+  for (let k = 0; k < bits; k++) {
+    const plane = planes[k]
+    if (plane === undefined) continue
+    const lit = scanMatrixFromBuffer(scanner, plane, matrix, rows, cols)
+    const weight = (1 << k) / maxLevel
+    for (let r = 0; r < rows; r++) {
+      const litRow = lit[r]
+      const greyRow = grey[r]
+      if (!litRow || !greyRow) continue
+      for (let c = 0; c < cols; c++) if (litRow[c]) greyRow[c] = (greyRow[c] ?? 0) + weight
+    }
+  }
+  return grey
 }

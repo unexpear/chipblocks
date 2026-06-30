@@ -49,4 +49,15 @@ describe('scanned multiplexed display — scanner + matrix co-sim paints a whole
     const fb = buildFrameBuffer(X)
     expect(scanMatrixFromBuffer(ROW_SCANNER_8, fb, DOT_MATRIX_MUX_8X8, 8, 8)).toEqual(X)
   })
+
+  test('a column pattern the full-row solve fails to converge on still reproduces exactly', () => {
+    // cols 2,3,6,7 set in every row: the all-at-once Newton solve hits its iteration cap on row 2 and
+    // collapses to all-dark. The matrix columns are independent (the driven row line is held at the supply
+    // voltage), so solveMatrixRow falls back to per-column solves and recovers it exactly — a regression
+    // guard for that convergence fallback. Before it, row 2 came back blank.
+    const pat = Array.from({ length: 8 }, () =>
+      Array.from({ length: 8 }, (_, c) => ((c >> 1) & 1) === 1),
+    )
+    expect(scanMatrixImage(ROW_SCANNER_8, DOT_MATRIX_MUX_8X8, pat)).toEqual(pat)
+  })
 })
