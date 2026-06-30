@@ -13,7 +13,7 @@
  * is faked: the picture is exactly what the wired scanner + matrix would paint on the eye.
  */
 
-import { solveDCRobust } from '../dc-robust.ts'
+import { solveDC } from '../dc-solver.ts'
 import {
   type BlockData,
   type CanvasEdgeLike,
@@ -25,6 +25,11 @@ import { compileLogic, stepLogic } from './logic-sim.ts'
 
 /** 0.1 mA — at/above this an LED is conducting (glowing), matching health.ts's LIT_FLOOR_AMPS. */
 const LIT = 1e-4
+/** The whole-row solve's Newton budget. We cap it LOW on purpose: this scan path has its own EXACT
+ *  per-column fallback (the columns are independent at a fixed row voltage), so a stiff column pattern
+ *  that would grind hundreds of Newton iterations should FAIL FAST here and fall back, not burn the
+ *  robust solver's full budget. Ordinary rows converge in well under this. */
+const SCAN_SOLVE_MAX_ITERATIONS = 100
 const supply = (v: number) => ({
   nominal_voltage: { value: { kind: 'scalar', amount: v, unit: 'volt' } },
   internal_resistance: { value: { kind: 'scalar', amount: 0, unit: 'ohm' } },
@@ -85,7 +90,7 @@ function solveColumns(
       targetHandle: e.targetHandle ?? null,
     })),
   )
-  const sol = solveDCRobust(world)
+  const sol = solveDC(world, { maxIterations: SCAN_SOLVE_MAX_ITERATIONS })
   const lit: number[] = []
   for (const c of litCols) {
     const led = flat.nodes.find(

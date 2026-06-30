@@ -29,9 +29,15 @@ import {
  * source stepping; this adds the missing tool rather than the substitute.
  */
 
-/** The DEFAULT Newton budget per ramp level — "robust" means try hard. A caller's own
- *  maxIterations overrides it. */
-const RAMP_SOLVE_MAX_ITERATIONS = 100
+/** The DEFAULT Newton budget — "robust" means try hard, so it is generous. Stiff but well-posed
+ *  mixed-diode circuits (e.g. a multiplexed LED matrix with a particular set of columns lit) converge
+ *  SLOWLY — the pnjlim step-limiting inches the coupled junctions to the operating point over many
+ *  iterations (one measured LED-matrix pattern needs ~520) — yet they DO converge. The old budget of 100
+ *  cut them off mid-convergence and reported a false did-not-converge with collapsed zero currents. A
+ *  converging solve still stops the instant it meets tolerance (the cap is only a ceiling), so this slows
+ *  nothing that already worked — it just lets the slow-but-real cases finish. A caller's own
+ *  maxIterations still overrides it. */
+const RAMP_SOLVE_MAX_ITERATIONS = 1000
 /** Ramp schedule: a modest first touch (junctions turn on most sharply near zero),
  *  growing on success and halving on failure, with bounds that keep it terminating. */
 const RAMP_STEP_INITIAL = 0.2
