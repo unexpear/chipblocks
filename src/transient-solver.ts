@@ -1742,6 +1742,12 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     }
   }
   const maxIter = options.maxIterations ?? NR_MAX_ITERATIONS
+  // A stiff but well-posed instant — the slow-converging mixed-diode case solveDCRobust handles for DC —
+  // can need more than the normal budget. A step that misses it RETRIES with this generous budget before
+  // the whole transient is declared a non-convergence (the transient analog of the DC robust path). The
+  // retry continues from the failed iterate, so it just lets a slow-converging instant finish. An explicit
+  // maxIterations is HONOURED (no escalation), so a caller that sets a low cap still sees did-not-converge.
+  const stepRetryMaxIter = options.maxIterations ?? 1000
 
   const sources: TimedSource[] = []
   const caps: CapElement[] = []
@@ -2153,8 +2159,9 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   const solveConverged = (
     mode: 'initial' | 'step',
     t: number,
+    iterCap: number = maxIter,
   ): { nodes: Map<string, number>; x: number[][] } | 'singular' | 'no-convergence' => {
-    for (let iter = 1; iter <= maxIter; iter++) {
+    for (let iter = 1; iter <= iterCap; iter++) {
       const solved = solveInstant(mode, t)
       if (solved === null) return 'singular'
       const nodes = solved.nodes
@@ -2592,7 +2599,9 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   }
 
   // t = 0 — the initial condition (capacitors held at their initial voltage).
-  const initial = solveConverged('initial', 0)
+  let initial = solveConverged('initial', 0)
+  // Stiff instant — retry hard before giving up (see stepRetryMaxIter).
+  if (initial === 'no-convergence') initial = solveConverged('initial', 0, stepRetryMaxIter)
   if (initial === 'singular') return { status: 'singular-matrix', series: [], ground, warnings }
   if (initial === 'no-convergence') {
     warnings.push('Newton-Raphson did not converge at t = 0')
@@ -2613,7 +2622,9 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   for (let k = 1; k <= steps; k++) {
     const t = k * dt
     options.onStepBegin?.(k, t, series[series.length - 1]?.nodes ?? new Map<string, number>())
-    const solved = solveConverged('step', t)
+    let solved = solveConverged('step', t)
+    // Stiff step — retry hard before giving up (see stepRetryMaxIter).
+    if (solved === 'no-convergence') solved = solveConverged('step', t, stepRetryMaxIter)
     if (solved === 'singular') return { status: 'singular-matrix', series, ground, warnings }
     if (solved === 'no-convergence') {
       warnings.push(`Newton-Raphson did not converge at t = ${t}`)

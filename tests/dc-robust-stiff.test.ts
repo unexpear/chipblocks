@@ -12,6 +12,7 @@ import { solveDCRobust } from '../src/dc-robust.ts'
 import { type CanvasEdgeLike, type CanvasNodeLike, flattenBlocks } from '../src/renderer/blocks.ts'
 import { DOT_MATRIX_MUX_8X8 } from '../src/renderer/builtin-blocks.ts'
 import { canvasToWorld } from '../src/renderer/canvas-to-world.ts'
+import { solveTransient } from '../src/transient-solver.ts'
 
 const supply = (v: number) => ({
   nominal_voltage: { value: { kind: 'scalar', amount: v, unit: 'volt' } },
@@ -87,4 +88,25 @@ describe('solveDCRobust converges stiff mixed-diode circuits (slow but well-pose
       }
     })
   }
+})
+
+describe('the transient solver retries a stiff step instead of collapsing the whole run', () => {
+  // The transient marches at a fixed dt; a step's per-step Newton used to fail at the 100-iteration cap
+  // and abort the ENTIRE solve with did-not-converge. The same stiff config the DC robust path handles
+  // (row 2, cols 1,2,5,6 — ~520 iters) now RETRIES that instant with a generous budget. (No caps here, so
+  // each instant is the stiff DC solve — this is exactly the transient-side gap the DC fix didn't cover.)
+  test('row 2, cols 1,2,5,6 — solves over time instead of did-not-converge', () => {
+    const result = solveTransient(rowWorld(2, [1, 2, 5, 6]), { timeStep: 0.0001, duration: 0.0003 })
+    expect(result.status).toBe('solved') // was 'did-not-converge' before the per-step retry
+    const last = result.series[result.series.length - 1]
+    expect(last).toBeDefined()
+    if (!last) throw new Error('no transient samples')
+    // The transient currents map keys by `id/terminal`, so find each lit LED's branch current by id.
+    const ledCurrent = (c: number): number => {
+      for (const [k, v] of last.currents ?? new Map<string, number>())
+        if (k.includes(`led_2_${c}`)) return Math.abs(v)
+      return 0
+    }
+    for (const c of [1, 2, 5, 6]) expect(ledCurrent(c)).toBeGreaterThan(8e-3) // ~9.2 mA, not collapsed 0
+  })
 })
