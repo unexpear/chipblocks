@@ -1,0 +1,3 @@
+# Normalise line endings: store text as LF and check out LF on every platform, so Windows checkouts
+# stop producing the phantom "LF will be replaced by CRLF" churn on otherwise-unchanged files.
+* text=auto eol=lf

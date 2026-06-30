@@ -59,6 +59,9 @@ Thumbs.db
 .cache/
 .parcel-cache/
 
+# Local scratch probes — throwaway debug tests, never committed
+tests/_probe/
+
 # Allow these in case wildcard catches them
 !docs/build/
 !.gitkeep
