@@ -252,14 +252,80 @@ function residualWithinTolerance(A: DenseMatrix, b: DenseVector, x: DenseVector)
 }
 
 /**
- * Solve A·x = b — the sparse fast path with a dense correctness backstop. Drop-in for dense-linear's
- * lusolve (same DenseMatrix/DenseVector API), so swapping the solvers' import is a one-line change.
- * Small systems and any case the sparse pass can't prove go straight to the dense solver.
+ * Per-structure dispatch memo. A circuit's nonzero STRUCTURE is fixed across the many solves one
+ * simulation runs (Newton iterations, time steps) — only the values change — so we measure sparse vs
+ * dense ONCE per distinct structure and reuse the faster verdict. This is what lets sparse be turned on
+ * for ALL circuits safely: it engages only where it actually wins (analog meshes/rails) and stays out of
+ * the way where it doesn't (large digital, which the no-pivot factor can't beat). Affects SPEED only —
+ * every sparse result is still residual-checked, so a wrong factor can never escape regardless of verdict.
+ */
+const dispatchVerdict = new Map<string, 'sparse' | 'dense'>()
+const DISPATCH_CACHE_CAP = 512
+
+/** Test-only: forget all measured verdicts so a test can observe a fresh calibration. */
+export function resetDispatchMemo(): void {
+  dispatchVerdict.clear()
+}
+
+/**
+ * A signature of the nonzero PATTERN (size + count + an FNV-1a hash of the nonzero positions). The values
+ * change between solves; the pattern does not, so the same circuit keys consistently. O(n²) — negligible
+ * beside the O(n³)/fill factor it gates, and only computed for n ≥ SPARSE_THRESHOLD. Distinct structures
+ * get distinct keys; if a pattern shifts (a switch opens), it simply re-calibrates.
+ */
+function structureKey(A: DenseMatrix): string {
+  const n = A.size
+  let h = 0x811c9dc5 | 0
+  let nnz = 0
+  for (let i = 0; i < n; i++) {
+    const base = i * n
+    for (let j = 0; j < n; j++) {
+      if (A.data[base + j] !== 0) {
+        nnz++
+        h = Math.imul(h ^ (i & 0xffff), 0x01000193)
+        h = Math.imul(h ^ (j & 0xffff), 0x01000193)
+      }
+    }
+  }
+  return `${n}:${nnz}:${h >>> 0}`
+}
+
+/**
+ * Solve A·x = b — the sparse fast path with a dense correctness backstop AND a speed backstop. Drop-in
+ * for dense-linear's lusolve (same DenseMatrix/DenseVector API), so swapping the solvers' import is a
+ * one-line change. Small systems go straight to dense. For larger ones, the first time a structure is
+ * seen both paths are timed and the faster is remembered; thereafter that structure takes the winning
+ * path directly. A sparse verdict that later stops factoring (values drifted) downgrades itself to dense.
  */
 export function lusolve(A: DenseMatrix, b: DenseVector): DenseVector {
-  if (A.size >= SPARSE_THRESHOLD) {
+  if (A.size < SPARSE_THRESHOLD) return denseLusolve(A, b)
+
+  const key = structureKey(A)
+  const verdict = dispatchVerdict.get(key)
+
+  if (verdict === 'dense') return denseLusolve(A, b)
+
+  if (verdict === 'sparse') {
     const x = sparseSolve(A, b)
     if (x !== null && residualWithinTolerance(A, b, x)) return x
+    dispatchVerdict.set(key, 'dense') // sparse no longer factors this structure — stop paying for it
+    return denseLusolve(A, b)
   }
-  return denseLusolve(A, b)
+
+  // First sighting of this structure: measure both, keep the faster, remember the verdict.
+  const sparseStart = performance.now()
+  const xSparse = sparseSolve(A, b)
+  const sparseOk = xSparse !== null && residualWithinTolerance(A, b, xSparse)
+  const sparseMs = performance.now() - sparseStart
+  const denseStart = performance.now()
+  const xDense = denseLusolve(A, b)
+  const denseMs = performance.now() - denseStart
+
+  if (dispatchVerdict.size >= DISPATCH_CACHE_CAP) dispatchVerdict.clear()
+  if (sparseOk && sparseMs < denseMs) {
+    dispatchVerdict.set(key, 'sparse')
+    return xSparse as DenseVector
+  }
+  dispatchVerdict.set(key, 'dense')
+  return xDense
 }

@@ -13,7 +13,7 @@ import {
   zerosMatrix,
   zerosVector,
 } from '../src/dense-linear.ts'
-import { lusolve as robustLusolve, sparseSolve } from '../src/sparse-linear.ts'
+import { resetDispatchMemo, lusolve as robustLusolve, sparseSolve } from '../src/sparse-linear.ts'
 
 /** Deterministic PRNG (a linear congruential generator) so the random systems are reproducible. */
 function lcg(seed: number): () => number {
@@ -159,6 +159,26 @@ describe('robust lusolve — sparse fast path with a dense backstop', () => {
     const combined = robustLusolve(A, b)
     const dense = denseLusolve(A, b)
     for (let i = 0; i < 40; i++) expect(combined.get([i, 0])).toBeCloseTo(dense.get([i, 0]), 9)
+  })
+
+  test('the calibrated dispatcher returns dense-correct answers on both the calibration and cached calls', () => {
+    // The dispatcher measures sparse vs dense the first time it sees a structure, then reuses the verdict.
+    // Both a sparse-friendly and a denser system (above the threshold) must give the dense-correct answer
+    // on the calibration call (which times both paths) AND on the subsequent cached call (which takes the
+    // remembered winner). We assert correctness, not which path won — timing is environment-dependent.
+    resetDispatchMemo()
+    const rng = lcg(31)
+    for (const density of [0.04, 0.5]) {
+      const { A, b, xTrue } = randomSystem(150, density, rng)
+      const ref = denseLusolve(A, b)
+      const calibration = robustLusolve(A, b)
+      const cached = robustLusolve(A, b)
+      for (let i = 0; i < 150; i++) {
+        expect(calibration.get([i, 0])).toBeCloseTo(ref.get([i, 0]), 7)
+        expect(cached.get([i, 0])).toBeCloseTo(ref.get([i, 0]), 7)
+        expect(cached.get([i, 0])).toBeCloseTo(xTrue.get([i, 0]), 6)
+      }
+    }
   })
 })
 
