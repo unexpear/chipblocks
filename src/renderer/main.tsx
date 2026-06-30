@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App.tsx'
+import { ErrorBoundary } from './error-boundary.tsx'
 import { SYMBOL_STYLE_EVENT, SymbolStyleProvider } from './symbol-style.tsx'
 import { applyTheme, loadTheme, saveTheme, THEME_LIST, type ThemeName } from './theme.ts'
 
@@ -32,7 +33,9 @@ if (bridge !== undefined) {
 createRoot(root).render(
   <StrictMode>
     <SymbolStyleProvider>
-      <App />
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
     </SymbolStyleProvider>
   </StrictMode>,
 )
