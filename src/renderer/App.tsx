@@ -126,6 +126,7 @@ import {
   type LensMode,
 } from './lens.ts'
 import {
+  blockIsLogicCompatible,
   type CompiledLogic,
   compileLogic,
   digitalSeed,
@@ -1073,8 +1074,15 @@ function solveCanvasLogic(
 }
 
 const isLogicFidelity = (n: Node): boolean => {
-  const f = (n.data as DeviceNodeData).fidelity
-  return f === 'logic' || f === 'behaviour'
+  const data = n.data as DeviceNodeData
+  const f = data.fidelity
+  if (f === 'logic' || f === 'behaviour') return true
+  if (f === 'transistor') return false
+  // Untagged: a purely-digital block (gates all the way down) DEFAULTS to the fast logic engine — the
+  // ~1000× digital win. The transistor solve stays the explicit choice for analog and for descending into
+  // a gate's silicon. Analog / mixed blocks aren't logic-compatible, so they keep the transistor solve.
+  const block = (data as { block?: BlockData }).block
+  return data.definition === 'block' && block !== undefined && blockIsLogicCompatible(block)
 }
 const ANALOG_PASSIVE = new Set(['power_source', 'ground', 'junction'])
 // A logic block's OUTPUT pins (it DRIVES these). Used to classify a logic↔analog boundary: an output

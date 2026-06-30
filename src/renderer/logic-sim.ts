@@ -43,6 +43,52 @@ export function isLogicGate(block: BlockData): boolean {
   return block.name in LOGIC_PRIMITIVES
 }
 
+/** The non-gate parts the logic engine handles (sources/ground seed nets, switches conduct, junctions
+ *  just join wires). Anything else — an LED, a resistor, a bare transistor — is analog the engine ignores. */
+const LOGIC_PASSIVE_DEFS = new Set([
+  'ground',
+  'power_source',
+  'junction',
+  'switch_spst_toggle',
+  'switch_spst_momentary',
+])
+const logicCompatCache = new WeakMap<BlockData, boolean>()
+
+/**
+ * Is this block PURELY digital — does it flatten (down to logic gates) into nothing but gates and the
+ * passives the logic engine handles? If so it is simulated EXACTLY by the fast logic engine, so it should
+ * default to LOGIC fidelity instead of the ~1000× slower transistor solve. A block with ANY analog part
+ * (an LED, a stray resistor, a bare transistor) returns false — compileLogic would silently DROP that part,
+ * so such a block must stay on the transistor solver (or use the mixed hand-off). Memoised per block: the
+ * flatten is the same work compileLogic does, done once.
+ */
+export function blockIsLogicCompatible(block: BlockData): boolean {
+  const cached = logicCompatCache.get(block)
+  if (cached !== undefined) return cached
+  const probe: CanvasNodeLike = {
+    id: '_probe',
+    position: { x: 0, y: 0 },
+    data: { definition: 'block', block },
+  }
+  const flat = flattenBlocks([probe], [], isLogicGate)
+  let sawGate = false
+  let compatible = true
+  for (const n of flat.nodes) {
+    const b = n.data.block
+    if (b && isLogicGate(b)) {
+      sawGate = true
+      continue
+    }
+    if (!LOGIC_PASSIVE_DEFS.has(n.data.definition)) {
+      compatible = false
+      break
+    }
+  }
+  const result = compatible && sawGate // at least one gate, and nothing analog
+  logicCompatCache.set(block, result)
+  return result
+}
+
 export type LogicResult = {
   /** The boolean a node's terminal (or a top-level block port) settled to — undefined if undriven. */
   value: (nodeId: string, handle: string) => boolean | undefined
