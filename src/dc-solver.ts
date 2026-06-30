@@ -53,6 +53,7 @@ import {
   motorParamsFromInstance,
   motorSteadyState,
 } from './motor-model.ts'
+import { NR_MAX_ITERATIONS, NR_VOLTAGE_TOLERANCE } from './solver-constants.ts'
 import { STANDARD_AMBIENT_C } from './thermal-model.ts'
 import {
   limitTunnelDiodeStep,
@@ -103,9 +104,6 @@ export function relayCoilEnergized(inst: Instance): boolean {
   return readEnumParam(inst, 'coil_state') === 'energized'
 }
 
-/** Newton-Raphson controls (§20.6). */
-const NR_MAX_ITERATIONS = 100
-const NR_VOLTAGE_TOLERANCE = 1e-6 // volts
 /** The SPICE GMIN scale (1 pS) — a tiny node-to-ground conductance that keeps the
  *  matrix solvable around hard-off junctions. Same scale as the MOSFET cutoff. */
 export const SOLVER_GMIN = 1e-12

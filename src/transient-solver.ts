@@ -122,6 +122,7 @@ import {
   motorSpeedStep,
 } from './motor-model.ts'
 import { type ShockleyDiodeState, scrTarget, shockleyDiodeTarget } from './shockley-diode.ts'
+import { NR_MAX_ITERATIONS, NR_VOLTAGE_TOLERANCE } from './solver-constants.ts'
 import { propagationDelayS } from './transmission-line-model.ts'
 import {
   limitTunnelDiodeStep,
@@ -138,9 +139,6 @@ import {
 } from './vacuum-tube-model.ts'
 import { type VaractorParams, varactorCapacitance, varactorCharge } from './varactor-model.ts'
 
-/** Newton-Raphson controls per time step (matches the DC solver's §20.6). */
-const NR_MAX_ITERATIONS = 100
-const NR_VOLTAGE_TOLERANCE = 1e-6 // volts
 const DEFAULT_IDEALITY_FACTOR = 2.0
 
 /** Diode-family definitions the transient loop solves via Shockley. */
