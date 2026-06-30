@@ -20,12 +20,13 @@ function gridLaplacian(W: number) {
       // A real conductance to ground at every node (like a real MNA dominated by actual resistances),
       // so the matrix is well-conditioned and the no-pivoting sparse factor engages instead of bailing.
       let diag = 0.5
-      for (const [di, dj] of [
+      const deltas: [number, number][] = [
         [1, 0],
         [-1, 0],
         [0, 1],
         [0, -1],
-      ]) {
+      ]
+      for (const [di, dj] of deltas) {
         const ni = i + di
         const nj = j + dj
         if (ni >= 0 && ni < W && nj >= 0 && nj < W) {
