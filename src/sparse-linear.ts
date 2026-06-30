@@ -15,10 +15,13 @@
  * (sparse-linear.test.ts); below SPARSE_THRESHOLD unknowns the dense solve is used directly (the
  * sparse setup isn't worth it for small systems, which is most circuits).
  *
- * No pivoting: the ordering's diagonal is used as the pivot sequence. MNA matrices carry a gmin
- * conductance to ground on every node, so they are well-conditioned and diagonally strong; a tiny or
- * zero pivot (a genuinely ill-conditioned or floating system) makes the sparse pass bail to dense
- * rather than risk an inaccurate factor — and the residual check is the backstop if it ever doesn't.
+ * No partial pivoting, but the ordering is diagonal-aware: a structurally-zero diagonal (an ideal
+ * voltage-source / branch-current row in MNA carries one) cannot lead the factor, so those rows are
+ * DEFERRED to the end of the order, by which point eliminating the node rows they couple to has filled
+ * their diagonal with a real Schur-complement value. Node (KCL) rows carry a gmin conductance to ground
+ * so their diagonal is always nonzero. A pivot that is still tiny/zero after deferral (a genuinely
+ * floating or singular system) makes the sparse pass bail to dense rather than risk an inaccurate
+ * factor — and the residual check is the backstop if it ever doesn't.
  */
 
 import { type DenseMatrix, DenseVector, lusolve as denseLusolve } from './dense-linear.ts'
@@ -27,31 +30,40 @@ import { type DenseMatrix, DenseVector, lusolve as denseLusolve } from './dense-
 const PIVOT_FLOOR = 1e-30
 /** Relative ‖A·x − b‖ above which a sparse result is rejected (→ dense). Matches dense-linear's check. */
 const RESIDUAL_TOLERANCE = 1e-6
-/** Below this many unknowns, skip the sparse machinery — a dense solve is already cheap. */
-const SPARSE_THRESHOLD = 32
+/**
+ * Below this many unknowns, skip the sparse machinery — a dense solve is already cheap, and the sparse
+ * setup (two O(n²) scans + the ordering) is pure overhead there. Measured crossover: the hub/Vdd-rail
+ * structure real circuits resemble only starts winning around n≈70-100, so 100 captures the wins without
+ * paying the small-n penalty on mesh/banded systems.
+ */
+const SPARSE_THRESHOLD = 100
 
 /**
  * A fill-reducing elimination order (minimum degree): repeatedly eliminate the lowest-degree node,
  * adding the fill edges its elimination creates among its neighbors. `order[k]` is the original index
  * eliminated k-th. Cheap and order-of-magnitude better than the natural order for circuit graphs (it
- * keeps the dense supply-rail rows out of the way until last). The order only affects SPEED, never
- * correctness — any elimination order is a valid factorization.
+ * keeps the dense supply-rail rows out of the way until last). The order only affects SPEED and pivot
+ * viability, never correctness — any elimination order is a valid factorization.
+ *
+ * Diagonal-aware: a node flagged in `zeroDiagonal` (its original diagonal is structurally zero, e.g. an
+ * ideal voltage-source row) is penalised by +n so it sorts after every ordinary node — it must not lead
+ * the no-pivot factor with a zero pivot; deferring it lets the Schur complement fill its diagonal first.
  */
-function minimumDegreeOrder(adjacency: Set<number>[]): number[] {
+function minimumDegreeOrder(adjacency: Set<number>[], zeroDiagonal?: boolean[]): number[] {
   const n = adjacency.length
   const graph = adjacency.map((s) => new Set(s)) // working copy; gains fill edges as we eliminate
   const eliminated = new Uint8Array(n)
   const order: number[] = []
   for (let step = 0; step < n; step++) {
     let best = -1
-    let bestDegree = Number.POSITIVE_INFINITY
+    let bestCost = Number.POSITIVE_INFINITY
     for (let v = 0; v < n; v++) {
       if (eliminated[v]) continue
-      const degree = (graph[v] as Set<number>).size
-      if (degree < bestDegree) {
-        bestDegree = degree
+      const cost = (graph[v] as Set<number>).size + (zeroDiagonal?.[v] ? n : 0)
+      if (cost < bestCost) {
+        bestCost = cost
         best = v
-        if (degree === 0) break
+        if (cost === 0) break
       }
     }
     order.push(best)
@@ -90,7 +102,11 @@ export function sparseSolve(A: DenseMatrix, b: DenseVector): DenseVector | null 
       }
     }
   }
-  const order = minimumDegreeOrder(adjacency)
+  // Flag structurally-zero diagonals (ideal voltage-source rows) so the order defers them past the
+  // nonzero-diagonal node rows — otherwise the no-pivot factor bails on a zero pivot at the first such row.
+  const zeroDiagonal = new Array<boolean>(n)
+  for (let i = 0; i < n; i++) zeroDiagonal[i] = Math.abs(A.data[i * n + i] as number) <= PIVOT_FLOOR
+  const order = minimumDegreeOrder(adjacency, zeroDiagonal)
   const inverse = new Array<number>(n)
   for (let k = 0; k < n; k++) inverse[order[k] as number] = k
 

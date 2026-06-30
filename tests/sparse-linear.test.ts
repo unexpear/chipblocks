@@ -103,6 +103,44 @@ describe('sparseSolve — same answers as the dense reference', () => {
     expect(xs).not.toBeNull()
     if (xs) for (let i = 0; i < n; i++) expect(xs.get([i, 0])).toBeCloseTo(xTrue.get([i, 0]), 7)
   })
+
+  test('an MNA system WITH ideal voltage-source rows (zero diagonals) — engages, does not bail', () => {
+    // A resistor chain (nonzero, gmin-loaded diagonals) plus four ideal voltage sources, whose
+    // branch-current rows have a structurally ZERO diagonal — the exact pattern that made the no-pivot
+    // factor bail at step 0 on the real decoder. Those rows are degree-1, so a plain minimum-degree order
+    // would eliminate them FIRST (zero pivot → bail → whole circuit forfeited to dense). The diagonal-
+    // aware order must defer them past the node rows, by which point eliminating the node they pin has
+    // filled their diagonal, so the factor engages and matches dense.
+    const nNodes = 60
+    const sourceNodes = [0, 17, 33, 48]
+    const n = nNodes + sourceNodes.length
+    const A = zerosMatrix(n)
+    const b = zerosVector(n)
+    const g = 1
+    const gmin = 1e-3
+    for (let i = 0; i < nNodes; i++) {
+      let diag = gmin
+      if (i > 0) {
+        A.set([i, i - 1], -g)
+        diag += g
+      }
+      if (i < nNodes - 1) {
+        A.set([i, i + 1], -g)
+        diag += g
+      }
+      A.set([i, i], diag)
+    }
+    sourceNodes.forEach((node, k) => {
+      const s = nNodes + k
+      A.set([s, node], 1) // V(node) − V(gnd) = Vs ; A[s][s] stays 0 (the zero diagonal)
+      A.set([node, s], 1) // the source branch current into the node
+      b.set([s, 0], 1 + k)
+    })
+    const xs = sparseSolve(A, b)
+    const xd = denseLusolve(A, b)
+    expect(xs).not.toBeNull() // the deferral let it engage — a plain order would have bailed here
+    if (xs) for (let i = 0; i < n; i++) expect(xs.get([i, 0])).toBeCloseTo(xd.get([i, 0]), 7)
+  })
 })
 
 describe('robust lusolve — sparse fast path with a dense backstop', () => {
