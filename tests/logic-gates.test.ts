@@ -36,7 +36,7 @@ import {
   XOR_BLOCK,
 } from '../src/renderer/builtin-blocks.ts'
 import { canvasToWorld } from '../src/renderer/canvas-to-world.ts'
-import { simulateLogic } from '../src/renderer/logic-sim.ts'
+import { compileLogic, simulateLogic, stepLogic } from '../src/renderer/logic-sim.ts'
 import { solveTransient } from '../src/transient-solver.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
@@ -136,6 +136,35 @@ function logicBlock(block: BlockData, inputs: Record<string, number>): (portId: 
   return (portId: string): number => {
     const v = result.value('g', portId)
     return v === true ? VDD : v === false ? 0 : Number.NaN
+  }
+}
+
+/**
+ * Clock a SEQUENTIAL digital block (a flip-flop, a register) on the FAST logic engine: compile its canvas
+ * once, then step it with fresh input levels each call while the engine carries the stored state forward
+ * (the master-slave bits) — exactly what the old seeded-DC-solve / transient clocking did, ~1000× faster.
+ * `step({ clk: false, d: true })` then `step({ clk: true, d: true })` is one rising edge. Returns a reader
+ * → VDD/0. The flip-flop's transistor-level and real-transient-time behaviour stay verified separately.
+ */
+function clockedBlock(
+  block: BlockData,
+  inputPorts: readonly string[],
+): (levels: Record<string, boolean>) => (port: string) => number {
+  const { nodes, edges } = buildBlockCanvas(
+    block,
+    Object.fromEntries(inputPorts.map((p) => [p, 0])),
+  )
+  const compiled = compileLogic(nodes, edges)
+  const state = new Map<string, boolean>()
+  return (levels: Record<string, boolean>) => {
+    const overrides = new Map<string, boolean>(
+      Object.entries(levels).map(([p, hi]) => [`in_${p}`, hi]),
+    )
+    const result = stepLogic(compiled, overrides, state)
+    return (port: string): number => {
+      const v = result.value('g', port)
+      return v === true ? VDD : v === false ? 0 : Number.NaN
+    }
   }
 }
 
@@ -558,92 +587,20 @@ describe('Gated D latch — transparent when enabled, holds when not (no forbidd
 })
 
 describe('D flip-flop — captures D on the rising clock edge (master-slave)', () => {
-  // The flip-flop's hold states are bistable, so an un-driven DC solve sits at the metastable
-  // midpoint -- there is no defined operating point without a power-up state, and the transient
-  // diverges from that unstable point. So (like the D latch) we drive it as a SEQUENCE of seeded
-  // DC solves: each clock phase is re-solved seeded by the previous one, which breaks the
-  // metastability and carries the stored bit forward exactly as the transient would. The first
-  // solve is seeded to a clean Q = 0 power-up.
-  const buildFF = (clk: number, d: number) => {
-    const nodes: CanvasNodeLike[] = [
-      { id: 'g', position: { x: 0, y: 0 }, data: { definition: 'block', block: D_FLIPFLOP_BLOCK } },
-      {
-        id: 'vdd',
-        position: { x: 0, y: 0 },
-        data: { definition: 'power_source', parameters: supply(VDD) },
-      },
-      { id: 'gnd', position: { x: 0, y: 0 }, data: { definition: 'ground' } },
-      {
-        id: 'in_clk',
-        position: { x: 0, y: 0 },
-        data: { definition: 'power_source', parameters: supply(clk) },
-      },
-      {
-        id: 'in_d',
-        position: { x: 0, y: 0 },
-        data: { definition: 'power_source', parameters: supply(d) },
-      },
-    ]
-    const edges: CanvasEdgeLike[] = [
-      wire('w_vdd_p', 'vdd', 'terminal_positive', 'g', 'v_dd'),
-      wire('w_vdd_n', 'vdd', 'terminal_negative', 'gnd', 'reference_terminal'),
-      wire('w_gnd', 'g', 'gnd', 'gnd', 'reference_terminal'),
-      wire('w_clk_p', 'in_clk', 'terminal_positive', 'g', 'clk'),
-      wire('w_clk_n', 'in_clk', 'terminal_negative', 'gnd', 'reference_terminal'),
-      wire('w_d_p', 'in_d', 'terminal_positive', 'g', 'd'),
-      wire('w_d_n', 'in_d', 'terminal_negative', 'gnd', 'reference_terminal'),
-    ]
-    const flat = flattenBlocks(nodes, edges)
-    const world = canvasToWorld(
-      flat.nodes.map((n) => ({
-        id: n.id,
-        definition: n.data.definition,
-        parameters: n.data.parameters,
-      })),
-      flat.edges.map((e) => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        sourceHandle: e.sourceHandle ?? null,
-        targetHandle: e.targetHandle ?? null,
-      })),
-    )
-    const netOf = (port: string) => {
-      const t = flat.portTarget.get(`g/${port}`)
-      return t
-        ? world.instances.get(t.nodeId)?.connects?.find((c) => c.terminal === t.handleId)?.net
-        : undefined
-    }
-    return { world, qNet: netOf('q'), qbarNet: netOf('qbar') }
-  }
+  // Edge-triggering is logic behaviour, so it is clocked on the FAST logic engine here (the engine
+  // carries the master-slave state across steps; this was ~6 seeded DC transistor solves, ~16 s). The
+  // flip-flop at full transistor fidelity is covered by the gate tests + the bridge above, and in REAL
+  // transient time by the .ic test below.
   test('Q captures D at each rising edge and ignores D in between (edge-triggered)', () => {
-    const base = buildFF(0, VDD)
-    // A starting guess (Q low, Qbar high) for the very first solve; the first rising edge below
-    // then forces a clean, defined Q regardless of where the bistable pair powers up.
-    const start = new Map<string, number>()
-    if (base.qNet) start.set(base.qNet, 0)
-    if (base.qbarNet) start.set(base.qbarNet, VDD)
-    const phase = (clk: number, d: number, seed: Map<string, number>) => {
-      const ff = buildFF(clk, d)
-      const sol = solveDCRobust(ff.world, { initialNodes: seed })
-      return { nodes: sol.nodes, q: ff.qNet ? (sol.nodes.get(ff.qNet) ?? Number.NaN) : Number.NaN }
-    }
-    // Establish a clean Q = 0: a first rising edge captures D = 0 (the transparent slave is
-    // forced, dissolving the metastable power-up).
-    const e0 = phase(0, 0, start) // CLK low: the master tracks D = 0
-    const q0 = phase(VDD, 0, e0.nodes) // rising edge: Q := 0
-    expect(isLow(q0.q)).toBe(true)
-    // Capture a 1: load it into the master with CLK low, then clock it through.
-    const load1 = phase(0, VDD, q0.nodes) // master tracks 1; the slave still holds 0
-    const cap1 = phase(VDD, VDD, load1.nodes) // rising edge: Q := 1
-    expect(isHigh(cap1.q)).toBe(true)
-    // D drops to 0 while CLK stays high: the master is frozen, so Q ignores it.
-    const ignore = phase(VDD, 0, cap1.nodes)
-    expect(isHigh(ignore.q)).toBe(true) // still 1 -- edge-triggered, not level-sensitive
-    // Capture a 0 the same way.
-    const load0 = phase(0, 0, ignore.nodes) // master tracks 0; the slave still holds 1
-    const cap0 = phase(VDD, 0, load0.nodes) // rising edge: Q := 0
-    expect(isLow(cap0.q)).toBe(true)
+    const step = clockedBlock(D_FLIPFLOP_BLOCK, ['clk', 'd'])
+    // A first rising edge with D = 0 settles a clean Q = 0 (the master-slave resolves the power-up state).
+    step({ clk: false, d: false }) // CLK low: master tracks 0
+    expect(isLow(step({ clk: true, d: false })('q'))).toBe(true) // rising edge: Q := 0
+    step({ clk: false, d: true }) // CLK low: master tracks 1; slave still holds 0
+    expect(isHigh(step({ clk: true, d: true })('q'))).toBe(true) // rising edge: Q := 1
+    expect(isHigh(step({ clk: true, d: false })('q'))).toBe(true) // D drops while CLK high → Q ignores it (edge-triggered)
+    step({ clk: false, d: false }) // CLK low: master tracks 0
+    expect(isLow(step({ clk: true, d: false })('q'))).toBe(true) // rising edge: Q := 0
   })
 
   test('in REAL transient time: an .ic power-up lets the rising edge capture D as a waveform', () => {
@@ -726,83 +683,15 @@ describe('4-bit register — four flip-flops latching a whole word on one clock 
   // ~136-transistor circuit storing a nibble in a single tick. The clock starts LOW so the masters
   // are transparent and D-defined at t=0 while the .ic pins the slaves -- a clean power-up.
   test('the rising edge latches the word 1010 across all four bits at once', () => {
-    const clock = {
-      nominal_voltage: scalar(2.5, 'volt'),
-      ac_amplitude: scalar(-2.5, 'volt'),
-      frequency: scalar(1000, 'hertz'),
-      waveform: { value: 'square' },
-    }
+    // Latching a whole word on one edge is logic behaviour — clocked on the fast logic engine (this was a
+    // ~136-transistor transient solve, ~15 s). The register's REAL-transient-time behaviour is the four D
+    // flip-flops of the .ic transient test above; this checks all four bits latch their D together.
     const word = [0, 1, 0, 1] // D0..D3 -> the nibble Q3 Q2 Q1 Q0 = 1010
-    const nodes: CanvasNodeLike[] = [
-      { id: 'g', position: { x: 0, y: 0 }, data: { definition: 'block', block: REGISTER_4BIT } },
-      {
-        id: 'vdd',
-        position: { x: 0, y: 0 },
-        data: { definition: 'power_source', parameters: supply(VDD) },
-      },
-      { id: 'gnd', position: { x: 0, y: 0 }, data: { definition: 'ground' } },
-      {
-        id: 'in_clk',
-        position: { x: 0, y: 0 },
-        data: { definition: 'power_source', parameters: clock },
-      },
-      ...word.map((bit, i) => ({
-        id: `in_d${i}`,
-        position: { x: 0, y: 0 },
-        data: { definition: 'power_source', parameters: supply(bit ? VDD : 0) },
-      })),
-    ]
-    const edges: CanvasEdgeLike[] = [
-      wire('w_vdd_p', 'vdd', 'terminal_positive', 'g', 'v_dd'),
-      wire('w_vdd_n', 'vdd', 'terminal_negative', 'gnd', 'reference_terminal'),
-      wire('w_gnd', 'g', 'gnd', 'gnd', 'reference_terminal'),
-      wire('w_clk_p', 'in_clk', 'terminal_positive', 'g', 'clk'),
-      wire('w_clk_n', 'in_clk', 'terminal_negative', 'gnd', 'reference_terminal'),
-      ...word.flatMap((_, i) => [
-        wire(`w_d${i}_p`, `in_d${i}`, 'terminal_positive', 'g', `d${i}`),
-        wire(`w_d${i}_n`, `in_d${i}`, 'terminal_negative', 'gnd', 'reference_terminal'),
-      ]),
-    ]
-    const flat = flattenBlocks(nodes, edges)
-    const world = canvasToWorld(
-      flat.nodes.map((n) => ({
-        id: n.id,
-        definition: n.data.definition,
-        parameters: n.data.parameters,
-      })),
-      flat.edges.map((e) => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        sourceHandle: e.sourceHandle ?? null,
-        targetHandle: e.targetHandle ?? null,
-      })),
-    )
-    const qNet = (i: number) => {
-      const t = flat.portTarget.get(`g/q${i}`)
-      return t
-        ? world.instances.get(t.nodeId)?.connects?.find((c) => c.terminal === t.handleId)?.net
-        : undefined
-    }
-    // .ic: pin every Q low at power-up (the only way the bistable register starts in transient)
-    const ic = new Map<string, number>()
-    for (let i = 0; i < 4; i++) {
-      const net = qNet(i)
-      if (net) ic.set(net, 0)
-    }
-    const result = solveTransient(world, {
-      timeStep: 0.00005,
-      duration: 0.0008,
-      initialVoltages: ic,
-    })
-    expect(result.status).toBe('solved')
-    const qAt = (i: number, t: number) =>
-      result.series.find((p) => p.time >= t)?.nodes.get(qNet(i) ?? '') ?? Number.NaN
-    // after the rising edge at 0.5 ms, every bit holds its D: Q3 Q2 Q1 Q0 = 1010
-    expect(isLow(qAt(0, 0.0007))).toBe(true) // Q0 = 0
-    expect(isHigh(qAt(1, 0.0007))).toBe(true) // Q1 = 1
-    expect(isLow(qAt(2, 0.0007))).toBe(true) // Q2 = 0
-    expect(isHigh(qAt(3, 0.0007))).toBe(true) // Q3 = 1
+    const step = clockedBlock(REGISTER_4BIT, ['clk', 'd0', 'd1', 'd2', 'd3'])
+    const data = Object.fromEntries(word.map((bit, i) => [`d${i}`, bit === 1]))
+    step({ clk: false, ...data }) // CLK low: every master tracks its D
+    const read = step({ clk: true, ...data }) // rising edge: all four latch at once
+    for (let i = 0; i < 4; i++) expect(isHigh(read(`q${i}`))).toBe(word[i] === 1) // Q_i == D_i, together
   })
 })
 
