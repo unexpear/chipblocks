@@ -27,12 +27,10 @@ import { CRT_DEFLECTION_INPUT_OHMS, crtParamsFromInstance, gridBrightness } from
 import { type DenseVector, lusolve, zerosMatrix, zerosVector } from './dense-linear.ts'
 import {
   companionModel,
-  criticalVoltage,
   deriveSaturationCurrent,
   diodeCurrent,
   LED_VARSHNI_ALPHA_EV_PER_K,
   LED_VARSHNI_BETA_K,
-  pnjlim,
   ROOM_TEMPERATURE_KELVIN,
   scaleSaturationCurrent,
   thermalVoltage,
@@ -43,7 +41,7 @@ import {
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { jfetMosfetParams } from './jfet-model.ts'
 import { ldrResistance, lightSensorCurrent } from './light.ts'
-import { limitMosfetStep, type MosfetParams, mosfetOperatingPoint } from './mosfet-model.ts'
+import { type MosfetParams, mosfetOperatingPoint } from './mosfet-model.ts'
 import {
   generatorEmf,
   generatorOperatingPoint,
@@ -53,10 +51,21 @@ import {
   motorParamsFromInstance,
   motorSteadyState,
 } from './motor-model.ts'
-import { NR_MAX_ITERATIONS, NR_VOLTAGE_TOLERANCE } from './solver-constants.ts'
+import {
+  GuessAccumulator,
+  nodeVolts,
+  updateBjtGuess,
+  updateJunctionGuess,
+  updateMosfetGuess,
+  updateScreenTubeGuess,
+  updateTriodeGuess,
+  updateTunnelGuess,
+  updateVacuumDiodeGuess,
+  updateZenerGuess,
+} from './nr-loop.ts'
+import { NR_MAX_ITERATIONS } from './solver-constants.ts'
 import { STANDARD_AMBIENT_C } from './thermal-model.ts'
 import {
-  limitTunnelDiodeStep,
   type TunnelDiodeParams,
   tunnelDiodeCompanion,
   tunnelDiodeCurrent,
@@ -65,7 +74,6 @@ import {
 import {
   childLangmuirCurrent,
   gridTubeOperatingPoint,
-  limitVacuumStep,
   perveanceFromOperatingPoint,
   screenGridTubeOperatingPoint,
   vacuumDiodeCompanion,
@@ -816,105 +824,17 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
       last = buildAndSolve()
       if (last === null) return emptyResult('singular-matrix', ground, warnings)
 
-      let maxDelta = 0
-      let anyLimited = false
-      for (const led of shockleyLeds) {
-        const vAnode = led.anodeNet === ground ? 0 : (last.nodes.get(led.anodeNet) ?? 0)
-        const vCathode = led.cathodeNet === ground ? 0 : (last.nodes.get(led.cathodeNet) ?? 0)
-        const vRaw = vAnode - vCathode
-        const nVT = led.idealityFactor * led.thermalV
-        const vcrit = criticalVoltage(led.saturationCurrent, led.idealityFactor, led.thermalV)
-        const limit = pnjlim(vRaw, led.vGuess, nVT, vcrit)
-        maxDelta = Math.max(maxDelta, Math.abs(limit.voltage - led.vGuess))
-        if (limit.limited) anyLimited = true
-        led.vGuess = limit.voltage
-      }
-      for (const z of zeners) {
-        const vAnode = z.anodeNet === ground ? 0 : (last.nodes.get(z.anodeNet) ?? 0)
-        const vCathode = z.cathodeNet === ground ? 0 : (last.nodes.get(z.cathodeNet) ?? 0)
-        const next = limitZenerStep(vAnode - vCathode, z)
-        maxDelta = Math.max(maxDelta, Math.abs(next.voltage - z.vGuess))
-        if (next.limited) anyLimited = true
-        z.vGuess = next.voltage
-      }
-      for (const bjt of bjts) {
-        const vB = bjt.baseNet === ground ? 0 : (last.nodes.get(bjt.baseNet) ?? 0)
-        const vC = bjt.collectorNet === ground ? 0 : (last.nodes.get(bjt.collectorNet) ?? 0)
-        const vE = bjt.emitterNet === ground ? 0 : (last.nodes.get(bjt.emitterNet) ?? 0)
-        const sign = bjt.polarity === 'pnp' ? -1 : 1
-        const vcrit = criticalVoltage(bjt.params.saturationCurrent, 1, bjt.thermalV)
-        const limBE = pnjlim(sign * (vB - vE), bjt.vBE, bjt.thermalV, vcrit)
-        const limBC = pnjlim(sign * (vB - vC), bjt.vBC, bjt.thermalV, vcrit)
-        maxDelta = Math.max(
-          maxDelta,
-          Math.abs(limBE.voltage - bjt.vBE),
-          Math.abs(limBC.voltage - bjt.vBC),
-        )
-        if (limBE.limited || limBC.limited) anyLimited = true
-        bjt.vBE = limBE.voltage
-        bjt.vBC = limBC.voltage
-      }
-      for (const fet of mosfets) {
-        const vG = fet.gateNet === ground ? 0 : (last.nodes.get(fet.gateNet) ?? 0)
-        const vD = fet.drainNet === ground ? 0 : (last.nodes.get(fet.drainNet) ?? 0)
-        const vS = fet.sourceNet === ground ? 0 : (last.nodes.get(fet.sourceNet) ?? 0)
-        // The square-law is gentler than a junction exponential — a plain
-        // per-iteration voltage-step clamp (SPICE's fetlim idea) is enough.
-        const nextVGS = limitMosfetStep(vG - vS, fet.vGS)
-        const nextVDS = limitMosfetStep(vD - vS, fet.vDS)
-        maxDelta = Math.max(maxDelta, Math.abs(nextVGS - fet.vGS), Math.abs(nextVDS - fet.vDS))
-        if (nextVGS !== vG - vS || nextVDS !== vD - vS) anyLimited = true
-        fet.vGS = nextVGS
-        fet.vDS = nextVDS
-      }
-      for (const td of tunnelDiodes) {
-        const vA = td.anodeNet === ground ? 0 : (last.nodes.get(td.anodeNet) ?? 0)
-        const vC = td.cathodeNet === ground ? 0 : (last.nodes.get(td.cathodeNet) ?? 0)
-        const next = limitTunnelDiodeStep(vA - vC, td.vGuess)
-        maxDelta = Math.max(maxDelta, Math.abs(next - td.vGuess))
-        if (next !== vA - vC) anyLimited = true
-        td.vGuess = next
-      }
-      for (const vd of vacuumDiodes) {
-        const vP = vd.plateNet === ground ? 0 : (last.nodes.get(vd.plateNet) ?? 0)
-        const vK = vd.cathodeNet === ground ? 0 : (last.nodes.get(vd.cathodeNet) ?? 0)
-        // The Child-Langmuir 3/2 law is gentle — a plain voltage-step clamp is enough.
-        const next = limitVacuumStep(vP - vK, vd.vGuess)
-        maxDelta = Math.max(maxDelta, Math.abs(next - vd.vGuess))
-        if (next !== vP - vK) anyLimited = true
-        vd.vGuess = next
-      }
-      for (const tri of triodes) {
-        const vP = tri.plateNet === ground ? 0 : (last.nodes.get(tri.plateNet) ?? 0)
-        const vG = tri.gridNet === ground ? 0 : (last.nodes.get(tri.gridNet) ?? 0)
-        const vK = tri.cathodeNet === ground ? 0 : (last.nodes.get(tri.cathodeNet) ?? 0)
-        const nextVGK = limitVacuumStep(vG - vK, tri.vGK)
-        const nextVPK = limitVacuumStep(vP - vK, tri.vPK)
-        maxDelta = Math.max(maxDelta, Math.abs(nextVGK - tri.vGK), Math.abs(nextVPK - tri.vPK))
-        if (nextVGK !== vG - vK || nextVPK !== vP - vK) anyLimited = true
-        tri.vGK = nextVGK
-        tri.vPK = nextVPK
-      }
-      for (const tube of screenTubes) {
-        const vP = tube.plateNet === ground ? 0 : (last.nodes.get(tube.plateNet) ?? 0)
-        const vG1 = tube.gridNet === ground ? 0 : (last.nodes.get(tube.gridNet) ?? 0)
-        const vG2 = tube.screenNet === ground ? 0 : (last.nodes.get(tube.screenNet) ?? 0)
-        const vK = tube.cathodeNet === ground ? 0 : (last.nodes.get(tube.cathodeNet) ?? 0)
-        const nG1 = limitVacuumStep(vG1 - vK, tube.vG1K)
-        const nG2 = limitVacuumStep(vG2 - vK, tube.vG2K)
-        const nP = limitVacuumStep(vP - vK, tube.vPK)
-        maxDelta = Math.max(
-          maxDelta,
-          Math.abs(nG1 - tube.vG1K),
-          Math.abs(nG2 - tube.vG2K),
-          Math.abs(nP - tube.vPK),
-        )
-        if (nG1 !== vG1 - vK || nG2 !== vG2 - vK || nP !== vP - vK) anyLimited = true
-        tube.vG1K = nG1
-        tube.vG2K = nG2
-        tube.vPK = nP
-      }
-      if (maxDelta < NR_VOLTAGE_TOLERANCE && !anyLimited) {
+      const acc = new GuessAccumulator()
+      const volts = nodeVolts(last.nodes, ground)
+      for (const led of shockleyLeds) acc.add(updateJunctionGuess(led, volts))
+      for (const z of zeners) acc.add(updateZenerGuess(z, volts))
+      for (const bjt of bjts) acc.add(updateBjtGuess(bjt, volts))
+      for (const fet of mosfets) acc.add(updateMosfetGuess(fet, volts))
+      for (const td of tunnelDiodes) acc.add(updateTunnelGuess(td, volts))
+      for (const vd of vacuumDiodes) acc.add(updateVacuumDiodeGuess(vd, volts))
+      for (const tri of triodes) acc.add(updateTriodeGuess(tri, volts))
+      for (const tube of screenTubes) acc.add(updateScreenTubeGuess(tube, volts))
+      if (acc.converged) {
         converged = true
         break
       }
@@ -1249,27 +1169,6 @@ function resolveZener(
     breakdownIdeality: ZENER_BREAKDOWN_IDEALITY,
     vGuess: 0, // warm start in the blocking region
   }
-}
-
-/**
- * Per-iteration voltage limiting for a Zener — pnjlim on whichever branch is
- * being driven. The forward branch is limited around its critical voltage; the
- * breakdown branch is limited the same way in u = −(V + V_Z) space, so a Newton
- * step can't overshoot the steep breakdown knee and diverge.
- */
-function limitZenerStep(vRaw: number, z: ZenerElement): { voltage: number; limited: boolean } {
-  const vcritFwd = criticalVoltage(z.saturationCurrent, z.idealityFactor, z.thermalV)
-  const fwd = pnjlim(vRaw, z.vGuess, z.idealityFactor * z.thermalV, vcritFwd)
-  if (fwd.limited) return fwd
-  const vcritBd = criticalVoltage(z.breakdownCurrent, z.breakdownIdeality, z.thermalV)
-  const bd = pnjlim(
-    -(vRaw + z.zenerVoltage),
-    -(z.vGuess + z.zenerVoltage),
-    z.breakdownIdeality * z.thermalV,
-    vcritBd,
-  )
-  if (bd.limited) return { voltage: -(bd.voltage + z.zenerVoltage), limited: true }
-  return { voltage: vRaw, limited: false }
 }
 
 /**
