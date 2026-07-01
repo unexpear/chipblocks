@@ -25,7 +25,7 @@ import {
   type CanvasNodeLike as BlockNodeLike,
   blockPortAliases,
   bubbleBlockHealth,
-  isOutputDrive,
+  type DriveKind,
 } from '../blocks.ts'
 import { type canvasToWorld, groundedComponent } from '../canvas-to-world.ts'
 import { wireFlow } from '../edge-currents.ts'
@@ -38,11 +38,23 @@ import { buildCrtTraces, type CrtSpot, type PartReading, partReadings } from '..
 import type { DeviceNodeData } from '../symbols.tsx'
 import { THEME } from '../theme.ts'
 import { canvasWorld } from './canvas-world.ts'
-import { ANALOG_PASSIVE, isLogicFidelity, LOGIC_OUTPUT_HANDLES } from './partition.ts'
+import { ANALOG_PASSIVE, findBridges, isLogicFidelity } from './partition.ts'
 
 /** Wire colours: a live (current-carrying) wire vs an idle tap — lifted with edgePhysics from App.tsx. */
 const CURRENT = THEME.accentBlue
 const IDLE = THEME.textFaint
+
+/** The declared drive of a logic block's port (push-pull / open-collector / tri-state / input) — what
+ *  findBridges needs to tell whether a boundary pin drives the analog or reads it. undefined when the
+ *  node isn't a block or the handle isn't one of its ports. */
+const portDriveOf = (
+  nodeById: Map<string, Node>,
+  logicId: string,
+  handle: string,
+): DriveKind | undefined =>
+  (nodeById.get(logicId)?.data as { block?: BlockData } | undefined)?.block?.ports.find(
+    (p) => p.id === handle,
+  )?.drive
 
 /**
  * Physics-derived React Flow edge fields for one wire: the current arrow +
@@ -381,30 +393,16 @@ function solveCanvasMixed(
     analogHandle: string
     output: boolean
   }
-  const boundaries: MixBoundary[] = []
-  for (const e of edgeList) {
-    const sL = logicIds.has(e.source)
-    const tL = logicIds.has(e.target)
-    if (sL === tL) continue
-    const analogId = sL ? e.target : e.source
-    if (!isRealLoad(analogId)) continue
-    const logicId = sL ? e.source : e.target
-    const logicHandle = (sL ? e.sourceHandle : e.targetHandle) ?? ''
-    // Is the logic pin an OUTPUT (logic drives the analog → inject its 0/Vdd) or an input (analog drives
-    // the logic → read it back)? Prefer the port's declared drive (push-pull/open-collector/tri-state),
-    // falling back to a known output name — so a decoder's seg_* drivers count, not just out/q/sum.
-    const port = (
-      nodeById.get(logicId)?.data as { block?: BlockData } | undefined
-    )?.block?.ports.find((p) => p.id === logicHandle)
-    boundaries.push({
-      id: e.id,
-      logicId,
-      logicHandle,
-      analogId,
-      analogHandle: (sL ? e.targetHandle : e.sourceHandle) ?? '',
-      output: isOutputDrive(port?.drive) || LOGIC_OUTPUT_HANDLES.has(logicHandle.toLowerCase()),
-    })
-  }
+  const boundaries: MixBoundary[] = findBridges(edgeList, logicIds, isRealLoad, (id, handle) =>
+    portDriveOf(nodeById, id, handle),
+  ).map((b) => ({
+    id: b.edgeId,
+    logicId: b.logicId,
+    logicHandle: b.logicHandle,
+    analogId: b.analogId,
+    analogHandle: b.analogHandle,
+    output: b.output,
+  }))
   const reverse = boundaries.filter((b) => !b.output) // analog → logic INPUT
   const reverseIds = new Set(reverse.map((b) => b.id))
 
@@ -586,23 +584,18 @@ function solveTransientCoSim(
     !logicIds.has(id) && defOf(id) !== undefined && !ANALOG_PASSIVE.has(defOf(id) as string)
 
   // BOUNDARIES: a logic OUTPUT pin wired to a real analog load — the digital→analog video crossing.
+  // (The transient co-sim only splices the OUTPUT boundaries; the input-driving direction isn't modelled.)
   type Bridge = { edgeId: string; srcId: string; logicId: string; logicHandle: string }
-  const bridges: Bridge[] = []
-  for (const e of edgeList) {
-    const sL = logicIds.has(e.source)
-    const tL = logicIds.has(e.target)
-    if (sL === tL) continue
-    const analogId = sL ? e.target : e.source
-    if (!isRealLoad(analogId)) continue
-    const logicId = sL ? e.source : e.target
-    const logicHandle = (sL ? e.sourceHandle : e.targetHandle) ?? ''
-    const port = (
-      nodeById.get(logicId)?.data as { block?: BlockData } | undefined
-    )?.block?.ports.find((p) => p.id === logicHandle)
-    if (!(isOutputDrive(port?.drive) || LOGIC_OUTPUT_HANDLES.has(logicHandle.toLowerCase())))
-      continue
-    bridges.push({ edgeId: e.id, srcId: `__grid_${e.id}`, logicId, logicHandle })
-  }
+  const bridges: Bridge[] = findBridges(edgeList, logicIds, isRealLoad, (id, handle) =>
+    portDriveOf(nodeById, id, handle),
+  )
+    .filter((b) => b.output)
+    .map((b) => ({
+      edgeId: b.edgeId,
+      srcId: `__grid_${b.edgeId}`,
+      logicId: b.logicId,
+      logicHandle: b.logicHandle,
+    }))
 
   // SPLIT: the logic component = everything reachable from the logic blocks over non-bridge edges (the
   // char-gen + its clock/clear/V+ sources + the digital ground). Requires the analog + digital sides to

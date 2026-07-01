@@ -9,10 +9,21 @@
  * (`solveTransientCoSim`). Pulling them here gives that seam one owner, independent of the UI, so the
  * dispatcher and both co-sim coordinators read the same classification. (This is a pure move — the
  * predicates are unchanged; only their home is.)
+ *
+ * CORRECTNESS OBLIGATION (the non-obvious property this partition encodes). Routing a digital block to
+ * the logic engine is not merely an optimisation — it is a REDUCTION with a proof obligation: the 0/1
+ * answer must equal what the full transistor solve WOULD have produced. That obligation cannot be
+ * discharged at runtime (verifying the ~54 ms logic solve by running the ~60 s transistor solve pays
+ * exactly the cost the logic engine exists to avoid). It is discharged at BUILD TIME, per PRIMITIVE:
+ * `tests/logic-gates.test.ts` runs the equivalence bridge — `logicBlock` vs the transistor `solveBlock`
+ * for every input of the primitive gates (e.g. the full adder) — so any composition of proven gates is
+ * sound by construction. `isLogicFidelity` returning true is therefore a claim that this node reduces to
+ * that proven-equivalent gate set (`blockIsLogicCompatible` — gates all the way down); when it does not,
+ * the transistor solve is kept. Preserve this: a new logic primitive needs a matching equivalence test.
  */
 
 import type { Node } from '@xyflow/react'
-import type { BlockData } from '../blocks.ts'
+import { type BlockData, type DriveKind, isOutputDrive } from '../blocks.ts'
 import { blockIsLogicCompatible } from '../logic-sim.ts'
 import type { DeviceNodeData } from '../symbols.tsx'
 
@@ -46,3 +57,57 @@ export const LOGIC_OUTPUT_HANDLES = new Set([
   'carry_out',
   'borrow',
 ])
+
+/** One wire that crosses the digital↔analog boundary of a mixed canvas — a logic pin wired to a real
+ *  analog load. `output` = the logic DRIVES the analog (inject its 0/Vdd); otherwise the analog drives
+ *  the logic input (read it back as a 0/1). The shared shape both co-sim coordinators build on. */
+export type CanvasBoundary = {
+  edgeId: string
+  logicId: string
+  logicHandle: string
+  analogId: string
+  analogHandle: string
+  output: boolean
+}
+
+/** The minimal edge shape findBridges reads — kept structural so partition.ts stays free of React Flow. */
+type BridgeEdge = {
+  id: string
+  source: string
+  target: string
+  sourceHandle?: string | null
+  targetHandle?: string | null
+}
+
+/**
+ * The digital↔analog boundaries of a mixed canvas: every wire between a logic-fidelity node (its ids in
+ * `logicIds`) and a real analog load (`isRealLoad`). This is the partition primitive both co-sim
+ * coordinators build on — the DC co-sim (solveCanvasMixed) splices a 0/Vdd source at each OUTPUT boundary
+ * and reads each input boundary back; the transient co-sim (solveTransientCoSim) does the same, over time.
+ * `driveOf` supplies the logic pin's declared drive (push-pull / open-collector / tri-state / input), so a
+ * decoder's `seg_*` drivers count as outputs, not only the by-name out/q/sum handles. Pure + UI-free —
+ * lifting the boundary-finding out of the two inline copies is the step that lets them share a coordinator.
+ */
+export function findBridges(
+  edges: readonly BridgeEdge[],
+  logicIds: ReadonlySet<string>,
+  isRealLoad: (id: string) => boolean,
+  driveOf: (logicId: string, logicHandle: string) => DriveKind | undefined,
+): CanvasBoundary[] {
+  const boundaries: CanvasBoundary[] = []
+  for (const e of edges) {
+    const sourceIsLogic = logicIds.has(e.source)
+    const targetIsLogic = logicIds.has(e.target)
+    if (sourceIsLogic === targetIsLogic) continue // both or neither logic → not a crossing
+    const analogId = sourceIsLogic ? e.target : e.source
+    if (!isRealLoad(analogId)) continue
+    const logicId = sourceIsLogic ? e.source : e.target
+    const logicHandle = (sourceIsLogic ? e.sourceHandle : e.targetHandle) ?? ''
+    const analogHandle = (sourceIsLogic ? e.targetHandle : e.sourceHandle) ?? ''
+    const output =
+      isOutputDrive(driveOf(logicId, logicHandle)) ||
+      LOGIC_OUTPUT_HANDLES.has(logicHandle.toLowerCase())
+    boundaries.push({ edgeId: e.id, logicId, logicHandle, analogId, analogHandle, output })
+  }
+  return boundaries
+}
