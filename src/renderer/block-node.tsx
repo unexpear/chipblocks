@@ -226,10 +226,11 @@ function DotMatrixFace({
   const coreR = Math.max(1.3, cell * 0.34)
   const glowR = Math.max(2, cell * 0.58)
   const blur = Math.max(0.7, cell * 0.26)
-  // Lit pixels, flattened once so the off-dots / glow / core layers all iterate the same set.
-  const lit = matrix.flatMap((row, ri) =>
-    row.map((px, ci) => ({ px, ri, ci })).filter((p) => p.px.on),
-  )
+  // Split once into lit / unlit pixels so every layer (off-dots, glow, core) maps a data array keyed by
+  // each pixel's stable {ri, ci} grid coordinate, not the raw map index.
+  const cells = matrix.flatMap((row, ri) => row.map((px, ci) => ({ px, ri, ci })))
+  const lit = cells.filter((p) => p.px.on)
+  const unlit = cells.filter((p) => !p.px.on)
   const cx = (ci: number) => cw * (ci + 0.5)
   const cy = (ri: number) => ch * (ri + 0.5)
   return (
@@ -249,20 +250,16 @@ function DotMatrixFace({
         </filter>
       </defs>
       {/* Unlit pixels: faint dark dots, so the panel still reads as a screen where it's dark. */}
-      {matrix.flatMap((row, ri) =>
-        row.map((px, ci) =>
-          px.on ? null : (
-            <circle
-              key={`off-${ri}-${ci}`}
-              cx={cx(ci)}
-              cy={cy(ri)}
-              r={coreR * 0.78}
-              fill={THEME.borderStrong}
-              opacity={0.22}
-            />
-          ),
-        ),
-      )}
+      {unlit.map(({ ri, ci }) => (
+        <circle
+          key={`off-${ri}-${ci}`}
+          cx={cx(ci)}
+          cy={cy(ri)}
+          r={coreR * 0.78}
+          fill={THEME.borderStrong}
+          opacity={0.22}
+        />
+      ))}
       {/* Glow layer: each lit pixel's halo, blurred so adjacent pixels melt together into a smooth image
           (a dim pixel carries a darker colour, so its bloom is fainter — the grey levels show through). */}
       <g filter={`url(#${bloomId})`}>
