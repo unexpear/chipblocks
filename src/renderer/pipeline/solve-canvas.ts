@@ -38,7 +38,7 @@ import { buildCrtTraces, type CrtSpot, type PartReading, partReadings } from '..
 import type { DeviceNodeData } from '../symbols.tsx'
 import { THEME } from '../theme.ts'
 import { canvasWorld } from './canvas-world.ts'
-import { ANALOG_PASSIVE, findBridges, isLogicFidelity } from './partition.ts'
+import { ANALOG_PASSIVE, classifyCanvas, findBridges, isLogicFidelity } from './partition.ts'
 
 /** Wire colours: a live (current-carrying) wire vs an idle tap — lifted with edgePhysics from App.tsx. */
 const CURRENT = THEME.accentBlue
@@ -761,11 +761,8 @@ export function solveTransientDispatch(
   edgeList: Edge[],
   options: { timeStep: number; duration: number; projectAmbientC?: number },
 ): { result: TransientResult; traces: Map<string, { points: CrtSpot[]; brightness: number }> } {
-  const hasLogic = nodeList.some(isLogicFidelity)
-  const hasAnalogLoad = nodeList.some(
-    (n) => !isLogicFidelity(n) && !ANALOG_PASSIVE.has((n.data as DeviceNodeData).definition ?? ''),
-  )
-  if (hasLogic && hasAnalogLoad) return solveTransientCoSim(nodeList, edgeList, options)
+  if (classifyCanvas(nodeList) === 'mixed') return solveTransientCoSim(nodeList, edgeList, options)
+  // 'analog' and 'logic' both take the analog transient path — there is no logic-only transient engine.
   const { sources, positions } = lightCastInputs(nodeList)
   const world = groundedComponent(
     worldWithCastLight(canvasWorld(nodeList, edgeList).world, positions, sources),
@@ -784,15 +781,14 @@ export function solveCanvasDispatch(
   routedGeoms?: Map<string, Point[]>,
   state?: Map<string, boolean>,
 ): ReturnType<typeof solveCanvas> {
-  if (!nodeList.some(isLogicFidelity)) {
-    return solveCanvas(nodeList, edgeList, projectAmbientC, routedGeoms)
+  switch (classifyCanvas(nodeList)) {
+    case 'analog':
+      return solveCanvas(nodeList, edgeList, projectAmbientC, routedGeoms)
+    case 'logic':
+      return solveCanvasLogic(nodeList, edgeList, projectAmbientC, routedGeoms, state)
+    case 'mixed':
+      return solveCanvasMixed(nodeList, edgeList, projectAmbientC, routedGeoms, state)
   }
-  const hasAnalogLoad = nodeList.some(
-    (n) => !isLogicFidelity(n) && !ANALOG_PASSIVE.has((n.data as DeviceNodeData).definition),
-  )
-  return hasAnalogLoad
-    ? solveCanvasMixed(nodeList, edgeList, projectAmbientC, routedGeoms, state)
-    : solveCanvasLogic(nodeList, edgeList, projectAmbientC, routedGeoms, state)
 }
 
 /** The logic high/low threshold (≈ Vcc/2) for the tri-state enable check — half the largest power

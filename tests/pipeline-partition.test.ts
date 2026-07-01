@@ -5,9 +5,30 @@
  * coordinator, so it earns a direct test of the boundary classification.
  */
 
+import type { Node } from '@xyflow/react'
 import { describe, expect, test } from 'vitest'
 import type { DriveKind } from '../src/renderer/blocks.ts'
-import { findBridges } from '../src/renderer/pipeline/partition.ts'
+import { classifyCanvas, findBridges } from '../src/renderer/pipeline/partition.ts'
+
+const node = (id: string, definition: string, fidelity?: string): Node =>
+  ({
+    id,
+    position: { x: 0, y: 0 },
+    data: { definition, ...(fidelity ? { fidelity } : {}) },
+  }) as unknown as Node
+
+describe('classifyCanvas — the first-class dispatch decision', () => {
+  test('no logic tags → analog', () => {
+    expect(classifyCanvas([node('r', 'resistor'), node('b', 'power_source')])).toBe('analog')
+  })
+  test('logic tags driving only digital/passive → logic', () => {
+    // a logic block + a bare supply (a passive) — no real analog load
+    expect(classifyCanvas([node('g', 'block', 'logic'), node('vdd', 'power_source')])).toBe('logic')
+  })
+  test('logic tags + a real analog load → mixed', () => {
+    expect(classifyCanvas([node('g', 'block', 'logic'), node('led', 'led')])).toBe('mixed')
+  })
+})
 
 describe('findBridges — the digital↔analog boundary primitive', () => {
   const edges = [

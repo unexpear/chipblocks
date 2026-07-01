@@ -58,6 +58,27 @@ export const LOGIC_OUTPUT_HANDLES = new Set([
   'borrow',
 ])
 
+/**
+ * How a canvas must be solved — the first-class classification the dispatch is built on, so the DC and
+ * transient dispatch decide the SAME way instead of each re-deriving it from ad-hoc `.some()` scans:
+ *   - `analog` — no logic tags → the full transistor-level solve.
+ *   - `logic`  — logic tags driving only digital → the fast 0/1 logic engine.
+ *   - `mixed`  — logic tags AND a real analog load → CO-SIMULATE: partition at the digital↔analog bridges
+ *                (findBridges) and coordinate the two engines. The mixed engines (solveCanvasMixed for DC,
+ *                solveTransientCoSim for transient) ARE the coordinators — a fixed-point iterate for DC, a
+ *                temporal lockstep over time for transient. A future engine registry keys off THIS.
+ */
+export type CanvasKind = 'analog' | 'logic' | 'mixed'
+
+/** Classify a canvas by its fidelity tags (the partition decision, shared by both dispatchers). */
+export function classifyCanvas(nodeList: readonly Node[]): CanvasKind {
+  if (!nodeList.some(isLogicFidelity)) return 'analog'
+  const hasAnalogLoad = nodeList.some(
+    (n) => !isLogicFidelity(n) && !ANALOG_PASSIVE.has((n.data as DeviceNodeData).definition),
+  )
+  return hasAnalogLoad ? 'mixed' : 'logic'
+}
+
 /** One wire that crosses the digital↔analog boundary of a mixed canvas — a logic pin wired to a real
  *  analog load. `output` = the logic DRIVES the analog (inject its 0/Vdd); otherwise the analog drives
  *  the logic input (read it back as a 0/1). The shared shape both co-sim coordinators build on. */
