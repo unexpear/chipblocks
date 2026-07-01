@@ -93,7 +93,7 @@ import {
   type TriodeElement,
   type TunnelDiode,
 } from './dc-solver.ts'
-import { type DenseVector, lusolve, zerosMatrix, zerosVector } from './dense-linear.ts'
+import { type DenseVector, zerosMatrix, zerosVector } from './dense-linear.ts'
 import {
   companionModel,
   deriveSaturationCurrent,
@@ -133,6 +133,7 @@ import {
 } from './nr-loop.ts'
 import { type ShockleyDiodeState, scrTarget, shockleyDiodeTarget } from './shockley-diode.ts'
 import { NR_MAX_ITERATIONS } from './solver-constants.ts'
+import { SparseSession } from './sparse-linear.ts'
 import { propagationDelayS } from './transmission-line-model.ts'
 import { tunnelDiodeCompanion, tunnelDiodeCurrent } from './tunnel-diode-model.ts'
 import {
@@ -2016,6 +2017,11 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   // Returns the net-voltage map PLUS the raw solution vector (the auxiliary
   // entries are the sources'/wires'/switches' exact branch currents — current
   // recording reads them instead of re-deriving), or null on a singular matrix.
+  // One sparse session across the WHOLE transient: the matrix structure is fixed for every step, so the
+  // fill-reducing order is computed once and reused over the hundreds of steps × Newton iterations — the
+  // dominant speedup. (The t=0 initial-condition solve carries extra rows, which just makes the session
+  // re-analyse once at the t=0 → t>0 size change; every later step reuses the step-structure order.)
+  const sparseSession = new SparseSession()
   const solveInstant = (
     mode: 'initial' | 'step',
     t: number,
@@ -2128,7 +2134,7 @@ export function solveTransient(world: World, options: TransientOptions): Transie
 
     let x: DenseVector
     try {
-      x = lusolve(M, b)
+      x = sparseSession.solve(M, b)
     } catch {
       return null
     }

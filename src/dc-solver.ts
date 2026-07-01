@@ -24,7 +24,7 @@
 import { type BjtParams, bjtCompanion, bjtCurrents } from './bjt-model.ts'
 import type { Instance, Net, World } from './cross-fk-validator.ts'
 import { CRT_DEFLECTION_INPUT_OHMS, crtParamsFromInstance, gridBrightness } from './crt-model.ts'
-import { type DenseVector, lusolve, zerosMatrix, zerosVector } from './dense-linear.ts'
+import { type DenseVector, zerosMatrix, zerosVector } from './dense-linear.ts'
 import {
   companionModel,
   deriveSaturationCurrent,
@@ -64,6 +64,7 @@ import {
   updateZenerGuess,
 } from './nr-loop.ts'
 import { NR_MAX_ITERATIONS } from './solver-constants.ts'
+import { SparseSession } from './sparse-linear.ts'
 import { STANDARD_AMBIENT_C } from './thermal-model.ts'
 import {
   type TunnelDiodeParams,
@@ -614,6 +615,12 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
   }
   const S = linearVoltageSources.length
 
+  // One sparse session for this whole solve: the circuit's matrix STRUCTURE is fixed across every Newton
+  // iteration (only the companion-model VALUES change), so the fill-reducing order is computed once and
+  // reused, and sparse-vs-dense is decided once — the reuse that makes sparse a net win here and avoids
+  // the per-iteration thrash. Small circuits (< the sparse threshold) fall straight through to dense.
+  const sparseSession = new SparseSession()
+
   // buildAndSolve stamps resistors + linear voltage sources + (optionally) the
   // Shockley companion models at their current guesses, then solves. Returns
   // the node-voltage map + the raw solution array (for aux currents), or null
@@ -753,7 +760,7 @@ export function solveDC(world: World, options?: SolveOptions): Solution {
 
     let x: DenseVector
     try {
-      x = lusolve(M, b)
+      x = sparseSession.solve(M, b)
     } catch {
       return null
     }
