@@ -132,4 +132,41 @@ describe('SparseSession — reusing the order across an iterated solve is the re
     )
     expect(sessionMs).toBeLessThan(denseMs) // a ~20× margin on this structure — not flaky
   })
+
+  /**
+   * The linear-transient case: the matrix is CONSTANT and only the right-hand side changes each step, so
+   * passing `constantMatrix: true` lets the session factor ONCE and make every subsequent step a bare
+   * forward/back solve. Correctness is asserted for every one of the 40 right-hand sides against dense —
+   * proving the reused factor stays correct as b varies — and the reuse is far faster than re-factoring.
+   */
+  test('constant 300-node matrix, 40 right-hand sides: factor reuse matches dense and is far faster', () => {
+    const n = 300
+    const A = hubMatrix(n)
+    const rhs = (k: number) => {
+      const b = zerosVector(n)
+      for (let i = 0; i < n; i++) b.data[i] = Math.sin(i * 0.1 + k) * (1 + (i % 5))
+      return b
+    }
+
+    const session = new SparseSession()
+    const t0 = performance.now()
+    const reuseSolutions: number[][] = []
+    for (let k = 0; k < 40; k++) {
+      reuseSolutions.push(Array.from(session.solve(A, rhs(k), true).data)) // constantMatrix: true
+    }
+    const reuseMs = performance.now() - t0
+
+    const t1 = performance.now()
+    for (let k = 0; k < 40; k++) {
+      const xd = denseLusolve(A, rhs(k))
+      for (let i = 0; i < n; i++)
+        expect((reuseSolutions[k] as number[])[i]).toBeCloseTo(xd.data[i] as number, 6)
+    }
+    const denseMs = performance.now() - t1
+
+    console.log(
+      `[factor-reuse] n=${n} ×40 rhs: reuse ${reuseMs.toFixed(0)}ms  dense ${denseMs.toFixed(0)}ms  → ${(denseMs / reuseMs).toFixed(1)}× faster`,
+    )
+    expect(reuseMs).toBeLessThan(denseMs)
+  })
 })

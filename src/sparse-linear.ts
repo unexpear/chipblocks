@@ -120,36 +120,63 @@ export function computeOrder(A: DenseMatrix): SparseOrder {
 }
 
 /**
- * Solve A·x = b by sparse Gaussian elimination (Doolittle LU) under a minimum-degree ordering — the
- * SAME elimination as before, but on TYPED-ARRAY rows with a dense accumulator instead of per-element
- * Maps/Sets, so the hot loop has no hashing. Each row is parallel `cols`/`vals` arrays; eliminating a
- * row scatters it into a reused `work` Float64Array (O(1) accesses), applies the pivot row, and gathers
- * the grown pattern back. Returns null — a signal to fall back to dense — on a zero/tiny pivot, on
- * fill-in growing dense (sparse wouldn't beat dense then), or any non-finite result. A and b not mutated.
- *
- * `precomputed` supplies a reusable order (SparseSession) so the O(n²) symbolic analysis is skipped —
- * the whole point of the session. Omitted, the order is computed here (a self-contained one-shot solve).
+ * A completed sparse LU factorisation, ready to solve for any right-hand side. `rowCol[k]`/`rowVal[k]`
+ * hold permuted row k's column indices and values after fill (the L multipliers below the diagonal, the
+ * U entries on and above it); `order` is the elimination permutation. Reusable: a linear transient's
+ * matrix is identical at every time step, so this is built once and only re-solved (solveFactor) per step.
  */
-export function sparseSolve(
-  A: DenseMatrix,
-  b: DenseVector,
-  precomputed?: SparseOrder,
-): DenseVector | null {
+export type SparseFactor = {
+  order: number[]
+  rowCol: number[][]
+  rowVal: number[][]
+}
+
+/**
+ * Where each permuted row's ORIGINAL nonzeros live in A — parallel `cols` (permuted column index) and
+ * `srcs` (flat index into A.data). Built once per structure (SparseSession) so a residual check can read
+ * A·x in O(nonzeros) instead of an O(n²) dense scan. Values are read fresh from A.data through `srcs`, so
+ * a value drift is caught; a PATTERN that grew past analysis (a nonlinear device switching on) is only
+ * under-checked, which is safe — factorize scans the FULL current A, so its factor is correct at the new
+ * positions too, and a genuinely garbage factor is wrong at the checked positions and still caught.
+ */
+type GatherMap = { cols: number[]; srcs: number[] }[]
+
+/** The gather map for a fixed structure + order — computed once, reused for every solve of that circuit. */
+export function computeGather(A: DenseMatrix, ord: SparseOrder): GatherMap {
   const n = A.size
-  if (n === 0) return new DenseVector(0)
+  const { order, inverse } = ord
+  const gather: GatherMap = Array.from({ length: n }, () => ({ cols: [], srcs: [] }))
+  for (let k = 0; k < n; k++) {
+    const oi = order[k] as number
+    const base = oi * n
+    const gk = gather[k] as { cols: number[]; srcs: number[] }
+    for (let oj = 0; oj < n; oj++) {
+      if (A.data[base + oj] !== 0) {
+        gk.cols.push(inverse[oj] as number)
+        gk.srcs.push(base + oj)
+      }
+    }
+  }
+  return gather
+}
 
-  // 1. Fill-reducing order — reused from the session, or computed for this one-shot solve.
-  const { order, inverse } = precomputed ?? computeOrder(A)
+/**
+ * Factor A into L·U by sparse Gaussian elimination (Doolittle) under a fill-reducing order — the SAME
+ * elimination as before on TYPED-ARRAY rows with a dense accumulator, split out from the solve so the
+ * factor can be REUSED across right-hand sides (a linear transient re-solves it every step). Reads the
+ * current A by a full scan, so it is always robust to a nonlinear device's nonzero pattern shifting.
+ * Returns null — fall back to dense — on a zero/tiny pivot or fill growing dense. A is not mutated.
+ */
+export function factorize(A: DenseMatrix, ord: SparseOrder): SparseFactor | null {
+  const n = A.size
+  const { order, inverse } = ord
 
-  // 2. Permuted system P·A·Pᵀ as per-row TYPED sparse rows (parallel col/val arrays) + per-column
-  //    occupancy (which rows hold a nonzero in each column, kept current as fill appears).
+  // Permuted rows P·A·Pᵀ (parallel col/val arrays) + per-column occupancy (rows holding a nonzero per col).
   const rowCol: number[][] = Array.from({ length: n }, () => [])
   const rowVal: number[][] = Array.from({ length: n }, () => [])
-  const rhs = new Float64Array(n)
   let nnz = 0
   for (let k = 0; k < n; k++) {
     const oi = order[k] as number
-    rhs[k] = b.data[oi] as number
     const base = oi * n
     const rc = rowCol[k] as number[]
     const rv = rowVal[k] as number[]
@@ -170,7 +197,7 @@ export function sparseSolve(
   // If the factor fills past this many nonzeros it is effectively dense — bail to dense, which is faster.
   const fillCap = Math.max(n * 16, Math.floor((n * n) / 2))
 
-  // 3. Sparse LU with a DENSE ACCUMULATOR. mark[c] === k tags work[c] as live for step k.
+  // Sparse LU with a DENSE ACCUMULATOR. mark[c] === k tags work[c] as live for step k.
   const work = new Float64Array(n)
   const mark = new Int32Array(n).fill(-1)
   for (let k = 0; k < n; k++) {
@@ -219,8 +246,20 @@ export function sparseSolve(
       vi.length = ci.length
     }
   }
+  return { order, rowCol, rowVal }
+}
 
-  // 4. Forward solve (L·y = rhs, unit L diagonal) then back solve (U·x' = y) over the sparse rows.
+/**
+ * Solve L·U·x = b for a completed factor and a right-hand side: a forward solve (unit-L) then a back solve
+ * (U) over the sparse rows, then un-permuted. O(nonzeros) — this is the cheap per-step operation a reused
+ * factor makes possible. Returns null (→ dense) on a zero U diagonal or a non-finite result.
+ */
+export function solveFactor(f: SparseFactor, b: DenseVector): DenseVector | null {
+  const { order, rowCol, rowVal } = f
+  const n = order.length
+  const rhs = new Float64Array(n)
+  for (let k = 0; k < n; k++) rhs[k] = b.data[order[k] as number] as number
+
   const y = new Float64Array(n)
   for (let i = 0; i < n; i++) {
     const ci = rowCol[i] as number[]
@@ -247,7 +286,6 @@ export function sparseSolve(
     xPermuted[i] = sum / diagonal
   }
 
-  // 5. Un-permute (x[order[k]] = x'[k]) with a finite-result guard.
   const x = new DenseVector(n)
   for (let k = 0; k < n; k++) {
     const xk = xPermuted[k] as number
@@ -255,6 +293,22 @@ export function sparseSolve(
     x.data[order[k] as number] = xk
   }
   return x
+}
+
+/**
+ * Solve A·x = b via a one-shot sparse factor + solve. `precomputed` reuses a SparseSession's order to skip
+ * the O(n²) symbolic analysis. Returns null (→ dense) whenever the sparse factor bails. A and b unchanged.
+ */
+export function sparseSolve(
+  A: DenseMatrix,
+  b: DenseVector,
+  precomputed?: SparseOrder,
+): DenseVector | null {
+  const n = A.size
+  if (n === 0) return new DenseVector(0)
+  const f = factorize(A, precomputed ?? computeOrder(A))
+  if (f === null) return null
+  return solveFactor(f, b)
 }
 
 /** Relative residual ‖A·x − b‖∞, scaled the same way dense-linear scales its consistency check. */
@@ -275,6 +329,47 @@ function residualWithinTolerance(A: DenseMatrix, b: DenseVector, x: DenseVector)
     }
     maxResidual = Math.max(maxResidual, Math.abs(dot - (b.data[i] as number)))
     aNorm = Math.max(aNorm, rowAbsSum)
+    xNorm = Math.max(xNorm, Math.abs(x.data[i] as number))
+    bNorm = Math.max(bNorm, Math.abs(b.data[i] as number))
+  }
+  const scale = Math.max(aNorm * xNorm + bNorm, 1)
+  return maxResidual <= RESIDUAL_TOLERANCE * scale
+}
+
+/**
+ * The same relative-residual check, but O(nonzeros) — it visits only the analysed nonzero positions
+ * (via the gather map) instead of scanning the full n² dense matrix. This is what keeps a reused-factor
+ * solve (a linear transient step) O(nonzeros) end to end; the dense check would put an O(n²) tax back on
+ * every step. Safe as a verifier: it reads A's CURRENT values through `gather.srcs`, so a value change is
+ * caught; a garbage factor is wrong at these positions too, so it is caught; only nonzeros that appeared
+ * AFTER analysis go unchecked, and those are already handled correctly by factorize's full-A scan.
+ */
+function sparseResidualWithinTolerance(
+  A: DenseMatrix,
+  b: DenseVector,
+  x: DenseVector,
+  order: number[],
+  gather: GatherMap,
+): boolean {
+  const n = order.length
+  let maxResidual = 0
+  let aNorm = 0
+  let xNorm = 0
+  let bNorm = 0
+  for (let k = 0; k < n; k++) {
+    const gk = gather[k] as { cols: number[]; srcs: number[] }
+    let dot = 0
+    let rowAbsSum = 0
+    for (let t = 0; t < gk.cols.length; t++) {
+      const aij = A.data[gk.srcs[t] as number] as number
+      const originalCol = order[gk.cols[t] as number] as number
+      dot += aij * (x.data[originalCol] as number)
+      rowAbsSum += Math.abs(aij)
+    }
+    maxResidual = Math.max(maxResidual, Math.abs(dot - (b.data[order[k] as number] as number)))
+    aNorm = Math.max(aNorm, rowAbsSum)
+  }
+  for (let i = 0; i < n; i++) {
     xNorm = Math.max(xNorm, Math.abs(x.data[i] as number))
     bNorm = Math.max(bNorm, Math.abs(b.data[i] as number))
   }
@@ -367,10 +462,17 @@ export function lusolve(A: DenseMatrix, b: DenseVector): DenseVector {
  * analysis and the sparse/dense race are each paid a single time instead of on every solve. This is what
  * makes sparse a net win in the ITERATED context a single-solve benchmark hides: measured on a 1024-node
  * mesh, the reusable symbolic analysis is ~70% of a sparse solve, so hoisting it out of the loop leaves
- * only the numeric factor — already several times faster than the dense factor — to pay per iteration.
+ * only the numeric factor to pay per iteration, and its residual is checked in O(nonzeros), not O(n²).
  * Deciding the dispatch once also removes the per-solve thrash that made the stateless drop-in REGRESS
  * large nonlinear digital circuits: their nonzero pattern shifts as transistors switch region, so a
  * per-call structure memo never caches and re-times sparse+dense every iteration.
+ *
+ * Two reuse levels: the ORDER (always, across every solve of the structure), and — when the caller passes
+ * `constantMatrix` — the whole numeric FACTOR. A LINEAR transient's matrix is IDENTICAL at every time step
+ * (backward-Euler puts the capacitor/inductor history and the source waveform in the right-hand side, not
+ * the matrix), so it is factored ONCE and every step is a bare O(nonzeros) forward/back solve. The reused
+ * factor is still residual-checked each step, so a wrong "constant" hint is caught and re-factored, never
+ * wrong.
  *
  * Correctness is unconditional and identical to the dense solver: every sparse result is residual-checked,
  * and anything short of a provable win (a tiny pivot, a drifted pattern the reused order no longer factors,
@@ -380,49 +482,85 @@ export function lusolve(A: DenseMatrix, b: DenseVector): DenseVector {
  */
 export class SparseSession {
   private order: SparseOrder | null = null
+  private gather: GatherMap | null = null
+  private factor: SparseFactor | null = null
   private verdict: 'sparse' | 'dense' | undefined
   private orderSize = -1
 
   /**
-   * Solve A·x = b, reusing this session's order + dispatch verdict. Delegates to the dense solver (which
-   * may throw on an inconsistent system, exactly like a direct dense call) whenever sparse can't provably
-   * win — so a caller can swap `lusolve(M, b)` for `session.solve(M, b)` with no change in behaviour.
+   * Solve A·x = b, reusing this session's order (and, when `constantMatrix` is true, its numeric factor).
+   * Delegates to the dense solver (which may throw on an inconsistent system, exactly like a direct dense
+   * call) whenever sparse can't provably win — so `session.solve(M, b)` behaves like `lusolve(M, b)`.
+   *
+   * Pass `constantMatrix: true` only when A is guaranteed identical to the previous solve's (a linear
+   * transient step). It is a HINT, not a promise — the reused factor's residual is verified, and a miss
+   * simply re-factors — so an over-eager hint costs one wasted solve, never correctness.
    */
-  solve(A: DenseMatrix, b: DenseVector): DenseVector {
+  solve(A: DenseMatrix, b: DenseVector, constantMatrix = false): DenseVector {
     const n = A.size
     if (n < SPARSE_THRESHOLD) return denseLusolve(A, b)
 
-    // The order is tied to the structure; recompute it if this is the first solve or the size ever changes
-    // (it shouldn't within one simulation). A size change invalidates the remembered verdict too.
+    // The order + gather are tied to the structure; recompute them on the first solve or if the size ever
+    // changes (it shouldn't within one simulation). A size change invalidates the verdict + stored factor.
     if (this.order === null || this.orderSize !== n) {
       this.order = computeOrder(A)
+      this.gather = computeGather(A, this.order)
       this.orderSize = n
       this.verdict = undefined
+      this.factor = null
     }
 
     if (this.verdict === 'dense') return denseLusolve(A, b)
 
     if (this.verdict === 'sparse') {
-      const x = sparseSolve(A, b, this.order)
-      if (x !== null && residualWithinTolerance(A, b, x)) return x
+      const x = this.attemptSparse(A, b, constantMatrix)
+      if (x !== null) return x
       this.verdict = 'dense' // the reused order stopped factoring this structure — stop paying for it
+      this.factor = null
       return denseLusolve(A, b)
     }
 
-    // First solve of this structure: race the numeric sparse factor (reusing the just-computed order — so
+    // First solve of this structure: race the numeric sparse path (reusing the just-computed order — so
     // this compares the per-ITERATION costs, not the one-time symbolic setup) against dense; keep the winner.
     const sparseStart = performance.now()
-    const xSparse = sparseSolve(A, b, this.order)
-    const sparseOk = xSparse !== null && residualWithinTolerance(A, b, xSparse)
+    const xSparse = this.attemptSparse(A, b, constantMatrix)
     const sparseMs = performance.now() - sparseStart
     const denseStart = performance.now()
     const xDense = denseLusolve(A, b)
     const denseMs = performance.now() - denseStart
-    if (sparseOk && sparseMs < denseMs) {
+    if (xSparse !== null && sparseMs < denseMs) {
       this.verdict = 'sparse'
-      return xSparse as DenseVector
+      return xSparse
     }
     this.verdict = 'dense'
+    this.factor = null
     return xDense
+  }
+
+  /**
+   * A residual-verified sparse solution, or null → fall back to dense. Reuses the stored factor when the
+   * caller guarantees the matrix is unchanged (a linear transient step); otherwise factors afresh from a
+   * full scan of the current A (robust to a nonlinear device's pattern shifting). The residual is the
+   * O(nonzeros) gather-based check either way.
+   */
+  private attemptSparse(
+    A: DenseMatrix,
+    b: DenseVector,
+    constantMatrix: boolean,
+  ): DenseVector | null {
+    const order = this.order as SparseOrder
+    const gather = this.gather as GatherMap
+    if (constantMatrix && this.factor !== null) {
+      const reused = solveFactor(this.factor, b)
+      if (reused !== null && sparseResidualWithinTolerance(A, b, reused, order.order, gather))
+        return reused
+      this.factor = null // the stored factor no longer solves this matrix (A changed) — refactor below
+    }
+    const f = factorize(A, order)
+    if (f === null) return null
+    const x = solveFactor(f, b)
+    if (x === null || !sparseResidualWithinTolerance(A, b, x, order.order, gather)) return null
+    if (constantMatrix) this.factor = f // keep it for the next unchanged-matrix step
+    return x
   }
 }

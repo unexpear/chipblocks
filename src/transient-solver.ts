@@ -2022,6 +2022,27 @@ export function solveTransient(world: World, options: TransientOptions): Transie
   // dominant speedup. (The t=0 initial-condition solve carries extra rows, which just makes the session
   // re-analyse once at the t=0 → t>0 size change; every later step reuses the step-structure order.)
   const sparseSession = new SparseSession()
+  // A LINEAR circuit's matrix is IDENTICAL at every step: backward-Euler puts the capacitor/inductor
+  // history and the source waveforms in the right-hand side, and the conductances (G = C/dt, 1/R, …) are
+  // fixed for a fixed dt. So if nothing nonlinear or state-carrying is present, the matrix is factored
+  // ONCE and every step is a bare forward/back solve. Nonlinear devices re-linearise the matrix each
+  // Newton iteration; a motor's back-EMF, a gas lamp's strike/extinguish, a CRT, and a varactor all shift
+  // it across steps — any of these means "not constant". (An over-eager guess is caught by the session's
+  // residual check and simply re-factors, so this only needs to be a sound approximation of "linear".)
+  const constantMatrix =
+    diodes.length === 0 &&
+    tunnelDiodes.length === 0 &&
+    shockleyDiodes.length === 0 &&
+    gasLamps.length === 0 &&
+    zeners.length === 0 &&
+    vacuumDiodes.length === 0 &&
+    triodes.length === 0 &&
+    screenTubes.length === 0 &&
+    bjts.length === 0 &&
+    mosfets.length === 0 &&
+    motors.length === 0 &&
+    crts.length === 0 &&
+    caps.every((c) => c.varactor === undefined)
   const solveInstant = (
     mode: 'initial' | 'step',
     t: number,
@@ -2134,7 +2155,9 @@ export function solveTransient(world: World, options: TransientOptions): Transie
 
     let x: DenseVector
     try {
-      x = sparseSession.solve(M, b)
+      // Only the t>0 steps share one fixed matrix; the t=0 solve carries extra IC/charge rows, so it is
+      // never treated as "unchanged" (and it comes first, so it establishes the reusable step factor).
+      x = sparseSession.solve(M, b, constantMatrix && mode === 'step')
     } catch {
       return null
     }
