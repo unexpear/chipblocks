@@ -126,7 +126,6 @@ import {
   type LensMode,
 } from './lens.ts'
 import {
-  blockIsLogicCompatible,
   type CompiledLogic,
   compileLogic,
   digitalSeed,
@@ -188,6 +187,7 @@ import {
 import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { PartPicker } from './part-picker.tsx'
 import { buildCrtTraces, type CrtSpot, type PartReading, partReadings } from './part-readings.ts'
+import { ANALOG_PASSIVE, isLogicFidelity, LOGIC_OUTPUT_HANDLES } from './pipeline/partition.ts'
 import { ProjectBrowser, type ProjectChoice } from './project-browser.tsx'
 import { ProjectHub } from './project-hub.tsx'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
@@ -1072,33 +1072,6 @@ function solveCanvasLogic(
     relaysSettled: true,
   }
 }
-
-const isLogicFidelity = (n: Node): boolean => {
-  const data = n.data as DeviceNodeData
-  const f = data.fidelity
-  if (f === 'logic' || f === 'behaviour') return true
-  if (f === 'transistor') return false
-  // Untagged: a purely-digital block (gates all the way down) DEFAULTS to the fast logic engine — the
-  // ~1000× digital win. The transistor solve stays the explicit choice for analog and for descending into
-  // a gate's silicon. Analog / mixed blocks aren't logic-compatible, so they keep the transistor solve.
-  const block = (data as { block?: BlockData }).block
-  return data.definition === 'block' && block !== undefined && blockIsLogicCompatible(block)
-}
-const ANALOG_PASSIVE = new Set(['power_source', 'ground', 'junction'])
-// A logic block's OUTPUT pins (it DRIVES these). Used to classify a logic↔analog boundary: an output
-// pin means the logic drives the analog; any other (input) pin means the analog drives the logic.
-const LOGIC_OUTPUT_HANDLES = new Set([
-  'out',
-  'q',
-  'qbar',
-  'q_bar',
-  'sum',
-  'carry',
-  'cout',
-  'c_out',
-  'carry_out',
-  'borrow',
-])
 
 /**
  * Mixed-fidelity solve — the hand-off (complexity-layer #3). A canvas with BOTH logic-tagged blocks and
