@@ -23,6 +23,11 @@ const moduleDir = dirname(fileURLToPath(import.meta.url))
 if (process.env.CHIP_DEBUG_PORT) {
   app.commandLine.appendSwitch('remote-debugging-port', process.env.CHIP_DEBUG_PORT)
   app.commandLine.appendSwitch('remote-allow-origins', '*')
+  // Keep the compositor producing frames while the window is covered or minimized. Windows' native
+  // occlusion tracking otherwise marks the page hidden and stops requestAnimationFrame entirely
+  // (even with backgroundThrottling off), which freezes React Flow's node measuring — new nodes
+  // stay visibility:hidden and CDP-driven verification clicks fall through to the pane.
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 }
 
 // ---------------------------------------------------------------------------
@@ -433,6 +438,11 @@ function createWindow(): void {
       // change or a stray edit can't silently weaken the renderer's isolation.
       contextIsolation: true,
       nodeIntegration: false,
+      // Dev-only, with the CDP endpoint: keep rendering + ResizeObserver alive while the window is
+      // minimized/occluded, so CDP verification can drive it. A hidden throttled window never delivers
+      // ResizeObserver ticks → React Flow never measures new nodes → they stay visibility:hidden and
+      // unclickable. Production keeps Electron's default throttling (the env var is never set there).
+      backgroundThrottling: !process.env.CHIP_DEBUG_PORT,
     },
   })
 
