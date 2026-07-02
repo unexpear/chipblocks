@@ -696,6 +696,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
   edgesRef.current = edges
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
+  // Live handle to the Connect-tool state machine, so the DEV CDP surface (__chip.connectProbe) can
+  // exercise its real handlers. Assigned once the hook runs, below; read live from the api closure.
+  const connectRef = useRef<ReturnType<typeof useConnectTool> | null>(null)
   const { screenToFlowPosition, fitView, deleteElements } = useReactFlow()
   const updateNodeInternals = useUpdateNodeInternals()
   const dropCount = useRef(initial.nodes.length)
@@ -4230,6 +4233,69 @@ function Canvas({ project }: { project: ProjectChoice }) {
         const v = terminalVoltsRef.current.get(key)
         return v === undefined ? null : Math.round(v * 100) / 100
       },
+      // Exercise the extracted Connect-tool state machine (use-connect-tool.ts) end-to-end against the
+      // REAL React state: single-mode two-pick builds a wire; re-picking the start cancels; batch mode
+      // queues then routes. Reads back edges/connectStart/queue after each React flush (tick between picks
+      // — the machine relies on a re-render between clicks; connectRef.current is re-read each time).
+      async connectProbe() {
+        const tick = () => new Promise((r) => setTimeout(r, 80))
+        const c = () => connectRef.current
+        const edgeCount = () => edgesRef.current.length
+        checkpointAction('dev: connect probe')
+        setEdges([])
+        setNodes([mkBlock('CPA', 220, 'pa', 'right'), mkBlock('CPB', 640, 'pb', 'left')])
+        await tick()
+        // 1) single-mode two-pick → one wire from CPA/pa to CPB/pb
+        const before = edgeCount()
+        c()?.onPickConnectPoint('CPA', 'pa')
+        await tick()
+        const startAfterFirst = c()?.connectStart ?? null
+        c()?.onPickConnectPoint('CPB', 'pb')
+        await tick()
+        const wire = edgesRef.current.find((e) => e.source === 'CPA' && e.target === 'CPB')
+        const single = {
+          startAfterFirst,
+          startCleared: c()?.connectStart === null,
+          added: edgeCount() - before,
+          wire: wire
+            ? {
+                source: wire.source,
+                target: wire.target,
+                sh: wire.sourceHandle,
+                th: wire.targetHandle,
+              }
+            : null,
+        }
+        // 2) re-pick the SAME point cancels (no wire)
+        setEdges([])
+        await tick()
+        const beforeRe = edgeCount()
+        c()?.onPickConnectPoint('CPA', 'pa')
+        await tick()
+        c()?.onPickConnectPoint('CPA', 'pa')
+        await tick()
+        const repick = { startCleared: c()?.connectStart === null, added: edgeCount() - beforeRe }
+        // 3) batch mode queues, then routes on demand
+        setEdges([])
+        c()?.setConnectMode('batch')
+        await tick()
+        c()?.onPickConnectPoint('CPA', 'pa')
+        await tick()
+        c()?.onPickConnectPoint('CPB', 'pb')
+        await tick()
+        const queuedLen = c()?.connectQueue.length ?? -1
+        const addedWhileQueued = edgeCount()
+        c()?.routeConnectQueue()
+        await tick()
+        const batch = {
+          queuedLen,
+          addedWhileQueued,
+          addedAfterRoute: edgeCount(),
+          queueClearedAfter: (c()?.connectQueue.length ?? -1) === 0,
+        }
+        c()?.setConnectMode('single')
+        return { single, repick, batch }
+      },
       charScreen(text: string) {
         // DEV: a real dot-matrix character SCREEN — per letter, one glyph ROM (logic) + one 5×7 LED
         // matrix (analog), the ROM's 35 pixels wired to the matrix, driven by a 3-bit code. The logic
@@ -5406,6 +5472,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
     setAutoRouteWires,
     checkpointAction,
   })
+  connectRef.current = connect
   const onWireClick = useCallback(
     (event: ReactMouseEvent) => {
       if (tool !== 'wire') return
