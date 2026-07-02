@@ -208,6 +208,7 @@ import { checkpoint, emptyHistory, redo, undo } from './undo-history.ts'
 import { formatEng } from './units.ts'
 import { useConnectTool } from './use-connect-tool.ts'
 import { useShortcuts } from './use-shortcuts.tsx'
+import { useWireTool } from './use-wire-tool.ts'
 import {
   findWireCrossings,
   netColor,
@@ -216,7 +217,7 @@ import {
 } from './wire-crossings.tsx'
 import { type SelectedWire, WireInspector } from './wire-inspector.tsx'
 import { DEFAULT_WIRE_GAUGE_AWG, DEFAULT_WIRE_MATERIAL } from './wire-length.ts'
-import { CURVE_RADIUS_PX, samplePathPoints } from './wire-path.ts'
+import { samplePathPoints } from './wire-path.ts'
 import {
   type DeratingResult,
   deratingDashboard,
@@ -696,9 +697,10 @@ function Canvas({ project }: { project: ProjectChoice }) {
   edgesRef.current = edges
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
-  // Live handle to the Connect-tool state machine, so the DEV CDP surface (__chip.connectProbe) can
-  // exercise its real handlers. Assigned once the hook runs, below; read live from the api closure.
+  // Live handles to the Connect/Wire tool state machines, so the DEV CDP surface (__chip.connectProbe,
+  // __chip.wireSetup) can exercise their real handlers. Assigned once each hook runs, below.
   const connectRef = useRef<ReturnType<typeof useConnectTool> | null>(null)
+  const wireRef = useRef<ReturnType<typeof useWireTool> | null>(null)
   const { screenToFlowPosition, fitView, deleteElements } = useReactFlow()
   const updateNodeInternals = useUpdateNodeInternals()
   const dropCount = useRef(initial.nodes.length)
@@ -4233,6 +4235,38 @@ function Canvas({ project }: { project: ProjectChoice }) {
         const v = terminalVoltsRef.current.get(key)
         return v === undefined ? null : Math.round(v * 100) / 100
       },
+      // Stage the canvas for a REAL-events wire-tool test (use-wire-tool.ts): two blocks with facing
+      // pins + the Wire tool armed. The clicks themselves come from outside as genuine mouse/key input
+      // (CDP Input.dispatch*), so the whole chain — canvas onClick → wire.onWireClick → finishWire —
+      // runs exactly as a user's would; state()/wireState() read the result back.
+      wireSetup() {
+        checkpointAction('dev: wire setup')
+        setEdges([])
+        // Fresh ids every call: re-staging with the SAME ids leaves React Flow's internals unmeasured
+        // (no remount → no ResizeObserver tick) and the nodes stay visibility:hidden — unclickable.
+        dropCount.current += 1
+        const a = `WPA_${dropCount.current}`
+        const b = `WPB_${dropCount.current}`
+        setNodes([mkBlock(a, 220, 'pa', 'right'), mkBlock(b, 640, 'pb', 'left')])
+        setTool('wire')
+        return { a, b }
+      },
+      wireState() {
+        const w = wireRef.current
+        return {
+          pending: w?.pendingWire
+            ? { start: w.pendingWire.start, corners: w.pendingWire.corners.length }
+            : null,
+          edges: edgesRef.current.map((e) => ({
+            source: e.source,
+            target: e.target,
+            corners: Array.isArray((e.data as { waypoints?: unknown[] } | undefined)?.waypoints)
+              ? ((e.data as { waypoints: unknown[] }).waypoints as unknown[]).length
+              : 0,
+          })),
+          junctions: nodesRef.current.filter((n) => n.type === 'junction').map((n) => n.id),
+        }
+      },
       // Exercise the extracted Connect-tool state machine (use-connect-tool.ts) end-to-end against the
       // REAL React state: single-mode two-pick builds a wire; re-picking the start cancels; batch mode
       // queues then routes. Reads back edges/connectStart/queue after each React flush (tick between picks
@@ -5383,84 +5417,21 @@ function Canvas({ project }: { project: ProjectChoice }) {
     [setEdges, checkpointAction, wireGauge],
   )
 
-  // Click-by-click wire drawing (S19-v3-60; CAD-style free placement + curves
-  // S19-v3-61): in wire mode the canvas works like a CAD line tool — click
-  // ANYWHERE to start (a terminal dot, or open space), click to drop corners,
-  // then click a terminal dot to finish — or double-click in space to end
-  // there. A free start/end becomes a JUNCTION (the schematic tie dot): wires
-  // meeting at it are connected; a free end is honestly an open circuit until
-  // something reaches it. The Line/Curve subtool picks sharp corners or
-  // rounded fillets — the wire's physical length follows whichever shape is
-  // drawn. Escape (or re-clicking the start) abandons the wire-in-progress.
-  const [wireStyle, setWireStyle] = useState<'line' | 'curve'>('line')
-  // Curve sweep size (S19-v3-70): how far before each corner the wire bends.
-  // The setting applies to wires drawn from now on; every wire keeps its own.
-  const [wireCurveRadius, setWireCurveRadius] = useState(CURVE_RADIUS_PX)
-  type WireAnchor = { nodeId: string; handleId: string } | { x: number; y: number }
-  const [pendingWire, setPendingWire] = useState<{
-    start: WireAnchor
-    corners: { id: string; x: number; y: number }[]
-  } | null>(null)
-  const [wireCursor, setWireCursor] = useState<{ x: number; y: number } | null>(null)
-  useEffect(() => {
-    if (tool !== 'wire') {
-      setPendingWire(null)
-      setWireCursor(null)
-    }
-  }, [tool])
-  useEffect(() => {
-    if (pendingWire === null) return
-    const onKey = (event: KeyboardEvent) => {
-      if (eventMatchesBinding(event, keybinds.cancelWire)) setPendingWire(null)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [pendingWire, keybinds.cancelWire])
-  const finishWire = useCallback(
-    (end: WireAnchor, corners: { id: string; x: number; y: number }[]) => {
-      if (pendingWire === null) return
-      checkpointAction('wire')
-      // A free anchor materializes as a junction node centered on the point
-      // (the node box is 14×14 with its tie handle in the middle).
-      const materialize = (anchor: WireAnchor): { nodeId: string; handleId: string } => {
-        if ('nodeId' in anchor) return anchor
-        dropCount.current += 1
-        const id = `junction_${dropCount.current}`
-        setNodes((current) =>
-          current.concat({
-            id,
-            type: 'junction',
-            position: { x: anchor.x - 7, y: anchor.y - 7 },
-            data: { definition: 'junction', label: id },
-          }),
-        )
-        return { nodeId: id, handleId: 'tie' }
-      }
-      const from = materialize(pendingWire.start)
-      const to = materialize(end)
-      setEdges((current) =>
-        addEdge(
-          {
-            source: from.nodeId,
-            sourceHandle: from.handleId,
-            target: to.nodeId,
-            targetHandle: to.handleId,
-            type: 'net',
-            deletable: true,
-            style: { stroke: DRAWN },
-            data: {
-              gaugeAwg: wireGauge,
-              ...(corners.length > 0 ? { waypoints: corners } : {}),
-              ...(wireStyle === 'curve' ? { curved: true, curveRadius: wireCurveRadius } : {}),
-            },
-          },
-          current,
-        ),
-      )
-      setPendingWire(null)
-    },
-    [pendingWire, wireStyle, wireCurveRadius, wireGauge, setEdges, setNodes, checkpointAction],
-  )
+  // Click-by-click CAD-style wire drawing (start anywhere, drop corners, finish on a dot or
+  // double-click in space → junction) lives in its own hook now (use-wire-tool.ts); its couplings to
+  // the canvas — the node/edge/undo state, the active tool, the wire gauge, the cancel keybind, the
+  // coordinate transform, and the shared id counter — are injected.
+  const wire = useWireTool({
+    tool,
+    wireGauge,
+    cancelWire: keybinds.cancelWire,
+    setEdges,
+    setNodes,
+    checkpointAction,
+    screenToFlowPosition,
+    dropCount,
+  })
+  wireRef.current = wire
   // The Connect tool's state machine (pick a start dot → pick an end dot → auto-route; Batch queues +
   // "Route all") lives in its own hook now; its couplings to the canvas — the edge/undo/routing state,
   // the active tool, the wire gauge, and the cancel keybind — are injected.
@@ -5473,62 +5444,6 @@ function Canvas({ project }: { project: ProjectChoice }) {
     checkpointAction,
   })
   connectRef.current = connect
-  const onWireClick = useCallback(
-    (event: ReactMouseEvent) => {
-      if (tool !== 'wire') return
-      const target = event.target as Element
-      const handleEl = target.closest?.('.react-flow__handle') as HTMLElement | null
-      if (handleEl !== null) {
-        const nodeId = handleEl.dataset.nodeid
-        const handleId = handleEl.dataset.handleid
-        if (nodeId === undefined || handleId === undefined) return
-        if (pendingWire === null) {
-          setPendingWire({ start: { nodeId, handleId }, corners: [] })
-          return
-        }
-        const start = pendingWire.start
-        if ('nodeId' in start && start.nodeId === nodeId && start.handleId === handleId) {
-          setPendingWire(null)
-          return
-        }
-        finishWire({ nodeId, handleId }, pendingWire.corners)
-        return
-      }
-      if (target.closest?.('.react-flow__pane') === null) return
-      const point = screenToFlowPosition({ x: event.clientX, y: event.clientY })
-      if (pendingWire === null) {
-        // CAD-style: a wire can START in open space (a junction is made there).
-        setPendingWire({ start: point, corners: [] })
-        return
-      }
-      setPendingWire({
-        ...pendingWire,
-        corners: [...pendingWire.corners, { id: crypto.randomUUID(), ...point }],
-      })
-    },
-    [tool, pendingWire, finishWire, screenToFlowPosition],
-  )
-  // Double-click in open space ENDS the wire there (the CAD convention). The
-  // double-click's own two single clicks each dropped a corner — remove them.
-  const onWireDoubleClick = useCallback(
-    (event: ReactMouseEvent) => {
-      if (tool !== 'wire' || pendingWire === null) return
-      const target = event.target as Element
-      if (target.closest?.('.react-flow__handle') !== null) return
-      if (target.closest?.('.react-flow__pane') === null) return
-      const point = screenToFlowPosition({ x: event.clientX, y: event.clientY })
-      finishWire(point, pendingWire.corners.slice(0, -2))
-    },
-    [tool, pendingWire, finishWire, screenToFlowPosition],
-  )
-  // The rubber band follows the cursor between clicks (flow coordinates).
-  const onWireMove = useCallback(
-    (event: ReactMouseEvent) => {
-      if (tool !== 'wire' || pendingWire === null) return
-      setWireCursor(screenToFlowPosition({ x: event.clientX, y: event.clientY }))
-    },
-    [tool, pendingWire, screenToFlowPosition],
-  )
 
   // Reconnect: drag a wire's endpoint to a different dot. Dropping in empty space
   // does nothing, so a wire is never lost this way — removal is explicit (select +
@@ -5778,13 +5693,13 @@ function Canvas({ project }: { project: ProjectChoice }) {
           if (onBodeProbeClick(event)) return
           if (onScopeProbeClick(event)) return
           onMeterClick(event)
-          onWireClick(event)
+          wire.onWireClick(event)
           connect.onConnectClick(event)
         }}
-        onDoubleClickCapture={onWireDoubleClick}
+        onDoubleClickCapture={wire.onWireDoubleClick}
         onMouseMove={(event) => {
           lastCursorFlow.current = screenToFlowPosition({ x: event.clientX, y: event.clientY })
-          onWireMove(event)
+          wire.onWireMove(event)
         }}
         onPointerDown={(event) => {
           onLassoDown(event)
@@ -6053,12 +5968,12 @@ function Canvas({ project }: { project: ProjectChoice }) {
                                       )
                                     })
                                   : null}
-                                {pendingWire !== null ? (
+                                {wire.pendingWire !== null ? (
                                   <PendingWirePreview
-                                    pending={pendingWire}
-                                    cursor={wireCursor}
-                                    curved={wireStyle === 'curve'}
-                                    curveRadius={wireCurveRadius}
+                                    pending={wire.pendingWire}
+                                    cursor={wire.wireCursor}
+                                    curved={wire.wireStyle === 'curve'}
+                                    curveRadius={wire.wireCurveRadius}
                                   />
                                 ) : null}
                                 {tool === 'connect' ? (
@@ -6627,10 +6542,10 @@ function Canvas({ project }: { project: ProjectChoice }) {
               <ToolbarItems
                 tool={tool}
                 onTool={setTool}
-                wireStyle={wireStyle}
-                onWireStyle={setWireStyle}
-                curveRadius={wireCurveRadius}
-                onCurveRadius={setWireCurveRadius}
+                wireStyle={wire.wireStyle}
+                onWireStyle={wire.setWireStyle}
+                curveRadius={wire.wireCurveRadius}
+                onCurveRadius={wire.setWireCurveRadius}
                 wireGauge={wireGauge}
                 onWireGauge={setWireGauge}
                 alwaysOn={alwaysOn}
