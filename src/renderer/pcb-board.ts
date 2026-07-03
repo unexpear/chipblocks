@@ -144,11 +144,18 @@ export function deriveBoard(
 /** One unrouted connection the board still owes — a straight "airwire" between two pads on the same
  *  schematic net. The classic EDA ratsnest line; the copper router's to-do list. */
 export type Airwire = {
+  /** The united net this connection belongs to — the router may touch same-net copper freely, but
+   *  must keep clearance from every other net's. */
+  net: string
   from: { x: number; y: number }
   to: { x: number; y: number }
 }
 
-export type Ratsnest = { airwires: Airwire[] }
+/** One pad's copper as a board-space bounding box, tagged with its net — the fixed copper the router
+ *  and the clearance checks must respect. */
+export type PadBox = { net: string; x: number; y: number; w: number; h: number }
+
+export type Ratsnest = { airwires: Airwire[]; padBoxes: PadBox[] }
 
 /** The World slice the ratsnest reads — structurally the cross-fk World, so the board's connectivity
  *  is EXACTLY what the solver solves (blocks flattened, junctions merged, same-named net labels and
@@ -210,7 +217,10 @@ export function computeRatsnest(world: RatsnestWorld, board: Board): Ratsnest {
   }
 
   const airwires: Airwire[] = []
-  for (const netMembers of united.values()) {
+  // Which net each placed pad belongs to — filled in during the net walk, then used to tag the
+  // FULL pad-copper inventory below.
+  const netOfPad = new Map<string, string>()
+  for (const [netKey, netMembers] of united) {
     // Every pin on this net → its pad's board position (pins with no placement/pad have no point).
     const points: { x: number; y: number }[] = []
     const seenPads = new Set<string>()
@@ -225,6 +235,7 @@ export function computeRatsnest(world: RatsnestWorld, board: Board): Ratsnest {
       const padKey = `${member.instance}/${pad.id}`
       if (seenPads.has(padKey)) continue
       seenPads.add(padKey)
+      netOfPad.set(padKey, netKey)
       points.push(placePoint(placement, pad.center))
     }
     if (points.length < 2) continue
@@ -248,11 +259,55 @@ export function computeRatsnest(world: RatsnestWorld, board: Board): Ratsnest {
         }
       }
       const next = rest.splice(bestIndex, 1)[0] as { x: number; y: number }
-      airwires.push({ from: bestFrom, to: next })
+      // Coincident pads (stacked parts) are copper already touching copper — nothing is owed, so a
+      // zero-length airwire is never emitted; the point still joins the tree so the net stays spanned.
+      if (bestDist > 0) airwires.push({ net: netKey, from: bestFrom, to: next })
       inTree.push(next)
     }
   }
-  return { airwires }
+
+  // EVERY pad of EVERY placement is real copper on the board — including unwired pads, which the
+  // router and the clearance audit must still keep away from (a trace crossing an unwired pad is a
+  // soldered joint on the fabbed board, and a short as soon as that pin is wired). Wired pads carry
+  // their net; unwired ones get a unique key so nothing is ever exempted against them.
+  const padBoxes: PadBox[] = []
+  for (const placement of board.placements) {
+    const fp = footprintByPlacement(placement)
+    if (fp === undefined) continue
+    for (const pad of fp.pads) {
+      const corners = [
+        placePoint(placement, {
+          x: pad.center.x - pad.size.w / 2,
+          y: pad.center.y - pad.size.h / 2,
+        }),
+        placePoint(placement, {
+          x: pad.center.x + pad.size.w / 2,
+          y: pad.center.y - pad.size.h / 2,
+        }),
+        placePoint(placement, {
+          x: pad.center.x + pad.size.w / 2,
+          y: pad.center.y + pad.size.h / 2,
+        }),
+        placePoint(placement, {
+          x: pad.center.x - pad.size.w / 2,
+          y: pad.center.y + pad.size.h / 2,
+        }),
+      ]
+      const xs = corners.map((c) => c.x)
+      const ys = corners.map((c) => c.y)
+      const x0 = Math.min(...xs)
+      const y0 = Math.min(...ys)
+      const padKey = `${placement.partId}/${pad.id}`
+      padBoxes.push({
+        net: netOfPad.get(padKey) ?? `unconnected:${padKey}`,
+        x: x0,
+        y: y0,
+        w: Math.max(...xs) - x0,
+        h: Math.max(...ys) - y0,
+      })
+    }
+  }
+  return { airwires, padBoxes }
 }
 
 /** The minimal wire shape offBoardPins reads (a schematic edge, straight off the canvas). */

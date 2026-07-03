@@ -144,6 +144,7 @@ import {
   type PlacementOverride,
   type Rotation,
 } from './pcb-board.ts'
+import { routeBoard } from './pcb-route.ts'
 import { PcbView } from './pcb-view.tsx'
 import { canvasWorld } from './pipeline/canvas-world.ts'
 import {
@@ -1238,8 +1239,17 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // canvas→world nets the solver uses (grounds + named rails merge exactly like they solve).
   // Only derived while the panel is open — the world walk isn't free on big canvases.
   const pcbRatsnest = useMemo(
-    () => (pcbOpen ? computeRatsnest(canvasWorld(nodes, edges).world, pcbBoard) : { airwires: [] }),
+    () =>
+      pcbOpen
+        ? computeRatsnest(canvasWorld(nodes, edges).world, pcbBoard)
+        : { airwires: [], padBoxes: [] },
     [pcbOpen, nodes, edges, pcbBoard],
+  )
+  // The copper: every airwire the single-layer router could turn into a real trace; what it couldn't
+  // stays an airwire, honestly counted. Re-routes live as parts move.
+  const pcbRouting = useMemo(
+    () => (pcbOpen ? routeBoard(pcbRatsnest) : { traces: [], unrouted: [] }),
+    [pcbOpen, pcbRatsnest],
   )
   // The header's "wired pins not on the board" count reads the UN-flattened schematic — the pins the
   // user actually drew — never the expanded world (whose pack/block internals a user can't point at).
@@ -6087,9 +6097,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
                     {pcbBoard.placements.length === 1 ? '' : 's'} placed ·{' '}
                     {pcbBoard.outline.w.toFixed(1)} × {pcbBoard.outline.h.toFixed(1)} mm board
                     {pcbRatsnest.airwires.length > 0 &&
-                      ` · ${pcbRatsnest.airwires.length} unrouted connection${
+                      ` · ${pcbRouting.traces.length} of ${pcbRatsnest.airwires.length} connection${
                         pcbRatsnest.airwires.length === 1 ? '' : 's'
-                      }`}
+                      } routed`}
                     {pcbOffBoard > 0 && (
                       <span style={{ color: THEME.textFaint }}>
                         {' '}
@@ -6118,7 +6128,8 @@ function Canvas({ project }: { project: ProjectChoice }) {
                   <>
                     <PcbView
                       board={pcbBoard}
-                      airwires={pcbRatsnest.airwires}
+                      airwires={pcbRouting.unrouted}
+                      traces={pcbRouting.traces}
                       pxPerMm={12}
                       onMove={onPcbMove}
                       onRotate={onPcbRotate}

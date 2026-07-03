@@ -1,6 +1,7 @@
 import { type PointerEvent as ReactPointerEvent, useRef, useState } from 'react'
 import type { Pad } from './footprint.ts'
 import { type Airwire, type Board, footprintByPlacement, type Rotation } from './pcb-board.ts'
+import type { CopperTrace } from './pcb-route.ts'
 
 /**
  * The PCB view — draws a board and the footprints placed on it, the physical counterpart to the
@@ -74,6 +75,7 @@ const nextRotation = (r: Rotation): Rotation => ((r + 90) % 360) as Rotation
 export function PcbView({
   board,
   airwires = [],
+  traces = [],
   pxPerMm = 12,
   paddingMm = 3,
   onMove,
@@ -82,6 +84,8 @@ export function PcbView({
   board: Board
   /** Unrouted connections (the ratsnest) — drawn as thin straight lines pad-to-pad. */
   airwires?: Airwire[]
+  /** Routed copper — drawn at real width on the board, under the parts like the top copper layer. */
+  traces?: CopperTrace[]
   pxPerMm?: number
   paddingMm?: number
   /** Move a part's footprint origin to (x, y) mm — supplied by the panel to make the board editable. */
@@ -211,6 +215,21 @@ export function PcbView({
         strokeWidth={1.4}
         onPointerDown={interactive ? () => setSelected(null) : undefined}
       />
+
+      {/* the routed copper — real trace widths, under the parts like the board's top layer */}
+      {traces.map((t) => (
+        <polyline
+          key={`tr${t.net}-${t.points[0]?.x},${t.points[0]?.y}-${t.points[t.points.length - 1]?.x},${t.points[t.points.length - 1]?.y}`}
+          points={t.points.map((p) => `${sx(p.x)},${sy(p.y)}`).join(' ')}
+          fill="none"
+          stroke={COPPER}
+          strokeWidth={t.widthMm * pxPerMm}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          data-trace={t.net}
+          pointerEvents="none"
+        />
+      ))}
 
       {board.placements.map((pl) => {
         const fp = footprintByPlacement(pl)
