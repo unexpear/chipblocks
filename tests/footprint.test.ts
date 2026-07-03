@@ -1,0 +1,93 @@
+/**
+ * Footprint model tests. Two jobs: pin the 0603 land pattern to its cited IPC-7351 / KiCad geometry
+ * (a drift in a pad size is a real manufacturing error), and enforce the catalog-wide invariants that
+ * keep the anti-placeholder rule honest for footprints — every shipped footprint is CITED and
+ * physically sane (pads inside their courtyard, no zero-area copper).
+ */
+import { describe, expect, test } from 'vitest'
+import {
+  BUILTIN_FOOTPRINTS,
+  FOOTPRINT_0603,
+  type Footprint,
+  footprintBounds,
+} from '../src/renderer/footprint.ts'
+
+describe('0603 land pattern — matches the cited IPC-7351 / KiCad geometry', () => {
+  test('two pads on 1.65 mm centres, each 0.8 × 0.95 mm', () => {
+    const [p1, p2] = FOOTPRINT_0603.pads
+    expect(FOOTPRINT_0603.pads).toHaveLength(2)
+    expect(p1?.id).toBe('1')
+    expect(p2?.id).toBe('2')
+    expect(p1?.center).toEqual({ x: -0.825, y: 0 })
+    expect(p2?.center).toEqual({ x: 0.825, y: 0 })
+    // Centre-to-centre pitch — the load-bearing land-pattern number.
+    expect((p2?.center.x ?? 0) - (p1?.center.x ?? 0)).toBeCloseTo(1.65, 6)
+    for (const p of FOOTPRINT_0603.pads) {
+      expect(p.size).toEqual({ w: 0.8, h: 0.95 })
+      expect(p.type).toBe('smd')
+    }
+  })
+
+  test('courtyard is 2.96 × 1.46 mm, centred on the origin', () => {
+    expect(FOOTPRINT_0603.courtyard).toEqual({ x: -1.48, y: -0.73, w: 2.96, h: 1.46 })
+  })
+
+  test('silkscreen is the two lines above + below the body', () => {
+    expect(FOOTPRINT_0603.silkscreen).toHaveLength(2)
+    expect(FOOTPRINT_0603.silkscreen[0]?.from.y).toBeCloseTo(-0.5225, 6)
+    expect(FOOTPRINT_0603.silkscreen[1]?.from.y).toBeCloseTo(0.5225, 6)
+  })
+})
+
+describe('footprintBounds', () => {
+  test('the courtyard is the outermost extent of the 0603', () => {
+    const b = footprintBounds(FOOTPRINT_0603)
+    expect(b.minX).toBeCloseTo(-1.48, 6)
+    expect(b.maxX).toBeCloseTo(1.48, 6)
+    expect(b.minY).toBeCloseTo(-0.73, 6)
+    expect(b.maxY).toBeCloseTo(0.73, 6)
+  })
+
+  test('bounds always contain every pad, even if a courtyard were undersized', () => {
+    // A deliberately-too-small courtyard must not clip a pad out of the render bounds.
+    const bad: Footprint = { ...FOOTPRINT_0603, courtyard: { x: -0.1, y: -0.1, w: 0.2, h: 0.2 } }
+    const b = footprintBounds(bad)
+    for (const p of bad.pads) {
+      expect(b.minX).toBeLessThanOrEqual(p.center.x - p.size.w / 2 + 1e-9)
+      expect(b.maxX).toBeGreaterThanOrEqual(p.center.x + p.size.w / 2 - 1e-9)
+    }
+  })
+})
+
+describe('every built-in footprint is cited + physically valid (the anti-placeholder rule)', () => {
+  const entries = Object.entries(BUILTIN_FOOTPRINTS)
+
+  test('the registry is keyed by each footprint id', () => {
+    for (const [key, fp] of entries) expect(fp.id).toBe(key)
+  })
+
+  for (const [key, fp] of entries) {
+    test(`${key}: cited, non-empty, pads inside the courtyard, real copper`, () => {
+      // Cited (a real source, high/medium/low — never unknown for a shipped value).
+      expect(fp.provenance.title.length).toBeGreaterThan(0)
+      expect(fp.provenance.citation.length).toBeGreaterThan(0)
+      expect(['high', 'medium', 'low']).toContain(fp.provenance.confidence)
+      // At least one pad, and every pad is real copper (no zero-area land).
+      expect(fp.pads.length).toBeGreaterThan(0)
+      const cy = fp.courtyard
+      for (const p of fp.pads) {
+        expect(p.size.w).toBeGreaterThan(0)
+        expect(p.size.h).toBeGreaterThan(0)
+        if (p.type === 'through_hole') {
+          expect(p.holeDiameter ?? 0).toBeGreaterThan(0)
+          expect(p.holeDiameter ?? 0).toBeLessThan(Math.min(p.size.w, p.size.h))
+        }
+        // The courtyard must enclose every pad — that is what a courtyard IS.
+        expect(p.center.x - p.size.w / 2).toBeGreaterThanOrEqual(cy.x - 1e-9)
+        expect(p.center.x + p.size.w / 2).toBeLessThanOrEqual(cy.x + cy.w + 1e-9)
+        expect(p.center.y - p.size.h / 2).toBeGreaterThanOrEqual(cy.y - 1e-9)
+        expect(p.center.y + p.size.h / 2).toBeLessThanOrEqual(cy.y + cy.h + 1e-9)
+      }
+    })
+  }
+})
