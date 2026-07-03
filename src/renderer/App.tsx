@@ -137,7 +137,13 @@ import {
 import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { PartPicker } from './part-picker.tsx'
 import { buildCrtTraces, type CrtSpot } from './part-readings.ts'
-import { computeRatsnest, deriveBoard, offBoardPins } from './pcb-board.ts'
+import {
+  computeRatsnest,
+  deriveBoard,
+  offBoardPins,
+  type PlacementOverride,
+  type Rotation,
+} from './pcb-board.ts'
 import { PcbView } from './pcb-view.tsx'
 import { canvasWorld } from './pipeline/canvas-world.ts'
 import {
@@ -896,6 +902,14 @@ function Canvas({ project }: { project: ProjectChoice }) {
     })
   }, [nodes, edges])
 
+  // Hand-placed spots on the PCB (drag / R on the board) — the auto row only seeds where a part
+  // starts. Declared up here because the file Open/Import handlers below must clear it: node ids
+  // repeat across files (every canvas mints resistor_1 …), so a loaded circuit would otherwise
+  // inherit the previous file's hand placements on any id collision.
+  const [pcbPlacements, setPcbPlacements] = useState<ReadonlyMap<string, PlacementOverride>>(
+    new Map(),
+  )
+
   // Load: the main process already validated the file; rebuild the canvas from
   // it, resume the drop counter above the loaded ids, and re-fit the view. The
   // always-on physics effect re-solves the loaded circuit automatically.
@@ -921,6 +935,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       const flow = circuitFileToFlow(result.file)
       setNodes(flow.nodes)
       setEdges(flow.edges)
+      setPcbPlacements(new Map()) // the loaded circuit starts from its own auto board
       dropCount.current = maxIdSuffix(result.file.nodes)
       window.setTimeout(() => fitView({ padding: 0.15 }), 80)
     })
@@ -944,6 +959,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       const flow = circuitFileToFlow(circuit)
       setNodes(flow.nodes)
       setEdges(flow.edges)
+      setPcbPlacements(new Map()) // imported netlists start from their own auto board
       dropCount.current = maxIdSuffix(circuit.nodes)
       window.setTimeout(() => fitView({ padding: 0.15 }), 80)
       setNetlistReport({ kind: 'import', count: circuit.nodes.length, unsupported, warnings })
@@ -1175,9 +1191,49 @@ function Canvas({ project }: { project: ProjectChoice }) {
     () =>
       deriveBoard(
         nodes.map((n) => ({ id: n.id, definition: (n.data as DeviceNodeData).definition })),
+        pcbPlacements,
       ),
-    [nodes],
+    [nodes, pcbPlacements],
   )
+  const pcbBoardRef = useRef(pcbBoard)
+  pcbBoardRef.current = pcbBoard
+  // Hand-placed spots for parts that leave the schematic are dropped. (File Open/Import clear the
+  // whole map separately — id collisions across files are the norm, and this prune can't see them.)
+  useEffect(() => {
+    setPcbPlacements((cur) => {
+      if (cur.size === 0) return cur
+      const ids = new Set(nodes.map((n) => n.id))
+      if ([...cur.keys()].every((id) => ids.has(id))) return cur
+      return new Map([...cur].filter(([id]) => ids.has(id)))
+    })
+  }, [nodes])
+  const onPcbMove = useCallback((partId: string, x: number, y: number) => {
+    // A drag can outlive its part (deleted mid-drag) — never re-insert an override for a ghost.
+    if (!nodesRef.current.some((n) => n.id === partId)) return
+    setPcbPlacements((cur) => {
+      const next = new Map(cur)
+      const prev = cur.get(partId)
+      next.set(partId, { x, y, rotation: prev?.rotation ?? 0 })
+      return next
+    })
+  }, [])
+  const onPcbRotate = useCallback((partId: string, rotation: Rotation) => {
+    if (!nodesRef.current.some((n) => n.id === partId)) return
+    setPcbPlacements((cur) => {
+      const next = new Map(cur)
+      const prev = cur.get(partId)
+      if (prev === undefined) {
+        // Rotating a part still on its auto spot: pin its current derived position first, so the
+        // turn happens in place instead of snapping the part back to a fresh auto seed.
+        const pl = pcbBoardRef.current.placements.find((p) => p.partId === partId)
+        if (pl === undefined) return cur
+        next.set(partId, { x: pl.x, y: pl.y, rotation })
+      } else {
+        next.set(partId, { ...prev, rotation })
+      }
+      return next
+    })
+  }, [])
   // The ratsnest: the unrouted pad-to-pad connections the board owes, read from the SAME
   // canvas→world nets the solver uses (grounds + named rails merge exactly like they solve).
   // Only derived while the panel is open — the world walk isn't free on big canvases.
@@ -6059,7 +6115,18 @@ function Canvas({ project }: { project: ProjectChoice }) {
                   </button>
                 </div>
                 {pcbBoard.placements.length > 0 ? (
-                  <PcbView board={pcbBoard} airwires={pcbRatsnest.airwires} pxPerMm={12} />
+                  <>
+                    <PcbView
+                      board={pcbBoard}
+                      airwires={pcbRatsnest.airwires}
+                      pxPerMm={12}
+                      onMove={onPcbMove}
+                      onRotate={onPcbRotate}
+                    />
+                    <span style={{ fontSize: 11, color: THEME.textFaint }}>
+                      drag a part to move it · click to select, R to rotate
+                    </span>
+                  </>
                 ) : (
                   <div style={{ fontSize: 12, color: THEME.textFaint, maxWidth: 320 }}>
                     No parts have a footprint yet — drop a resistor, capacitor, thermistor or

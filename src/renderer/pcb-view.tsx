@@ -1,12 +1,17 @@
+import { type PointerEvent as ReactPointerEvent, useRef, useState } from 'react'
 import type { Pad } from './footprint.ts'
-import { type Airwire, type Board, footprintByPlacement } from './pcb-board.ts'
+import { type Airwire, type Board, footprintByPlacement, type Rotation } from './pcb-board.ts'
 
 /**
  * The PCB view — draws a board and the footprints placed on it, the physical counterpart to the
  * schematic canvas. Real board colours: a green FR4 substrate with its edge cut, gold copper pads
  * (drilled holes for through-hole), white silkscreen, and the assembly courtyards faint. Each part is
- * labelled with its schematic id, so the board reads back to the circuit. Pure geometry from
- * pcb-board.ts scaled mm → px; it reads nothing live.
+ * labelled with its schematic id, so the board reads back to the circuit.
+ *
+ * Interactive when given callbacks (the PCB panel passes them): drag a footprint to move it, click to
+ * select, R to rotate the selection a quarter turn — the airwires and the board outline follow live.
+ * Geometry comes from pcb-board.ts in real mm scaled mm → px; the pointer maths inverts the same
+ * scale, so a part lands exactly where it's dropped.
  */
 
 const BOARD = '#0d3b26' // FR4 green
@@ -18,6 +23,7 @@ const SILK = '#e8eaed'
 const COURTYARD = '#7fe3b0'
 const PART_INK = '#dfeee6'
 const AIRWIRE = '#f5f0dc' // thin pale ratsnest lines, the EDA convention
+const SELECT = '#9ecbff' // the selected part's halo
 
 function padShape(p: Pad, scale: number, key: string) {
   const w = p.size.w * scale
@@ -63,34 +69,134 @@ function padShape(p: Pad, scale: number, key: string) {
   )
 }
 
+const nextRotation = (r: Rotation): Rotation => ((r + 90) % 360) as Rotation
+
 export function PcbView({
   board,
   airwires = [],
   pxPerMm = 12,
   paddingMm = 3,
+  onMove,
+  onRotate,
 }: {
   board: Board
   /** Unrouted connections (the ratsnest) — drawn as thin straight lines pad-to-pad. */
   airwires?: Airwire[]
   pxPerMm?: number
   paddingMm?: number
+  /** Move a part's footprint origin to (x, y) mm — supplied by the panel to make the board editable. */
+  onMove?: (partId: string, x: number, y: number) => void
+  /** Turn a part a quarter turn (the R key on the selected part). */
+  onRotate?: (partId: string, rotation: Rotation) => void
 }) {
+  const interactive = onMove !== undefined
+  const [selected, setSelected] = useState<string | null>(null)
+  const svgRef = useRef<SVGSVGElement | null>(null)
+  // The live drag: the held part, its origin at grab time, and where the pointer started — all
+  // FROZEN at pointerdown. Each move applies only the pointer's client-px delta (scaled to mm) to
+  // the grabbed origin. Deliberately frame-free: the outline re-fits while the part moves, and in a
+  // bottom-docked panel that shifts the svg's own screen position — re-reading the frame per event
+  // would feed that shift back into the position (a runaway). A ref — every needed re-render comes
+  // from the placement itself changing upstream.
+  const drag = useRef<{
+    partId: string
+    originX: number
+    originY: number
+    startClientX: number
+    startClientY: number
+  } | null>(null)
+  // The outline is ALSO frozen for the duration of a drag: the moving part re-fits the outline, and
+  // if the render frame followed it live, a part pushing the board's own edge would pin at the
+  // margin on screen while the pointer walked away (its motion cancels out of the mm→px map). With
+  // the frame held, the part tracks the pointer exactly; the outline snaps to fit once on drop.
+  // State, not a ref — clearing it on drop must re-render so the snap actually appears.
+  const [frozenOutline, setFrozenOutline] = useState<Board['outline'] | null>(null)
+
   const o = board.outline
-  const minX = o.x - paddingMm
-  const minY = o.y - paddingMm
-  const wPx = (o.w + 2 * paddingMm) * pxPerMm
-  const hPx = (o.h + 2 * paddingMm) * pxPerMm
+  const frame = frozenOutline ?? o
+  const minX = frame.x - paddingMm
+  const minY = frame.y - paddingMm
+  const wPx = (frame.w + 2 * paddingMm) * pxPerMm
+  const hPx = (frame.h + 2 * paddingMm) * pxPerMm
   const sx = (x: number) => (x - minX) * pxPerMm
   const sy = (y: number) => (y - minY) * pxPerMm
 
+  const endDrag = (e: ReactPointerEvent) => {
+    if (drag.current === null) return
+    drag.current = null
+    setFrozenOutline(null)
+    if (svgRef.current?.hasPointerCapture(e.pointerId)) {
+      svgRef.current.releasePointerCapture(e.pointerId)
+    }
+  }
+  const grabPart = (partId: string, originX: number, originY: number) => (e: ReactPointerEvent) => {
+    if (e.button !== 0) return // right/middle press is never a grab (right-drag pans elsewhere)
+    setSelected(partId)
+    if (onMove === undefined) return
+    drag.current = {
+      partId,
+      originX,
+      originY,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+    }
+    setFrozenOutline(board.outline)
+    svgRef.current?.setPointerCapture(e.pointerId)
+    e.preventDefault()
+    // preventDefault also suppressed the click's focus default — focus explicitly, or the R key
+    // never reaches this svg and falls through to the schematic's global rotate shortcut.
+    svgRef.current?.focus({ preventScroll: true })
+  }
+  const movePart = (e: ReactPointerEvent) => {
+    const d = drag.current
+    if (d === null || onMove === undefined) return
+    if (e.buttons === 0) {
+      // the button is no longer down (a missed pointerup/cancel) — end the drag, don't chase
+      endDrag(e)
+      return
+    }
+    onMove(
+      d.partId,
+      Math.round((d.originX + (e.clientX - d.startClientX) / pxPerMm) * 100) / 100,
+      Math.round((d.originY + (e.clientY - d.startClientY) / pxPerMm) * 100) / 100,
+    )
+  }
+  const rotateSelected = () => {
+    if (onRotate === undefined || selected === null) return
+    const pl = board.placements.find((p) => p.partId === selected)
+    if (pl !== undefined) onRotate(selected, nextRotation(pl.rotation))
+  }
+
   return (
     <svg
+      ref={svgRef}
       width={wPx}
       height={hPx}
       viewBox={`0 0 ${wPx} ${hPx}`}
-      style={{ display: 'block', fontFamily: 'system-ui, sans-serif' }}
+      style={{
+        display: 'block',
+        fontFamily: 'system-ui, sans-serif',
+        outline: 'none',
+        touchAction: 'none',
+      }}
       role="img"
       aria-label="PCB layout"
+      tabIndex={interactive ? 0 : undefined}
+      onPointerMove={interactive ? movePart : undefined}
+      onPointerUp={interactive ? endDrag : undefined}
+      onPointerCancel={interactive ? endDrag : undefined}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key !== 'r' && e.key !== 'R') return
+              // ours alone — without this the same press also fires the schematic's global
+              // rotate shortcut and silently turns whatever part is selected on the canvas
+              e.stopPropagation()
+              e.preventDefault()
+              rotateSelected()
+            }
+          : undefined
+      }
     >
       <title>PCB layout — {board.placements.length} parts placed</title>
       {/* the FR4 board with its edge cut */}
@@ -103,27 +209,33 @@ export function PcbView({
         fill={BOARD}
         stroke={BOARD_EDGE}
         strokeWidth={1.4}
+        onPointerDown={interactive ? () => setSelected(null) : undefined}
       />
 
       {board.placements.map((pl) => {
         const fp = footprintByPlacement(pl)
         if (fp === undefined) return null
+        const isSelected = selected === pl.partId
         return (
           <g
             key={pl.partId}
             transform={`translate(${sx(pl.x)} ${sy(pl.y)}) rotate(${pl.rotation})`}
+            data-part={pl.partId}
+            data-rotation={pl.rotation}
+            style={interactive ? { cursor: 'grab' } : undefined}
+            onPointerDown={interactive ? grabPart(pl.partId, pl.x, pl.y) : undefined}
           >
-            {/* courtyard keep-out, faint */}
+            {/* courtyard keep-out (faint) — doubles as the selection halo */}
             <rect
               x={fp.courtyard.x * pxPerMm}
               y={fp.courtyard.y * pxPerMm}
               width={fp.courtyard.w * pxPerMm}
               height={fp.courtyard.h * pxPerMm}
-              fill="none"
-              stroke={COURTYARD}
-              strokeWidth={0.6}
-              strokeDasharray="3 2"
-              opacity={0.35}
+              fill={isSelected ? `${SELECT}22` : 'none'}
+              stroke={isSelected ? SELECT : COURTYARD}
+              strokeWidth={isSelected ? 1.2 : 0.6}
+              strokeDasharray={isSelected ? undefined : '3 2'}
+              opacity={isSelected ? 0.9 : 0.35}
             />
             {fp.pads.map((p) => padShape(p, pxPerMm, `${pl.partId}-p${p.id}`))}
             {fp.silkscreen.map((s) => (
@@ -165,6 +277,7 @@ export function PcbView({
           strokeWidth={1}
           opacity={0.75}
           data-airwire="true"
+          pointerEvents="none"
         />
       ))}
     </svg>

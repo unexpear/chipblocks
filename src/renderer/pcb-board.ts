@@ -80,25 +80,38 @@ export function placementBounds(
   }
 }
 
+/** A user's hand-placed spot for one part: where its footprint origin sits and how it's turned. */
+export type PlacementOverride = { x: number; y: number; rotation: Rotation }
+
 /**
  * Seed a board from the schematic parts: lay each footprinted part out in a left-to-right row (its
  * footprint's bounds packed with a gap, all vertically centred), then fit the outline around them with
- * a margin. Deterministic, so the same schematic always seeds the same starting board.
+ * a margin. Deterministic, so the same schematic always seeds the same starting board. A part the user
+ * has dragged or rotated on the board keeps its hand-placed spot (`overrides`, keyed by part id) —
+ * the auto row only decides where a part STARTS; stale overrides for deleted parts simply match
+ * nothing. The outline always re-fits around wherever the parts actually are.
  */
-export function deriveBoard(parts: readonly BoardPart[], gap = 2, margin = 2.5): Board {
+export function deriveBoard(
+  parts: readonly BoardPart[],
+  overrides?: ReadonlyMap<string, PlacementOverride>,
+  gap = 2,
+  margin = 2.5,
+): Board {
   const placements: Placement[] = []
   let cursorX = 0
   for (const part of parts) {
     const fp = footprintForPart(part.definition)
     if (fp === undefined) continue
     const b = footprintBounds(fp)
-    // Place the origin so the footprint's LEFT edge lands at cursorX and it's centred on y = 0.
+    const override = overrides?.get(part.id)
+    // Auto spot: the footprint's LEFT edge lands at cursorX, centred on y = 0. The auto row
+    // advances even for hand-placed parts, so the others' seeds never reflow under them.
     placements.push({
       partId: part.id,
       footprintId: fp.id,
-      x: cursorX - b.minX,
-      y: -(b.minY + b.maxY) / 2,
-      rotation: 0,
+      x: override?.x ?? cursorX - b.minX,
+      y: override?.y ?? -(b.minY + b.maxY) / 2,
+      rotation: override?.rotation ?? 0,
     })
     cursorX += b.maxX - b.minX + gap
   }

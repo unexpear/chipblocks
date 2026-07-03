@@ -92,6 +92,41 @@ describe('deriveBoard', () => {
     expect(deriveBoard(parts([['Q1', 'transistor_bjt_npn']])).placements).toEqual([])
     expect(deriveBoard([]).outline.w).toBeGreaterThan(0)
   })
+
+  test('a hand-placed part keeps its spot; the others keep their auto seeds', () => {
+    const defs: [string, string][] = [
+      ['R1', 'resistor'],
+      ['R2', 'resistor'],
+      ['R3', 'resistor'],
+    ]
+    const auto = deriveBoard(parts(defs))
+    const moved = deriveBoard(
+      parts(defs),
+      new Map([['R2', { x: 20, y: 15, rotation: 90 as const }]]),
+    )
+    const pl = (b: ReturnType<typeof deriveBoard>, id: string) =>
+      b.placements.find((p) => p.partId === id)
+    expect(pl(moved, 'R2')).toMatchObject({ x: 20, y: 15, rotation: 90 })
+    // R1 and R3 sit exactly where the auto row seeded them — no reflow under a moved neighbour.
+    expect(pl(moved, 'R1')).toEqual(pl(auto, 'R1'))
+    expect(pl(moved, 'R3')).toEqual(pl(auto, 'R3'))
+    // and the outline re-fits around the moved part
+    const o = moved.outline
+    const fp = footprintByPlacement(pl(moved, 'R2') as NonNullable<ReturnType<typeof pl>>)
+    if (fp === undefined) throw new Error('missing footprint')
+    const bb = placementBounds(pl(moved, 'R2') as NonNullable<ReturnType<typeof pl>>, fp)
+    expect(bb.maxX).toBeLessThanOrEqual(o.x + o.w + 1e-9)
+    expect(bb.maxY).toBeLessThanOrEqual(o.y + o.h + 1e-9)
+  })
+
+  test('an override for a deleted part matches nothing and changes nothing', () => {
+    const defs: [string, string][] = [['R1', 'resistor']]
+    const withStale = deriveBoard(
+      parts(defs),
+      new Map([['GONE', { x: 99, y: 99, rotation: 0 as const }]]),
+    )
+    expect(withStale).toEqual(deriveBoard(parts(defs)))
+  })
 })
 
 describe('placementBounds respects rotation', () => {
