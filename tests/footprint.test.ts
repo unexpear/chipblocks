@@ -37,15 +37,32 @@ describe('0603 land pattern — matches the cited IPC-7351 / KiCad geometry', ()
     expect(FOOTPRINT_0603.silkscreen[0]?.from.y).toBeCloseTo(-0.5225, 6)
     expect(FOOTPRINT_0603.silkscreen[1]?.from.y).toBeCloseTo(0.5225, 6)
   })
+
+  test('fabrication body outline is the 1.6 × 0.825 mm chip rectangle (KiCad F.Fab)', () => {
+    // Four edges of the rect (-0.8, -0.4125) → (0.8, 0.4125).
+    expect(FOOTPRINT_0603.fabrication).toHaveLength(4)
+    const xs = FOOTPRINT_0603.fabrication.flatMap((l) => [l.from.x, l.to.x])
+    const ys = FOOTPRINT_0603.fabrication.flatMap((l) => [l.from.y, l.to.y])
+    expect(Math.min(...xs)).toBeCloseTo(-0.8, 6)
+    expect(Math.max(...xs)).toBeCloseTo(0.8, 6)
+    expect(Math.min(...ys)).toBeCloseTo(-0.4125, 6)
+    expect(Math.max(...ys)).toBeCloseTo(0.4125, 6)
+  })
+
+  test('reference + value text anchor at ±1.43 mm, KiCad convention', () => {
+    expect(FOOTPRINT_0603.labels.reference).toEqual({ x: 0, y: -1.43 })
+    expect(FOOTPRINT_0603.labels.value).toEqual({ x: 0, y: 1.43 })
+  })
 })
 
 describe('footprintBounds', () => {
-  test('the courtyard is the outermost extent of the 0603', () => {
+  test('the 0603 bounds span the courtyard in x and the text anchors in y', () => {
     const b = footprintBounds(FOOTPRINT_0603)
+    // x: the courtyard (±1.48) is widest. y: the reference/value text (±1.43) sits outside it.
     expect(b.minX).toBeCloseTo(-1.48, 6)
     expect(b.maxX).toBeCloseTo(1.48, 6)
-    expect(b.minY).toBeCloseTo(-0.73, 6)
-    expect(b.maxY).toBeCloseTo(0.73, 6)
+    expect(b.minY).toBeCloseTo(-1.43, 6)
+    expect(b.maxY).toBeCloseTo(1.43, 6)
   })
 
   test('bounds always contain every pad, even if a courtyard were undersized', () => {
@@ -72,8 +89,9 @@ describe('every built-in footprint is cited + physically valid (the anti-placeho
       expect(fp.provenance.title.length).toBeGreaterThan(0)
       expect(fp.provenance.citation.length).toBeGreaterThan(0)
       expect(['high', 'medium', 'low']).toContain(fp.provenance.confidence)
-      // At least one pad, and every pad is real copper (no zero-area land).
+      // At least one pad + a component body outline (F.Fab), and every pad is real copper.
       expect(fp.pads.length).toBeGreaterThan(0)
+      expect(fp.fabrication.length).toBeGreaterThan(0)
       const cy = fp.courtyard
       for (const p of fp.pads) {
         expect(p.size.w).toBeGreaterThan(0)

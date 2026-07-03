@@ -11,6 +11,7 @@ import { type Footprint, footprintBounds, type Pad } from './footprint.ts'
 const COPPER = '#d9a441' // ENIG-gold pad
 const COPPER_EDGE = '#b5852b'
 const SILK = '#e8eaed'
+const FAB = '#8a7a5a' // the component body outline (KiCad's F.Fab layer), muted vs the white silk
 const COURTYARD = '#a06ad8' // magenta keep-out, the KiCad convention
 const BOARD = '#0c0c0e'
 const ORIGIN = '#5b5b62'
@@ -55,8 +56,9 @@ export function FootprintView({
         />
       )
     }
+    // KiCad's roundrect corner ratio is 0.25 of the shorter side.
     const rx =
-      p.shape === 'roundrect' ? Math.min(w, h) * 0.18 : p.shape === 'oval' ? Math.min(w, h) / 2 : 0
+      p.shape === 'roundrect' ? Math.min(w, h) * 0.25 : p.shape === 'oval' ? Math.min(w, h) / 2 : 0
     return (
       <rect
         x={cx - w / 2}
@@ -125,6 +127,20 @@ export function FootprintView({
         </g>
       ))}
 
+      {/* component body outline (F.Fab) — the actual chip under the silkscreen */}
+      {footprint.fabrication.map((s, i) => (
+        <line
+          key={`fab-${i}-${s.from.x}-${s.from.y}`}
+          x1={sx(s.from.x)}
+          y1={sy(s.from.y)}
+          x2={sx(s.to.x)}
+          y2={sy(s.to.y)}
+          stroke={FAB}
+          strokeWidth={Math.max(1, mm(s.width))}
+          strokeLinecap="round"
+        />
+      ))}
+
       {/* silkscreen outline */}
       {footprint.silkscreen.map((s, i) => (
         <line
@@ -138,6 +154,21 @@ export function FootprintView({
           strokeLinecap="round"
         />
       ))}
+
+      {/* reference designator — the board fills in R1/C3…; the footprint just anchors it */}
+      {showLabels ? (
+        <text
+          x={sx(footprint.labels.reference.x)}
+          y={sy(footprint.labels.reference.y)}
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize={Math.min(mm(1), 13)}
+          fill={SILK}
+          opacity={0.85}
+        >
+          REF**
+        </text>
+      ) : null}
 
       {/* origin cross (footprint centre) */}
       <g stroke={ORIGIN} strokeWidth={1} opacity={0.7}>
