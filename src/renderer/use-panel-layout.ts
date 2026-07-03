@@ -17,6 +17,7 @@ export function usePanelLayout() {
     scope: { edge: 'bottom', group: 3 },
     timeline: { edge: 'bottom', group: 3 },
     bode: { edge: 'bottom', group: 3 },
+    pcb: { edge: 'bottom', group: 3 },
   })
   const [activeTab, setActiveTab] = useState<Record<number, string>>({})
   // Drag a panel's grip/tab onto another panel to stack them into a tab group; drop

@@ -52,6 +52,7 @@ export type ToolbarActionId =
   | 'scope'
   | 'timeline'
   | 'bode'
+  | 'pcb'
   | 'group'
   | 'clipboard'
   | 'math'
@@ -98,6 +99,14 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
     color: THEME.accentBlueBright,
     title:
       "Bode — the frequency response: pick an input source and an output node and see gain (dB) and phase vs frequency. Reads off the RC/filter corner, an amplifier's roll-off and phase margin, or a transmission line's quarter-wave resonances.",
+  },
+  {
+    id: 'pcb',
+    label: 'PCB',
+    icon: '▦',
+    color: THEME.statusOk,
+    title:
+      'PCB — the physical layout: every part that has a footprint placed on a board, copper pads and all. The first physical form of the circuit, on the road to the manufacturing files.',
   },
   {
     id: 'group',
@@ -205,6 +214,7 @@ export function ToolbarItems({
   onScope,
   onTimeline,
   onBode,
+  onPcb,
   onMath,
   onWorstCase,
   onGroup,
@@ -238,6 +248,7 @@ export function ToolbarItems({
   onScope: () => void
   onTimeline: () => void
   onBode: () => void
+  onPcb: () => void
   onMath: () => void
   onWorstCase: () => void
   onGroup: () => void
@@ -261,6 +272,7 @@ export function ToolbarItems({
     scope: onScope,
     timeline: onTimeline,
     bode: onBode,
+    pcb: onPcb,
     group: onGroup,
     clipboard: onClipboard,
     math: onMath,

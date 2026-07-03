@@ -137,6 +137,8 @@ import {
 import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { PartPicker } from './part-picker.tsx'
 import { buildCrtTraces, type CrtSpot } from './part-readings.ts'
+import { deriveBoard } from './pcb-board.ts'
+import { PcbView } from './pcb-view.tsx'
 import { canvasWorld } from './pipeline/canvas-world.ts'
 import {
   lightCastInputs,
@@ -1166,6 +1168,16 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // Math panel (S19-v3-63): the equations behind the current solution, derived
   // live from the same solved state the canvas shows.
   const [showMath, setShowMath] = useState(false)
+  // PCB view: the physical layout — the footprinted parts placed on a board. Derived from the
+  // schematic parts (each part → its footprint → a spot on the board); re-derives as parts change.
+  const [pcbOpen, setPcbOpen] = useState(false)
+  const pcbBoard = useMemo(
+    () =>
+      deriveBoard(
+        nodes.map((n) => ({ id: n.id, definition: (n.data as DeviceNodeData).definition })),
+      ),
+    [nodes],
+  )
   // The Bode (frequency-response) tool — its panel state, the grounded world the AC sweep runs on,
   // and the output-picking click handler live in useBode now; its couplings (the warm solved world,
   // the active tool) are injected. Destructured to the same names the toolbar, panel and canvas
@@ -5766,6 +5778,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                 onTimeline={() => setTimelineOpen((open) => !open)}
                 onMath={() => setShowMath((open) => !open)}
                 onBode={() => setBodeOpen((open) => !open)}
+                onPcb={() => setPcbOpen((open) => !open)}
                 onWorstCase={runWorstCase}
                 onGroup={() => setGroupPrompt({ name: '', error: null })}
                 canGroup={selectedCount >= 2}
@@ -5985,10 +5998,60 @@ function Canvas({ project }: { project: ProjectChoice }) {
               />
             ),
           },
+          pcb: {
+            title: 'PCB',
+            visible: pcbOpen,
+            content: (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                >
+                  <span style={{ fontSize: 12, color: THEME.textSoft }}>
+                    {pcbBoard.placements.length} part
+                    {pcbBoard.placements.length === 1 ? '' : 's'} placed ·{' '}
+                    {pcbBoard.outline.w.toFixed(1)} × {pcbBoard.outline.h.toFixed(1)} mm board
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPcbOpen(false)}
+                    style={{
+                      border: `1px solid ${THEME.borderStrong}`,
+                      background: THEME.surfaceInput,
+                      color: THEME.textSoft,
+                      borderRadius: 4,
+                      fontSize: 11,
+                      padding: '2px 8px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+                {pcbBoard.placements.length > 0 ? (
+                  <PcbView board={pcbBoard} pxPerMm={12} />
+                ) : (
+                  <div style={{ fontSize: 12, color: THEME.textFaint, maxWidth: 320 }}>
+                    No parts have a footprint yet — drop a resistor, capacitor, thermistor or
+                    inductor and it lands on the board here.
+                  </div>
+                )}
+              </div>
+            ),
+          },
         }
         const groups = panelGroups(
           panelLayout,
-          ['hierarchy', 'parts', 'tools', 'properties', 'scope', 'timeline', 'bode', 'timing'],
+          [
+            'hierarchy',
+            'parts',
+            'tools',
+            'properties',
+            'scope',
+            'timeline',
+            'bode',
+            'pcb',
+            'timing',
+          ],
           (id) => Boolean(registry[id]?.visible),
         )
         const renderGroup = (g: (typeof groups)[number]) => {
