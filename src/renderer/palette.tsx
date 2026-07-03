@@ -173,6 +173,10 @@ export const PARTS: { definition: string; label: string }[] = [
   { definition: 'ground', label: 'Ground' },
   { definition: 'net_label', label: 'Net Label' },
   { definition: 'text_note', label: 'Text note' },
+  { definition: 'text_box', label: 'Text box' },
+  { definition: 'graphic_line', label: 'Line' },
+  { definition: 'graphic_rect', label: 'Rectangle' },
+  { definition: 'graphic_circle', label: 'Circle' },
 ]
 
 export function PaletteItems({ filter }: { filter?: string }) {

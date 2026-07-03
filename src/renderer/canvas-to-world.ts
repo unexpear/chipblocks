@@ -1,4 +1,5 @@
 import type { Instance, Net, World } from '../cross-fk-validator.ts'
+import { ANNOTATION_DEFINITIONS } from './part-defaults.ts'
 
 /**
  * Canvas → World (Sprint 19 S19-v3-21; resistive wires S19-v3-32). The verifiable
@@ -67,8 +68,8 @@ export function canvasToWorld(nodes: CanvasNode[], edges: CanvasEdge[]): World {
     // carries no current. The casting pre-pass reads it from the canvas nodes
     // (positions + intensity); it never enters the circuit world.
     if (node.definition === 'light_source') continue
-    // A text note is pure annotation — no terminals, nothing electrical to stamp.
-    if (node.definition === 'text_note') continue
+    // Annotations (text, box, line, rect, circle) are pure drawings — nothing electrical to stamp.
+    if (ANNOTATION_DEFINITIONS.has(node.definition)) continue
     // A net label: record it as an endpoint, and its (trimmed) name as the teleport key.
     if (node.definition === 'net_label') {
       netLabels.add(node.id)

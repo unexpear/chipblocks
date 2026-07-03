@@ -25,6 +25,7 @@
 import type { Node } from '@xyflow/react'
 import { type BlockData, type DriveKind, isOutputDrive } from '../blocks.ts'
 import { blockIsLogicCompatible } from '../logic-sim.ts'
+import { ANNOTATION_DEFINITIONS } from '../part-defaults.ts'
 import type { DeviceNodeData } from '../symbols.tsx'
 
 /** Does this node solve on the fast logic engine (0/1) rather than the transistor-level analog solve? */
@@ -41,8 +42,14 @@ export const isLogicFidelity = (n: Node): boolean => {
 }
 
 /** Definitions that carry no analog load of their own — a mixed canvas isn't "analog" just for having
- *  these. A text note is a pure annotation: no terminals, no load, no effect on the canvas's kind. */
-export const ANALOG_PASSIVE = new Set(['power_source', 'ground', 'junction', 'text_note'])
+ *  these. Annotations (text, box, line, rect, circle) are pure drawings: no terminals, no load, no
+ *  effect on the canvas's kind. */
+export const ANALOG_PASSIVE = new Set([
+  'power_source',
+  'ground',
+  'junction',
+  ...ANNOTATION_DEFINITIONS,
+])
 
 // A logic block's OUTPUT pins (it DRIVES these). Used to classify a logic↔analog boundary: an output
 // pin means the logic drives the analog; any other (input) pin means the analog drives the logic.

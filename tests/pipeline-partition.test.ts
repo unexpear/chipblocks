@@ -8,6 +8,7 @@
 import type { Node } from '@xyflow/react'
 import { describe, expect, test } from 'vitest'
 import type { DriveKind } from '../src/renderer/blocks.ts'
+import { ANNOTATION_DEFINITIONS } from '../src/renderer/part-defaults.ts'
 import { classifyCanvas, findBridges } from '../src/renderer/pipeline/partition.ts'
 
 const node = (id: string, definition: string, fidelity?: string): Node =>
@@ -28,14 +29,16 @@ describe('classifyCanvas — the first-class dispatch decision', () => {
   test('logic tags + a real analog load → mixed', () => {
     expect(classifyCanvas([node('g', 'block', 'logic'), node('led', 'led')])).toBe('mixed')
   })
-  test('a text note is pure annotation — it never flips a logic canvas to mixed', () => {
-    expect(
-      classifyCanvas([
-        node('g', 'block', 'logic'),
-        node('vdd', 'power_source'),
-        node('n', 'text_note'),
-      ]),
-    ).toBe('logic')
+  test('annotations are pure drawings — none of them flips a logic canvas to mixed', () => {
+    for (const definition of ANNOTATION_DEFINITIONS) {
+      expect(
+        classifyCanvas([
+          node('g', 'block', 'logic'),
+          node('vdd', 'power_source'),
+          node('n', definition),
+        ]),
+      ).toBe('logic')
+    }
   })
 })
 

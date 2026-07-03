@@ -6,7 +6,7 @@ import {
   type SavedWire,
 } from './circuit-file.ts'
 import { buildNets, endpointKey } from './output-contention.ts'
-import { defaultParameters } from './part-defaults.ts'
+import { ANNOTATION_DEFINITIONS, defaultParameters } from './part-defaults.ts'
 
 /**
  * SPICE netlist import (circuit-io, format #1). Parses a plain SPICE deck into a CircuitFile — the same
@@ -562,14 +562,16 @@ export function serializeSpiceNetlist(circuit: CircuitFile): SpiceExportResult {
 
   for (const node of circuit.nodes) {
     if (node.definition === 'ground' || node.definition === 'junction') continue
-    // A text note's faithful SPICE form IS a comment — not an unsupported element.
-    if (node.definition === 'text_note') {
+    // A text annotation's faithful SPICE form IS a comment — not an unsupported element; the
+    // graphic shapes (line / rect / circle) have nothing to say in a netlist and are skipped.
+    if (node.definition === 'text_note' || node.definition === 'text_box') {
       const text = node.parameters?.note_text?.value
       if (typeof text === 'string' && text.trim() !== '') {
         for (const line of text.split('\n')) comments.push(`* note: ${line}`)
       }
       continue
     }
+    if (ANNOTATION_DEFINITIONS.has(node.definition)) continue
     const card = EXPORT_CARDS[node.definition]
     if (card === undefined) {
       unsupported.push(`${node.id} (${node.definition})`)

@@ -228,7 +228,7 @@ describe('serializeSpiceNetlist — canvas → netlist', () => {
     expect(/R1 .*220/.test(result.netlist)).toBe(true) // the resistor still exports
   })
 
-  test('a text note exports as a SPICE comment, not an unsupported element', () => {
+  test('text annotations export as SPICE comments; shapes are skipped — none are "unsupported"', () => {
     const circuit: CircuitFile = {
       format: CIRCUIT_FILE_FORMAT,
       version: CIRCUIT_FILE_VERSION,
@@ -240,6 +240,16 @@ describe('serializeSpiceNetlist — canvas → netlist', () => {
           y: 0,
           parameters: { note_text: { value: 'hand-wound coil\nsee datasheet' } },
         },
+        {
+          id: 'text_box_1',
+          definition: 'text_box',
+          x: 0,
+          y: 0,
+          parameters: { note_text: { value: 'boxed warning' } },
+        },
+        { id: 'graphic_line_1', definition: 'graphic_line', x: 0, y: 0 },
+        { id: 'graphic_rect_1', definition: 'graphic_rect', x: 0, y: 0 },
+        { id: 'graphic_circle_1', definition: 'graphic_circle', x: 0, y: 0 },
       ],
       wires: [],
     }
@@ -247,6 +257,8 @@ describe('serializeSpiceNetlist — canvas → netlist', () => {
     expect(result.unsupported).toHaveLength(0)
     expect(result.netlist).toContain('* note: hand-wound coil')
     expect(result.netlist).toContain('* note: see datasheet')
+    expect(result.netlist).toContain('* note: boxed warning')
+    expect(result.netlist).not.toContain('graphic_')
   })
 
   test('a diode exports with a re-importable model', () => {

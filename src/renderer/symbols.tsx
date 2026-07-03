@@ -16,6 +16,7 @@ import {
 } from './lens.ts'
 import { FrontContext } from './net-edge.tsx'
 import {
+  ANNOTATION_DEFINITIONS,
   fuseIntact,
   type Parameters,
   primaryValue,
@@ -1923,8 +1924,6 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   ground: [{ id: 'reference_terminal', position: Position.Top }],
   // The tag sits up top; its single terminal hangs below on the stalk, where a wire joins it.
   net_label: [{ id: 'reference_terminal', position: Position.Bottom }],
-  // A text note is pure annotation — no terminals, nothing to wire to.
-  text_note: [],
 }
 const FALLBACK_TERMINALS = TWO('terminal_a', 'terminal_b')
 
@@ -1973,6 +1972,8 @@ export function terminalsOf(
   definition: string,
   parameters?: Parameters,
 ): { id: string; position: Position; offset?: number; at?: { x: number; y: number } }[] {
+  // Annotations (text, box, line, rect, circle) are pure drawings — no terminals, nothing to wire to.
+  if (ANNOTATION_DEFINITIONS.has(definition)) return []
   if (definition === 'power_source') {
     const count = sourceTerminalCount(parameters)
     if (count === 1) return [{ id: 'terminal_positive', position: Position.Left }]
@@ -2036,7 +2037,7 @@ export function DeviceGlyph({
   // The text note is an annotation, not a device: its glyph IS its text (multi-line), edited via
   // the note_text parameter in the Properties panel — the same string-parameter plumbing the net
   // label's name uses, so saving/copying/undo all just work.
-  if (definition === 'text_note') {
+  if (definition === 'text_note' || definition === 'text_box') {
     return (
       <div
         style={{
@@ -2044,17 +2045,56 @@ export function DeviceGlyph({
           width: 'max-content',
           minWidth: 40,
           maxWidth: 420,
-          padding: '2px 6px',
+          padding: definition === 'text_box' ? '5px 9px' : '2px 6px',
           whiteSpace: 'pre-wrap',
           fontFamily: 'system-ui, sans-serif',
           fontSize: 14,
           lineHeight: 1.35,
           color: STROKE,
           textAlign: 'left',
+          // The text box wears KiCad's frame; the bare note stays frameless.
+          ...(definition === 'text_box'
+            ? { border: `1.5px solid ${STROKE}`, borderRadius: 2 }
+            : {}),
         }}
       >
         {stringValue(parameters, 'note_text') || 'Text'}
       </div>
+    )
+  }
+  // Graphic drawing items (KiCad's line / rectangle / circle) — real millimetres at the drawing
+  // sheet's 4-units-per-mm scale. Rotate a line with R like any part.
+  if (definition === 'graphic_line') {
+    const w = (scalarAmount(parameters, 'length') ?? 40) * 4
+    return (
+      <svg width={Math.max(8, w)} height={8} aria-hidden="true" style={{ display: 'block' }}>
+        <line x1={0} y1={4} x2={w} y2={4} stroke={STROKE} strokeWidth={1.6} />
+      </svg>
+    )
+  }
+  if (definition === 'graphic_rect') {
+    const w = (scalarAmount(parameters, 'width') ?? 40) * 4
+    const h = (scalarAmount(parameters, 'height') ?? 25) * 4
+    return (
+      <svg width={w} height={h} aria-hidden="true" style={{ display: 'block' }}>
+        <rect
+          x={1}
+          y={1}
+          width={w - 2}
+          height={h - 2}
+          fill="none"
+          stroke={STROKE}
+          strokeWidth={1.6}
+        />
+      </svg>
+    )
+  }
+  if (definition === 'graphic_circle') {
+    const d = (scalarAmount(parameters, 'diameter') ?? 20) * 4
+    return (
+      <svg width={d} height={d} aria-hidden="true" style={{ display: 'block' }}>
+        <circle cx={d / 2} cy={d / 2} r={d / 2 - 1} fill="none" stroke={STROKE} strokeWidth={1.6} />
+      </svg>
     )
   }
   // The switch is state-dependent: render its blade open or closed.
@@ -2423,8 +2463,8 @@ export function DeviceNode({ id, data }: NodeProps) {
           </div>
         ) : null}
       </div>
-      {/* A text note is its own text — no id caption underneath (it would read as part of the note). */}
-      {definition === 'text_note' ? null : (
+      {/* An annotation is its own drawing — no id caption underneath (it would read as part of it). */}
+      {ANNOTATION_DEFINITIONS.has(definition) ? null : (
         <div
           style={{
             position: 'absolute',

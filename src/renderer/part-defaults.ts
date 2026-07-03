@@ -27,10 +27,24 @@ const DEFAULTS: Record<string, Parameters> = {
   net_label: {
     net_name: { value: '+5V' },
   },
-  // A free-floating text note — a schematic annotation (KiCad's text item). No terminals,
-  // no electrical meaning; the solver pipeline skips it entirely.
+  // Schematic annotations (KiCad's drawing items) — no terminals, no electrical meaning; the
+  // solver pipeline skips them entirely. Dimensions are in real millimetres at the drawing
+  // sheet's scale (4 canvas units per mm), so a 40 mm rectangle is 40 mm on the printed page.
   text_note: {
     note_text: { value: 'Text' },
+  },
+  text_box: {
+    note_text: { value: 'Text' },
+  },
+  graphic_line: {
+    length: scalar(40, 'millimetre'),
+  },
+  graphic_rect: {
+    width: scalar(40, 'millimetre'),
+    height: scalar(25, 'millimetre'),
+  },
+  graphic_circle: {
+    diameter: scalar(20, 'millimetre'),
   },
   resistor: {
     // 470 Ω — E12 standard, sized so the 9 V default battery drives the 2 V
@@ -1059,6 +1073,19 @@ export function defaultParameters(definition: string): Parameters {
   const preset = DEFAULTS[definition]
   return preset ? (JSON.parse(JSON.stringify(preset)) as Parameters) : {}
 }
+
+/**
+ * Pure schematic annotations (KiCad's drawing items: text, text box, line, rectangle, circle).
+ * No terminals, no electrical meaning — the lowering pass, the canvas classifier, and the netlist
+ * exports all skip them by this one set.
+ */
+export const ANNOTATION_DEFINITIONS = new Set([
+  'text_note',
+  'text_box',
+  'graphic_line',
+  'graphic_rect',
+  'graphic_circle',
+])
 
 // readScalarParam reads off an Instance; a dropped part has only its parameters,
 // so wrap them — readScalarParam only touches `.parameters`.
