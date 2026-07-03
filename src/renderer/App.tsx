@@ -152,18 +152,8 @@ import { ProjectHub } from './project-hub.tsx'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
 import { scanMatrixFromBuffer } from './scan-display.ts'
 import { SchematicHierarchy } from './schematic-hierarchy.tsx'
-import {
-  channelsForProbes,
-  fastestSourceHz,
-  type ScopeChannel,
-  ScopePlot,
-  type ScopeProbe,
-  scopeProbeKey,
-  scopeWindow,
-  TRACE_COLORS,
-} from './scope.tsx'
-import { extractXyPath, type FamilyStep, stepValues, withSourceVoltage } from './scope-family.ts'
-import { H_DIVISIONS, scopeRecordSteps, slowestHonestTimebase } from './scope-scales.ts'
+import { fastestSourceHz, ScopePlot, scopeProbeKey, scopeWindow, TRACE_COLORS } from './scope.tsx'
+import { H_DIVISIONS, scopeRecordSteps } from './scope-scales.ts'
 import { DEFAULT_SHEET, SheetFrame, type SheetSettings } from './sheet-frame.tsx'
 import { parseSpiceNetlist, serializeSpiceNetlist } from './spice-netlist.ts'
 import { type DeviceNodeData, type Fidelity, nodeTypes, terminalsOf } from './symbols.tsx'
@@ -183,6 +173,7 @@ import { checkpoint, emptyHistory, redo, undo } from './undo-history.ts'
 import { formatEng } from './units.ts'
 import { useConnectTool } from './use-connect-tool.ts'
 import { useMultimeter } from './use-multimeter.ts'
+import { useOscilloscope } from './use-oscilloscope.ts'
 import { useSelectionGestures } from './use-selection-gestures.ts'
 import { useShortcuts } from './use-shortcuts.tsx'
 import { useWireTool } from './use-wire-tool.ts'
@@ -677,6 +668,14 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // __chip.wireSetup) can exercise their real handlers. Assigned once each hook runs, below.
   const connectRef = useRef<ReturnType<typeof useConnectTool> | null>(null)
   const wireRef = useRef<ReturnType<typeof useWireTool> | null>(null)
+  const scopeRef = useRef<{
+    probes: unknown[]
+    channels: string[]
+    open: boolean
+    status: string | null
+    windowSec: number
+    refusal: string | null
+  } | null>(null)
   const meterRef = useRef<{
     redProbe: { nodeId: string; handleId: string } | undefined
     blackProbe: { nodeId: string; handleId: string } | undefined
@@ -1124,10 +1123,6 @@ function Canvas({ project }: { project: ProjectChoice }) {
     setEdges(result.restored.edges)
     reSolve(result.restored.nodes, result.restored.edges)
   }, [snapshotCanvas, setNodes, setEdges, reSolve])
-
-  // Scope (time-domain view): run the canvas circuit through solveTransient over
-  // an auto-picked window and show every node voltage as a waveform.
-  const [scopeResult, setScopeResult] = useState<TransientResult | null>(null)
   const [crtTraces, setCrtTraces] = useState<
     Map<string, { points: CrtSpot[]; brightness: number }>
   >(new Map())
@@ -1149,30 +1144,6 @@ function Canvas({ project }: { project: ProjectChoice }) {
   const [timelineResult, setTimelineResult] = useState<TransientResult | null>(null)
   // Travelling-charge front (Sprint 22): the spatial-propagation view toggle.
   const [frontMode, setFrontMode] = useState(false)
-  // One display-window's duration — the trigger aligns sweeps inside the
-  // 3-window record (set alongside each scope run).
-  const [scopeWindowSec, setScopeWindowSec] = useState(1e-3)
-  // Timebase knob (S19-v3-78): seconds per grid square, or 'auto' (the window
-  // heuristic). Manual settings re-run the sim at the new window; a setting
-  // too slow to sample the fastest source honestly is REFUSED, never aliased.
-  const [scopeSecPerDiv, setScopeSecPerDiv] = useState<number | 'auto'>('auto')
-  const [scopeAutoWindowSec, setScopeAutoWindowSec] = useState(1e-3)
-  const [scopeRefusal, setScopeRefusal] = useState<string | null>(null)
-  // Family curves (S20-v3-4): a FROZEN set of stepped-parameter runs — the
-  // I-V family. Each trace is a real solver run with one source's voltage
-  // overridden; the dataset stays until cleared or re-traced (re-running N
-  // simulations on every edit would not be a live view, it would be a lag).
-  const [scopeFamily, setScopeFamily] = useState<{
-    steps: FamilyStep[]
-    xChannel: ScopeChannel
-    yChannel: ScopeChannel
-    sourceId: string
-    skipped: string[]
-  } | null>(null)
-  const [scopeFamilyNote, setScopeFamilyNote] = useState<string | null>(null)
-  // Scope probes (S19-v3-77): the terminals the user clipped channels onto.
-  // Only these plot — clipping where you care, like real scope leads.
-  const [scopeProbes, setScopeProbes] = useState<ScopeProbe[]>([])
 
   // Math panel (S19-v3-63): the equations behind the current solution, derived
   // live from the same solved state the canvas shows.
@@ -1473,126 +1444,6 @@ function Canvas({ project }: { project: ProjectChoice }) {
       coilFieldTesla,
     }
   }, [edges, readings, lens, flow, frameEdges])
-  const runScope = useCallback(() => {
-    const { sources, positions } = lightCastInputs(nodes)
-    const world = groundedComponent(
-      worldWithCastLight(canvasWorld(nodes, edges).world, positions, sources),
-    )
-    const auto = scopeWindow(world)
-    setScopeAutoWindowSec(auto.duration)
-    const windowSec = scopeSecPerDiv === 'auto' ? auto.duration : scopeSecPerDiv * H_DIVISIONS
-    setScopeWindowSec(windowSec)
-    // The RECORD is three display-windows long (S19-v3-75): the trigger search
-    // starts after the first (power-on transients settle), and a full window
-    // always fits after the trigger point. Step spacing follows the FASTEST
-    // source (≥32 samples/cycle, ≤20 000 steps — the multimeter's V~ honesty
-    // rule); a timebase too slow to keep that is refused, never aliased.
-    const fastestHz = fastestSourceHz(world)
-    const steps = scopeRecordSteps(windowSec * 3, fastestHz)
-    if (steps === 'span-too-wide') {
-      const slowest = slowestHonestTimebase(fastestHz)
-      setScopeRefusal(
-        `${formatEng(windowSec / H_DIVISIONS, 's')}/div spans too much time to sample the ` +
-          `${formatEng(fastestHz, 'Hz')} source honestly (the scope keeps at least 32 points ` +
-          `per cycle, at most 20 000 steps — past that the trace would alias into a shape ` +
-          `that was never there). Slowest honest setting for this circuit: ` +
-          `${formatEng(slowest, 's')}/div.`,
-      )
-      return
-    }
-    setScopeRefusal(null)
-    // Electro-thermal (S20-v3-5): the scope's simulation heats the parts by
-    // the same lumped law the DC solve uses — the meter clamp and the scope
-    // clamp now agree on the same wire. The thermal loop's own warnings
-    // (runaway, out-of-range tempco) surface with the solver's.
-    const thermal = solveTransientThermal(world, {
-      timeStep: (windowSec * 3) / steps,
-      duration: windowSec * 3,
-      projectAmbientC: projectAmbientRef.current,
-    })
-    setScopeResult({
-      ...thermal.result,
-      warnings: [...thermal.result.warnings, ...thermal.warnings],
-    })
-    // CRT live traces (the spot's locus over this run) for any tube in the circuit — the inspector's
-    // screen draws them instead of the single DC spot once the scope has run.
-    setCrtTraces(buildCrtTraces(world, thermal.result.series))
-  }, [nodes, edges, scopeSecPerDiv])
-
-  // Trace a family (S20-v3-4): one solver run per stepped value of the chosen
-  // source's voltage, each run's settled (X, Y) path kept. The window and the
-  // honest-sampling guard are computed ONCE from the base circuit — stepping
-  // a DC value changes no frequency, so every run shares them. Failed steps
-  // are reported by name, never faked.
-  const runFamily = useCallback(
-    (
-      xChannel: ScopeChannel,
-      yChannel: ScopeChannel,
-      sourceId: string,
-      from: number,
-      to: number,
-      count: number,
-    ) => {
-      const { sources, positions } = lightCastInputs(nodes)
-      const baseWorld = groundedComponent(
-        worldWithCastLight(canvasWorld(nodes, edges).world, positions, sources),
-      )
-      const auto = scopeWindow(baseWorld)
-      const windowSec = scopeSecPerDiv === 'auto' ? auto.duration : scopeSecPerDiv * H_DIVISIONS
-      const fastestHz = fastestSourceHz(baseWorld)
-      const honestSteps = scopeRecordSteps(windowSec * 3, fastestHz)
-      if (honestSteps === 'span-too-wide') {
-        setScopeFamily(null)
-        setScopeFamilyNote(
-          `the timebase is too slow to sample the ${formatEng(fastestHz, 'Hz')} source honestly — ` +
-            `pick a faster Horiz setting, then trace`,
-        )
-        return
-      }
-      const dt = (windowSec * 3) / honestSteps
-      const traced: FamilyStep[] = []
-      const skipped: string[] = []
-      for (const value of stepValues(from, to, count)) {
-        const stepped = withSourceVoltage(
-          nodes as unknown as { id: string; data?: { parameters?: Record<string, unknown> } }[],
-          sourceId,
-          value,
-        ) as unknown as Node[]
-        // The light is unchanged across voltage steps — reuse the base sources.
-        const world = groundedComponent(
-          worldWithCastLight(canvasWorld(stepped, edges).world, positions, sources),
-        )
-        // Each family run heats its parts too — a high-gate step's curve is
-        // traced at the temperature that step actually sustains.
-        const result = solveTransientThermal(world, {
-          timeStep: dt,
-          duration: windowSec * 3,
-          projectAmbientC: projectAmbientRef.current,
-        }).result
-        const label = `${sourceId} = ${formatEng(value, 'V')}`
-        if (result.status !== 'solved') {
-          skipped.push(`${formatEng(value, 'V')}: ${result.status}`)
-          continue
-        }
-        traced.push({
-          value,
-          label,
-          path: extractXyPath(result.series, xChannel, yChannel, windowSec),
-        })
-      }
-      setScopeFamily({ steps: traced, xChannel, yChannel, sourceId, skipped })
-      setScopeFamilyNote(skipped.length > 0 ? `skipped — ${skipped.join(' · ')}` : null)
-    },
-    [nodes, edges, scopeSecPerDiv],
-  )
-
-  // While the Scope is open it follows the circuit live: any edit (drop, wire,
-  // value change, switch flip) re-runs the time simulation — same spirit as the
-  // always-on DC re-solve. Closed scope costs nothing.
-  const scopeOpen = scopeResult !== null || scopeRefusal !== null
-  useEffect(() => {
-    if (scopeOpen) runScope()
-  }, [scopeOpen, runScope])
 
   // The timeline runs its OWN transient record — independent of the scope, so opening the
   // timeline never pops the scope open (or leaves it lingering when closed). Same physics
@@ -1624,54 +1475,6 @@ function Canvas({ project }: { project: ProjectChoice }) {
     if (timelineOpen) runTimeline()
   }, [timelineOpen, runTimeline])
 
-  // Clip / unclip a scope probe (S19-v3-77; clamps S19-v3-83; part currents
-  // S20-v3-3): with the Scope open and the plain select tool, clicking a
-  // terminal dot toggles a VOLTAGE channel there; clicking a WIRE clamps a
-  // CURRENT channel around it; ALT+clicking a part's BODY clamps the part's
-  // own recorded current (the curve tracer's Y axis). Plain body clicks stay
-  // selection. Returns whether the click was consumed.
-  const onScopeProbeClick = useCallback(
-    (event: ReactMouseEvent): boolean => {
-      if (!scopeOpen || tool !== 'select') return false
-      const target = event.target as Element
-      const toggle = (probe: ScopeProbe) => {
-        const key = scopeProbeKey(probe)
-        setScopeProbes((current) =>
-          current.some((p) => scopeProbeKey(p) === key)
-            ? current.filter((p) => scopeProbeKey(p) !== key)
-            : [...current, probe],
-        )
-        event.stopPropagation()
-      }
-      if (event.altKey) {
-        const nodeEl = target.closest?.('.react-flow__node') as HTMLElement | null
-        const nodeId = nodeEl?.getAttribute('data-id')
-        if (nodeId === null || nodeId === undefined) return false
-        toggle({ kind: 'part', nodeId })
-        return true
-      }
-      const handleEl = target.closest?.('.react-flow__handle') as HTMLElement | null
-      if (handleEl !== null) {
-        const nodeId = handleEl.dataset.nodeid
-        const handleId = handleEl.dataset.handleid
-        if (nodeId === undefined || handleId === undefined) return false
-        toggle({ kind: 'terminal', nodeId, handleId })
-        return true
-      }
-      const edgeEl = target.closest?.('.react-flow__edge')
-      if (edgeEl !== null && edgeEl !== undefined) {
-        const dataId = edgeEl.getAttribute('data-id')
-        const testId = edgeEl.getAttribute('data-testid')
-        const edgeId = dataId ?? (testId?.startsWith('rf__edge-') ? testId.slice(9) : null)
-        if (edgeId === null) return false
-        toggle({ kind: 'wire', edgeId })
-        return true
-      }
-      return false
-    },
-    [scopeOpen, tool],
-  )
-
   // Bode output picking: while the Bode panel is in "pick" mode, a terminal click on the
   // canvas sets the output node (resolved through the same grounded world the sweep uses),
   // then leaves pick mode — the frequency-domain answer to the scope's probe clicks.
@@ -1696,123 +1499,6 @@ function Canvas({ project }: { project: ProjectChoice }) {
     [bodeOpen, bodePicking, tool, bodeWorld],
   )
 
-  // Each probeable PART's recorded-current key (S20-v3-3): which terminal's
-  // current the solver records as "the" device current, per definition —
-  // fixed names where the device has them (anode, collector, drain, +), the
-  // instance's own first connect for symmetric two-leads (so the label can
-  // state the direction honestly). Parts with no recorded element current
-  // (ground, junctions, expanded multi-lead sources, blocks) resolve to
-  // nothing and the probe is dropped, never invented.
-  const scopePartInfo = useMemo(() => {
-    // Parts whose recorded current is anode→cathode (the transient solver records them at /anode):
-    // the LED/diode family, the zener, and the latching thyristors (Shockley + the SCR's A-K path).
-    const DIODES = new Set([
-      'led',
-      'led_uv_algan',
-      'diode_silicon_rectifier',
-      'diode_schottky_al_si',
-      'diode_zener_silicon',
-      'diode_laser',
-      'diode_tunnel',
-      'diode_shockley',
-      'diode_varactor',
-      'scr',
-    ])
-    const info = new Map<string, { currentKey: string; label: string }>()
-    for (const inst of solvedWorld.instances.values()) {
-      const id = inst.id
-      if (DIODES.has(inst.definition)) {
-        info.set(id, { currentKey: `${id}/anode`, label: `${id} · I(anode→cathode)` })
-      } else if (inst.definition === 'power_source') {
-        info.set(id, { currentKey: `${id}/terminal_positive`, label: `${id} · I(+→−)` })
-      } else if (
-        inst.definition === 'transistor_bjt_npn' ||
-        inst.definition === 'transistor_bjt_pnp'
-      ) {
-        info.set(id, { currentKey: `${id}/collector`, label: `${id} · I(collector)` })
-      } else if (
-        inst.definition === 'transistor_mosfet_nmos' ||
-        inst.definition === 'transistor_mosfet_pmos' ||
-        inst.definition === 'transistor_jfet_n_channel' ||
-        inst.definition === 'transistor_jfet_p_channel'
-      ) {
-        info.set(id, { currentKey: `${id}/drain`, label: `${id} · I(drain)` })
-      } else if (inst.definition === 'diode_constant_current') {
-        // A CRD is internally a JFET, so the solver records its current at the synthetic drain.
-        info.set(id, { currentKey: `${id}/drain`, label: `${id} · I(anode→cathode)` })
-      } else if (inst.definition === 'vacuum_diode') {
-        info.set(id, { currentKey: `${id}/plate`, label: `${id} · I(plate→cathode)` })
-      } else if (
-        inst.definition === 'triode' ||
-        inst.definition === 'tetrode' ||
-        inst.definition === 'pentode'
-      ) {
-        info.set(id, { currentKey: `${id}/plate`, label: `${id} · I(plate)` })
-      } else if (
-        inst.definition === 'switch_spst_toggle' ||
-        inst.definition === 'switch_spst_momentary'
-      ) {
-        info.set(id, { currentKey: `${id}/terminal_in`, label: `${id} · I(in→out)` })
-      } else if (inst.definition === 'switch_spdt') {
-        info.set(id, { currentKey: `${id}/common`, label: `${id} · I(common)` })
-      } else if (inst.definition === 'potentiometer') {
-        // The wiper current is the pot-specific quantity: ~0 in an unloaded
-        // divider, nonzero as a rheostat or when the tap drives a load.
-        info.set(id, { currentKey: `${id}/wiper`, label: `${id} · I(wiper)` })
-      } else if (inst.definition === 'fuse') {
-        info.set(id, { currentKey: `${id}/terminal_a`, label: `${id} · I(a→b)` })
-      } else if (inst.definition === 'relay') {
-        info.set(id, { currentKey: `${id}/coil_a`, label: `${id} · I(coil)` })
-      } else if (
-        inst.definition === 'transformer' ||
-        inst.definition === 'transformer_center_tapped'
-      ) {
-        info.set(id, { currentKey: `${id}/primary_a`, label: `${id} · I(primary)` })
-      } else if (
-        inst.definition === 'resistor' ||
-        inst.definition === 'thermistor' ||
-        inst.definition === 'incandescent_bulb' ||
-        inst.definition === 'photoresistor' ||
-        inst.definition === 'capacitor' ||
-        inst.definition === 'inductor' ||
-        inst.definition === 'electromagnet' ||
-        inst.definition === 'dc_motor' ||
-        inst.definition === 'generator'
-      ) {
-        const c1 = inst.connects?.[0]
-        const c2 = inst.connects?.[1]
-        if (c1 === undefined || c2 === undefined) continue
-        const short = (t: string) => t.replace(/^terminal_/, '')
-        info.set(id, {
-          currentKey: `${id}/${c1.terminal}`,
-          label: `${id} · I(${short(c1.terminal)}→${short(c2.terminal)})`,
-        })
-      }
-    }
-    return info
-  }, [solvedWorld])
-
-  // Each drawn wire's two nets + real resistance, for the scope's clamps —
-  // from the SAME world the solves use (wire instance ids are wire_<edgeId>).
-  const scopeWireInfo = useMemo(() => {
-    const info = new Map<string, { netA: string; netB: string; ohms: number; label: string }>()
-    for (const edge of edges) {
-      const inst = solvedWorld.instances.get(`wire_${edge.id}`)
-      if (inst === undefined) continue
-      const netA = inst.connects?.find((c) => c.terminal === 'terminal_a')?.net
-      const netB = inst.connects?.find((c) => c.terminal === 'terminal_b')?.net
-      const ohms = readScalarParam(inst, 'resistance') ?? 0
-      if (netA === undefined || netB === undefined) continue
-      info.set(edge.id, {
-        netA,
-        netB,
-        ohms,
-        label: `clamp · ${edge.source} → ${edge.target}`,
-      })
-    }
-    return info
-  }, [edges, solvedWorld])
-
   // Each wired terminal's net — what the Ω probes hand to the powered-off
   // solve. Block PORTS and multi-lead source LEADS alias to the real terminal
   // they stand for (lead aliases first — a port can point at a lead).
@@ -1832,19 +1518,49 @@ function Canvas({ project }: { project: ProjectChoice }) {
     }
     return nets
   }, [solvedWorld, nodes])
-  // The probed channels the Scope plots — terminals resolved through the same
-  // terminal→net lookup the multimeter uses (block ports + lead taps
-  // included); wire clamps through the wire-instance lookup.
-  const scopeChannels = useMemo(
-    () =>
-      channelsForProbes(
-        scopeProbes,
-        (key) => probeNets.get(key),
-        (edgeId) => scopeWireInfo.get(edgeId),
-        (nodeId) => scopePartInfo.get(nodeId),
-      ),
-    [scopeProbes, probeNets, scopeWireInfo, scopePartInfo],
-  )
+  // The oscilloscope + curve tracer lives in useOscilloscope now (probes/timebase/refusal/family
+  // state, the electro-thermal runScope/runFamily, the live re-run while open, the probe-click
+  // handler, and the channel resolution); its couplings — the active tool, the nodes/wires, the warm
+  // solved world, the shared terminal→net lookup, the project ambient, and the CRT-trace sink — are
+  // injected. Destructured to the same names the panel, the toolbar, the probe badges, and the
+  // canvas click chain already use.
+  const {
+    scopeResult,
+    setScopeResult,
+    scopeWindowSec,
+    scopeSecPerDiv,
+    setScopeSecPerDiv,
+    scopeAutoWindowSec,
+    scopeRefusal,
+    setScopeRefusal,
+    scopeFamily,
+    setScopeFamily,
+    scopeFamilyNote,
+    setScopeFamilyNote,
+    scopeProbes,
+    setScopeProbes,
+    scopeOpen,
+    runScope,
+    runFamily,
+    onScopeProbeClick,
+    scopeChannels,
+  } = useOscilloscope({
+    tool,
+    nodes,
+    edges,
+    solvedWorld,
+    probeNets,
+    projectAmbientRef,
+    setCrtTraces,
+  })
+  scopeRef.current = {
+    probes: scopeProbes,
+    channels: scopeChannels.map((c) => c.label),
+    open: scopeOpen,
+    status: scopeResult?.status ?? null,
+    windowSec: scopeWindowSec,
+    refusal: scopeRefusal,
+  }
   // The multimeter — its probes/dial/jack/fuse/REL/MINMAX/HOLD state machine, its measurements
   // (Ω, A⎓ + fuse blowing) and its readout all live in useMultimeter now; its couplings to the
   // canvas — the active tool, the wires, the terminal→net lookup, the warm solved world, the live
@@ -3881,6 +3597,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
         ] as Edge[])
         setTool('meter')
         return { v, r, g, wire: `wm_plus_${n}` }
+      },
+      scopeState() {
+        return scopeRef.current
       },
       meterState() {
         const m = meterRef.current
