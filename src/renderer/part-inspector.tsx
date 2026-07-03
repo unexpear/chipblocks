@@ -1,4 +1,6 @@
 import { type CSSProperties, useEffect, useRef } from 'react'
+import { footprintForPart } from './footprint-assignment.ts'
+import { FootprintView } from './footprint-view.tsx'
 import {
   defaultParameters,
   defaultProvenance,
@@ -462,6 +464,19 @@ export function PartInspector({
     <div style={{ width: 190, fontFamily: 'system-ui, sans-serif' }}>
       <div style={{ fontSize: 12, color: THEME.textPrimary }}>{selected.id}</div>
       <div style={{ fontSize: 10, color: THEME.textMuted }}>{selected.definition}</div>
+
+      {/* The physical package this part lands on — the schematic → board join (footprint-assignment.ts). */}
+      {(() => {
+        const fp = footprintForPart(selected.definition)
+        if (fp === undefined) return null
+        return (
+          <>
+            <div style={sectionLabel}>Footprint</div>
+            <div style={{ fontSize: 11, color: THEME.textSoft, marginBottom: 4 }}>{fp.name}</div>
+            <FootprintView footprint={fp} pxPerMm={26} />
+          </>
+        )
+      })()}
 
       {reading ? (
         <>
