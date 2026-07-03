@@ -562,6 +562,14 @@ export function serializeSpiceNetlist(circuit: CircuitFile): SpiceExportResult {
 
   for (const node of circuit.nodes) {
     if (node.definition === 'ground' || node.definition === 'junction') continue
+    // A text note's faithful SPICE form IS a comment — not an unsupported element.
+    if (node.definition === 'text_note') {
+      const text = node.parameters?.note_text?.value
+      if (typeof text === 'string' && text.trim() !== '') {
+        for (const line of text.split('\n')) comments.push(`* note: ${line}`)
+      }
+      continue
+    }
     const card = EXPORT_CARDS[node.definition]
     if (card === undefined) {
       unsupported.push(`${node.id} (${node.definition})`)

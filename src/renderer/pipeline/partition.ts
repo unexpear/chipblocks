@@ -40,8 +40,9 @@ export const isLogicFidelity = (n: Node): boolean => {
   return data.definition === 'block' && block !== undefined && blockIsLogicCompatible(block)
 }
 
-/** Definitions that carry no analog load of their own — a mixed canvas isn't "analog" just for having these. */
-export const ANALOG_PASSIVE = new Set(['power_source', 'ground', 'junction'])
+/** Definitions that carry no analog load of their own — a mixed canvas isn't "analog" just for having
+ *  these. A text note is a pure annotation: no terminals, no load, no effect on the canvas's kind. */
+export const ANALOG_PASSIVE = new Set(['power_source', 'ground', 'junction', 'text_note'])
 
 // A logic block's OUTPUT pins (it DRIVES these). Used to classify a logic↔analog boundary: an output
 // pin means the logic drives the analog; any other (input) pin means the analog drives the logic.

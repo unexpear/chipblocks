@@ -27,6 +27,11 @@ const DEFAULTS: Record<string, Parameters> = {
   net_label: {
     net_name: { value: '+5V' },
   },
+  // A free-floating text note — a schematic annotation (KiCad's text item). No terminals,
+  // no electrical meaning; the solver pipeline skips it entirely.
+  text_note: {
+    note_text: { value: 'Text' },
+  },
   resistor: {
     // 470 Ω — E12 standard, sized so the 9 V default battery drives the 2 V
     // default LED at ~15 mA: safely under its 20 mA rating, so a dropped

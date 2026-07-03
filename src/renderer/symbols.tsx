@@ -1923,6 +1923,8 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   ground: [{ id: 'reference_terminal', position: Position.Top }],
   // The tag sits up top; its single terminal hangs below on the stalk, where a wire joins it.
   net_label: [{ id: 'reference_terminal', position: Position.Bottom }],
+  // A text note is pure annotation — no terminals, nothing to wire to.
+  text_note: [],
 }
 const FALLBACK_TERMINALS = TWO('terminal_a', 'terminal_b')
 
@@ -2031,6 +2033,30 @@ export function DeviceGlyph({
   /** The node's rotation — source circles counter-rotate their inner mark. */
   rotation?: number
 }) {
+  // The text note is an annotation, not a device: its glyph IS its text (multi-line), edited via
+  // the note_text parameter in the Properties panel — the same string-parameter plumbing the net
+  // label's name uses, so saving/copying/undo all just work.
+  if (definition === 'text_note') {
+    return (
+      <div
+        style={{
+          // Size to the text itself (the device-node wrapper would otherwise squeeze it to symbol width).
+          width: 'max-content',
+          minWidth: 40,
+          maxWidth: 420,
+          padding: '2px 6px',
+          whiteSpace: 'pre-wrap',
+          fontFamily: 'system-ui, sans-serif',
+          fontSize: 14,
+          lineHeight: 1.35,
+          color: STROKE,
+          textAlign: 'left',
+        }}
+      >
+        {stringValue(parameters, 'note_text') || 'Text'}
+      </div>
+    )
+  }
   // The switch is state-dependent: render its blade open or closed.
   if (definition === 'switch_spst_toggle') return <SwitchGlyph closed={switchClosed(parameters)} />
   if (definition === 'switch_spst_momentary')
@@ -2397,40 +2423,45 @@ export function DeviceNode({ id, data }: NodeProps) {
           </div>
         ) : null}
       </div>
-      <div
-        style={{
-          position: 'absolute',
-          top: '100%',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          color: THEME.textMuted,
-          fontSize: 9,
-          whiteSpace: 'nowrap',
-          pointerEvents: 'none',
-        }}
-      >
-        {label}
-        {value ? <span style={{ color: THEME.accentBlue, marginLeft: 5 }}>{value}</span> : null}
-        {lensState.lens === 'power' && watts !== undefined && watts > 0 ? (
-          <span style={{ color: THEME.lensTemp, marginLeft: 5 }}>{formatEng(watts, 'W')}</span>
-        ) : null}
-        {lensState.lens === 'temp' && tempC !== undefined ? (
-          <span style={{ color: THEME.lensTemp, marginLeft: 5 }}>{tempC.toFixed(1)} °C</span>
-        ) : null}
-        {lensState.lens === 'energy' && energyW !== undefined && energyW > 0 ? (
-          <span style={{ color: THEME.lensEnergy, marginLeft: 5 }}>{formatEng(energyW, 'W')}</span>
-        ) : null}
-        {lensState.lens === 'field' && coilField !== undefined ? (
-          <span style={{ color: THEME.lensField, marginLeft: 5 }}>
-            {coilField < 1 ? `${(coilField * 1000).toFixed(0)} mT` : `${coilField.toFixed(2)} T`}
-          </span>
-        ) : null}
-        {health?.failed ? (
-          <span title={health.note} style={{ marginLeft: 5 }}>
-            💥
-          </span>
-        ) : null}
-      </div>
+      {/* A text note is its own text — no id caption underneath (it would read as part of the note). */}
+      {definition === 'text_note' ? null : (
+        <div
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            color: THEME.textMuted,
+            fontSize: 9,
+            whiteSpace: 'nowrap',
+            pointerEvents: 'none',
+          }}
+        >
+          {label}
+          {value ? <span style={{ color: THEME.accentBlue, marginLeft: 5 }}>{value}</span> : null}
+          {lensState.lens === 'power' && watts !== undefined && watts > 0 ? (
+            <span style={{ color: THEME.lensTemp, marginLeft: 5 }}>{formatEng(watts, 'W')}</span>
+          ) : null}
+          {lensState.lens === 'temp' && tempC !== undefined ? (
+            <span style={{ color: THEME.lensTemp, marginLeft: 5 }}>{tempC.toFixed(1)} °C</span>
+          ) : null}
+          {lensState.lens === 'energy' && energyW !== undefined && energyW > 0 ? (
+            <span style={{ color: THEME.lensEnergy, marginLeft: 5 }}>
+              {formatEng(energyW, 'W')}
+            </span>
+          ) : null}
+          {lensState.lens === 'field' && coilField !== undefined ? (
+            <span style={{ color: THEME.lensField, marginLeft: 5 }}>
+              {coilField < 1 ? `${(coilField * 1000).toFixed(0)} mT` : `${coilField.toFixed(2)} T`}
+            </span>
+          ) : null}
+          {health?.failed ? (
+            <span title={health.note} style={{ marginLeft: 5 }}>
+              💥
+            </span>
+          ) : null}
+        </div>
+      )}
     </div>
   )
 }

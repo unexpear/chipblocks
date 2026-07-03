@@ -28,6 +28,15 @@ describe('classifyCanvas — the first-class dispatch decision', () => {
   test('logic tags + a real analog load → mixed', () => {
     expect(classifyCanvas([node('g', 'block', 'logic'), node('led', 'led')])).toBe('mixed')
   })
+  test('a text note is pure annotation — it never flips a logic canvas to mixed', () => {
+    expect(
+      classifyCanvas([
+        node('g', 'block', 'logic'),
+        node('vdd', 'power_source'),
+        node('n', 'text_note'),
+      ]),
+    ).toBe('logic')
+  })
 })
 
 describe('findBridges — the digital↔analog boundary primitive', () => {

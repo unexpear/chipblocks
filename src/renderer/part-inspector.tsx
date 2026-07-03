@@ -825,6 +825,21 @@ export function PartInspector({
               </label>
             )
           }
+          // The text note's content — multi-line, edited here like every other part value.
+          if (key === 'note_text') {
+            return (
+              <label key={`${selected.id}:${key}`} style={{ ...row, alignItems: 'flex-start' }}>
+                <span style={{ color: THEME.textSoft }}>Text</span>
+                <textarea
+                  value={String(param.value ?? '')}
+                  onChange={(e) => onEnum('note_text', e.target.value)}
+                  className="nodrag"
+                  rows={4}
+                  style={{ ...field, maxWidth: 148, resize: 'vertical', fontFamily: 'inherit' }}
+                />
+              </label>
+            )
+          }
           return (
             <div key={`${selected.id}:${key}`} style={row}>
               <span style={{ color: THEME.textSoft }}>{humanize(key)}</span>

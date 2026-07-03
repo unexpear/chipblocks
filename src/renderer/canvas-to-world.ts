@@ -67,6 +67,8 @@ export function canvasToWorld(nodes: CanvasNode[], edges: CanvasEdge[]): World {
     // carries no current. The casting pre-pass reads it from the canvas nodes
     // (positions + intensity); it never enters the circuit world.
     if (node.definition === 'light_source') continue
+    // A text note is pure annotation — no terminals, nothing electrical to stamp.
+    if (node.definition === 'text_note') continue
     // A net label: record it as an endpoint, and its (trimmed) name as the teleport key.
     if (node.definition === 'net_label') {
       netLabels.add(node.id)

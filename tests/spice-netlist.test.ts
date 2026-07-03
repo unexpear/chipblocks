@@ -228,6 +228,27 @@ describe('serializeSpiceNetlist — canvas → netlist', () => {
     expect(/R1 .*220/.test(result.netlist)).toBe(true) // the resistor still exports
   })
 
+  test('a text note exports as a SPICE comment, not an unsupported element', () => {
+    const circuit: CircuitFile = {
+      format: CIRCUIT_FILE_FORMAT,
+      version: CIRCUIT_FILE_VERSION,
+      nodes: [
+        {
+          id: 'text_note_1',
+          definition: 'text_note',
+          x: 0,
+          y: 0,
+          parameters: { note_text: { value: 'hand-wound coil\nsee datasheet' } },
+        },
+      ],
+      wires: [],
+    }
+    const result = serializeSpiceNetlist(circuit)
+    expect(result.unsupported).toHaveLength(0)
+    expect(result.netlist).toContain('* note: hand-wound coil')
+    expect(result.netlist).toContain('* note: see datasheet')
+  })
+
   test('a diode exports with a re-importable model', () => {
     const circuit: CircuitFile = {
       format: CIRCUIT_FILE_FORMAT,

@@ -172,6 +172,7 @@ export const PARTS: { definition: string; label: string }[] = [
   { definition: 'relay', label: 'Relay' },
   { definition: 'ground', label: 'Ground' },
   { definition: 'net_label', label: 'Net Label' },
+  { definition: 'text_note', label: 'Text note' },
 ]
 
 export function PaletteItems({ filter }: { filter?: string }) {
