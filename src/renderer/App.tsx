@@ -32,7 +32,6 @@ import {
   useState,
 } from 'react'
 import type { Instance } from '../cross-fk-validator.ts'
-import { fuseIsIntact, switchIsClosed } from '../dc-solver.ts'
 import { solveTransientThermal } from '../electro-thermal.ts'
 import { overcurrentFuseIds } from '../failure-detector.ts'
 import { readScalarParam } from '../instance-params.ts'
@@ -40,7 +39,6 @@ import { LIGHT_SENSOR_DEFINITIONS, worldWithCastLight } from '../light.ts'
 import { solveWithRelays } from '../relay.ts'
 import { analyzeTiming } from '../static-timing.ts'
 import { STANDARD_AMBIENT_C } from '../thermal-model.ts'
-import type { TransientResult } from '../transient-solver.ts'
 import { type AddableTerminal, BlockInspector, type BlockPortPatch } from './block-inspector.tsx'
 import { BlockViewer } from './block-viewer.tsx'
 import {
@@ -84,7 +82,6 @@ import { ClipboardPanel } from './clipboard-panel.tsx'
 import { ContextMenu } from './context-menu.tsx'
 import { CoordinateAxes } from './coordinate-axes.tsx'
 import { DockablePanel, type TabDropTarget } from './dockable-panel.tsx'
-import { computeFront } from './front-propagation.ts'
 import {
   CrtScreenContext,
   type CrtScreenData,
@@ -115,7 +112,6 @@ import {
   edgeTypes,
   FrameEdgeContext,
   FrontContext,
-  type FrontState,
   GlobalRoutesContext,
   PartBoxesContext,
   type Point,
@@ -158,7 +154,7 @@ import { DEFAULT_SHEET, SheetFrame, type SheetSettings } from './sheet-frame.tsx
 import { parseSpiceNetlist, serializeSpiceNetlist } from './spice-netlist.ts'
 import { type DeviceNodeData, type Fidelity, nodeTypes, terminalsOf } from './symbols.tsx'
 import { tileRow } from './tiling.ts'
-import { clampIndex, frameEdgeValues, frameLensRange } from './timeline.ts'
+import { frameLensRange } from './timeline.ts'
 import { TimelinePanel } from './timeline-panel.tsx'
 import {
   flipFlopTiming,
@@ -176,6 +172,7 @@ import { useMultimeter } from './use-multimeter.ts'
 import { useOscilloscope } from './use-oscilloscope.ts'
 import { useSelectionGestures } from './use-selection-gestures.ts'
 import { useShortcuts } from './use-shortcuts.tsx'
+import { useTimeline } from './use-timeline.ts'
 import { useWireTool } from './use-wire-tool.ts'
 import {
   findWireCrossings,
@@ -676,6 +673,15 @@ function Canvas({ project }: { project: ProjectChoice }) {
     windowSec: number
     refusal: string | null
   } | null>(null)
+  const timelineRef = useRef<{
+    open: boolean
+    index: number
+    frontMode: boolean
+    status: string | null
+    frames: number
+    frameEdges: number | null
+    frontActive: boolean
+  } | null>(null)
   const meterRef = useRef<{
     redProbe: { nodeId: string; handleId: string } | undefined
     blackProbe: { nodeId: string; handleId: string } | undefined
@@ -1137,13 +1143,31 @@ function Canvas({ project }: { project: ProjectChoice }) {
     }
     return m
   }, [crtTraces])
-  // Timeline playback (Sprint 22): the panel open + the playhead's position in the
-  // scope's transient record (a possibly-fractional index while playing).
-  const [timelineOpen, setTimelineOpen] = useState(false)
-  const [timelineIndex, setTimelineIndex] = useState(0)
-  const [timelineResult, setTimelineResult] = useState<TransientResult | null>(null)
-  // Travelling-charge front (Sprint 22): the spatial-propagation view toggle.
-  const [frontMode, setFrontMode] = useState(false)
+  // Timeline playback + the travelling-charge front (Sprint 22) live in useTimeline now: the panel
+  // state, the played-back frame → per-wire values, the spatial turn-on wave, and the live-re-run
+  // effect. Its couplings — the nodes/wires, the warm solved world, and the project ambient — are
+  // injected; destructured to the same names the wires' contexts, the lens range, the toolbar, and
+  // the panel already use. crtTraces + lensState stay in App (shared with the scope / broader canvas).
+  const {
+    timelineOpen,
+    setTimelineOpen,
+    timelineIndex,
+    setTimelineIndex,
+    frontMode,
+    setFrontMode,
+    frameEdges,
+    frontState,
+    displayResult,
+  } = useTimeline({ nodes, edges, solvedWorld, projectAmbientRef })
+  timelineRef.current = {
+    open: timelineOpen,
+    index: timelineIndex,
+    frontMode,
+    status: displayResult?.status ?? null,
+    frames: displayResult?.series.length ?? 0,
+    frameEdges: frameEdges?.size ?? null,
+    frontActive: frontState !== null,
+  }
 
   // Math panel (S19-v3-63): the equations behind the current solution, derived
   // live from the same solved state the canvas shows.
@@ -1277,107 +1301,6 @@ function Canvas({ project }: { project: ProjectChoice }) {
     setFlow(next)
     if (next) setLens('none')
   }, [])
-  // Timeline playback (Sprint 22): the wire endpoints' nets, built once from the solved
-  // world, let a played-back frame be turned into per-wire flow + voltage.
-  const wireNets = useMemo(() => {
-    const map = new Map<string, { netA: string | undefined; netB: string | undefined }>()
-    for (const inst of solvedWorld.instances.values()) {
-      if (!inst.id.startsWith('wire_')) continue
-      const netA = inst.connects?.find((c) => c.terminal === 'terminal_a')?.net
-      const netB = inst.connects?.find((c) => c.terminal === 'terminal_b')?.net
-      map.set(inst.id.slice('wire_'.length), { netA, netB })
-    }
-    return map
-  }, [solvedWorld])
-  // The played-back instant: a point in the scope's transient record chosen by the playhead.
-  // null = timeline closed, so the canvas shows the steady solve.
-  const playbackFrame = useMemo(() => {
-    if (!timelineOpen || frontMode || timelineResult === null || timelineResult.status !== 'solved')
-      return null
-    const series = timelineResult.series
-    if (series.length === 0) return null
-    return series[clampIndex(timelineIndex, series.length)] ?? null
-  }, [timelineOpen, frontMode, timelineResult, timelineIndex])
-  // Per-wire display values at that instant — fed to the wires (FrameEdgeContext) and the
-  // lens range below, so flow + voltage follow the playhead without the physics re-solving.
-  const frameEdges = useMemo(
-    () => (playbackFrame ? frameEdgeValues(playbackFrame, edges, wireNets) : null),
-    [playbackFrame, edges, wireNets],
-  )
-  // Travelling-charge front (Sprint 22): the spatial turn-on wave. From the wire lengths + the
-  // net graph (a part bridges its terminals instantly), out from the source nets — WHEN the
-  // front first reaches every net + how it sweeps each wire.
-  const frontData = useMemo(() => {
-    const wires = edges.map((e) => ({
-      id: e.id,
-      netA: wireNets.get(e.id)?.netA,
-      netB: wireNets.get(e.id)?.netB,
-      lengthM: typeof e.data?.lengthM === 'number' ? e.data.lengthM : 0,
-    }))
-    const bridges: string[][] = []
-    const sourceNets: string[] = []
-    for (const inst of solvedWorld.instances.values()) {
-      if (inst.id.startsWith('wire_')) continue
-      const nets = (inst.connects ?? [])
-        .map((c) => c.net)
-        .filter((n): n is string => typeof n === 'string')
-      if (inst.definition === 'power_source') {
-        sourceNets.push(...nets)
-        continue
-      }
-      // An open switch or a blown fuse stops the wave — those terminals don't bridge.
-      const openSwitch =
-        (inst.definition === 'switch_spst_toggle' || inst.definition === 'switch_spst_momentary') &&
-        !switchIsClosed(inst)
-      const blownFuse = inst.definition === 'fuse' && !fuseIsIntact(inst)
-      if (!openSwitch && !blownFuse && nets.length >= 2) bridges.push(nets)
-    }
-    const result = computeFront({ wires, bridges, sourceNets })
-    // Each part's first-arrival = the earliest the front reaches any of its terminals.
-    const partArrival = new Map<string, number>()
-    for (const inst of solvedWorld.instances.values()) {
-      if (inst.id.startsWith('wire_')) continue
-      let earliest = Number.POSITIVE_INFINITY
-      for (const connect of inst.connects ?? []) {
-        const a = result.arrival.get(connect.net)
-        if (a !== undefined && a < earliest) earliest = a
-      }
-      partArrival.set(inst.id, earliest)
-    }
-    return { result, partArrival }
-  }, [edges, wireNets, solvedWorld])
-  // The front plays like a transient — a synthetic series of instants from 0 to the last
-  // arrival — so the timeline panel's play / scrub / step drive it with no new controls.
-  const frontSeries = useMemo<TransientResult>(() => {
-    const max = frontData.result.maxTime
-    if (!(max > 0)) {
-      return {
-        status: 'no-ground',
-        series: [],
-        ground: undefined,
-        warnings: ['No source to send a front from — drop a battery and wire it up.'],
-      }
-    }
-    const frames = 240
-    const series = Array.from({ length: frames }, (_, k) => ({
-      time: (k / (frames - 1)) * max,
-      nodes: new Map<string, number>(),
-      currents: new Map<string, number>(),
-    }))
-    return { status: 'solved', series, ground: undefined, warnings: [] }
-  }, [frontData])
-  // The front-time the playhead sits at (null when not in front mode) — drives the wire sweep.
-  const frontState = useMemo<FrontState | null>(() => {
-    if (!frontMode || !timelineOpen || frontSeries.series.length === 0) return null
-    const point = frontSeries.series[clampIndex(timelineIndex, frontSeries.series.length)]
-    return {
-      time: point?.time ?? 0,
-      wires: frontData.result.wires,
-      partArrival: frontData.partArrival,
-    }
-  }, [frontMode, timelineOpen, timelineIndex, frontSeries, frontData])
-  // The panel plays the transient normally, or the front sweep when front mode is on.
-  const displayResult = frontMode ? frontSeries : timelineResult
   const lensState = useMemo(() => {
     let vMin = Number.POSITIVE_INFINITY
     let vMax = Number.NEGATIVE_INFINITY
@@ -1444,36 +1367,6 @@ function Canvas({ project }: { project: ProjectChoice }) {
       coilFieldTesla,
     }
   }, [edges, readings, lens, flow, frameEdges])
-
-  // The timeline runs its OWN transient record — independent of the scope, so opening the
-  // timeline never pops the scope open (or leaves it lingering when closed). Same physics
-  // and honest-sampling guard; it plays the whole record, so it uses the auto window.
-  const runTimeline = useCallback(() => {
-    const { sources, positions } = lightCastInputs(nodes)
-    const world = groundedComponent(
-      worldWithCastLight(canvasWorld(nodes, edges).world, positions, sources),
-    )
-    const auto = scopeWindow(world)
-    const fastestHz = fastestSourceHz(world)
-    const steps = scopeRecordSteps(auto.duration * 3, fastestHz)
-    if (steps === 'span-too-wide') {
-      setTimelineResult(null)
-      return
-    }
-    const thermal = solveTransientThermal(world, {
-      timeStep: (auto.duration * 3) / steps,
-      duration: auto.duration * 3,
-      projectAmbientC: projectAmbientRef.current,
-    })
-    setTimelineResult({
-      ...thermal.result,
-      warnings: [...thermal.result.warnings, ...thermal.warnings],
-    })
-  }, [nodes, edges])
-  // While the timeline is open it follows the circuit live: any edit re-runs the record.
-  useEffect(() => {
-    if (timelineOpen) runTimeline()
-  }, [timelineOpen, runTimeline])
 
   // Bode output picking: while the Bode panel is in "pick" mode, a terminal click on the
   // canvas sets the output node (resolved through the same grounded world the sweep uses),
@@ -3600,6 +3493,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
       },
       scopeState() {
         return scopeRef.current
+      },
+      timelineState() {
+        return timelineRef.current
       },
       meterState() {
         const m = meterRef.current
