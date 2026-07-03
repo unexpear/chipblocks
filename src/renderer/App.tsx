@@ -137,7 +137,7 @@ import {
 import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { PartPicker } from './part-picker.tsx'
 import { buildCrtTraces, type CrtSpot } from './part-readings.ts'
-import { deriveBoard } from './pcb-board.ts'
+import { computeRatsnest, deriveBoard, offBoardPins } from './pcb-board.ts'
 import { PcbView } from './pcb-view.tsx'
 import { canvasWorld } from './pipeline/canvas-world.ts'
 import {
@@ -1177,6 +1177,26 @@ function Canvas({ project }: { project: ProjectChoice }) {
         nodes.map((n) => ({ id: n.id, definition: (n.data as DeviceNodeData).definition })),
       ),
     [nodes],
+  )
+  // The ratsnest: the unrouted pad-to-pad connections the board owes, read from the SAME
+  // canvas→world nets the solver uses (grounds + named rails merge exactly like they solve).
+  // Only derived while the panel is open — the world walk isn't free on big canvases.
+  const pcbRatsnest = useMemo(
+    () => (pcbOpen ? computeRatsnest(canvasWorld(nodes, edges).world, pcbBoard) : { airwires: [] }),
+    [pcbOpen, nodes, edges, pcbBoard],
+  )
+  // The header's "wired pins not on the board" count reads the UN-flattened schematic — the pins the
+  // user actually drew — never the expanded world (whose pack/block internals a user can't point at).
+  const pcbOffBoard = useMemo(
+    () =>
+      pcbOpen
+        ? offBoardPins(
+            nodes.map((n) => ({ id: n.id, definition: (n.data as DeviceNodeData).definition })),
+            edges,
+            pcbBoard,
+          )
+        : 0,
+    [pcbOpen, nodes, edges, pcbBoard],
   )
   // The Bode (frequency-response) tool — its panel state, the grounded world the AC sweep runs on,
   // and the output-picking click handler live in useBode now; its couplings (the warm solved world,
@@ -6010,6 +6030,17 @@ function Canvas({ project }: { project: ProjectChoice }) {
                     {pcbBoard.placements.length} part
                     {pcbBoard.placements.length === 1 ? '' : 's'} placed ·{' '}
                     {pcbBoard.outline.w.toFixed(1)} × {pcbBoard.outline.h.toFixed(1)} mm board
+                    {pcbRatsnest.airwires.length > 0 &&
+                      ` · ${pcbRatsnest.airwires.length} unrouted connection${
+                        pcbRatsnest.airwires.length === 1 ? '' : 's'
+                      }`}
+                    {pcbOffBoard > 0 && (
+                      <span style={{ color: THEME.textFaint }}>
+                        {' '}
+                        · {pcbOffBoard} wired pin{pcbOffBoard === 1 ? '' : 's'} not on the board yet
+                        (no footprint)
+                      </span>
+                    )}
                   </span>
                   <button
                     type="button"
@@ -6028,7 +6059,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                   </button>
                 </div>
                 {pcbBoard.placements.length > 0 ? (
-                  <PcbView board={pcbBoard} pxPerMm={12} />
+                  <PcbView board={pcbBoard} airwires={pcbRatsnest.airwires} pxPerMm={12} />
                 ) : (
                   <div style={{ fontSize: 12, color: THEME.textFaint, maxWidth: 320 }}>
                     No parts have a footprint yet — drop a resistor, capacitor, thermistor or

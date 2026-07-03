@@ -39,3 +39,23 @@ export function footprintOptions(definition: string): Footprint[] {
     .map((id) => BUILTIN_FOOTPRINTS[id])
     .filter((f): f is Footprint => f !== undefined)
 }
+
+/**
+ * Which copper pad each schematic terminal solders to — the pin-level half of the schematic→board
+ * join (the part-level half is PART_FOOTPRINTS). Keyed by the canvas handle id (`terminal_a` …), the
+ * value is the footprint pad id ('1', '2' …). For the symmetric 2-terminal chips the a→1 / b→2
+ * orientation is arbitrary electrically but fixed here so the ratsnest and (later) the router are
+ * deterministic — and it matches the KiCad-import convention (kicad-schematic.ts maps pin 1 →
+ * terminal_a for 2-terminal parts), so a round-tripped schematic lands on the same pads.
+ */
+export const TERMINAL_PADS: Record<string, Record<string, string>> = {
+  resistor: { terminal_a: '1', terminal_b: '2' },
+  capacitor: { terminal_a: '1', terminal_b: '2' },
+  thermistor: { terminal_a: '1', terminal_b: '2' },
+  inductor: { terminal_a: '1', terminal_b: '2' },
+}
+
+/** The pad a part's terminal solders to; undefined when the part or terminal isn't mapped (honest). */
+export function padForTerminal(definition: string, handleId: string): string | undefined {
+  return TERMINAL_PADS[definition]?.[handleId]
+}

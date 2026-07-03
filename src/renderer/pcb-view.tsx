@@ -1,5 +1,5 @@
 import type { Pad } from './footprint.ts'
-import { type Board, footprintByPlacement } from './pcb-board.ts'
+import { type Airwire, type Board, footprintByPlacement } from './pcb-board.ts'
 
 /**
  * The PCB view — draws a board and the footprints placed on it, the physical counterpart to the
@@ -17,6 +17,7 @@ const HOLE = '#06180f' // a drilled hole shows through to the dark substrate
 const SILK = '#e8eaed'
 const COURTYARD = '#7fe3b0'
 const PART_INK = '#dfeee6'
+const AIRWIRE = '#f5f0dc' // thin pale ratsnest lines, the EDA convention
 
 function padShape(p: Pad, scale: number, key: string) {
   const w = p.size.w * scale
@@ -64,10 +65,13 @@ function padShape(p: Pad, scale: number, key: string) {
 
 export function PcbView({
   board,
+  airwires = [],
   pxPerMm = 12,
   paddingMm = 3,
 }: {
   board: Board
+  /** Unrouted connections (the ratsnest) — drawn as thin straight lines pad-to-pad. */
+  airwires?: Airwire[]
   pxPerMm?: number
   paddingMm?: number
 }) {
@@ -121,10 +125,10 @@ export function PcbView({
               strokeDasharray="3 2"
               opacity={0.35}
             />
-            {fp.pads.map((p, i) => padShape(p, pxPerMm, `${pl.partId}-p${i}`))}
-            {fp.silkscreen.map((s, i) => (
+            {fp.pads.map((p) => padShape(p, pxPerMm, `${pl.partId}-p${p.id}`))}
+            {fp.silkscreen.map((s) => (
               <line
-                key={`${pl.partId}-s${i}`}
+                key={`${pl.partId}-s${s.from.x},${s.from.y},${s.to.x},${s.to.y}`}
                 x1={s.from.x * pxPerMm}
                 y1={s.from.y * pxPerMm}
                 x2={s.to.x * pxPerMm}
@@ -148,6 +152,21 @@ export function PcbView({
           </g>
         )
       })}
+
+      {/* the ratsnest: every copper connection the board still owes, straight pad-to-pad */}
+      {airwires.map((a) => (
+        <line
+          key={`aw${a.from.x},${a.from.y}-${a.to.x},${a.to.y}`}
+          x1={sx(a.from.x)}
+          y1={sy(a.from.y)}
+          x2={sx(a.to.x)}
+          y2={sy(a.to.y)}
+          stroke={AIRWIRE}
+          strokeWidth={1}
+          opacity={0.75}
+          data-airwire="true"
+        />
+      ))}
     </svg>
   )
 }
