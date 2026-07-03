@@ -144,6 +144,7 @@ import {
   type PlacementOverride,
   type Rotation,
 } from './pcb-board.ts'
+import { runDrc } from './pcb-drc.ts'
 import { routeBoard } from './pcb-route.ts'
 import { PcbView } from './pcb-view.tsx'
 import { canvasWorld } from './pipeline/canvas-world.ts'
@@ -1250,6 +1251,11 @@ function Canvas({ project }: { project: ProjectChoice }) {
   const pcbRouting = useMemo(
     () => (pcbOpen ? routeBoard(pcbRatsnest) : { traces: [], unrouted: [] }),
     [pcbOpen, pcbRatsnest],
+  )
+  // Design-rule check — the board's failure-mode pass (cited limits), re-run live like the routing.
+  const pcbDrc = useMemo(
+    () => (pcbOpen ? runDrc(pcbBoard, pcbRatsnest, pcbRouting) : []),
+    [pcbOpen, pcbBoard, pcbRatsnest, pcbRouting],
   )
   // The header's "wired pins not on the board" count reads the UN-flattened schematic — the pins the
   // user actually drew — never the expanded world (whose pack/block internals a user can't point at).
@@ -6107,6 +6113,15 @@ function Canvas({ project }: { project: ProjectChoice }) {
                         (no footprint)
                       </span>
                     )}
+                    {pcbBoard.placements.length > 0 &&
+                      (pcbDrc.length > 0 ? (
+                        <span style={{ color: THEME.statusDanger }}>
+                          {' '}
+                          · DRC: {pcbDrc.length} violation{pcbDrc.length === 1 ? '' : 's'}
+                        </span>
+                      ) : (
+                        <span style={{ color: THEME.statusOk }}> · DRC clean</span>
+                      ))}
                   </span>
                   <button
                     type="button"
@@ -6130,10 +6145,29 @@ function Canvas({ project }: { project: ProjectChoice }) {
                       board={pcbBoard}
                       airwires={pcbRouting.unrouted}
                       traces={pcbRouting.traces}
+                      markers={pcbDrc.map((v) => v.at)}
                       pxPerMm={12}
                       onMove={onPcbMove}
                       onRotate={onPcbRotate}
                     />
+                    {pcbDrc.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {pcbDrc.slice(0, 8).map((v) => (
+                          <span
+                            key={`${v.code}:${v.at.x},${v.at.y}:${v.message}`}
+                            style={{ fontSize: 11, color: THEME.statusDanger }}
+                          >
+                            ⚠ {v.code}: {v.message} — at ({v.at.x.toFixed(1)}, {v.at.y.toFixed(1)})
+                            mm
+                          </span>
+                        ))}
+                        {pcbDrc.length > 8 && (
+                          <span style={{ fontSize: 11, color: THEME.textFaint }}>
+                            … and {pcbDrc.length - 8} more
+                          </span>
+                        )}
+                      </div>
+                    )}
                     <span style={{ fontSize: 11, color: THEME.textFaint }}>
                       drag a part to move it · click to select, R to rotate
                     </span>

@@ -155,19 +155,37 @@ export function routeBoard(
   return { traces, unrouted }
 }
 
+export type ClearanceViolation = {
+  kind: 'trace-trace' | 'trace-pad' | 'pad-pad'
+  netA: string
+  netB: string
+  /** Where the copper comes too close, in board mm — the centre of the offending overlap. */
+  at: Pt
+}
+
+/** The midpoint of the part of segment a→b that lies inside the zone (callers guarantee it hits). */
+const overlapMidpoint = (a: Pt, b: Pt, zone: Box): Pt => {
+  const xLo = Math.max(Math.min(a.x, b.x), zone.x)
+  const xHi = Math.min(Math.max(a.x, b.x), zone.x + zone.w)
+  const yLo = Math.max(Math.min(a.y, b.y), zone.y)
+  const yHi = Math.min(Math.max(a.y, b.y), zone.y + zone.h)
+  return { x: (xLo + xHi) / 2, y: (yLo + yHi) / 2 }
+}
+
 /**
  * The clearance audit — every place two different nets' copper comes closer than the class allows:
- * trace centrelines vs each other and vs pad copper. Used by the tests to prove the router's output
- * legal, and the seed of the DRC pass to come (which will run it over hand-edits too). A tiny epsilon
- * keeps exactly-at-clearance copper (flush routes the router legally emits) from being flagged.
+ * trace centrelines vs each other, vs pad copper, and pad copper vs pad copper (parts dragged onto
+ * each other). Each violation carries WHERE, so the board can mark it. Used by the tests to prove
+ * the router's output legal, and by the DRC pass. A tiny epsilon keeps exactly-at-clearance copper
+ * (flush routes the router legally emits) from being flagged.
  */
 export function clearanceViolations(
   routing: BoardRouting,
   padBoxes: readonly PadBox[],
   cls: RouteClass = DEFAULT_ROUTE_CLASS,
-): { kind: 'trace-trace' | 'trace-pad'; netA: string; netB: string }[] {
+): ClearanceViolation[] {
   const epsilon = 1e-9
-  const out: { kind: 'trace-trace' | 'trace-pad'; netA: string; netB: string }[] = []
+  const out: ClearanceViolation[] = []
   const traces = routing.traces
   for (let i = 0; i < traces.length; i++) {
     const t = traces[i] as CopperTrace
@@ -179,7 +197,12 @@ export function clearanceViolations(
         if (pad.net === t.net) continue
         const zone = inflate(pad, cls.clearanceMm + t.widthMm / 2 - epsilon)
         if (segmentHitsBox(a, b, zone)) {
-          out.push({ kind: 'trace-pad', netA: t.net, netB: pad.net })
+          out.push({
+            kind: 'trace-pad',
+            netA: t.net,
+            netB: pad.net,
+            at: overlapMidpoint(a, b, zone),
+          })
         }
       }
       // vs other traces (later ones only — each pair once)
@@ -193,9 +216,35 @@ export function clearanceViolations(
             u.widthMm / 2 + cls.clearanceMm + t.widthMm / 2 - epsilon,
           )
           if (segmentHitsBox(a, b, zone)) {
-            out.push({ kind: 'trace-trace', netA: t.net, netB: u.net })
+            out.push({
+              kind: 'trace-trace',
+              netA: t.net,
+              netB: u.net,
+              at: overlapMidpoint(a, b, zone),
+            })
           }
         }
+      }
+    }
+  }
+  // pad copper vs pad copper — different nets' pads closer than the clearance (stacked parts)
+  for (let i = 0; i < padBoxes.length; i++) {
+    const p = padBoxes[i] as PadBox
+    for (let j = i + 1; j < padBoxes.length; j++) {
+      const q = padBoxes[j] as PadBox
+      if (p.net === q.net) continue
+      const zone = inflate(p, cls.clearanceMm - epsilon)
+      const xLo = Math.max(zone.x, q.x)
+      const xHi = Math.min(zone.x + zone.w, q.x + q.w)
+      const yLo = Math.max(zone.y, q.y)
+      const yHi = Math.min(zone.y + zone.h, q.y + q.h)
+      if (xLo < xHi && yLo < yHi) {
+        out.push({
+          kind: 'pad-pad',
+          netA: p.net,
+          netB: q.net,
+          at: { x: (xLo + xHi) / 2, y: (yLo + yHi) / 2 },
+        })
       }
     }
   }

@@ -211,7 +211,12 @@ describe('routeBoard', () => {
     const routing = routeBoard(rn)
     expect(routing.traces.length + routing.unrouted.length).toBe(rn.airwires.length)
     expect(routing.unrouted.length).toBeGreaterThan(0)
-    // and whatever DID route is still legal
-    expect(clearanceViolations(routing, rn.padBoxes)).toEqual([])
+    // whatever DID route is still legal copper. (The stacked PADS themselves are a pad-pad
+    // clearance violation — that's the DRC's finding about the placement, not the router's output.)
+    const traceViolations = clearanceViolations(routing, rn.padBoxes).filter(
+      (v) => v.kind !== 'pad-pad',
+    )
+    expect(traceViolations).toEqual([])
+    expect(clearanceViolations(routing, rn.padBoxes).some((v) => v.kind === 'pad-pad')).toBe(true)
   })
 })

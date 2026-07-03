@@ -1,0 +1,201 @@
+import type { FootprintProvenance } from './footprint.ts'
+import {
+  type Board,
+  footprintByPlacement,
+  type Placement,
+  placePoint,
+  type Ratsnest,
+} from './pcb-board.ts'
+import {
+  type BoardRouting,
+  clearanceViolations,
+  DEFAULT_ROUTE_CLASS,
+  type RouteClass,
+} from './pcb-route.ts'
+
+/**
+ * Design-rule checking — the board's failure-mode checks, mirroring what the schematic side already
+ * has. Each rule carries a CITED limit (the anti-placeholder rule applies to manufacturing rules
+ * exactly like it does to physics values): violating copper clearance shorts nets, overlapping
+ * courtyards means two parts physically collide at assembly, and copper closer than 0.3 mm to the
+ * board edge gets torn by the mill's ±0.2 mm tolerance. Violations say WHERE (board mm), so the
+ * board marks them; nothing is auto-"fixed" silently — the user sees exactly what a fab's DRC would
+ * reject. This is the last gate before the Gerber export can be trusted.
+ */
+
+export type DrcCode = 'copper-clearance' | 'courtyard-overlap' | 'edge-clearance' | 'track-width'
+
+export type DrcViolation = {
+  code: DrcCode
+  message: string
+  /** Where on the board, in mm — the marker position. */
+  at: { x: number; y: number }
+}
+
+/** The cited limit behind each rule (copper clearance lives on the RouteClass itself). */
+export const DRC_RULES: Record<
+  Exclude<DrcCode, 'copper-clearance'>,
+  { limitMm: number; provenance: FootprintProvenance }
+> = {
+  'courtyard-overlap': {
+    limitMm: 0,
+    provenance: {
+      source_type: 'standard',
+      title: 'IPC-7351 courtyard — the smallest keep-out providing minimum assembly clearance',
+      citation:
+        'IPC-7351B courtyard excess concept, as carried by every shipped footprint (courtyard geometry verbatim from the KiCad footprint library): two courtyards overlapping means two parts physically collide at assembly',
+      confidence: 'high',
+      url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
+    },
+  },
+  'edge-clearance': {
+    limitMm: 0.3,
+    provenance: {
+      source_type: 'reference',
+      title: 'JLCPCB PCB capabilities — copper to board edge ≥ 0.3 mm',
+      citation:
+        'JLCPCB manufacturing capabilities: minimum trace/copper to board-outline clearance 0.3 mm (routed edge; milling tolerance ±0.2 mm)',
+      confidence: 'high',
+      url: 'https://jlcpcb.com/capabilities/pcb-capabilities',
+      date_accessed: '2026-07-04',
+    },
+  },
+  'track-width': {
+    limitMm: 0.2,
+    provenance: {
+      source_type: 'reference',
+      title: 'KiCad board rules — minimum track width 0.2 mm',
+      citation:
+        'KiCad 10 project templates (board.design_settings.rules.min_track_width = 0.2), consistent across the templates on the installed KiCad 10.0; matches common fab standard capability',
+      confidence: 'high',
+      url: 'https://gitlab.com/kicad/code/kicad',
+    },
+  },
+}
+
+/** A placement's courtyard as a board-space box (corners turned with the part, then min/maxed). */
+function courtyardBox(pl: Placement): { x: number; y: number; w: number; h: number } | undefined {
+  const fp = footprintByPlacement(pl)
+  if (fp === undefined) return undefined
+  const c = fp.courtyard
+  const corners = [
+    placePoint(pl, { x: c.x, y: c.y }),
+    placePoint(pl, { x: c.x + c.w, y: c.y }),
+    placePoint(pl, { x: c.x + c.w, y: c.y + c.h }),
+    placePoint(pl, { x: c.x, y: c.y + c.h }),
+  ]
+  const xs = corners.map((p) => p.x)
+  const ys = corners.map((p) => p.y)
+  const x0 = Math.min(...xs)
+  const y0 = Math.min(...ys)
+  return { x: x0, y: y0, w: Math.max(...xs) - x0, h: Math.max(...ys) - y0 }
+}
+
+const fmt = (v: number) => (Math.round(v * 100) / 100).toString()
+
+/** Every copper rectangle on the board (pads as-is; trace segments at their real width). */
+function copperBoxes(
+  ratsnest: Ratsnest,
+  routing: BoardRouting,
+): { x: number; y: number; w: number; h: number; what: string }[] {
+  const out: { x: number; y: number; w: number; h: number; what: string }[] = []
+  for (const pad of ratsnest.padBoxes) {
+    out.push({ x: pad.x, y: pad.y, w: pad.w, h: pad.h, what: `a pad (${pad.net})` })
+  }
+  for (const t of routing.traces) {
+    for (let i = 0; i < t.points.length - 1; i++) {
+      const a = t.points[i]
+      const b = t.points[i + 1]
+      if (a === undefined || b === undefined) continue
+      const half = t.widthMm / 2
+      const x0 = Math.min(a.x, b.x) - half
+      const y0 = Math.min(a.y, b.y) - half
+      out.push({
+        x: x0,
+        y: y0,
+        w: Math.abs(b.x - a.x) + t.widthMm,
+        h: Math.abs(b.y - a.y) + t.widthMm,
+        what: `a trace (${t.net})`,
+      })
+    }
+  }
+  return out
+}
+
+/**
+ * Run every board rule and report each violation with its spot. Pure — the same inputs the panel
+ * already derives (board, ratsnest, routing) in, a flat list out.
+ */
+export function runDrc(
+  board: Board,
+  ratsnest: Ratsnest,
+  routing: BoardRouting,
+  cls: RouteClass = DEFAULT_ROUTE_CLASS,
+): DrcViolation[] {
+  const out: DrcViolation[] = []
+
+  // Copper-to-copper clearance (traces + pads, cross-net) — the audit the router itself honours.
+  for (const v of clearanceViolations(routing, ratsnest.padBoxes, cls)) {
+    out.push({
+      code: 'copper-clearance',
+      message: `${v.kind === 'pad-pad' ? 'pads' : v.kind === 'trace-trace' ? 'traces' : 'trace and pad'} of two nets closer than ${fmt(cls.clearanceMm)} mm`,
+      at: v.at,
+    })
+  }
+
+  // Courtyard overlap — two parts physically colliding at assembly.
+  for (let i = 0; i < board.placements.length; i++) {
+    const a = board.placements[i]
+    const boxA = a === undefined ? undefined : courtyardBox(a)
+    if (a === undefined || boxA === undefined) continue
+    for (let j = i + 1; j < board.placements.length; j++) {
+      const b = board.placements[j]
+      const boxB = b === undefined ? undefined : courtyardBox(b)
+      if (b === undefined || boxB === undefined) continue
+      const xLo = Math.max(boxA.x, boxB.x)
+      const xHi = Math.min(boxA.x + boxA.w, boxB.x + boxB.w)
+      const yLo = Math.max(boxA.y, boxB.y)
+      const yHi = Math.min(boxA.y + boxA.h, boxB.y + boxB.h)
+      if (xLo < xHi && yLo < yHi) {
+        out.push({
+          code: 'courtyard-overlap',
+          message: `${a.partId} and ${b.partId} collide — their courtyards overlap`,
+          at: { x: (xLo + xHi) / 2, y: (yLo + yHi) / 2 },
+        })
+      }
+    }
+  }
+
+  // Copper to board edge — the mill tears copper closer than the limit.
+  const edge = DRC_RULES['edge-clearance'].limitMm
+  const o = board.outline
+  for (const c of copperBoxes(ratsnest, routing)) {
+    const tooClose =
+      c.x < o.x + edge ||
+      c.y < o.y + edge ||
+      c.x + c.w > o.x + o.w - edge ||
+      c.y + c.h > o.y + o.h - edge
+    if (tooClose) {
+      out.push({
+        code: 'edge-clearance',
+        message: `${c.what} sits within ${fmt(edge)} mm of the board edge`,
+        at: { x: c.x + c.w / 2, y: c.y + c.h / 2 },
+      })
+    }
+  }
+
+  // Minimum manufacturable track width.
+  const minTrack = DRC_RULES['track-width'].limitMm
+  for (const t of routing.traces) {
+    if (t.widthMm >= minTrack) continue
+    const p = t.points[0]
+    if (p === undefined) continue
+    out.push({
+      code: 'track-width',
+      message: `a ${fmt(t.widthMm)} mm trace is narrower than the ${fmt(minTrack)} mm minimum`,
+      at: p,
+    })
+  }
+
+  return out
+}

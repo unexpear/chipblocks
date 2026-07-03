@@ -25,6 +25,7 @@ const COURTYARD = '#7fe3b0'
 const PART_INK = '#dfeee6'
 const AIRWIRE = '#f5f0dc' // thin pale ratsnest lines, the EDA convention
 const SELECT = '#9ecbff' // the selected part's halo
+const VIOLATION = '#ff6b6b' // DRC markers
 
 function padShape(p: Pad, scale: number, key: string) {
   const w = p.size.w * scale
@@ -76,6 +77,7 @@ export function PcbView({
   board,
   airwires = [],
   traces = [],
+  markers = [],
   pxPerMm = 12,
   paddingMm = 3,
   onMove,
@@ -86,6 +88,8 @@ export function PcbView({
   airwires?: Airwire[]
   /** Routed copper — drawn at real width on the board, under the parts like the top copper layer. */
   traces?: CopperTrace[]
+  /** DRC violation spots, in board mm — drawn as red rings on top of everything. */
+  markers?: { x: number; y: number }[]
   pxPerMm?: number
   paddingMm?: number
   /** Move a part's footprint origin to (x, y) mm — supplied by the panel to make the board editable. */
@@ -298,6 +302,21 @@ export function PcbView({
           data-airwire="true"
           pointerEvents="none"
         />
+      ))}
+
+      {/* DRC violation markers — a red ring at each spot, on top of everything */}
+      {markers.map((m) => (
+        <g key={`drc${m.x},${m.y}`} pointerEvents="none" data-drc-marker="true">
+          <circle
+            cx={sx(m.x)}
+            cy={sy(m.y)}
+            r={7}
+            fill="none"
+            stroke={VIOLATION}
+            strokeWidth={1.6}
+          />
+          <circle cx={sx(m.x)} cy={sy(m.y)} r={1.8} fill={VIOLATION} />
+        </g>
       ))}
     </svg>
   )
