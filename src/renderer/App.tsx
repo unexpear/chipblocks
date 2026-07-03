@@ -81,7 +81,7 @@ import {
 import { ClipboardPanel } from './clipboard-panel.tsx'
 import { ContextMenu } from './context-menu.tsx'
 import { CoordinateAxes } from './coordinate-axes.tsx'
-import { DockablePanel, type TabDropTarget } from './dockable-panel.tsx'
+import { DockablePanel } from './dockable-panel.tsx'
 import {
   CrtScreenContext,
   type CrtScreenData,
@@ -122,7 +122,7 @@ import { routeAllWires, type WireReq } from './orthogonal-route.ts'
 import { detectOutputContention } from './output-contention.ts'
 import { PageSettings } from './page-settings.tsx'
 import { BLOCK_MIME, DEFINITION_MIME, Palette } from './palette.tsx'
-import { moveToEdge, type PanelLayout, panelGroups, stackOnto } from './panel-groups.ts'
+import { panelGroups } from './panel-groups.ts'
 import {
   blownFuse,
   defaultParameters,
@@ -171,6 +171,7 @@ import { useBode } from './use-bode.ts'
 import { useConnectTool } from './use-connect-tool.ts'
 import { useMultimeter } from './use-multimeter.ts'
 import { useOscilloscope } from './use-oscilloscope.ts'
+import { usePanelLayout } from './use-panel-layout.ts'
 import { useSelectionGestures } from './use-selection-gestures.ts'
 import { useShortcuts } from './use-shortcuts.tsx'
 import { useTimeline } from './use-timeline.ts'
@@ -947,18 +948,10 @@ function Canvas({ project }: { project: ProjectChoice }) {
     })
   }, [setNodes, setEdges, fitView, checkpointAction])
 
-  // Movable menus (S19-v3-10): each docks to a window edge; the user drags them.
-  // Dock panels + their tab-stack grouping (Sprint 21). Each panel starts on its own
-  // edge; dragging one onto another stacks them into a tabbed group (panel-groups.ts).
-  const [panelLayout, setPanelLayout] = useState<PanelLayout>({
-    hierarchy: { edge: 'left', group: 0 },
-    properties: { edge: 'left', group: 2 },
-    tools: { edge: 'top', group: 1 },
-    scope: { edge: 'bottom', group: 3 },
-    timeline: { edge: 'bottom', group: 3 },
-    bode: { edge: 'bottom', group: 3 },
-  })
-  const [activeTab, setActiveTab] = useState<Record<number, string>>({})
+  // The dockable-panel layout (S19-v3-10 / Sprint 21) — where each panel docks, which tab is active in
+  // each stacked group, and the drag-to-dock / drag-to-stack handler — lives in usePanelLayout now
+  // (pure UI state, no circuit coupling). Destructured to the same names the panel groups + drop use.
+  const { panelLayout, activeTab, setActiveTab, onTabDrop } = usePanelLayout()
   // Active tool: 'select' (move parts) or 'wire' (parts locked; drag draws wires).
   const [tool, setTool] = useState<Tool>('select')
   // Snap-to-grid (optional): OFF by default — placement stays free, the way it has always worked —
@@ -4869,18 +4862,6 @@ function Canvas({ project }: { project: ProjectChoice }) {
           amps: typeof selectedEdge.data?.amps === 'number' ? selectedEdge.data.amps : null,
         }
       : null
-
-  // Drag a panel's grip/tab onto another panel to stack them into a tab group; drop
-  // onto an edge to dock it (or pop a stacked tab back out). The reducer is pure.
-  const onTabDrop = (tabId: string, target: TabDropTarget) => {
-    if (target.kind === 'edge') {
-      setPanelLayout((layout) => moveToEdge(layout, tabId, target.edge))
-      return
-    }
-    const group = panelLayout[target.targetId]?.group
-    if (group !== undefined) setActiveTab((cur) => ({ ...cur, [group]: tabId }))
-    setPanelLayout((layout) => stackOnto(layout, tabId, target.targetId))
-  }
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: the dock-grid is the drop target for palette parts; keyboard-accessible placement is future work
