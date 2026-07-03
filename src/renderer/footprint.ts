@@ -4,8 +4,9 @@
  * brick of the board road (TOOLCHAIN-ROADMAP.md Track 1): the schematic says what a part IS, the
  * footprint says how it physically lands on copper — the bridge from a drawn circuit to a real PCB.
  *
- * All geometry is in REAL millimetres, origin at the footprint's centre (the KiCad/EDA convention), so
- * a footprint's numbers ARE its manufacturing dimensions. Per the project's anti-placeholder rule every
+ * All geometry is in REAL millimetres relative to the footprint origin (the part centre for SMD chips,
+ * or pin 1 for through-hole ICs — the KiCad/EDA convention), so a footprint's numbers ARE its
+ * manufacturing dimensions. Per the project's anti-placeholder rule every
  * shipped footprint's dimensions are cited to a real land-pattern source (IPC-7351 via the public KiCad
  * footprint library), so "where did this pad size come from?" always has an answer.
  */
@@ -48,10 +49,17 @@ export type SilkLine = {
 /** The courtyard keep-out rectangle (assembly clearance), in mm, as a min-corner + extent. */
 export type Courtyard = { x: number; y: number; w: number; h: number }
 
-/** Where the two board texts anchor — KiCad's Reference (the R1/C3 designator) + Value. */
+/**
+ * Where the three board texts anchor — mirroring KiCad's footprint text set:
+ *  - `reference`: the R1/C3 designator, on silkscreen (what's printed on the board);
+ *  - `value`: the part value / footprint name, on the fabrication layer;
+ *  - `fabReference`: a SECOND copy of the designator, on the fabrication layer at the part centre, so an
+ *    assembler can read which part is which on the bare board (KiCad's `${REFERENCE}` fab text).
+ */
 export type FootprintLabels = {
   reference: { x: number; y: number }
   value: { x: number; y: number }
+  fabReference: { x: number; y: number }
 }
 
 export type Footprint = {
@@ -112,7 +120,11 @@ export const FOOTPRINT_0603: Footprint = {
     { from: { x: 0.8, y: 0.4125 }, to: { x: -0.8, y: 0.4125 }, width: 0.1 },
     { from: { x: -0.8, y: 0.4125 }, to: { x: -0.8, y: -0.4125 }, width: 0.1 },
   ],
-  labels: { reference: { x: 0, y: -1.43 }, value: { x: 0, y: 1.43 } },
+  labels: {
+    reference: { x: 0, y: -1.43 },
+    value: { x: 0, y: 1.43 },
+    fabReference: { x: 0, y: 0 },
+  },
   courtyard: { x: -1.48, y: -0.73, w: 2.96, h: 1.46 },
   provenance: {
     source_type: 'standard',
@@ -126,9 +138,261 @@ export const FOOTPRINT_0603: Footprint = {
   },
 }
 
-/** Every built-in footprint, keyed by id. Grows as the starter set lands (SOIC-8, DIP-8, headers). */
+/** A rectangle as four line segments (the common body-outline / silk shape), in mm. */
+function rectOutline(x0: number, y0: number, x1: number, y1: number, width = 0.1): SilkLine[] {
+  return [
+    { from: { x: x0, y: y0 }, to: { x: x1, y: y0 }, width },
+    { from: { x: x1, y: y0 }, to: { x: x1, y: y1 }, width },
+    { from: { x: x1, y: y1 }, to: { x: x0, y: y1 }, width },
+    { from: { x: x0, y: y1 }, to: { x: x0, y: y0 }, width },
+  ]
+}
+
+/**
+ * SOIC-8 (3.9×4.9 mm body, 1.27 mm pitch) — the 8-lead small-outline IC, gull-wing SMD. Pads + courtyard
+ * + text anchors are verbatim from KiCad (Package_SO.pretty/SOIC-8_3.9x4.9mm_P1.27mm.kicad_mod); the
+ * silk + fab body are the outline rectangles (KiCad additionally chamfers the pin-1 corner). Pin 1 is
+ * the roundrect pad (2–8 keep the same size); orientation reads off that, KiCad's convention.
+ */
+export const FOOTPRINT_SOIC8: Footprint = {
+  id: 'SOIC-8_3.9x4.9mm_P1.27mm',
+  name: 'SOIC-8 (3.9×4.9 mm, 1.27 mm pitch)',
+  description: '8-lead small-outline IC — gull-wing SMD, 1.27 mm pitch. JEDEC MS-012 / IPC-7351.',
+  pads: [
+    {
+      id: '1',
+      center: { x: -2.475, y: -1.905 },
+      size: { w: 1.95, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '2',
+      center: { x: -2.475, y: -0.635 },
+      size: { w: 1.95, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '3',
+      center: { x: -2.475, y: 0.635 },
+      size: { w: 1.95, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '4',
+      center: { x: -2.475, y: 1.905 },
+      size: { w: 1.95, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '5',
+      center: { x: 2.475, y: 1.905 },
+      size: { w: 1.95, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '6',
+      center: { x: 2.475, y: 0.635 },
+      size: { w: 1.95, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '7',
+      center: { x: 2.475, y: -0.635 },
+      size: { w: 1.95, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '8',
+      center: { x: 2.475, y: -1.905 },
+      size: { w: 1.95, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+  ],
+  silkscreen: rectOutline(-2.06, -2.56, 2.06, 2.56, 0.12),
+  fabrication: rectOutline(-1.95, -2.45, 1.95, 2.45),
+  labels: { reference: { x: 0, y: -3.4 }, value: { x: 0, y: 3.4 }, fabReference: { x: 0, y: 0 } },
+  courtyard: { x: -3.7, y: -2.7, w: 7.4, h: 5.4 },
+  provenance: {
+    source_type: 'standard',
+    title: 'JEDEC MS-012 / IPC-7351 SOIC-8 3.9×4.9 mm 1.27 mm-pitch land pattern',
+    citation:
+      'KiCad footprint library, Package_SO.pretty/SOIC-8_3.9x4.9mm_P1.27mm.kicad_mod — 8 pads 1.95×0.6 mm on 1.27 mm pitch, rows at x=±2.475 mm',
+    confidence: 'high',
+    url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
+  },
+}
+
+/**
+ * DIP-8 (0.3″ / 7.62 mm rows) — the 8-pin dual-in-line THROUGH-HOLE IC. Pads + drills + courtyard + text
+ * verbatim from KiCad (Package_DIP.pretty/DIP-8_W7.62mm.kicad_mod). Origin at PIN 1 (0,0), KiCad's
+ * through-hole convention — not the part centre. Pin 1 is the square (roundrect) pad, 2–8 are round.
+ * Silk + fab are the body-outline rectangles (KiCad chamfers pin 1).
+ */
+export const FOOTPRINT_DIP8: Footprint = {
+  id: 'DIP-8_W7.62mm',
+  name: 'DIP-8 (0.3″ / 7.62 mm)',
+  description: '8-pin dual-in-line through-hole IC — 2.54 mm pitch, 7.62 mm rows. JEDEC MS-001.',
+  pads: [
+    {
+      id: '1',
+      center: { x: 0, y: 0 },
+      size: { w: 1.6, h: 1.6 },
+      shape: 'roundrect',
+      type: 'through_hole',
+      holeDiameter: 0.8,
+    },
+    {
+      id: '2',
+      center: { x: 0, y: 2.54 },
+      size: { w: 1.6, h: 1.6 },
+      shape: 'circle',
+      type: 'through_hole',
+      holeDiameter: 0.8,
+    },
+    {
+      id: '3',
+      center: { x: 0, y: 5.08 },
+      size: { w: 1.6, h: 1.6 },
+      shape: 'circle',
+      type: 'through_hole',
+      holeDiameter: 0.8,
+    },
+    {
+      id: '4',
+      center: { x: 0, y: 7.62 },
+      size: { w: 1.6, h: 1.6 },
+      shape: 'circle',
+      type: 'through_hole',
+      holeDiameter: 0.8,
+    },
+    {
+      id: '5',
+      center: { x: 7.62, y: 7.62 },
+      size: { w: 1.6, h: 1.6 },
+      shape: 'circle',
+      type: 'through_hole',
+      holeDiameter: 0.8,
+    },
+    {
+      id: '6',
+      center: { x: 7.62, y: 5.08 },
+      size: { w: 1.6, h: 1.6 },
+      shape: 'circle',
+      type: 'through_hole',
+      holeDiameter: 0.8,
+    },
+    {
+      id: '7',
+      center: { x: 7.62, y: 2.54 },
+      size: { w: 1.6, h: 1.6 },
+      shape: 'circle',
+      type: 'through_hole',
+      holeDiameter: 0.8,
+    },
+    {
+      id: '8',
+      center: { x: 7.62, y: 0 },
+      size: { w: 1.6, h: 1.6 },
+      shape: 'circle',
+      type: 'through_hole',
+      holeDiameter: 0.8,
+    },
+  ],
+  silkscreen: rectOutline(1.16, -1.33, 6.46, 8.95, 0.12),
+  fabrication: rectOutline(0.635, -1.27, 6.985, 8.89),
+  labels: {
+    reference: { x: 3.81, y: -2.33 },
+    value: { x: 3.81, y: 9.95 },
+    fabReference: { x: 3.81, y: 3.81 },
+  },
+  courtyard: { x: -1.06, y: -1.52, w: 9.73, h: 10.66 },
+  provenance: {
+    source_type: 'standard',
+    title: 'JEDEC MS-001 DIP-8, 2.54 mm pitch / 7.62 mm (0.3″) rows',
+    citation:
+      'KiCad footprint library, Package_DIP.pretty/DIP-8_W7.62mm.kicad_mod — 8 through-hole pads 1.6 mm, 0.8 mm drill, 2.54 mm pitch, rows 7.62 mm apart',
+    confidence: 'high',
+    url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
+    notes: 'Origin at pin 1 (0,0), not the part centre — KiCad convention for through-hole ICs.',
+  },
+}
+
+/**
+ * 1×4 pin header, 2.54 mm (0.1″) pitch, vertical through-hole. Pads + drills + courtyard + text verbatim
+ * from KiCad (Connector_PinHeader_2.54mm.pretty/PinHeader_1x04_P2.54mm_Vertical.kicad_mod). Origin at
+ * pin 1; pin 1 is the square (rect) pad. Silk + fab are the body-outline rectangles.
+ */
+export const FOOTPRINT_PINHDR_1X4: Footprint = {
+  id: 'PinHeader_1x04_P2.54mm_Vertical',
+  name: '1×4 pin header (0.1″ / 2.54 mm)',
+  description: 'Single-row 4-pin 2.54 mm pin header, vertical through-hole.',
+  pads: [
+    {
+      id: '1',
+      center: { x: 0, y: 0 },
+      size: { w: 1.7, h: 1.7 },
+      shape: 'rect',
+      type: 'through_hole',
+      holeDiameter: 1.0,
+    },
+    {
+      id: '2',
+      center: { x: 0, y: 2.54 },
+      size: { w: 1.7, h: 1.7 },
+      shape: 'circle',
+      type: 'through_hole',
+      holeDiameter: 1.0,
+    },
+    {
+      id: '3',
+      center: { x: 0, y: 5.08 },
+      size: { w: 1.7, h: 1.7 },
+      shape: 'circle',
+      type: 'through_hole',
+      holeDiameter: 1.0,
+    },
+    {
+      id: '4',
+      center: { x: 0, y: 7.62 },
+      size: { w: 1.7, h: 1.7 },
+      shape: 'circle',
+      type: 'through_hole',
+      holeDiameter: 1.0,
+    },
+  ],
+  silkscreen: rectOutline(-1.38, -1.38, 1.38, 9.0, 0.12),
+  fabrication: rectOutline(-1.27, -1.27, 1.27, 8.89),
+  labels: {
+    reference: { x: 0, y: -2.38 },
+    value: { x: 0, y: 10 },
+    fabReference: { x: 0, y: 3.81 },
+  },
+  courtyard: { x: -1.77, y: -1.77, w: 3.54, h: 11.16 },
+  provenance: {
+    source_type: 'standard',
+    title: '2.54 mm (0.1″) pitch single-row pin header, 1×4 vertical',
+    citation:
+      'KiCad footprint library, Connector_PinHeader_2.54mm.pretty/PinHeader_1x04_P2.54mm_Vertical.kicad_mod — 4 through-hole pads 1.7 mm, 1.0 mm drill, 2.54 mm pitch',
+    confidence: 'high',
+    url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
+    notes: 'Origin at pin 1 (0,0); pin 1 square. The universal 0.1″ prototyping connector.',
+  },
+}
+
+/** Every built-in footprint, keyed by id. The board road's starter set (TOOLCHAIN-ROADMAP.md Track 1). */
 export const BUILTIN_FOOTPRINTS: Record<string, Footprint> = {
   [FOOTPRINT_0603.id]: FOOTPRINT_0603,
+  [FOOTPRINT_SOIC8.id]: FOOTPRINT_SOIC8,
+  [FOOTPRINT_DIP8.id]: FOOTPRINT_DIP8,
+  [FOOTPRINT_PINHDR_1X4.id]: FOOTPRINT_PINHDR_1X4,
 }
 
 /**

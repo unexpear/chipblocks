@@ -157,17 +157,31 @@ export function FootprintView({
 
       {/* reference designator — the board fills in R1/C3…; the footprint just anchors it */}
       {showLabels ? (
-        <text
-          x={sx(footprint.labels.reference.x)}
-          y={sy(footprint.labels.reference.y)}
-          textAnchor="middle"
-          dominantBaseline="central"
-          fontSize={Math.min(mm(1), 13)}
-          fill={SILK}
-          opacity={0.85}
-        >
-          REF**
-        </text>
+        <>
+          <text
+            x={sx(footprint.labels.reference.x)}
+            y={sy(footprint.labels.reference.y)}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize={Math.min(mm(1), 13)}
+            fill={SILK}
+            opacity={0.85}
+          >
+            REF**
+          </text>
+          {/* the designator repeated on the fab layer (assembly reads the part on the bare board) */}
+          <text
+            x={sx(footprint.labels.fabReference.x)}
+            y={sy(footprint.labels.fabReference.y)}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize={Math.min(mm(0.5), 8)}
+            fill={FAB}
+            opacity={0.9}
+          >
+            REF**
+          </text>
+        </>
       ) : null}
 
       {/* origin cross (footprint centre) */}

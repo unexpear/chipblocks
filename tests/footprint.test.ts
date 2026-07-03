@@ -8,6 +8,9 @@ import { describe, expect, test } from 'vitest'
 import {
   BUILTIN_FOOTPRINTS,
   FOOTPRINT_0603,
+  FOOTPRINT_DIP8,
+  FOOTPRINT_PINHDR_1X4,
+  FOOTPRINT_SOIC8,
   type Footprint,
   footprintBounds,
 } from '../src/renderer/footprint.ts'
@@ -49,9 +52,10 @@ describe('0603 land pattern — matches the cited IPC-7351 / KiCad geometry', ()
     expect(Math.max(...ys)).toBeCloseTo(0.4125, 6)
   })
 
-  test('reference + value text anchor at ±1.43 mm, KiCad convention', () => {
-    expect(FOOTPRINT_0603.labels.reference).toEqual({ x: 0, y: -1.43 })
-    expect(FOOTPRINT_0603.labels.value).toEqual({ x: 0, y: 1.43 })
+  test('all three text anchors match KiCad: silk reference, fab value, fab designator', () => {
+    expect(FOOTPRINT_0603.labels.reference).toEqual({ x: 0, y: -1.43 }) // REF** on silkscreen
+    expect(FOOTPRINT_0603.labels.value).toEqual({ x: 0, y: 1.43 }) // value on fab
+    expect(FOOTPRINT_0603.labels.fabReference).toEqual({ x: 0, y: 0 }) // ${REFERENCE} on fab, centred
   })
 })
 
@@ -73,6 +77,36 @@ describe('footprintBounds', () => {
       expect(b.minX).toBeLessThanOrEqual(p.center.x - p.size.w / 2 + 1e-9)
       expect(b.maxX).toBeGreaterThanOrEqual(p.center.x + p.size.w / 2 - 1e-9)
     }
+  })
+})
+
+describe('starter set — the multi-pad + through-hole footprints (SOIC-8, DIP-8, pin header)', () => {
+  test('SOIC-8: 8 SMD pads, 1.27 mm pitch, two rows at x = ±2.475 mm', () => {
+    const p = FOOTPRINT_SOIC8.pads
+    expect(p).toHaveLength(8)
+    expect(p.every((pad) => pad.type === 'smd')).toBe(true)
+    expect((p[1]?.center.y ?? 0) - (p[0]?.center.y ?? 0)).toBeCloseTo(1.27, 6) // pitch
+    expect(p[0]?.center.x).toBeCloseTo(-2.475, 6)
+    expect(p[4]?.center.x).toBeCloseTo(2.475, 6)
+  })
+
+  test('DIP-8: 8 through-hole pads, 0.8 mm drills, pin 1 squared, origin at pin 1', () => {
+    const p = FOOTPRINT_DIP8.pads
+    expect(p).toHaveLength(8)
+    expect(p.every((pad) => pad.type === 'through_hole' && pad.holeDiameter === 0.8)).toBe(true)
+    expect(p[0]?.shape).toBe('roundrect') // pin 1 squared for orientation
+    expect(p.slice(1).every((pad) => pad.shape === 'circle')).toBe(true)
+    expect(p[0]?.center).toEqual({ x: 0, y: 0 }) // origin at pin 1, not the part centre
+    expect((p[1]?.center.y ?? 0) - (p[0]?.center.y ?? 0)).toBeCloseTo(2.54, 6) // 0.1" pitch
+    expect((p[4]?.center.x ?? 0) - (p[0]?.center.x ?? 0)).toBeCloseTo(7.62, 6) // 0.3" rows
+  })
+
+  test('pin header 1×4: 4 through-hole pads, 1.0 mm drills, pin 1 rect', () => {
+    const p = FOOTPRINT_PINHDR_1X4.pads
+    expect(p).toHaveLength(4)
+    expect(p.every((pad) => pad.type === 'through_hole' && pad.holeDiameter === 1)).toBe(true)
+    expect(p[0]?.shape).toBe('rect') // pin 1 square
+    expect(p[3]?.center.y).toBeCloseTo(7.62, 6) // 3 × 2.54 mm
   })
 })
 
