@@ -8,7 +8,20 @@ import { THEME } from './theme.ts'
  * comment). The sheet itself (sheet-frame.tsx) renders from this; App owns the state + persistence.
  */
 
-const SIZES: SheetSize[] = ['A4', 'A3', 'A2', 'Letter']
+const SIZES: SheetSize[] = [
+  'A0',
+  'A1',
+  'A2',
+  'A3',
+  'A4',
+  'A5',
+  'Letter',
+  'Legal',
+  'Ledger',
+  'ANSI C',
+  'ANSI D',
+  'ANSI E',
+]
 
 const field: CSSProperties = {
   background: THEME.surfaceInput,

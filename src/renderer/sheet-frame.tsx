@@ -16,7 +16,19 @@ import { THEME } from './theme.ts'
  * values remain editable in the Page Settings dialog; App owns the state + persistence.
  */
 
-export type SheetSize = 'A4' | 'A3' | 'A2' | 'Letter'
+export type SheetSize =
+  | 'A0'
+  | 'A1'
+  | 'A2'
+  | 'A3'
+  | 'A4'
+  | 'A5'
+  | 'Letter'
+  | 'Legal'
+  | 'Ledger'
+  | 'ANSI C'
+  | 'ANSI D'
+  | 'ANSI E'
 export type SheetOrientation = 'landscape' | 'portrait'
 export type SheetSettings = {
   size: SheetSize
@@ -38,15 +50,40 @@ export const DEFAULT_SHEET: SheetSettings = {
   comment: '',
 }
 
-/** Paper sizes in millimetres as [long edge, short edge] (ISO 216 + US Letter). */
+/**
+ * Paper sizes in millimetres as [long edge, short edge] — the common engineering sheet sizes:
+ * the ISO 216 A-series (each size is half the one above it) and the US sizes per ANSI/ASME Y14.1
+ * (Letter = ANSI A, Ledger/Tabloid = ANSI B, then C/D/E) plus US Legal.
+ */
 const SHEET_MM: Record<SheetSize, [number, number]> = {
-  A4: [297, 210],
-  A3: [420, 297],
+  A0: [1189, 841],
+  A1: [841, 594],
   A2: [594, 420],
+  A3: [420, 297],
+  A4: [297, 210],
+  A5: [210, 148],
   Letter: [279.4, 215.9],
+  Legal: [355.6, 215.9],
+  Ledger: [431.8, 279.4],
+  'ANSI C': [558.8, 431.8],
+  'ANSI D': [863.6, 558.8],
+  'ANSI E': [1117.6, 863.6],
 }
 
-const SIZES: SheetSize[] = ['A4', 'A3', 'A2', 'Letter']
+const SIZES: SheetSize[] = [
+  'A0',
+  'A1',
+  'A2',
+  'A3',
+  'A4',
+  'A5',
+  'Letter',
+  'Legal',
+  'Ledger',
+  'ANSI C',
+  'ANSI D',
+  'ANSI E',
+]
 
 /** Flow units per millimetre — the page's scale on the canvas (an A4 lands ~1188×840 units). */
 const PER_MM = 4
