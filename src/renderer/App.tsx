@@ -5226,6 +5226,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
                                     settings={sheetSettings}
                                     projectName={project.name}
                                     light={light}
+                                    onEdit={(patch) =>
+                                      setSheetSettings((current) => ({ ...current, ...patch }))
+                                    }
                                   />
                                 ) : null}
                                 {/* Coordinate-graph axes through the origin + the four quadrants. */}
