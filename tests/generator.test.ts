@@ -100,6 +100,37 @@ describe('DC generator — DC solve + live readings', () => {
     expect((heavy?.voltage ?? 1e9) < (light?.voltage ?? 0)).toBe(true)
     expect(light?.voltage ?? 0).toBeGreaterThan(12) // 100 Ω » R_a → terminal near the full 12.566 V EMF
   })
+
+  test('spin it BACKWARD and everything reverses — EMF, current, and the fields with them', () => {
+    // The dynamo demo: mechanical spin direction IS the electrical direction. E = k·ω is signed,
+    // so a shaft driven the other way pushes the same current the other way around the loop —
+    // which is what flips the flow dashes and the field lens's dot-and-cross marks on screen.
+    const solveAtRpm = (rpm: number) => {
+      const nodes: CanvasNode[] = [
+        {
+          id: 'gen1',
+          definition: 'generator',
+          parameters: { ...genNode(), drive_speed: scalar(rpm, 'rpm') },
+        },
+        { id: 'r1', definition: 'resistor', parameters: { resistance: scalar(10, 'ohm') } },
+        { id: 'gnd', definition: 'ground' },
+      ]
+      const edges = [
+        g('gen1', 'terminal_positive', 'r1', 'terminal_a'),
+        g('r1', 'terminal_b', 'gnd', 'reference_terminal'),
+        g('gen1', 'terminal_negative', 'gnd', 'reference_terminal'),
+      ]
+      const world = canvasToWorld(nodes, edges)
+      const sol = solveDC(world)
+      expect(sol.status).toBe('solved')
+      return { current: sol.branches.get('r1') ?? 0, reading: partReadings(world, sol).get('gen1') }
+    }
+    const fwd = solveAtRpm(3000)
+    const rev = solveAtRpm(-3000)
+    expect(fwd.current).toBeCloseTo(EMF / 11.5, 4) // ~1.093 A one way…
+    expect(rev.current).toBeCloseTo(-fwd.current, 6) // …exactly the same the other way
+    expect(rev.reading?.generatedEmfV ?? 0).toBeCloseTo(-EMF, 3) // the EMF itself reversed
+  })
 })
 
 describe('DC generator — transient (a fixed-speed dynamo is a constant source)', () => {

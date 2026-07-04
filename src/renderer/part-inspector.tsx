@@ -38,15 +38,17 @@ const amountOf = (parameters: Parameters | undefined, key: string): number | und
 /**
  * Params that can legitimately be ≤ 0, so editing them must NOT clamp the sign: a tempco
  * (NTC is negative), a FET threshold (PMOS is negative), a source EMF (a user may type a
- * negative to reverse it), and any temperature in °C (sub-zero is real). Every other edited
- * value is a physical magnitude, so `paramMin` floors it at 0 — the inspector won't commit a
- * negative resistance / capacitance / current. Zero is left to the solver (a degenerate 0
- * reads as open, not a crash); 0 Hz / 0 V AC are legitimate anyway.
+ * negative to reverse it), a generator's drive speed (spin the shaft backward and EMF, current
+ * and every field direction reverse with it — the dynamo demo), and any temperature in °C
+ * (sub-zero is real). Every other edited value is a physical magnitude, so `paramMin` floors it
+ * at 0 — the inspector won't commit a negative resistance / capacitance / current. Zero is left
+ * to the solver (a degenerate 0 reads as open, not a crash); 0 Hz / 0 V AC are legitimate anyway.
  */
 const SIGNED_PARAM_KEYS = new Set([
   'temperature_coefficient',
   'threshold_voltage',
   'nominal_voltage',
+  'drive_speed',
 ])
 export function paramMin(key: string, unit: string): number | undefined {
   if (SIGNED_PARAM_KEYS.has(key)) return undefined
