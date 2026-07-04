@@ -79,6 +79,7 @@ import {
   screenGridTubeOperatingPoint,
   vacuumDiodeCompanion,
 } from './vacuum-tube-model.ts'
+import { pruneFloatingCircuits } from './world-components.ts'
 
 /**
  * A switch conducts only when closed. State lives on the instance as
@@ -361,13 +362,20 @@ const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'light_source', // environmental (no electrical terminals)
 ])
 
-export function solveDC(world: World, options?: SolveOptions): Solution {
+export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
   const warnings: string[] = []
 
-  const ground = identifyGround(world, options, warnings)
+  const ground = identifyGround(inputWorld, options, warnings)
   if (ground === undefined) {
     return emptyResult('no-ground', undefined, warnings)
   }
+
+  // Multi-circuit: sub-circuits with no path to the ground reference would make the whole matrix
+  // singular — they are pruned (with a note naming their parts) so every OTHER circuit on the
+  // canvas still solves. Everything below sees only the solvable world.
+  const pruned = pruneFloatingCircuits(inputWorld, ground)
+  warnings.push(...pruned.notes)
+  const world = pruned.world
 
   // Honesty check: surface any instance whose definition the solver doesn't model, instead of
   // silently dropping it as an open circuit and reporting a maybe-wrong 'solved'. The supported part

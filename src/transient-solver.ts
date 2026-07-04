@@ -147,6 +147,7 @@ import {
   vacuumDiodeCompanion,
 } from './vacuum-tube-model.ts'
 import { type VaractorParams, varactorCapacitance, varactorCharge } from './varactor-model.ts'
+import { pruneFloatingCircuits } from './world-components.ts'
 
 const DEFAULT_IDEALITY_FACTOR = 2.0
 
@@ -1719,7 +1720,7 @@ function stampTransientZener(
   }
 }
 
-export function solveTransient(world: World, options: TransientOptions): TransientResult {
+export function solveTransient(inputWorld: World, options: TransientOptions): TransientResult {
   const warnings: string[] = []
   const dt = options.timeStep
   const duration = options.duration
@@ -1727,10 +1728,17 @@ export function solveTransient(world: World, options: TransientOptions): Transie
     return { status: 'bad-options', series: [], ground: undefined, warnings }
   }
 
-  const ground = identifyGround(world, options, warnings)
+  const ground = identifyGround(inputWorld, options, warnings)
   if (ground === undefined) {
     return { status: 'no-ground', series: [], ground: undefined, warnings }
   }
+
+  // Multi-circuit: sub-circuits with no path to the ground reference would make the whole matrix
+  // singular — they are pruned (with a note naming their parts) so every OTHER circuit on the
+  // canvas still runs through time. Everything below sees only the solvable world.
+  const pruned = pruneFloatingCircuits(inputWorld, ground)
+  warnings.push(...pruned.notes)
+  const world = pruned.world
 
   const nodeIndex = assignNodeIndices(world.nets, ground)
   const N = nodeIndex.size
