@@ -46,6 +46,13 @@ export function scopeWindow(world: World): { timeStep: number; duration: number 
       const amplitude = readScalarParam(inst, 'ac_amplitude') ?? 0
       const frequency = readScalarParam(inst, 'frequency') ?? 0
       if (amplitude > 0 && frequency > 0) slowestAcHz = Math.min(slowestAcHz, frequency)
+    } else if (inst.definition === 'alternator' || inst.definition === 'alternator_three_phase') {
+      // The alternator's frequency comes from its shaft: f = pole_pairs · RPM / 60 — the window
+      // heuristic must see it or a 60 Hz machine gets a microsecond window showing 1/16 cycle.
+      const polePairs = readScalarParam(inst, 'pole_pairs') ?? 0
+      const rpm = readScalarParam(inst, 'drive_speed') ?? 0
+      const f = Math.abs((polePairs * rpm) / 60)
+      if (f > 0) slowestAcHz = Math.min(slowestAcHz, f)
     } else if (inst.definition === 'resistor') {
       const ohms = readScalarParam(inst, 'resistance') ?? 0
       maxOhms = Math.max(maxOhms, ohms)
@@ -84,10 +91,19 @@ export function scopeWindow(world: World): { timeStep: number; duration: number 
 export function fastestSourceHz(world: World): number {
   let fastest = 0
   for (const inst of world.instances.values()) {
-    if (inst.definition !== 'power_source') continue
-    const amplitude = readScalarParam(inst, 'ac_amplitude') ?? 0
-    const frequency = readScalarParam(inst, 'frequency') ?? 0
-    if (amplitude > 0 && frequency > fastest) fastest = frequency
+    if (inst.definition === 'power_source') {
+      const amplitude = readScalarParam(inst, 'ac_amplitude') ?? 0
+      const frequency = readScalarParam(inst, 'frequency') ?? 0
+      if (amplitude > 0 && frequency > fastest) fastest = frequency
+    }
+    // An alternator's frequency is DERIVED from its shaft: f = pole_pairs · RPM / 60 — the
+    // scope's honest-sampling window must know it, or 60 Hz machines get an unusable timebase.
+    if (inst.definition === 'alternator' || inst.definition === 'alternator_three_phase') {
+      const polePairs = readScalarParam(inst, 'pole_pairs') ?? 0
+      const rpm = readScalarParam(inst, 'drive_speed') ?? 0
+      const f = Math.abs((polePairs * rpm) / 60)
+      if (f > fastest) fastest = f
+    }
   }
   return fastest
 }

@@ -344,6 +344,8 @@ const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'electromagnet',
   'dc_motor',
   'generator',
+  'alternator',
+  'alternator_three_phase',
   'induction_motor',
   'crt',
   'transmission_line',
@@ -688,6 +690,24 @@ export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
         const bNet = inst.connects?.find((c) => c.terminal === 'terminal_b')?.net
         if (r1 !== undefined && r1 > 0 && aNet !== undefined && bNet !== undefined)
           stampConductance(nodeIndex, M, aNet, bNet, r1)
+      } else if (inst.definition === 'alternator') {
+        // An alternator's EMF averages to ZERO over a cycle — at DC it is just its winding
+        // resistance (the sine lives in the transient solve; the DC panel shows the steady part).
+        const rw = readScalarParam(inst, 'winding_resistance')
+        const pNet = inst.connects?.find((c) => c.terminal === 'terminal_positive')?.net
+        const nNet = inst.connects?.find((c) => c.terminal === 'terminal_negative')?.net
+        if (rw !== undefined && rw > 0 && pNet !== undefined && nNet !== undefined)
+          stampConductance(nodeIndex, M, pNet, nNet, rw)
+      } else if (inst.definition === 'alternator_three_phase') {
+        // Same at DC: three windings, each phase → neutral, each just its winding resistance.
+        const rw = readScalarParam(inst, 'winding_resistance')
+        const neutral = inst.connects?.find((c) => c.terminal === 'neutral')?.net
+        if (rw !== undefined && rw > 0 && neutral !== undefined) {
+          for (const phase of ['phase_a', 'phase_b', 'phase_c']) {
+            const pNet = inst.connects?.find((c) => c.terminal === phase)?.net
+            if (pNet !== undefined) stampConductance(nodeIndex, M, pNet, neutral, rw)
+          }
+        }
       } else if (inst.definition === 'crt') {
         // A CRT's electron gun is a fixed beam-current load on the anode (EHT); the X/Y deflection
         // plates are high-impedance inputs. The spot position + brightness are read post-solve.
@@ -914,6 +934,15 @@ export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
       if (p !== undefined && posNet !== undefined && negNet !== undefined) {
         const vAcross = (nodes.get(posNet) ?? 0) - (nodes.get(negNet) ?? 0)
         branches.set(inst.id, generatorOperatingPoint(vAcross, p).current)
+      }
+    } else if (inst.definition === 'alternator') {
+      // At DC the alternator is its winding resistance — record the current Ohm's law gives it,
+      // like its machine siblings, so the Math panel's KCL re-sum closes at its nets.
+      const rw = readScalarParam(inst, 'winding_resistance')
+      const posNet = inst.connects?.find((c) => c.terminal === 'terminal_positive')?.net
+      const negNet = inst.connects?.find((c) => c.terminal === 'terminal_negative')?.net
+      if (rw !== undefined && rw > 0 && posNet !== undefined && negNet !== undefined) {
+        branches.set(inst.id, ((nodes.get(posNet) ?? 0) - (nodes.get(negNet) ?? 0)) / rw)
       }
     } else if (inst.definition === 'vccs') {
       // Reported current = the output current it sources, g·V_control.

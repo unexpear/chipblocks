@@ -267,6 +267,9 @@ type TimedSource = {
   waveform: 'sine' | 'square' | 'triangle' | 'sawtooth' | 'staircase'
   /** Staircase only: how many held levels per period (e.g. one per scanline). Default 8. */
   steps?: number
+  /** Sine only: phase angle in radians — how a three-phase alternator's B and C coils sit 120°
+   *  behind and ahead of A (their sine waves shifted in time, the video-classic picture). */
+  phaseRad?: number
 }
 
 /** A capacitor resolved for the time loop. */
@@ -590,12 +593,130 @@ function sourceVoltageAt(src: TimedSource, t: number): number {
     const level = Math.min(n - 1, Math.floor(frac * n))
     return src.dcOffset + src.amplitude * ((2 * (level + 0.5)) / n - 1)
   }
-  const swing = Math.sin(2 * Math.PI * src.frequency * t)
+  const swing = Math.sin(2 * Math.PI * src.frequency * t + (src.phaseRad ?? 0))
   if (src.waveform === 'square') {
     // sign(sin) gives an exact 50 % duty cycle; the t = 0 edge starts HIGH.
     return src.dcOffset + (swing >= 0 ? src.amplitude : -src.amplitude)
   }
   return src.dcOffset + src.amplitude * swing
+}
+
+/**
+ * An alternator's electrical output from its shaft: a rotating field of `polePairs` pole pairs
+ * spun at `rpm` sweeps the coils at the electrical rate ω_e = polePairs · ω_mech, so the machine
+ * makes f = poles·RPM/120 (the classic relation — a 4-pole machine at 1800 RPM is exactly the
+ * US grid's 60 Hz) with EMF amplitude k·|ω_e| (Faraday: the flux linkage k swept at ω_e).
+ * A reversed shaft flips the PHASE SEQUENCE (the sign carried out for the three-phase coils);
+ * a lone coil's steady sine looks the same either way — unlike the DC dynamo, whose polarity
+ * flips. Returns null when an essential parameter is missing or senseless.
+ */
+function alternatorElectrical(
+  inst: Instance,
+): { amplitude: number; frequencyHz: number; sequenceSign: 1 | -1; rWinding: number } | null {
+  const k = readScalarParam(inst, 'flux_linkage')
+  const rWinding = readScalarParam(inst, 'winding_resistance')
+  const polePairs = readScalarParam(inst, 'pole_pairs')
+  const rpm = readScalarParam(inst, 'drive_speed')
+  if (
+    k === undefined ||
+    rWinding === undefined ||
+    polePairs === undefined ||
+    rpm === undefined ||
+    !(k > 0) ||
+    !(rWinding > 0) ||
+    !(polePairs >= 1)
+  ) {
+    return null
+  }
+  const omegaElectrical = polePairs * ((rpm * 2 * Math.PI) / 60)
+  return {
+    amplitude: k * Math.abs(omegaElectrical),
+    frequencyHz: Math.abs(omegaElectrical) / (2 * Math.PI),
+    sequenceSign: omegaElectrical >= 0 ? 1 : -1,
+    rWinding,
+  }
+}
+
+/** The three phase coils' angles: A at 0°, B a third of a turn behind, C a third ahead. */
+const THREE_PHASE_OFFSETS: { terminal: string; phase: number }[] = [
+  { terminal: 'phase_a', phase: 0 },
+  { terminal: 'phase_b', phase: (2 * Math.PI) / 3 },
+  { terminal: 'phase_c', phase: (4 * Math.PI) / 3 },
+]
+
+/** A single-phase alternator as a TimedSource: a pure sine EMF behind its winding resistance. */
+function resolveAlternator(inst: Instance, nodeIndex: Map<string, number>): TimedSource | null {
+  const e = alternatorElectrical(inst)
+  const pNet = inst.connects?.find((c) => c.terminal === 'terminal_positive')?.net
+  const nNet = inst.connects?.find((c) => c.terminal === 'terminal_negative')?.net
+  if (e === null || pNet === undefined || nNet === undefined) return null
+  return {
+    id: inst.id,
+    termP: 'terminal_positive',
+    termN: 'terminal_negative',
+    iP: nodeIndex.get(pNet),
+    iN: nodeIndex.get(nNet),
+    dcOffset: 0,
+    amplitude: e.amplitude,
+    frequency: e.frequencyHz,
+    rInternal: e.rWinding,
+    waveform: 'sine',
+  }
+}
+
+/**
+ * A three-phase alternator as up to THREE TimedSources, one per coil, each phase → neutral behind
+ * its own winding resistance: identical sines a third of a period apart. Reversing the shaft
+ * flips the phase SEQUENCE (b and c swap order in time) — the real reversal signature of a
+ * rotating field, and why swapping any two leads reverses a three-phase motor.
+ *
+ * Resolved PER COIL, the same as the DC stamp, so the two engines always agree: a machine with
+ * only phase A and the neutral wired is a legitimate single-phase tap off one coil and solves as
+ * one; coils whose phase lead dangles are skipped by name. The wye star point is the `neutral`
+ * terminal — with it unwired no coil has a return, so the machine can't solve and says exactly
+ * that (a 3-wire line-to-line-only hookup with a floating internal star is a documented further
+ * rung). Null = an electrical parameter is missing or senseless.
+ */
+function resolveThreePhaseAlternator(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+): { sources: TimedSource[]; notes: string[] } | null {
+  const e = alternatorElectrical(inst)
+  if (e === null) return null
+  const neutralNet = inst.connects?.find((c) => c.terminal === 'neutral')?.net
+  if (neutralNet === undefined) {
+    return {
+      sources: [],
+      notes: [
+        `Three-phase alternator '${inst.id}': the neutral (wye star point) is not wired — no coil has a return, so the machine is not solved. Wire the neutral (a 3-wire line-to-line-only hookup is not modeled yet).`,
+      ],
+    }
+  }
+  const sources: TimedSource[] = []
+  const notes: string[] = []
+  for (const coil of THREE_PHASE_OFFSETS) {
+    const phaseNet = inst.connects?.find((c) => c.terminal === coil.terminal)?.net
+    if (phaseNet === undefined) {
+      notes.push(
+        `Three-phase alternator '${inst.id}': ${coil.terminal} is not wired — that coil sits idle (the wired ones still generate).`,
+      )
+      continue
+    }
+    sources.push({
+      id: inst.id,
+      termP: coil.terminal,
+      termN: 'neutral',
+      iP: nodeIndex.get(phaseNet),
+      iN: nodeIndex.get(neutralNet),
+      dcOffset: 0,
+      amplitude: e.amplitude,
+      frequency: e.frequencyHz,
+      rInternal: e.rWinding,
+      waveform: 'sine',
+      phaseRad: -e.sequenceSign * coil.phase,
+    })
+  }
+  return { sources, notes }
 }
 
 /**
@@ -1868,6 +1989,28 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
       if (gen !== null) generators.push(gen)
       else
         warnings.push(`Skipped generator '${inst.id}' (missing k / R_a / drive speed / connects)`)
+    } else if (inst.definition === 'alternator') {
+      const alt = resolveAlternator(inst, nodeIndex)
+      if (alt !== null) sources.push(alt)
+      else {
+        const unwired = ['terminal_positive', 'terminal_negative'].filter(
+          (t) => inst.connects?.find((c) => c.terminal === t)?.net === undefined,
+        )
+        warnings.push(
+          unwired.length > 0
+            ? `Alternator '${inst.id}': ${unwired.join(' and ')} not wired — not solved.`
+            : `Skipped alternator '${inst.id}' (missing flux linkage / winding resistance / pole pairs / drive speed)`,
+        )
+      }
+    } else if (inst.definition === 'alternator_three_phase') {
+      const alts = resolveThreePhaseAlternator(inst, nodeIndex)
+      if (alts !== null) {
+        sources.push(...alts.sources)
+        warnings.push(...alts.notes)
+      } else
+        warnings.push(
+          `Skipped three-phase alternator '${inst.id}' (missing flux linkage / winding resistance / pole pairs / drive speed)`,
+        )
     } else if (inst.definition === 'transmission_line') {
       const line = resolveTransmissionLine(inst, nodeIndex)
       if (line !== null) lines.push(line)
@@ -2252,10 +2395,15 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
     // Sources, wires, closed switches: the auxiliary variable at N+s IS the
     // branch current termP → termN (the stamp's equation is
     // v_P − v_N − I·r = V, the same a→b convention the wire clamp uses).
+    // ACCUMULATED, not assigned: a three-phase alternator is three sources sharing one neutral
+    // terminal, whose reading must be the SUM of the three returns (≈ 0 when balanced — the
+    // whole point of the wye neutral), not whichever phase wrote last.
     for (let s = 0; s < S; s++) {
       // biome-ignore lint/style/noNonNullAssertion: s is bound by S
       const src = sources[s]!
-      through(src.id, src.termP, src.termN, x[N + s]?.[0] ?? 0)
+      const amps = x[N + s]?.[0] ?? 0
+      into.set(`${src.id}/${src.termP}`, (into.get(`${src.id}/${src.termP}`) ?? 0) + amps)
+      into.set(`${src.id}/${src.termN}`, (into.get(`${src.id}/${src.termN}`) ?? 0) - amps)
     }
 
     // Dependent sources: a VCCS sources g·V_control out of output_positive; a CCCS sources

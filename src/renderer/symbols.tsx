@@ -741,6 +741,70 @@ function GeneratorGlyph() {
   )
 }
 
+/** Alternator (AC generator) — IEC: the machine circle with "G" over "~". */
+function AlternatorGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>alternator (AC generator)</title>
+      {lead(0, 24)}
+      <circle cx={40} cy={MID} r={16} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <text
+        x={40}
+        y={MID - 4}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={11}
+        fontWeight={700}
+        fill={STROKE}
+        fontFamily="system-ui, sans-serif"
+      >
+        G
+      </text>
+      <path d="M33 27 q3.5 -6 7 0 q3.5 6 7 0" fill="none" stroke={STROKE} strokeWidth={1.2} />
+      {lead(56, W)}
+    </svg>
+  )
+}
+
+/** Three-phase alternator — IEC: the machine circle with "G" over "3~"; the neutral leads out the
+ *  left, the three phase leads fan out the right (their handles sit on the node's right edge). */
+function ThreePhaseAlternatorGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>three-phase alternator</title>
+      {lead(0, 24)}
+      <circle cx={40} cy={MID} r={16} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <text
+        x={37}
+        y={MID - 4}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={11}
+        fontWeight={700}
+        fill={STROKE}
+        fontFamily="system-ui, sans-serif"
+      >
+        G
+      </text>
+      <text
+        x={40}
+        y={MID + 7}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={9}
+        fill={STROKE}
+        fontFamily="system-ui, sans-serif"
+      >
+        3~
+      </text>
+      {/* the three phase leads fanning to the right edge, meeting their handles at y 8/22/36 */}
+      <path d="M56 22 L80 8" fill="none" stroke={STROKE} strokeWidth={1.4} />
+      <path d="M56 22 L80 22" fill="none" stroke={STROKE} strokeWidth={1.4} />
+      <path d="M56 22 L80 36" fill="none" stroke={STROKE} strokeWidth={1.4} />
+    </svg>
+  )
+}
+
 /** Three-phase induction (AC) motor — IEC: the machine circle with "M" over "3~" (3-phase AC),
  *  distinguishing it from the DC motor's plain "M". A lead each side. */
 function InductionMotorGlyph() {
@@ -1740,6 +1804,8 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   electromagnet: ElectromagnetGlyph,
   dc_motor: MotorGlyph,
   generator: GeneratorGlyph,
+  alternator: AlternatorGlyph,
+  alternator_three_phase: ThreePhaseAlternatorGlyph,
   induction_motor: InductionMotorGlyph,
   transmission_line: TransmissionLineGlyph,
   led: LedGlyph,
@@ -1827,6 +1893,16 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   electromagnet: TWO('terminal_a', 'terminal_b'),
   dc_motor: TWO('terminal_positive', 'terminal_negative'),
   generator: TWO('terminal_positive', 'terminal_negative'),
+  alternator: TWO('terminal_positive', 'terminal_negative'),
+  // Three-phase alternator: the three phase leads spread down the right side (A top → C bottom),
+  // the wye neutral out of the left — wire loads phase → neutral (single-phase taps) or phase →
+  // phase (line-to-line).
+  alternator_three_phase: [
+    { id: 'neutral', position: Position.Left },
+    { id: 'phase_a', position: Position.Right, offset: 8 },
+    { id: 'phase_b', position: Position.Right, offset: 22 },
+    { id: 'phase_c', position: Position.Right, offset: 36 },
+  ],
   induction_motor: TWO('terminal_a', 'terminal_b'),
   arc_lamp: TWO('anode', 'cathode'),
   neon_lamp: TWO('anode', 'cathode'),
@@ -2001,6 +2077,9 @@ function polarityOf(definition: string, terminalId: string): '+' | '−' | undef
     if (terminalId === 'terminal_a') return '+'
     if (terminalId === 'terminal_b') return '−'
   }
+  // An alternator's output ALTERNATES — its terminal names reuse the machine family's
+  // positive/negative, but a real AC generator wears no +/− markings (the real-markings rule).
+  if (definition === 'alternator') return undefined
   return TERMINAL_POLARITY[terminalId]
 }
 

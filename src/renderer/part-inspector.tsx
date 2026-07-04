@@ -537,6 +537,15 @@ export function PartInspector({
           {reading.generatedEmfV !== undefined
             ? readingRow('EMF (no-load)', formatEng(reading.generatedEmfV, 'V'), null)
             : null}
+          {reading.frequencyHz !== undefined
+            ? readingRow('Frequency', formatEng(reading.frequencyHz, 'Hz'), null)
+            : null}
+          {reading.emfPeakV !== undefined
+            ? readingRow('EMF peak', formatEng(reading.emfPeakV, 'V'), null)
+            : null}
+          {reading.emfRmsV !== undefined
+            ? readingRow('EMF rms', formatEng(reading.emfRmsV, 'V'), null)
+            : null}
           {reading.speedRpm !== undefined
             ? readingRow('Speed', `${Math.round(reading.speedRpm)} RPM`, null)
             : null}

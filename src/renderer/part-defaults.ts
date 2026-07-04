@@ -189,6 +189,28 @@ const DEFAULTS: Record<string, Parameters> = {
     viscous_friction: scalar(1e-5, 'N*m*s/rad'),
     winding: { value: 'copper' },
   },
+  alternator: {
+    // A 4-pole (2-pair) bench alternator at 1800 RPM: f = poles·RPM/120 = 60 Hz EXACTLY — the
+    // North American grid frequency at the classic 4-pole synchronous speed. k = 0.05 V·s/rad
+    // (electrical) → EMF amplitude k·ω_e = 0.05 × 377 ≈ 18.8 V peak ≈ 13.3 V rms, an
+    // automotive-class machine. Spin it faster and BOTH f and V rise — the real signature.
+    flux_linkage: scalar(0.05, 'V*s/rad'),
+    winding_resistance: scalar(1, 'ohm'),
+    pole_pairs: scalar(2, 'dimensionless'),
+    drive_speed: scalar(1800, 'rpm'),
+    viscous_friction: scalar(1e-5, 'N*m*s/rad'),
+    winding: { value: 'copper' },
+  },
+  alternator_three_phase: {
+    // The same 4-pole machine with THREE coils 120° apart — 60 Hz at 1800 RPM, ~13.3 V rms per
+    // phase, three sines a third of a period apart plus the wye neutral.
+    flux_linkage: scalar(0.05, 'V*s/rad'),
+    winding_resistance: scalar(1, 'ohm'),
+    pole_pairs: scalar(2, 'dimensionless'),
+    drive_speed: scalar(1800, 'rpm'),
+    viscous_friction: scalar(1e-5, 'N*m*s/rad'),
+    winding: { value: 'copper' },
+  },
   dc_motor: {
     // A small 12 V brushed DC motor (hobby / gearmotor class). R_a 2 Ω; motor constant
     // k ≈ 0.02 V·s/rad (= N·m/A); light friction → ~5600 RPM no-load drawing ~0.15 A.
@@ -755,6 +777,21 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     armature_resistance: 'small bench dynamo, ~1.5 Ω winding (short-circuit ~8.4 A)',
     drive_speed: 'prime-mover speed 3000 RPM (a governed/regulated drive holds it constant)',
     viscous_friction: 'windage/bearing loss — sets the drive torque + efficiency reading',
+  },
+  alternator: {
+    flux_linkage:
+      'k ≈ 0.05 V·s/rad (electrical) → ~18.8 V peak / 13.3 V rms at 60 Hz (automotive class)',
+    winding_resistance: 'small alternator stator, ~1 Ω per winding',
+    pole_pairs: '2 pairs = a 4-pole rotor — 60 Hz at the classic 1800 RPM synchronous speed',
+    drive_speed: '1800 RPM → f = poles·RPM/120 = 60 Hz exactly (the North American grid frequency)',
+    viscous_friction: 'windage/bearing loss — the mechanical side, not the electrical solve',
+  },
+  alternator_three_phase: {
+    flux_linkage: 'k ≈ 0.05 V·s/rad per coil → ~13.3 V rms per phase at 60 Hz',
+    winding_resistance: '~1 Ω per phase winding',
+    pole_pairs: '2 pairs = a 4-pole rotor — 60 Hz at 1800 RPM (f = poles·RPM/120)',
+    drive_speed: '1800 RPM → 60 Hz on all three phases, a third of a period apart',
+    viscous_friction: 'windage/bearing loss — the mechanical side, not the electrical solve',
   },
   dc_motor: {
     armature_resistance: 'small 12 V brushed motor, ~2 Ω winding (hobby / gearmotor class)',

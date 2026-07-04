@@ -99,6 +99,8 @@ export const PARTS: { definition: string; label: string }[] = [
   { definition: 'electromagnet', label: 'Electromagnet' },
   { definition: 'dc_motor', label: 'DC Motor' },
   { definition: 'generator', label: 'Generator' },
+  { definition: 'alternator', label: 'Alternator' },
+  { definition: 'alternator_three_phase', label: '3φ Alternator' },
   { definition: 'induction_motor', label: 'AC Motor' },
   { definition: 'transmission_line', label: 'T-Line' },
   { definition: 'transformer', label: 'Transformer' },

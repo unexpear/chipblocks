@@ -1,0 +1,96 @@
+# Valid fixture: alternator (single-phase AC generator) — the rotating-magnet machine behind
+# every wall outlet. Spin a magnet of `pole_pairs` pole pairs past a stator coil and Faraday
+# induction makes a SINE EMF: the electrical rate is omega_e = pole_pairs * omega_mech, so the
+# output frequency is the classic f = poles*RPM/120 (a 4-pole machine at 1800 RPM makes exactly
+# the US grid's 60 Hz), and the EMF amplitude is k*|omega_e| (the flux linkage k swept at the
+# electrical rate). Spin it faster and BOTH the frequency and the voltage rise - the signature
+# of a real alternator, unlike an ideal AC source. (Faraday 1831; Hippolyte Pixii's 1832
+# alternating magneto was literally this machine.)
+#
+# Modeled as a sinusoidal Thevenin source - EMF k*|omega_e|*sin(omega_e*t) behind the winding
+# resistance - solved by the transient engine as a TimedSource; at DC its EMF averages to zero
+# over a cycle, so the DC solve sees just the winding resistance (the DC panel shows the steady
+# part, the Scope shows the sine).
+#
+# Honest scope: a governed prime mover holds the drive speed constant; the winding's synchronous
+# inductance (armature reaction) and the spin-up transient are documented further rungs; the
+# magnets and bearings are lumped into k, as the motor/dynamo lump theirs. A lone coil's steady
+# sine looks the same for either spin direction (only a multi-phase machine's SEQUENCE reveals
+# reversal) - the honest contrast with the DC dynamo, whose polarity flips.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: alternator
+origin: builtin
+layer: primitive_device
+name: "Alternator (AC generator)"
+description: "A single-phase alternator - the rotating-magnet AC generator behind every outlet. A prime mover spins a magnet of pole_pairs pole pairs past the stator coil, generating a sine EMF at the electrical rate omega_e = pole_pairs * omega_mech: the frequency is f = poles*RPM/120 (a 4-pole machine at 1800 RPM makes the US grid's 60 Hz exactly) and the amplitude is flux_linkage * |omega_e|, behind the winding resistance. Spin it faster and both the frequency AND the voltage rise - the real machine's signature, unlike an ideal AC source."
+composition:
+  requires:
+    winding:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  winding:
+    type: material_ref
+    satisfies_role: winding
+    required: true
+    default:
+      value: copper
+    description: The conductor the stator coil is wound from. Must conduct; copper is the standard.
+  flux_linkage:
+    type: quantity
+    units: volt*second/radian
+    required: true
+    description: k, the peak flux linkage of the stator coil (V*s/rad electrical). The EMF amplitude is k * |omega_e| - Faraday's law with the rotor field swept past the coil at the electrical rate.
+  winding_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: The stator winding's resistance. The terminal voltage droops below the EMF as current is delivered, and it sets the copper loss - and it is all the DC solve sees (the EMF averages to zero).
+  pole_pairs:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: Rotor pole PAIRS (a 4-pole rotor is 2 pairs). Multiplies the mechanical speed into the electrical rate - more poles make the grid frequency at a slower, easier shaft speed (f = poles*RPM/120).
+  drive_speed:
+    type: quantity
+    units: rpm
+    required: true
+    description: The prime mover's shaft speed in RPM (signed - a reversed shaft reverses the rotating field; a lone coil's sine looks the same, but a three-phase machine's sequence flips). Sets BOTH the frequency and the amplitude.
+  viscous_friction:
+    type: quantity
+    units: newton*meter*second/radian
+    required: true
+    description: B, the viscous damping (bearing friction + windage) - the mechanical loss term, not part of the electrical solve.
+behaviors:
+  - provides_emf
+  - electromechanical_coupling
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  terminal_positive:
+    description: One stator lead. The sine EMF is measured from here to the other lead; "positive" names the lead, not a fixed polarity - the output alternates.
+  terminal_negative:
+    description: The other stator lead - the return.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Transient: a TimedSource with amplitude k*|omega_e|, frequency |omega_e|/2pi, behind
+  winding_resistance (transient-solver.ts resolveAlternator / alternatorElectrical). DC: the EMF
+  averages to zero over a cycle, so only the winding resistance stamps. The frequency relation
+  f = poles*RPM/120 is the standard synchronous-machine identity (Chapman, "Electric Machinery
+  Fundamentals"; Fitzgerald, "Electric Machinery"); the shipped defaults make a 4-pole (2-pair)
+  bench machine at 1800 RPM produce exactly 60 Hz - the North American grid frequency (ANSI
+  C84.1 systems run at 60 Hz) - at an automotive-class ~13 V rms. Honest scope: fixed governed
+  drive speed; no synchronous inductance (armature reaction) yet; magnets/bearings lumped into k
+  and B.

@@ -53,6 +53,9 @@ export type PartReading = {
   torqueNm?: number
   backEmfV?: number
   generatedEmfV?: number
+  frequencyHz?: number
+  emfPeakV?: number
+  emfRmsV?: number
   luminousFluxLm?: number
   slipPercent?: number
   startupCurrentA?: number
@@ -201,6 +204,27 @@ export function partReadings(
       }
     }
 
+    // Alternator (single- or three-phase): the shaft-derived electrical numbers — the output
+    // frequency f = poles·RPM/120 and the per-coil EMF (peak and rms). These come from the
+    // machine's parameters (the DC solve can't see a sine), so like the induction motor they are
+    // gated on the machine actually being IN the solved circuit — a floating alternator shows
+    // nothing, not nameplate numbers. The Scope shows the waves themselves.
+    if (
+      (inst.definition === 'alternator' || inst.definition === 'alternator_three_phase') &&
+      (inst.connects ?? []).some((c) => solution.nodes.has(c.net))
+    ) {
+      const k = readScalarParam(inst, 'flux_linkage')
+      const polePairs = readScalarParam(inst, 'pole_pairs')
+      const rpm = readScalarParam(inst, 'drive_speed')
+      if (k !== undefined && polePairs !== undefined && rpm !== undefined && k > 0) {
+        const omegaE = polePairs * ((rpm * 2 * Math.PI) / 60)
+        reading.frequencyHz = Math.abs(omegaE) / (2 * Math.PI)
+        reading.emfPeakV = k * Math.abs(omegaE)
+        reading.emfRmsV = (k * Math.abs(omegaE)) / Math.SQRT2
+        reading.speedRpm = rpm
+      }
+    }
+
     // Arc / neon discharge lamp: once struck (the latch is conducting) it burns at its discharge
     // (arc / maintaining) voltage; report the light = efficacy × power. Extinguished → no light.
     if (
@@ -263,7 +287,11 @@ export function partReadings(
       }
     }
 
-    if (reading.current !== undefined || reading.voltage !== undefined) {
+    if (
+      reading.current !== undefined ||
+      reading.voltage !== undefined ||
+      reading.frequencyHz !== undefined
+    ) {
       readings.set(inst.id, reading)
     }
   }

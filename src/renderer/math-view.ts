@@ -847,6 +847,41 @@ function partCard(
     }
     return { id: inst.id, title: 'Generator — spin it, make EMF (E = k·ω)', lines }
   }
+  if (def === 'alternator' || def === 'alternator_three_phase') {
+    const k = readScalarParam(inst, 'flux_linkage')
+    const polePairs = readScalarParam(inst, 'pole_pairs')
+    const rpm = readScalarParam(inst, 'drive_speed')
+    const three = def === 'alternator_three_phase'
+    lines.push(
+      three
+        ? 'The power-station machine: one magnet spins inside THREE coils sitting a third of a turn apart, so each sees the field a third of a period after the last — three identical sine waves, 120° apart. Their summed power is constant, and a balanced load returns zero current on the shared neutral.'
+        : 'A magnet spinning past a coil makes a SINE: the field sweeps by once per pole pair per turn, pushing the electrons forward then pulling them back. Faster spin sweeps the field faster — so the frequency AND the voltage both rise with the shaft speed.',
+    )
+    if (k !== undefined && polePairs !== undefined && rpm !== undefined) {
+      const omegaE = polePairs * ((rpm * 2 * Math.PI) / 60)
+      const f = Math.abs(omegaE) / (2 * Math.PI)
+      const peak = k * Math.abs(omegaE)
+      lines.push(
+        `f = poles·RPM/120 = ${(2 * polePairs).toFixed(0)}·${Math.abs(rpm).toFixed(0)}/120 = ${formatEng(f, 'Hz')}${Math.abs(f - 60) < 0.5 ? ' — the North American grid frequency' : ''}. EMF amplitude = k·ω_e = ${formatEng(k, 'V·s/rad')} × ${formatEng(Math.abs(omegaE), 'rad/s')} = ${fmtV(peak)} peak (${fmtV(peak / Math.SQRT2)} rms — what a multimeter reads).`,
+      )
+      if (three)
+        lines.push(
+          rpm >= 0
+            ? 'Phase order: A, then B a third of a period later, then C — the abc sequence. Spin the shaft the other way and B and C swap order (that is how you reverse a three-phase motor: swap any two leads).'
+            : 'The shaft is running REVERSED, so the sequence is acb — B now leads instead of lags. Swapping any two phase leads has the same effect.',
+        )
+    }
+    lines.push(
+      'This page shows the steady picture (a sine averages to zero at DC); the Scope shows the waves — and its φ measurement reads the 120° between phases directly.',
+    )
+    return {
+      id: inst.id,
+      title: three
+        ? 'Three-phase alternator — three coils, 120° apart'
+        : 'Alternator — spin speed sets frequency AND voltage',
+      lines,
+    }
+  }
   if (def === 'arc_lamp') {
     const struck = readEnumParam(inst, 'device_state') === 'conducting'
     const arcV = readScalarParam(inst, 'arc_voltage')

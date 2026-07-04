@@ -1,0 +1,101 @@
+# Valid fixture: three-phase alternator - the power-station machine. THREE stator coils sit
+# 120 degrees apart around one rotating magnet, so each sees the field a third of a turn after
+# the last: three identical sine EMFs a third of a period apart, on three wires plus the shared
+# neutral (the wye star point). This is why the grid is three-phase: the summed instantaneous
+# power is CONSTANT (single-phase power pulses at twice the line frequency), and a balanced load
+# returns ZERO current on the neutral - three circuits' worth of power over four wires.
+#
+# Each phase is modeled as its own sinusoidal Thevenin source, phase -> neutral, behind its own
+# winding resistance, all sharing the amplitude k*|omega_e| and frequency f = poles*RPM/120 with
+# phase angles 0 / -120 / +120 degrees. Reversing the shaft flips the PHASE SEQUENCE (b and c
+# swap order in time) - the real reversal signature of a rotating field, and why swapping any
+# two leads reverses a three-phase motor.
+#
+# Honest scope: the wye (star) connection with an accessible neutral is built in - it is the
+# common machine and the one that gives single-phase taps; a delta-connected stator is a
+# further rung, and so is a 3-wire hookup with the neutral left unwired (the floating internal
+# star point) - the solver says so rather than solving it wrong. Each fully wired coil solves on
+# its own (phase + neutral = a legitimate single-phase tap); a dangling phase lead just idles
+# that coil, named in a note. Fixed governed drive speed; no synchronous inductance; magnets and
+# bearings lumped into k and B, as the whole machine family lumps them.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: alternator_three_phase
+origin: builtin
+layer: primitive_device
+name: "Three-phase alternator"
+description: "A three-phase AC generator - the power-station machine. Three stator coils 120 degrees apart around one spinning magnet produce three identical sine EMFs a third of a period apart (phases A, B, C) plus the shared wye neutral. Frequency f = poles*RPM/120 and per-phase amplitude flux_linkage * |omega_e|, each phase behind its own winding resistance. A balanced load returns zero neutral current; reversing the shaft flips the phase sequence."
+composition:
+  requires:
+    winding:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 4
+parameters:
+  winding:
+    type: material_ref
+    satisfies_role: winding
+    required: true
+    default:
+      value: copper
+    description: The conductor the three stator coils are wound from. Must conduct; copper is the standard.
+  flux_linkage:
+    type: quantity
+    units: volt*second/radian
+    required: true
+    description: k, each coil's peak flux linkage (V*s/rad electrical). Every phase's EMF amplitude is k * |omega_e|; the three coils are identical, a third of a turn apart.
+  winding_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: Each stator winding's resistance (per phase). Sets the per-phase droop under load and the copper loss; at DC it is all the solve sees of each coil.
+  pole_pairs:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: Rotor pole PAIRS. Multiplies the mechanical speed into the electrical rate, f = poles*RPM/120 - utility machines add poles to make 60 Hz at practical shaft speeds.
+  drive_speed:
+    type: quantity
+    units: rpm
+    required: true
+    description: The prime mover's shaft speed in RPM (signed). Sets the frequency and amplitude of all three phases together; a reversed shaft swaps the B and C sequence in time.
+  viscous_friction:
+    type: quantity
+    units: newton*meter*second/radian
+    required: true
+    description: B, the viscous damping (bearing friction + windage) - the mechanical loss term, not part of the electrical solve.
+behaviors:
+  - provides_emf
+  - electromechanical_coupling
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  phase_a:
+    description: Phase A - the reference coil. Its sine crosses zero rising as the rotor's north pole passes it.
+  phase_b:
+    description: Phase B - the coil a third of a turn behind A; its sine lags A by 120 degrees (a third of a period later).
+  phase_c:
+    description: Phase C - the coil a third of a turn ahead; its sine leads A by 120 degrees. Reversing the shaft swaps B and C's order in time.
+  neutral:
+    description: The wye star point - the three coils' shared return. Carries only the IMBALANCE of the three phase currents; a balanced load returns zero here.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  Transient: three TimedSources sharing amplitude k*|omega_e| and frequency f = poles*RPM/120,
+  phase angles 0 / -120 / +120 degrees (sequence sign follows the shaft direction), each phase ->
+  neutral behind winding_resistance (transient-solver.ts resolveThreePhaseAlternator). The shared
+  neutral's recorded current is the accumulated SUM of the three returns, so a balanced wye load
+  reads ~0 A on it - the textbook (and video-classic) neutral property. DC: three winding
+  resistances to the neutral, EMFs averaging to zero. Sources: standard synchronous-machine
+  theory (Chapman, "Electric Machinery Fundamentals"; Fitzgerald, "Electric Machinery");
+  f = poles*RPM/120; three-phase constant-power and neutral-balance identities are textbook
+  results of the 120-degree spacing.
