@@ -5326,6 +5326,26 @@ function Canvas({ project }: { project: ProjectChoice }) {
             pointerEvents: 'none',
           }}
         >
+          {/* The solve's own notes — a floating circuit set aside, an unsupported element —
+              were invisible before: the engine explained itself only to the test suite. */}
+          {(solution?.warnings.length ?? 0) > 0 ? (
+            <div
+              style={{
+                color: THEME.statusWarn,
+                marginBottom: 3,
+                maxWidth: 560,
+                whiteSpace: 'normal',
+                textAlign: 'right',
+              }}
+            >
+              {[...new Set(solution.warnings)].slice(0, 2).map((w) => (
+                <div key={w}>⚠ {w}</div>
+              ))}
+              {new Set(solution.warnings).size > 2 ? (
+                <div>… and {new Set(solution.warnings).size - 2} more</div>
+              ) : null}
+            </div>
+          ) : null}
           ChipBlocks — {nodes.length} components, {edges.length} wires · select a part to edit it, R
           to rotate, Delete to remove, double-click a switch to flip
           {tool === 'wire'

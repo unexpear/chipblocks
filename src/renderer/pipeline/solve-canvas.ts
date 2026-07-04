@@ -171,11 +171,34 @@ function solveCanvas(
   // component is solved: a free-floating section's voltages are genuinely
   // undefined (and would be a singular matrix) — it sits idle instead of
   // killing the whole canvas. The meter still gets the FULL world.
+  const solvable = groundedComponent(world)
   const thermal = solveWithRelays(
-    groundedComponent(world),
+    solvable,
     projectAmbientC === undefined ? undefined : { projectAmbientC },
   )
   const solution = thermal.solution
+  // Name what the strip set aside — the engine must explain itself ON SCREEN (the footer shows
+  // solution warnings), not only to the test suite. Wires are connections and a ground symbol is a
+  // net name, so only real wired parts are worth naming.
+  if (solvable.instances.size < world.instances.size) {
+    const dropped = [...world.instances.values()].filter(
+      (inst) =>
+        !solvable.instances.has(inst.id) &&
+        inst.definition !== 'wire' &&
+        inst.definition !== 'ground' &&
+        (inst.connects?.length ?? 0) > 0,
+    )
+    if (dropped.length > 0) {
+      const named =
+        dropped
+          .slice(0, 4)
+          .map((inst) => inst.id)
+          .join(', ') + (dropped.length > 4 ? ', …' : '')
+      solution.warnings.push(
+        `Separate circuit (${named}) has no path to ground — not solved. Ground it (or wire it to the grounded circuit) and it solves independently alongside the others.`,
+      )
+    }
+  }
   const edges = edgeList.map((edge) => {
     const wire = drawn.get(edge.id) ?? { lengthM: 0, ohms: 0 }
     const physics = edgePhysics(
