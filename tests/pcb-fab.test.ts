@@ -345,6 +345,24 @@ describe('the ZIP itself', () => {
     expect(decoder.decode(files.get(FAB_FILE_NAMES.report))).toContain('STATUS: PASS')
     expect(decoder.decode(files.get(FAB_FILE_NAMES.netlist))).toContain('.end')
     expect(decoder.decode(files.get(FAB_FILE_NAMES.readme))).toContain(FAB_FILE_NAMES.drill)
+    // the fab-order spec: material / thickness / copper weight / finish, cited
+    const stackup = decoder.decode(files.get(FAB_FILE_NAMES.stackup))
+    expect(stackup).toContain('FR4')
+    expect(stackup).toContain('1.6 mm')
+    expect(stackup).toContain('1 oz (35 µm)')
+    expect(stackup).toContain('HASL')
+    expect(stackup).toContain('Provenance:')
+    // the trace-physics line — the router's cited ~1 A note backed by a computed number
+    expect(stackup).toContain('Default trace:')
+    expect(stackup).toMatch(/carries ~0\.\d+ A at a 10 °C rise/)
+  })
+
+  test('the validation report states the BOARD SPEC (material/thickness/copper/finish) for the fab', () => {
+    const report = buildValidationReport(cleanInputs()).reportText
+    expect(report).toContain('BOARD SPEC')
+    expect(report).toContain('2-layer, 1.6 mm FR4')
+    expect(report).toContain('1 oz (35 µm) copper')
+    expect(report).toContain('HASL')
   })
 
   test('byte-deterministic: the same board and the same moment produce the identical archive', () => {

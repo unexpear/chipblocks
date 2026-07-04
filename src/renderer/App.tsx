@@ -148,6 +148,7 @@ import {
 import { runDrc } from './pcb-drc.ts'
 import { type BomRow, buildManufacturingZip } from './pcb-fab.ts'
 import { routeBoard } from './pcb-route.ts'
+import { defaultStackup, SURFACE_FINISHES } from './pcb-stackup.ts'
 import { PcbView } from './pcb-view.tsx'
 import { canvasWorld } from './pipeline/canvas-world.ts'
 import {
@@ -1292,6 +1293,10 @@ function Canvas({ project }: { project: ProjectChoice }) {
     }
     return problems
   }, [pcbBoard, pcbOffBoard, pcbRouting, pcbDrc])
+  // The board's physical stack-up (substrate / copper weight / finish) — the fab-order spec that
+  // goes in the manufacturing ZIP. Fixed at the shipped default today (2-layer 1.6 mm FR4, 1 oz,
+  // HASL); a stack-up editor would make it user-set later.
+  const pcbStackup = useMemo(() => defaultStackup(), [])
   const [pcbExportNote, setPcbExportNote] = useState<string | null>(null)
   // A "manufacturing ZIP saved" note is only true for the board it was exported from — any edit
   // to the parts, wires or placements (or loading another file, which replaces all three) makes
@@ -1341,6 +1346,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       bomRows,
       netlistText: netlist,
       netlistUnsupported: unsupported,
+      stackup: pcbStackup,
       when: new Date(),
     })
     if (fab.validation.status !== 'pass') {
@@ -1350,7 +1356,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
     void window.chipblocks?.saveFabZip?.(fab.bytes).then((r) => {
       setPcbExportNote(r.ok && r.path !== undefined ? `manufacturing ZIP saved — ${r.path}` : null)
     })
-  }, [nodes, edges, pcbBoard, pcbRatsnest, pcbRouting, pcbDrc, pcbOffBoard])
+  }, [nodes, edges, pcbBoard, pcbRatsnest, pcbRouting, pcbDrc, pcbOffBoard, pcbStackup])
   // The Bode (frequency-response) tool — its panel state, the grounded world the AC sweep runs on,
   // and the output-picking click handler live in useBode now; its couplings (the warm solved world,
   // the active tool) are injected. Destructured to the same names the toolbar, panel and canvas
@@ -6340,6 +6346,16 @@ function Canvas({ project }: { project: ProjectChoice }) {
                     )}
                     <span style={{ fontSize: 11, color: THEME.textFaint }}>
                       drag a part to move it · click to select, R to rotate
+                    </span>
+                    <span style={{ fontSize: 11, color: THEME.textFaint }}>
+                      stack-up: {pcbStackup.copperLayers}-layer ·{' '}
+                      {pcbStackup.thicknessMm.toFixed(1)} mm FR4 ·{' '}
+                      {pcbStackup.copperWeight === 'two_oz'
+                        ? '2 oz'
+                        : pcbStackup.copperWeight === 'half_oz'
+                          ? '0.5 oz'
+                          : '1 oz'}{' '}
+                      copper · {SURFACE_FINISHES[pcbStackup.surfaceFinish].name} finish
                     </span>
                   </>
                 ) : (

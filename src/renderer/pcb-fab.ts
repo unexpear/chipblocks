@@ -14,6 +14,16 @@ import {
   isoWithOffset,
 } from './pcb-gerber.ts'
 import { type BoardRouting, DEFAULT_ROUTE_CLASS, VIA_RULES } from './pcb-route.ts'
+import {
+  COPPER_WEIGHT_MM,
+  COPPER_WEIGHT_PROVENANCE,
+  defaultStackup,
+  FR4_SUBSTRATE,
+  type Stackup,
+  SURFACE_FINISHES,
+  traceAmpacity,
+  traceResistanceOhm,
+} from './pcb-stackup.ts'
 import { SILK_TEXT } from './stroke-font.ts'
 
 /**
@@ -26,8 +36,9 @@ import { SILK_TEXT } from './stroke-font.ts'
  *
  * Contents (flat, the shape fab upload forms expect): the eight Gerber layers (two copper, two
  * mask, two paste, silkscreen, edge cuts) + the drill file (KiCad-style names, Protel
- * extensions), bom.csv + placement.csv (the assembly pair, JLCPCB
- * column conventions), the SPICE netlist, the validation report, and a README naming every file.
+ * extensions), bom.csv + placement.csv (the assembly pair, JLCPCB column conventions),
+ * board-stackup.txt (the fab-ORDER spec — material / thickness / copper weight / finish, cited),
+ * the SPICE netlist, the validation report, and a README naming every file.
  */
 
 export type BomRow = {
@@ -136,7 +147,55 @@ export type FabInputs = {
   /** Parts the SPICE serializer could not express ('id (definition)' lines) — they exist on the
    *  board (bom.csv / placement.csv) but not in netlist.cir; the report states the omission. */
   netlistUnsupported?: readonly string[]
+  /** The board's physical stack-up (substrate, copper weight, finish) — the fab-ORDER spec. Absent
+   *  ⇒ the shipped default (2-layer, 1.6 mm FR4, 1 oz copper, HASL). */
+  stackup?: Stackup
   when: Date
+}
+
+/** A copper weight as an ounce label (the trade unit) with its µm thickness in parentheses. */
+const copperWeightLabel = (w: Stackup['copperWeight']): string => {
+  const oz = w === 'half_oz' ? '0.5' : w === 'two_oz' ? '2' : '1'
+  return `${oz} oz (${num(COPPER_WEIGHT_MM[w] * 1000)} µm)`
+}
+
+/** The fab-ORDER spec — the board-stackup.txt file + the report's BOARD SPEC lines. States the
+ *  material, finished thickness, copper weight, layer count and surface finish a fab needs on the
+ *  order; without it the fab silently defaults everything. Every line is cited. */
+export function buildStackupSpec(stackup: Stackup): string {
+  const finish = SURFACE_FINISHES[stackup.surfaceFinish]
+  // The trace physics the copper weight sets — computed for the default trace width, so the router's
+  // "~1 A" note is backed by a real number, not just prose. DC resistance per 100 mm + the IPC-2221
+  // current a trace of that width carries at a 10 °C rise.
+  const traceW = DEFAULT_ROUTE_CLASS.traceWidthMm
+  const rPer100 = traceResistanceOhm(traceW, 100, stackup.copperWeight, 20)
+  const amps = traceAmpacity(traceW, stackup.copperWeight, 10, 'external')
+  return [
+    'ChipBlocks board stack-up — the fab-order spec (every value cited)',
+    '',
+    `  Layers:          ${stackup.copperLayers} copper`,
+    `  Finished thickness: ${num(stackup.thicknessMm)} mm`,
+    `  Substrate:       FR4 — Dk ${num(FR4_SUBSTRATE.dielectricConstant)}, Df ${num(FR4_SUBSTRATE.lossTangent)}, Tg ~${num(FR4_SUBSTRATE.glassTransitionC)} °C, ${num(FR4_SUBSTRATE.thermalConductivityWmK)} W/m·K`,
+    `  Copper weight:   ${copperWeightLabel(stackup.copperWeight)} outer`,
+    `  Surface finish:  ${finish.name}${finish.leadFree ? ' (lead-free)' : ''}`,
+    `  Default trace:   ${num(traceW)} mm wide → ${num(rPer100 * 1000)} mΩ per 100 mm; carries ~${(Math.round(amps * 100) / 100).toFixed(2)} A at a 10 °C rise (IPC-2221 external)`,
+    '',
+    'Cross-section (top → bottom):',
+    ...stackup.layers.map((l) => {
+      const d =
+        l.dielectricConstant !== undefined
+          ? ` — Dk ${num(l.dielectricConstant)}, Df ${num(l.lossTangent ?? 0)}`
+          : ''
+      return `  ${num(l.thicknessMm)} mm  ${l.name} (${l.material ?? l.type}${d})`
+    }),
+    '',
+    'Provenance:',
+    `  stack-up:     ${stackup.provenance.title} — ${stackup.provenance.citation}`,
+    `  substrate:    ${FR4_SUBSTRATE.provenance.title} — ${FR4_SUBSTRATE.provenance.citation}`,
+    `  copper weight: ${COPPER_WEIGHT_PROVENANCE.title} — ${COPPER_WEIGHT_PROVENANCE.citation}`,
+    `  finish:       ${finish.provenance.title} — ${finish.provenance.citation}`,
+    '',
+  ].join('\n')
 }
 
 export type FabValidation = {
@@ -184,6 +243,8 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
     problems.push(`In the BOM but not placed on the board: ${missingFromBoard.join(', ')}.`)
   }
   const status = problems.length === 0 ? 'pass' : 'fail'
+  const stackup = inputs.stackup ?? defaultStackup()
+  const finish = SURFACE_FINISHES[stackup.surfaceFinish]
 
   const lines = [
     'ChipBlocks board validation report',
@@ -191,6 +252,9 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
     '',
     `STATUS: ${status.toUpperCase()}`,
     ...problems.map((p) => `  ✗ ${p}`),
+    '',
+    'BOARD SPEC (the fab order — see board-stackup.txt for the full cross-section + citations)',
+    `  ${stackup.copperLayers}-layer, ${num(stackup.thicknessMm)} mm FR4 (Dk ${num(FR4_SUBSTRATE.dielectricConstant)}), ${copperWeightLabel(stackup.copperWeight)} copper, ${finish.name} finish`,
     '',
     'BOARD',
     `  outline: ${num(board.outline.w)} × ${num(board.outline.h)} mm`,
@@ -251,6 +315,7 @@ export const FAB_FILE_NAMES = {
   drill: `${BASE}.drl`,
   bom: 'bom.csv',
   placement: 'placement.csv',
+  stackup: 'board-stackup.txt',
   netlist: 'netlist.cir',
   report: 'validation-report.txt',
   readme: 'README.txt',
@@ -276,6 +341,9 @@ function buildReadme(inputs: FabInputs): string {
     'Assembly:',
     `  ${FAB_FILE_NAMES.bom}               bill of materials (grouped by value + footprint)`,
     `  ${FAB_FILE_NAMES.placement}         pick-and-place: body centres, mm, Y up, rotation CCW`,
+    '',
+    'Order spec:',
+    `  ${FAB_FILE_NAMES.stackup}     material / thickness / copper weight / finish (the fab order)`,
     '',
     'Reference:',
     `  ${FAB_FILE_NAMES.netlist}           the circuit as a SPICE netlist (its own element numbering)`,
@@ -312,6 +380,7 @@ export function buildManufacturingZip(inputs: FabInputs): FabZip {
     text(FAB_FILE_NAMES.drill, excellonDrill(board, routing, when)),
     text(FAB_FILE_NAMES.bom, buildBomCsv(inputs.bomRows)),
     text(FAB_FILE_NAMES.placement, buildPlacementCsv(board)),
+    text(FAB_FILE_NAMES.stackup, buildStackupSpec(inputs.stackup ?? defaultStackup())),
     text(FAB_FILE_NAMES.netlist, inputs.netlistText),
     text(FAB_FILE_NAMES.report, validation.reportText),
     text(FAB_FILE_NAMES.readme, buildReadme(inputs)),

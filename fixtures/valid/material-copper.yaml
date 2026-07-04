@@ -46,6 +46,40 @@ properties:
     support:
       model_status: defined
       solver_status: not_applicable
+  temperature_coefficient_of_resistance:
+    value:
+      kind: condition_bound
+      amount: 0.00393
+      unit: per_degC
+      conditions:
+        temperature:
+          amount: 20
+          unit: degC
+    provenance:
+      source_type: standard
+      title: Copper temperature coefficient of resistance at 20 C
+      citation: "IEC 60028 / CRC Handbook: annealed copper alpha = 0.00393 /degC near 20 C — resistance rises about 0.39% per degree; used with resistivity to give rho(T) = rho20*(1 + alpha*(T-20))."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_conductivity:
+    value:
+      kind: condition_bound
+      amount: 401
+      unit: watt_per_meter_kelvin
+      conditions:
+        temperature:
+          amount: 27
+          unit: degC
+    provenance:
+      source_type: reference
+      title: Copper thermal conductivity near room temperature
+      citation: "CRC Handbook of Chemistry and Physics, 102nd ed. (pure copper ~401 W/m-K at 300 K); commercial copper foil runs ~385-400 W/m-K."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
 support:
   model_status: defined
   solver_status: not_applicable
