@@ -503,6 +503,40 @@ export function NetEdge({
           opacity: 0.09 + 0.07 * i,
         })).filter((band) => band.radiusPx >= 0.75)
       : []
+  // Field DIRECTION — the textbook dot-and-cross: the field circles the wire (right-hand rule), so
+  // in the drawing plane it points OUT of the screen (⊙) on one side of the current and INTO it (⊗)
+  // on the other, and the two swap sides when the current reverses. Derived from the SIGNED solved
+  // current along the wire's longest drawn segment (screen y grows downward — accounted for): for
+  // current flowing screen-right, ⊙ sits above the wire, ⊗ below. On AC, watch them swap.
+  let fieldDirMarks: { x: number; y: number; out: boolean }[] = []
+  if (fieldBands.length > 0 && amps !== null && Math.abs(amps) > 1e-12) {
+    let bi = 0
+    let bestLen = -1
+    for (let i = 0; i < routePoints.length - 1; i++) {
+      const a = routePoints[i]
+      const b = routePoints[i + 1]
+      if (a === undefined || b === undefined) continue
+      const len = Math.hypot(b.x - a.x, b.y - a.y)
+      if (len > bestLen) {
+        bestLen = len
+        bi = i
+      }
+    }
+    const a = routePoints[bi]
+    const b = routePoints[bi + 1]
+    if (a !== undefined && b !== undefined && bestLen > 24) {
+      const mx = (a.x + b.x) / 2
+      const my = (a.y + b.y) / 2
+      const f = amps >= 0 ? 1 : -1 // flow runs source → target when the solved current is positive
+      const ux = ((b.x - a.x) / bestLen) * f
+      const uy = ((b.y - a.y) / bestLen) * f
+      const off = 13
+      fieldDirMarks = [
+        { x: mx + off * uy, y: my - off * ux, out: true }, // ⊙ — B out of the screen
+        { x: mx - off * uy, y: my + off * ux, out: false }, // ⊗ — B into the screen
+      ]
+    }
+  }
 
   // Lens readout: the REAL number the active lens represents, shown right on the wire while
   // the lens is on (not only on hover) — so a lens is the legible math, not just a wash of
@@ -539,6 +573,37 @@ export function NetEdge({
           strokeLinejoin="round"
           style={{ pointerEvents: 'none' }}
         />
+      ))}
+      {fieldDirMarks.map((m) => (
+        <g
+          key={m.out ? 'field-out' : 'field-in'}
+          data-field-dir={m.out ? 'out' : 'in'}
+          style={{ pointerEvents: 'none' }}
+        >
+          <circle cx={m.x} cy={m.y} r={5} fill="none" stroke={FIELD_COLOR} strokeWidth={1.2} />
+          {m.out ? (
+            <circle cx={m.x} cy={m.y} r={1.4} fill={FIELD_COLOR} />
+          ) : (
+            <>
+              <line
+                x1={m.x - 2.8}
+                y1={m.y - 2.8}
+                x2={m.x + 2.8}
+                y2={m.y + 2.8}
+                stroke={FIELD_COLOR}
+                strokeWidth={1.2}
+              />
+              <line
+                x1={m.x - 2.8}
+                y1={m.y + 2.8}
+                x2={m.x + 2.8}
+                y2={m.y - 2.8}
+                stroke={FIELD_COLOR}
+                strokeWidth={1.2}
+              />
+            </>
+          )}
+        </g>
       ))}
       <BaseEdge
         id={id}

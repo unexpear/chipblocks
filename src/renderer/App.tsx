@@ -5710,7 +5710,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
               ? `B = μ₀I/2πr · band edges ${formatEng(lensState.fieldTesla, 'T')} / ${formatEng(
                   3 * lensState.fieldTesla,
                   'T',
-                )} / ${formatEng(10 * lensState.fieldTesla, 'T')} (innermost) · Earth ≈ 25–65 µT`
+                )} / ${formatEng(10 * lensState.fieldTesla, 'T')} (innermost) · Earth ≈ 25–65 µT · ⊙ field out of the screen, ⊗ into it (right-hand rule — they swap when the current reverses)`
               : 'no current flowing — no magnetic field to draw'}
           </div>
         ) : null}
