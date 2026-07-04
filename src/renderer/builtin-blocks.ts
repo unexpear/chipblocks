@@ -2527,6 +2527,294 @@ function orReduce(
   return { nodes, edges, ids, out: acc }
 }
 
+/** AND-reduce a list of input refs into one output via a chain of 2-input AND gates. The dual of
+ *  orReduce: returns the gate nodes, wiring edges, gate ids (for rail-chaining), and the final
+ *  output ref. With a single input it returns that input unchanged (no gate). */
+function andReduce(
+  ins: { node: string; handle: string }[],
+  prefix: string,
+  x: number,
+): {
+  nodes: BlockData['nodes']
+  edges: BlockData['edges']
+  ids: string[]
+  out: { node: string; handle: string }
+} {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ids: string[] = []
+  let acc = ins[0]
+  if (acc === undefined) throw new Error('andReduce needs at least one input')
+  for (let i = 1; i < ins.length; i++) {
+    const inp = ins[i]
+    if (inp === undefined) continue
+    const id = `${prefix}_and${i}`
+    nodes.push({ id, definition: 'block', x, y: 30 + i * 160, block: AND_BLOCK })
+    ids.push(id)
+    edges.push({
+      id: `${prefix}_a${i}`,
+      source: acc.node,
+      sourceHandle: acc.handle,
+      target: id,
+      targetHandle: 'a',
+    })
+    edges.push({
+      id: `${prefix}_b${i}`,
+      source: inp.node,
+      sourceHandle: inp.handle,
+      target: id,
+      targetHandle: 'b',
+    })
+    acc = { node: id, handle: 'out' }
+  }
+  return { nodes, edges, ids, out: acc }
+}
+
+/**
+ * BINARY DECODER (n → 2ⁿ, one-hot) — the address decoder every memory and every mux front-end runs
+ * on: n binary inputs select exactly ONE of 2ⁿ outputs high, the rest low. Built the textbook way,
+ * from real gates: each input feeds an inverter so both the bit and its complement are available,
+ * then output Yv is the AND of the n literals (A_i where bit i of v is 1, ¬A_i where it is 0) — the
+ * minterm that is true for exactly the input value v. Descend for the ANDs and inverters, descend
+ * again for the transistors. Purely combinational, so the fast logic engine evaluates it as 0/1.
+ */
+function binaryDecoder(bits: number): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const railIds: string[] = []
+  // One inverter per input: inv_i.in carries A_i (the true literal net + the input port), inv_i.out
+  // carries ¬A_i. Both are referenced as minterm literals below.
+  for (let i = 0; i < bits; i++) {
+    nodes.push({
+      id: `inv${i}`,
+      definition: 'block',
+      x: 40,
+      y: 30 + i * 150,
+      block: INVERTER_BLOCK,
+    })
+    railIds.push(`inv${i}`)
+  }
+  const literal = (i: number, high: boolean) => ({
+    node: `inv${i}`,
+    handle: high ? 'in' : 'out',
+  })
+  const outputs = 1 << bits
+  const outRefs: { node: string; handle: string }[] = []
+  for (let v = 0; v < outputs; v++) {
+    const lits = Array.from({ length: bits }, (_, i) => literal(i, ((v >> i) & 1) === 1))
+    const tree = andReduce(lits, `d${v}`, 300 + v * 220)
+    nodes.push(...tree.nodes)
+    edges.push(...tree.edges)
+    railIds.push(...tree.ids)
+    outRefs.push(tree.out)
+  }
+  edges.push(...chainRails(railIds, 'dec'))
+  let left = 14
+  for (let i = 0; i < bits; i++) {
+    ports.push({
+      id: `a${i}`,
+      label: `A${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `inv${i}`, handleId: 'in' },
+    })
+    left += 18
+  }
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'inv0', handleId: 'gnd' },
+  })
+  let right = 14
+  for (let v = 0; v < outputs; v++) {
+    const ref = outRefs[v]
+    if (ref === undefined) continue
+    ports.push({
+      id: `y${v}`,
+      label: `Y${v}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: ref.node, handleId: ref.handle },
+    })
+    right += 16
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'inv0', handleId: 'v_dd' },
+  })
+  return { name: `${bits}-to-${outputs} Decoder`, origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** A 2-to-4 one-hot binary decoder — the smallest, and the one whose whole truth table fits in view. */
+export const BINARY_DECODER_2_4: BlockData = binaryDecoder(2)
+/** A 3-to-8 one-hot binary decoder — the 74138-class address decoder, built from real gates. */
+export const BINARY_DECODER_3_8: BlockData = binaryDecoder(3)
+
+/**
+ * PRIORITY ENCODER (2ⁿ → n) — the inverse of the decoder, and the one every interrupt controller
+ * uses: it reports the binary INDEX of the highest-numbered active input, and a valid line (GS)
+ * that says any input is active at all (so index 0 active is told apart from nothing active). A
+ * plain encoder would garble when two inputs are high; this resolves them by PRIORITY. Real gate
+ * logic: a suffix-OR chain computes "is any HIGHER input active" for each position; input j WINS
+ * only if it is high AND no higher input is (I_j AND ¬higher_j); each output bit A_k ORs the wins
+ * of the inputs whose index has bit k set. Descend for the OR/AND/NOT gates. Combinational → fast
+ * logic engine. (With a strictly one-hot input it reduces to a plain binary encoder.)
+ */
+function priorityEncoder(inputs: number): BlockData {
+  const outBits = Math.round(Math.log2(inputs))
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const railIds: string[] = []
+  // The input net refs: input j is anchored at its suffix-OR gate's 'a' input (for j < top), and
+  // the top input at the top suffix-OR gate's 'b' input — every input reaches exactly one gate
+  // pin, then fans out by edges from that pin.
+  const top = inputs - 1
+  const inRef: { node: string; handle: string }[] = []
+  for (let j = 0; j < top; j++) inRef.push({ node: `so${j}`, handle: 'a' })
+  inRef.push({ node: `so${top - 1}`, handle: 'b' }) // the top input rides the top OR gate's b input
+
+  // Suffix-OR chain: soRef[j] = OR(I_j .. I_top). soRef[top] IS the top input's net; for j < top a
+  // real OR gate so${j} = OR(I_j, soRef[j+1]).
+  const soRef: { node: string; handle: string }[] = new Array(inputs)
+  soRef[top] = inRef[top] as { node: string; handle: string }
+  for (let j = top - 1; j >= 0; j--) {
+    nodes.push({ id: `so${j}`, definition: 'block', x: 300, y: 30 + j * 150, block: OR_BLOCK })
+    railIds.push(`so${j}`)
+    // input a = I_j (its port anchor); input b = soRef[j+1]
+    const b = soRef[j + 1] as { node: string; handle: string }
+    edges.push({
+      id: `so${j}_b`,
+      source: b.node,
+      sourceHandle: b.handle,
+      target: `so${j}`,
+      targetHandle: 'b',
+    })
+    soRef[j] = { node: `so${j}`, handle: 'out' }
+  }
+
+  // wins_j = I_j AND ¬higher_j, where higher_j = soRef[j+1]. The top input wins outright.
+  const winRef: { node: string; handle: string }[] = new Array(inputs)
+  winRef[top] = inRef[top] as { node: string; handle: string }
+  for (let j = 0; j < top; j++) {
+    nodes.push({
+      id: `ninv${j}`,
+      definition: 'block',
+      x: 560,
+      y: 30 + j * 150,
+      block: INVERTER_BLOCK,
+    })
+    nodes.push({ id: `w${j}`, definition: 'block', x: 780, y: 30 + j * 150, block: AND_BLOCK })
+    railIds.push(`ninv${j}`, `w${j}`)
+    const higher = soRef[j + 1] as { node: string; handle: string }
+    edges.push({
+      id: `higher${j}`,
+      source: higher.node,
+      sourceHandle: higher.handle,
+      target: `ninv${j}`,
+      targetHandle: 'in',
+    })
+    // AND input a = I_j (fanned from its suffix-OR 'a' pin), input b = ¬higher_j
+    const ij = inRef[j] as { node: string; handle: string }
+    edges.push({
+      id: `w${j}_a`,
+      source: ij.node,
+      sourceHandle: ij.handle,
+      target: `w${j}`,
+      targetHandle: 'a',
+    })
+    edges.push({
+      id: `w${j}_b`,
+      source: `ninv${j}`,
+      sourceHandle: 'out',
+      target: `w${j}`,
+      targetHandle: 'b',
+    })
+    winRef[j] = { node: `w${j}`, handle: 'out' }
+  }
+
+  // A_k = OR of the wins whose input index has bit k set.
+  const outRefs: { node: string; handle: string }[] = []
+  for (let k = 0; k < outBits; k++) {
+    const terms: { node: string; handle: string }[] = []
+    for (let j = 0; j < inputs; j++)
+      if (((j >> k) & 1) === 1) terms.push(winRef[j] as { node: string; handle: string })
+    const red = orReduce(terms, `a${k}`, 1040 + k * 240)
+    nodes.push(...red.nodes)
+    edges.push(...red.edges)
+    railIds.push(...red.ids)
+    outRefs.push(red.out)
+  }
+  edges.push(...chainRails(railIds, 'enc'))
+
+  let left = 14
+  for (let j = 0; j < inputs; j++) {
+    const ref = inRef[j] as { node: string; handle: string }
+    ports.push({
+      id: `i${j}`,
+      label: `I${j}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: ref.node, handleId: ref.handle },
+    })
+    left += 16
+  }
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: `so${top - 1}`, handleId: 'gnd' },
+  })
+  let right = 14
+  for (let k = 0; k < outBits; k++) {
+    const ref = outRefs[k] as { node: string; handle: string }
+    ports.push({
+      id: `a${k}`,
+      label: `A${k}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: ref.node, handleId: ref.handle },
+    })
+    right += 18
+  }
+  // GS (valid / group-select): any input active = the whole suffix-OR, soRef[0].
+  const gs = soRef[0] as { node: string; handle: string }
+  ports.push({
+    id: 'gs',
+    label: 'GS',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: gs.node, handleId: gs.handle },
+  })
+  right += 18
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: `so${top - 1}`, handleId: 'v_dd' },
+  })
+  return {
+    name: `${inputs}-to-${outBits} Priority Encoder`,
+    origin: { x: 0, y: 0 },
+    nodes,
+    edges,
+    ports,
+  }
+}
+
+/** A 4-to-2 priority encoder — the inverse of the 2-to-4 decoder, with a valid (GS) line. */
+export const PRIORITY_ENCODER_4_2: BlockData = priorityEncoder(4)
+/** An 8-to-3 priority encoder — the 74148-class part, built from real gates. */
+export const PRIORITY_ENCODER_8_3: BlockData = priorityEncoder(8)
+
 /**
  * KEYPAD ENCODER — turns the one-hot keypad (17 key lines) into the compact binary the control unit reads:
  * the pressed DIGIT as 4-bit BCD (D0..D3) via an OR-plane, a DIGIT line ("some digit was pressed"), the
@@ -6489,6 +6777,10 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   logic_bcd_complementer: BCD_COMPLEMENTER_DIGIT,
   logic_bcd_alu_10: BCD_ALU_10,
   logic_bcd_alu_cell: BCD_ALU_CELL,
+  logic_decoder_2_4: BINARY_DECODER_2_4,
+  logic_decoder_3_8: BINARY_DECODER_3_8,
+  logic_encoder_4_2: PRIORITY_ENCODER_4_2,
+  logic_encoder_8_3: PRIORITY_ENCODER_8_3,
   logic_decoder_7seg: HEX_DECODER_7SEG,
   logic_bcd_decoder_10: BCD_DECODER_10,
   logic_sr_latch: SR_LATCH_BLOCK,
