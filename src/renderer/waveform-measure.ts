@@ -197,3 +197,104 @@ export function measureSeries(samples: WaveSample[]): WaveMeasurements {
     fallS: fallTime(samples, v10, v90),
   }
 }
+
+/**
+ * Rising mid-level crossing TIMES, gated by the same ±10 %-of-peak hysteresis band countHz uses (a
+ * Schmitt trigger emitting timestamps): an upward mean crossing only counts after the signal has
+ * been below the band, and re-arms only after it returns below — ripple can't double-fire. Each
+ * time is linearly interpolated on the crossing segment, the same technique the edge timings use.
+ */
+function risingMeanCrossings(samples: WaveSample[], mean: number): number[] {
+  let peak = 0
+  for (const s of samples) peak = Math.max(peak, Math.abs(s.v - mean))
+  const band = 0.1 * peak
+  const times: number[] = []
+  let armed = false
+  for (let i = 1; i < samples.length; i++) {
+    const s0 = samples[i - 1]
+    const s1 = samples[i]
+    if (s0 === undefined || s1 === undefined) continue
+    if (s1.v - mean < -band) armed = true
+    else if (armed && s0.v < mean && s1.v >= mean) {
+      times.push(crossingTime(s0, s1, mean))
+      armed = false
+    }
+  }
+  return times
+}
+
+/**
+ * Phase of waveform B RELATIVE to waveform A, in degrees — the two-channel measurement a bench
+ * scope calls "phase". Measured the instrument way: both signals' hysteresis-gated rising
+ * mid-level crossings are timestamped, the shared period T comes from the crossing spacing, and
+ * each A-crossing is matched to its nearest B-crossing (wrapped into ±T/2):
+ *
+ *   φ = −360° · Δt / T   with Δt = t_B − t_A
+ *
+ * so a LAGGING B (crossing later — a low-pass output) reads NEGATIVE, the same convention as the
+ * Bode plot's phase and the e^(jωt+φ) physics. Pairs are averaged circularly (as unit vectors), so
+ * readings straddling ±180° can't cancel. Null — the honest dash — when either signal is flat or
+ * has no countable cycle, or when the two frequencies differ by more than 2 % (phase between two
+ * different frequencies isn't a number).
+ */
+export function phaseBetweenDeg(a: WaveSample[], b: WaveSample[]): number | null {
+  if (a.length < 2 || b.length < 2) return null
+  const stats = (samples: WaveSample[]) => {
+    let sum = 0
+    let vmax = Number.NEGATIVE_INFINITY
+    let vmin = Number.POSITIVE_INFINITY
+    for (const s of samples) {
+      sum += s.v
+      if (s.v > vmax) vmax = s.v
+      if (s.v < vmin) vmin = s.v
+    }
+    const mean = sum / samples.length
+    let sumSq = 0
+    for (const s of samples) sumSq += (s.v - mean) ** 2
+    return { mean, rmsAc: Math.sqrt(sumSq / samples.length), vpp: vmax - vmin }
+  }
+  const sa = stats(a)
+  const sb = stats(b)
+  // The flat-line gate, SCALE-FREE (unlike countHz's 1 mV floor, which is volt-calibrated): a
+  // microampere current probe has a real phase, but numerical residue riding on a DC level does
+  // not — so the AC part must be real relative to the signal's own scale, whatever its unit.
+  const flat = (s: { mean: number; rmsAc: number; vpp: number }) =>
+    s.rmsAc < 1e-6 * (Math.abs(s.mean) + s.vpp)
+  if (flat(sa) || flat(sb)) return null
+
+  const eventsA = risingMeanCrossings(a, sa.mean)
+  const eventsB = risingMeanCrossings(b, sb.mean)
+  // BOTH channels need two crossings: one B-crossing can't establish B's period, and without it
+  // the frequency-match gate below can't run — a bench scope likewise needs full cycles on both.
+  if (eventsA.length < 2 || eventsB.length < 2) return null
+  const lastA = eventsA[eventsA.length - 1]
+  const firstA = eventsA[0]
+  if (lastA === undefined || firstA === undefined || lastA <= firstA) return null
+  const periodA = (lastA - firstA) / (eventsA.length - 1)
+  const lastB = eventsB[eventsB.length - 1]
+  const firstB = eventsB[0]
+  if (lastB === undefined || firstB === undefined || lastB <= firstB) return null
+  const periodB = (lastB - firstB) / (eventsB.length - 1)
+  // Two different frequencies have no fixed phase between them.
+  if (Math.abs(periodB - periodA) / periodA > 0.02) return null
+
+  // Each A-crossing vs its nearest B-crossing, wrapped into ±T/2; averaged as unit vectors.
+  let sumCos = 0
+  let sumSin = 0
+  let pairs = 0
+  for (const tA of eventsA) {
+    let bestDelta = Number.POSITIVE_INFINITY
+    for (const tB of eventsB) {
+      const wrapped = ((((tB - tA) / periodA + 0.5) % 1) + 1) % 1 // 0..1
+      const delta = (wrapped - 0.5) * periodA // −T/2 .. +T/2
+      if (Math.abs(delta) < Math.abs(bestDelta)) bestDelta = delta
+    }
+    if (!Number.isFinite(bestDelta)) continue
+    const phi = (-2 * Math.PI * bestDelta) / periodA
+    sumCos += Math.cos(phi)
+    sumSin += Math.sin(phi)
+    pairs += 1
+  }
+  if (pairs === 0) return null
+  return (Math.atan2(sumSin, sumCos) * 180) / Math.PI
+}

@@ -12,7 +12,7 @@ import { smoothTrace } from './scope-smooth.ts'
 import { alignSweep, autoLevel, type TriggerEdge, type TriggerMode } from './scope-trigger.ts'
 import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
-import { measureSeries } from './waveform-measure.ts'
+import { measureSeries, phaseBetweenDeg } from './waveform-measure.ts'
 
 /**
  * Scope (Sprint 19 S19-v3-42..45 arc; TRIGGERING S19-v3-75): run the canvas
@@ -231,6 +231,8 @@ const MARGIN = { left: 48, right: 10, top: 8, bottom: 20 }
 const TRIGGER_COLOR = THEME.statusWarn
 const CURSOR_COLOR = THEME.accentBlueSoft
 const MATH_COLOR = THEME.textBright
+// The saved reference trace — grey-white, the way bench scopes draw REF memories.
+const REF_COLOR = '#b9c4d4'
 const MATH_KEY = '__math__'
 const FFT_H = 110
 const INNER_W = PLOT_W - MARGIN.left - MARGIN.right
@@ -376,6 +378,10 @@ export function ScopePlot({
   const [ghosts, setGhosts] = useState<{ id: number; sweep: Sweep }[]>([])
   const prevSweepRef = useRef<Sweep | null>(null)
   const ghostIdRef = useRef(0)
+  // Reference trace (the bench scope's REF memory): an explicitly SAVED sweep that stays on screen
+  // while the circuit is edited — the deliberate before/after compare (persistence is automatic and
+  // fades; the REF holds until cleared).
+  const [reference, setReference] = useState<Sweep | null>(null)
 
   // Derive this run's sweep (live path; a held sweep displays instead).
   const solved = result !== null && result.status === 'solved' && result.series.length >= 2
@@ -675,28 +681,43 @@ export function ScopePlot({
 
   // Auto-measurements read each row over the DISPLAYED sweep — measure what
   // you see, the bench convention. A held sweep measures its frozen points;
-  // zooming changes what there is to measure.
+  // zooming changes what there is to measure. Channels beyond CH1 also carry
+  // φ, their phase RELATIVE to CH1 (undefined = not applicable, null = dash).
   const measurementRows = measureOn
-    ? [
-        ...sweep.channels.map((channel, i) => ({
-          key: channel.key,
-          label: `CH${i + 1}`,
-          color: TRACE_COLORS[i % TRACE_COLORS.length] ?? MATH_COLOR,
-          unit: channel.unit as string,
-          m: measureSeries(points.map((p) => ({ t: p.time, v: channelValue(channel, p) }))),
-        })),
-        ...(mathOn && mathUnit !== null
-          ? [
-              {
-                key: MATH_KEY,
-                label: `M ${mathLabel}`,
-                color: MATH_COLOR,
-                unit: mathUnit,
-                m: measureSeries(points.map((p) => ({ t: p.time, v: mathValueAt(p) }))),
-              },
-            ]
-          : []),
-      ]
+    ? (() => {
+        const samplesFor = (channel: ScopeChannel) =>
+          points.map((p) => ({ t: p.time, v: channelValue(channel, p) }))
+        const ch1 = sweep.channels[0]
+        const ch1Samples = ch1 !== undefined ? samplesFor(ch1) : null
+        return [
+          ...sweep.channels.map((channel, i) => {
+            const samples = samplesFor(channel)
+            return {
+              key: channel.key,
+              label: `CH${i + 1}`,
+              color: TRACE_COLORS[i % TRACE_COLORS.length] ?? MATH_COLOR,
+              unit: channel.unit as string,
+              m: measureSeries(samples),
+              phi:
+                i > 0 && ch1Samples !== null
+                  ? phaseBetweenDeg(ch1Samples, samples)
+                  : (undefined as number | null | undefined),
+            }
+          }),
+          ...(mathOn && mathUnit !== null
+            ? [
+                {
+                  key: MATH_KEY,
+                  label: `M ${mathLabel}`,
+                  color: MATH_COLOR,
+                  unit: mathUnit,
+                  m: measureSeries(points.map((p) => ({ t: p.time, v: mathValueAt(p) }))),
+                  phi: undefined as number | null | undefined,
+                },
+              ]
+            : []),
+        ]
+      })()
     : null
 
   // FFT (S19-v3-81) analyzes the ▶ source channel: the settled record when
@@ -1039,6 +1060,19 @@ export function ScopePlot({
         <button
           type="button"
           className="nodrag"
+          onClick={() => setReference(reference === null ? sweep : null)}
+          title="Reference: save the displayed sweep as a REF trace — it stays on screen (dashed, grey) while you edit the circuit, so before and after sit in one picture. A bench scope's REF memory; and because the simulator is deterministic, any difference between REF and live IS your edit, not noise. Drawn through the current knobs. Click again to clear."
+          style={{
+            ...controlStyle,
+            cursor: 'pointer',
+            ...(reference !== null ? { borderColor: REF_COLOR, color: REF_COLOR } : {}),
+          }}
+        >
+          ref
+        </button>
+        <button
+          type="button"
+          className="nodrag"
           onClick={downloadCsv}
           title="Download the displayed sweep as a CSV file: a time column (t = 0 at the trigger, matching the axis) plus one column per channel and the math trace — ready for a spreadsheet or any plotting tool."
           style={{ ...controlStyle, cursor: 'pointer' }}
@@ -1356,6 +1390,36 @@ export function ScopePlot({
                 ) : null,
               )
             })}
+            {/* The saved REFERENCE sweep: aligned at ITS OWN trigger instant, drawn dashed in the
+                REF grey through the CURRENT knobs — the deliberate before/after against the live
+                trace. A ref channel whose probe was since unclipped simply has no ruler to draw
+                through and is left out, never guessed. */}
+            {reference !== null
+              ? (() => {
+                  const refTZero =
+                    reference.triggerIndex !== null
+                      ? (reference.points[reference.triggerIndex]?.time ?? 0)
+                      : (reference.points[0]?.time ?? 0)
+                  return reference.channels.map((channel) =>
+                    transforms.has(channel.key) ? (
+                      <polyline
+                        key={`ref-${channel.key}`}
+                        fill="none"
+                        stroke={REF_COLOR}
+                        strokeWidth={1.2}
+                        strokeDasharray="6 3"
+                        opacity={0.8}
+                        data-ref="true"
+                        points={smoothTrace(
+                          reference.points,
+                          (p) => x(p.time - refTZero),
+                          (p) => yFor(channel.key)(channelValue(channel, p)),
+                        )}
+                      />
+                    ) : null,
+                  )
+                })()
+              : null}
             {sweep.channels.map((channel, i) => {
               const yChannel = yFor(channel.key)
               return (
@@ -1637,7 +1701,7 @@ export function ScopePlot({
       {/* The measurement strip: one row of live numbers per trace. */}
       {measurementRows !== null && !waitingInNormal ? (
         <div style={{ marginTop: 3, maxWidth: PLOT_W, fontSize: 10 }}>
-          {measurementRows.map(({ key, label, color, unit, m }) => (
+          {measurementRows.map(({ key, label, color, unit, m, phi }) => (
             <div
               key={key}
               style={{
@@ -1656,6 +1720,14 @@ export function ScopePlot({
               <span>duty {m.dutyHigh !== null ? `${(m.dutyHigh * 100).toFixed(1)} %` : '—'}</span>
               <span>↑ {m.riseS !== null ? formatEng(m.riseS, 's') : '—'}</span>
               <span>↓ {m.fallS !== null ? formatEng(m.fallS, 's') : '—'}</span>
+              {phi !== undefined ? (
+                <span
+                  title="Phase relative to CH1: φ = −360°·Δt/T, with Δt measured between the two signals' rising mid-level crossings (hysteresis-gated, like the frequency counter) and T their shared period. NEGATIVE = this channel LAGS CH1 — an RC low-pass output reads −atan(2πfRC), the same sign convention as the Bode plot. A dash: no countable cycle, or the two frequencies differ (no fixed phase exists)."
+                  data-phase={key}
+                >
+                  φ {phi !== null ? `${phi.toFixed(1)}°` : '—'} vs CH1
+                </span>
+              ) : null}
             </div>
           ))}
         </div>
