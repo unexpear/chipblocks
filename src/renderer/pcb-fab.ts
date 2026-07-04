@@ -8,6 +8,7 @@ import {
   gerberBottomCopper,
   gerberEdgeCuts,
   gerberMask,
+  gerberPaste,
   gerberSilkscreen,
   gerberTopCopper,
   isoWithOffset,
@@ -23,8 +24,9 @@ import { SILK_TEXT } from './stroke-font.ts'
  * every wired pin on the board); the validation report inside restates exactly what was checked,
  * against which cited limits, so "why should I trust these files" always has an answer.
  *
- * Contents (flat, the shape fab upload forms expect): the six Gerber layers + the drill file
- * (KiCad-style names, Protel extensions), bom.csv + placement.csv (the assembly pair, JLCPCB
+ * Contents (flat, the shape fab upload forms expect): the eight Gerber layers (two copper, two
+ * mask, two paste, silkscreen, edge cuts) + the drill file (KiCad-style names, Protel
+ * extensions), bom.csv + placement.csv (the assembly pair, JLCPCB
  * column conventions), the SPICE netlist, the validation report, and a README naming every file.
  */
 
@@ -215,6 +217,8 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
     `    bottom through plated ${num(DEFAULT_ROUTE_CLASS.viaDiameterMm)} / ${num(DEFAULT_ROUTE_CLASS.viaDrillMm)} mm vias when the top is blocked. Vias are`,
     '    tented (mask-covered), the KiCad default.',
     `  · Solder-mask openings equal the pad copper (clearance ${num(GERBER_CONVENTIONS.mask_clearance.valueMm)} mm — ${GERBER_CONVENTIONS.mask_clearance.provenance.title}).`,
+    '  · Paste apertures equal the SMD pads (KiCad’s zero paste clearance; the stencil house',
+    '    applies its own reduction). Through-hole pads get no paste.',
     `  · Silkscreen carries the part outlines and stroked reference designators (${num(SILK_TEXT.heightMm)} mm`,
     `    lettering at ${num(SILK_TEXT.thicknessMm)} mm stroke — ${SILK_TEXT.provenance.title}).`,
     '  · Board frame: millimetres, Y up (the Gerber convention); placement rotations are degrees',
@@ -240,6 +244,8 @@ export const FAB_FILE_NAMES = {
   bottomCopper: `${BASE}-B_Cu.gbl`,
   topMask: `${BASE}-F_Mask.gts`,
   bottomMask: `${BASE}-B_Mask.gbs`,
+  topPaste: `${BASE}-F_Paste.gtp`,
+  bottomPaste: `${BASE}-B_Paste.gbp`,
   topSilk: `${BASE}-F_Silkscreen.gto`,
   edgeCuts: `${BASE}-Edge_Cuts.gm1`,
   drill: `${BASE}.drl`,
@@ -261,6 +267,8 @@ function buildReadme(inputs: FabInputs): string {
     `  ${FAB_FILE_NAMES.bottomCopper}      bottom copper — TH rings, bottom traces, via barrels`,
     `  ${FAB_FILE_NAMES.topMask}    top solder mask openings`,
     `  ${FAB_FILE_NAMES.bottomMask}    bottom solder mask openings`,
+    `  ${FAB_FILE_NAMES.topPaste}   top solder-paste stencil apertures (SMD pads)`,
+    `  ${FAB_FILE_NAMES.bottomPaste}   bottom paste (empty — no bottom-mounted parts)`,
     `  ${FAB_FILE_NAMES.topSilk} top silkscreen (part outlines + designators)`,
     `  ${FAB_FILE_NAMES.edgeCuts}  board outline (the fab cuts this centreline)`,
     `  ${FAB_FILE_NAMES.drill}           plated drill hits (component holes + via holes)`,
@@ -297,6 +305,8 @@ export function buildManufacturingZip(inputs: FabInputs): FabZip {
     text(FAB_FILE_NAMES.bottomCopper, gerberBottomCopper(board, ratsnest, routing, when)),
     text(FAB_FILE_NAMES.topMask, gerberMask(board, 'Top', when)),
     text(FAB_FILE_NAMES.bottomMask, gerberMask(board, 'Bot', when)),
+    text(FAB_FILE_NAMES.topPaste, gerberPaste(board, 'Top', when)),
+    text(FAB_FILE_NAMES.bottomPaste, gerberPaste(board, 'Bot', when)),
     text(FAB_FILE_NAMES.topSilk, gerberSilkscreen(board, when)),
     text(FAB_FILE_NAMES.edgeCuts, gerberEdgeCuts(board.outline, when)),
     text(FAB_FILE_NAMES.drill, excellonDrill(board, routing, when)),

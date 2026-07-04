@@ -6,6 +6,7 @@
  */
 import { describe, expect, test } from 'vitest'
 import { canvasToWorld } from '../src/renderer/canvas-to-world.ts'
+import { BUILTIN_FOOTPRINTS } from '../src/renderer/footprint.ts'
 import { type BoardPart, computeRatsnest, deriveBoard } from '../src/renderer/pcb-board.ts'
 import { DRC_RULES, runDrc } from '../src/renderer/pcb-drc.ts'
 import { routeBoard } from '../src/renderer/pcb-route.ts'
@@ -129,6 +130,92 @@ describe('runDrc', () => {
     }
     const violations = runDrc(board, rn, routing)
     expect(violations.some((v) => v.code === 'track-width')).toBe(true)
+  })
+
+  test('silk lettering over a neighbour’s exposed pad is flagged — the fab would clip the ink', () => {
+    // R2 is dragged to sit exactly where R1's designator prints (R1 at (10,10) letters at
+    // (10, 8.57)): the lettering crosses R2's pad copper — ink the fab clips off the mask opening.
+    const defs: [string, string][] = [
+      ['resistor_1', 'resistor'],
+      ['resistor_2', 'resistor'],
+    ]
+    const board = deriveBoard(
+      parts(defs),
+      new Map([
+        ['resistor_1', { x: 10, y: 10, rotation: 0 as const }],
+        ['resistor_2', { x: 10, y: 8.57, rotation: 0 as const }],
+      ]),
+    )
+    const rn = computeRatsnest(world(defs, []), board)
+    const violations = runDrc(board, rn, { traces: [], vias: [], unrouted: [] })
+    expect(violations.some((v) => v.code === 'silk-over-pad')).toBe(true)
+
+    // …and a normal spread board prints NO silk on any pad (own outlines and lettering clear)
+    const clean = deriveBoard(parts(defs))
+    const cleanRn = computeRatsnest(world(defs, []), clean)
+    const cleanViolations = runDrc(clean, cleanRn, { traces: [], vias: [], unrouted: [] })
+    expect(cleanViolations.filter((v) => v.code === 'silk-over-pad')).toEqual([])
+  })
+
+  test('every shipped footprint’s OWN silk stays off its own pads (outlines and lettering)', () => {
+    // One of each footprinted part, auto-placed — the whole catalog's silk must be self-clean.
+    const defs: [string, string][] = [
+      ['resistor_1', 'resistor'],
+      ['capacitor_1', 'capacitor'],
+      ['inductor_1', 'inductor'],
+      ['thermistor_1', 'thermistor'],
+      ['transistor_bjt_npn_1', 'transistor_bjt_npn'],
+    ]
+    const board = deriveBoard(parts(defs))
+    const rn = computeRatsnest(world(defs, []), board)
+    const violations = runDrc(board, rn, { traces: [], vias: [], unrouted: [] })
+    expect(violations.filter((v) => v.code === 'silk-over-pad')).toEqual([])
+  })
+
+  test('EVERY footprint in the library is silk-clean on its own pads — not just the reachable ones', () => {
+    // SOIC-8 / DIP-8 / the header have no catalog part yet but ARE shipped and hand-placeable, so
+    // the silk-over-pad DRC would flag any board using them if their silk crossed their pads
+    // (review-caught: the SOIC-8's simplified full-rectangle silk ran straight down the pad rows).
+    const emptyWorld = { instances: new Map(), nets: new Map() }
+    for (const id of Object.keys(BUILTIN_FOOTPRINTS)) {
+      const board = {
+        outline: { x: -20, y: -20, w: 40, h: 40 },
+        placements: [{ partId: 'X1', footprintId: id, x: 0, y: 0, rotation: 0 as const }],
+      }
+      const rn = computeRatsnest(emptyWorld, board)
+      const violations = runDrc(board, rn, { traces: [], vias: [], unrouted: [] })
+      expect(
+        violations.filter((v) => v.code === 'silk-over-pad'),
+        `${id} prints silk on its own pads`,
+      ).toEqual([])
+    }
+  })
+
+  test('a designator sweeping across BOTH of a neighbour’s pads reports each one — no early-out', () => {
+    // A part with a long literal id (kept verbatim, not shortened) is dragged over a resistor so
+    // its wide lettering crosses BOTH the resistor's pads. The fix (the early return stopped at
+    // the first pad it found) must surface each pad separately.
+    const defs: [string, string][] = [
+      ['wwwwwwww', 'resistor'], // literal id → ~7 mm of lettering sweeping horizontally
+      ['victim', 'resistor'],
+    ]
+    const board = deriveBoard(
+      parts(defs),
+      new Map([
+        ['wwwwwwww', { x: 10, y: 11.4, rotation: 0 as const }],
+        ['victim', { x: 10, y: 10, rotation: 0 as const }],
+      ]),
+    )
+    const rn = computeRatsnest(world(defs, []), board)
+    const hits = runDrc(board, rn, { traces: [], vias: [], unrouted: [] }).filter(
+      (v) => v.code === 'silk-over-pad',
+    )
+    const victimPads = new Set(
+      hits.filter((h) => h.message.startsWith('wwwwwwww')).map((h) => h.message),
+    )
+    // both of the victim resistor's pads flagged from ONE part's lettering — proof the checker
+    // doesn't stop at the first pad a stroke touches
+    expect(victimPads.size).toBeGreaterThanOrEqual(2)
   })
 
   test('an undersized via and two crowding holes are flagged with their cited limits', () => {

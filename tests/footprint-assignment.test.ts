@@ -17,10 +17,15 @@ describe('footprintForPart', () => {
     expect(footprintForPart('capacitor')?.id).toBe('R_0603_1608Metric')
   })
 
+  test('a transistor lands on the SOT-23 (the standard small-transistor package)', () => {
+    expect(footprintForPart('transistor_bjt_npn')?.id).toBe('SOT-23')
+    expect(footprintForPart('transistor_mosfet_nmos')?.id).toBe('SOT-23')
+  })
+
   test('an unmapped part has no footprint yet (honest, not a wrong package)', () => {
-    // A BJT is 3-terminal; it waits for a SOT-23/TO-92, never gets forced onto a 2-pad chip.
-    expect(footprintForPart('transistor_bjt_npn')).toBeUndefined()
+    // An LED has no package in the catalog yet — it waits for one, never gets forced onto a chip.
     expect(footprintForPart('led')).toBeUndefined()
+    expect(footprintForPart('diode')).toBeUndefined()
     expect(footprintForPart('not_a_part')).toBeUndefined()
   })
 
@@ -34,7 +39,8 @@ describe('footprintForPart', () => {
 describe('footprintOptions', () => {
   test('lists the part’s footprints; empty for an unmapped part', () => {
     expect(footprintOptions('resistor').map((f) => f.id)).toContain('R_0603_1608Metric')
-    expect(footprintOptions('transistor_bjt_npn')).toEqual([])
+    expect(footprintOptions('transistor_bjt_npn').map((f) => f.id)).toContain('SOT-23')
+    expect(footprintOptions('led')).toEqual([])
   })
 })
 

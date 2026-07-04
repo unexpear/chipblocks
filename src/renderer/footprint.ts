@@ -216,7 +216,17 @@ export const FOOTPRINT_SOIC8: Footprint = {
       type: 'smd',
     },
   ],
-  silkscreen: rectOutline(-2.06, -2.56, 2.06, 2.56, 0.12),
+  // KiCad's actual silk (verbatim): the top + bottom edges, with the long sides drawn only as tiny
+  // 0.095 mm corner nubs (y ±2.465…±2.56) — the verticals are BROKEN there so the outline never
+  // runs down the pad columns (pads reach y ±2.205), which is exactly what keeps silk off the pads.
+  silkscreen: [
+    { from: { x: -2.06, y: -2.56 }, to: { x: 2.06, y: -2.56 }, width: 0.12 },
+    { from: { x: -2.06, y: -2.465 }, to: { x: -2.06, y: -2.56 }, width: 0.12 },
+    { from: { x: -2.06, y: 2.56 }, to: { x: -2.06, y: 2.465 }, width: 0.12 },
+    { from: { x: 2.06, y: -2.56 }, to: { x: 2.06, y: -2.465 }, width: 0.12 },
+    { from: { x: 2.06, y: 2.465 }, to: { x: 2.06, y: 2.56 }, width: 0.12 },
+    { from: { x: 2.06, y: 2.56 }, to: { x: -2.06, y: 2.56 }, width: 0.12 },
+  ],
   fabrication: rectOutline(-1.95, -2.45, 1.95, 2.45),
   labels: { reference: { x: 0, y: -3.4 }, value: { x: 0, y: 3.4 }, fabReference: { x: 0, y: 0 } },
   courtyard: { x: -3.7, y: -2.7, w: 7.4, h: 5.4 },
@@ -387,12 +397,83 @@ export const FOOTPRINT_PINHDR_1X4: Footprint = {
   },
 }
 
+/**
+ * SOT-23 (JEDEC TO-236) — the 3-lead small-outline transistor, THE package small transistors ship
+ * in. Pads + courtyard + text anchors verbatim from KiCad (Package_TO_SOT_SMD.pretty/SOT-23
+ * .kicad_mod): pads 1/2 left at (−0.9375, ∓0.95), pad 3 right at (0.9375, 0), each 1.475×0.6 mm
+ * roundrect. Fab body is the real 1.3×2.9 mm outline WITH its pin-1 chamfer (the file's polygon,
+ * drawn as its five edges). Silk is the file's seven broken outline strokes; its filled pin-1
+ * arrow triangle is omitted (our silk model is line segments) — pin 1 still reads from the
+ * chamfer + the pad layout. Courtyard is the bounding rectangle of KiCad's courtyard outline (theirs
+ * cuts all four corners and notches the left edge inward; the rectangle CONTAINS it, so collision
+ * checks stay conservative).
+ */
+export const FOOTPRINT_SOT23: Footprint = {
+  id: 'SOT-23',
+  name: 'SOT-23 (TO-236)',
+  description: '3-lead small-outline transistor — the standard SMD small-transistor package.',
+  pads: [
+    {
+      id: '1',
+      center: { x: -0.9375, y: -0.95 },
+      size: { w: 1.475, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '2',
+      center: { x: -0.9375, y: 0.95 },
+      size: { w: 1.475, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '3',
+      center: { x: 0.9375, y: 0 },
+      size: { w: 1.475, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+  ],
+  silkscreen: [
+    { from: { x: -0.76, y: -1.56 }, to: { x: 0.76, y: -1.56 }, width: 0.12 },
+    { from: { x: -0.76, y: -1.51 }, to: { x: -0.76, y: -1.56 }, width: 0.12 },
+    { from: { x: -0.76, y: 0.39 }, to: { x: -0.76, y: -0.39 }, width: 0.12 },
+    { from: { x: -0.76, y: 1.56 }, to: { x: -0.76, y: 1.51 }, width: 0.12 },
+    { from: { x: 0.76, y: -1.56 }, to: { x: 0.76, y: -0.56 }, width: 0.12 },
+    { from: { x: 0.76, y: 0.56 }, to: { x: 0.76, y: 1.56 }, width: 0.12 },
+    { from: { x: 0.76, y: 1.56 }, to: { x: -0.76, y: 1.56 }, width: 0.12 },
+  ],
+  // The body polygon's five edges, pin-1 chamfer included: (−0.325,−1.45) is the chamfer corner.
+  fabrication: [
+    { from: { x: -0.325, y: -1.45 }, to: { x: 0.65, y: -1.45 }, width: 0.1 },
+    { from: { x: 0.65, y: -1.45 }, to: { x: 0.65, y: 1.45 }, width: 0.1 },
+    { from: { x: 0.65, y: 1.45 }, to: { x: -0.65, y: 1.45 }, width: 0.1 },
+    { from: { x: -0.65, y: 1.45 }, to: { x: -0.65, y: -1.125 }, width: 0.1 },
+    { from: { x: -0.65, y: -1.125 }, to: { x: -0.325, y: -1.45 }, width: 0.1 },
+  ],
+  labels: { reference: { x: 0, y: -2.4 }, value: { x: 0, y: 2.4 }, fabReference: { x: 0, y: 0 } },
+  courtyard: { x: -1.93, y: -1.7, w: 3.86, h: 3.4 },
+  provenance: {
+    source_type: 'standard',
+    title: 'JEDEC TO-236 (SOT-23) 3-lead small-outline transistor land pattern',
+    citation:
+      'KiCad footprint library, Package_TO_SOT_SMD.pretty/SOT-23.kicad_mod — pads 1.475×0.6 mm at (−0.9375, ∓0.95) and (0.9375, 0); body 1.3×2.9 mm; courtyard extents ±1.93 × ±1.7 — read verbatim from the installed KiCad 10.0 library',
+    confidence: 'high',
+    url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
+    date_accessed: '2026-07-04',
+    notes:
+      'Courtyard stored as the bounding rectangle of KiCad’s (corner-cut) courtyard outline — conservative. The silk pin-1 arrow triangle is omitted (line-segment silk model).',
+  },
+}
+
 /** Every built-in footprint, keyed by id. The board road's starter set (TOOLCHAIN-ROADMAP.md Track 1). */
 export const BUILTIN_FOOTPRINTS: Record<string, Footprint> = {
   [FOOTPRINT_0603.id]: FOOTPRINT_0603,
   [FOOTPRINT_SOIC8.id]: FOOTPRINT_SOIC8,
   [FOOTPRINT_DIP8.id]: FOOTPRINT_DIP8,
   [FOOTPRINT_PINHDR_1X4.id]: FOOTPRINT_PINHDR_1X4,
+  [FOOTPRINT_SOT23.id]: FOOTPRINT_SOT23,
 }
 
 /**

@@ -18,6 +18,11 @@ export const PART_FOOTPRINTS: Record<string, { default: string; options: string[
   capacitor: { default: 'R_0603_1608Metric', options: ['R_0603_1608Metric'] },
   thermistor: { default: 'R_0603_1608Metric', options: ['R_0603_1608Metric'] },
   inductor: { default: 'R_0603_1608Metric', options: ['R_0603_1608Metric'] },
+  // Small transistors ship in SOT-23 (JEDEC TO-236) — BJTs and small-signal MOSFETs alike.
+  transistor_bjt_npn: { default: 'SOT-23', options: ['SOT-23'] },
+  transistor_bjt_pnp: { default: 'SOT-23', options: ['SOT-23'] },
+  transistor_mosfet_nmos: { default: 'SOT-23', options: ['SOT-23'] },
+  transistor_mosfet_pmos: { default: 'SOT-23', options: ['SOT-23'] },
 }
 
 /**
@@ -53,6 +58,13 @@ export const TERMINAL_PADS: Record<string, Record<string, string>> = {
   capacitor: { terminal_a: '1', terminal_b: '2' },
   thermistor: { terminal_a: '1', terminal_b: '2' },
   inductor: { terminal_a: '1', terminal_b: '2' },
+  // SOT-23 pinouts, the industry-standard assignments the datasheets print:
+  // BJT 1=Base 2=Emitter 3=Collector (Nexperia BC846/BC847 series, SOT-23 marking diagram);
+  // MOSFET 1=Gate 2=Source 3=Drain (onsemi/Nexperia 2N7002, SOT-23 pinning).
+  transistor_bjt_npn: { base: '1', emitter: '2', collector: '3' },
+  transistor_bjt_pnp: { base: '1', emitter: '2', collector: '3' },
+  transistor_mosfet_nmos: { gate: '1', source: '2', drain: '3' },
+  transistor_mosfet_pmos: { gate: '1', source: '2', drain: '3' },
 }
 
 /** The pad a part's terminal solders to; undefined when the part or terminal isn't mapped (honest). */
@@ -76,6 +88,10 @@ const DESIGNATOR_PREFIXES: Record<string, string> = {
   capacitor: 'C',
   inductor: 'L',
   thermistor: 'RT',
+  transistor_bjt_npn: 'Q',
+  transistor_bjt_pnp: 'Q',
+  transistor_mosfet_nmos: 'Q',
+  transistor_mosfet_pmos: 'Q',
 }
 
 /**

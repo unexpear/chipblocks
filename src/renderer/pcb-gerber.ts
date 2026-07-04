@@ -378,6 +378,26 @@ export function gerberMask(board: Board, side: 'Top' | 'Bot', when: Date): strin
   ].join('\n')
 }
 
+/** Solder paste — the stencil the assembler squeegees paste through, for REFLOW-soldered pads
+ *  only: SMD pads get an aperture, through-hole pads get none (their legs are wave- or hand-
+ *  soldered; paste over an open hole just falls through). Aperture = the pad itself — KiCad's
+ *  zero paste clearance, ground-truthed against kicad-cli 10.0.4 output (the demo boards' paste
+ *  apertures are byte-identical to their copper pad apertures); the stencil house applies its own
+ *  reduction. Positive polarity: the image IS the paste. */
+export function gerberPaste(board: Board, side: 'Top' | 'Bot', when: Date): string {
+  const apertures = new Apertures()
+  // No footprint mounts parts on the bottom yet, so the bottom stencil is honestly empty.
+  const filter: PadFilter = side === 'Top' ? (pad) => pad.type === 'smd' : () => false
+  const flashes = planFlashes(board, apertures, filter, null)
+  return [
+    ...gerberHeader(`Paste,${side}`, 'Positive', when),
+    ...apertures.block(),
+    ...flashBody(flashes, null),
+    'M02*',
+    '',
+  ].join('\n')
+}
+
 /** Top silkscreen: every footprint's silk outline plus its reference DESIGNATOR (R1, C2 — the
  *  short board name, not the schematic id), stroked in the board lettering font at KiCad's cited
  *  text size (SILK_TEXT). The text centres above the part's courtyard at any rotation

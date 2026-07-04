@@ -21,6 +21,7 @@ import {
   gerberBottomCopper,
   gerberEdgeCuts,
   gerberMask,
+  gerberPaste,
   gerberSilkscreen,
   gerberTopCopper,
 } from '../src/renderer/pcb-gerber.ts'
@@ -197,6 +198,34 @@ describe('solder mask — negative polarity, opening = pad (cited: fab applies e
     const { board } = routedPair()
     expect(gerberMask(board, 'Bot', WHEN)).not.toContain('D03*')
     expect(gerberMask(TH_BOARD, 'Bot', WHEN).match(/D03\*/g)).toHaveLength(12)
+  })
+})
+
+describe('solder paste — the stencil, reflow pads only', () => {
+  test('SMD pads get apertures identical to their copper; through-hole pads get NONE', () => {
+    // Mixed board: DIP-8 + header are through-hole (no paste — their legs are wave/hand
+    // soldered), so the top paste of the TH_BOARD is empty…
+    const thPaste = gerberPaste(TH_BOARD, 'Top', WHEN)
+    expect(thPaste).toContain('%TF.FileFunction,Paste,Top*%')
+    expect(thPaste).toContain('%TF.FilePolarity,Positive*%')
+    expect(thPaste).not.toContain('D03*')
+    // …while an SMD board's paste flashes exactly where its copper does, same apertures
+    const { board, ratsnest, routing } = routedPair()
+    const paste = gerberPaste(board, 'Top', WHEN)
+    const copper = gerberTopCopper(board, ratsnest, routing, WHEN)
+    const flashes = paste.match(/X-?\d+Y-?\d+D03\*/g) ?? []
+    expect(flashes).toHaveLength(4)
+    for (const flash of flashes) expect(copper).toContain(flash)
+    expect(paste).toContain(
+      'RoundRect,0.200000X-0.200000X-0.275000X0.200000X-0.275000X0.200000X0.275000X-0.200000X0.275000X0*%',
+    )
+  })
+
+  test('the bottom stencil is honestly empty — no footprint mounts parts on the bottom', () => {
+    const { board } = routedPair()
+    const paste = gerberPaste(board, 'Bot', WHEN)
+    expect(paste).toContain('%TF.FileFunction,Paste,Bot*%')
+    expect(paste).not.toContain('D03*')
   })
 })
 

@@ -5,6 +5,7 @@ import {
   type Placement,
   placePoint,
   type Ratsnest,
+  silkReferenceAnchor,
 } from './pcb-board.ts'
 import {
   type BoardRouting,
@@ -13,6 +14,7 @@ import {
   type RouteClass,
   VIA_RULES,
 } from './pcb-route.ts'
+import { SILK_TEXT, strokeText } from './stroke-font.ts'
 
 /**
  * Design-rule checking — the board's failure-mode checks, mirroring what the schematic side already
@@ -31,6 +33,7 @@ export type DrcCode =
   | 'track-width'
   | 'via-size'
   | 'hole-to-hole'
+  | 'silk-over-pad'
 
 export type DrcViolation = {
   code: DrcCode
@@ -46,6 +49,18 @@ export const DRC_RULES: Record<
   Exclude<DrcCode, 'copper-clearance' | 'via-size' | 'hole-to-hole'>,
   { limitMm: number; provenance: FootprintProvenance }
 > = {
+  'silk-over-pad': {
+    limitMm: 0,
+    provenance: {
+      source_type: 'reference',
+      title: 'Silkscreen must not print on exposed pads — fabs clip it; ink on a joint is a defect',
+      citation:
+        'JLCPCB PCB capabilities / order rules: silkscreen over pad openings is removed (clipped) during fabrication — lettering that lands there simply disappears from the board, and any ink that survives ends up under solder. KiCad ships the same check (DRC “silkscreen clipped by solder mask”).',
+      confidence: 'high',
+      url: 'https://jlcpcb.com/capabilities/pcb-capabilities',
+      date_accessed: '2026-07-04',
+    },
+  },
   'courtyard-overlap': {
     limitMm: 0,
     provenance: {
@@ -261,6 +276,62 @@ export function runDrc(
           at: { x: (a.at.x + b.at.x) / 2, y: (a.at.y + b.at.y) / 2 },
         })
       }
+    }
+  }
+
+  // Silkscreen over exposed pads — the fab CLIPS ink that lands on a mask opening (the opening
+  // equals the pad, mask clearance 0), so lettering there disappears from the manufactured board
+  // and any survivor sits under solder. Every silk stroke — outlines and designator lettering,
+  // its OWN pads included — is sampled finely along its length (glyphs run diagonal; a bounding-box
+  // test would flag near-misses) and each sample's EXACT distance to the pad rectangle is compared
+  // to the stroke's half-width. True point-to-rect distance (not a grown axis box) so a stroke
+  // passing just off a pad CORNER isn't falsely flagged. A stroke crossing several pads reports
+  // each once (no early-out that would hide the later ones).
+  const padRects = ratsnest.padBoxes
+  const silkHits = new Set<string>()
+  const distToRect = (
+    px: number,
+    py: number,
+    r: { x: number; y: number; w: number; h: number },
+  ): number => {
+    const dx = Math.max(r.x - px, 0, px - (r.x + r.w))
+    const dy = Math.max(r.y - py, 0, py - (r.y + r.h))
+    return Math.hypot(dx, dy)
+  }
+  const checkStroke = (
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    strokeWidth: number,
+    partId: string,
+  ) => {
+    const g = strokeWidth / 2
+    const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / 0.05))
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps
+      const px = from.x + (to.x - from.x) * t
+      const py = from.y + (to.y - from.y) * t
+      for (const pad of padRects) {
+        if (distToRect(px, py, pad) >= g) continue
+        const key = `${partId}:${pad.pad}`
+        if (silkHits.has(key)) continue
+        silkHits.add(key)
+        out.push({
+          code: 'silk-over-pad',
+          message: `${partId}'s silkscreen prints on an exposed pad (${pad.pad}) — the fab clips it`,
+          at: { x: px, y: py },
+        })
+      }
+    }
+  }
+  for (const pl of board.placements) {
+    const fp = footprintByPlacement(pl)
+    if (fp === undefined) continue
+    for (const s of fp.silkscreen) {
+      checkStroke(placePoint(pl, s.from), placePoint(pl, s.to), s.width, pl.partId)
+    }
+    const text = strokeText(pl.designator ?? pl.partId, silkReferenceAnchor(pl, fp))
+    for (const seg of text.segments) {
+      checkStroke(seg.from, seg.to, SILK_TEXT.thicknessMm, pl.partId)
     }
   }
 

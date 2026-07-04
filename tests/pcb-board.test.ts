@@ -35,7 +35,7 @@ const world = (defs: [string, string][], wires: [string, string, string, string]
 
 describe('deriveBoard', () => {
   test('places only the footprinted parts; skips ones with no package', () => {
-    // R1, C1 have footprints (0603); Q1 (BJT) and D1 (LED) do not yet.
+    // R1, C1 have footprints (0603), Q1 a SOT-23; D1 (LED) has no package yet.
     const board = deriveBoard(
       parts([
         ['R1', 'resistor'],
@@ -44,8 +44,12 @@ describe('deriveBoard', () => {
         ['D1', 'led'],
       ]),
     )
-    expect(board.placements.map((p) => p.partId)).toEqual(['R1', 'C1'])
-    expect(board.placements.every((p) => p.footprintId === 'R_0603_1608Metric')).toBe(true)
+    expect(board.placements.map((p) => p.partId)).toEqual(['R1', 'Q1', 'C1'])
+    expect(board.placements.map((p) => p.footprintId)).toEqual([
+      'R_0603_1608Metric',
+      'SOT-23',
+      'R_0603_1608Metric',
+    ])
   })
 
   test('lays parts out left-to-right without overlapping courtyards', () => {
@@ -89,7 +93,7 @@ describe('deriveBoard', () => {
 
   test('an empty (or footprint-free) schematic yields an empty board, not a crash', () => {
     expect(deriveBoard([]).placements).toEqual([])
-    expect(deriveBoard(parts([['Q1', 'transistor_bjt_npn']])).placements).toEqual([])
+    expect(deriveBoard(parts([['D1', 'led']])).placements).toEqual([])
     expect(deriveBoard([]).outline.w).toBeGreaterThan(0)
   })
 
@@ -254,10 +258,10 @@ describe('computeRatsnest', () => {
   test('one on-board pad wired to an unplaceable part yields no airwire (nothing to span)', () => {
     const defs: [string, string][] = [
       ['R1', 'resistor'],
-      ['Q1', 'transistor_bjt_npn'],
+      ['D1', 'led'],
     ]
-    const board = deriveBoard(parts(defs)) // only R1 lands on the board
-    const rn = computeRatsnest(world(defs, [['R1', 'terminal_b', 'Q1', 'base']]), board)
+    const board = deriveBoard(parts(defs)) // only R1 lands on the board (no LED package yet)
+    const rn = computeRatsnest(world(defs, [['R1', 'terminal_b', 'D1', 'anode']]), board)
     expect(rn.airwires).toHaveLength(0)
   })
 })
@@ -297,20 +301,20 @@ describe('offBoardPins (the header count)', () => {
     const defs: [string, string][] = [
       ['R1', 'resistor'],
       ['R2', 'resistor'],
-      ['Q1', 'transistor_bjt_npn'],
+      ['D1', 'led'],
     ]
     const board = deriveBoard(parts(defs))
-    // Q1's base carries TWO wires — still ONE pin the board can't show.
+    // D1's anode carries TWO wires — still ONE pin the board can't show.
     const n = offBoardPins(
       parts(defs),
       wires([
-        ['R1', 'terminal_b', 'Q1', 'base'],
-        ['R2', 'terminal_a', 'Q1', 'base'],
-        ['R2', 'terminal_b', 'Q1', 'collector'],
+        ['R1', 'terminal_b', 'D1', 'anode'],
+        ['R2', 'terminal_a', 'D1', 'anode'],
+        ['R2', 'terminal_b', 'D1', 'cathode'],
       ]),
       board,
     )
-    expect(n).toBe(2) // base (once) + collector
+    expect(n).toBe(2) // anode (once) + cathode
   })
 
   test('counts the pins the user DREW, not flattening internals', () => {

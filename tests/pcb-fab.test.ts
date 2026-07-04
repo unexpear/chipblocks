@@ -7,6 +7,7 @@
  */
 import { describe, expect, test } from 'vitest'
 import { canvasToWorld } from '../src/renderer/canvas-to-world.ts'
+import { padForTerminal } from '../src/renderer/footprint-assignment.ts'
 import {
   type BoardPart,
   computeRatsnest,
@@ -134,6 +135,27 @@ describe('assembly files', () => {
     expect(csv).toContain('R3,')
     expect(csv).toContain('C12,')
     expect(csv).not.toContain('resistor_3')
+  })
+
+  test('a transistor lands on the board: SOT-23 from the KiCad library, Q designator, real pinout', () => {
+    const board = deriveBoard(parts([['transistor_bjt_npn_1', 'transistor_bjt_npn']]))
+    const pl = board.placements[0]
+    expect(pl?.footprintId).toBe('SOT-23')
+    expect(pl?.designator).toBe('Q1')
+    // the cited pad geometry (verbatim from the installed Package_TO_SOT_SMD library)
+    const fp = pl === undefined ? undefined : footprintByPlacement(pl)
+    expect(fp?.pads.map((p) => [p.center.x, p.center.y])).toEqual([
+      [-0.9375, -0.95],
+      [-0.9375, 0.95],
+      [0.9375, 0],
+    ])
+    // the datasheet pinout: base→1, emitter→2, collector→3 (and gate/source/drain for FETs)
+    expect(padForTerminal('transistor_bjt_npn', 'base')).toBe('1')
+    expect(padForTerminal('transistor_bjt_npn', 'emitter')).toBe('2')
+    expect(padForTerminal('transistor_bjt_npn', 'collector')).toBe('3')
+    expect(padForTerminal('transistor_mosfet_nmos', 'gate')).toBe('1')
+    expect(padForTerminal('transistor_mosfet_nmos', 'source')).toBe('2')
+    expect(padForTerminal('transistor_mosfet_nmos', 'drain')).toBe('3')
   })
 
   test('colliding designators dedupe — the second part keeps its raw id, never two parts one name', () => {
