@@ -152,8 +152,9 @@ export type Airwire = {
 }
 
 /** One pad's copper as a board-space bounding box, tagged with its net — the fixed copper the router
- *  and the clearance checks must respect. */
-export type PadBox = { net: string; x: number; y: number; w: number; h: number }
+ *  and the clearance checks must respect. `pad` names which physical pad this is (`partId/padId`),
+ *  so downstream consumers (the Gerber writer's net attributes) can look a pad's net back up. */
+export type PadBox = { net: string; pad: string; x: number; y: number; w: number; h: number }
 
 export type Ratsnest = { airwires: Airwire[]; padBoxes: PadBox[] }
 
@@ -300,6 +301,7 @@ export function computeRatsnest(world: RatsnestWorld, board: Board): Ratsnest {
       const padKey = `${placement.partId}/${pad.id}`
       padBoxes.push({
         net: netOfPad.get(padKey) ?? `unconnected:${padKey}`,
+        pad: padKey,
         x: x0,
         y: y0,
         w: Math.max(...xs) - x0,
