@@ -16,7 +16,9 @@ import {
 import {
   clearanceViolations,
   DEFAULT_ROUTE_CLASS,
+  gridRouteTwoLayer,
   routeBoard,
+  twoLayerConnects,
   VIA_RULES,
 } from '../src/renderer/pcb-route.ts'
 
@@ -389,6 +391,107 @@ describe('the bottom layer through vias', () => {
     // the crowded east spot is refused; the drill gap to the same-net hole stays legal
     const gap = Math.hypot(via.at.x - 1.8, via.at.y - 0) - (via.drillMm + 0.8) / 2
     expect(gap).toBeGreaterThanOrEqual(VIA_RULES.hole_to_hole.limitMm)
+  })
+
+  test('MID-ROUTE layer switching: dive under a top wall, surface past the bottom walls', () => {
+    // The layer sandwich neither single layer can cross: the TOP is walled at x=10; the BOTTOM is
+    // walled at x=2 and x=18 (as committed bottom traces of other nets would be). The only way
+    // from (0,0) to (20,0) is top → via → bottom under the top wall → via → top: two vias
+    // MID-ROUTE — the endpoint-only strategy has no answer here.
+    const topWall = { x: 9.5, y: -40, w: 1, h: 80 }
+    const bottomWalls = [
+      { x: 1.5, y: -40, w: 1, h: 80 },
+      { x: 17.5, y: -40, w: 1, h: 80 },
+    ]
+    const route = gridRouteTwoLayer(
+      { x: 0, y: 0 },
+      ['top'],
+      { x: 20, y: 0 },
+      ['top'],
+      { top: [topWall], bottom: bottomWalls },
+      () => true, // via legality probed by the caller in routeBoard; here the field is open
+    )
+    if (route === null) throw new Error('two-layer route not found')
+    expect(route.viaAt).toHaveLength(2)
+    expect(route.runs.map((r) => r.layer)).toEqual(['top', 'bottom', 'top'])
+    // the bottom run really is the one crossing the top wall's x, and the vias flank it
+    const bottom = route.runs[1]
+    if (bottom === undefined) throw new Error('missing bottom run')
+    const xs = bottom.points.map((p) => p.x)
+    expect(Math.min(...xs)).toBeLessThan(9.5)
+    expect(Math.max(...xs)).toBeGreaterThan(10.5)
+    // every run stays clear of ITS layer's walls
+    for (const run of route.runs) {
+      const walls = run.layer === 'top' ? [topWall] : bottomWalls
+      for (let i = 0; i < run.points.length - 1; i++) {
+        const a = run.points[i] as { x: number; y: number }
+        const b = run.points[i + 1] as { x: number; y: number }
+        for (const wall of walls) {
+          const hitsX = Math.min(a.x, b.x) < wall.x + wall.w && Math.max(a.x, b.x) > wall.x
+          const hitsY = Math.min(a.y, b.y) < wall.y + wall.h && Math.max(a.y, b.y) > wall.y
+          expect(hitsX && hitsY).toBe(false)
+        }
+      }
+    }
+  })
+
+  test('a flip AT an SMD endpoint keeps its via — the route connects, never a silent open', () => {
+    // Review-caught (HIGH): when the two-layer A* flipped to the other layer exactly AT an
+    // endpoint, the earlier "derive vias from surviving runs" logic dropped that endpoint's via.
+    // For a top-only SMD pad that via is the SOLE bridge from the bottom run up to the pad — its
+    // loss left the net electrically OPEN while the router reported success and the DRC (which
+    // checks spacing, not continuity) stayed clean. This forces a flip at the goal: the bottom is
+    // clear, the top is walled everywhere EXCEPT a tiny window right at the goal, so the cheapest
+    // route runs on the bottom and only surfaces to the top at the very last point.
+    const bigTopWall = { x: 0.5, y: -40, w: 18, h: 80 } // blocks the top across the whole span
+    const route = gridRouteTwoLayer(
+      { x: 0, y: 0 },
+      ['top'],
+      { x: 20, y: 0 },
+      ['top'],
+      { top: [bigTopWall], bottom: [] },
+      () => true,
+    )
+    if (route === null) throw new Error('two-layer route not found')
+    // whatever the shape, the emitted copper must actually connect the two top-only endpoints
+    expect(twoLayerConnects(route, { x: 0, y: 0 }, ['top'], { x: 20, y: 0 }, ['top'])).toBe(true)
+    // and there is a via wherever the path leaves/returns to the top pad layer
+    expect(route.viaAt.length).toBeGreaterThanOrEqual(1)
+  })
+
+  test('routeBoard refuses (unrouted) any two-layer route its own copper does not connect', () => {
+    // The end-to-end guard: two top-only SMD pads on one net, pad a boxed by other-net top copper
+    // so the beside-pad via fails and the two-layer search runs; the connectivity self-check makes
+    // the router commit ONLY a genuinely joined route, never a hidden open reported as success.
+    const rn: Ratsnest = {
+      airwires: [{ net: 'sig', from: { x: 0, y: 0 }, to: { x: 30, y: 0 } }],
+      padBoxes: [
+        { net: 'sig', pad: 'a/1', throughHole: false, x: -0.4, y: -0.475, w: 0.8, h: 0.95 },
+        { net: 'sig', pad: 'b/1', throughHole: false, x: 29.6, y: -0.475, w: 0.8, h: 0.95 },
+        // a closed top ring around pad a so no beside-pad via spot is legal
+        { net: 'ring:n', pad: 'r/1', throughHole: false, x: -3, y: -3, w: 6, h: 1 },
+        { net: 'ring:s', pad: 'r/2', throughHole: false, x: -3, y: 2, w: 6, h: 1 },
+        { net: 'ring:w', pad: 'r/3', throughHole: false, x: -3, y: -2, w: 1, h: 4 },
+        { net: 'ring:e', pad: 'r/4', throughHole: false, x: 2, y: -2, w: 1, h: 4 },
+      ],
+    }
+    const routing = routeBoard(rn)
+    // Whatever routeBoard decides — routed or unrouted — the committed copper must be self-
+    // consistent: every airwire is either connected copper or an honest airwire, NEVER a
+    // committed-but-open net. Rebuild the emitted route and prove its endpoints connect.
+    if (routing.unrouted.length === 0) {
+      const runs = routing.traces
+        .filter((t) => t.net === 'sig')
+        .map((t) => ({ layer: t.layer, points: t.points }))
+      const viaAt = routing.vias.filter((v) => v.net === 'sig').map((v) => v.at)
+      expect(
+        twoLayerConnects({ runs, viaAt }, { x: 0, y: 0 }, ['top'], { x: 30, y: 0 }, ['top']),
+      ).toBe(true)
+    } else {
+      // refused honestly — no phantom copper committed for it
+      expect(routing.traces.filter((t) => t.net === 'sig')).toEqual([])
+      expect(routing.vias.filter((v) => v.net === 'sig')).toEqual([])
+    }
   })
 
   test('the via rules the router builds to are cited (drill floor, annular ring, hole spacing)', () => {
