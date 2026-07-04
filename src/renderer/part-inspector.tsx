@@ -201,6 +201,23 @@ const SOURCE_TYPES: {
     source: '12 V DC barrel-jack adapter; ~0.5 Ω regulated',
   },
   {
+    label: 'US outlet (120 V, 60 Hz)',
+    voltage: 0,
+    internalResistance: 0.4,
+    acAmplitude: 169.7,
+    frequency: 60,
+    source: 'ANSI C84.1 — 120 V rms / 60 Hz US single-phase; peak = 120·√2 ≈ 170 V; ~0.4 Ω branch',
+  },
+  {
+    label: 'US 240 V (split-phase)',
+    voltage: 0,
+    internalResistance: 0.4,
+    acAmplitude: 339.4,
+    frequency: 60,
+    source:
+      'ANSI C84.1 — 240 V rms leg-to-leg / 60 Hz (the US split-phase large-appliance service)',
+  },
+  {
     label: 'AC signal (1 kHz)',
     voltage: 0,
     internalResistance: 50,
