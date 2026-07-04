@@ -68,3 +68,27 @@ export const BOM_VALUE_PARAMS: Record<string, { param: string; unit: string }> =
   thermistor: { param: 'resistance', unit: 'Ω' },
   inductor: { param: 'inductance', unit: 'H' },
 }
+
+/** The standard reference-designator class letters (ASME Y14.44 / IEEE 315 clause 22 — the R/C/L
+ *  every schematic reader knows; RT is the thermal resistor). */
+const DESIGNATOR_PREFIXES: Record<string, string> = {
+  resistor: 'R',
+  capacitor: 'C',
+  inductor: 'L',
+  thermistor: 'RT',
+}
+
+/**
+ * The board's short reference designator for a part — what the silkscreen prints, the BOM and the
+ * pick-and-place file key on. A canvas-minted id (`resistor_3`) becomes the standard class letter
+ * plus its number (`R3` — 'RESISTOR_3' would be 8 mm of silk lettering on a 1.6 mm part); a
+ * hand-named id (`ra`, `alt3`) is the user's own name and is kept as they wrote it.
+ */
+export function boardDesignator(partId: string, definition: string): string {
+  const prefix = DESIGNATOR_PREFIXES[definition]
+  if (prefix !== undefined) {
+    const minted = partId.match(new RegExp(`^${definition}[_-]?(\\d+)$`, 'i'))
+    if (minted !== null) return `${prefix}${minted[1]}`
+  }
+  return partId
+}

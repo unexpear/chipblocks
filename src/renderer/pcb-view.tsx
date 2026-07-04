@@ -1,7 +1,14 @@
 import { type PointerEvent as ReactPointerEvent, useRef, useState } from 'react'
 import type { Pad } from './footprint.ts'
-import { type Airwire, type Board, footprintByPlacement, type Rotation } from './pcb-board.ts'
-import type { CopperTrace } from './pcb-route.ts'
+import {
+  type Airwire,
+  type Board,
+  footprintByPlacement,
+  type Rotation,
+  silkReferenceAnchor,
+} from './pcb-board.ts'
+import type { CopperTrace, Via } from './pcb-route.ts'
+import { SILK_TEXT, strokeText } from './stroke-font.ts'
 
 /**
  * The PCB view — draws a board and the footprints placed on it, the physical counterpart to the
@@ -19,10 +26,10 @@ const BOARD = '#0d3b26' // FR4 green
 const BOARD_EDGE = '#4ec98a' // the board outline / edge cut
 const COPPER = '#d9a441'
 const COPPER_EDGE = '#b5852b'
+const COPPER_BOTTOM = '#4a7fd4' // bottom-layer copper — blue, the EDA convention
 const HOLE = '#06180f' // a drilled hole shows through to the dark substrate
 const SILK = '#e8eaed'
 const COURTYARD = '#7fe3b0'
-const PART_INK = '#dfeee6'
 const AIRWIRE = '#f5f0dc' // thin pale ratsnest lines, the EDA convention
 const SELECT = '#9ecbff' // the selected part's halo
 const VIOLATION = '#ff6b6b' // DRC markers
@@ -77,6 +84,7 @@ export function PcbView({
   board,
   airwires = [],
   traces = [],
+  vias = [],
   markers = [],
   pxPerMm = 12,
   paddingMm = 3,
@@ -86,8 +94,10 @@ export function PcbView({
   board: Board
   /** Unrouted connections (the ratsnest) — drawn as thin straight lines pad-to-pad. */
   airwires?: Airwire[]
-  /** Routed copper — drawn at real width on the board, under the parts like the top copper layer. */
+  /** Routed copper on both layers — bottom drawn in blue under everything, top in copper gold. */
   traces?: CopperTrace[]
+  /** Plated vias — a copper ring with its drilled hole, joining the two layers. */
+  vias?: Via[]
   /** DRC violation spots, in board mm — drawn as red rings on top of everything. */
   markers?: { x: number; y: number }[]
   pxPerMm?: number
@@ -220,19 +230,41 @@ export function PcbView({
         onPointerDown={interactive ? () => setSelected(null) : undefined}
       />
 
-      {/* the routed copper — real trace widths, under the parts like the board's top layer */}
-      {traces.map((t) => (
-        <polyline
-          key={`tr${t.net}-${t.points[0]?.x},${t.points[0]?.y}-${t.points[t.points.length - 1]?.x},${t.points[t.points.length - 1]?.y}`}
-          points={t.points.map((p) => `${sx(p.x)},${sy(p.y)}`).join(' ')}
-          fill="none"
-          stroke={COPPER}
-          strokeWidth={t.widthMm * pxPerMm}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          data-trace={t.net}
-          pointerEvents="none"
-        />
+      {/* the routed copper — real trace widths; bottom layer in blue first (it sits under the
+          board's face), then the top layer in copper gold */}
+      {(['bottom', 'top'] as const).map((layer) =>
+        traces
+          .filter((t) => t.layer === layer)
+          .map((t) => (
+            <polyline
+              key={`tr${t.net}-${layer}-${t.points[0]?.x},${t.points[0]?.y}-${t.points[t.points.length - 1]?.x},${t.points[t.points.length - 1]?.y}`}
+              points={t.points.map((p) => `${sx(p.x)},${sy(p.y)}`).join(' ')}
+              fill="none"
+              stroke={layer === 'top' ? COPPER : COPPER_BOTTOM}
+              strokeWidth={t.widthMm * pxPerMm}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity={layer === 'top' ? 1 : 0.85}
+              data-trace={t.net}
+              data-layer={layer}
+              pointerEvents="none"
+            />
+          )),
+      )}
+
+      {/* vias — a plated barrel joining the layers: copper ring, drilled hole */}
+      {vias.map((v) => (
+        <g key={`via${v.at.x},${v.at.y}`} pointerEvents="none" data-via={v.net}>
+          <circle
+            cx={sx(v.at.x)}
+            cy={sy(v.at.y)}
+            r={(v.diameterMm / 2) * pxPerMm}
+            fill={COPPER}
+            stroke={COPPER_EDGE}
+            strokeWidth={0.5}
+          />
+          <circle cx={sx(v.at.x)} cy={sy(v.at.y)} r={(v.drillMm / 2) * pxPerMm} fill={HOLE} />
+        </g>
       ))}
 
       {board.placements.map((pl) => {
@@ -273,17 +305,35 @@ export function PcbView({
                 strokeLinecap="round"
               />
             ))}
-            {/* the schematic id, so the board reads back to the circuit */}
-            <text
-              x={fp.labels.reference.x * pxPerMm}
-              y={fp.labels.reference.y * pxPerMm}
-              textAnchor="middle"
-              dominantBaseline="central"
-              fontSize={Math.min(1.1 * pxPerMm, 13)}
-              fill={PART_INK}
-            >
-              {pl.partId}
-            </text>
+          </g>
+        )
+      })}
+
+      {/* reference designators — the REAL silkscreen lettering (the same strokes at the same
+          courtyard-top anchor the Gerber prints, at the cited 1.0 mm / 0.15 mm), upright at any
+          rotation, so the board view shows exactly what the fab will ink */}
+      {board.placements.map((pl) => {
+        const fp = footprintByPlacement(pl)
+        if (fp === undefined) return null
+        const text = strokeText(
+          pl.designator ?? pl.partId,
+          silkReferenceAnchor(pl, fp),
+          SILK_TEXT.heightMm,
+        )
+        return (
+          <g key={`ref-${pl.partId}`} pointerEvents="none" data-silk-ref={pl.partId}>
+            {text.segments.map((s) => (
+              <line
+                key={`${pl.partId}-t${s.from.x},${s.from.y}-${s.to.x},${s.to.y}`}
+                x1={sx(s.from.x)}
+                y1={sy(s.from.y)}
+                x2={sx(s.to.x)}
+                y2={sy(s.to.y)}
+                stroke={SILK}
+                strokeWidth={Math.max(0.8, SILK_TEXT.thicknessMm * pxPerMm)}
+                strokeLinecap="round"
+              />
+            ))}
           </g>
         )
       })}

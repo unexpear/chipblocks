@@ -7,7 +7,13 @@
  */
 import { describe, expect, test } from 'vitest'
 import { canvasToWorld } from '../src/renderer/canvas-to-world.ts'
-import { type BoardPart, computeRatsnest, deriveBoard } from '../src/renderer/pcb-board.ts'
+import {
+  type BoardPart,
+  computeRatsnest,
+  deriveBoard,
+  footprintByPlacement,
+  silkReferenceAnchor,
+} from '../src/renderer/pcb-board.ts'
 import {
   buildBomCsv,
   buildManufacturingZip,
@@ -18,6 +24,7 @@ import {
 } from '../src/renderer/pcb-fab.ts'
 import { gerberTopCopper } from '../src/renderer/pcb-gerber.ts'
 import { routeBoard } from '../src/renderer/pcb-route.ts'
+import { SILK_TEXT, strokeTextWidthMm } from '../src/renderer/stroke-font.ts'
 import { buildZip, crc32 } from '../src/zip-store.ts'
 
 const WHEN = new Date(2026, 6, 4, 12, 0, 0)
@@ -111,6 +118,53 @@ describe('assembly files', () => {
     expect(lines).toContain('R2,20,-10,Top,0')
   })
 
+  test('canvas-minted ids print as STANDARD designators — resistor_3 is R3 on silk, BOM and CPL', () => {
+    // Review-caught: 'RESISTOR_1' is 8.3 mm of 1 mm lettering on a 1.6 mm part — off the board
+    // edge and across its neighbour. The board names parts the way every schematic reader knows.
+    const board = deriveBoard(
+      parts([
+        ['resistor_3', 'resistor'],
+        ['capacitor_12', 'capacitor'],
+        ['thermistor_1', 'thermistor'],
+        ['ra', 'resistor'], // hand-named — kept as the user wrote it
+      ]),
+    )
+    expect(board.placements.map((p) => p.designator)).toEqual(['R3', 'C12', 'RT1', 'ra'])
+    const csv = buildPlacementCsv(board)
+    expect(csv).toContain('R3,')
+    expect(csv).toContain('C12,')
+    expect(csv).not.toContain('resistor_3')
+  })
+
+  test('colliding designators dedupe — the second part keeps its raw id, never two parts one name', () => {
+    const board = deriveBoard(
+      parts([
+        ['R1', 'resistor'], // hand-named 'R1'
+        ['resistor_1', 'resistor'], // would also shorten to R1
+      ]),
+    )
+    expect(board.placements[0]?.designator).toBe('R1')
+    expect(board.placements[1]?.designator).toBe('resistor_1')
+  })
+
+  test('the board outline contains the silk lettering — ink never hangs off the routed edge', () => {
+    const board = deriveBoard(
+      parts([
+        ['resistor_1', 'resistor'],
+        ['resistor_2', 'resistor'],
+      ]),
+    )
+    for (const pl of board.placements) {
+      const fp = footprintByPlacement(pl)
+      if (fp === undefined) throw new Error('missing footprint')
+      const anchor = silkReferenceAnchor(pl, fp)
+      const half = strokeTextWidthMm(pl.designator ?? pl.partId) / 2
+      expect(anchor.x - half).toBeGreaterThanOrEqual(board.outline.x)
+      expect(anchor.x + half).toBeLessThanOrEqual(board.outline.x + board.outline.w)
+      expect(anchor.y - SILK_TEXT.heightMm / 2).toBeGreaterThanOrEqual(board.outline.y)
+    }
+  })
+
   test('a through-hole part’s body centre is its BODY, not its pin-1 origin', () => {
     // DIP-8 fab outline spans (0.635, −1.27) → (6.985, 8.89): centre (3.81, 3.81) + origin (5, 5)
     const csv = buildPlacementCsv({
@@ -159,7 +213,7 @@ describe('assembly files', () => {
     const gerber = gerberTopCopper(
       board,
       { airwires: [], padBoxes: [] },
-      { traces: [], unrouted: [] },
+      { traces: [], vias: [], unrouted: [] },
       WHEN,
     )
     expect(gerber).toContain(`X${Math.round(expectedX * 1e6)}Y${Math.round(expectedY * 1e6)}D03*`)
@@ -201,7 +255,7 @@ describe('the validation report', () => {
     const failing: FabInputs = {
       ...inputs,
       offBoardPins: 3,
-      routing: { traces: [], unrouted: inputs.ratsnest.airwires },
+      routing: { traces: [], vias: [], unrouted: inputs.ratsnest.airwires },
       drc: [{ code: 'copper-clearance', message: 'two nets too close', at: { x: 1, y: 2 } }],
     }
     const v = buildValidationReport(failing)

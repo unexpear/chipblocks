@@ -82,7 +82,7 @@ import { ClipboardPanel } from './clipboard-panel.tsx'
 import { ContextMenu } from './context-menu.tsx'
 import { CoordinateAxes } from './coordinate-axes.tsx'
 import { DockablePanel } from './dockable-panel.tsx'
-import { BOM_VALUE_PARAMS, footprintForPart } from './footprint-assignment.ts'
+import { BOM_VALUE_PARAMS } from './footprint-assignment.ts'
 import {
   CrtScreenContext,
   type CrtScreenData,
@@ -1252,7 +1252,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // The copper: every airwire the single-layer router could turn into a real trace; what it couldn't
   // stays an airwire, honestly counted. Re-routes live as parts move.
   const pcbRouting = useMemo(
-    () => (pcbOpen ? routeBoard(pcbRatsnest) : { traces: [], unrouted: [] }),
+    () => (pcbOpen ? routeBoard(pcbRatsnest) : { traces: [], vias: [], unrouted: [] }),
     [pcbOpen, pcbRatsnest],
   )
   // Design-rule check — the board's failure-mode pass (cited limits), re-run live like the routing.
@@ -1309,10 +1309,12 @@ function Canvas({ project }: { project: ProjectChoice }) {
       projectAmbientRef.current,
     )
     const { netlist, unsupported } = serializeSpiceNetlist(file)
-    const bomRows: BomRow[] = nodes.flatMap((n) => {
-      const data = n.data as DeviceNodeData
-      const fp = footprintForPart(data.definition)
-      if (fp === undefined) return []
+    // BOM rows come FROM the board's placements, so the reference is the same deduped short
+    // designator (R1, C2) the silkscreen prints and placement.csv keys on — one naming, three files.
+    const dataById = new Map(nodes.map((n) => [n.id, n.data as DeviceNodeData]))
+    const bomRows: BomRow[] = pcbBoard.placements.flatMap((pl) => {
+      const data = dataById.get(pl.partId)
+      if (data === undefined) return []
       const valueSpec = BOM_VALUE_PARAMS[data.definition]
       const raw = valueSpec === undefined ? undefined : data.parameters?.[valueSpec.param]?.value
       const v =
@@ -1320,13 +1322,13 @@ function Canvas({ project }: { project: ProjectChoice }) {
       const amount = v?.kind === 'scalar' && typeof v.amount === 'number' ? v.amount : undefined
       return [
         {
-          reference: n.id,
+          reference: pl.designator ?? pl.partId,
           definition: data.definition,
           value:
             amount !== undefined && valueSpec !== undefined
               ? formatEng(amount, valueSpec.unit)
               : data.definition,
-          footprintId: fp.id,
+          footprintId: pl.footprintId,
         },
       ]
     })
@@ -6240,10 +6242,13 @@ function Canvas({ project }: { project: ProjectChoice }) {
                     {pcbBoard.placements.length} part
                     {pcbBoard.placements.length === 1 ? '' : 's'} placed ·{' '}
                     {pcbBoard.outline.w.toFixed(1)} × {pcbBoard.outline.h.toFixed(1)} mm board
+                    {/* routed CONNECTIONS, not trace count — one via'd connection is three traces */}
                     {pcbRatsnest.airwires.length > 0 &&
-                      ` · ${pcbRouting.traces.length} of ${pcbRatsnest.airwires.length} connection${
+                      ` · ${pcbRatsnest.airwires.length - pcbRouting.unrouted.length} of ${pcbRatsnest.airwires.length} connection${
                         pcbRatsnest.airwires.length === 1 ? '' : 's'
                       } routed`}
+                    {pcbRouting.vias.length > 0 &&
+                      ` · ${pcbRouting.vias.length} via${pcbRouting.vias.length === 1 ? '' : 's'}`}
                     {pcbOffBoard > 0 && (
                       <span style={{ color: THEME.textFaint }}>
                         {' '}
@@ -6309,6 +6314,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                       board={pcbBoard}
                       airwires={pcbRouting.unrouted}
                       traces={pcbRouting.traces}
+                      vias={pcbRouting.vias}
                       markers={pcbDrc.map((v) => v.at)}
                       pxPerMm={12}
                       onMove={onPcbMove}

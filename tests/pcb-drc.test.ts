@@ -121,11 +121,32 @@ describe('runDrc', () => {
             { x: 1, y: 0 },
             { x: 2, y: 0 },
           ],
+          layer: 'top' as const,
         },
       ],
+      vias: [],
       unrouted: [],
     }
     const violations = runDrc(board, rn, routing)
     expect(violations.some((v) => v.code === 'track-width')).toBe(true)
+  })
+
+  test('an undersized via and two crowding holes are flagged with their cited limits', () => {
+    const defs: [string, string][] = [['R1', 'resistor']]
+    const board = deriveBoard(parts(defs))
+    const rn = computeRatsnest(world(defs, []), board)
+    const routing = {
+      traces: [],
+      // drill 0.2 < the 0.3 mm floor; ring (0.3−0.2)/2 = 0.05 is exactly legal (no annular flag);
+      // the second via's hole sits 0.5 mm away → edge gap 0.5 − 0.3 = 0.2 < 0.25 → hole-to-hole.
+      vias: [
+        { net: 'a', at: { x: 20, y: 20 }, diameterMm: 0.3, drillMm: 0.2 },
+        { net: 'a', at: { x: 20.5, y: 20 }, diameterMm: 0.6, drillMm: 0.4 },
+      ],
+      unrouted: [],
+    }
+    const violations = runDrc(board, rn, routing)
+    expect(violations.some((v) => v.code === 'via-size' && v.message.includes('0.2'))).toBe(true)
+    expect(violations.some((v) => v.code === 'hole-to-hole')).toBe(true)
   })
 })

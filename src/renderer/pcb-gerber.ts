@@ -5,8 +5,10 @@ import {
   footprintByPlacement,
   placePoint,
   type Ratsnest,
+  silkReferenceAnchor,
 } from './pcb-board.ts'
 import type { BoardRouting } from './pcb-route.ts'
+import { SILK_TEXT, strokeText } from './stroke-font.ts'
 
 /**
  * The Gerber + drill writers — the board becomes the exact files a fab manufactures
@@ -22,9 +24,10 @@ import type { BoardRouting } from './pcb-route.ts'
  * points UP. Every emitted Y is therefore negated — exactly what KiCad does when plotting (its
  * internal frame is y-down too; the demo files show every board Y appearing negated).
  *
- * The board is a TWO-copper-layer board (the standard minimum fab order) with all routing on the
- * top layer: the bottom copper carries only the through-hole pads' annular rings. That is honest
- * manufacturable truth, stated again in the validation report.
+ * The board is a TWO-copper-layer board (the standard minimum fab order), both layers routed:
+ * connections take the top layer first and drop to the bottom through plated vias when the top is
+ * blocked, so the bottom copper carries the through-hole pads' annular rings, the bottom-layer
+ * traces, and the via barrels. Vias are tented (mask-covered) — no mask openings for them.
  */
 
 /** Values a fab manufactures directly, cited (the anti-placeholder rule applies to file formats). */
@@ -277,23 +280,18 @@ function flashBody(
   return lines
 }
 
-/** Top copper: every pad flashed + every routed trace drawn at its class width. */
-export function gerberTopCopper(
-  board: Board,
-  ratsnest: Ratsnest,
-  routing: BoardRouting,
-  when: Date,
-): string {
-  const apertures = new Apertures()
-  const flashes = planFlashes(board, apertures, ALL_PADS, 'ComponentPad')
-  const traceCodes = new Map(
-    routing.traces.map((t) => [t.widthMm, apertures.code(`C,${apNum(t.widthMm)}`, 'Conductor')]),
-  )
-  const body = flashBody(flashes, padNets(ratsnest))
+/** Draw one layer's traces: a Conductor aperture per width, each polyline D02 then D01s, its net
+ *  attribute attached. Shared by the two copper layers so they can never draw differently. */
+function traceBody(
+  traces: readonly BoardRouting['traces'][number][],
+  layer: 'top' | 'bottom',
+  apertures: Apertures,
+  body: string[],
+): void {
   let currentCode = -1
-  for (const t of routing.traces) {
-    const code = traceCodes.get(t.widthMm)
-    if (code === undefined || t.points.length < 2) continue
+  for (const t of traces) {
+    if (t.layer !== layer || t.points.length < 2) continue
+    const code = apertures.code(`C,${apNum(t.widthMm)}`, 'Conductor')
     if (code !== currentCode) {
       body.push(`D${code}*`)
       currentCode = code
@@ -303,6 +301,35 @@ export function gerberTopCopper(
     for (const p of t.points.slice(1)) body.push(`${xy(p)}D01*`)
     body.push('%TD*%')
   }
+}
+
+/** Flash the via barrels — the same copper appears on BOTH layers, tagged ViaPad + its net. */
+function viaBody(routing: BoardRouting, apertures: Apertures, body: string[]): void {
+  let currentCode = -1
+  for (const v of routing.vias) {
+    const code = apertures.code(`C,${apNum(v.diameterMm)}`, 'ViaPad')
+    if (code !== currentCode) {
+      body.push(`D${code}*`)
+      currentCode = code
+    }
+    body.push(`%TO.N,${safeField(v.net)}*%`)
+    body.push(`${xy(v.at)}D03*`)
+    body.push('%TD*%')
+  }
+}
+
+/** Top copper: every pad flashed, the top-layer traces, and the via barrels. */
+export function gerberTopCopper(
+  board: Board,
+  ratsnest: Ratsnest,
+  routing: BoardRouting,
+  when: Date,
+): string {
+  const apertures = new Apertures()
+  const flashes = planFlashes(board, apertures, ALL_PADS, 'ComponentPad')
+  const body = flashBody(flashes, padNets(ratsnest))
+  traceBody(routing.traces, 'top', apertures, body)
+  viaBody(routing, apertures, body)
   return [
     ...gerberHeader('Copper,L1,Top', 'Positive', when),
     ...apertures.block(),
@@ -312,21 +339,32 @@ export function gerberTopCopper(
   ].join('\n')
 }
 
-/** Bottom copper: the through-hole pads' annular rings only — no routing lives down here (yet). */
-export function gerberBottomCopper(board: Board, ratsnest: Ratsnest, when: Date): string {
+/** Bottom copper: the through-hole pads' annular rings, the bottom-layer traces, and the via
+ *  barrels (a via's copper exists on both layers). */
+export function gerberBottomCopper(
+  board: Board,
+  ratsnest: Ratsnest,
+  routing: BoardRouting,
+  when: Date,
+): string {
   const apertures = new Apertures()
   const flashes = planFlashes(board, apertures, THROUGH_HOLE_ONLY, 'ComponentPad')
+  const body = flashBody(flashes, padNets(ratsnest))
+  traceBody(routing.traces, 'bottom', apertures, body)
+  viaBody(routing, apertures, body)
   return [
     ...gerberHeader('Copper,L2,Bot', 'Positive', when),
     ...apertures.block(),
-    ...flashBody(flashes, padNets(ratsnest)),
+    ...body,
     'M02*',
     '',
   ].join('\n')
 }
 
 /** Solder mask: NEGATIVE polarity — the image marks where mask is REMOVED, so it flashes the pads
- *  with the pads' own apertures (mask clearance 0, cited above; the fab applies its expansion). */
+ *  with the pads' own apertures (mask clearance 0, cited above; the fab applies its expansion).
+ *  Vias get NO mask opening: they are TENTED — covered by mask — KiCad's default via treatment,
+ *  which protects the barrel from solder bridging. */
 export function gerberMask(board: Board, side: 'Top' | 'Bot', when: Date): string {
   const apertures = new Apertures()
   const filter = side === 'Top' ? ALL_PADS : THROUGH_HOLE_ONLY
@@ -340,25 +378,44 @@ export function gerberMask(board: Board, side: 'Top' | 'Bot', when: Date): strin
   ].join('\n')
 }
 
-/** Top silkscreen: every footprint's silk outline, drawn per part. Reference lettering is not
- *  emitted yet (the designators live in the BOM + placement files) — stated in the report. */
+/** Top silkscreen: every footprint's silk outline plus its reference DESIGNATOR (R1, C2 — the
+ *  short board name, not the schematic id), stroked in the board lettering font at KiCad's cited
+ *  text size (SILK_TEXT). The text centres above the part's courtyard at any rotation
+ *  (silkReferenceAnchor) — clear of the pads by the courtyard invariant, upright so it always
+ *  reads left-to-right. A character the font cannot print keeps its space and is named in a G04
+ *  comment — never dropped in silence. */
 export function gerberSilkscreen(board: Board, when: Date): string {
   const apertures = new Apertures()
   const body: string[] = []
   let currentCode = -1
+  const draw = (code: number, from: { x: number; y: number }, to: { x: number; y: number }) => {
+    if (code !== currentCode) {
+      body.push(`D${code}*`)
+      currentCode = code
+    }
+    body.push(`${xy(from)}D02*`)
+    body.push(`${xy(to)}D01*`)
+  }
   for (const placement of board.placements) {
     const fp = footprintByPlacement(placement)
-    if (fp === undefined || fp.silkscreen.length === 0) continue
+    if (fp === undefined) continue
     body.push(`%TO.C,${safeField(placement.partId)}*%`)
     for (const s of fp.silkscreen) {
-      const code = apertures.code(`C,${apNum(s.width)}`, null)
-      if (code !== currentCode) {
-        body.push(`D${code}*`)
-        currentCode = code
-      }
-      body.push(`${xy(placePoint(placement, s.from))}D02*`)
-      body.push(`${xy(placePoint(placement, s.to))}D01*`)
+      draw(
+        apertures.code(`C,${apNum(s.width)}`, null),
+        placePoint(placement, s.from),
+        placePoint(placement, s.to),
+      )
     }
+    const designator = placement.designator ?? placement.partId
+    const text = strokeText(designator, silkReferenceAnchor(placement, fp), SILK_TEXT.heightMm)
+    if (text.missing.length > 0) {
+      body.push(
+        `G04 '${safeField(designator)}': no glyph for ${safeField(text.missing.join(' '))} — space kept*`,
+      )
+    }
+    const textCode = apertures.code(`C,${apNum(SILK_TEXT.thicknessMm)}`, null)
+    for (const seg of text.segments) draw(textCode, seg.from, seg.to)
     body.push('%TD*%')
   }
   return [
@@ -421,23 +478,33 @@ const drillNum = (mm: number): string => {
 
 /**
  * The drill file — Excellon per Ucamco's XNC format, shaped exactly like KiCad 10's output: M48
- * header with #@! file attributes, FMAT,2 + METRIC, one T tool per hole diameter (ascending), then
- * each tool's holes (sorted for determinism), M30. All our holes are plated component holes
- * (through-hole pads), hence FileFunction Plated,1,2,PTH.
+ * header with #@! file attributes, FMAT,2 + METRIC, one T tool per hole KIND and diameter
+ * (component holes and via holes carry different attributes, so a shared diameter still gets its
+ * own tool — KiCad's convention), ascending, then each tool's holes (sorted for determinism),
+ * M30. Every hole is plated (component legs and via barrels), hence FileFunction Plated,1,2,PTH.
  */
-export function excellonDrill(board: Board, when: Date): string {
-  const holes = new Map<number, { x: number; y: number }[]>()
+export function excellonDrill(board: Board, routing: BoardRouting, when: Date): string {
+  const holes = new Map<string, { drill: number; kind: string; at: { x: number; y: number }[] }>()
+  const add = (
+    drill: number,
+    kind: 'ComponentDrill' | 'ViaDrill',
+    at: { x: number; y: number },
+  ) => {
+    const key = `${kind}:${drill}`
+    const entry = holes.get(key) ?? { drill, kind, at: [] }
+    entry.at.push(at)
+    holes.set(key, entry)
+  }
   for (const placement of board.placements) {
     const fp = footprintByPlacement(placement)
     if (fp === undefined) continue
     for (const pad of fp.pads) {
       if (pad.type !== 'through_hole' || pad.holeDiameter === undefined) continue
-      const list = holes.get(pad.holeDiameter) ?? []
-      list.push(placePoint(placement, pad.center))
-      holes.set(pad.holeDiameter, list)
+      add(pad.holeDiameter, 'ComponentDrill', placePoint(placement, pad.center))
     }
   }
-  const diameters = [...holes.keys()].sort((a, b) => a - b)
+  for (const v of routing.vias) add(v.drillMm, 'ViaDrill', v.at)
+  const tools = [...holes.values()].sort((a, b) => a.drill - b.drill || (a.kind < b.kind ? -1 : 1))
   const lines = [
     'M48',
     `; DRILL file ChipBlocks BoardExport date ${isoWithOffset(when)}`,
@@ -448,14 +515,14 @@ export function excellonDrill(board: Board, when: Date): string {
     'FMAT,2',
     'METRIC',
   ]
-  diameters.forEach((d, i) => {
-    lines.push('; #@! TA.AperFunction,Plated,PTH,ComponentDrill')
-    lines.push(`T${i + 1}C${d.toFixed(3)}`)
+  tools.forEach((tool, i) => {
+    lines.push(`; #@! TA.AperFunction,Plated,PTH,${tool.kind}`)
+    lines.push(`T${i + 1}C${tool.drill.toFixed(3)}`)
   })
   lines.push('%', 'G90', 'G05')
-  diameters.forEach((d, i) => {
+  tools.forEach((tool, i) => {
     lines.push(`T${i + 1}`)
-    const sorted = [...(holes.get(d) ?? [])].sort((p, q) => p.x - q.x || p.y - q.y)
+    const sorted = [...tool.at].sort((p, q) => p.x - q.x || p.y - q.y)
     for (const h of sorted) lines.push(`X${drillNum(h.x)}Y${drillNum(-h.y)}`)
   })
   lines.push('M30', '')

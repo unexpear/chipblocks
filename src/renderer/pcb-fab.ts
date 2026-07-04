@@ -12,7 +12,8 @@ import {
   gerberTopCopper,
   isoWithOffset,
 } from './pcb-gerber.ts'
-import { type BoardRouting, DEFAULT_ROUTE_CLASS } from './pcb-route.ts'
+import { type BoardRouting, DEFAULT_ROUTE_CLASS, VIA_RULES } from './pcb-route.ts'
+import { SILK_TEXT } from './stroke-font.ts'
 
 /**
  * The manufacturing ZIP — deliverable #2 (CLAUDE.md core principle 1): the archive a user hands a
@@ -110,8 +111,10 @@ export function buildPlacementCsv(board: Board): string {
     // tell the pick-and-place machine to turn a SOIC 180° from where its pads actually are
     // (review-caught by tracing pin 1's flash against the CSV on a 90°-rotated part).
     const rotationCcw = (360 - placement.rotation) % 360
+    // The Designator is the SHORT board name (R1) — the same one the silkscreen prints, so the
+    // assembler's file and the ink on the board can never disagree.
     lines.push(
-      `${csvField(placement.partId)},${num(centre.x)},${num(-centre.y)},Top,${rotationCcw}`,
+      `${csvField(placement.designator ?? placement.partId)},${num(centre.x)},${num(-centre.y)},Top,${rotationCcw}`,
     )
   }
   return `${lines.join('\n')}\n`
@@ -169,7 +172,7 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
   // board. The app builds both from the same schematic, so a mismatch means a caller bug — the
   // engine refuses rather than shipping an assembly pair that contradicts the copper.
   const bomRefs = new Set(inputs.bomRows.map((r) => r.reference))
-  const placedIds = new Set(board.placements.map((p) => p.partId))
+  const placedIds = new Set(board.placements.map((p) => p.designator ?? p.partId))
   const missingFromBom = [...placedIds].filter((id) => !bomRefs.has(id))
   const missingFromBoard = [...bomRefs].filter((id) => !placedIds.has(id))
   if (missingFromBom.length > 0) {
@@ -190,13 +193,17 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
     'BOARD',
     `  outline: ${num(board.outline.w)} × ${num(board.outline.h)} mm`,
     `  parts placed: ${board.placements.length}`,
-    `  connections: ${ratsnest.airwires.length} owed, ${routing.traces.length} routed as copper, ${routing.unrouted.length} unrouted`,
+    // routed CONNECTIONS, not trace count — one via'd connection is three copper traces
+    `  connections: ${ratsnest.airwires.length} owed, ${ratsnest.airwires.length - routing.unrouted.length} routed, ${routing.unrouted.length} unrouted${routing.vias.length > 0 ? ` (${routing.vias.length} via${routing.vias.length === 1 ? '' : 's'})` : ''}`,
     '',
     'RULES CHECKED (each limit cited — ask the file where a number came from and it answers)',
     `  trace width ${num(DEFAULT_ROUTE_CLASS.traceWidthMm)} mm / clearance ${num(DEFAULT_ROUTE_CLASS.clearanceMm)} mm — ${DEFAULT_ROUTE_CLASS.provenance.title}`,
     `  copper-to-edge ≥ ${num(DRC_RULES['edge-clearance'].limitMm)} mm — ${DRC_RULES['edge-clearance'].provenance.title}`,
     `  courtyard overlap — ${DRC_RULES['courtyard-overlap'].provenance.title}`,
     `  minimum track width ${num(DRC_RULES['track-width'].limitMm)} mm — ${DRC_RULES['track-width'].provenance.title}`,
+    `  via drill ≥ ${num(VIA_RULES.min_drill.limitMm)} mm — ${VIA_RULES.min_drill.provenance.title}`,
+    `  via annular ring ≥ ${num(VIA_RULES.min_annular.limitMm)} mm — ${VIA_RULES.min_annular.provenance.title}`,
+    `  hole-to-hole ≥ ${num(VIA_RULES.hole_to_hole.limitMm)} mm — ${VIA_RULES.hole_to_hole.provenance.title}`,
     '',
     'DESIGN-RULE CHECK',
     ...(drc.length === 0
@@ -204,11 +211,12 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
       : drc.map((v) => `  ✗ ${v.code}: ${v.message} at (${num(v.at.x)}, ${num(v.at.y)}) mm`)),
     '',
     'HONEST SCOPE',
-    '  · Two copper layers (the standard minimum fab order); ALL routing is on the top layer —',
-    '    the bottom copper carries only the through-hole pads’ annular rings.',
+    '  · Two copper layers, both routed: connections take the top layer first and drop to the',
+    `    bottom through plated ${num(DEFAULT_ROUTE_CLASS.viaDiameterMm)} / ${num(DEFAULT_ROUTE_CLASS.viaDrillMm)} mm vias when the top is blocked. Vias are`,
+    '    tented (mask-covered), the KiCad default.',
     `  · Solder-mask openings equal the pad copper (clearance ${num(GERBER_CONVENTIONS.mask_clearance.valueMm)} mm — ${GERBER_CONVENTIONS.mask_clearance.provenance.title}).`,
-    '  · Silkscreen carries the part outlines; reference lettering is not drawn on silk yet —',
-    '    designators live in bom.csv and placement.csv.',
+    `  · Silkscreen carries the part outlines and stroked reference designators (${num(SILK_TEXT.heightMm)} mm`,
+    `    lettering at ${num(SILK_TEXT.thicknessMm)} mm stroke — ${SILK_TEXT.provenance.title}).`,
     '  · Board frame: millimetres, Y up (the Gerber convention); placement rotations are degrees',
     '    counter-clockwise in that frame.',
     '  · netlist.cir uses its own SPICE element numbering — an electrical reference, not keyed to',
@@ -249,13 +257,13 @@ function buildReadme(inputs: FabInputs): string {
     '',
     'Fabrication (Gerber X2, units mm; drill in Excellon decimal mm — file shapes ground-truthed',
     'against KiCad 10.0.4 output):',
-    `  ${FAB_FILE_NAMES.topCopper}      top copper — pads + all routed traces`,
-    `  ${FAB_FILE_NAMES.bottomCopper}      bottom copper — through-hole annular rings`,
+    `  ${FAB_FILE_NAMES.topCopper}      top copper — pads, top traces, via barrels`,
+    `  ${FAB_FILE_NAMES.bottomCopper}      bottom copper — TH rings, bottom traces, via barrels`,
     `  ${FAB_FILE_NAMES.topMask}    top solder mask openings`,
     `  ${FAB_FILE_NAMES.bottomMask}    bottom solder mask openings`,
-    `  ${FAB_FILE_NAMES.topSilk} top silkscreen (part outlines)`,
+    `  ${FAB_FILE_NAMES.topSilk} top silkscreen (part outlines + designators)`,
     `  ${FAB_FILE_NAMES.edgeCuts}  board outline (the fab cuts this centreline)`,
-    `  ${FAB_FILE_NAMES.drill}           plated drill hits`,
+    `  ${FAB_FILE_NAMES.drill}           plated drill hits (component holes + via holes)`,
     '',
     'Assembly:',
     `  ${FAB_FILE_NAMES.bom}               bill of materials (grouped by value + footprint)`,
@@ -286,12 +294,12 @@ export function buildManufacturingZip(inputs: FabInputs): FabZip {
   })
   const entries: ZipEntry[] = [
     text(FAB_FILE_NAMES.topCopper, gerberTopCopper(board, ratsnest, routing, when)),
-    text(FAB_FILE_NAMES.bottomCopper, gerberBottomCopper(board, ratsnest, when)),
+    text(FAB_FILE_NAMES.bottomCopper, gerberBottomCopper(board, ratsnest, routing, when)),
     text(FAB_FILE_NAMES.topMask, gerberMask(board, 'Top', when)),
     text(FAB_FILE_NAMES.bottomMask, gerberMask(board, 'Bot', when)),
     text(FAB_FILE_NAMES.topSilk, gerberSilkscreen(board, when)),
     text(FAB_FILE_NAMES.edgeCuts, gerberEdgeCuts(board.outline, when)),
-    text(FAB_FILE_NAMES.drill, excellonDrill(board, when)),
+    text(FAB_FILE_NAMES.drill, excellonDrill(board, routing, when)),
     text(FAB_FILE_NAMES.bom, buildBomCsv(inputs.bomRows)),
     text(FAB_FILE_NAMES.placement, buildPlacementCsv(board)),
     text(FAB_FILE_NAMES.netlist, inputs.netlistText),

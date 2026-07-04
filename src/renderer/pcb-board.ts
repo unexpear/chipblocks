@@ -1,5 +1,6 @@
 import { BUILTIN_FOOTPRINTS, type Footprint, footprintBounds } from './footprint.ts'
-import { footprintForPart, padForTerminal } from './footprint-assignment.ts'
+import { boardDesignator, footprintForPart, padForTerminal } from './footprint-assignment.ts'
+import { SILK_TEXT, strokeTextWidthMm } from './stroke-font.ts'
 
 /**
  * The PCB board — the physical layout the schematic becomes (TOOLCHAIN-ROADMAP.md Track 1, the PCB
@@ -24,6 +25,9 @@ export type Placement = {
   x: number
   y: number
   rotation: Rotation
+  /** The short reference designator (R1, C2 — boardDesignator) the silk prints and the assembly
+   *  files key on. deriveBoard fills it (deduped); absent (hand-built boards) ⇒ the partId. */
+  designator?: string
 }
 
 /** The board outline (its physical edge), in mm — a rectangle for now. */
@@ -98,12 +102,18 @@ export function deriveBoard(
   margin = 2.5,
 ): Board {
   const placements: Placement[] = []
+  // Short designators, deduped: two ids can collapse onto one designator ('r1' and 'resistor_1'
+  // both read R1) — the second keeps its raw id, so no two parts ever print the same name.
+  const takenDesignators = new Set<string>()
   let cursorX = 0
   for (const part of parts) {
     const fp = footprintForPart(part.definition)
     if (fp === undefined) continue
     const b = footprintBounds(fp)
     const override = overrides?.get(part.id)
+    const short = boardDesignator(part.id, part.definition)
+    const designator = takenDesignators.has(short) ? part.id : short
+    takenDesignators.add(designator)
     // Auto spot: the footprint's LEFT edge lands at cursorX, centred on y = 0. The auto row
     // advances even for hand-placed parts, so the others' seeds never reflow under them.
     placements.push({
@@ -112,6 +122,7 @@ export function deriveBoard(
       x: override?.x ?? cursorX - b.minX,
       y: override?.y ?? -(b.minY + b.maxY) / 2,
       rotation: override?.rotation ?? 0,
+      designator,
     })
     cursorX += b.maxX - b.minX + gap
   }
@@ -129,6 +140,14 @@ export function deriveBoard(
     minY = Math.min(minY, bb.minY)
     maxX = Math.max(maxX, bb.maxX)
     maxY = Math.max(maxY, bb.maxY)
+    // The silk lettering is real ink on the manufactured board — the outline must contain it
+    // (review-caught: a designator centred on a small part hung 0.16 mm past the routed edge).
+    const anchor = silkReferenceAnchor(p, fp)
+    const halfText = strokeTextWidthMm(p.designator ?? p.partId) / 2
+    minX = Math.min(minX, anchor.x - halfText)
+    maxX = Math.max(maxX, anchor.x + halfText)
+    minY = Math.min(minY, anchor.y - SILK_TEXT.heightMm / 2)
+    maxY = Math.max(maxY, anchor.y + SILK_TEXT.heightMm / 2)
   }
   return {
     outline: {
@@ -138,6 +157,29 @@ export function deriveBoard(
       h: maxY - minY + 2 * margin,
     },
     placements,
+  }
+}
+
+/**
+ * Where a placement's silk designator centres, in board mm: above the part's courtyard at ANY
+ * rotation, clear of the pads by construction (the courtyard contains them — the catalog's
+ * invariant). For the 0603 at rotation 0 this lands exactly on KiCad's own reference anchor
+ * (courtyard top −0.73, half the 1.0 mm lettering and a 0.2 mm gap above → −1.43). Upright text
+ * at a rotation-following anchor was review-caught printing across the part's own pads.
+ */
+export function silkReferenceAnchor(p: Placement, fp: Footprint): { x: number; y: number } {
+  const c = fp.courtyard
+  const corners = [
+    placePoint(p, { x: c.x, y: c.y }),
+    placePoint(p, { x: c.x + c.w, y: c.y }),
+    placePoint(p, { x: c.x + c.w, y: c.y + c.h }),
+    placePoint(p, { x: c.x, y: c.y + c.h }),
+  ]
+  const xs = corners.map((q) => q.x)
+  const ys = corners.map((q) => q.y)
+  return {
+    x: (Math.min(...xs) + Math.max(...xs)) / 2,
+    y: Math.min(...ys) - SILK_TEXT.heightMm / 2 - 0.2,
   }
 }
 
@@ -153,8 +195,21 @@ export type Airwire = {
 
 /** One pad's copper as a board-space bounding box, tagged with its net — the fixed copper the router
  *  and the clearance checks must respect. `pad` names which physical pad this is (`partId/padId`),
- *  so downstream consumers (the Gerber writer's net attributes) can look a pad's net back up. */
-export type PadBox = { net: string; pad: string; x: number; y: number; w: number; h: number }
+ *  so downstream consumers (the Gerber writer's net attributes) can look a pad's net back up.
+ *  `throughHole` says the copper exists on BOTH layers (an SMD pad lives on top only) — what the
+ *  bottom-layer router and the layer-aware clearance audit key on. */
+export type PadBox = {
+  net: string
+  pad: string
+  throughHole: boolean
+  /** The plated hole's drill diameter (mm), for through-hole pads — the router's via placement
+   *  must keep the hole-to-hole gap from EVERY drill, same net or not (the drill breaks out). */
+  holeMm?: number
+  x: number
+  y: number
+  w: number
+  h: number
+}
 
 export type Ratsnest = { airwires: Airwire[]; padBoxes: PadBox[] }
 
@@ -302,6 +357,8 @@ export function computeRatsnest(world: RatsnestWorld, board: Board): Ratsnest {
       padBoxes.push({
         net: netOfPad.get(padKey) ?? `unconnected:${padKey}`,
         pad: padKey,
+        throughHole: pad.type === 'through_hole',
+        ...(pad.holeDiameter !== undefined ? { holeMm: pad.holeDiameter } : {}),
         x: x0,
         y: y0,
         w: Math.max(...xs) - x0,

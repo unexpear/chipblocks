@@ -11,6 +11,7 @@ import {
   clearanceViolations,
   DEFAULT_ROUTE_CLASS,
   type RouteClass,
+  VIA_RULES,
 } from './pcb-route.ts'
 
 /**
@@ -23,7 +24,13 @@ import {
  * reject. This is the last gate before the Gerber export can be trusted.
  */
 
-export type DrcCode = 'copper-clearance' | 'courtyard-overlap' | 'edge-clearance' | 'track-width'
+export type DrcCode =
+  | 'copper-clearance'
+  | 'courtyard-overlap'
+  | 'edge-clearance'
+  | 'track-width'
+  | 'via-size'
+  | 'hole-to-hole'
 
 export type DrcViolation = {
   code: DrcCode
@@ -32,9 +39,11 @@ export type DrcViolation = {
   at: { x: number; y: number }
 }
 
-/** The cited limit behind each rule (copper clearance lives on the RouteClass itself). */
+/** The cited limit behind each rule (copper clearance lives on the RouteClass itself; the via
+ *  drill/annular/hole-spacing limits live in pcb-route's VIA_RULES so the router and this check
+ *  can never disagree). */
 export const DRC_RULES: Record<
-  Exclude<DrcCode, 'copper-clearance'>,
+  Exclude<DrcCode, 'copper-clearance' | 'via-size' | 'hole-to-hole'>,
   { limitMm: number; provenance: FootprintProvenance }
 > = {
   'courtyard-overlap': {
@@ -119,6 +128,15 @@ function copperBoxes(
       })
     }
   }
+  for (const v of routing.vias) {
+    out.push({
+      x: v.at.x - v.diameterMm / 2,
+      y: v.at.y - v.diameterMm / 2,
+      w: v.diameterMm,
+      h: v.diameterMm,
+      what: `a via (${v.net})`,
+    })
+  }
   return out
 }
 
@@ -195,6 +213,55 @@ export function runDrc(
       message: `a ${fmt(t.widthMm)} mm trace is narrower than the ${fmt(minTrack)} mm minimum`,
       at: p,
     })
+  }
+
+  // Via geometry — the drill floor and the copper ring the plating needs (VIA_RULES, cited).
+  for (const v of routing.vias) {
+    if (v.drillMm < VIA_RULES.min_drill.limitMm) {
+      out.push({
+        code: 'via-size',
+        message: `a ${fmt(v.drillMm)} mm via drill is under the ${fmt(VIA_RULES.min_drill.limitMm)} mm minimum`,
+        at: v.at,
+      })
+    }
+    const annular = (v.diameterMm - v.drillMm) / 2
+    if (annular < VIA_RULES.min_annular.limitMm) {
+      out.push({
+        code: 'via-size',
+        message: `a ${fmt(annular)} mm via annular ring is under the ${fmt(VIA_RULES.min_annular.limitMm)} mm minimum`,
+        at: v.at,
+      })
+    }
+  }
+
+  // Hole-to-hole — every plated drill on the board (component holes + vias), pairwise: the drill
+  // breaks out between two holes closer than the limit, same net or not.
+  const holes: { at: { x: number; y: number }; drillMm: number }[] = routing.vias.map((v) => ({
+    at: v.at,
+    drillMm: v.drillMm,
+  }))
+  for (const pl of board.placements) {
+    const fp = footprintByPlacement(pl)
+    if (fp === undefined) continue
+    for (const pad of fp.pads) {
+      if (pad.holeDiameter === undefined) continue
+      holes.push({ at: placePoint(pl, pad.center), drillMm: pad.holeDiameter })
+    }
+  }
+  const minHoleGap = VIA_RULES.hole_to_hole.limitMm
+  for (let i = 0; i < holes.length; i++) {
+    const a = holes[i] as (typeof holes)[number]
+    for (let j = i + 1; j < holes.length; j++) {
+      const b = holes[j] as (typeof holes)[number]
+      const gap = Math.hypot(a.at.x - b.at.x, a.at.y - b.at.y) - (a.drillMm + b.drillMm) / 2
+      if (gap < minHoleGap - 1e-9) {
+        out.push({
+          code: 'hole-to-hole',
+          message: `two plated holes sit ${fmt(Math.max(0, gap))} mm apart — under the ${fmt(minHoleGap)} mm minimum`,
+          at: { x: (a.at.x + b.at.x) / 2, y: (a.at.y + b.at.y) / 2 },
+        })
+      }
+    }
   }
 
   return out

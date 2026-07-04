@@ -7,8 +7,18 @@
  */
 import { describe, expect, test } from 'vitest'
 import { canvasToWorld } from '../src/renderer/canvas-to-world.ts'
-import { type BoardPart, computeRatsnest, deriveBoard } from '../src/renderer/pcb-board.ts'
-import { clearanceViolations, DEFAULT_ROUTE_CLASS, routeBoard } from '../src/renderer/pcb-route.ts'
+import {
+  type BoardPart,
+  computeRatsnest,
+  deriveBoard,
+  type Ratsnest,
+} from '../src/renderer/pcb-board.ts'
+import {
+  clearanceViolations,
+  DEFAULT_ROUTE_CLASS,
+  routeBoard,
+  VIA_RULES,
+} from '../src/renderer/pcb-route.ts'
 
 const parts = (defs: [string, string][]): BoardPart[] =>
   defs.map(([id, definition]) => ({ id, definition }))
@@ -218,5 +228,179 @@ describe('routeBoard', () => {
     )
     expect(traceViolations).toEqual([])
     expect(clearanceViolations(routing, rn.padBoxes).some((v) => v.kind === 'pad-pad')).toBe(true)
+  })
+})
+
+describe('the bottom layer through vias', () => {
+  /** A signal pad walled in by a CLOSED ring of foreign copper — no top-layer escape exists (the
+   *  A* grid cannot leave a closed box), so only a via to the bottom can carry it out. Hand-built
+   *  ratsnest: geometry this airtight can't be arranged from real placements deterministically. */
+  const walledIn = (wallsThroughHole: boolean, signalThroughHole: boolean): Ratsnest => ({
+    airwires: [{ net: 'sig', from: { x: 0, y: 0 }, to: { x: 10, y: 0 } }],
+    padBoxes: [
+      {
+        net: 'sig',
+        pad: 'a/1',
+        throughHole: signalThroughHole,
+        x: -0.4,
+        y: -0.475,
+        w: 0.8,
+        h: 0.95,
+      },
+      {
+        net: 'sig',
+        pad: 'b/1',
+        throughHole: signalThroughHole,
+        x: 9.6,
+        y: -0.475,
+        w: 0.8,
+        h: 0.95,
+      },
+      // the closed 6×6 ring (inner cavity 4×4) around pad a — four wall strips, each its own net
+      { net: 'wall:n', pad: 'w/1', throughHole: wallsThroughHole, x: -3, y: -3, w: 6, h: 1 },
+      { net: 'wall:s', pad: 'w/2', throughHole: wallsThroughHole, x: -3, y: 2, w: 6, h: 1 },
+      { net: 'wall:w', pad: 'w/3', throughHole: wallsThroughHole, x: -3, y: -2, w: 1, h: 4 },
+      { net: 'wall:e', pad: 'w/4', throughHole: wallsThroughHole, x: 2, y: -2, w: 1, h: 4 },
+    ],
+  })
+
+  test('an SMD pad walled in on top escapes through a via beside it — stub, via, bottom trace', () => {
+    const rn = walledIn(false, false)
+    const routing = routeBoard(rn)
+    expect(routing.unrouted).toHaveLength(0)
+    expect(routing.vias).toHaveLength(2) // one beside each SMD endpoint
+    for (const v of routing.vias) {
+      expect(v.diameterMm).toBe(DEFAULT_ROUTE_CLASS.viaDiameterMm)
+      expect(v.drillMm).toBe(DEFAULT_ROUTE_CLASS.viaDrillMm)
+    }
+    const bottom = routing.traces.filter((t) => t.layer === 'bottom')
+    const stubs = routing.traces.filter((t) => t.layer === 'top')
+    expect(bottom).toHaveLength(1)
+    expect(stubs).toHaveLength(2) // pad centre → via, on top, one per end
+    // the whole arrangement is legal copper on both layers (pad-pad findings are the fixture's
+    // own touching wall strips — the placement's problem, not the router's output)
+    expect(clearanceViolations(routing, rn.padBoxes).filter((v) => v.kind !== 'pad-pad')).toEqual(
+      [],
+    )
+  })
+
+  test('a through-hole endpoint is already on the bottom — no via needed there', () => {
+    const routing = routeBoard(walledIn(false, true))
+    expect(routing.unrouted).toHaveLength(0)
+    expect(routing.vias).toHaveLength(0)
+    expect(routing.traces.filter((t) => t.layer === 'bottom')).toHaveLength(1)
+    expect(routing.traces.filter((t) => t.layer === 'top')).toHaveLength(0)
+  })
+
+  test('walls of THROUGH-HOLE copper block both layers — the connection stays an honest airwire', () => {
+    const routing = routeBoard(walledIn(true, false))
+    expect(routing.unrouted).toHaveLength(1)
+    expect(routing.vias).toHaveLength(0)
+    expect(routing.traces).toHaveLength(0)
+  })
+
+  test('a same-net HUB reuses one via — never two drills stacked on one coordinate', () => {
+    // Review-caught (executed by the reviewer): two airwires sharing a walled-in SMD endpoint
+    // both dropped to the bottom and placed IDENTICAL vias — the fab would drill the same hole
+    // twice, and the DRC flagged what the router had certified. The second connection must RIDE
+    // the first via instead.
+    const rn: Ratsnest = {
+      airwires: [
+        { net: 'sig', from: { x: 0, y: 0 }, to: { x: 10, y: 0 } },
+        { net: 'sig', from: { x: 0, y: 0 }, to: { x: -10, y: 0 } },
+      ],
+      padBoxes: [
+        { net: 'sig', pad: 'a/1', throughHole: false, x: -0.4, y: -0.475, w: 0.8, h: 0.95 },
+        {
+          net: 'sig',
+          pad: 'b/1',
+          throughHole: true,
+          holeMm: 0.8,
+          x: 9.6,
+          y: -0.475,
+          w: 0.8,
+          h: 0.95,
+        },
+        {
+          net: 'sig',
+          pad: 'c/1',
+          throughHole: true,
+          holeMm: 0.8,
+          x: -10.4,
+          y: -0.475,
+          w: 0.8,
+          h: 0.95,
+        },
+        { net: 'wall:n', pad: 'w/1', throughHole: false, x: -3, y: -3, w: 6, h: 1 },
+        { net: 'wall:s', pad: 'w/2', throughHole: false, x: -3, y: 2, w: 6, h: 1 },
+        { net: 'wall:w', pad: 'w/3', throughHole: false, x: -3, y: -2, w: 1, h: 4 },
+        { net: 'wall:e', pad: 'w/4', throughHole: false, x: 2, y: -2, w: 1, h: 4 },
+      ],
+    }
+    const routing = routeBoard(rn)
+    expect(routing.unrouted).toHaveLength(0)
+    expect(routing.vias).toHaveLength(1) // ONE hole serves both connections
+    // and every plated-hole pair keeps the cited gap (nothing for the DRC to reject)
+    const holes = [
+      ...routing.vias.map((v) => ({ at: v.at, d: v.drillMm })),
+      ...rn.padBoxes
+        .filter((p) => p.holeMm !== undefined)
+        .map((p) => ({ at: { x: p.x + p.w / 2, y: p.y + p.h / 2 }, d: p.holeMm as number })),
+    ]
+    for (let i = 0; i < holes.length; i++) {
+      for (let j = i + 1; j < holes.length; j++) {
+        const a = holes[i] as (typeof holes)[number]
+        const b = holes[j] as (typeof holes)[number]
+        const gap = Math.hypot(a.at.x - b.at.x, a.at.y - b.at.y) - (a.d + b.d) / 2
+        expect(gap).toBeGreaterThanOrEqual(VIA_RULES.hole_to_hole.limitMm)
+      }
+    }
+  })
+
+  test('a via never crowds a SAME-net component hole — the drill breaks out regardless of net', () => {
+    // A same-net through-hole pad sits 1.8 mm east of the walled-in SMD pad: the east via spot
+    // (1.2, 0) would leave only a 0.6 mm centre gap to its 0.8 mm hole (edge gap 0 < 0.25) — the
+    // router must pick another side, not park a drill against its own net's hole.
+    const rn: Ratsnest = {
+      airwires: [{ net: 'sig', from: { x: 0, y: 0 }, to: { x: 10, y: 0 } }],
+      padBoxes: [
+        { net: 'sig', pad: 'a/1', throughHole: false, x: -0.4, y: -0.475, w: 0.8, h: 0.95 },
+        { net: 'sig', pad: 't/1', throughHole: true, holeMm: 0.8, x: 1.4, y: -0.4, w: 0.8, h: 0.8 },
+        {
+          net: 'sig',
+          pad: 'b/1',
+          throughHole: true,
+          holeMm: 0.8,
+          x: 9.6,
+          y: -0.475,
+          w: 0.8,
+          h: 0.95,
+        },
+        { net: 'wall:n', pad: 'w/1', throughHole: false, x: -3, y: -3, w: 6, h: 1 },
+        { net: 'wall:s', pad: 'w/2', throughHole: false, x: -3, y: 2, w: 6, h: 1 },
+        { net: 'wall:w', pad: 'w/3', throughHole: false, x: -3, y: -2, w: 1, h: 4 },
+        { net: 'wall:e', pad: 'w/4', throughHole: false, x: 2, y: -2, w: 1, h: 4 },
+      ],
+    }
+    const routing = routeBoard(rn)
+    expect(routing.unrouted).toHaveLength(0)
+    const via = routing.vias[0]
+    if (via === undefined) throw new Error('no via placed')
+    // the crowded east spot is refused; the drill gap to the same-net hole stays legal
+    const gap = Math.hypot(via.at.x - 1.8, via.at.y - 0) - (via.drillMm + 0.8) / 2
+    expect(gap).toBeGreaterThanOrEqual(VIA_RULES.hole_to_hole.limitMm)
+  })
+
+  test('the via rules the router builds to are cited (drill floor, annular ring, hole spacing)', () => {
+    for (const rule of Object.values(VIA_RULES)) {
+      expect(rule.limitMm).toBeGreaterThan(0)
+      expect(rule.provenance.citation.length).toBeGreaterThan(10)
+      expect(rule.provenance.confidence).toBe('high')
+    }
+    // the class via satisfies its own rules: drill ≥ floor, ring ≥ minimum
+    expect(DEFAULT_ROUTE_CLASS.viaDrillMm).toBeGreaterThanOrEqual(VIA_RULES.min_drill.limitMm)
+    expect(
+      (DEFAULT_ROUTE_CLASS.viaDiameterMm - DEFAULT_ROUTE_CLASS.viaDrillMm) / 2,
+    ).toBeGreaterThanOrEqual(VIA_RULES.min_annular.limitMm)
   })
 })

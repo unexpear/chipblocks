@@ -120,7 +120,7 @@ describe('top copper', () => {
     const rotated = gerberTopCopper(
       rotBoard,
       computeRatsnest(world(defs, []), rotBoard),
-      { traces: [], unrouted: [] },
+      { traces: [], vias: [], unrouted: [] },
       WHEN,
     )
     // 0.95×0.8 now: r = 0.2, inset corners ±0.275, ±0.2 — swapped vs the unrotated pad
@@ -132,19 +132,48 @@ describe('top copper', () => {
   })
 })
 
-describe('bottom copper — through-hole annular rings only', () => {
-  test('an SMD-only board has an empty bottom copper image', () => {
+const NO_ROUTING = { traces: [], vias: [], unrouted: [] }
+
+describe('bottom copper — through-hole rings, bottom traces, via barrels', () => {
+  test('an SMD-only unrouted board has an empty bottom copper image', () => {
     const { board, ratsnest } = routedPair()
-    const gerber = gerberBottomCopper(board, ratsnest, WHEN)
+    const gerber = gerberBottomCopper(board, ratsnest, NO_ROUTING, WHEN)
     expect(gerber).toContain('%TF.FileFunction,Copper,L2,Bot*%')
     expect(gerber).not.toContain('D03*')
   })
 
   test('a through-hole board flashes every pin on the bottom too', () => {
-    const gerber = gerberBottomCopper(TH_BOARD, EMPTY_RATSNEST, WHEN)
+    const gerber = gerberBottomCopper(TH_BOARD, EMPTY_RATSNEST, NO_ROUTING, WHEN)
     expect(gerber.match(/D03\*/g)).toHaveLength(12) // 8 DIP pins + 4 header pins
     // DIP-8 pin 5 at origin(5,5) + local (7.62, 7.62) = (12.62, 12.62)
     expect(gerber).toContain('X12620000Y-12620000D03*')
+  })
+
+  test('a via’s barrel appears on BOTH copper layers; a bottom trace only on the bottom', () => {
+    const routing = {
+      traces: [
+        {
+          net: 'n1',
+          widthMm: 0.25,
+          points: [
+            { x: 20, y: 5 },
+            { x: 25, y: 5 },
+          ],
+          layer: 'bottom' as const,
+        },
+      ],
+      vias: [{ net: 'n1', at: { x: 20, y: 5 }, diameterMm: 0.6, drillMm: 0.4 }],
+      unrouted: [],
+    }
+    const top = gerberTopCopper(TH_BOARD, EMPTY_RATSNEST, routing, WHEN)
+    const bottom = gerberBottomCopper(TH_BOARD, EMPTY_RATSNEST, routing, WHEN)
+    for (const layer of [top, bottom]) {
+      expect(layer).toContain('%TA.AperFunction,ViaPad*%')
+      expect(layer).toContain('C,0.600000')
+      expect(layer).toContain('X20000000Y-5000000D03*') // the barrel flash
+    }
+    expect(bottom).toContain('X25000000Y-5000000D01*') // the bottom trace draw…
+    expect(top).not.toContain('D01*') // …never on top
   })
 })
 
@@ -183,6 +212,35 @@ describe('silkscreen and profile', () => {
     expect(silk).toContain('%TO.C,R1*%')
   })
 
+  test('the reference designator is STROKED on the silk at the cited 1.0 mm / 0.15 mm lettering', () => {
+    // A part named 'i' (uppercased to I): the glyph's centre stem is a single vertical bar that
+    // lands EXACTLY on the label anchor's x — hand-computed: the 0603 anchor is (0, −1.43) local,
+    // so at (10, 10) the text centres on (10, 8.57); cap top 8.07, baseline 9.07.
+    const silk = gerberSilkscreen(
+      {
+        outline: { x: 0, y: 0, w: 20, h: 20 },
+        placements: [{ partId: 'i', footprintId: 'R_0603_1608Metric', x: 10, y: 10, rotation: 0 }],
+      },
+      WHEN,
+    )
+    expect(silk).toContain('C,0.150000') // SILK_TEXT.thicknessMm, cited from the KiCad defaults
+    expect(silk).toContain('X10000000Y-8070000D02*')
+    expect(silk).toContain('X10000000Y-9070000D01*')
+  })
+
+  test('a character the font cannot print is named in a comment — never dropped in silence', () => {
+    const silk = gerberSilkscreen(
+      {
+        outline: { x: 0, y: 0, w: 20, h: 20 },
+        placements: [
+          { partId: 'r#1', footprintId: 'R_0603_1608Metric', x: 10, y: 10, rotation: 0 },
+        ],
+      },
+      WHEN,
+    )
+    expect(silk).toContain("G04 'r#1': no glyph for #")
+  })
+
   test('the profile is the outline rectangle, drawn as a closed centreline at the cited width', () => {
     const edge = gerberEdgeCuts({ x: 0, y: 0, w: 30, h: 20 }, WHEN)
     expect(edge).toContain('%TF.FileFunction,Profile,NP*%')
@@ -197,7 +255,7 @@ describe('silkscreen and profile', () => {
 })
 
 describe('the drill file — Excellon, decimal mm, ascending tools', () => {
-  const drill = excellonDrill(TH_BOARD, WHEN)
+  const drill = excellonDrill(TH_BOARD, NO_ROUTING, WHEN)
 
   test('declares itself the way KiCad’s files do', () => {
     expect(drill.startsWith('M48')).toBe(true)
@@ -229,9 +287,25 @@ describe('the drill file — Excellon, decimal mm, ascending tools', () => {
 
   test('an SMD-only board yields a drill file with neither tools nor hits — no invented holes', () => {
     const { board } = routedPair()
-    const smd = excellonDrill(board, WHEN)
+    const smd = excellonDrill(board, NO_ROUTING, WHEN)
     expect(smd).not.toContain('T1C')
     expect(smd).not.toMatch(/\nX-?[\d.]+Y/)
+  })
+
+  test('via holes get their own tool with the ViaDrill attribute, beside the component drills', () => {
+    const withVia = excellonDrill(
+      TH_BOARD,
+      {
+        traces: [],
+        vias: [{ net: 'n1', at: { x: 20, y: 6 }, diameterMm: 0.6, drillMm: 0.4 }],
+        unrouted: [],
+      },
+      WHEN,
+    )
+    expect(withVia).toContain('; #@! TA.AperFunction,Plated,PTH,ViaDrill')
+    expect(withVia).toContain('T1C0.400') // 0.4 sorts before the 0.8 DIP and 1.0 header drills
+    expect(withVia).toContain('T2C0.800')
+    expect(withVia).toContain('X20.0Y-6.0')
   })
 })
 
@@ -250,8 +324,10 @@ test('a pad and a trace sharing one circle body get SEPARATE apertures — attri
             { x: 20, y: 5 },
             { x: 25, y: 5 },
           ],
+          layer: 'top' as const,
         },
       ],
+      vias: [],
       unrouted: [],
     },
     WHEN,
