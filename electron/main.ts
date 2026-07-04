@@ -143,6 +143,29 @@ function registerNetlistExportHandler(window: BrowserWindow): void {
   })
 }
 
+function registerFabZipExportHandler(window: BrowserWindow): void {
+  // The renderer sends the finished manufacturing ZIP's bytes (built by the deterministic engine —
+  // Gerbers, drill, BOM, placement, validation report); we pick a file and write them verbatim.
+  ipcMain.removeHandler('file:save-fab-zip')
+  ipcMain.handle('file:save-fab-zip', async (_event, data: Uint8Array) => {
+    const picked = await dialog.showSaveDialog(window, {
+      filters: [{ name: 'Manufacturing ZIP', extensions: ['zip'] }],
+      defaultPath: 'manufacturing.zip',
+    })
+    if (picked.canceled || picked.filePath === undefined) return { ok: false }
+    try {
+      await writeFile(picked.filePath, Buffer.from(data))
+    } catch (error) {
+      dialog.showErrorBox(
+        'Could not export manufacturing ZIP',
+        `Writing the file failed: ${String(error)}`,
+      )
+      return { ok: false }
+    }
+    return { ok: true, path: picked.filePath }
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Keyboard shortcuts (S19-v3-62). The bindings live in ONE file in the app's
 // data folder; the renderer's Shortcuts panel reads and edits them over IPC,
@@ -459,6 +482,7 @@ function createWindow(): void {
   installMenu(window)
   registerSaveHandler(window)
   registerNetlistExportHandler(window)
+  registerFabZipExportHandler(window)
   registerKeybindHandlers(window)
 }
 

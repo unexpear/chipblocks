@@ -82,6 +82,7 @@ import { ClipboardPanel } from './clipboard-panel.tsx'
 import { ContextMenu } from './context-menu.tsx'
 import { CoordinateAxes } from './coordinate-axes.tsx'
 import { DockablePanel } from './dockable-panel.tsx'
+import { BOM_VALUE_PARAMS, footprintForPart } from './footprint-assignment.ts'
 import {
   CrtScreenContext,
   type CrtScreenData,
@@ -145,6 +146,7 @@ import {
   type Rotation,
 } from './pcb-board.ts'
 import { runDrc } from './pcb-drc.ts'
+import { type BomRow, buildManufacturingZip } from './pcb-fab.ts'
 import { routeBoard } from './pcb-route.ts'
 import { PcbView } from './pcb-view.tsx'
 import { canvasWorld } from './pipeline/canvas-world.ts'
@@ -217,6 +219,7 @@ declare global {
       onNetlistOpened?: (callback: (text: string) => void) => void
       onExportNetlistRequest?: (callback: () => void) => void
       saveNetlistData?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      saveFabZip?: (data: Uint8Array) => Promise<{ ok: boolean; path?: string }>
       getKeybinds?: () => Promise<Record<string, string>>
       setKeybinds?: (binds: Record<string, string>) => Promise<Record<string, string>>
       onShortcutsOpen?: (callback: () => void) => void
@@ -1270,6 +1273,82 @@ function Canvas({ project }: { project: ProjectChoice }) {
         : 0,
     [pcbOpen, nodes, edges, pcbBoard],
   )
+  // Why the manufacturing ZIP can't be exported yet — empty exactly when the board is complete
+  // (parts placed, everything routed, DRC clean, no wired pin missing its footprint). The export
+  // button reads this: the ZIP is never offered for a board a fab would manufacture into garbage.
+  const pcbFabProblems = useMemo(() => {
+    const problems: string[] = []
+    if (pcbBoard.placements.length === 0) problems.push('no parts on the board')
+    if (pcbOffBoard > 0) {
+      problems.push(`${pcbOffBoard} wired pin${pcbOffBoard === 1 ? '' : 's'} not on the board`)
+    }
+    if (pcbRouting.unrouted.length > 0) {
+      problems.push(
+        `${pcbRouting.unrouted.length} unrouted connection${pcbRouting.unrouted.length === 1 ? '' : 's'}`,
+      )
+    }
+    if (pcbDrc.length > 0) {
+      problems.push(`${pcbDrc.length} DRC violation${pcbDrc.length === 1 ? '' : 's'}`)
+    }
+    return problems
+  }, [pcbBoard, pcbOffBoard, pcbRouting, pcbDrc])
+  const [pcbExportNote, setPcbExportNote] = useState<string | null>(null)
+  // A "manufacturing ZIP saved" note is only true for the board it was exported from — any edit
+  // to the parts, wires or placements (or loading another file, which replaces all three) makes
+  // it stale, and a stale success note is exactly the trust failure the export gating prevents.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the deps ARE the trigger — any board-defining change invalidates the note
+  useEffect(() => {
+    setPcbExportNote(null)
+  }, [nodes, edges, pcbPlacements])
+  const onExportFabZip = useCallback(() => {
+    // The archive is assembled by the deterministic engine (Gerbers, drill, BOM, placement,
+    // validation report) from the same derived board state the panel shows.
+    const file = serializeCircuit(
+      nodes.map((n) => ({ id: n.id, position: n.position, data: n.data as DeviceNodeData })),
+      edges,
+      projectAmbientRef.current,
+    )
+    const { netlist, unsupported } = serializeSpiceNetlist(file)
+    const bomRows: BomRow[] = nodes.flatMap((n) => {
+      const data = n.data as DeviceNodeData
+      const fp = footprintForPart(data.definition)
+      if (fp === undefined) return []
+      const valueSpec = BOM_VALUE_PARAMS[data.definition]
+      const raw = valueSpec === undefined ? undefined : data.parameters?.[valueSpec.param]?.value
+      const v =
+        raw !== null && typeof raw === 'object' ? (raw as Record<string, unknown>) : undefined
+      const amount = v?.kind === 'scalar' && typeof v.amount === 'number' ? v.amount : undefined
+      return [
+        {
+          reference: n.id,
+          definition: data.definition,
+          value:
+            amount !== undefined && valueSpec !== undefined
+              ? formatEng(amount, valueSpec.unit)
+              : data.definition,
+          footprintId: fp.id,
+        },
+      ]
+    })
+    const fab = buildManufacturingZip({
+      board: pcbBoard,
+      ratsnest: pcbRatsnest,
+      routing: pcbRouting,
+      drc: pcbDrc,
+      offBoardPins: pcbOffBoard,
+      bomRows,
+      netlistText: netlist,
+      netlistUnsupported: unsupported,
+      when: new Date(),
+    })
+    if (fab.validation.status !== 'pass') {
+      setPcbExportNote(`not exported — ${fab.validation.problems.join(' ')}`)
+      return
+    }
+    void window.chipblocks?.saveFabZip?.(fab.bytes).then((r) => {
+      setPcbExportNote(r.ok && r.path !== undefined ? `manufacturing ZIP saved — ${r.path}` : null)
+    })
+  }, [nodes, edges, pcbBoard, pcbRatsnest, pcbRouting, pcbDrc, pcbOffBoard])
   // The Bode (frequency-response) tool — its panel state, the grounded world the AC sweep runs on,
   // and the output-picking click handler live in useBode now; its couplings (the warm solved world,
   // the active tool) are injected. Destructured to the same names the toolbar, panel and canvas
@@ -6182,22 +6261,48 @@ function Canvas({ project }: { project: ProjectChoice }) {
                         <span style={{ color: THEME.statusOk }}> · DRC clean</span>
                       ))}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setPcbOpen(false)}
-                    style={{
-                      border: `1px solid ${THEME.borderStrong}`,
-                      background: THEME.surfaceInput,
-                      color: THEME.textSoft,
-                      borderRadius: 4,
-                      fontSize: 11,
-                      padding: '2px 8px',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Close
-                  </button>
+                  <span style={{ display: 'flex', gap: 6 }}>
+                    <button
+                      type="button"
+                      onClick={onExportFabZip}
+                      disabled={pcbFabProblems.length > 0}
+                      title={
+                        pcbFabProblems.length > 0
+                          ? `The board isn't manufacturable yet: ${pcbFabProblems.join(', ')}`
+                          : 'Export the manufacturing ZIP — Gerbers, drill, BOM, placement, validation report'
+                      }
+                      style={{
+                        border: `1px solid ${THEME.borderStrong}`,
+                        background: THEME.surfaceInput,
+                        color: pcbFabProblems.length > 0 ? THEME.textFaint : THEME.textSoft,
+                        borderRadius: 4,
+                        fontSize: 11,
+                        padding: '2px 8px',
+                        cursor: pcbFabProblems.length > 0 ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      Export ZIP
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPcbOpen(false)}
+                      style={{
+                        border: `1px solid ${THEME.borderStrong}`,
+                        background: THEME.surfaceInput,
+                        color: THEME.textSoft,
+                        borderRadius: 4,
+                        fontSize: 11,
+                        padding: '2px 8px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Close
+                    </button>
+                  </span>
                 </div>
+                {pcbExportNote !== null && (
+                  <span style={{ fontSize: 11, color: THEME.textFaint }}>{pcbExportNote}</span>
+                )}
                 {pcbBoard.placements.length > 0 ? (
                   <>
                     <PcbView

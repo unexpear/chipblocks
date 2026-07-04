@@ -34,6 +34,10 @@ contextBridge.exposeInMainWorld('chipblocks', {
     subscribe('file:export-netlist-request', callback),
   saveNetlistData: (text: string): Promise<{ ok: boolean; path?: string }> =>
     ipcRenderer.invoke('file:save-netlist', text),
+  // Manufacturing ZIP (board road): the renderer builds the engine-owned archive bytes;
+  // the main process picks a destination and writes them verbatim.
+  saveFabZip: (data: Uint8Array): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('file:save-fab-zip', data),
   // Shortcuts (S19-v3-62): the renderer panel reads + edits the keybinds the
   // main process persists; the Shortcuts menu opens the panel over IPC.
   getKeybinds: (): Promise<Record<string, string>> => ipcRenderer.invoke('keybinds:get'),

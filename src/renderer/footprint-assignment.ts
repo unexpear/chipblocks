@@ -59,3 +59,12 @@ export const TERMINAL_PADS: Record<string, Record<string, string>> = {
 export function padForTerminal(definition: string, handleId: string): string | undefined {
   return TERMINAL_PADS[definition]?.[handleId]
 }
+
+/** Which parameter is a part's BOM "value" (the number an assembler reads — '470 Ω', '100 µF'),
+ *  and the unit symbol it displays with. Only the footprinted parts appear in a BOM. */
+export const BOM_VALUE_PARAMS: Record<string, { param: string; unit: string }> = {
+  resistor: { param: 'resistance', unit: 'Ω' },
+  capacitor: { param: 'capacitance', unit: 'F' },
+  thermistor: { param: 'resistance', unit: 'Ω' },
+  inductor: { param: 'inductance', unit: 'H' },
+}
