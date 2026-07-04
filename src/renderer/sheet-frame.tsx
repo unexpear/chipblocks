@@ -202,7 +202,7 @@ export function SheetFrame({
   const fieldTarget = (field: EditableField): React.JSX.Element => {
     const r = FIELD_RECTS[field]
     return (
-      // biome-ignore lint/a11y/useKeyWithClickEvents: canvas-surface affordance; the same fields have full keyboard editing in the Page Settings dialog
+      // biome-ignore lint/a11y/noStaticElementInteractions: canvas-surface affordance; the same fields have full keyboard editing in the Page Settings dialog
       <rect
         key={`target-${field}`}
         x={sx(r.x)}

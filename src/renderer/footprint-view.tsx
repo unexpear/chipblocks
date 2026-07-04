@@ -128,9 +128,9 @@ export function FootprintView({
       ))}
 
       {/* component body outline (F.Fab) — the actual chip under the silkscreen */}
-      {footprint.fabrication.map((s, i) => (
+      {footprint.fabrication.map((s) => (
         <line
-          key={`fab-${i}-${s.from.x}-${s.from.y}`}
+          key={`fab-${s.from.x},${s.from.y}-${s.to.x},${s.to.y}`}
           x1={sx(s.from.x)}
           y1={sy(s.from.y)}
           x2={sx(s.to.x)}
@@ -142,9 +142,9 @@ export function FootprintView({
       ))}
 
       {/* silkscreen outline */}
-      {footprint.silkscreen.map((s, i) => (
+      {footprint.silkscreen.map((s) => (
         <line
-          key={`silk-${i}-${s.from.x}-${s.from.y}`}
+          key={`silk-${s.from.x},${s.from.y}-${s.to.x},${s.to.y}`}
           x1={sx(s.from.x)}
           y1={sy(s.from.y)}
           x2={sx(s.to.x)}
