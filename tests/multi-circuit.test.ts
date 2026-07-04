@@ -9,6 +9,7 @@
 import { describe, expect, test } from 'vitest'
 import { solveDC } from '../src/dc-solver.ts'
 import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
+import { partReadings } from '../src/renderer/part-readings.ts'
 import { solveTransient } from '../src/transient-solver.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
@@ -126,5 +127,43 @@ describe('the honest refusals stay', () => {
       g('r1', 'terminal_b', 'v1', 'terminal_negative'),
     ]
     expect(solveDC(canvasToWorld(nodes, edges)).status).toBe('no-ground')
+  })
+
+  test('a floating induction motor goes honestly blank — no nameplate numbers as if spinning', () => {
+    // The motor's readings come from nameplate parameters, so without the in-the-solution gate a
+    // pruned motor would still display full running current/RPM while everything else went blank.
+    const a = circuitA()
+    const nodes: CanvasNode[] = [
+      ...a.nodes,
+      source('vm', 230),
+      {
+        id: 'im1',
+        definition: 'induction_motor',
+        parameters: {
+          supply_voltage: scalar(230, 'volt'),
+          line_frequency: scalar(50, 'hertz'),
+          pole_count: scalar(4, 'dimensionless'),
+          stator_resistance: scalar(2, 'ohm'),
+          stator_reactance: scalar(4, 'ohm'),
+          rotor_resistance: scalar(2, 'ohm'),
+          rotor_reactance: scalar(4, 'ohm'),
+          magnetizing_reactance: scalar(80, 'ohm'),
+          load_torque: scalar(20, 'N*m'),
+          viscous_friction: scalar(0.002, 'N*m*s/rad'),
+        },
+      },
+    ]
+    const edges = [
+      ...a.edges,
+      // the motor loop is wired to its supply but NOT grounded — a floating circuit
+      g('vm', 'terminal_positive', 'im1', 'terminal_a'),
+      g('im1', 'terminal_b', 'vm', 'terminal_negative'),
+    ]
+    const world = canvasToWorld(nodes, edges)
+    const sol = solveDC(world)
+    expect(sol.status).toBe('solved') // circuit A still solves
+    const readings = partReadings(world, sol)
+    expect(readings.has('im1')).toBe(false) // the unsolved motor shows NOTHING, not 1425 RPM
+    expect(readings.get('ra1')?.current).toBeCloseTo(2.5 / 1000, 6) // A's readings intact
   })
 })

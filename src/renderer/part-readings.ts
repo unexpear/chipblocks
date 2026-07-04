@@ -217,8 +217,13 @@ export function partReadings(
 
     // Induction motor: its per-phase steady-state operating point — slip, speed, torque, running +
     // locked-rotor current, power, efficiency, power factor — computed at its nameplate supply.
+    // Gated on the motor actually being IN the solved circuit (its nets present in the solution):
+    // the numbers come from nameplate parameters, so without this gate a floating motor in a pruned
+    // sub-circuit would still read as if it were spinning, while every other unsolved part goes
+    // honestly blank.
     if (inst.definition === 'induction_motor') {
-      const imParams = inductionMotorParamsFromInstance(inst)
+      const inSolvedCircuit = (inst.connects ?? []).some((c) => solution.nodes.has(c.net))
+      const imParams = inSolvedCircuit ? inductionMotorParamsFromInstance(inst) : undefined
       if (imParams !== undefined) {
         const op = inductionMotorOperatingPoint(imParams)
         reading.current = op.statorCurrentRms
