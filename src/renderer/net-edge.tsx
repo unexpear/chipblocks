@@ -505,9 +505,10 @@ export function NetEdge({
       : []
   // Field DIRECTION — the textbook dot-and-cross: the field circles the wire (right-hand rule), so
   // in the drawing plane it points OUT of the screen (⊙) on one side of the current and INTO it (⊗)
-  // on the other, and the two swap sides when the current reverses. Derived from the SIGNED solved
-  // current along the wire's longest drawn segment (screen y grows downward — accounted for): for
-  // current flowing screen-right, ⊙ sits above the wire, ⊗ below. On AC, watch them swap.
+  // on the other, and the two swap sides when the current reverses. The edge's `amps` is a
+  // MAGNITUDE — the direction lives in flowReverse, the SAME signal the flow dashes and arrowheads
+  // march by, so the dots and the dashes can never disagree. Screen y grows downward (accounted
+  // for): for current flowing screen-right, ⊙ sits above the wire, ⊗ below. On AC, watch them swap.
   let fieldDirMarks: { x: number; y: number; out: boolean }[] = []
   if (fieldBands.length > 0 && amps !== null && Math.abs(amps) > 1e-12) {
     let bi = 0
@@ -527,7 +528,7 @@ export function NetEdge({
     if (a !== undefined && b !== undefined && bestLen > 24) {
       const mx = (a.x + b.x) / 2
       const my = (a.y + b.y) / 2
-      const f = amps >= 0 ? 1 : -1 // flow runs source → target when the solved current is positive
+      const f = flowReverse ? -1 : 1 // routePoints run source → target; flowReverse = current runs the other way
       const ux = ((b.x - a.x) / bestLen) * f
       const uy = ((b.y - a.y) / bestLen) * f
       const off = 13
