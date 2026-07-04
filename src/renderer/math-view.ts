@@ -329,8 +329,19 @@ function partCard(
     }
     if (amplitude > 0) {
       const f = readScalarParam(inst, 'frequency') ?? 0
+      const shape = inst.parameters?.waveform?.value
+      const wave =
+        shape === 'square'
+          ? `± ${formatEng(amplitude, 'V')} as a square wave (half the time up, half down)`
+          : shape === 'triangle'
+            ? `± ${formatEng(amplitude, 'V')} as a triangle wave — straight ramps up and down at ${formatEng(f, 'Hz')}`
+            : shape === 'sawtooth'
+              ? `± ${formatEng(amplitude, 'V')} as a sawtooth — a steady ramp up at ${formatEng(f, 'Hz')}, then an instant snap back (the sweep shape)`
+              : shape === 'staircase'
+                ? `± ${formatEng(amplitude, 'V')} as a staircase — held steps rising through each ${formatEng(f, 'Hz')} period`
+                : `+ ${formatEng(amplitude, 'V')}·sin(2π·${formatEng(f, 'Hz')}·t), a smooth sine`
       lines.push(
-        `This one also changes over time: V(t) = ${fmtV(emf)} ${inst.parameters?.waveform?.value === 'square' ? `± ${formatEng(amplitude, 'V')} as a square wave (half the time up, half down)` : `+ ${formatEng(amplitude, 'V')}·sin(2π·${formatEng(f, 'Hz')}·t), a smooth sine`}. This page shows the steady part; the Scope shows the wiggle.`,
+        `This one also changes over time: V(t) = ${fmtV(emf)} ${wave}. This page shows the steady part; the Scope shows the wiggle.`,
       )
     }
     return { id: inst.id, title: 'Source — a pusher with internal resistance', lines }

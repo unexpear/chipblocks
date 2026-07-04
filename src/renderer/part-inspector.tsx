@@ -5,7 +5,9 @@ import {
   defaultParameters,
   defaultProvenance,
   type Parameters,
+  type SourceWaveform,
   sourceTerminalCount,
+  sourceWaveform,
 } from './part-defaults.ts'
 import type { PartReading } from './part-readings.ts'
 import { THEME } from './theme.ts'
@@ -223,9 +225,9 @@ const SOURCE_TYPES: {
   },
 ]
 
-/** A source's waveform parameter ('sine' when absent — the pre-clock default). */
-function currentWaveform(parameters: Parameters | undefined): 'sine' | 'square' {
-  return parameters?.waveform?.value === 'square' ? 'square' : 'sine'
+/** A source's waveform parameter ('sine' when absent — the solver's default). */
+function currentWaveform(parameters: Parameters | undefined): SourceWaveform {
+  return sourceWaveform(parameters)
 }
 
 /** The preset matching the current DC + AC values + waveform (else null = Custom). */
@@ -686,11 +688,14 @@ export function PartInspector({
                 value={currentWaveform(selected.parameters)}
                 onChange={(e) => onEnum('waveform', e.target.value)}
                 className="nodrag"
-                title="Sine — the smooth AC shape. Square — the clock shape: jumps between offset − amplitude and offset + amplitude at exact 50% duty (a 0–5 V clock is offset 2.5 V ± 2.5 V)."
+                title="The function-generator shapes, all swinging offset ± amplitude at the set frequency. Sine ∿ — the smooth AC shape (one FFT spike). Square ⊓ — the clock: exact 50% duty jumps (odd harmonics falling as 1/n — why squares sound buzzy). Triangle ⋀ — linear ramps up and down, sine-phased (odd harmonics falling as 1/n², much purer than a square). Sawtooth ⋰ — ramp up, snap back: the CRT deflection sweep (the ramp draws, the snap is the retrace). Staircase ⊓⊓ — held discrete levels per period: the stepped sweep that keeps a coarse raster's scanlines flat."
                 style={{ ...field, maxWidth: 130 }}
               >
                 <option value="sine">sine ∿</option>
                 <option value="square">square ⊓ (clock)</option>
+                <option value="triangle">triangle ⋀</option>
+                <option value="sawtooth">sawtooth ⋰ (sweep)</option>
+                <option value="staircase">staircase (stepped sweep)</option>
               </select>
             </label>
           ) : null}

@@ -1100,9 +1100,12 @@ export function sourceIsAc(parameters: Parameters | undefined): boolean {
   return (amountOf(parameters, 'ac_amplitude') ?? 0) > 0
 }
 
-/** Is a source's waveform square (the clock shape)? Absent = sine, like the solver. */
-export function sourceIsSquare(parameters: Parameters | undefined): boolean {
-  return stringOf(parameters, 'waveform') === 'square'
+export type SourceWaveform = 'sine' | 'square' | 'triangle' | 'sawtooth' | 'staircase'
+
+/** A source's waveform shape; absent or unknown = sine, matching the solver's default. */
+export function sourceWaveform(parameters: Parameters | undefined): SourceWaveform {
+  const w = stringOf(parameters, 'waveform')
+  return w === 'square' || w === 'triangle' || w === 'sawtooth' || w === 'staircase' ? w : 'sine'
 }
 
 /** Is a switch closed (conducting)? Absent state defaults to closed — matches the solver. */

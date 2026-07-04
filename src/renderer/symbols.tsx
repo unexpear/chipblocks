@@ -22,8 +22,8 @@ import {
   primaryValue,
   relayEnergized,
   sourceIsAc,
-  sourceIsSquare,
   sourceTerminalCount,
+  sourceWaveform,
   spdtOnA,
   switchClosed,
   wiperFraction,
@@ -221,6 +221,56 @@ function SquareSourceGlyph({ rotation = 0 }: { rotation?: number }) {
       <g transform={`rotate(${-rotation} 40 ${MID})`}>
         <path
           d="M31 26 L31 18 L40 18 L40 26 L49 26 L49 18"
+          fill="none"
+          stroke={STROKE}
+          strokeWidth={1.3}
+        />
+      </g>
+      {lead(54, W)}
+    </svg>
+  )
+}
+
+/** Triangle-wave source — the generator circle with its ramp-up/ramp-down trace (kept upright). */
+function TriangleSourceGlyph({ rotation = 0 }: { rotation?: number }) {
+  return (
+    <svg width={W} height={H}>
+      <title>triangle-wave source</title>
+      {lead(0, 26)}
+      <circle cx={40} cy={MID} r={14} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <g transform={`rotate(${-rotation} 40 ${MID})`}>
+        <path d="M31 26 L36 18 L45 26 L49 19" fill="none" stroke={STROKE} strokeWidth={1.3} />
+      </g>
+      {lead(54, W)}
+    </svg>
+  )
+}
+
+/** Sawtooth source — the generator circle with the ramp-and-retrace sweep trace (kept upright). */
+function SawtoothSourceGlyph({ rotation = 0 }: { rotation?: number }) {
+  return (
+    <svg width={W} height={H}>
+      <title>sawtooth sweep source</title>
+      {lead(0, 26)}
+      <circle cx={40} cy={MID} r={14} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <g transform={`rotate(${-rotation} 40 ${MID})`}>
+        <path d="M31 26 L40 18 L40 26 L49 18" fill="none" stroke={STROKE} strokeWidth={1.3} />
+      </g>
+      {lead(54, W)}
+    </svg>
+  )
+}
+
+/** Staircase source — the generator circle with the stepped-sweep trace (kept upright). */
+function StaircaseSourceGlyph({ rotation = 0 }: { rotation?: number }) {
+  return (
+    <svg width={W} height={H}>
+      <title>staircase stepped-sweep source</title>
+      {lead(0, 26)}
+      <circle cx={40} cy={MID} r={14} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <g transform={`rotate(${-rotation} 40 ${MID})`}>
+        <path
+          d="M31 26 L36 26 L36 22 L41 22 L41 18 L46 18"
           fill="none"
           stroke={STROKE}
           strokeWidth={1.3}
@@ -2110,11 +2160,18 @@ export function DeviceGlyph({
   // The relay's arm shows whether the coil is energized (the solve resolves it).
   if (definition === 'relay') return <RelayGlyph energized={relayEnergized(parameters)} />
   // Every source is the same IEC circle; the mark inside says which kind —
-  // DC bars, the sine, or the clock trace — and stays upright at any rotation.
+  // DC bars or the waveform trace it generates — and stays upright at any rotation.
   if (definition === 'power_source') {
     if (sourceIsAc(parameters)) {
-      return sourceIsSquare(parameters) ? (
+      const shape = sourceWaveform(parameters)
+      return shape === 'square' ? (
         <SquareSourceGlyph rotation={rotation} />
+      ) : shape === 'triangle' ? (
+        <TriangleSourceGlyph rotation={rotation} />
+      ) : shape === 'sawtooth' ? (
+        <SawtoothSourceGlyph rotation={rotation} />
+      ) : shape === 'staircase' ? (
+        <StaircaseSourceGlyph rotation={rotation} />
       ) : (
         <AcSourceGlyph rotation={rotation} />
       )

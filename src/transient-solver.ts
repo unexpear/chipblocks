@@ -28,10 +28,13 @@
  * books still balance exactly — the source genuinely supplies the artifact.
  *
  * A power_source is read as a time-varying Thévenin source in series with
- * internal_resistance. Two waveforms (the `waveform` enum, default sine):
- *   sine:   V(t) = nominal_voltage + ac_amplitude·sin(2π·frequency·t)
- *   square: V(t) = nominal_voltage ± ac_amplitude  (sign of the sine; exact
- *           50 % duty — the clock shape for driving logic)
+ * internal_resistance. The function-generator shapes (the `waveform` enum, default sine):
+ *   sine:      V(t) = nominal_voltage + ac_amplitude·sin(2π·frequency·t)
+ *   square:    V(t) = nominal_voltage ± ac_amplitude  (sign of the sine; exact
+ *              50 % duty — the clock shape for driving logic)
+ *   triangle:  sine-phased linear ramps (offset at t = 0, +A at T/4, −A at 3T/4)
+ *   sawtooth:  ramp −A → +A per period, snap back (the CRT deflection sweep)
+ *   staircase: `steps` held levels per period (the stepped vertical sweep)
  * A plain DC source is just ac_amplitude = 0.
  *
  * Diode-family devices (silicon/Schottky rectifiers, LEDs, the laser diode) use the same Shockley
@@ -246,18 +249,21 @@ type TimedSource = {
   frequency: number // hertz
   rInternal: number // ohms (series internal resistance)
   /**
-   * 'sine' (default), 'square', or 'sawtooth' — the waveform. A square source swings
+   * 'sine' (default), 'square', 'triangle', 'sawtooth', or 'staircase' — the function-generator
+   * shapes. A square source swings
    * offset ± amplitude at exact 50 % duty, the function-generator convention
    * (a 0–5 V logic clock is offset 2.5 V, amplitude 2.5 V). Edges land within
    * one time step — the solver's stated time resolution, same idealization a
-   * SPICE pulse source makes when rise/fall default to one print step. A sawtooth
-   * ramps offset−amplitude → offset+amplitude over each period then snaps back —
+   * SPICE pulse source makes when rise/fall default to one print step. A triangle ramps
+   * linearly offset → +amplitude → −amplitude → offset each period, sine-phased (starts at the
+   * offset, rising, peak at T/4 — swap a sine for a triangle and the zero crossings stay put).
+   * A sawtooth ramps offset−amplitude → offset+amplitude over each period then snaps back —
    * the deflection sweep of a CRT (the ramp draws a line; the snap is the retrace).
    * A staircase holds `steps` discrete levels across the period (offset−amplitude →
    * offset+amplitude) — a stepped vertical sweep, so a few-line raster sits flat per
    * scanline instead of shearing (a real staircase-generator / stepped-deflection sweep).
    */
-  waveform: 'sine' | 'square' | 'sawtooth' | 'staircase'
+  waveform: 'sine' | 'square' | 'triangle' | 'sawtooth' | 'staircase'
   /** Staircase only: how many held levels per period (e.g. one per scanline). Default 8. */
   steps?: number
 }
@@ -543,20 +549,30 @@ function resolveSource(inst: Instance, nodeIndex: Map<string, number>): TimedSou
     amplitude: readScalarParam(inst, 'ac_amplitude') ?? 0,
     frequency: readScalarParam(inst, 'frequency') ?? 0,
     rInternal: readScalarParam(inst, 'internal_resistance') ?? 0,
-    waveform:
-      readEnumParam(inst, 'waveform') === 'square'
-        ? 'square'
-        : readEnumParam(inst, 'waveform') === 'sawtooth'
-          ? 'sawtooth'
-          : readEnumParam(inst, 'waveform') === 'staircase'
-            ? 'staircase'
-            : 'sine',
+    waveform: resolveWaveform(readEnumParam(inst, 'waveform')),
     ...(steps !== undefined ? { steps } : {}),
   }
 }
 
+const WAVEFORMS = new Set(['square', 'triangle', 'sawtooth', 'staircase'] as const)
+
+/** An unknown or absent waveform name is a sine, matching the parameter's documented default. */
+function resolveWaveform(name: string | undefined): TimedSource['waveform'] {
+  return name !== undefined && (WAVEFORMS as Set<string>).has(name)
+    ? (name as TimedSource['waveform'])
+    : 'sine'
+}
+
 function sourceVoltageAt(src: TimedSource, t: number): number {
   if (src.amplitude === 0) return src.dcOffset
+  if (src.waveform === 'triangle') {
+    // Sine-phased linear ramps: offset at t = 0 rising, +amplitude at T/4, −amplitude at 3T/4 —
+    // swap a sine for a triangle and the zero crossings stay where they were.
+    const phase = src.frequency * t
+    const frac = phase - Math.floor(phase)
+    const tri = frac < 0.25 ? 4 * frac : frac < 0.75 ? 2 - 4 * frac : 4 * frac - 4
+    return src.dcOffset + src.amplitude * tri
+  }
   if (src.waveform === 'sawtooth') {
     // A rising ramp from −amplitude to +amplitude over each period, snapping back at the
     // period boundary — a CRT deflection sweep (the ramp draws the line; the snap is the retrace).
