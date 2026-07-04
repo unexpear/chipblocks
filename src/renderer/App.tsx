@@ -3509,6 +3509,45 @@ function Canvas({ project }: { project: ProjectChoice }) {
           junctions: nodesRef.current.filter((n) => n.type === 'junction').map((n) => n.id),
         }
       },
+      // Stage an ARBITRARY spread, wired circuit through the real setNodes/setEdges — the general
+      // form of wireSetup/meterSetup, so a verification doesn't have to choreograph drop-drag-wire
+      // mouse gestures just to arrange parts (drops stack at one point; drags fight the zoom).
+      // Parts get the shipped defaults merged under any explicit parameters. DEV-only, like every
+      // hook here; the staged state is indistinguishable from hand-built (same solve, same undo).
+      stage(
+        parts: { id: string; definition: string; x: number; y: number; parameters?: object }[],
+        wires: [string, string, string, string][],
+      ) {
+        checkpointAction('dev: stage')
+        setNodes(
+          parts.map(
+            (p) =>
+              ({
+                id: p.id,
+                type: 'device',
+                position: { x: p.x, y: p.y },
+                data: {
+                  definition: p.definition,
+                  label: p.id,
+                  parameters: { ...defaultParameters(p.definition), ...(p.parameters ?? {}) },
+                },
+              }) as Node,
+          ),
+        )
+        setEdges(
+          wires.map(
+            ([source, sourceHandle, target, targetHandle], i) =>
+              ({
+                id: `stage_w${i}`,
+                type: 'net',
+                source,
+                sourceHandle,
+                target,
+                targetHandle,
+              }) as Edge,
+          ),
+        )
+      },
       // Stage a REAL powered loop for a real-events multimeter test (use-multimeter.ts): 5 V source →
       // resistor → back, grounded, meter tool armed. The probing itself comes from outside as genuine
       // mouse input on the terminal dots / the wire / the panel's dial buttons; meterState() reads back
