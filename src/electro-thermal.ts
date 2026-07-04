@@ -12,8 +12,10 @@
  * parts → repeat until temperatures settle (< 0.1 °C) or the iteration cap hits.
  * Non-convergence is reported honestly (thermal runaway is real physics — a part
  * whose heating increases its own dissipation may have no stable point), and a
- * linear tempco pushed past R ≤ 0 marks the model out-of-range instead of
- * inventing a negative resistance.
+ * linear tempco pushed past R ≤ 0 means the element has been destroyed: the part
+ * FAILS OPEN (the film burns through — the standard resistor failure mode under
+ * sustained overload), never a near-zero short that would collapse the rest of
+ * the circuit's voltages.
  */
 
 import type { Instance, World } from './cross-fk-validator.ts'
@@ -41,8 +43,14 @@ export type ElectroThermalResult = {
 
 const MAX_THERMAL_ITERATIONS = 25
 const TEMPERATURE_TOLERANCE_C = 0.1
-/** Linear-tempco floor: an adjusted resistance at/below this is out of range. */
+/** Linear-tempco validity floor: an adjusted resistance at/below this means the model has left its
+ *  range — physically, the element has been destroyed by the temperature that got it here. */
 const RESISTANCE_FLOOR_OHMS = 1e-9
+/** What a destroyed resistor becomes: OPEN. A film/carbon element overloaded to destruction burns
+ *  through and breaks the circuit — it does not fuse into a short. 1 GΩ stands in for the burned
+ *  gap: effectively open to the circuit (100× the meter's own 10 MΩ input), finite so the matrix
+ *  stays conditioned and a probe across the gap still reads the source EMF, like the real bench. */
+const FAILED_OPEN_RESISTANCE_OHMS = 1e9
 /** °C → K. */
 const CELSIUS_TO_KELVIN = 273.15
 /**
@@ -153,10 +161,12 @@ function worldAtTemperatures(
     if (adjusted <= RESISTANCE_FLOOR_OHMS) {
       outOfRange = true
       warnings.push(
-        `'${id}': temperature-adjusted resistance fell to ${adjusted.toPrecision(3)} Ω at ` +
-          `${(temperaturesC.get(id) ?? STANDARD_AMBIENT_C).toFixed(0)} °C — the linear tempco model is out of range; clamped.`,
+        `'${id}' burned OPEN at ${(temperaturesC.get(id) ?? STANDARD_AMBIENT_C).toFixed(0)} °C — ` +
+          `the temperature-adjusted resistance fell to ${adjusted.toPrecision(3)} Ω (the linear tempco ` +
+          'model is out of range there); a resistor destroyed by overload fails open, so it now stands ' +
+          'at 1 GΩ, not a short.',
       )
-      adjusted = RESISTANCE_FLOOR_OHMS
+      adjusted = FAILED_OPEN_RESISTANCE_OHMS
     }
     instances.set(id, {
       ...inst,

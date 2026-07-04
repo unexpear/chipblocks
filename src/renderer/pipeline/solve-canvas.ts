@@ -240,8 +240,12 @@ function solveCanvas(
   // An internal part's failure also marks its block node (validation bubbles
   // up the hierarchy, per the object model — a failing source SECTION marks
   // its source the same way). The board ambient flows in so the over-temperature
-  // check fires at the same temperature the solve and the thermocouple show.
-  const health = bubbleBlockHealth(canvasHealth(world, solution, projectAmbientC))
+  // check fires at the same temperature the solve and the thermocouple show, and
+  // the settled temperatures keep a burned-open part red (its final solution
+  // carries no current — the temperature that destroyed it is the evidence).
+  const health = bubbleBlockHealth(
+    canvasHealth(world, solution, projectAmbientC, thermal.temperaturesC),
+  )
   // Probing a block's PORT or a multi-lead source's lead reads the real
   // terminal it stands for. Lead aliases land first: a block port may itself
   // point at a lead that the expansion re-homed.

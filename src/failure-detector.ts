@@ -97,11 +97,18 @@ const VACUUM_TUBE_DEFINITIONS = new Set(['vacuum_diode', 'triode', 'tetrode', 'p
  * over-temperature check needs it so its temperature matches the solve (a part
  * in a hot enclosure runs hotter, and is likelier to fail, than the same part
  * at 25 °C). A part's own ambient_temperature still overrides it.
+ *
+ * solvedTemperaturesC — the electro-thermal loop's settled temperatures — lets
+ * the over-temperature check judge each part at the temperature the solve
+ * actually reached. Without it a part the loop burned OPEN would read healthy:
+ * the destroyed element carries no current in the final solution, so its
+ * recomputed power (and temperature) look fine.
  */
 export function detectFailures(
   world: World,
   solution: Solution,
   projectAmbientC?: number,
+  solvedTemperaturesC?: ReadonlyMap<string, number>,
 ): Failure[] {
   if (solution.status !== 'solved') return []
 
@@ -148,7 +155,7 @@ export function detectFailures(
     }
     // Thermal is generic: any part declaring a thermal resistance + max
     // operating temperature gets the lumped T = T_amb + P·θ_JA check (§ stage 7).
-    const overtemp = checkOvertemperature(inst, solution, projectAmbientC)
+    const overtemp = checkOvertemperature(inst, solution, projectAmbientC, solvedTemperaturesC)
     if (overtemp !== null) failures.push(overtemp)
   }
 
@@ -541,34 +548,43 @@ export function checkCapacitorOvervoltage(inst: Instance, solution: Solution): F
  * ambientOf), so the temperature checked here is the SAME one the solve, the
  * readings, and the thermocouple landed on: a part's own ambient_temperature,
  * else the board-wide projectAmbientC, else the 25 °C baseline.
+ *
+ * When the electro-thermal loop's SETTLED temperatures are passed in, a part
+ * found there is judged at that temperature directly — essential for a part the
+ * loop burned OPEN: its final solution dissipates ~nothing (the element broke
+ * the circuit), so recomputing from the final power would read a destroyed part
+ * as healthy. The temperature that killed it is the one on record.
  */
 export function checkOvertemperature(
   inst: Instance,
   solution: Solution,
   projectAmbientC?: number,
+  solvedTemperaturesC?: ReadonlyMap<string, number>,
 ): Failure | null {
   const maxTemperature = readScalarParam(inst, 'max_operating_temperature')
   if (maxTemperature === undefined) return null
 
-  const branch = solution.branches.get(inst.id)
-  if (branch === undefined) return null
-  const volts = acrossVolts(inst, solution)
-  if (volts === undefined) return null
+  let temperature = solvedTemperaturesC?.get(inst.id)
+  if (temperature === undefined) {
+    const branch = solution.branches.get(inst.id)
+    if (branch === undefined) return null
+    const volts = acrossVolts(inst, solution)
+    if (volts === undefined) return null
 
-  const watts = Math.abs(branch) * volts
-  // A part can declare its own local ambient (a thermistor placed in a hot spot);
-  // otherwise it sits in the board-wide ambient; with neither, the 25 °C baseline.
-  const ambient =
-    readScalarParam(inst, 'ambient_temperature') ?? projectAmbientC ?? STANDARD_AMBIENT_C
-  // A filament radiates its heat (T grows as P^¼); every other part conducts it
-  // through a θ_JA. A part with neither law (no θ_JA, not a bulb) isn't checkable.
-  let temperature: number | undefined
-  if (inst.definition === 'incandescent_bulb') {
-    temperature = bulbFilamentTemperatureC(inst, watts, ambient)
-  } else {
-    const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
-    if (thetaJa === undefined || thetaJa <= 0) return null
-    temperature = junctionTemperature(watts, thetaJa, ambient)
+    const watts = Math.abs(branch) * volts
+    // A part can declare its own local ambient (a thermistor placed in a hot spot);
+    // otherwise it sits in the board-wide ambient; with neither, the 25 °C baseline.
+    const ambient =
+      readScalarParam(inst, 'ambient_temperature') ?? projectAmbientC ?? STANDARD_AMBIENT_C
+    // A filament radiates its heat (T grows as P^¼); every other part conducts it
+    // through a θ_JA. A part with neither law (no θ_JA, not a bulb) isn't checkable.
+    if (inst.definition === 'incandescent_bulb') {
+      temperature = bulbFilamentTemperatureC(inst, watts, ambient)
+    } else {
+      const thetaJa = readScalarParam(inst, 'thermal_resistance_junction_ambient')
+      if (thetaJa === undefined || thetaJa <= 0) return null
+      temperature = junctionTemperature(watts, thetaJa, ambient)
+    }
   }
   if (temperature === undefined || temperature <= maxTemperature) return null
 

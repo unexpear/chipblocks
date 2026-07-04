@@ -10,7 +10,12 @@ import { describe, expect, test } from 'vitest'
 import type { World } from '../src/cross-fk-validator.ts'
 import { solveDC } from '../src/dc-solver.ts'
 import { scaleSaturationCurrent, thermalVoltage } from '../src/diode-model.ts'
-import { resistanceAtTemperature, solveElectroThermal } from '../src/electro-thermal.ts'
+import {
+  resistanceAtTemperature,
+  solveElectroThermal,
+  solveTransientThermal,
+} from '../src/electro-thermal.ts'
+import { detectFailures } from '../src/failure-detector.ts'
 import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
@@ -342,5 +347,152 @@ describe('solveElectroThermal', () => {
     const vSource = result.solution.nodes.get(netOf('source')) ?? Number.NaN
     const kvl = current * 1 + current * hotOhms + (vDrain - vSource)
     expect(kvl).toBeCloseTo(9, 2)
+  })
+})
+
+describe('a resistor destroyed by overload fails OPEN, never a short', () => {
+  /** 25 V behind 1 Ω into a 100 Ω carbon-film resistor: 6.1 W on a part rated ¼ W. The tempco
+   *  walk (α −500 ppm/K, θ_JA 340) drives the linear model past R ≤ 0 — the element burns. */
+  const burnWorld = () => {
+    const nodes: CanvasNode[] = [
+      {
+        id: 'bat',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(25, 'volt'), internal_resistance: scalar(1, 'ohm') },
+      },
+      {
+        id: 'r1',
+        definition: 'resistor',
+        parameters: {
+          resistance: scalar(100, 'ohm'),
+          temperature_coefficient: scalar(-5e-4, 'per_kelvin'),
+          thermal_resistance_junction_ambient: scalar(340, 'kelvin_per_watt'),
+          max_operating_temperature: scalar(155, 'celsius'),
+          power_rating: scalar(0.25, 'watt'),
+        },
+      },
+      { id: 'gnd', definition: 'ground' },
+    ]
+    const edges = [
+      {
+        source: 'bat',
+        sourceHandle: 'terminal_positive',
+        target: 'r1',
+        targetHandle: 'terminal_a',
+      },
+      {
+        source: 'r1',
+        sourceHandle: 'terminal_b',
+        target: 'bat',
+        targetHandle: 'terminal_negative',
+      },
+      {
+        source: 'gnd',
+        sourceHandle: 'reference_terminal',
+        target: 'bat',
+        targetHandle: 'terminal_negative',
+      },
+    ]
+    return canvasToWorld(nodes, edges)
+  }
+
+  test('the burned part OPENS the loop — the source node keeps its EMF instead of collapsing', () => {
+    const world = burnWorld()
+    const result = solveElectroThermal(world)
+    expect(result.solution.status).toBe('solved')
+    expect(result.thermalConverged).toBe(false) // the model left validity — reported, not faked
+    expect(result.warnings.some((w) => w.includes("'r1'") && w.includes('burned OPEN'))).toBe(true)
+    // The regression this test exists for: the old clamp-to-≈0 Ω turned the burned resistor into
+    // a SHORT, so the 25 V EMF divided across the source's 1 Ω and the node read ~0 V. Failed
+    // OPEN, the node reads the EMF — what a real meter shows across a burned-out part.
+    const vTop =
+      world.instances.get('r1')?.connects?.find((c) => c.terminal === 'terminal_a')?.net ?? ''
+    expect(result.solution.nodes.get(vTop) ?? 0).toBeGreaterThan(20)
+    // …and essentially no current flows through the burned gap.
+    expect(Math.abs(result.solution.branches.get('r1') ?? 1)).toBeLessThan(1e-6)
+  })
+
+  test('the destroyed part still flags RED: the settled temperatures carry the evidence', () => {
+    const world = burnWorld()
+    const result = solveElectroThermal(world)
+    expect(result.temperaturesC.get('r1') ?? 0).toBeGreaterThan(155)
+    // With the solved temperatures, the over-temperature check fires on the killing temperature…
+    const flagged = detectFailures(world, result.solution, undefined, result.temperaturesC)
+    const overtemp = flagged.find((f) => f.code === 'part-overtemperature' && f.source === 'r1')
+    expect(overtemp).toBeDefined()
+    expect(overtemp?.measured ?? 0).toBeGreaterThan(155)
+    // …and WITHOUT them it would miss: the final (open) solution dissipates nothing — the exact
+    // blind spot the solvedTemperaturesC threading exists to close.
+    const blind = detectFailures(world, result.solution)
+    expect(blind.some((f) => f.code === 'part-overtemperature')).toBe(false)
+  })
+
+  test('the observed alternator world: burned loads no longer short the phases to ~0 V', () => {
+    // The real-app case that exposed the bug: a three-phase alternator (13.3 V rms per phase)
+    // into 100 Ω quarter-watt loads. The loads genuinely burn (~1.7 W → thermal walk past R ≤ 0);
+    // the old clamp made them SHORTS and the solved phase read 0.79 V instead of ~18.85 V peak.
+    const altParams = {
+      flux_linkage: scalar(0.05, 'V*s/rad'),
+      winding_resistance: scalar(1, 'ohm'),
+      pole_pairs: scalar(2, 'dimensionless'),
+      drive_speed: scalar(1800, 'rpm'),
+      viscous_friction: scalar(1e-5, 'N*m*s/rad'),
+    }
+    const loadParams = {
+      resistance: scalar(100, 'ohm'),
+      temperature_coefficient: scalar(-5e-4, 'per_kelvin'),
+      thermal_resistance_junction_ambient: scalar(340, 'kelvin_per_watt'),
+      max_operating_temperature: scalar(155, 'celsius'),
+      power_rating: scalar(0.25, 'watt'),
+    }
+    const nodes: CanvasNode[] = [
+      { id: 'alt3', definition: 'alternator_three_phase', parameters: altParams },
+      { id: 'ra', definition: 'resistor', parameters: loadParams },
+      { id: 'rb', definition: 'resistor', parameters: loadParams },
+      { id: 'rc', definition: 'resistor', parameters: loadParams },
+      { id: 'gnd', definition: 'ground' },
+    ]
+    const edges = [
+      { source: 'alt3', sourceHandle: 'phase_a', target: 'ra', targetHandle: 'terminal_a' },
+      { source: 'alt3', sourceHandle: 'phase_b', target: 'rb', targetHandle: 'terminal_a' },
+      { source: 'alt3', sourceHandle: 'phase_c', target: 'rc', targetHandle: 'terminal_a' },
+      {
+        source: 'ra',
+        sourceHandle: 'terminal_b',
+        target: 'gnd',
+        targetHandle: 'reference_terminal',
+      },
+      {
+        source: 'rb',
+        sourceHandle: 'terminal_b',
+        target: 'gnd',
+        targetHandle: 'reference_terminal',
+      },
+      {
+        source: 'rc',
+        sourceHandle: 'terminal_b',
+        target: 'gnd',
+        targetHandle: 'reference_terminal',
+      },
+      {
+        source: 'alt3',
+        sourceHandle: 'neutral',
+        target: 'gnd',
+        targetHandle: 'reference_terminal',
+      },
+    ]
+    const world = canvasToWorld(nodes, edges)
+    const period = 1 / 60
+    const thermal = solveTransientThermal(world, { timeStep: period / 500, duration: 4 * period })
+    expect(thermal.result.status).toBe('solved')
+    expect(thermal.warnings.some((w) => w.includes('burned OPEN'))).toBe(true)
+    // The loads really did burn — hotter than anything the part survives…
+    expect(thermal.temperaturesC.get('ra') ?? 0).toBeGreaterThan(155)
+    // …and phase A now reads its full open-circuit sine, not the 0.79 V short artifact.
+    const net =
+      world.instances.get('ra')?.connects?.find((c) => c.terminal === 'terminal_a')?.net ?? ''
+    let peak = 0
+    for (const p of thermal.result.series) peak = Math.max(peak, Math.abs(p.nodes.get(net) ?? 0))
+    expect(peak).toBeGreaterThan(15) // ~18.85 V EMF peak through the burned-open gap
   })
 })

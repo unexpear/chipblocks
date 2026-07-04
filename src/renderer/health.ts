@@ -116,17 +116,20 @@ const LIT_FLOOR_AMPS = 1e-4
 
 /** Map each instance id to its health, from a solved world. Empty if unsolved.
  *  projectAmbientC (the board ambient the world was solved at) flows into the
- *  over-temperature check so its temperature matches the rest of the app. */
+ *  over-temperature check so its temperature matches the rest of the app;
+ *  solvedTemperaturesC (the electro-thermal loop's settled map) keeps a part
+ *  the loop burned OPEN flagged red — its final solution dissipates nothing. */
 export function canvasHealth(
   world: World,
   solution: Solution,
   projectAmbientC?: number,
+  solvedTemperaturesC?: ReadonlyMap<string, number>,
 ): Map<string, NodeHealth> {
   const health = new Map<string, NodeHealth>()
   if (solution.status !== 'solved') return health
 
   const failures = new Map(
-    detectFailures(world, solution, projectAmbientC).map((f) => [f.source, f]),
+    detectFailures(world, solution, projectAmbientC, solvedTemperaturesC).map((f) => [f.source, f]),
   )
   for (const inst of world.instances.values()) {
     const failure = failures.get(inst.id)
