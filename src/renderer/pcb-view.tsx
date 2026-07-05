@@ -4,6 +4,7 @@ import {
   type Airwire,
   type Board,
   footprintByPlacement,
+  type PadBox,
   placePoint,
   type Rotation,
   silkReferenceAnchor,
@@ -97,6 +98,13 @@ export function PcbView({
   paddingMm = 3,
   onMove,
   onRotate,
+  routeActive = false,
+  padBoxes = [],
+  pendingPoints,
+  routeCursor,
+  routeColor = '#ffcf6b',
+  onRouteClick,
+  onRouteMove,
 }: {
   board: Board
   /** Unrouted connections (the ratsnest) — drawn as thin straight lines pad-to-pad. */
@@ -117,9 +125,22 @@ export function PcbView({
   onMove?: (partId: string, x: number, y: number) => void
   /** Turn a part a quarter turn (the R key on the selected part). */
   onRotate?: (partId: string, rotation: Rotation) => void
+  /** ROUTE TOOL: when on, clicks lay copper (start on a pad, corners in space, finish on a pad) instead
+   *  of dragging parts. `padBoxes` are the clickable pad targets; `pendingPoints` + `routeCursor` draw
+   *  the trace being laid; `routeColor` tints it (top = gold, bottom = blue). */
+  routeActive?: boolean
+  padBoxes?: PadBox[]
+  pendingPoints?: { x: number; y: number }[]
+  routeCursor?: { x: number; y: number } | null
+  routeColor?: string
+  /** A click while routing — `pad` is the pad under it (net inference), or null for open board. */
+  onRouteClick?: (mm: { x: number; y: number }, pad: PadBox | null) => void
+  /** Pointer move while routing — for the rubber-band segment to the cursor. */
+  onRouteMove?: (mm: { x: number; y: number }) => void
 }) {
-  // Editing (drag / rotate) belongs only to the full flat layout — the layer sheets are view-only.
-  const interactive = onMove !== undefined && mode === 'flat'
+  // Editing (drag / rotate) belongs only to the full flat layout — the layer sheets are view-only, and
+  // the route tool takes over the pointer when it's on.
+  const interactive = onMove !== undefined && mode === 'flat' && !routeActive
   const [selected, setSelected] = useState<string | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
   const drag = useRef<{
@@ -139,6 +160,20 @@ export function PcbView({
   const hPx = (frame.h + 2 * paddingMm) * pxPerMm
   const sx = (x: number) => (x - minX) * pxPerMm
   const sy = (y: number) => (y - minY) * pxPerMm
+
+  // screen → board mm (the inverse of sx/sy), and the pad under a board point (net inference for routing)
+  const eventToMm = (e: { clientX: number; clientY: number }): { x: number; y: number } => {
+    const rect = svgRef.current?.getBoundingClientRect()
+    if (rect === undefined) return { x: 0, y: 0 }
+    return {
+      x: (e.clientX - rect.left) / pxPerMm + minX,
+      y: (e.clientY - rect.top) / pxPerMm + minY,
+    }
+  }
+  const hitPad = (mm: { x: number; y: number }): PadBox | null =>
+    padBoxes.find(
+      (pb) => mm.x >= pb.x && mm.x <= pb.x + pb.w && mm.y >= pb.y && mm.y <= pb.y + pb.h,
+    ) ?? null
 
   const endDrag = (e: ReactPointerEvent) => {
     if (drag.current === null) return
@@ -253,11 +288,23 @@ export function PcbView({
         fontFamily: 'system-ui, sans-serif',
         outline: 'none',
         touchAction: 'none',
+        cursor: routeActive ? 'crosshair' : undefined,
       }}
       role="img"
       aria-label="PCB layout"
       tabIndex={interactive ? 0 : undefined}
-      onPointerMove={interactive ? movePart : undefined}
+      onClick={
+        routeActive
+          ? (e) => {
+              const mm = eventToMm(e)
+              onRouteClick?.(mm, hitPad(mm))
+            }
+          : undefined
+      }
+      onPointerMove={(e) => {
+        if (interactive) movePart(e)
+        if (routeActive) onRouteMove?.(eventToMm(e))
+      }}
       onPointerUp={interactive ? endDrag : undefined}
       onPointerCancel={interactive ? endDrag : undefined}
       onKeyDown={
@@ -434,6 +481,66 @@ export function PcbView({
           <circle cx={sx(m.x)} cy={sy(m.y)} r={1.8} fill={VIOLATION} />
         </g>
       ))}
+
+      {/* ROUTE TOOL overlay: the clickable pads (dots) + the trace being laid (committed corners as a
+          solid polyline, plus a dashed rubber-band from the last corner to the cursor). */}
+      {routeActive && (
+        <g pointerEvents="none" data-route-overlay="true">
+          {padBoxes.map((pb) => (
+            <circle
+              key={`routepad-${pb.pad}`}
+              cx={sx(pb.x + pb.w / 2)}
+              cy={sy(pb.y + pb.h / 2)}
+              r={2.4}
+              fill="none"
+              stroke={SELECT}
+              strokeWidth={1}
+              opacity={0.75}
+              data-route-pad={pb.pad}
+              data-net={pb.net}
+            />
+          ))}
+          {pendingPoints !== undefined && pendingPoints.length > 0 && (
+            <>
+              {pendingPoints.length > 1 && (
+                <polyline
+                  points={pendingPoints.map((p) => `${sx(p.x)},${sy(p.y)}`).join(' ')}
+                  fill="none"
+                  stroke={routeColor}
+                  strokeWidth={3}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  data-pending-route="true"
+                />
+              )}
+              {routeCursor !== undefined && routeCursor !== null && (
+                <polyline
+                  points={(() => {
+                    const last = pendingPoints[pendingPoints.length - 1]
+                    if (last === undefined) return ''
+                    // preview the H-then-V orthogonal segment to the cursor
+                    return `${sx(last.x)},${sy(last.y)} ${sx(routeCursor.x)},${sy(last.y)} ${sx(routeCursor.x)},${sy(routeCursor.y)}`
+                  })()}
+                  fill="none"
+                  stroke={routeColor}
+                  strokeWidth={2}
+                  strokeDasharray="4 3"
+                  opacity={0.8}
+                />
+              )}
+              {pendingPoints.map((p, i) => (
+                <circle
+                  key={`pendingpt-${i}-${p.x},${p.y}`}
+                  cx={sx(p.x)}
+                  cy={sy(p.y)}
+                  r={2}
+                  fill={routeColor}
+                />
+              ))}
+            </>
+          )}
+        </g>
+      )}
     </svg>
   )
 }

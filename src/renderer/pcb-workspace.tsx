@@ -1,5 +1,5 @@
 import { Pcb3DView } from './pcb-3d-view.tsx'
-import type { Board, Rotation } from './pcb-board.ts'
+import type { Board, PadBox, Rotation } from './pcb-board.ts'
 import { type BoardLayer, type BoardLayerId, layerLabel } from './pcb-layers.ts'
 import type { BoardRouting } from './pcb-route.ts'
 import type { Stackup } from './pcb-stackup.ts'
@@ -114,6 +114,7 @@ export function BoardView({
   viewHeight = 460,
   onMove,
   onRotate,
+  route,
 }: {
   board: Board
   stackup: Stackup
@@ -127,6 +128,16 @@ export function BoardView({
   viewHeight?: number
   onMove?: (partId: string, x: number, y: number) => void
   onRotate?: (partId: string, rotation: Rotation) => void
+  /** The route tool's live state + handlers (flat/layers only), threaded to PcbView. */
+  route?: {
+    active: boolean
+    padBoxes: PadBox[]
+    pendingPoints?: { x: number; y: number }[]
+    cursor?: { x: number; y: number } | null
+    color?: string
+    onClick: (mm: { x: number; y: number }, pad: PadBox | null) => void
+    onMove: (mm: { x: number; y: number }) => void
+  }
 }) {
   if (mode === 'exploded') {
     // "3D" — the real to-scale, orbitable board (the from-scratch pcb-3d engine).
@@ -144,6 +155,17 @@ export function BoardView({
       pxPerMm={pxPerMm}
       {...(onMove ? { onMove } : {})}
       {...(onRotate ? { onRotate } : {})}
+      {...(route
+        ? {
+            routeActive: route.active,
+            padBoxes: route.padBoxes,
+            onRouteClick: route.onClick,
+            onRouteMove: route.onMove,
+            ...(route.pendingPoints ? { pendingPoints: route.pendingPoints } : {}),
+            ...(route.cursor !== undefined ? { routeCursor: route.cursor } : {}),
+            ...(route.color ? { routeColor: route.color } : {}),
+          }
+        : {})}
     />
   )
 }

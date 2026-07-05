@@ -142,13 +142,20 @@ import {
   computeRatsnest,
   deriveBoard,
   offBoardPins,
+  type PadBox,
   type PlacementOverride,
   type Rotation,
 } from './pcb-board.ts'
 import { runDrc } from './pcb-drc.ts'
 import { type BomRow, buildManufacturingZip } from './pcb-fab.ts'
 import { type BoardLayerId, boardLayers } from './pcb-layers.ts'
-import { type CopperTrace, mergeUserCopper, routeBoard, type Via } from './pcb-route.ts'
+import {
+  type CopperTrace,
+  DEFAULT_ROUTE_CLASS,
+  mergeUserCopper,
+  routeBoard,
+  type Via,
+} from './pcb-route.ts'
 import {
   buildStackup,
   type CopperWeight,
@@ -1216,6 +1223,14 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // a part drag (which re-runs the router) never wipes it; merged back in via pcbMergedRouting below.
   const [userTraces, setUserTraces] = useState<CopperTrace[]>([])
   const [userVias, setUserVias] = useState<Via[]>([])
+  // The board-editing tool + the route being laid (click a pad → corners → a pad, like the wire tool).
+  const [boardTool, setBoardTool] = useState<'select' | 'route'>('select')
+  const [pendingRoute, setPendingRoute] = useState<{
+    net: string
+    layer: 'top' | 'bottom'
+    points: { x: number; y: number }[]
+  } | null>(null)
+  const [routeCursor, setRouteCursor] = useState<{ x: number; y: number } | null>(null)
   const pcbBoard = useMemo(
     () =>
       deriveBoard(
@@ -1346,6 +1361,64 @@ function Canvas({ project }: { project: ProjectChoice }) {
     },
     [pcbLayers],
   )
+  // The copper layer new traces land on — the bottom sheet routes bottom copper, everything else top.
+  // In Layers mode the ▲/▼ pager picks it; a Top/Bottom control sets it directly in any mode.
+  const activeCopperLayer: 'top' | 'bottom' = pcbActiveLayerId === 'b_cu' ? 'bottom' : 'top'
+  // The ROUTE tool state machine (click-based, like the wire tool): start on a pad (net inferred),
+  // click open board to drop orthogonal (H-then-V) corners, click a same-net pad to finish → a real
+  // CopperTrace on the active layer. It joins pcbMergedRouting, so it draws, DRCs, and ships in the ZIP.
+  const onBoardRouteClick = useCallback(
+    (mm: { x: number; y: number }, pad: PadBox | null) => {
+      if (boardTool !== 'route') return
+      const center = (pb: PadBox) => ({ x: pb.x + pb.w / 2, y: pb.y + pb.h / 2 })
+      const appendOrtho = (
+        pts: { x: number; y: number }[],
+        to: { x: number; y: number },
+      ): { x: number; y: number }[] => {
+        const last = pts[pts.length - 1]
+        if (last === undefined) return [to]
+        const corner = { x: to.x, y: last.y } // H then V
+        const out = [...pts]
+        const same = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+          Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6
+        if (!same(corner, last) && !same(corner, to)) out.push(corner)
+        out.push(to)
+        return out
+      }
+      if (pendingRoute === null) {
+        if (pad === null) return // a trace must start on a pad
+        setPendingRoute({ net: pad.net, layer: activeCopperLayer, points: [center(pad)] })
+        return
+      }
+      if (pad !== null) {
+        if (pad.net !== pendingRoute.net) return // can't join a different net
+        const points = appendOrtho(pendingRoute.points, center(pad))
+        setUserTraces((cur) => [
+          ...cur,
+          {
+            net: pendingRoute.net,
+            widthMm: DEFAULT_ROUTE_CLASS.traceWidthMm,
+            layer: pendingRoute.layer,
+            points,
+          },
+        ])
+        setPendingRoute(null)
+        return
+      }
+      setPendingRoute({ ...pendingRoute, points: appendOrtho(pendingRoute.points, mm) })
+    },
+    [boardTool, pendingRoute, activeCopperLayer],
+  )
+  const onBoardRouteMove = useCallback(
+    (mm: { x: number; y: number }) => {
+      if (boardTool === 'route') setRouteCursor(mm)
+    },
+    [boardTool],
+  )
+  // Leaving the board workspace or switching tools abandons a half-drawn route.
+  useEffect(() => {
+    if (workspaceMode !== 'board' || boardTool !== 'route') setPendingRoute(null)
+  }, [workspaceMode, boardTool])
   const [pcbExportNote, setPcbExportNote] = useState<string | null>(null)
   // A "manufacturing ZIP saved" note is only true for the board it was exported from — any edit
   // to the parts, wires or placements (or loading another file, which replaces all three) makes
@@ -2012,8 +2085,15 @@ function Canvas({ project }: { project: ProjectChoice }) {
         return
       }
       // The board workspace owns the main area — schematic copy/cut/paste/rotate/delete are inert here
-      // (rotating a board part is R on the focused board, handled inside PcbView).
-      if (workspaceMode === 'board') return
+      // (rotating a board part is R on the focused board, handled inside PcbView). Esc abandons a
+      // half-drawn route (and drops the route tool back to Select).
+      if (workspaceMode === 'board') {
+        if (event.key === 'Escape') {
+          setPendingRoute(null)
+          setBoardTool('select')
+        }
+        return
+      }
       if (eventMatchesBinding(event, keybinds.copy)) {
         event.preventDefault()
         doCopy()
@@ -5287,6 +5367,57 @@ function Canvas({ project }: { project: ProjectChoice }) {
                 activeLayerIndex={pcbActiveLayerIndex}
                 onStep={stepPcbLayer}
               />
+              {pcbViewMode !== 'exploded' && (
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <button
+                    type="button"
+                    onClick={() => setBoardTool((t) => (t === 'route' ? 'select' : 'route'))}
+                    title="Route tool — click a pad to start, click to drop corners, click a same-net pad to finish (Esc cancels). Draws real copper on the active layer that ships in the Gerbers."
+                    style={{
+                      border: `1px solid ${THEME.borderStrong}`,
+                      background: boardTool === 'route' ? THEME.accentBlue : THEME.surfaceInput,
+                      color: boardTool === 'route' ? '#0b1220' : THEME.textSoft,
+                      borderRadius: 4,
+                      fontSize: 11,
+                      padding: '2px 10px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ▬ Route
+                  </button>
+                  {boardTool === 'route' && (
+                    <span style={{ display: 'flex', gap: 0 }}>
+                      {(['f_cu', 'b_cu'] as const).map((id, i) => (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => setPcbActiveLayerId(id)}
+                          title={
+                            id === 'f_cu' ? 'Route on the top copper' : 'Route on the bottom copper'
+                          }
+                          style={{
+                            border: `1px solid ${THEME.borderStrong}`,
+                            background:
+                              pcbActiveLayerId === id
+                                ? id === 'f_cu'
+                                  ? '#ffcf6b'
+                                  : '#6b9bff'
+                                : THEME.surfaceInput,
+                            color: pcbActiveLayerId === id ? '#0b1220' : THEME.textSoft,
+                            borderRadius: i === 0 ? '4px 0 0 4px' : '0 4px 4px 0',
+                            borderLeft: i === 0 ? undefined : 'none',
+                            fontSize: 11,
+                            padding: '2px 8px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {id === 'f_cu' ? 'Top' : 'Bottom'}
+                        </button>
+                      ))}
+                    </span>
+                  )}
+                </span>
+              )}
               <button
                 type="button"
                 onClick={onWorkspace}
@@ -5318,6 +5449,15 @@ function Canvas({ project }: { project: ProjectChoice }) {
                   viewHeight={560}
                   onMove={onPcbMove}
                   onRotate={onPcbRotate}
+                  route={{
+                    active: boardTool === 'route' && pcbViewMode !== 'exploded',
+                    padBoxes: pcbRatsnest.padBoxes,
+                    onClick: onBoardRouteClick,
+                    onMove: onBoardRouteMove,
+                    cursor: routeCursor,
+                    color: activeCopperLayer === 'bottom' ? '#6b9bff' : '#ffcf6b',
+                    ...(pendingRoute ? { pendingPoints: pendingRoute.points } : {}),
+                  }}
                 />
               ) : (
                 <span style={{ fontSize: 12, color: THEME.textFaint }}>
