@@ -2,7 +2,7 @@
 
 ChipBlocks depends on third-party software. This file lists each direct dependency, its license, copyright holder, source repository, and where to find the full license text. ChipBlocks complies with each license's redistribution requirements (preserving LICENSE files, preserving NOTICE content where present per Apache-2.0 §4(d), retaining attribution notices).
 
-> **Last verified:** 2026-06-05 (added during v3 Sprint 12 when `mathjs` brought the first NOTICE-bearing dependency).
+> **Last verified:** 2026-07-05 — re-checked; the board-road toolchain (footprint model, copper router, DRC, Gerber/Excellon writers, manufacturing ZIP) and the from-scratch 3-D board engine added **NO new dependencies** (all original TypeScript). The dependency set is unchanged since the Sprint 18 Electron/React/React-Flow additions below. Originally added during v3 Sprint 12 when `mathjs` brought the first NOTICE-bearing dependency.
 
 ---
 

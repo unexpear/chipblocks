@@ -2,7 +2,7 @@
 
 > Centralized credits, acknowledgments, and references for the ChipBlocks project. Citations also appear inline in per-fixture provenance fields and per-doc verification sections; this file consolidates the full picture.
 >
-> **Last updated:** 2026-06-05
+> **Last updated:** 2026-07-05
 
 ---
 
@@ -106,7 +106,9 @@ Per the project's core principles, AI does NOT:
 - **IEC** (International Electrotechnical Commission) — 60028 (annealed copper resistivity standard), 60617 (graphical symbols for diagrams), 60086 (primary batteries), 61190 (electronic-grade solder alloys), 61960 (lithium secondary cells), 62317 (ferrite cores), 60404 (magnetic materials), 62471 (photobiological safety of lamps including LEDs)
 - **IEEE** — 315 (US schematic symbols), 60028 (cross-reference to IEC)
 - **ANSI** — Y32.2-1975 (graphic symbols for electrical and electronic diagrams), ANSI/IEC 60086 (battery designations)
-- **IPC** (Association Connecting Electronics Industries) — J-STD-006 (electronic-grade solder alloys), J-STD-020 (component moisture/reflow sensitivity), 4101 (PCB laminates including FR4), 9701 (thermal cycling reliability), A-610 (acceptability of electronic assemblies), TM-650 (test methods)
+- **IPC** (Association Connecting Electronics Industries) — J-STD-003 (solderability / OSP), J-STD-006 (electronic-grade solder alloys), J-STD-020 (component moisture/reflow sensitivity), 2221 (generic PCB design — trace ampacity sizing), 4101 (PCB laminates including FR4), 4552 (ENIG surface finish), 4553 (immersion silver), 4562 (copper foil / copper weight), 7351 (SMD land-pattern standard — the board-road footprints' pad geometry), 9701 (thermal cycling reliability), A-610 (acceptability of electronic assemblies), TM-650 (test methods)
+- **JEDEC** (JEDEC Solid State Technology Association) — component package outlines used for the board-road 3-D component body dimensions: MS-012 (SOIC narrow), MS-001 (PDIP / dual-in-line), TO-236 (SOT-23). Registered outline dimensions (body size + seated height) are factual package specifications.
+- **Ucamco** — the **Gerber format** specification (RS-274X / X2), the de-facto PCB fabrication artwork standard the board road's Gerber writer implements against. Companion **Excellon / XNC** drill format for the drill files. Format specs are open and freely published by Ucamco.
 - **ASTM** — B344 (resistance heating wire including nichrome), B32 (electronic-grade solder)
 - **ICAO Standard Atmosphere (ISO 2533)** — atmospheric values used in material-air.yaml
 
@@ -120,6 +122,9 @@ Per the project's per-fixture provenance discipline, specific datasheets are cit
 - **Switches:** C&K 7101 series, NKK S-series families
 - **PCB laminates:** Isola 370HR, ITEQ IT-180A
 - **Batteries:** Duracell MN1604 (Procell), Energizer 522 (9V alkaline)
+- **Chip resistors / passives (0603 body height):** Yageo RC0603 series, Vishay CRCW0603 series
+- **Transistors (SOT-23 body height):** ON Semiconductor and Diodes Incorporated SOT-23 package drawings
+- **Pin headers (2.54 mm body + pin dimensions):** Würth Elektronik and Amphenol 0.1″ (2.54 mm) header series
 
 All values cited from manufacturer datasheets are factual measurements (not copyrighted expression); the citations are the standard professional practice for traceable engineering work.
 
@@ -142,6 +147,8 @@ None bundled at v3 Sprint 11 close. Projects referenced as design inspiration, f
 - **upb-lea/Inkscape_electric_Symbols** — CC0-1.0 (public domain). Comprehensive SVG schematic symbol library. Top supplementary candidate for the eventual canvas. Source: [github.com/upb-lea/Inkscape_electric_Symbols](https://github.com/upb-lea/Inkscape_electric_Symbols). Verified 2026-06-05.
 - **AcheronProject/electrical_template** — BSD 3-Clause. SVG schematic symbols, explicit IEEE/ANSI 315-1975 alignment. Source: [github.com/AcheronProject/electrical_template](https://github.com/AcheronProject/electrical_template). Verified 2026-06-05.
 - **KiCad symbol library** — GPL. Referenced as the de facto industry standard for schematic symbols. The project's eventual canvas will follow KiCad-compatible naming conventions but draw its own SVG symbols. Symbol library at [gitlab.com/kicad/libraries/kicad-symbols](https://gitlab.com/kicad/libraries/kicad-symbols).
+- **KiCad footprint library** (`kicad-footprints`) — CC-BY-SA 4.0 **with the KiCad Library Exception** (the exception explicitly permits using the library's land patterns in your own designs/boards without the copyleft attaching to those designs). The board road's footprint pad geometry (0603, SOIC-8, DIP-8, pin header, SOT-23) is cited to this library as the reproducible source of the IPC-7351 land patterns; the DIMENSIONS themselves are functional facts (IPC-7351-derived land patterns), and each footprint was additionally ground-truthed against the project lead's installed KiCad 10.0. The library is NOT bundled or copied wholesale — only per-footprint dimensional values are reproduced, with provenance. Source: [gitlab.com/kicad/libraries/kicad-footprints](https://gitlab.com/kicad/libraries/kicad-footprints).
+- **KiCad (kicad-cli)** — GPL-3.0, invoked as an external user-installed tool (never bundled). Used ONLY as ground-truth to verify the board road's from-scratch Gerber/Excellon output byte-shape against real fab files (`kicad-cli pcb export`); no KiCad code ships in ChipBlocks. Source: [gitlab.com/kicad/code/kicad](https://gitlab.com/kicad/code/kicad).
 
 ### Tools recommended for future integration (per CLAUDE.md + SIMULATION-AND-VISUALIZATION-ARC.md)
 
@@ -157,18 +164,25 @@ None bundled at v3 Sprint 11 close. Projects referenced as design inspiration, f
 - **SkyWater SKY130** — 130nm CMOS, Apache 2.0. Archived 2026-04-18. Read-only historical reference. Source: [github.com/google/skywater-pdk](https://github.com/google/skywater-pdk).
 - **GF180MCU** — 180nm CMOS, Apache 2.0. Archived 2026-04-22. Read-only historical reference. Source: [github.com/google/gf180mcu-pdk](https://github.com/google/gf180mcu-pdk).
 
-### Development toolchain
+### Runtime / bundled dependencies (ship in the app)
+
+- **React** + **React-DOM** — MIT (the renderer UI framework)
+- **@xyflow/react** (React Flow, v12) — MIT (the schematic canvas)
+- **Electron** — MIT (the desktop shell; added Sprint 18)
+- **mathjs** — Apache-2.0 (added Sprint 12; NOTICE preserved at project root)
+- **Ajv** + **ajv-formats** — MIT (JSON-Schema validation of the catalog)
+- **yaml** (npm package) — ISC (catalog parsing)
+
+### Development toolchain (build/test only)
 
 - **TypeScript** — Apache 2.0
+- **Vite** + **electron-vite** + **@vitejs/plugin-react** — MIT (build tooling)
 - **Vitest** — MIT
 - **Biome** — MIT OR Apache-2.0 (dual)
-- **Ajv** + **ajv-formats** — MIT
-- **yaml** (npm package) — ISC
-- **@types/node** — MIT (DefinitelyTyped)
-- **mathjs** — Apache-2.0 (added Sprint 12; NOTICE preserved at project root)
+- **@types/node** / **@types/react** / **@types/react-dom** — MIT (DefinitelyTyped)
 - **Node.js** — MIT-based
 
-All development dependencies pass the project's permissive-license-only rule (CLAUDE.md principle 4: MIT / Apache-2.0 / BSD / ISC / CC0 / MPL-2.0). Per-package license verification done during Sprint 2 toolchain selection ([TOOLING-RESEARCH-2026-05.md](TOOLING-RESEARCH-2026-05.md)) and during Sprint 12 mathjs install. Full attribution + NOTICE compliance scaffolding lives in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) and [NOTICE](NOTICE).
+All dependencies pass the project's permissive-license-only rule (CLAUDE.md principle 4: MIT / Apache-2.0 / BSD / ISC / CC0 / MPL-2.0) — every entry above is MIT, Apache-2.0, or ISC, verified 2026-07-05 against each package's own `license` field. The from-scratch board work (footprint model, copper router, DRC, Gerber/Excellon writers, manufacturing ZIP, and the 3-D board engine) adds **no new dependencies** — it is original TypeScript, consistent with the project's from-scratch stance. Per-package license verification done during Sprint 2 toolchain selection ([TOOLING-RESEARCH-2026-05.md](TOOLING-RESEARCH-2026-05.md)), Sprint 12 (mathjs), and Sprint 18 (Electron/React/React Flow). Full attribution + NOTICE compliance scaffolding lives in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) and [NOTICE](NOTICE).
 
 ---
 
