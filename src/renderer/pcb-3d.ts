@@ -1,3 +1,4 @@
+import { fabricationBounds } from './footprint.ts'
 import type { Board } from './pcb-board.ts'
 import { footprintByPlacement, placePoint } from './pcb-board.ts'
 import type { BoardRouting } from './pcb-route.ts'
@@ -64,6 +65,8 @@ const COLORS = {
   copper: '#d7a13c', // gold — real tinned/ENIG-ish copper, both sides (the blue is a 2-D EDA convention)
   copperEdge: '#8a6321',
   silk: '#eef0f2',
+  body: '#242932', // component body — near-black plastic (ICs, chip resistors, headers)
+  pin: '#c2c6cd', // metal pins (tin-plated header posts)
 } as const
 
 const LIGHT = norm({ x: -0.35, y: -0.45, z: 0.82 }) // upper-front light for the shading
@@ -123,6 +126,32 @@ function disk(cx: number, cy: number, r: number, z: number, sides = 12): Vec3[] 
     out.push({ x: cx + r * Math.cos(t), y: cy + r * Math.sin(t), z })
   }
   return out
+}
+
+/**
+ * Extrude a 4-corner base (board-space XY) from z0 to z1 as a closed box (top, bottom, 4 sides) with
+ * outward-facing winding — used for component bodies and header pins. Colour is one per box; the flat
+ * shading differentiates the faces by their angle to the light.
+ */
+function pushBox(
+  faces: Face[],
+  corners: { x: number; y: number }[],
+  z0: number,
+  z1: number,
+  color: string,
+): void {
+  if (corners.length < 4) return
+  const b = corners.map((p) => ({ x: p.x, y: p.y, z: z0 }))
+  const t = corners.map((p) => ({ x: p.x, y: p.y, z: z1 }))
+  const [b0, b1, b2, b3] = b
+  const [t0, t1, t2, t3] = t
+  if (!b0 || !b1 || !b2 || !b3 || !t0 || !t1 || !t2 || !t3) return
+  faces.push({ verts: [t0, t1, t2, t3], color, decals: [] }) // top (+z)
+  faces.push({ verts: [b3, b2, b1, b0], color, decals: [] }) // bottom (−z)
+  faces.push({ verts: [b0, b1, t1, t0], color, decals: [] })
+  faces.push({ verts: [b1, b2, t2, t1], color, decals: [] })
+  faces.push({ verts: [b2, b3, t3, t2], color, decals: [] })
+  faces.push({ verts: [b3, b0, t0, t3], color, decals: [] })
 }
 
 /**
@@ -224,8 +253,44 @@ export function buildBoardScene(board: Board, routing: BoardRouting, stackup: St
     }
   }
 
-  const center = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: T / 2 }
-  const diagonal = Math.hypot(o.w, o.h, T)
+  // component 3-D bodies — the assembled board. Each part's real X/Y (its fabrication outline) is
+  // extruded to its cited body height above the board (+ standoff); pin headers also get metal posts.
+  let topZ = T
+  for (const pl of board.placements) {
+    const fp = footprintByPlacement(pl)
+    const body = fp?.body3d
+    if (fp === undefined || body === undefined) continue
+    const bb = fabricationBounds(fp)
+    if (bb === undefined) continue
+    const z0 = T + body.standoffMm
+    const z1 = z0 + body.heightMm
+    const corners = [
+      { x: bb.x, y: bb.y },
+      { x: bb.x + bb.w, y: bb.y },
+      { x: bb.x + bb.w, y: bb.y + bb.h },
+      { x: bb.x, y: bb.y + bb.h },
+    ].map((p) => placePoint(pl, p))
+    pushBox(faces, corners, z0, z1, COLORS.body)
+    topZ = Math.max(topZ, z1)
+    if (body.pinPosts) {
+      const half = body.pinPosts.widthMm / 2
+      const pinTop = z1 + body.pinPosts.heightMm
+      for (const pad of fp.pads) {
+        const post = [
+          { x: pad.center.x - half, y: pad.center.y - half },
+          { x: pad.center.x + half, y: pad.center.y - half },
+          { x: pad.center.x + half, y: pad.center.y + half },
+          { x: pad.center.x - half, y: pad.center.y + half },
+        ].map((p) => placePoint(pl, p))
+        pushBox(faces, post, z1, pinTop, COLORS.pin)
+      }
+      topZ = Math.max(topZ, pinTop)
+    }
+  }
+
+  // frame the whole assembly (a tall header raises topZ well above the board)
+  const center = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: topZ / 2 }
+  const diagonal = Math.hypot(o.w, o.h, topZ)
   return { faces, center, diagonal }
 }
 

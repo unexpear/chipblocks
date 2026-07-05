@@ -78,6 +78,40 @@ export type Footprint = {
   labels: FootprintLabels
   courtyard: Courtyard
   provenance: FootprintProvenance
+  /** The part's 3-D BODY for the CAD view — its real height above the board, cited. The body's X/Y
+   *  extent is the `fabrication` outline (already cited); this adds the third dimension so the assembled
+   *  board shows the real part sitting on it. Absent ⇒ no body drawn (only the part's copper). */
+  body3d?: Body3D
+}
+
+/** A part's real 3-D body dimensions, cited — the height the `fabrication` X/Y outline is extruded to. */
+export type Body3D = {
+  /** Molded/body height above its standoff, in mm. */
+  heightMm: number
+  /** Gap between the board's top surface and the body's underside, in mm (lead standoff). */
+  standoffMm: number
+  /** Optional protruding pins (pin headers): a square post `widthMm` across rising `heightMm` above the
+   *  body's top face (metal, not plastic). */
+  pinPosts?: { widthMm: number; heightMm: number }
+  provenance: FootprintProvenance
+}
+
+/** The bounding box (mm) of a footprint's fabrication (body) outline — the part's real X/Y extent. */
+export function fabricationBounds(fp: Footprint): Courtyard | undefined {
+  if (fp.fabrication.length === 0) return undefined
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  for (const s of fp.fabrication) {
+    for (const p of [s.from, s.to]) {
+      minX = Math.min(minX, p.x)
+      minY = Math.min(minY, p.y)
+      maxX = Math.max(maxX, p.x)
+      maxY = Math.max(maxY, p.y)
+    }
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
 }
 
 /**
@@ -135,6 +169,17 @@ export const FOOTPRINT_0603: Footprint = {
     url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
     notes:
       'Reproducible: the identical footprint opens in KiCad. Body size 1.6×0.8 mm (the 1608 metric name).',
+  },
+  body3d: {
+    heightMm: 0.45,
+    standoffMm: 0.02,
+    provenance: {
+      source_type: 'datasheet',
+      title: 'EIA 0603 / IEC 1608M chip resistor body height',
+      citation:
+        'Yageo RC0603 and Vishay CRCW0603 chip resistor datasheets: body 1.60×0.80 mm, height 0.45±0.10 mm; SMD solder standoff ≈ 0.02 mm',
+      confidence: 'high',
+    },
   },
 }
 
@@ -238,6 +283,17 @@ export const FOOTPRINT_SOIC8: Footprint = {
     confidence: 'high',
     url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
   },
+  body3d: {
+    heightMm: 1.5,
+    standoffMm: 0.15,
+    provenance: {
+      source_type: 'standard',
+      title: 'JEDEC MS-012 SOIC (narrow, 3.9 mm body) seated height',
+      citation:
+        'JEDEC MS-012 variation AA: overall height A 1.75 mm max (≈1.5 mm nominal), lead standoff A1 0.10–0.25 mm',
+      confidence: 'high',
+    },
+  },
 }
 
 /**
@@ -333,6 +389,17 @@ export const FOOTPRINT_DIP8: Footprint = {
     url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
     notes: 'Origin at pin 1 (0,0), not the part centre — KiCad convention for through-hole ICs.',
   },
+  body3d: {
+    heightMm: 3.3,
+    standoffMm: 0.5,
+    provenance: {
+      source_type: 'standard',
+      title: 'JEDEC MS-001 PDIP-8 molded body thickness',
+      citation:
+        'JEDEC MS-001 variation BA: molded body thickness A2 ≈ 3.3 mm; base standoff A1 ≥ 0.38 mm (leads seat the body ≈0.5 mm above the board)',
+      confidence: 'medium',
+    },
+  },
 }
 
 /**
@@ -394,6 +461,18 @@ export const FOOTPRINT_PINHDR_1X4: Footprint = {
     confidence: 'high',
     url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
     notes: 'Origin at pin 1 (0,0); pin 1 square. The universal 0.1″ prototyping connector.',
+  },
+  body3d: {
+    heightMm: 2.5,
+    standoffMm: 0,
+    pinPosts: { widthMm: 0.64, heightMm: 6.0 },
+    provenance: {
+      source_type: 'datasheet',
+      title: 'Standard 2.54 mm (0.1″) vertical pin header — insulator + pins',
+      citation:
+        'Generic 2.54 mm pin header (e.g. Würth 61300411121, Amphenol 10129378): black insulator 2.5 mm tall, 0.64 mm square posts protruding ≈6 mm above the insulator',
+      confidence: 'medium',
+    },
   },
 }
 
@@ -464,6 +543,17 @@ export const FOOTPRINT_SOT23: Footprint = {
     date_accessed: '2026-07-04',
     notes:
       'Courtyard stored as the bounding rectangle of KiCad’s (corner-cut) courtyard outline — conservative. The silk pin-1 arrow triangle is omitted (line-segment silk model).',
+  },
+  body3d: {
+    heightMm: 1.1,
+    standoffMm: 0.1,
+    provenance: {
+      source_type: 'datasheet',
+      title: 'JEDEC TO-236 (SOT-23) body height',
+      citation:
+        'SOT-23 (TO-236AB) package drawings (ON Semiconductor, Diodes Inc): body ≈2.9×1.3 mm, height 1.0–1.3 mm, lead standoff ≈0.1 mm',
+      confidence: 'high',
+    },
   },
 }
 

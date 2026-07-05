@@ -72,20 +72,24 @@ const routing: BoardRouting = {
   unrouted: [],
 }
 
+// a bare board (no parts) — isolates pure slab + cull behaviour from the component bodies
+const bareBoard = { outline: { x: 0, y: 0, w: 20, h: 8 }, placements: [] }
+const noRouting: BoardRouting = { traces: [], vias: [], unrouted: [] }
+
 describe('buildBoardScene — real to-scale geometry', () => {
   test('the slab is the board’s true finished thickness (1.6 mm default)', () => {
-    const scene = buildBoardScene(board, routing, defaultStackup())
+    const scene = buildBoardScene(bareBoard, noRouting, defaultStackup())
     // every z is either 0 (bottom) or the finished thickness (top) — no exaggeration
     const zs = new Set(scene.faces.flatMap((f) => f.verts.map((v) => Number(v.z.toFixed(3)))))
     expect(zs.has(0)).toBe(true)
     expect(zs.has(1.6)).toBe(true)
-    expect(scene.center.z).toBeCloseTo(0.8, 6) // half the board
+    expect(scene.center.z).toBeCloseTo(0.8, 6) // half the bare board
   })
 
   test('a 2 mm board makes a 2 mm slab (thickness follows the stack-up)', () => {
     const scene = buildBoardScene(
-      board,
-      { traces: [], vias: [], unrouted: [] },
+      bareBoard,
+      noRouting,
       buildStackup({ thicknessMm: 2.0, copperWeight: 'one_oz', surfaceFinish: 'enig' }),
     )
     const maxZ = Math.max(...scene.faces.flatMap((f) => f.verts.map((v) => v.z)))
@@ -123,15 +127,7 @@ describe('renderScene — cull, near-clip, copper on top', () => {
   })
 
   test('backface cull: viewed straight down, the TOP copper shows and the bottom face is culled', () => {
-    const scene2 = buildBoardScene(
-      board,
-      {
-        traces: [],
-        vias: [],
-        unrouted: [],
-      },
-      defaultStackup(),
-    )
+    const scene2 = buildBoardScene(bareBoard, noRouting, defaultStackup())
     const topCam: OrbitCamera = { ...defaultCamera(scene2), elevationDeg: 89, azimuthDeg: 0 }
     const { ctx, fills } = mockCtx()
     renderScene(ctx, scene2, topCam, 480, 480, 1)
@@ -149,6 +145,63 @@ describe('renderScene — cull, near-clip, copper on top', () => {
     const { ctx, fills } = mockCtx()
     expect(() => renderScene(ctx, scene, grazeIn, 640, 480, 1)).not.toThrow()
     expect(fills.length).toBeGreaterThan(0)
+  })
+})
+
+describe('component 3-D bodies — the assembled board, at cited heights', () => {
+  test('each footprinted part extrudes a body box to its cited height above the board', () => {
+    const scene = buildBoardScene(board, { traces: [], vias: [], unrouted: [] }, defaultStackup())
+    // 6 slab faces + 6 faces per component body (2 resistors) = 18
+    expect(scene.faces.length).toBeGreaterThanOrEqual(6 + 2 * 6)
+    // a 0603 body tops out at board 1.6 + standoff 0.02 + height 0.45 = 2.07 mm
+    const maxZ = Math.max(...scene.faces.flatMap((f) => f.verts.map((v) => v.z)))
+    expect(maxZ).toBeCloseTo(2.07, 3)
+  })
+
+  test('a pin header extrudes its plastic base AND its metal posts to the cited pin height', () => {
+    const headerBoard = {
+      outline: { x: 0, y: 0, w: 12, h: 14 },
+      placements: [
+        {
+          partId: 'J1',
+          footprintId: 'PinHeader_1x04_P2.54mm_Vertical',
+          x: 3,
+          y: 3,
+          rotation: 0 as const,
+        },
+      ],
+    }
+    const scene = buildBoardScene(
+      headerBoard,
+      { traces: [], vias: [], unrouted: [] },
+      defaultStackup(),
+    )
+    // base box (6) + 4 pin posts × 6 = 30, plus the 6 slab faces
+    expect(scene.faces.length).toBeGreaterThanOrEqual(6 + 6 + 4 * 6)
+    // the pins reach board 1.6 + base 2.5 + pin 6.0 = 10.1 mm
+    const maxZ = Math.max(...scene.faces.flatMap((f) => f.verts.map((v) => v.z)))
+    expect(maxZ).toBeCloseTo(10.1, 3)
+  })
+
+  test('the camera frames the whole assembly — the tall header raises the framing height', () => {
+    const flat = buildBoardScene(board, { traces: [], vias: [], unrouted: [] }, defaultStackup())
+    const tall = buildBoardScene(
+      {
+        outline: { x: 0, y: 0, w: 12, h: 14 },
+        placements: [
+          {
+            partId: 'J1',
+            footprintId: 'PinHeader_1x04_P2.54mm_Vertical',
+            x: 3,
+            y: 3,
+            rotation: 0 as const,
+          },
+        ],
+      },
+      { traces: [], vias: [], unrouted: [] },
+      defaultStackup(),
+    )
+    expect(tall.center.z).toBeGreaterThan(flat.center.z) // framing rises with the header
   })
 })
 
