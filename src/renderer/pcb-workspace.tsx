@@ -128,7 +128,7 @@ export function BoardView({
   viewHeight?: number
   onMove?: (partId: string, x: number, y: number) => void
   onRotate?: (partId: string, rotation: Rotation) => void
-  /** The route tool's live state + handlers (flat/layers only), threaded to PcbView. */
+  /** The route + via tools' live state + handlers (flat/layers only), threaded to PcbView. */
   route?: {
     active: boolean
     padBoxes: PadBox[]
@@ -137,6 +137,8 @@ export function BoardView({
     color?: string
     onClick: (mm: { x: number; y: number }, pad: PadBox | null) => void
     onMove: (mm: { x: number; y: number }) => void
+    viaActive: boolean
+    onViaClick: (at: { x: number; y: number }, net: string) => void
   }
 }) {
   if (mode === 'exploded') {
@@ -161,6 +163,8 @@ export function BoardView({
             padBoxes: route.padBoxes,
             onRouteClick: route.onClick,
             onRouteMove: route.onMove,
+            viaActive: route.viaActive,
+            onViaClick: route.onViaClick,
             ...(route.pendingPoints ? { pendingPoints: route.pendingPoints } : {}),
             ...(route.cursor !== undefined ? { routeCursor: route.cursor } : {}),
             ...(route.color ? { routeColor: route.color } : {}),

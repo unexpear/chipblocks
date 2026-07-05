@@ -86,6 +86,19 @@ function padShape(p: Pad, scale: number, key: string) {
 
 const nextRotation = (r: Rotation): Rotation => ((r + 90) % 360) as Rotation
 
+/** The closest point on segment a→b to point p (mm) — for snapping a via onto an existing trace. */
+function closestOnSegment(
+  p: { x: number; y: number },
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+): { x: number; y: number } {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len2 = dx * dx + dy * dy || 1
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2))
+  return { x: a.x + dx * t, y: a.y + dy * t }
+}
+
 export function PcbView({
   board,
   airwires = [],
@@ -105,6 +118,8 @@ export function PcbView({
   routeColor = '#ffcf6b',
   onRouteClick,
   onRouteMove,
+  viaActive = false,
+  onViaClick,
 }: {
   board: Board
   /** Unrouted connections (the ratsnest) — drawn as thin straight lines pad-to-pad. */
@@ -137,10 +152,14 @@ export function PcbView({
   onRouteClick?: (mm: { x: number; y: number }, pad: PadBox | null) => void
   /** Pointer move while routing — for the rubber-band segment to the cursor. */
   onRouteMove?: (mm: { x: number; y: number }) => void
+  /** VIA TOOL: when on, a click on copper (a pad or an existing trace) drops a plated via there that
+   *  bridges the two copper layers, carrying that copper's net. */
+  viaActive?: boolean
+  onViaClick?: (at: { x: number; y: number }, net: string) => void
 }) {
   // Editing (drag / rotate) belongs only to the full flat layout — the layer sheets are view-only, and
-  // the route tool takes over the pointer when it's on.
-  const interactive = onMove !== undefined && mode === 'flat' && !routeActive
+  // the route/via tools take over the pointer when on.
+  const interactive = onMove !== undefined && mode === 'flat' && !routeActive && !viaActive
   const [selected, setSelected] = useState<string | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
   const drag = useRef<{
@@ -174,6 +193,27 @@ export function PcbView({
     padBoxes.find(
       (pb) => mm.x >= pb.x && mm.x <= pb.x + pb.w && mm.y >= pb.y && mm.y <= pb.y + pb.h,
     ) ?? null
+  // the copper under a board point — a pad, else the nearest trace within a via-ish radius. Gives the
+  // via tool a snap point + the net to carry.
+  const hitCopper = (mm: {
+    x: number
+    y: number
+  }): { at: { x: number; y: number }; net: string } | null => {
+    const pad = hitPad(mm)
+    if (pad !== null) return { at: { x: pad.x + pad.w / 2, y: pad.y + pad.h / 2 }, net: pad.net }
+    let best: { at: { x: number; y: number }; net: string; d: number } | null = null
+    for (const t of traces) {
+      for (let i = 0; i + 1 < t.points.length; i++) {
+        const a = t.points[i]
+        const b = t.points[i + 1]
+        if (!a || !b) continue
+        const cp = closestOnSegment(mm, a, b)
+        const d = Math.hypot(mm.x - cp.x, mm.y - cp.y)
+        if (d < 0.5 && (best === null || d < best.d)) best = { at: cp, net: t.net, d }
+      }
+    }
+    return best !== null ? { at: best.at, net: best.net } : null
+  }
 
   const endDrag = (e: ReactPointerEvent) => {
     if (drag.current === null) return
@@ -288,7 +328,7 @@ export function PcbView({
         fontFamily: 'system-ui, sans-serif',
         outline: 'none',
         touchAction: 'none',
-        cursor: routeActive ? 'crosshair' : undefined,
+        cursor: routeActive || viaActive ? 'crosshair' : undefined,
       }}
       role="img"
       aria-label="PCB layout"
@@ -299,7 +339,12 @@ export function PcbView({
               const mm = eventToMm(e)
               onRouteClick?.(mm, hitPad(mm))
             }
-          : undefined
+          : viaActive
+            ? (e) => {
+                const hit = hitCopper(eventToMm(e))
+                if (hit !== null) onViaClick?.(hit.at, hit.net)
+              }
+            : undefined
       }
       onPointerMove={(e) => {
         if (interactive) movePart(e)
@@ -482,9 +527,9 @@ export function PcbView({
         </g>
       ))}
 
-      {/* ROUTE TOOL overlay: the clickable pads (dots) + the trace being laid (committed corners as a
+      {/* ROUTE/VIA TOOL overlay: the clickable pads (dots) + the trace being laid (committed corners as a
           solid polyline, plus a dashed rubber-band from the last corner to the cursor). */}
-      {routeActive && (
+      {(routeActive || viaActive) && (
         <g pointerEvents="none" data-route-overlay="true">
           {padBoxes.map((pb) => (
             <circle

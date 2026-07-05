@@ -1224,7 +1224,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
   const [userTraces, setUserTraces] = useState<CopperTrace[]>([])
   const [userVias, setUserVias] = useState<Via[]>([])
   // The board-editing tool + the route being laid (click a pad → corners → a pad, like the wire tool).
-  const [boardTool, setBoardTool] = useState<'select' | 'route'>('select')
+  const [boardTool, setBoardTool] = useState<'select' | 'route' | 'via'>('select')
   const [pendingRoute, setPendingRoute] = useState<{
     net: string
     layer: 'top' | 'bottom'
@@ -1412,6 +1412,24 @@ function Canvas({ project }: { project: ProjectChoice }) {
   const onBoardRouteMove = useCallback(
     (mm: { x: number; y: number }) => {
       if (boardTool === 'route') setRouteCursor(mm)
+    },
+    [boardTool],
+  )
+  // The VIA tool (click-based like the wire tool): click on copper (a pad or a trace) and it drops a
+  // plated via there — a real layer-bridging barrel carrying that copper's net, the vertical jump
+  // between the two copper layers. Merges into userVias → renders (3-D barrel / 2-D ring), DRCs, ships.
+  const onBoardViaClick = useCallback(
+    (at: { x: number; y: number }, net: string) => {
+      if (boardTool !== 'via') return
+      setUserVias((cur) => [
+        ...cur,
+        {
+          net,
+          at,
+          diameterMm: DEFAULT_ROUTE_CLASS.viaDiameterMm,
+          drillMm: DEFAULT_ROUTE_CLASS.viaDrillMm,
+        },
+      ])
     },
     [boardTool],
   )
@@ -5385,6 +5403,22 @@ function Canvas({ project }: { project: ProjectChoice }) {
                   >
                     ▬ Route
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setBoardTool((t) => (t === 'via' ? 'select' : 'via'))}
+                    title="Via tool — click on copper (a pad or a trace) to drop a plated via there: the vertical jump that carries the net between the two copper layers. Shows as a real barrel in the 3-D view."
+                    style={{
+                      border: `1px solid ${THEME.borderStrong}`,
+                      background: boardTool === 'via' ? THEME.accentBlue : THEME.surfaceInput,
+                      color: boardTool === 'via' ? '#0b1220' : THEME.textSoft,
+                      borderRadius: 4,
+                      fontSize: 11,
+                      padding: '2px 10px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ⊙ Via
+                  </button>
                   {boardTool === 'route' && (
                     <span style={{ display: 'flex', gap: 0 }}>
                       {(['f_cu', 'b_cu'] as const).map((id, i) => (
@@ -5454,6 +5488,8 @@ function Canvas({ project }: { project: ProjectChoice }) {
                     padBoxes: pcbRatsnest.padBoxes,
                     onClick: onBoardRouteClick,
                     onMove: onBoardRouteMove,
+                    viaActive: boardTool === 'via' && pcbViewMode !== 'exploded',
+                    onViaClick: onBoardViaClick,
                     cursor: routeCursor,
                     color: activeCopperLayer === 'bottom' ? '#6b9bff' : '#ffcf6b',
                     ...(pendingRoute ? { pendingPoints: pendingRoute.points } : {}),
