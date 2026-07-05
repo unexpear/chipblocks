@@ -2,7 +2,7 @@
 
 > **IMPORTANT DISCLAIMER FIRST:** I am Claude, an AI assistant. **I am not a lawyer. This document is NOT legal advice.** This is a structured review of the project's current legal posture — strengths, gaps, and risk categories — based on common-knowledge analysis of open-source project practices. For any high-stakes legal decision (commercial launch, dispute resolution, IP enforcement), consult a qualified attorney in your jurisdiction. **The disclaimer-of-warranty in [LICENSE](LICENSE) also applies to this document itself.**
 >
-> **Reviewed:** 2026-06-05
+> **Reviewed:** 2026-06-05 · **Re-reviewed:** 2026-07-05 (added the board-road KiCad footprint/data reproduction analysis in the Copyright section)
 
 ---
 
@@ -64,9 +64,21 @@ Under US copyright law (and most jurisdictions): **facts are not copyrightable.*
 - **ARRL symbol GRAPHICS** are copyrighted as visual works. The project explicitly does NOT copy ARRL's specific symbol drawings ([SCHEMATIC-SYMBOLS.md](SCHEMATIC-SYMBOLS.md) is clear on this — ARRL is an inventory checklist, not a graphics source). ChipBlocks's eventual SVG library will be ORIGINAL drawings following the same IEEE/ANSI 315 conventions.
 - **KiCad symbol GRAPHICS** are GPL-licensed. The project cannot copy KiCad's SVG files into a bundled product. The conventions (zigzag = resistor, triangle + bar = diode) are public standards (IEC 60617, IEEE 315), and those conventions themselves are not copyrightable — only specific drawings are.
 
+### KiCad footprint data reproduction — the board road (added 2026-07-05, audited carefully)
+
+The board road reproduces PCB **footprint geometry** (`src/renderer/footprint.ts`) with per-footprint provenance citing the KiCad footprint library. This deserves a precise, honest analysis because the KiCad libraries are **CC-BY-SA 4.0** — whose **ShareAlike** clause is copyleft and would conflict with the project's MIT license *if* we were redistributing copyrightable KiCad expression. Category by category:
+
+- **Pad sizes, pitches, drills, courtyard extents, body-outline dimensions, and the cited 3-D body heights** are **facts** — IPC-7351 land patterns and JEDEC/manufacturer package dimensions, dictated by the package + the standard (there is essentially one correct 0603 land pattern per IPC-7351 density level B). Facts are not copyrightable; the **merger doctrine** covers the rest (one functional way to express a required land pattern). Reproducing these numbers is the same as citing a resistivity value from a textbook. KiCad is used as a convenient, reproducible reference and as **ground-truth** (each footprint was additionally checked against the lead's installed KiCad 10.0). **No ShareAlike trigger — no copyrightable expression is reproduced.**
+- **Silkscreen outline coordinates** are the one place with a *thin* layer of expression on top of the functional requirement (silk must trace the body and clear the pads). Some footprints were modeled on KiCad's specific silk rendering (e.g. SOIC-8's "broken-stroke corner nubs"), and a couple of provenance notes say values were read "verbatim." This is highly functional (limited ways to draw a body outline that avoids pads), **de minimis** (a handful of line segments per part), and **attributed** — so the risk is low. But it is the honest edge case: it is not *purely* fact the way the pad dimensions are. **Belt-and-suspenders option** if maximum purity is ever wanted: regenerate the silk outlines independently from the body dimensions (our own drawing rule) rather than matching KiCad's specific segments — a small, self-contained code change.
+- **KiCad default VALUES** cited as facts about what KiCad ships (the Default net class 0.25 mm/0.2 mm/0.6-0.4 via in `pcb-route.ts`; the 1.6 mm / 0.035 Cu / 1.51 core / 0.01 mask stack-up in `pcb-stackup.ts`; the 1.0 mm/0.15 mm silk text size in `stroke-font.ts`) are **factual observations** of a public tool's defaults — not copyrightable, like noting a program's default window size.
+- **The `.kicad_sch` importer** (`kicad-schematic.ts`) and the **Gerber X2 / Excellon writers** (`pcb-gerber.ts`) are **our own code** implementing published **file formats** (KiCad's s-expression schematic format; Ucamco's Gerber/XNC). Reading and writing a file format for interoperability is not copyright infringement (formats/interfaces are not protectable; *Google v. Oracle*). KiCad's `kicad-cli` was used only to ground-truth our output's byte-shape; no KiCad code was copied, and KiCad is never bundled.
+- **The silk stroke font** (`stroke-font.ts`) is **our own** original glyph set — NOT KiCad's Newstroke font. Only the text *size* is cited (a fact).
+
+**Net:** the dimensional data is facts (safe, no ShareAlike conflict); the code is ours (interoperability); the fonts/symbols are ours. The single honest caveat is that a few silk outlines are modeled on KiCad's specific functional rendering — low risk, attributed, and trivially replaceable if ever desired. Attribution is in [CREDITS.md](CREDITS.md) (KiCad footprint library with its exact CC-BY-SA-4.0 + Library-Exception posture; `kicad-cli` as external-only GPL tool).
+
 ### Verdict
 
-Strong. The project's discipline of citing values per-fixture with sources, plus the explicit rule about not copying graphics from copyrighted symbol libraries, addresses the main copyright risks.
+Strong. The project's discipline of citing values per-fixture with sources, the explicit rule about not copying graphics from copyrighted symbol libraries, and the facts-based reproduction of standard-derived footprint dimensions address the main copyright risks. The one residual (a few KiCad-modeled silk outlines) is low-risk, attributed, and replaceable.
 
 ### Recommendations
 
@@ -344,6 +356,9 @@ This is the **Firefox / Mozilla model**: the code is free (MIT/MPL family), but 
 |---|---|---|---|
 | License compatibility (bundling) | Verified MIT/Apache/BSD/ISC/CC0/MPL-2.0 only | Low | Continue per-tool verification |
 | Copyright of cited values | Per-fixture provenance discipline | Low | Continue, avoid verbatim quotation |
+| KiCad footprint DIMENSIONS reproduced | IPC-7351/JEDEC facts + merger doctrine; attributed to KiCad footprint lib (CC-BY-SA + Library Exception) | Low | Continue — facts, no ShareAlike trigger |
+| KiCad-modeled silk OUTLINES | Functional + de minimis + attributed | Low (the one non-pure-fact edge) | OK as-is; optionally regenerate silk independently for max purity |
+| KiCad file formats (.kicad_sch in, Gerber out) | Own code; formats not copyrightable (interoperability); KiCad never bundled | Very low | Continue |
 | Copyright of graphics (symbols) | Explicit "original drawings, not copies" rule | Low | Confirm when canvas lands |
 | Trademark "ChipBlocks" | Not verified at USPTO TESS | Medium pre-launch, HIGH post-launch | Manual TESS search before any launch |
 | Patent considerations | Public-domain physics + methods only | Low | Patent landscape review before novel-algorithm work |
