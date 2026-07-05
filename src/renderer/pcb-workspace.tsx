@@ -1,0 +1,156 @@
+import type { Board, Rotation } from './pcb-board.ts'
+import { PcbExplodedView } from './pcb-exploded.tsx'
+import { type BoardLayer, type BoardLayerId, layerLabel } from './pcb-layers.ts'
+import type { BoardRouting } from './pcb-route.ts'
+import type { Stackup } from './pcb-stackup.ts'
+import { PcbView } from './pcb-view.tsx'
+import { THEME } from './theme.ts'
+
+/**
+ * Shared board-view pieces, used by BOTH the PCB dock panel and the full-size main-area board
+ * workspace so the two never drift:
+ *
+ *  - PcbViewControls — the Flat / Layers / 3D segmented toggle plus, in Layers mode, the ▲/▼ pager
+ *    that walks the lamination one sheet at a time (with the sheet's real-thickness label).
+ *  - BoardView — the one place that branches the view mode: 3D → the exploded PcbExplodedView, else →
+ *    the flat/layers PcbView. Centralising the branch keeps the `mode` union honest in a single spot.
+ */
+
+export type PcbViewMode = 'flat' | 'layers' | 'exploded'
+
+export function PcbViewControls({
+  mode,
+  onMode,
+  layers,
+  activeLayerIndex,
+  onStep,
+}: {
+  mode: PcbViewMode
+  onMode: (mode: PcbViewMode) => void
+  layers: BoardLayer[]
+  activeLayerIndex: number
+  onStep: (delta: number) => void
+}) {
+  const modes: PcbViewMode[] = ['flat', 'layers', 'exploded']
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <span style={{ display: 'flex', gap: 0 }}>
+        {modes.map((m, i) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => onMode(m)}
+            style={{
+              border: `1px solid ${THEME.borderStrong}`,
+              background: mode === m ? THEME.accentBlue : THEME.surfaceInput,
+              color: mode === m ? '#0b1220' : THEME.textSoft,
+              borderRadius: i === 0 ? '4px 0 0 4px' : i === modes.length - 1 ? '0 4px 4px 0' : '0',
+              borderLeft: i === 0 ? undefined : 'none',
+              fontSize: 11,
+              padding: '2px 10px',
+              cursor: 'pointer',
+            }}
+          >
+            {m === 'flat' ? 'Flat' : m === 'layers' ? 'Layers' : '3D'}
+          </button>
+        ))}
+      </span>
+      {mode === 'layers' && (
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button
+            type="button"
+            onClick={() => onStep(-1)}
+            disabled={activeLayerIndex <= 0}
+            title="Up a layer (toward the top of the stack)"
+            style={{
+              border: `1px solid ${THEME.borderStrong}`,
+              background: THEME.surfaceInput,
+              color: activeLayerIndex <= 0 ? THEME.textFaint : THEME.textSoft,
+              borderRadius: 4,
+              fontSize: 12,
+              padding: '0 8px',
+              cursor: activeLayerIndex <= 0 ? 'default' : 'pointer',
+            }}
+          >
+            ▲
+          </button>
+          <span style={{ fontSize: 11, color: THEME.textSoft, minWidth: 150 }}>
+            {(() => {
+              const l = layers[activeLayerIndex]
+              return l ? layerLabel(l) : ''
+            })()} · {Math.max(activeLayerIndex + 1, 1)}/{layers.length}
+          </span>
+          <button
+            type="button"
+            onClick={() => onStep(1)}
+            disabled={activeLayerIndex >= layers.length - 1}
+            title="Down a layer (toward the bottom of the stack)"
+            style={{
+              border: `1px solid ${THEME.borderStrong}`,
+              background: THEME.surfaceInput,
+              color: activeLayerIndex >= layers.length - 1 ? THEME.textFaint : THEME.textSoft,
+              borderRadius: 4,
+              fontSize: 12,
+              padding: '0 8px',
+              cursor: activeLayerIndex >= layers.length - 1 ? 'default' : 'pointer',
+            }}
+          >
+            ▼
+          </button>
+        </span>
+      )}
+    </div>
+  )
+}
+
+export function BoardView({
+  board,
+  stackup,
+  routing,
+  drcMarkers = [],
+  mode,
+  activeLayer,
+  pxPerMm = 12,
+  explodedPxPerMm,
+  onMove,
+  onRotate,
+}: {
+  board: Board
+  stackup: Stackup
+  routing: BoardRouting
+  drcMarkers?: { x: number; y: number }[]
+  mode: PcbViewMode
+  activeLayer: BoardLayerId
+  /** Scale for the flat/layers view (mm → px). */
+  pxPerMm?: number
+  /** Scale for the exploded view; defaults to pxPerMm. */
+  explodedPxPerMm?: number
+  onMove?: (partId: string, x: number, y: number) => void
+  onRotate?: (partId: string, rotation: Rotation) => void
+}) {
+  if (mode === 'exploded') {
+    return (
+      <PcbExplodedView
+        board={board}
+        stackup={stackup}
+        traces={routing.traces}
+        vias={routing.vias}
+        pxPerMm={explodedPxPerMm ?? pxPerMm}
+      />
+    )
+  }
+  return (
+    <PcbView
+      board={board}
+      airwires={routing.unrouted}
+      traces={routing.traces}
+      vias={routing.vias}
+      markers={drcMarkers}
+      mode={mode}
+      activeLayer={activeLayer}
+      pxPerMm={pxPerMm}
+      {...(onMove ? { onMove } : {})}
+      {...(onRotate ? { onRotate } : {})}
+    />
+  )
+}

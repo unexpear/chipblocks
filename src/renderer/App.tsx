@@ -146,9 +146,8 @@ import {
   type Rotation,
 } from './pcb-board.ts'
 import { runDrc } from './pcb-drc.ts'
-import { PcbExplodedView } from './pcb-exploded.tsx'
 import { type BomRow, buildManufacturingZip } from './pcb-fab.ts'
-import { type BoardLayerId, boardLayers, layerLabel } from './pcb-layers.ts'
+import { type BoardLayerId, boardLayers } from './pcb-layers.ts'
 import { routeBoard } from './pcb-route.ts'
 import {
   buildStackup,
@@ -159,7 +158,7 @@ import {
   SURFACE_FINISHES,
   type SurfaceFinishId,
 } from './pcb-stackup.ts'
-import { PcbView } from './pcb-view.tsx'
+import { BoardView, PcbViewControls } from './pcb-workspace.tsx'
 import { canvasWorld } from './pipeline/canvas-world.ts'
 import {
   lightCastInputs,
@@ -1203,6 +1202,16 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // PCB view: the physical layout — the footprinted parts placed on a board. Derived from the
   // schematic parts (each part → its footprint → a spot on the board); re-derives as parts change.
   const [pcbOpen, setPcbOpen] = useState(false)
+  // Which surface the MAIN building area shows: the schematic canvas (default) or the full-size board
+  // workspace — the board as a first-class editing surface, not just the dock panel. The panel stays.
+  const [workspaceMode, setWorkspaceMode] = useState<'schematic' | 'board'>('schematic')
+  const onWorkspace = useCallback(
+    () => setWorkspaceMode((m) => (m === 'board' ? 'schematic' : 'board')),
+    [],
+  )
+  // The PCB derivation (board → router → DRC) runs when EITHER the dock panel is open OR the board
+  // workspace is showing — so the full-size workspace derives real copper without forcing the dock open.
+  const pcbActive = pcbOpen || workspaceMode === 'board'
   const pcbBoard = useMemo(
     () =>
       deriveBoard(
@@ -1255,34 +1264,34 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // Only derived while the panel is open — the world walk isn't free on big canvases.
   const pcbRatsnest = useMemo(
     () =>
-      pcbOpen
+      pcbActive
         ? computeRatsnest(canvasWorld(nodes, edges).world, pcbBoard)
         : { airwires: [], padBoxes: [] },
-    [pcbOpen, nodes, edges, pcbBoard],
+    [pcbActive, nodes, edges, pcbBoard],
   )
   // The copper: every airwire the single-layer router could turn into a real trace; what it couldn't
   // stays an airwire, honestly counted. Re-routes live as parts move.
   const pcbRouting = useMemo(
-    () => (pcbOpen ? routeBoard(pcbRatsnest) : { traces: [], vias: [], unrouted: [] }),
-    [pcbOpen, pcbRatsnest],
+    () => (pcbActive ? routeBoard(pcbRatsnest) : { traces: [], vias: [], unrouted: [] }),
+    [pcbActive, pcbRatsnest],
   )
   // Design-rule check — the board's failure-mode pass (cited limits), re-run live like the routing.
   const pcbDrc = useMemo(
-    () => (pcbOpen ? runDrc(pcbBoard, pcbRatsnest, pcbRouting) : []),
-    [pcbOpen, pcbBoard, pcbRatsnest, pcbRouting],
+    () => (pcbActive ? runDrc(pcbBoard, pcbRatsnest, pcbRouting) : []),
+    [pcbActive, pcbBoard, pcbRatsnest, pcbRouting],
   )
   // The header's "wired pins not on the board" count reads the UN-flattened schematic — the pins the
   // user actually drew — never the expanded world (whose pack/block internals a user can't point at).
   const pcbOffBoard = useMemo(
     () =>
-      pcbOpen
+      pcbActive
         ? offBoardPins(
             nodes.map((n) => ({ id: n.id, definition: (n.data as DeviceNodeData).definition })),
             edges,
             pcbBoard,
           )
         : 0,
-    [pcbOpen, nodes, edges, pcbBoard],
+    [pcbActive, nodes, edges, pcbBoard],
   )
   // Why the manufacturing ZIP can't be exported yet — empty exactly when the board is complete
   // (parts placed, everything routed, DRC clean, no wired pin missing its footprint). The export
@@ -1976,7 +1985,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
         window.dispatchEvent(new Event('chipblocks:shortcuts'))
         return
       }
-      if (eventMatchesBinding(event, keybinds.selectAll)) {
+      if (workspaceMode !== 'board' && eventMatchesBinding(event, keybinds.selectAll)) {
         event.preventDefault()
         editActions.current.selectAll()
         return
@@ -1991,6 +2000,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
         doRedo()
         return
       }
+      // The board workspace owns the main area — schematic copy/cut/paste/rotate/delete are inert here
+      // (rotating a board part is R on the focused board, handled inside PcbView).
+      if (workspaceMode === 'board') return
       if (eventMatchesBinding(event, keybinds.copy)) {
         event.preventDefault()
         doCopy()
@@ -2019,7 +2031,18 @@ function Canvas({ project }: { project: ProjectChoice }) {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [keybinds, shortcutsOpen, doRotate, doDelete, doCopy, doCut, doPaste, doUndo, doRedo])
+  }, [
+    keybinds,
+    shortcutsOpen,
+    workspaceMode,
+    doRotate,
+    doDelete,
+    doCopy,
+    doCut,
+    doPaste,
+    doUndo,
+    doRedo,
+  ])
 
   const onDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -5143,7 +5166,10 @@ function Canvas({ project }: { project: ProjectChoice }) {
     >
       {/* biome-ignore lint/a11y/noStaticElementInteractions: this wrapper only ROUTES capture-phase clicks to the active tool (lasso guard, scope probes, meter probes, wire clicks); the real interactive targets are the terminal handles and buttons inside */}
       <div
+        data-workspace-mode={workspaceMode}
         onClickCapture={(event) => {
+          // The board workspace owns the main area — schematic tool dispatch is inert under it.
+          if (workspaceMode === 'board') return
           // While the lasso is the active tool, clicks aimed at the CANVAS
           // must not reach React Flow — its pane click would clear the
           // selection the lasso just made. Clicks on overlay UI in this same
@@ -5160,20 +5186,27 @@ function Canvas({ project }: { project: ProjectChoice }) {
           wire.onWireClick(event)
           connect.onConnectClick(event)
         }}
-        onDoubleClickCapture={wire.onWireDoubleClick}
+        onDoubleClickCapture={(event) => {
+          if (workspaceMode === 'board') return
+          wire.onWireDoubleClick(event)
+        }}
         onMouseMove={(event) => {
+          if (workspaceMode === 'board') return
           lastCursorFlow.current = screenToFlowPosition({ x: event.clientX, y: event.clientY })
           wire.onWireMove(event)
         }}
         onPointerDown={(event) => {
+          if (workspaceMode === 'board') return
           onLassoDown(event)
           onBoxDown(event)
         }}
         onPointerMove={(event) => {
+          if (workspaceMode === 'board') return
           onLassoMove(event)
           onBoxMove(event)
         }}
         onPointerUp={() => {
+          if (workspaceMode === 'board') return
           onLassoUp()
           onBoxUp()
         }}
@@ -5185,6 +5218,90 @@ function Canvas({ project }: { project: ProjectChoice }) {
           overflow: 'hidden',
         }}
       >
+        {/* The BOARD WORKSPACE — the physical board as a full-size editing surface filling the main
+            area, layered opaquely over the schematic (which stays mounted, its state intact). The
+            ancestor's schematic pointer handlers are gated on schematic mode so they don't fire under
+            the board. The dock PCB panel still works independently. */}
+        {workspaceMode === 'board' && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 40,
+              background: THEME.surfaceBase,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '8px 12px',
+                borderBottom: `1px solid ${THEME.borderSubtle}`,
+                flexWrap: 'wrap',
+              }}
+            >
+              <span style={{ fontSize: 12, color: THEME.textSoft, fontWeight: 600 }}>Board</span>
+              <span style={{ fontSize: 11, color: THEME.textFaint }}>
+                {pcbBoard.placements.length} part{pcbBoard.placements.length === 1 ? '' : 's'} ·{' '}
+                {pcbBoard.outline.w.toFixed(1)} × {pcbBoard.outline.h.toFixed(1)} mm
+                {pcbRatsnest.airwires.length > 0 &&
+                  ` · ${pcbRatsnest.airwires.length - pcbRouting.unrouted.length}/${pcbRatsnest.airwires.length} routed`}
+                {pcbDrc.length > 0 && (
+                  <span style={{ color: THEME.statusDanger }}> · DRC: {pcbDrc.length}</span>
+                )}
+              </span>
+              <PcbViewControls
+                mode={pcbViewMode}
+                onMode={setPcbViewMode}
+                layers={pcbLayers}
+                activeLayerIndex={pcbActiveLayerIndex}
+                onStep={stepPcbLayer}
+              />
+              <button
+                type="button"
+                onClick={onWorkspace}
+                title="Return to the schematic canvas"
+                style={{
+                  marginLeft: 'auto',
+                  border: `1px solid ${THEME.borderStrong}`,
+                  background: THEME.surfaceInput,
+                  color: THEME.textSoft,
+                  borderRadius: 4,
+                  fontSize: 11,
+                  padding: '3px 10px',
+                  cursor: 'pointer',
+                }}
+              >
+                ← Schematic
+              </button>
+            </div>
+            <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
+              {pcbBoard.placements.length > 0 ? (
+                <BoardView
+                  board={pcbBoard}
+                  stackup={pcbStackup}
+                  routing={pcbRouting}
+                  drcMarkers={pcbDrc.map((v) => v.at)}
+                  mode={pcbViewMode}
+                  activeLayer={pcbActiveLayerId}
+                  pxPerMm={16}
+                  explodedPxPerMm={14}
+                  onMove={onPcbMove}
+                  onRotate={onPcbRotate}
+                />
+              ) : (
+                <span style={{ fontSize: 12, color: THEME.textFaint }}>
+                  No parts with footprints on the board yet — add parts in the schematic (resistors,
+                  capacitors, ICs…) and they appear here as real footprints to place.
+                </span>
+              )}
+            </div>
+          </div>
+        )}
         <HealthContext.Provider value={shownHealth}>
           <CrtScreenContext.Provider value={crtScreens}>
             <LensContext.Provider value={lensState}>
@@ -6046,6 +6163,8 @@ function Canvas({ project }: { project: ProjectChoice }) {
                 onMath={() => setShowMath((open) => !open)}
                 onBode={() => setBodeOpen((open) => !open)}
                 onPcb={() => setPcbOpen((open) => !open)}
+                workspace={workspaceMode}
+                onWorkspace={onWorkspace}
                 onWorstCase={runWorstCase}
                 onGroup={() => setGroupPrompt({ name: '', error: null })}
                 canGroup={selectedCount >= 2}
@@ -6345,106 +6464,25 @@ function Canvas({ project }: { project: ProjectChoice }) {
                 )}
                 {pcbBoard.placements.length > 0 ? (
                   <>
-                    <div
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}
-                    >
-                      <span style={{ display: 'flex', gap: 0 }}>
-                        {(['flat', 'layers', 'exploded'] as const).map((m, i, arr) => (
-                          <button
-                            key={m}
-                            type="button"
-                            onClick={() => setPcbViewMode(m)}
-                            style={{
-                              border: `1px solid ${THEME.borderStrong}`,
-                              background: pcbViewMode === m ? THEME.accentBlue : THEME.surfaceInput,
-                              color: pcbViewMode === m ? '#0b1220' : THEME.textSoft,
-                              borderRadius:
-                                i === 0
-                                  ? '4px 0 0 4px'
-                                  : i === arr.length - 1
-                                    ? '0 4px 4px 0'
-                                    : '0',
-                              borderLeft: i === 0 ? undefined : 'none',
-                              fontSize: 11,
-                              padding: '2px 10px',
-                              cursor: 'pointer',
-                            }}
-                          >
-                            {m === 'flat' ? 'Flat' : m === 'layers' ? 'Layers' : '3D'}
-                          </button>
-                        ))}
-                      </span>
-                      {pcbViewMode === 'layers' && (
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <button
-                            type="button"
-                            onClick={() => stepPcbLayer(-1)}
-                            disabled={pcbActiveLayerIndex <= 0}
-                            title="Up a layer (toward the top of the stack)"
-                            style={{
-                              border: `1px solid ${THEME.borderStrong}`,
-                              background: THEME.surfaceInput,
-                              color: pcbActiveLayerIndex <= 0 ? THEME.textFaint : THEME.textSoft,
-                              borderRadius: 4,
-                              fontSize: 12,
-                              padding: '0 8px',
-                              cursor: pcbActiveLayerIndex <= 0 ? 'default' : 'pointer',
-                            }}
-                          >
-                            ▲
-                          </button>
-                          <span style={{ fontSize: 11, color: THEME.textSoft, minWidth: 150 }}>
-                            {(() => {
-                              const l = pcbLayers[pcbActiveLayerIndex]
-                              return l ? layerLabel(l) : ''
-                            })()} · {Math.max(pcbActiveLayerIndex + 1, 1)}/{pcbLayers.length}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => stepPcbLayer(1)}
-                            disabled={pcbActiveLayerIndex >= pcbLayers.length - 1}
-                            title="Down a layer (toward the bottom of the stack)"
-                            style={{
-                              border: `1px solid ${THEME.borderStrong}`,
-                              background: THEME.surfaceInput,
-                              color:
-                                pcbActiveLayerIndex >= pcbLayers.length - 1
-                                  ? THEME.textFaint
-                                  : THEME.textSoft,
-                              borderRadius: 4,
-                              fontSize: 12,
-                              padding: '0 8px',
-                              cursor:
-                                pcbActiveLayerIndex >= pcbLayers.length - 1 ? 'default' : 'pointer',
-                            }}
-                          >
-                            ▼
-                          </button>
-                        </span>
-                      )}
-                    </div>
-                    {pcbViewMode === 'exploded' ? (
-                      <PcbExplodedView
-                        board={pcbBoard}
-                        stackup={pcbStackup}
-                        traces={pcbRouting.traces}
-                        vias={pcbRouting.vias}
-                        pxPerMm={11}
-                      />
-                    ) : (
-                      <PcbView
-                        board={pcbBoard}
-                        airwires={pcbRouting.unrouted}
-                        traces={pcbRouting.traces}
-                        vias={pcbRouting.vias}
-                        markers={pcbDrc.map((v) => v.at)}
-                        mode={pcbViewMode}
-                        activeLayer={pcbActiveLayerId}
-                        pxPerMm={12}
-                        onMove={onPcbMove}
-                        onRotate={onPcbRotate}
-                      />
-                    )}
+                    <PcbViewControls
+                      mode={pcbViewMode}
+                      onMode={setPcbViewMode}
+                      layers={pcbLayers}
+                      activeLayerIndex={pcbActiveLayerIndex}
+                      onStep={stepPcbLayer}
+                    />
+                    <BoardView
+                      board={pcbBoard}
+                      stackup={pcbStackup}
+                      routing={pcbRouting}
+                      drcMarkers={pcbDrc.map((v) => v.at)}
+                      mode={pcbViewMode}
+                      activeLayer={pcbActiveLayerId}
+                      pxPerMm={12}
+                      explodedPxPerMm={11}
+                      onMove={onPcbMove}
+                      onRotate={onPcbRotate}
+                    />
                     {pcbDrc.length > 0 && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                         {pcbDrc.slice(0, 8).map((v) => (

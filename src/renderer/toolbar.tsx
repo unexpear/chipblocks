@@ -53,6 +53,7 @@ export type ToolbarActionId =
   | 'timeline'
   | 'bode'
   | 'pcb'
+  | 'workspace'
   | 'group'
   | 'clipboard'
   | 'math'
@@ -106,7 +107,15 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
     icon: '▦',
     color: THEME.statusOk,
     title:
-      'PCB — the physical layout: every part that has a footprint placed on a board, copper pads and all. The first physical form of the circuit, on the road to the manufacturing files.',
+      'PCB — the physical layout in a side panel: every part that has a footprint placed on a board, copper pads and all. The first physical form of the circuit, on the road to the manufacturing files.',
+  },
+  {
+    id: 'workspace',
+    label: 'Board',
+    icon: '🧱',
+    color: THEME.accentBlueBright,
+    title:
+      'Board workspace — open the physical board as a FULL-SIZE editing surface in the main area (co-equal with the schematic), not just the side panel. Flat / Layers / 3-D views, drag parts to place them, and the board tools live here. Click again to return to the schematic.',
   },
   {
     id: 'group',
@@ -215,6 +224,8 @@ export function ToolbarItems({
   onTimeline,
   onBode,
   onPcb,
+  workspace,
+  onWorkspace,
   onMath,
   onWorstCase,
   onGroup,
@@ -249,6 +260,8 @@ export function ToolbarItems({
   onTimeline: () => void
   onBode: () => void
   onPcb: () => void
+  workspace: 'schematic' | 'board'
+  onWorkspace: () => void
   onMath: () => void
   onWorstCase: () => void
   onGroup: () => void
@@ -273,6 +286,7 @@ export function ToolbarItems({
     timeline: onTimeline,
     bode: onBode,
     pcb: onPcb,
+    workspace: onWorkspace,
     group: onGroup,
     clipboard: onClipboard,
     math: onMath,
@@ -421,6 +435,8 @@ export function ToolbarItems({
           are selected; Clipboard shows its count — the only two per-button extras. */}
       {TOOLBAR_ACTIONS.map((action) => {
         const disabled = action.id === 'group' && !canGroup
+        // The board-workspace button is a toggle: it lights up while the main area shows the board.
+        const active = action.id === 'workspace' && workspace === 'board'
         const label =
           action.id === 'clipboard' && clipboardCount > 0
             ? `${action.label} (${clipboardCount})`
@@ -433,7 +449,7 @@ export function ToolbarItems({
             disabled={disabled}
             title={action.title}
             style={{
-              ...toolButton(false),
+              ...toolButton(active),
               flexDirection: 'row',
               gap: 6,
               padding: '8px 12px',
