@@ -142,12 +142,10 @@ export const FOOTPRINT_0603: Footprint = {
       type: 'smd',
     },
   ],
-  silkscreen: [
-    { from: { x: -0.237258, y: -0.5225 }, to: { x: 0.237258, y: -0.5225 }, width: 0.12 },
-    { from: { x: -0.237258, y: 0.5225 }, to: { x: 0.237258, y: 0.5225 }, width: 0.12 },
-  ],
-  // The component body outline (F.Fab): a 1.6 × 0.825 mm rectangle — the actual chip, as KiCad draws it
-  // on the fabrication layer. Four edges of the rect (-0.8, -0.4125) → (0.8, 0.4125).
+  // ChipBlocks' own corner-tick silk, computed from the courtyard (never copied from another tool).
+  silkscreen: cornerTicksSilk({ x: -1.48, y: -0.73, w: 2.96, h: 1.46 }),
+  // The component body outline (F.Fab): a 1.6 × 0.825 mm rectangle — the chip's real body extent (an
+  // IPC-7351 / package fact). Four edges of the rect (-0.8, -0.4125) → (0.8, 0.4125).
   fabrication: [
     { from: { x: -0.8, y: -0.4125 }, to: { x: 0.8, y: -0.4125 }, width: 0.1 },
     { from: { x: 0.8, y: -0.4125 }, to: { x: 0.8, y: 0.4125 }, width: 0.1 },
@@ -194,10 +192,36 @@ function rectOutline(x0: number, y0: number, x1: number, y1: number, width = 0.1
 }
 
 /**
- * SOIC-8 (3.9×4.9 mm body, 1.27 mm pitch) — the 8-lead small-outline IC, gull-wing SMD. Pads + courtyard
- * + text anchors are verbatim from KiCad (Package_SO.pretty/SOIC-8_3.9x4.9mm_P1.27mm.kicad_mod); the
- * silk + fab body are the outline rectangles (KiCad additionally chamfers the pin-1 corner). Pin 1 is
- * the roundrect pad (2–8 keep the same size); orientation reads off that, KiCad's convention.
+ * ChipBlocks' OWN silkscreen rule: short right-angle corner ticks at the four corners of the footprint's
+ * courtyard. Every segment is COMPUTED here from the footprint's own dimensions — nothing is copied or
+ * traced from another tool's silk. The courtyard already encloses every pad with clearance, so these
+ * ticks never touch copper (the silk-over-pad DRC stays clean). One clean, tool-independent silk style
+ * for every package, so no shipped silk coordinate is derived from any third-party library.
+ */
+function cornerTicksSilk(rect: Courtyard, tickMm = 0.5, width = 0.12): SilkLine[] {
+  const t = Math.max(0.2, Math.min(tickMm, rect.w / 2 - 0.05, rect.h / 2 - 0.05))
+  const x0 = rect.x
+  const y0 = rect.y
+  const x1 = rect.x + rect.w
+  const y1 = rect.y + rect.h
+  const corner = (cx: number, cy: number, sx: number, sy: number): SilkLine[] => [
+    { from: { x: cx, y: cy }, to: { x: cx + sx * t, y: cy }, width },
+    { from: { x: cx, y: cy }, to: { x: cx, y: cy + sy * t }, width },
+  ]
+  return [
+    ...corner(x0, y0, 1, 1),
+    ...corner(x1, y0, -1, 1),
+    ...corner(x1, y1, -1, -1),
+    ...corner(x0, y1, 1, -1),
+  ]
+}
+
+/**
+ * SOIC-8 (3.9×4.9 mm body, 1.27 mm pitch) — the 8-lead small-outline IC, gull-wing SMD. Pad geometry is
+ * the IPC-7351 / JEDEC MS-012 land pattern (ground-truthed against KiCad's Package_SO library); the fab
+ * body is the real 3.9×4.9 mm outline. The SILK is ChipBlocks' own corner-tick rule (cornerTicksSilk),
+ * not copied from any library. Pin 1 is the roundrect pad (2–8 keep the same size); orientation reads
+ * off that (the standard convention).
  */
 export const FOOTPRINT_SOIC8: Footprint = {
   id: 'SOIC-8_3.9x4.9mm_P1.27mm',
@@ -261,17 +285,8 @@ export const FOOTPRINT_SOIC8: Footprint = {
       type: 'smd',
     },
   ],
-  // KiCad's actual silk (verbatim): the top + bottom edges, with the long sides drawn only as tiny
-  // 0.095 mm corner nubs (y ±2.465…±2.56) — the verticals are BROKEN there so the outline never
-  // runs down the pad columns (pads reach y ±2.205), which is exactly what keeps silk off the pads.
-  silkscreen: [
-    { from: { x: -2.06, y: -2.56 }, to: { x: 2.06, y: -2.56 }, width: 0.12 },
-    { from: { x: -2.06, y: -2.465 }, to: { x: -2.06, y: -2.56 }, width: 0.12 },
-    { from: { x: -2.06, y: 2.56 }, to: { x: -2.06, y: 2.465 }, width: 0.12 },
-    { from: { x: 2.06, y: -2.56 }, to: { x: 2.06, y: -2.465 }, width: 0.12 },
-    { from: { x: 2.06, y: 2.465 }, to: { x: 2.06, y: 2.56 }, width: 0.12 },
-    { from: { x: 2.06, y: 2.56 }, to: { x: -2.06, y: 2.56 }, width: 0.12 },
-  ],
+  // ChipBlocks' own corner-tick silk, computed from the courtyard (never copied from another tool).
+  silkscreen: cornerTicksSilk({ x: -3.7, y: -2.7, w: 7.4, h: 5.4 }),
   fabrication: rectOutline(-1.95, -2.45, 1.95, 2.45),
   labels: { reference: { x: 0, y: -3.4 }, value: { x: 0, y: 3.4 }, fabReference: { x: 0, y: 0 } },
   courtyard: { x: -3.7, y: -2.7, w: 7.4, h: 5.4 },
@@ -300,7 +315,7 @@ export const FOOTPRINT_SOIC8: Footprint = {
  * DIP-8 (0.3″ / 7.62 mm rows) — the 8-pin dual-in-line THROUGH-HOLE IC. Pads + drills + courtyard + text
  * verbatim from KiCad (Package_DIP.pretty/DIP-8_W7.62mm.kicad_mod). Origin at PIN 1 (0,0), KiCad's
  * through-hole convention — not the part centre. Pin 1 is the square (roundrect) pad, 2–8 are round.
- * Silk + fab are the body-outline rectangles (KiCad chamfers pin 1).
+ * Fab is the body-outline rectangle; the silk is ChipBlocks' own corner ticks (cornerTicksSilk).
  */
 export const FOOTPRINT_DIP8: Footprint = {
   id: 'DIP-8_W7.62mm',
@@ -372,7 +387,7 @@ export const FOOTPRINT_DIP8: Footprint = {
       holeDiameter: 0.8,
     },
   ],
-  silkscreen: rectOutline(1.16, -1.33, 6.46, 8.95, 0.12),
+  silkscreen: cornerTicksSilk({ x: -1.06, y: -1.52, w: 9.73, h: 10.66 }),
   fabrication: rectOutline(0.635, -1.27, 6.985, 8.89),
   labels: {
     reference: { x: 3.81, y: -2.33 },
@@ -405,7 +420,7 @@ export const FOOTPRINT_DIP8: Footprint = {
 /**
  * 1×4 pin header, 2.54 mm (0.1″) pitch, vertical through-hole. Pads + drills + courtyard + text verbatim
  * from KiCad (Connector_PinHeader_2.54mm.pretty/PinHeader_1x04_P2.54mm_Vertical.kicad_mod). Origin at
- * pin 1; pin 1 is the square (rect) pad. Silk + fab are the body-outline rectangles.
+ * pin 1; pin 1 is the square (rect) pad. Fab is the body-outline rectangle; silk is our corner ticks.
  */
 export const FOOTPRINT_PINHDR_1X4: Footprint = {
   id: 'PinHeader_1x04_P2.54mm_Vertical',
@@ -445,7 +460,7 @@ export const FOOTPRINT_PINHDR_1X4: Footprint = {
       holeDiameter: 1.0,
     },
   ],
-  silkscreen: rectOutline(-1.38, -1.38, 1.38, 9.0, 0.12),
+  silkscreen: cornerTicksSilk({ x: -1.77, y: -1.77, w: 3.54, h: 11.16 }),
   fabrication: rectOutline(-1.27, -1.27, 1.27, 8.89),
   labels: {
     reference: { x: 0, y: -2.38 },
@@ -478,14 +493,13 @@ export const FOOTPRINT_PINHDR_1X4: Footprint = {
 
 /**
  * SOT-23 (JEDEC TO-236) — the 3-lead small-outline transistor, THE package small transistors ship
- * in. Pads + courtyard + text anchors verbatim from KiCad (Package_TO_SOT_SMD.pretty/SOT-23
- * .kicad_mod): pads 1/2 left at (−0.9375, ∓0.95), pad 3 right at (0.9375, 0), each 1.475×0.6 mm
- * roundrect. Fab body is the real 1.3×2.9 mm outline WITH its pin-1 chamfer (the file's polygon,
- * drawn as its five edges). Silk is the file's seven broken outline strokes; its filled pin-1
- * arrow triangle is omitted (our silk model is line segments) — pin 1 still reads from the
- * chamfer + the pad layout. Courtyard is the bounding rectangle of KiCad's courtyard outline (theirs
- * cuts all four corners and notches the left edge inward; the rectangle CONTAINS it, so collision
- * checks stay conservative).
+ * in. Pad geometry is the JEDEC TO-236 / IPC-7351 land pattern (ground-truthed against KiCad's
+ * Package_TO_SOT_SMD library): pads 1/2 left at (−0.9375, ∓0.95), pad 3 right at (0.9375, 0), each
+ * 1.475×0.6 mm roundrect. Fab body is the real 1.3×2.9 mm outline WITH its pin-1 chamfer (drawn as its
+ * five edges). The SILK is ChipBlocks' own corner-tick rule (cornerTicksSilk) — pin 1 reads from the
+ * chamfer + the pad layout. Courtyard is the bounding rectangle of the standard courtyard outline
+ * (which cuts all four corners and notches the left edge inward; the rectangle CONTAINS it, so
+ * collision checks stay conservative).
  */
 export const FOOTPRINT_SOT23: Footprint = {
   id: 'SOT-23',
@@ -514,15 +528,8 @@ export const FOOTPRINT_SOT23: Footprint = {
       type: 'smd',
     },
   ],
-  silkscreen: [
-    { from: { x: -0.76, y: -1.56 }, to: { x: 0.76, y: -1.56 }, width: 0.12 },
-    { from: { x: -0.76, y: -1.51 }, to: { x: -0.76, y: -1.56 }, width: 0.12 },
-    { from: { x: -0.76, y: 0.39 }, to: { x: -0.76, y: -0.39 }, width: 0.12 },
-    { from: { x: -0.76, y: 1.56 }, to: { x: -0.76, y: 1.51 }, width: 0.12 },
-    { from: { x: 0.76, y: -1.56 }, to: { x: 0.76, y: -0.56 }, width: 0.12 },
-    { from: { x: 0.76, y: 0.56 }, to: { x: 0.76, y: 1.56 }, width: 0.12 },
-    { from: { x: 0.76, y: 1.56 }, to: { x: -0.76, y: 1.56 }, width: 0.12 },
-  ],
+  // ChipBlocks' own corner-tick silk, computed from the courtyard (never copied from another tool).
+  silkscreen: cornerTicksSilk({ x: -1.93, y: -1.7, w: 3.86, h: 3.4 }),
   // The body polygon's five edges, pin-1 chamfer included: (−0.325,−1.45) is the chamfer corner.
   fabrication: [
     { from: { x: -0.325, y: -1.45 }, to: { x: 0.65, y: -1.45 }, width: 0.1 },
@@ -542,7 +549,7 @@ export const FOOTPRINT_SOT23: Footprint = {
     url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
     date_accessed: '2026-07-04',
     notes:
-      'Courtyard stored as the bounding rectangle of KiCad’s (corner-cut) courtyard outline — conservative. The silk pin-1 arrow triangle is omitted (line-segment silk model).',
+      'Courtyard stored as the bounding rectangle of the (corner-cut) courtyard outline — conservative. Silk is ChipBlocks’ own corner-tick rule, not the library’s outline.',
   },
   body3d: {
     heightMm: 1.1,

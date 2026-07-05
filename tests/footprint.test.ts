@@ -35,10 +35,18 @@ describe('0603 land pattern — matches the cited IPC-7351 / KiCad geometry', ()
     expect(FOOTPRINT_0603.courtyard).toEqual({ x: -1.48, y: -0.73, w: 2.96, h: 1.46 })
   })
 
-  test('silkscreen is the two lines above + below the body', () => {
-    expect(FOOTPRINT_0603.silkscreen).toHaveLength(2)
-    expect(FOOTPRINT_0603.silkscreen[0]?.from.y).toBeCloseTo(-0.5225, 6)
-    expect(FOOTPRINT_0603.silkscreen[1]?.from.y).toBeCloseTo(0.5225, 6)
+  test('silkscreen is ChipBlocks’ own corner ticks (8 segments), pad-free, at the courtyard corners', () => {
+    // our own cornerTicksSilk rule: 2 segments at each of the 4 courtyard corners = 8
+    expect(FOOTPRINT_0603.silkscreen).toHaveLength(8)
+    const ends = FOOTPRINT_0603.silkscreen.flatMap((l) => [l.from, l.to])
+    // every silk vertex is within the courtyard (−1.48..1.48, −0.73..0.73) and clear of the pads
+    // (pads reach x±1.225, y±0.475): each tick vertex is outside that copper envelope
+    for (const p of ends) {
+      expect(Math.abs(p.x)).toBeLessThanOrEqual(1.48 + 1e-6)
+      expect(Math.abs(p.y)).toBeLessThanOrEqual(0.73 + 1e-6)
+      const insidePadEnvelope = Math.abs(p.x) < 1.225 && Math.abs(p.y) < 0.475
+      expect(insidePadEnvelope).toBe(false)
+    }
   })
 
   test('fabrication body outline is the 1.6 × 0.825 mm chip rectangle (KiCad F.Fab)', () => {

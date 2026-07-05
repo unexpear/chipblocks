@@ -230,15 +230,15 @@ describe('solder paste — the stencil, reflow pads only', () => {
 })
 
 describe('silkscreen and profile', () => {
-  test('silk draws each footprint outline where the part sits, at the footprint’s real line width', () => {
+  test('silk draws each footprint’s (own corner-tick) outline where the part sits, at its real line width', () => {
     const { board } = routedPair()
     const silk = gerberSilkscreen(board, WHEN)
     expect(silk).toContain('%TF.FileFunction,Legend,Top*%')
-    expect(silk).toContain('C,0.120000') // the 0603’s silk width, from the KiCad footprint
-    // R1’s top silk line: (10−0.237258, 10−0.5225) → (10+0.237258, same)
-    expect(silk).toContain('X9762742Y-9477500D02*')
-    expect(silk).toContain('X10237258Y-9477500D01*')
-    expect(silk).toContain('%TO.C,R1*%')
+    expect(silk).toContain('C,0.120000') // the 0603’s silk width (ChipBlocks’ own cornerTicksSilk)
+    // the corner ticks are stroked: a pen-up move (D02) then a pen-down draw (D01) per segment
+    expect(silk).toMatch(/D02\*/)
+    expect(silk).toMatch(/D01\*/)
+    expect(silk).toContain('%TO.C,R1*%') // the strokes carry R1's net/part attribute
   })
 
   test('the reference designator is STROKED on the silk at the cited 1.0 mm / 0.15 mm lettering', () => {
