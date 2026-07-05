@@ -5289,7 +5289,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                   mode={pcbViewMode}
                   activeLayer={pcbActiveLayerId}
                   pxPerMm={16}
-                  explodedPxPerMm={14}
+                  viewHeight={560}
                   onMove={onPcbMove}
                   onRotate={onPcbRotate}
                 />
@@ -6479,7 +6479,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                       mode={pcbViewMode}
                       activeLayer={pcbActiveLayerId}
                       pxPerMm={12}
-                      explodedPxPerMm={11}
+                      viewHeight={380}
                       onMove={onPcbMove}
                       onRotate={onPcbRotate}
                     />

@@ -1,5 +1,5 @@
+import { Pcb3DView } from './pcb-3d-view.tsx'
 import type { Board, Rotation } from './pcb-board.ts'
-import { PcbExplodedView } from './pcb-exploded.tsx'
 import { type BoardLayer, type BoardLayerId, layerLabel } from './pcb-layers.ts'
 import type { BoardRouting } from './pcb-route.ts'
 import type { Stackup } from './pcb-stackup.ts'
@@ -111,7 +111,7 @@ export function BoardView({
   mode,
   activeLayer,
   pxPerMm = 12,
-  explodedPxPerMm,
+  viewHeight = 460,
   onMove,
   onRotate,
 }: {
@@ -123,21 +123,14 @@ export function BoardView({
   activeLayer: BoardLayerId
   /** Scale for the flat/layers view (mm → px). */
   pxPerMm?: number
-  /** Scale for the exploded view; defaults to pxPerMm. */
-  explodedPxPerMm?: number
+  /** Pixel height for the 3-D canvas. */
+  viewHeight?: number
   onMove?: (partId: string, x: number, y: number) => void
   onRotate?: (partId: string, rotation: Rotation) => void
 }) {
   if (mode === 'exploded') {
-    return (
-      <PcbExplodedView
-        board={board}
-        stackup={stackup}
-        traces={routing.traces}
-        vias={routing.vias}
-        pxPerMm={explodedPxPerMm ?? pxPerMm}
-      />
-    )
+    // "3D" — the real to-scale, orbitable board (the from-scratch pcb-3d engine).
+    return <Pcb3DView board={board} routing={routing} stackup={stackup} height={viewHeight} />
   }
   return (
     <PcbView

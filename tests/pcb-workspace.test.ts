@@ -36,11 +36,12 @@ describe('BoardView — the one view-mode branch', () => {
     expect(html).toContain('aria-label="PCB layout"')
   })
 
-  test('3D mode renders the exploded lamination', () => {
+  test('3D mode renders the real to-scale 3-D board canvas', () => {
     const html = renderToStaticMarkup(
       createElement(BoardView, { board, stackup, routing, mode: 'exploded', activeLayer: 'f_cu' }),
     )
-    expect(html).toContain('aria-label="PCB exploded lamination view"')
+    expect(html).toContain('aria-label="PCB 3D view"')
+    expect(html).toContain('data-pcb3d="true"')
   })
 })
 
