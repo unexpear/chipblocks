@@ -24,10 +24,11 @@ export function Pcb3DView({
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState({ w: 640, h: height })
 
-  // exploded lamination: 0 = the assembled board; >0 separates the copper layers in real space (the
-  // stage for seeing — and eventually routing — the connections between layers).
+  // exploded lamination: 0 = the assembled board; >0 splits the stack-up layers apart in real space
+  // (the stage for seeing — and eventually routing — the connections between layers). The gap is capped
+  // modestly so the thin copper/mask layers stay a readable stack rather than scattering far apart.
   const [explode, setExplode] = useState(0)
-  const maxExplode = Math.max(8, Math.max(board.outline.w, board.outline.h) * 0.6)
+  const maxExplode = Math.max(3, Math.max(board.outline.w, board.outline.h) * 0.22)
   const scene = useMemo(
     () => buildBoardScene(board, routing, stackup, explode),
     [board, routing, stackup, explode],

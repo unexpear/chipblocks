@@ -2,7 +2,7 @@ import { fabricationBounds } from './footprint.ts'
 import type { Board } from './pcb-board.ts'
 import { footprintByPlacement, placePoint } from './pcb-board.ts'
 import type { BoardRouting } from './pcb-route.ts'
-import type { Stackup } from './pcb-stackup.ts'
+import type { Stackup, StackupLayer } from './pcb-stackup.ts'
 
 /**
  * A from-scratch, TO-SCALE 3-D renderer for the PCB — the real board in real space, the way a CAD
@@ -72,6 +72,7 @@ const COLORS = {
   fr4: '#0c3a24', // the board EDGE (bare FR4 laminate)
   maskTop: '#0e5836', // green soldermask over the copper planes
   maskBottom: '#0b4a2d',
+  core: '#116a42', // the FR4 dielectric core slab (opaque) in the exploded stack
   copper: '#d7a13c', // gold — real tinned/ENIG-ish copper, both sides (the blue is a 2-D EDA convention)
   copperEdge: '#8a6321',
   silk: '#eef0f2',
@@ -165,9 +166,44 @@ function pushBox(
 }
 
 /**
+ * A full-board-outline slab from z0 to z1 (a stack-up layer in the exploded view). The TOP face carries
+ * any copper/silk decals. `alpha` makes it translucent (thin mask/copper sheets you can see through) and
+ * then draws all faces (double-sided) so the translucency reads through the box.
+ */
+function addSlab(
+  faces: Face[],
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  z0: number,
+  z1: number,
+  color: string,
+  topDecals: Poly[],
+  alpha?: number,
+): void {
+  const b00 = { x: x0, y: y0, z: z0 }
+  const b10 = { x: x1, y: y0, z: z0 }
+  const b11 = { x: x1, y: y1, z: z0 }
+  const b01 = { x: x0, y: y1, z: z0 }
+  const t00 = { x: x0, y: y0, z: z1 }
+  const t10 = { x: x1, y: y0, z: z1 }
+  const t11 = { x: x1, y: y1, z: z1 }
+  const t01 = { x: x0, y: y1, z: z1 }
+  const extra = alpha !== undefined ? { alpha, doubleSided: true } : {}
+  faces.push({ verts: [t00, t10, t11, t01], color, decals: topDecals, ...extra }) // top (+z)
+  faces.push({ verts: [b01, b11, b10, b00], color, decals: [], ...extra }) // bottom
+  faces.push({ verts: [b00, b10, t10, t00], color, decals: [], ...extra })
+  faces.push({ verts: [b10, b11, t11, t10], color, decals: [], ...extra })
+  faces.push({ verts: [b11, b01, t01, t11], color, decals: [], ...extra })
+  faces.push({ verts: [b01, b00, t00, t01], color, decals: [], ...extra })
+}
+
+/**
  * Build the board's real 3-D geometry from the derived board + routing + stack-up. All millimetres:
  * the FR4 slab at true thickness, the copper pads/traces on their real surfaces, and via barrels
- * through the board.
+ * through the board. `explodeMm` > 0 SPLITS the board into its real stack-up layers (F.Mask / F.Cu /
+ * FR4 core / B.Cu / B.Mask), each a slab at its true thickness, separated in space with its own artwork.
  */
 export function buildBoardScene(
   board: Board,
@@ -183,23 +219,26 @@ export function buildBoardScene(
   const y1 = o.y + o.h
 
   const exploded = explodeMm > 0
-  const topCuZ = T + explodeMm // top copper: on the surface (assembled) or lifted (exploded)
-  const botCuZ = -explodeMm // bottom copper: on the surface or dropped away
-  const compBase = exploded ? topCuZ : T // components ride on the (possibly lifted) top copper
 
-  // the eight corners of the FR4 slab (always z=0..T)
-  const c = {
-    b00: { x: x0, y: y0, z: 0 },
-    b10: { x: x1, y: y0, z: 0 },
-    b11: { x: x1, y: y1, z: 0 },
-    b01: { x: x0, y: y1, z: 0 },
-    t00: { x: x0, y: y0, z: T },
-    t10: { x: x1, y: y0, z: T },
-    t11: { x: x1, y: y1, z: T },
-    t01: { x: x0, y: y1, z: T },
+  // EXPLODED LAYOUT: place each real stack-up layer bottom→top, its own slab at its true thickness,
+  // separated by explodeMm gaps (contiguous when explodeMm = 0 → the real board). Record the copper
+  // layers' surface heights + the top of the stack (where the parts ride).
+  type Placed = { name: string; type: StackupLayer['type']; z0: number; z1: number }
+  const placed: Placed[] = []
+  if (exploded) {
+    let z = 0
+    for (const L of [...stackup.layers].reverse()) {
+      placed.push({ name: L.name, type: L.type, z0: z, z1: z + L.thicknessMm })
+      z = z + L.thicknessMm + explodeMm
+    }
   }
+  const layerTop = (name: string, fallback: number) =>
+    placed.find((p) => p.name === name)?.z1 ?? fallback
+  const topCuZ = exploded ? layerTop('F.Cu', T) : T // copper on the top-copper layer's surface
+  const botCuZ = exploded ? layerTop('B.Cu', 0) : 0 // copper on the bottom-copper layer's surface
+  const compBase = exploded ? (placed[placed.length - 1]?.z1 ?? T) : T // parts ride the top layer
 
-  // copper polys (traces + pads + via caps) at their (possibly exploded) layer heights
+  // copper polys (traces + pads + via caps) at their (possibly separated) layer heights
   const topCopper: Poly[] = []
   const bottomCopper: Poly[] = []
   for (const t of routing.traces) {
@@ -237,52 +276,61 @@ export function buildBoardScene(
     })
   }
 
-  const faces: Face[] = [
-    // the FR4 slab. Assembled: the top/bottom faces CARRY the copper (decals). Exploded: copper floats
-    // on its own planes above/below, so the slab stays bare green.
-    {
-      verts: [c.t00, c.t10, c.t11, c.t01],
-      color: COLORS.maskTop,
-      decals: exploded ? [] : topCopper,
-    },
-    {
-      verts: [c.b01, c.b11, c.b10, c.b00],
-      color: COLORS.maskBottom,
-      decals: exploded ? [] : bottomCopper,
-    },
-    { verts: [c.b00, c.b10, c.t10, c.t00], color: COLORS.fr4, decals: [] },
-    { verts: [c.b10, c.b11, c.t11, c.t10], color: COLORS.fr4, decals: [] },
-    { verts: [c.b11, c.b01, c.t01, c.t11], color: COLORS.fr4, decals: [] },
-    { verts: [c.b01, c.b00, c.t00, c.t01], color: COLORS.fr4, decals: [] },
-  ]
-
-  // EXPLODED: each copper layer is a faint translucent sheet floating in space with its copper on top,
-  // so you SEE the separated planes the vias bridge — the stage for routing between layers in 3-D.
-  if (exploded) {
-    const planeAt = (z: number, color: string): Face => ({
-      verts: [
-        { x: x0, y: y0, z },
-        { x: x1, y: y0, z },
-        { x: x1, y: y1, z },
-        { x: x0, y: y1, z },
-      ],
-      color,
-      decals: [],
-      doubleSided: true,
-      alpha: 0.25,
-    })
-    faces.push(planeAt(topCuZ - 0.02, COLORS.maskTop))
-    for (const p of topCopper) {
-      faces.push({ verts: p.verts, color: p.color, decals: [], doubleSided: true })
+  const faces: Face[] = []
+  if (!exploded) {
+    // ASSEMBLED: one FR4 slab (z=0..T); the top/bottom faces carry the copper as decals.
+    const c = {
+      b00: { x: x0, y: y0, z: 0 },
+      b10: { x: x1, y: y0, z: 0 },
+      b11: { x: x1, y: y1, z: 0 },
+      b01: { x: x0, y: y1, z: 0 },
+      t00: { x: x0, y: y0, z: T },
+      t10: { x: x1, y: y0, z: T },
+      t11: { x: x1, y: y1, z: T },
+      t01: { x: x0, y: y1, z: T },
     }
-    faces.push(planeAt(botCuZ - 0.02, COLORS.maskBottom))
-    for (const p of bottomCopper) {
-      faces.push({ verts: p.verts, color: p.color, decals: [], doubleSided: true })
+    faces.push(
+      { verts: [c.t00, c.t10, c.t11, c.t01], color: COLORS.maskTop, decals: topCopper },
+      { verts: [c.b01, c.b11, c.b10, c.b00], color: COLORS.maskBottom, decals: bottomCopper },
+      { verts: [c.b00, c.b10, c.t10, c.t00], color: COLORS.fr4, decals: [] },
+      { verts: [c.b10, c.b11, c.t11, c.t10], color: COLORS.fr4, decals: [] },
+      { verts: [c.b11, c.b01, c.t01, c.t11], color: COLORS.fr4, decals: [] },
+      { verts: [c.b01, c.b00, c.t00, c.t01], color: COLORS.fr4, decals: [] },
+    )
+  } else {
+    // EXPLODED: the board SPLIT into its real layers — the FR4 core as its own slab (its true, thinner
+    // thickness), the copper layers as their own planes carrying the real copper, the soldermask as thin
+    // translucent sheets. Each at its true height, separated in space.
+    for (const p of placed) {
+      if (p.type === 'core' || p.type === 'prepreg') {
+        addSlab(faces, x0, y0, x1, y1, p.z0, p.z1, COLORS.core, []) // the opaque dielectric slab
+      } else if (p.type === 'solder_mask') {
+        addSlab(faces, x0, y0, x1, y1, p.z0, p.z1, COLORS.maskTop, [], 0.28) // thin translucent green
+      } else if (p.type === 'copper') {
+        // a faint marker plane for the copper layer + the REAL copper (opaque) on it — copper only where
+        // there IS copper, the honest etched pattern.
+        const copper = p.name === 'F.Cu' ? topCopper : bottomCopper
+        faces.push({
+          verts: [
+            { x: x0, y: y0, z: p.z1 },
+            { x: x1, y: y0, z: p.z1 },
+            { x: x1, y: y1, z: p.z1 },
+            { x: x0, y: y1, z: p.z1 },
+          ],
+          color: COLORS.maskTop,
+          decals: [],
+          doubleSided: true,
+          alpha: 0.12,
+        })
+        for (const poly of copper) {
+          faces.push({ verts: poly.verts, color: poly.color, decals: [], doubleSided: true })
+        }
+      }
     }
   }
 
   // via barrels — real copper cylinders. Assembled: through the board (0..T). Exploded: they SPAN the
-  // gap between the separated copper planes (botCuZ..topCuZ) — the visible between-layers connection.
+  // gap between the separated copper layers (botCuZ..topCuZ) — the visible between-layers connection.
   const viaLo = exploded ? botCuZ : 0
   const viaHi = exploded ? topCuZ : T
   for (const v of routing.vias) {
@@ -309,8 +357,8 @@ export function buildBoardScene(
   }
 
   // component 3-D bodies — each part's real X/Y (its fabrication outline) extruded to its cited body
-  // height, sitting on the (possibly lifted) top copper surface; pin headers also get metal posts.
-  let topZ = Math.max(T, topCuZ)
+  // height, sitting on the (possibly lifted) top surface; pin headers also get metal posts.
+  let topZ = Math.max(T, compBase)
   for (const pl of board.placements) {
     const fp = footprintByPlacement(pl)
     const body = fp?.body3d
@@ -343,10 +391,9 @@ export function buildBoardScene(
     }
   }
 
-  // frame the whole assembly (exploded: from the dropped bottom plane up to the tallest part on top)
-  const loZ = exploded ? botCuZ : 0
-  const center = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: (loZ + topZ) / 2 }
-  const diagonal = Math.hypot(o.w, o.h, topZ - loZ)
+  // frame the whole assembly (exploded: from the bottom of the stack up to the tallest part on top)
+  const center = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: topZ / 2 }
+  const diagonal = Math.hypot(o.w, o.h, topZ)
   return { faces, center, diagonal }
 }
 

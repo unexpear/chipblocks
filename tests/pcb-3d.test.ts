@@ -205,23 +205,45 @@ describe('component 3-D bodies — the assembled board, at cited heights', () =>
   })
 })
 
-describe('exploded lamination — layers separated in real space', () => {
+describe('exploded lamination — the board SPLIT into its real stack-up layers', () => {
   const explode = 5
-  const T = 1.6
 
-  test('the copper layers float apart; the via barrel spans the full gap', () => {
+  test('the stack rises from z=0 through separated layers; the via barrel bridges the two copper layers', () => {
     const scene = buildBoardScene(board, routing, defaultStackup(), explode)
     const zs = scene.faces.flatMap((f) => f.verts.map((v) => v.z))
-    // bottom copper drops to −explode, top copper lifts to T+explode — the via bridges the whole span
-    expect(Math.min(...zs)).toBeLessThanOrEqual(-explode + 1e-6)
-    expect(zs.some((z) => Math.abs(z - (T + explode)) < 1e-6)).toBe(true)
+    expect(Math.min(...zs)).toBeCloseTo(0, 6) // the bottom layer sits at the base
+    expect(Math.max(...zs)).toBeGreaterThan(explode * 3) // several real layers + gaps stacked up
+    // the tallest single face is the via barrel spanning the separated top + bottom copper layers
+    const maxSpan = Math.max(
+      ...scene.faces.map((f) => {
+        const fz = f.verts.map((v) => v.z)
+        return Math.max(...fz) - Math.min(...fz)
+      }),
+    )
+    expect(maxSpan).toBeGreaterThan(explode * 2)
   })
 
-  test('exploded adds faces (floating copper + faint layer planes) vs assembled', () => {
+  test('the FR4 core becomes its OWN thinner slab (not the full board thickness)', () => {
+    const scene = buildBoardScene(
+      board,
+      { traces: [], vias: [], unrouted: [] },
+      defaultStackup(),
+      explode,
+    )
+    // the core slab (opaque, distinct colour) spans ~1.51 mm — the real core, NOT the 1.6 mm board
+    const coreFace = scene.faces.find((f) => {
+      const fz = f.verts.map((v) => v.z)
+      const span = Math.max(...fz) - Math.min(...fz)
+      return span > 1 && span < 1.6 // a slab between 1 and 1.6 mm tall = the core
+    })
+    expect(coreFace).toBeDefined()
+  })
+
+  test('exploded adds faces (per-layer slabs + copper + translucent sheets) vs assembled', () => {
     const assembled = buildBoardScene(board, routing, defaultStackup(), 0)
     const exp = buildBoardScene(board, routing, defaultStackup(), explode)
     expect(exp.faces.length).toBeGreaterThan(assembled.faces.length)
-    // the exploded view uses double-sided floating sheets + translucent planes
+    // the exploded view uses double-sided copper sheets + translucent mask/marker planes
     expect(exp.faces.some((f) => f.doubleSided)).toBe(true)
     expect(exp.faces.some((f) => f.alpha !== undefined)).toBe(true)
   })
