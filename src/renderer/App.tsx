@@ -148,7 +148,15 @@ import {
 import { runDrc } from './pcb-drc.ts'
 import { type BomRow, buildManufacturingZip } from './pcb-fab.ts'
 import { routeBoard } from './pcb-route.ts'
-import { defaultStackup, SURFACE_FINISHES } from './pcb-stackup.ts'
+import {
+  buildStackup,
+  type CopperWeight,
+  DEFAULT_STACKUP_OPTIONS,
+  STANDARD_BOARD_THICKNESSES_MM,
+  type StackupOptions,
+  SURFACE_FINISHES,
+  type SurfaceFinishId,
+} from './pcb-stackup.ts'
 import { PcbView } from './pcb-view.tsx'
 import { canvasWorld } from './pipeline/canvas-world.ts'
 import {
@@ -1293,10 +1301,12 @@ function Canvas({ project }: { project: ProjectChoice }) {
     }
     return problems
   }, [pcbBoard, pcbOffBoard, pcbRouting, pcbDrc])
-  // The board's physical stack-up (substrate / copper weight / finish) — the fab-order spec that
-  // goes in the manufacturing ZIP. Fixed at the shipped default today (2-layer 1.6 mm FR4, 1 oz,
-  // HASL); a stack-up editor would make it user-set later.
-  const pcbStackup = useMemo(() => defaultStackup(), [])
+  // The board's physical stack-up — the fab-order spec that goes in the manufacturing ZIP. The user
+  // edits the knobs (finished thickness, copper weight, surface finish) in the PCB panel; the
+  // cross-section (the FR4 core filling to the chosen thickness) is rebuilt from them.
+  const [pcbStackupOptions, setPcbStackupOptions] =
+    useState<StackupOptions>(DEFAULT_STACKUP_OPTIONS)
+  const pcbStackup = useMemo(() => buildStackup(pcbStackupOptions), [pcbStackupOptions])
   const [pcbExportNote, setPcbExportNote] = useState<string | null>(null)
   // A "manufacturing ZIP saved" note is only true for the board it was exported from — any edit
   // to the parts, wires or placements (or loading another file, which replaces all three) makes
@@ -6347,15 +6357,91 @@ function Canvas({ project }: { project: ProjectChoice }) {
                     <span style={{ fontSize: 11, color: THEME.textFaint }}>
                       drag a part to move it · click to select, R to rotate
                     </span>
-                    <span style={{ fontSize: 11, color: THEME.textFaint }}>
-                      stack-up: {pcbStackup.copperLayers}-layer ·{' '}
-                      {pcbStackup.thicknessMm.toFixed(1)} mm FR4 ·{' '}
-                      {pcbStackup.copperWeight === 'two_oz'
-                        ? '2 oz'
-                        : pcbStackup.copperWeight === 'half_oz'
-                          ? '0.5 oz'
-                          : '1 oz'}{' '}
-                      copper · {SURFACE_FINISHES[pcbStackup.surfaceFinish].name} finish
+                    <span
+                      style={{
+                        fontSize: 11,
+                        color: THEME.textFaint,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      stack-up: {pcbStackup.copperLayers}-layer FR4 ·
+                      <select
+                        value={pcbStackup.thicknessMm}
+                        onChange={(e) =>
+                          setPcbStackupOptions((o) => ({
+                            ...o,
+                            thicknessMm: Number(e.target.value),
+                          }))
+                        }
+                        title="Finished board thickness"
+                        style={{
+                          background: THEME.surfaceInput,
+                          color: THEME.textSoft,
+                          border: `1px solid ${THEME.borderStrong}`,
+                          borderRadius: 4,
+                          fontSize: 11,
+                          padding: '1px 4px',
+                        }}
+                      >
+                        {STANDARD_BOARD_THICKNESSES_MM.map((t) => (
+                          <option key={t} value={t}>
+                            {t.toFixed(1)} mm
+                          </option>
+                        ))}
+                      </select>
+                      ·
+                      <select
+                        value={pcbStackup.copperWeight}
+                        onChange={(e) =>
+                          setPcbStackupOptions((o) => ({
+                            ...o,
+                            copperWeight: e.target.value as CopperWeight,
+                          }))
+                        }
+                        title="Outer copper weight"
+                        style={{
+                          background: THEME.surfaceInput,
+                          color: THEME.textSoft,
+                          border: `1px solid ${THEME.borderStrong}`,
+                          borderRadius: 4,
+                          fontSize: 11,
+                          padding: '1px 4px',
+                        }}
+                      >
+                        <option value="half_oz">0.5 oz copper</option>
+                        <option value="one_oz">1 oz copper</option>
+                        <option value="two_oz">2 oz copper</option>
+                      </select>
+                      ·
+                      <select
+                        value={pcbStackup.surfaceFinish}
+                        onChange={(e) =>
+                          setPcbStackupOptions((o) => ({
+                            ...o,
+                            surfaceFinish: e.target.value as SurfaceFinishId,
+                          }))
+                        }
+                        title="Surface finish"
+                        style={{
+                          background: THEME.surfaceInput,
+                          color: THEME.textSoft,
+                          border: `1px solid ${THEME.borderStrong}`,
+                          borderRadius: 4,
+                          fontSize: 11,
+                          padding: '1px 4px',
+                        }}
+                      >
+                        {(Object.keys(SURFACE_FINISHES) as (keyof typeof SURFACE_FINISHES)[]).map(
+                          (id) => (
+                            <option key={id} value={id}>
+                              {SURFACE_FINISHES[id].name}
+                            </option>
+                          ),
+                        )}
+                      </select>
                     </span>
                   </>
                 ) : (

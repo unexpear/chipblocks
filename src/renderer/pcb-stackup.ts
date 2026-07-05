@@ -208,23 +208,55 @@ export type Stackup = {
   provenance: FootprintProvenance
 }
 
+/** The standard finished board thicknesses a prototype fab offers (mm) — the stack-up editor's
+ *  thickness choices. 1.6 mm is the default. */
+export const STANDARD_BOARD_THICKNESSES_MM = [0.4, 0.6, 0.8, 1.0, 1.2, 1.6, 2.0, 2.4] as const
+
+export const BOARD_THICKNESS_PROVENANCE: FootprintProvenance = {
+  source_type: 'reference',
+  title: 'Standard finished board thicknesses: 0.4–2.4 mm, 1.6 mm default',
+  citation:
+    "PCBWay multi-layer stack-up selector offers 0.4 / 0.6 / 0.8 / 1.0 / 1.2 / 1.6 / 2.0 / 2.4 mm; 1.6 mm is the industry default (and the installed KiCad 10.0 default stack-up's finished thickness).",
+  confidence: 'high',
+  url: 'https://www.pcbway.com/capabilities.html',
+  date_accessed: '2026-07-04',
+}
+
+/** The solder-mask thickness per side (mm) — KiCad's stack-up default, fixed for every board. */
+const SOLDER_MASK_MM = 0.01
+
+export type StackupOptions = {
+  thicknessMm: number
+  copperWeight: CopperWeight
+  surfaceFinish: SurfaceFinishId
+}
+
+/** The default board the editor starts from: 2-layer, 1.6 mm FR4, 1 oz copper, HASL. */
+export const DEFAULT_STACKUP_OPTIONS: StackupOptions = {
+  thicknessMm: 1.6,
+  copperWeight: 'one_oz',
+  surfaceFinish: 'hasl',
+}
+
 /**
- * The shipped default stack-up: a 2-layer, 1.6 mm FR4 board with 1 oz outer copper and a HASL
- * finish — the standard prototype order, and byte-for-byte the installed KiCad 10.0 default 2-layer
- * stack-up (0.035 mm copper / 1.51 mm FR4 core Dk 4.5 tanδ 0.02 / 0.035 mm copper, 0.01 mm mask per
- * side). The core thickness is what makes the finished board 1.6 mm once the copper + mask are added.
+ * Build a 2-layer FR4 stack-up from the editable knobs (finished thickness, copper weight, surface
+ * finish). The cross-section is the standard KiCad build — solder mask / copper / FR4 core / copper
+ * / solder mask — with the FR4 CORE thickness computed to fill whatever the copper + mask leave, so
+ * the finished board is exactly the chosen thickness. The default (1.6 mm / 1 oz / HASL) reproduces
+ * the installed KiCad 10.0 default stack-up byte-for-byte.
  */
-export function defaultStackup(): Stackup {
-  const cu = COPPER_WEIGHT_MM.one_oz
-  const mask = 0.01
-  const core = 1.51
+export function buildStackup(options: StackupOptions = DEFAULT_STACKUP_OPTIONS): Stackup {
+  const cu = COPPER_WEIGHT_MM[options.copperWeight]
+  // the FR4 core is what's left after the two copper layers and two mask layers
+  const core = Math.round((options.thicknessMm - 2 * SOLDER_MASK_MM - 2 * cu) * 1000) / 1000
+  const finish = SURFACE_FINISHES[options.surfaceFinish]
   return {
     copperLayers: 2,
-    thicknessMm: Math.round((mask * 2 + cu * 2 + core) * 100) / 100,
-    copperWeight: 'one_oz',
-    surfaceFinish: 'hasl',
+    thicknessMm: options.thicknessMm,
+    copperWeight: options.copperWeight,
+    surfaceFinish: options.surfaceFinish,
     layers: [
-      { name: 'F.Mask', type: 'solder_mask', thicknessMm: mask },
+      { name: 'F.Mask', type: 'solder_mask', thicknessMm: SOLDER_MASK_MM },
       { name: 'F.Cu', type: 'copper', thicknessMm: cu },
       {
         name: 'dielectric 1',
@@ -235,19 +267,22 @@ export function defaultStackup(): Stackup {
         lossTangent: FR4_SUBSTRATE.lossTangent,
       },
       { name: 'B.Cu', type: 'copper', thicknessMm: cu },
-      { name: 'B.Mask', type: 'solder_mask', thicknessMm: mask },
+      { name: 'B.Mask', type: 'solder_mask', thicknessMm: SOLDER_MASK_MM },
     ],
     provenance: {
       source_type: 'reference',
-      title: 'Default stack-up: 2-layer, 1.6 mm FR4, 1 oz copper, HASL',
+      title: `Stack-up: 2-layer, ${options.thicknessMm} mm FR4, ${options.copperWeight === 'two_oz' ? '2' : options.copperWeight === 'half_oz' ? '0.5' : '1'} oz copper, ${finish.name}`,
       citation:
-        'The installed KiCad 10.0 default 2-layer stack-up (0.035 mm F.Cu / 1.51 mm FR4 core Dk 4.5 tanδ 0.02 / 0.035 mm B.Cu, 0.01 mm solder mask per side), the standard prototype order a fab makes by default.',
+        'Standard prototype 2-layer FR4 stack-up: mask / copper / FR4 core / copper / mask, the KiCad construction (0.01 mm mask per side, core filling to the chosen finished thickness). Thickness per the standard fab range, copper per IPC-4562, finish per its own citation. The 1.6 mm / 1 oz / HASL default reproduces the installed KiCad 10.0 default stack-up byte-for-byte.',
       confidence: 'high',
       url: 'https://gitlab.com/kicad/code/kicad',
       date_accessed: '2026-07-04',
     },
   }
 }
+
+/** The shipped default stack-up (2-layer, 1.6 mm FR4, 1 oz copper, HASL). */
+export const defaultStackup = (): Stackup => buildStackup(DEFAULT_STACKUP_OPTIONS)
 
 /** A trace's copper thickness (mm) for a copper weight. */
 export const traceThicknessMm = (weight: CopperWeight): number => COPPER_WEIGHT_MM[weight]

@@ -8,12 +8,15 @@
  */
 import { describe, expect, test } from 'vitest'
 import {
+  BOARD_THICKNESS_PROVENANCE,
+  buildStackup,
   COPPER,
   COPPER_WEIGHT_MM,
   COPPER_WEIGHT_PROVENANCE,
   defaultStackup,
   FR4_SUBSTRATE,
   IPC2221,
+  STANDARD_BOARD_THICKNESSES_MM,
   SURFACE_FINISHES,
   traceAmpacity,
   traceResistanceOhm,
@@ -56,6 +59,53 @@ describe('the default stack-up — 2-layer, 1.6 mm FR4, 1 oz, HASL', () => {
     expect(core?.dielectricConstant).toBe(FR4_SUBSTRATE.dielectricConstant)
     expect(core?.lossTangent).toBe(FR4_SUBSTRATE.lossTangent)
     expect(s.provenance.confidence).toBe('high')
+  })
+
+  test('the default reproduces the installed KiCad 10.0 stack-up: 0.035 Cu / 1.51 FR4 core', () => {
+    const cu = s.layers.filter((l) => l.type === 'copper')
+    const core = s.layers.find((l) => l.type === 'core')
+    expect(cu.every((l) => l.thicknessMm === 0.035)).toBe(true) // 1 oz
+    expect(core?.thicknessMm).toBeCloseTo(1.51, 6) // 1.6 − 2·0.01 mask − 2·0.035 Cu
+  })
+})
+
+describe('the stack-up EDITOR — buildStackup rebuilds the cross-section from the knobs', () => {
+  test('the FR4 core recomputes so the finished board is exactly the chosen thickness, any combo', () => {
+    for (const thicknessMm of STANDARD_BOARD_THICKNESSES_MM) {
+      for (const copperWeight of ['half_oz', 'one_oz', 'two_oz'] as const) {
+        const s = buildStackup({ thicknessMm, copperWeight, surfaceFinish: 'enig' })
+        expect(s.thicknessMm).toBe(thicknessMm)
+        const summed = s.layers.reduce((t, l) => t + l.thicknessMm, 0)
+        expect(summed).toBeCloseTo(thicknessMm, 6) // layers always sum to the finished thickness
+        const core = s.layers.find((l) => l.type === 'core')
+        expect(core?.thicknessMm).toBeGreaterThan(0) // never a negative core for a standard combo
+        // the copper layers carry the chosen weight
+        expect(
+          s.layers
+            .filter((l) => l.type === 'copper')
+            .every((l) => l.thicknessMm === COPPER_WEIGHT_MM[copperWeight]),
+        ).toBe(true)
+      }
+    }
+  })
+
+  test('a thicker board with 2 oz copper: thicker core, thicker copper, chosen finish', () => {
+    const s = buildStackup({ thicknessMm: 2.0, copperWeight: 'two_oz', surfaceFinish: 'osp' })
+    expect(s.thicknessMm).toBe(2.0)
+    expect(s.copperWeight).toBe('two_oz')
+    expect(s.surfaceFinish).toBe('osp')
+    expect(s.layers.find((l) => l.type === 'copper')?.thicknessMm).toBe(0.07) // 2 oz
+    // core = 2.0 − 0.02 mask − 0.14 Cu = 1.84
+    expect(s.layers.find((l) => l.type === 'core')?.thicknessMm).toBeCloseTo(1.84, 6)
+    expect(s.provenance.title).toContain('2 mm')
+    expect(s.provenance.title).toContain('OSP')
+  })
+
+  test('the standard thickness options are cited and include the 1.6 mm default', () => {
+    expect(STANDARD_BOARD_THICKNESSES_MM).toContain(1.6)
+    expect(STANDARD_BOARD_THICKNESSES_MM[0]).toBe(0.4)
+    expect(BOARD_THICKNESS_PROVENANCE.confidence).toBe('high')
+    expect(BOARD_THICKNESS_PROVENANCE.citation).toContain('PCBWay')
   })
 })
 
