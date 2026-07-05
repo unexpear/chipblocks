@@ -205,6 +205,41 @@ describe('component 3-D bodies — the assembled board, at cited heights', () =>
   })
 })
 
+describe('exploded lamination — layers separated in real space', () => {
+  const explode = 5
+  const T = 1.6
+
+  test('the copper layers float apart; the via barrel spans the full gap', () => {
+    const scene = buildBoardScene(board, routing, defaultStackup(), explode)
+    const zs = scene.faces.flatMap((f) => f.verts.map((v) => v.z))
+    // bottom copper drops to −explode, top copper lifts to T+explode — the via bridges the whole span
+    expect(Math.min(...zs)).toBeLessThanOrEqual(-explode + 1e-6)
+    expect(zs.some((z) => Math.abs(z - (T + explode)) < 1e-6)).toBe(true)
+  })
+
+  test('exploded adds faces (floating copper + faint layer planes) vs assembled', () => {
+    const assembled = buildBoardScene(board, routing, defaultStackup(), 0)
+    const exp = buildBoardScene(board, routing, defaultStackup(), explode)
+    expect(exp.faces.length).toBeGreaterThan(assembled.faces.length)
+    // the exploded view uses double-sided floating sheets + translucent planes
+    expect(exp.faces.some((f) => f.doubleSided)).toBe(true)
+    expect(exp.faces.some((f) => f.alpha !== undefined)).toBe(true)
+  })
+
+  test('assembled mode (explode=0) is unchanged — copper stays as decals on the slab, no floating faces', () => {
+    const assembled = buildBoardScene(board, routing, defaultStackup(), 0)
+    expect(assembled.faces[0]?.decals.length ?? 0).toBeGreaterThan(0) // copper on the slab top
+    expect(assembled.faces.every((f) => !f.doubleSided)).toBe(true)
+    expect(assembled.faces.every((f) => f.alpha === undefined)).toBe(true)
+  })
+
+  test('the framing spans the exploded gap (taller than assembled)', () => {
+    const assembled = buildBoardScene(board, routing, defaultStackup(), 0)
+    const exp = buildBoardScene(board, routing, defaultStackup(), explode)
+    expect(exp.diagonal).toBeGreaterThan(assembled.diagonal)
+  })
+})
+
 describe('defaultCamera', () => {
   test('frames the board: distance scales with the board diagonal, targets its centre', () => {
     const scene = buildBoardScene(board, routing, defaultStackup())

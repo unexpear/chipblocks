@@ -24,7 +24,14 @@ export function Pcb3DView({
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState({ w: 640, h: height })
 
-  const scene = useMemo(() => buildBoardScene(board, routing, stackup), [board, routing, stackup])
+  // exploded lamination: 0 = the assembled board; >0 separates the copper layers in real space (the
+  // stage for seeing — and eventually routing — the connections between layers).
+  const [explode, setExplode] = useState(0)
+  const maxExplode = Math.max(8, Math.max(board.outline.w, board.outline.h) * 0.6)
+  const scene = useMemo(
+    () => buildBoardScene(board, routing, stackup, explode),
+    [board, routing, stackup, explode],
+  )
 
   // orbit state: azimuth / elevation / distance. Target follows the (live) board centre.
   const [orbit, setOrbit] = useState(() => {
@@ -143,6 +150,21 @@ export function Pcb3DView({
           alignItems: 'center',
         }}
       >
+        <label
+          style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#9fb0c3' }}
+          title="Explode the layers apart in space — separate the copper planes so you can see the vias bridging between them"
+        >
+          Explode
+          <input
+            type="range"
+            min={0}
+            max={maxExplode}
+            step={maxExplode / 100}
+            value={explode}
+            onChange={(e) => setExplode(Number(e.target.value))}
+            style={{ width: 90 }}
+          />
+        </label>
         <span style={{ fontSize: 10, color: '#9fb0c3' }}>drag to orbit · scroll to zoom</span>
         <button
           type="button"
