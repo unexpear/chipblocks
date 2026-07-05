@@ -146,7 +146,9 @@ import {
   type Rotation,
 } from './pcb-board.ts'
 import { runDrc } from './pcb-drc.ts'
+import { PcbExplodedView } from './pcb-exploded.tsx'
 import { type BomRow, buildManufacturingZip } from './pcb-fab.ts'
+import { type BoardLayerId, boardLayers, layerLabel } from './pcb-layers.ts'
 import { routeBoard } from './pcb-route.ts'
 import {
   buildStackup,
@@ -1307,6 +1309,23 @@ function Canvas({ project }: { project: ProjectChoice }) {
   const [pcbStackupOptions, setPcbStackupOptions] =
     useState<StackupOptions>(DEFAULT_STACKUP_OPTIONS)
   const pcbStackup = useMemo(() => buildStackup(pcbStackupOptions), [pcbStackupOptions])
+  // The PCB view mode: the full flat layout; the LAMINATION as a stack of paper (one sheet at a
+  // time, paged up/down); or the 3-D exploded view (the sheets pulled apart in space, vias bridging
+  // the copper planes). The drawable layers come from the stack-up.
+  const [pcbViewMode, setPcbViewMode] = useState<'flat' | 'layers' | 'exploded'>('flat')
+  const [pcbActiveLayerId, setPcbActiveLayerId] = useState<BoardLayerId>('f_cu')
+  const pcbLayers = useMemo(() => boardLayers(pcbStackup), [pcbStackup])
+  const pcbActiveLayerIndex = pcbLayers.findIndex((l) => l.id === pcbActiveLayerId)
+  const stepPcbLayer = useCallback(
+    (delta: number) => {
+      setPcbActiveLayerId((cur) => {
+        const idx = pcbLayers.findIndex((l) => l.id === cur)
+        const next = Math.min(Math.max(idx + delta, 0), pcbLayers.length - 1)
+        return pcbLayers[next]?.id ?? cur
+      })
+    },
+    [pcbLayers],
+  )
   const [pcbExportNote, setPcbExportNote] = useState<string | null>(null)
   // A "manufacturing ZIP saved" note is only true for the board it was exported from — any edit
   // to the parts, wires or placements (or loading another file, which replaces all three) makes
@@ -6326,16 +6345,106 @@ function Canvas({ project }: { project: ProjectChoice }) {
                 )}
                 {pcbBoard.placements.length > 0 ? (
                   <>
-                    <PcbView
-                      board={pcbBoard}
-                      airwires={pcbRouting.unrouted}
-                      traces={pcbRouting.traces}
-                      vias={pcbRouting.vias}
-                      markers={pcbDrc.map((v) => v.at)}
-                      pxPerMm={12}
-                      onMove={onPcbMove}
-                      onRotate={onPcbRotate}
-                    />
+                    <div
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}
+                    >
+                      <span style={{ display: 'flex', gap: 0 }}>
+                        {(['flat', 'layers', 'exploded'] as const).map((m, i, arr) => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => setPcbViewMode(m)}
+                            style={{
+                              border: `1px solid ${THEME.borderStrong}`,
+                              background: pcbViewMode === m ? THEME.accentBlue : THEME.surfaceInput,
+                              color: pcbViewMode === m ? '#0b1220' : THEME.textSoft,
+                              borderRadius:
+                                i === 0
+                                  ? '4px 0 0 4px'
+                                  : i === arr.length - 1
+                                    ? '0 4px 4px 0'
+                                    : '0',
+                              borderLeft: i === 0 ? undefined : 'none',
+                              fontSize: 11,
+                              padding: '2px 10px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {m === 'flat' ? 'Flat' : m === 'layers' ? 'Layers' : '3D'}
+                          </button>
+                        ))}
+                      </span>
+                      {pcbViewMode === 'layers' && (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <button
+                            type="button"
+                            onClick={() => stepPcbLayer(-1)}
+                            disabled={pcbActiveLayerIndex <= 0}
+                            title="Up a layer (toward the top of the stack)"
+                            style={{
+                              border: `1px solid ${THEME.borderStrong}`,
+                              background: THEME.surfaceInput,
+                              color: pcbActiveLayerIndex <= 0 ? THEME.textFaint : THEME.textSoft,
+                              borderRadius: 4,
+                              fontSize: 12,
+                              padding: '0 8px',
+                              cursor: pcbActiveLayerIndex <= 0 ? 'default' : 'pointer',
+                            }}
+                          >
+                            ▲
+                          </button>
+                          <span style={{ fontSize: 11, color: THEME.textSoft, minWidth: 150 }}>
+                            {(() => {
+                              const l = pcbLayers[pcbActiveLayerIndex]
+                              return l ? layerLabel(l) : ''
+                            })()} · {Math.max(pcbActiveLayerIndex + 1, 1)}/{pcbLayers.length}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => stepPcbLayer(1)}
+                            disabled={pcbActiveLayerIndex >= pcbLayers.length - 1}
+                            title="Down a layer (toward the bottom of the stack)"
+                            style={{
+                              border: `1px solid ${THEME.borderStrong}`,
+                              background: THEME.surfaceInput,
+                              color:
+                                pcbActiveLayerIndex >= pcbLayers.length - 1
+                                  ? THEME.textFaint
+                                  : THEME.textSoft,
+                              borderRadius: 4,
+                              fontSize: 12,
+                              padding: '0 8px',
+                              cursor:
+                                pcbActiveLayerIndex >= pcbLayers.length - 1 ? 'default' : 'pointer',
+                            }}
+                          >
+                            ▼
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                    {pcbViewMode === 'exploded' ? (
+                      <PcbExplodedView
+                        board={pcbBoard}
+                        stackup={pcbStackup}
+                        traces={pcbRouting.traces}
+                        vias={pcbRouting.vias}
+                        pxPerMm={11}
+                      />
+                    ) : (
+                      <PcbView
+                        board={pcbBoard}
+                        airwires={pcbRouting.unrouted}
+                        traces={pcbRouting.traces}
+                        vias={pcbRouting.vias}
+                        markers={pcbDrc.map((v) => v.at)}
+                        mode={pcbViewMode}
+                        activeLayer={pcbActiveLayerId}
+                        pxPerMm={12}
+                        onMove={onPcbMove}
+                        onRotate={onPcbRotate}
+                      />
+                    )}
                     {pcbDrc.length > 0 && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                         {pcbDrc.slice(0, 8).map((v) => (

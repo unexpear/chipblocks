@@ -4,22 +4,27 @@ import {
   type Airwire,
   type Board,
   footprintByPlacement,
+  placePoint,
   type Rotation,
   silkReferenceAnchor,
 } from './pcb-board.ts'
+import type { BoardLayerId } from './pcb-layers.ts'
 import type { CopperTrace, Via } from './pcb-route.ts'
 import { SILK_TEXT, strokeText } from './stroke-font.ts'
 
 /**
  * The PCB view — draws a board and the footprints placed on it, the physical counterpart to the
  * schematic canvas. Real board colours: a green FR4 substrate with its edge cut, gold copper pads
- * (drilled holes for through-hole), white silkscreen, and the assembly courtyards faint. Each part is
- * labelled with its schematic id, so the board reads back to the circuit.
+ * (drilled holes for through-hole), white silkscreen, and the assembly courtyards faint.
  *
- * Interactive when given callbacks (the PCB panel passes them): drag a footprint to move it, click to
- * select, R to rotate the selection a quarter turn — the airwires and the board outline follow live.
- * Geometry comes from pcb-board.ts in real mm scaled mm → px; the pointer maths inverts the same
- * scale, so a part lands exactly where it's dropped.
+ * Three view MODES:
+ *  - 'flat'   the full top-down layout, all layers at once — the editable board (drag a part, R to
+ *             rotate, click to select; the airwires + outline follow live).
+ *  - 'layers' the LAMINATION as a stack of paper: one layer at a time, page up/down through the
+ *             stack (F.Silkscreen → F.Cu → FR4 core → B.Cu). View-only — you're inspecting a sheet.
+ *
+ * (The 3-D exploded mode is a further rung.) Geometry comes from pcb-board.ts in real mm scaled
+ * mm → px; the pointer maths inverts the same scale, so a part lands exactly where it's dropped.
  */
 
 const BOARD = '#0d3b26' // FR4 green
@@ -86,6 +91,8 @@ export function PcbView({
   traces = [],
   vias = [],
   markers = [],
+  mode = 'flat',
+  activeLayer = 'f_cu',
   pxPerMm = 12,
   paddingMm = 3,
   onMove,
@@ -100,6 +107,10 @@ export function PcbView({
   vias?: Via[]
   /** DRC violation spots, in board mm — drawn as red rings on top of everything. */
   markers?: { x: number; y: number }[]
+  /** 'flat' = the full editable layout; 'layers' = one lamination sheet at a time (view-only). */
+  mode?: 'flat' | 'layers'
+  /** The sheet shown in 'layers' mode. */
+  activeLayer?: BoardLayerId
   pxPerMm?: number
   paddingMm?: number
   /** Move a part's footprint origin to (x, y) mm — supplied by the panel to make the board editable. */
@@ -107,15 +118,10 @@ export function PcbView({
   /** Turn a part a quarter turn (the R key on the selected part). */
   onRotate?: (partId: string, rotation: Rotation) => void
 }) {
-  const interactive = onMove !== undefined
+  // Editing (drag / rotate) belongs only to the full flat layout — the layer sheets are view-only.
+  const interactive = onMove !== undefined && mode === 'flat'
   const [selected, setSelected] = useState<string | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
-  // The live drag: the held part, its origin at grab time, and where the pointer started — all
-  // FROZEN at pointerdown. Each move applies only the pointer's client-px delta (scaled to mm) to
-  // the grabbed origin. Deliberately frame-free: the outline re-fits while the part moves, and in a
-  // bottom-docked panel that shifts the svg's own screen position — re-reading the frame per event
-  // would feed that shift back into the position (a runaway). A ref — every needed re-render comes
-  // from the placement itself changing upstream.
   const drag = useRef<{
     partId: string
     originX: number
@@ -123,11 +129,6 @@ export function PcbView({
     startClientX: number
     startClientY: number
   } | null>(null)
-  // The outline is ALSO frozen for the duration of a drag: the moving part re-fits the outline, and
-  // if the render frame followed it live, a part pushing the board's own edge would pin at the
-  // margin on screen while the pointer walked away (its motion cancels out of the mm→px map). With
-  // the frame held, the part tracks the pointer exactly; the outline snaps to fit once on drop.
-  // State, not a ref — clearing it on drop must re-render so the snap actually appears.
   const [frozenOutline, setFrozenOutline] = useState<Board['outline'] | null>(null)
 
   const o = board.outline
@@ -148,28 +149,19 @@ export function PcbView({
     }
   }
   const grabPart = (partId: string, originX: number, originY: number) => (e: ReactPointerEvent) => {
-    if (e.button !== 0) return // right/middle press is never a grab (right-drag pans elsewhere)
+    if (e.button !== 0) return
     setSelected(partId)
     if (onMove === undefined) return
-    drag.current = {
-      partId,
-      originX,
-      originY,
-      startClientX: e.clientX,
-      startClientY: e.clientY,
-    }
+    drag.current = { partId, originX, originY, startClientX: e.clientX, startClientY: e.clientY }
     setFrozenOutline(board.outline)
     svgRef.current?.setPointerCapture(e.pointerId)
     e.preventDefault()
-    // preventDefault also suppressed the click's focus default — focus explicitly, or the R key
-    // never reaches this svg and falls through to the schematic's global rotate shortcut.
     svgRef.current?.focus({ preventScroll: true })
   }
   const movePart = (e: ReactPointerEvent) => {
     const d = drag.current
     if (d === null || onMove === undefined) return
     if (e.buttons === 0) {
-      // the button is no longer down (a missed pointerup/cancel) — end the drag, don't chase
       endDrag(e)
       return
     }
@@ -183,6 +175,71 @@ export function PcbView({
     if (onRotate === undefined || selected === null) return
     const pl = board.placements.find((p) => p.partId === selected)
     if (pl !== undefined) onRotate(selected, nextRotation(pl.rotation))
+  }
+
+  // Which layer each feature lives on — so 'layers' mode can show one sheet. In 'flat' mode
+  // everything shows at once.
+  const show = (layer: BoardLayerId): boolean => mode === 'flat' || activeLayer === layer
+
+  const traceEls = (whichLayer: 'top' | 'bottom') =>
+    traces
+      .filter((t) => t.layer === whichLayer)
+      .map((t) => (
+        <polyline
+          key={`tr${t.net}-${whichLayer}-${t.points[0]?.x},${t.points[0]?.y}-${t.points[t.points.length - 1]?.x},${t.points[t.points.length - 1]?.y}`}
+          points={t.points.map((p) => `${sx(p.x)},${sy(p.y)}`).join(' ')}
+          fill="none"
+          stroke={whichLayer === 'top' ? COPPER : COPPER_BOTTOM}
+          strokeWidth={t.widthMm * pxPerMm}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity={whichLayer === 'top' ? 1 : 0.85}
+          data-trace={t.net}
+          data-layer={whichLayer}
+          pointerEvents="none"
+        />
+      ))
+
+  const viaEls = vias.map((v) => (
+    <g key={`via${v.at.x},${v.at.y}`} pointerEvents="none" data-via={v.net}>
+      <circle
+        cx={sx(v.at.x)}
+        cy={sy(v.at.y)}
+        r={(v.diameterMm / 2) * pxPerMm}
+        fill={COPPER}
+        stroke={COPPER_EDGE}
+        strokeWidth={0.5}
+      />
+      <circle cx={sx(v.at.x)} cy={sy(v.at.y)} r={(v.drillMm / 2) * pxPerMm} fill={HOLE} />
+    </g>
+  ))
+
+  // Every drilled hole (through-hole pads + via drills) — what the FR4 core sheet shows.
+  const drillEls = () => {
+    const holes: { x: number; y: number; d: number; key: string }[] = []
+    for (const pl of board.placements) {
+      const fp = footprintByPlacement(pl)
+      if (fp === undefined) continue
+      for (const pad of fp.pads) {
+        if (pad.holeDiameter === undefined) continue
+        const c = placePoint(pl, pad.center)
+        holes.push({ x: c.x, y: c.y, d: pad.holeDiameter, key: `${pl.partId}/${pad.id}` })
+      }
+    }
+    for (const v of vias)
+      holes.push({ x: v.at.x, y: v.at.y, d: v.drillMm, key: `via${v.at.x},${v.at.y}` })
+    return holes.map((h) => (
+      <circle
+        key={`drill-${h.key}`}
+        cx={sx(h.x)}
+        cy={sy(h.y)}
+        r={(h.d / 2) * pxPerMm}
+        fill={HOLE}
+        stroke={COPPER_EDGE}
+        strokeWidth={0.4}
+        pointerEvents="none"
+      />
+    ))
   }
 
   return (
@@ -207,8 +264,6 @@ export function PcbView({
         interactive
           ? (e) => {
               if (e.key !== 'r' && e.key !== 'R') return
-              // ours alone — without this the same press also fires the schematic's global
-              // rotate shortcut and silently turns whatever part is selected on the canvas
               e.stopPropagation()
               e.preventDefault()
               rotateSelected()
@@ -217,144 +272,155 @@ export function PcbView({
       }
     >
       <title>PCB layout — {board.placements.length} parts placed</title>
-      {/* the FR4 board with its edge cut */}
+      {/* the FR4 board with its edge cut — the sheet everything sits on. On the core layer it is
+          the solid FR4 slab; on the other sheets it is the faint board outline for context. */}
       <rect
         x={sx(o.x)}
         y={sy(o.y)}
         width={o.w * pxPerMm}
         height={o.h * pxPerMm}
         rx={4}
-        fill={BOARD}
+        fill={mode === 'flat' || activeLayer === 'core' ? BOARD : 'none'}
         stroke={BOARD_EDGE}
         strokeWidth={1.4}
+        opacity={mode === 'layers' && activeLayer !== 'core' ? 0.4 : 1}
         onPointerDown={interactive ? () => setSelected(null) : undefined}
       />
 
-      {/* the routed copper — real trace widths; bottom layer in blue first (it sits under the
-          board's face), then the top layer in copper gold */}
-      {(['bottom', 'top'] as const).map((layer) =>
-        traces
-          .filter((t) => t.layer === layer)
-          .map((t) => (
-            <polyline
-              key={`tr${t.net}-${layer}-${t.points[0]?.x},${t.points[0]?.y}-${t.points[t.points.length - 1]?.x},${t.points[t.points.length - 1]?.y}`}
-              points={t.points.map((p) => `${sx(p.x)},${sy(p.y)}`).join(' ')}
-              fill="none"
-              stroke={layer === 'top' ? COPPER : COPPER_BOTTOM}
-              strokeWidth={t.widthMm * pxPerMm}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              opacity={layer === 'top' ? 1 : 0.85}
-              data-trace={t.net}
-              data-layer={layer}
-              pointerEvents="none"
-            />
-          )),
-      )}
+      {/* FR4 core sheet: the drilled holes that pass through the substrate */}
+      {show('core') && drillEls()}
 
-      {/* vias — a plated barrel joining the layers: copper ring, drilled hole */}
-      {vias.map((v) => (
-        <g key={`via${v.at.x},${v.at.y}`} pointerEvents="none" data-via={v.net}>
-          <circle
-            cx={sx(v.at.x)}
-            cy={sy(v.at.y)}
-            r={(v.diameterMm / 2) * pxPerMm}
-            fill={COPPER}
-            stroke={COPPER_EDGE}
-            strokeWidth={0.5}
+      {/* bottom copper (blue), then top copper (gold) */}
+      {show('b_cu') && traceEls('bottom')}
+      {show('f_cu') && traceEls('top')}
+
+      {/* vias join the two copper sheets — shown whenever either copper sheet is up */}
+      {(show('f_cu') || show('b_cu')) && viaEls}
+
+      {/* pads: all pads on the top copper; only the through-hole pads' rings on the bottom copper */}
+      {(show('f_cu') || show('b_cu')) &&
+        board.placements.map((pl) => {
+          const fp = footprintByPlacement(pl)
+          if (fp === undefined) return null
+          const isSelected = selected === pl.partId
+          // on the bottom sheet only through-hole pads have copper
+          const pads = show('f_cu') ? fp.pads : fp.pads.filter((p) => p.type === 'through_hole')
+          if (pads.length === 0) return null
+          return (
+            <g
+              key={`pads-${pl.partId}`}
+              transform={`translate(${sx(pl.x)} ${sy(pl.y)}) rotate(${pl.rotation})`}
+              data-part={pl.partId}
+              data-rotation={pl.rotation}
+              style={interactive ? { cursor: 'grab' } : undefined}
+              onPointerDown={interactive ? grabPart(pl.partId, pl.x, pl.y) : undefined}
+            >
+              {mode === 'flat' && (
+                <rect
+                  x={fp.courtyard.x * pxPerMm}
+                  y={fp.courtyard.y * pxPerMm}
+                  width={fp.courtyard.w * pxPerMm}
+                  height={fp.courtyard.h * pxPerMm}
+                  fill={isSelected ? `${SELECT}22` : 'none'}
+                  stroke={isSelected ? SELECT : COURTYARD}
+                  strokeWidth={isSelected ? 1.2 : 0.6}
+                  strokeDasharray={isSelected ? undefined : '3 2'}
+                  opacity={isSelected ? 0.9 : 0.35}
+                />
+              )}
+              {pads.map((p) => padShape(p, pxPerMm, `${pl.partId}-p${p.id}`))}
+            </g>
+          )
+        })}
+
+      {/* F.Silkscreen sheet: the part outlines + courtyards */}
+      {show('f_silk') &&
+        board.placements.map((pl) => {
+          const fp = footprintByPlacement(pl)
+          if (fp === undefined) return null
+          return (
+            <g key={`silk-${pl.partId}`} pointerEvents="none">
+              {mode === 'layers' && (
+                <g transform={`translate(${sx(pl.x)} ${sy(pl.y)}) rotate(${pl.rotation})`}>
+                  <rect
+                    x={fp.courtyard.x * pxPerMm}
+                    y={fp.courtyard.y * pxPerMm}
+                    width={fp.courtyard.w * pxPerMm}
+                    height={fp.courtyard.h * pxPerMm}
+                    fill="none"
+                    stroke={COURTYARD}
+                    strokeWidth={0.6}
+                    strokeDasharray="3 2"
+                    opacity={0.35}
+                  />
+                </g>
+              )}
+              {fp.silkscreen.map((s) => {
+                const a = placePoint(pl, s.from)
+                const b = placePoint(pl, s.to)
+                return (
+                  <line
+                    key={`${pl.partId}-s${s.from.x},${s.from.y},${s.to.x},${s.to.y}`}
+                    x1={sx(a.x)}
+                    y1={sy(a.y)}
+                    x2={sx(b.x)}
+                    y2={sy(b.y)}
+                    stroke={SILK}
+                    strokeWidth={Math.max(0.8, s.width * pxPerMm)}
+                    strokeLinecap="round"
+                  />
+                )
+              })}
+            </g>
+          )
+        })}
+
+      {/* reference designators — the REAL silkscreen lettering, on the F.Silkscreen sheet */}
+      {show('f_silk') &&
+        board.placements.map((pl) => {
+          const fp = footprintByPlacement(pl)
+          if (fp === undefined) return null
+          const text = strokeText(
+            pl.designator ?? pl.partId,
+            silkReferenceAnchor(pl, fp),
+            SILK_TEXT.heightMm,
+          )
+          return (
+            <g key={`ref-${pl.partId}`} pointerEvents="none" data-silk-ref={pl.partId}>
+              {text.segments.map((s) => (
+                <line
+                  key={`${pl.partId}-t${s.from.x},${s.from.y}-${s.to.x},${s.to.y}`}
+                  x1={sx(s.from.x)}
+                  y1={sy(s.from.y)}
+                  x2={sx(s.to.x)}
+                  y2={sy(s.to.y)}
+                  stroke={SILK}
+                  strokeWidth={Math.max(0.8, SILK_TEXT.thicknessMm * pxPerMm)}
+                  strokeLinecap="round"
+                />
+              ))}
+            </g>
+          )
+        })}
+
+      {/* the ratsnest (unrouted copper owed) — only on the full flat layout */}
+      {mode === 'flat' &&
+        airwires.map((a) => (
+          <line
+            key={`aw${a.from.x},${a.from.y}-${a.to.x},${a.to.y}`}
+            x1={sx(a.from.x)}
+            y1={sy(a.from.y)}
+            x2={sx(a.to.x)}
+            y2={sy(a.to.y)}
+            stroke={AIRWIRE}
+            strokeWidth={1}
+            opacity={0.75}
+            data-airwire="true"
+            pointerEvents="none"
           />
-          <circle cx={sx(v.at.x)} cy={sy(v.at.y)} r={(v.drillMm / 2) * pxPerMm} fill={HOLE} />
-        </g>
-      ))}
+        ))}
 
-      {board.placements.map((pl) => {
-        const fp = footprintByPlacement(pl)
-        if (fp === undefined) return null
-        const isSelected = selected === pl.partId
-        return (
-          <g
-            key={pl.partId}
-            transform={`translate(${sx(pl.x)} ${sy(pl.y)}) rotate(${pl.rotation})`}
-            data-part={pl.partId}
-            data-rotation={pl.rotation}
-            style={interactive ? { cursor: 'grab' } : undefined}
-            onPointerDown={interactive ? grabPart(pl.partId, pl.x, pl.y) : undefined}
-          >
-            {/* courtyard keep-out (faint) — doubles as the selection halo */}
-            <rect
-              x={fp.courtyard.x * pxPerMm}
-              y={fp.courtyard.y * pxPerMm}
-              width={fp.courtyard.w * pxPerMm}
-              height={fp.courtyard.h * pxPerMm}
-              fill={isSelected ? `${SELECT}22` : 'none'}
-              stroke={isSelected ? SELECT : COURTYARD}
-              strokeWidth={isSelected ? 1.2 : 0.6}
-              strokeDasharray={isSelected ? undefined : '3 2'}
-              opacity={isSelected ? 0.9 : 0.35}
-            />
-            {fp.pads.map((p) => padShape(p, pxPerMm, `${pl.partId}-p${p.id}`))}
-            {fp.silkscreen.map((s) => (
-              <line
-                key={`${pl.partId}-s${s.from.x},${s.from.y},${s.to.x},${s.to.y}`}
-                x1={s.from.x * pxPerMm}
-                y1={s.from.y * pxPerMm}
-                x2={s.to.x * pxPerMm}
-                y2={s.to.y * pxPerMm}
-                stroke={SILK}
-                strokeWidth={Math.max(0.8, s.width * pxPerMm)}
-                strokeLinecap="round"
-              />
-            ))}
-          </g>
-        )
-      })}
-
-      {/* reference designators — the REAL silkscreen lettering (the same strokes at the same
-          courtyard-top anchor the Gerber prints, at the cited 1.0 mm / 0.15 mm), upright at any
-          rotation, so the board view shows exactly what the fab will ink */}
-      {board.placements.map((pl) => {
-        const fp = footprintByPlacement(pl)
-        if (fp === undefined) return null
-        const text = strokeText(
-          pl.designator ?? pl.partId,
-          silkReferenceAnchor(pl, fp),
-          SILK_TEXT.heightMm,
-        )
-        return (
-          <g key={`ref-${pl.partId}`} pointerEvents="none" data-silk-ref={pl.partId}>
-            {text.segments.map((s) => (
-              <line
-                key={`${pl.partId}-t${s.from.x},${s.from.y}-${s.to.x},${s.to.y}`}
-                x1={sx(s.from.x)}
-                y1={sy(s.from.y)}
-                x2={sx(s.to.x)}
-                y2={sy(s.to.y)}
-                stroke={SILK}
-                strokeWidth={Math.max(0.8, SILK_TEXT.thicknessMm * pxPerMm)}
-                strokeLinecap="round"
-              />
-            ))}
-          </g>
-        )
-      })}
-
-      {/* the ratsnest: every copper connection the board still owes, straight pad-to-pad */}
-      {airwires.map((a) => (
-        <line
-          key={`aw${a.from.x},${a.from.y}-${a.to.x},${a.to.y}`}
-          x1={sx(a.from.x)}
-          y1={sy(a.from.y)}
-          x2={sx(a.to.x)}
-          y2={sy(a.to.y)}
-          stroke={AIRWIRE}
-          strokeWidth={1}
-          opacity={0.75}
-          data-airwire="true"
-          pointerEvents="none"
-        />
-      ))}
-
-      {/* DRC violation markers — a red ring at each spot, on top of everything */}
+      {/* DRC violation markers — a red ring at each spot, on top of everything (both modes) */}
       {markers.map((m) => (
         <g key={`drc${m.x},${m.y}`} pointerEvents="none" data-drc-marker="true">
           <circle
