@@ -112,6 +112,7 @@ export function BoardView({
   activeLayer,
   pxPerMm = 12,
   viewHeight = 460,
+  coordinateGrid = false,
   onMove,
   onRotate,
   route,
@@ -126,6 +127,8 @@ export function BoardView({
   pxPerMm?: number
   /** Pixel height for the 3-D canvas. */
   viewHeight?: number
+  /** Draw the coordinate axes + 4-quadrant grid (our coordinate system) on the flat + 3-D views. */
+  coordinateGrid?: boolean
   onMove?: (partId: string, x: number, y: number) => void
   onRotate?: (partId: string, rotation: Rotation) => void
   /** The route + via tools' live state + handlers (flat/layers only), threaded to PcbView. */
@@ -143,7 +146,15 @@ export function BoardView({
 }) {
   if (mode === 'exploded') {
     // "3D" — the real to-scale, orbitable board (the from-scratch pcb-3d engine).
-    return <Pcb3DView board={board} routing={routing} stackup={stackup} height={viewHeight} />
+    return (
+      <Pcb3DView
+        board={board}
+        routing={routing}
+        stackup={stackup}
+        height={viewHeight}
+        coordinateGrid={coordinateGrid}
+      />
+    )
   }
   return (
     <PcbView
@@ -155,6 +166,7 @@ export function BoardView({
       mode={mode}
       activeLayer={activeLayer}
       pxPerMm={pxPerMm}
+      coordinateGrid={coordinateGrid}
       {...(onMove ? { onMove } : {})}
       {...(onRotate ? { onRotate } : {})}
       {...(route

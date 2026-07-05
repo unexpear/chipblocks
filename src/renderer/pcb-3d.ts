@@ -48,11 +48,20 @@ export type Face = {
   alpha?: number
 }
 
+/** The coordinate reference drawn on the ground plane (z=0): the mm grid, the x/y axes through the
+ *  origin, and the quadrant / axis labels — our coordinate system, in real 3-D. */
+export type GridRef = {
+  lines: { a: Vec3; b: Vec3; axis: boolean }[]
+  labels: { at: Vec3; text: string }[]
+}
+
 export type Scene = {
   faces: Face[]
   center: Vec3
   /** The board's 3-D diagonal in mm — used to frame the default camera. */
   diagonal: number
+  /** The coordinate grid (present when built with showGrid). */
+  grid?: GridRef
 }
 
 export type OrbitCamera = {
@@ -81,6 +90,7 @@ const COLORS = {
 } as const
 
 const LIGHT = norm({ x: -0.35, y: -0.45, z: 0.82 }) // upper-front light for the shading
+const GRID_COLOR = '#6b8fc0' // the coordinate ground grid + axes (matches the flat view's axes)
 
 /** The board's true finished thickness (mm) from the stack-up. */
 function boardThicknessMm(stackup: Stackup): number {
@@ -210,6 +220,7 @@ export function buildBoardScene(
   routing: BoardRouting,
   stackup: Stackup,
   explodeMm = 0,
+  showGrid = false,
 ): Scene {
   const T = boardThicknessMm(stackup)
   const o = board.outline
@@ -394,7 +405,38 @@ export function buildBoardScene(
   // frame the whole assembly (exploded: from the bottom of the stack up to the tallest part on top)
   const center = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: topZ / 2 }
   const diagonal = Math.hypot(o.w, o.h, topZ)
-  return { faces, center, diagonal }
+
+  // the coordinate reference on the ground plane (z=0): our mm grid + the x/y axes through the origin
+  // (0,0) + the four quadrants — so the board sits on our coordinate system, CAD-style.
+  let grid: GridRef | undefined
+  if (showGrid) {
+    const step = 5 // mm
+    const margin = 6
+    const gx0 = Math.floor((Math.min(0, x0) - margin) / step) * step
+    const gx1 = Math.ceil((Math.max(0, x1) + margin) / step) * step
+    const gy0 = Math.floor((Math.min(0, y0) - margin) / step) * step
+    const gy1 = Math.ceil((Math.max(0, y1) + margin) / step) * step
+    const lines: GridRef['lines'] = []
+    for (let gx = gx0; gx <= gx1; gx += step) {
+      lines.push({ a: { x: gx, y: gy0, z: 0 }, b: { x: gx, y: gy1, z: 0 }, axis: gx === 0 })
+    }
+    for (let gy = gy0; gy <= gy1; gy += step) {
+      lines.push({ a: { x: gx0, y: gy, z: 0 }, b: { x: gx1, y: gy, z: 0 }, axis: gy === 0 })
+    }
+    grid = {
+      lines,
+      labels: [
+        { at: { x: gx1 - 1, y: -1.2, z: 0 }, text: 'x' },
+        { at: { x: -1.2, y: gy1 - 1, z: 0 }, text: 'y' },
+        { at: { x: 2, y: 2, z: 0 }, text: 'I' },
+        { at: { x: -3, y: 2, z: 0 }, text: 'II' },
+        { at: { x: -3.5, y: -2.5, z: 0 }, text: 'III' },
+        { at: { x: 2, y: -2.5, z: 0 }, text: 'IV' },
+      ],
+    }
+  }
+
+  return { faces, center, diagonal, ...(grid ? { grid } : {}) }
 }
 
 export function defaultCamera(scene: Scene): OrbitCamera {
@@ -522,6 +564,40 @@ export function renderScene(
   ctx.lineJoin = 'round'
 
   const proj = makeProjector(cam, width, height)
+
+  // the coordinate grid on the ground plane, drawn BEHIND the board (the board sits on it). A segment
+  // is clipped to the near plane so a line crossing behind the camera doesn't smear across the screen.
+  if (scene.grid !== undefined) {
+    const drawSeg = (p: Vec3, q: Vec3, stroke: string, w: number, alpha: number) => {
+      let va = proj.toView(p)
+      let vb = proj.toView(q)
+      if (va.z < NEAR_MM && vb.z < NEAR_MM) return
+      if (va.z < NEAR_MM) va = lerpAtNear(vb, va, NEAR_MM)
+      else if (vb.z < NEAR_MM) vb = lerpAtNear(va, vb, NEAR_MM)
+      const a = proj.project(va)
+      const b = proj.project(vb)
+      ctx.globalAlpha = alpha
+      ctx.strokeStyle = stroke
+      ctx.lineWidth = w
+      ctx.beginPath()
+      ctx.moveTo(a.x, a.y)
+      ctx.lineTo(b.x, b.y)
+      ctx.stroke()
+    }
+    for (const l of scene.grid.lines) {
+      drawSeg(l.a, l.b, GRID_COLOR, l.axis ? 1.4 : 0.6, l.axis ? 0.55 : 0.16)
+    }
+    ctx.globalAlpha = 0.6
+    ctx.fillStyle = GRID_COLOR
+    ctx.font = 'italic 12px Georgia, serif'
+    for (const lbl of scene.grid.labels) {
+      const v = proj.toView(lbl.at)
+      if (v.z < NEAR_MM) continue
+      const s = proj.project(v)
+      ctx.fillText(lbl.text, s.x, s.y)
+    }
+    ctx.globalAlpha = 1
+  }
 
   const visible: { face: Face; depth: number; shade: number }[] = []
   for (const face of scene.faces) {

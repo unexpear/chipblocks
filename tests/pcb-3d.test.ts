@@ -262,6 +262,24 @@ describe('exploded lamination — the board SPLIT into its real stack-up layers'
   })
 })
 
+describe('coordinate grid — our coordinate system on the ground plane', () => {
+  test('showGrid builds the mm grid on z=0 with the x/y axes through the origin and I–IV labels', () => {
+    const withGrid = buildBoardScene(board, routing, defaultStackup(), 0, true)
+    const noGrid = buildBoardScene(board, routing, defaultStackup(), 0, false)
+    expect(noGrid.grid).toBeUndefined()
+    expect(withGrid.grid).toBeDefined()
+    const g = withGrid.grid
+    if (!g) throw new Error('grid missing')
+    // the grid lies on the ground plane z=0
+    expect(g.lines.every((l) => l.a.z === 0 && l.b.z === 0)).toBe(true)
+    // exactly two axes pass through the origin (the x-axis at y=0 and the y-axis at x=0)
+    expect(g.lines.filter((l) => l.axis).length).toBe(2)
+    // the four quadrants + the axis names are labelled
+    const texts = g.labels.map((l) => l.text)
+    expect(texts).toEqual(expect.arrayContaining(['I', 'II', 'III', 'IV', 'x', 'y']))
+  })
+})
+
 describe('defaultCamera', () => {
   test('frames the board: distance scales with the board diagonal, targets its centre', () => {
     const scene = buildBoardScene(board, routing, defaultStackup())

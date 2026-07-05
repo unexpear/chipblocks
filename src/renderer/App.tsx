@@ -5481,6 +5481,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                   activeLayer={pcbActiveLayerId}
                   pxPerMm={16}
                   viewHeight={560}
+                  coordinateGrid
                   onMove={onPcbMove}
                   onRotate={onPcbRotate}
                   route={{
@@ -6682,6 +6683,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                       activeLayer={pcbActiveLayerId}
                       pxPerMm={12}
                       viewHeight={380}
+                      coordinateGrid
                       onMove={onPcbMove}
                       onRotate={onPcbRotate}
                     />

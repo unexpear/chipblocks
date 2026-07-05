@@ -39,6 +39,7 @@ const COURTYARD = '#7fe3b0'
 const AIRWIRE = '#f5f0dc' // thin pale ratsnest lines, the EDA convention
 const SELECT = '#9ecbff' // the selected part's halo
 const VIOLATION = '#ff6b6b' // DRC markers
+const AXIS = '#6b8fc0' // the coordinate-reference axes / grid (matches the schematic's axes)
 
 function padShape(p: Pad, scale: number, key: string) {
   const w = p.size.w * scale
@@ -120,6 +121,7 @@ export function PcbView({
   onRouteMove,
   viaActive = false,
   onViaClick,
+  coordinateGrid = false,
 }: {
   board: Board
   /** Unrouted connections (the ratsnest) — drawn as thin straight lines pad-to-pad. */
@@ -156,6 +158,9 @@ export function PcbView({
    *  bridges the two copper layers, carrying that copper's net. */
   viaActive?: boolean
   onViaClick?: (at: { x: number; y: number }, net: string) => void
+  /** Draw the coordinate reference behind the board: the x/y axes through the origin (0,0), the four
+   *  quadrants (I–IV), and a faint mm grid — the same coordinate system the schematic canvas shows. */
+  coordinateGrid?: boolean
 }) {
   // Editing (drag / rotate) belongs only to the full flat layout — the layer sheets are view-only, and
   // the route/via tools take over the pointer when on.
@@ -364,6 +369,76 @@ export function PcbView({
       }
     >
       <title>PCB layout — {board.placements.length} parts placed</title>
+
+      {/* coordinate reference behind the board: the mm grid, the x/y axes through the origin (0,0), and
+          the four quadrants (I–IV) — our coordinate system, the same one the schematic canvas draws. */}
+      {coordinateGrid &&
+        (() => {
+          const ox = sx(0)
+          const oy = sy(0)
+          const stepMm = 5
+          const xLo = Math.ceil(minX / stepMm) * stepMm
+          const xHi = minX + wPx / pxPerMm
+          const yLo = Math.ceil(minY / stepMm) * stepMm
+          const yHi = minY + hPx / pxPerMm
+          const grid: number[][] = []
+          for (let gx = xLo; gx <= xHi; gx += stepMm) grid.push([sx(gx), 0, sx(gx), hPx])
+          for (let gy = yLo; gy <= yHi; gy += stepMm) grid.push([0, sy(gy), wPx, sy(gy)])
+          return (
+            <g pointerEvents="none" data-coord-grid="true">
+              {grid.map(([x1, y1, x2, y2]) => (
+                <line
+                  key={`cg${x1},${y1},${x2},${y2}`}
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  stroke={AXIS}
+                  strokeWidth={0.5}
+                  opacity={0.14}
+                />
+              ))}
+              <line x1={0} y1={oy} x2={wPx} y2={oy} stroke={AXIS} strokeWidth={1} opacity={0.5} />
+              <line x1={ox} y1={0} x2={ox} y2={hPx} stroke={AXIS} strokeWidth={1} opacity={0.5} />
+              <circle
+                cx={ox}
+                cy={oy}
+                r={3}
+                fill="none"
+                stroke={AXIS}
+                strokeWidth={1}
+                opacity={0.6}
+              />
+              <g
+                fill={AXIS}
+                fontFamily="Georgia, serif"
+                fontStyle="italic"
+                fontSize={13}
+                opacity={0.5}
+              >
+                <text x={ox + 8} y={oy - 8}>
+                  I
+                </text>
+                <text x={ox - 16} y={oy - 8}>
+                  II
+                </text>
+                <text x={ox - 18} y={oy + 16}>
+                  III
+                </text>
+                <text x={ox + 8} y={oy + 16}>
+                  IV
+                </text>
+                <text x={ox + 6} y={oy - 26} fontSize={11}>
+                  y
+                </text>
+                <text x={ox + 26} y={oy - 6} fontSize={11}>
+                  x
+                </text>
+              </g>
+            </g>
+          )
+        })()}
+
       {/* the FR4 board with its edge cut — the sheet everything sits on. On the core layer it is
           the solid FR4 slab; on the other sheets it is the faint board outline for context. */}
       <rect

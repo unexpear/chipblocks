@@ -14,11 +14,13 @@ export function Pcb3DView({
   routing,
   stackup,
   height = 460,
+  coordinateGrid = false,
 }: {
   board: Board
   routing: BoardRouting
   stackup: Stackup
   height?: number
+  coordinateGrid?: boolean
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -30,8 +32,8 @@ export function Pcb3DView({
   const [explode, setExplode] = useState(0)
   const maxExplode = Math.max(3, Math.max(board.outline.w, board.outline.h) * 0.22)
   const scene = useMemo(
-    () => buildBoardScene(board, routing, stackup, explode),
-    [board, routing, stackup, explode],
+    () => buildBoardScene(board, routing, stackup, explode, coordinateGrid),
+    [board, routing, stackup, explode, coordinateGrid],
   )
 
   // orbit state: azimuth / elevation / distance. Target follows the (live) board centre.
