@@ -135,6 +135,88 @@ export type BoardRouting = {
   unrouted: Airwire[]
 }
 
+/**
+ * Merge the user's HAND-DRAWN copper into the auto-router's output, and RECOMPUTE which airwires are
+ * still owed. Hand-drawn traces + vias are the exact same types the whole pipeline reads (the 3-D/2-D
+ * views, DRC, and the Gerber/Excellon writers), so once they're in these arrays the copper is real end
+ * to end — it draws, gets design-rule-checked, and ships in the manufacturing files identically to
+ * auto-routed copper. The keystone is `unrouted`: an airwire the auto-router couldn't take is dropped
+ * from the owed list once the user's copper physically joins its two pads — otherwise a fully
+ * hand-routed board would never satisfy the export gate (which refuses to ship an unrouted board).
+ */
+export function mergeUserCopper(
+  auto: BoardRouting,
+  userTraces: CopperTrace[],
+  userVias: Via[],
+): BoardRouting {
+  if (userTraces.length === 0 && userVias.length === 0) return auto
+  const traces = [...auto.traces, ...userTraces]
+  const vias = [...auto.vias, ...userVias]
+  const unrouted = auto.unrouted.filter((aw) => !copperConnects(aw.from, aw.to, traces, vias))
+  return { traces, vias, unrouted }
+}
+
+/**
+ * Physical copper connectivity: are points `a` and `b` joined by the given traces + vias? Union-find
+ * over a 0.2 mm spatial grid, per layer — a trace joins all its own points on its layer, a via bridges
+ * the two layers at its point, and copper landing in the same cell touches. A pad end reaches copper on
+ * either layer near its point. This is how a real board connects, so it never over-reports a join.
+ */
+export function copperConnects(a: Pt, b: Pt, traces: CopperTrace[], vias: Via[]): boolean {
+  const GRID = 0.2
+  const parent = new Map<string, string>()
+  const key = (x: number, y: number, layer: string) =>
+    `${Math.round(x / GRID)}:${Math.round(y / GRID)}:${layer}`
+  const ensure = (k: string) => {
+    if (!parent.has(k)) parent.set(k, k)
+  }
+  const find = (k: string): string => {
+    let root = k
+    let p = parent.get(root)
+    while (p !== undefined && p !== root) {
+      root = p
+      p = parent.get(root)
+    }
+    let cur = k
+    let cp = parent.get(cur)
+    while (cp !== undefined && cur !== root) {
+      parent.set(cur, root)
+      cur = cp
+      cp = parent.get(cur)
+    }
+    return root
+  }
+  const union = (x: string, y: string) => {
+    ensure(x)
+    ensure(y)
+    parent.set(find(x), find(y))
+  }
+  for (const t of traces) {
+    let prev: string | null = null
+    for (const p of t.points) {
+      const k = key(p.x, p.y, t.layer)
+      ensure(k)
+      if (prev !== null) union(prev, k)
+      prev = k
+    }
+  }
+  for (const v of vias) union(key(v.at.x, v.at.y, 'top'), key(v.at.x, v.at.y, 'bottom'))
+  const comps = (p: Pt): Set<string> => {
+    const s = new Set<string>()
+    for (const layer of ['top', 'bottom']) {
+      const k = key(p.x, p.y, layer)
+      if (parent.has(k)) s.add(find(k))
+    }
+    return s
+  }
+  const ca = comps(a)
+  const cb = comps(b)
+  for (const c of ca) {
+    if (cb.has(c)) return true
+  }
+  return false
+}
+
 /** Inflate a box by `pad` on every side — the forbidden zone for a trace CENTRELINE around copper. */
 const inflate = (b: Box, pad: number): Box => ({
   x: b.x - pad,

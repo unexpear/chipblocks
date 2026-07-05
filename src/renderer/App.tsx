@@ -148,7 +148,7 @@ import {
 import { runDrc } from './pcb-drc.ts'
 import { type BomRow, buildManufacturingZip } from './pcb-fab.ts'
 import { type BoardLayerId, boardLayers } from './pcb-layers.ts'
-import { routeBoard } from './pcb-route.ts'
+import { type CopperTrace, mergeUserCopper, routeBoard, type Via } from './pcb-route.ts'
 import {
   buildStackup,
   type CopperWeight,
@@ -1212,6 +1212,10 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // The PCB derivation (board → router → DRC) runs when EITHER the dock panel is open OR the board
   // workspace is showing — so the full-size workspace derives real copper without forcing the dock open.
   const pcbActive = pcbOpen || workspaceMode === 'board'
+  // The user's HAND-DRAWN copper (the route/via tools) — kept separate from the auto-router's output so
+  // a part drag (which re-runs the router) never wipes it; merged back in via pcbMergedRouting below.
+  const [userTraces, setUserTraces] = useState<CopperTrace[]>([])
+  const [userVias, setUserVias] = useState<Via[]>([])
   const pcbBoard = useMemo(
     () =>
       deriveBoard(
@@ -1275,10 +1279,17 @@ function Canvas({ project }: { project: ProjectChoice }) {
     () => (pcbActive ? routeBoard(pcbRatsnest) : { traces: [], vias: [], unrouted: [] }),
     [pcbActive, pcbRatsnest],
   )
+  // The auto-router's copper unioned with the user's hand-drawn traces/vias — the SINGLE routing every
+  // downstream reader uses (views, DRC, export). Merging also recomputes the owed list, so hand-routing
+  // a connection the auto-router couldn't take marks it done and lets the board export.
+  const pcbMergedRouting = useMemo(
+    () => mergeUserCopper(pcbRouting, userTraces, userVias),
+    [pcbRouting, userTraces, userVias],
+  )
   // Design-rule check — the board's failure-mode pass (cited limits), re-run live like the routing.
   const pcbDrc = useMemo(
-    () => (pcbActive ? runDrc(pcbBoard, pcbRatsnest, pcbRouting) : []),
-    [pcbActive, pcbBoard, pcbRatsnest, pcbRouting],
+    () => (pcbActive ? runDrc(pcbBoard, pcbRatsnest, pcbMergedRouting) : []),
+    [pcbActive, pcbBoard, pcbRatsnest, pcbMergedRouting],
   )
   // The header's "wired pins not on the board" count reads the UN-flattened schematic — the pins the
   // user actually drew — never the expanded world (whose pack/block internals a user can't point at).
@@ -1302,16 +1313,16 @@ function Canvas({ project }: { project: ProjectChoice }) {
     if (pcbOffBoard > 0) {
       problems.push(`${pcbOffBoard} wired pin${pcbOffBoard === 1 ? '' : 's'} not on the board`)
     }
-    if (pcbRouting.unrouted.length > 0) {
+    if (pcbMergedRouting.unrouted.length > 0) {
       problems.push(
-        `${pcbRouting.unrouted.length} unrouted connection${pcbRouting.unrouted.length === 1 ? '' : 's'}`,
+        `${pcbMergedRouting.unrouted.length} unrouted connection${pcbMergedRouting.unrouted.length === 1 ? '' : 's'}`,
       )
     }
     if (pcbDrc.length > 0) {
       problems.push(`${pcbDrc.length} DRC violation${pcbDrc.length === 1 ? '' : 's'}`)
     }
     return problems
-  }, [pcbBoard, pcbOffBoard, pcbRouting, pcbDrc])
+  }, [pcbBoard, pcbOffBoard, pcbMergedRouting, pcbDrc])
   // The board's physical stack-up — the fab-order spec that goes in the manufacturing ZIP. The user
   // edits the knobs (finished thickness, copper weight, surface finish) in the PCB panel; the
   // cross-section (the FR4 core filling to the chosen thickness) is rebuilt from them.
@@ -1342,7 +1353,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: the deps ARE the trigger — any board-defining change invalidates the note
   useEffect(() => {
     setPcbExportNote(null)
-  }, [nodes, edges, pcbPlacements])
+  }, [nodes, edges, pcbPlacements, userTraces, userVias])
   const onExportFabZip = useCallback(() => {
     // The archive is assembled by the deterministic engine (Gerbers, drill, BOM, placement,
     // validation report) from the same derived board state the panel shows.
@@ -1378,7 +1389,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
     const fab = buildManufacturingZip({
       board: pcbBoard,
       ratsnest: pcbRatsnest,
-      routing: pcbRouting,
+      routing: pcbMergedRouting,
       drc: pcbDrc,
       offBoardPins: pcbOffBoard,
       bomRows,
@@ -1394,7 +1405,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
     void window.chipblocks?.saveFabZip?.(fab.bytes).then((r) => {
       setPcbExportNote(r.ok && r.path !== undefined ? `manufacturing ZIP saved — ${r.path}` : null)
     })
-  }, [nodes, edges, pcbBoard, pcbRatsnest, pcbRouting, pcbDrc, pcbOffBoard, pcbStackup])
+  }, [nodes, edges, pcbBoard, pcbRatsnest, pcbMergedRouting, pcbDrc, pcbOffBoard, pcbStackup])
   // The Bode (frequency-response) tool — its panel state, the grounded world the AC sweep runs on,
   // and the output-picking click handler live in useBode now; its couplings (the warm solved world,
   // the active tool) are injected. Destructured to the same names the toolbar, panel and canvas
@@ -3687,6 +3698,21 @@ function Canvas({ project }: { project: ProjectChoice }) {
           ),
         )
       },
+      // Hand-drawn copper (the route/via tools' backing state), driven directly for tests: a real
+      // CopperTrace on a layer / a real Via — merged into the routing exactly like the tools will do,
+      // so this exercises the whole reaches-DRC-and-Gerber path.
+      pcbAddTrace(net: string, layer: 'top' | 'bottom', points: { x: number; y: number }[]) {
+        setUserTraces((cur) => [...cur, { net, widthMm: 0.25, layer, points }])
+        return userTraces.length + 1
+      },
+      pcbAddVia(net: string, at: { x: number; y: number }) {
+        setUserVias((cur) => [...cur, { net, at, diameterMm: 0.6, drillMm: 0.4 }])
+        return userVias.length + 1
+      },
+      pcbClearUserCopper() {
+        setUserTraces([])
+        setUserVias([])
+      },
       // Stage a REAL powered loop for a real-events multimeter test (use-multimeter.ts): 5 V source →
       // resistor → back, grounded, meter tool armed. The probing itself comes from outside as genuine
       // mouse input on the terminal dots / the wire / the panel's dial buttons; meterState() reads back
@@ -5249,7 +5275,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                 {pcbBoard.placements.length} part{pcbBoard.placements.length === 1 ? '' : 's'} ·{' '}
                 {pcbBoard.outline.w.toFixed(1)} × {pcbBoard.outline.h.toFixed(1)} mm
                 {pcbRatsnest.airwires.length > 0 &&
-                  ` · ${pcbRatsnest.airwires.length - pcbRouting.unrouted.length}/${pcbRatsnest.airwires.length} routed`}
+                  ` · ${pcbRatsnest.airwires.length - pcbMergedRouting.unrouted.length}/${pcbRatsnest.airwires.length} routed`}
                 {pcbDrc.length > 0 && (
                   <span style={{ color: THEME.statusDanger }}> · DRC: {pcbDrc.length}</span>
                 )}
@@ -5284,7 +5310,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                 <BoardView
                   board={pcbBoard}
                   stackup={pcbStackup}
-                  routing={pcbRouting}
+                  routing={pcbMergedRouting}
                   drcMarkers={pcbDrc.map((v) => v.at)}
                   mode={pcbViewMode}
                   activeLayer={pcbActiveLayerId}
@@ -6398,11 +6424,11 @@ function Canvas({ project }: { project: ProjectChoice }) {
                     {pcbBoard.outline.w.toFixed(1)} × {pcbBoard.outline.h.toFixed(1)} mm board
                     {/* routed CONNECTIONS, not trace count — one via'd connection is three traces */}
                     {pcbRatsnest.airwires.length > 0 &&
-                      ` · ${pcbRatsnest.airwires.length - pcbRouting.unrouted.length} of ${pcbRatsnest.airwires.length} connection${
+                      ` · ${pcbRatsnest.airwires.length - pcbMergedRouting.unrouted.length} of ${pcbRatsnest.airwires.length} connection${
                         pcbRatsnest.airwires.length === 1 ? '' : 's'
                       } routed`}
-                    {pcbRouting.vias.length > 0 &&
-                      ` · ${pcbRouting.vias.length} via${pcbRouting.vias.length === 1 ? '' : 's'}`}
+                    {pcbMergedRouting.vias.length > 0 &&
+                      ` · ${pcbMergedRouting.vias.length} via${pcbMergedRouting.vias.length === 1 ? '' : 's'}`}
                     {pcbOffBoard > 0 && (
                       <span style={{ color: THEME.textFaint }}>
                         {' '}
@@ -6474,7 +6500,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                     <BoardView
                       board={pcbBoard}
                       stackup={pcbStackup}
-                      routing={pcbRouting}
+                      routing={pcbMergedRouting}
                       drcMarkers={pcbDrc.map((v) => v.at)}
                       mode={pcbViewMode}
                       activeLayer={pcbActiveLayerId}
