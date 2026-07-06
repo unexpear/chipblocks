@@ -53,6 +53,20 @@ describe('deriveBoard', () => {
     ])
   })
 
+  test('a part uses its CHOSEN footprint (the picker); an invalid choice falls back to the default', () => {
+    const board = deriveBoard([
+      { id: 'R1', definition: 'resistor', footprintId: 'R_0805_2012Metric' }, // picked the 0805
+      { id: 'R2', definition: 'resistor' }, // no choice → default 0603
+      { id: 'Q1', definition: 'transistor_bjt_npn', footprintId: 'TO-92_Inline' }, // picked TO-92
+      { id: 'R3', definition: 'resistor', footprintId: 'DIP-8_W7.62mm' }, // not a resistor option → default
+    ])
+    const fpOf = (id: string) => board.placements.find((p) => p.partId === id)?.footprintId
+    expect(fpOf('R1')).toBe('R_0805_2012Metric')
+    expect(fpOf('R2')).toBe('R_0603_1608Metric')
+    expect(fpOf('Q1')).toBe('TO-92_Inline')
+    expect(fpOf('R3')).toBe('R_0603_1608Metric') // invalid choice guarded → default
+  })
+
   test('lays parts out left-to-right without overlapping courtyards', () => {
     const board = deriveBoard(
       parts([

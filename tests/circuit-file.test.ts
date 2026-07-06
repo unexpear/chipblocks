@@ -53,6 +53,33 @@ describe('serialize → deserialize round-trip', () => {
     if (without.ok) expect(without.file.projectAmbientC).toBeUndefined()
   })
 
+  test('round-trips a part’s CHOSEN footprint (the picker); omitted when it uses the default', () => {
+    const withChoice = [
+      {
+        id: 'resistor_2',
+        position: { x: 220, y: 80 },
+        data: {
+          definition: 'resistor',
+          footprintId: 'R_0805_2012Metric', // the user picked the 0805 package
+          parameters: { resistance: { value: { kind: 'scalar', amount: 470, unit: 'ohm' } } },
+        },
+      },
+    ]
+    const picked = deserializeCircuit(JSON.stringify(serializeCircuit(withChoice, [])))
+    expect(picked.ok).toBe(true)
+    if (picked.ok) {
+      expect(picked.file.nodes.find((n) => n.id === 'resistor_2')?.footprintId).toBe(
+        'R_0805_2012Metric',
+      )
+    }
+    // a part with no chosen package doesn't write the field (older files + parts on their default)
+    const noChoice = deserializeCircuit(JSON.stringify(serializeCircuit(nodes, [])))
+    expect(noChoice.ok).toBe(true)
+    if (noChoice.ok) {
+      expect(noChoice.file.nodes.find((n) => n.id === 'resistor_2')?.footprintId).toBeUndefined()
+    }
+  })
+
   test('a malformed projectAmbientC is dropped, not passed through as a fake number', () => {
     // The loader and the type both expect a number; a string / null / wrong type must not
     // ride through typed as one. The circuit still loads — the ambient just falls to default.

@@ -31,6 +31,9 @@ export type ClipNode = {
   y: number
   rotation?: number
   parameters?: Parameters
+  /** The chosen board package (footprint id) — a paste must keep it, else the copy silently reverts to
+   *  the default package (and, for a transistor, a different pinout). */
+  footprintId?: string
   block?: BlockData
 }
 
@@ -90,6 +93,7 @@ export function snapshotSelection(
     x: n.position.x,
     y: n.position.y,
     ...(n.data.rotation !== undefined ? { rotation: n.data.rotation } : {}),
+    ...(n.data.footprintId !== undefined ? { footprintId: n.data.footprintId } : {}),
     ...(n.data.parameters !== undefined
       ? { parameters: JSON.parse(JSON.stringify(n.data.parameters)) as Parameters }
       : {}),
@@ -191,6 +195,7 @@ export function materializeItem(
       definition: n.definition,
       ...(n.label !== undefined ? { label: n.label } : {}),
       ...(n.rotation !== undefined ? { rotation: n.rotation } : {}),
+      ...(n.footprintId !== undefined ? { footprintId: n.footprintId } : {}),
       ...(n.parameters !== undefined
         ? { parameters: JSON.parse(JSON.stringify(n.parameters)) as Parameters }
         : {}),

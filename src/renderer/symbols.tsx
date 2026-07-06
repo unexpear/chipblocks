@@ -2141,6 +2141,9 @@ export type DeviceNodeData = {
   label: string
   rotation?: number
   parameters?: Parameters
+  /** The physical package the user chose for this part on the board (a footprint id, e.g. an 0805 or a
+   *  TO-92). Absent ⇒ the part's default footprint. Validated against the part's options on use. */
+  footprintId?: string
   /** Which engine simulates this block; absent ⇒ 'transistor'. */
   fidelity?: Fidelity
   /** Calculator keypad button: the key this switch types ('0'..'9', '+', '-', '*', '/', '=', 'C', '±').

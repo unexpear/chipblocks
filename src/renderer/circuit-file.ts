@@ -27,6 +27,8 @@ export type SavedNode = {
   y: number
   rotation?: number
   parameters?: Parameters
+  /** The chosen board package (footprint id); absent ⇒ the part's default footprint. */
+  footprintId?: string
   /** A circuit block carries its real internals (S19-v3-67). */
   block?: BlockData
 }
@@ -63,7 +65,13 @@ export type CircuitFile = {
 type CanvasNodeLike = {
   id: string
   position: { x: number; y: number }
-  data: { definition: string; rotation?: number; parameters?: Parameters; block?: BlockData }
+  data: {
+    definition: string
+    rotation?: number
+    parameters?: Parameters
+    footprintId?: string
+    block?: BlockData
+  }
 }
 type CanvasEdgeLike = {
   id: string
@@ -116,6 +124,7 @@ export function serializeCircuit(
         y: n.position.y,
         ...(n.data.rotation ? { rotation: n.data.rotation } : {}),
         ...(parameters ? { parameters } : {}),
+        ...(n.data.footprintId ? { footprintId: n.data.footprintId } : {}),
         ...(n.data.block ? { block: n.data.block } : {}),
       }
     }),

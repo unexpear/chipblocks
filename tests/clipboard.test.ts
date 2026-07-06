@@ -158,6 +158,36 @@ describe('materializeItem', () => {
     expect((r?.data.parameters?.resistance as { value: { amount: number } }).value.amount).toBe(470)
   })
 
+  test('a part’s chosen footprint (board package) survives copy → paste', () => {
+    // Review-caught: copy/paste dropped node.data.footprintId, silently reverting the copy to the
+    // default package (and, for a transistor, a different pinout). The paste must carry it.
+    const picked: CanvasNodeLike[] = [
+      {
+        id: 'r9',
+        type: 'device',
+        position: { x: 0, y: 0 },
+        data: {
+          definition: 'resistor',
+          footprintId: 'R_0805_2012Metric',
+          parameters: { resistance: scalar(1000, 'ohm') },
+        },
+      },
+    ]
+    const item = snapshotSelection(picked, [], new Set(['r9']))
+    if (item === null) throw new Error('nothing snapshotted')
+    expect(item.nodes[0]?.footprintId).toBe('R_0805_2012Metric') // the snapshot carries it
+    const out = materializeItem({ ...item, stamp: 1 }, 'p1', { x: 10, y: 10 })
+    expect(out.nodes[0]?.data.footprintId).toBe('R_0805_2012Metric') // the paste restores it
+  })
+
+  test('a part with no chosen footprint pastes without the field (stays on its default)', () => {
+    const item = snapshotSelection(nodes, edges, new Set(['r1']))
+    if (item === null) throw new Error('nothing snapshotted')
+    expect(item.nodes[0]?.footprintId).toBeUndefined()
+    const out = materializeItem({ ...item, stamp: 1 }, 'p2', { x: 0, y: 0 })
+    expect(out.nodes[0]?.data.footprintId).toBeUndefined()
+  })
+
   test('a copied BLOCK pastes with re-cloned internals (fresh inner ids too)', () => {
     const blockNode: CanvasNodeLike = {
       id: 'block_1',

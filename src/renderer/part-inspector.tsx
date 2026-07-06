@@ -1,5 +1,5 @@
 import { type CSSProperties, useEffect, useRef } from 'react'
-import { footprintForPart } from './footprint-assignment.ts'
+import { footprintForPart, footprintOptions } from './footprint-assignment.ts'
 import { FootprintView } from './footprint-view.tsx'
 import {
   defaultParameters,
@@ -295,6 +295,8 @@ export type SelectedPart = {
   id: string
   definition: string
   parameters: Parameters | undefined
+  /** The chosen board package (footprint id); absent ⇒ the part's default footprint. */
+  footprintId?: string
 }
 
 export type PartInspectorProps = {
@@ -309,6 +311,8 @@ export type PartInspectorProps = {
   /** Set a scalar value; pass `unit` to allow CREATING the parameter when absent. */
   onParam: (key: string, amount: number, unit?: string) => void
   onEnum: (key: string, value: string) => void
+  /** Choose this part's board PACKAGE (footprint id) from its options — the footprint picker. */
+  onFootprint: (footprintId: string) => void
   /**
    * Change a material ref. Distinct from onEnum so the App can react physically —
    * e.g. an LED's n_side re-derives its color + forward voltage from the chosen
@@ -417,6 +421,7 @@ export function PartInspector({
   validMaterials,
   onParam,
   onEnum,
+  onFootprint,
   onMaterial,
   onDeriveResistance,
   projectAmbientC,
@@ -486,14 +491,32 @@ export function PartInspector({
       <div style={{ fontSize: 12, color: THEME.textPrimary }}>{selected.id}</div>
       <div style={{ fontSize: 10, color: THEME.textMuted }}>{selected.definition}</div>
 
-      {/* The physical package this part lands on — the schematic → board join (footprint-assignment.ts). */}
+      {/* The physical package this part lands on — the schematic → board join (footprint-assignment.ts),
+          with the PICKER to choose among the part's options (0402/0603/0805, SOT-23/TO-92). */}
       {(() => {
-        const fp = footprintForPart(selected.definition)
+        const options = footprintOptions(selected.definition)
+        const fp = footprintForPart(selected.definition, selected.footprintId)
         if (fp === undefined) return null
         return (
           <>
             <div style={sectionLabel}>Footprint</div>
-            <div style={{ fontSize: 11, color: THEME.textSoft, marginBottom: 4 }}>{fp.name}</div>
+            {options.length > 1 ? (
+              <select
+                value={fp.id}
+                onChange={(e) => onFootprint(e.target.value)}
+                className="nodrag"
+                style={{ ...field, width: '100%', marginBottom: 4 }}
+                title="Choose this part's board package"
+              >
+                {options.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div style={{ fontSize: 11, color: THEME.textSoft, marginBottom: 4 }}>{fp.name}</div>
+            )}
             <FootprintView footprint={fp} pxPerMm={26} />
           </>
         )

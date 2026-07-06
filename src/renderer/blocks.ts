@@ -130,6 +130,9 @@ export type CanvasNodeLike = {
     label?: string
     rotation?: number
     parameters?: Parameters
+    /** The chosen board package (footprint id); absent ⇒ the part's default. Carried so copy/paste and
+     *  other canvas round-trips preserve it, like the .chipblocks save/load and undo paths do. */
+    footprintId?: string
     block?: BlockData
   }
   selected?: boolean

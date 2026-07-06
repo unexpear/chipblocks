@@ -53,7 +53,7 @@ export type Recess = {
 export type Board = { outline: BoardOutline; placements: Placement[] }
 
 /** The minimal part shape deriveBoard reads (a schematic node). */
-export type BoardPart = { id: string; definition: string }
+export type BoardPart = { id: string; definition: string; footprintId?: string }
 
 /** Resolve a placement's footprint (it stores the id, not the object). */
 export function footprintByPlacement(p: Placement): Footprint | undefined {
@@ -124,7 +124,8 @@ export function deriveBoard(
   const takenDesignators = new Set<string>()
   let cursorX = 0
   for (const part of parts) {
-    const fp = footprintForPart(part.definition)
+    // The user's chosen package if valid for this part, else the part's default (footprintForPart guards).
+    const fp = footprintForPart(part.definition, part.footprintId)
     if (fp === undefined) continue
     const b = footprintBounds(fp)
     const override = overrides?.get(part.id)

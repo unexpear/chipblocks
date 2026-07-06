@@ -435,6 +435,7 @@ function circuitFileToFlow(file: CircuitFile) {
       label: n.block?.name ?? n.id,
       ...(n.rotation ? { rotation: n.rotation } : {}),
       ...(n.parameters ? { parameters: n.parameters } : {}),
+      ...(n.footprintId ? { footprintId: n.footprintId } : {}),
       ...(n.block ? { block: n.block } : {}),
     },
   }))
@@ -1465,7 +1466,14 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const pcbBoard = useMemo(
     () =>
       deriveBoard(
-        nodes.map((n) => ({ id: n.id, definition: (n.data as DeviceNodeData).definition })),
+        nodes.map((n) => {
+          const data = n.data as DeviceNodeData
+          return {
+            id: n.id,
+            definition: data.definition,
+            ...(data.footprintId ? { footprintId: data.footprintId } : {}),
+          }
+        }),
         pcbPlacements,
       ),
     [nodes, pcbPlacements],
@@ -5562,6 +5570,18 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     [setNodes, checkpointAction],
   )
 
+  // Pick a part's board PACKAGE (footprint) → stored on the node so it saves + undoes with the part;
+  // the board re-derives (new placement/pads) but the schematic solve is unaffected (same electrical part).
+  const onEditFootprint = useCallback(
+    (nodeId: string, footprintId: string) => {
+      checkpointAction(`footprint:${nodeId}`)
+      setNodes((current) =>
+        current.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, footprintId } } : n)),
+      )
+    },
+    [setNodes, checkpointAction],
+  )
+
   // Pick a wire's gauge → its R = ρ·L/A changes; re-solve so the resistance,
   // current and hot spot all update live (a data edit, like a part's params,
   // so it must drive the re-solve itself rather than wait on a topology change).
@@ -5592,6 +5612,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         id: selectedNode.id,
         definition: (selectedNode.data as DeviceNodeData).definition,
         parameters: (selectedNode.data as DeviceNodeData).parameters,
+        ...((selectedNode.data as DeviceNodeData).footprintId
+          ? { footprintId: (selectedNode.data as DeviceNodeData).footprintId }
+          : {}),
       }
     : null
   // A selected circuit BLOCK → the pinout editor (instead of the part properties).
@@ -6861,6 +6884,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 }}
                 onEnum={(key, value) => {
                   if (selectedPart) onEditEnum(selectedPart.id, key, value)
+                }}
+                onFootprint={(footprintId) => {
+                  if (selectedPart) onEditFootprint(selectedPart.id, footprintId)
                 }}
                 onMaterial={(key, value) => {
                   if (selectedPart) onEditEnum(selectedPart.id, key, value)
