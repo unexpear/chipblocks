@@ -406,7 +406,7 @@ describe('inner copper (multilevel boards)', () => {
     const outerOnly = gerberInnerCopper(
       board,
       ratsnest,
-      routeBoard(ratsnest), // routeBoard only lays top/bottom copper
+      routeBoard(ratsnest), // routeBoard defaults to a 2-layer board — top/bottom copper only
       'inner1',
       2,
       WHEN,

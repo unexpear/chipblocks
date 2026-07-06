@@ -1509,6 +1509,13 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       return next
     })
   }, [])
+  // The board's physical stack-up — the fab-order spec that goes in the manufacturing ZIP. The user
+  // edits the knobs (finished thickness, copper weight, surface finish, layer count) in the PCB
+  // panel; the cross-section (the FR4 core filling to the chosen thickness) is rebuilt from them.
+  // Declared here (ahead of routing) because the router needs the copper-layer count.
+  const [pcbStackupOptions, setPcbStackupOptions] =
+    useState<StackupOptions>(DEFAULT_STACKUP_OPTIONS)
+  const pcbStackup = useMemo(() => buildStackup(pcbStackupOptions), [pcbStackupOptions])
   // The ratsnest: the unrouted pad-to-pad connections the board owes, read from the SAME
   // canvas→world nets the solver uses (grounds + named rails merge exactly like they solve).
   // Only derived while the panel is open — the world walk isn't free on big canvases.
@@ -1519,11 +1526,14 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         : { airwires: [], padBoxes: [] },
     [pcbActive, nodes, edges, pcbBoard],
   )
-  // The copper: every airwire the single-layer router could turn into a real trace; what it couldn't
-  // stays an airwire, honestly counted. Re-routes live as parts move.
+  // The copper: every airwire the router could turn into a real trace, across all the board's copper
+  // layers; what it couldn't stays an airwire, honestly counted. Re-routes live as parts move.
   const pcbRouting = useMemo(
-    () => (pcbActive ? routeBoard(pcbRatsnest) : { traces: [], vias: [], unrouted: [] }),
-    [pcbActive, pcbRatsnest],
+    () =>
+      pcbActive
+        ? routeBoard(pcbRatsnest, DEFAULT_ROUTE_CLASS, pcbStackup.copperLayers)
+        : { traces: [], vias: [], unrouted: [] },
+    [pcbActive, pcbRatsnest, pcbStackup.copperLayers],
   )
   // The auto-router's copper unioned with the user's hand-drawn traces/vias — the SINGLE routing every
   // downstream reader uses (views, DRC, export). Merging also recomputes the owed list, so hand-routing
@@ -1532,12 +1542,6 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     () => mergeUserCopper(pcbRouting, userTraces, userVias),
     [pcbRouting, userTraces, userVias],
   )
-  // The board's physical stack-up — the fab-order spec that goes in the manufacturing ZIP. The user
-  // edits the knobs (finished thickness, copper weight, surface finish) in the PCB panel; the
-  // cross-section (the FR4 core filling to the chosen thickness) is rebuilt from them.
-  const [pcbStackupOptions, setPcbStackupOptions] =
-    useState<StackupOptions>(DEFAULT_STACKUP_OPTIONS)
-  const pcbStackup = useMemo(() => buildStackup(pcbStackupOptions), [pcbStackupOptions])
   // Controlled impedance of a default-width outer trace on this stack-up (IPC-2141A microstrip), plus
   // the width that would hit 50 Ω — a live readout as the stack-up knobs change.
   const pcbImpedance = useMemo(() => {

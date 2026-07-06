@@ -9,24 +9,24 @@ import {
 import type { Airwire, PadBox, Ratsnest } from './pcb-board.ts'
 
 /**
- * The copper router — turns the ratsnest's airwires into real copper on the board's TWO layers
+ * The copper router — turns the ratsnest's airwires into real copper on the board's copper layers
  * (TOOLCHAIN-ROADMAP.md Track 1: the step between placement and DRC/Gerber). Every trace is an
  * orthogonal polyline in real mm at a CITED width, routed with the same guaranteed obstacle-avoiding
  * engine the schematic's wires use (orthogonal-route.ts): a trace's centreline never comes closer
  * than width/2 + clearance to another net's copper on ITS layer — pads, routed traces, or via
  * barrels. Same-net copper may touch freely (that's a connection, not a short).
  *
- * Layers: every connection tries the TOP layer first (SMD pads only exist there); a connection the
- * top can't take drops to the BOTTOM through plated VIAS. Three escalating strategies: (1) a
- * through-hole pad is already on both layers and needs no via; (2) an SMD pad gets a via beside it
- * joined by a short top-layer stub (bottomTerminal); (3) the full two-layer A* (gridRouteTwoLayer)
- * routes across BOTH layers at once, dropping vias MID-ROUTE to dive under a blocked region and
- * surface again. Whatever the two-layer search returns is committed only if its copper genuinely
- * connects the endpoints (twoLayerConnects) — the clearance/DRC audits check spacing, not
- * continuity. What no strategy can take stays an airwire in `unrouted`, honestly counted, never
- * drawn as copper it isn't. Routing is greedy shortest-airwire-first, the classic ordering. Traces
- * may pass under part bodies (real boards route under SMD parts) but never through other nets'
- * copper.
+ * Layers: `routeBoard` takes the board's copper-layer count (2 by default; 4 or 6 add inner layers).
+ * Every connection tries the TOP layer first (SMD pads only exist there); a connection the top can't
+ * take drops through plated VIAS. Three escalating strategies: (1) a through-hole pad is already on
+ * every layer and needs no via; (2) an SMD pad gets a via beside it joined by a short top-layer stub
+ * (bottomTerminal); (3) the full multi-layer A* (gridRouteMultiLayer) routes across ALL routable
+ * layers at once, dropping vias MID-ROUTE to dive under a blocked region and surface again on any
+ * layer. Whatever that search returns is committed only if its copper genuinely connects the
+ * endpoints (twoLayerConnects) — the clearance/DRC audits check spacing, not continuity. What no
+ * strategy can take stays an airwire in `unrouted`, honestly counted, never drawn as copper it
+ * isn't. Routing is greedy shortest-airwire-first, the classic ordering. Traces may pass under part
+ * bodies (real boards route under SMD parts) but never through other nets' copper.
  */
 
 /** The routing rules a net class carries: trace width, copper-to-copper clearance, and the via it
@@ -125,8 +125,8 @@ export const ALL_COPPER_LAYERS: readonly CopperLayer[] = [
 /**
  * The routable copper layers of a board with `copperLayerCount` copper layers, in stack order
  * (top → inner → bottom): 2 → [top, bottom]; 4 → [top, inner1, inner2, bottom]; 6 → adds inner3/4.
- * A trace and the route tool each carry one of these; the auto-router uses top/bottom, inner layers
- * are hand-routed for now.
+ * A trace and the route tool each carry one of these; the auto-router searches ALL of them at once
+ * (gridRouteMultiLayer), and they can be hand-routed too.
  */
 export function routableCopperLayers(copperLayerCount: number): CopperLayer[] {
   if (copperLayerCount <= 2) return ['top', 'bottom']
@@ -303,41 +303,48 @@ export type TwoLayerRoute = {
 }
 
 /**
- * A* over BOTH copper layers at once — the full router: nodes are (x, y, layer) on the combined
- * Hanan grid of the two layers' obstacles, moves are orthogonal steps on the current layer plus a
- * layer FLIP (a via, at VIA_COST_MM) wherever the caller says a via barrel is legal. This is what
- * lets one connection start on the top, dive under a blocked region, and surface again — vias
- * mid-route, not just beside the endpoints. Exported for tests.
+ * A* over EVERY copper layer at once — the full router. Nodes are (x, y, layer) on the combined Hanan
+ * grid of every layer's obstacles; moves are orthogonal steps on the current layer, plus a layer
+ * CHANGE (a plated through-via, at VIA_COST_MM) to ANY other layer wherever a via barrel is legal — a
+ * through-via joins them all. This is what lets one connection start on the top, dive to an inner or
+ * bottom layer under a blocked region, and surface again — vias mid-route, not just beside the
+ * endpoints. A 2-layer board reduces to exactly the top/bottom search. `obstaclesByLayer` and `layers`
+ * are index-aligned (obstaclesByLayer[i] = the forbidden zones on layers[i]). Exported for tests.
  */
-export function gridRouteTwoLayer(
+export function gridRouteMultiLayer(
   a: Pt,
   aLayers: readonly CopperLayer[],
   b: Pt,
   bLayers: readonly CopperLayer[],
-  obstacles: { top: Box[]; bottom: Box[] },
+  obstaclesByLayer: readonly (readonly Box[])[],
+  layers: readonly CopperLayer[],
   viaLegalAt: (p: Pt) => boolean,
   margin = 0.4,
   maxNodes = 500_000,
 ): TwoLayerRoute | null {
+  const numLayers = layers.length
+  const layerIndex = (l: CopperLayer) => layers.indexOf(l)
   const xsSet = new Set<number>([a.x, b.x])
   const ysSet = new Set<number>([a.y, b.y])
-  for (const o of [...obstacles.top, ...obstacles.bottom]) {
-    xsSet.add(o.x - margin)
-    xsSet.add(o.x + o.w + margin)
-    ysSet.add(o.y - margin)
-    ysSet.add(o.y + o.h + margin)
+  for (const layerObs of obstaclesByLayer) {
+    for (const o of layerObs) {
+      xsSet.add(o.x - margin)
+      xsSet.add(o.x + o.w + margin)
+      ysSet.add(o.y - margin)
+      ysSet.add(o.y + o.h + margin)
+    }
   }
   const xs = [...xsSet].sort((p, q) => p - q)
   const ys = [...ysSet].sort((p, q) => p - q)
-  if (xs.length * ys.length * 2 > maxNodes) return null
+  if (xs.length * ys.length * numLayers > maxNodes) return null
   const W = xs.length
   const at = (ix: number, iy: number): Pt => ({ x: xs[ix] as number, y: ys[iy] as number })
-  const layerObstacles = (layer: 0 | 1) => (layer === 0 ? obstacles.top : obstacles.bottom)
-  const clear = (p: Pt, q: Pt, layer: 0 | 1) =>
-    !layerObstacles(layer).some((o) => segmentHitsBox(p, q, o))
-  const pointFree = (p: Pt, layer: 0 | 1) =>
-    !layerObstacles(layer).some((o) => p.x > o.x && p.x < o.x + o.w && p.y > o.y && p.y < o.y + o.h)
-  const key = (ix: number, iy: number, layer: 0 | 1) => (iy * W + ix) * 2 + layer
+  const layerObstacles = (li: number): readonly Box[] => obstaclesByLayer[li] ?? []
+  const clear = (p: Pt, q: Pt, li: number) =>
+    !layerObstacles(li).some((o) => segmentHitsBox(p, q, o))
+  const pointFree = (p: Pt, li: number) =>
+    !layerObstacles(li).some((o) => p.x > o.x && p.x < o.x + o.w && p.y > o.y && p.y < o.y + o.h)
+  const key = (ix: number, iy: number, li: number) => (iy * W + ix) * numLayers + li
   const h = (ix: number, iy: number) =>
     Math.abs((xs[ix] as number) - b.x) + Math.abs((ys[iy] as number) - b.y)
   // memoize the (expensive) via-legality probe per grid point
@@ -357,19 +364,25 @@ export function gridRouteTwoLayer(
   const goalIy = ys.indexOf(b.y)
   const gScore = new Map<number, number>()
   const cameFrom = new Map<number, number>()
-  const open: { ix: number; iy: number; layer: 0 | 1; f: number }[] = []
+  const open: { ix: number; iy: number; layer: number; f: number }[] = []
   for (const l of aLayers) {
-    const layer = l === 'top' ? 0 : 1
-    gScore.set(key(startIx, startIy, layer), 0)
-    open.push({ ix: startIx, iy: startIy, layer, f: h(startIx, startIy) })
+    const li = layerIndex(l)
+    if (li < 0) continue
+    gScore.set(key(startIx, startIy, li), 0)
+    open.push({ ix: startIx, iy: startIy, layer: li, f: h(startIx, startIy) })
   }
-  const goalKeys = new Set(bLayers.map((l) => key(goalIx, goalIy, l === 'top' ? 0 : 1)))
+  const goalKeys = new Set(
+    bLayers
+      .map((l) => layerIndex(l))
+      .filter((li) => li >= 0)
+      .map((li) => key(goalIx, goalIy, li)),
+  )
   let reachedGoal = -1
   while (open.length > 0) {
     let best = 0
     for (let i = 1; i < open.length; i++)
       if ((open[i] as { f: number }).f < (open[best] as { f: number }).f) best = i
-    const cur = open.splice(best, 1)[0] as { ix: number; iy: number; layer: 0 | 1 }
+    const cur = open.splice(best, 1)[0] as { ix: number; iy: number; layer: number }
     const ck = key(cur.ix, cur.iy, cur.layer)
     if (goalKeys.has(ck)) {
       reachedGoal = ck
@@ -395,45 +408,48 @@ export function gridRouteTwoLayer(
         open.push({ ix: nx, iy: ny, layer: cur.layer, f: tentative + h(nx, ny) })
       }
     }
-    // the layer flip — a via, if a barrel is legal here and the landing layer is open
-    const other = (cur.layer === 0 ? 1 : 0) as 0 | 1
-    if (pointFree(cp, other) && viaOk(cur.ix, cur.iy)) {
-      const tentative = cg + VIA_COST_MM
-      const nk = key(cur.ix, cur.iy, other)
-      if (tentative < (gScore.get(nk) ?? Number.POSITIVE_INFINITY)) {
-        gScore.set(nk, tentative)
-        cameFrom.set(nk, ck)
-        open.push({ ix: cur.ix, iy: cur.iy, layer: other, f: tentative + h(cur.ix, cur.iy) })
+    // A layer change — a plated through-via joins every layer at this point, so from here the path can
+    // surface on ANY other layer whose copper is open there, for one via's cost.
+    if (viaOk(cur.ix, cur.iy)) {
+      for (let li = 0; li < numLayers; li++) {
+        if (li === cur.layer || !pointFree(cp, li)) continue
+        const tentative = cg + VIA_COST_MM
+        const nk = key(cur.ix, cur.iy, li)
+        if (tentative < (gScore.get(nk) ?? Number.POSITIVE_INFINITY)) {
+          gScore.set(nk, tentative)
+          cameFrom.set(nk, ck)
+          open.push({ ix: cur.ix, iy: cur.iy, layer: li, f: tentative + h(cur.ix, cur.iy) })
+        }
       }
     }
   }
   if (reachedGoal < 0) return null
 
-  // Walk back, splitting the node chain into per-layer runs with a via at every flip.
-  const chain: { p: Pt; layer: 0 | 1 }[] = []
+  // Walk back, splitting the node chain into per-layer runs with a via at every layer change.
+  const chain: { p: Pt; layer: number }[] = []
   let k = reachedGoal
   for (;;) {
-    const cell = Math.floor(k / 2)
-    chain.unshift({ p: at(cell % W, Math.floor(cell / W)), layer: (k % 2) as 0 | 1 })
+    const cell = Math.floor(k / numLayers)
+    chain.unshift({ p: at(cell % W, Math.floor(cell / W)), layer: k % numLayers })
     const prev = cameFrom.get(k)
     if (prev === undefined) break
     k = prev
   }
   const runs: { layer: CopperLayer; points: Pt[] }[] = []
-  // A via at EVERY layer flip — the A* only flips where the caller's viaLegalAt passed, so every
-  // one is legal, and every one is NEEDED: it bridges the run (or the pad) on each layer at that
-  // point. A flip that lands exactly on an endpoint leaves a single-point run whose TRACE draws
-  // nothing, but its via must stay — at an SMD (top-only) pad that via is the sole bridge from a
-  // bottom run up to the pad's top copper; dropping it opens the net (review-caught: the earlier
-  // "derive vias from surviving runs" refactor silently opened exactly that case).
+  // A via at EVERY layer change — the A* only changes layers where the caller's viaLegalAt passed, so
+  // every one is legal, and every one is NEEDED: it bridges the run (or the pad) at that point. A
+  // change that lands exactly on an endpoint leaves a single-point run whose TRACE draws nothing, but
+  // its via must stay — at an SMD (top-only) pad that via is the sole bridge from an inner/bottom run
+  // up to the pad's top copper; dropping it opens the net (review-caught: the earlier "derive vias
+  // from surviving runs" refactor silently opened exactly that case).
   const viaAt: Pt[] = []
   for (const node of chain) {
-    const layerName: CopperLayer = node.layer === 0 ? 'top' : 'bottom'
+    const layerName = layers[node.layer] as CopperLayer
     const run = runs[runs.length - 1]
     if (run === undefined) {
       runs.push({ layer: layerName, points: [node.p] })
     } else if (run.layer !== layerName) {
-      viaAt.push({ x: node.p.x, y: node.p.y }) // the flip point (prev run ends here) is a via
+      viaAt.push({ x: node.p.x, y: node.p.y }) // the change point (prev run ends here) is a via
       runs.push({ layer: layerName, points: [node.p] })
     } else {
       run.points.push(node.p)
@@ -443,6 +459,31 @@ export function gridRouteTwoLayer(
     .map((r) => ({ layer: r.layer, points: simplifyPath(r.points) }))
     .filter((r) => r.points.length >= 2)
   return { runs: kept, viaAt }
+}
+
+/** The two-layer (top / bottom) form — the original signature, now a thin wrapper over the general
+ *  N-layer router so both share one implementation. */
+export function gridRouteTwoLayer(
+  a: Pt,
+  aLayers: readonly CopperLayer[],
+  b: Pt,
+  bLayers: readonly CopperLayer[],
+  obstacles: { top: Box[]; bottom: Box[] },
+  viaLegalAt: (p: Pt) => boolean,
+  margin = 0.4,
+  maxNodes = 500_000,
+): TwoLayerRoute | null {
+  return gridRouteMultiLayer(
+    a,
+    aLayers,
+    b,
+    bLayers,
+    [obstacles.top, obstacles.bottom],
+    ['top', 'bottom'],
+    viaLegalAt,
+    margin,
+    maxNodes,
+  )
 }
 
 /**
@@ -471,7 +512,16 @@ export function twoLayerConnects(
       link(key(run.points[i] as Pt, run.layer), key(run.points[i + 1] as Pt, run.layer))
     }
   }
-  for (const v of route.viaAt) link(key(v, 'top'), key(v, 'bottom'))
+  // A plated through-via joins EVERY copper layer at its point — chain them so any two layers of
+  // the route are connected there (a 2-layer route still just joins top↔bottom).
+  for (const v of route.viaAt) {
+    for (let i = 0; i < ALL_COPPER_LAYERS.length - 1; i++) {
+      link(
+        key(v, ALL_COPPER_LAYERS[i] as CopperLayer),
+        key(v, ALL_COPPER_LAYERS[i + 1] as CopperLayer),
+      )
+    }
+  }
   const starts = fromLayers.map((l) => key(from, l))
   const goals = new Set(toLayers.map((l) => key(to, l)))
   if (starts.some((s) => goals.has(s))) return true
@@ -515,12 +565,16 @@ function tryPath(a: Pt, b: Pt, obstacles: Box[]): Pt[] | null {
 export function routeBoard(
   ratsnest: Ratsnest,
   cls: RouteClass = DEFAULT_ROUTE_CLASS,
+  copperLayers = 2,
 ): BoardRouting {
   const w = cls.traceWidthMm
   const clr = cls.clearanceMm
   const traces: CopperTrace[] = []
   const vias: Via[] = []
   const unrouted: Airwire[] = []
+  // The layers the router may lay copper on, in stack order — [top, bottom] for a 2-layer board,
+  // [top, inner1, …, bottom] once inner layers exist. The full A* searches all of them at once.
+  const routable = routableCopperLayers(copperLayers)
 
   const ordered = [...ratsnest.airwires].sort(
     (p, q) =>
@@ -534,7 +588,7 @@ export function routeBoard(
     const out: Box[] = []
     for (const pad of ratsnest.padBoxes) {
       if (pad.net === net) continue
-      if (layer === 'bottom' && !pad.throughHole) continue // SMD copper exists on top only
+      if (layer !== 'top' && !pad.throughHole) continue // SMD copper exists on the top layer only
       out.push(inflate(pad, clr + w / 2))
     }
     for (const t of traces) {
@@ -671,8 +725,9 @@ export function routeBoard(
         continue
       }
     }
-    // The full two-layer search — vias MID-ROUTE, not just beside the endpoints: dive under a
-    // blocked region and surface again. A through-hole endpoint may start on either layer.
+    // The full multi-layer search — vias MID-ROUTE, not just beside the endpoints: dive under a
+    // blocked region and surface again, on ANY routable layer. A through-hole endpoint sits on
+    // every layer; an SMD pad's copper is on the top only, so it must start there.
     const layersOf = (p: Pt): CopperLayer[] => {
       const pad = ratsnest.padBoxes.find(
         (bx) =>
@@ -682,16 +737,17 @@ export function routeBoard(
           p.y >= bx.y &&
           p.y <= bx.y + bx.h,
       )
-      return pad?.throughHole ? ['top', 'bottom'] : ['top']
+      return pad?.throughHole ? [...routable] : ['top']
     }
     const fromLayers = layersOf(aw.from)
     const toLayers = layersOf(aw.to)
-    const two = gridRouteTwoLayer(
+    const two = gridRouteMultiLayer(
       aw.from,
       fromLayers,
       aw.to,
       toLayers,
-      { top: topObstacles, bottom: obstaclesFor(aw.net, 'bottom') },
+      routable.map((l) => (l === 'top' ? topObstacles : obstaclesFor(aw.net, l))),
+      routable,
       (p) => viaSpotLegal(p, aw.net),
     )
     if (two !== null) {

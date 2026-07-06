@@ -17,6 +17,7 @@ import {
   clearanceViolations,
   copperConnects,
   DEFAULT_ROUTE_CLASS,
+  gridRouteMultiLayer,
   gridRouteTwoLayer,
   routableCopperLayers,
   routeBoard,
@@ -576,5 +577,104 @@ describe('the routable-layer model — inner copper layers', () => {
       },
     ]
     expect(copperConnects({ x: 0, y: 0 }, { x: 10, y: 0 }, traces, via)).toBe(true)
+  })
+})
+
+describe('the 4-layer auto-router — gridRouteMultiLayer across inner copper', () => {
+  // A CLOSED ring of copper around the origin — the same airtight geometry the two-layer via tests
+  // rely on: the A* grid cannot leave a closed box, so a pad boxed in by this ring on a layer has
+  // NO route out on that layer. Reused on top AND bottom below to force a dive to an inner layer.
+  const ring = () => [
+    { x: -3, y: -3, w: 6, h: 1 },
+    { x: -3, y: 2, w: 6, h: 1 },
+    { x: -3, y: -2, w: 1, h: 4 },
+    { x: 2, y: -2, w: 1, h: 4 },
+  ]
+
+  test('the 2-layer wrapper is EXACTLY the general N-layer router (no regression)', () => {
+    const wall = { x: 9.5, y: -40, w: 1, h: 80 }
+    const args = [{ x: 0, y: 0 }, ['top'] as const, { x: 20, y: 0 }, ['top'] as const] as const
+    const viaOk = () => true
+    const viaWrapper = gridRouteTwoLayer(
+      args[0],
+      args[1],
+      args[2],
+      args[3],
+      { top: [wall], bottom: [] },
+      viaOk,
+    )
+    const viaGeneral = gridRouteMultiLayer(
+      args[0],
+      args[1],
+      args[2],
+      args[3],
+      [[wall], []],
+      ['top', 'bottom'],
+      viaOk,
+    )
+    expect(viaWrapper).toEqual(viaGeneral)
+  })
+
+  test('a pad boxed in on BOTH outer layers escapes through an INNER layer', () => {
+    // The origin pad (a through-hole pad, present on every layer) is walled in by a CLOSED ring on
+    // the TOP and an identical CLOSED ring on the BOTTOM — neither outer layer can carry it out. Only
+    // the open inner layers can. This is the capability 2 layers physically cannot provide.
+    const layers = routableCopperLayers(4) // ['top','inner1','inner2','bottom']
+    const route = gridRouteMultiLayer(
+      { x: 0, y: 0 },
+      layers, // through-hole start: on every layer
+      { x: 20, y: 0 },
+      ['top'], // surface to a top-only pad at the far end
+      [ring(), [], [], ring()], // top & bottom ringed; inner1 / inner2 open
+      layers,
+      () => true,
+    )
+    if (route === null) throw new Error('no inner-layer route found')
+    // it genuinely connects the two endpoints through its committed copper…
+    expect(twoLayerConnects(route, { x: 0, y: 0 }, layers, { x: 20, y: 0 }, ['top'])).toBe(true)
+    // …and it actually used an inner layer to do it (the whole point)
+    const innerRun = route.runs.find((r) => r.layer === 'inner1' || r.layer === 'inner2')
+    expect(innerRun).toBeDefined()
+    // and there is a via wherever it surfaces from the inner layer to the top pad
+    expect(route.viaAt.length).toBeGreaterThanOrEqual(1)
+  })
+
+  test('the SAME box is unroutable on 2 layers — the inner layers are what unlock it', () => {
+    // Identical geometry, but only top + bottom exist: the pad is enclosed on both, so there is no
+    // way out at all. Proves the inner layers (not some detour) are doing the work above.
+    const route = gridRouteTwoLayer(
+      { x: 0, y: 0 },
+      ['top', 'bottom'],
+      { x: 20, y: 0 },
+      ['top'],
+      { top: ring(), bottom: ring() },
+      () => true,
+    )
+    expect(route).toBeNull()
+  })
+
+  test('routeBoard threads the copper-layer count through — a 4-layer board still routes + connects', () => {
+    // The end-to-end plumbing: the same walled-in SMD board the 2-layer router handles must still
+    // route on a 4-layer board, and its committed copper must genuinely connect (no regression from
+    // widening the layer set). The bottom is open here, so it uses it — but the layer count flows all
+    // the way to gridRouteMultiLayer and back.
+    const rn: Ratsnest = {
+      airwires: [{ net: 'sig', from: { x: 0, y: 0 }, to: { x: 10, y: 0 } }],
+      padBoxes: [
+        { net: 'sig', pad: 'a/1', throughHole: false, x: -0.4, y: -0.475, w: 0.8, h: 0.95 },
+        { net: 'sig', pad: 'b/1', throughHole: false, x: 9.6, y: -0.475, w: 0.8, h: 0.95 },
+        { net: 'wall:n', pad: 'w/1', throughHole: false, x: -3, y: -3, w: 6, h: 1 },
+        { net: 'wall:s', pad: 'w/2', throughHole: false, x: -3, y: 2, w: 6, h: 1 },
+        { net: 'wall:w', pad: 'w/3', throughHole: false, x: -3, y: -2, w: 1, h: 4 },
+        { net: 'wall:e', pad: 'w/4', throughHole: false, x: 2, y: -2, w: 1, h: 4 },
+      ],
+    }
+    const routing = routeBoard(rn, DEFAULT_ROUTE_CLASS, 4)
+    expect(routing.unrouted).toHaveLength(0)
+    const sig = routing.traces.filter((t) => t.net === 'sig')
+    const vias = routing.vias.filter((v) => v.net === 'sig')
+    expect(copperConnects({ x: 0, y: 0 }, { x: 10, y: 0 }, sig, vias)).toBe(true)
+    // every emitted trace sits on a layer that a 4-layer board actually has
+    for (const t of routing.traces) expect(routableCopperLayers(4)).toContain(t.layer)
   })
 })
