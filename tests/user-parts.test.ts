@@ -14,6 +14,7 @@ import {
   getUserPartsSnapshot,
   isReservedBuiltinId,
   isUserPart,
+  mergeUserParts,
   registerUserPart,
   reserveBuiltinIds,
   setUserParts,
@@ -246,5 +247,37 @@ describe('the external store (so React re-renders the palette on a change)', () 
     const after = getUserPartsSnapshot()
     expect(after).not.toBe(before) // new reference after a change
     expect(after.map((p) => p.id)).toContain('my_ic')
+  })
+})
+
+describe('mergeUserParts — a non-clobbering load (existing wins on an id clash)', () => {
+  test('adds new parts but KEEPS an already-registered one (no silent rewrite across tabs)', () => {
+    const original = part({ id: 'my_ic', name: 'ORIGINAL' })
+    registerUserPart(original)
+    const added = mergeUserParts([
+      part({ id: 'my_ic', name: 'DIFFERENT' }), // clashes → must be ignored, original kept
+      part({ id: 'fresh', name: 'FRESH' }), // new → added
+    ])
+    expect(added).toBe(1)
+    expect(getUserPart('my_ic')?.name).toBe('ORIGINAL') // the open tab's part is untouched
+    expect(getUserPart('fresh')?.name).toBe('FRESH')
+  })
+
+  test('skips a reserved built-in id', () => {
+    reserveBuiltinIds(['reserved_x'])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(mergeUserParts([part({ id: 'reserved_x' })])).toBe(0)
+    warn.mockRestore()
+    expect(isUserPart('reserved_x')).toBe(false)
+  })
+
+  test('notifies subscribers once when something is added, not at all when nothing is', () => {
+    let calls = 0
+    const unsub = subscribeUserParts(() => calls++)
+    mergeUserParts([]) // nothing → no notify
+    expect(calls).toBe(0)
+    mergeUserParts([part({ id: 'a' }), part({ id: 'b' })]) // 2 added → one notify
+    expect(calls).toBe(1)
+    unsub()
   })
 })

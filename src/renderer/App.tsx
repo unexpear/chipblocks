@@ -215,6 +215,7 @@ import { useShortcuts } from './use-shortcuts.tsx'
 import { useTimeline } from './use-timeline.ts'
 import { useWireTool } from './use-wire-tool.ts'
 import { UserPartEditor } from './user-part-editor.tsx'
+import { allUserParts, mergeUserParts } from './user-parts.ts'
 import {
   findWireCrossings,
   netColor,
@@ -1148,6 +1149,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         projectAmbientRef.current,
         sheetSettingsRef.current,
         placementsToSaved(pcbPlacementsRef.current),
+        allUserParts(),
       )
       void bridge.saveCircuitData(JSON.stringify(file, null, 2)).then((r) => {
         // A successful save lands the project in the "My Projects" list (by its file path).
@@ -1216,6 +1218,11 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       // Restore the saved drawing sheet (page size + title block); an older file has none → keep the
       // current sheet. Merge over the default so a partial/old sheet still fills every field.
       if (result.file.sheet) setSheetSettings({ ...DEFAULT_SHEET, ...result.file.sheet })
+      // Register the project's custom parts (already validated by deserializeCircuit) so its nodes draw
+      // + wire as their real symbols. A non-clobbering merge: if an id is already in the library (e.g. a
+      // part another open tab authored), the EXISTING one is kept — loading a project never silently
+      // rewrites a part in use elsewhere. (Built-in-id clashes are skipped too.)
+      mergeUserParts(result.file.userParts ?? [])
       const flow = circuitFileToFlow(result.file)
       setNodes(flow.nodes)
       setEdges(flow.edges)

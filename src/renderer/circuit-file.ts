@@ -1,6 +1,8 @@
 import type { BlockData } from './blocks.ts'
 import type { Parameters } from './part-defaults.ts'
 import type { SheetSettings } from './sheet-frame.tsx'
+import { validateUserPart } from './user-part-validate.ts'
+import type { UserPart } from './user-parts.ts'
 
 /**
  * Circuit file format (S19-v3-52) — Save/Load, the first half of the
@@ -68,6 +70,9 @@ export type CircuitFile = {
   sheet?: SheetSettings
   /** Hand-placed board positions/rotations; absent ⇒ every part starts on its auto spot (older files). */
   placements?: SavedPlacement[]
+  /** User-authored custom parts used by this project, so the file is self-contained + portable; absent
+   *  ⇒ none (older files). Validated on load by user-part-validate.ts (mirrors user-part.schema.json). */
+  userParts?: UserPart[]
   nodes: SavedNode[]
   wires: SavedWire[]
 }
@@ -114,6 +119,24 @@ function persistableParameters(parameters: Parameters | undefined): Parameters |
   return kept.length > 0 ? (Object.fromEntries(kept) as Parameters) : undefined
 }
 
+/** Every definition id the circuit references — top-level nodes AND parts nested inside blocks (a block
+ *  can group a selection that itself contains a user part), walked recursively. Used to save only the
+ *  user parts this project actually uses, so the file stays scoped + portable (not the whole session). */
+function collectDefinitionIds(nodes: CanvasNodeLike[]): Set<string> {
+  const ids = new Set<string>()
+  const walkBlock = (block: BlockData) => {
+    for (const inner of block.nodes) {
+      ids.add(inner.definition)
+      if (inner.block) walkBlock(inner.block)
+    }
+  }
+  for (const n of nodes) {
+    ids.add(n.data.definition)
+    if (n.data.block) walkBlock(n.data.block)
+  }
+  return ids
+}
+
 /** The canvas state → a versioned, solver-free circuit file. */
 export function serializeCircuit(
   nodes: CanvasNodeLike[],
@@ -121,13 +144,19 @@ export function serializeCircuit(
   projectAmbientC?: number,
   sheet?: SheetSettings,
   placements?: readonly SavedPlacement[],
+  userParts?: readonly UserPart[],
 ): CircuitFile {
+  // Save only the user parts THIS circuit references (not the whole session registry, which is shared
+  // across open tabs) — so the file is self-contained + portable without leaking unrelated parts.
+  const usedIds = userParts && userParts.length > 0 ? collectDefinitionIds(nodes) : undefined
+  const referencedUserParts = usedIds ? (userParts ?? []).filter((p) => usedIds.has(p.id)) : []
   return {
     format: CIRCUIT_FILE_FORMAT,
     version: CIRCUIT_FILE_VERSION,
     ...(typeof projectAmbientC === 'number' ? { projectAmbientC } : {}),
     ...(sheet ? { sheet } : {}),
     ...(placements && placements.length > 0 ? { placements: [...placements] } : {}),
+    ...(referencedUserParts.length > 0 ? { userParts: referencedUserParts } : {}),
     nodes: nodes.map((n) => {
       const parameters = persistableParameters(n.data.parameters)
       return {
@@ -215,7 +244,7 @@ export function deserializeCircuit(text: string): DeserializeResult {
   // projectAmbientC drives the solve temperature; if present it must be a finite number.
   // A malformed one is DROPPED — not a reason to reject the whole circuit — so the returned
   // type is honest (a number or absent) and the loader falls back to the 25 °C default.
-  const { projectAmbientC, sheet, placements, ...rest } = file
+  const { projectAmbientC, sheet, placements, userParts, ...rest } = file
   const base = rest as CircuitFile
   const ambientOk = typeof projectAmbientC === 'number' && Number.isFinite(projectAmbientC)
   // A malformed sheet (not an object) is dropped, not a reason to reject the circuit; the loader
@@ -236,6 +265,12 @@ export function deserializeCircuit(text: string): DeserializeResult {
         )
       })
     : []
+  // User parts: validate each against the user-part shape (mirrors user-part.schema.json). A malformed
+  // entry is dropped — not a reason to reject the whole circuit — so a mostly-good file still loads its
+  // good parts (and the parts that reference a dropped one just render as the honest unknown-part box).
+  const cleanUserParts = Array.isArray(userParts)
+    ? userParts.map((p) => validateUserPart(p)).filter((p): p is UserPart => p !== null)
+    : []
   return {
     ok: true,
     file: {
@@ -243,6 +278,7 @@ export function deserializeCircuit(text: string): DeserializeResult {
       ...(ambientOk ? { projectAmbientC: projectAmbientC as number } : {}),
       ...(sheetOk ? { sheet: sheet as SheetSettings } : {}),
       ...(cleanPlacements.length > 0 ? { placements: cleanPlacements } : {}),
+      ...(cleanUserParts.length > 0 ? { userParts: cleanUserParts } : {}),
     },
   }
 }

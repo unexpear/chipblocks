@@ -239,3 +239,20 @@ export function setUserParts(parts: readonly UserPart[]): void {
   }
   publish()
 }
+
+/**
+ * Add parts WITHOUT clobbering (used when a project loads its custom parts into a session that may
+ * already hold parts from another open tab): an id already registered is KEPT, not overwritten — so a
+ * loaded project can never silently change a part another tab is using. Reserved built-in ids are
+ * skipped. Returns how many were newly added.
+ */
+export function mergeUserParts(parts: readonly UserPart[]): number {
+  let added = 0
+  for (const p of parts) {
+    if (registry.has(p.id) || reservedBuiltinIds.has(p.id)) continue
+    registry.set(p.id, p)
+    added++
+  }
+  if (added > 0) publish()
+  return added
+}
