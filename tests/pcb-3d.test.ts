@@ -266,30 +266,129 @@ describe('exploded lamination — the board SPLIT into its real stack-up layers'
   })
 })
 
-describe('multilevel board — inner copper planes appear in the exploded view', () => {
+describe('multilevel board — inner copper routed + shown at its real buried depth', () => {
   const COPPER_GOLD = '#d7a13c' // COLORS.copper
   const flatZ = (f: { verts: { z: number }[] }): number | null => {
     const z0 = f.verts[0]?.z
     if (z0 === undefined) return null
     return f.verts.every((v) => Math.abs(v.z - z0) < 1e-9) ? z0 : null
   }
-
-  test('a 4-layer board shows solid copper planes strictly BETWEEN the top and bottom copper', () => {
-    const stack4 = buildStackup({
+  const stack4 = () =>
+    buildStackup({
       thicknessMm: 1.6,
       copperWeight: 'one_oz',
       surfaceFinish: 'hasl',
       copperLayers: 4,
     })
-    const scene = buildBoardScene(board, routing, stack4, 5) // exploded so the layers separate
-    // inner copper = a flat copper quad whose z sits between the two outer copper layers (a via barrel
-    // spans z so it is excluded by flatZ; the outer copper sits AT copperZ.top / .bottom).
-    const innerPlanes = scene.faces.filter((f) => {
+  // a real routed trace on the FIRST inner layer (not top, not bottom)
+  const innerRouting: BoardRouting = {
+    traces: [
+      {
+        net: 'N9',
+        widthMm: 0.25,
+        layer: 'inner1',
+        points: [
+          { x: board.outline.x + 1, y: board.outline.y + 2 },
+          { x: board.outline.x + 5, y: board.outline.y + 2 },
+        ],
+      },
+    ],
+    vias: [],
+    unrouted: [],
+  }
+  const copperFacesAt = (scene: ReturnType<typeof buildBoardScene>, z: number) =>
+    scene.faces.filter((f) => {
+      if (f.color !== COPPER_GOLD) return false
+      const fz = flatZ(f)
+      return fz !== null && Math.abs(fz - z) < 1e-6
+    })
+
+  test('the scene exposes each inner copper layer’s z, strictly ordered between top and bottom', () => {
+    const scene = buildBoardScene(board, innerRouting, stack4())
+    const { top, bottom, inner1, inner2 } = scene.copperZ
+    expect(inner1).toBeDefined()
+    expect(inner2).toBeDefined()
+    // top (= T) > inner1 > inner2 > bottom (= 0): the real stack order, buried inside the 0..T slab
+    expect(top).toBeGreaterThan(inner1 as number)
+    expect(inner1 as number).toBeGreaterThan(inner2 as number)
+    expect(inner2 as number).toBeGreaterThan(bottom)
+    // a plain 2-layer board has no inner keys at all
+    expect(buildBoardScene(board, routing, defaultStackup()).copperZ.inner1).toBeUndefined()
+  })
+
+  test('a routed inner-layer trace draws at its real inner depth — never on the top or bottom', () => {
+    const scene = buildBoardScene(board, innerRouting, stack4(), 5) // exploded so inner layers show
+    const innerZ = scene.copperZ.inner1
+    expect(innerZ).toBeDefined()
+    // the trace copper sits on the inner1 plane…
+    expect(copperFacesAt(scene, innerZ as number).length).toBeGreaterThanOrEqual(1)
+    // …and is NOT collapsed onto the outer copper (the bug: inner traces drew at an outer height).
+    // The outer copper here is only the SMD pads; the inner1 trace must not appear among them.
+    const outerCopper = [
+      ...copperFacesAt(scene, scene.copperZ.top),
+      ...copperFacesAt(scene, scene.copperZ.bottom),
+    ]
+    // every outer copper face is a pad (4 corners at a pad-sized extent), never the 0.25 mm-wide ribbon
+    const isRibbon = (f: { verts: { x: number; y: number }[] }) => {
+      const xs = f.verts.map((v) => v.x)
+      const ys = f.verts.map((v) => v.y)
+      const w = Math.max(...xs) - Math.min(...xs)
+      const h = Math.max(...ys) - Math.min(...ys)
+      return Math.min(w, h) < 0.3 // the trace ribbon is 0.25 mm across its short side
+    }
+    expect(outerCopper.some(isRibbon)).toBe(false)
+  })
+
+  test('assembled: an inner trace is BURIED — it never leaks onto an outer copper face', () => {
+    const copperDecals = (s: ReturnType<typeof buildBoardScene>) =>
+      s.faces.reduce((n, f) => n + f.decals.filter((d) => d.color === COPPER_GOLD).length, 0)
+    const withInner = buildBoardScene(board, innerRouting, stack4(), 0)
+    const noInner = buildBoardScene(board, { traces: [], vias: [], unrouted: [] }, stack4(), 0)
+    // in the assembled (solid) board the inner trace is inside the FR4 — it adds NO visible copper,
+    // and (the old bug) it must not be dumped onto the top or bottom copper decals either
+    expect(copperDecals(withInner)).toBe(copperDecals(noInner))
+  })
+
+  test('an unrouted inner layer shows NO copper pour — the 3-D matches its empty inner Gerber', () => {
+    // nothing routed and no vias: the inner planes carry ZERO copper (the old solid-pour depiction is
+    // gone — an unrouted inner layer's Gerber is empty, so its 3-D plane is bare too).
+    const scene = buildBoardScene(board, { traces: [], vias: [], unrouted: [] }, stack4(), 5)
+    const between = scene.faces.filter((f) => {
       if (f.color !== COPPER_GOLD) return false
       const z = flatZ(f)
       return z !== null && z > scene.copperZ.bottom + 1e-6 && z < scene.copperZ.top - 1e-6
     })
-    expect(innerPlanes.length).toBeGreaterThanOrEqual(2) // In1.Cu + In2.Cu pour planes
+    expect(between).toHaveLength(0)
+  })
+
+  test('a plated through-via flashes a copper cap on EVERY copper layer (matches its Gerber)', () => {
+    const scene = buildBoardScene(
+      board,
+      {
+        traces: [],
+        vias: [
+          {
+            net: 'N9',
+            at: { x: board.outline.x + 3, y: board.outline.y + 3 },
+            diameterMm: 0.6,
+            drillMm: 0.4,
+          },
+        ],
+        unrouted: [],
+      },
+      stack4(),
+      5,
+    )
+    // a cap on top, bottom, inner1 AND inner2 — the through-via joins all four
+    for (const z of [
+      scene.copperZ.top,
+      scene.copperZ.bottom,
+      scene.copperZ.inner1,
+      scene.copperZ.inner2,
+    ]) {
+      expect(z).toBeDefined()
+      expect(copperFacesAt(scene, z as number).length).toBeGreaterThanOrEqual(1)
+    }
   })
 
   test('a plain 2-layer board has NO copper between its two copper layers', () => {

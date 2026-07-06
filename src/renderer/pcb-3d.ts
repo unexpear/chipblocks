@@ -1,7 +1,7 @@
 import { fabricationBounds } from './footprint.ts'
 import type { Board, Recess } from './pcb-board.ts'
 import { footprintByPlacement, placePoint } from './pcb-board.ts'
-import type { BoardRouting } from './pcb-route.ts'
+import type { BoardRouting, CopperLayer } from './pcb-route.ts'
 import type { Stackup, StackupLayer } from './pcb-stackup.ts'
 
 /**
@@ -61,9 +61,11 @@ export type Scene = {
   center: Vec3
   /** The board's 3-D diagonal in mm — used to frame the default camera. */
   diagonal: number
-  /** The z-height (mm) of each copper layer's surface — where a routing click on that layer lands.
-   *  Assembled: top = board thickness, bottom = 0. Exploded: the separated slabs' copper surfaces. */
-  copperZ: { top: number; bottom: number }
+  /** The z-height (mm) of EVERY copper layer's surface — where a routing click on that layer lands.
+   *  Assembled: top = board thickness, bottom = 0, inner layers at their true buried mid-height in the
+   *  slab. Exploded: the separated slabs' copper surfaces. Inner keys are present only when the board
+   *  actually has those layers (4-/6-layer); top and bottom are always present. */
+  copperZ: { top: number; bottom: number } & Partial<Record<CopperLayer, number>>
   /** The coordinate grid (present when built with showGrid). */
   grid?: GridRef
 }
@@ -99,6 +101,26 @@ const GRID_COLOR = '#6b8fc0' // the coordinate ground grid + axes (matches the f
 /** The board's true finished thickness (mm) from the stack-up. */
 function boardThicknessMm(stackup: Stackup): number {
   return stackup.layers.reduce((sum, l) => sum + l.thicknessMm, 0)
+}
+
+/** Map a stack-up copper layer's name (F.Cu / In1.Cu … / B.Cu, per buildStackup) to its CopperLayer. */
+function stackupCopperLayer(name: string): CopperLayer | null {
+  switch (name) {
+    case 'F.Cu':
+      return 'top'
+    case 'In1.Cu':
+      return 'inner1'
+    case 'In2.Cu':
+      return 'inner2'
+    case 'In3.Cu':
+      return 'inner3'
+    case 'In4.Cu':
+      return 'inner4'
+    case 'B.Cu':
+      return 'bottom'
+    default:
+      return null
+  }
 }
 
 /** Turn a footprint-local rectangle (centre + half extents) into its four board-space corners at z. */
@@ -398,12 +420,51 @@ export function buildBoardScene(
   const botCuZ = exploded ? layerTop('B.Cu', 0) : 0 // copper on the bottom-copper layer's surface
   const compBase = exploded ? (placed[placed.length - 1]?.z1 ?? T) : T // parts ride the top layer
 
-  // copper polys (traces + pads + via caps) at their (possibly separated) layer heights
-  const topCopper: Poly[] = []
-  const bottomCopper: Poly[] = []
+  // The real surface height (mm) of EVERY copper layer the board has. Assembled: the outer copper sits
+  // on the board's two faces (T / 0); an inner layer sits at its true buried mid-height inside the 0..T
+  // slab. Exploded: each separated slab's copper surface (its z1). This is what puts an inner-layer
+  // trace at its real depth instead of collapsing it onto the bottom.
+  const copperZByLayer = new Map<CopperLayer, number>()
+  if (exploded) {
+    for (const p of placed) {
+      const cl = stackupCopperLayer(p.name)
+      if (cl !== null) copperZByLayer.set(cl, p.z1)
+    }
+  } else {
+    let z = T
+    for (const L of stackup.layers) {
+      const zHi = z
+      const zLo = z - L.thicknessMm
+      if (L.type === 'copper') {
+        const cl = stackupCopperLayer(L.name)
+        if (cl !== null) {
+          copperZByLayer.set(cl, cl === 'top' ? T : cl === 'bottom' ? 0 : (zHi + zLo) / 2)
+        }
+      }
+      z = zLo
+    }
+  }
+  const zOfLayer = (l: CopperLayer): number =>
+    copperZByLayer.get(l) ?? (l === 'bottom' ? botCuZ : topCuZ)
+  // The copper layers the board actually has, in stack order (top → inner → bottom) — a plated
+  // through-via and a through-hole pad put copper on every one of them.
+  const boardCopperLayers = [...copperZByLayer.keys()]
+
+  // Copper artwork bucketed PER LAYER (traces + pad rings + via caps) at each layer's real height —
+  // exactly the copper that layer's Gerber carries, so the 3-D board matches the manufacturing files.
+  const copperByLayer = new Map<CopperLayer, Poly[]>()
+  const bucketOf = (l: CopperLayer): Poly[] => {
+    const existing = copperByLayer.get(l)
+    if (existing !== undefined) return existing
+    const fresh: Poly[] = []
+    copperByLayer.set(l, fresh)
+    return fresh
+  }
+  bucketOf('top') // the two outer buckets always exist (they back the assembled board's two faces)
+  bucketOf('bottom')
   for (const t of routing.traces) {
-    const z = t.layer === 'top' ? topCuZ : botCuZ
-    const target = t.layer === 'top' ? topCopper : bottomCopper
+    const target = bucketOf(t.layer)
+    const z = zOfLayer(t.layer)
     for (let i = 0; i + 1 < t.points.length; i++) {
       const a = t.points[i]
       const b = t.points[i + 1]
@@ -415,26 +476,33 @@ export function buildBoardScene(
     const fp = footprintByPlacement(pl)
     if (fp === undefined) continue
     for (const pad of fp.pads) {
-      // every pad has copper on top; a through-hole pad has a ring on the bottom too
-      topCopper.push({
-        verts: padCornersAtZ(pl, pad.center, pad.size.w, pad.size.h, topCuZ),
+      // an SMD pad is copper on the top only; a through-hole pad has an annular ring on EVERY layer.
+      bucketOf('top').push({
+        verts: padCornersAtZ(pl, pad.center, pad.size.w, pad.size.h, zOfLayer('top')),
         color: COLORS.copper,
       })
       if (pad.type === 'through_hole') {
-        bottomCopper.push({
-          verts: padCornersAtZ(pl, pad.center, pad.size.w, pad.size.h, botCuZ),
-          color: COLORS.copper,
-        })
+        for (const cl of boardCopperLayers) {
+          if (cl === 'top') continue
+          bucketOf(cl).push({
+            verts: padCornersAtZ(pl, pad.center, pad.size.w, pad.size.h, zOfLayer(cl)),
+            color: COLORS.copper,
+          })
+        }
       }
     }
   }
   for (const v of routing.vias) {
-    topCopper.push({ verts: disk(v.at.x, v.at.y, v.diameterMm / 2, topCuZ), color: COLORS.copper })
-    bottomCopper.push({
-      verts: disk(v.at.x, v.at.y, v.diameterMm / 2, botCuZ),
-      color: COLORS.copper,
-    })
+    // a plated through-via's barrel puts a copper ring on every copper layer it passes
+    for (const cl of boardCopperLayers) {
+      bucketOf(cl).push({
+        verts: disk(v.at.x, v.at.y, v.diameterMm / 2, zOfLayer(cl)),
+        color: COLORS.copper,
+      })
+    }
   }
+  const topCopper = bucketOf('top')
+  const bottomCopper = bucketOf('bottom')
 
   const faces: Face[] = []
   if (!exploded) {
@@ -482,9 +550,12 @@ export function buildBoardScene(
       } else if (p.type === 'solder_mask') {
         addSlab(faces, x0, y0, x1, y1, p.z0, p.z1, COLORS.maskTop, [], 0.28) // thin translucent green
       } else if (p.type === 'copper') {
-        // a faint marker plane for the copper layer + the REAL copper (opaque) on it — copper only where
-        // there IS copper, the honest etched pattern.
-        const copper = p.name === 'F.Cu' ? topCopper : p.name === 'B.Cu' ? bottomCopper : null
+        // a faint marker plane for the copper LEVEL + the REAL etched copper on it — every copper layer
+        // (top, bottom, AND the inner layers) shows exactly its own routed traces, pad rings and via
+        // caps at this separated height, so the exploded stack matches that layer's Gerber. An inner
+        // layer with nothing routed on it shows just the faint marker (its Gerber is empty too).
+        const cl = stackupCopperLayer(p.name)
+        const copper = cl !== null ? copperByLayer.get(cl) : undefined
         faces.push({
           verts: [
             { x: x0, y: y0, z: p.z1 },
@@ -497,26 +568,10 @@ export function buildBoardScene(
           doubleSided: true,
           alpha: 0.12,
         })
-        if (copper !== null) {
+        if (copper !== undefined) {
           for (const poly of copper) {
             faces.push({ verts: poly.verts, color: poly.color, decals: [], doubleSided: true })
           }
-        } else {
-          // an INNER copper layer (a 4-/6-layer multilevel board) — drawn as a solid copper pour plane,
-          // the classic buried ground/power plane, inset from the board edge by the fab clearance. We
-          // don't hand-route inner layers, so a full pour is the honest depiction of that copper level.
-          const inset = 0.4
-          faces.push({
-            verts: [
-              { x: x0 + inset, y: y0 + inset, z: p.z1 },
-              { x: x1 - inset, y: y0 + inset, z: p.z1 },
-              { x: x1 - inset, y: y1 - inset, z: p.z1 },
-              { x: x0 + inset, y: y1 - inset, z: p.z1 },
-            ],
-            color: COLORS.copper,
-            decals: [],
-            doubleSided: true,
-          })
         }
       }
     }
@@ -618,11 +673,19 @@ export function buildBoardScene(
     }
   }
 
+  const copperZ: { top: number; bottom: number } & Partial<Record<CopperLayer, number>> = {
+    top: zOfLayer('top'),
+    bottom: zOfLayer('bottom'),
+  }
+  for (const cl of ['inner1', 'inner2', 'inner3', 'inner4'] as const) {
+    const z = copperZByLayer.get(cl)
+    if (z !== undefined) copperZ[cl] = z
+  }
   return {
     faces,
     center,
     diagonal,
-    copperZ: { top: topCuZ, bottom: botCuZ },
+    copperZ,
     ...(grid ? { grid } : {}),
   }
 }

@@ -38,9 +38,10 @@ export type BoardRouteProp = {
 const CLICK_SLOP_PX = 6
 const OVERLAY_SELECT = '#8fd0ff'
 
-/** The z of the copper layer a routing click lands on. */
+/** The z of the copper layer a routing click lands on — the real (possibly buried / separated) height
+ *  of that layer, falling back to the top surface for any layer the board doesn't have. */
 function layerZ(scene: Scene, layer: CopperLayer): number {
-  return layer === 'bottom' ? scene.copperZ.bottom : scene.copperZ.top
+  return scene.copperZ[layer] ?? scene.copperZ.top
 }
 
 /**
