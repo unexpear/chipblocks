@@ -50,6 +50,12 @@ contextBridge.exposeInMainWorld('chipblocks', {
   // the main process picks a destination and writes them verbatim.
   saveFabZip: (data: Uint8Array): Promise<{ ok: boolean; path?: string }> =>
     ipcRenderer.invoke('file:save-fab-zip', data),
+  // Personal parts library (user-made parts, slice 3b): the parts you author persist to
+  // ~/.chipblocks/user-parts.json so they follow you across projects. Main does the raw file I/O;
+  // the renderer owns the format. Read returns the file text (or null when there's no library yet).
+  readUserLibrary: (): Promise<string | null> => ipcRenderer.invoke('user-library:read'),
+  writeUserLibrary: (text: string): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('user-library:write', text),
   // Shortcuts (S19-v3-62): the renderer panel reads + edits the keybinds the
   // main process persists; the Shortcuts menu opens the panel over IPC.
   getKeybinds: (): Promise<Record<string, string>> => ipcRenderer.invoke('keybinds:get'),

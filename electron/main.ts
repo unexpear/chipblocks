@@ -1,4 +1,4 @@
-import { readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -307,6 +307,38 @@ function registerKeybindHandlers(window: BrowserWindow): void {
   })
 }
 
+// The personal parts library (user-made parts, slice 3b): the parts you author live in
+// ~/.chipblocks/user-parts.json so they follow you into every project. `~` is the OS home dir (the
+// four-origin `user_local` location). Main does raw text I/O; the renderer (user-library.ts) owns the
+// format + validation. Read returns the text (or null when there's no library yet).
+const userLibraryPath = () => join(app.getPath('home'), '.chipblocks', 'user-parts.json')
+
+function registerUserLibraryHandlers(): void {
+  ipcMain.removeHandler('user-library:read')
+  ipcMain.removeHandler('user-library:write')
+  ipcMain.handle('user-library:read', async (): Promise<string | null> => {
+    try {
+      return await readFile(userLibraryPath(), 'utf8')
+    } catch {
+      return null // no library file yet (or unreadable) → the renderer starts with an empty library
+    }
+  })
+  ipcMain.handle(
+    'user-library:write',
+    async (_event, text: string): Promise<{ ok: boolean; path?: string }> => {
+      const path = userLibraryPath()
+      try {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, text, 'utf8')
+        return { ok: true, path }
+      } catch (error) {
+        dialog.showErrorBox('Could not save your parts library', `Writing failed: ${String(error)}`)
+        return { ok: false }
+      }
+    },
+  )
+}
+
 // Custom application menu — replaces Electron's default. Top level: File, Edit,
 // View (with the old Window items folded in), Settings, Shortcuts. Every label
 // says what the item actually does. Settings drives the renderer over IPC: a
@@ -590,6 +622,7 @@ function createWindow(): void {
   registerFabZipExportHandler(window)
   registerCircuitOpenHandlers(window)
   registerKeybindHandlers(window)
+  registerUserLibraryHandlers()
 }
 
 app.whenReady().then(async () => {

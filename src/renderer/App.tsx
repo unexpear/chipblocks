@@ -214,8 +214,9 @@ import { useSelectionGestures } from './use-selection-gestures.ts'
 import { useShortcuts } from './use-shortcuts.tsx'
 import { useTimeline } from './use-timeline.ts'
 import { useWireTool } from './use-wire-tool.ts'
+import { deserializeUserLibrary, serializeUserLibrary, withPart } from './user-library.ts'
 import { UserPartEditor } from './user-part-editor.tsx'
-import { allUserParts, mergeUserParts } from './user-parts.ts'
+import { allUserParts, mergeUserParts, type UserPart } from './user-parts.ts'
 import {
   findWireCrossings,
   netColor,
@@ -253,6 +254,8 @@ declare global {
       onExportNetlistRequest?: (callback: () => void) => void
       saveNetlistData?: (text: string) => Promise<{ ok: boolean; path?: string }>
       saveFabZip?: (data: Uint8Array) => Promise<{ ok: boolean; path?: string }>
+      readUserLibrary?: () => Promise<string | null>
+      writeUserLibrary?: (text: string) => Promise<{ ok: boolean; path?: string }>
       getKeybinds?: () => Promise<Record<string, string>>
       setKeybinds?: (binds: Record<string, string>) => Promise<Record<string, string>>
       onShortcutsOpen?: (callback: () => void) => void
@@ -697,6 +700,19 @@ export function App() {
     [tabs],
   )
 
+  // Load the personal parts library (~/.chipblocks/user-parts.json) ONCE at app start, before any
+  // project opens, so your authored parts are in every tab's palette + draw on any project that uses
+  // them. A merge (existing wins), so it can't clobber a part a project later brings in.
+  useEffect(() => {
+    const bridge = window.chipblocks
+    if (bridge?.readUserLibrary === undefined) return
+    void bridge.readUserLibrary().then((text) => {
+      if (text === null) return
+      const result = deserializeUserLibrary(text)
+      if (result.ok) mergeUserParts(result.parts)
+    })
+  }, [])
+
   return (
     <div
       style={{
@@ -780,6 +796,37 @@ function templateNodes(template: string, depth: 'block' | 'design'): Node[] {
 
 /** Snap-to-grid step (px) — parts align to the 20 px major grid (the bold lines) when snap is on. */
 const SNAP_GRID: [number, number] = [20, 20]
+
+/**
+ * Persist a freshly-authored part into the personal library (~/.chipblocks/user-parts.json) so it
+ * follows you across projects. Read-modify-write, deduped by id — the library grows ONLY by authoring,
+ * so a part that merely passed through the session from opening someone else's project is never added.
+ *
+ * The read-modify-write isn't internally serialized; it's safe because it's fired only from the New-Part
+ * dialog's Save, which is a single modal (no two open at once). If a second author path is ever added
+ * (import, batch), serialize the writes — otherwise a later read could lose the earlier part.
+ */
+async function persistAuthoredPart(part: UserPart): Promise<void> {
+  const bridge = window.chipblocks
+  if (bridge?.readUserLibrary === undefined || bridge.writeUserLibrary === undefined) return
+  const text = await bridge.readUserLibrary()
+  if (text === null) {
+    // No library yet → create it with this part.
+    await bridge.writeUserLibrary(serializeUserLibrary([part]))
+    return
+  }
+  const parsed = deserializeUserLibrary(text)
+  if (!parsed.ok) {
+    // The existing library is there but unreadable (corrupt, or a newer format from a future build). Do
+    // NOT overwrite it — that would clobber it — just skip persisting; the part still works this session
+    // and can be re-authored once the library is sorted out.
+    console.warn(
+      `[user-library] not persisting "${part.id}": library unreadable (${parsed.reason})`,
+    )
+    return
+  }
+  await bridge.writeUserLibrary(serializeUserLibrary(withPart(parsed.parts, part)))
+}
 
 function Canvas({ project, active = true }: { project: ProjectChoice; active?: boolean }) {
   // Only the active tab is "live" — a background tab keeps its state mounted but must NOT grab global
@@ -6353,7 +6400,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           <NetlistReportCard report={netlistReport} onDismiss={() => setNetlistReport(null)} />
         ) : null}
         {pickerOpen ? <PartPicker onPick={placePart} onClose={() => setPickerOpen(false)} /> : null}
-        {newPartOpen ? <UserPartEditor onClose={() => setNewPartOpen(false)} /> : null}
+        {newPartOpen ? (
+          <UserPartEditor
+            onClose={() => setNewPartOpen(false)}
+            onCreated={(part) => void persistAuthoredPart(part)}
+          />
+        ) : null}
         {pageSettingsOpen ? (
           <PageSettings
             settings={sheetSettings}
