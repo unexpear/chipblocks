@@ -28,8 +28,15 @@ describe('footprintForPart', () => {
   test('an unmapped part has no footprint yet (honest, not a wrong package)', () => {
     // An LED has no package in the catalog yet — it waits for one, never gets forced onto a chip.
     expect(footprintForPart('led')).toBeUndefined()
-    expect(footprintForPart('diode')).toBeUndefined()
     expect(footprintForPart('not_a_part')).toBeUndefined()
+  })
+
+  test('a diode lands on the SOD-123 SMD package (pad 1 = cathode)', () => {
+    expect(footprintForPart('diode')?.id).toBe('D_SOD-123')
+    // cathode → pad 1 (the band-marked end), anode → pad 2 — the diode-footprint convention
+    expect(padForTerminal('diode', 'cathode')).toBe('1')
+    expect(padForTerminal('diode', 'anode')).toBe('2')
+    expect(terminalForPad('diode', '1')).toBe('cathode')
   })
 
   test('a valid chosen footprint wins; an invalid one falls back to the default', () => {

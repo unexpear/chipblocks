@@ -815,16 +815,136 @@ export const FOOTPRINT_TO92: Footprint = {
   },
 }
 
+/**
+ * 1206 (imperial) / 3216 (metric) two-terminal chip land pattern — the large chip passive, for
+ * higher-power resistors and bulk capacitors. Geometry is the IPC-7351 nominal land pattern from the
+ * public KiCad library (Resistor_SMD.pretty/R_1206_3216Metric.kicad_mod): two 1.125 × 1.75 mm pads on
+ * 2.925 mm centres, a 4.56 × 2.26 mm courtyard. Read verbatim from the installed KiCad 10.0 library.
+ */
+export const FOOTPRINT_1206: Footprint = {
+  id: 'R_1206_3216Metric',
+  name: '1206 (3216 metric) chip',
+  description:
+    'Two-terminal SMD chip land pattern — the large passive size (power resistors, bulk capacitors). IPC-7351 nominal.',
+  pads: [
+    {
+      id: '1',
+      center: { x: -1.4625, y: 0 },
+      size: { w: 1.125, h: 1.75 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '2',
+      center: { x: 1.4625, y: 0 },
+      size: { w: 1.125, h: 1.75 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+  ],
+  silkscreen: cornerTicksSilk({ x: -2.28, y: -1.13, w: 4.56, h: 2.26 }),
+  // The component body outline (F.Fab): the 3.2 × 1.6 mm chip body extent (F.Fab rect ±1.6 × ±0.8).
+  fabrication: rectOutline(-1.6, -0.8, 1.6, 0.8),
+  labels: {
+    reference: { x: 0, y: -1.83 },
+    value: { x: 0, y: 1.83 },
+    fabReference: { x: 0, y: 0 },
+  },
+  courtyard: { x: -2.28, y: -1.13, w: 4.56, h: 2.26 },
+  provenance: {
+    source_type: 'standard',
+    title: 'IPC-7351 nominal 1206/3216 chip land pattern',
+    citation:
+      'KiCad footprint library, Resistor_SMD.pretty/R_1206_3216Metric.kicad_mod — two 1.125×1.75 mm pads on 2.925 mm centres; courtyard ±2.28×±1.13 mm — read verbatim from the installed KiCad 10.0 library',
+    confidence: 'high',
+    url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
+    date_accessed: '2026-07-06',
+    notes: 'Body size 3.2×1.6 mm (the 3216 metric name). Silk is ChipBlocks’ own corner-tick rule.',
+  },
+  body3d: {
+    heightMm: 0.55,
+    standoffMm: 0.02,
+    provenance: {
+      source_type: 'datasheet',
+      title: 'EIA 1206 / IEC 3216M chip resistor body height',
+      citation:
+        'Vishay CRCW1206 / Yageo RC1206 chip resistor datasheets: body 3.20×1.60 mm, height ≈ 0.55 mm (0.45 typ – 0.60 max); SMD solder standoff ≈ 0.02 mm',
+      confidence: 'medium',
+    },
+  },
+}
+
+/**
+ * SOD-123 — a small two-terminal SMD DIODE package (the common signal / small-power diode land). Pads
+ * verbatim from the installed KiCad library (Diode_SMD.pretty/D_SOD-123.kicad_mod): two 0.9 × 1.2 mm
+ * pads on 3.3 mm centres, a 4.7 × 2.3 mm courtyard, a 2.8 × 1.8 mm body. Pad 1 is the CATHODE (the
+ * band-marked end); pad 2 the anode — the standard diode-footprint convention.
+ */
+export const FOOTPRINT_SOD123: Footprint = {
+  id: 'D_SOD-123',
+  name: 'SOD-123 (SMD diode)',
+  description: 'Two-terminal SMD diode package — pad 1 is the cathode (band). JEDEC/EIAJ SOD-123.',
+  pads: [
+    {
+      id: '1',
+      center: { x: -1.65, y: 0 },
+      size: { w: 0.9, h: 1.2 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '2',
+      center: { x: 1.65, y: 0 },
+      size: { w: 0.9, h: 1.2 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+  ],
+  silkscreen: cornerTicksSilk({ x: -2.35, y: -1.15, w: 4.7, h: 2.3 }),
+  // The component body outline (F.Fab): the 2.8 × 1.8 mm body extent (F.Fab rect ±1.4 × ±0.9).
+  fabrication: rectOutline(-1.4, -0.9, 1.4, 0.9),
+  labels: {
+    reference: { x: 0, y: -1.7 },
+    value: { x: 0, y: 1.7 },
+    fabReference: { x: 0, y: 0 },
+  },
+  courtyard: { x: -2.35, y: -1.15, w: 4.7, h: 2.3 },
+  provenance: {
+    source_type: 'standard',
+    title: 'JEDEC/EIAJ SOD-123 SMD diode land pattern',
+    citation:
+      'KiCad footprint library, Diode_SMD.pretty/D_SOD-123.kicad_mod — two 0.9×1.2 mm pads on 3.3 mm centres; body 2.8×1.8 mm; courtyard ±2.35×±1.15 mm — read verbatim from the installed KiCad 10.0 library',
+    confidence: 'high',
+    url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
+    date_accessed: '2026-07-06',
+    notes:
+      'Pad 1 = cathode (the band-marked end), pad 2 = anode — the diode-footprint convention. Silk is ChipBlocks’ own corner-tick rule.',
+  },
+  body3d: {
+    heightMm: 1.1,
+    standoffMm: 0.05,
+    provenance: {
+      source_type: 'datasheet',
+      title: 'SOD-123 body height',
+      citation:
+        'SOD-123 package drawings (onsemi, Diodes Inc): body ≈ 2.68×1.60 mm, height 1.0–1.2 mm, lead standoff ≈ 0.05 mm',
+      confidence: 'medium',
+    },
+  },
+}
+
 /** Every built-in footprint, keyed by id. The board road's starter set (TOOLCHAIN-ROADMAP.md Track 1). */
 export const BUILTIN_FOOTPRINTS: Record<string, Footprint> = {
   [FOOTPRINT_0402.id]: FOOTPRINT_0402,
   [FOOTPRINT_0603.id]: FOOTPRINT_0603,
   [FOOTPRINT_0805.id]: FOOTPRINT_0805,
+  [FOOTPRINT_1206.id]: FOOTPRINT_1206,
   [FOOTPRINT_SOIC8.id]: FOOTPRINT_SOIC8,
   [FOOTPRINT_DIP8.id]: FOOTPRINT_DIP8,
   [FOOTPRINT_PINHDR_1X4.id]: FOOTPRINT_PINHDR_1X4,
   [FOOTPRINT_SOT23.id]: FOOTPRINT_SOT23,
   [FOOTPRINT_TO92.id]: FOOTPRINT_TO92,
+  [FOOTPRINT_SOD123.id]: FOOTPRINT_SOD123,
 }
 
 /**

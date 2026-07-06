@@ -10,8 +10,10 @@ import {
   FOOTPRINT_0402,
   FOOTPRINT_0603,
   FOOTPRINT_0805,
+  FOOTPRINT_1206,
   FOOTPRINT_DIP8,
   FOOTPRINT_PINHDR_1X4,
+  FOOTPRINT_SOD123,
   FOOTPRINT_SOIC8,
   FOOTPRINT_TO92,
   type Footprint,
@@ -98,14 +100,29 @@ describe('0402 / 0805 chip land patterns — the smaller + larger passive sizes 
     expect(FOOTPRINT_0805.courtyard).toEqual({ x: -1.68, y: -0.95, w: 3.36, h: 1.9 })
   })
 
-  test('the three chip sizes are ordered 0402 < 0603 < 0805 by pad + courtyard', () => {
+  test('the four chip sizes are ordered 0402 < 0603 < 0805 < 1206 by pad + courtyard', () => {
+    const sizes = [FOOTPRINT_0402, FOOTPRINT_0603, FOOTPRINT_0805, FOOTPRINT_1206]
     const area = (f: Footprint) => f.courtyard.w * f.courtyard.h
-    expect(area(FOOTPRINT_0402)).toBeLessThan(area(FOOTPRINT_0603))
-    expect(area(FOOTPRINT_0603)).toBeLessThan(area(FOOTPRINT_0805))
-    // the pad grows with the package too
     const padArea = (f: Footprint) => (f.pads[0]?.size.w ?? 0) * (f.pads[0]?.size.h ?? 0)
-    expect(padArea(FOOTPRINT_0402)).toBeLessThan(padArea(FOOTPRINT_0603))
-    expect(padArea(FOOTPRINT_0603)).toBeLessThan(padArea(FOOTPRINT_0805))
+    for (let i = 1; i < sizes.length; i++) {
+      expect(area(sizes[i] as Footprint)).toBeGreaterThan(area(sizes[i - 1] as Footprint))
+      expect(padArea(sizes[i] as Footprint)).toBeGreaterThan(padArea(sizes[i - 1] as Footprint))
+    }
+  })
+
+  test('1206: two 1.125 × 1.75 mm pads on 2.925 mm centres', () => {
+    const [p1, p2] = FOOTPRINT_1206.pads
+    expect((p2?.center.x ?? 0) - (p1?.center.x ?? 0)).toBeCloseTo(2.925, 6)
+    for (const p of FOOTPRINT_1206.pads) expect(p.size).toEqual({ w: 1.125, h: 1.75 })
+  })
+
+  test('SOD-123 (SMD diode): two 0.9 × 1.2 mm pads on 3.3 mm centres, pad 1 = the cathode', () => {
+    const p = FOOTPRINT_SOD123.pads
+    expect(p).toHaveLength(2)
+    expect(p.every((pad) => pad.type === 'smd')).toBe(true)
+    expect((p[1]?.center.x ?? 0) - (p[0]?.center.x ?? 0)).toBeCloseTo(3.3, 6)
+    for (const pad of p) expect(pad.size).toEqual({ w: 0.9, h: 1.2 })
+    expect(p[0]?.id).toBe('1') // pad 1 is the cathode end (band-marked)
   })
 })
 

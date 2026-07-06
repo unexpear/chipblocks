@@ -13,23 +13,25 @@ import { BUILTIN_FOOTPRINTS, type Footprint } from './footprint.ts'
  * grow as the footprint set does, with no change here beyond adding ids.
  */
 export const PART_FOOTPRINTS: Record<string, { default: string; options: string[] }> = {
-  // The 2-terminal chip passives — offered in the three common sizes (0402 / 0603 / 0805), 0603 default.
+  // The 2-terminal chip passives — offered in the four common sizes (0402 / 0603 / 0805 / 1206), 0603 default.
   resistor: {
     default: 'R_0603_1608Metric',
-    options: ['R_0402_1005Metric', 'R_0603_1608Metric', 'R_0805_2012Metric'],
+    options: ['R_0402_1005Metric', 'R_0603_1608Metric', 'R_0805_2012Metric', 'R_1206_3216Metric'],
   },
   capacitor: {
     default: 'R_0603_1608Metric',
-    options: ['R_0402_1005Metric', 'R_0603_1608Metric', 'R_0805_2012Metric'],
+    options: ['R_0402_1005Metric', 'R_0603_1608Metric', 'R_0805_2012Metric', 'R_1206_3216Metric'],
   },
   thermistor: {
     default: 'R_0603_1608Metric',
-    options: ['R_0402_1005Metric', 'R_0603_1608Metric', 'R_0805_2012Metric'],
+    options: ['R_0402_1005Metric', 'R_0603_1608Metric', 'R_0805_2012Metric', 'R_1206_3216Metric'],
   },
   inductor: {
     default: 'R_0603_1608Metric',
-    options: ['R_0402_1005Metric', 'R_0603_1608Metric', 'R_0805_2012Metric'],
+    options: ['R_0402_1005Metric', 'R_0603_1608Metric', 'R_0805_2012Metric', 'R_1206_3216Metric'],
   },
+  // Diodes land on the SOD-123 SMD package (pad 1 = cathode, the band-marked end).
+  diode: { default: 'D_SOD-123', options: ['D_SOD-123'] },
   // Small transistors ship SMD in SOT-23 (default) or through-hole in TO-92 — BJTs and small-signal
   // MOSFETs alike. The two packages pin out differently (see TERMINAL_PADS_BY_FOOTPRINT).
   transistor_bjt_npn: { default: 'SOT-23', options: ['SOT-23', 'TO-92_Inline'] },
@@ -71,6 +73,9 @@ export const TERMINAL_PADS: Record<string, Record<string, string>> = {
   capacitor: { terminal_a: '1', terminal_b: '2' },
   thermistor: { terminal_a: '1', terminal_b: '2' },
   inductor: { terminal_a: '1', terminal_b: '2' },
+  // SOD-123 diode: pad 1 is the CATHODE (band-marked end), pad 2 the anode — the diode-footprint
+  // convention, so a wired anode/cathode lands on the physically correct end.
+  diode: { anode: '2', cathode: '1' },
   // SOT-23 pinouts, the industry-standard assignments the datasheets print:
   // BJT 1=Base 2=Emitter 3=Collector (Nexperia BC846/BC847 series, SOT-23 marking diagram);
   // MOSFET 1=Gate 2=Source 3=Drain (onsemi/Nexperia 2N7002, SOT-23 pinning).
@@ -149,6 +154,7 @@ const DESIGNATOR_PREFIXES: Record<string, string> = {
   capacitor: 'C',
   inductor: 'L',
   thermistor: 'RT',
+  diode: 'D',
   transistor_bjt_npn: 'Q',
   transistor_bjt_pnp: 'Q',
   transistor_mosfet_nmos: 'Q',
