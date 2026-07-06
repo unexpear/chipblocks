@@ -15,6 +15,7 @@ import {
   FOOTPRINT_SOIC8,
   FOOTPRINT_TO92,
   type Footprint,
+  fabricationBounds,
   footprintBounds,
 } from '../src/renderer/footprint.ts'
 
@@ -186,6 +187,44 @@ describe('starter set — the multi-pad + through-hole footprints (SOIC-8, DIP-8
     // the round can bulges to the circle's left/right extremes (centre 1.27 ± r 2.48), past the chord
     expect(Math.min(...xs)).toBeCloseTo(-1.21, 2)
     expect(Math.max(...xs)).toBeCloseTo(3.75, 2)
+  })
+})
+
+describe('pin-1 chamfers on the fabrication body outline', () => {
+  const isDiagonal = (s: { from: { x: number; y: number }; to: { x: number; y: number } }) =>
+    s.from.x !== s.to.x && s.from.y !== s.to.y
+  const chamferOf = (fp: Footprint) => fp.fabrication.find(isDiagonal)
+
+  test('SOIC-8, DIP-8 and the pin header each chamfer their pin-1 corner (5-edge body, one diagonal)', () => {
+    for (const fp of [FOOTPRINT_SOIC8, FOOTPRINT_DIP8, FOOTPRINT_PINHDR_1X4]) {
+      expect(fp.fabrication).toHaveLength(5) // 4 rect edges → the pin-1 corner replaced by a chamfer
+      expect(chamferOf(fp)).toBeDefined() // exactly one diagonal — the pin-1 cut
+    }
+  })
+
+  test('DIP-8 + pin-header chamfers are KiCad-exact, and the chamfer never inflates the 3-D body', () => {
+    // the chamfer coordinates are verbatim from the installed KiCad F.Fab
+    expect(chamferOf(FOOTPRINT_DIP8)).toMatchObject({
+      from: { x: 0.635, y: -0.27 },
+      to: { x: 1.635, y: -1.27 },
+    })
+    expect(chamferOf(FOOTPRINT_PINHDR_1X4)).toMatchObject({
+      from: { x: -1.27, y: -0.635 },
+      to: { x: -0.635, y: -1.27 },
+    })
+    // the chamfer cuts INWARD, so the fab bounding box (what the 3-D body extrudes) is the true rect
+    const b = fabricationBounds(FOOTPRINT_DIP8)
+    if (b === undefined) throw new Error('no fabrication bounds')
+    expect(b.x).toBeCloseTo(0.635, 6)
+    expect(b.y).toBeCloseTo(-1.27, 6)
+    expect(b.w).toBeCloseTo(6.35, 6) // 6.985 − 0.635 — unchanged from the plain body rectangle
+    expect(b.h).toBeCloseTo(10.16, 6) // 8.89 − (−1.27)
+  })
+
+  test('a symmetric chip passive is NOT chamfered (no pin-1 to mark)', () => {
+    for (const fp of [FOOTPRINT_0603, FOOTPRINT_0402, FOOTPRINT_0805]) {
+      expect(chamferOf(fp)).toBeUndefined() // a plain rectangle — the 1608/1005/2012 body has no pin 1
+    }
   })
 })
 

@@ -312,6 +312,30 @@ function rectOutline(x0: number, y0: number, x1: number, y1: number, width = 0.1
 }
 
 /**
+ * A body-outline rectangle with its (x0, y0) — the PIN-1 — corner CHAMFERED by `chamferMm` (a 45° cut).
+ * The chamfer marks pin-1 orientation on the fabrication layer the way a real IC's body corner does. It
+ * cuts INWARD (the chamfer stays inside the rectangle), so the outline's bounding box — and therefore the
+ * 3-D body extruded from it — is exactly the true body size. On the through-hole packages here the pin-1
+ * corner is the (x0, y0) top-left, and the chamfer coordinates match the installed KiCad F.Fab exactly.
+ */
+function chamferedRect(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  chamferMm: number,
+  width = 0.1,
+): SilkLine[] {
+  return [
+    { from: { x: x0 + chamferMm, y: y0 }, to: { x: x1, y: y0 }, width }, // top (past the chamfer)
+    { from: { x: x1, y: y0 }, to: { x: x1, y: y1 }, width }, // right
+    { from: { x: x1, y: y1 }, to: { x: x0, y: y1 }, width }, // bottom
+    { from: { x: x0, y: y1 }, to: { x: x0, y: y0 + chamferMm }, width }, // left (up to the chamfer)
+    { from: { x: x0, y: y0 + chamferMm }, to: { x: x0 + chamferMm, y: y0 }, width }, // the pin-1 chamfer
+  ]
+}
+
+/**
  * A "D"-shaped (half-round) body outline as a closed polyline: a flat chord at y = `flatY` on a circle
  * of radius `r` about (`cx`, `cy`), with the rounded side bulging AWAY from the flat (toward smaller y).
  * The curve is approximated by `segments` chords. This is the real body shape of round-can packages
@@ -436,7 +460,9 @@ export const FOOTPRINT_SOIC8: Footprint = {
   ],
   // ChipBlocks' own corner-tick silk, computed from the courtyard (never copied from another tool).
   silkscreen: cornerTicksSilk({ x: -3.7, y: -2.7, w: 7.4, h: 5.4 }),
-  fabrication: rectOutline(-1.95, -2.45, 1.95, 2.45),
+  // Body outline with the pin-1 (top-left) corner chamfered. KiCad marks SOIC pin-1 with a small beak
+  // OUTSIDE the body; we chamfer the corner instead so the extruded 3-D body stays the true 3.9×4.9 mm.
+  fabrication: chamferedRect(-1.95, -2.45, 1.95, 2.45, 0.5),
   labels: { reference: { x: 0, y: -3.4 }, value: { x: 0, y: 3.4 }, fabReference: { x: 0, y: 0 } },
   courtyard: { x: -3.7, y: -2.7, w: 7.4, h: 5.4 },
   provenance: {
@@ -537,7 +563,8 @@ export const FOOTPRINT_DIP8: Footprint = {
     },
   ],
   silkscreen: cornerTicksSilk({ x: -1.06, y: -1.52, w: 9.73, h: 10.66 }),
-  fabrication: rectOutline(0.635, -1.27, 6.985, 8.89),
+  // Body outline with pin-1 (top-left) chamfered — coordinates verbatim from KiCad's DIP-8 F.Fab.
+  fabrication: chamferedRect(0.635, -1.27, 6.985, 8.89, 1.0),
   labels: {
     reference: { x: 3.81, y: -2.33 },
     value: { x: 3.81, y: 9.95 },
@@ -610,7 +637,8 @@ export const FOOTPRINT_PINHDR_1X4: Footprint = {
     },
   ],
   silkscreen: cornerTicksSilk({ x: -1.77, y: -1.77, w: 3.54, h: 11.16 }),
-  fabrication: rectOutline(-1.27, -1.27, 1.27, 8.89),
+  // Body outline with pin-1 (top-left) chamfered — coordinates verbatim from KiCad's pin-header F.Fab.
+  fabrication: chamferedRect(-1.27, -1.27, 1.27, 8.89, 0.635),
   labels: {
     reference: { x: 0, y: -2.38 },
     value: { x: 0, y: 10 },
