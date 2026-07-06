@@ -1,5 +1,5 @@
-import { Pcb3DView } from './pcb-3d-view.tsx'
-import type { Board, PadBox, Rotation } from './pcb-board.ts'
+import { type BoardRouteProp, Pcb3DView } from './pcb-3d-view.tsx'
+import type { Board, Rotation } from './pcb-board.ts'
 import { type BoardLayer, type BoardLayerId, layerLabel } from './pcb-layers.ts'
 import type { BoardRouting } from './pcb-route.ts'
 import type { Stackup } from './pcb-stackup.ts'
@@ -131,21 +131,13 @@ export function BoardView({
   coordinateGrid?: boolean
   onMove?: (partId: string, x: number, y: number) => void
   onRotate?: (partId: string, rotation: Rotation) => void
-  /** The route + via tools' live state + handlers (flat/layers only), threaded to PcbView. */
-  route?: {
-    active: boolean
-    padBoxes: PadBox[]
-    pendingPoints?: { x: number; y: number }[]
-    cursor?: { x: number; y: number } | null
-    color?: string
-    onClick: (mm: { x: number; y: number }, pad: PadBox | null) => void
-    onMove: (mm: { x: number; y: number }) => void
-    viaActive: boolean
-    onViaClick: (at: { x: number; y: number }, net: string) => void
-  }
+  /** The route + via tools' live state + handlers, threaded to PcbView (flat/layers) AND Pcb3DView
+   *  (the 3-D exploded view) — you can lay copper by clicking in either. */
+  route?: BoardRouteProp
 }) {
   if (mode === 'exploded') {
-    // "3D" — the real to-scale, orbitable board (the from-scratch pcb-3d engine).
+    // "3D" — the real to-scale, orbitable board (the from-scratch pcb-3d engine). The route/via tools
+    // work here too: a click casts a ray onto the active copper layer and lays copper in 3-D space.
     return (
       <Pcb3DView
         board={board}
@@ -153,6 +145,7 @@ export function BoardView({
         stackup={stackup}
         height={viewHeight}
         coordinateGrid={coordinateGrid}
+        {...(route ? { route } : {})}
       />
     )
   }

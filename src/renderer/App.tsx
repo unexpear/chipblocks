@@ -5385,73 +5385,71 @@ function Canvas({ project }: { project: ProjectChoice }) {
                 activeLayerIndex={pcbActiveLayerIndex}
                 onStep={stepPcbLayer}
               />
-              {pcbViewMode !== 'exploded' && (
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <button
-                    type="button"
-                    onClick={() => setBoardTool((t) => (t === 'route' ? 'select' : 'route'))}
-                    title="Route tool — click a pad to start, click to drop corners, click a same-net pad to finish (Esc cancels). Draws real copper on the active layer that ships in the Gerbers."
-                    style={{
-                      border: `1px solid ${THEME.borderStrong}`,
-                      background: boardTool === 'route' ? THEME.accentBlue : THEME.surfaceInput,
-                      color: boardTool === 'route' ? '#0b1220' : THEME.textSoft,
-                      borderRadius: 4,
-                      fontSize: 11,
-                      padding: '2px 10px',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    ▬ Route
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBoardTool((t) => (t === 'via' ? 'select' : 'via'))}
-                    title="Via tool — click on copper (a pad or a trace) to drop a plated via there: the vertical jump that carries the net between the two copper layers. Shows as a real barrel in the 3-D view."
-                    style={{
-                      border: `1px solid ${THEME.borderStrong}`,
-                      background: boardTool === 'via' ? THEME.accentBlue : THEME.surfaceInput,
-                      color: boardTool === 'via' ? '#0b1220' : THEME.textSoft,
-                      borderRadius: 4,
-                      fontSize: 11,
-                      padding: '2px 10px',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    ⊙ Via
-                  </button>
-                  {boardTool === 'route' && (
-                    <span style={{ display: 'flex', gap: 0 }}>
-                      {(['f_cu', 'b_cu'] as const).map((id, i) => (
-                        <button
-                          key={id}
-                          type="button"
-                          onClick={() => setPcbActiveLayerId(id)}
-                          title={
-                            id === 'f_cu' ? 'Route on the top copper' : 'Route on the bottom copper'
-                          }
-                          style={{
-                            border: `1px solid ${THEME.borderStrong}`,
-                            background:
-                              pcbActiveLayerId === id
-                                ? id === 'f_cu'
-                                  ? '#ffcf6b'
-                                  : '#6b9bff'
-                                : THEME.surfaceInput,
-                            color: pcbActiveLayerId === id ? '#0b1220' : THEME.textSoft,
-                            borderRadius: i === 0 ? '4px 0 0 4px' : '0 4px 4px 0',
-                            borderLeft: i === 0 ? undefined : 'none',
-                            fontSize: 11,
-                            padding: '2px 8px',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          {id === 'f_cu' ? 'Top' : 'Bottom'}
-                        </button>
-                      ))}
-                    </span>
-                  )}
-                </span>
-              )}
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => setBoardTool((t) => (t === 'route' ? 'select' : 'route'))}
+                  title="Route tool — click a pad to start, click to drop corners, click a same-net pad to finish. Draws real copper on the active layer that ships in the Gerbers. Works on the flat board AND directly in the 3-D view (click to route, drag to orbit)."
+                  style={{
+                    border: `1px solid ${THEME.borderStrong}`,
+                    background: boardTool === 'route' ? THEME.accentBlue : THEME.surfaceInput,
+                    color: boardTool === 'route' ? '#0b1220' : THEME.textSoft,
+                    borderRadius: 4,
+                    fontSize: 11,
+                    padding: '2px 10px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ▬ Route
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBoardTool((t) => (t === 'via' ? 'select' : 'via'))}
+                  title="Via tool — click on copper (a pad or a trace) to drop a plated via there: the vertical jump that carries the net between the two copper layers. Shows as a real barrel in the 3-D view."
+                  style={{
+                    border: `1px solid ${THEME.borderStrong}`,
+                    background: boardTool === 'via' ? THEME.accentBlue : THEME.surfaceInput,
+                    color: boardTool === 'via' ? '#0b1220' : THEME.textSoft,
+                    borderRadius: 4,
+                    fontSize: 11,
+                    padding: '2px 10px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ⊙ Via
+                </button>
+                {boardTool === 'route' && (
+                  <span style={{ display: 'flex', gap: 0 }}>
+                    {(['f_cu', 'b_cu'] as const).map((id, i) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setPcbActiveLayerId(id)}
+                        title={
+                          id === 'f_cu' ? 'Route on the top copper' : 'Route on the bottom copper'
+                        }
+                        style={{
+                          border: `1px solid ${THEME.borderStrong}`,
+                          background:
+                            pcbActiveLayerId === id
+                              ? id === 'f_cu'
+                                ? '#ffcf6b'
+                                : '#6b9bff'
+                              : THEME.surfaceInput,
+                          color: pcbActiveLayerId === id ? '#0b1220' : THEME.textSoft,
+                          borderRadius: i === 0 ? '4px 0 0 4px' : '0 4px 4px 0',
+                          borderLeft: i === 0 ? undefined : 'none',
+                          fontSize: 11,
+                          padding: '2px 8px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {id === 'f_cu' ? 'Top' : 'Bottom'}
+                      </button>
+                    ))}
+                  </span>
+                )}
+              </span>
               <button
                 type="button"
                 onClick={onWorkspace}
@@ -5485,11 +5483,12 @@ function Canvas({ project }: { project: ProjectChoice }) {
                   onMove={onPcbMove}
                   onRotate={onPcbRotate}
                   route={{
-                    active: boardTool === 'route' && pcbViewMode !== 'exploded',
+                    active: boardTool === 'route',
+                    layer: activeCopperLayer,
                     padBoxes: pcbRatsnest.padBoxes,
                     onClick: onBoardRouteClick,
                     onMove: onBoardRouteMove,
-                    viaActive: boardTool === 'via' && pcbViewMode !== 'exploded',
+                    viaActive: boardTool === 'via',
                     onViaClick: onBoardViaClick,
                     cursor: routeCursor,
                     color: activeCopperLayer === 'bottom' ? '#6b9bff' : '#ffcf6b',

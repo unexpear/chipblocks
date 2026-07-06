@@ -10,6 +10,7 @@ import {
   silkReferenceAnchor,
 } from './pcb-board.ts'
 import type { BoardLayerId } from './pcb-layers.ts'
+import { hitCopper, hitPad } from './pcb-pick.ts'
 import type { CopperTrace, Via } from './pcb-route.ts'
 import { SILK_TEXT, strokeText } from './stroke-font.ts'
 
@@ -86,19 +87,6 @@ function padShape(p: Pad, scale: number, key: string) {
 }
 
 const nextRotation = (r: Rotation): Rotation => ((r + 90) % 360) as Rotation
-
-/** The closest point on segment a→b to point p (mm) — for snapping a via onto an existing trace. */
-function closestOnSegment(
-  p: { x: number; y: number },
-  a: { x: number; y: number },
-  b: { x: number; y: number },
-): { x: number; y: number } {
-  const dx = b.x - a.x
-  const dy = b.y - a.y
-  const len2 = dx * dx + dy * dy || 1
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2))
-  return { x: a.x + dx * t, y: a.y + dy * t }
-}
 
 export function PcbView({
   board,
@@ -193,31 +181,6 @@ export function PcbView({
       x: (e.clientX - rect.left) / pxPerMm + minX,
       y: (e.clientY - rect.top) / pxPerMm + minY,
     }
-  }
-  const hitPad = (mm: { x: number; y: number }): PadBox | null =>
-    padBoxes.find(
-      (pb) => mm.x >= pb.x && mm.x <= pb.x + pb.w && mm.y >= pb.y && mm.y <= pb.y + pb.h,
-    ) ?? null
-  // the copper under a board point — a pad, else the nearest trace within a via-ish radius. Gives the
-  // via tool a snap point + the net to carry.
-  const hitCopper = (mm: {
-    x: number
-    y: number
-  }): { at: { x: number; y: number }; net: string } | null => {
-    const pad = hitPad(mm)
-    if (pad !== null) return { at: { x: pad.x + pad.w / 2, y: pad.y + pad.h / 2 }, net: pad.net }
-    let best: { at: { x: number; y: number }; net: string; d: number } | null = null
-    for (const t of traces) {
-      for (let i = 0; i + 1 < t.points.length; i++) {
-        const a = t.points[i]
-        const b = t.points[i + 1]
-        if (!a || !b) continue
-        const cp = closestOnSegment(mm, a, b)
-        const d = Math.hypot(mm.x - cp.x, mm.y - cp.y)
-        if (d < 0.5 && (best === null || d < best.d)) best = { at: cp, net: t.net, d }
-      }
-    }
-    return best !== null ? { at: best.at, net: best.net } : null
   }
 
   const endDrag = (e: ReactPointerEvent) => {
@@ -342,11 +305,11 @@ export function PcbView({
         routeActive
           ? (e) => {
               const mm = eventToMm(e)
-              onRouteClick?.(mm, hitPad(mm))
+              onRouteClick?.(mm, hitPad(padBoxes, mm))
             }
           : viaActive
             ? (e) => {
-                const hit = hitCopper(eventToMm(e))
+                const hit = hitCopper(traces, padBoxes, eventToMm(e))
                 if (hit !== null) onViaClick?.(hit.at, hit.net)
               }
             : undefined

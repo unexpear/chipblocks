@@ -9,8 +9,12 @@ import { describe, expect, test } from 'vitest'
 import {
   buildBoardScene,
   defaultCamera,
+  makeProjector,
   type OrbitCamera,
+  projectToScreen,
+  rayPlaneZ,
   renderScene,
+  screenToBoardMm,
 } from '../src/renderer/pcb-3d.ts'
 import { deriveBoard } from '../src/renderer/pcb-board.ts'
 import type { BoardRouting } from '../src/renderer/pcb-route.ts'
@@ -288,5 +292,67 @@ describe('defaultCamera', () => {
     expect(cam.target).toEqual(scene.center)
     expect(cam.elevationDeg).toBeGreaterThan(0)
     expect(cam.elevationDeg).toBeLessThan(90)
+  })
+})
+
+describe('3-D routing pick — the inverse projection that turns a click into a board-mm point', () => {
+  test('the scene exposes each copper layer’s z (top = board thickness, bottom = 0)', () => {
+    const scene = buildBoardScene(board, routing, defaultStackup())
+    expect(scene.copperZ.top).toBeCloseTo(1.6, 6)
+    expect(scene.copperZ.bottom).toBeCloseTo(0, 6)
+  })
+
+  test('exploded: the two copper layers separate in z (top well above bottom)', () => {
+    const scene = buildBoardScene(board, routing, defaultStackup(), 5)
+    expect(scene.copperZ.top).toBeGreaterThan(scene.copperZ.bottom + 5)
+  })
+
+  test('a click round-trips on the TOP plane: project a board point, then unproject it back', () => {
+    const scene = buildBoardScene(board, routing, defaultStackup())
+    const cam = defaultCamera(scene)
+    const proj = makeProjector(cam, 800, 600)
+    const world = { x: board.outline.x + 5, y: board.outline.y + 3, z: scene.copperZ.top }
+    const screen = proj.project(proj.toView(world))
+    const back = screenToBoardMm(cam, 800, 600, screen.x, screen.y, scene.copperZ.top)
+    expect(back).not.toBeNull()
+    expect(back?.x).toBeCloseTo(world.x, 3)
+    expect(back?.y).toBeCloseTo(world.y, 3)
+  })
+
+  test('the SAME screen click lands on different mm per layer (the z-plane picks top vs bottom)', () => {
+    const scene = buildBoardScene(board, routing, defaultStackup(), 5)
+    const cam = defaultCamera(scene)
+    const proj = makeProjector(cam, 800, 600)
+    // a real board point on the bottom copper plane projects to some pixel...
+    const world = { x: board.outline.x + 2, y: board.outline.y + 2, z: scene.copperZ.bottom }
+    const px = proj.project(proj.toView(world))
+    // ...unprojecting that pixel against the bottom plane recovers it exactly...
+    const onBottom = screenToBoardMm(cam, 800, 600, px.x, px.y, scene.copperZ.bottom)
+    expect(onBottom?.x).toBeCloseTo(world.x, 3)
+    expect(onBottom?.y).toBeCloseTo(world.y, 3)
+    // ...but against the (separated) top plane it lands somewhere else — the layers are not co-planar
+    const onTop = screenToBoardMm(cam, 800, 600, px.x, px.y, scene.copperZ.top)
+    expect(onTop).not.toBeNull()
+    expect(Math.hypot((onTop?.x ?? 0) - world.x, (onTop?.y ?? 0) - world.y)).toBeGreaterThan(0.5)
+  })
+
+  test('rayPlaneZ returns null when the ray is parallel to the plane or the plane is behind the eye', () => {
+    const parallel = rayPlaneZ({ origin: { x: 0, y: 0, z: 5 }, dir: { x: 1, y: 0, z: 0 } }, 0)
+    expect(parallel).toBeNull()
+    const behind = rayPlaneZ({ origin: { x: 0, y: 0, z: 5 }, dir: { x: 0, y: 0, z: 1 } }, 0)
+    expect(behind).toBeNull() // the z=0 plane is behind a ray looking up from z=5
+  })
+
+  test('projectToScreen drops points at/behind the near plane, keeps points in front', () => {
+    const scene = buildBoardScene(board, routing, defaultStackup())
+    const cam = defaultCamera(scene)
+    const proj = makeProjector(cam, 800, 600)
+    const behindEye = {
+      x: proj.eye.x - proj.forward.x * 50,
+      y: proj.eye.y - proj.forward.y * 50,
+      z: proj.eye.z - proj.forward.z * 50,
+    }
+    expect(projectToScreen(proj, behindEye)).toBeNull()
+    expect(projectToScreen(proj, scene.center)).not.toBeNull()
   })
 })

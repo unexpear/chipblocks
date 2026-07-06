@@ -22,6 +22,7 @@ export type Vec3 = { x: number; y: number; z: number }
 
 const sub = (a: Vec3, b: Vec3): Vec3 => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z })
 const add = (a: Vec3, b: Vec3): Vec3 => ({ x: a.x + b.x, y: a.y + b.y, z: a.z + b.z })
+const scale = (a: Vec3, s: number): Vec3 => ({ x: a.x * s, y: a.y * s, z: a.z * s })
 const dot = (a: Vec3, b: Vec3): number => a.x * b.x + a.y * b.y + a.z * b.z
 const cross = (a: Vec3, b: Vec3): Vec3 => ({
   x: a.y * b.z - a.z * b.y,
@@ -60,6 +61,9 @@ export type Scene = {
   center: Vec3
   /** The board's 3-D diagonal in mm — used to frame the default camera. */
   diagonal: number
+  /** The z-height (mm) of each copper layer's surface — where a routing click on that layer lands.
+   *  Assembled: top = board thickness, bottom = 0. Exploded: the separated slabs' copper surfaces. */
+  copperZ: { top: number; bottom: number }
   /** The coordinate grid (present when built with showGrid). */
   grid?: GridRef
 }
@@ -436,7 +440,13 @@ export function buildBoardScene(
     }
   }
 
-  return { faces, center, diagonal, ...(grid ? { grid } : {}) }
+  return {
+    faces,
+    center,
+    diagonal,
+    copperZ: { top: topCuZ, bottom: botCuZ },
+    ...(grid ? { grid } : {}),
+  }
 }
 
 export function defaultCamera(scene: Scene): OrbitCamera {
@@ -461,15 +471,23 @@ function eyeOf(cam: OrbitCamera): Vec3 {
   })
 }
 
-type Projector = {
+export type Projector = {
   eye: Vec3
+  /** The camera basis in world space (right / up / forward) — also the rows that map view → world. */
+  right: Vec3
+  up: Vec3
+  forward: Vec3
+  /** Perspective focal length in px (height / 2 / tan(fov/2)). */
+  focal: number
+  width: number
+  height: number
   /** World → camera/view space: x = right, y = up, z = forward (depth in front of the camera). */
   toView: (p: Vec3) => Vec3
   /** View space → screen (perspective divide). Assumes z > 0 (clip against the near plane first). */
   project: (v: Vec3) => { x: number; y: number }
 }
 
-function makeProjector(cam: OrbitCamera, width: number, height: number): Projector {
+export function makeProjector(cam: OrbitCamera, width: number, height: number): Projector {
   const eye = eyeOf(cam)
   const forward = norm(sub(cam.target, eye))
   const worldUp: Vec3 = { x: 0, y: 0, z: 1 }
@@ -480,6 +498,12 @@ function makeProjector(cam: OrbitCamera, width: number, height: number): Project
   const focal = height / 2 / Math.tan((cam.fovDeg * Math.PI) / 180 / 2)
   return {
     eye,
+    right,
+    up,
+    forward,
+    focal,
+    width,
+    height,
     toView: (p: Vec3) => {
       const d = sub(p, eye)
       return { x: dot(d, right), y: dot(d, up), z: dot(d, forward) }
@@ -519,6 +543,55 @@ function clipNear(verts: Vec3[], near: number): Vec3[] {
 function lerpAtNear(a: Vec3, b: Vec3, near: number): Vec3 {
   const t = (near - a.z) / (b.z - a.z || 1)
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: near }
+}
+
+export type Ray = { origin: Vec3; dir: Vec3 }
+
+/**
+ * A screen point (CSS px) → a world-space ray from the camera eye. This INVERTS the perspective
+ * projection: recover the view-space direction (vx, vy, 1) that `project` would map to (sx, sy), then
+ * rotate it back to world with the camera basis. This is what makes 3-D routing possible — a click
+ * becomes a real ray you can intersect with a copper layer.
+ */
+export function screenRay(proj: Projector, sx: number, sy: number): Ray {
+  const vx = (sx - proj.width / 2) / proj.focal
+  const vy = (proj.height / 2 - sy) / proj.focal
+  const dir = norm(add(add(scale(proj.right, vx), scale(proj.up, vy)), proj.forward))
+  return { origin: proj.eye, dir }
+}
+
+/**
+ * Intersect a world ray with the horizontal plane z = zPlane (a copper layer's surface). Returns the
+ * board-space (x, y) mm of the hit, or null if the ray is parallel to the plane or the hit is behind
+ * the eye. This is the 3-D analogue of the flat view's `eventToMm`.
+ */
+export function rayPlaneZ(ray: Ray, zPlane: number): { x: number; y: number } | null {
+  const dz = ray.dir.z
+  if (Math.abs(dz) < 1e-9) return null
+  const t = (zPlane - ray.origin.z) / dz
+  if (t <= 0) return null
+  return { x: ray.origin.x + ray.dir.x * t, y: ray.origin.y + ray.dir.y * t }
+}
+
+/** Convenience: a screen click → the board-mm point on the copper plane z = zPlane, using the same
+ *  camera the renderer draws with. Builds the projector, casts the ray, hits the plane. */
+export function screenToBoardMm(
+  cam: OrbitCamera,
+  width: number,
+  height: number,
+  sx: number,
+  sy: number,
+  zPlane: number,
+): { x: number; y: number } | null {
+  return rayPlaneZ(screenRay(makeProjector(cam, width, height), sx, sy), zPlane)
+}
+
+/** Project a world point to screen (CSS px), or null if it is at/behind the near plane — for drawing
+ *  the routing overlay (pending trace, pad rings, cursor) on top of the rendered board. */
+export function projectToScreen(proj: Projector, p: Vec3): { x: number; y: number } | null {
+  const v = proj.toView(p)
+  if (v.z < NEAR_MM) return null
+  return proj.project(v)
 }
 
 function shadeHex(hex: string, f: number): string {
