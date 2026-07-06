@@ -13,13 +13,19 @@ import {
   GERBER_CONVENTIONS,
   gerberBottomCopper,
   gerberEdgeCuts,
+  gerberInnerCopper,
   gerberMask,
   gerberPaste,
   gerberSilkscreen,
   gerberTopCopper,
   isoWithOffset,
 } from './pcb-gerber.ts'
-import { type BoardRouting, DEFAULT_ROUTE_CLASS, VIA_RULES } from './pcb-route.ts'
+import {
+  type BoardRouting,
+  DEFAULT_ROUTE_CLASS,
+  routableCopperLayers,
+  VIA_RULES,
+} from './pcb-route.ts'
 import {
   COPPER_WEIGHT_MM,
   COPPER_WEIGHT_PROVENANCE,
@@ -237,15 +243,8 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
   const stackup = inputs.stackup ?? defaultStackup()
   const problems: string[] = []
   if (board.placements.length === 0) problems.push('No parts are placed on the board.')
-  // Multilevel guard: the board can be DESIGNED as 4-/6-layer (and shown in the exploded 3-D view),
-  // but we only generate the two outer copper Gerbers — a fab could not build the inner layers from
-  // this archive, so we refuse rather than ship a stack-up spec the copper doesn't back up.
-  if (stackup.copperLayers > 2) {
-    const inner = stackup.copperLayers - 2
-    problems.push(
-      `The stack-up is set to ${stackup.copperLayers} copper layers, but ChipBlocks generates only the two outer copper layers (F.Cu / B.Cu) — the ${inner} inner copper layer${inner === 1 ? '' : 's'} would have no artwork to manufacture. Set the stack-up back to 2 layers to export. (The multilevel stack-up is for design and the exploded 3-D view for now.)`,
-    )
-  }
+  // (4-/6-layer boards now export: the inner-copper Gerbers are generated below, so a fab has real
+  // artwork for every copper layer the stack-up declares.)
   // Cavity / stepped guard: a controlled-depth recess needs a depth-routing (mechanical) program the
   // ZIP doesn't yet carry, and shipping a flat 2-D fab set for a 3-D-milled board would be wrong —
   // so we refuse rather than let the fab build a flat board that ignores the pockets.
@@ -365,7 +364,19 @@ export const FAB_FILE_NAMES = {
   readme: 'README.txt',
 } as const
 
+/** The Gerber file name for inner copper layer `innerIndex` (In1 = 1, In2 = 2…), following KiCad's
+ *  convention: In1.Cu → -In1_Cu.g2, In2.Cu → -In2_Cu.g3 (the extension is the physical layer number). */
+export function innerCopperFileName(innerIndex: number): string {
+  return `${BASE}-In${innerIndex}_Cu.g${innerIndex + 1}`
+}
+
 function buildReadme(inputs: FabInputs): string {
+  const innerCount = Math.max(0, (inputs.stackup?.copperLayers ?? 2) - 2)
+  const innerCopperLines = Array.from(
+    { length: innerCount },
+    (_, i) =>
+      `  ${innerCopperFileName(i + 1)}      inner copper In${i + 1} — TH rings, its traces, via barrels`,
+  )
   return [
     'ChipBlocks manufacturing files',
     `Generated ${isoWithOffset(inputs.when)} by the ChipBlocks deterministic engine.`,
@@ -373,6 +384,7 @@ function buildReadme(inputs: FabInputs): string {
     'Fabrication (Gerber X2, units mm; drill in Excellon decimal mm — file shapes ground-truthed',
     'against KiCad 10.0.4 output):',
     `  ${FAB_FILE_NAMES.topCopper}      top copper — pads, top traces, via barrels`,
+    ...innerCopperLines,
     `  ${FAB_FILE_NAMES.bottomCopper}      bottom copper — TH rings, bottom traces, via barrels`,
     `  ${FAB_FILE_NAMES.topMask}    top solder mask openings`,
     `  ${FAB_FILE_NAMES.bottomMask}    bottom solder mask openings`,
@@ -406,15 +418,35 @@ export type FabZip = {
  *  a failing board's ZIP — but the builder always builds, so tests can inspect failing reports. */
 export function buildManufacturingZip(inputs: FabInputs): FabZip {
   const { board, ratsnest, routing, when } = inputs
+  const stackup = inputs.stackup ?? defaultStackup()
   const validation = buildValidationReport(inputs)
   const encoder = new TextEncoder()
   const text = (name: string, content: string): ZipEntry => ({
     name,
     data: encoder.encode(content),
   })
+  // One Gerber per copper layer, in stack order: top (L1), then each inner layer (In1 = L2…), then the
+  // bottom (L_last). A 2-layer board is exactly top + bottom as before; a 4-/6-layer board adds its
+  // inner copper so a fab has real artwork for every layer the stack-up declares.
+  const copper = routableCopperLayers(stackup.copperLayers)
+  const copperEntries: ZipEntry[] = copper.map((cl, idx) => {
+    const layerNumber = idx + 1
+    if (cl === 'top') {
+      return text(FAB_FILE_NAMES.topCopper, gerberTopCopper(board, ratsnest, routing, when))
+    }
+    if (cl === 'bottom') {
+      return text(
+        FAB_FILE_NAMES.bottomCopper,
+        gerberBottomCopper(board, ratsnest, routing, when, layerNumber),
+      )
+    }
+    return text(
+      innerCopperFileName(idx),
+      gerberInnerCopper(board, ratsnest, routing, cl, layerNumber, when),
+    )
+  })
   const entries: ZipEntry[] = [
-    text(FAB_FILE_NAMES.topCopper, gerberTopCopper(board, ratsnest, routing, when)),
-    text(FAB_FILE_NAMES.bottomCopper, gerberBottomCopper(board, ratsnest, routing, when)),
+    ...copperEntries,
     text(FAB_FILE_NAMES.topMask, gerberMask(board, 'Top', when)),
     text(FAB_FILE_NAMES.bottomMask, gerberMask(board, 'Bot', when)),
     text(FAB_FILE_NAMES.topPaste, gerberPaste(board, 'Top', when)),

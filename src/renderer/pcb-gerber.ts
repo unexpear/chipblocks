@@ -7,7 +7,7 @@ import {
   type Ratsnest,
   silkReferenceAnchor,
 } from './pcb-board.ts'
-import type { BoardRouting } from './pcb-route.ts'
+import type { BoardRouting, CopperLayer } from './pcb-route.ts'
 import { SILK_TEXT, strokeText } from './stroke-font.ts'
 
 /**
@@ -284,7 +284,7 @@ function flashBody(
  *  attribute attached. Shared by the two copper layers so they can never draw differently. */
 function traceBody(
   traces: readonly BoardRouting['traces'][number][],
-  layer: 'top' | 'bottom',
+  layer: CopperLayer,
   apertures: Apertures,
   body: string[],
 ): void {
@@ -340,12 +340,14 @@ export function gerberTopCopper(
 }
 
 /** Bottom copper: the through-hole pads' annular rings, the bottom-layer traces, and the via
- *  barrels (a via's copper exists on both layers). */
+ *  barrels (a via's copper exists on every layer). `layerNumber` is the bottom's physical layer
+ *  number — L2 on a 2-layer board, L4 on a 4-layer, L6 on a 6-layer. */
 export function gerberBottomCopper(
   board: Board,
   ratsnest: Ratsnest,
   routing: BoardRouting,
   when: Date,
+  layerNumber = 2,
 ): string {
   const apertures = new Apertures()
   const flashes = planFlashes(board, apertures, THROUGH_HOLE_ONLY, 'ComponentPad')
@@ -353,7 +355,33 @@ export function gerberBottomCopper(
   traceBody(routing.traces, 'bottom', apertures, body)
   viaBody(routing, apertures, body)
   return [
-    ...gerberHeader('Copper,L2,Bot', 'Positive', when),
+    ...gerberHeader(`Copper,L${layerNumber},Bot`, 'Positive', when),
+    ...apertures.block(),
+    ...body,
+    'M02*',
+    '',
+  ].join('\n')
+}
+
+/** An INNER copper layer (In1.Cu, In2.Cu…) of a multilevel board: the through-hole pads' annular
+ *  rings (SMD pads only exist on the outer layers), this layer's traces, and the via barrels (a
+ *  plated through-via's copper runs through every layer). `layerNumber` is its physical layer number
+ *  (In1 = L2, In2 = L3…). */
+export function gerberInnerCopper(
+  board: Board,
+  ratsnest: Ratsnest,
+  routing: BoardRouting,
+  layer: CopperLayer,
+  layerNumber: number,
+  when: Date,
+): string {
+  const apertures = new Apertures()
+  const flashes = planFlashes(board, apertures, THROUGH_HOLE_ONLY, 'ComponentPad')
+  const body = flashBody(flashes, padNets(ratsnest))
+  traceBody(routing.traces, layer, apertures, body)
+  viaBody(routing, apertures, body)
+  return [
+    ...gerberHeader(`Copper,L${layerNumber},Inr`, 'Positive', when),
     ...apertures.block(),
     ...body,
     'M02*',

@@ -20,6 +20,7 @@ import {
   GERBER_CONVENTIONS,
   gerberBottomCopper,
   gerberEdgeCuts,
+  gerberInnerCopper,
   gerberMask,
   gerberPaste,
   gerberSilkscreen,
@@ -372,4 +373,44 @@ test('the conventions carry provenance (a fab manufactures these exact numbers)'
     expect(c.provenance.citation.length).toBeGreaterThan(10)
     expect(c.provenance.confidence).toBe('high')
   }
+})
+
+describe('inner copper (multilevel boards)', () => {
+  const { board, ratsnest } = routedPair()
+  // an inner-layer trace joined by a plated through-via (which appears on the inner layer too)
+  const routing = {
+    traces: [
+      {
+        net: 'net_1',
+        widthMm: 0.25,
+        layer: 'inner1' as const,
+        points: [
+          { x: 11, y: 10 },
+          { x: 19, y: 10 },
+        ],
+      },
+    ],
+    vias: [{ net: 'net_1', at: { x: 15, y: 10 }, diameterMm: 0.6, drillMm: 0.4 }],
+    unrouted: [],
+  }
+  const gerber = gerberInnerCopper(board, ratsnest, routing, 'inner1', 2, WHEN)
+
+  test('carries the inner-copper file function (Copper,L2,Inr) and draws the inner trace + via', () => {
+    expect(gerber).toContain('%TF.FileFunction,Copper,L2,Inr*%')
+    expect(gerber).toContain('D01*') // the inner trace is drawn
+    expect(gerber).toContain('D03*') // the through-via flashes on the inner layer
+    expect(gerber.trim().endsWith('M02*')).toBe(true)
+  })
+
+  test('an inner layer draws NO trace when the copper is only on the outer layers', () => {
+    const outerOnly = gerberInnerCopper(
+      board,
+      ratsnest,
+      routeBoard(ratsnest), // routeBoard only lays top/bottom copper
+      'inner1',
+      2,
+      WHEN,
+    )
+    expect(outerOnly).not.toContain('D01*') // nothing routed on inner1
+  })
 })

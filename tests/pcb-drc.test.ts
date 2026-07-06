@@ -290,6 +290,34 @@ describe('runDrc', () => {
       const { board, rn, routing } = routed()
       expect(runDrc(board, rn, routing).filter((x) => x.code === 'over-current')).toHaveLength(0)
     })
+
+    test('a buried inner-layer trace is flagged at HALF the current — the internal IPC-2221 k', () => {
+      const { board, rn, net } = routed()
+      const pts = [
+        { x: 0, y: 0 },
+        { x: 5, y: 0 },
+      ]
+      const inner = {
+        traces: [{ net, widthMm: 0.25, layer: 'inner1' as const, points: pts }],
+        vias: [],
+        unrouted: [],
+      }
+      const outer = {
+        ...inner,
+        traces: [{ net, widthMm: 0.25, layer: 'top' as const, points: pts }],
+      }
+      const oc = (r: Parameters<typeof runDrc>[2]) =>
+        runDrc(board, rn, r, undefined, {
+          netCurrents: new Map([[net, 0.6]]),
+          copperWeight: 'one_oz',
+        }).filter((v) => v.code === 'over-current')
+      // 0.6 A: over a buried inner trace's ~0.44 A rating, but UNDER an external trace's ~0.88 A.
+      const innerHits = oc(inner)
+      expect(innerHits).toHaveLength(1)
+      expect(innerHits[0]?.message).toContain('inner-layer')
+      expect(innerHits[0]?.message).toContain('internal')
+      expect(oc(outer)).toHaveLength(0) // the same trace on the outer copper is within its rating
+    })
   })
 
   describe('open-net — a net not joined by its own copper', () => {

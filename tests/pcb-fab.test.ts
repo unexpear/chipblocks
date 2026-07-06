@@ -22,6 +22,7 @@ import {
   buildValidationReport,
   FAB_FILE_NAMES,
   type FabInputs,
+  innerCopperFileName,
 } from '../src/renderer/pcb-fab.ts'
 import { gerberTopCopper } from '../src/renderer/pcb-gerber.ts'
 import { routeBoard } from '../src/renderer/pcb-route.ts'
@@ -267,19 +268,36 @@ describe('the validation report', () => {
     expect(v.reportText).not.toContain('trace over-current (each trace vs its ampacity')
   })
 
-  test('a multilevel (4-layer) board is REFUSED — we generate only the two outer copper Gerbers', () => {
-    const v = buildValidationReport({
-      ...cleanInputs(),
-      stackup: buildStackup({
-        thicknessMm: 1.6,
-        copperWeight: 'one_oz',
-        surfaceFinish: 'hasl',
-        copperLayers: 4,
-      }),
+  test('a multilevel (4-layer) board EXPORTS — each inner copper layer gets its own Gerber', () => {
+    const stackup = buildStackup({
+      thicknessMm: 1.6,
+      copperWeight: 'one_oz',
+      surfaceFinish: 'hasl',
+      copperLayers: 4,
     })
-    expect(v.status).toBe('fail')
-    expect(v.problems.some((p) => p.includes('4 copper layers') && p.includes('inner'))).toBe(true)
-    expect(v.reportText).toContain('Set the stack-up back to 2 layers')
+    const v = buildValidationReport({ ...cleanInputs(), stackup })
+    expect(v.status).toBe('pass') // no longer refused — the inner artwork is generated
+    const zip = buildManufacturingZip({ ...cleanInputs(), stackup })
+    // the copper set is F.Cu (L1) / In1.Cu (L2) / In2.Cu (L3) / B.Cu (L4)
+    expect(zip.entries).toContain(FAB_FILE_NAMES.topCopper)
+    expect(zip.entries).toContain(innerCopperFileName(1)) // In1_Cu.g2
+    expect(zip.entries).toContain(innerCopperFileName(2)) // In2_Cu.g3
+    expect(zip.entries).toContain(FAB_FILE_NAMES.bottomCopper)
+    // a 2-layer board has NO inner-copper files
+    const two = buildManufacturingZip(cleanInputs())
+    expect(two.entries).not.toContain(innerCopperFileName(1))
+  })
+
+  test('a 6-layer board emits four inner copper Gerbers (In1..In4)', () => {
+    const stackup = buildStackup({
+      thicknessMm: 1.6,
+      copperWeight: 'one_oz',
+      surfaceFinish: 'hasl',
+      copperLayers: 6,
+    })
+    const zip = buildManufacturingZip({ ...cleanInputs(), stackup })
+    for (const n of [1, 2, 3, 4]) expect(zip.entries).toContain(innerCopperFileName(n))
+    expect(zip.entries).not.toContain(innerCopperFileName(5))
   })
 
   test('a board with a controlled-depth recess (cavity / step) is REFUSED — we emit no depth-mill program', () => {

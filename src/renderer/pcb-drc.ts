@@ -355,15 +355,22 @@ export function runDrc(
     for (const t of routing.traces) {
       const current = opts.netCurrents.get(t.net) ?? 0
       if (current <= 1e-9) continue
-      // top + bottom are OUTER copper (the 'external' IPC-2221 constant); inner layers aren't routed.
-      const ampacity = traceAmpacity(t.widthMm, weight, OVER_CURRENT_DELTA_T_C)
+      // Top + bottom are OUTER copper (the higher 'external' IPC-2221 constant); a BURIED inner-layer
+      // trace has no air to cool it, so it carries about HALF as much — the 'internal' constant.
+      const external = t.layer === 'top' || t.layer === 'bottom'
+      const ampacity = traceAmpacity(
+        t.widthMm,
+        weight,
+        OVER_CURRENT_DELTA_T_C,
+        external ? 'external' : 'internal',
+      )
       if (ampacity <= 0 || current <= ampacity) continue
       const a = t.points[0]
       const b = t.points[1] ?? a
       if (a === undefined || b === undefined) continue
       out.push({
         code: 'over-current',
-        message: `a ${fmt(t.widthMm)} mm trace on net ${t.net} carries ${fmtA(current)} A — over its ~${fmtA(ampacity)} A rating (IPC-2221, ${OVER_CURRENT_DELTA_T_C} °C rise, ${oz} oz). Widen the trace or split the current.`,
+        message: `a ${fmt(t.widthMm)} mm ${external ? '' : 'inner-layer '}trace on net ${t.net} carries ${fmtA(current)} A — over its ~${fmtA(ampacity)} A rating (IPC-2221 ${external ? 'external' : 'internal'}, ${OVER_CURRENT_DELTA_T_C} °C rise, ${oz} oz). Widen the trace or split the current.`,
         at: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
       })
     }
