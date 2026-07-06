@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('chipblocks', {
     path: string,
   ): Promise<{ ok: boolean; path?: string; text?: string; reason?: string }> =>
     ipcRenderer.invoke('circuit:read', path),
+  // Auto-discover saved .chipblocks projects in the usual folders (so My Projects finds them itself).
+  scanProjects: (): Promise<{ path: string; name: string; savedAt: number }[]> =>
+    ipcRenderer.invoke('circuit:scan'),
   // Import Netlist (rung 1b): a netlist file's raw text arrives; the renderer parses it.
   onNetlistOpened: (callback: (text: string) => void) => subscribe('file:netlist-opened', callback),
   // Export Netlist (rung 2): the File menu asks; the renderer answers with the SPICE text.

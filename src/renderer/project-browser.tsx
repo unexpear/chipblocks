@@ -230,7 +230,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
     setCatId(c.id)
     setTplId(c.templates[0]?.id ?? '')
     setDepth('design')
-    if (c.id === 'recent') setRecents(listRecentProjects()) // pick up anything saved since mount
+    if (c.id === 'recent') refreshProjects() // re-scan + pick up anything saved since mount
   }
 
   const create = () => {
@@ -240,6 +240,28 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
 
   // "My Projects": the saved .chipblocks files, and opening one (or an arbitrary file) into a new tab.
   const [recents, setRecents] = useState<RecentProject[]>(() => listRecentProjects())
+  const [scanning, setScanning] = useState(false)
+  // Auto-discover saved projects on disk and merge them with the remembered list (an explicitly-saved
+  // project keeps its name + save time; the rest come from the scan). Deduped by path, newest first.
+  const refreshProjects = () => {
+    setRecents(listRecentProjects())
+    const scan = window.chipblocks?.scanProjects
+    if (scan === undefined) return
+    setScanning(true)
+    void scan()
+      .then((scanned) => {
+        const byPath = new Map<string, RecentProject>()
+        for (const p of scanned)
+          byPath.set(p.path, { name: p.name, path: p.path, savedAt: p.savedAt })
+        for (const p of listRecentProjects()) byPath.set(p.path, p) // remembered entry wins
+        setRecents([...byPath.values()].sort((a, b) => b.savedAt - a.savedAt))
+      })
+      .finally(() => setScanning(false))
+  }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-time scan on mount; refreshProjects is stable enough here
+  useEffect(() => {
+    refreshProjects()
+  }, [])
   const openFromFile = (text: string, path: string) => {
     const result = deserializeCircuit(text)
     if (!result.ok) return
@@ -409,10 +431,37 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                 <span style={{ fontSize: 18, color: ACCENT }}>+</span>
                 Open a saved project… <span style={{ color: MUTED }}>(.chipblocks file)</span>
               </button>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontSize: 11,
+                  color: MUTED,
+                }}
+              >
+                {scanning
+                  ? 'Scanning your folders for saved projects…'
+                  : `Found in Documents / Desktop / Downloads · ${recents.length} project${recents.length === 1 ? '' : 's'}`}
+                <button
+                  type="button"
+                  onClick={() => refreshProjects()}
+                  title="Scan again"
+                  style={{
+                    all: 'unset',
+                    cursor: 'pointer',
+                    color: ACCENT_TEXT,
+                    textDecoration: 'underline',
+                  }}
+                >
+                  rescan
+                </button>
+              </div>
               {recents.length === 0 ? (
                 <div style={{ color: MUTED, fontSize: 13, padding: '20px 4px' }}>
-                  No saved projects yet — create one from a template and save it (File ▸ Save), and
-                  it will appear here to reopen.
+                  {scanning
+                    ? 'Looking for .chipblocks files…'
+                    : 'No saved projects found. Create one from a template and save it (File ▸ Save), or use “Open a saved project…” above — it will appear here to reopen.'}
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

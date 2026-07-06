@@ -239,6 +239,7 @@ declare global {
       readCircuitFile?: (
         path: string,
       ) => Promise<{ ok: boolean; path?: string; text?: string; reason?: string }>
+      scanProjects?: () => Promise<{ path: string; name: string; savedAt: number }[]>
       onNetlistOpened?: (callback: (text: string) => void) => void
       onExportNetlistRequest?: (callback: () => void) => void
       saveNetlistData?: (text: string) => Promise<{ ok: boolean; path?: string }>

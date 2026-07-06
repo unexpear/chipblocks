@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -182,7 +182,69 @@ async function readCircuitAt(
   return { ok: true, text }
 }
 
+/**
+ * Auto-discover saved .chipblocks projects for the "My Projects" list — the user shouldn't have to
+ * remember where they saved. Walks the usual save spots (Documents / Desktop / Downloads deep, home
+ * shallow), bounded hard (skip system/build dirs, a depth + total-dir cap) so it stays fast and never
+ * wanders the whole disk. Returns each file's path + name + modified time.
+ */
+async function scanForCircuits(): Promise<{ path: string; name: string; savedAt: number }[]> {
+  const found: { path: string; name: string; savedAt: number }[] = []
+  const seen = new Set<string>()
+  const skip = new Set([
+    'node_modules',
+    'AppData',
+    'Library',
+    'System Volume Information',
+    '$RECYCLE.BIN',
+    '.git',
+    '.cache',
+    'out',
+    'dist',
+  ])
+  let dirs = 0
+  const MAX_DIRS = 4000
+  async function walk(dir: string, depth: number, maxDepth: number): Promise<void> {
+    if (depth > maxDepth || dirs > MAX_DIRS || seen.has(dir)) return
+    seen.add(dir)
+    dirs++
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => null)
+    if (entries === null) return
+    for (const e of entries) {
+      const full = join(dir, e.name)
+      if (e.isDirectory()) {
+        if (e.name.startsWith('.') || skip.has(e.name)) continue
+        await walk(full, depth + 1, maxDepth)
+      } else if (e.isFile() && e.name.toLowerCase().endsWith('.chipblocks')) {
+        try {
+          const st = await stat(full)
+          found.push({ path: full, name: basename(e.name, '.chipblocks'), savedAt: st.mtimeMs })
+        } catch {
+          // unreadable file — skip it
+        }
+      }
+    }
+  }
+  const dir = (id: Parameters<typeof app.getPath>[0]) => {
+    try {
+      return app.getPath(id)
+    } catch {
+      return ''
+    }
+  }
+  // the likely save spots, deep; then home shallow (the `seen` set stops re-walking the deep roots)
+  for (const root of [dir('documents'), dir('desktop'), dir('downloads')]) {
+    if (root) await walk(root, 0, 6)
+  }
+  const home = dir('home')
+  if (home) await walk(home, 0, 2)
+  return found
+}
+
 function registerCircuitOpenHandlers(window: BrowserWindow): void {
+  // Auto-find saved projects across the usual folders (the My Projects list merges these in).
+  ipcMain.removeHandler('circuit:scan')
+  ipcMain.handle('circuit:scan', () => scanForCircuits())
   // Open a .chipblocks file into a NEW TAB: show the dialog, validate, and RETURN the text + path so
   // the renderer can spin up a fresh tab (the menu's file:opened, by contrast, replaces the canvas).
   ipcMain.removeHandler('circuit:open-dialog')
