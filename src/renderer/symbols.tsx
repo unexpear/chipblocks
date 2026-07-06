@@ -29,6 +29,13 @@ import {
   wiperFraction,
 } from './part-defaults.ts'
 import { formatEng } from './units.ts'
+import {
+  getUserPart,
+  type PinElectrical,
+  type UserPart,
+  userPartGeometry,
+  userPartTerminals,
+} from './user-parts.ts'
 
 /**
  * Standard schematic symbols (Sprint 18 S18-v3-5) — IEC 60617 / IEEE 315
@@ -2128,6 +2135,9 @@ export function terminalsOf(
       ]
     }
   }
+  // A user-authored part draws its terminals from its pin spec (a labelled box), not a hardcoded map.
+  const userPart = getUserPart(definition)
+  if (userPart !== undefined) return userPartTerminals(userPart)
   return TERMINALS[definition] ?? FALLBACK_TERMINALS
 }
 
@@ -2149,6 +2159,102 @@ export type DeviceNodeData = {
   /** Calculator keypad button: the key this switch types ('0'..'9', '+', '-', '*', '/', '=', 'C', '±').
    *  Clicking the switch feeds this key to the calculator's control unit. */
   calcKey?: string
+}
+
+// A user-authored part's electrical roles that get a filled pin dot (a source of drive), vs the hollow
+// dot every passive/input/bidirectional pin wears — a subtle read of which pins push current out.
+const DRIVING_PINS: ReadonlySet<PinElectrical> = new Set(['output', 'power_out'])
+
+/**
+ * A user-authored part's symbol — a labelled box with a pin stub + name at each pin, drawn straight
+ * from its pin spec (userPartGeometry). No hand-coded picture: a part that isn't in the code still
+ * renders here, and because the glyph and the wire handles (userPartTerminals) read the SAME geometry
+ * in the SAME node-box coordinate space, every handle lands exactly on its drawn pin tip.
+ */
+function UserPartGlyph({ part }: { part: UserPart }) {
+  const { width, height, body, pins } = userPartGeometry(part)
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      aria-hidden="true"
+      style={{ display: 'block' }}
+    >
+      <rect
+        x={body.x}
+        y={body.y}
+        width={body.width}
+        height={body.height}
+        rx={3}
+        fill={THEME.surfaceRaised}
+        stroke={STROKE}
+        strokeWidth={1.6}
+      />
+      <text
+        x={body.x + body.width / 2}
+        y={body.y + body.height / 2}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={12}
+        fontFamily="system-ui, sans-serif"
+        fontWeight={600}
+        fill={STROKE}
+        // Squeeze an over-long name to fit the body (never stretch a short one) so it can't spill past
+        // the box — the box-width heuristic can under-guess a wide all-caps name.
+        {...(part.name.length * 8 > body.width - 12
+          ? { textLength: body.width - 12, lengthAdjust: 'spacingAndGlyphs' as const }
+          : {})}
+      >
+        {part.name}
+      </text>
+      {pins.map((p) => {
+        // The name label tucks just INSIDE the body next to the pin root.
+        const label =
+          p.side === 'left'
+            ? { x: p.rootX + 4, y: p.rootY, anchor: 'start' as const }
+            : p.side === 'right'
+              ? { x: p.rootX - 4, y: p.rootY, anchor: 'end' as const }
+              : p.side === 'top'
+                ? { x: p.rootX, y: p.rootY + 9, anchor: 'middle' as const }
+                : { x: p.rootX, y: p.rootY - 9, anchor: 'middle' as const }
+        const driving = DRIVING_PINS.has(p.electrical)
+        return (
+          <Fragment key={p.id}>
+            <line
+              x1={p.rootX}
+              y1={p.rootY}
+              x2={p.tipX}
+              y2={p.tipY}
+              stroke={STROKE}
+              strokeWidth={1.4}
+            />
+            <circle
+              cx={p.tipX}
+              cy={p.tipY}
+              r={2.4}
+              fill={driving ? STROKE : THEME.surfaceRaised}
+              stroke={STROKE}
+              strokeWidth={1.2}
+            />
+            {p.name && (
+              <text
+                x={label.x}
+                y={label.y}
+                textAnchor={label.anchor}
+                dominantBaseline="central"
+                fontSize={9}
+                fontFamily="system-ui, sans-serif"
+                fill={THEME.textFaint}
+              >
+                {p.name}
+              </text>
+            )}
+          </Fragment>
+        )
+      })}
+    </svg>
+  )
 }
 
 /**
@@ -2275,6 +2381,10 @@ export function DeviceGlyph({
   }
   const Glyph = GLYPHS[definition]
   if (Glyph) return <Glyph />
+  // A user-authored part draws its own labelled box from its pin spec (matching terminalsOf's handles),
+  // so a definition that isn't hardcoded here still renders instead of falling back to a bare name box.
+  const userPart = getUserPart(definition)
+  if (userPart !== undefined) return <UserPartGlyph part={userPart} />
   return (
     <div
       style={{
@@ -2367,8 +2477,12 @@ export function DeviceNode({ id, data }: NodeProps) {
   // 5:2-ish width gives a raster enough horizontal room to resolve text (a row of characters).
   const crtScreen = useContext(CrtScreenContext).get(id)
   const isCrtScreen = definition === 'crt'
-  const boxW = isCrtScreen ? 240 : W
-  const boxH = isCrtScreen ? 88 : H
+  // A user-authored part sizes its box to its own pin-spec geometry, so the fixed W×H symbol box
+  // becomes a labelled pin box exactly as wide/tall as the drawn glyph (handles share its space).
+  const userPartDef = getUserPart(definition)
+  const userGeom = userPartDef ? userPartGeometry(userPartDef) : undefined
+  const boxW = isCrtScreen ? 240 : (userGeom?.width ?? W)
+  const boxH = isCrtScreen ? 88 : (userGeom?.height ?? H)
   const lensState = useContext(LensContext)
   // Travelling-charge front: dim the part until the wave reaches it, so it lights up in turn
   // (the far bulb last). partArrival is its earliest terminal-arrival time; null = not in front mode.

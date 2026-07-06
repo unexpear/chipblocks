@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { DIGIT_DISPLAY_SIZES } from './builtin-blocks.ts'
 import { DeviceGlyph } from './symbols.tsx'
 import { THEME } from './theme.ts'
+import { reserveBuiltinIds } from './user-parts.ts'
 
 /**
  * Parts palette (Sprint 19 S19-v3-6; dockable in S19-v3-10). The placeable
@@ -184,6 +185,11 @@ export const PARTS: { definition: string; label: string }[] = [
   { definition: 'graphic_rect', label: 'Rectangle' },
   { definition: 'graphic_circle', label: 'Circle' },
 ]
+
+// Reserve every built-in definition id so a user-authored part can never claim one (which would make
+// the solver + symbols treat the user's black box as that built-in). This IS the authoritative list of
+// placeable built-ins, so it stays in step with the palette automatically.
+reserveBuiltinIds(PARTS.map((part) => part.definition))
 
 export function PaletteItems({ filter }: { filter?: string }) {
   const query = (filter ?? '').trim().toLowerCase()

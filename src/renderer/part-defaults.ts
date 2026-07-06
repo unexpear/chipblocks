@@ -3,6 +3,7 @@ import { readEnumParam, readScalarParam } from '../instance-params.ts'
 import { ldrResistance, lightSensorCurrent } from '../light.ts'
 import { propagationDelayS } from '../transmission-line-model.ts'
 import { formatEng } from './units.ts'
+import { getUserPart } from './user-parts.ts'
 
 /**
  * Part parameter defaults + display (Sprint 19 S19-v3-20).
@@ -1108,7 +1109,11 @@ export function defaultProvenance(definition: string, key: string): string | und
 /** A real, cited default parameter set for a freshly-dropped part (a fresh copy; editable). */
 export function defaultParameters(definition: string): Parameters {
   const preset = DEFAULTS[definition]
-  return preset ? (JSON.parse(JSON.stringify(preset)) as Parameters) : {}
+  if (preset) return JSON.parse(JSON.stringify(preset)) as Parameters
+  // A user-authored part carries its own (optional) default parameters — a fresh copy, editable.
+  const userPart = getUserPart(definition)
+  if (userPart?.parameters) return JSON.parse(JSON.stringify(userPart.parameters)) as Parameters
+  return {}
 }
 
 /**
