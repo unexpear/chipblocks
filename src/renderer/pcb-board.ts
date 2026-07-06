@@ -329,7 +329,7 @@ export function computeRatsnest(world: RatsnestWorld, board: Board): Ratsnest {
       const definition = world.instances.get(member.instance)?.definition
       if (definition === undefined || NOT_A_PIN.has(definition)) continue
       const placement = placementOf.get(member.instance)
-      const padId = padForTerminal(definition, member.terminal)
+      const padId = padForTerminal(definition, member.terminal, placement?.footprintId)
       const fp = placement !== undefined ? footprintByPlacement(placement) : undefined
       const pad = padId !== undefined ? fp?.pads.find((p) => p.id === padId) : undefined
       if (placement === undefined || pad === undefined) continue
@@ -447,7 +447,7 @@ export function offBoardPins(
     const definition = definitionOf.get(nodeId)
     if (definition === undefined || NOT_A_PART.has(definition)) return
     const placement = placementOf.get(nodeId)
-    const padId = padForTerminal(definition, handleId)
+    const padId = padForTerminal(definition, handleId, placement?.footprintId)
     const fp = placement !== undefined ? footprintByPlacement(placement) : undefined
     const onBoard = padId !== undefined && fp?.pads.some((p) => p.id === padId) === true
     if (onBoard) return

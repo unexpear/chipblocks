@@ -1564,7 +1564,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const pcbPadCurrentOf = useCallback(
     (partId: string, padId: string): number | undefined => {
       const definition = solvedWorld.instances.get(partId)?.definition
-      const terminal = definition !== undefined ? terminalForPad(definition, padId) : undefined
+      // The pad→terminal mapping is package-specific (a TO-92's pins order differently from a SOT-23's),
+      // so resolve it against the part's chosen footprint — else a transistor's per-pin current is
+      // mis-attributed on a non-default package.
+      const footprintId = pcbBoard.placements.find((p) => p.partId === partId)?.footprintId
+      const terminal =
+        definition !== undefined ? terminalForPad(definition, padId, footprintId) : undefined
       if (pcbAcRms !== undefined) {
         return terminal !== undefined ? pcbAcRms.get(`${partId}/${terminal}`) : undefined
       }
@@ -1574,7 +1579,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       }
       return readings.get(partId)?.current
     },
-    [solvedWorld, solution, readings, pcbAcRms],
+    [solvedWorld, solution, readings, pcbAcRms, pcbBoard],
   )
   const pcbNetCurrents = useMemo(
     () =>

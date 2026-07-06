@@ -13,6 +13,7 @@ import {
   FOOTPRINT_DIP8,
   FOOTPRINT_PINHDR_1X4,
   FOOTPRINT_SOIC8,
+  FOOTPRINT_TO92,
   type Footprint,
   footprintBounds,
 } from '../src/renderer/footprint.ts'
@@ -155,6 +156,36 @@ describe('starter set — the multi-pad + through-hole footprints (SOIC-8, DIP-8
     expect(p.every((pad) => pad.type === 'through_hole' && pad.holeDiameter === 1)).toBe(true)
     expect(p[0]?.shape).toBe('rect') // pin 1 square
     expect(p[3]?.center.y).toBeCloseTo(7.62, 6) // 3 × 2.54 mm
+  })
+
+  test('TO-92: 3 through-hole pads, 0.75 mm drills, pin 1 square at the origin, pin 2 staggered back', () => {
+    const p = FOOTPRINT_TO92.pads
+    expect(p).toHaveLength(3)
+    expect(p.every((pad) => pad.type === 'through_hole' && pad.holeDiameter === 0.75)).toBe(true)
+    expect(p[0]?.shape).toBe('rect') // pin 1 square for orientation
+    expect(p.slice(1).every((pad) => pad.shape === 'circle')).toBe(true)
+    expect(p[0]?.center).toEqual({ x: 0, y: 0 }) // origin at pin 1 (KiCad THT convention)
+    expect(p[1]?.center).toEqual({ x: 1.27, y: -1.27 }) // middle pin staggered back — the TO-92 triangle
+    expect(p[2]?.center).toEqual({ x: 2.54, y: 0 })
+  })
+
+  test('TO-92 body is the real half-round "D" outline — a closed polygon bulging off the flat face', () => {
+    const fab = FOOTPRINT_TO92.fabrication
+    expect(fab.length).toBeGreaterThanOrEqual(6) // an arc polygon + the flat, not a plain rectangle
+    // it is a CLOSED loop: each segment's end is the next segment's start (wrapping around)
+    for (let i = 0; i < fab.length; i++) {
+      const cur = fab[i]
+      const next = fab[(i + 1) % fab.length]
+      expect(cur?.to.x).toBeCloseTo(next?.from.x ?? Number.NaN, 6)
+      expect(cur?.to.y).toBeCloseTo(next?.from.y ?? Number.NaN, 6)
+    }
+    const ys = fab.flatMap((l) => [l.from.y, l.to.y])
+    const xs = fab.flatMap((l) => [l.from.x, l.to.x])
+    expect(Math.max(...ys)).toBeCloseTo(1.75, 2) // the flat face (y = flatY)
+    expect(Math.min(...ys)).toBeCloseTo(-2.48, 2) // the rounded bulge (radius about the body centre)
+    // the round can bulges to the circle's left/right extremes (centre 1.27 ± r 2.48), past the chord
+    expect(Math.min(...xs)).toBeCloseTo(-1.21, 2)
+    expect(Math.max(...xs)).toBeCloseTo(3.75, 2)
   })
 })
 

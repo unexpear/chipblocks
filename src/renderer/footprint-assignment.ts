@@ -30,11 +30,12 @@ export const PART_FOOTPRINTS: Record<string, { default: string; options: string[
     default: 'R_0603_1608Metric',
     options: ['R_0402_1005Metric', 'R_0603_1608Metric', 'R_0805_2012Metric'],
   },
-  // Small transistors ship in SOT-23 (JEDEC TO-236) — BJTs and small-signal MOSFETs alike.
-  transistor_bjt_npn: { default: 'SOT-23', options: ['SOT-23'] },
-  transistor_bjt_pnp: { default: 'SOT-23', options: ['SOT-23'] },
-  transistor_mosfet_nmos: { default: 'SOT-23', options: ['SOT-23'] },
-  transistor_mosfet_pmos: { default: 'SOT-23', options: ['SOT-23'] },
+  // Small transistors ship SMD in SOT-23 (default) or through-hole in TO-92 — BJTs and small-signal
+  // MOSFETs alike. The two packages pin out differently (see TERMINAL_PADS_BY_FOOTPRINT).
+  transistor_bjt_npn: { default: 'SOT-23', options: ['SOT-23', 'TO-92_Inline'] },
+  transistor_bjt_pnp: { default: 'SOT-23', options: ['SOT-23', 'TO-92_Inline'] },
+  transistor_mosfet_nmos: { default: 'SOT-23', options: ['SOT-23', 'TO-92_Inline'] },
+  transistor_mosfet_pmos: { default: 'SOT-23', options: ['SOT-23', 'TO-92_Inline'] },
 }
 
 /**
@@ -79,16 +80,52 @@ export const TERMINAL_PADS: Record<string, Record<string, string>> = {
   transistor_mosfet_pmos: { gate: '1', source: '2', drain: '3' },
 }
 
-/** The pad a part's terminal solders to; undefined when the part or terminal isn't mapped (honest). */
-export function padForTerminal(definition: string, handleId: string): string | undefined {
-  return TERMINAL_PADS[definition]?.[handleId]
+/**
+ * Per-FOOTPRINT pinout overrides — for parts whose pad↔terminal assignment DIFFERS by package. Most
+ * parts pin out the same in every package (a chip resistor is 1/2 in 0402/0603/0805), so they only need
+ * the default TERMINAL_PADS above. But a transistor's PHYSICAL pin order is package-specific: SOT-23
+ * (the default) is Base/Emitter/Collector on pins 1/2/3, while the TO-92 jellybeans put the control pin
+ * in the MIDDLE. Keyed definition → footprintId → {terminal: pad}; anything absent falls back to
+ * TERMINAL_PADS. This is what keeps the ratsnest + routing physically correct when a part's package
+ * changes (a base net wired to the emitter pin would be a real, silent mis-route).
+ */
+export const TERMINAL_PADS_BY_FOOTPRINT: Record<string, Record<string, Record<string, string>>> = {
+  // TO-92, standard small-signal pinouts (flat face toward you, leads down):
+  // BJT 2N3904 / 2N3906 = Emitter / Base / Collector on pins 1 / 2 / 3;
+  // MOSFET 2N7000 / BS170 = Source / Gate / Drain on pins 1 / 2 / 3 — the control pin is the MIDDLE one.
+  transistor_bjt_npn: { 'TO-92_Inline': { base: '2', emitter: '1', collector: '3' } },
+  transistor_bjt_pnp: { 'TO-92_Inline': { base: '2', emitter: '1', collector: '3' } },
+  transistor_mosfet_nmos: { 'TO-92_Inline': { gate: '2', source: '1', drain: '3' } },
+  transistor_mosfet_pmos: { 'TO-92_Inline': { gate: '2', source: '1', drain: '3' } },
 }
 
-/** The terminal (handle) a footprint pad belongs to — the inverse of padForTerminal. Lets the board
- *  over-current check route a pad back to its solved per-terminal current (base/collector/emitter,
- *  gate/source/drain). undefined when the part or pad isn't mapped. */
-export function terminalForPad(definition: string, padId: string): string | undefined {
-  const pads = TERMINAL_PADS[definition]
+/** The pad↔terminal map for a part in a specific footprint: the per-footprint override if one exists,
+ *  else the part's default (TERMINAL_PADS). undefined when the part is unmapped. */
+function pinoutFor(definition: string, footprintId?: string): Record<string, string> | undefined {
+  const override =
+    footprintId !== undefined ? TERMINAL_PADS_BY_FOOTPRINT[definition]?.[footprintId] : undefined
+  return override ?? TERMINAL_PADS[definition]
+}
+
+/** The pad a part's terminal solders to, for the part's chosen footprint (or its default pinout when
+ *  no footprint is given). undefined when the part or terminal isn't mapped (honest). */
+export function padForTerminal(
+  definition: string,
+  handleId: string,
+  footprintId?: string,
+): string | undefined {
+  return pinoutFor(definition, footprintId)?.[handleId]
+}
+
+/** The terminal (handle) a footprint pad belongs to — the inverse of padForTerminal, for the part's
+ *  chosen footprint. Lets the board over-current check route a pad back to its solved per-terminal
+ *  current (base/collector/emitter, gate/source/drain). undefined when the part or pad isn't mapped. */
+export function terminalForPad(
+  definition: string,
+  padId: string,
+  footprintId?: string,
+): string | undefined {
+  const pads = pinoutFor(definition, footprintId)
   if (pads === undefined) return undefined
   for (const handle in pads) {
     if (pads[handle] === padId) return handle

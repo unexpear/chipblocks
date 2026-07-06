@@ -10,6 +10,7 @@ import {
   footprintOptions,
   PART_FOOTPRINTS,
   padForTerminal,
+  TERMINAL_PADS_BY_FOOTPRINT,
   terminalForPad,
 } from '../src/renderer/footprint-assignment.ts'
 
@@ -93,5 +94,59 @@ describe('terminalForPad — pad → terminal (inverse of padForTerminal)', () =
   test('an unmapped part or pad is undefined (honest, never a wrong terminal)', () => {
     expect(terminalForPad('led', '1')).toBeUndefined()
     expect(terminalForPad('transistor_bjt_npn', '9')).toBeUndefined()
+  })
+})
+
+describe('per-footprint pinouts — a transistor pins out differently by package (SOT-23 vs TO-92)', () => {
+  const transistors = [
+    'transistor_bjt_npn',
+    'transistor_bjt_pnp',
+    'transistor_mosfet_nmos',
+    'transistor_mosfet_pmos',
+  ]
+
+  test('transistors offer SOT-23 (SMD default) and TO-92 (through-hole)', () => {
+    for (const def of transistors) {
+      expect(footprintOptions(def).map((f) => f.id)).toEqual(
+        expect.arrayContaining(['SOT-23', 'TO-92_Inline']),
+      )
+      expect(footprintForPart(def)?.id).toBe('SOT-23') // SMD default unchanged
+      expect(footprintForPart(def, 'TO-92_Inline')?.id).toBe('TO-92_Inline') // TO-92 a valid choice
+    }
+  })
+
+  test('SOT-23 keeps B/E/C = 1/2/3; TO-92 moves the control pin to the MIDDLE', () => {
+    // default (no footprint) and SOT-23 agree: base on pin 1
+    expect(padForTerminal('transistor_bjt_npn', 'base')).toBe('1')
+    expect(padForTerminal('transistor_bjt_npn', 'base', 'SOT-23')).toBe('1')
+    // TO-92 (2N3904 EBC): base is the middle pin (2), emitter pin 1, collector pin 3
+    expect(padForTerminal('transistor_bjt_npn', 'base', 'TO-92_Inline')).toBe('2')
+    expect(padForTerminal('transistor_bjt_npn', 'emitter', 'TO-92_Inline')).toBe('1')
+    expect(padForTerminal('transistor_bjt_npn', 'collector', 'TO-92_Inline')).toBe('3')
+    // MOSFET TO-92 (2N7000 SGD): gate is the middle pin
+    expect(padForTerminal('transistor_mosfet_nmos', 'gate', 'TO-92_Inline')).toBe('2')
+    expect(padForTerminal('transistor_mosfet_nmos', 'source', 'TO-92_Inline')).toBe('1')
+    expect(padForTerminal('transistor_mosfet_nmos', 'drain', 'TO-92_Inline')).toBe('3')
+  })
+
+  test('terminalForPad honours the footprint too — pad 1 is emitter on TO-92, base on SOT-23', () => {
+    expect(terminalForPad('transistor_bjt_npn', '1', 'SOT-23')).toBe('base')
+    expect(terminalForPad('transistor_bjt_npn', '1', 'TO-92_Inline')).toBe('emitter')
+    expect(terminalForPad('transistor_bjt_npn', '2', 'TO-92_Inline')).toBe('base')
+    // round-trips on TO-92 for every transistor
+    for (const def of transistors) {
+      const pinout = TERMINAL_PADS_BY_FOOTPRINT[def]?.['TO-92_Inline'] ?? {}
+      for (const terminal of Object.keys(pinout)) {
+        const pad = padForTerminal(def, terminal, 'TO-92_Inline')
+        expect(terminalForPad(def, pad as string, 'TO-92_Inline')).toBe(terminal)
+      }
+    }
+  })
+
+  test('a passive pins out the same in every size (0402 / 0603 / 0805 all use pads 1 / 2)', () => {
+    for (const fp of ['R_0402_1005Metric', 'R_0603_1608Metric', 'R_0805_2012Metric']) {
+      expect(padForTerminal('resistor', 'terminal_a', fp)).toBe('1')
+      expect(padForTerminal('resistor', 'terminal_b', fp)).toBe('2')
+    }
   })
 })

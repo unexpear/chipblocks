@@ -312,6 +312,35 @@ function rectOutline(x0: number, y0: number, x1: number, y1: number, width = 0.1
 }
 
 /**
+ * A "D"-shaped (half-round) body outline as a closed polyline: a flat chord at y = `flatY` on a circle
+ * of radius `r` about (`cx`, `cy`), with the rounded side bulging AWAY from the flat (toward smaller y).
+ * The curve is approximated by `segments` chords. This is the real body shape of round-can packages
+ * (the TO-92 transistor); a polygonal approximation is the honest way to draw a curve in the segment-
+ * based footprint model (the same stance as SOT-23's polygonal body).
+ */
+function halfRoundBody(
+  cx: number,
+  cy: number,
+  r: number,
+  flatY: number,
+  segments = 12,
+  width = 0.1,
+): SilkLine[] {
+  const half = Math.sqrt(Math.max(0, r * r - (flatY - cy) ** 2))
+  const aRight = Math.atan2(flatY - cy, half) // the right chord endpoint's angle about the centre
+  const aLeft = Math.atan2(flatY - cy, -half) - 2 * Math.PI // the left endpoint, swept the LONG way round
+  const pt = (i: number) => {
+    const a = aRight + (i / segments) * (aLeft - aRight)
+    return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }
+  }
+  const out: SilkLine[] = []
+  for (let i = 0; i < segments; i++) out.push({ from: pt(i), to: pt(i + 1), width })
+  // close with the flat chord (left endpoint → right endpoint at y = flatY)
+  out.push({ from: pt(segments), to: pt(0), width })
+  return out
+}
+
+/**
  * ChipBlocks' OWN silkscreen rule: short right-angle corner ticks at the four corners of the footprint's
  * courtyard. Every segment is COMPUTED here from the footprint's own dimensions — nothing is copied or
  * traced from another tool's silk. The courtyard already encloses every pad with clearance, so these
@@ -684,6 +713,80 @@ export const FOOTPRINT_SOT23: Footprint = {
   },
 }
 
+/**
+ * TO-92 (JEDEC TO-226 / SC-43) — the classic 3-lead THROUGH-HOLE transistor package, the black
+ * half-round "flat side" jellybean (2N3904, BC547, 2N7000). Pads + drills + courtyard verbatim from the
+ * installed KiCad 10 library (Package_TO_SOT_THT.pretty/TO-92.kicad_mod): three 1.3 mm pads on 0.75 mm
+ * drills, pin 1 at the origin (square), pin 2 staggered back 1.27 mm, pin 3 at 2.54 mm — the standard
+ * formed-lead triangle. The body is the real half-round outline (a circle of r ≈ 2.48 mm about the
+ * centre, flat face at y = 1.75 mm), drawn as a polygon (halfRoundBody). Silk is ChipBlocks' own corner
+ * ticks. Origin at pin 1, the KiCad through-hole convention.
+ */
+export const FOOTPRINT_TO92: Footprint = {
+  id: 'TO-92_Inline',
+  name: 'TO-92 (through-hole transistor)',
+  description:
+    '3-lead through-hole transistor — the classic half-round jellybean package (2N3904, BC547, 2N7000).',
+  pads: [
+    {
+      id: '1',
+      center: { x: 0, y: 0 },
+      size: { w: 1.3, h: 1.3 },
+      shape: 'rect',
+      type: 'through_hole',
+      holeDiameter: 0.75,
+    },
+    {
+      id: '2',
+      center: { x: 1.27, y: -1.27 },
+      size: { w: 1.3, h: 1.3 },
+      shape: 'circle',
+      type: 'through_hole',
+      holeDiameter: 0.75,
+    },
+    {
+      id: '3',
+      center: { x: 2.54, y: 0 },
+      size: { w: 1.3, h: 1.3 },
+      shape: 'circle',
+      type: 'through_hole',
+      holeDiameter: 0.75,
+    },
+  ],
+  silkscreen: cornerTicksSilk({ x: -1.46, y: -2.73, w: 5.46, h: 4.74 }),
+  // The real half-round body outline (F.Fab): circle r = 2.48 mm about the body centre (1.27, 0), flat
+  // face at y = 1.75 mm — the D-shape the TO-92 can really is, as a 12-gon.
+  fabrication: halfRoundBody(1.27, 0, 2.48, 1.75),
+  labels: {
+    reference: { x: 1.27, y: -3.56 },
+    value: { x: 1.27, y: 2.79 },
+    fabReference: { x: 1.27, y: 0 },
+  },
+  courtyard: { x: -1.46, y: -2.73, w: 5.46, h: 4.74 },
+  provenance: {
+    source_type: 'standard',
+    title: 'JEDEC TO-226 (TO-92) 3-lead through-hole transistor land pattern',
+    citation:
+      'KiCad footprint library, Package_TO_SOT_THT.pretty/TO-92.kicad_mod — three 1.3 mm pads on 0.75 mm drills at (0,0)/(1.27,−1.27)/(2.54,0); courtyard −1.46..4.0 × −2.73..2.01 mm — read verbatim from the installed KiCad 10.0 library',
+    confidence: 'high',
+    url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
+    date_accessed: '2026-07-06',
+    notes:
+      'Origin at pin 1 (0,0), not the body centre — KiCad through-hole convention. Pin 1 square. Body is the half-round outline as a polygon; silk is ChipBlocks’ own corner-tick rule.',
+  },
+  body3d: {
+    heightMm: 5.2,
+    standoffMm: 1.0,
+    provenance: {
+      source_type: 'datasheet',
+      title: 'TO-92 (TO-226) molded body height',
+      citation:
+        'Common TO-92 transistor package drawings (onsemi 2N3904, Fairchild BC547): molded body ≈ 4.5×5.2 mm, height (A) ≈ 5.2 mm; leads seat the body ≈ 1 mm above the board (lead length dependent)',
+      confidence: 'medium',
+    },
+  },
+}
+
 /** Every built-in footprint, keyed by id. The board road's starter set (TOOLCHAIN-ROADMAP.md Track 1). */
 export const BUILTIN_FOOTPRINTS: Record<string, Footprint> = {
   [FOOTPRINT_0402.id]: FOOTPRINT_0402,
@@ -693,6 +796,7 @@ export const BUILTIN_FOOTPRINTS: Record<string, Footprint> = {
   [FOOTPRINT_DIP8.id]: FOOTPRINT_DIP8,
   [FOOTPRINT_PINHDR_1X4.id]: FOOTPRINT_PINHDR_1X4,
   [FOOTPRINT_SOT23.id]: FOOTPRINT_SOT23,
+  [FOOTPRINT_TO92.id]: FOOTPRINT_TO92,
 }
 
 /**
