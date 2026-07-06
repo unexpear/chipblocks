@@ -82,7 +82,7 @@ import { ClipboardPanel } from './clipboard-panel.tsx'
 import { ContextMenu } from './context-menu.tsx'
 import { CoordinateAxes } from './coordinate-axes.tsx'
 import { DockablePanel } from './dockable-panel.tsx'
-import { BOM_VALUE_PARAMS } from './footprint-assignment.ts'
+import { BOM_VALUE_PARAMS, terminalForPad } from './footprint-assignment.ts'
 import {
   CrtScreenContext,
   type CrtScreenData,
@@ -1535,16 +1535,24 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     useState<StackupOptions>(DEFAULT_STACKUP_OPTIONS)
   const pcbStackup = useMemo(() => buildStackup(pcbStackupOptions), [pcbStackupOptions])
   // The current on each net (from the LIVE solve) — what the over-current DRC checks each trace's
-  // IPC-2221 ampacity against. netThroughCurrents only trusts a part's single scalar where it is a
-  // real through-current (2-terminal parts), so a transistor's collector/drain current is never
-  // charged to its base/gate net (which would falsely over-current a control trace).
-  const pcbNetCurrents = useMemo(
-    () =>
-      pcbActive
-        ? netThroughCurrents(pcbRatsnest.padBoxes, (partId) => readings.get(partId)?.current)
-        : new Map<string, number>(),
-    [pcbActive, pcbRatsnest, readings],
-  )
+  // IPC-2221 ampacity against. Each pad reports its OWN terminal's current: a two-terminal part's
+  // through-current, or — for a transistor — that pin's solved current (base pin = the tiny base
+  // current, emitter pin = iC + iB, collector pin = iC; a MOSFET gate = ~0). So a transistor's
+  // collector current is never charged to its base/gate trace, and its emitter/source trace is
+  // checked against the real (higher) current it carries.
+  const pcbNetCurrents = useMemo(() => {
+    if (!pcbActive) return new Map<string, number>()
+    const currentOfPad = (partId: string, padId: string): number | undefined => {
+      const perTerminal = solution.terminalCurrents?.get(partId)
+      if (perTerminal !== undefined) {
+        const definition = solvedWorld.instances.get(partId)?.definition
+        const terminal = definition !== undefined ? terminalForPad(definition, padId) : undefined
+        return terminal !== undefined ? perTerminal.get(terminal) : undefined
+      }
+      return readings.get(partId)?.current
+    }
+    return netThroughCurrents(pcbRatsnest.padBoxes, currentOfPad)
+  }, [pcbActive, pcbRatsnest, readings, solution, solvedWorld])
   // Design-rule check — the board's failure-mode pass (cited limits), re-run live like the routing.
   // The solved net currents + copper weight enable the over-current check (trace vs IPC-2221 ampacity).
   const pcbDrc = useMemo(

@@ -253,4 +253,20 @@ describe('solveDC — NPN BJT (Ebers-Moll) common-emitter', () => {
     const iC = Math.abs(sol.branches.get('rc') ?? 0)
     expect(iC / iB).toBeCloseTo(50, 0)
   })
+
+  test('terminalCurrents itemises each pin: base = iB, collector = iC, emitter = iC + iB', () => {
+    // The board over-current DRC reads a transistor's per-pin current from here so it never charges
+    // the collector current to the base trace. iE must be the LARGEST (it returns iC and iB).
+    const sol = solveDC(commonEmitter(100))
+    const iB = Math.abs(sol.branches.get('rb') ?? 0)
+    const iC = Math.abs(sol.branches.get('rc') ?? 0)
+    const term = sol.terminalCurrents?.get('q1')
+    if (term === undefined) throw new Error('no per-terminal currents for the BJT')
+    expect(term.get('base')).toBeCloseTo(iB, 6) // the tiny base current, NOT iC
+    expect(term.get('collector')).toBeCloseTo(iC, 6)
+    expect(term.get('emitter')).toBeCloseTo(iC + iB, 6) // KCL: emitter carries collector + base
+    const base = term.get('base') ?? 0
+    const emitter = term.get('emitter') ?? 0
+    expect(emitter).toBeGreaterThan(base) // the control pin is far below the power pins
+  })
 })

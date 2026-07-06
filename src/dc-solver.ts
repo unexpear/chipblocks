@@ -163,6 +163,17 @@ export type Solution = {
    * toward terminal_negative / cathode / terminal_b.
    */
   branches: Map<string, number>
+  /**
+   * Instance id → its per-terminal current MAGNITUDES (amps), for multi-terminal devices whose
+   * single `branches` entry (a BJT's collector current, a MOSFET's drain current) does not tell you
+   * what its OTHER terminals carry. Keyed by the device's terminal name (base/emitter/collector,
+   * gate/source/drain). A two-terminal part is absent here: its `branches` current is the true
+   * through-current on both terminals. Consumers (the board over-current DRC) read a pad's own
+   * terminal current from here so a transistor's base/gate net is never charged its collector
+   * current, and its emitter/source net gets iE = iC + iB, not iC. Optional: the linear fast-path
+   * and the no-result early returns omit it (no transistors to itemize).
+   */
+  terminalCurrents?: Map<string, Map<string, number>>
   /** The net id chosen as ground reference; undefined when status === 'no-ground'. */
   ground: string | undefined
   /** Non-fatal observations (multiple grounds, unsupported elements skipped, etc.). */
@@ -1012,22 +1023,46 @@ export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
     )
     branches.set(z.inst.id, conductance * z.vGuess + currentSource)
   }
+  // Per-terminal current magnitudes for the 3-terminal devices — the board over-current DRC needs
+  // to know what EACH pad carries, which the single collector/drain `branches` entry can't say.
+  const terminalCurrents = new Map<string, Map<string, number>>()
   // BJT: the collector current is the branch current we report (physical sign —
-  // a PNP's conventional collector current flows out of the collector).
+  // a PNP's conventional collector current flows out of the collector). iB / iE come from the same
+  // solved operating point (iE = -(iC + iB) by KCL), stored per terminal for the board DRC.
   for (const bjt of bjts) {
     const sign = bjt.polarity === 'pnp' ? -1 : 1
-    branches.set(bjt.inst.id, sign * bjtCurrents(bjt.vBE, bjt.vBC, bjt.params, bjt.thermalV).iC)
+    const { iC, iB, iE } = bjtCurrents(bjt.vBE, bjt.vBC, bjt.params, bjt.thermalV)
+    branches.set(bjt.inst.id, sign * iC)
+    terminalCurrents.set(
+      bjt.inst.id,
+      new Map([
+        ['base', Math.abs(iB)],
+        ['collector', Math.abs(iC)],
+        ['emitter', Math.abs(iE)],
+      ]),
+    )
   }
   // MOSFET: the drain current at the converged bias (signed into the drain —
-  // negative for a conducting PMOS, whose current flows source → drain).
+  // negative for a conducting PMOS, whose current flows source → drain). The DC gate current is
+  // zero (an insulated gate); source magnitude equals drain by KCL.
   for (const fet of mosfets) {
-    branches.set(fet.inst.id, mosfetOperatingPoint(fet.vGS, fet.vDS, fet.params).iD)
+    const { iD } = mosfetOperatingPoint(fet.vGS, fet.vDS, fet.params)
+    branches.set(fet.inst.id, iD)
+    terminalCurrents.set(
+      fet.inst.id,
+      new Map([
+        ['gate', 0],
+        ['drain', Math.abs(iD)],
+        ['source', Math.abs(iD)],
+      ]),
+    )
   }
 
   return {
     status: hasUnsupported ? 'unsupported-element' : 'solved',
     nodes,
     branches,
+    terminalCurrents,
     ground,
     warnings,
     iterations,

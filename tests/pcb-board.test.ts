@@ -340,7 +340,7 @@ describe('offBoardPins (the header count)', () => {
 
 describe('netThroughCurrents — the over-current DRC input', () => {
   test('a two-terminal part charges both its nets with its through-current', () => {
-    // R1 (0.5 A) in series R2: the shared net carries the through-current.
+    // R1 (0.5 A) in series R2: the shared net carries the through-current on both pads.
     const pads = [
       { pad: 'R1/1', net: 'in' },
       { pad: 'R1/2', net: 'mid' },
@@ -352,40 +352,41 @@ describe('netThroughCurrents — the over-current DRC input', () => {
     expect(nc.get('in')).toBeCloseTo(0.5)
   })
 
-  test('a transistor never charges its base/gate net with the collector/drain current', () => {
-    // Q's single solved scalar is its collector current (2 A). The base net is fed through Rb, which
-    // carries the real base current (20 mA). The base net must read 20 mA — NOT 2 A — or the base
-    // trace would be falsely over-current-flagged and BLOCK the fab ZIP.
-    const pads = [
-      { pad: 'Rb/1', net: 'drive' },
-      { pad: 'Rb/2', net: 'base' },
-      { pad: 'Q/1', net: 'base' }, // SOT-23 pad 1 = base
-      { pad: 'Q/2', net: 'emitter' }, // pad 2 = emitter
-      { pad: 'Q/3', net: 'collector' }, // pad 3 = collector
-    ]
-    const nc = netThroughCurrents(pads, (id) => ({ Rb: 0.02, Q: 2.0 })[id])
-    expect(nc.get('base')).toBeCloseTo(0.02) // from Rb, never Q's 2 A
-    expect(nc.get('base')).not.toBeCloseTo(2.0)
-    // Q's own nets with no two-terminal neighbour are absent (its scalar is not trusted per-net).
-    expect(nc.get('emitter')).toBeUndefined()
-    expect(nc.get('collector')).toBeUndefined()
-  })
-
-  test('a two-terminal load on a transistor net still carries the real current onto that net', () => {
-    // A collector load resistor Rc (2 A) sits on the collector net → the collector net IS checked
-    // at 2 A (from Rc), so a genuinely overloaded collector trace is still caught.
+  test('each transistor pin charges its OWN net: base tiny, emitter iC+iB, collector iC', () => {
+    // A BJT solved at iC = 2 A, iB = 20 mA → iE = 2.02 A. Each pad reports its own terminal current.
+    // The base net must read 20 mA (NOT 2 A → no false over-current BLOCK); the emitter net must read
+    // the real 2.02 A (NOT under-reported as iC); the collector net reads iC.
+    const term: Record<string, Record<string, number>> = {
+      Q: { '1': 0.02, '2': 2.02, '3': 2.0 }, // pad 1=base, 2=emitter, 3=collector (SOT-23)
+    }
     const pads = [
       { pad: 'Q/1', net: 'base' },
       { pad: 'Q/2', net: 'emitter' },
       { pad: 'Q/3', net: 'collector' },
-      { pad: 'Rc/1', net: 'vcc' },
-      { pad: 'Rc/2', net: 'collector' },
     ]
-    const nc = netThroughCurrents(pads, (id) => ({ Q: 2.0, Rc: 2.0 })[id])
-    expect(nc.get('collector')).toBeCloseTo(2.0) // from Rc, the real through-current
+    const nc = netThroughCurrents(pads, (id, pad) => term[id]?.[pad])
+    expect(nc.get('base')).toBeCloseTo(0.02)
+    expect(nc.get('base')).not.toBeCloseTo(2.0)
+    expect(nc.get('emitter')).toBeCloseTo(2.02) // iC + iB, the highest-current pin
+    expect(nc.get('collector')).toBeCloseTo(2.0)
   })
 
-  test('a part with no solved current contributes nothing', () => {
+  test('a net takes the LARGEST pad current on it (the base resistor and the base pin agree)', () => {
+    // Rb carries the base current (20 mA); Q's base pin also carries 20 mA — the net reads 20 mA.
+    const pads = [
+      { pad: 'Rb/1', net: 'drive' },
+      { pad: 'Rb/2', net: 'base' },
+      { pad: 'Q/1', net: 'base' },
+    ]
+    const current: Record<string, Record<string, number>> = {
+      Rb: { '1': 0.02, '2': 0.02 },
+      Q: { '1': 0.02 },
+    }
+    const nc = netThroughCurrents(pads, (id, pad) => current[id]?.[pad])
+    expect(nc.get('base')).toBeCloseTo(0.02)
+  })
+
+  test('a pad with no solved current contributes nothing', () => {
     const pads = [
       { pad: 'R1/1', net: 'a' },
       { pad: 'R1/2', net: 'b' },

@@ -231,33 +231,27 @@ export type PadBox = {
 export type Ratsnest = { airwires: Airwire[]; padBoxes: PadBox[] }
 
 /**
- * The current each net's copper carries, for the over-current DRC — keyed net → amps.
+ * The current each net's copper carries, for the over-current DRC — keyed net → amps: the largest
+ * current landing on the net across the pads sitting on it.
  *
- * A part's single solved current (part-readings' `current`) is a genuine THROUGH-current, the same
- * on both of its pads, ONLY for a TWO-terminal part (resistor, capacitor, inductor, diode…). A
- * THREE-terminal part reports just one scalar — a BJT's collector current, a MOSFET's drain current
- * (dc-solver stores one branch per part) — and that value does NOT flow in its base/gate net, which
- * carries only the tiny base current (or ~0 DC for a MOSFET gate). Charging the collector/drain
- * current to the base/gate trace would falsely flag a correctly-sized control trace and BLOCK the
- * manufacturing ZIP. So multi-pad parts are skipped here; each of their nets takes its current from
- * the two-terminal parts (e.g. the base resistor carrying the real base current) that sit on it.
- * This is honest per the same limit the Math panel states: a net meeting a 3-terminal device can't
- * be itemized from one-scalar-per-part branch data alone.
+ * `currentOfPad(partId, padId)` returns the current through that specific PAD. For a two-terminal
+ * part that is its through-current (the same on both pads); for a three-terminal part it is that
+ * terminal's own current — a BJT's base pad carries the tiny base current, its emitter pad carries
+ * iE = iC + iB, its collector pad iC; a MOSFET's gate pad carries ~0. Using the pad's OWN current
+ * (not one scalar per part) is what keeps a transistor's collector current off its base/gate net —
+ * which would otherwise falsely over-current a correctly-sized control trace and BLOCK the ZIP —
+ * and puts the real (higher) emitter/source current on that net so a genuine overload is caught.
  */
 export function netThroughCurrents(
   padBoxes: readonly { pad: string; net: string }[],
-  currentOfPart: (partId: string) => number | undefined,
+  currentOfPad: (partId: string, padId: string) => number | undefined,
 ): Map<string, number> {
-  const padsPerPart = new Map<string, number>()
-  for (const pb of padBoxes) {
-    const part = pb.pad.split('/')[0]
-    if (part !== undefined) padsPerPart.set(part, (padsPerPart.get(part) ?? 0) + 1)
-  }
   const byNet = new Map<string, number>()
   for (const pb of padBoxes) {
-    const part = pb.pad.split('/')[0]
-    if (part === undefined || (padsPerPart.get(part) ?? 0) > 2) continue
-    const current = currentOfPart(part)
+    const slash = pb.pad.indexOf('/')
+    const partId = slash >= 0 ? pb.pad.slice(0, slash) : pb.pad
+    const padId = slash >= 0 ? pb.pad.slice(slash + 1) : ''
+    const current = currentOfPad(partId, padId)
     if (current === undefined) continue
     byNet.set(pb.net, Math.max(byNet.get(pb.net) ?? 0, Math.abs(current)))
   }

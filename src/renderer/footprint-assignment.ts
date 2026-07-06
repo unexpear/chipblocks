@@ -72,6 +72,18 @@ export function padForTerminal(definition: string, handleId: string): string | u
   return TERMINAL_PADS[definition]?.[handleId]
 }
 
+/** The terminal (handle) a footprint pad belongs to — the inverse of padForTerminal. Lets the board
+ *  over-current check route a pad back to its solved per-terminal current (base/collector/emitter,
+ *  gate/source/drain). undefined when the part or pad isn't mapped. */
+export function terminalForPad(definition: string, padId: string): string | undefined {
+  const pads = TERMINAL_PADS[definition]
+  if (pads === undefined) return undefined
+  for (const handle in pads) {
+    if (pads[handle] === padId) return handle
+  }
+  return undefined
+}
+
 /** Which parameter is a part's BOM "value" (the number an assembler reads — '470 Ω', '100 µF'),
  *  and the unit symbol it displays with. Only the footprinted parts appear in a BOM. */
 export const BOM_VALUE_PARAMS: Record<string, { param: string; unit: string }> = {

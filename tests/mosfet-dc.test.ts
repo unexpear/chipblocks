@@ -102,6 +102,13 @@ describe('NMOS in the DC solver', () => {
       .find((i) => i.id === 'm1')
       ?.connects?.find((c) => c.terminal === 'drain')?.net
     expect(solution.nodes.get(drainNet ?? '')).toBeCloseTo(0.6498, 3)
+    // Per-terminal currents for the board over-current DRC: the gate carries ~0 (insulated), drain
+    // and source both carry |iD|. So a MOSFET's gate trace is never charged its drain current.
+    const term = solution.terminalCurrents?.get('m1')
+    if (term === undefined) throw new Error('no per-terminal currents for the MOSFET')
+    expect(term.get('gate')).toBe(0)
+    expect(term.get('drain')).toBeCloseTo(Math.abs(iD), 6)
+    expect(term.get('source')).toBeCloseTo(Math.abs(iD), 6)
   })
 })
 

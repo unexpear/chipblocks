@@ -9,6 +9,8 @@ import {
   footprintForPart,
   footprintOptions,
   PART_FOOTPRINTS,
+  padForTerminal,
+  terminalForPad,
 } from '../src/renderer/footprint-assignment.ts'
 
 describe('footprintForPart', () => {
@@ -52,4 +54,31 @@ describe('the mapping references only real footprints (no dangling ids)', () => 
       for (const id of entry.options) expect(BUILTIN_FOOTPRINTS[id]).toBeDefined()
     })
   }
+})
+
+describe('terminalForPad — pad → terminal (inverse of padForTerminal)', () => {
+  test("a transistor's pads map back to their datasheet terminals", () => {
+    // SOT-23 BJT: 1=base, 2=emitter, 3=collector.
+    expect(terminalForPad('transistor_bjt_npn', '1')).toBe('base')
+    expect(terminalForPad('transistor_bjt_npn', '2')).toBe('emitter')
+    expect(terminalForPad('transistor_bjt_npn', '3')).toBe('collector')
+    // SOT-23 MOSFET: 1=gate, 2=source, 3=drain.
+    expect(terminalForPad('transistor_mosfet_nmos', '1')).toBe('gate')
+    expect(terminalForPad('transistor_mosfet_nmos', '3')).toBe('drain')
+  })
+
+  test('it round-trips padForTerminal for every mapped part', () => {
+    for (const def of ['resistor', 'transistor_bjt_npn', 'transistor_mosfet_pmos']) {
+      for (const pad of ['1', '2', '3']) {
+        const terminal = terminalForPad(def, pad)
+        if (terminal === undefined) continue
+        expect(padForTerminal(def, terminal)).toBe(pad)
+      }
+    }
+  })
+
+  test('an unmapped part or pad is undefined (honest, never a wrong terminal)', () => {
+    expect(terminalForPad('led', '1')).toBeUndefined()
+    expect(terminalForPad('transistor_bjt_npn', '9')).toBeUndefined()
+  })
 })
