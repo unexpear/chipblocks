@@ -8,6 +8,7 @@ import {
 } from './pcb-board.ts'
 import type { DrcViolation } from './pcb-drc.ts'
 import { DRC_RULES } from './pcb-drc.ts'
+import { type GbrjobFileAttr, gerberJobFile } from './pcb-gbrjob.ts'
 import {
   excellonDrill,
   GERBER_CONVENTIONS,
@@ -363,6 +364,7 @@ export const FAB_FILE_NAMES = {
   topSilk: `${BASE}-F_Silkscreen.gto`,
   edgeCuts: `${BASE}-Edge_Cuts.gm1`,
   drill: `${BASE}.drl`,
+  gbrjob: `${BASE}-job.gbrjob`,
   bom: 'bom.csv',
   placement: 'placement.csv',
   stackup: 'board-stackup.txt',
@@ -400,6 +402,7 @@ function buildReadme(inputs: FabInputs): string {
     `  ${FAB_FILE_NAMES.topSilk} top silkscreen (part outlines + designators)`,
     `  ${FAB_FILE_NAMES.edgeCuts}  board outline (the fab cuts this centreline)`,
     `  ${FAB_FILE_NAMES.drill}           plated drill hits (component holes + via holes)`,
+    `  ${FAB_FILE_NAMES.gbrjob}      job manifest — names every Gerber's layer + the fab attributes`,
     '',
     'Assembly:',
     `  ${FAB_FILE_NAMES.bom}               bill of materials (grouped by value + footprint)`,
@@ -452,6 +455,43 @@ export function buildManufacturingZip(inputs: FabInputs): FabZip {
       gerberInnerCopper(board, ratsnest, routing, cl, layerNumber, when),
     )
   })
+  // The Gerber Job File's FilesAttributes — the exact Gerber set below, each with its JOB-FILE
+  // FileFunction (SolderMask / SolderPaste / Profile — the job file's spelling, distinct from the
+  // Gerber attribute's Soldermask / Paste / Profile,NP). The Excellon drill is NOT listed (KiCad keeps
+  // it separate — it's not a Gerber). Copper first (top → inner → bottom), then the outer layers.
+  const jobFiles: GbrjobFileAttr[] = [
+    ...copper.map((cl, idx): GbrjobFileAttr => {
+      const layerNumber = idx + 1
+      if (cl === 'top') {
+        return { path: FAB_FILE_NAMES.topCopper, function: 'Copper,L1,Top', polarity: 'Positive' }
+      }
+      if (cl === 'bottom') {
+        return {
+          path: FAB_FILE_NAMES.bottomCopper,
+          function: `Copper,L${layerNumber},Bot`,
+          polarity: 'Positive',
+        }
+      }
+      return {
+        path: innerCopperFileName(idx),
+        function: `Copper,L${layerNumber},Inr`,
+        polarity: 'Positive',
+      }
+    }),
+    { path: FAB_FILE_NAMES.topMask, function: 'SolderMask,Top', polarity: 'Negative' },
+    { path: FAB_FILE_NAMES.bottomMask, function: 'SolderMask,Bot', polarity: 'Negative' },
+    { path: FAB_FILE_NAMES.topPaste, function: 'SolderPaste,Top', polarity: 'Positive' },
+    { path: FAB_FILE_NAMES.bottomPaste, function: 'SolderPaste,Bot', polarity: 'Positive' },
+    { path: FAB_FILE_NAMES.topSilk, function: 'Legend,Top', polarity: 'Positive' },
+    { path: FAB_FILE_NAMES.edgeCuts, function: 'Profile', polarity: 'Positive' },
+  ]
+  const gbrjobText = gerberJobFile({
+    board,
+    stackup,
+    cls: DEFAULT_ROUTE_CLASS,
+    when,
+    files: jobFiles,
+  })
   const entries: ZipEntry[] = [
     ...copperEntries,
     text(FAB_FILE_NAMES.topMask, gerberMask(board, 'Top', when)),
@@ -461,6 +501,7 @@ export function buildManufacturingZip(inputs: FabInputs): FabZip {
     text(FAB_FILE_NAMES.topSilk, gerberSilkscreen(board, when)),
     text(FAB_FILE_NAMES.edgeCuts, gerberEdgeCuts(board.outline, when)),
     text(FAB_FILE_NAMES.drill, excellonDrill(board, routing, when)),
+    text(FAB_FILE_NAMES.gbrjob, gbrjobText),
     text(FAB_FILE_NAMES.bom, buildBomCsv(inputs.bomRows)),
     text(FAB_FILE_NAMES.placement, buildPlacementCsv(board)),
     text(FAB_FILE_NAMES.stackup, buildStackupSpec(inputs.stackup ?? defaultStackup())),

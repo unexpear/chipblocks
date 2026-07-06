@@ -418,6 +418,45 @@ describe('the ZIP itself', () => {
     expect(stackup).toMatch(/≈ \d+ Ω single-ended \(microstrip, IPC-2141A/)
   })
 
+  test('the .gbrjob manifest lists every Gerber IN the ZIP and never a file that is not there', () => {
+    const fab = buildManufacturingZip(cleanInputs())
+    const files = readZip(fab.bytes)
+    expect(fab.entries).toContain(FAB_FILE_NAMES.gbrjob)
+    const job = JSON.parse(new TextDecoder().decode(files.get(FAB_FILE_NAMES.gbrjob)))
+    // EVERY file the manifest names must actually be in the ZIP (a fab loading it never hits a
+    // missing file), and the file it names as each layer is the copper/mask/paste/silk/edge Gerber.
+    const zipNames = new Set(files.keys())
+    for (const f of job.FilesAttributes) expect(zipNames.has(f.Path)).toBe(true)
+    const paths = job.FilesAttributes.map((f: { Path: string }) => f.Path)
+    expect(paths).toContain(FAB_FILE_NAMES.topCopper)
+    expect(paths).toContain(FAB_FILE_NAMES.bottomCopper)
+    expect(paths).toContain(FAB_FILE_NAMES.edgeCuts)
+    // the Excellon drill is NOT a Gerber — the job file leaves it out (matching KiCad)
+    expect(paths).not.toContain(FAB_FILE_NAMES.drill)
+    expect(job.GeneralSpecs.LayerNumber).toBe(2)
+    expect(job.GeneralSpecs.BoardThickness).toBe(1.6)
+  })
+
+  test('a 4-layer board’s .gbrjob names all four copper layers with inner FileFunctions', () => {
+    const inputs = cleanInputs()
+    const fab = buildManufacturingZip({
+      ...inputs,
+      stackup: buildStackup({
+        thicknessMm: 1.6,
+        copperWeight: 'one_oz',
+        surfaceFinish: 'enig',
+        copperLayers: 4,
+      }),
+    })
+    const job = JSON.parse(new TextDecoder().decode(readZip(fab.bytes).get(FAB_FILE_NAMES.gbrjob)))
+    expect(job.GeneralSpecs.LayerNumber).toBe(4)
+    expect(job.GeneralSpecs.Finish).toBe('ENIG')
+    const copperFns = job.FilesAttributes.filter((f: { FileFunction: string }) =>
+      f.FileFunction.startsWith('Copper'),
+    ).map((f: { FileFunction: string }) => f.FileFunction)
+    expect(copperFns).toEqual(['Copper,L1,Top', 'Copper,L2,Inr', 'Copper,L3,Inr', 'Copper,L4,Bot'])
+  })
+
   test('the validation report states the BOARD SPEC (material/thickness/copper/finish) for the fab', () => {
     const report = buildValidationReport(cleanInputs()).reportText
     expect(report).toContain('BOARD SPEC')
