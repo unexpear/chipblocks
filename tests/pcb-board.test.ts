@@ -12,6 +12,7 @@ import {
   computeRatsnest,
   deriveBoard,
   footprintByPlacement,
+  netThroughCurrents,
   offBoardPins,
   placementBounds,
   placePoint,
@@ -334,5 +335,61 @@ describe('offBoardPins (the header count)', () => {
       board,
     )
     expect(n).toBe(2) // exactly the source's two drawn pins — never its expansion seams
+  })
+})
+
+describe('netThroughCurrents — the over-current DRC input', () => {
+  test('a two-terminal part charges both its nets with its through-current', () => {
+    // R1 (0.5 A) in series R2: the shared net carries the through-current.
+    const pads = [
+      { pad: 'R1/1', net: 'in' },
+      { pad: 'R1/2', net: 'mid' },
+      { pad: 'R2/1', net: 'mid' },
+      { pad: 'R2/2', net: 'gnd' },
+    ]
+    const nc = netThroughCurrents(pads, (id) => ({ R1: 0.5, R2: 0.5 })[id])
+    expect(nc.get('mid')).toBeCloseTo(0.5)
+    expect(nc.get('in')).toBeCloseTo(0.5)
+  })
+
+  test('a transistor never charges its base/gate net with the collector/drain current', () => {
+    // Q's single solved scalar is its collector current (2 A). The base net is fed through Rb, which
+    // carries the real base current (20 mA). The base net must read 20 mA — NOT 2 A — or the base
+    // trace would be falsely over-current-flagged and BLOCK the fab ZIP.
+    const pads = [
+      { pad: 'Rb/1', net: 'drive' },
+      { pad: 'Rb/2', net: 'base' },
+      { pad: 'Q/1', net: 'base' }, // SOT-23 pad 1 = base
+      { pad: 'Q/2', net: 'emitter' }, // pad 2 = emitter
+      { pad: 'Q/3', net: 'collector' }, // pad 3 = collector
+    ]
+    const nc = netThroughCurrents(pads, (id) => ({ Rb: 0.02, Q: 2.0 })[id])
+    expect(nc.get('base')).toBeCloseTo(0.02) // from Rb, never Q's 2 A
+    expect(nc.get('base')).not.toBeCloseTo(2.0)
+    // Q's own nets with no two-terminal neighbour are absent (its scalar is not trusted per-net).
+    expect(nc.get('emitter')).toBeUndefined()
+    expect(nc.get('collector')).toBeUndefined()
+  })
+
+  test('a two-terminal load on a transistor net still carries the real current onto that net', () => {
+    // A collector load resistor Rc (2 A) sits on the collector net → the collector net IS checked
+    // at 2 A (from Rc), so a genuinely overloaded collector trace is still caught.
+    const pads = [
+      { pad: 'Q/1', net: 'base' },
+      { pad: 'Q/2', net: 'emitter' },
+      { pad: 'Q/3', net: 'collector' },
+      { pad: 'Rc/1', net: 'vcc' },
+      { pad: 'Rc/2', net: 'collector' },
+    ]
+    const nc = netThroughCurrents(pads, (id) => ({ Q: 2.0, Rc: 2.0 })[id])
+    expect(nc.get('collector')).toBeCloseTo(2.0) // from Rc, the real through-current
+  })
+
+  test('a part with no solved current contributes nothing', () => {
+    const pads = [
+      { pad: 'R1/1', net: 'a' },
+      { pad: 'R1/2', net: 'b' },
+    ]
+    expect(netThroughCurrents(pads, () => undefined).size).toBe(0)
   })
 })

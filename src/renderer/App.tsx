@@ -141,6 +141,7 @@ import { buildCrtTraces, type CrtSpot } from './part-readings.ts'
 import {
   computeRatsnest,
   deriveBoard,
+  netThroughCurrents,
   offBoardPins,
   type PadBox,
   type PlacementOverride,
@@ -1533,20 +1534,17 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [pcbStackupOptions, setPcbStackupOptions] =
     useState<StackupOptions>(DEFAULT_STACKUP_OPTIONS)
   const pcbStackup = useMemo(() => buildStackup(pcbStackupOptions), [pcbStackupOptions])
-  // The current on each net (its throughput = the largest part current on it, from the LIVE solve) —
-  // what the over-current DRC checks each trace's IPC-2221 ampacity against. A pad's part is the head
-  // of its `partId/padId` key; readings carry each part's through-current.
-  const pcbNetCurrents = useMemo(() => {
-    const m = new Map<string, number>()
-    if (!pcbActive) return m
-    for (const pad of pcbRatsnest.padBoxes) {
-      const partId = pad.pad.split('/')[0]
-      const cur = partId !== undefined ? readings.get(partId)?.current : undefined
-      if (cur === undefined) continue
-      m.set(pad.net, Math.max(m.get(pad.net) ?? 0, Math.abs(cur)))
-    }
-    return m
-  }, [pcbActive, pcbRatsnest, readings])
+  // The current on each net (from the LIVE solve) — what the over-current DRC checks each trace's
+  // IPC-2221 ampacity against. netThroughCurrents only trusts a part's single scalar where it is a
+  // real through-current (2-terminal parts), so a transistor's collector/drain current is never
+  // charged to its base/gate net (which would falsely over-current a control trace).
+  const pcbNetCurrents = useMemo(
+    () =>
+      pcbActive
+        ? netThroughCurrents(pcbRatsnest.padBoxes, (partId) => readings.get(partId)?.current)
+        : new Map<string, number>(),
+    [pcbActive, pcbRatsnest, readings],
+  )
   // Design-rule check — the board's failure-mode pass (cited limits), re-run live like the routing.
   // The solved net currents + copper weight enable the over-current check (trace vs IPC-2221 ampacity).
   const pcbDrc = useMemo(

@@ -230,6 +230,40 @@ export type PadBox = {
 
 export type Ratsnest = { airwires: Airwire[]; padBoxes: PadBox[] }
 
+/**
+ * The current each net's copper carries, for the over-current DRC — keyed net → amps.
+ *
+ * A part's single solved current (part-readings' `current`) is a genuine THROUGH-current, the same
+ * on both of its pads, ONLY for a TWO-terminal part (resistor, capacitor, inductor, diode…). A
+ * THREE-terminal part reports just one scalar — a BJT's collector current, a MOSFET's drain current
+ * (dc-solver stores one branch per part) — and that value does NOT flow in its base/gate net, which
+ * carries only the tiny base current (or ~0 DC for a MOSFET gate). Charging the collector/drain
+ * current to the base/gate trace would falsely flag a correctly-sized control trace and BLOCK the
+ * manufacturing ZIP. So multi-pad parts are skipped here; each of their nets takes its current from
+ * the two-terminal parts (e.g. the base resistor carrying the real base current) that sit on it.
+ * This is honest per the same limit the Math panel states: a net meeting a 3-terminal device can't
+ * be itemized from one-scalar-per-part branch data alone.
+ */
+export function netThroughCurrents(
+  padBoxes: readonly { pad: string; net: string }[],
+  currentOfPart: (partId: string) => number | undefined,
+): Map<string, number> {
+  const padsPerPart = new Map<string, number>()
+  for (const pb of padBoxes) {
+    const part = pb.pad.split('/')[0]
+    if (part !== undefined) padsPerPart.set(part, (padsPerPart.get(part) ?? 0) + 1)
+  }
+  const byNet = new Map<string, number>()
+  for (const pb of padBoxes) {
+    const part = pb.pad.split('/')[0]
+    if (part === undefined || (padsPerPart.get(part) ?? 0) > 2) continue
+    const current = currentOfPart(part)
+    if (current === undefined) continue
+    byNet.set(pb.net, Math.max(byNet.get(pb.net) ?? 0, Math.abs(current)))
+  }
+  return byNet
+}
+
 /** The World slice the ratsnest reads — structurally the cross-fk World, so the board's connectivity
  *  is EXACTLY what the solver solves (blocks flattened, junctions merged, same-named net labels and
  *  all grounds teleported into one net), never a parallel re-derivation that could drift. */
