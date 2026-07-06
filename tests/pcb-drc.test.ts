@@ -291,4 +291,64 @@ describe('runDrc', () => {
       expect(runDrc(board, rn, routing).filter((x) => x.code === 'over-current')).toHaveLength(0)
     })
   })
+
+  describe('open-net — a net not joined by its own copper', () => {
+    const defs: [string, string][] = [
+      ['R1', 'resistor'],
+      ['R2', 'resistor'],
+    ]
+    const built = () => {
+      const board = deriveBoard(parts(defs))
+      const rn = computeRatsnest(world(defs, [['R1', 'terminal_b', 'R2', 'terminal_a']]), board)
+      return { board, rn }
+    }
+    const openNet = (v: ReturnType<typeof runDrc>) => v.filter((x) => x.code === 'open-net')
+
+    test('a fully-routed net is whole — no open-net violation', () => {
+      const { board, rn } = built()
+      expect(openNet(runDrc(board, rn, routeBoard(rn)))).toEqual([])
+    })
+
+    test('a net the router self-certifies but laid NO copper for is flagged open', () => {
+      // unrouted EMPTY (the router considers it done) but there is no copper — the blind spot the
+      // clearance/width checks miss (they check spacing, not continuity).
+      const { board, rn } = built()
+      const opens = openNet(runDrc(board, rn, { traces: [], vias: [], unrouted: [] }))
+      expect(opens).toHaveLength(1)
+      expect(opens[0]?.message).toContain('not fully connected')
+    })
+
+    test('a net still owed an airwire is NOT double-reported (already unrouted)', () => {
+      const { board, rn } = built()
+      // The airwire is owed → surfaced as the header's routed count; open-net must not re-flag it.
+      expect(openNet(runDrc(board, rn, { traces: [], vias: [], unrouted: rn.airwires }))).toEqual(
+        [],
+      )
+    })
+
+    test('a layer change with no via leaves the net open; adding the via makes it whole', () => {
+      const { board, rn } = built()
+      const net = rn.airwires[0]?.net
+      if (net === undefined) throw new Error('no airwire')
+      const pads = rn.padBoxes
+        .filter((p) => p.net === net)
+        .map((p) => ({ x: p.x + p.w / 2, y: p.y + p.h / 2 }))
+      const [p1, p2] = pads
+      if (p1 === undefined || p2 === undefined) throw new Error('need two pads')
+      const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }
+      // Top trace covers half, bottom trace the other half — but NO via joins the layers.
+      const routing = {
+        traces: [
+          { net, widthMm: 0.25, layer: 'top' as const, points: [p1, mid] },
+          { net, widthMm: 0.25, layer: 'bottom' as const, points: [mid, p2] },
+        ],
+        vias: [],
+        unrouted: [],
+      }
+      expect(openNet(runDrc(board, rn, routing))).toHaveLength(1)
+      // The via bridges the layers at the seam → the copper physically connects → no open.
+      const withVia = { ...routing, vias: [{ net, at: mid, diameterMm: 0.6, drillMm: 0.4 }] }
+      expect(openNet(runDrc(board, rn, withVia))).toEqual([])
+    })
+  })
 })

@@ -10,6 +10,7 @@ import {
 import {
   type BoardRouting,
   clearanceViolations,
+  copperConnects,
   DEFAULT_ROUTE_CLASS,
   type RouteClass,
   VIA_RULES,
@@ -36,6 +37,7 @@ export type DrcCode =
   | 'hole-to-hole'
   | 'silk-over-pad'
   | 'over-current'
+  | 'open-net'
 
 /** The temperature rise (°C above ambient) the over-current check sizes to — IPC-2221's standard,
  *  conservative sizing point. A trace exceeding its ampacity at this rise runs hotter and ages fast. */
@@ -52,7 +54,7 @@ export type DrcViolation = {
  *  drill/annular/hole-spacing limits live in pcb-route's VIA_RULES so the router and this check
  *  can never disagree). */
 export const DRC_RULES: Record<
-  Exclude<DrcCode, 'copper-clearance' | 'via-size' | 'hole-to-hole' | 'over-current'>,
+  Exclude<DrcCode, 'copper-clearance' | 'via-size' | 'hole-to-hole' | 'over-current' | 'open-net'>,
   { limitMm: number; provenance: FootprintProvenance }
 > = {
   'silk-over-pad': {
@@ -364,6 +366,38 @@ export function runDrc(
         message: `a ${fmt(t.widthMm)} mm trace on net ${t.net} carries ${fmtA(current)} A — over its ~${fmtA(ampacity)} A rating (IPC-2221, ${OVER_CURRENT_DELTA_T_C} °C rise, ${oz} oz). Widen the trace or split the current.`,
         at: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
       })
+    }
+  }
+
+  // Open net — a net whose pads are NOT all joined by its OWN copper is BROKEN, even on a board that
+  // reads "fully routed": the clearance/width checks are blind to continuity (they check spacing, not
+  // whether copper actually connects), and the router can self-certify a connection it didn't make (a
+  // layer change with no via leaves a pad meeting a trace through no plated hole). This verifies each
+  // net's continuity INDEPENDENTLY, using only that net's copper, so a foreign trace touching a pad
+  // can't mask an open. Nets still owed an airwire are skipped — those are already surfaced as
+  // "unrouted" (the header's routed count) and blocked from export; this adds the router's blind spot.
+  const unroutedNets = new Set(routing.unrouted.map((aw) => aw.net))
+  const padsByNet = new Map<string, { x: number; y: number }[]>()
+  for (const pad of ratsnest.padBoxes) {
+    const center = { x: pad.x + pad.w / 2, y: pad.y + pad.h / 2 }
+    const list = padsByNet.get(pad.net)
+    if (list === undefined) padsByNet.set(pad.net, [center])
+    else list.push(center)
+  }
+  for (const [net, pads] of padsByNet) {
+    const anchor = pads[0]
+    if (pads.length < 2 || anchor === undefined || unroutedNets.has(net)) continue
+    const netTraces = routing.traces.filter((t) => t.net === net)
+    const netVias = routing.vias.filter((v) => v.net === net)
+    for (let i = 1; i < pads.length; i++) {
+      const pad = pads[i]
+      if (pad === undefined || copperConnects(anchor, pad, netTraces, netVias)) continue
+      out.push({
+        code: 'open-net',
+        message: `net ${net} is not fully connected — a pad at (${fmt(pad.x)}, ${fmt(pad.y)}) mm has no copper path to the rest of the net (an open). Route the missing link, or add a via where the copper changes layer.`,
+        at: pad,
+      })
+      break // one report per broken net is enough to flag it
     }
   }
 
