@@ -33,6 +33,23 @@ export type Placement = {
 /** The board outline (its physical edge), in mm — a rectangle for now. */
 export type BoardOutline = { x: number; y: number; w: number; h: number }
 
+/**
+ * A controlled-depth RECESS — a rectangular pocket milled into the board to a partial depth (it does
+ * NOT pass through). This one primitive covers the whole variable-thickness family: an interior recess
+ * is a cavity / recessed board (sit a tall part flush, or expose a buried layer); a recess that runs
+ * to the board edge reads as a stepped board (a thinner card edge). x/y/w/h are the pocket footprint in
+ * board mm; depthMm is the milled depth (< the board thickness); side is which face it is cut into.
+ * Real fab process = depth-controlled CNC routing, cited ~±0.2 mm Z-axis depth tolerance.
+ */
+export type Recess = {
+  x: number
+  y: number
+  w: number
+  h: number
+  depthMm: number
+  side: 'top' | 'bottom'
+}
+
 export type Board = { outline: BoardOutline; placements: Placement[] }
 
 /** The minimal part shape deriveBoard reads (a schematic node). */

@@ -269,6 +269,15 @@ describe('the validation report', () => {
     expect(v.reportText).toContain('Set the stack-up back to 2 layers')
   })
 
+  test('a board with a controlled-depth recess (cavity / step) is REFUSED — we emit no depth-mill program', () => {
+    const v = buildValidationReport({
+      ...cleanInputs(),
+      recesses: [{ x: 1, y: 1, w: 3, h: 2, depthMm: 0.8, side: 'top' }],
+    })
+    expect(v.status).toBe('fail')
+    expect(v.problems.some((p) => p.includes('recess') && p.includes('depth-routing'))).toBe(true)
+  })
+
   test('a BOM that disagrees with the placements FAILS — the archive must agree with itself', () => {
     const inputs = cleanInputs()
     const v = buildValidationReport({ ...inputs, bomRows: inputs.bomRows.slice(0, 1) })

@@ -1,5 +1,5 @@
 import { fabricationBounds } from './footprint.ts'
-import type { Board } from './pcb-board.ts'
+import type { Board, Recess } from './pcb-board.ts'
 import { footprintByPlacement, placePoint } from './pcb-board.ts'
 import type { BoardRouting } from './pcb-route.ts'
 import type { Stackup, StackupLayer } from './pcb-stackup.ts'
@@ -213,11 +213,155 @@ function addSlab(
   faces.push({ verts: [b01, b00, t00, t01], color, decals: [], ...extra })
 }
 
+/** Merge overlapping [a,b] x-intervals (sorted, coalesced) — for tiling the surface around pockets. */
+function mergeIntervals(intervals: [number, number][]): [number, number][] {
+  const sorted = [...intervals].filter(([a, b]) => b > a).sort((p, q) => p[0] - q[0])
+  const out: [number, number][] = []
+  for (const [a, b] of sorted) {
+    const last = out[out.length - 1]
+    if (last && a <= last[1] + 1e-9) last[1] = Math.max(last[1], b)
+    else out.push([a, b])
+  }
+  return out
+}
+
+/**
+ * Tile a board surface into the frame quads that survive around a set of rectangular recesses — a slab
+ * decomposition: split into horizontal bands at every recess y-edge, and in each band subtract the
+ * active recesses' x-intervals from the full width. Handles any number of recesses; a recess touching
+ * the board edge leaves no frame on that side (which is exactly what reads as a step).
+ */
+function frameStrips(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  recs: Recess[],
+): { x0: number; y0: number; x1: number; y1: number }[] {
+  const ys = [
+    ...new Set(
+      [y0, y1, ...recs.flatMap((r) => [r.y, r.y + r.h])].filter((y) => y >= y0 && y <= y1),
+    ),
+  ].sort((a, b) => a - b)
+  const strips: { x0: number; y0: number; x1: number; y1: number }[] = []
+  for (let i = 0; i + 1 < ys.length; i++) {
+    const ya = ys[i]
+    const yb = ys[i + 1]
+    if (ya === undefined || yb === undefined || yb - ya < 1e-6) continue
+    const active = recs.filter((r) => r.y <= ya + 1e-6 && r.y + r.h >= yb - 1e-6)
+    const covered = mergeIntervals(
+      active.map((r) => [Math.max(x0, r.x), Math.min(x1, r.x + r.w)] as [number, number]),
+    )
+    let cur = x0
+    for (const [a, b] of covered) {
+      if (a > cur + 1e-6) strips.push({ x0: cur, y0: ya, x1: a, y1: yb })
+      cur = Math.max(cur, b)
+    }
+    if (cur < x1 - 1e-6) strips.push({ x0: cur, y0: ya, x1: x1, y1: yb })
+  }
+  return strips
+}
+
+/** Does a copper poly's bounding box overlap any recess (so that copper is milled away in the pocket)? */
+function copperInRecess(verts: Vec3[], recs: Recess[]): boolean {
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  for (const v of verts) {
+    minX = Math.min(minX, v.x)
+    minY = Math.min(minY, v.y)
+    maxX = Math.max(maxX, v.x)
+    maxY = Math.max(maxY, v.y)
+  }
+  return recs.some((r) => maxX > r.x && minX < r.x + r.w && maxY > r.y && minY < r.y + r.h)
+}
+
+const RECESS_COPPER_LIFT_MM = 0.01 // surviving surface copper drawn a hair proud of the mask, so it paints on top
+
+/**
+ * Render a recessed board surface: the mask frame around the pockets, plus each pocket's four milled
+ * walls + floor (bare FR4) at the controlled depth. `sign` = +1 for the top surface (the pocket cuts
+ * DOWN from surfaceZ), −1 for the bottom (it cuts UP). Copper in a pocket is dropped (milled away); the
+ * surviving copper is lifted a hair off the mask so it paints over the frame.
+ */
+function pushRecessedSurface(
+  faces: Face[],
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  surfaceZ: number,
+  recs: Recess[],
+  maskColor: string,
+  copper: Poly[],
+  sign: 1 | -1,
+  boardT: number,
+): void {
+  for (const s of frameStrips(x0, y0, x1, y1, recs)) {
+    faces.push({
+      verts: [
+        { x: s.x0, y: s.y0, z: surfaceZ },
+        { x: s.x1, y: s.y0, z: surfaceZ },
+        { x: s.x1, y: s.y1, z: surfaceZ },
+        { x: s.x0, y: s.y1, z: surfaceZ },
+      ],
+      color: maskColor,
+      decals: [],
+      doubleSided: true,
+    })
+  }
+  for (const r of recs) {
+    // the pocket floor, clamped inside the slab so a too-deep recess can't punch through the far side
+    // (the UI already caps depth < thickness; this makes the engine safe for any input).
+    const floorZ = Math.max(0.02, Math.min(surfaceZ - sign * r.depthMm, boardT - 0.02))
+    const corners = [
+      { x: r.x, y: r.y },
+      { x: r.x + r.w, y: r.y },
+      { x: r.x + r.w, y: r.y + r.h },
+      { x: r.x, y: r.y + r.h },
+    ]
+    faces.push({
+      verts: corners.map((c) => ({ x: c.x, y: c.y, z: floorZ })),
+      color: COLORS.fr4,
+      decals: [],
+      doubleSided: true,
+    })
+    for (let i = 0; i < 4; i++) {
+      const p = corners[i]
+      const q = corners[(i + 1) % 4]
+      if (!p || !q) continue
+      faces.push({
+        verts: [
+          { x: p.x, y: p.y, z: surfaceZ },
+          { x: q.x, y: q.y, z: surfaceZ },
+          { x: q.x, y: q.y, z: floorZ },
+          { x: p.x, y: p.y, z: floorZ },
+        ],
+        color: COLORS.fr4,
+        decals: [],
+        doubleSided: true,
+      })
+    }
+  }
+  const liftedZ = surfaceZ + sign * RECESS_COPPER_LIFT_MM
+  for (const poly of copper) {
+    if (copperInRecess(poly.verts, recs)) continue
+    faces.push({
+      verts: poly.verts.map((v) => ({ x: v.x, y: v.y, z: liftedZ })),
+      color: poly.color,
+      decals: [],
+      doubleSided: true,
+    })
+  }
+}
+
 /**
  * Build the board's real 3-D geometry from the derived board + routing + stack-up. All millimetres:
  * the FR4 slab at true thickness, the copper pads/traces on their real surfaces, and via barrels
  * through the board. `explodeMm` > 0 SPLITS the board into its real stack-up layers (F.Mask / F.Cu /
  * FR4 core / B.Cu / B.Mask), each a slab at its true thickness, separated in space with its own artwork.
+ * `recesses` are controlled-depth pockets milled into the assembled board (cavity / stepped boards).
  */
 export function buildBoardScene(
   board: Board,
@@ -225,6 +369,7 @@ export function buildBoardScene(
   stackup: Stackup,
   explodeMm = 0,
   showGrid = false,
+  recesses: Recess[] = [],
 ): Scene {
   const T = boardThicknessMm(stackup)
   const o = board.outline
@@ -293,7 +438,8 @@ export function buildBoardScene(
 
   const faces: Face[] = []
   if (!exploded) {
-    // ASSEMBLED: one FR4 slab (z=0..T); the top/bottom faces carry the copper as decals.
+    // ASSEMBLED: one FR4 slab (z=0..T). The top/bottom carry the copper; when the board has controlled-
+    // depth recesses (cavity / stepped boards) on a side, that surface becomes a milled frame + pockets.
     const c = {
       b00: { x: x0, y: y0, z: 0 },
       b10: { x: x1, y: y0, z: 0 },
@@ -304,9 +450,23 @@ export function buildBoardScene(
       t11: { x: x1, y: y1, z: T },
       t01: { x: x0, y: y1, z: T },
     }
+    const topRecs = recesses.filter((r) => r.side === 'top')
+    const botRecs = recesses.filter((r) => r.side === 'bottom')
+    if (topRecs.length > 0) {
+      pushRecessedSurface(faces, x0, y0, x1, y1, T, topRecs, COLORS.maskTop, topCopper, 1, T)
+    } else {
+      faces.push({ verts: [c.t00, c.t10, c.t11, c.t01], color: COLORS.maskTop, decals: topCopper })
+    }
+    if (botRecs.length > 0) {
+      pushRecessedSurface(faces, x0, y0, x1, y1, 0, botRecs, COLORS.maskBottom, bottomCopper, -1, T)
+    } else {
+      faces.push({
+        verts: [c.b01, c.b11, c.b10, c.b00],
+        color: COLORS.maskBottom,
+        decals: bottomCopper,
+      })
+    }
     faces.push(
-      { verts: [c.t00, c.t10, c.t11, c.t01], color: COLORS.maskTop, decals: topCopper },
-      { verts: [c.b01, c.b11, c.b10, c.b00], color: COLORS.maskBottom, decals: bottomCopper },
       { verts: [c.b00, c.b10, c.t10, c.t00], color: COLORS.fr4, decals: [] },
       { verts: [c.b10, c.b11, c.t11, c.t10], color: COLORS.fr4, decals: [] },
       { verts: [c.b11, c.b01, c.t01, c.t11], color: COLORS.fr4, decals: [] },

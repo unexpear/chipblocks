@@ -144,6 +144,7 @@ import {
   offBoardPins,
   type PadBox,
   type PlacementOverride,
+  type Recess,
   type Rotation,
 } from './pcb-board.ts'
 import { runDrc } from './pcb-drc.ts'
@@ -1345,6 +1346,9 @@ function Canvas({ project }: { project: ProjectChoice }) {
   const [pcbStackupOptions, setPcbStackupOptions] =
     useState<StackupOptions>(DEFAULT_STACKUP_OPTIONS)
   const pcbStackup = useMemo(() => buildStackup(pcbStackupOptions), [pcbStackupOptions])
+  // Controlled-depth recesses (cavity / stepped boards) — rectangular pockets milled into the board.
+  // Design + 3-D visualisation for now; export is gated until the depth-mill output exists.
+  const [boardRecesses, setBoardRecesses] = useState<Recess[]>([])
   // The PCB view mode: the full flat layout; the LAMINATION as a stack of paper (one sheet at a
   // time, paged up/down); or the 3-D exploded view (the sheets pulled apart in space, vias bridging
   // the copper planes). The drawable layers come from the stack-up.
@@ -1488,6 +1492,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       netlistText: netlist,
       netlistUnsupported: unsupported,
       stackup: pcbStackup,
+      recesses: boardRecesses,
       when: new Date(),
     })
     if (fab.validation.status !== 'pass') {
@@ -1497,7 +1502,17 @@ function Canvas({ project }: { project: ProjectChoice }) {
     void window.chipblocks?.saveFabZip?.(fab.bytes).then((r) => {
       setPcbExportNote(r.ok && r.path !== undefined ? `manufacturing ZIP saved — ${r.path}` : null)
     })
-  }, [nodes, edges, pcbBoard, pcbRatsnest, pcbMergedRouting, pcbDrc, pcbOffBoard, pcbStackup])
+  }, [
+    nodes,
+    edges,
+    pcbBoard,
+    pcbRatsnest,
+    pcbMergedRouting,
+    pcbDrc,
+    pcbOffBoard,
+    pcbStackup,
+    boardRecesses,
+  ])
   // The Bode (frequency-response) tool — its panel state, the grounded world the AC sweep runs on,
   // and the output-picking click handler live in useBode now; its couplings (the warm solved world,
   // the active tool) are injected. Destructured to the same names the toolbar, panel and canvas
@@ -5481,6 +5496,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                   pxPerMm={16}
                   viewHeight={560}
                   coordinateGrid
+                  recesses={boardRecesses}
                   onMove={onPcbMove}
                   onRotate={onPcbRotate}
                   route={{
@@ -6684,6 +6700,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
                       pxPerMm={12}
                       viewHeight={380}
                       coordinateGrid
+                      recesses={boardRecesses}
                       onMove={onPcbMove}
                       onRotate={onPcbRotate}
                     />
@@ -6816,6 +6833,179 @@ function Canvas({ project }: { project: ProjectChoice }) {
                           ),
                         )}
                       </select>
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        color: THEME.textFaint,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      cavity / step:
+                      <button
+                        type="button"
+                        title="Add a recessed cavity — a controlled-depth pocket milled into the board centre. Open the 3-D view to see it."
+                        onClick={() => {
+                          const o = pcbBoard.outline
+                          setBoardRecesses((rs) => [
+                            ...rs,
+                            {
+                              x: o.x + o.w * 0.3,
+                              y: o.y + o.h * 0.3,
+                              w: o.w * 0.4,
+                              h: o.h * 0.4,
+                              depthMm: Math.min(
+                                pcbStackup.thicknessMm * 0.5,
+                                pcbStackup.thicknessMm - 0.1,
+                              ),
+                              side: 'top',
+                            },
+                          ])
+                        }}
+                        style={{
+                          border: `1px solid ${THEME.borderStrong}`,
+                          background: THEME.surfaceInput,
+                          color: THEME.textSoft,
+                          borderRadius: 4,
+                          fontSize: 11,
+                          padding: '1px 6px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        + Cavity
+                      </button>
+                      <button
+                        type="button"
+                        title="Add a stepped edge — a recess running to the board edge (a thinner card edge / step)."
+                        onClick={() => {
+                          const o = pcbBoard.outline
+                          setBoardRecesses((rs) => [
+                            ...rs,
+                            {
+                              x: o.x,
+                              y: o.y,
+                              w: o.w,
+                              h: o.h * 0.28,
+                              depthMm: Math.min(
+                                pcbStackup.thicknessMm * 0.4,
+                                pcbStackup.thicknessMm - 0.1,
+                              ),
+                              side: 'top',
+                            },
+                          ])
+                        }}
+                        style={{
+                          border: `1px solid ${THEME.borderStrong}`,
+                          background: THEME.surfaceInput,
+                          color: THEME.textSoft,
+                          borderRadius: 4,
+                          fontSize: 11,
+                          padding: '1px 6px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        + Step
+                      </button>
+                      {boardRecesses.map((r, i) => {
+                        const o = pcbBoard.outline
+                        const isStep =
+                          r.x <= o.x + 0.01 ||
+                          r.y <= o.y + 0.01 ||
+                          r.x + r.w >= o.x + o.w - 0.01 ||
+                          r.y + r.h >= o.y + o.h - 0.01
+                        return (
+                          <span
+                            key={`recess-${r.side}-${r.x}-${r.y}-${r.w}-${r.h}`}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 3,
+                              border: `1px solid ${THEME.borderStrong}`,
+                              borderRadius: 4,
+                              padding: '1px 4px',
+                            }}
+                          >
+                            {isStep ? 'step' : 'cavity'}
+                            <input
+                              type="number"
+                              value={r.depthMm}
+                              min={0.05}
+                              max={pcbStackup.thicknessMm - 0.05}
+                              step={0.05}
+                              title="Milled depth (mm)"
+                              onChange={(e) => {
+                                const d = Number(e.target.value)
+                                setBoardRecesses((rs) =>
+                                  rs.map((rr, j) =>
+                                    j === i
+                                      ? {
+                                          ...rr,
+                                          depthMm: Math.max(
+                                            0.05,
+                                            Math.min(d, pcbStackup.thicknessMm - 0.05),
+                                          ),
+                                        }
+                                      : rr,
+                                  ),
+                                )
+                              }}
+                              style={{
+                                width: 44,
+                                background: THEME.surfaceInput,
+                                color: THEME.textSoft,
+                                border: `1px solid ${THEME.borderStrong}`,
+                                borderRadius: 3,
+                                fontSize: 11,
+                                padding: '1px 2px',
+                              }}
+                            />
+                            mm
+                            <select
+                              value={r.side}
+                              title="Which face is milled"
+                              onChange={(e) =>
+                                setBoardRecesses((rs) =>
+                                  rs.map((rr, j) =>
+                                    j === i
+                                      ? { ...rr, side: e.target.value as 'top' | 'bottom' }
+                                      : rr,
+                                  ),
+                                )
+                              }
+                              style={{
+                                background: THEME.surfaceInput,
+                                color: THEME.textSoft,
+                                border: `1px solid ${THEME.borderStrong}`,
+                                borderRadius: 3,
+                                fontSize: 11,
+                                padding: '1px 2px',
+                              }}
+                            >
+                              <option value="top">top</option>
+                              <option value="bottom">bottom</option>
+                            </select>
+                            <button
+                              type="button"
+                              title="Remove this recess"
+                              onClick={() => setBoardRecesses((rs) => rs.filter((_, j) => j !== i))}
+                              style={{
+                                border: 'none',
+                                background: 'transparent',
+                                color: THEME.statusDanger,
+                                cursor: 'pointer',
+                                fontSize: 13,
+                                lineHeight: 1,
+                                padding: '0 2px',
+                              }}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        )
+                      })}
                     </span>
                   </>
                 ) : (

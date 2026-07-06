@@ -1,5 +1,11 @@
 import { buildZip, type ZipEntry } from '../zip-store.ts'
-import { type Board, footprintByPlacement, placePoint, type Ratsnest } from './pcb-board.ts'
+import {
+  type Board,
+  footprintByPlacement,
+  placePoint,
+  type Ratsnest,
+  type Recess,
+} from './pcb-board.ts'
 import type { DrcViolation } from './pcb-drc.ts'
 import { DRC_RULES } from './pcb-drc.ts'
 import {
@@ -150,6 +156,8 @@ export type FabInputs = {
   /** The board's physical stack-up (substrate, copper weight, finish) — the fab-ORDER spec. Absent
    *  ⇒ the shipped default (2-layer, 1.6 mm FR4, 1 oz copper, HASL). */
   stackup?: Stackup
+  /** Controlled-depth recesses (cavity / stepped boards) — a depth-milling spec we don't yet emit. */
+  recesses?: readonly Recess[]
   when: Date
 }
 
@@ -222,6 +230,15 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
     const inner = stackup.copperLayers - 2
     problems.push(
       `The stack-up is set to ${stackup.copperLayers} copper layers, but ChipBlocks generates only the two outer copper layers (F.Cu / B.Cu) — the ${inner} inner copper layer${inner === 1 ? '' : 's'} would have no artwork to manufacture. Set the stack-up back to 2 layers to export. (The multilevel stack-up is for design and the exploded 3-D view for now.)`,
+    )
+  }
+  // Cavity / stepped guard: a controlled-depth recess needs a depth-routing (mechanical) program the
+  // ZIP doesn't yet carry, and shipping a flat 2-D fab set for a 3-D-milled board would be wrong —
+  // so we refuse rather than let the fab build a flat board that ignores the pockets.
+  const recessCount = inputs.recesses?.length ?? 0
+  if (recessCount > 0) {
+    problems.push(
+      `The board has ${recessCount} controlled-depth recess${recessCount === 1 ? '' : 'es'} (cavity / stepped board), but ChipBlocks does not yet generate the depth-routing (mechanical) program a fab needs to mill them (±0.2 mm Z-axis) — so the archive would describe a flat board. Remove the recess${recessCount === 1 ? '' : 'es'} to export. (Cavity / stepped boards are for design and the 3-D view for now.)`,
     )
   }
   if (offBoardPins > 0) {

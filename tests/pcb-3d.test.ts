@@ -16,7 +16,7 @@ import {
   renderScene,
   screenToBoardMm,
 } from '../src/renderer/pcb-3d.ts'
-import { deriveBoard } from '../src/renderer/pcb-board.ts'
+import { deriveBoard, type Recess } from '../src/renderer/pcb-board.ts'
 import type { BoardRouting } from '../src/renderer/pcb-route.ts'
 import { buildStackup, defaultStackup } from '../src/renderer/pcb-stackup.ts'
 
@@ -300,6 +300,55 @@ describe('multilevel board — inner copper planes appear in the exploded view',
       return z !== null && z > scene.copperZ.bottom + 1e-6 && z < scene.copperZ.top - 1e-6
     })
     expect(between).toHaveLength(0)
+  })
+})
+
+describe('cavity / stepped boards — controlled-depth recesses milled into the assembled board', () => {
+  const FR4 = '#0c3a24' // COLORS.fr4 — bare laminate (the pocket floor + walls)
+  const T = 1.6
+  const recess: Recess = {
+    x: board.outline.x + 2,
+    y: board.outline.y + 2,
+    w: 4,
+    h: 3,
+    depthMm: 0.8,
+    side: 'top',
+  }
+  const flatZ = (f: { verts: { z: number }[] }, z: number) =>
+    f.verts.length === 4 && f.verts.every((v) => Math.abs(v.z - z) < 1e-6)
+
+  test('a top recess cuts a pocket — a bare-FR4 floor at the reduced depth, and more faces than the flat board', () => {
+    const flat = buildBoardScene(board, routing, defaultStackup(), 0, false, [])
+    const cav = buildBoardScene(board, routing, defaultStackup(), 0, false, [recess])
+    expect(cav.faces.length).toBeGreaterThan(flat.faces.length) // frame strips + 4 walls + floor
+    const floor = cav.faces.find((f) => f.color === FR4 && flatZ(f, T - recess.depthMm))
+    expect(floor).toBeDefined() // a flat FR4 floor sits at z = T − depth (0.8 mm)
+  })
+
+  test('the pocket has vertical walls spanning the full milled depth (T down to the floor)', () => {
+    const cav = buildBoardScene(board, routing, defaultStackup(), 0, false, [recess])
+    const wall = cav.faces.find((f) => {
+      if (f.color !== FR4) return false
+      const zs = f.verts.map((v) => v.z)
+      return (
+        Math.abs(Math.max(...zs) - T) < 1e-6 &&
+        Math.abs(Math.min(...zs) - (T - recess.depthMm)) < 1e-6
+      )
+    })
+    expect(wall).toBeDefined()
+  })
+
+  test('a recess spanning to the board edge (a step) still cuts a floor at depth', () => {
+    const o = board.outline
+    const step: Recess = { x: o.x, y: o.y, w: o.w, h: o.h * 0.3, depthMm: 0.6, side: 'top' }
+    const cav = buildBoardScene(board, routing, defaultStackup(), 0, false, [step])
+    expect(cav.faces.some((f) => f.color === FR4 && flatZ(f, T - step.depthMm))).toBe(true)
+  })
+
+  test('a bottom recess cuts UP from z=0 (floor at +depth)', () => {
+    const bot: Recess = { ...recess, side: 'bottom' }
+    const cav = buildBoardScene(board, routing, defaultStackup(), 0, false, [bot])
+    expect(cav.faces.some((f) => f.color === FR4 && flatZ(f, bot.depthMm))).toBe(true)
   })
 })
 

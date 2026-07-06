@@ -9,7 +9,7 @@ import {
   type Scene,
   screenToBoardMm,
 } from './pcb-3d.ts'
-import type { Board, PadBox } from './pcb-board.ts'
+import type { Board, PadBox, Recess } from './pcb-board.ts'
 import { hitCopper, hitPad } from './pcb-pick.ts'
 import type { BoardRouting, CopperLayer } from './pcb-route.ts'
 import type { Stackup } from './pcb-stackup.ts'
@@ -155,6 +155,7 @@ export function Pcb3DView({
   stackup,
   height = 460,
   coordinateGrid = false,
+  recesses = [],
   route,
 }: {
   board: Board
@@ -162,6 +163,7 @@ export function Pcb3DView({
   stackup: Stackup
   height?: number
   coordinateGrid?: boolean
+  recesses?: Recess[]
   route?: BoardRouteProp
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -174,8 +176,8 @@ export function Pcb3DView({
   const [explode, setExplode] = useState(0)
   const maxExplode = Math.max(3, Math.max(board.outline.w, board.outline.h) * 0.22)
   const scene = useMemo(
-    () => buildBoardScene(board, routing, stackup, explode, coordinateGrid),
-    [board, routing, stackup, explode, coordinateGrid],
+    () => buildBoardScene(board, routing, stackup, explode, coordinateGrid, recesses),
+    [board, routing, stackup, explode, coordinateGrid, recesses],
   )
 
   const routeActive = route?.active ?? false

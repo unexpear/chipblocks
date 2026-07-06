@@ -1,5 +1,5 @@
 import { type BoardRouteProp, Pcb3DView } from './pcb-3d-view.tsx'
-import type { Board, Rotation } from './pcb-board.ts'
+import type { Board, Recess, Rotation } from './pcb-board.ts'
 import { type BoardLayer, type BoardLayerId, layerLabel } from './pcb-layers.ts'
 import type { BoardRouting } from './pcb-route.ts'
 import type { Stackup } from './pcb-stackup.ts'
@@ -113,6 +113,7 @@ export function BoardView({
   pxPerMm = 12,
   viewHeight = 460,
   coordinateGrid = false,
+  recesses = [],
   onMove,
   onRotate,
   route,
@@ -129,6 +130,8 @@ export function BoardView({
   viewHeight?: number
   /** Draw the coordinate axes + 4-quadrant grid (our coordinate system) on the flat + 3-D views. */
   coordinateGrid?: boolean
+  /** Controlled-depth pockets milled into the board (cavity / stepped boards) — shown in the 3-D view. */
+  recesses?: Recess[]
   onMove?: (partId: string, x: number, y: number) => void
   onRotate?: (partId: string, rotation: Rotation) => void
   /** The route + via tools' live state + handlers, threaded to PcbView (flat/layers) AND Pcb3DView
@@ -145,6 +148,7 @@ export function BoardView({
         stackup={stackup}
         height={viewHeight}
         coordinateGrid={coordinateGrid}
+        recesses={recesses}
         {...(route ? { route } : {})}
       />
     )
