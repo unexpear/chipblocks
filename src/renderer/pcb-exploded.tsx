@@ -1,8 +1,15 @@
 import type { ReactElement } from 'react'
 import type { Pad } from './footprint.ts'
 import { type Board, footprintByPlacement, placePoint, silkReferenceAnchor } from './pcb-board.ts'
-import { type BoardLayer, boardLayers, layerLabel } from './pcb-layers.ts'
-import type { CopperTrace, Via } from './pcb-route.ts'
+import {
+  type BoardLayer,
+  boardLayerIdForCopper,
+  boardLayers,
+  copperLayerOf,
+  copperTraceColor,
+  layerLabel,
+} from './pcb-layers.ts'
+import type { CopperLayer, CopperTrace, Via } from './pcb-route.ts'
 import type { Stackup } from './pcb-stackup.ts'
 import { SILK_TEXT, strokeText } from './stroke-font.ts'
 
@@ -65,8 +72,8 @@ export function PcbExplodedView({
       const r = projectRaw(x, y, pxPerMm)
       return { x: r.x, y: r.y - lift }
     }
-  const copperLift = (which: 'top' | 'bottom') =>
-    liftOf(layers.findIndex((l) => l.id === (which === 'top' ? 'f_cu' : 'b_cu')))
+  const copperLift = (cl: CopperLayer) =>
+    liftOf(layers.findIndex((l) => l.id === boardLayerIdForCopper(cl)))
 
   // Bounding box: every board corner at the top and bottom lift, plus a wide left margin for labels.
   const cTL = { x: o.x, y: o.y }
@@ -97,14 +104,14 @@ export function PcbExplodedView({
   const hPx = maxY - minY + 2 * pad
   const at = (s: P): P => ({ x: originX + s.x, y: originY + s.y })
 
-  const traceEls = (which: 'top' | 'bottom') => {
-    const lift = copperLift(which)
+  const traceEls = (cl: CopperLayer) => {
+    const lift = copperLift(cl)
     const p = project(lift)
     return traces
-      .filter((t) => t.layer === which)
+      .filter((t) => t.layer === cl)
       .map((t) => (
         <polyline
-          key={`tr${which}${t.net}-${t.points[0]?.x},${t.points[0]?.y}-${t.points[t.points.length - 1]?.x},${t.points[t.points.length - 1]?.y}`}
+          key={`tr${cl}${t.net}-${t.points[0]?.x},${t.points[0]?.y}-${t.points[t.points.length - 1]?.x},${t.points[t.points.length - 1]?.y}`}
           points={t.points
             .map((pt) => {
               const s = at(p(pt.x, pt.y))
@@ -112,12 +119,12 @@ export function PcbExplodedView({
             })
             .join(' ')}
           fill="none"
-          stroke={which === 'top' ? COPPER : COPPER_BOTTOM}
+          stroke={copperTraceColor(cl)}
           strokeWidth={t.widthMm * pxPerMm}
           strokeLinecap="round"
           strokeLinejoin="round"
           data-trace={t.net}
-          data-layer={which}
+          data-layer={cl}
         />
       ))
   }
@@ -371,6 +378,9 @@ export function PcbExplodedView({
 
   // Draw bottom → top so upper sheets overlay, interleaving each sheet's own artwork.
   const drawOrder = layers.map((l, i) => ({ l, i })).reverse()
+  // On a multilevel board there are several FR4 dielectric sheets; the drilled holes pass through the
+  // whole board, so draw them once (on the first core sheet), not once per dielectric.
+  const firstCoreIndex = layers.findIndex((l) => l.id === 'core')
 
   return (
     <svg
@@ -382,17 +392,19 @@ export function PcbExplodedView({
       aria-label="PCB exploded lamination view"
     >
       <title>{`PCB exploded view — ${n} layers, ${board.placements.length} parts`}</title>
-      {drawOrder.map(({ l, i }) => (
-        <g key={`layer-${l.id}`}>
-          {sheetFor(l, i)}
-          {l.id === 'b_cu' && traceEls('bottom')}
-          {l.id === 'b_cu' && padsFor('bottom')}
-          {l.id === 'core' && drillEls()}
-          {l.id === 'f_cu' && traceEls('top')}
-          {l.id === 'f_cu' && padsFor('top')}
-          {l.id === 'f_silk' && silkEls()}
-        </g>
-      ))}
+      {drawOrder.map(({ l, i }) => {
+        const cl = l.kind === 'copper' ? copperLayerOf(l.id) : undefined
+        return (
+          <g key={`layer-${l.id}`}>
+            {sheetFor(l, i)}
+            {cl !== undefined && traceEls(cl)}
+            {l.id === 'b_cu' && padsFor('bottom')}
+            {l.id === 'core' && i === firstCoreIndex && drillEls()}
+            {l.id === 'f_cu' && padsFor('top')}
+            {l.id === 'f_silk' && silkEls()}
+          </g>
+        )
+      })}
       {/* via barrels bridge the copper planes — drawn last so they read as the through-connection */}
       {viaBarrels()}
     </svg>

@@ -151,9 +151,10 @@ import {
 } from './pcb-board.ts'
 import { runDrc } from './pcb-drc.ts'
 import { type BomRow, buildManufacturingZip } from './pcb-fab.ts'
-import { type BoardLayerId, boardLayers } from './pcb-layers.ts'
+import { type BoardLayerId, boardLayers, copperLayerOf } from './pcb-layers.ts'
 import { MEASURE_UNITS, type Measurement, type MeasureUnit } from './pcb-measure.ts'
 import {
+  type CopperLayer,
   type CopperTrace,
   DEFAULT_ROUTE_CLASS,
   mergeUserCopper,
@@ -1452,7 +1453,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [boardTool, setBoardTool] = useState<'select' | 'route' | 'via' | 'measure'>('select')
   const [pendingRoute, setPendingRoute] = useState<{
     net: string
-    layer: 'top' | 'bottom'
+    layer: CopperLayer
     points: { x: number; y: number }[]
   } | null>(null)
   const [routeCursor, setRouteCursor] = useState<{ x: number; y: number } | null>(null)
@@ -1648,9 +1649,10 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     },
     [pcbLayers],
   )
-  // The copper layer new traces land on — the bottom sheet routes bottom copper, everything else top.
-  // In Layers mode the ▲/▼ pager picks it; a Top/Bottom control sets it directly in any mode.
-  const activeCopperLayer: 'top' | 'bottom' = pcbActiveLayerId === 'b_cu' ? 'bottom' : 'top'
+  // The copper layer new traces land on — the active drawable sheet's copper layer (F.Cu → top,
+  // In1.Cu → inner1, B.Cu → bottom…). A non-copper sheet (silk/core) falls back to the top.
+  // In Layers mode the ▲/▼ pager picks it; the layer buttons set it directly in any mode.
+  const activeCopperLayer: CopperLayer = copperLayerOf(pcbActiveLayerId) ?? 'top'
   // The ROUTE tool state machine (click-based, like the wire tool): start on a pad (net inferred),
   // click open board to drop orthogonal (H-then-V) corners, click a same-net pad to finish → a real
   // CopperTrace on the active layer. It joins pcbMergedRouting, so it draws, DRCs, and ships in the ZIP.
@@ -4125,7 +4127,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       // Hand-drawn copper (the route/via tools' backing state), driven directly for tests: a real
       // CopperTrace on a layer / a real Via — merged into the routing exactly like the tools will do,
       // so this exercises the whole reaches-DRC-and-Gerber path.
-      pcbAddTrace(net: string, layer: 'top' | 'bottom', points: { x: number; y: number }[]) {
+      pcbAddTrace(net: string, layer: CopperLayer, points: { x: number; y: number }[]) {
         setUserTraces((cur) => [...cur, { net, widthMm: 0.25, layer, points }])
         return userTraces.length + 1
       },
@@ -5818,37 +5820,43 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                     )}
                   </span>
                 )}
-                {boardTool === 'route' && (
-                  <span style={{ display: 'flex', gap: 0 }}>
-                    {(['f_cu', 'b_cu'] as const).map((id, i) => (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => setPcbActiveLayerId(id)}
-                        title={
-                          id === 'f_cu' ? 'Route on the top copper' : 'Route on the bottom copper'
-                        }
-                        style={{
-                          border: `1px solid ${THEME.borderStrong}`,
-                          background:
-                            pcbActiveLayerId === id
-                              ? id === 'f_cu'
-                                ? '#ffcf6b'
-                                : '#6b9bff'
-                              : THEME.surfaceInput,
-                          color: pcbActiveLayerId === id ? '#0b1220' : THEME.textSoft,
-                          borderRadius: i === 0 ? '4px 0 0 4px' : '0 4px 4px 0',
-                          borderLeft: i === 0 ? undefined : 'none',
-                          fontSize: 11,
-                          padding: '2px 8px',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {id === 'f_cu' ? 'Top' : 'Bottom'}
-                      </button>
-                    ))}
-                  </span>
-                )}
+                {boardTool === 'route' &&
+                  (() => {
+                    const copperSheets = pcbLayers.filter((l) => l.kind === 'copper')
+                    return (
+                      <span style={{ display: 'flex', gap: 0 }}>
+                        {copperSheets.map((l, i) => (
+                          <button
+                            key={l.id}
+                            type="button"
+                            onClick={() => setPcbActiveLayerId(l.id)}
+                            title={`Route on ${l.name}${l.id === 'f_cu' || l.id === 'b_cu' ? '' : ' (buried inner layer)'}`}
+                            style={{
+                              border: `1px solid ${THEME.borderStrong}`,
+                              background: pcbActiveLayerId === l.id ? l.color : THEME.surfaceInput,
+                              color: pcbActiveLayerId === l.id ? '#0b1220' : THEME.textSoft,
+                              borderRadius:
+                                i === 0
+                                  ? '4px 0 0 4px'
+                                  : i === copperSheets.length - 1
+                                    ? '0 4px 4px 0'
+                                    : '0',
+                              borderLeft: i === 0 ? undefined : 'none',
+                              fontSize: 11,
+                              padding: '2px 8px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {l.id === 'f_cu'
+                              ? 'Top'
+                              : l.id === 'b_cu'
+                                ? 'Bottom'
+                                : l.name.replace('.Cu', '')}
+                          </button>
+                        ))}
+                      </span>
+                    )
+                  })()}
               </span>
             </div>
             <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
@@ -5875,7 +5883,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                     viaActive: boardTool === 'via',
                     onViaClick: onBoardViaClick,
                     cursor: routeCursor,
-                    color: activeCopperLayer === 'bottom' ? '#6b9bff' : '#ffcf6b',
+                    color: pcbLayers.find((l) => l.id === pcbActiveLayerId)?.color ?? '#ffcf6b',
                     ...(pendingRoute ? { pendingPoints: pendingRoute.points } : {}),
                   }}
                   measure={{

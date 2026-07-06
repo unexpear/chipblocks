@@ -9,7 +9,7 @@ import {
   type Rotation,
   silkReferenceAnchor,
 } from './pcb-board.ts'
-import type { BoardLayerId } from './pcb-layers.ts'
+import { type BoardLayerId, boardLayerIdForCopper, copperTraceColor } from './pcb-layers.ts'
 import {
   formatMeasure,
   type Measurement,
@@ -18,7 +18,7 @@ import {
   measureDistanceMm,
 } from './pcb-measure.ts'
 import { hitCopper, hitPad } from './pcb-pick.ts'
-import type { CopperTrace, Via } from './pcb-route.ts'
+import { ALL_COPPER_LAYERS, type CopperLayer, type CopperTrace, type Via } from './pcb-route.ts'
 import { SILK_TEXT, strokeText } from './stroke-font.ts'
 
 /**
@@ -40,7 +40,6 @@ const BOARD = '#0d3b26' // FR4 green
 const BOARD_EDGE = '#4ec98a' // the board outline / edge cut
 const COPPER = '#d9a441'
 const COPPER_EDGE = '#b5852b'
-const COPPER_BOTTOM = '#4a7fd4' // bottom-layer copper — blue, the EDA convention
 const HOLE = '#06180f' // a drilled hole shows through to the dark substrate
 const SILK = '#e8eaed'
 const COURTYARD = '#7fe3b0'
@@ -289,7 +288,7 @@ export function PcbView({
   // everything shows at once.
   const show = (layer: BoardLayerId): boolean => mode === 'flat' || activeLayer === layer
 
-  const traceEls = (whichLayer: 'top' | 'bottom') =>
+  const traceEls = (whichLayer: CopperLayer) =>
     traces
       .filter((t) => t.layer === whichLayer)
       .map((t) => (
@@ -297,7 +296,7 @@ export function PcbView({
           key={`tr${t.net}-${whichLayer}-${t.points[0]?.x},${t.points[0]?.y}-${t.points[t.points.length - 1]?.x},${t.points[t.points.length - 1]?.y}`}
           points={t.points.map((p) => `${sx(p.x)},${sy(p.y)}`).join(' ')}
           fill="none"
-          stroke={whichLayer === 'top' ? COPPER : COPPER_BOTTOM}
+          stroke={copperTraceColor(whichLayer)}
           strokeWidth={t.widthMm * pxPerMm}
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -495,9 +494,13 @@ export function PcbView({
       {/* FR4 core sheet: the drilled holes that pass through the substrate */}
       {show('core') && drillEls()}
 
-      {/* bottom copper (blue), then top copper (gold) */}
-      {show('b_cu') && traceEls('bottom')}
-      {show('f_cu') && traceEls('top')}
+      {/* copper traces, deepest layer first so the top gold sits on top: bottom, inner (deep→shallow),
+          then top. Inner layers only exist on a 4-/6-layer board. */}
+      {[...ALL_COPPER_LAYERS]
+        .reverse()
+        .map((cl) =>
+          show(boardLayerIdForCopper(cl)) ? <g key={`traces-${cl}`}>{traceEls(cl)}</g> : null,
+        )}
 
       {/* vias join the two copper sheets — shown whenever either copper sheet is up */}
       {(show('f_cu') || show('b_cu')) && viaEls}
