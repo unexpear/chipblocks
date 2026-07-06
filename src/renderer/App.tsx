@@ -150,6 +150,7 @@ import {
 import { runDrc } from './pcb-drc.ts'
 import { type BomRow, buildManufacturingZip } from './pcb-fab.ts'
 import { type BoardLayerId, boardLayers } from './pcb-layers.ts'
+import { MEASURE_UNITS, type Measurement, type MeasureUnit } from './pcb-measure.ts'
 import {
   type CopperTrace,
   DEFAULT_ROUTE_CLASS,
@@ -1444,13 +1445,18 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [userTraces, setUserTraces] = useState<CopperTrace[]>([])
   const [userVias, setUserVias] = useState<Via[]>([])
   // The board-editing tool + the route being laid (click a pad → corners → a pad, like the wire tool).
-  const [boardTool, setBoardTool] = useState<'select' | 'route' | 'via'>('select')
+  const [boardTool, setBoardTool] = useState<'select' | 'route' | 'via' | 'measure'>('select')
   const [pendingRoute, setPendingRoute] = useState<{
     net: string
     layer: 'top' | 'bottom'
     points: { x: number; y: number }[]
   } | null>(null)
   const [routeCursor, setRouteCursor] = useState<{ x: number; y: number } | null>(null)
+  // The measure/ruler tool: placed measurements (mm), the point being dropped, the live cursor, + unit.
+  const [measurements, setMeasurements] = useState<Measurement[]>([])
+  const [pendingMeasureA, setPendingMeasureA] = useState<{ x: number; y: number } | null>(null)
+  const [measureCursor, setMeasureCursor] = useState<{ x: number; y: number } | null>(null)
+  const [measureUnit, setMeasureUnit] = useState<MeasureUnit>('mm')
   const pcbBoard = useMemo(
     () =>
       deriveBoard(
@@ -1656,9 +1662,32 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     },
     [boardTool],
   )
-  // Leaving the board workspace or switching tools abandons a half-drawn route.
+  // The MEASURE / ruler tool: click a first board point, then a second — that places a measurement
+  // (real millimetres). The first click drops point A; the next completes an A→B measurement.
+  const onBoardMeasureClick = useCallback(
+    (mm: { x: number; y: number }) => {
+      if (boardTool !== 'measure') return
+      // No nested setState: the first click drops point A; the next reads it and commits the A→B
+      // measurement (a side-effect inside a setState updater would double-fire under StrictMode).
+      if (pendingMeasureA === null) {
+        setPendingMeasureA(mm)
+      } else {
+        setMeasurements((cur) => [...cur, { a: pendingMeasureA, b: mm }])
+        setPendingMeasureA(null)
+      }
+    },
+    [boardTool, pendingMeasureA],
+  )
+  const onBoardMeasureMove = useCallback(
+    (mm: { x: number; y: number }) => {
+      if (boardTool === 'measure') setMeasureCursor(mm)
+    },
+    [boardTool],
+  )
+  // Leaving the board workspace or switching tools abandons a half-drawn route / measurement.
   useEffect(() => {
     if (workspaceMode !== 'board' || boardTool !== 'route') setPendingRoute(null)
+    if (workspaceMode !== 'board' || boardTool !== 'measure') setPendingMeasureA(null)
   }, [workspaceMode, boardTool])
   const [pcbExportNote, setPcbExportNote] = useState<string | null>(null)
   // A "manufacturing ZIP saved" note is only true for the board it was exported from — any edit
@@ -5658,6 +5687,66 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 >
                   ⊙ Via
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setBoardTool((t) => (t === 'measure' ? 'select' : 'measure'))}
+                  title="Measure tool — a dimensional ruler. Click two points on the board to measure the distance between them (mm / cm / in / mil / µm); clicks snap to pad centres. Distinct from the multimeter, which measures electrical quantities."
+                  style={{
+                    border: `1px solid ${THEME.borderStrong}`,
+                    background: boardTool === 'measure' ? THEME.accentBlue : THEME.surfaceInput,
+                    color: boardTool === 'measure' ? '#0b1220' : THEME.textSoft,
+                    borderRadius: 4,
+                    fontSize: 11,
+                    padding: '2px 10px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  📏 Measure
+                </button>
+                {boardTool === 'measure' && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <select
+                      value={measureUnit}
+                      onChange={(e) => setMeasureUnit(e.target.value as MeasureUnit)}
+                      title="Measurement unit"
+                      style={{
+                        background: THEME.surfaceInput,
+                        color: THEME.textSoft,
+                        border: `1px solid ${THEME.borderStrong}`,
+                        borderRadius: 4,
+                        fontSize: 11,
+                        padding: '1px 4px',
+                      }}
+                    >
+                      {MEASURE_UNITS.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.label}
+                        </option>
+                      ))}
+                    </select>
+                    {measurements.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMeasurements([])
+                          setPendingMeasureA(null)
+                        }}
+                        title="Clear all measurements"
+                        style={{
+                          border: `1px solid ${THEME.borderStrong}`,
+                          background: THEME.surfaceInput,
+                          color: THEME.textSoft,
+                          borderRadius: 4,
+                          fontSize: 11,
+                          padding: '2px 8px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Clear ({measurements.length})
+                      </button>
+                    )}
+                  </span>
+                )}
                 {boardTool === 'route' && (
                   <span style={{ display: 'flex', gap: 0 }}>
                     {(['f_cu', 'b_cu'] as const).map((id, i) => (
@@ -5717,6 +5806,15 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                     cursor: routeCursor,
                     color: activeCopperLayer === 'bottom' ? '#6b9bff' : '#ffcf6b',
                     ...(pendingRoute ? { pendingPoints: pendingRoute.points } : {}),
+                  }}
+                  measure={{
+                    active: boardTool === 'measure',
+                    unit: measureUnit,
+                    measurements,
+                    pendingA: pendingMeasureA,
+                    cursor: measureCursor,
+                    onClick: onBoardMeasureClick,
+                    onMove: onBoardMeasureMove,
                   }}
                 />
               ) : (

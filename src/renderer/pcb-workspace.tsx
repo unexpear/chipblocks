@@ -1,6 +1,7 @@
 import { type BoardRouteProp, Pcb3DView } from './pcb-3d-view.tsx'
 import type { Board, Recess, Rotation } from './pcb-board.ts'
 import { type BoardLayer, type BoardLayerId, layerLabel } from './pcb-layers.ts'
+import type { Measurement, MeasureUnit } from './pcb-measure.ts'
 import type { BoardRouting } from './pcb-route.ts'
 import type { Stackup } from './pcb-stackup.ts'
 import { PcbView } from './pcb-view.tsx'
@@ -117,6 +118,7 @@ export function BoardView({
   onMove,
   onRotate,
   route,
+  measure,
 }: {
   board: Board
   stackup: Stackup
@@ -137,6 +139,16 @@ export function BoardView({
   /** The route + via tools' live state + handlers, threaded to PcbView (flat/layers) AND Pcb3DView
    *  (the 3-D exploded view) — you can lay copper by clicking in either. */
   route?: BoardRouteProp
+  /** The measure / ruler tool's live state + handlers (flat view). */
+  measure?: {
+    active: boolean
+    unit: MeasureUnit
+    measurements: Measurement[]
+    pendingA?: { x: number; y: number } | null
+    cursor?: { x: number; y: number } | null
+    onClick: (mm: { x: number; y: number }) => void
+    onMove: (mm: { x: number; y: number }) => void
+  }
 }) {
   if (mode === 'exploded') {
     // "3D" — the real to-scale, orbitable board (the from-scratch pcb-3d engine). The route/via tools
@@ -177,6 +189,17 @@ export function BoardView({
             ...(route.pendingPoints ? { pendingPoints: route.pendingPoints } : {}),
             ...(route.cursor !== undefined ? { routeCursor: route.cursor } : {}),
             ...(route.color ? { routeColor: route.color } : {}),
+          }
+        : {})}
+      {...(measure
+        ? {
+            measureActive: measure.active,
+            measureUnit: measure.unit,
+            measurements: measure.measurements,
+            onMeasureClick: measure.onClick,
+            onMeasureMove: measure.onMove,
+            ...(measure.pendingA !== undefined ? { pendingMeasureA: measure.pendingA } : {}),
+            ...(measure.cursor !== undefined ? { measureCursor: measure.cursor } : {}),
           }
         : {})}
     />

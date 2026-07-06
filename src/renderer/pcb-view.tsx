@@ -10,6 +10,13 @@ import {
   silkReferenceAnchor,
 } from './pcb-board.ts'
 import type { BoardLayerId } from './pcb-layers.ts'
+import {
+  formatMeasure,
+  type Measurement,
+  type MeasureUnit,
+  measureDelta,
+  measureDistanceMm,
+} from './pcb-measure.ts'
 import { hitCopper, hitPad } from './pcb-pick.ts'
 import type { CopperTrace, Via } from './pcb-route.ts'
 import { SILK_TEXT, strokeText } from './stroke-font.ts'
@@ -41,6 +48,47 @@ const AIRWIRE = '#f5f0dc' // thin pale ratsnest lines, the EDA convention
 const SELECT = '#9ecbff' // the selected part's halo
 const VIOLATION = '#ff6b6b' // DRC markers
 const AXIS = '#6b8fc0' // the coordinate-reference axes / grid (matches the schematic's axes)
+const MEASURE = '#57d1c9' // the measure/ruler tool — teal, distinct from copper + the route colours
+
+/** A ruler read-out: the length (big) + Δx / Δy (small) on a dark chip, centred on a screen point. */
+function MeasureLabel({
+  px,
+  py,
+  dist,
+  d,
+  unit,
+}: {
+  px: number
+  py: number
+  dist: number
+  d: { dx: number; dy: number }
+  unit: MeasureUnit
+}) {
+  const main = formatMeasure(dist, unit)
+  const sub = `Δx ${formatMeasure(Math.abs(d.dx), unit)} · Δy ${formatMeasure(Math.abs(d.dy), unit)}`
+  const w = Math.max(main.length, sub.length) * 5.5 + 12
+  return (
+    <g>
+      <rect
+        x={px - w / 2}
+        y={py - 22}
+        width={w}
+        height={28}
+        rx={4}
+        fill="#0b1220"
+        opacity={0.85}
+        stroke={MEASURE}
+        strokeWidth={0.6}
+      />
+      <text x={px} y={py - 10} textAnchor="middle" fontSize={11} fontWeight={600} fill="#e8eef6">
+        {main}
+      </text>
+      <text x={px} y={py + 1} textAnchor="middle" fontSize={9} fill="#9fb0c3">
+        {sub}
+      </text>
+    </g>
+  )
+}
 
 function padShape(p: Pad, scale: number, key: string) {
   const w = p.size.w * scale
@@ -109,6 +157,13 @@ export function PcbView({
   onRouteMove,
   viaActive = false,
   onViaClick,
+  measureActive = false,
+  measureUnit = 'mm',
+  measurements = [],
+  pendingMeasureA,
+  measureCursor,
+  onMeasureClick,
+  onMeasureMove,
   coordinateGrid = false,
 }: {
   board: Board
@@ -146,13 +201,23 @@ export function PcbView({
    *  bridges the two copper layers, carrying that copper's net. */
   viaActive?: boolean
   onViaClick?: (at: { x: number; y: number }, net: string) => void
+  /** MEASURE TOOL (a dimensional ruler): click two board points to place a measurement; the live
+   *  cursor rubber-bands from the first point, showing the length in `measureUnit` + Δx / Δy. */
+  measureActive?: boolean
+  measureUnit?: MeasureUnit
+  measurements?: Measurement[]
+  pendingMeasureA?: { x: number; y: number } | null
+  measureCursor?: { x: number; y: number } | null
+  onMeasureClick?: (mm: { x: number; y: number }) => void
+  onMeasureMove?: (mm: { x: number; y: number }) => void
   /** Draw the coordinate reference behind the board: the x/y axes through the origin (0,0), the four
    *  quadrants (I–IV), and a faint mm grid — the same coordinate system the schematic canvas shows. */
   coordinateGrid?: boolean
 }) {
   // Editing (drag / rotate) belongs only to the full flat layout — the layer sheets are view-only, and
   // the route/via tools take over the pointer when on.
-  const interactive = onMove !== undefined && mode === 'flat' && !routeActive && !viaActive
+  const interactive =
+    onMove !== undefined && mode === 'flat' && !routeActive && !viaActive && !measureActive
   const [selected, setSelected] = useState<string | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
   const drag = useRef<{
@@ -296,7 +361,7 @@ export function PcbView({
         fontFamily: 'system-ui, sans-serif',
         outline: 'none',
         touchAction: 'none',
-        cursor: routeActive || viaActive ? 'crosshair' : undefined,
+        cursor: routeActive || viaActive || measureActive ? 'crosshair' : undefined,
       }}
       role="img"
       aria-label="PCB layout"
@@ -312,11 +377,21 @@ export function PcbView({
                 const hit = hitCopper(traces, padBoxes, eventToMm(e))
                 if (hit !== null) onViaClick?.(hit.at, hit.net)
               }
-            : undefined
+            : measureActive
+              ? (e) => {
+                  // snap to a pad centre when the click lands on one — pad-to-pad reads exact
+                  const mm = eventToMm(e)
+                  const pad = hitPad(padBoxes, mm)
+                  onMeasureClick?.(
+                    pad !== null ? { x: pad.x + pad.w / 2, y: pad.y + pad.h / 2 } : mm,
+                  )
+                }
+              : undefined
       }
       onPointerMove={(e) => {
         if (interactive) movePart(e)
         if (routeActive) onRouteMove?.(eventToMm(e))
+        if (measureActive) onMeasureMove?.(eventToMm(e))
       }}
       onPointerUp={interactive ? endDrag : undefined}
       onPointerCancel={interactive ? endDrag : undefined}
@@ -620,6 +695,69 @@ export function PcbView({
                   fill={routeColor}
                 />
               ))}
+            </>
+          )}
+        </g>
+      )}
+
+      {/* MEASURE / RULER overlay: placed measurements (a solid dimension line + endpoints + the length
+          & Δx/Δy read-out) plus the pending rubber-band from the first point to the live cursor. */}
+      {measureActive && (
+        <g pointerEvents="none" data-measure-overlay="true">
+          {measurements.map((m) => {
+            const dist = measureDistanceMm(m.a, m.b)
+            const d = measureDelta(m.a, m.b)
+            return (
+              <g key={`meas-${m.a.x},${m.a.y}-${m.b.x},${m.b.y}`}>
+                <line
+                  x1={sx(m.a.x)}
+                  y1={sy(m.a.y)}
+                  x2={sx(m.b.x)}
+                  y2={sy(m.b.y)}
+                  stroke={MEASURE}
+                  strokeWidth={1.5}
+                />
+                <circle cx={sx(m.a.x)} cy={sy(m.a.y)} r={2.6} fill={MEASURE} />
+                <circle cx={sx(m.b.x)} cy={sy(m.b.y)} r={2.6} fill={MEASURE} />
+                <MeasureLabel
+                  px={(sx(m.a.x) + sx(m.b.x)) / 2}
+                  py={(sy(m.a.y) + sy(m.b.y)) / 2}
+                  dist={dist}
+                  d={d}
+                  unit={measureUnit}
+                />
+              </g>
+            )
+          })}
+          {pendingMeasureA !== undefined && pendingMeasureA !== null && (
+            <>
+              <circle
+                cx={sx(pendingMeasureA.x)}
+                cy={sy(pendingMeasureA.y)}
+                r={2.6}
+                fill={MEASURE}
+              />
+              {measureCursor !== undefined && measureCursor !== null && (
+                <>
+                  <line
+                    x1={sx(pendingMeasureA.x)}
+                    y1={sy(pendingMeasureA.y)}
+                    x2={sx(measureCursor.x)}
+                    y2={sy(measureCursor.y)}
+                    stroke={MEASURE}
+                    strokeWidth={1.5}
+                    strokeDasharray="4 3"
+                    opacity={0.85}
+                  />
+                  <MeasureLabel
+                    px={(sx(pendingMeasureA.x) + sx(measureCursor.x)) / 2}
+                    py={(sy(pendingMeasureA.y) + sy(measureCursor.y)) / 2}
+                    dist={measureDistanceMm(pendingMeasureA, measureCursor)}
+                    d={measureDelta(pendingMeasureA, measureCursor)}
+                    unit={measureUnit}
+                  />
+                </>
+              )}
             </>
           )}
         </g>
