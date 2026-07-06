@@ -338,6 +338,70 @@ describe('runDrc', () => {
       expect(hot[0]?.message).toContain('barrel')
       expect(oc(0.5)).toHaveLength(0)
     })
+
+    test('multi-drop: a thin branch off a high-current trunk is checked against ITS load, not the trunk', () => {
+      // A 5 A source at (0,0) feeds a big 4.9 A load at (10,2) and a tiny 0.1 A load at (10,-2), the
+      // net routed as a trunk + two branches. The tiny branch (0.1 A) must NOT be over-current, though
+      // the whole net carries 5 A.
+      const board = { outline: { x: -5, y: -5, w: 30, h: 20 }, placements: [] }
+      const box = (pad: string, x: number, y: number) => ({
+        pad,
+        net: 'n',
+        throughHole: false,
+        x: x - 0.5,
+        y: y - 0.5,
+        w: 1,
+        h: 1,
+      })
+      const rn = {
+        airwires: [],
+        padBoxes: [box('S/1', 0, 0), box('L1/1', 10, 2), box('L2/1', 10, -2)],
+      }
+      const seg = (pts: { x: number; y: number }[]) => ({
+        net: 'n',
+        widthMm: 0.25,
+        layer: 'top' as const,
+        points: pts,
+      })
+      const routing = {
+        traces: [
+          seg([
+            { x: 0, y: 0 },
+            { x: 10, y: 0 },
+          ]), // trunk (5 A)
+          seg([
+            { x: 10, y: 0 },
+            { x: 10, y: 2 },
+          ]), // branch to the big load (4.9 A)
+          seg([
+            { x: 10, y: 0 },
+            { x: 10, y: -2 },
+          ]), // branch to the tiny load (0.1 A)
+        ],
+        vias: [],
+        unrouted: [],
+      }
+      const opts = {
+        netCurrents: new Map([['n', 5]]),
+        copperWeight: 'one_oz' as const,
+        padCurrents: new Map([
+          ['S/1', 5],
+          ['L1/1', 4.9],
+          ['L2/1', 0.1],
+        ]),
+      }
+      const oc = runDrc(board, rn, routing, undefined, opts).filter(
+        (v) => v.code === 'over-current',
+      )
+      // trunk (5 A) and the big branch (4.9 A) are over the ~0.88 A rating; the tiny branch is NOT.
+      expect(oc).toHaveLength(2)
+      // WITHOUT the per-pad currents, the tiny branch would be flagged against the whole-net 5 A too.
+      const withoutPads = runDrc(board, rn, routing, undefined, {
+        netCurrents: opts.netCurrents,
+        copperWeight: opts.copperWeight,
+      }).filter((v) => v.code === 'over-current')
+      expect(withoutPads).toHaveLength(3) // all three traces, including the false-flagged tiny branch
+    })
   })
 
   describe('open-net — a net not joined by its own copper', () => {

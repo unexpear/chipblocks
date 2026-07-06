@@ -1557,9 +1557,8 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // through-current, or a transistor pin's own (base pin = the tiny base current, emitter pin =
   // iC + iB, collector pin = iC; a MOSFET gate = ~0). So a transistor's collector current is never
   // charged to its base/gate trace, and an AC-driven trace is checked against its real RMS current.
-  const pcbNetCurrents = useMemo(() => {
-    if (!pcbActive) return new Map<string, number>()
-    const currentOfPad = (partId: string, padId: string): number | undefined => {
+  const pcbPadCurrentOf = useCallback(
+    (partId: string, padId: string): number | undefined => {
       const definition = solvedWorld.instances.get(partId)?.definition
       const terminal = definition !== undefined ? terminalForPad(definition, padId) : undefined
       if (pcbAcRms !== undefined) {
@@ -1570,9 +1569,30 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         return terminal !== undefined ? perTerminal.get(terminal) : undefined
       }
       return readings.get(partId)?.current
+    },
+    [solvedWorld, solution, readings, pcbAcRms],
+  )
+  const pcbNetCurrents = useMemo(
+    () =>
+      pcbActive
+        ? netThroughCurrents(pcbRatsnest.padBoxes, pcbPadCurrentOf)
+        : new Map<string, number>(),
+    [pcbActive, pcbRatsnest, pcbPadCurrentOf],
+  )
+  // Per-pad current, keyed `partId/padId` — feeds the over-current DRC's per-segment (multi-drop)
+  // check so a thin branch trace is checked against ITS load, not the whole net's trunk current.
+  const pcbPadCurrents = useMemo(() => {
+    const m = new Map<string, number>()
+    if (!pcbActive) return m
+    for (const pb of pcbRatsnest.padBoxes) {
+      const slash = pb.pad.indexOf('/')
+      const partId = slash >= 0 ? pb.pad.slice(0, slash) : pb.pad
+      const padId = slash >= 0 ? pb.pad.slice(slash + 1) : ''
+      const current = pcbPadCurrentOf(partId, padId)
+      if (current !== undefined) m.set(pb.pad, Math.abs(current))
     }
-    return netThroughCurrents(pcbRatsnest.padBoxes, currentOfPad)
-  }, [pcbActive, pcbRatsnest, readings, solution, solvedWorld, pcbAcRms])
+    return m
+  }, [pcbActive, pcbRatsnest, pcbPadCurrentOf])
   // Design-rule check — the board's failure-mode pass (cited limits), re-run live like the routing.
   // The solved net currents + copper weight enable the over-current check (trace vs IPC-2221 ampacity).
   const pcbDrc = useMemo(
@@ -1581,9 +1601,18 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         ? runDrc(pcbBoard, pcbRatsnest, pcbMergedRouting, DEFAULT_ROUTE_CLASS, {
             netCurrents: pcbNetCurrents,
             copperWeight: pcbStackup.copperWeight,
+            padCurrents: pcbPadCurrents,
           })
         : [],
-    [pcbActive, pcbBoard, pcbRatsnest, pcbMergedRouting, pcbNetCurrents, pcbStackup.copperWeight],
+    [
+      pcbActive,
+      pcbBoard,
+      pcbRatsnest,
+      pcbMergedRouting,
+      pcbNetCurrents,
+      pcbStackup.copperWeight,
+      pcbPadCurrents,
+    ],
   )
   // The over-current check needs solved currents. A purely-digital (logic-fidelity) board is resolved
   // as 0/1 with NO currents (empty branches), and an unsolved board has none either — so the check

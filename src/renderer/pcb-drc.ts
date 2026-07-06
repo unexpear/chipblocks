@@ -15,6 +15,7 @@ import {
   type RouteClass,
   VIA_RULES,
 } from './pcb-route.ts'
+import { netSegmentCurrents } from './pcb-segment-current.ts'
 import {
   type CopperWeight,
   IPC2221,
@@ -179,7 +180,15 @@ export function runDrc(
   ratsnest: Ratsnest,
   routing: BoardRouting,
   cls: RouteClass = DEFAULT_ROUTE_CLASS,
-  opts?: { netCurrents?: Map<string, number>; copperWeight?: CopperWeight },
+  opts?: {
+    netCurrents?: Map<string, number>
+    copperWeight?: CopperWeight
+    /** Per-pad current (magnitude), keyed by the pad's `partId/padId`. When present, a multi-drop
+     *  net's copper is resolved into a tree and each TRACE SEGMENT is checked against the current it
+     *  actually carries — so a thin branch off a high-current trunk is checked against its own small
+     *  load, not the trunk. Absent ⇒ every segment falls back to the whole-net max (the old behaviour). */
+    padCurrents?: Map<string, number>
+  },
 ): DrcViolation[] {
   const out: DrcViolation[] = []
 
@@ -358,26 +367,65 @@ export function runDrc(
   if (opts?.netCurrents !== undefined && opts.copperWeight !== undefined) {
     const weight = opts.copperWeight
     const oz = weight === 'two_oz' ? '2' : weight === 'half_oz' ? '0.5' : '1'
+    // Group traces by net so a multi-drop net's copper can be resolved into a tree and each segment
+    // checked against the current it really carries (a thin branch off a trunk isn't the trunk's load).
+    const tracesByNet = new Map<string, BoardRouting['traces'][number][]>()
     for (const t of routing.traces) {
-      const current = opts.netCurrents.get(t.net) ?? 0
-      if (current <= 1e-9) continue
-      // Top + bottom are OUTER copper (the higher 'external' IPC-2221 constant); a BURIED inner-layer
-      // trace has no air to cool it, so it carries about HALF as much — the 'internal' constant.
-      const external = t.layer === 'top' || t.layer === 'bottom'
-      const ampacity = traceAmpacity(
-        t.widthMm,
-        weight,
-        OVER_CURRENT_DELTA_T_C,
-        external ? 'external' : 'internal',
-      )
-      if (ampacity <= 0 || current <= ampacity) continue
-      const a = t.points[0]
-      const b = t.points[1] ?? a
-      if (a === undefined || b === undefined) continue
-      out.push({
-        code: 'over-current',
-        message: `a ${fmt(t.widthMm)} mm ${external ? '' : 'inner-layer '}trace on net ${t.net} carries ${fmtA(current)} A — over its ~${fmtA(ampacity)} A rating (IPC-2221 ${external ? 'external' : 'internal'}, ${OVER_CURRENT_DELTA_T_C} °C rise, ${oz} oz). Widen the trace or split the current.`,
-        at: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      const list = tracesByNet.get(t.net)
+      if (list === undefined) tracesByNet.set(t.net, [t])
+      else list.push(t)
+    }
+    // Per-net pad currents (point + magnitude) — the input to the per-segment tree analysis. Absent
+    // (no padCurrents) ⇒ every segment falls back to the whole-net max, the old behaviour.
+    const padCurrentsByNet = new Map<string, { at: { x: number; y: number }; current: number }[]>()
+    if (opts.padCurrents !== undefined) {
+      for (const pb of ratsnest.padBoxes) {
+        const current = opts.padCurrents.get(pb.pad)
+        if (current === undefined) continue
+        const entry = { at: { x: pb.x + pb.w / 2, y: pb.y + pb.h / 2 }, current }
+        const list = padCurrentsByNet.get(pb.net)
+        if (list === undefined) padCurrentsByNet.set(pb.net, [entry])
+        else list.push(entry)
+      }
+    }
+    for (const [net, netTraces] of tracesByNet) {
+      const netMax = opts.netCurrents.get(net) ?? 0
+      if (netMax <= 1e-9) continue
+      const netPads = padCurrentsByNet.get(net)
+      const segCurrents =
+        netPads !== undefined
+          ? netSegmentCurrents(netTraces, netPads, netMax)
+          : netTraces.map((t) => new Array(Math.max(0, t.points.length - 1)).fill(netMax))
+      netTraces.forEach((t, ti) => {
+        // Top + bottom are OUTER copper (the higher 'external' IPC-2221 constant); a BURIED inner-layer
+        // trace has no air to cool it, so it carries about HALF as much — the 'internal' constant.
+        const external = t.layer === 'top' || t.layer === 'bottom'
+        const ampacity = traceAmpacity(
+          t.widthMm,
+          weight,
+          OVER_CURRENT_DELTA_T_C,
+          external ? 'external' : 'internal',
+        )
+        if (ampacity <= 0) return
+        // The worst segment on this trace — one violation per over-current trace, at that spot.
+        const segs = segCurrents[ti] ?? []
+        let worst = 0
+        let worstSeg = 0
+        segs.forEach((c, si) => {
+          if (c > worst) {
+            worst = c
+            worstSeg = si
+          }
+        })
+        if (worst <= ampacity) return
+        const a = t.points[worstSeg]
+        const b = t.points[worstSeg + 1] ?? a
+        if (a === undefined || b === undefined) return
+        out.push({
+          code: 'over-current',
+          message: `a ${fmt(t.widthMm)} mm ${external ? '' : 'inner-layer '}trace on net ${net} carries ${fmtA(worst)} A — over its ~${fmtA(ampacity)} A rating (IPC-2221 ${external ? 'external' : 'internal'}, ${OVER_CURRENT_DELTA_T_C} °C rise, ${oz} oz). Widen the trace or split the current.`,
+          at: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+        })
       })
     }
     // A plated via's barrel is a current bottleneck — far less copper than a wide trace — and often the
