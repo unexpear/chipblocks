@@ -175,6 +175,7 @@ import {
   solveTransientDispatch,
 } from './pipeline/solve-canvas.ts'
 import { ProjectBrowser, type ProjectChoice } from './project-browser.tsx'
+import { projectNameFromPath, recordRecentProject } from './recent-projects.ts'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
 import { scanMatrixFromBuffer } from './scan-display.ts'
 import { SchematicHierarchy } from './schematic-hierarchy.tsx'
@@ -234,6 +235,10 @@ declare global {
       onSaveRequest: (callback: () => void) => void
       saveCircuitData: (text: string) => Promise<{ ok: boolean; path?: string }>
       onCircuitOpened: (callback: (text: string) => void) => void
+      openCircuitDialog?: () => Promise<{ ok: boolean; path?: string; text?: string }>
+      readCircuitFile?: (
+        path: string,
+      ) => Promise<{ ok: boolean; path?: string; text?: string; reason?: string }>
       onNetlistOpened?: (callback: (text: string) => void) => void
       onExportNetlistRequest?: (callback: () => void) => void
       saveNetlistData?: (text: string) => Promise<{ ok: boolean; path?: string }>
@@ -685,10 +690,13 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     // dropdowns); the canvas itself starts from the chosen template's parts, not the
     // catalog demo layout.
     const world = loadCatalogWorld()
-    const nodes: Node[] = templateNodes(project.template, project.depth)
-    // A fresh project starts unwired — the user draws the connections (or a richer
-    // wired starter lands later). The re-solve fills current/length/resistance.
-    const baseEdges: Edge[] = []
+    // A SAVED project opens from its stored circuit; a fresh one from the chosen template (unwired —
+    // the user draws the connections). The re-solve fills current/length/resistance either way.
+    const flow = project.loaded
+      ? circuitFileToFlow(project.loaded)
+      : { nodes: templateNodes(project.template, project.depth), edges: [] as Edge[] }
+    const nodes: Node[] = flow.nodes
+    const baseEdges: Edge[] = flow.edges
     // Catalog material ids for the Properties panel's material dropdown.
     const materials = [...world.definitions.values()]
       .filter((d) => (d as { kind?: string }).kind === 'material')
@@ -729,7 +737,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       materialResistivity,
       validMaterialsByDef,
     }
-  }, [project.template, project.depth])
+  }, [project.template, project.depth, project.loaded])
 
   // Live React Flow state — nodes are draggable (S19-v3-3); setNodes/setEdges
   // also let the palette drop new parts and the user draw new wires.
@@ -849,7 +857,11 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   } | null>(null)
   const { screenToFlowPosition, fitView, deleteElements } = useReactFlow()
   const updateNodeInternals = useUpdateNodeInternals()
-  const dropCount = useRef(initial.nodes.length)
+  // A loaded project resumes its id counter ABOVE the saved ids (so new drops never collide); a fresh
+  // template project just counts its seeded parts.
+  const dropCount = useRef(
+    project.loaded ? maxIdSuffix(project.loaded.nodes) : initial.nodes.length,
+  )
   // The Add-Part pop-up (the KiCad-style Choose-a-part dialog) — open state lives here.
   const [pickerOpen, setPickerOpen] = useState(false)
   const [sheetSettings, setSheetSettings] = useState<SheetSettings>(DEFAULT_SHEET)
@@ -1028,9 +1040,18 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         projectAmbientRef.current,
         sheetSettingsRef.current,
       )
-      void bridge.saveCircuitData(JSON.stringify(file, null, 2))
+      void bridge.saveCircuitData(JSON.stringify(file, null, 2)).then((r) => {
+        // A successful save lands the project in the "My Projects" list (by its file path).
+        if (r.ok && r.path !== undefined) {
+          recordRecentProject({
+            name: project.name || projectNameFromPath(r.path),
+            path: r.path,
+            savedAt: Date.now(),
+          })
+        }
+      })
     })
-  }, [nodes, edges])
+  }, [nodes, edges, project.name])
 
   // Export (rung 2): serialize the canvas to a CircuitFile, then to a SPICE netlist; hand the text to
   // the main process to write, and show the report — what exported, what has no SPICE equivalent.

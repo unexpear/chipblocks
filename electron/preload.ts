@@ -27,6 +27,15 @@ contextBridge.exposeInMainWorld('chipblocks', {
   saveCircuitData: (text: string): Promise<{ ok: boolean; path?: string }> =>
     ipcRenderer.invoke('file:save-data', text),
   onCircuitOpened: (callback: (text: string) => void) => subscribe('file:opened', callback),
+  // Open a .chipblocks project into a NEW TAB (tabbed shell): a request/response round-trip that
+  // returns the file's text + path, so the launcher can spin up a tab instead of replacing a canvas.
+  openCircuitDialog: (): Promise<{ ok: boolean; path?: string; text?: string }> =>
+    ipcRenderer.invoke('circuit:open-dialog'),
+  // Reopen a recent project by its known path (the My Projects list); ok:false + reason if it moved.
+  readCircuitFile: (
+    path: string,
+  ): Promise<{ ok: boolean; path?: string; text?: string; reason?: string }> =>
+    ipcRenderer.invoke('circuit:read', path),
   // Import Netlist (rung 1b): a netlist file's raw text arrives; the renderer parses it.
   onNetlistOpened: (callback: (text: string) => void) => subscribe('file:netlist-opened', callback),
   // Export Netlist (rung 2): the File menu asks; the renderer answers with the SPICE text.

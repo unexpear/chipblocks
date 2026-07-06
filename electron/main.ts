@@ -166,6 +166,49 @@ function registerFabZipExportHandler(window: BrowserWindow): void {
   })
 }
 
+/** Read + validate a .chipblocks file at `path` (shared by the open-into-a-new-tab handlers below,
+ *  which RETURN content to the renderer instead of pushing it onto the one canvas like the menu does). */
+async function readCircuitAt(
+  path: string,
+): Promise<{ ok: true; text: string } | { ok: false; reason: string }> {
+  let text: string
+  try {
+    text = await readFile(path, 'utf8')
+  } catch (error) {
+    return { ok: false, reason: `Reading the file failed: ${String(error)}` }
+  }
+  const result = deserializeCircuit(text)
+  if (!result.ok) return { ok: false, reason: result.reason }
+  return { ok: true, text }
+}
+
+function registerCircuitOpenHandlers(window: BrowserWindow): void {
+  // Open a .chipblocks file into a NEW TAB: show the dialog, validate, and RETURN the text + path so
+  // the renderer can spin up a fresh tab (the menu's file:opened, by contrast, replaces the canvas).
+  ipcMain.removeHandler('circuit:open-dialog')
+  ipcMain.handle('circuit:open-dialog', async () => {
+    const picked = await dialog.showOpenDialog(window, {
+      filters: CIRCUIT_FILTERS,
+      properties: ['openFile'],
+    })
+    const path = picked.filePaths[0]
+    if (picked.canceled || path === undefined) return { ok: false }
+    const read = await readCircuitAt(path)
+    if (!read.ok) {
+      dialog.showErrorBox('Could not open project', read.reason)
+      return { ok: false }
+    }
+    return { ok: true, path, text: read.text }
+  })
+  // Reopen a recent project by its known path (from the My Projects list). A missing/moved file
+  // returns ok:false with a reason so the launcher can prune the stale entry.
+  ipcMain.removeHandler('circuit:read')
+  ipcMain.handle('circuit:read', async (_event, path: string) => {
+    const read = await readCircuitAt(path)
+    return read.ok ? { ok: true, path, text: read.text } : { ok: false, reason: read.reason }
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Keyboard shortcuts (S19-v3-62). The bindings live in ONE file in the app's
 // data folder; the renderer's Shortcuts panel reads and edits them over IPC,
@@ -483,6 +526,7 @@ function createWindow(): void {
   registerSaveHandler(window)
   registerNetlistExportHandler(window)
   registerFabZipExportHandler(window)
+  registerCircuitOpenHandlers(window)
   registerKeybindHandlers(window)
 }
 

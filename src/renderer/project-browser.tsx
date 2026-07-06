@@ -1,4 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
+import { type CircuitFile, deserializeCircuit } from './circuit-file.ts'
+import {
+  listRecentProjects,
+  projectNameFromPath,
+  type RecentProject,
+  recordRecentProject,
+  removeRecentProject,
+} from './recent-projects.ts'
 import { DeviceGlyph } from './symbols.tsx'
 import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
 import { useShortcuts } from './use-shortcuts.tsx'
@@ -18,6 +26,10 @@ export type ProjectChoice = {
   templateName: string
   name: string
   depth: 'block' | 'design'
+  /** When set, the tab opens from a SAVED project (this loaded circuit) instead of a template. */
+  loaded?: CircuitFile
+  /** The .chipblocks file this project was opened from (for Save reusing the path + the MRU). */
+  path?: string
 }
 
 type Template = {
@@ -218,11 +230,49 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
     setCatId(c.id)
     setTplId(c.templates[0]?.id ?? '')
     setDepth('design')
+    if (c.id === 'recent') setRecents(listRecentProjects()) // pick up anything saved since mount
   }
 
   const create = () => {
     if (!template) return
     onCreate({ template: template.id, templateName: template.name, name, depth })
+  }
+
+  // "My Projects": the saved .chipblocks files, and opening one (or an arbitrary file) into a new tab.
+  const [recents, setRecents] = useState<RecentProject[]>(() => listRecentProjects())
+  const openFromFile = (text: string, path: string) => {
+    const result = deserializeCircuit(text)
+    if (!result.ok) return
+    const nm = projectNameFromPath(path)
+    recordRecentProject({ name: nm, path, savedAt: Date.now() })
+    onCreate({
+      template: '',
+      templateName: nm,
+      name: nm,
+      depth: 'design',
+      loaded: result.file,
+      path,
+    })
+  }
+  const openDialog = async () => {
+    const r = await window.chipblocks?.openCircuitDialog?.()
+    if (r?.ok && typeof r.text === 'string' && typeof r.path === 'string') {
+      openFromFile(r.text, r.path)
+    }
+  }
+  const reopenRecent = async (rp: RecentProject) => {
+    const r = await window.chipblocks?.readCircuitFile?.(rp.path)
+    if (r?.ok && typeof r.text === 'string') {
+      openFromFile(r.text, rp.path)
+    } else {
+      // the file moved or was deleted — prune the stale entry
+      removeRecentProject(rp.path)
+      setRecents(listRecentProjects())
+    }
+  }
+  const dropRecent = (path: string) => {
+    removeRecentProject(path)
+    setRecents(listRecentProjects())
   }
 
   const depthFields =
@@ -336,7 +386,103 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
             alignContent: 'start',
           }}
         >
-          {category && category.templates.length > 0 ? (
+          {catId === 'recent' ? (
+            <div
+              style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 12 }}
+            >
+              <button
+                type="button"
+                onClick={() => void openDialog()}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '12px 14px',
+                  borderRadius: 8,
+                  border: `1px dashed ${BORDER}`,
+                  background: PANEL,
+                  color: TEXT,
+                  cursor: 'pointer',
+                  fontSize: 13,
+                }}
+              >
+                <span style={{ fontSize: 18, color: ACCENT }}>+</span>
+                Open a saved project… <span style={{ color: MUTED }}>(.chipblocks file)</span>
+              </button>
+              {recents.length === 0 ? (
+                <div style={{ color: MUTED, fontSize: 13, padding: '20px 4px' }}>
+                  No saved projects yet — create one from a template and save it (File ▸ Save), and
+                  it will appear here to reopen.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {recents.map((rp) => (
+                    <div
+                      key={rp.path}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: '8px 12px',
+                        borderRadius: 6,
+                        border: `1px solid ${BORDER}`,
+                        background: PANEL,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => void reopenRecent(rp)}
+                        style={{
+                          all: 'unset',
+                          cursor: 'pointer',
+                          flex: 1,
+                          minWidth: 0,
+                          color: TEXT,
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 13,
+                            color: TEXT,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {rp.name}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: MUTED,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {rp.path}
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        title="Remove from the list"
+                        onClick={() => dropRecent(rp.path)}
+                        style={{
+                          all: 'unset',
+                          cursor: 'pointer',
+                          color: MUTED,
+                          fontSize: 15,
+                          padding: '0 4px',
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : category && category.templates.length > 0 ? (
             category.templates.map((t) => {
               const on = t.id === tplId
               return (
@@ -381,9 +527,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                 fontSize: 13,
               }}
             >
-              {catId === 'recent'
-                ? 'No projects yet — create one from a template, or open a saved .chipblocks file. Your projects will appear here.'
-                : 'Coming soon — board, chip and system design arrive as ChipBlocks grows down the stack.'}
+              Coming soon — board, chip and system design arrive as ChipBlocks grows down the stack.
             </div>
           )}
         </div>
