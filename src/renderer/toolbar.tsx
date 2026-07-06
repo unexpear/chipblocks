@@ -110,14 +110,6 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
       'PCB — the physical layout in a side panel: every part that has a footprint placed on a board, copper pads and all. The first physical form of the circuit, on the road to the manufacturing files.',
   },
   {
-    id: 'workspace',
-    label: 'Board',
-    icon: '🧱',
-    color: THEME.accentBlueBright,
-    title:
-      'Board workspace — open the physical board as a FULL-SIZE editing surface in the main area (co-equal with the schematic), not just the side panel. Flat / Layers / 3-D views, drag parts to place them, and the board tools live here. Click again to return to the schematic.',
-  },
-  {
     id: 'group',
     label: 'Group',
     icon: '⧉',

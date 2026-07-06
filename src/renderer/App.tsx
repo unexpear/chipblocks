@@ -569,6 +569,76 @@ function ProjectTabBar({
   )
 }
 
+/**
+ * The level breadcrumb across the top of a project — Circuit ▸ Board ▸ Chip ▸ System. Circuit and
+ * Board are the real levels (the schematic and the physical board workspace); Chip + System are
+ * "coming soon" stops. This replaces the old schematic↔board toggle: click a level to travel to it.
+ */
+function LevelBreadcrumb({
+  mode,
+  onMode,
+  light,
+}: {
+  mode: 'schematic' | 'board'
+  onMode: (m: 'schematic' | 'board') => void
+  light: boolean
+}) {
+  const levels = [
+    { id: 'schematic', label: 'Circuit', soon: false },
+    { id: 'board', label: 'Board', soon: false },
+    { id: 'chip', label: 'Chip', soon: true },
+    { id: 'system', label: 'System', soon: true },
+  ] as const
+  const bright = light ? THEME.borderSubtle : THEME.textBright
+  const soft = light ? THEME.borderStrong : THEME.textSoft
+  const faint = THEME.textFaint
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 2,
+        height: 30,
+        flexShrink: 0,
+        padding: '0 14px',
+        background: light ? THEME.white : THEME.surfaceBase,
+        borderBottom: `1px solid ${THEME.borderSubtle}`,
+        fontSize: 12,
+      }}
+    >
+      {levels.map((lvl, i) => {
+        const on =
+          (lvl.id === 'board' && mode === 'board') ||
+          (lvl.id === 'schematic' && mode === 'schematic')
+        return (
+          <span key={lvl.id} style={{ display: 'flex', alignItems: 'center' }}>
+            {i > 0 && <span style={{ color: faint, margin: '0 4px' }}>▸</span>}
+            <button
+              type="button"
+              disabled={lvl.soon}
+              onClick={() => {
+                if (lvl.id === 'schematic' || lvl.id === 'board') onMode(lvl.id)
+              }}
+              title={lvl.soon ? `${lvl.label} — coming soon` : `Go to the ${lvl.label} level`}
+              style={{
+                all: 'unset',
+                cursor: lvl.soon ? 'default' : 'pointer',
+                color: lvl.soon ? faint : on ? bright : soft,
+                fontWeight: on ? 700 : 400,
+                padding: '4px 7px',
+                borderRadius: 4,
+              }}
+            >
+              {lvl.label}
+              {lvl.soon && <span style={{ fontSize: 10, color: faint }}> · soon</span>}
+            </button>
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
 export function App() {
   // The window is TABBED: a permanent "My Projects" home tab (the launcher) plus one tab per open
   // project. Only the ACTIVE tab is live — every project tab stays MOUNTED (so switching back is
@@ -5447,13 +5517,17 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         // Dock-grid: top/bottom bars span all columns; left/right panels fill the
         // middle row; the canvas takes the center cell. Empty edges collapse, so
         // docked panels never overlap and everything adjusts around them.
-        gridTemplateRows: 'auto minmax(0, 1fr) auto',
+        gridTemplateRows: 'auto auto minmax(0, 1fr) auto',
         gridTemplateColumns: 'auto minmax(0, 1fr) auto',
-        gridTemplateAreas: '"top top top" "left center right" "bottom bottom bottom"',
+        gridTemplateAreas:
+          '"crumb crumb crumb" "top top top" "left center right" "bottom bottom bottom"',
       }}
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
+      <div style={{ gridArea: 'crumb' }}>
+        <LevelBreadcrumb mode={workspaceMode} onMode={setWorkspaceMode} light={light} />
+      </div>
       {/* biome-ignore lint/a11y/noStaticElementInteractions: this wrapper only ROUTES capture-phase clicks to the active tool (lasso guard, scope probes, meter probes, wire clicks); the real interactive targets are the terminal handles and buttons inside */}
       <div
         data-workspace-mode={workspaceMode}
@@ -5616,23 +5690,6 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                   </span>
                 )}
               </span>
-              <button
-                type="button"
-                onClick={onWorkspace}
-                title="Return to the schematic canvas"
-                style={{
-                  marginLeft: 'auto',
-                  border: `1px solid ${THEME.borderStrong}`,
-                  background: THEME.surfaceInput,
-                  color: THEME.textSoft,
-                  borderRadius: 4,
-                  fontSize: 11,
-                  padding: '3px 10px',
-                  cursor: 'pointer',
-                }}
-              >
-                ← Schematic
-              </button>
             </div>
             <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
               {pcbBoard.placements.length > 0 ? (
