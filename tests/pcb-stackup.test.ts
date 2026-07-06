@@ -301,6 +301,14 @@ describe('materials and finishes are cited (the anti-placeholder rule)', () => {
     expect(SURFACE_FINISHES.hasl.leadFree).toBe(false)
     expect(SURFACE_FINISHES.enig.leadFree).toBe(true)
     expect(SURFACE_FINISHES.enig.provenance.citation).toContain('IPC-4552')
+    // the added premium / press-fit finishes, cited to their IPC-455x standards, both lead-free
+    expect(SURFACE_FINISHES.enepig.provenance.citation).toContain('IPC-4556')
+    expect(SURFACE_FINISHES.enepig.leadFree).toBe(true)
+    expect(SURFACE_FINISHES.immersion_tin.provenance.citation).toContain('IPC-4554')
+    expect(SURFACE_FINISHES.immersion_tin.leadFree).toBe(true)
+    // every finish maps to a distinct name (the picker + the fab spec read these)
+    const names = Object.values(SURFACE_FINISHES).map((f) => f.name)
+    expect(new Set(names).size).toBe(names.length)
   })
 })
 

@@ -82,7 +82,14 @@ export const FR4_SUBSTRATE = {
 } as const
 
 /** A surface finish plated onto the exposed copper (the solder-mask openings) — what solders to. */
-export type SurfaceFinishId = 'hasl' | 'hasl_lead_free' | 'enig' | 'osp' | 'immersion_silver'
+export type SurfaceFinishId =
+  | 'hasl'
+  | 'hasl_lead_free'
+  | 'enig'
+  | 'enepig'
+  | 'osp'
+  | 'immersion_silver'
+  | 'immersion_tin'
 
 export type SurfaceFinish = {
   id: SurfaceFinishId
@@ -149,6 +156,22 @@ export const SURFACE_FINISHES: Record<SurfaceFinishId, SurfaceFinish> = {
       date_accessed: '2026-07-04',
     },
   },
+  enepig: {
+    id: 'enepig',
+    name: 'ENEPIG',
+    description:
+      'Electroless nickel (~3–6 µm) / electroless palladium (~0.05–0.3 µm) / immersion gold (~0.03–0.1 µm). The premium finish — the palladium barrier eliminates ENIG’s "black pad" risk, it is wire-bondable AND solderable, and it is dead flat; the most expensive of the common finishes.',
+    leadFree: true,
+    provenance: {
+      source_type: 'standard',
+      title: 'ENEPIG per IPC-4556: Ni 3–6 µm, Pd 0.05–0.3 µm, Au 0.03–0.1 µm',
+      citation:
+        'IPC-4556 (ENEPIG specification): electroless nickel 118–236 µin (3–6 µm), electroless palladium 2–12 µin (0.05–0.3 µm), immersion gold 1.2–3.9 µin (0.03–0.1 µm). Wire-bondable + solderable, no black-pad; the top-tier finish, offered by PCBWay/JLCPCB at a surcharge.',
+      confidence: 'high',
+      url: 'https://www.ipc.org',
+      date_accessed: '2026-07-06',
+    },
+  },
   osp: {
     id: 'osp',
     name: 'OSP',
@@ -179,6 +202,22 @@ export const SURFACE_FINISHES: Record<SurfaceFinishId, SurfaceFinish> = {
       confidence: 'medium',
       url: 'https://www.ipc.org',
       date_accessed: '2026-07-04',
+    },
+  },
+  immersion_tin: {
+    id: 'immersion_tin',
+    name: 'Immersion tin',
+    description:
+      'A thin immersion tin layer (~0.8–1.2 µm) on the copper. Flat, lead-free, excellent for fine-pitch and press-fit connectors; limited shelf life (copper-tin intermetallic keeps growing) and best with a single reflow.',
+    leadFree: true,
+    provenance: {
+      source_type: 'standard',
+      title: 'Immersion tin per IPC-4554: ~0.8–1.2 µm Sn',
+      citation:
+        'IPC-4554 (immersion tin specification): minimum 1.0 µm (40 µin) tin on copper, typically 0.8–1.2 µm. Flat, RoHS, ideal for press-fit / fine-pitch; Cu-Sn intermetallic growth limits shelf life + reflow count.',
+      confidence: 'medium',
+      url: 'https://www.ipc.org',
+      date_accessed: '2026-07-06',
     },
   },
 }

@@ -39,10 +39,14 @@ function jobFinish(stackup: Stackup): string {
       return 'HAL lead-free'
     case 'enig':
       return 'ENIG'
+    case 'enepig':
+      return 'ENEPIG'
     case 'osp':
       return 'OSP'
     case 'immersion_silver':
       return 'Immersion silver'
+    case 'immersion_tin':
+      return 'Immersion tin'
   }
 }
 

@@ -103,6 +103,13 @@ describe('gerberJobFile', () => {
     expect(copper).toHaveLength(4)
   })
 
+  test('the added finishes map to their KiCad job-file names (ENEPIG / Immersion tin)', () => {
+    const opt = (surfaceFinish: 'enepig' | 'immersion_tin') =>
+      buildStackup({ thicknessMm: 1.6, copperWeight: 'one_oz', surfaceFinish })
+    expect(parse(opt('enepig')).GeneralSpecs.Finish).toBe('ENEPIG')
+    expect(parse(opt('immersion_tin')).GeneralSpecs.Finish).toBe('Immersion tin')
+  })
+
   test('deterministic — the same board always yields the same manifest text', () => {
     const a = gerberJobFile({
       board,
