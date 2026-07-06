@@ -57,6 +57,7 @@ import {
   ungroupBlock,
   withoutOffsets,
 } from './blocks.ts'
+import { boardRmsTerminalCurrents } from './board-ac-current.ts'
 import { BodePanel } from './bode-panel.tsx'
 import { BUILTIN_BLOCKS, buildFrameBuffer, CALCULATOR, CHAR_GEN } from './builtin-blocks.ts'
 import { ConnectPointsOverlay, PendingWirePreview } from './canvas-overlays.tsx'
@@ -1534,25 +1535,35 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [pcbStackupOptions, setPcbStackupOptions] =
     useState<StackupOptions>(DEFAULT_STACKUP_OPTIONS)
   const pcbStackup = useMemo(() => buildStackup(pcbStackupOptions), [pcbStackupOptions])
-  // The current on each net (from the LIVE solve) — what the over-current DRC checks each trace's
-  // IPC-2221 ampacity against. Each pad reports its OWN terminal's current: a two-terminal part's
-  // through-current, or — for a transistor — that pin's solved current (base pin = the tiny base
-  // current, emitter pin = iC + iB, collector pin = iC; a MOSFET gate = ~0). So a transistor's
-  // collector current is never charged to its base/gate trace, and its emitter/source trace is
-  // checked against the real (higher) current it carries.
+  // The RMS current at every device terminal when the board has a live AC source — the heating
+  // (RMS) current an AC trace really carries, which the DC operating point (~0 A for a pure AC
+  // source) can't see. undefined for a DC circuit; then the DC per-terminal currents are used.
+  const pcbAcRms = useMemo(
+    () => (pcbActive ? boardRmsTerminalCurrents(solvedWorld, solvedTemperatures) : undefined),
+    [pcbActive, solvedWorld, solvedTemperatures],
+  )
+  // The current on each net — what the over-current DRC checks each trace's IPC-2221 ampacity
+  // against. Each pad reports its OWN terminal's current: for an AC circuit the RMS current through
+  // that terminal; otherwise the DC solve's per-terminal current — a two-terminal part's
+  // through-current, or a transistor pin's own (base pin = the tiny base current, emitter pin =
+  // iC + iB, collector pin = iC; a MOSFET gate = ~0). So a transistor's collector current is never
+  // charged to its base/gate trace, and an AC-driven trace is checked against its real RMS current.
   const pcbNetCurrents = useMemo(() => {
     if (!pcbActive) return new Map<string, number>()
     const currentOfPad = (partId: string, padId: string): number | undefined => {
+      const definition = solvedWorld.instances.get(partId)?.definition
+      const terminal = definition !== undefined ? terminalForPad(definition, padId) : undefined
+      if (pcbAcRms !== undefined) {
+        return terminal !== undefined ? pcbAcRms.get(`${partId}/${terminal}`) : undefined
+      }
       const perTerminal = solution.terminalCurrents?.get(partId)
       if (perTerminal !== undefined) {
-        const definition = solvedWorld.instances.get(partId)?.definition
-        const terminal = definition !== undefined ? terminalForPad(definition, padId) : undefined
         return terminal !== undefined ? perTerminal.get(terminal) : undefined
       }
       return readings.get(partId)?.current
     }
     return netThroughCurrents(pcbRatsnest.padBoxes, currentOfPad)
-  }, [pcbActive, pcbRatsnest, readings, solution, solvedWorld])
+  }, [pcbActive, pcbRatsnest, readings, solution, solvedWorld, pcbAcRms])
   // Design-rule check — the board's failure-mode pass (cited limits), re-run live like the routing.
   // The solved net currents + copper weight enable the over-current check (trace vs IPC-2221 ampacity).
   const pcbDrc = useMemo(
