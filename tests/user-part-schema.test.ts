@@ -53,6 +53,12 @@ const agreementCases: { label: string; part: unknown; ok: boolean }[] = [
     },
     ok: true,
   },
+  {
+    label: 'a valid part with a board footprint',
+    part: { ...valid(), footprintId: 'R_0603_1608Metric' },
+    ok: true,
+  },
+  { label: 'an empty footprint id', part: { ...valid(), footprintId: '' }, ok: false },
   { label: 'missing name', part: { ...valid(), name: '' }, ok: false },
   { label: 'missing designator', part: { ...valid(), designatorPrefix: '' }, ok: false },
   { label: 'zero pins', part: { ...valid(), pins: [] }, ok: false },

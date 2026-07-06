@@ -1,4 +1,20 @@
 import { BUILTIN_FOOTPRINTS, type Footprint } from './footprint.ts'
+import { getUserPart, type UserPart } from './user-parts.ts'
+
+/**
+ * A user-authored part lands on the board too (user-made parts, slice 4a): it declares a footprint id,
+ * and its pins map to that footprint's pads IN DECLARATION ORDER (pin 1 → pad 1, …). A footprint only
+ * fits if it has at least as many pads as the part has pins. This returns the part's footprint — the
+ * per-instance chosen override if it fits, else the part's own default — or undefined if neither fits.
+ */
+function userPartFootprint(userPart: UserPart, chosenId?: string): Footprint | undefined {
+  const fits = (id: string | undefined): Footprint | undefined => {
+    if (id === undefined) return undefined
+    const fp = BUILTIN_FOOTPRINTS[id]
+    return fp !== undefined && fp.pads.length >= userPart.pins.length ? fp : undefined
+  }
+  return fits(chosenId) ?? fits(userPart.footprintId)
+}
 
 /**
  * The schematic → board join: which physical footprint(s) a catalog part can land on, and its default.
@@ -46,18 +62,35 @@ export const PART_FOOTPRINTS: Record<string, { default: string; options: string[
  */
 export function footprintForPart(definition: string, chosenId?: string): Footprint | undefined {
   const entry = PART_FOOTPRINTS[definition]
-  if (entry === undefined) return undefined
-  const id = chosenId !== undefined && entry.options.includes(chosenId) ? chosenId : entry.default
-  return BUILTIN_FOOTPRINTS[id]
+  if (entry !== undefined) {
+    const id = chosenId !== undefined && entry.options.includes(chosenId) ? chosenId : entry.default
+    return BUILTIN_FOOTPRINTS[id]
+  }
+  const userPart = getUserPart(definition)
+  return userPart !== undefined ? userPartFootprint(userPart, chosenId) : undefined
 }
 
-/** Every footprint this part can take (for a future footprint picker); empty when the part is unmapped. */
+/** Every footprint this part can take (for the footprint picker); empty when the part is unmapped. A
+ *  custom part can take any built-in footprint with at least as many pads as it has pins. */
 export function footprintOptions(definition: string): Footprint[] {
   const entry = PART_FOOTPRINTS[definition]
-  if (entry === undefined) return []
-  return entry.options
-    .map((id) => BUILTIN_FOOTPRINTS[id])
-    .filter((f): f is Footprint => f !== undefined)
+  if (entry !== undefined) {
+    return entry.options
+      .map((id) => BUILTIN_FOOTPRINTS[id])
+      .filter((f): f is Footprint => f !== undefined)
+  }
+  const userPart = getUserPart(definition)
+  if (userPart === undefined) return []
+  return footprintsForPinCount(userPart.pins.length)
+}
+
+/** The built-in footprints a part with `pinCount` pins can take (at least that many pads), sorted
+ *  small → large. The New-Part editor uses this for an in-progress (unregistered) part; footprintOptions
+ *  uses it for a saved custom part. */
+export function footprintsForPinCount(pinCount: number): Footprint[] {
+  return Object.values(BUILTIN_FOOTPRINTS)
+    .filter((f) => f.pads.length >= pinCount)
+    .sort((a, b) => a.pads.length - b.pads.length || a.name.localeCompare(b.name))
 }
 
 /**
@@ -119,7 +152,15 @@ export function padForTerminal(
   handleId: string,
   footprintId?: string,
 ): string | undefined {
-  return pinoutFor(definition, footprintId)?.[handleId]
+  const pinout = pinoutFor(definition, footprintId)
+  if (pinout !== undefined) return pinout[handleId]
+  // A custom part maps its pins to the footprint's pads in declaration order (pin i → pad i).
+  const userPart = getUserPart(definition)
+  if (userPart === undefined) return undefined
+  const fp = userPartFootprint(userPart, footprintId)
+  if (fp === undefined) return undefined
+  const pinIndex = userPart.pins.findIndex((p) => p.id === handleId)
+  return pinIndex >= 0 ? fp.pads[pinIndex]?.id : undefined
 }
 
 /** The terminal (handle) a footprint pad belongs to — the inverse of padForTerminal, for the part's
@@ -131,11 +172,20 @@ export function terminalForPad(
   footprintId?: string,
 ): string | undefined {
   const pads = pinoutFor(definition, footprintId)
-  if (pads === undefined) return undefined
-  for (const handle in pads) {
-    if (pads[handle] === padId) return handle
+  if (pads !== undefined) {
+    for (const handle in pads) {
+      if (pads[handle] === padId) return handle
+    }
+    return undefined
   }
-  return undefined
+  // Custom part: the inverse of padForTerminal — the pad's index in the footprint maps back to the pin
+  // at that same declaration index (extra footprint pads beyond the pin count have no terminal).
+  const userPart = getUserPart(definition)
+  if (userPart === undefined) return undefined
+  const fp = userPartFootprint(userPart, footprintId)
+  if (fp === undefined) return undefined
+  const padIndex = fp.pads.findIndex((p) => p.id === padId)
+  return padIndex >= 0 ? userPart.pins[padIndex]?.id : undefined
 }
 
 /** Which parameter is a part's BOM "value" (the number an assembler reads — '470 Ω', '100 µF'),
@@ -168,7 +218,8 @@ const DESIGNATOR_PREFIXES: Record<string, string> = {
  * hand-named id (`ra`, `alt3`) is the user's own name and is kept as they wrote it.
  */
 export function boardDesignator(partId: string, definition: string): string {
-  const prefix = DESIGNATOR_PREFIXES[definition]
+  // A custom part carries its own designator letter (e.g. 'U'); built-ins use the standard class map.
+  const prefix = DESIGNATOR_PREFIXES[definition] ?? getUserPart(definition)?.designatorPrefix
   if (prefix !== undefined) {
     const minted = partId.match(new RegExp(`^${definition}[_-]?(\\d+)$`, 'i'))
     if (minted !== null) return `${prefix}${minted[1]}`

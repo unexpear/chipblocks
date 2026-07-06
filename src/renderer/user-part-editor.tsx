@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { footprintsForPinCount } from './footprint-assignment.ts'
 import { UserPartGlyph } from './symbols.tsx'
 import { THEME } from './theme.ts'
 import { buildUserPartDraft } from './user-part-draft.ts'
@@ -42,9 +43,15 @@ export function UserPartEditor({
     { key: 'pin-init-1', name: 'OUT', side: 'right', electrical: 'output' },
   ])
   const [params, setParams] = useState<ParamRow[]>([])
+  const [footprint, setFootprint] = useState('')
   const [error, setError] = useState<string | null>(null)
   const nameRef = useRef<HTMLInputElement>(null)
   useEffect(() => nameRef.current?.focus(), [])
+
+  // The footprints this part can land on need at least as many pads as it has pins, so the list narrows
+  // as pins are added. A choice that no longer fits (you added pins past its pad count) auto-clears.
+  const footprintChoices = footprintsForPinCount(pins.length)
+  const footprintValue = footprintChoices.some((f) => f.id === footprint) ? footprint : ''
 
   const addPin = () =>
     setPins((ps) => [
@@ -81,6 +88,7 @@ export function UserPartEditor({
       designatorPrefix: designator,
       pins: pins.map((p) => ({ name: p.name, side: p.side, electrical: p.electrical })),
       params: params.map((p) => ({ name: p.name, amount: p.amount, unit: p.unit })),
+      ...(footprintValue ? { footprintId: footprintValue } : {}),
     })
     if (!result.ok) {
       setError(result.error)
@@ -245,6 +253,29 @@ export function UserPartEditor({
                 </button>
               </div>
             ))}
+
+            <div style={{ height: 14 }} />
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: THEME.textPrimary }}>
+                Board footprint
+              </span>
+              <span style={{ fontSize: 10.5, color: THEME.textFaint }}>
+                optional — so it lands on a board (pins map to pads in order)
+              </span>
+            </div>
+            <select
+              value={footprintValue}
+              onChange={(e) => setFootprint(e.target.value)}
+              title="The physical package this part solders to. Only footprints with enough pads for your pins are listed; your pins map to its pads top-to-bottom in order."
+              style={{ ...selectInput, width: '100%', flex: 'initial' }}
+            >
+              <option value="">None — stays off the board</option>
+              {footprintChoices.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name} ({f.pads.length} pads)
+                </option>
+              ))}
+            </select>
 
             <div style={{ height: 14 }} />
             <SectionHeader

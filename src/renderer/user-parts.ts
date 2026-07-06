@@ -54,6 +54,9 @@ export type UserPart = {
   designatorPrefix: string
   description?: string
   pins: UserPin[]
+  /** The board package this part lands on (a BUILTIN_FOOTPRINTS id) — its pins map to the footprint's
+   *  pads in declaration order. Absent ⇒ the part has no footprint yet, so it stays off the board. */
+  footprintId?: string
   /** Cited default parameters, if any (typed values); black-box parts often have none. */
   parameters?: Parameters
 }

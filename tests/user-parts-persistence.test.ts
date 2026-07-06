@@ -25,6 +25,7 @@ const poweredIc: UserPart = {
   id: 'my_ic',
   name: 'My IC',
   designatorPrefix: 'U',
+  footprintId: 'DIP-8_W7.62mm', // a board footprint must survive the round-trip too (slice 4a)
   pins: [{ id: 'vcc', name: 'VCC', side: 'top', electrical: 'power_in' }],
   parameters: { supply_voltage: { value: { kind: 'scalar', amount: 5, unit: 'V' } } },
 }

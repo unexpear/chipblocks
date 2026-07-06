@@ -67,6 +67,11 @@ export function validateUserPart(raw: unknown): UserPart | null {
     return null
   }
   if (raw.description !== undefined && typeof raw.description !== 'string') return null
+  if (
+    raw.footprintId !== undefined &&
+    (typeof raw.footprintId !== 'string' || raw.footprintId.length < 1)
+  )
+    return null
   if (!Array.isArray(raw.pins) || raw.pins.length < 1) return null
 
   const pins: UserPart['pins'] = []
@@ -97,6 +102,7 @@ export function validateUserPart(raw: unknown): UserPart | null {
     name: raw.name,
     designatorPrefix: raw.designatorPrefix,
     ...(typeof raw.description === 'string' ? { description: raw.description } : {}),
+    ...(typeof raw.footprintId === 'string' ? { footprintId: raw.footprintId } : {}),
     pins,
     ...(parameters && Object.keys(parameters).length > 0 ? { parameters } : {}),
   }

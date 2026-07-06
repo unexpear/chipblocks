@@ -20,6 +20,8 @@ export type UserPartInput = {
   designatorPrefix: string
   pins: PinInput[]
   params: ParamInput[]
+  /** The chosen board footprint id (from the editor's picker); empty/absent ⇒ no footprint. */
+  footprintId?: string
 }
 
 /** A definition-id / terminal-id slug: lowercase, non-alphanumerics collapse to a single underscore. */
@@ -83,10 +85,12 @@ export function buildUserPartDraft(input: UserPartInput): DraftResult {
   }
 
   const designatorPrefix = input.designatorPrefix.trim().toUpperCase() || 'U'
+  const footprintId = input.footprintId?.trim()
   const part: UserPart = {
     id,
     name,
     designatorPrefix,
+    ...(footprintId ? { footprintId } : {}),
     pins: userPins,
     ...(usedParam.size > 0 ? { parameters } : {}),
   }
