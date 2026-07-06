@@ -109,7 +109,31 @@ export const VIA_RULES: Record<
   },
 }
 
-export type CopperLayer = 'top' | 'bottom'
+export type CopperLayer = 'top' | 'inner1' | 'inner2' | 'inner3' | 'inner4' | 'bottom'
+
+/** Every copper layer a trace could be on, top → bottom — the full universe (up to a 6-layer board).
+ *  A plated through-via joins ALL of them at its point regardless of the board's actual layer count. */
+export const ALL_COPPER_LAYERS: readonly CopperLayer[] = [
+  'top',
+  'inner1',
+  'inner2',
+  'inner3',
+  'inner4',
+  'bottom',
+]
+
+/**
+ * The routable copper layers of a board with `copperLayerCount` copper layers, in stack order
+ * (top → inner → bottom): 2 → [top, bottom]; 4 → [top, inner1, inner2, bottom]; 6 → adds inner3/4.
+ * A trace and the route tool each carry one of these; the auto-router uses top/bottom, inner layers
+ * are hand-routed for now.
+ */
+export function routableCopperLayers(copperLayerCount: number): CopperLayer[] {
+  if (copperLayerCount <= 2) return ['top', 'bottom']
+  const innerCount = Math.min(copperLayerCount - 2, 4)
+  const inner = ALL_COPPER_LAYERS.slice(1, 1 + innerCount)
+  return ['top', ...inner, 'bottom']
+}
 
 /** One routed copper trace: an orthogonal centreline polyline in board mm, at its class width,
  *  on one copper layer. */
@@ -200,10 +224,18 @@ export function copperConnects(a: Pt, b: Pt, traces: CopperTrace[], vias: Via[])
       prev = k
     }
   }
-  for (const v of vias) union(key(v.at.x, v.at.y, 'top'), key(v.at.x, v.at.y, 'bottom'))
+  // A plated through-via joins EVERY copper layer at its point (layers with no copper there just
+  // become isolated grid cells, harmless) — so on a 2-layer board it still joins top↔bottom, and on
+  // a 4-/6-layer board it bridges the inner layers too.
+  for (const v of vias) {
+    const anchor = key(v.at.x, v.at.y, ALL_COPPER_LAYERS[0] as string)
+    for (let i = 1; i < ALL_COPPER_LAYERS.length; i++) {
+      union(anchor, key(v.at.x, v.at.y, ALL_COPPER_LAYERS[i] as string))
+    }
+  }
   const comps = (p: Pt): Set<string> => {
     const s = new Set<string>()
-    for (const layer of ['top', 'bottom']) {
+    for (const layer of ALL_COPPER_LAYERS) {
       const k = key(p.x, p.y, layer)
       if (parent.has(k)) s.add(find(k))
     }

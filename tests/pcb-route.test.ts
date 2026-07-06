@@ -15,8 +15,10 @@ import {
 } from '../src/renderer/pcb-board.ts'
 import {
   clearanceViolations,
+  copperConnects,
   DEFAULT_ROUTE_CLASS,
   gridRouteTwoLayer,
+  routableCopperLayers,
   routeBoard,
   twoLayerConnects,
   VIA_RULES,
@@ -505,5 +507,74 @@ describe('the bottom layer through vias', () => {
     expect(
       (DEFAULT_ROUTE_CLASS.viaDiameterMm - DEFAULT_ROUTE_CLASS.viaDrillMm) / 2,
     ).toBeGreaterThanOrEqual(VIA_RULES.min_annular.limitMm)
+  })
+})
+
+describe('the routable-layer model — inner copper layers', () => {
+  test('routableCopperLayers lists the copper layers in stack order for 2 / 4 / 6', () => {
+    expect(routableCopperLayers(2)).toEqual(['top', 'bottom'])
+    expect(routableCopperLayers(4)).toEqual(['top', 'inner1', 'inner2', 'bottom'])
+    expect(routableCopperLayers(6)).toEqual([
+      'top',
+      'inner1',
+      'inner2',
+      'inner3',
+      'inner4',
+      'bottom',
+    ])
+  })
+
+  test('a plated through-via joins an inner-layer trace to a top-layer trace', () => {
+    // A top run reaches the via point; an inner1 run leaves it. Without the via they are separate
+    // layers; the through-via bridges them so the two ends connect.
+    const via = [{ net: 'n', at: { x: 5, y: 0 }, diameterMm: 0.6, drillMm: 0.4 }]
+    const traces = [
+      {
+        net: 'n',
+        widthMm: 0.25,
+        layer: 'top' as const,
+        points: [
+          { x: 0, y: 0 },
+          { x: 5, y: 0 },
+        ],
+      },
+      {
+        net: 'n',
+        widthMm: 0.25,
+        layer: 'inner1' as const,
+        points: [
+          { x: 5, y: 0 },
+          { x: 10, y: 0 },
+        ],
+      },
+    ]
+    expect(copperConnects({ x: 0, y: 0 }, { x: 10, y: 0 }, traces, via)).toBe(true)
+    // …and with NO via the top and inner1 copper don't touch → not connected.
+    expect(copperConnects({ x: 0, y: 0 }, { x: 10, y: 0 }, traces, [])).toBe(false)
+  })
+
+  test('the 2-layer via join is unchanged — top↔bottom still connects through a via', () => {
+    const via = [{ net: 'n', at: { x: 5, y: 0 }, diameterMm: 0.6, drillMm: 0.4 }]
+    const traces = [
+      {
+        net: 'n',
+        widthMm: 0.25,
+        layer: 'top' as const,
+        points: [
+          { x: 0, y: 0 },
+          { x: 5, y: 0 },
+        ],
+      },
+      {
+        net: 'n',
+        widthMm: 0.25,
+        layer: 'bottom' as const,
+        points: [
+          { x: 5, y: 0 },
+          { x: 10, y: 0 },
+        ],
+      },
+    ]
+    expect(copperConnects({ x: 0, y: 0 }, { x: 10, y: 0 }, traces, via)).toBe(true)
   })
 })
