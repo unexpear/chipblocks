@@ -451,3 +451,148 @@ export function traceAmpacity(
   const k = layer === 'external' ? IPC2221.kExternal : IPC2221.kInternal
   return k * deltaTempC ** 0.44 * areaMil2 ** 0.725
 }
+
+/** The IPC-2141A controlled-impedance formulas — the closed-form single-line approximations for a
+ *  trace's characteristic impedance from its width, the dielectric height to its reference plane, the
+ *  copper thickness, and the dielectric constant. */
+export const IPC2141 = {
+  provenance: {
+    source_type: 'standard',
+    title:
+      'IPC-2141A controlled impedance: microstrip Z₀ = (87/√(εr+1.41))·ln(5.98h/(0.8w+t)); symmetric stripline Z₀ = (60/√εr)·ln(1.9b/(0.8w+t))',
+    citation:
+      'IPC-2141A (2004) "Controlled Impedance Circuit Boards and High-Speed Logic Design", the closed-form single-conductor approximations. Surface microstrip is stated valid for 0.1 ≤ w/h ≤ 2.0 and 1 ≤ εr ≤ 15; symmetric (centred) stripline for w/(b−t) < 0.35 and t/b < 0.25. These are APPROXIMATIONS (typically within ~5% of a 2-D field solver, worse near the range edges); a fab\'s impedance-controlled stack-up and a field solver (e.g. Polar Si9000) are authoritative for a manufactured board.',
+    confidence: 'high',
+    url: 'https://www.ipc.org',
+    date_accessed: '2026-07-06',
+  } satisfies FootprintProvenance,
+} as const
+
+/**
+ * Surface-microstrip characteristic impedance (Ω), IPC-2141A:
+ *   Z₀ = (87 / √(εr + 1.41)) · ln(5.98·h / (0.8·w + t))
+ * h = dielectric height from the trace to its reference plane, w = width, t = copper thickness (all
+ * mm), εr = dielectric constant. Returns 0 for a non-physical geometry (the ln argument ≤ 1 — a trace
+ * so wide, or a plane so close, that the formula breaks down).
+ */
+export function microstripImpedanceOhms(
+  widthMm: number,
+  dielectricHeightMm: number,
+  copperThicknessMm: number,
+  dielectricConstant: number,
+): number {
+  if (widthMm <= 0 || dielectricHeightMm <= 0 || dielectricConstant < 1) return 0
+  const denom = 0.8 * widthMm + copperThicknessMm
+  const arg = denom > 0 ? (5.98 * dielectricHeightMm) / denom : 0
+  if (arg <= 1) return 0
+  return (87 / Math.sqrt(dielectricConstant + 1.41)) * Math.log(arg)
+}
+
+/**
+ * Symmetric (centred) stripline characteristic impedance (Ω), IPC-2141A:
+ *   Z₀ = (60 / √εr) · ln(1.9·b / (0.8·w + t))
+ * b = plane-to-plane spacing (the trace centred between them), w = width, t = copper thickness (mm).
+ * For an inner trace between two reference planes.
+ */
+export function striplineImpedanceOhms(
+  widthMm: number,
+  planeSpacingMm: number,
+  copperThicknessMm: number,
+  dielectricConstant: number,
+): number {
+  if (widthMm <= 0 || planeSpacingMm <= 0 || dielectricConstant < 1) return 0
+  const denom = 0.8 * widthMm + copperThicknessMm
+  const arg = denom > 0 ? (1.9 * planeSpacingMm) / denom : 0
+  if (arg <= 1) return 0
+  return (60 / Math.sqrt(dielectricConstant)) * Math.log(arg)
+}
+
+export type TraceImpedance = {
+  ohms: number
+  model: 'microstrip'
+  /** The copper layer acting as the reference plane. */
+  referenceLayer: string
+  /** Dielectric height from the trace to that plane (mm) — the h in the formula. */
+  dielectricHeightMm: number
+  dielectricConstant: number
+  /** Whether the geometry sits inside IPC-2141A's stated validity range (0.1 ≤ w/h ≤ 2.0). Outside
+   *  it the number is an extrapolation — reported, but flagged. */
+  withinValidity: boolean
+}
+
+/**
+ * A routed (outer-layer) trace's characteristic impedance on a given stack-up. An outer trace
+ * references the NEAREST copper layer below/above it — on a 2-layer board the opposite side (the full
+ * core between them, so a thin trace runs high-impedance); on a 4-/6-layer board the adjacent inner
+ * plane (a thin prepreg, where controlled impedance is practical). It assumes that reference layer is
+ * a solid plane (the standard controlled-impedance assumption). undefined when there is no second
+ * copper layer to reference.
+ */
+export function traceImpedance(
+  stackup: Stackup,
+  widthMm: number,
+  layer: 'top' | 'bottom' = 'top',
+): TraceImpedance | undefined {
+  const copperIdx: number[] = []
+  stackup.layers.forEach((l, i) => {
+    if (l.type === 'copper') copperIdx.push(i)
+  })
+  if (copperIdx.length < 2) return undefined
+  const traceI = layer === 'top' ? copperIdx[0] : copperIdx[copperIdx.length - 1]
+  const refI = layer === 'top' ? copperIdx[1] : copperIdx[copperIdx.length - 2]
+  if (traceI === undefined || refI === undefined) return undefined
+  const lo = Math.min(traceI, refI)
+  const hi = Math.max(traceI, refI)
+  let height = 0
+  let dkSum = 0
+  let dkWeight = 0
+  for (let i = lo + 1; i < hi; i++) {
+    const l = stackup.layers[i]
+    if (l === undefined) continue
+    height += l.thicknessMm
+    if (l.dielectricConstant !== undefined) {
+      dkSum += l.dielectricConstant * l.thicknessMm
+      dkWeight += l.thicknessMm
+    }
+  }
+  if (height <= 0) return undefined
+  const dk = dkWeight > 0 ? dkSum / dkWeight : FR4_SUBSTRATE.dielectricConstant
+  const t = stackup.layers[traceI]?.thicknessMm ?? traceThicknessMm(stackup.copperWeight)
+  const ohms = microstripImpedanceOhms(widthMm, height, t, dk)
+  const wOverH = widthMm / height
+  return {
+    ohms,
+    model: 'microstrip',
+    referenceLayer: stackup.layers[refI]?.name ?? 'plane',
+    dielectricHeightMm: height,
+    dielectricConstant: dk,
+    withinValidity: ohms > 0 && wOverH >= 0.1 && wOverH <= 2.0 && dk >= 1 && dk <= 15,
+  }
+}
+
+/**
+ * The trace width (mm) that hits a target characteristic impedance on this stack-up, by bisection
+ * (impedance falls as the trace widens). undefined when the target isn't reachable within a
+ * manufacturable 0.05–10 mm width — e.g. 50 Ω on a full 1.6 mm two-layer core needs an impractically
+ * wide trace, which is the honest answer (controlled impedance wants a thin dielectric).
+ */
+export function widthForImpedance(
+  stackup: Stackup,
+  targetOhms: number,
+  layer: 'top' | 'bottom' = 'top',
+): number | undefined {
+  const zAt = (w: number) => traceImpedance(stackup, w, layer)?.ohms ?? 0
+  let lo = 0.05
+  let hi = 10
+  // Impedance falls monotonically as the trace widens (to 0 once the formula goes non-physical). The
+  // target is reachable only if the thinnest trace is still ABOVE it and the widest is at or below it.
+  const zNarrow = zAt(lo)
+  const zWidest = zAt(hi)
+  if (!(targetOhms > 0) || zNarrow < targetOhms || zWidest > targetOhms) return undefined
+  for (let iter = 0; iter < 48; iter++) {
+    const mid = (lo + hi) / 2
+    if (zAt(mid) > targetOhms) lo = mid
+    else hi = mid
+  }
+  return Math.round(((lo + hi) / 2) * 1000) / 1000
+}

@@ -393,6 +393,9 @@ describe('the ZIP itself', () => {
     // the trace-physics line — the router's cited ~1 A note backed by a computed number
     expect(stackup).toContain('Default trace:')
     expect(stackup).toMatch(/carries ~0\.\d+ A at a 10 °C rise/)
+    // the controlled-impedance line (IPC-2141A microstrip on this stack-up)
+    expect(stackup).toContain('Trace impedance:')
+    expect(stackup).toMatch(/≈ \d+ Ω single-ended \(microstrip, IPC-2141A/)
   })
 
   test('the validation report states the BOARD SPEC (material/thickness/copper/finish) for the fab', () => {

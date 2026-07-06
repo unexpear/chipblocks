@@ -15,12 +15,17 @@ import {
   COPPER_WEIGHT_PROVENANCE,
   defaultStackup,
   FR4_SUBSTRATE,
+  IPC2141,
   IPC2221,
+  microstripImpedanceOhms,
   STANDARD_BOARD_THICKNESSES_MM,
   SURFACE_FINISHES,
+  striplineImpedanceOhms,
   traceAmpacity,
+  traceImpedance,
   traceResistanceOhm,
   traceThicknessMm,
+  widthForImpedance,
 } from '../src/renderer/pcb-stackup.ts'
 
 describe('copper weight → thickness (the trade unit)', () => {
@@ -283,5 +288,85 @@ describe('materials and finishes are cited (the anti-placeholder rule)', () => {
     expect(SURFACE_FINISHES.hasl.leadFree).toBe(false)
     expect(SURFACE_FINISHES.enig.leadFree).toBe(true)
     expect(SURFACE_FINISHES.enig.provenance.citation).toContain('IPC-4552')
+  })
+})
+
+describe('controlled impedance — IPC-2141A microstrip / stripline', () => {
+  test('microstrip matches the hand-worked IPC-2141A formula', () => {
+    // εr 4.2, h 0.254 mm (10 mil), w 0.508 mm (20 mil), t 0.0356 mm (1 oz):
+    // Z0 = 87/√5.61 · ln(5.98·0.254 / (0.8·0.508 + 0.0356)) = 36.73 · ln(3.436) = 45.3 Ω.
+    expect(microstripImpedanceOhms(0.508, 0.254, 0.0356, 4.2)).toBeCloseTo(45.3, 1)
+  })
+
+  test('symmetric stripline matches the hand-worked IPC-2141A formula', () => {
+    // εr 4.2, b 0.5 mm, w 0.2 mm, t 0.0356 mm:
+    // Z0 = 60/√4.2 · ln(1.9·0.5 / (0.8·0.2 + 0.0356)) = 29.28 · ln(4.857) = 46.3 Ω.
+    expect(striplineImpedanceOhms(0.2, 0.5, 0.0356, 4.2)).toBeCloseTo(46.3, 1)
+  })
+
+  test('impedance falls as the trace widens (a wider trace is lower-Z)', () => {
+    expect(microstripImpedanceOhms(0.2, 0.254, 0.0356, 4.2)).toBeGreaterThan(
+      microstripImpedanceOhms(0.6, 0.254, 0.0356, 4.2),
+    )
+  })
+
+  test('a non-physical geometry (trace as wide as the plane is far) returns 0, not a negative Z', () => {
+    // ln argument ≤ 1 → the formula breaks down; report 0 rather than a bogus negative impedance.
+    expect(microstripImpedanceOhms(20, 0.254, 0.0356, 4.2)).toBe(0)
+    expect(microstripImpedanceOhms(0, 0.254, 0.0356, 4.2)).toBe(0)
+  })
+
+  test('a default 2-layer trace runs high-Z — the full core sits between it and the far plane', () => {
+    // A 0.25 mm trace over a ~1.5 mm core is far from its reference → ~130 Ω, well above 50 Ω. This
+    // is the honest reason controlled impedance wants a thin dielectric (an inner plane / thin core).
+    const z = traceImpedance(defaultStackup(), 0.25)
+    if (z === undefined) throw new Error('a 2-layer board has a reference plane')
+    expect(z.model).toBe('microstrip')
+    expect(z.ohms).toBeGreaterThan(100)
+    expect(z.dielectricHeightMm).toBeGreaterThan(1) // the whole FR4 core
+    expect(z.dielectricConstant).toBeCloseTo(FR4_SUBSTRATE.dielectricConstant, 1)
+  })
+
+  test('a thinner board lowers the impedance for the same trace width', () => {
+    const wide =
+      traceImpedance(
+        buildStackup({ ...{}, thicknessMm: 1.6, copperWeight: 'one_oz', surfaceFinish: 'hasl' }),
+        0.25,
+      )?.ohms ?? 0
+    const thin =
+      traceImpedance(
+        buildStackup({ thicknessMm: 0.4, copperWeight: 'one_oz', surfaceFinish: 'hasl' }),
+        0.25,
+      )?.ohms ?? 0
+    expect(thin).toBeGreaterThan(0)
+    expect(thin).toBeLessThan(wide) // closer plane → lower Z
+  })
+
+  test('widthForImpedance solves back to the target, on a thin board and a thick one', () => {
+    // A thin (0.4 mm) board reaches 50 Ω with a narrow trace; a full 1.6 mm board reaches it too, but
+    // only with a very WIDE trace (its plane is far). Both must round-trip back to ~50 Ω.
+    const thin = buildStackup({ thicknessMm: 0.4, copperWeight: 'one_oz', surfaceFinish: 'hasl' })
+    const wThin = widthForImpedance(thin, 50)
+    if (wThin === undefined) throw new Error('0.4 mm board should reach 50 Ω')
+    expect(traceImpedance(thin, wThin)?.ohms ?? 0).toBeCloseTo(50, 0)
+
+    const wThick = widthForImpedance(defaultStackup(), 50)
+    if (wThick === undefined) throw new Error('1.6 mm board reaches 50 Ω with a wide trace')
+    expect(traceImpedance(defaultStackup(), wThick)?.ohms ?? 0).toBeCloseTo(50, 0)
+    // …and the thin board needs a far narrower trace than the thick one (the honest design lesson).
+    expect(wThin).toBeLessThan(wThick)
+  })
+
+  test('a target no trace can reach on the stack-up returns undefined (not a bogus width)', () => {
+    // 2 Ω is below even a 10 mm-wide trace on a 1.6 mm board → honestly unreachable (too low).
+    expect(widthForImpedance(defaultStackup(), 2)).toBeUndefined()
+    // …and 500 Ω is above even the thinnest trace's impedance → unreachable (too high).
+    expect(widthForImpedance(defaultStackup(), 500)).toBeUndefined()
+  })
+
+  test('the formula is cited with its validity range', () => {
+    expect(IPC2141.provenance.confidence).toBe('high')
+    expect(IPC2141.provenance.citation).toContain('IPC-2141A')
+    expect(IPC2141.provenance.citation).toContain('w/h')
   })
 })

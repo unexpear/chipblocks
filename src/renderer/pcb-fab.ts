@@ -29,6 +29,7 @@ import {
   type Stackup,
   SURFACE_FINISHES,
   traceAmpacity,
+  traceImpedance,
   traceResistanceOhm,
 } from './pcb-stackup.ts'
 import { SILK_TEXT } from './stroke-font.ts'
@@ -183,6 +184,13 @@ export function buildStackupSpec(stackup: Stackup): string {
   const traceW = DEFAULT_ROUTE_CLASS.traceWidthMm
   const rPer100 = traceResistanceOhm(traceW, 100, stackup.copperWeight, 20)
   const amps = traceAmpacity(traceW, stackup.copperWeight, 10, 'external')
+  const z = traceImpedance(stackup, traceW, 'top')
+  const zLine =
+    z === undefined
+      ? []
+      : [
+          `  Trace impedance: ${num(traceW)} mm over the ${z.referenceLayer} plane ≈ ${Math.round(z.ohms)} Ω single-ended (microstrip, IPC-2141A${z.withinValidity ? '' : ' — outside the formula range, treat as an estimate'})`,
+        ]
   return [
     'ChipBlocks board stack-up — the fab-order spec (every value cited)',
     '',
@@ -192,6 +200,7 @@ export function buildStackupSpec(stackup: Stackup): string {
     `  Copper weight:   ${copperWeightLabel(stackup.copperWeight)} outer`,
     `  Surface finish:  ${finish.name}${finish.leadFree ? ' (lead-free)' : ''}`,
     `  Default trace:   ${num(traceW)} mm wide → ${num(rPer100 * 1000)} mΩ per 100 mm; carries ~${(Math.round(amps * 100) / 100).toFixed(2)} A at a 10 °C rise (IPC-2221 external)`,
+    ...zLine,
     '',
     'Cross-section (top → bottom):',
     ...stackup.layers.map((l) => {

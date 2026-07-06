@@ -169,6 +169,8 @@ import {
   type StackupOptions,
   SURFACE_FINISHES,
   type SurfaceFinishId,
+  traceImpedance,
+  widthForImpedance,
 } from './pcb-stackup.ts'
 import { BoardView, PcbViewControls } from './pcb-workspace.tsx'
 import { canvasWorld } from './pipeline/canvas-world.ts'
@@ -1535,6 +1537,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [pcbStackupOptions, setPcbStackupOptions] =
     useState<StackupOptions>(DEFAULT_STACKUP_OPTIONS)
   const pcbStackup = useMemo(() => buildStackup(pcbStackupOptions), [pcbStackupOptions])
+  // Controlled impedance of a default-width outer trace on this stack-up (IPC-2141A microstrip), plus
+  // the width that would hit 50 Ω — a live readout as the stack-up knobs change.
+  const pcbImpedance = useMemo(() => {
+    const z = traceImpedance(pcbStackup, DEFAULT_ROUTE_CLASS.traceWidthMm, 'top')
+    return { z, widthFor50: widthForImpedance(pcbStackup, 50) }
+  }, [pcbStackup])
   // The RMS current at every device terminal when the board has a live AC source — the heating
   // (RMS) current an AC trace really carries, which the DC operating point (~0 A for a pure AC
   // source) can't see. undefined for a DC circuit; then the DC per-terminal currents are used.
@@ -7211,6 +7219,24 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                         )}
                       </select>
                     </span>
+                    {pcbImpedance.z !== undefined && (
+                      <span
+                        style={{ fontSize: 11, color: THEME.textFaint }}
+                        title={`IPC-2141A single-line microstrip: a ${DEFAULT_ROUTE_CLASS.traceWidthMm} mm trace over the ${pcbImpedance.z.referenceLayer} plane, ${pcbImpedance.z.dielectricHeightMm.toFixed(3)} mm of FR4 (Dk ${pcbImpedance.z.dielectricConstant.toFixed(1)}) between them.${pcbImpedance.z.withinValidity ? '' : ' Outside the formula range (w/h) — treat as an estimate.'} A closed-form approximation (~±5%); a fab's field-solver stack-up is authoritative for a manufactured board.`}
+                      >
+                        impedance:{' '}
+                        <span style={{ color: THEME.textSoft }}>
+                          {DEFAULT_ROUTE_CLASS.traceWidthMm} mm ≈ {Math.round(pcbImpedance.z.ohms)}{' '}
+                          Ω{pcbImpedance.z.withinValidity ? '' : ' (est.)'}
+                        </span>{' '}
+                        · 50 Ω needs{' '}
+                        <span style={{ color: THEME.textSoft }}>
+                          {pcbImpedance.widthFor50 !== undefined
+                            ? `${pcbImpedance.widthFor50} mm`
+                            : 'a thinner dielectric'}
+                        </span>
+                      </span>
+                    )}
                     <span
                       style={{
                         fontSize: 11,
