@@ -297,6 +297,25 @@ describe('the bottom layer through vias', () => {
     expect(routing.traces.filter((t) => t.layer === 'top')).toHaveLength(0)
   })
 
+  test('the auto-router never drops a via INSIDE a pad (via-in-pad — solder wicking)', () => {
+    // the SMD-walled case forces beside-pad vias; every one must clear every pad's copper
+    const rn = walledIn(false, false)
+    const routing = routeBoard(rn)
+    expect(routing.vias.length).toBeGreaterThan(0)
+    for (const v of routing.vias) {
+      const bx = v.at.x - v.diameterMm / 2
+      const by = v.at.y - v.diameterMm / 2
+      for (const pad of rn.padBoxes) {
+        const overlaps =
+          bx < pad.x + pad.w &&
+          pad.x < bx + v.diameterMm &&
+          by < pad.y + pad.h &&
+          pad.y < by + v.diameterMm
+        expect(overlaps).toBe(false) // no via barrel intersects any pad — including its own net's
+      }
+    }
+  })
+
   test('walls of THROUGH-HOLE copper block both layers — the connection stays an honest airwire', () => {
     const routing = routeBoard(walledIn(true, false))
     expect(routing.unrouted).toHaveLength(1)

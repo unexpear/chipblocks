@@ -624,7 +624,9 @@ export function routeBoard(
         const holeAt = { x: pad.x + pad.w / 2, y: pad.y + pad.h / 2 }
         if (!holeGapClear(holeAt, pad.holeMm)) return false
       }
-      if (pad.net === net) continue
+      // A via must clear EVERY pad — other nets to avoid a short, and its OWN net too: a via sitting
+      // in a pad (any net) wicks the component's solder down the barrel (via-in-pad). So there is NO
+      // same-net exemption here, unlike a trace, where same-net copper may touch freely.
       if (boxesOverlap(inflate(pad, clr), barrel)) return false
     }
     for (const t of traces) {

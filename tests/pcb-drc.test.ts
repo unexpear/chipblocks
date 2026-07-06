@@ -46,6 +46,49 @@ describe('runDrc', () => {
     expect(runDrc(board, rn, routing)).toEqual([])
   })
 
+  test('a via dropped INSIDE a component pad is flagged via-in-pad (solder wicking), even same-net', () => {
+    const defs: [string, string][] = [['R1', 'resistor']]
+    const board = deriveBoard(parts(defs))
+    const rn = computeRatsnest(world(defs, []), board)
+    const pad = rn.padBoxes[0]
+    if (pad === undefined) throw new Error('no pad')
+    // a hand-placed via sitting on the pad's centre — SAME net as the pad, still a defect
+    const routing = {
+      traces: [],
+      vias: [
+        {
+          net: pad.net,
+          at: { x: pad.x + pad.w / 2, y: pad.y + pad.h / 2 },
+          diameterMm: 0.6,
+          drillMm: 0.4,
+        },
+      ],
+      unrouted: [],
+    }
+    const flagged = runDrc(board, rn, routing).filter((d) => d.code === 'via-in-pad')
+    expect(flagged).toHaveLength(1)
+    expect(flagged[0]?.message).toContain('via-in-pad')
+  })
+
+  test('a via clear of every pad is NOT flagged via-in-pad', () => {
+    const defs: [string, string][] = [['R1', 'resistor']]
+    const board = deriveBoard(parts(defs))
+    const rn = computeRatsnest(world(defs, []), board)
+    const [p0, p1] = rn.padBoxes
+    if (p0 === undefined || p1 === undefined) throw new Error('missing pads')
+    // the gap between the two pads (the part body) — clear of both pad coppers
+    const mid = {
+      x: (p0.x + p0.w / 2 + (p1.x + p1.w / 2)) / 2,
+      y: (p0.y + p0.h / 2 + (p1.y + p1.h / 2)) / 2,
+    }
+    const routing = {
+      traces: [],
+      vias: [{ net: 'n', at: mid, diameterMm: 0.6, drillMm: 0.4 }],
+      unrouted: [],
+    }
+    expect(runDrc(board, rn, routing).filter((d) => d.code === 'via-in-pad')).toEqual([])
+  })
+
   test('parts dragged into collision: the courtyards overlap and the spot is marked', () => {
     const defs: [string, string][] = [
       ['R1', 'resistor'],

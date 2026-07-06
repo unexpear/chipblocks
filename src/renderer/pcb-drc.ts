@@ -41,6 +41,7 @@ export type DrcCode =
   | 'edge-clearance'
   | 'track-width'
   | 'via-size'
+  | 'via-in-pad'
   | 'hole-to-hole'
   | 'silk-over-pad'
   | 'over-current'
@@ -74,6 +75,17 @@ export const DRC_RULES: Record<
       confidence: 'high',
       url: 'https://jlcpcb.com/capabilities/pcb-capabilities',
       date_accessed: '2026-07-04',
+    },
+  },
+  'via-in-pad': {
+    limitMm: 0,
+    provenance: {
+      source_type: 'reference',
+      title: 'A via inside a component pad wicks the joint’s solder down the barrel — fabs flag it',
+      citation:
+        'Standard PCB DFM / IPC-7093 & IPC-A-610: a via placed in a solderable component pad draws molten solder down the plated barrel during reflow, starving the joint (a "via-in-pad" needs a filled-and-capped process — an extra plated-over step — to be sound). Unfilled via-in-pad is a manufacturability defect fab DRC/DFM checks flag.',
+      confidence: 'high',
+      url: 'https://www.pcblibraries.com/',
     },
   },
   'courtyard-overlap': {
@@ -271,6 +283,28 @@ export function runDrc(
         message: `a ${fmt(annular)} mm via annular ring is under the ${fmt(VIA_RULES.min_annular.limitMm)} mm minimum`,
         at: v.at,
       })
+    }
+  }
+
+  // Via in pad — a via whose barrel sits inside a component pad's copper wicks that joint's solder
+  // down the barrel (via-in-pad). It is its OWN defect, not a clearance one: it applies even same-net
+  // (a via in its own net's pad still starves the joint). The auto-router keeps vias off every pad;
+  // this catches a HAND-placed via dropped on a pad.
+  for (const v of routing.vias) {
+    const bx = v.at.x - v.diameterMm / 2
+    const by = v.at.y - v.diameterMm / 2
+    const bs = v.diameterMm
+    for (const pad of ratsnest.padBoxes) {
+      // open-interval overlap: a via touching a pad edge is legal; interior overlap is via-in-pad
+      if (bx < pad.x + pad.w && pad.x < bx + bs && by < pad.y + pad.h && pad.y < by + bs) {
+        const part = pad.pad.split('/')[0] ?? pad.net
+        out.push({
+          code: 'via-in-pad',
+          message: `a via sits inside ${part}'s pad — solder wicks down the barrel (via-in-pad); keep vias off pads`,
+          at: v.at,
+        })
+        break // one flag per via
+      }
     }
   }
 
