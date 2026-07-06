@@ -2971,7 +2971,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // DEV-only control surface for the AI to drive the app over CDP. There is no UI — the AI can't see
   // the Electron window, so these hidden hooks on window.__chip expose the React-internal handlers it
   // needs (raw CDP can click the DOM but can't reach onEditBlockPort). Stripped from production by the
-  // DEV guard; nodesRef/handlers are stable, so the surface is attached once and reads live state.
+  // DEV guard; nodesRef/handlers are stable, so the surface is attached once and reads live state — the
+  // pcbAddTrace/pcbAddVia count returns (userTraces/userVias.length) are a DEV convenience, not relied on.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attaches once by design; see comment above.
   useEffect(() => {
     if (!import.meta.env.DEV || !active) return // only the active tab owns the single window.__chip slot
     const mkBlock = (id: string, x: number, portId: string, side: PinSide): Node => {

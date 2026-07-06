@@ -686,9 +686,9 @@ export function PcbView({
                   opacity={0.8}
                 />
               )}
-              {pendingPoints.map((p, i) => (
+              {pendingPoints.map((p) => (
                 <circle
-                  key={`pendingpt-${i}-${p.x},${p.y}`}
+                  key={`pendingpt-${p.x},${p.y}`}
                   cx={sx(p.x)}
                   cy={sy(p.y)}
                   r={2}
