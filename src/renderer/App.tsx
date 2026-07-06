@@ -175,7 +175,6 @@ import {
   solveTransientDispatch,
 } from './pipeline/solve-canvas.ts'
 import { ProjectBrowser, type ProjectChoice } from './project-browser.tsx'
-import { ProjectHub } from './project-hub.tsx'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
 import { scanMatrixFromBuffer } from './scan-display.ts'
 import { SchematicHierarchy } from './schematic-hierarchy.tsx'
@@ -477,35 +476,157 @@ function meterDialStyle(active: boolean, light: boolean): React.CSSProperties {
  * arrows on the solved circuit (S19-v3-5). useReactFlow needs a provider, so the
  * page splits into App (provider) + Canvas (content).
  */
-export function App() {
-  // Two gates before the editor: the project browser (pick a purpose + template, Unreal-style),
-  // then the project hub (KiCad-style — the project's files + the tools that work on it). Null
-  // project = on the browser; project set but not yet in the editor = on the hub.
-  const [project, setProject] = useState<ProjectChoice | null>(null)
-  const [inEditor, setInEditor] = useState(false)
-  if (project === null) {
+type ProjectTab = { id: string; project: ProjectChoice }
+
+/** The window's tab strip: a permanent "My Projects" home tab (the launcher) + one tab per open
+ *  project. Clicking a tab makes it the active (live) one; × closes a project tab. */
+function ProjectTabBar({
+  tabs,
+  activeId,
+  onSelect,
+  onClose,
+}: {
+  tabs: ProjectTab[]
+  activeId: string
+  onSelect: (id: string) => void
+  onClose: (id: string) => void
+}) {
+  const renderTab = (id: string, label: string, closable: boolean) => {
+    const on = activeId === id
     return (
-      <ProjectBrowser
-        onCreate={(choice) => {
-          setProject(choice)
-          setInEditor(false)
+      <div
+        key={id}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+          padding: '0 10px',
+          fontSize: 12,
+          color: on ? '#e8eef6' : '#8fa0b4',
+          background: on ? '#141f33' : 'transparent',
+          borderRight: '1px solid #1c2740',
+          borderTop: `2px solid ${on ? '#4f9dff' : 'transparent'}`,
+          whiteSpace: 'nowrap',
         }}
-      />
-    )
-  }
-  if (!inEditor) {
-    return (
-      <ProjectHub
-        project={project}
-        onOpenEditor={() => setInEditor(true)}
-        onBack={() => setProject(null)}
-      />
+      >
+        <button
+          type="button"
+          onClick={() => onSelect(id)}
+          style={{
+            all: 'unset',
+            cursor: 'pointer',
+            color: 'inherit',
+            padding: '5px 2px',
+            fontWeight: on ? 600 : 400,
+          }}
+        >
+          {label}
+        </button>
+        {closable && (
+          <button
+            type="button"
+            title="Close project"
+            onClick={(e) => {
+              e.stopPropagation()
+              onClose(id)
+            }}
+            style={{
+              all: 'unset',
+              cursor: 'pointer',
+              color: '#6b7c93',
+              fontSize: 14,
+              lineHeight: 1,
+              padding: '0 2px',
+            }}
+          >
+            ×
+          </button>
+        )}
+      </div>
     )
   }
   return (
-    <ReactFlowProvider>
-      <Canvas project={project} />
-    </ReactFlowProvider>
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'stretch',
+        height: 30,
+        flexShrink: 0,
+        background: '#0a0f18',
+        borderBottom: '1px solid #1c2740',
+        overflowX: 'auto',
+      }}
+    >
+      {renderTab('home', '⌂ My Projects', false)}
+      {tabs.map((t) => renderTab(t.id, t.project.name || t.project.templateName, true))}
+    </div>
+  )
+}
+
+export function App() {
+  // The window is TABBED: a permanent "My Projects" home tab (the launcher) plus one tab per open
+  // project. Only the ACTIVE tab is live — every project tab stays MOUNTED (so switching back is
+  // instant and keeps its state), but its Canvas is gated on `active`, so a background tab never grabs
+  // the keyboard or the single window.__chip CDP slot (and idle, does not solve). Creating a project
+  // from the launcher opens a new tab and switches to it.
+  const [tabs, setTabs] = useState<ProjectTab[]>([])
+  const [activeId, setActiveId] = useState('home')
+  const nextId = useRef(1)
+
+  const openProject = useCallback((choice: ProjectChoice) => {
+    const id = `proj_${nextId.current++}`
+    setTabs((ts) => [...ts, { id, project: choice }])
+    setActiveId(id)
+  }, [])
+  const closeTab = useCallback(
+    (id: string) => {
+      const idx = tabs.findIndex((t) => t.id === id)
+      const rest = tabs.filter((t) => t.id !== id)
+      setTabs(rest)
+      setActiveId((cur) =>
+        cur === id ? (rest[Math.min(idx, rest.length - 1)]?.id ?? 'home') : cur,
+      )
+    },
+    [tabs],
+  )
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100vh',
+        width: '100vw',
+        background: '#0a0f18',
+      }}
+    >
+      <ProjectTabBar tabs={tabs} activeId={activeId} onSelect={setActiveId} onClose={closeTab} />
+      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: activeId === 'home' ? 'block' : 'none',
+          }}
+        >
+          <ProjectBrowser onCreate={openProject} />
+        </div>
+        {tabs.map((t) => (
+          <div
+            key={t.id}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: activeId === t.id ? 'block' : 'none',
+            }}
+          >
+            <ReactFlowProvider>
+              <Canvas project={t.project} active={activeId === t.id} />
+            </ReactFlowProvider>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -553,7 +674,12 @@ function templateNodes(template: string, depth: 'block' | 'design'): Node[] {
 /** Snap-to-grid step (px) — parts align to the 20 px major grid (the bold lines) when snap is on. */
 const SNAP_GRID: [number, number] = [20, 20]
 
-function Canvas({ project }: { project: ProjectChoice }) {
+function Canvas({ project, active = true }: { project: ProjectChoice; active?: boolean }) {
+  // Only the active tab is "live" — a background tab keeps its state mounted but must NOT grab global
+  // keystrokes (delete/copy/paste) or the single window.__chip CDP slot. activeRef lets the
+  // always-attached global handlers no-op while this tab is in the background.
+  const activeRef = useRef(active)
+  activeRef.current = active
   const initial = useMemo(() => {
     // The catalog world supplies the part + material DEFINITIONS (for the material
     // dropdowns); the canvas itself starts from the chosen template's parts, not the
@@ -2096,6 +2222,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!activeRef.current) return // a background tab must not act on global keystrokes
       const target = event.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
       if (shortcutsOpen) return // the panel owns the keyboard while open
@@ -2704,7 +2831,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
   // needs (raw CDP can click the DOM but can't reach onEditBlockPort). Stripped from production by the
   // DEV guard; nodesRef/handlers are stable, so the surface is attached once and reads live state.
   useEffect(() => {
-    if (!import.meta.env.DEV) return
+    if (!import.meta.env.DEV || !active) return // only the active tab owns the single window.__chip slot
     const mkBlock = (id: string, x: number, portId: string, side: PinSide): Node => {
       const block: BlockData = {
         name: id,
@@ -5009,6 +5136,7 @@ function Canvas({ project }: { project: ProjectChoice }) {
       w.__chip = undefined
     }
   }, [
+    active,
     setNodes,
     setEdges,
     onEditBlockPort,
@@ -5289,8 +5417,8 @@ function Canvas({ project }: { project: ProjectChoice }) {
     // biome-ignore lint/a11y/noStaticElementInteractions: the dock-grid is the drop target for palette parts; keyboard-accessible placement is future work
     <div
       style={{
-        width: '100vw',
-        height: '100vh',
+        width: '100%',
+        height: '100%',
         background: light ? THEME.textBright : THEME.surfaceDeep,
         overflow: 'hidden',
         display: 'grid',

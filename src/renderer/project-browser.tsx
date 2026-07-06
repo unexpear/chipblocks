@@ -41,7 +41,7 @@ type Category = {
 }
 
 const CATEGORIES: Category[] = [
-  { id: 'recent', label: 'Recent projects', sub: 'Reopen recent work', templates: [] },
+  { id: 'recent', label: 'My Projects', sub: 'Open recent or saved work', templates: [] },
   {
     id: 'circuit',
     label: 'Circuit',
@@ -241,8 +241,8 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
   return (
     <div
       style={{
-        height: '100vh',
-        width: '100vw',
+        height: '100%',
+        width: '100%',
         background: BG,
         color: TEXT,
         display: 'flex',
@@ -382,7 +382,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
               }}
             >
               {catId === 'recent'
-                ? 'No recent projects yet — your saved work will appear here.'
+                ? 'No projects yet — create one from a template, or open a saved .chipblocks file. Your projects will appear here.'
                 : 'Coming soon — board, chip and system design arrive as ChipBlocks grows down the stack.'}
             </div>
           )}
