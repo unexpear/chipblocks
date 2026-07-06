@@ -500,7 +500,7 @@ export function buildManufacturingZip(inputs: FabInputs): FabZip {
     text(FAB_FILE_NAMES.bottomPaste, gerberPaste(board, 'Bot', when)),
     text(FAB_FILE_NAMES.topSilk, gerberSilkscreen(board, when)),
     text(FAB_FILE_NAMES.edgeCuts, gerberEdgeCuts(board.outline, when)),
-    text(FAB_FILE_NAMES.drill, excellonDrill(board, routing, when)),
+    text(FAB_FILE_NAMES.drill, excellonDrill(board, routing, when, stackup.copperLayers)),
     text(FAB_FILE_NAMES.gbrjob, gbrjobText),
     text(FAB_FILE_NAMES.bom, buildBomCsv(inputs.bomRows)),
     text(FAB_FILE_NAMES.placement, buildPlacementCsv(board)),

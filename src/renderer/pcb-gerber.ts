@@ -529,9 +529,17 @@ const drillNum = (mm: number): string => {
  * header with #@! file attributes, FMAT,2 + METRIC, one T tool per hole KIND and diameter
  * (component holes and via holes carry different attributes, so a shared diameter still gets its
  * own tool — KiCad's convention), ascending, then each tool's holes (sorted for determinism),
- * M30. Every hole is plated (component legs and via barrels), hence FileFunction Plated,1,2,PTH.
+ * M30. Every hole is plated (component legs and via barrels) and goes the whole way through, so the
+ * FileFunction is Plated,1,N,PTH — layer 1 (top copper) to layer N (the bottom copper), where N is the
+ * board's copper-layer count. Hardcoding 1,2 was correct only on a 2-layer board; on a 4-/6-layer board
+ * the drill must agree with the .gbrjob / inner-Gerber layer count (integration-audit-caught).
  */
-export function excellonDrill(board: Board, routing: BoardRouting, when: Date): string {
+export function excellonDrill(
+  board: Board,
+  routing: BoardRouting,
+  when: Date,
+  copperLayers = 2,
+): string {
   const holes = new Map<string, { drill: number; kind: string; at: { x: number; y: number }[] }>()
   const add = (
     drill: number,
@@ -559,7 +567,7 @@ export function excellonDrill(board: Board, routing: BoardRouting, when: Date): 
     '; FORMAT={-:-/ absolute / metric / decimal}',
     `; #@! TF.CreationDate,${isoWithOffset(when)}`,
     '; #@! TF.GenerationSoftware,ChipBlocks,BoardExport,1',
-    '; #@! TF.FileFunction,Plated,1,2,PTH',
+    `; #@! TF.FileFunction,Plated,1,${copperLayers},PTH`,
     'FMAT,2',
     'METRIC',
   ]

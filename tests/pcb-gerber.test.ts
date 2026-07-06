@@ -296,6 +296,21 @@ describe('the drill file — Excellon, decimal mm, ascending tools', () => {
     expect(drill.trimEnd().endsWith('M30')).toBe(true)
   })
 
+  test('the plated span follows the board’s copper-layer count (1→N, not hardcoded 1,2)', () => {
+    // integration-audit-caught: on a 4-/6-layer board the drill's declared span must match the .gbrjob
+    // + inner-Gerber layer count, else the export set describes the board with two different counts.
+    expect(excellonDrill(TH_BOARD, NO_ROUTING, WHEN, 4)).toContain(
+      '; #@! TF.FileFunction,Plated,1,4,PTH',
+    )
+    expect(excellonDrill(TH_BOARD, NO_ROUTING, WHEN, 6)).toContain(
+      '; #@! TF.FileFunction,Plated,1,6,PTH',
+    )
+    // the default (2-layer) still declares 1,2
+    expect(excellonDrill(TH_BOARD, NO_ROUTING, WHEN)).toContain(
+      '; #@! TF.FileFunction,Plated,1,2,PTH',
+    )
+  })
+
   test('one tool per hole size, ascending: T1 = 0.8 mm (DIP), T2 = 1.0 mm (header)', () => {
     expect(drill).toContain('T1C0.800')
     expect(drill).toContain('T2C1.000')

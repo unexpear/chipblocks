@@ -448,13 +448,18 @@ describe('the ZIP itself', () => {
         copperLayers: 4,
       }),
     })
-    const job = JSON.parse(new TextDecoder().decode(readZip(fab.bytes).get(FAB_FILE_NAMES.gbrjob)))
+    const files = readZip(fab.bytes)
+    const job = JSON.parse(new TextDecoder().decode(files.get(FAB_FILE_NAMES.gbrjob)))
     expect(job.GeneralSpecs.LayerNumber).toBe(4)
     expect(job.GeneralSpecs.Finish).toBe('ENIG')
     const copperFns = job.FilesAttributes.filter((f: { FileFunction: string }) =>
       f.FileFunction.startsWith('Copper'),
     ).map((f: { FileFunction: string }) => f.FileFunction)
     expect(copperFns).toEqual(['Copper,L1,Top', 'Copper,L2,Inr', 'Copper,L3,Inr', 'Copper,L4,Bot'])
+    // the DRILL file in the SAME ZIP must agree on the layer count (integration-audit-caught: it used
+    // to hardcode Plated,1,2,PTH, contradicting the 4-layer gbrjob for the same board)
+    const drill = new TextDecoder().decode(files.get(FAB_FILE_NAMES.drill))
+    expect(drill).toContain('; #@! TF.FileFunction,Plated,1,4,PTH')
   })
 
   test('the validation report states the BOARD SPEC (material/thickness/copper/finish) for the fab', () => {
