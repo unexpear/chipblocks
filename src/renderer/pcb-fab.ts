@@ -159,6 +159,10 @@ export type FabInputs = {
   stackup?: Stackup
   /** Controlled-depth recesses (cavity / stepped boards) — a depth-milling spec we don't yet emit. */
   recesses?: readonly Recess[]
+  /** Whether trace over-current could be checked: false for a board with no solved currents (a
+   *  purely-digital / logic board), so the report discloses the check was NOT run rather than imply a
+   *  pass. Absent ⇒ treated as evaluated (an analog board, the common case). */
+  overCurrentEvaluated?: boolean
   when: Date
 }
 
@@ -297,7 +301,9 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
     `  via drill ≥ ${num(VIA_RULES.min_drill.limitMm)} mm — ${VIA_RULES.min_drill.provenance.title}`,
     `  via annular ring ≥ ${num(VIA_RULES.min_annular.limitMm)} mm — ${VIA_RULES.min_annular.provenance.title}`,
     `  hole-to-hole ≥ ${num(VIA_RULES.hole_to_hole.limitMm)} mm — ${VIA_RULES.hole_to_hole.provenance.title}`,
-    `  trace over-current (each trace vs its ampacity at the solved net current) — ${IPC2221.provenance.title}`,
+    inputs.overCurrentEvaluated === false
+      ? '  trace over-current — NOT CHECKED: this board has no solved currents (a digital / logic board), so trace widths were not verified against current. Check on a current-solving (analog) build.'
+      : `  trace over-current (each trace vs its ampacity at the solved net current) — ${IPC2221.provenance.title}`,
     '',
     'DESIGN-RULE CHECK',
     ...(drc.length === 0

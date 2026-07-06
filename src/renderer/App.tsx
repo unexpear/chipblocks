@@ -1576,6 +1576,18 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         : [],
     [pcbActive, pcbBoard, pcbRatsnest, pcbMergedRouting, pcbNetCurrents, pcbStackup.copperWeight],
   )
+  // The over-current check needs solved currents. A purely-digital (logic-fidelity) board is resolved
+  // as 0/1 with NO currents (empty branches), and an unsolved board has none either — so the check
+  // silently contributes nothing. Rather than let such a board read "over-current clean" for a test
+  // that never ran (faking a pass), we detect it: routed copper exists, but no current was solved.
+  const pcbOverCurrentUnevaluated = useMemo(
+    () =>
+      pcbActive &&
+      pcbMergedRouting.traces.length > 0 &&
+      solution.branches.size === 0 &&
+      pcbAcRms === undefined,
+    [pcbActive, pcbMergedRouting, solution, pcbAcRms],
+  )
   // The header's "wired pins not on the board" count reads the UN-flattened schematic — the pins the
   // user actually drew — never the expanded world (whose pack/block internals a user can't point at).
   const pcbOffBoard = useMemo(
@@ -1778,6 +1790,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       netlistUnsupported: unsupported,
       stackup: pcbStackup,
       recesses: boardRecesses,
+      overCurrentEvaluated: !pcbOverCurrentUnevaluated,
       when: new Date(),
     })
     if (fab.validation.status !== 'pass') {
@@ -1797,6 +1810,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     pcbOffBoard,
     pcbStackup,
     boardRecesses,
+    pcbOverCurrentUnevaluated,
   ])
   // The Bode (frequency-response) tool — its panel state, the grounded world the AC sweep runs on,
   // and the output-picking click handler live in useBode now; its couplings (the warm solved world,
@@ -5686,6 +5700,15 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 {pcbDrc.length > 0 && (
                   <span style={{ color: THEME.statusDanger }}> · DRC: {pcbDrc.length}</span>
                 )}
+                {pcbOverCurrentUnevaluated && (
+                  <span
+                    style={{ color: THEME.statusWarn }}
+                    title="This board's currents weren't solved (a digital / logic board), so trace over-current couldn't be checked."
+                  >
+                    {' '}
+                    · over-current not checked
+                  </span>
+                )}
               </span>
               <PcbViewControls
                 mode={pcbViewMode}
@@ -6983,6 +7006,15 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                       ) : (
                         <span style={{ color: THEME.statusOk }}> · DRC clean</span>
                       ))}
+                    {pcbOverCurrentUnevaluated && (
+                      <span
+                        style={{ color: THEME.statusWarn }}
+                        title="This board's currents weren't solved (a digital / logic board, or an unsolved circuit), so trace over-current couldn't be checked. It is NOT reported as clean."
+                      >
+                        {' '}
+                        · over-current not checked (no solved currents)
+                      </span>
+                    )}
                   </span>
                   <span style={{ display: 'flex', gap: 6 }}>
                     <button

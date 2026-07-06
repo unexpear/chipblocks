@@ -252,6 +252,19 @@ describe('the validation report', () => {
     expect(v.reportText).toContain('KiCad Default net class')
     expect(v.reportText).toContain('JLCPCB')
     expect(v.reportText).toContain('clean — no violations')
+    // over-current was checkable (an analog board): the report names its cited rule.
+    expect(v.reportText).toContain('trace over-current')
+    expect(v.reportText).toContain('IPC-2221')
+  })
+
+  test('a board with no solved currents (digital) DISCLOSES over-current was not checked', () => {
+    // The board still exports (a digital board is manufacturable), but the report must not imply the
+    // over-current check passed when it never ran — the project's "never fake a pass" rule.
+    const v = buildValidationReport({ ...cleanInputs(), overCurrentEvaluated: false })
+    expect(v.status).toBe('pass') // not a violation — the board is still manufacturable
+    expect(v.reportText).toContain('trace over-current — NOT CHECKED')
+    expect(v.reportText).toContain('no solved currents')
+    expect(v.reportText).not.toContain('trace over-current (each trace vs its ampacity')
   })
 
   test('a multilevel (4-layer) board is REFUSED — we generate only the two outer copper Gerbers', () => {
