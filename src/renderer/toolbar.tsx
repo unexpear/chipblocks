@@ -49,6 +49,7 @@ const AMBIENT_PRESETS: { label: string; c: number }[] = [
  */
 export type ToolbarActionId =
   | 'addPart'
+  | 'newPart'
   | 'scope'
   | 'timeline'
   | 'bode'
@@ -77,6 +78,14 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
     color: THEME.accentBlue,
     title:
       'Add Part — open a searchable list of every part (like KiCad’s Choose Symbol); pick one and it drops at the centre of the view, ready to drag into place. The parts palette still works too.',
+  },
+  {
+    id: 'newPart',
+    label: 'New Part',
+    icon: '✎',
+    color: THEME.accentPurple,
+    title:
+      'New Part — author your own custom part: give it a name, pins (each on a chosen side with an electrical role), and optional default values. It draws itself from those pins and joins the palette, ready to drop and wire like any built-in.',
   },
   {
     id: 'scope',
@@ -212,6 +221,7 @@ export function ToolbarItems({
   onProjectAmbient,
   onSolve,
   onAddPart,
+  onNewPart,
   onScope,
   onTimeline,
   onBode,
@@ -248,6 +258,7 @@ export function ToolbarItems({
   onProjectAmbient: (c: number) => void
   onSolve: () => void
   onAddPart: () => void
+  onNewPart: () => void
   onScope: () => void
   onTimeline: () => void
   onBode: () => void
@@ -274,6 +285,7 @@ export function ToolbarItems({
   // add an entry here and in TOOLBAR_ACTIONS; rewire one → change it here.
   const actionHandlers: Record<ToolbarActionId, () => void> = {
     addPart: onAddPart,
+    newPart: onNewPart,
     scope: onScope,
     timeline: onTimeline,
     bode: onBode,

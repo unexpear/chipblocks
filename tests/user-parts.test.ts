@@ -11,11 +11,13 @@ import { terminalsOf } from '../src/renderer/symbols.tsx'
 import {
   allUserParts,
   getUserPart,
+  getUserPartsSnapshot,
   isReservedBuiltinId,
   isUserPart,
   registerUserPart,
   reserveBuiltinIds,
   setUserParts,
+  subscribeUserParts,
   type UserPart,
   userPartGeometry,
   userPartTerminals,
@@ -117,6 +119,21 @@ describe('userPartGeometry — the box + pin coordinates', () => {
     const wide = userPartGeometry(part({ name: 'A-VERY-LONG-PART-NAME-INDEED' }))
     expect(wide.width).toBeGreaterThan(userPartGeometry(part({ name: 'X' })).width)
   })
+
+  test('the body widens to fit named side-pins beside the centred name (no overlap)', () => {
+    const named = (l: string, r: string) =>
+      userPartGeometry(
+        part({
+          name: 'My Sensor',
+          pins: [
+            { id: 'i', name: l, side: 'left', electrical: 'input' },
+            { id: 'o', name: r, side: 'right', electrical: 'output' },
+          ],
+        }),
+      )
+    // longer pin labels demand a wider body so the inside labels don't collide with the centre name
+    expect(named('INPUT_SIGNAL', 'OUTPUT_SIGNAL').width).toBeGreaterThan(named('A', 'B').width)
+  })
 })
 
 describe('userPartTerminals — the wire handles agree with the drawn pins', () => {
@@ -206,5 +223,28 @@ describe('a user id can never collide with a built-in (the registry stays disjoi
   test('a non-reserved id registers normally (returns true)', () => {
     expect(registerUserPart(part({ id: 'my_ic' }))).toBe(true)
     expect(isUserPart('my_ic')).toBe(true)
+  })
+})
+
+describe('the external store (so React re-renders the palette on a change)', () => {
+  test('subscribeUserParts fires on register + setUserParts, and stops after unsubscribe', () => {
+    let calls = 0
+    const unsub = subscribeUserParts(() => calls++)
+    registerUserPart(part())
+    expect(calls).toBe(1)
+    setUserParts([part({ id: 'a' }), part({ id: 'b' })])
+    expect(calls).toBe(2)
+    unsub()
+    registerUserPart(part({ id: 'c' }))
+    expect(calls).toBe(2) // no more notifications after unsubscribe
+  })
+
+  test('getUserPartsSnapshot is a STABLE reference until a mutation (no render loop)', () => {
+    const before = getUserPartsSnapshot()
+    expect(getUserPartsSnapshot()).toBe(before) // same reference when nothing changed
+    registerUserPart(part())
+    const after = getUserPartsSnapshot()
+    expect(after).not.toBe(before) // new reference after a change
+    expect(after.map((p) => p.id)).toContain('my_ic')
   })
 })

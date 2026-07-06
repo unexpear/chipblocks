@@ -214,6 +214,7 @@ import { useSelectionGestures } from './use-selection-gestures.ts'
 import { useShortcuts } from './use-shortcuts.tsx'
 import { useTimeline } from './use-timeline.ts'
 import { useWireTool } from './use-wire-tool.ts'
+import { UserPartEditor } from './user-part-editor.tsx'
 import {
   findWireCrossings,
   netColor,
@@ -964,6 +965,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   )
   // The Add-Part pop-up (the KiCad-style Choose-a-part dialog) — open state lives here.
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [newPartOpen, setNewPartOpen] = useState(false)
   const [sheetSettings, setSheetSettings] = useState<SheetSettings>(DEFAULT_SHEET)
   const [showSheet, setShowSheet] = useState(true)
   const [pageSettingsOpen, setPageSettingsOpen] = useState(false)
@@ -6344,6 +6346,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           <NetlistReportCard report={netlistReport} onDismiss={() => setNetlistReport(null)} />
         ) : null}
         {pickerOpen ? <PartPicker onPick={placePart} onClose={() => setPickerOpen(false)} /> : null}
+        {newPartOpen ? <UserPartEditor onClose={() => setNewPartOpen(false)} /> : null}
         {pageSettingsOpen ? (
           <PageSettings
             settings={sheetSettings}
@@ -6869,6 +6872,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 onProjectAmbient={onProjectAmbient}
                 onSolve={handleSolve}
                 onAddPart={() => setPickerOpen(true)}
+                onNewPart={() => setNewPartOpen(true)}
                 onScope={runScope}
                 onTimeline={() => setTimelineOpen((open) => !open)}
                 onMath={() => setShowMath((open) => !open)}

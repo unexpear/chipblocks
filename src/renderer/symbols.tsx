@@ -2171,7 +2171,7 @@ const DRIVING_PINS: ReadonlySet<PinElectrical> = new Set(['output', 'power_out']
  * renders here, and because the glyph and the wire handles (userPartTerminals) read the SAME geometry
  * in the SAME node-box coordinate space, every handle lands exactly on its drawn pin tip.
  */
-function UserPartGlyph({ part }: { part: UserPart }) {
+export function UserPartGlyph({ part }: { part: UserPart }) {
   const { width, height, body, pins } = userPartGeometry(part)
   return (
     <svg

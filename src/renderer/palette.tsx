@@ -1,8 +1,8 @@
-import { useState } from 'react'
-import { DIGIT_DISPLAY_SIZES } from './builtin-blocks.ts'
+import { useState, useSyncExternalStore } from 'react'
+import { BUILTIN_BLOCKS, DIGIT_DISPLAY_SIZES } from './builtin-blocks.ts'
 import { DeviceGlyph } from './symbols.tsx'
 import { THEME } from './theme.ts'
-import { reserveBuiltinIds } from './user-parts.ts'
+import { getUserPartsSnapshot, reserveBuiltinIds, subscribeUserParts } from './user-parts.ts'
 
 /**
  * Parts palette (Sprint 19 S19-v3-6; dockable in S19-v3-10). The placeable
@@ -187,9 +187,12 @@ export const PARTS: { definition: string; label: string }[] = [
 ]
 
 // Reserve every built-in definition id so a user-authored part can never claim one (which would make
-// the solver + symbols treat the user's black box as that built-in). This IS the authoritative list of
-// placeable built-ins, so it stays in step with the palette automatically.
-reserveBuiltinIds(PARTS.map((part) => part.definition))
+// the solver + symbols treat the user's black box as that built-in — or, worse, the drop path resolve
+// it to a real built-in BLOCK). Covers both id namespaces the canvas can resolve: the placeable parts
+// (PARTS) AND every built-in composite block (BUILTIN_BLOCKS — many, like row_scanner_8, aren't in PARTS
+// yet the onDrop path checks BUILTIN_BLOCKS first). Both lists are the authoritative sources, so this
+// stays in step automatically.
+reserveBuiltinIds([...PARTS.map((part) => part.definition), ...Object.keys(BUILTIN_BLOCKS)])
 
 export function PaletteItems({ filter }: { filter?: string }) {
   const query = (filter ?? '').trim().toLowerCase()
@@ -232,6 +235,62 @@ export function PaletteItems({ filter }: { filter?: string }) {
 }
 
 /**
+ * The user-authored parts section: every custom part the user has made (via the New-Part dialog),
+ * draggable onto the canvas exactly like a built-in. It subscribes to the user-parts registry through
+ * useSyncExternalStore, so a newly saved part appears here the moment it's registered.
+ */
+export function UserPartPaletteItems({ filter }: { filter?: string }) {
+  const userParts = useSyncExternalStore(subscribeUserParts, getUserPartsSnapshot)
+  const query = (filter ?? '').trim().toLowerCase()
+  const shown = query
+    ? userParts.filter(
+        (p) => p.name.toLowerCase().includes(query) || p.id.toLowerCase().includes(query),
+      )
+    : userParts
+  if (shown.length === 0) return null
+  return (
+    <>
+      <div
+        style={{
+          color: THEME.textMuted,
+          fontSize: 10,
+          fontFamily: 'system-ui, sans-serif',
+          margin: '8px 2px 2px',
+        }}
+      >
+        Your parts — drag to place
+      </div>
+      {shown.map((part) => (
+        // biome-ignore lint/a11y/noStaticElementInteractions: a palette part is a drag source; keyboard-accessible placement is future work
+        <div
+          key={part.id}
+          draggable
+          onDragStart={(event) => {
+            event.dataTransfer.setData(DEFINITION_MIME, part.id)
+            event.dataTransfer.effectAllowed = 'move'
+          }}
+          title={`Drag ${part.name} onto the canvas`}
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 2,
+            padding: '8px 6px',
+            border: `1px solid ${THEME.borderSubtle}`,
+            borderRadius: 6,
+            background: THEME.surfaceRaised,
+            cursor: 'grab',
+          }}
+        >
+          <DeviceGlyph definition={part.id} />
+          <span style={{ color: THEME.textPrimary, fontSize: 11 }}>{part.name}</span>
+        </div>
+      ))}
+    </>
+  )
+}
+
+/**
  * The Parts panel: a filter-as-you-type box over the placeable parts AND the
  * on-canvas blocks. The query matches a part's label or its definition id (so
  * "mos" finds the MOSFETs, "logic" finds the gates) and a block's name. Empty
@@ -262,6 +321,7 @@ export function Palette({ blocks }: { blocks: { id: string; name: string }[] }) 
         }}
       />
       <PaletteItems filter={query} />
+      <UserPartPaletteItems filter={query} />
       <BlockPaletteItems blocks={blocks} filter={query} />
     </>
   )

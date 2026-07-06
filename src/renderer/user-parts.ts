@@ -67,6 +67,7 @@ const STUB = 8 // length of the pin lead sticking out of the body
 const PITCH = 20 // spacing between adjacent pins on one side
 const MARGIN = 16 // gap from a body corner to the first / last pin on that side
 const CHAR_W = 8 // approx px per character of the 12px semibold body name (the box grows to fit it)
+const PIN_LABEL_CHAR = 6 // approx px per character of a 9px pin-name label tucked inside the body edge
 
 /** A placed pin: the stub root on the body edge, its tip on the node's outer edge, + drawing fields. */
 export type PlacedPin = {
@@ -107,8 +108,12 @@ export function userPartGeometry(part: UserPart): UserPartGeometry {
   const vMax = Math.max(left.length, right.length)
   const hMax = Math.max(top.length, bottom.length)
   const bodyH = Math.max(MIN_BODY_H, 2 * MARGIN + Math.max(0, vMax - 1) * PITCH)
-  const labelW = part.name.length * CHAR_W + 20
-  const bodyW = Math.max(MIN_BODY_W, labelW, 2 * MARGIN + Math.max(0, hMax - 1) * PITCH)
+  // Width fits the centred name AND the left/right pin labels tucked inside each edge without the three
+  // colliding — so a long name beside named side-pins ("IN … My Sensor … OUT") stays readable.
+  const labelChars = (pins: UserPin[]) => Math.max(0, ...pins.map((p) => p.name.length))
+  const sideLabelW = Math.max(labelChars(left), labelChars(right)) * PIN_LABEL_CHAR
+  const nameBandW = part.name.length * CHAR_W + 2 * sideLabelW + 24
+  const bodyW = Math.max(MIN_BODY_W, nameBandW, 2 * MARGIN + Math.max(0, hMax - 1) * PITCH)
   const width = bodyW + 2 * STUB
   const height = bodyH + 2 * STUB
   const bx = STUB
@@ -166,6 +171,25 @@ export function userPartTerminals(
 // symbol / terminal / palette / defaults lookups consult it so a user part behaves like a built-in.
 const registry = new Map<string, UserPart>()
 
+// A tiny external store so React (the palette) re-renders when the registry changes. The module-global
+// Map is invisible to React; `snapshot` is a stable array rebuilt only on a mutation, and getSnapshot
+// returns the SAME reference until then — exactly what useSyncExternalStore needs to avoid render loops.
+let snapshot: UserPart[] = []
+const listeners = new Set<() => void>()
+function publish(): void {
+  snapshot = [...registry.values()]
+  for (const listener of listeners) listener()
+}
+/** Subscribe to registry changes (returns an unsubscribe). Pairs with getUserPartsSnapshot. */
+export function subscribeUserParts(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+/** The current user parts as a STABLE reference (unchanged until the next mutation) — for React. */
+export function getUserPartsSnapshot(): readonly UserPart[] {
+  return snapshot
+}
+
 // Built-in definition ids are OFF-LIMITS as user-part ids. The solver, symbols, and defaults all key off
 // the definition-id STRING, so a user part sharing a built-in's id would be simulated AND drawn as that
 // built-in (with the wrong parameters) — a silent lie. The app seeds this set from the palette's built-in
@@ -191,6 +215,7 @@ export function registerUserPart(part: UserPart): boolean {
     return false
   }
   registry.set(part.id, part)
+  publish()
   return true
 }
 export function getUserPart(id: string): UserPart | undefined {
@@ -212,4 +237,5 @@ export function setUserParts(parts: readonly UserPart[]): void {
     }
     registry.set(p.id, p)
   }
+  publish()
 }
