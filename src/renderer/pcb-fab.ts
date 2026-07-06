@@ -25,6 +25,7 @@ import {
   COPPER_WEIGHT_PROVENANCE,
   defaultStackup,
   FR4_SUBSTRATE,
+  IPC2221,
   type Stackup,
   SURFACE_FINISHES,
   traceAmpacity,
@@ -296,6 +297,7 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
     `  via drill ≥ ${num(VIA_RULES.min_drill.limitMm)} mm — ${VIA_RULES.min_drill.provenance.title}`,
     `  via annular ring ≥ ${num(VIA_RULES.min_annular.limitMm)} mm — ${VIA_RULES.min_annular.provenance.title}`,
     `  hole-to-hole ≥ ${num(VIA_RULES.hole_to_hole.limitMm)} mm — ${VIA_RULES.hole_to_hole.provenance.title}`,
+    `  trace over-current (each trace vs its ampacity at the solved net current) — ${IPC2221.provenance.title}`,
     '',
     'DESIGN-RULE CHECK',
     ...(drc.length === 0

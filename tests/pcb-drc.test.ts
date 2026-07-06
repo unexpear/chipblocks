@@ -236,4 +236,59 @@ describe('runDrc', () => {
     expect(violations.some((v) => v.code === 'via-size' && v.message.includes('0.2'))).toBe(true)
     expect(violations.some((v) => v.code === 'hole-to-hole')).toBe(true)
   })
+
+  describe('over-current — a trace vs its IPC-2221 ampacity', () => {
+    const routed = () => {
+      const defs: [string, string][] = [
+        ['R1', 'resistor'],
+        ['R2', 'resistor'],
+      ]
+      const board = deriveBoard(parts(defs))
+      const rn = computeRatsnest(world(defs, [['R1', 'terminal_b', 'R2', 'terminal_a']]), board)
+      const routing = routeBoard(rn)
+      return { board, rn, routing, net: routing.traces[0]?.net ?? '' }
+    }
+
+    test('a thin trace carrying more than its rating is flagged (cited to IPC-2221)', () => {
+      const { board, rn, routing, net } = routed()
+      expect(net).not.toBe('')
+      // a 0.25 mm 1 oz trace is rated ~0.88 A at a 10 °C rise — 5 A blows past it
+      const v = runDrc(board, rn, routing, undefined, {
+        netCurrents: new Map([[net, 5]]),
+        copperWeight: 'one_oz',
+      }).filter((x) => x.code === 'over-current')
+      expect(v).toHaveLength(1)
+      expect(v[0]?.message).toContain('5 A')
+      expect(v[0]?.message).toContain('IPC-2221')
+    })
+
+    test('a current within the ampacity does NOT flag', () => {
+      const { board, rn, routing, net } = routed()
+      const v = runDrc(board, rn, routing, undefined, {
+        netCurrents: new Map([[net, 0.1]]), // 0.1 A << the ~0.88 A rating
+        copperWeight: 'one_oz',
+      })
+      expect(v.filter((x) => x.code === 'over-current')).toHaveLength(0)
+    })
+
+    test('heavier copper raises the rating — the same current that flagged 1 oz clears at 2 oz', () => {
+      const { board, rn, routing, net } = routed()
+      // ~1.4 A: over a 0.25 mm 1 oz trace (~0.88 A) but under 2 oz (~1.45 A)
+      const at1oz = runDrc(board, rn, routing, undefined, {
+        netCurrents: new Map([[net, 1.4]]),
+        copperWeight: 'one_oz',
+      }).filter((x) => x.code === 'over-current')
+      const at2oz = runDrc(board, rn, routing, undefined, {
+        netCurrents: new Map([[net, 1.4]]),
+        copperWeight: 'two_oz',
+      }).filter((x) => x.code === 'over-current')
+      expect(at1oz).toHaveLength(1)
+      expect(at2oz).toHaveLength(0)
+    })
+
+    test('no over-current check without solved net currents (an unsolved board)', () => {
+      const { board, rn, routing } = routed()
+      expect(runDrc(board, rn, routing).filter((x) => x.code === 'over-current')).toHaveLength(0)
+    })
+  })
 })

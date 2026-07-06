@@ -1527,10 +1527,37 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     () => mergeUserCopper(pcbRouting, userTraces, userVias),
     [pcbRouting, userTraces, userVias],
   )
+  // The board's physical stack-up — the fab-order spec that goes in the manufacturing ZIP. The user
+  // edits the knobs (finished thickness, copper weight, surface finish) in the PCB panel; the
+  // cross-section (the FR4 core filling to the chosen thickness) is rebuilt from them.
+  const [pcbStackupOptions, setPcbStackupOptions] =
+    useState<StackupOptions>(DEFAULT_STACKUP_OPTIONS)
+  const pcbStackup = useMemo(() => buildStackup(pcbStackupOptions), [pcbStackupOptions])
+  // The current on each net (its throughput = the largest part current on it, from the LIVE solve) —
+  // what the over-current DRC checks each trace's IPC-2221 ampacity against. A pad's part is the head
+  // of its `partId/padId` key; readings carry each part's through-current.
+  const pcbNetCurrents = useMemo(() => {
+    const m = new Map<string, number>()
+    if (!pcbActive) return m
+    for (const pad of pcbRatsnest.padBoxes) {
+      const partId = pad.pad.split('/')[0]
+      const cur = partId !== undefined ? readings.get(partId)?.current : undefined
+      if (cur === undefined) continue
+      m.set(pad.net, Math.max(m.get(pad.net) ?? 0, Math.abs(cur)))
+    }
+    return m
+  }, [pcbActive, pcbRatsnest, readings])
   // Design-rule check — the board's failure-mode pass (cited limits), re-run live like the routing.
+  // The solved net currents + copper weight enable the over-current check (trace vs IPC-2221 ampacity).
   const pcbDrc = useMemo(
-    () => (pcbActive ? runDrc(pcbBoard, pcbRatsnest, pcbMergedRouting) : []),
-    [pcbActive, pcbBoard, pcbRatsnest, pcbMergedRouting],
+    () =>
+      pcbActive
+        ? runDrc(pcbBoard, pcbRatsnest, pcbMergedRouting, DEFAULT_ROUTE_CLASS, {
+            netCurrents: pcbNetCurrents,
+            copperWeight: pcbStackup.copperWeight,
+          })
+        : [],
+    [pcbActive, pcbBoard, pcbRatsnest, pcbMergedRouting, pcbNetCurrents, pcbStackup.copperWeight],
   )
   // The header's "wired pins not on the board" count reads the UN-flattened schematic — the pins the
   // user actually drew — never the expanded world (whose pack/block internals a user can't point at).
@@ -1564,12 +1591,6 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     }
     return problems
   }, [pcbBoard, pcbOffBoard, pcbMergedRouting, pcbDrc])
-  // The board's physical stack-up — the fab-order spec that goes in the manufacturing ZIP. The user
-  // edits the knobs (finished thickness, copper weight, surface finish) in the PCB panel; the
-  // cross-section (the FR4 core filling to the chosen thickness) is rebuilt from them.
-  const [pcbStackupOptions, setPcbStackupOptions] =
-    useState<StackupOptions>(DEFAULT_STACKUP_OPTIONS)
-  const pcbStackup = useMemo(() => buildStackup(pcbStackupOptions), [pcbStackupOptions])
   // Controlled-depth recesses (cavity / stepped boards) — rectangular pockets milled into the board.
   // Design + 3-D visualisation for now; export is gated until the depth-mill output exists.
   const [boardRecesses, setBoardRecesses] = useState<Recess[]>([])

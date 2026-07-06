@@ -14,6 +14,7 @@ import {
   type RouteClass,
   VIA_RULES,
 } from './pcb-route.ts'
+import { type CopperWeight, IPC2221, traceAmpacity } from './pcb-stackup.ts'
 import { SILK_TEXT, strokeText } from './stroke-font.ts'
 
 /**
@@ -34,6 +35,11 @@ export type DrcCode =
   | 'via-size'
   | 'hole-to-hole'
   | 'silk-over-pad'
+  | 'over-current'
+
+/** The temperature rise (°C above ambient) the over-current check sizes to — IPC-2221's standard,
+ *  conservative sizing point. A trace exceeding its ampacity at this rise runs hotter and ages fast. */
+export const OVER_CURRENT_DELTA_T_C = 10
 
 export type DrcViolation = {
   code: DrcCode
@@ -46,7 +52,7 @@ export type DrcViolation = {
  *  drill/annular/hole-spacing limits live in pcb-route's VIA_RULES so the router and this check
  *  can never disagree). */
 export const DRC_RULES: Record<
-  Exclude<DrcCode, 'copper-clearance' | 'via-size' | 'hole-to-hole'>,
+  Exclude<DrcCode, 'copper-clearance' | 'via-size' | 'hole-to-hole' | 'over-current'>,
   { limitMm: number; provenance: FootprintProvenance }
 > = {
   'silk-over-pad': {
@@ -116,6 +122,7 @@ function courtyardBox(pl: Placement): { x: number; y: number; w: number; h: numb
 }
 
 const fmt = (v: number) => (Math.round(v * 100) / 100).toString()
+const fmtA = (v: number) => (Math.round(v * 1000) / 1000).toString() // amps, mA precision
 
 /** Every copper rectangle on the board (pads as-is; trace segments at their real width). */
 function copperBoxes(
@@ -164,6 +171,7 @@ export function runDrc(
   ratsnest: Ratsnest,
   routing: BoardRouting,
   cls: RouteClass = DEFAULT_ROUTE_CLASS,
+  opts?: { netCurrents?: Map<string, number>; copperWeight?: CopperWeight },
 ): DrcViolation[] {
   const out: DrcViolation[] = []
 
@@ -335,5 +343,33 @@ export function runDrc(
     }
   }
 
+  // Over-current — a trace carrying more current than its IPC-2221 ampacity for a modest rise: it runs
+  // hot and ages fast (the electrical counterpart to the too-narrow-track check). Only run when the
+  // caller supplies the SOLVED net currents + the copper weight (a solved board). A trace on a net can
+  // carry that net's whole throughput, so each is checked against the max part current on its net.
+  if (opts?.netCurrents !== undefined && opts.copperWeight !== undefined) {
+    const weight = opts.copperWeight
+    const oz = weight === 'two_oz' ? '2' : weight === 'half_oz' ? '0.5' : '1'
+    for (const t of routing.traces) {
+      const current = opts.netCurrents.get(t.net) ?? 0
+      if (current <= 1e-9) continue
+      // top + bottom are OUTER copper (the 'external' IPC-2221 constant); inner layers aren't routed.
+      const ampacity = traceAmpacity(t.widthMm, weight, OVER_CURRENT_DELTA_T_C)
+      if (ampacity <= 0 || current <= ampacity) continue
+      const a = t.points[0]
+      const b = t.points[1] ?? a
+      if (a === undefined || b === undefined) continue
+      out.push({
+        code: 'over-current',
+        message: `a ${fmt(t.widthMm)} mm trace on net ${t.net} carries ${fmtA(current)} A — over its ~${fmtA(ampacity)} A rating (IPC-2221, ${OVER_CURRENT_DELTA_T_C} °C rise, ${oz} oz). Widen the trace or split the current.`,
+        at: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      })
+    }
+  }
+
   return out
 }
+
+/** The IPC-2221 provenance behind the over-current check (re-exported for the fab report's cited
+ *  rules list — the ampacity curve fit + its constants live in pcb-stackup's IPC2221). */
+export const OVER_CURRENT_PROVENANCE = IPC2221.provenance
