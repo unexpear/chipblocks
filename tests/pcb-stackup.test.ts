@@ -25,6 +25,9 @@ import {
   traceImpedance,
   traceResistanceOhm,
   traceThicknessMm,
+  VIA_PLATING_MM,
+  VIA_PLATING_PROVENANCE,
+  viaAmpacity,
   widthForImpedance,
 } from '../src/renderer/pcb-stackup.ts'
 
@@ -265,6 +268,16 @@ describe('IPC-2221 trace current capacity — I = k·ΔT^0.44·A^0.725', () => {
     expect(IPC2221.kExternal).toBe(0.048)
     expect(IPC2221.kInternal).toBe(0.024)
     expect(IPC2221.provenance.confidence).toBe('high')
+  })
+
+  test('a plated via barrel carries far less than a wide trace — the current bottleneck', () => {
+    // 0.4 mm drill, 20 µm plating: A = π·0.02·0.42 mm² ≈ 40.9 mil²; I = 0.024·10^0.44·40.9^0.725 ≈ 0.97 A.
+    const i = viaAmpacity(0.4, VIA_PLATING_MM, 10)
+    expect(i).toBeCloseTo(0.97, 1)
+    // a smaller drill = less barrel copper = lower ampacity
+    expect(viaAmpacity(0.3, VIA_PLATING_MM, 10)).toBeLessThan(viaAmpacity(0.6, VIA_PLATING_MM, 10))
+    expect(VIA_PLATING_PROVENANCE.confidence).toBe('high')
+    expect(VIA_PLATING_PROVENANCE.citation).toContain('IPC-6012')
   })
 })
 

@@ -15,7 +15,13 @@ import {
   type RouteClass,
   VIA_RULES,
 } from './pcb-route.ts'
-import { type CopperWeight, IPC2221, traceAmpacity } from './pcb-stackup.ts'
+import {
+  type CopperWeight,
+  IPC2221,
+  traceAmpacity,
+  VIA_PLATING_MM,
+  viaAmpacity,
+} from './pcb-stackup.ts'
 import { SILK_TEXT, strokeText } from './stroke-font.ts'
 
 /**
@@ -372,6 +378,19 @@ export function runDrc(
         code: 'over-current',
         message: `a ${fmt(t.widthMm)} mm ${external ? '' : 'inner-layer '}trace on net ${t.net} carries ${fmtA(current)} A — over its ~${fmtA(ampacity)} A rating (IPC-2221 ${external ? 'external' : 'internal'}, ${OVER_CURRENT_DELTA_T_C} °C rise, ${oz} oz). Widen the trace or split the current.`,
         at: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      })
+    }
+    // A plated via's barrel is a current bottleneck — far less copper than a wide trace — and often the
+    // narrowest point on a high-current net. Check each via's barrel ampacity against its net current.
+    for (const v of routing.vias) {
+      const current = opts.netCurrents.get(v.net) ?? 0
+      if (current <= 1e-9) continue
+      const ampacity = viaAmpacity(v.drillMm, VIA_PLATING_MM, OVER_CURRENT_DELTA_T_C)
+      if (ampacity <= 0 || current <= ampacity) continue
+      out.push({
+        code: 'over-current',
+        message: `a via on net ${v.net} (${fmt(v.drillMm)} mm drill) carries ${fmtA(current)} A — over its ~${fmtA(ampacity)} A plated-barrel rating (IPC-2221 internal on a ${VIA_PLATING_MM * 1000} µm IPC-6012 barrel, ${OVER_CURRENT_DELTA_T_C} °C rise). Add a parallel via, or use a larger drill.`,
+        at: v.at,
       })
     }
   }

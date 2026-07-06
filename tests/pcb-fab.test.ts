@@ -253,9 +253,11 @@ describe('the validation report', () => {
     expect(v.reportText).toContain('KiCad Default net class')
     expect(v.reportText).toContain('JLCPCB')
     expect(v.reportText).toContain('clean — no violations')
-    // over-current was checkable (an analog board): the report names its cited rule.
+    // over-current was checkable (an analog board): the report names its cited rules — trace + via.
     expect(v.reportText).toContain('trace over-current')
+    expect(v.reportText).toContain('via over-current')
     expect(v.reportText).toContain('IPC-2221')
+    expect(v.reportText).toContain('IPC-6012') // the via barrel plating citation
   })
 
   test('a board with no solved currents (digital) DISCLOSES over-current was not checked', () => {

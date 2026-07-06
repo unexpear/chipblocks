@@ -318,6 +318,26 @@ describe('runDrc', () => {
       expect(innerHits[0]?.message).toContain('internal')
       expect(oc(outer)).toHaveLength(0) // the same trace on the outer copper is within its rating
     })
+
+    test('a via carrying more than its plated barrel can hold is flagged (the bottleneck)', () => {
+      const { board, rn, net } = routed()
+      const routing = {
+        traces: [],
+        vias: [{ net, at: { x: 0, y: 0 }, diameterMm: 0.6, drillMm: 0.4 }],
+        unrouted: [],
+      }
+      const oc = (amps: number) =>
+        runDrc(board, rn, routing, undefined, {
+          netCurrents: new Map([[net, amps]]),
+          copperWeight: 'one_oz',
+        }).filter((v) => v.code === 'over-current')
+      // a 0.4 mm via's barrel is rated ~0.97 A: 3 A blows past it, 0.5 A clears it.
+      const hot = oc(3)
+      expect(hot).toHaveLength(1)
+      expect(hot[0]?.message).toContain('via on net')
+      expect(hot[0]?.message).toContain('barrel')
+      expect(oc(0.5)).toHaveLength(0)
+    })
   })
 
   describe('open-net — a net not joined by its own copper', () => {

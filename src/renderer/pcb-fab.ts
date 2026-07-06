@@ -37,6 +37,7 @@ import {
   traceAmpacity,
   traceImpedance,
   traceResistanceOhm,
+  VIA_PLATING_PROVENANCE,
 } from './pcb-stackup.ts'
 import { SILK_TEXT } from './stroke-font.ts'
 
@@ -312,6 +313,11 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
     inputs.overCurrentEvaluated === false
       ? '  trace over-current — NOT CHECKED: this board has no solved currents (a digital / logic board), so trace widths were not verified against current. Check on a current-solving (analog) build.'
       : `  trace over-current (each trace vs its ampacity at the solved net current) — ${IPC2221.provenance.title}`,
+    ...(inputs.overCurrentEvaluated === false
+      ? []
+      : [
+          `  via over-current (each via's plated barrel vs its net current) — ${VIA_PLATING_PROVENANCE.title}`,
+        ]),
     '  net continuity (every net whole — each net verified joined by its OWN copper, no opens)',
     '',
     'DESIGN-RULE CHECK',

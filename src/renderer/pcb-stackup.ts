@@ -452,6 +452,35 @@ export function traceAmpacity(
   return k * deltaTempC ** 0.44 * areaMil2 ** 0.725
 }
 
+/** The plated copper on a via's hole wall — the barrel that carries current between layers. IPC-6012
+ *  Class 2 requires ≥ 20 µm (0.8 mil) average copper in a plated through-hole; we size to that minimum
+ *  (a conservative ampacity — the real plating is usually a little thicker). */
+export const VIA_PLATING_MM = 0.02
+
+export const VIA_PLATING_PROVENANCE: FootprintProvenance = {
+  source_type: 'standard',
+  title: 'Plated-through-hole wall copper: ≥ 20 µm (IPC-6012 Class 2)',
+  citation:
+    'IPC-6012 (Qualification and Performance Specification for Rigid PCBs) Class 2: minimum average plated copper in a plated through-hole / via barrel is 20 µm (0.8 mil), 25 µm minimum in any one spot. Sizing the via ampacity to the 20 µm minimum is conservative — the delivered plating is typically 25 µm+.',
+  confidence: 'high',
+  url: 'https://www.ipc.org',
+  date_accessed: '2026-07-06',
+}
+
+/**
+ * A plated via's current-carrying capacity (A), IPC-2221 applied to the barrel: I = k·ΔT^0.44·A^0.725
+ * with A the barrel WALL cross-section — the copper annulus around the drilled hole, area
+ * π·plating·(drill + plating). A via is buried in the board, so it uses the INTERNAL constant (like an
+ * inner trace). A conservative first-pass number; a real board's via ampacity depends on its length
+ * and the planes it ties to, which a thermal solver would model.
+ */
+export function viaAmpacity(drillMm: number, platingMm = VIA_PLATING_MM, deltaTempC = 10): number {
+  const areaMm2 = Math.PI * platingMm * (drillMm + platingMm)
+  const areaMil2 = areaMm2 * MM2_PER_MIL2
+  if (areaMil2 <= 0 || deltaTempC <= 0) return 0
+  return IPC2221.kInternal * deltaTempC ** 0.44 * areaMil2 ** 0.725
+}
+
 /** The IPC-2141A controlled-impedance formulas — the closed-form single-line approximations for a
  *  trace's characteristic impedance from its width, the dielectric height to its reference plane, the
  *  copper thickness, and the dielectric constant. */
