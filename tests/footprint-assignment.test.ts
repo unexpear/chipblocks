@@ -44,6 +44,19 @@ describe('footprintOptions', () => {
     expect(footprintOptions('transistor_bjt_npn').map((f) => f.id)).toContain('SOT-23')
     expect(footprintOptions('led')).toEqual([])
   })
+
+  test('a chip passive now offers all three common sizes (0402 / 0603 / 0805), 0603 default', () => {
+    for (const part of ['resistor', 'capacitor', 'thermistor', 'inductor']) {
+      const ids = footprintOptions(part).map((f) => f.id)
+      expect(ids).toEqual(
+        expect.arrayContaining(['R_0402_1005Metric', 'R_0603_1608Metric', 'R_0805_2012Metric']),
+      )
+      expect(footprintForPart(part)?.id).toBe('R_0603_1608Metric') // default stays the middle size
+      // each smaller/larger size is a valid explicit choice
+      expect(footprintForPart(part, 'R_0402_1005Metric')?.id).toBe('R_0402_1005Metric')
+      expect(footprintForPart(part, 'R_0805_2012Metric')?.id).toBe('R_0805_2012Metric')
+    }
+  })
 })
 
 describe('the mapping references only real footprints (no dangling ids)', () => {

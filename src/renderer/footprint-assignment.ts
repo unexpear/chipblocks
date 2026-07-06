@@ -8,16 +8,28 @@ import { BUILTIN_FOOTPRINTS, type Footprint } from './footprint.ts'
  * until its package footprint is added (a BJT waits for SOT-23, an op-amp for SOIC-8, etc.), rather
  * than being forced onto a footprint that isn't its package.
  *
- * `options` lists every footprint the part could take (a resistor also comes in 0402/0805/through-hole);
- * `default` is the one a freshly-dropped part gets. Today only the 0603 exists for these, so the lists
- * are short — they grow as the footprint set does, with no change here beyond adding ids.
+ * `options` lists every footprint the part could take (a chip passive comes in 0402 / 0603 / 0805);
+ * `default` is the one a freshly-dropped part gets (the 0603, the workhorse middle size). The lists
+ * grow as the footprint set does, with no change here beyond adding ids.
  */
 export const PART_FOOTPRINTS: Record<string, { default: string; options: string[] }> = {
-  // The 2-terminal chip parts that genuinely come in an 0603 (1608 metric) package.
-  resistor: { default: 'R_0603_1608Metric', options: ['R_0603_1608Metric'] },
-  capacitor: { default: 'R_0603_1608Metric', options: ['R_0603_1608Metric'] },
-  thermistor: { default: 'R_0603_1608Metric', options: ['R_0603_1608Metric'] },
-  inductor: { default: 'R_0603_1608Metric', options: ['R_0603_1608Metric'] },
+  // The 2-terminal chip passives — offered in the three common sizes (0402 / 0603 / 0805), 0603 default.
+  resistor: {
+    default: 'R_0603_1608Metric',
+    options: ['R_0402_1005Metric', 'R_0603_1608Metric', 'R_0805_2012Metric'],
+  },
+  capacitor: {
+    default: 'R_0603_1608Metric',
+    options: ['R_0402_1005Metric', 'R_0603_1608Metric', 'R_0805_2012Metric'],
+  },
+  thermistor: {
+    default: 'R_0603_1608Metric',
+    options: ['R_0402_1005Metric', 'R_0603_1608Metric', 'R_0805_2012Metric'],
+  },
+  inductor: {
+    default: 'R_0603_1608Metric',
+    options: ['R_0402_1005Metric', 'R_0603_1608Metric', 'R_0805_2012Metric'],
+  },
   // Small transistors ship in SOT-23 (JEDEC TO-236) — BJTs and small-signal MOSFETs alike.
   transistor_bjt_npn: { default: 'SOT-23', options: ['SOT-23'] },
   transistor_bjt_pnp: { default: 'SOT-23', options: ['SOT-23'] },

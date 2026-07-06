@@ -7,7 +7,9 @@
 import { describe, expect, test } from 'vitest'
 import {
   BUILTIN_FOOTPRINTS,
+  FOOTPRINT_0402,
   FOOTPRINT_0603,
+  FOOTPRINT_0805,
   FOOTPRINT_DIP8,
   FOOTPRINT_PINHDR_1X4,
   FOOTPRINT_SOIC8,
@@ -64,6 +66,44 @@ describe('0603 land pattern — matches the cited IPC-7351 / KiCad geometry', ()
     expect(FOOTPRINT_0603.labels.reference).toEqual({ x: 0, y: -1.43 }) // REF** on silkscreen
     expect(FOOTPRINT_0603.labels.value).toEqual({ x: 0, y: 1.43 }) // value on fab
     expect(FOOTPRINT_0603.labels.fabReference).toEqual({ x: 0, y: 0 }) // ${REFERENCE} on fab, centred
+  })
+})
+
+describe('0402 / 0805 chip land patterns — the smaller + larger passive sizes (cited KiCad geometry)', () => {
+  test('0402: two 0.54 × 0.64 mm pads on 1.02 mm centres, courtyard 1.86 × 0.94 mm', () => {
+    const [p1, p2] = FOOTPRINT_0402.pads
+    expect(FOOTPRINT_0402.pads).toHaveLength(2)
+    expect(p1?.center).toEqual({ x: -0.51, y: 0 })
+    expect(p2?.center).toEqual({ x: 0.51, y: 0 })
+    expect((p2?.center.x ?? 0) - (p1?.center.x ?? 0)).toBeCloseTo(1.02, 6) // pitch
+    for (const p of FOOTPRINT_0402.pads) {
+      expect(p.size).toEqual({ w: 0.54, h: 0.64 })
+      expect(p.type).toBe('smd')
+    }
+    expect(FOOTPRINT_0402.courtyard).toEqual({ x: -0.93, y: -0.47, w: 1.86, h: 0.94 })
+  })
+
+  test('0805: two 1.025 × 1.4 mm pads on 1.825 mm centres, courtyard 3.36 × 1.9 mm', () => {
+    const [p1, p2] = FOOTPRINT_0805.pads
+    expect(FOOTPRINT_0805.pads).toHaveLength(2)
+    expect(p1?.center).toEqual({ x: -0.9125, y: 0 })
+    expect(p2?.center).toEqual({ x: 0.9125, y: 0 })
+    expect((p2?.center.x ?? 0) - (p1?.center.x ?? 0)).toBeCloseTo(1.825, 6) // pitch
+    for (const p of FOOTPRINT_0805.pads) {
+      expect(p.size).toEqual({ w: 1.025, h: 1.4 })
+      expect(p.type).toBe('smd')
+    }
+    expect(FOOTPRINT_0805.courtyard).toEqual({ x: -1.68, y: -0.95, w: 3.36, h: 1.9 })
+  })
+
+  test('the three chip sizes are ordered 0402 < 0603 < 0805 by pad + courtyard', () => {
+    const area = (f: Footprint) => f.courtyard.w * f.courtyard.h
+    expect(area(FOOTPRINT_0402)).toBeLessThan(area(FOOTPRINT_0603))
+    expect(area(FOOTPRINT_0603)).toBeLessThan(area(FOOTPRINT_0805))
+    // the pad grows with the package too
+    const padArea = (f: Footprint) => (f.pads[0]?.size.w ?? 0) * (f.pads[0]?.size.h ?? 0)
+    expect(padArea(FOOTPRINT_0402)).toBeLessThan(padArea(FOOTPRINT_0603))
+    expect(padArea(FOOTPRINT_0603)).toBeLessThan(padArea(FOOTPRINT_0805))
   })
 })
 

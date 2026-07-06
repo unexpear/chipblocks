@@ -181,6 +181,126 @@ export const FOOTPRINT_0603: Footprint = {
   },
 }
 
+/**
+ * 0402 (imperial) / 1005 (metric) two-terminal chip land pattern — the SMALLER passive size, for dense
+ * boards. Geometry is the IPC-7351 nominal land pattern from the public KiCad library
+ * (Resistor_SMD.pretty/R_0402_1005Metric.kicad_mod): two 0.54 × 0.64 mm pads on 1.02 mm centres, a
+ * 1.86 × 0.94 mm courtyard. Read verbatim from the installed KiCad 10.0 library; the identical footprint
+ * opens in KiCad.
+ */
+export const FOOTPRINT_0402: Footprint = {
+  id: 'R_0402_1005Metric',
+  name: '0402 (1005 metric) chip',
+  description:
+    'Two-terminal SMD chip land pattern — the smaller passive size (resistors, small capacitors). IPC-7351 nominal.',
+  pads: [
+    {
+      id: '1',
+      center: { x: -0.51, y: 0 },
+      size: { w: 0.54, h: 0.64 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '2',
+      center: { x: 0.51, y: 0 },
+      size: { w: 0.54, h: 0.64 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+  ],
+  silkscreen: cornerTicksSilk({ x: -0.93, y: -0.47, w: 1.86, h: 0.94 }),
+  // The component body outline (F.Fab): the 1.05 × 0.54 mm chip body extent (F.Fab rect ±0.525 × ±0.27).
+  fabrication: rectOutline(-0.525, -0.27, 0.525, 0.27),
+  labels: {
+    reference: { x: 0, y: -1.17 },
+    value: { x: 0, y: 1.17 },
+    fabReference: { x: 0, y: 0 },
+  },
+  courtyard: { x: -0.93, y: -0.47, w: 1.86, h: 0.94 },
+  provenance: {
+    source_type: 'standard',
+    title: 'IPC-7351 nominal 0402/1005 chip land pattern',
+    citation:
+      'KiCad footprint library, Resistor_SMD.pretty/R_0402_1005Metric.kicad_mod — two 0.54×0.64 mm pads on 1.02 mm centres; courtyard ±0.93×±0.47 mm — read verbatim from the installed KiCad 10.0 library',
+    confidence: 'high',
+    url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
+    date_accessed: '2026-07-06',
+    notes: 'Body size 1.0×0.5 mm (the 1005 metric name). Silk is ChipBlocks’ own corner-tick rule.',
+  },
+  body3d: {
+    heightMm: 0.35,
+    standoffMm: 0.01,
+    provenance: {
+      source_type: 'datasheet',
+      title: 'EIA 0402 / IEC 1005M chip resistor body height',
+      citation:
+        'Yageo RC0402 and Vishay CRCW0402 chip resistor datasheets: body 1.00×0.50 mm, height ≈ 0.35 mm; SMD solder standoff ≈ 0.01 mm',
+      confidence: 'high',
+    },
+  },
+}
+
+/**
+ * 0805 (imperial) / 2012 (metric) two-terminal chip land pattern — the LARGER common passive size, for
+ * higher-power resistors and bigger capacitors. Geometry is the IPC-7351 nominal land pattern from the
+ * public KiCad library (Resistor_SMD.pretty/R_0805_2012Metric.kicad_mod): two 1.025 × 1.4 mm pads on
+ * 1.825 mm centres, a 3.36 × 1.9 mm courtyard. Read verbatim from the installed KiCad 10.0 library.
+ */
+export const FOOTPRINT_0805: Footprint = {
+  id: 'R_0805_2012Metric',
+  name: '0805 (2012 metric) chip',
+  description:
+    'Two-terminal SMD chip land pattern — the larger common passive size (higher-power resistors, bigger capacitors). IPC-7351 nominal.',
+  pads: [
+    {
+      id: '1',
+      center: { x: -0.9125, y: 0 },
+      size: { w: 1.025, h: 1.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '2',
+      center: { x: 0.9125, y: 0 },
+      size: { w: 1.025, h: 1.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+  ],
+  silkscreen: cornerTicksSilk({ x: -1.68, y: -0.95, w: 3.36, h: 1.9 }),
+  // The component body outline (F.Fab): the 2.0 × 1.25 mm chip body extent (F.Fab rect ±1.0 × ±0.625).
+  fabrication: rectOutline(-1.0, -0.625, 1.0, 0.625),
+  labels: {
+    reference: { x: 0, y: -1.65 },
+    value: { x: 0, y: 1.65 },
+    fabReference: { x: 0, y: 0 },
+  },
+  courtyard: { x: -1.68, y: -0.95, w: 3.36, h: 1.9 },
+  provenance: {
+    source_type: 'standard',
+    title: 'IPC-7351 nominal 0805/2012 chip land pattern',
+    citation:
+      'KiCad footprint library, Resistor_SMD.pretty/R_0805_2012Metric.kicad_mod — two 1.025×1.4 mm pads on 1.825 mm centres; courtyard ±1.68×±0.95 mm — read verbatim from the installed KiCad 10.0 library',
+    confidence: 'high',
+    url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
+    date_accessed: '2026-07-06',
+    notes:
+      'Body size 2.0×1.25 mm (the 2012 metric name). Silk is ChipBlocks’ own corner-tick rule.',
+  },
+  body3d: {
+    heightMm: 0.5,
+    standoffMm: 0.02,
+    provenance: {
+      source_type: 'datasheet',
+      title: 'EIA 0805 / IEC 2012M chip resistor body height',
+      citation:
+        'Vishay CRCW0805 and Yageo RC0805 chip resistor datasheets: body 2.00×1.25 mm, height ≈ 0.50 mm (0.45 typ – 0.60 max); SMD solder standoff ≈ 0.02 mm',
+      confidence: 'medium',
+    },
+  },
+}
+
 /** A rectangle as four line segments (the common body-outline / silk shape), in mm. */
 function rectOutline(x0: number, y0: number, x1: number, y1: number, width = 0.1): SilkLine[] {
   return [
@@ -566,7 +686,9 @@ export const FOOTPRINT_SOT23: Footprint = {
 
 /** Every built-in footprint, keyed by id. The board road's starter set (TOOLCHAIN-ROADMAP.md Track 1). */
 export const BUILTIN_FOOTPRINTS: Record<string, Footprint> = {
+  [FOOTPRINT_0402.id]: FOOTPRINT_0402,
   [FOOTPRINT_0603.id]: FOOTPRINT_0603,
+  [FOOTPRINT_0805.id]: FOOTPRINT_0805,
   [FOOTPRINT_SOIC8.id]: FOOTPRINT_SOIC8,
   [FOOTPRINT_DIP8.id]: FOOTPRINT_DIP8,
   [FOOTPRINT_PINHDR_1X4.id]: FOOTPRINT_PINHDR_1X4,
