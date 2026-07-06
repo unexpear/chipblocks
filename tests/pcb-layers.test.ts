@@ -23,6 +23,20 @@ describe('boardLayers — the lamination, top → bottom', () => {
     expect(layers.find((l) => l.id === 'core')?.thicknessMm).toBeCloseTo(1.51, 6)
   })
 
+  test('a multilevel board rolls the WHOLE dielectric into the core sheet, not just the first core', () => {
+    // 6-layer 1.6 mm: two 0.42 mm cores + three 0.2 mm prepregs = 1.44 mm dielectric. The simplified
+    // "FR4 core" sheet must state that, not a single 0.42 mm core under a 1.6 mm stated board.
+    const layers = boardLayers(
+      buildStackup({
+        thicknessMm: 1.6,
+        copperWeight: 'one_oz',
+        surfaceFinish: 'hasl',
+        copperLayers: 6,
+      }),
+    )
+    expect(layers.find((l) => l.id === 'core')?.thicknessMm).toBeCloseTo(1.44, 3)
+  })
+
   test('the sheets follow the stack-up editor: 2 oz on a 2 mm board', () => {
     const layers = boardLayers(
       buildStackup({ thicknessMm: 2.0, copperWeight: 'two_oz', surfaceFinish: 'enig' }),

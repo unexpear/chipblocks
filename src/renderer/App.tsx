@@ -158,6 +158,7 @@ import {
 } from './pcb-route.ts'
 import {
   buildStackup,
+  type CopperLayerCount,
   type CopperWeight,
   DEFAULT_STACKUP_OPTIONS,
   STANDARD_BOARD_THICKNESSES_MM,
@@ -6717,7 +6718,30 @@ function Canvas({ project }: { project: ProjectChoice }) {
                         flexWrap: 'wrap',
                       }}
                     >
-                      stack-up: {pcbStackup.copperLayers}-layer FR4 ·
+                      stack-up:
+                      <select
+                        value={pcbStackup.copperLayers}
+                        onChange={(e) =>
+                          setPcbStackupOptions((o) => ({
+                            ...o,
+                            copperLayers: Number(e.target.value) as CopperLayerCount,
+                          }))
+                        }
+                        title="Copper layer count. 2 = standard board. 4 / 6 = multilevel: inner copper planes buried in the FR4 — pull the layers apart in the 3-D view to see them. (Multilevel is for design + visualisation; export stays 2-layer for now.)"
+                        style={{
+                          background: THEME.surfaceInput,
+                          color: THEME.textSoft,
+                          border: `1px solid ${THEME.borderStrong}`,
+                          borderRadius: 4,
+                          fontSize: 11,
+                          padding: '1px 4px',
+                        }}
+                      >
+                        <option value={2}>2-layer</option>
+                        <option value={4}>4-layer</option>
+                        <option value={6}>6-layer</option>
+                      </select>
+                      FR4 ·
                       <select
                         value={pcbStackup.thicknessMm}
                         onChange={(e) =>

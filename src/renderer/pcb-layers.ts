@@ -46,7 +46,13 @@ const FR4_COLOR = '#0d3b26'
  */
 export function boardLayers(stackup: Stackup): BoardLayer[] {
   const copperMm = COPPER_WEIGHT_MM[stackup.copperWeight]
-  const coreMm = stackup.layers.find((l) => l.type === 'core')?.thicknessMm
+  // The simplified "FR4 core" sheet stands for the WHOLE dielectric slab. On a multilevel board that
+  // is every core + prepreg (not just the first core), so the label states the real dielectric depth
+  // — otherwise a 4-/6-layer board would read a ~0.4 mm core under a 1.6 mm stated board thickness.
+  const dielectricSum = stackup.layers
+    .filter((l) => l.type === 'core' || l.type === 'prepreg')
+    .reduce((sum, l) => sum + l.thicknessMm, 0)
+  const coreMm = dielectricSum > 0 ? Math.round(dielectricSum * 1000) / 1000 : undefined
   return [
     { id: 'f_silk', name: 'F.Silkscreen', kind: 'silk', side: 'top', color: SILK_COLOR },
     {

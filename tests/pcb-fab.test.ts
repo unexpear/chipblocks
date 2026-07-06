@@ -25,6 +25,7 @@ import {
 } from '../src/renderer/pcb-fab.ts'
 import { gerberTopCopper } from '../src/renderer/pcb-gerber.ts'
 import { routeBoard } from '../src/renderer/pcb-route.ts'
+import { buildStackup } from '../src/renderer/pcb-stackup.ts'
 import { SILK_TEXT, strokeTextWidthMm } from '../src/renderer/stroke-font.ts'
 import { buildZip, crc32 } from '../src/zip-store.ts'
 
@@ -251,6 +252,21 @@ describe('the validation report', () => {
     expect(v.reportText).toContain('KiCad Default net class')
     expect(v.reportText).toContain('JLCPCB')
     expect(v.reportText).toContain('clean — no violations')
+  })
+
+  test('a multilevel (4-layer) board is REFUSED — we generate only the two outer copper Gerbers', () => {
+    const v = buildValidationReport({
+      ...cleanInputs(),
+      stackup: buildStackup({
+        thicknessMm: 1.6,
+        copperWeight: 'one_oz',
+        surfaceFinish: 'hasl',
+        copperLayers: 4,
+      }),
+    })
+    expect(v.status).toBe('fail')
+    expect(v.problems.some((p) => p.includes('4 copper layers') && p.includes('inner'))).toBe(true)
+    expect(v.reportText).toContain('Set the stack-up back to 2 layers')
   })
 
   test('a BOM that disagrees with the placements FAILS — the archive must agree with itself', () => {

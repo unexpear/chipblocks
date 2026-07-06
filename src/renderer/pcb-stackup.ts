@@ -225,10 +225,39 @@ export const BOARD_THICKNESS_PROVENANCE: FootprintProvenance = {
 /** The solder-mask thickness per side (mm) — KiCad's stack-up default, fixed for every board. */
 const SOLDER_MASK_MM = 0.01
 
+/**
+ * The prepreg (pre-impregnated glass sheet) thickness bonding an outer copper foil to a core in a
+ * multilevel build, mm. Standard 7628 glass-style prepreg is ~0.20 mm — JLCPCB's published 4-layer
+ * 1.6 mm stack-up lists 7628 prepreg at 0.2104 mm, PCBWay's at ~0.196 mm; 0.20 mm is the cited
+ * nominal. Fixed material — it does NOT scale with the finished thickness; the CORE is ground to hit
+ * the ordered thickness, exactly as a fab laminates the stack.
+ */
+const PREPREG_MM = 0.2
+
+/** Inner copper layers are typically LIGHTER than the outer plated copper — 0.5 oz is the fab norm
+ *  (JLCPCB inner base ≈ 0.0152 mm ≈ 0.44 oz; our 0.5 oz nominal = 0.0175 mm). */
+const INNER_COPPER_MM = COPPER_WEIGHT_MM.half_oz
+
+/** The copper layer counts the stack-up editor offers — 2 (standard) or 4 / 6 (multilevel: inner
+ *  copper planes buried in the FR4, seen in the exploded 3-D view). */
+export type CopperLayerCount = 2 | 4 | 6
+
+export const MULTILAYER_PROVENANCE: FootprintProvenance = {
+  source_type: 'reference',
+  title: 'Multilevel FR4 stack-up: 4/6-layer construction (7628 prepreg + 0.5 oz inner copper)',
+  citation:
+    'Standard multilevel FR4 build, per JLCPCB (JLC04161H 4-layer) and PCBWay (4-/6-layer laminated structure): outer copper foil (chosen weight) — 7628 prepreg ~0.20 mm — inner copper (0.5 oz, lighter than outer per the fab norm) around FR4 core(s), the core(s) ground so the finished board is the ordered thickness. 4-layer = 2 prepregs + 1 core; 6-layer = 3 prepregs + 2 cores. Verified 2026-07-05 against JLCPCB (jlcpcb.com/impedance) + PCBWay (pcbway.com/multi-layer-laminated-structure.html), both ≈1.6 mm total.',
+  confidence: 'medium',
+  url: 'https://www.pcbway.com/multi-layer-laminated-structure.html',
+  date_accessed: '2026-07-05',
+}
+
 export type StackupOptions = {
   thicknessMm: number
   copperWeight: CopperWeight
   surfaceFinish: SurfaceFinishId
+  /** Copper layer count — 2 (default) or 4 / 6 (multilevel). Absent = 2. */
+  copperLayers?: CopperLayerCount
 }
 
 /** The default board the editor starts from: 2-layer, 1.6 mm FR4, 1 oz copper, HASL. */
@@ -236,48 +265,131 @@ export const DEFAULT_STACKUP_OPTIONS: StackupOptions = {
   thicknessMm: 1.6,
   copperWeight: 'one_oz',
   surfaceFinish: 'hasl',
+  copperLayers: 2,
 }
 
 /**
- * Build a 2-layer FR4 stack-up from the editable knobs (finished thickness, copper weight, surface
- * finish). The cross-section is the standard KiCad build — solder mask / copper / FR4 core / copper
- * / solder mask — with the FR4 CORE thickness computed to fill whatever the copper + mask leave, so
- * the finished board is exactly the chosen thickness. The default (1.6 mm / 1 oz / HASL) reproduces
- * the installed KiCad 10.0 default stack-up byte-for-byte.
+ * Build an FR4 stack-up from the editable knobs (finished thickness, copper weight, surface finish,
+ * copper-layer count). 2-layer is the standard KiCad build — solder mask / copper / FR4 core / copper
+ * / solder mask. 4- and 6-layer are the real multilevel builds — the outer foils bond to the core(s)
+ * through prepreg, with lighter inner copper planes buried between (the sandwich you see in the
+ * exploded 3-D view). In every case the FR4 CORE thickness is computed to fill whatever the copper +
+ * mask + prepreg leave, so the finished board is exactly the chosen thickness (how a fab grinds the
+ * core to hit the order). The 2-layer default (1.6 mm / 1 oz / HASL) reproduces the installed KiCad
+ * 10.0 default stack-up byte-for-byte.
  */
 export function buildStackup(options: StackupOptions = DEFAULT_STACKUP_OPTIONS): Stackup {
-  const cu = COPPER_WEIGHT_MM[options.copperWeight]
-  // the FR4 core is what's left after the two copper layers and two mask layers
-  const core = Math.round((options.thicknessMm - 2 * SOLDER_MASK_MM - 2 * cu) * 1000) / 1000
+  const copperLayers: CopperLayerCount = options.copperLayers ?? 2
+  const outerCu = COPPER_WEIGHT_MM[options.copperWeight]
+  const innerCu = INNER_COPPER_MM
   const finish = SURFACE_FINISHES[options.surfaceFinish]
+  const round3 = (x: number) => Math.round(x * 1000) / 1000
+  const fr4 = {
+    material: 'FR4',
+    dielectricConstant: FR4_SUBSTRATE.dielectricConstant,
+    lossTangent: FR4_SUBSTRATE.lossTangent,
+  } as const
+  const mask = (name: string): StackupLayer => ({
+    name,
+    type: 'solder_mask',
+    thicknessMm: SOLDER_MASK_MM,
+  })
+  const cu = (name: string, t: number): StackupLayer => ({ name, type: 'copper', thicknessMm: t })
+  const prepreg = (name: string): StackupLayer => ({
+    name,
+    type: 'prepreg',
+    thicknessMm: PREPREG_MM,
+    ...fr4,
+  })
+  const core = (name: string, t: number): StackupLayer => ({
+    name,
+    type: 'core',
+    thicknessMm: Math.max(round3(t), 0.05),
+    ...fr4,
+  })
+
+  let layers: StackupLayer[]
+  if (copperLayers === 4) {
+    // outer / prepreg / inner / CORE / inner / prepreg / outer — the core fills to the finished thickness
+    const coreMm =
+      options.thicknessMm - 2 * SOLDER_MASK_MM - 2 * outerCu - 2 * innerCu - 2 * PREPREG_MM
+    layers = [
+      mask('F.Mask'),
+      cu('F.Cu', outerCu),
+      prepreg('prepreg 1'),
+      cu('In1.Cu', innerCu),
+      core('dielectric 1', coreMm),
+      cu('In2.Cu', innerCu),
+      prepreg('prepreg 2'),
+      cu('B.Cu', outerCu),
+      mask('B.Mask'),
+    ]
+  } else if (copperLayers === 6) {
+    // outer / pp / inner / core / inner / pp / inner / core / inner / pp / outer — two cores share the
+    // dielectric fill. Round the budget ONCE and let the second core absorb the remainder, so the two
+    // rounded cores sum to the budget EXACTLY (halving then rounding each drifts ~1 µm per core, e.g.
+    // 0.5 oz copper makes each core 0.4375 → 0.438, and 2× overshoots the ordered thickness by 1 µm).
+    const coreBudget = round3(
+      options.thicknessMm - 2 * SOLDER_MASK_MM - 2 * outerCu - 4 * innerCu - 3 * PREPREG_MM,
+    )
+    const core1Mm = round3(coreBudget / 2)
+    const core2Mm = round3(coreBudget - core1Mm)
+    layers = [
+      mask('F.Mask'),
+      cu('F.Cu', outerCu),
+      prepreg('prepreg 1'),
+      cu('In1.Cu', innerCu),
+      core('dielectric 1', core1Mm),
+      cu('In2.Cu', innerCu),
+      prepreg('prepreg 2'),
+      cu('In3.Cu', innerCu),
+      core('dielectric 2', core2Mm),
+      cu('In4.Cu', innerCu),
+      prepreg('prepreg 3'),
+      cu('B.Cu', outerCu),
+      mask('B.Mask'),
+    ]
+  } else {
+    // 2-layer (default): mask / copper / FR4 core / copper / mask — the KiCad construction, byte-for-byte
+    const coreMm = round3(options.thicknessMm - 2 * SOLDER_MASK_MM - 2 * outerCu)
+    layers = [
+      mask('F.Mask'),
+      cu('F.Cu', outerCu),
+      core('dielectric 1', coreMm),
+      cu('B.Cu', outerCu),
+      mask('B.Mask'),
+    ]
+  }
+
+  // The layers always sum to the finished board. For a feasible board that IS the requested thickness;
+  // for an infeasible thin multilevel combo (copper + prepreg already exceed it) the cores clamp to
+  // their floor and the real board is thicker — so we report the HONEST finished thickness, never a lie.
+  const finishedMm = round3(layers.reduce((sum, l) => sum + l.thicknessMm, 0))
+  const weightLabel =
+    options.copperWeight === 'two_oz' ? '2' : options.copperWeight === 'half_oz' ? '0.5' : '1'
+  const provenance: FootprintProvenance =
+    copperLayers === 2
+      ? {
+          source_type: 'reference',
+          title: `Stack-up: 2-layer, ${finishedMm} mm FR4, ${weightLabel} oz copper, ${finish.name}`,
+          citation:
+            'Standard prototype 2-layer FR4 stack-up: mask / copper / FR4 core / copper / mask, the KiCad construction (0.01 mm mask per side, core filling to the chosen finished thickness). Thickness per the standard fab range, copper per IPC-4562, finish per its own citation. The 1.6 mm / 1 oz / HASL default reproduces the installed KiCad 10.0 default stack-up byte-for-byte.',
+          confidence: 'high',
+          url: 'https://gitlab.com/kicad/code/kicad',
+          date_accessed: '2026-07-04',
+        }
+      : {
+          ...MULTILAYER_PROVENANCE,
+          title: `Stack-up: ${copperLayers}-layer, ${finishedMm} mm FR4, ${weightLabel} oz outer / 0.5 oz inner copper, ${finish.name}`,
+        }
+
   return {
-    copperLayers: 2,
-    thicknessMm: options.thicknessMm,
+    copperLayers,
+    thicknessMm: finishedMm,
     copperWeight: options.copperWeight,
     surfaceFinish: options.surfaceFinish,
-    layers: [
-      { name: 'F.Mask', type: 'solder_mask', thicknessMm: SOLDER_MASK_MM },
-      { name: 'F.Cu', type: 'copper', thicknessMm: cu },
-      {
-        name: 'dielectric 1',
-        type: 'core',
-        thicknessMm: core,
-        material: 'FR4',
-        dielectricConstant: FR4_SUBSTRATE.dielectricConstant,
-        lossTangent: FR4_SUBSTRATE.lossTangent,
-      },
-      { name: 'B.Cu', type: 'copper', thicknessMm: cu },
-      { name: 'B.Mask', type: 'solder_mask', thicknessMm: SOLDER_MASK_MM },
-    ],
-    provenance: {
-      source_type: 'reference',
-      title: `Stack-up: 2-layer, ${options.thicknessMm} mm FR4, ${options.copperWeight === 'two_oz' ? '2' : options.copperWeight === 'half_oz' ? '0.5' : '1'} oz copper, ${finish.name}`,
-      citation:
-        'Standard prototype 2-layer FR4 stack-up: mask / copper / FR4 core / copper / mask, the KiCad construction (0.01 mm mask per side, core filling to the chosen finished thickness). Thickness per the standard fab range, copper per IPC-4562, finish per its own citation. The 1.6 mm / 1 oz / HASL default reproduces the installed KiCad 10.0 default stack-up byte-for-byte.',
-      confidence: 'high',
-      url: 'https://gitlab.com/kicad/code/kicad',
-      date_accessed: '2026-07-04',
-    },
+    layers,
+    provenance,
   }
 }
 

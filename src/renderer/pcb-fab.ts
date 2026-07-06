@@ -212,8 +212,18 @@ export type FabValidation = {
  */
 export function buildValidationReport(inputs: FabInputs): FabValidation {
   const { board, ratsnest, routing, drc, offBoardPins, when } = inputs
+  const stackup = inputs.stackup ?? defaultStackup()
   const problems: string[] = []
   if (board.placements.length === 0) problems.push('No parts are placed on the board.')
+  // Multilevel guard: the board can be DESIGNED as 4-/6-layer (and shown in the exploded 3-D view),
+  // but we only generate the two outer copper Gerbers — a fab could not build the inner layers from
+  // this archive, so we refuse rather than ship a stack-up spec the copper doesn't back up.
+  if (stackup.copperLayers > 2) {
+    const inner = stackup.copperLayers - 2
+    problems.push(
+      `The stack-up is set to ${stackup.copperLayers} copper layers, but ChipBlocks generates only the two outer copper layers (F.Cu / B.Cu) — the ${inner} inner copper layer${inner === 1 ? '' : 's'} would have no artwork to manufacture. Set the stack-up back to 2 layers to export. (The multilevel stack-up is for design and the exploded 3-D view for now.)`,
+    )
+  }
   if (offBoardPins > 0) {
     problems.push(
       `${offBoardPins} wired pin${offBoardPins === 1 ? ' has' : 's have'} no footprint — the board would be missing real connections.`,
@@ -243,7 +253,6 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
     problems.push(`In the BOM but not placed on the board: ${missingFromBoard.join(', ')}.`)
   }
   const status = problems.length === 0 ? 'pass' : 'fail'
-  const stackup = inputs.stackup ?? defaultStackup()
   const finish = SURFACE_FINISHES[stackup.surfaceFinish]
 
   const lines = [

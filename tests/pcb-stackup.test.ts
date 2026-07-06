@@ -109,6 +109,115 @@ describe('the stack-up EDITOR — buildStackup rebuilds the cross-section from t
   })
 })
 
+describe('multilevel stack-ups — 4 and 6 copper layers (the exploded-view demo)', () => {
+  test('a 4-layer board: outer / prepreg / inner / core / inner / prepreg / outer, summing to the thickness', () => {
+    const s = buildStackup({
+      thicknessMm: 1.6,
+      copperWeight: 'one_oz',
+      surfaceFinish: 'hasl',
+      copperLayers: 4,
+    })
+    expect(s.copperLayers).toBe(4)
+    expect(s.layers.map((l) => l.type)).toEqual([
+      'solder_mask',
+      'copper',
+      'prepreg',
+      'copper',
+      'core',
+      'copper',
+      'prepreg',
+      'copper',
+      'solder_mask',
+    ])
+    expect(s.layers.filter((l) => l.type === 'copper')).toHaveLength(4)
+    expect(s.layers.filter((l) => l.type === 'prepreg')).toHaveLength(2)
+    expect(s.layers.filter((l) => l.type === 'core')).toHaveLength(1)
+    const summed = s.layers.reduce((t, l) => t + l.thicknessMm, 0)
+    expect(summed).toBeCloseTo(1.6, 6) // the core still fills to the exact finished thickness
+  })
+
+  test('inner copper is lighter than outer — 0.5 oz inner planes vs the chosen outer weight', () => {
+    const s = buildStackup({
+      thicknessMm: 1.6,
+      copperWeight: 'one_oz',
+      surfaceFinish: 'hasl',
+      copperLayers: 4,
+    })
+    const outer = s.layers.filter((l) => l.name === 'F.Cu' || l.name === 'B.Cu')
+    const inner = s.layers.filter((l) => l.name.startsWith('In'))
+    expect(outer.every((l) => l.thicknessMm === COPPER_WEIGHT_MM.one_oz)).toBe(true)
+    expect(inner).toHaveLength(2) // In1.Cu, In2.Cu
+    expect(inner.every((l) => l.thicknessMm === COPPER_WEIGHT_MM.half_oz)).toBe(true)
+  })
+
+  test('a 6-layer board: 6 copper, 3 prepregs, 2 cores, In1..In4 inner, still summing to the thickness', () => {
+    const s = buildStackup({
+      thicknessMm: 1.6,
+      copperWeight: 'one_oz',
+      surfaceFinish: 'hasl',
+      copperLayers: 6,
+    })
+    expect(s.copperLayers).toBe(6)
+    expect(s.layers.filter((l) => l.type === 'copper')).toHaveLength(6)
+    expect(s.layers.filter((l) => l.type === 'prepreg')).toHaveLength(3)
+    expect(s.layers.filter((l) => l.type === 'core')).toHaveLength(2)
+    expect(s.layers.filter((l) => l.name.startsWith('In')).map((l) => l.name)).toEqual([
+      'In1.Cu',
+      'In2.Cu',
+      'In3.Cu',
+      'In4.Cu',
+    ])
+    const summed = s.layers.reduce((t, l) => t + l.thicknessMm, 0)
+    expect(summed).toBeCloseTo(1.6, 6)
+  })
+
+  test('every feasible multilevel combo (4 + 6 layer, ALL copper weights) finishes at EXACTLY the ordered thickness', () => {
+    // guards the half-oz 6-layer rounding trap: two cores that each round half-up would overshoot by
+    // ~1 µm — the fill must be distributed so the layers sum to the ordered thickness for every weight.
+    for (const thicknessMm of [1.0, 1.2, 1.6, 2.0, 2.4]) {
+      for (const copperWeight of ['half_oz', 'one_oz', 'two_oz'] as const) {
+        for (const copperLayers of [4, 6] as const) {
+          const s = buildStackup({ thicknessMm, copperWeight, surfaceFinish: 'hasl', copperLayers })
+          const summed = s.layers.reduce((t, l) => t + l.thicknessMm, 0)
+          expect(summed).toBeCloseTo(thicknessMm, 6) // layers sum to the ordered thickness
+          expect(s.thicknessMm).toBeCloseTo(thicknessMm, 6) // and thicknessMm reports it
+        }
+      }
+    }
+  })
+
+  test('an infeasible thin multilevel board reports its HONEST finished thickness (layers always sum to it)', () => {
+    // a 6-layer board can't be 0.4 mm — the copper + prepreg alone exceed it — so the cores clamp and
+    // the real board is thicker; thicknessMm must equal Σ layers, never the impossible requested value.
+    const s = buildStackup({
+      thicknessMm: 0.4,
+      copperWeight: 'one_oz',
+      surfaceFinish: 'hasl',
+      copperLayers: 6,
+    })
+    const summed = s.layers.reduce((t, l) => t + l.thicknessMm, 0)
+    expect(s.thicknessMm).toBeCloseTo(summed, 6) // the invariant: thicknessMm === Σ layers
+    expect(s.thicknessMm).toBeGreaterThan(0.4)
+  })
+
+  test('multilevel carries its own cited provenance (JLCPCB / PCBWay), 2-layer keeps the KiCad one', () => {
+    const four = buildStackup({
+      thicknessMm: 1.6,
+      copperWeight: 'one_oz',
+      surfaceFinish: 'hasl',
+      copperLayers: 4,
+    })
+    expect(four.provenance.title).toContain('4-layer')
+    expect(four.provenance.citation).toContain('prepreg')
+    expect(four.provenance.citation.toLowerCase()).toContain('pcbway')
+    // omitting copperLayers still builds the KiCad 2-layer default
+    expect(
+      buildStackup({ thicknessMm: 1.6, copperWeight: 'one_oz', surfaceFinish: 'hasl' })
+        .copperLayers,
+    ).toBe(2)
+  })
+})
+
 describe('trace DC resistance — R = ρ(T)·L/(w·t)', () => {
   test('a 0.25 mm, 1 oz, 100 mm trace at 20 °C is ~192 mΩ', () => {
     // ρ 1.68e-8 · 0.1 m / (0.00025·0.000035 m²) = 0.192 Ω — i.e. 1 oz sheet resistance

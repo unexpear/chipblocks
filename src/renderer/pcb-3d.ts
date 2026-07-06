@@ -324,7 +324,7 @@ export function buildBoardScene(
       } else if (p.type === 'copper') {
         // a faint marker plane for the copper layer + the REAL copper (opaque) on it — copper only where
         // there IS copper, the honest etched pattern.
-        const copper = p.name === 'F.Cu' ? topCopper : bottomCopper
+        const copper = p.name === 'F.Cu' ? topCopper : p.name === 'B.Cu' ? bottomCopper : null
         faces.push({
           verts: [
             { x: x0, y: y0, z: p.z1 },
@@ -337,8 +337,26 @@ export function buildBoardScene(
           doubleSided: true,
           alpha: 0.12,
         })
-        for (const poly of copper) {
-          faces.push({ verts: poly.verts, color: poly.color, decals: [], doubleSided: true })
+        if (copper !== null) {
+          for (const poly of copper) {
+            faces.push({ verts: poly.verts, color: poly.color, decals: [], doubleSided: true })
+          }
+        } else {
+          // an INNER copper layer (a 4-/6-layer multilevel board) — drawn as a solid copper pour plane,
+          // the classic buried ground/power plane, inset from the board edge by the fab clearance. We
+          // don't hand-route inner layers, so a full pour is the honest depiction of that copper level.
+          const inset = 0.4
+          faces.push({
+            verts: [
+              { x: x0 + inset, y: y0 + inset, z: p.z1 },
+              { x: x1 - inset, y: y0 + inset, z: p.z1 },
+              { x: x1 - inset, y: y1 - inset, z: p.z1 },
+              { x: x0 + inset, y: y1 - inset, z: p.z1 },
+            ],
+            color: COLORS.copper,
+            decals: [],
+            doubleSided: true,
+          })
         }
       }
     }

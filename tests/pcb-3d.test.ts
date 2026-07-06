@@ -266,6 +266,43 @@ describe('exploded lamination — the board SPLIT into its real stack-up layers'
   })
 })
 
+describe('multilevel board — inner copper planes appear in the exploded view', () => {
+  const COPPER_GOLD = '#d7a13c' // COLORS.copper
+  const flatZ = (f: { verts: { z: number }[] }): number | null => {
+    const z0 = f.verts[0]?.z
+    if (z0 === undefined) return null
+    return f.verts.every((v) => Math.abs(v.z - z0) < 1e-9) ? z0 : null
+  }
+
+  test('a 4-layer board shows solid copper planes strictly BETWEEN the top and bottom copper', () => {
+    const stack4 = buildStackup({
+      thicknessMm: 1.6,
+      copperWeight: 'one_oz',
+      surfaceFinish: 'hasl',
+      copperLayers: 4,
+    })
+    const scene = buildBoardScene(board, routing, stack4, 5) // exploded so the layers separate
+    // inner copper = a flat copper quad whose z sits between the two outer copper layers (a via barrel
+    // spans z so it is excluded by flatZ; the outer copper sits AT copperZ.top / .bottom).
+    const innerPlanes = scene.faces.filter((f) => {
+      if (f.color !== COPPER_GOLD) return false
+      const z = flatZ(f)
+      return z !== null && z > scene.copperZ.bottom + 1e-6 && z < scene.copperZ.top - 1e-6
+    })
+    expect(innerPlanes.length).toBeGreaterThanOrEqual(2) // In1.Cu + In2.Cu pour planes
+  })
+
+  test('a plain 2-layer board has NO copper between its two copper layers', () => {
+    const scene = buildBoardScene(board, routing, defaultStackup(), 5)
+    const between = scene.faces.filter((f) => {
+      if (f.color !== COPPER_GOLD) return false
+      const z = flatZ(f)
+      return z !== null && z > scene.copperZ.bottom + 1e-6 && z < scene.copperZ.top - 1e-6
+    })
+    expect(between).toHaveLength(0)
+  })
+})
+
 describe('coordinate grid — our coordinate system on the ground plane', () => {
   test('showGrid builds the mm grid on z=0 with the x/y axes through the origin and I–IV labels', () => {
     const withGrid = buildBoardScene(board, routing, defaultStackup(), 0, true)
