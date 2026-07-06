@@ -146,6 +146,7 @@ export function PcbView({
   pxPerMm = 12,
   paddingMm = 3,
   onMove,
+  onMoveStart,
   onRotate,
   routeActive = false,
   padBoxes = [],
@@ -182,6 +183,9 @@ export function PcbView({
   paddingMm?: number
   /** Move a part's footprint origin to (x, y) mm — supplied by the panel to make the board editable. */
   onMove?: (partId: string, x: number, y: number) => void
+  /** A drag has begun to actually MOVE a part (fired once, on the first move — not on a plain click) so
+   *  the panel can checkpoint the pre-drag board for undo. */
+  onMoveStart?: (partId: string) => void
   /** Turn a part a quarter turn (the R key on the selected part). */
   onRotate?: (partId: string, rotation: Rotation) => void
   /** ROUTE TOOL: when on, clicks lay copper (start on a pad, corners in space, finish on a pad) instead
@@ -225,6 +229,9 @@ export function PcbView({
     originY: number
     startClientX: number
     startClientY: number
+    /** Has this gesture actually moved the part yet? Gates the one-per-drag undo checkpoint so a plain
+     *  click (select, no move) never floods the undo stack. */
+    moved: boolean
   } | null>(null)
   const [frozenOutline, setFrozenOutline] = useState<Board['outline'] | null>(null)
 
@@ -259,7 +266,14 @@ export function PcbView({
     if (e.button !== 0) return
     setSelected(partId)
     if (onMove === undefined) return
-    drag.current = { partId, originX, originY, startClientX: e.clientX, startClientY: e.clientY }
+    drag.current = {
+      partId,
+      originX,
+      originY,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      moved: false,
+    }
     setFrozenOutline(board.outline)
     svgRef.current?.setPointerCapture(e.pointerId)
     e.preventDefault()
@@ -271,6 +285,11 @@ export function PcbView({
     if (e.buttons === 0) {
       endDrag(e)
       return
+    }
+    if (!d.moved) {
+      // first real motion of this gesture → checkpoint the pre-drag board ONCE (not on a plain click)
+      d.moved = true
+      onMoveStart?.(d.partId)
     }
     onMove(
       d.partId,

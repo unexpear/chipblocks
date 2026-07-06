@@ -68,6 +68,7 @@ import {
   type CircuitFile,
   deserializeCircuit,
   maxIdSuffix,
+  type SavedPlacement,
   serializeCircuit,
 } from './circuit-file.ts'
 import {
@@ -416,6 +417,27 @@ const CALC_HARNESS_EDGES: Record<string, unknown>[] = [
     },
   ]),
 ]
+
+const VALID_ROTATIONS: readonly Rotation[] = [0, 90, 180, 270]
+
+/** The hand-placements Map → the file's SavedPlacement[] (id-sorted for a stable, reviewable diff). */
+function placementsToSaved(placements: ReadonlyMap<string, PlacementOverride>): SavedPlacement[] {
+  return [...placements]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([id, { x, y, rotation }]) => ({ id, x, y, rotation }))
+}
+
+/** A loaded file's SavedPlacement[] → the hand-placements Map, keeping only valid rotations. */
+function placementsFromSaved(
+  saved: readonly SavedPlacement[] | undefined,
+): Map<string, PlacementOverride> {
+  const map = new Map<string, PlacementOverride>()
+  for (const p of saved ?? []) {
+    if (!(VALID_ROTATIONS as readonly number[]).includes(p.rotation)) continue
+    map.set(p.id, { x: p.x, y: p.y, rotation: p.rotation as Rotation })
+  }
+  return map
+}
 
 /**
  * Map a loaded / imported CircuitFile to the canvas's React Flow nodes + edges. Shared by Open (a
@@ -973,15 +995,21 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // FIRST — the canvas as it is right before the change goes onto the undo
   // stack. Snapshots are deep copies (later edits can't reach back into
   // history); restoring re-solves, so the physics always matches the canvas.
-  const undoHistory = useRef(emptyHistory<{ nodes: Node[]; edges: Edge[] }>())
-  const snapshotCanvas = useCallback(
-    (): { nodes: Node[]; edges: Edge[] } =>
-      JSON.parse(JSON.stringify({ nodes: nodesRef.current, edges: edgesRef.current })) as {
-        nodes: Node[]
-        edges: Edge[]
-      },
-    [],
+  const undoHistory = useRef(
+    emptyHistory<{ nodes: Node[]; edges: Edge[]; placements: SavedPlacement[] }>(),
   )
+  const snapshotCanvas = useCallback((): {
+    nodes: Node[]
+    edges: Edge[]
+    placements: SavedPlacement[]
+  } => {
+    const canvas = JSON.parse(
+      JSON.stringify({ nodes: nodesRef.current, edges: edgesRef.current }),
+    ) as { nodes: Node[]; edges: Edge[] }
+    // Board hand-placements ride the SAME undo snapshot as the canvas, so a board drag/rotate undoes
+    // together with the parts + wires (they're one document).
+    return { ...canvas, placements: placementsToSaved(pcbPlacementsRef.current) }
+  }, [])
   const checkpointAction = useCallback(
     (tag: string) => {
       undoHistory.current = checkpoint(undoHistory.current, snapshotCanvas(), tag, Date.now())
@@ -1117,6 +1145,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         edges,
         projectAmbientRef.current,
         sheetSettingsRef.current,
+        placementsToSaved(pcbPlacementsRef.current),
       )
       void bridge.saveCircuitData(JSON.stringify(file, null, 2)).then((r) => {
         // A successful save lands the project in the "My Projects" list (by its file path).
@@ -1158,6 +1187,10 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [pcbPlacements, setPcbPlacements] = useState<ReadonlyMap<string, PlacementOverride>>(
     new Map(),
   )
+  // A live handle to the current placements so the Save handler (registered above, before this
+  // declaration) and the undo snapshot can read them without re-registering on every board drag.
+  const pcbPlacementsRef = useRef(pcbPlacements)
+  pcbPlacementsRef.current = pcbPlacements
 
   // Load: the main process already validated the file; rebuild the canvas from
   // it, resume the drop counter above the loaded ids, and re-fit the view. The
@@ -1184,7 +1217,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       const flow = circuitFileToFlow(result.file)
       setNodes(flow.nodes)
       setEdges(flow.edges)
-      setPcbPlacements(new Map()) // the loaded circuit starts from its own auto board
+      // Restore THIS file's hand placements (replacing the previous canvas's — ids repeat across files,
+      // so we never inherit the old ones); older files with none load onto their auto board.
+      setPcbPlacements(placementsFromSaved(result.file.placements))
       dropCount.current = maxIdSuffix(result.file.nodes)
       window.setTimeout(() => fitView({ padding: 0.15 }), 80)
     })
@@ -1380,6 +1415,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     undoHistory.current = result.history
     setNodes(result.restored.nodes)
     setEdges(result.restored.edges)
+    setPcbPlacements(placementsFromSaved(result.restored.placements))
     reSolve(result.restored.nodes, result.restored.edges)
   }, [snapshotCanvas, setNodes, setEdges, reSolve])
   const doRedo = useCallback(() => {
@@ -1388,6 +1424,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     undoHistory.current = result.history
     setNodes(result.restored.nodes)
     setEdges(result.restored.edges)
+    setPcbPlacements(placementsFromSaved(result.restored.placements))
     reSolve(result.restored.nodes, result.restored.edges)
   }, [snapshotCanvas, setNodes, setEdges, reSolve])
   const [crtTraces, setCrtTraces] = useState<
@@ -1500,23 +1537,32 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       return next
     })
   }, [])
-  const onPcbRotate = useCallback((partId: string, rotation: Rotation) => {
-    if (!nodesRef.current.some((n) => n.id === partId)) return
-    setPcbPlacements((cur) => {
-      const next = new Map(cur)
-      const prev = cur.get(partId)
-      if (prev === undefined) {
-        // Rotating a part still on its auto spot: pin its current derived position first, so the
-        // turn happens in place instead of snapping the part back to a fresh auto seed.
-        const pl = pcbBoardRef.current.placements.find((p) => p.partId === partId)
-        if (pl === undefined) return cur
-        next.set(partId, { x: pl.x, y: pl.y, rotation })
-      } else {
-        next.set(partId, { ...prev, rotation })
-      }
-      return next
-    })
-  }, [])
+  const onPcbRotate = useCallback(
+    (partId: string, rotation: Rotation) => {
+      if (!nodesRef.current.some((n) => n.id === partId)) return
+      checkpointAction('board-rotate') // capture the pre-rotate board so a turn undoes
+      setPcbPlacements((cur) => {
+        const next = new Map(cur)
+        const prev = cur.get(partId)
+        if (prev === undefined) {
+          // Rotating a part still on its auto spot: pin its current derived position first, so the
+          // turn happens in place instead of snapping the part back to a fresh auto seed.
+          const pl = pcbBoardRef.current.placements.find((p) => p.partId === partId)
+          if (pl === undefined) return cur
+          next.set(partId, { x: pl.x, y: pl.y, rotation })
+        } else {
+          next.set(partId, { ...prev, rotation })
+        }
+        return next
+      })
+    },
+    [checkpointAction],
+  )
+  // A board drag has STARTED to actually move a part (fired on the first move, not on a plain click) —
+  // checkpoint the pre-drag board once so the whole drag is a single undo (later moves don't checkpoint).
+  const onPcbMoveStart = useCallback(() => {
+    checkpointAction('board-move')
+  }, [checkpointAction])
   // The board's physical stack-up — the fab-order spec that goes in the manufacturing ZIP. The user
   // edits the knobs (finished thickness, copper weight, surface finish, layer count) in the PCB
   // panel; the cross-section (the FR4 core filling to the chosen thickness) is rebuilt from them.
@@ -5934,6 +5980,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                   coordinateGrid
                   recesses={boardRecesses}
                   onMove={onPcbMove}
+                  onMoveStart={onPcbMoveStart}
                   onRotate={onPcbRotate}
                   route={{
                     active: boardTool === 'route',
@@ -7159,6 +7206,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                       coordinateGrid
                       recesses={boardRecesses}
                       onMove={onPcbMove}
+                      onMoveStart={onPcbMoveStart}
                       onRotate={onPcbRotate}
                     />
                     {pcbDrc.length > 0 && (

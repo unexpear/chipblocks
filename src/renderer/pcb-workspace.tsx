@@ -116,6 +116,7 @@ export function BoardView({
   coordinateGrid = false,
   recesses = [],
   onMove,
+  onMoveStart,
   onRotate,
   route,
   measure,
@@ -135,6 +136,8 @@ export function BoardView({
   /** Controlled-depth pockets milled into the board (cavity / stepped boards) — shown in the 3-D view. */
   recesses?: Recess[]
   onMove?: (partId: string, x: number, y: number) => void
+  /** A part-drag has begun to move (fired once per drag) — for the undo checkpoint. */
+  onMoveStart?: (partId: string) => void
   onRotate?: (partId: string, rotation: Rotation) => void
   /** The route + via tools' live state + handlers, threaded to PcbView (flat/layers) AND Pcb3DView
    *  (the 3-D exploded view) — you can lay copper by clicking in either. */
@@ -177,6 +180,7 @@ export function BoardView({
       pxPerMm={pxPerMm}
       coordinateGrid={coordinateGrid}
       {...(onMove ? { onMove } : {})}
+      {...(onMoveStart ? { onMoveStart } : {})}
       {...(onRotate ? { onRotate } : {})}
       {...(route
         ? {

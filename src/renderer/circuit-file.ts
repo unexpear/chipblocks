@@ -50,6 +50,15 @@ export type SavedWire = {
   material?: string
 }
 
+/** A part's HAND placement on the board — its position (mm) + rotation, keyed by part id. Absent for a
+ *  part still on its auto spot; the board re-seeds those. Saved so a laid-out board survives a reload. */
+export type SavedPlacement = {
+  id: string
+  x: number
+  y: number
+  rotation: number
+}
+
 export type CircuitFile = {
   format: typeof CIRCUIT_FILE_FORMAT
   version: typeof CIRCUIT_FILE_VERSION
@@ -57,6 +66,8 @@ export type CircuitFile = {
   projectAmbientC?: number
   /** The drawing sheet — page size + ISO 7200 title-block fields; absent ⇒ the default A4 sheet. */
   sheet?: SheetSettings
+  /** Hand-placed board positions/rotations; absent ⇒ every part starts on its auto spot (older files). */
+  placements?: SavedPlacement[]
   nodes: SavedNode[]
   wires: SavedWire[]
 }
@@ -109,12 +120,14 @@ export function serializeCircuit(
   edges: CanvasEdgeLike[],
   projectAmbientC?: number,
   sheet?: SheetSettings,
+  placements?: readonly SavedPlacement[],
 ): CircuitFile {
   return {
     format: CIRCUIT_FILE_FORMAT,
     version: CIRCUIT_FILE_VERSION,
     ...(typeof projectAmbientC === 'number' ? { projectAmbientC } : {}),
     ...(sheet ? { sheet } : {}),
+    ...(placements && placements.length > 0 ? { placements: [...placements] } : {}),
     nodes: nodes.map((n) => {
       const parameters = persistableParameters(n.data.parameters)
       return {
@@ -202,18 +215,34 @@ export function deserializeCircuit(text: string): DeserializeResult {
   // projectAmbientC drives the solve temperature; if present it must be a finite number.
   // A malformed one is DROPPED — not a reason to reject the whole circuit — so the returned
   // type is honest (a number or absent) and the loader falls back to the 25 °C default.
-  const { projectAmbientC, sheet, ...rest } = file
+  const { projectAmbientC, sheet, placements, ...rest } = file
   const base = rest as CircuitFile
   const ambientOk = typeof projectAmbientC === 'number' && Number.isFinite(projectAmbientC)
   // A malformed sheet (not an object) is dropped, not a reason to reject the circuit; the loader
   // merges what survives over the default sheet, so a partial/old one still loads.
   const sheetOk = typeof sheet === 'object' && sheet !== null
+  // Hand placements: keep only well-formed entries (id + finite x/y + numeric rotation); a bad one is
+  // dropped, not a reason to reject the circuit — that part just falls back to its auto spot.
+  const cleanPlacements = Array.isArray(placements)
+    ? (placements as unknown[]).filter((p): p is SavedPlacement => {
+        const q = p as Record<string, unknown>
+        return (
+          typeof q?.id === 'string' &&
+          typeof q?.x === 'number' &&
+          Number.isFinite(q.x) &&
+          typeof q?.y === 'number' &&
+          Number.isFinite(q.y) &&
+          typeof q?.rotation === 'number'
+        )
+      })
+    : []
   return {
     ok: true,
     file: {
       ...base,
       ...(ambientOk ? { projectAmbientC: projectAmbientC as number } : {}),
       ...(sheetOk ? { sheet: sheet as SheetSettings } : {}),
+      ...(cleanPlacements.length > 0 ? { placements: cleanPlacements } : {}),
     },
   }
 }

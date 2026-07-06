@@ -80,6 +80,44 @@ describe('serialize → deserialize round-trip', () => {
     }
   })
 
+  test('round-trips hand board placements (positions + rotations); omitted when there are none', () => {
+    const placements = [
+      { id: 'resistor_2', x: 12.5, y: -3, rotation: 90 },
+      { id: 'power_source_1', x: 0, y: 0, rotation: 0 },
+    ]
+    const r = deserializeCircuit(
+      JSON.stringify(serializeCircuit(nodes, edges, undefined, undefined, placements)),
+    )
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.file.placements).toEqual(placements)
+    // no hand placements → the field is omitted (older files / a fully auto-laid board)
+    const none = deserializeCircuit(JSON.stringify(serializeCircuit(nodes, edges)))
+    expect(none.ok).toBe(true)
+    if (none.ok) expect(none.file.placements).toBeUndefined()
+  })
+
+  test('drops malformed placement entries but keeps the good ones (a bad one falls to its auto spot)', () => {
+    const file = {
+      ...serializeCircuit(nodes, edges),
+      placements: [
+        { id: 'good', x: 1, y: 2, rotation: 0 },
+        { id: 'nan', x: Number.NaN, y: 2, rotation: 0 }, // x serializes to null → not finite → dropped
+        { x: 1, y: 2, rotation: 0 }, // missing id → dropped
+        { id: 'norot', x: 1, y: 2 }, // missing rotation → dropped
+      ],
+    }
+    const r = deserializeCircuit(JSON.stringify(file))
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.file.placements).toEqual([{ id: 'good', x: 1, y: 2, rotation: 0 }])
+  })
+
+  test('a placements field that is not an array is dropped, not a reason to reject the circuit', () => {
+    const file = { ...serializeCircuit(nodes, edges), placements: 'nonsense' }
+    const r = deserializeCircuit(JSON.stringify(file))
+    expect(r.ok).toBe(true) // still loads
+    if (r.ok) expect(r.file.placements).toBeUndefined()
+  })
+
   test('a malformed projectAmbientC is dropped, not passed through as a fake number', () => {
     // The loader and the type both expect a number; a string / null / wrong type must not
     // ride through typed as one. The circuit still loads — the ambient just falls to default.
