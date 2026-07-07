@@ -26,7 +26,12 @@ const poweredIc: UserPart = {
   name: 'My IC',
   designatorPrefix: 'U',
   footprintId: 'DIP-8_W7.62mm', // a board footprint must survive the round-trip too (slice 4a)
-  pins: [{ id: 'vcc', name: 'VCC', side: 'top', electrical: 'power_in' }],
+  pins: [
+    { id: 'a', name: 'A', side: 'left', electrical: 'passive' },
+    { id: 'b', name: 'B', side: 'right', electrical: 'passive' },
+  ],
+  // a real behaviour must also survive the round-trip (slice 4b)
+  behavesAs: { definition: 'resistor', terminals: { terminal_a: 'a', terminal_b: 'b' } },
   parameters: { supply_voltage: { value: { kind: 'scalar', amount: 5, unit: 'V' } } },
 }
 

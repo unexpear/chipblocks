@@ -1110,8 +1110,18 @@ export function defaultProvenance(definition: string, key: string): string | und
 export function defaultParameters(definition: string): Parameters {
   const preset = DEFAULTS[definition]
   if (preset) return JSON.parse(JSON.stringify(preset)) as Parameters
-  // A user-authored part carries its own (optional) default parameters — a fresh copy, editable.
   const userPart = getUserPart(definition)
+  // A part that behaves as a real device gets THAT device's cited defaults (so a placed instance solves
+  // with real values, editable per instance), then any of the part's own overrides on top. A behaviour
+  // target should be a BUILT-IN device; if a hand-edited file points it at another custom part, don't
+  // follow it (that could cycle) — just use the part's own params.
+  if (userPart?.behavesAs) {
+    const target = userPart.behavesAs.definition
+    const deviceDefaults = getUserPart(target) === undefined ? defaultParameters(target) : {}
+    const merged = { ...deviceDefaults, ...(userPart.parameters ?? {}) }
+    return JSON.parse(JSON.stringify(merged)) as Parameters
+  }
+  // A user-authored black-box part carries its own (optional) default parameters — a fresh copy.
   if (userPart?.parameters) return JSON.parse(JSON.stringify(userPart.parameters)) as Parameters
   return {}
 }

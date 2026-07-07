@@ -22,6 +22,7 @@ import { type CanvasEdge, type CanvasNode, canvasToWorld } from '../canvas-to-wo
 import { expandMultiLeadSources } from '../multi-tap-source.ts'
 import type { Point } from '../net-edge.tsx'
 import type { DeviceNodeData } from '../symbols.tsx'
+import { getUserPart } from '../user-parts.ts'
 import {
   gaugeAreaM2,
   lengthFromDrawn,
@@ -95,6 +96,62 @@ function drawnWire(
 }
 
 /**
+ * Give any user part that declares a real behaviour (behavesAs) its device physics BEFORE lowering
+ * (user-made parts, slice 4b): rewrite the node's definition to the built-in device, and remap each of
+ * its wired pins to the device's matching terminal, so the solver stamps + solves the real device. A
+ * part with no behaviour is untouched (stays a black box). Runs after flatten/expand, so a behaviour
+ * part grouped inside a block is handled too (its definition survives flattening). Keeps
+ * canvasToWorld pure — the registry is consulted only here.
+ */
+function applyUserPartBehaviours(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+): { nodes: CanvasNode[]; edges: CanvasEdge[] } {
+  const behaviours = new Map<string, { definition: string; pinToTerminal: Map<string, string> }>()
+  for (const node of nodes) {
+    const behaviour = getUserPart(node.definition)?.behavesAs
+    if (behaviour === undefined) continue
+    const pinToTerminal = new Map<string, string>()
+    for (const [terminal, pinId] of Object.entries(behaviour.terminals)) {
+      pinToTerminal.set(pinId, terminal)
+    }
+    behaviours.set(node.id, { definition: behaviour.definition, pinToTerminal })
+  }
+  if (behaviours.size === 0) return { nodes, edges }
+
+  const loweredNodes = nodes.map((node) => {
+    const behaviour = behaviours.get(node.id)
+    // Keep the node's parameters (they hold the device's values) — only the definition changes.
+    return behaviour === undefined ? node : { ...node, definition: behaviour.definition }
+  })
+  const remap = (nodeId: string, handle: string | null | undefined): string | null => {
+    const behaviour = behaviours.get(nodeId)
+    if (behaviour === undefined || handle == null) return handle ?? null
+    return behaviour.pinToTerminal.get(handle) ?? handle
+  }
+  // A wire that lands on an UNMAPPED pin of a behaviour part is dropped: that pin has no device terminal,
+  // so its wire must NOT reach the real device — otherwise it would (a) add a phantom third connection
+  // that makes a 2-terminal device (resistor/cap/inductor) fail its exact-2-connects stamp and silently
+  // stop conducting, and (b) risk merging nets if the pin id happened to equal a device terminal name.
+  const onUnmappedPin = (nodeId: string, handle: string | null | undefined): boolean => {
+    const behaviour = behaviours.get(nodeId)
+    return behaviour !== undefined && handle != null && !behaviour.pinToTerminal.has(handle)
+  }
+  const loweredEdges = edges
+    .filter(
+      (edge) =>
+        !onUnmappedPin(edge.source, edge.sourceHandle) &&
+        !onUnmappedPin(edge.target, edge.targetHandle),
+    )
+    .map((edge) => ({
+      ...edge,
+      sourceHandle: remap(edge.source, edge.sourceHandle),
+      targetHandle: remap(edge.target, edge.targetHandle),
+    }))
+  return { nodes: loweredNodes, edges: loweredEdges }
+}
+
+/**
  * The World for the current canvas (nodes + drawn wires carrying their real
  * resistance), plus each wire's drawn length/resistance for the readouts. Shared
  * by the DC re-solve (solveCanvas) and the Scope's transient run — one source of
@@ -141,8 +198,10 @@ export function canvasWorld(
     targetHandle: e.targetHandle ?? null,
     resistanceOhms: drawn.get(e.id)?.ohms ?? 0,
   }))
+  // Give behaviour-carrying user parts their real device physics before lowering.
+  const lowered = applyUserPartBehaviours(flatNodes.map(toCanvasNode), canvasEdges)
   return {
-    world: canvasToWorld(flatNodes.map(toCanvasNode), canvasEdges),
+    world: canvasToWorld(lowered.nodes, lowered.edges),
     drawn,
     leadAliases: expanded.aliases,
   }

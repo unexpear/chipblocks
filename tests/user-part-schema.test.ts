@@ -59,6 +59,14 @@ const agreementCases: { label: string; part: unknown; ok: boolean }[] = [
     ok: true,
   },
   { label: 'an empty footprint id', part: { ...valid(), footprintId: '' }, ok: false },
+  {
+    label: 'a valid part with a real behaviour (behavesAs)',
+    part: {
+      ...valid(),
+      behavesAs: { definition: 'resistor', terminals: { terminal_a: 'in', terminal_b: 'out' } },
+    },
+    ok: true,
+  },
   { label: 'missing name', part: { ...valid(), name: '' }, ok: false },
   { label: 'missing designator', part: { ...valid(), designatorPrefix: '' }, ok: false },
   { label: 'zero pins', part: { ...valid(), pins: [] }, ok: false },
@@ -143,6 +151,25 @@ describe('two documented rules the validator adds that JSON Schema cannot expres
     }
     expect(validateSchema(dupIds)).toBe(true) // JSON Schema can't require per-id uniqueness
     expect(validateUserPart(dupIds)).toBeNull() // loader does — two terminals sharing an id break wiring
+  })
+
+  test('behavesAs mapping a terminal to a NON-existent pin: schema accepts, validator rejects', () => {
+    // JSON Schema can't cross-reference the pins array; the runtime validator checks the pin exists.
+    const badMap = {
+      ...valid(),
+      behavesAs: { definition: 'resistor', terminals: { terminal_a: 'ghost_pin' } },
+    }
+    expect(validateSchema(badMap)).toBe(true) // schema: terminals is a string→string map, 'ghost_pin' ok
+    expect(validateUserPart(badMap)).toBeNull() // validator: 'ghost_pin' isn't a real pin id
+  })
+
+  test('behavesAs mapping two terminals to the SAME pin: schema accepts, validator rejects', () => {
+    const shared = {
+      ...valid(),
+      behavesAs: { definition: 'resistor', terminals: { terminal_a: 'in', terminal_b: 'in' } },
+    }
+    expect(validateSchema(shared)).toBe(true) // schema: both values are strings, fine
+    expect(validateUserPart(shared)).toBeNull() // validator: a pin can't be two terminals
   })
 
   test('a non-finite param amount (1e400 → Infinity): schema accepts the number, validator rejects', () => {

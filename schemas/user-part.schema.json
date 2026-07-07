@@ -49,6 +49,21 @@
         "additionalProperties": false
       }
     },
+    "behavesAs": {
+      "type": "object",
+      "description": "Optional REAL, simulatable behaviour (slice 4b): the part behaves as a built-in device so the solver runs that device's real physics. `definition` is the built-in device id (e.g. 'resistor'); `terminals` maps each of that device's terminal names to one of this part's pin ids. The runtime validator additionally checks every mapped pin id actually exists on the part.",
+      "properties": {
+        "definition": { "type": "string", "minLength": 1 },
+        "terminals": {
+          "type": "object",
+          "minProperties": 1,
+          "patternProperties": { "^[a-z][a-z0-9_]*$": { "type": "string", "minLength": 1 } },
+          "additionalProperties": false
+        }
+      },
+      "required": ["definition", "terminals"],
+      "additionalProperties": false
+    },
     "parameters": {
       "type": "object",
       "description": "Optional default values — the user's own rough-but-typed scalars (amount + unit). No provenance required at project/user_local origin.",

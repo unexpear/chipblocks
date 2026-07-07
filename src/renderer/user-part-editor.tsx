@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { footprintsForPinCount } from './footprint-assignment.ts'
 import { UserPartGlyph } from './symbols.tsx'
 import { THEME } from './theme.ts'
-import { buildUserPartDraft } from './user-part-draft.ts'
+import { BEHAVIOUR_DEVICES, buildUserPartDraft } from './user-part-draft.ts'
 import {
   PIN_ELECTRICAL_TYPES,
   type PinElectrical,
@@ -44,6 +44,10 @@ export function UserPartEditor({
   ])
   const [params, setParams] = useState<ParamRow[]>([])
   const [footprint, setFootprint] = useState('')
+  // The real behaviour: the device id it simulates as ('' = none) + which pin INDEX each device terminal
+  // maps to. Picking a device auto-maps its terminals to the pins in declaration order.
+  const [behaviourDef, setBehaviourDef] = useState('')
+  const [behaviourMap, setBehaviourMap] = useState<Record<string, number>>({})
   const [error, setError] = useState<string | null>(null)
   const nameRef = useRef<HTMLInputElement>(null)
   useEffect(() => nameRef.current?.focus(), [])
@@ -52,6 +56,23 @@ export function UserPartEditor({
   // as pins are added. A choice that no longer fits (you added pins past its pad count) auto-clears.
   const footprintChoices = footprintsForPinCount(pins.length)
   const footprintValue = footprintChoices.some((f) => f.id === footprint) ? footprint : ''
+
+  // A behaviour needs at least as many pins as the device has terminals; a choice that no longer fits
+  // (you removed pins) auto-clears. Only devices with ≤ pinCount terminals are offered.
+  const behaviourDevice = BEHAVIOUR_DEVICES.find((d) => d.definition === behaviourDef)
+  const behaviourValid =
+    behaviourDevice !== undefined && behaviourDevice.terminals.length <= pins.length
+  const pinIndexFor = (terminal: string, i: number) =>
+    Math.min(behaviourMap[terminal] ?? i, Math.max(0, pins.length - 1))
+  const chooseBehaviour = (definition: string) => {
+    setBehaviourDef(definition)
+    const device = BEHAVIOUR_DEVICES.find((d) => d.definition === definition)
+    const map: Record<string, number> = {}
+    device?.terminals.forEach((t, i) => {
+      map[t] = i
+    })
+    setBehaviourMap(map)
+  }
 
   const addPin = () =>
     setPins((ps) => [
@@ -89,6 +110,16 @@ export function UserPartEditor({
       pins: pins.map((p) => ({ name: p.name, side: p.side, electrical: p.electrical })),
       params: params.map((p) => ({ name: p.name, amount: p.amount, unit: p.unit })),
       ...(footprintValue ? { footprintId: footprintValue } : {}),
+      ...(behaviourValid && behaviourDevice
+        ? {
+            behavesAs: {
+              definition: behaviourDef,
+              terminals: Object.fromEntries(
+                behaviourDevice.terminals.map((t, i) => [t, pinIndexFor(t, i)]),
+              ),
+            },
+          }
+        : {}),
     })
     if (!result.ok) {
       setError(result.error)
@@ -276,6 +307,61 @@ export function UserPartEditor({
                 </option>
               ))}
             </select>
+
+            <div style={{ height: 14 }} />
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: THEME.textPrimary }}>
+                Behaviour
+              </span>
+              <span style={{ fontSize: 10.5, color: THEME.textFaint }}>
+                optional — make it simulate as a real device
+              </span>
+            </div>
+            <select
+              value={behaviourValid ? behaviourDef : ''}
+              onChange={(e) => chooseBehaviour(e.target.value)}
+              title="Give the part real physics: pick the built-in device it behaves as, and map each of that device's terminals to one of your pins. The simulator then runs the real device."
+              style={{ ...selectInput, width: '100%', flex: 'initial' }}
+            >
+              <option value="">None — a black box (won’t simulate)</option>
+              {BEHAVIOUR_DEVICES.filter((d) => d.terminals.length <= pins.length).map((d) => (
+                <option key={d.definition} value={d.definition}>
+                  {d.label}
+                </option>
+              ))}
+            </select>
+            {behaviourValid && behaviourDevice ? (
+              <div style={{ marginTop: 6 }}>
+                {behaviourDevice.terminals.map((terminal, i) => (
+                  <div
+                    key={terminal}
+                    style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}
+                  >
+                    <span style={{ fontSize: 11, color: THEME.textMuted, width: 84 }}>
+                      {terminal.replace(/_/g, ' ')}
+                    </span>
+                    <span style={{ fontSize: 11, color: THEME.textFaint }}>→</span>
+                    <select
+                      value={pinIndexFor(terminal, i)}
+                      onChange={(e) =>
+                        setBehaviourMap((m) => ({ ...m, [terminal]: Number(e.target.value) }))
+                      }
+                      style={selectInput}
+                    >
+                      {pins.map((p, pi) => (
+                        <option key={p.key} value={pi}>
+                          {p.name || `pin ${pi + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+                <span style={{ fontSize: 10.5, color: THEME.textFaint }}>
+                  Simulates as a {behaviourDevice.label} with its cited default values (edit them on
+                  a placed part).
+                </span>
+              </div>
+            ) : null}
 
             <div style={{ height: 14 }} />
             <SectionHeader

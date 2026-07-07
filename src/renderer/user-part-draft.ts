@@ -22,7 +22,24 @@ export type UserPartInput = {
   params: ParamInput[]
   /** The chosen board footprint id (from the editor's picker); empty/absent ⇒ no footprint. */
   footprintId?: string
+  /** The real device this part behaves as (slice 4b): the device id + which PIN INDEX each of the
+   *  device's terminals maps to. Empty definition ⇒ no behaviour (stays a black box). */
+  behavesAs?: { definition: string; terminals: Record<string, number> }
 }
+
+/**
+ * The built-in devices a custom part can BEHAVE AS — a curated set of solvable primitives with their
+ * terminal names. The editor offers these; the draft builder validates against them. (A cross-check test
+ * asserts these terminal names match the canvas's terminalsOf, so this list can't silently drift.)
+ */
+export const BEHAVIOUR_DEVICES: { definition: string; label: string; terminals: string[] }[] = [
+  { definition: 'resistor', label: 'Resistor', terminals: ['terminal_a', 'terminal_b'] },
+  { definition: 'capacitor', label: 'Capacitor', terminals: ['terminal_a', 'terminal_b'] },
+  { definition: 'inductor', label: 'Inductor', terminals: ['terminal_a', 'terminal_b'] },
+  { definition: 'thermistor', label: 'Thermistor', terminals: ['terminal_a', 'terminal_b'] },
+  { definition: 'diode_silicon_rectifier', label: 'Diode', terminals: ['anode', 'cathode'] },
+  { definition: 'led', label: 'LED', terminals: ['anode', 'cathode'] },
+]
 
 /** A definition-id / terminal-id slug: lowercase, non-alphanumerics collapse to a single underscore. */
 export function slug(text: string): string {
@@ -84,6 +101,33 @@ export function buildUserPartDraft(input: UserPartInput): DraftResult {
     parameters[key] = { value: { kind: 'scalar', amount, unit: row.unit.trim() } }
   }
 
+  // The real behaviour (optional): resolve each of the device's terminals to a REAL pin id (the editor
+  // maps by pin INDEX; the final ids are known only here). Every terminal must map to a valid pin.
+  let behavesAs: UserPart['behavesAs']
+  const requested = input.behavesAs
+  if (requested !== undefined && requested.definition !== '') {
+    const device = BEHAVIOUR_DEVICES.find((d) => d.definition === requested.definition)
+    if (device === undefined) return { ok: false, error: 'That behaviour device isn’t supported.' }
+    const terminals: Record<string, string> = {}
+    const usedPins = new Set<string>()
+    for (const terminal of device.terminals) {
+      const pinIndex = requested.terminals[terminal]
+      const pin = pinIndex === undefined ? undefined : userPins[pinIndex]
+      if (pin === undefined) {
+        return {
+          ok: false,
+          error: `Map the ${device.label}’s “${terminal.replace(/_/g, ' ')}” to a pin.`,
+        }
+      }
+      if (usedPins.has(pin.id)) {
+        return { ok: false, error: `Each ${device.label} terminal needs a DIFFERENT pin.` }
+      }
+      usedPins.add(pin.id)
+      terminals[terminal] = pin.id
+    }
+    behavesAs = { definition: device.definition, terminals }
+  }
+
   const designatorPrefix = input.designatorPrefix.trim().toUpperCase() || 'U'
   const footprintId = input.footprintId?.trim()
   const part: UserPart = {
@@ -91,6 +135,7 @@ export function buildUserPartDraft(input: UserPartInput): DraftResult {
     name,
     designatorPrefix,
     ...(footprintId ? { footprintId } : {}),
+    ...(behavesAs ? { behavesAs } : {}),
     pins: userPins,
     ...(usedParam.size > 0 ? { parameters } : {}),
   }

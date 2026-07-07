@@ -57,6 +57,18 @@ export type UserPart = {
   /** The board package this part lands on (a BUILTIN_FOOTPRINTS id) — its pins map to the footprint's
    *  pads in declaration order. Absent ⇒ the part has no footprint yet, so it stays off the board. */
   footprintId?: string
+  /**
+   * Optional REAL, simulatable behaviour (user-made parts, slice 4b): the part behaves as a built-in
+   * device, so the solver runs that device's real physics instead of reporting a black box. `definition`
+   * is the built-in device id (e.g. 'resistor'); `terminals` maps each of that device's terminal names
+   * to one of this part's pin ids. Absent ⇒ still a black box (honestly unsolved). Real device physics —
+   * no faking; the part is graduating from a black box toward a full definition.
+   */
+  behavesAs?: {
+    definition: string
+    /** deviceTerminalName → this part's pin id (e.g. { terminal_a: 'p1', terminal_b: 'p2' }). */
+    terminals: Record<string, string>
+  }
   /** Cited default parameters, if any (typed values); black-box parts often have none. */
   parameters?: Parameters
 }

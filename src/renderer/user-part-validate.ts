@@ -31,6 +31,29 @@ const PARAM_KEY_RE = /^[a-z][a-z0-9_]*$/
 const isObj = (x: unknown): x is Record<string, unknown> =>
   typeof x === 'object' && x !== null && !Array.isArray(x)
 
+/** Validate an optional behavesAs: a device id + a terminal→pin map whose pins must ACTUALLY EXIST on
+ *  the part (an extra check the JSON Schema can't express). undefined = absent; null = invalid → reject. */
+function cleanBehavesAs(
+  raw: unknown,
+  pinIds: ReadonlySet<string>,
+): UserPart['behavesAs'] | null | undefined {
+  if (raw === undefined) return undefined
+  if (!isObj(raw)) return null
+  if (typeof raw.definition !== 'string' || raw.definition.length < 1) return null
+  if (!isObj(raw.terminals)) return null
+  const terminals: Record<string, string> = {}
+  const usedPins = new Set<string>()
+  for (const [terminal, pinId] of Object.entries(raw.terminals)) {
+    // Each mapped pin must EXIST on the part and be used by only ONE terminal (a shared pin would leave
+    // another terminal unconnected — a degenerate device). Both are checks JSON Schema can't express.
+    if (typeof pinId !== 'string' || !pinIds.has(pinId) || usedPins.has(pinId)) return null
+    usedPins.add(pinId)
+    terminals[terminal] = pinId
+  }
+  if (Object.keys(terminals).length < 1) return null
+  return { definition: raw.definition, terminals }
+}
+
 function cleanParameters(raw: unknown): Parameters | null | undefined {
   if (raw === undefined) return undefined
   if (!isObj(raw)) return null
@@ -97,12 +120,16 @@ export function validateUserPart(raw: unknown): UserPart | null {
   const parameters = cleanParameters(raw.parameters)
   if (parameters === null) return null
 
+  const behavesAs = cleanBehavesAs(raw.behavesAs, seen)
+  if (behavesAs === null) return null
+
   return {
     id: raw.id,
     name: raw.name,
     designatorPrefix: raw.designatorPrefix,
     ...(typeof raw.description === 'string' ? { description: raw.description } : {}),
     ...(typeof raw.footprintId === 'string' ? { footprintId: raw.footprintId } : {}),
+    ...(behavesAs ? { behavesAs } : {}),
     pins,
     ...(parameters && Object.keys(parameters).length > 0 ? { parameters } : {}),
   }

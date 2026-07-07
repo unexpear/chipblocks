@@ -98,6 +98,55 @@ describe('buildUserPartDraft — happy path', () => {
   })
 })
 
+describe('buildUserPartDraft — behavesAs (real device behaviour)', () => {
+  test('resolves each device terminal (by pin INDEX) to the real pin id', () => {
+    // "IN" is pin 0 → slug 'in'; "OUT" is pin 1 → slug 'out'.
+    const r = buildUserPartDraft(
+      input({ behavesAs: { definition: 'resistor', terminals: { terminal_a: 0, terminal_b: 1 } } }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.part.behavesAs).toEqual({
+      definition: 'resistor',
+      terminals: { terminal_a: 'in', terminal_b: 'out' },
+    })
+  })
+
+  test('an unsupported behaviour device is refused', () => {
+    const r = buildUserPartDraft(
+      input({ behavesAs: { definition: 'not_a_device', terminals: { terminal_a: 0 } } }),
+    )
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error).toContain('supported')
+  })
+
+  test('a device terminal mapped to no valid pin is refused', () => {
+    const r = buildUserPartDraft(
+      input({ behavesAs: { definition: 'resistor', terminals: { terminal_a: 0, terminal_b: 9 } } }),
+    )
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error).toContain('terminal_b'.replace(/_/g, ' '))
+  })
+
+  test('two device terminals mapped to the SAME pin is refused (would leave a terminal dead)', () => {
+    const r = buildUserPartDraft(
+      input({ behavesAs: { definition: 'resistor', terminals: { terminal_a: 0, terminal_b: 0 } } }),
+    )
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error).toContain('DIFFERENT')
+  })
+
+  test('an empty behaviour definition means no behaviour (black box)', () => {
+    const r = buildUserPartDraft(input({ behavesAs: { definition: '', terminals: {} } }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.part.behavesAs).toBeUndefined()
+  })
+})
+
 describe('buildUserPartDraft — validation errors', () => {
   test('an empty name is rejected', () => {
     const r = buildUserPartDraft(input({ name: '   ' }))
