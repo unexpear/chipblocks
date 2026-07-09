@@ -162,6 +162,25 @@ describe('internal-circuit parts persist (slice 4b Model B)', () => {
   })
 })
 
+describe('the Simulate-as choice (fidelity) persists', () => {
+  test('an explicit transistor opt-out on a node survives the save → reload round-trip', () => {
+    const nodes = [
+      {
+        id: 'm1',
+        position: { x: 0, y: 0 },
+        data: { definition: 'my_module', fidelity: 'transistor' as const },
+      },
+      { id: 'm2', position: { x: 0, y: 0 }, data: { definition: 'my_module' } },
+    ]
+    const file = serializeCircuit(nodes, [])
+    const result = deserializeCircuit(JSON.stringify(file))
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.file.nodes.find((n) => n.id === 'm1')?.fidelity).toBe('transistor')
+    expect(result.file.nodes.find((n) => n.id === 'm2')?.fidelity).toBeUndefined() // untagged stays auto
+  })
+})
+
 describe('malformed user parts are dropped, not fatal', () => {
   test('a broken part is filtered out; the good ones still load', () => {
     const file = {

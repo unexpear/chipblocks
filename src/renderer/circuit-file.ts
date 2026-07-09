@@ -31,6 +31,10 @@ export type SavedNode = {
   parameters?: Parameters
   /** The chosen board package (footprint id); absent ⇒ the part's default footprint. */
   footprintId?: string
+  /** The user's explicit Simulate-as choice for a block / internal-circuit module (the complexity-layer
+   *  tag); absent ⇒ the automatic default (gates-only → the fast logic engine). Saved so an explicit
+   *  Transistor opt-out doesn't silently revert to the logic engine on reload. */
+  fidelity?: 'transistor' | 'logic' | 'behaviour'
   /** A circuit block carries its real internals (S19-v3-67). */
   block?: BlockData
 }
@@ -86,6 +90,7 @@ type CanvasNodeLike = {
     rotation?: number
     parameters?: Parameters
     footprintId?: string
+    fidelity?: 'transistor' | 'logic' | 'behaviour'
     block?: BlockData
   }
 }
@@ -200,6 +205,7 @@ export function serializeCircuit(
         ...(n.data.rotation ? { rotation: n.data.rotation } : {}),
         ...(parameters ? { parameters } : {}),
         ...(n.data.footprintId ? { footprintId: n.data.footprintId } : {}),
+        ...(n.data.fidelity ? { fidelity: n.data.fidelity } : {}),
         ...(n.data.block ? { block: n.data.block } : {}),
       }
     }),

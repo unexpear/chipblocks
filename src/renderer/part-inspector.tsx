@@ -326,6 +326,12 @@ export type PartInspectorProps = {
   /** A CRT's spot positions over the scope's transient run (screen fractions, −1..1) — the live
    *  trace. Present once the scope has run; absent → the inspector shows the single DC spot. */
   spotTrace?: { points: { x: number; y: number }[]; brightness: number } | undefined
+  /** For a custom part built from an internal circuit: how it currently simulates — the fast 0/1
+   *  logic engine (its internals are gates-only) or the transistor-level solve. */
+  moduleFidelity?: 'transistor' | 'logic'
+  /** Present only for internal-circuit custom parts — pick how the module simulates (the same
+   *  Simulate-as control a circuit block offers). Absent ⇒ the section isn't shown. */
+  onModuleFidelity?: (f: 'transistor' | 'logic') => void
 }
 
 const row: CSSProperties = {
@@ -426,6 +432,8 @@ export function PartInspector({
   onDeriveResistance,
   projectAmbientC,
   spotTrace,
+  moduleFidelity,
+  onModuleFidelity,
 }: PartInspectorProps) {
   if (selected === null) {
     return (
@@ -490,6 +498,42 @@ export function PartInspector({
     <div style={{ width: 190, fontFamily: 'system-ui, sans-serif' }}>
       <div style={{ fontSize: 12, color: THEME.textPrimary }}>{selected.id}</div>
       <div style={{ fontSize: 10, color: THEME.textMuted }}>{selected.definition}</div>
+
+      {/* An internal-circuit custom part simulates like the block it was saved from — same Simulate-as
+          choice: the fast 0/1 logic engine (gates-only internals default here) or the full transistor
+          solve. Only shown for modules (onModuleFidelity present). */}
+      {onModuleFidelity !== undefined ? (
+        <>
+          <div style={sectionLabel}>Simulate as</div>
+          <div style={{ display: 'flex', gap: 3, marginBottom: 2 }}>
+            {(['transistor', 'logic'] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => onModuleFidelity(f)}
+                style={{
+                  ...deriveButton,
+                  marginTop: 0,
+                  flex: 1,
+                  ...(moduleFidelity === f
+                    ? {
+                        background: THEME.accentBlue,
+                        color: THEME.textBright,
+                        borderColor: THEME.accentBlue,
+                      }
+                    : {}),
+                }}
+              >
+                {f === 'transistor' ? 'Transistor' : 'Logic'}
+              </button>
+            ))}
+          </div>
+          <div style={sourceNote}>
+            Logic = fast 0/1 (gates-only internals default to it). Transistor = the full analog
+            solve of the real circuit inside.
+          </div>
+        </>
+      ) : null}
 
       {/* The physical package this part lands on — the schematic → board join (footprint-assignment.ts),
           with the PICKER to choose among the part's options (0402/0603/0805, SOT-23/TO-92). */}

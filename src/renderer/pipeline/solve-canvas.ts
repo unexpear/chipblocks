@@ -36,7 +36,8 @@ import type { LiveLevels } from '../output-contention.ts'
 import { buildCrtTraces, type CrtSpot, type PartReading, partReadings } from '../part-readings.ts'
 import type { DeviceNodeData } from '../symbols.tsx'
 import { THEME } from '../theme.ts'
-import { canvasWorld, userPartAliases } from './canvas-world.ts'
+import { getUserPart } from '../user-parts.ts'
+import { attachInternalCircuits, canvasWorld, userPartAliases } from './canvas-world.ts'
 import { ANALOG_PASSIVE, classifyCanvas, findBridges, isLogicFidelity } from './partition.ts'
 
 /** Wire colours: a live (current-carrying) wire vs an idle tap — lifted with edgePhysics from App.tsx. */
@@ -45,15 +46,26 @@ const IDLE = THEME.textFaint
 
 /** The declared drive of a logic block's port (push-pull / open-collector / tri-state / input) — what
  *  findBridges needs to tell whether a boundary pin drives the analog or reads it. undefined when the
- *  node isn't a block or the handle isn't one of its ports. */
+ *  node isn't a block or the handle isn't one of its ports. A custom MODULE's stored ports don't carry
+ *  `drive` (the save keeps the solve core), but the direction survived onto the part's PINS as their
+ *  `electrical` role — fall back to that, or a module output named e.g. `seg_a` would silently classify
+ *  as an INPUT boundary and the mixed co-sim would leave its load unsolved. */
 const portDriveOf = (
   nodeById: Map<string, Node>,
   logicId: string,
   handle: string,
-): DriveKind | undefined =>
-  (nodeById.get(logicId)?.data as { block?: BlockData } | undefined)?.block?.ports.find(
-    (p) => p.id === handle,
-  )?.drive
+): DriveKind | undefined => {
+  const data = nodeById.get(logicId)?.data as { definition?: string; block?: BlockData } | undefined
+  const declared = data?.block?.ports.find((p) => p.id === handle)?.drive
+  if (declared !== undefined) return declared
+  const pin = getUserPart(data?.definition ?? '')?.pins.find((p) => p.id === handle)
+  if (pin === undefined) return undefined
+  return pin.electrical === 'output'
+    ? 'push_pull'
+    : pin.electrical === 'input'
+      ? 'input'
+      : undefined
+}
 
 /**
  * Physics-derived React Flow edge fields for one wire: the current arrow +
@@ -347,6 +359,10 @@ function solveCanvasLogic(
           ...(typeof edge.data?.curveRadius === 'number'
             ? { curveRadius: edge.data.curveRadius }
             : {}),
+          // The user's per-wire gauge + conductor material survive the rebuild (the analog path keeps
+          // them too — dropping them here silently reset edited wires on every logic/mixed re-solve).
+          ...(typeof edge.data?.gaugeAwg === 'number' ? { gaugeAwg: edge.data.gaugeAwg } : {}),
+          ...(typeof edge.data?.material === 'string' ? { material: edge.data.material } : {}),
         },
       }) as Edge,
   )
@@ -565,6 +581,10 @@ function solveCanvasMixed(
           ...(typeof edge.data?.curveRadius === 'number'
             ? { curveRadius: edge.data.curveRadius }
             : {}),
+          // The user's per-wire gauge + conductor material survive the rebuild (the analog path keeps
+          // them too — dropping them here silently reset edited wires on every logic/mixed re-solve).
+          ...(typeof edge.data?.gaugeAwg === 'number' ? { gaugeAwg: edge.data.gaugeAwg } : {}),
+          ...(typeof edge.data?.material === 'string' ? { material: edge.data.material } : {}),
         },
       }) as Edge,
   )
@@ -783,10 +803,13 @@ function solveTransientCoSim(
  * so every transient entry point (scope, CRT demos, timeline) can route through one function.
  */
 export function solveTransientDispatch(
-  nodeList: Node[],
+  rawNodeList: Node[],
   edgeList: Edge[],
   options: { timeStep: number; duration: number; projectAmbientC?: number },
 ): { result: TransientResult; traces: Map<string, { points: CrtSpot[]; brightness: number }> } {
+  // Internal-circuit user parts get their block data attached up front, so the classification AND the
+  // co-sim (which reads data.block directly) both see a custom module exactly as they see a block.
+  const nodeList = attachInternalCircuits(rawNodeList)
   if (classifyCanvas(nodeList) === 'mixed') return solveTransientCoSim(nodeList, edgeList, options)
   // 'analog' and 'logic' both take the analog transient path — there is no logic-only transient engine.
   const { sources, positions } = lightCastInputs(nodeList)
@@ -801,12 +824,16 @@ export function solveTransientDispatch(
  *  full transistor solve; logic tags + a real analog load (an analog device or a transistor-tagged block)
  *  → the mixed hand-off; logic tags driving only digital sources → the fast logic engine. */
 export function solveCanvasDispatch(
-  nodeList: Node[],
+  rawNodeList: Node[],
   edgeList: Edge[],
   projectAmbientC?: number,
   routedGeoms?: Map<string, Point[]>,
   state?: Map<string, boolean>,
 ): ReturnType<typeof solveCanvas> {
+  // Internal-circuit user parts get their block data attached up front, so the classification, the
+  // logic engine (digitalSeed reads data.block), and the mixed co-sim all see a custom module exactly
+  // as they see the block it was saved from — including routing a digital module to the fast engine.
+  const nodeList = attachInternalCircuits(rawNodeList)
   switch (classifyCanvas(nodeList)) {
     case 'analog':
       return solveCanvas(nodeList, edgeList, projectAmbientC, routedGeoms)

@@ -175,6 +175,7 @@ import {
 } from './pcb-stackup.ts'
 import { BoardView, PcbViewControls } from './pcb-workspace.tsx'
 import { canvasWorld, userPartAliases } from './pipeline/canvas-world.ts'
+import { isLogicFidelity } from './pipeline/partition.ts'
 import {
   lightCastInputs,
   solveCanvasDispatch,
@@ -222,7 +223,13 @@ import {
 import { userPartFromBlock } from './user-part-draft.ts'
 import { UserPartEditor } from './user-part-editor.tsx'
 import { validateUserPart } from './user-part-validate.ts'
-import { allUserParts, mergeUserParts, registerUserPart, type UserPart } from './user-parts.ts'
+import {
+  allUserParts,
+  getUserPart,
+  mergeUserParts,
+  registerUserPart,
+  type UserPart,
+} from './user-parts.ts'
 import {
   findWireCrossings,
   netColor,
@@ -469,6 +476,11 @@ function circuitFileToFlow(file: CircuitFile) {
       ...(n.rotation ? { rotation: n.rotation } : {}),
       ...(n.parameters ? { parameters: n.parameters } : {}),
       ...(n.footprintId ? { footprintId: n.footprintId } : {}),
+      // The explicit Simulate-as choice survives a reload — only the three known tags (a hand-edited
+      // junk value degrades to the automatic default, which is honest).
+      ...(n.fidelity === 'transistor' || n.fidelity === 'logic' || n.fidelity === 'behaviour'
+        ? { fidelity: n.fidelity }
+        : {}),
       ...(n.block ? { block: n.block } : {}),
     },
   }))
@@ -7040,6 +7052,20 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                   )
                   if (ohms !== null) onEditParam(selectedPart.id, 'resistance', ohms)
                 }}
+                // An internal-circuit custom part gets the block's Simulate-as choice: show the
+                // module's EFFECTIVE engine (its tag, else the gates-only default) + let the user
+                // switch — the same data.fidelity seam blocks use.
+                {...(selectedPart &&
+                selectedNode &&
+                getUserPart(selectedPart.definition)?.internal !== undefined
+                  ? {
+                      moduleFidelity: (isLogicFidelity(selectedNode) ? 'logic' : 'transistor') as
+                        | 'logic'
+                        | 'transistor',
+                      onModuleFidelity: (f: 'transistor' | 'logic') =>
+                        onSetFidelity(selectedPart.id, f),
+                    }
+                  : {})}
               />
             ),
           },

@@ -27,6 +27,7 @@ import { type BlockData, type DriveKind, isOutputDrive } from '../blocks.ts'
 import { blockIsLogicCompatible } from '../logic-sim.ts'
 import { ANNOTATION_DEFINITIONS } from '../part-defaults.ts'
 import type { DeviceNodeData } from '../symbols.tsx'
+import { resolvedUserPartInternal } from './canvas-world.ts'
 
 /** Does this node solve on the fast logic engine (0/1) rather than the transistor-level analog solve? */
 export const isLogicFidelity = (n: Node): boolean => {
@@ -34,11 +35,14 @@ export const isLogicFidelity = (n: Node): boolean => {
   const f = data.fidelity
   if (f === 'logic' || f === 'behaviour') return true
   if (f === 'transistor') return false
-  // Untagged: a purely-digital block (gates all the way down) DEFAULTS to the fast logic engine — the
+  // Untagged: a purely-digital circuit (gates all the way down) DEFAULTS to the fast logic engine — the
   // ~1000× digital win. The transistor solve stays the explicit choice for analog and for descending into
-  // a gate's silicon. Analog / mixed blocks aren't logic-compatible, so they keep the transistor solve.
-  const block = (data as { block?: BlockData }).block
-  return data.definition === 'block' && block !== undefined && blockIsLogicCompatible(block)
+  // a gate's silicon. Analog / mixed circuits aren't logic-compatible, so they keep the transistor solve.
+  // Holds for BOTH shapes of a drawn circuit: a canvas block (data.block) AND a custom part built from
+  // one (its registry internals, nested modules resolved) — saving a digital block as a part must not
+  // silently demote it onto the transistor scaling wall.
+  const block = (data as { block?: BlockData }).block ?? resolvedUserPartInternal(data.definition)
+  return block !== undefined && blockIsLogicCompatible(block)
 }
 
 /** Definitions that carry no analog load of their own — a mixed canvas isn't "analog" just for having

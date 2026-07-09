@@ -24,7 +24,7 @@ import { type CanvasEdge, type CanvasNode, canvasToWorld } from '../canvas-to-wo
 import { expandMultiLeadSources } from '../multi-tap-source.ts'
 import type { Point } from '../net-edge.tsx'
 import type { DeviceNodeData } from '../symbols.tsx'
-import { getUserPart } from '../user-parts.ts'
+import { getUserPart, subscribeUserParts } from '../user-parts.ts'
 import {
   gaugeAreaM2,
   lengthFromDrawn,
@@ -133,29 +133,65 @@ function resolveInternalBlocks(block: BlockData, chain: ReadonlySet<string>): Bl
   return changed ? { ...block, nodes } : block
 }
 
+// Resolution is cached by block-object identity: a module with no nested custom parts resolves to the
+// SAME registry object every time (free), and one WITH nested parts caches its rebuilt tree here — so
+// per-solve callers (and the fidelity classifier, which runs per node per solve) never re-walk it. The
+// cache empties whenever the registry changes (a re-authored sub-part must re-resolve).
+let resolvedInternals = new WeakMap<BlockData, BlockData>()
+subscribeUserParts(() => {
+  resolvedInternals = new WeakMap()
+  warnedCycles.clear() // a re-authored part may fix (or reintroduce) a cycle — warn fresh
+})
+
+function resolveInternalsCached(block: BlockData, rootPartId?: string): BlockData {
+  const hit = resolvedInternals.get(block)
+  if (hit !== undefined) return hit
+  const resolved = resolveInternalBlocks(
+    block,
+    rootPartId === undefined ? new Set() : new Set([rootPartId]),
+  )
+  resolvedInternals.set(block, resolved)
+  // The resolved tree is its own fixed point: a SECOND attach pass (the dispatch attaches, then
+  // canvasWorld attaches again) must hit the cache and return it unchanged — without this, a
+  // cycle-REFUSED inner node at the bottom of the tree would be re-consulted with a fresh chain and
+  // expanded one extra round per pass, duplicating real parts past the refusal.
+  resolvedInternals.set(resolved, resolved)
+  return resolved
+}
+
+/**
+ * The RESOLVED internal circuit of an internal-circuit user part (nested custom parts expanded to
+ * their own internals, cycle-guarded) — what the fidelity classifier tests for logic-compatibility and
+ * what a placed module solves as. undefined for anything that isn't an internal-circuit part.
+ */
+export function resolvedUserPartInternal(definition: string): BlockData | undefined {
+  const part = getUserPart(definition)
+  if (part?.internal === undefined) return undefined
+  return resolveInternalsCached(part.internal, part.id)
+}
+
 /**
  * Attach each internal-circuit user part's REAL sub-circuit as block data before the flatten, so the
  * standard block flattening (namespacing, port→pin rewiring, recursion) expands it into its real parts
  * for the solver — a custom module solves exactly like the drawn circuit it was made from. Pure: new
- * node objects, never mutating the canvas's own nodes.
+ * node objects, never mutating the canvas's own nodes. Exported for the dispatch layer: the logic
+ * engine and the mixed co-sim read a node's `data.block` directly, so the dispatchers attach internals
+ * up front and hand every engine the same attached list.
  */
-function attachInternalCircuits(nodeList: Node[]): Node[] {
+export function attachInternalCircuits(nodeList: Node[]): Node[] {
   let changed = false
   const out = nodeList.map((node) => {
     const data = node.data as DeviceNodeData & { block?: BlockData }
     if (data.block) {
-      const resolved = resolveInternalBlocks(data.block, new Set())
+      const resolved = resolveInternalsCached(data.block)
       if (resolved === data.block) return node
       changed = true
       return { ...node, data: { ...data, block: resolved } } as Node
     }
-    const part = getUserPart(data.definition)
-    if (part?.internal === undefined) return node
+    const internal = resolvedUserPartInternal(data.definition)
+    if (internal === undefined) return node
     changed = true
-    return {
-      ...node,
-      data: { ...data, block: resolveInternalBlocks(part.internal, new Set([part.id])) },
-    } as Node
+    return { ...node, data: { ...data, block: internal } } as Node
   })
   return changed ? out : nodeList
 }
