@@ -112,6 +112,56 @@ describe('the file is scoped to parts THIS circuit uses (not the whole session r
   })
 })
 
+describe('internal-circuit parts persist (slice 4b Model B)', () => {
+  const subPart: UserPart = {
+    id: 'my_sub',
+    name: 'My Sub',
+    designatorPrefix: 'U',
+    pins: [
+      { id: 'x', name: 'X', side: 'left', electrical: 'passive' },
+      { id: 'y', name: 'Y', side: 'right', electrical: 'passive' },
+    ],
+    behavesAs: { definition: 'resistor', terminals: { terminal_a: 'x', terminal_b: 'y' } },
+  }
+  const moduleUsingSub: UserPart = {
+    id: 'my_module',
+    name: 'My Module',
+    designatorPrefix: 'U',
+    pins: [
+      { id: 'a', name: 'A', side: 'left', electrical: 'passive' },
+      { id: 'b', name: 'B', side: 'right', electrical: 'passive' },
+    ],
+    internal: {
+      name: 'core',
+      origin: { x: 0, y: 0 },
+      nodes: [{ id: 's1', definition: 'my_sub', x: 0, y: 0 }],
+      edges: [],
+      ports: [
+        { id: 'a', label: 's1 · x', side: 'left', inner: { nodeId: 's1', handleId: 'x' } },
+        { id: 'b', label: 's1 · y', side: 'right', inner: { nodeId: 's1', handleId: 'y' } },
+      ],
+    },
+  }
+
+  test('an internal part survives the round-trip intact (the whole sub-circuit)', () => {
+    expect(roundTrip([moduleUsingSub, subPart]).userParts).toEqual([moduleUsingSub, subPart])
+  })
+
+  test('the scoped save follows a module’s INTERNALS: its custom sub-parts are saved too', () => {
+    // The canvas references ONLY my_module — but its internals use my_sub, which must land in the
+    // file too, or the module would reload with an unresolvable black box inside.
+    const file = serializeCircuit(
+      [{ id: 'n1', position: { x: 0, y: 0 }, data: { definition: 'my_module' } }],
+      [],
+      undefined,
+      undefined,
+      undefined,
+      [moduleUsingSub, subPart, sensor], // sensor is unrelated — must stay OUT
+    )
+    expect(file.userParts?.map((p) => p.id).sort()).toEqual(['my_module', 'my_sub'])
+  })
+})
+
 describe('malformed user parts are dropped, not fatal', () => {
   test('a broken part is filtered out; the good ones still load', () => {
     const file = {

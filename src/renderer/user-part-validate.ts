@@ -1,3 +1,4 @@
+import type { BlockData } from './blocks.ts'
 import type { Parameters } from './part-defaults.ts'
 import type { PinElectrical, PinSide, UserPart } from './user-parts.ts'
 
@@ -30,6 +31,130 @@ const PARAM_KEY_RE = /^[a-z][a-z0-9_]*$/
 
 const isObj = (x: unknown): x is Record<string, unknown> =>
   typeof x === 'object' && x !== null && !Array.isArray(x)
+
+const isFiniteNum = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x)
+
+/** Hand-edited files can nest internals arbitrarily; past this depth the part is rejected (a legit
+ *  module-of-modules stays shallow — this is a runaway/cycle backstop, not a design limit). */
+const MAX_INTERNAL_DEPTH = 8
+
+/**
+ * Validate one level of a persisted internal circuit — the SOLVE CORE shape userPartFromBlock writes
+ * (name/origin/nodes/edges/ports, nothing else). Strict: any malformed piece rejects the whole block
+ * (→ the part is dropped on load, never half-loaded with a broken circuit inside).
+ *
+ * KNOWN LIMIT: `port.inner.handleId` is checked to exist as a string on a REAL inner node, but not to
+ * be a real terminal OF that node's device (the per-definition terminal catalog lives in the renderer's
+ * symbols module, which this import-pure file can't reach). A hand-edited handle like 'terminal_z' on a
+ * resistor therefore loads; wiring that pin puts a phantom connection on the device, which the solver
+ * then skips (same pre-existing behaviour as a canvas block with a hand-broken port). The app's own
+ * writer can't produce this — ports come from real drawn wires.
+ */
+function cleanBlockCore(raw: unknown, depth: number): BlockData | null {
+  if (depth <= 0) return null
+  if (!isObj(raw)) return null
+  if (typeof raw.name !== 'string') return null
+  if (!isObj(raw.origin) || !isFiniteNum(raw.origin.x) || !isFiniteNum(raw.origin.y)) return null
+  if (!Array.isArray(raw.nodes) || !Array.isArray(raw.edges) || !Array.isArray(raw.ports))
+    return null
+
+  const nodeIds = new Set<string>()
+  const nodes: BlockData['nodes'] = []
+  for (const n of raw.nodes) {
+    if (!isObj(n)) return null
+    if (typeof n.id !== 'string' || n.id.length < 1 || nodeIds.has(n.id)) return null
+    nodeIds.add(n.id)
+    if (typeof n.definition !== 'string' || n.definition.length < 1) return null
+    if (!isFiniteNum(n.x) || !isFiniteNum(n.y)) return null
+    if (n.rotation !== undefined && !isFiniteNum(n.rotation)) return null
+    const parameters = cleanParameters(n.parameters)
+    if (parameters === null) return null
+    let block: BlockData | undefined
+    if (n.block !== undefined) {
+      const nested = cleanBlockCore(n.block, depth - 1)
+      if (nested === null) return null
+      block = nested
+    }
+    nodes.push({
+      id: n.id,
+      definition: n.definition,
+      x: n.x,
+      y: n.y,
+      ...(n.rotation !== undefined ? { rotation: n.rotation } : {}),
+      ...(parameters && Object.keys(parameters).length > 0 ? { parameters } : {}),
+      ...(block ? { block } : {}),
+    })
+  }
+
+  const edges: BlockData['edges'] = []
+  for (const e of raw.edges) {
+    if (!isObj(e)) return null
+    if (typeof e.id !== 'string' || typeof e.source !== 'string' || typeof e.target !== 'string')
+      return null
+    if (e.sourceHandle !== null && typeof e.sourceHandle !== 'string') return null
+    if (e.targetHandle !== null && typeof e.targetHandle !== 'string') return null
+    let waypoints: { id: string; x: number; y: number }[] | undefined
+    if (e.waypoints !== undefined) {
+      if (!Array.isArray(e.waypoints)) return null
+      waypoints = []
+      for (const w of e.waypoints) {
+        if (!isObj(w) || typeof w.id !== 'string' || !isFiniteNum(w.x) || !isFiniteNum(w.y))
+          return null
+        waypoints.push({ id: w.id, x: w.x, y: w.y })
+      }
+    }
+    if (e.curved !== undefined && e.curved !== true) return null
+    if (e.curveRadius !== undefined && !isFiniteNum(e.curveRadius)) return null
+    edges.push({
+      id: e.id,
+      source: e.source,
+      sourceHandle: e.sourceHandle,
+      target: e.target,
+      targetHandle: e.targetHandle,
+      ...(waypoints && waypoints.length > 0 ? { waypoints } : {}),
+      ...(e.curved === true ? { curved: true } : {}),
+      ...(e.curveRadius !== undefined ? { curveRadius: e.curveRadius as number } : {}),
+    })
+  }
+
+  const portIds = new Set<string>()
+  const ports: BlockData['ports'] = []
+  for (const p of raw.ports) {
+    if (!isObj(p)) return null
+    if (typeof p.id !== 'string' || p.id.length < 1 || portIds.has(p.id)) return null
+    portIds.add(p.id)
+    if (typeof p.label !== 'string') return null
+    if (p.name !== undefined && typeof p.name !== 'string') return null
+    if (typeof p.side !== 'string' || !SIDES.includes(p.side as PinSide)) return null
+    if (!isObj(p.inner)) return null
+    // A port must expose a REAL internal terminal — an unknown inner node would leave the pin dead.
+    if (typeof p.inner.nodeId !== 'string' || !nodeIds.has(p.inner.nodeId)) return null
+    if (typeof p.inner.handleId !== 'string' || p.inner.handleId.length < 1) return null
+    ports.push({
+      id: p.id,
+      label: p.label,
+      ...(p.name !== undefined ? { name: p.name } : {}),
+      side: p.side as PinSide,
+      inner: { nodeId: p.inner.nodeId, handleId: p.inner.handleId },
+    })
+  }
+
+  return { name: raw.name, origin: { x: raw.origin.x, y: raw.origin.y }, nodes, edges, ports }
+}
+
+/** Validate an optional internal circuit. The top level's ports must be 1:1 with the part's PINS (same
+ *  ids) — that's what routes a wire on a pin to the real internal terminal. undefined = absent. */
+function cleanInternal(raw: unknown, pinIds: ReadonlySet<string>): BlockData | null | undefined {
+  if (raw === undefined) return undefined
+  const block = cleanBlockCore(raw, MAX_INTERNAL_DEPTH)
+  if (block === null) return null
+  const portIds = new Set(block.ports.map((p) => p.id))
+  if (portIds.size !== pinIds.size) return null
+  for (const id of portIds) {
+    if (!pinIds.has(id)) return null
+  }
+  return block
+}
 
 /** Validate an optional behavesAs: a device id + a terminal→pin map whose pins must ACTUALLY EXIST on
  *  the part (an extra check the JSON Schema can't express). undefined = absent; null = invalid → reject. */
@@ -123,6 +248,12 @@ export function validateUserPart(raw: unknown): UserPart | null {
   const behavesAs = cleanBehavesAs(raw.behavesAs, seen)
   if (behavesAs === null) return null
 
+  const internal = cleanInternal(raw.internal, seen)
+  if (internal === null) return null
+
+  // A part simulates ONE way: as a single device (behavesAs) or as its internal circuit — never both.
+  if (behavesAs !== undefined && internal !== undefined) return null
+
   return {
     id: raw.id,
     name: raw.name,
@@ -130,6 +261,7 @@ export function validateUserPart(raw: unknown): UserPart | null {
     ...(typeof raw.description === 'string' ? { description: raw.description } : {}),
     ...(typeof raw.footprintId === 'string' ? { footprintId: raw.footprintId } : {}),
     ...(behavesAs ? { behavesAs } : {}),
+    ...(internal ? { internal } : {}),
     pins,
     ...(parameters && Object.keys(parameters).length > 0 ? { parameters } : {}),
   }

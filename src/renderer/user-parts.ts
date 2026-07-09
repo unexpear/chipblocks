@@ -1,4 +1,5 @@
 import { Position } from '@xyflow/react'
+import type { BlockData } from './blocks.ts'
 import type { Parameters } from './part-defaults.ts'
 
 /**
@@ -69,6 +70,14 @@ export type UserPart = {
     /** deviceTerminalName → this part's pin id (e.g. { terminal_a: 'p1', terminal_b: 'p2' }). */
     terminals: Record<string, string>
   }
+  /**
+   * Optional REAL internal circuit (user-made parts, slice 4b Model B — the fuller graduation): the
+   * part is built from a whole sub-circuit of real parts, stored in the same shape a circuit block
+   * uses. Each port's id IS one of this part's pin ids (1:1), so a wire on a pin reaches the real
+   * internal terminal when the solve flattens it — exactly how a block flattens. Mutually exclusive
+   * with behavesAs (a part simulates one way). Absent ⇒ no internals.
+   */
+  internal?: BlockData
   /** Cited default parameters, if any (typed values); black-box parts often have none. */
   parameters?: Parameters
 }

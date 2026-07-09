@@ -82,3 +82,38 @@ export function deserializeUserLibrary(text: string): LibraryResult {
 export function withPart(parts: readonly UserPart[], part: UserPart): UserPart[] {
   return [...parts.filter((p) => p.id !== part.id), part]
 }
+
+/**
+ * The part PLUS every custom part its internals reference, transitively (resolved from `all`, the
+ * session registry) — what a save must persist so a saved module isn't silently broken in every other
+ * project (a module built around custom sub-parts needs those sub-parts wherever it goes). Set-guarded,
+ * so a self/mutual reference can't loop; a sub-part missing from `all` is simply not included (it loads
+ * as an honest black box).
+ */
+export function withInternalParts(part: UserPart, all: readonly UserPart[]): UserPart[] {
+  const byId = new Map(all.map((p) => [p.id, p]))
+  const collect = (block: NonNullable<UserPart['internal']>, into: string[]) => {
+    for (const inner of block.nodes) {
+      into.push(inner.definition)
+      if (inner.block) collect(inner.block, into)
+    }
+  }
+  const result: UserPart[] = []
+  const seen = new Set<string>()
+  const queue = [part]
+  seen.add(part.id)
+  while (queue.length > 0) {
+    const next = queue.shift() as UserPart
+    result.push(next)
+    if (next.internal === undefined) continue
+    const referenced: string[] = []
+    collect(next.internal, referenced)
+    for (const id of referenced) {
+      if (seen.has(id)) continue
+      seen.add(id)
+      const sub = byId.get(id)
+      if (sub !== undefined) queue.push(sub)
+    }
+  }
+  return result
+}

@@ -47,7 +47,6 @@ import {
   type CanvasNodeLike as BlockNodeLike,
   type BlockPort,
   blockLayout,
-  blockPortAliases,
   cloneBlockData,
   edgeTouchesPort,
   flattenBlocks,
@@ -175,7 +174,7 @@ import {
   widthForImpedance,
 } from './pcb-stackup.ts'
 import { BoardView, PcbViewControls } from './pcb-workspace.tsx'
-import { canvasWorld } from './pipeline/canvas-world.ts'
+import { canvasWorld, userPartAliases } from './pipeline/canvas-world.ts'
 import {
   lightCastInputs,
   solveCanvasDispatch,
@@ -214,9 +213,16 @@ import { useSelectionGestures } from './use-selection-gestures.ts'
 import { useShortcuts } from './use-shortcuts.tsx'
 import { useTimeline } from './use-timeline.ts'
 import { useWireTool } from './use-wire-tool.ts'
-import { deserializeUserLibrary, serializeUserLibrary, withPart } from './user-library.ts'
+import {
+  deserializeUserLibrary,
+  serializeUserLibrary,
+  withInternalParts,
+  withPart,
+} from './user-library.ts'
+import { userPartFromBlock } from './user-part-draft.ts'
 import { UserPartEditor } from './user-part-editor.tsx'
-import { allUserParts, mergeUserParts, type UserPart } from './user-parts.ts'
+import { validateUserPart } from './user-part-validate.ts'
+import { allUserParts, mergeUserParts, registerUserPart, type UserPart } from './user-parts.ts'
 import {
   findWireCrossings,
   netColor,
@@ -809,10 +815,13 @@ const SNAP_GRID: [number, number] = [20, 20]
 async function persistAuthoredPart(part: UserPart): Promise<void> {
   const bridge = window.chipblocks
   if (bridge?.readUserLibrary === undefined || bridge.writeUserLibrary === undefined) return
+  // A module built around OTHER custom parts needs those sub-parts wherever it goes — persist the
+  // whole transitive set, not just the authored part (else the module is silently dead elsewhere).
+  const closure = withInternalParts(part, allUserParts())
   const text = await bridge.readUserLibrary()
   if (text === null) {
-    // No library yet → create it with this part.
-    await bridge.writeUserLibrary(serializeUserLibrary([part]))
+    // No library yet → create it with this part (+ its custom sub-parts).
+    await bridge.writeUserLibrary(serializeUserLibrary(closure))
     return
   }
   const parsed = deserializeUserLibrary(text)
@@ -825,7 +834,9 @@ async function persistAuthoredPart(part: UserPart): Promise<void> {
     )
     return
   }
-  await bridge.writeUserLibrary(serializeUserLibrary(withPart(parsed.parts, part)))
+  let parts = parsed.parts
+  for (const p of closure) parts = withPart(parts, p)
+  await bridge.writeUserLibrary(serializeUserLibrary(parts))
 }
 
 function Canvas({ project, active = true }: { project: ProjectChoice; active?: boolean }) {
@@ -2175,8 +2186,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   }, [edges, readings, lens, flow, frameEdges])
 
   // Each wired terminal's net — what the Ω probes hand to the powered-off
-  // solve. Block PORTS and multi-lead source LEADS alias to the real terminal
-  // they stand for (lead aliases first — a port can point at a lead).
+  // solve. Block PORTS, multi-lead source LEADS, and user-part PINS (a module's
+  // pin, a behaves-as pin) all alias to the real terminal they stand for
+  // (lead aliases first — a port can point at a lead).
   const probeNets = useMemo(() => {
     const nets = terminalNets(solvedWorld)
     const flat = flattenBlocks(
@@ -2187,7 +2199,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       const inner = nets.get(alias.inner)
       if (inner !== undefined) nets.set(alias.outer, inner)
     }
-    for (const alias of blockPortAliases(nodes as unknown as BlockNodeLike[])) {
+    for (const alias of userPartAliases(nodes)) {
       const inner = nets.get(alias.inner)
       if (inner !== undefined) nets.set(alias.outer, inner)
     }
@@ -6976,6 +6988,24 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 onAddPort={(nodeId, handleId) => onAddBlockPort(selectedNode.id, nodeId, handleId)}
                 onReorderPort={(portId, dir) => onReorderBlockPort(selectedNode.id, portId, dir)}
                 onRemovePort={(portId) => onRemoveBlockPort(selectedNode.id, portId)}
+                onSaveAsPart={(partName) => {
+                  // Turn this block's REAL circuit into a reusable custom part (pins = the block's
+                  // pins; simulates as the circuit inside), register it, and persist it to the
+                  // personal library so it follows the user across projects.
+                  const result = userPartFromBlock(partName, 'U', selectedBlock)
+                  if (!result.ok) return result.error
+                  // Refuse at SAVE time anything the load-time validator would drop (e.g. a block that
+                  // arrived malformed from a hand-edited file) — otherwise the part works all session,
+                  // persists, then silently vanishes on the next launch.
+                  if (validateUserPart(result.part) === null) {
+                    return 'This block can’t be saved as a part — its internal circuit didn’t pass validation.'
+                  }
+                  if (!registerUserPart(result.part)) {
+                    return 'That name is a built-in part’s id — pick another.'
+                  }
+                  void persistAuthoredPart(result.part)
+                  return null
+                }}
               />
             ) : (
               <PartInspector

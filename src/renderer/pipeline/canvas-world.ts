@@ -14,8 +14,10 @@
 import type { Edge, Node } from '@xyflow/react'
 import type { World } from '../../cross-fk-validator.ts'
 import {
+  type BlockData,
   type CanvasEdgeLike as BlockEdgeLike,
   type CanvasNodeLike as BlockNodeLike,
+  blockPortAliases,
   flattenBlocks,
 } from '../blocks.ts'
 import { type CanvasEdge, type CanvasNode, canvasToWorld } from '../canvas-to-world.ts'
@@ -96,6 +98,105 @@ function drawnWire(
 }
 
 /**
+ * Resolve internal-circuit user parts INSIDE a block's data (user-made parts, slice 4b Model B): an
+ * inner node whose definition is a custom part with real internals gets that sub-circuit attached in
+ * the block shape, so flattenBlocks' normal recursion expands it to its real parts. `chain` carries the
+ * part ids currently being expanded — a self/mutual reference from a hand-edited file is refused (the
+ * inner instance stays an honest black box) instead of recursing forever.
+ */
+// Warn ONCE per part id — the lowering runs on every re-solve (each edit, each scope tick), and a
+// cyclic part would otherwise flood the console. The solver's own unsupported-element warning is the
+// user-facing signal; this is a dev breadcrumb.
+const warnedCycles = new Set<string>()
+
+function resolveInternalBlocks(block: BlockData, chain: ReadonlySet<string>): BlockData {
+  let changed = false
+  const nodes = block.nodes.map((inner) => {
+    if (inner.block) {
+      const resolved = resolveInternalBlocks(inner.block, chain)
+      if (resolved === inner.block) return inner
+      changed = true
+      return { ...inner, block: resolved }
+    }
+    const part = getUserPart(inner.definition)
+    if (part?.internal === undefined) return inner
+    if (chain.has(part.id)) {
+      if (!warnedCycles.has(part.id)) {
+        warnedCycles.add(part.id)
+        console.warn(`[user-parts] "${part.id}" contains itself — left as a black box`)
+      }
+      return inner
+    }
+    changed = true
+    return { ...inner, block: resolveInternalBlocks(part.internal, new Set([...chain, part.id])) }
+  })
+  return changed ? { ...block, nodes } : block
+}
+
+/**
+ * Attach each internal-circuit user part's REAL sub-circuit as block data before the flatten, so the
+ * standard block flattening (namespacing, port→pin rewiring, recursion) expands it into its real parts
+ * for the solver — a custom module solves exactly like the drawn circuit it was made from. Pure: new
+ * node objects, never mutating the canvas's own nodes.
+ */
+function attachInternalCircuits(nodeList: Node[]): Node[] {
+  let changed = false
+  const out = nodeList.map((node) => {
+    const data = node.data as DeviceNodeData & { block?: BlockData }
+    if (data.block) {
+      const resolved = resolveInternalBlocks(data.block, new Set())
+      if (resolved === data.block) return node
+      changed = true
+      return { ...node, data: { ...data, block: resolved } } as Node
+    }
+    const part = getUserPart(data.definition)
+    if (part?.internal === undefined) return node
+    changed = true
+    return {
+      ...node,
+      data: { ...data, block: resolveInternalBlocks(part.internal, new Set([part.id])) },
+    } as Node
+  })
+  return changed ? out : nodeList
+}
+
+/**
+ * Meter/scope terminal aliases for user parts, so probing a pin reads the REAL terminal it stands for
+ * (blocks and multi-lead sources already alias this way — user parts get the same treatment):
+ *  - a behaves-as pin aliases to the device terminal on the same instance (at EVERY depth, so a
+ *    behaviour part nested inside a module or block still reads);
+ *  - a module pin aliases through the standard block-port resolution over the internals-ATTACHED node
+ *    list — which also lets a canvas block's port chain through a nested module to the real terminal.
+ * Includes the plain canvas-block port aliases too (computed over the attached list), so call sites use
+ * THIS instead of blockPortAliases. Order matters downstream: the behaviour aliases are emitted first,
+ * so a port alias that lands on a behaviour pin resolves through the already-folded value.
+ */
+export function userPartAliases(nodeList: Node[]): { outer: string; inner: string }[] {
+  const aliases: { outer: string; inner: string }[] = []
+  const pushBehaviour = (definition: string, instanceKey: string) => {
+    const behaviour = getUserPart(definition)?.behavesAs
+    if (behaviour === undefined) return
+    for (const [terminal, pinId] of Object.entries(behaviour.terminals)) {
+      aliases.push({ outer: `${instanceKey}/${pinId}`, inner: `${instanceKey}/${terminal}` })
+    }
+  }
+  const walkBlock = (block: BlockData, prefix: string) => {
+    for (const inner of block.nodes) {
+      pushBehaviour(inner.definition, `${prefix}.${inner.id}`)
+      if (inner.block) walkBlock(inner.block, `${prefix}.${inner.id}`)
+    }
+  }
+  const attached = attachInternalCircuits(nodeList)
+  for (const node of attached) {
+    const data = node.data as DeviceNodeData & { block?: BlockData }
+    pushBehaviour(data.definition, node.id)
+    if (data.block) walkBlock(data.block, node.id)
+  }
+  aliases.push(...blockPortAliases(attached as unknown as BlockNodeLike[]))
+  return aliases
+}
+
+/**
  * Give any user part that declares a real behaviour (behavesAs) its device physics BEFORE lowering
  * (user-made parts, slice 4b): rewrite the node's definition to the built-in device, and remap each of
  * its wired pins to the device's matching terminal, so the solver stamps + solves the real device. A
@@ -169,9 +270,11 @@ export function canvasWorld(
   // Blocks are pure structure: expand every block back into its REAL parts
   // (namespaced ids, ports routed to the real internal terminals) before
   // anything physical is computed. The solver never sees a block. The same
-  // rule expands a multi-lead source into its real two-lead sections.
+  // rule expands a multi-lead source into its real two-lead sections. An
+  // internal-circuit user part first gets its stored sub-circuit attached in
+  // block shape, so the same flatten expands it too.
   const flat = flattenBlocks(
-    nodeList as unknown as BlockNodeLike[],
+    attachInternalCircuits(nodeList) as unknown as BlockNodeLike[],
     edgeList as unknown as BlockEdgeLike[],
   )
   const expanded = expandMultiLeadSources(flat.nodes, flat.edges)

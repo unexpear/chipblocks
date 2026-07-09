@@ -23,7 +23,6 @@ import {
   type BlockData,
   type CanvasEdgeLike as BlockEdgeLike,
   type CanvasNodeLike as BlockNodeLike,
-  blockPortAliases,
   bubbleBlockHealth,
   type DriveKind,
 } from '../blocks.ts'
@@ -37,7 +36,7 @@ import type { LiveLevels } from '../output-contention.ts'
 import { buildCrtTraces, type CrtSpot, type PartReading, partReadings } from '../part-readings.ts'
 import type { DeviceNodeData } from '../symbols.tsx'
 import { THEME } from '../theme.ts'
-import { canvasWorld } from './canvas-world.ts'
+import { canvasWorld, userPartAliases } from './canvas-world.ts'
 import { ANALOG_PASSIVE, classifyCanvas, findBridges, isLogicFidelity } from './partition.ts'
 
 /** Wire colours: a live (current-carrying) wire vs an idle tap — lifted with edgePhysics from App.tsx. */
@@ -254,7 +253,7 @@ function solveCanvas(
     const inner = terminalVolts.get(alias.inner)
     if (inner !== undefined) terminalVolts.set(alias.outer, inner)
   }
-  for (const alias of blockPortAliases(nodeList as unknown as BlockNodeLike[])) {
+  for (const alias of userPartAliases(nodeList)) {
     const inner = terminalVolts.get(alias.inner)
     if (inner !== undefined) terminalVolts.set(alias.outer, inner)
   }
@@ -325,7 +324,7 @@ function solveCanvasLogic(
     const inner = terminalVolts.get(alias.inner)
     if (inner !== undefined) terminalVolts.set(alias.outer, inner)
   }
-  for (const alias of blockPortAliases(nodeList as unknown as BlockNodeLike[])) {
+  for (const alias of userPartAliases(nodeList)) {
     const inner = terminalVolts.get(alias.inner)
     if (inner !== undefined) terminalVolts.set(alias.outer, inner)
   }

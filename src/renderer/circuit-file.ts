@@ -137,6 +137,35 @@ function collectDefinitionIds(nodes: CanvasNodeLike[]): Set<string> {
   return ids
 }
 
+/** Close the used-ids set over custom-part INTERNALS: a used part built from a sub-circuit may use
+ *  OTHER custom parts inside (nested modules) — those must land in the file too, or the module would
+ *  reload with unresolvable black boxes inside. Walks each newly-used part's internal circuit until no
+ *  new ids appear (set-based, so a self/mutual reference can't loop). */
+function closeOverInternals(usedIds: Set<string>, userParts: readonly UserPart[]): Set<string> {
+  const byId = new Map(userParts.map((p) => [p.id, p]))
+  const walkBlock = (block: BlockData, queue: string[]) => {
+    for (const inner of block.nodes) {
+      queue.push(inner.definition)
+      if (inner.block) walkBlock(inner.block, queue)
+    }
+  }
+  const queue = [...usedIds]
+  while (queue.length > 0) {
+    const id = queue.pop() as string
+    const internal = byId.get(id)?.internal
+    if (internal === undefined) continue
+    const found: string[] = []
+    walkBlock(internal, found)
+    for (const inner of found) {
+      if (!usedIds.has(inner)) {
+        usedIds.add(inner)
+        queue.push(inner)
+      }
+    }
+  }
+  return usedIds
+}
+
 /** The canvas state → a versioned, solver-free circuit file. */
 export function serializeCircuit(
   nodes: CanvasNodeLike[],
@@ -148,7 +177,11 @@ export function serializeCircuit(
 ): CircuitFile {
   // Save only the user parts THIS circuit references (not the whole session registry, which is shared
   // across open tabs) — so the file is self-contained + portable without leaking unrelated parts.
-  const usedIds = userParts && userParts.length > 0 ? collectDefinitionIds(nodes) : undefined
+  // Closed over internals: a used module's own custom sub-parts count as used too.
+  const usedIds =
+    userParts && userParts.length > 0
+      ? closeOverInternals(collectDefinitionIds(nodes), userParts)
+      : undefined
   const referencedUserParts = usedIds ? (userParts ?? []).filter((p) => usedIds.has(p.id)) : []
   return {
     format: CIRCUIT_FILE_FORMAT,

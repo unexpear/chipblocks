@@ -64,6 +64,16 @@
       "required": ["definition", "terminals"],
       "additionalProperties": false
     },
+    "internal": {
+      "allOf": [
+        { "$ref": "#/$defs/blockCore" },
+        {
+          "properties": { "ports": { "minItems": 1 } },
+          "$comment": "The TOP level must expose at least one port (= pin); a NESTED block may have zero ports (a sub-circuit grouped with no boundary wires is legal block data)."
+        }
+      ],
+      "description": "Optional REAL internal circuit (slice 4b Model B): the part is built from a whole sub-circuit of real parts, in the solve-core block shape (name/origin/nodes/edges/ports). Each top-level port id must equal one of this part's pin ids 1:1 (a runtime-validator rule JSON Schema can't express). Mutually exclusive with behavesAs (enforced below)."
+    },
     "parameters": {
       "type": "object",
       "description": "Optional default values — the user's own rough-but-typed scalars (amount + unit). No provenance required at project/user_local origin.",
@@ -90,5 +100,118 @@
     }
   },
   "required": ["id", "name", "designatorPrefix", "pins"],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "not": {
+    "required": ["behavesAs", "internal"],
+    "$comment": "A part simulates ONE way — as a single device (behavesAs) or as its internal circuit (internal), never both."
+  },
+  "$defs": {
+    "blockCore": {
+      "type": "object",
+      "description": "The solve core of an internal circuit — the same shape a canvas circuit block flattens from: the real parts (nodes), the wires between them (edges, with their drawn geometry so inner wire lengths stay physically real), and the ports that expose internal terminals. Presentation extras a canvas block can carry (display faces, gate symbols, pin drive marks) are deliberately not persisted here.",
+      "properties": {
+        "name": { "type": "string" },
+        "origin": {
+          "type": "object",
+          "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+          "required": ["x", "y"],
+          "additionalProperties": false
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "definition": { "type": "string", "minLength": 1 },
+              "x": { "type": "number" },
+              "y": { "type": "number" },
+              "rotation": { "type": "number" },
+              "parameters": {
+                "type": "object",
+                "patternProperties": {
+                  "^[a-z][a-z0-9_]*$": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "type": "object",
+                        "properties": {
+                          "kind": { "const": "scalar" },
+                          "amount": { "type": "number" },
+                          "unit": { "type": "string" }
+                        },
+                        "required": ["kind", "amount", "unit"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["value"],
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "block": { "$ref": "#/$defs/blockCore" }
+            },
+            "required": ["id", "definition", "x", "y"],
+            "additionalProperties": false
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "source": { "type": "string" },
+              "sourceHandle": { "type": ["string", "null"] },
+              "target": { "type": "string" },
+              "targetHandle": { "type": ["string", "null"] },
+              "waypoints": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "x": { "type": "number" },
+                    "y": { "type": "number" }
+                  },
+                  "required": ["id", "x", "y"],
+                  "additionalProperties": false
+                }
+              },
+              "curved": { "const": true },
+              "curveRadius": { "type": "number" }
+            },
+            "required": ["id", "source", "sourceHandle", "target", "targetHandle"],
+            "additionalProperties": false
+          }
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "label": { "type": "string" },
+              "name": { "type": "string" },
+              "side": { "enum": ["left", "right", "top", "bottom"] },
+              "inner": {
+                "type": "object",
+                "properties": {
+                  "nodeId": { "type": "string", "minLength": 1 },
+                  "handleId": { "type": "string", "minLength": 1 }
+                },
+                "required": ["nodeId", "handleId"],
+                "additionalProperties": false
+              }
+            },
+            "required": ["id", "label", "side", "inner"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["name", "origin", "nodes", "edges", "ports"],
+      "additionalProperties": false
+    }
+  }
 }

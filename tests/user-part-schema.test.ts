@@ -33,6 +33,36 @@ const valid = () => ({
   ],
 })
 
+// A minimal valid internal circuit whose port ids match valid()'s pin ids (in/out) 1:1.
+const validInternal = () => ({
+  name: 'core',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    {
+      id: 'r1',
+      definition: 'resistor',
+      x: 0,
+      y: 0,
+      parameters: { resistance: { value: { kind: 'scalar', amount: 100, unit: 'ohm' } } },
+    },
+  ],
+  edges: [],
+  ports: [
+    {
+      id: 'in',
+      label: 'r1 · terminal_a',
+      side: 'left',
+      inner: { nodeId: 'r1', handleId: 'terminal_a' },
+    },
+    {
+      id: 'out',
+      label: 'r1 · terminal_b',
+      side: 'right',
+      inner: { nodeId: 'r1', handleId: 'terminal_b' },
+    },
+  ],
+})
+
 // Cases where the strict schema and the runtime validator MUST agree (no extra-key leniency involved).
 const agreementCases: { label: string; part: unknown; ok: boolean }[] = [
   { label: 'a minimal valid part', part: valid(), ok: true },
@@ -64,6 +94,51 @@ const agreementCases: { label: string; part: unknown; ok: boolean }[] = [
     part: {
       ...valid(),
       behavesAs: { definition: 'resistor', terminals: { terminal_a: 'in', terminal_b: 'out' } },
+    },
+    ok: true,
+  },
+  {
+    label: 'a valid part with a real internal circuit',
+    part: { ...valid(), internal: validInternal() },
+    ok: true,
+  },
+  {
+    label: 'BOTH behavesAs and internal (a part simulates one way, never both)',
+    part: {
+      ...valid(),
+      behavesAs: { definition: 'resistor', terminals: { terminal_a: 'in', terminal_b: 'out' } },
+      internal: validInternal(),
+    },
+    ok: false,
+  },
+  {
+    label: 'an internal circuit with no ports (nothing to wire to)',
+    part: { ...valid(), internal: { ...validInternal(), ports: [] } },
+    ok: false,
+  },
+  {
+    label: 'a NESTED sub-block with zero ports (grouped with no boundary wires — legal block data)',
+    part: {
+      ...valid(),
+      internal: {
+        ...validInternal(),
+        nodes: [
+          ...validInternal().nodes,
+          {
+            id: 'island',
+            definition: 'block',
+            x: 50,
+            y: 50,
+            block: {
+              name: 'isolated',
+              origin: { x: 0, y: 0 },
+              nodes: [{ id: 'r9', definition: 'resistor', x: 0, y: 0 }],
+              edges: [],
+              ports: [],
+            },
+          },
+        ],
+      },
     },
     ok: true,
   },
@@ -170,6 +245,41 @@ describe('two documented rules the validator adds that JSON Schema cannot expres
     }
     expect(validateSchema(shared)).toBe(true) // schema: both values are strings, fine
     expect(validateUserPart(shared)).toBeNull() // validator: a pin can't be two terminals
+  })
+
+  test('an internal port id that is NOT a pin id: schema accepts, validator rejects (must be 1:1)', () => {
+    const badPort = {
+      ...valid(),
+      internal: {
+        ...validInternal(),
+        ports: [
+          { id: 'in', label: 'a', side: 'left', inner: { nodeId: 'r1', handleId: 'terminal_a' } },
+          {
+            id: 'ghost',
+            label: 'b',
+            side: 'right',
+            inner: { nodeId: 'r1', handleId: 'terminal_b' },
+          },
+        ],
+      },
+    }
+    expect(validateSchema(badPort)).toBe(true) // schema can't cross-reference the pins array
+    expect(validateUserPart(badPort)).toBeNull() // validator: ports ↔ pins must match 1:1
+  })
+
+  test('an internal port exposing a NON-existent inner node: schema accepts, validator rejects', () => {
+    const badInner = {
+      ...valid(),
+      internal: {
+        ...validInternal(),
+        ports: [
+          { id: 'in', label: 'a', side: 'left', inner: { nodeId: 'nope', handleId: 'terminal_a' } },
+          { id: 'out', label: 'b', side: 'right', inner: { nodeId: 'r1', handleId: 'terminal_b' } },
+        ],
+      },
+    }
+    expect(validateSchema(badInner)).toBe(true) // schema can't cross-reference the nodes array
+    expect(validateUserPart(badInner)).toBeNull() // validator: a port must expose a real inner terminal
   })
 
   test('a non-finite param amount (1e400 → Infinity): schema accepts the number, validator rejects', () => {

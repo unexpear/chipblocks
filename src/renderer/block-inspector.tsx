@@ -1,4 +1,4 @@
-import { type CSSProperties, useMemo } from 'react'
+import { type CSSProperties, useMemo, useState } from 'react'
 import type { BlockData, BlockPort, DriveKind, PinKind, PinSide } from './blocks.ts'
 import { characterizeBlock } from './logic-sim.ts'
 import type { Fidelity } from './symbols.tsx'
@@ -71,6 +71,7 @@ export function BlockInspector({
   onAddPort,
   onReorderPort,
   onRemovePort,
+  onSaveAsPart,
 }: {
   ports: BlockPort[]
   block: BlockData
@@ -81,6 +82,8 @@ export function BlockInspector({
   onAddPort: (nodeId: string, handleId: string) => void
   onReorderPort: (portId: string, dir: -1 | 1) => void
   onRemovePort: (portId: string) => void
+  /** Save this block's circuit as a reusable custom part — returns an error message, or null on success. */
+  onSaveAsPart?: (name: string) => string | null
 }) {
   // Group the list by edge so the ▲▼ reordering (which moves a pin among its same-side pins) reads
   // naturally; a stable sort keeps each edge's pins in their current order.
@@ -298,6 +301,65 @@ export function BlockInspector({
             </option>
           ))}
         </select>
+      ) : null}
+      {onSaveAsPart ? <SaveAsPart onSave={onSaveAsPart} /> : null}
+    </div>
+  )
+}
+
+/**
+ * "Save as custom part" (user-made parts, slice 4b Model B): turn THIS block's real internal circuit
+ * into a reusable custom part — its pins are the block's pins, its physics is the circuit inside. The
+ * part joins the palette and your personal library like any authored part.
+ */
+function SaveAsPart({ onSave }: { onSave: (name: string) => string | null }) {
+  const [name, setName] = useState('')
+  const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null)
+  return (
+    <div style={{ borderTop: `1px solid ${THEME.borderSubtle}`, paddingTop: 8, marginTop: 10 }}>
+      <div style={{ fontWeight: 700, color: THEME.textBright, marginBottom: 2 }}>
+        Save as custom part
+      </div>
+      <div style={{ fontSize: 9, color: THEME.textFaint, marginBottom: 4 }}>
+        Makes this block a reusable part: same pins, and it simulates as the real circuit inside.
+        Saved to your parts library.
+      </div>
+      <div style={{ display: 'flex', gap: 4 }}>
+        <input
+          value={name}
+          placeholder="part name (e.g. My Amp)"
+          onChange={(e) => {
+            setName(e.target.value)
+            setStatus(null)
+          }}
+          style={{ ...field, flex: 1 }}
+        />
+        <button
+          type="button"
+          onClick={() => {
+            const error = onSave(name)
+            if (error !== null) {
+              setStatus({ ok: false, text: error })
+              return
+            }
+            setStatus({ ok: true, text: 'Saved — it’s in the palette under “Your parts”.' })
+            setName('')
+          }}
+          style={{ ...arrow, fontSize: 10, padding: '3px 8px' }}
+        >
+          Save
+        </button>
+      </div>
+      {status ? (
+        <div
+          style={{
+            fontSize: 9,
+            marginTop: 3,
+            color: status.ok ? THEME.statusOk : THEME.statusDanger,
+          }}
+        >
+          {status.text}
+        </div>
       ) : null}
     </div>
   )
