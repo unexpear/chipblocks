@@ -214,7 +214,9 @@ export function buildMathView(
 
   // KCL per net: sum every member element's branch current with its sign
   // (+ into the net at the element's B side, − at its A side). Nets touching
-  // a 3-terminal device can't be itemized from 2-terminal branch data alone.
+  // a multi-terminal device can't be itemized from 2-terminal branch data
+  // alone — including a multi-WINDING machine with only two of its ports
+  // wired (a 3-phase motor on a phase→neutral or line-to-line hookup).
   const nets: MathNetRow[] = []
   for (const [netId] of solution.nodes) {
     const terms: string[] = []
@@ -223,9 +225,13 @@ export function buildMathView(
     for (const inst of world.instances.values()) {
       const connectsHere = (inst.connects ?? []).filter((c) => c.net === netId)
       if (connectsHere.length === 0) continue
-      if ((inst.connects ?? []).length > 2) {
+      if (
+        (inst.connects ?? []).length > 2 ||
+        inst.definition === 'induction_motor_three_phase' ||
+        inst.definition === 'alternator_three_phase'
+      ) {
         multiTerminal = true
-        terms.push(`${inst.id} (3-terminal — see its card)`)
+        terms.push(`${inst.id} (multi-terminal — see its card)`)
         continue
       }
       const current = solution.branches.get(inst.id)
@@ -243,7 +249,7 @@ export function buildMathView(
       terms,
       sumAmps: multiTerminal ? null : sum,
       ...(multiTerminal
-        ? { note: 'balanced inside the solve — a 3-terminal device meets this net' }
+        ? { note: 'balanced inside the solve — a multi-terminal device meets this net' }
         : {}),
     })
   }
@@ -929,11 +935,16 @@ function partCard(
     }
     return { id: inst.id, title: 'Neon lamp — strike, glow, and the relaxation oscillator', lines }
   }
-  if (def === 'induction_motor') {
+  if (def === 'induction_motor' || def === 'induction_motor_three_phase') {
     const imParams = inductionMotorParamsFromInstance(inst)
     lines.push(
       'An induction motor has no electrical connection to its rotor. The 3-phase stator winding makes a magnetic field that ROTATES at the synchronous speed; the rotor is dragged along but always lags by the slip s — and that lag is exactly what induces the rotor currents that make the torque. At synchronous speed there is no lag, no induced current and no torque, so it must run a little slow, and slips more the harder it is loaded.',
     )
+    if (def === 'induction_motor_three_phase') {
+      lines.push(
+        'This one takes its three phases on real wires (plus the wye star point): swap any two leads and the field sequence — and the rotation — reverses; lose a phase and the field stops rotating at standstill, so a loaded machine cannot start (single-phasing).',
+      )
+    }
     if (imParams !== undefined) {
       const op = inductionMotorOperatingPoint(imParams)
       lines.push(

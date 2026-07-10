@@ -848,6 +848,46 @@ function InductionMotorGlyph() {
   )
 }
 
+/** Three-phase induction motor with a TRUE three-phase hookup — the same M/3~ machine circle,
+ *  but the three phase leads fan in from the left edge and the wye star point (neutral) leads
+ *  out the right, mirroring the three-phase alternator that feeds it. */
+function ThreePhaseInductionMotorGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>AC induction motor, three-phase supply</title>
+      {/* the three phase leads fanning from the left edge into the machine, handles at y 8/22/36 */}
+      <path d="M0 8 L24 22" fill="none" stroke={STROKE} strokeWidth={1.4} />
+      <path d="M0 22 L24 22" fill="none" stroke={STROKE} strokeWidth={1.4} />
+      <path d="M0 36 L24 22" fill="none" stroke={STROKE} strokeWidth={1.4} />
+      <circle cx={40} cy={MID} r={16} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <text
+        x={40}
+        y={MID - 4}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={11}
+        fontWeight={700}
+        fill={STROKE}
+        fontFamily="system-ui, sans-serif"
+      >
+        M
+      </text>
+      <text
+        x={40}
+        y={MID + 7}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={8}
+        fill={STROKE}
+        fontFamily="system-ui, sans-serif"
+      >
+        3~
+      </text>
+      {lead(56, W)}
+    </svg>
+  )
+}
+
 /** Carbon arc lamp — two electrode rods facing across a small gap with the arc (a jagged spark)
  *  striking between them. A lead out each side (anode + / cathode −). */
 function ArcLampGlyph() {
@@ -1814,6 +1854,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   alternator: AlternatorGlyph,
   alternator_three_phase: ThreePhaseAlternatorGlyph,
   induction_motor: InductionMotorGlyph,
+  induction_motor_three_phase: ThreePhaseInductionMotorGlyph,
   transmission_line: TransmissionLineGlyph,
   led: LedGlyph,
   arc_lamp: ArcLampGlyph,
@@ -1911,6 +1952,14 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
     { id: 'phase_c', position: Position.Right, offset: 36 },
   ],
   induction_motor: TWO('terminal_a', 'terminal_b'),
+  // True three-phase motor: the phase leads down the left edge (fed from the alternator's fan),
+  // the wye star point (neutral) out the right — wire it for 4-wire, leave it for 3-wire.
+  induction_motor_three_phase: [
+    { id: 'phase_a', position: Position.Left, offset: 8 },
+    { id: 'phase_b', position: Position.Left, offset: 22 },
+    { id: 'phase_c', position: Position.Left, offset: 36 },
+    { id: 'neutral', position: Position.Right },
+  ],
   arc_lamp: TWO('anode', 'cathode'),
   neon_lamp: TWO('anode', 'cathode'),
   // A CRT: the electron gun (cathode + anode) on the left, the X/Y deflection inputs on the right.

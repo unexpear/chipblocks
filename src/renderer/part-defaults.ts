@@ -145,6 +145,23 @@ const DEFAULTS: Record<string, Parameters> = {
     rotor_inertia: scalar(0.0152, 'kg*m^2'),
     winding: { value: 'copper' },
   },
+  induction_motor_three_phase: {
+    // The same ~4 kW 4-pole machine as induction_motor (same per-phase equivalent circuit and
+    // the same cited ABB M2BAX 112MLA 4 rotor inertia), wired for a TRUE three-phase hookup:
+    // phase A/B/C ports + the wye star point. Feed it from the 3φ alternator phase-for-phase.
+    supply_voltage: scalar(230, 'volt'),
+    line_frequency: scalar(50, 'hertz'),
+    pole_count: scalar(4, 'dimensionless'),
+    stator_resistance: scalar(2, 'ohm'),
+    stator_reactance: scalar(4, 'ohm'),
+    rotor_resistance: scalar(2, 'ohm'),
+    rotor_reactance: scalar(4, 'ohm'),
+    magnetizing_reactance: scalar(80, 'ohm'),
+    load_torque: scalar(20, 'N*m'),
+    viscous_friction: scalar(0.002, 'N*m*s/rad'),
+    rotor_inertia: scalar(0.0152, 'kg*m^2'),
+    winding: { value: 'copper' },
+  },
   crt: {
     // A small cathode-ray tube (oscilloscope class). The electron gun draws ~0.1 mA from a 2 kV
     // anode (EHT); the grid bias (−10 V against a −50 V cutoff) sets ~80% brightness. Deflection
@@ -750,6 +767,19 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     rotor_reactance: 'referred rotor leakage X2 (~4 Ω)',
     magnetizing_reactance: 'magnetizing branch Xm (~80 Ω), the no-load magnetizing current',
     load_torque: 'shaft load (~20 N·m) for a ~4 kW class machine near rated slip',
+    viscous_friction: 'windage + bearing loss',
+    rotor_inertia: 'J ~0.0152 kg·m² (ABB M2BAX 112MLA 4, 4 kW 4-pole) — sets the spin-up time',
+  },
+  induction_motor_three_phase: {
+    supply_voltage: 'per-phase RMS nameplate (230 V phase of a 400 V 3-phase line)',
+    line_frequency: '50 Hz mains (60 Hz elsewhere)',
+    pole_count: '4-pole → 1500 RPM synchronous at 50 Hz (120·f/poles)',
+    stator_resistance: 'representative per-phase R1 (~2 Ω) for a ~4 kW machine',
+    stator_reactance: 'representative stator leakage X1 (~4 Ω at 50 Hz)',
+    rotor_resistance: 'referred rotor R2 (~2 Ω) — sets the slip and starting torque',
+    rotor_reactance: 'referred rotor leakage X2 (~4 Ω)',
+    magnetizing_reactance: 'magnetizing branch Xm (~80 Ω), the no-load magnetizing current',
+    load_torque: 'shaft load (~20 N·m); above the STARTING torque it never leaves standstill',
     viscous_friction: 'windage + bearing loss',
     rotor_inertia: 'J ~0.0152 kg·m² (ABB M2BAX 112MLA 4, 4 kW 4-pole) — sets the spin-up time',
   },
@@ -1410,7 +1440,7 @@ export function primaryValue(
     const v = amountOf(parameters, 'rated_anode_voltage')
     return v === undefined ? null : `${formatEng(v, 'V')} EHT`
   }
-  if (definition === 'induction_motor') {
+  if (definition === 'induction_motor' || definition === 'induction_motor_three_phase') {
     // Headline the synchronous speed (120·f/poles) — the field's rotation the rotor chases.
     const f = amountOf(parameters, 'line_frequency')
     const poles = amountOf(parameters, 'pole_count')

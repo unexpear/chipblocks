@@ -114,7 +114,13 @@ import {
 import { coilInductanceFromInstance } from './electromagnet-model.ts'
 import {
   createDqMotor,
+  createDqMotor3,
+  DQ3_PORTS,
+  type Dq3MotorCore,
   type DqMotorCore,
+  dq3CommitMotor,
+  dq3InitMotor,
+  dq3StampMotor,
   dqCommitMotor,
   dqInductancesFromParams,
   dqInitMotor,
@@ -200,6 +206,7 @@ export const TRANSIENT_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'electromagnet',
   'dc_motor',
   'induction_motor',
+  'induction_motor_three_phase',
   'generator',
   'alternator',
   'alternator_three_phase',
@@ -1130,6 +1137,48 @@ function resolveInductor(inst: Instance, nodeIndex: Map<string, number>): Induct
   }
 }
 
+/** The AC drives sharing a machine's CIRCUIT — walked from its own terminal nets, so an
+ *  unrelated circuit's source can never masquerade as its supply. Alternators count: they
+ *  resolve into the same sine sources (electrical frequency = pole pairs × shaft speed). */
+function connectedAcDrives(world: World, seedNets: string[]): { hz: number; rms: number }[] {
+  const netToInstances = new Map<string, Instance[]>()
+  for (const s of world.instances.values()) {
+    for (const c of s.connects ?? []) {
+      const list = netToInstances.get(c.net)
+      if (list === undefined) netToInstances.set(c.net, [s])
+      else list.push(s)
+    }
+  }
+  const seenNets = new Set<string>(seedNets)
+  const seenInstances = new Set<Instance>()
+  const queue = [...seedNets]
+  for (let net = queue.pop(); net !== undefined; net = queue.pop()) {
+    for (const s of netToInstances.get(net) ?? []) {
+      if (seenInstances.has(s)) continue
+      seenInstances.add(s)
+      for (const c of s.connects ?? []) {
+        if (!seenNets.has(c.net)) {
+          seenNets.add(c.net)
+          queue.push(c.net)
+        }
+      }
+    }
+  }
+  const acDrives: { hz: number; rms: number }[] = []
+  for (const s of seenInstances) {
+    if (s.definition === 'power_source') {
+      const amplitude = readScalarParam(s, 'ac_amplitude') ?? 0
+      const f = readScalarParam(s, 'frequency') ?? 0
+      if (amplitude > 0 && f > 0) acDrives.push({ hz: f, rms: amplitude / Math.SQRT2 })
+    } else if (s.definition === 'alternator' || s.definition === 'alternator_three_phase') {
+      const e = alternatorElectrical(s)
+      if (e !== null && e.frequencyHz > 0)
+        acDrives.push({ hz: e.frequencyHz, rms: e.amplitude / Math.SQRT2 })
+    }
+  }
+  return acDrives
+}
+
 /** An AC induction motor element for the time loop — the dq DYNAMIC model (a two-terminal
  *  Norton companion around the flux + speed states in induction-motor-dq.ts). */
 type InductionMotorDqElement = {
@@ -1178,45 +1227,7 @@ function resolveInductionMotorDq(
   if (inductances === null) return null // both leakages zero — the flux model is singular
   const notes: string[] = []
   const op = inductionMotorOperatingPoint(p)
-
-  // The AC drives that share the motor's CIRCUIT — walked from its own terminals, so an
-  // unrelated circuit's source can never set the phase-delay period. Alternators count: they
-  // resolve into the same sine sources (electrical frequency = pole pairs × shaft speed).
-  const netToInstances = new Map<string, Instance[]>()
-  for (const s of world.instances.values()) {
-    for (const c of s.connects ?? []) {
-      const list = netToInstances.get(c.net)
-      if (list === undefined) netToInstances.set(c.net, [s])
-      else list.push(s)
-    }
-  }
-  const seenNets = new Set<string>([c1.net, c2.net])
-  const seenInstances = new Set<Instance>()
-  const queue = [c1.net, c2.net]
-  for (let net = queue.pop(); net !== undefined; net = queue.pop()) {
-    for (const s of netToInstances.get(net) ?? []) {
-      if (seenInstances.has(s)) continue
-      seenInstances.add(s)
-      for (const c of s.connects ?? []) {
-        if (!seenNets.has(c.net)) {
-          seenNets.add(c.net)
-          queue.push(c.net)
-        }
-      }
-    }
-  }
-  const acDrives: { hz: number; rms: number }[] = []
-  for (const s of seenInstances) {
-    if (s.definition === 'power_source') {
-      const amplitude = readScalarParam(s, 'ac_amplitude') ?? 0
-      const f = readScalarParam(s, 'frequency') ?? 0
-      if (amplitude > 0 && f > 0) acDrives.push({ hz: f, rms: amplitude / Math.SQRT2 })
-    } else if (s.definition === 'alternator' || s.definition === 'alternator_three_phase') {
-      const e = alternatorElectrical(s)
-      if (e !== null && e.frequencyHz > 0)
-        acDrives.push({ hz: e.frequencyHz, rms: e.amplitude / Math.SQRT2 })
-    }
-  }
+  const acDrives = connectedAcDrives(world, [c1.net, c2.net])
 
   // The unseen phases are delayed by thirds of the DRIVE period: the one distinct connected
   // AC frequency when it is unambiguous, else the nameplate.
@@ -1274,6 +1285,79 @@ function resolveInductionMotorDq(
       iB: nodeIndex.get(c2.net),
       hasAcDrive: acDrives.length > 0,
       core: createDqMotor(inductances, mechanics, lockedOmega, period),
+    },
+  }
+}
+
+/** The TRUE three-phase induction motor element — three phase ports (+ optional star-point
+ *  neutral) around the same dq states, a multi-port Norton companion (induction-motor-dq.ts). */
+type InductionMotor3Element = {
+  id: string
+  terminals: string[] // the wired subset of phase_a / phase_b / phase_c / neutral, in port order
+  nets: string[]
+  idx: (number | undefined)[]
+  hasAcDrive: boolean
+  core: Dq3MotorCore
+}
+
+/**
+ * The three-port machine needs NONE of the single-port model's phase synthesis: its phases
+ * arrive on real wires, so any drive frequency, waveform, imbalance, phase swap (reversal) or
+ * lost phase (single-phasing) is marched as the physics it is. An unwired port — the floating
+ * star, an open phase — is eliminated exactly by its zero-current condition.
+ */
+function resolveInductionMotor3(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  world: World,
+): {
+  element?: InductionMotor3Element
+  stalled: boolean
+  notes: string[]
+  acDrives: { hz: number; rms: number }[]
+} | null {
+  const p = inductionMotorParamsFromInstance(inst)
+  if (p === undefined) return null
+  if (!(p.statorResistance > 0) || !(p.magnetizingReactance > 0)) return null
+  if (p.statorReactance < 0 || p.rotorReactance < 0) return null
+  const inductances = dqInductancesFromParams(p)
+  if (inductances === null) return null // both leakages zero — the flux model is singular
+  const netOf = (terminal: string) => inst.connects?.find((c) => c.terminal === terminal)?.net
+  const wired = DQ3_PORTS.map((t) => netOf(t) !== undefined) as [boolean, boolean, boolean, boolean]
+  const wiredPorts = DQ3_PORTS.filter((_, i) => wired[i])
+  if (wiredPorts.length < 2) return null // no circuit through the machine
+  const notes: string[] = []
+  const op = inductionMotorOperatingPoint(p)
+  const nets = wiredPorts.map((t) => netOf(t) ?? '')
+  const acDrives = connectedAcDrives(world, nets)
+  const rotorInertia = readScalarParam(inst, 'rotor_inertia')
+  const mechanics =
+    rotorInertia !== undefined && rotorInertia > 0
+      ? { rotorInertia, viscousFriction: p.viscousFriction, loadTorque: p.loadTorque }
+      : null
+  if (mechanics === null) {
+    notes.push(
+      `Induction motor '${inst.id}' has no rotor_inertia — the rotor is held at its nameplate ` +
+        'operating speed (quasi-static); set rotor_inertia (kg·m²) for the true spin-up',
+    )
+  }
+  const lockedOmega = (1 - op.slip) * synchronousSpeedRadPerSec(p.frequency, p.poles)
+  // The did-not-start warning's minimum window is measured in DRIVE periods: the one
+  // unambiguous connected AC frequency when there is one, else the nameplate. (Nothing is
+  // synthesized from this — the phases arrive on real wires.)
+  const acFrequencies = new Set(acDrives.map((d) => d.hz))
+  const driveHz = acFrequencies.size === 1 ? ([...acFrequencies][0] ?? p.frequency) : p.frequency
+  return {
+    stalled: op.stalled,
+    notes,
+    acDrives,
+    element: {
+      id: inst.id,
+      terminals: [...wiredPorts],
+      nets,
+      idx: nets.map((n) => nodeIndex.get(n)),
+      hasAcDrive: acDrives.length > 0,
+      core: createDqMotor3(inductances, mechanics, lockedOmega, wired, 1 / driveHz),
     },
   }
 }
@@ -1872,6 +1956,49 @@ function stampDqMotorCompanion(
   }
 }
 
+/** Stamp the three-phase induction motor's multi-port Norton: the reduced conductance matrix
+ *  over its wired terminals plus a history source per terminal (current INTO each terminal =
+ *  Σ G·v + I_hist; a ground-connected terminal contributes v = 0 and needs no row). */
+function stampDq3MotorCompanion(
+  m: InductionMotor3Element,
+  dt: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const { conductance, historyCurrents } = dq3StampMotor(m.core, dt)
+  for (let r = 0; r < m.idx.length; r++) {
+    const ir = m.idx[r]
+    if (ir === undefined) continue
+    b.set([ir, 0], (b.get([ir, 0]) ?? 0) - (historyCurrents[r] ?? 0))
+    for (let c = 0; c < m.idx.length; c++) {
+      const ic = m.idx[c]
+      if (ic === undefined) continue
+      M.set([ir, ic], (M.get([ir, ic]) ?? 0) + (conductance[r]?.[c] ?? 0))
+    }
+  }
+}
+
+/** The readings panel is the steady-state analysis at the NAMEPLATE supply; when no AC drive on
+ *  the machine's circuit matches it, say so (the time-domain march follows the actual drive). */
+function nameplateMismatchNote(
+  inst: Instance,
+  acDrives: { hz: number; rms: number }[],
+): string | null {
+  const nameplateV = readScalarParam(inst, 'supply_voltage') ?? 0
+  const nameplateF = readScalarParam(inst, 'line_frequency') ?? 0
+  const compatible = (d: { hz: number; rms: number }): boolean =>
+    Math.abs(d.hz - nameplateF) <= 0.01 * nameplateF &&
+    Math.abs(d.rms - nameplateV) <= 0.1 * nameplateV
+  if (acDrives.length === 0 || acDrives.some(compatible)) return null
+  return (
+    `Induction motor '${inst.id}': its readings are analyzed at its nameplate (${nameplateV} V ` +
+    `RMS, ${nameplateF} Hz) but no source on its circuit matches — the readings panel shows the ` +
+    'nameplate operating point; the time-domain waveform follows the actual drive'
+  )
+}
+
 /**
  * Stamp a transformer's coupled backward-Euler companion: a 2×2 conductance block
  * across (primary, secondary) winding voltages plus per-winding history sources.
@@ -2174,6 +2301,7 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
   const inductors: InductorElement[] = []
   const motors: MotorElement[] = []
   const dqMotors: InductionMotorDqElement[] = []
+  const dq3Motors: InductionMotor3Element[] = []
   const generators: GeneratorElement[] = []
   const lines: TransmissionLineElement[] = []
   const transformers: TransformerElement[] = []
@@ -2284,21 +2412,29 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
               `Induction motor '${inst.id}' is STALLED — the load exceeds its breakdown torque; it draws the locked-rotor (starting) current`,
             )
           }
-          // The READINGS (speed / slip / torque / efficiency panel) are the steady-state
-          // analysis at the NAMEPLATE supply. The time-domain march follows whatever actually
-          // drives the terminals — an off-nameplate drive is legitimate here, but the panel
-          // won't match it. Checked against the drives sharing the motor's circuit (alternators
-          // included), not the whole canvas.
-          const nameplateV = readScalarParam(inst, 'supply_voltage') ?? 0
-          const nameplateF = readScalarParam(inst, 'line_frequency') ?? 0
-          const nameplateCompatible = (d: { hz: number; rms: number }): boolean =>
-            Math.abs(d.hz - nameplateF) <= 0.01 * nameplateF &&
-            Math.abs(d.rms - nameplateV) <= 0.1 * nameplateV
-          if (im.acDrives.length > 0 && !im.acDrives.some(nameplateCompatible)) {
+          const note = nameplateMismatchNote(inst, im.acDrives)
+          if (note !== null) warnings.push(note)
+        }
+      }
+    } else if (inst.definition === 'induction_motor_three_phase') {
+      // The TRUE three-phase machine: real wires on every phase, so imbalance, phase swaps
+      // (reversal) and lost phases (single-phasing) are marched as physics, not synthesized.
+      const im = resolveInductionMotor3(inst, nodeIndex, world)
+      if (im === null) {
+        warnings.push(
+          `Skipped three-phase induction motor '${inst.id}' (needs at least two wired terminals and physical equivalent-circuit values: R1 > 0, Xm > 0, X1/X2 >= 0 with X1 + X2 > 0)`,
+        )
+      } else {
+        warnings.push(...im.notes)
+        if (im.element !== undefined) {
+          dq3Motors.push(im.element)
+          if (im.stalled) {
             warnings.push(
-              `Induction motor '${inst.id}': its readings are analyzed at its nameplate (${nameplateV} V RMS, ${nameplateF} Hz) but no source on its circuit matches — the readings panel shows the nameplate operating point; the time-domain waveform follows the actual drive`,
+              `Induction motor '${inst.id}' is STALLED — the load exceeds its breakdown torque; it draws the locked-rotor (starting) current`,
             )
           }
+          const note = nameplateMismatchNote(inst, im.acDrives)
+          if (note !== null) warnings.push(note)
         }
       }
     } else if (inst.definition === 'dc_motor') {
@@ -2587,6 +2723,7 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
       for (const motor of motors) stampFixedCurrent(motor.iA, motor.iB, motor.iPrev, b)
       // A dq motor holds zero port current at t = 0 — its fluxes cannot jump (inductive start).
       for (const m of dqMotors) stampFixedCurrent(m.iA, m.iB, 0, b)
+      // Same for the three-phase machine: every winding starts at zero current (no stamp needed).
       for (const tr of transformers) {
         stampFixedCurrent(tr.iPA, tr.iPB, tr.i1Prev, b)
         stampFixedCurrent(tr.iSA, tr.iSB, tr.i2Prev, b)
@@ -2602,6 +2739,7 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
       for (const ind of inductors) stampInductorCompanion(ind, dt, M, b)
       for (const motor of motors) stampMotorCompanion(motor, dt, M, b)
       for (const m of dqMotors) stampDqMotorCompanion(m, t, dt, M, b)
+      for (const m of dq3Motors) stampDq3MotorCompanion(m, dt, M, b)
       for (const tr of transformers) stampTransformerCompanion(tr, dt, M, b)
       for (const tr of ctTransformers) stampCtTransformerCompanion(tr, dt, M, b)
     }
@@ -2810,6 +2948,25 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
           ? 0
           : stamp.conductance * (volts(m.netA) - volts(m.netB)) + stamp.historyCurrent
       through(m.id, m.termA, m.termB, amps)
+    }
+
+    for (const m of dq3Motors) {
+      // Per-terminal currents from the multi-port Norton (amps INTO each wired terminal).
+      const stamp = m.core.stamp
+      if (mode === 'initial' || stamp === null) {
+        for (const term of m.terminals) into.set(`${m.id}/${term}`, 0)
+      } else {
+        const v = m.nets.map((n) => volts(n))
+        m.terminals.forEach((term, r) => {
+          into.set(
+            `${m.id}/${term}`,
+            v.reduce(
+              (s, vv, c) => s + (stamp.conductance[r]?.[c] ?? 0) * vv,
+              stamp.historyCurrents[r] ?? 0,
+            ),
+          )
+        })
+      }
     }
 
     for (const gen of generators) {
@@ -3047,6 +3204,12 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
     // Seed the phase delay line with the solved t = 0 port voltage.
     dqInitMotor(m.core, (initial.nodes.get(m.netA) ?? 0) - (initial.nodes.get(m.netB) ?? 0))
   }
+  for (const m of dq3Motors) {
+    dq3InitMotor(
+      m.core,
+      m.nets.map((n) => initial.nodes.get(n) ?? 0),
+    )
+  }
 
   // March forward with backward-Euler. Each step: converge the nonlinear solve
   // (warm-started from the previous operating point), record the sample WITH
@@ -3150,6 +3313,13 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
       // speed shrinks the slip next step — that is what tapers the locked-rotor inrush.
       dqCommitMotor(m.core, (nodes.get(m.netA) ?? 0) - (nodes.get(m.netB) ?? 0), dt)
     }
+    for (const m of dq3Motors) {
+      dq3CommitMotor(
+        m.core,
+        m.nets.map((n) => nodes.get(n) ?? 0),
+        dt,
+      )
+    }
     for (const line of lines) recordLineSample(line, t, nodes)
     for (const tr of transformers) {
       // Same: this step's winding currents from the companion at the OLD history.
@@ -3192,11 +3362,23 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
 
   // A driven motor that never got moving is worth saying out loud: a load above the STARTING
   // torque blocks the machine even when a running point exists (the torque valley between s = 1
-  // and breakdown is unreachable from rest) — and on DC there is no rotating field at all. The
-  // check is exact, not a heuristic: ω = 0 is the stiction clamp having held (a rotor that broke
-  // away is strictly above zero, however short the run), and a window under two drive periods is
-  // too short to claim anything about starting.
-  for (const m of dqMotors) {
+  // and breakdown is unreachable from rest), a single-phased machine makes no starting torque at
+  // all — and on DC there is no rotating field. The check is exact, not a heuristic: ω = 0 is
+  // the stiction clamp having held (a rotor that broke away is strictly above zero, however
+  // short the run), and a window under two drive periods is too short to claim anything.
+  const stuckMotors: { id: string; hasAcDrive: boolean; core: DqMotorCore | Dq3MotorCore }[] = [
+    ...dqMotors.map((m) => ({
+      id: m.id,
+      hasAcDrive: m.hasAcDrive,
+      core: m.core as DqMotorCore | Dq3MotorCore,
+    })),
+    ...dq3Motors.map((m) => ({
+      id: m.id,
+      hasAcDrive: m.hasAcDrive,
+      core: m.core as DqMotorCore | Dq3MotorCore,
+    })),
+  ]
+  for (const m of stuckMotors) {
     const mech = m.core.mechanics
     if (mech === null || mech.loadTorque <= 0 || !m.core.energized) continue
     if (duration < 2 * m.core.period) continue

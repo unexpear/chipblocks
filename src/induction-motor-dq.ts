@@ -167,13 +167,15 @@ function delayedPortVoltage(history: { t: number; v: number }[], t: number): num
   return a.v + ((b.v - a.v) * (t - a.t)) / span
 }
 
-/** Solve the 4×4 system M·x = rhs for two right-hand sides (Gaussian elimination, partial
- *  pivoting). One factorization serves both the history and the sensitivity solve. */
-function solve4Two(M: number[][], rhs1: Vec4, rhs2: Vec4): { x1: Vec4; x2: Vec4 } {
-  const a = M.map((row, r) => [...row, rhs1[r] ?? 0, rhs2[r] ?? 0])
-  for (let col = 0; col < 4; col++) {
+/** Solve the square system M·x = rhs for several right-hand sides at once (Gaussian
+ *  elimination, partial pivoting) — one factorization serves them all. */
+function solveMulti(M: number[][], rhss: number[][]): number[][] {
+  const n = M.length
+  const m = rhss.length
+  const a = M.map((row, r) => [...row, ...rhss.map((rhs) => rhs[r] ?? 0)])
+  for (let col = 0; col < n; col++) {
     let pivot = col
-    for (let r = col + 1; r < 4; r++) {
+    for (let r = col + 1; r < n; r++) {
       if (Math.abs(a[r]?.[col] ?? 0) > Math.abs(a[pivot]?.[col] ?? 0)) pivot = r
     }
     const pivotRow = a[pivot]
@@ -187,30 +189,32 @@ function solve4Two(M: number[][], rhs1: Vec4, rhs2: Vec4): { x1: Vec4; x2: Vec4 
     if (head === undefined) break
     const p = head[col] ?? 0
     if (p === 0) continue
-    for (let r = col + 1; r < 4; r++) {
+    for (let r = col + 1; r < n; r++) {
       const row = a[r]
       if (row === undefined) continue
       const f = (row[col] ?? 0) / p
       if (f === 0) continue
-      for (let c = col; c < 6; c++) row[c] = (row[c] ?? 0) - f * (head[c] ?? 0)
+      for (let c = col; c < n + m; c++) row[c] = (row[c] ?? 0) - f * (head[c] ?? 0)
     }
   }
-  const x1: Vec4 = [0, 0, 0, 0]
-  const x2: Vec4 = [0, 0, 0, 0]
-  for (let r = 3; r >= 0; r--) {
+  const xs = rhss.map(() => new Array<number>(n).fill(0))
+  for (let r = n - 1; r >= 0; r--) {
     const row = a[r]
     if (row === undefined) continue
-    let s1 = row[4] ?? 0
-    let s2 = row[5] ?? 0
-    for (let c = r + 1; c < 4; c++) {
-      s1 -= (row[c] ?? 0) * (x1[c] ?? 0)
-      s2 -= (row[c] ?? 0) * (x2[c] ?? 0)
-    }
     const p = row[r] ?? 0
-    x1[r] = p !== 0 ? s1 / p : 0
-    x2[r] = p !== 0 ? s2 / p : 0
+    for (let k = 0; k < m; k++) {
+      let s = row[n + k] ?? 0
+      for (let c = r + 1; c < n; c++) s -= (row[c] ?? 0) * (xs[k]?.[c] ?? 0)
+      const xk = xs[k]
+      if (xk !== undefined) xk[r] = p !== 0 ? s / p : 0
+    }
   }
-  return { x1, x2 }
+  return xs
+}
+
+function solve4Two(M: number[][], rhs1: Vec4, rhs2: Vec4): { x1: Vec4; x2: Vec4 } {
+  const [x1, x2] = solveMulti(M, [rhs1, rhs2])
+  return { x1: (x1 ?? [0, 0, 0, 0]) as Vec4, x2: (x2 ?? [0, 0, 0, 0]) as Vec4 }
 }
 
 /** The state matrix A of dλ/dt = A·λ + u at a frozen electrical rotor speed. */
@@ -329,4 +333,266 @@ export function dqCommitMotor(core: DqMotorCore, portVolts: number, h: number): 
 export function dqInitMotor(core: DqMotorCore, portVolts: number): void {
   core.history.push({ t: 0, v: portVolts })
   core.uPrev = [(2 / 3) * portVolts, 0]
+}
+
+// === The TRUE three-phase machine — three phase ports (+ an optional star-point/neutral) ===
+//
+// Same verified dq physics, but the three phases arrive on REAL wires: no delayed-phase
+// synthesis, no drive-period detection. The Clarke α/β components of the WINDING voltages are
+// common-mode invariant, so they read straight off the phase TERMINALS (the star voltage cancels)
+// and the machine never needs an internal star node in the matrix. The zero axis lives only when
+// the neutral port is wired (a 4-wire wye); an unwired port — the floating star, an open phase —
+// is eliminated exactly (its current forced to zero, the textbook open-terminal reduction), which
+// is what makes swapped-lead reversal, single-phasing, and the two DC hookup identities
+// (phase→neutral = R1, line-to-line = 2·R1) fall out instead of being coded.
+
+/** Port order everywhere below: [phase_a, phase_b, phase_c, neutral]. */
+export const DQ3_PORTS = ['phase_a', 'phase_b', 'phase_c', 'neutral'] as const
+
+const SQRT3 = Math.sqrt(3)
+// Terminal voltages → (v_α, v_β, v_0): the winding-voltage Clarke, star cancelled out of α/β.
+const T_IN_ALPHA = [2 / 3, -1 / 3, -1 / 3, 0]
+const T_IN_BETA = [0, 1 / SQRT3, -1 / SQRT3, 0]
+const T_IN_ZERO = [1 / 3, 1 / 3, 1 / 3, -1]
+const T_IN: number[][] = [T_IN_ALPHA, T_IN_BETA, T_IN_ZERO]
+// (i_α, i_β, i_0) → current INTO each terminal (the amplitude-invariant inverse Clarke; the
+// neutral returns the three zero-sequence shares, i_N = −3·i_0).
+const T_OUT: number[][] = [
+  [1, 0, 1],
+  [-1 / 2, SQRT3 / 2, 1],
+  [-1 / 2, -SQRT3 / 2, 1],
+  [0, 0, -3],
+]
+
+type Dq3Stamp = {
+  /** Reduced Norton over the WIRED ports (row/col order = the wired subset of DQ3_PORTS). */
+  conductance: number[][]
+  historyCurrents: number[]
+  /** Full 4-port pieces, kept to reconstruct the open ports' voltages at commit. */
+  fullG: number[][]
+  fullIh: number[]
+  fluxKnown: Vec4
+  sensAlpha: Vec4
+  sensBeta: Vec4
+  i0Known: number
+  i0PerV0: number
+}
+
+export type Dq3MotorCore = {
+  inductances: DqInductances
+  mechanics: DqMechanics | null
+  lockedOmega: number
+  /** Which of [phase_a, phase_b, phase_c, neutral] is wired; unwired ports are eliminated. */
+  wired: [boolean, boolean, boolean, boolean]
+  /** The connected drive's period (nameplate when ambiguous) — only the did-not-start
+   *  warning's minimum-window gate reads it; nothing is synthesized from it. */
+  period: number
+  flux: Vec4
+  i0: number
+  omega: number
+  torque: number
+  energized: boolean
+  uPrev: [number, number] // committed (v_α, v_β) — the trapezoid's left edge
+  stamp: Dq3Stamp | null
+}
+
+export function createDqMotor3(
+  inductances: DqInductances,
+  mechanics: DqMechanics | null,
+  lockedOmega: number,
+  wired: [boolean, boolean, boolean, boolean],
+  period: number,
+): Dq3MotorCore {
+  return {
+    inductances,
+    mechanics,
+    lockedOmega,
+    wired,
+    period,
+    flux: [0, 0, 0, 0],
+    i0: 0,
+    omega: mechanics === null ? lockedOmega : 0,
+    torque: 0,
+    energized: false,
+    uPrev: [0, 0],
+    stamp: null,
+  }
+}
+
+/** Reconstruct the open ports' voltages from the wired ones — the exact open-terminal condition
+ *  (each unwired port's current forced to zero), solved on the open sub-block. */
+function openPortVoltages(
+  stamp: Dq3Stamp,
+  wired: [boolean, boolean, boolean, boolean],
+  wiredVolts: number[],
+): number[] {
+  const full = [0, 0, 0, 0]
+  let w = 0
+  for (let p = 0; p < 4; p++) if (wired[p]) full[p] = wiredVolts[w++] ?? 0
+  const open: number[] = []
+  for (let p = 0; p < 4; p++) if (!wired[p]) open.push(p)
+  if (open.length === 0) return full
+  // G_oo · v_o = −(Ih_o + G_ow · v_w)
+  const Goo = open.map((r) => open.map((c) => stamp.fullG[r]?.[c] ?? 0))
+  const rhs = open.map((r) => {
+    let s = stamp.fullIh[r] ?? 0
+    for (let p = 0; p < 4; p++) if (wired[p]) s += (stamp.fullG[r]?.[p] ?? 0) * (full[p] ?? 0)
+    return -s
+  })
+  const [vOpen] = solveMulti(Goo, [rhs])
+  open.forEach((p, k) => {
+    full[p] = vOpen?.[k] ?? 0
+  })
+  return full
+}
+
+/**
+ * Prepare the multi-port Norton companion for the step ending one h after the last commit:
+ * i_wired = G·v_wired + I_hist. Built as the full 4-port composition G = T_out·K·T_in (K = the
+ * trapezoidal flux sensitivities + the backward-Euler zero axis), then every unwired port is
+ * eliminated by its zero-current condition — one code path for the 4-wire wye, the floating
+ * star, and an open phase.
+ */
+export function dq3StampMotor(core: Dq3MotorCore, h: number): Dq3Stamp {
+  const L = core.inductances
+  const A = stateMatrix(L, L.polePairs * core.omega)
+  const half = h / 2
+  const lhs = A.map((row, r) => row.map((v, c) => (r === c ? 1 : 0) - half * v))
+  const rhsHist: Vec4 = [0, 0, 0, 0]
+  for (let r = 0; r < 4; r++) {
+    let s = core.flux[r] ?? 0
+    for (let c = 0; c < 4; c++) s += half * (A[r]?.[c] ?? 0) * (core.flux[c] ?? 0)
+    rhsHist[r] = s
+  }
+  rhsHist[0] += half * (core.uPrev[0] ?? 0)
+  rhsHist[1] += half * (core.uPrev[1] ?? 0)
+  const [fluxKnown, sensAlpha, sensBeta] = solveMulti(lhs, [
+    rhsHist,
+    [half, 0, 0, 0],
+    [0, half, 0, 0],
+  ]) as [Vec4, Vec4, Vec4]
+
+  const iOf = (lam: Vec4, r0: number, r2: number) =>
+    (L.rotorH * (lam[r0] ?? 0) - L.magnetizingH * (lam[r2] ?? 0)) / L.fluxDet
+  const iAlphaHist = iOf(fluxKnown, 0, 2)
+  const iBetaHist = iOf(fluxKnown, 1, 3)
+  const K: number[][] = [
+    [iOf(sensAlpha, 0, 2), iOf(sensBeta, 0, 2), 0],
+    [iOf(sensAlpha, 1, 3), iOf(sensBeta, 1, 3), 0],
+    [0, 0, 0],
+  ]
+  const denom0 = L.statorLeakageH + h * L.statorOhms
+  const i0Known = (L.statorLeakageH * core.i0) / denom0
+  const i0PerV0 = h / denom0
+  const kRow = K[2]
+  if (kRow !== undefined) kRow[2] = i0PerV0
+
+  // G = T_out·K·T_in (4×4); Ih = T_out·(iα_hist, iβ_hist, i0_hist).
+  const cols = [0, 1, 2, 3]
+  const KT = K.map((kr) =>
+    cols.map((c) => kr.reduce((s, kv, j) => s + kv * (T_IN[j]?.[c] ?? 0), 0)),
+  )
+  const fullG = T_OUT.map((or_) =>
+    cols.map((c) => or_.reduce((s, ov, j) => s + ov * (KT[j]?.[c] ?? 0), 0)),
+  )
+  const ih3 = [iAlphaHist, iBetaHist, i0Known]
+  const fullIh = T_OUT.map((or_) => or_.reduce((s, ov, j) => s + ov * (ih3[j] ?? 0), 0))
+
+  // Eliminate the open ports: G' = G_ww − G_wo·G_oo⁻¹·G_ow, Ih' = Ih_w − G_wo·G_oo⁻¹·Ih_o.
+  const wiredIdx: number[] = []
+  const openIdx: number[] = []
+  for (let p = 0; p < 4; p++) (core.wired[p] ? wiredIdx : openIdx).push(p)
+  let conductance = wiredIdx.map((r) => wiredIdx.map((c) => fullG[r]?.[c] ?? 0))
+  let historyCurrents = wiredIdx.map((r) => fullIh[r] ?? 0)
+  if (openIdx.length > 0) {
+    const Goo = openIdx.map((r) => openIdx.map((c) => fullG[r]?.[c] ?? 0))
+    const rhss = [
+      ...wiredIdx.map((c) => openIdx.map((r) => fullG[r]?.[c] ?? 0)),
+      openIdx.map((r) => fullIh[r] ?? 0),
+    ]
+    const solved = solveMulti(Goo, rhss)
+    conductance = wiredIdx.map((r) =>
+      wiredIdx.map(
+        (c, ci) =>
+          (fullG[r]?.[c] ?? 0) -
+          openIdx.reduce((s, o, oi) => s + (fullG[r]?.[o] ?? 0) * (solved[ci]?.[oi] ?? 0), 0),
+      ),
+    )
+    const ihSolved = solved[wiredIdx.length]
+    historyCurrents = wiredIdx.map(
+      (r, ri) =>
+        (historyCurrents[ri] ?? 0) -
+        openIdx.reduce((s, o, oi) => s + (fullG[r]?.[o] ?? 0) * (ihSolved?.[oi] ?? 0), 0),
+    )
+  }
+
+  const stamp: Dq3Stamp = {
+    conductance,
+    historyCurrents,
+    fullG,
+    fullIh,
+    fluxKnown,
+    sensAlpha,
+    sensBeta,
+    i0Known,
+    i0PerV0,
+  }
+  core.stamp = stamp
+  return stamp
+}
+
+/** Commit the converged step from the solved WIRED terminal voltages (in wired-port order):
+ *  reconstruct the open ports, update fluxes / i₀ / torque / speed. Returns the current INTO
+ *  each wired terminal, for the recording. */
+export function dq3CommitMotor(core: Dq3MotorCore, wiredVolts: number[], h: number): number[] {
+  const stamp = core.stamp
+  if (stamp === null) return wiredVolts.map(() => 0)
+  const L = core.inductances
+  const vFull = openPortVoltages(stamp, core.wired, wiredVolts)
+  const vAlpha = T_IN_ALPHA.reduce((s, t, p) => s + t * (vFull[p] ?? 0), 0)
+  const vBeta = T_IN_BETA.reduce((s, t, p) => s + t * (vFull[p] ?? 0), 0)
+  const v0 = T_IN_ZERO.reduce((s, t, p) => s + t * (vFull[p] ?? 0), 0)
+  const flux: Vec4 = [0, 0, 0, 0]
+  for (let r = 0; r < 4; r++)
+    flux[r] =
+      (stamp.fluxKnown[r] ?? 0) +
+      (stamp.sensAlpha[r] ?? 0) * vAlpha +
+      (stamp.sensBeta[r] ?? 0) * vBeta
+  const iAlpha = (L.rotorH * flux[0] - L.magnetizingH * flux[2]) / L.fluxDet
+  const iBeta = (L.rotorH * flux[1] - L.magnetizingH * flux[3]) / L.fluxDet
+  core.flux = flux
+  core.i0 = core.wired[3] ? stamp.i0Known + stamp.i0PerV0 * v0 : 0
+  core.torque = 1.5 * L.polePairs * (flux[0] * iBeta - flux[1] * iAlpha)
+  const mech = core.mechanics
+  core.omega = mech === null ? core.lockedOmega : speedStep(core.omega, core.torque, mech, h)
+  if (Math.max(Math.abs(vAlpha), Math.abs(vBeta), Math.abs(v0)) > 1e-3) core.energized = true
+  core.uPrev = [vAlpha, vBeta]
+  const wiredIdx: number[] = []
+  for (let p = 0; p < 4; p++) if (core.wired[p]) wiredIdx.push(p)
+  return wiredIdx.map((_, ri) =>
+    wiredVolts.reduce(
+      (s, v, ci) => s + (stamp.conductance[ri]?.[ci] ?? 0) * v,
+      stamp.historyCurrents[ri] ?? 0,
+    ),
+  )
+}
+
+/** Seed the trapezoid's left edge from the t = 0 solve. With every machine current still zero an
+ *  open port's voltage is indeterminate — it reads as the wired phases' mean (one O(h) sample). */
+export function dq3InitMotor(core: Dq3MotorCore, wiredVolts: number[]): void {
+  const phases: number[] = []
+  let w = 0
+  for (let p = 0; p < 4; p++) {
+    if (!core.wired[p]) continue
+    if (p < 3) phases.push(wiredVolts[w] ?? 0)
+    w++
+  }
+  const mean = phases.length > 0 ? phases.reduce((s, v) => s + v, 0) / phases.length : 0
+  const full = [mean, mean, mean, 0]
+  w = 0
+  for (let p = 0; p < 4; p++) if (core.wired[p]) full[p] = wiredVolts[w++] ?? 0
+  core.uPrev = [
+    T_IN_ALPHA.reduce((s, t, p) => s + t * (full[p] ?? 0), 0),
+    T_IN_BETA.reduce((s, t, p) => s + t * (full[p] ?? 0), 0),
+  ]
 }

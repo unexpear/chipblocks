@@ -103,6 +103,7 @@ export const PARTS: { definition: string; label: string }[] = [
   { definition: 'alternator', label: 'Alternator' },
   { definition: 'alternator_three_phase', label: '3φ Alternator' },
   { definition: 'induction_motor', label: 'AC Motor' },
+  { definition: 'induction_motor_three_phase', label: '3φ AC Motor' },
   { definition: 'transmission_line', label: 'T-Line' },
   { definition: 'transformer', label: 'Transformer' },
   { definition: 'transformer_center_tapped', label: 'CT Transformer' },

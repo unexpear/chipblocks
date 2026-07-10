@@ -245,7 +245,10 @@ export function partReadings(
     // the numbers come from nameplate parameters, so without this gate a floating motor in a pruned
     // sub-circuit would still read as if it were spinning, while every other unsolved part goes
     // honestly blank.
-    if (inst.definition === 'induction_motor') {
+    if (
+      inst.definition === 'induction_motor' ||
+      inst.definition === 'induction_motor_three_phase'
+    ) {
       const inSolvedCircuit = (inst.connects ?? []).some((c) => solution.nodes.has(c.net))
       const imParams = inSolvedCircuit ? inductionMotorParamsFromInstance(inst) : undefined
       if (imParams !== undefined) {

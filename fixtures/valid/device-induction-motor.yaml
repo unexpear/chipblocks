@@ -37,8 +37,9 @@
 # (a 4-wire-wye convention) is what keeps DC honest: on a battery the machine makes no torque and
 # degenerates to exactly the stator R1 the DC solve uses (the engines agree on DC content).
 # Self-heating and thermal protection are unmodeled; so are magnetic saturation, deep-bar/skin
-# effect, and core loss. A true 3-phase supply (three ports) and the single-phase
-# double-revolving-field machine are refinements.
+# effect, and core loss. A TRUE 3-phase hookup (three phase ports + the star point) ships as its
+# sibling part, induction_motor_three_phase - use that one for real reversal (swapped leads) and
+# single-phasing; the single-phase double-revolving-field machine remains a refinement.
 #
 # MUST validate against definition.schema.json.
 kind: primitive_device
@@ -168,7 +169,8 @@ notes: |
   thermal protection are unmodeled; NOTE for a future theta_JA: the terminal power is the INPUT
   power, most of which leaves as mechanical output at rated load — heat is P_in - P_mech, never
   the whole terminal ledger. Magnetic saturation, deep-bar/skin effect and core loss are
-  unmodeled refinements, as are a true 3-phase supply (three ports) and the single-phase
-  double-revolving-field machine. Sources: Tesla's 1888 polyphase patents; the Steinmetz
+  unmodeled refinements. The true 3-phase (three-port) machine ships separately as
+  induction_motor_three_phase; the single-phase double-revolving-field machine remains a
+  refinement. Sources: Tesla's 1888 polyphase patents; the Steinmetz
   equivalent circuit; Krause, "Analysis of Electric Machinery" (the stationary-frame qd0 model);
   Fitzgerald, "Electric Machinery"; Chapman, "Electric Machinery Fundamentals".

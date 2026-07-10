@@ -1,0 +1,156 @@
+# Valid fixture: three-phase induction motor with a TRUE three-phase hookup - three phase ports
+# plus the wye star point brought out (like a six-terminal machine wired in star). Where the
+# two-terminal sibling (induction_motor) carries one phase and synthesizes the other two, THIS
+# machine takes all three on real wires - so everything a real three-phase line does to a real
+# motor happens here because the physics makes it happen, not because it was coded:
+#   - a balanced positive-sequence supply spins it up forward onto the Steinmetz operating point;
+#   - SWAP ANY TWO LEADS and the field sequence reverses - the motor runs BACKWARD (the classic
+#     electrician's reversal, and the classic accident);
+#   - LOSE A PHASE (single-phasing) and the field stops rotating at standstill - the developed
+#     starting torque is exactly zero, a loaded machine cannot start, and the solver names it;
+#   - an unbalanced or off-frequency supply is marched as-is, no nameplate assumption.
+#
+# Modeled by the same dq (stationary-reference-frame) dynamic model as the sibling
+# (induction-motor-dq.ts): stator + rotor flux linkages, the zero-sequence current, and the rotor
+# speed as states; trapezoidal flux march; J*domega/dt = T_e - B*omega - T_load. The Clarke
+# alpha/beta components of the winding voltages are common-mode invariant, so they read straight
+# off the phase terminals and the machine needs no internal star node; an UNWIRED port (the
+# floating star of a 3-wire hookup, or an open phase) is eliminated exactly by its zero-current
+# condition - the textbook open-terminal reduction, verified against the phasor solution.
+#
+# Honest scope: wye (star) stator, star point on the neutral terminal - wire it for a 4-wire
+# hookup (zero-sequence path live, like the three-phase alternator's neutral), leave it unwired
+# for the common 3-wire machine (floating star, zero-sequence current identically zero). At DC
+# a phase-to-neutral loop sees exactly one winding R1; a line-to-line loop sees two windings in
+# series (2*R1) - both the DC solver's stamp and the transient's settled limit, so the engines
+# agree. A delta-connected stator is a further rung. Self-heating, saturation, deep-bar/skin
+# effect and core loss are unmodeled, as on the sibling. Without a rotor_inertia the rotor is
+# held at the nameplate operating speed (quasi-static) and the solver says so.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: induction_motor_three_phase
+origin: builtin
+layer: primitive_device
+name: "AC induction motor (3-phase supply)"
+description: "A three-phase squirrel-cage induction motor with a true three-phase hookup - phase A, B and C ports plus the wye star point. All three phases arrive on real wires, so the real machine's behaviors emerge from the physics - swap any two leads and it runs backward; lose a phase and it cannot start from rest (single-phasing, named by the solver); drive it unbalanced or off-frequency and the waveforms are marched as-is. Given a rotor inertia it genuinely spins up from rest, drawing the locked-rotor inrush that tapers onto the steady operating point the readings show."
+composition:
+  requires:
+    winding:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 3
+parameters:
+  winding:
+    type: material_ref
+    satisfies_role: winding
+    required: true
+    default:
+      value: copper
+    description: The conductor the stator is wound from. Must conduct; copper is the standard.
+  supply_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: The per-phase (phase-to-neutral) RMS nameplate voltage. The READINGS analyze the machine at this nameplate; the time-domain march follows whatever actually drives the terminals. For a 400 V three-phase line the per-phase value is 230 V.
+  line_frequency:
+    type: quantity
+    units: hertz
+    required: true
+    description: The nameplate supply frequency. With the pole count it sets the synchronous speed n_s = 120*f/poles (1500 RPM for a 4-pole 50 Hz machine).
+  pole_count:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: The number of stator poles (even). Fewer poles spin faster; a 4-pole motor is synchronous at 1500 RPM on 50 Hz.
+  stator_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: R1, the per-phase stator winding resistance. Sets part of the copper loss; at DC a phase-to-neutral loop is exactly this, a line-to-line loop two of these in series.
+  stator_reactance:
+    type: quantity
+    units: ohm
+    required: true
+    description: X1, the per-phase stator leakage reactance at the nameplate frequency.
+  rotor_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: R2, the rotor resistance referred to the stator. It sets the slip and the starting torque - a higher R2 gives more starting torque but more running slip.
+  rotor_reactance:
+    type: quantity
+    units: ohm
+    required: true
+    description: X2, the rotor leakage reactance referred to the stator.
+  magnetizing_reactance:
+    type: quantity
+    units: ohm
+    required: true
+    description: Xm, the magnetizing reactance - the shunt branch that sets up the air-gap field and draws the no-load magnetizing current.
+  load_torque:
+    type: quantity
+    units: newton*meter
+    required: false
+    description: The shaft load torque opposing rotation. The motor settles at the slip where its developed torque equals this; beyond the breakdown torque it stalls, and a load above the STARTING torque keeps it from ever leaving standstill.
+  rotor_inertia:
+    type: quantity
+    units: kilogram*meter^2
+    required: false
+    description: J, the rotor's moment of inertia. Sets the mechanical spin-up time - how long the locked-rotor inrush lasts as the machine accelerates from rest. Without it the rotor is held at the nameplate operating speed (quasi-static) and the solver says so. A ~4 kW 4-pole 112-frame machine is ~0.015 kg*m^2 (motor only, no coupled load).
+  viscous_friction:
+    type: quantity
+    units: newton*meter*second/radian
+    required: false
+    description: B, the windage + bearing loss. A small drag the developed torque must also overcome.
+behaviors:
+  - electromechanical_coupling
+  - produces_magnetic_field
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  phase_a:
+    description: Phase A - the reference winding's line terminal.
+  phase_b:
+    description: Phase B - the winding a third of a turn around the stator. Swap any two phase leads and the field sequence - and the rotation - reverses.
+  phase_c:
+    description: Phase C - the third winding. Leave any phase unwired and the machine is single-phasing - it cannot start from rest.
+  neutral:
+    description: The wye star point, brought out. Wire it for a 4-wire hookup (it carries only the imbalance of the three phase currents); leave it unwired for the common 3-wire machine (floating star).
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  READINGS: the same per-phase steady-state analysis (Steinmetz) as the two-terminal sibling, at
+  the nameplate supply - operating slip, speed, torque, running + locked-rotor current,
+  mechanical power, efficiency, power factor (induction-motor-model.ts). TIME DOMAIN: the dq
+  (stationary-reference-frame) dynamic model (induction-motor-dq.ts), fed by the REAL terminal
+  waveforms - no synthesized phases, no drive-period detection, no nameplate assumption in the
+  march. The winding-voltage Clarke components are common-mode invariant, so alpha/beta read
+  straight off the phase terminals (the star voltage cancels) and no internal star node is
+  needed; v_0 = (v_a+v_b+v_c)/3 - v_neutral lives only when the neutral is wired. An unwired
+  port (floating star, open phase) is eliminated exactly by its zero-current condition. What
+  falls out, verified against the phasor solution before implementation: a balanced positive-
+  sequence set motors forward onto the Steinmetz operating point (0.01% agreement) with zero
+  neutral current; swapping two leads reverses the rotation (negative sequence, equal and
+  opposite starting torque); single-phasing from rest makes IDENTICALLY zero torque (the
+  alpha/beta subsystems decouple at standstill) so a loaded machine never starts - named by the
+  did-NOT-start warning; DC phase-to-neutral sees exactly R1 and line-to-line exactly 2*R1,
+  matching the DC solver's wye / Y-to-delta stamp (the at-rest limit; DC-injection braking of a
+  spinning rotor is unmodeled at DC). At DC the Math panel notes the machine's nets as balanced
+  inside the solve rather than itemizing per-terminal currents (the multi-winding convention its
+  three-phase alternator sibling also uses); the transient records every wired terminal's
+  current. Fluxes integrate by the trapezoidal rule; the zero axis
+  and mechanics stay implicit; the rotor speed is frozen within each circuit step. The load
+  opposes motion and the shaft holds at rest until the developed torque exceeds it. Delta
+  stator, saturation, deep-bar/skin effect, core loss and self-heating are unmodeled rungs.
+  Sources: Tesla's 1888 polyphase patents; the Steinmetz equivalent circuit; Krause, "Analysis
+  of Electric Machinery" (stationary-frame qd0); Fitzgerald, "Electric Machinery"; Chapman,
+  "Electric Machinery Fundamentals".
