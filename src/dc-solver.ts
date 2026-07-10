@@ -963,6 +963,16 @@ export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
       if (rw !== undefined && rw > 0 && posNet !== undefined && negNet !== undefined) {
         branches.set(inst.id, ((nodes.get(posNet) ?? 0) - (nodes.get(negNet) ?? 0)) / rw)
       }
+    } else if (inst.definition === 'induction_motor') {
+      // At DC the induction motor is its stator winding R1 (exactly what its DC stamp uses — on DC
+      // it makes no torque, it just heats) — record the Ohm's-law current like its machine siblings,
+      // so the Math panel's KCL re-sum closes at its nets and the power reading computes.
+      const r1 = readScalarParam(inst, 'stator_resistance')
+      const aNet = inst.connects?.find((c) => c.terminal === 'terminal_a')?.net
+      const bNet = inst.connects?.find((c) => c.terminal === 'terminal_b')?.net
+      if (r1 !== undefined && r1 > 0 && aNet !== undefined && bNet !== undefined) {
+        branches.set(inst.id, ((nodes.get(aNet) ?? 0) - (nodes.get(bNet) ?? 0)) / r1)
+      }
     } else if (inst.definition === 'vccs') {
       // Reported current = the output current it sources, g·V_control.
       const g = readScalarParam(inst, 'transconductance')

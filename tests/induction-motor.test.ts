@@ -15,6 +15,7 @@ import {
   synchronousSpeedRadPerSec,
 } from '../src/induction-motor-model.ts'
 import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
+import { buildMathView } from '../src/renderer/math-view.ts'
 import { partReadings } from '../src/renderer/part-readings.ts'
 import { solveTransient, type TransientResult } from '../src/transient-solver.ts'
 
@@ -269,5 +270,63 @@ describe('induction motor — a live R–L load in the time-domain solve', () =>
     expect(iIdle).toBeLessThan(iLoaded)
     const opIdle = inductionMotorOperatingPoint(imParams(0))
     expect(Math.abs(iIdle - opIdle.statorCurrentRms) / opIdle.statorCurrentRms).toBeLessThan(0.03)
+  })
+})
+
+describe('induction motor on DC — the branch current is recorded, so the books balance', () => {
+  // On DC the motor is its stator R1 (no rotating field, no torque — it just heats). The DC solver
+  // must RECORD that Ohm's-law current like its machine siblings: without it the Math panel's KCL
+  // re-sum showed a false ±6 A residual at the motor's nets, and the power reading never computed.
+  const dcWorld = () => {
+    const nodes: CanvasNode[] = [
+      {
+        id: 'bat',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(12, 'volt'), internal_resistance: scalar(0, 'ohm') },
+      },
+      {
+        id: 'm1',
+        definition: 'induction_motor',
+        parameters: {
+          supply_voltage: scalar(230, 'volt'),
+          line_frequency: scalar(50, 'hertz'),
+          pole_count: scalar(4, 'dimensionless'),
+          stator_resistance: scalar(2, 'ohm'),
+          stator_reactance: scalar(4, 'ohm'),
+          rotor_resistance: scalar(2, 'ohm'),
+          rotor_reactance: scalar(4, 'ohm'),
+          magnetizing_reactance: scalar(80, 'ohm'),
+          load_torque: scalar(20, 'N*m'),
+          viscous_friction: scalar(0.002, 'N*m*s/rad'),
+        },
+      },
+      { id: 'gnd', definition: 'ground' },
+    ]
+    const edges = [
+      g('bat', 'terminal_positive', 'm1', 'terminal_a'),
+      g('m1', 'terminal_b', 'bat', 'terminal_negative'),
+      g('gnd', 'reference_terminal', 'bat', 'terminal_negative'),
+    ]
+    return canvasToWorld(nodes, edges)
+  }
+
+  test('the DC solve records V/R1 through the motor (12 V across 2 Ω → 6 A)', () => {
+    const world = dcWorld()
+    const sol = solveDC(world)
+    expect(sol.status).toBe('solved')
+    expect(Math.abs(sol.branches.get('m1') ?? 0)).toBeCloseTo(6, 6)
+    // …and the real DC electrical power (all winding heat) computes for the reading.
+    const reading = partReadings(world, sol).get('m1')
+    expect(reading?.power ?? 0).toBeCloseTo(72, 4)
+  })
+
+  test('the Math panel’s KCL re-sum closes at the motor’s nets (no false residual)', () => {
+    const world = dcWorld()
+    const view = buildMathView(world, solveDC(world))
+    expect(view.nets.length).toBeGreaterThan(1)
+    for (const net of view.nets) {
+      expect(net.sumAmps).not.toBeNull()
+      expect(Math.abs(net.sumAmps ?? 1)).toBeLessThan(1e-9)
+    }
   })
 })
