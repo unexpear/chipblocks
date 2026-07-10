@@ -153,6 +153,14 @@ export type SolutionStatus =
   | 'numerical-error'
   | 'did-not-converge'
 
+/** Did the DC physics actually run (real converged node voltages)? 'unsupported-element' still ran —
+ *  the supported circuit converged; the warnings say what was skipped. Seeding, source-stepping, and the
+ *  thermal loops use THIS, so one black-box part doesn't demote a converged operating point to a cold
+ *  start (or stall the ramp accepting no level at all). */
+export function dcRan(status: SolutionStatus): boolean {
+  return status === 'solved' || status === 'unsupported-element'
+}
+
 export type Solution = {
   status: SolutionStatus
   /** Net id → voltage relative to ground, in volts. */

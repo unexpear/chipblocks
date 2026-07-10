@@ -1,5 +1,6 @@
 import type { Instance, World } from './cross-fk-validator.ts'
 import {
+  dcRan,
   LIGHT_CURRENT_DEFINITIONS,
   type Solution,
   type SolveOptions,
@@ -114,7 +115,7 @@ export function solveDCBySourceStepping(world: World, options?: SolveOptions): S
     const sol = seed
       ? solveDC(scaled, { ...rampOptions, initialNodes: seed })
       : solveDC(scaled, rampOptions)
-    if (sol.status === 'solved') {
+    if (dcRan(sol.status)) {
       alpha = next
       seed = sol.nodes
       solution = sol
@@ -125,7 +126,7 @@ export function solveDCBySourceStepping(world: World, options?: SolveOptions): S
     }
   }
 
-  if (alpha >= 1 && solution && solution.status === 'solved') return solution
+  if (alpha >= 1 && solution && dcRan(solution.status)) return solution
   // The ramp stalled — report the real circuit's own (failed) status, not a partial
   // scaled-down solve dressed up as the answer.
   return solveDC(world, rampOptions)
@@ -140,6 +141,6 @@ export function solveDCBySourceStepping(world: World, options?: SolveOptions): S
  */
 export function solveDCRobust(world: World, options?: SolveOptions): Solution {
   const direct = solveDC(world, { maxIterations: RAMP_SOLVE_MAX_ITERATIONS, ...options })
-  if (direct.status === 'solved' || direct.status === 'no-ground') return direct
+  if (dcRan(direct.status) || direct.status === 'no-ground') return direct
   return solveDCBySourceStepping(world, options)
 }

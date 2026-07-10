@@ -1,5 +1,5 @@
 import type { World } from '../cross-fk-validator.ts'
-import { solveTransient } from '../transient-solver.ts'
+import { solveTransient, transientRan } from '../transient-solver.ts'
 import { fastestSourceHz, scopeWindow } from './scope.tsx'
 
 /**
@@ -39,7 +39,7 @@ export function boardRmsTerminalCurrents(
     duration,
     ...(temperaturesC ? { temperaturesC } : {}),
   })
-  if (result.status !== 'solved' || result.series.length < 4) return undefined
+  if (!transientRan(result.status) || result.series.length < 4) return undefined
 
   const tEnd = result.series[result.series.length - 1]?.time ?? 0
   const windowStart = tEnd - duration / 3 // the last slowest-source period (duration = 3 periods)

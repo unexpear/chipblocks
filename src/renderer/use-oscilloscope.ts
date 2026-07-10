@@ -12,6 +12,7 @@ import { solveTransientThermal } from '../electro-thermal.ts'
 import { readScalarParam } from '../instance-params.ts'
 import { worldWithCastLight } from '../light.ts'
 import type { TransientResult } from '../transient-solver.ts'
+import { transientRan } from '../transient-solver.ts'
 import { groundedComponent } from './canvas-to-world.ts'
 import { buildCrtTraces } from './part-readings.ts'
 import { canvasWorld } from './pipeline/canvas-world.ts'
@@ -175,7 +176,7 @@ export function useOscilloscope(deps: {
           projectAmbientC: projectAmbientRef.current,
         }).result
         const label = `${sourceId} = ${formatEng(value, 'V')}`
-        if (result.status !== 'solved') {
+        if (!transientRan(result.status)) {
           skipped.push(`${formatEng(value, 'V')}: ${result.status}`)
           continue
         }

@@ -3,6 +3,7 @@ import type { World } from '../cross-fk-validator.ts'
 import { coilInductanceFromInstance } from '../electromagnet-model.ts'
 import { readScalarParam } from '../instance-params.ts'
 import type { TransientResult } from '../transient-solver.ts'
+import { transientRan } from '../transient-solver.ts'
 import { scopeCsv } from './scope-csv.ts'
 import { cursorReadout, interpolateSeries } from './scope-cursors.ts'
 import { type FamilyStep, familyExtent } from './scope-family.ts'
@@ -400,7 +401,7 @@ export function ScopePlot({
   const [reference, setReference] = useState<Sweep | null>(null)
 
   // Derive this run's sweep (live path; a held sweep displays instead).
-  const solved = result !== null && result.status === 'solved' && result.series.length >= 2
+  const solved = result !== null && transientRan(result.status) && result.series.length >= 2
   const series = solved ? result.series : []
   const dt = series.length >= 2 ? (series[1]?.time ?? 0) - (series[0]?.time ?? 0) : 1
   const windowPoints = Math.max(2, Math.min(series.length, Math.round(windowDuration / dt) + 1))

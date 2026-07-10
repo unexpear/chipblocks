@@ -19,7 +19,7 @@
  */
 
 import type { Instance, World } from './cross-fk-validator.ts'
-import { type Solution, type SolveOptions, solveDC } from './dc-solver.ts'
+import { dcRan, type Solution, type SolveOptions, solveDC } from './dc-solver.ts'
 import { readScalarParam } from './instance-params.ts'
 import {
   acrossVolts,
@@ -27,7 +27,12 @@ import {
   junctionTemperature,
   STANDARD_AMBIENT_C,
 } from './thermal-model.ts'
-import { solveTransient, type TransientOptions, type TransientResult } from './transient-solver.ts'
+import {
+  solveTransient,
+  type TransientOptions,
+  type TransientResult,
+  transientRan,
+} from './transient-solver.ts'
 
 export type ElectroThermalResult = {
   /** The electrically-converged solution at the final temperatures. */
@@ -266,7 +271,8 @@ export function solveElectroThermal(
   let iteration = 0
 
   for (iteration = 1; iteration <= MAX_THERMAL_ITERATIONS; iteration++) {
-    if (solution.status !== 'solved') break
+    // 'unsupported-element' still RAN (a skipped black box, warned) — keep settling the real parts.
+    if (!dcRan(solution.status)) break
 
     const next = computeTemperatures(world, solution, projectAmbientC)
     let maxDelta = 0
@@ -423,7 +429,8 @@ export function solveTransientThermal(
   let iteration = 0
 
   for (iteration = 1; iteration <= MAX_THERMAL_ITERATIONS; iteration++) {
-    if (result.status !== 'solved') break
+    // 'unsupported-element' still RAN (a skipped black box, warned) — keep settling the real parts.
+    if (!transientRan(result.status)) break
 
     const next = computeTransientTemperatures(world, result, settleSeconds, projectAmbientC)
     let maxDelta = 0

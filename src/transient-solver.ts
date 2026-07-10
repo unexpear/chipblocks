@@ -64,6 +64,7 @@ import { solveDCRobust } from './dc-robust.ts'
 import {
   assignNodeIndices,
   type BjtElement,
+  dcRan,
   fuseIsIntact,
   identifyGround,
   KELVIN_OFFSET,
@@ -160,6 +161,72 @@ const DIODE_DEFINITIONS = new Set([
   'diode_schottky_al_si',
 ])
 
+/**
+ * Every definition SOME transient pass actually consumes — the honesty ledger (the transient twin of
+ * the DC solver's DC_SUPPORTED_DEFINITIONS). The element resolution below is spread across SEVERAL
+ * passes (the resistive stamp, the big element chain, the standalone VCCS/CCCS passes, the
+ * light-current sources), so no single `else` can catch a stranger; this set is their union, and
+ * solveTransient warns for any primitive-device instance in none of them instead of silently treating
+ * it as an open circuit. Keep it in step: a new `inst.definition === '…'` in ANY pass must be added
+ * here — tests/transient-unsupported.test.ts enumerates every definition this FILE consumes (parsed
+ * from the source) and fails if one is missing from the set. Exported for that test only.
+ */
+export const TRANSIENT_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
+  ...DIODE_DEFINITIONS,
+  // The resistive stamp pass (+ the potentiometer's two-segment stamp).
+  'resistor',
+  'thermistor',
+  'incandescent_bulb',
+  'photoresistor',
+  'potentiometer',
+  // The element chain.
+  'power_source',
+  'capacitor',
+  'diode_varactor',
+  'inductor',
+  'electromagnet',
+  'dc_motor',
+  'generator',
+  'alternator',
+  'alternator_three_phase',
+  'transmission_line',
+  'transformer',
+  'transformer_center_tapped',
+  'transistor_bjt_npn',
+  'transistor_bjt_pnp',
+  'transistor_mosfet_nmos',
+  'transistor_mosfet_pmos',
+  'transistor_jfet_n_channel',
+  'transistor_jfet_p_channel',
+  'diode_constant_current',
+  'diode_tunnel',
+  'vacuum_diode',
+  'triode',
+  'tetrode',
+  'pentode',
+  'diode_shockley',
+  'scr',
+  'arc_lamp',
+  'neon_lamp',
+  'crt',
+  'wire',
+  'fuse',
+  'relay',
+  'switch_spst_toggle',
+  'switch_spst_momentary',
+  'switch_spdt',
+  'diode_zener_silicon',
+  // Standalone controlled sources (their own passes).
+  'vccs',
+  'cccs',
+  // Light-current sensors (photocurrent injection pass).
+  'photodiode',
+  'phototransistor',
+  // Legitimately produce no transient stamp (not unsupported):
+  'ground', // the reference-node marker — defines a net, no device to stamp
+  'light_source', // environmental (no electrical terminals)
+])
+
 export type TransientOptions = {
   /** Explicit ground net id; overrides ground-port / type: ground auto-detection. */
   ground?: string
@@ -227,6 +294,17 @@ export type TransientStatus =
   | 'singular-matrix'
   | 'bad-options'
   | 'did-not-converge'
+  /** The run finished and the series is real, but an element the solver doesn't model was skipped
+   *  (treated as an open circuit) — the DC solver's honesty status, mirrored. Displayable: the
+   *  supported physics genuinely ran; the warnings name what was left out. */
+  | 'unsupported-element'
+
+/** Did the physics actually run (a real series to display)? 'unsupported-element' still ran — the
+ *  supported circuit solved; the warnings say what was skipped. The instruments (scope, meter, timeline,
+ *  the electro-thermal loop) use THIS, so one black-box part doesn't blank every honest trace. */
+export function transientRan(status: TransientStatus): boolean {
+  return status === 'solved' || status === 'unsupported-element'
+}
 
 export type TransientResult = {
   status: TransientStatus
@@ -1861,6 +1939,22 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
   warnings.push(...pruned.notes)
   const world = pruned.world
 
+  // Honesty check (the DC solver's, mirrored): surface any instance whose definition NO transient pass
+  // models, instead of silently treating it as an open circuit and reporting a maybe-wrong 'solved'.
+  // The supported part of the circuit still runs through time; the status flags the skip.
+  let hasUnsupported = false
+  for (const inst of world.instances.values()) {
+    // Only primitive devices are circuit elements the solver stamps; interface / material instances
+    // (a solder joint, a material sample) are catalog metadata, legitimately not stamped.
+    if (inst.kind_ref !== 'primitive_device') continue
+    if (!TRANSIENT_SUPPORTED_DEFINITIONS.has(inst.definition)) {
+      warnings.push(
+        `Unsupported element '${inst.id}' (${inst.definition}) — not modeled; treated as an open circuit`,
+      )
+      hasUnsupported = true
+    }
+  }
+
   const nodeIndex = assignNodeIndices(world.nets, ground)
   const N = nodeIndex.size
   const vT = thermalVoltage()
@@ -2658,7 +2752,8 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
     )
   }
   const seed = solveDCRobust({ ...world, instances: seedInstances })
-  if (seed.status === 'solved') {
+  // 'unsupported-element' still converged (a skipped black box, warned) — its operating point is real.
+  if (dcRan(seed.status)) {
     const at = (net: string) => (net === ground ? 0 : (seed.nodes.get(net) ?? 0))
     for (const d of diodes) d.vGuess = at(d.anodeNet) - at(d.cathodeNet)
     for (const td of tunnelDiodes) td.vGuess = at(td.anodeNet) - at(td.cathodeNet)
@@ -2844,5 +2939,5 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
     }
   }
 
-  return { status: 'solved', series, ground, warnings }
+  return { status: hasUnsupported ? 'unsupported-element' : 'solved', series, ground, warnings }
 }

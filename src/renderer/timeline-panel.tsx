@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { TransientResult } from '../transient-solver.ts'
+import { transientRan } from '../transient-solver.ts'
 import { THEME } from './theme.ts'
 import { clampIndex } from './timeline.ts'
 import { formatEng } from './units.ts'
@@ -31,7 +32,7 @@ export function TimelinePanel({
   const indexRef = useRef(index)
   indexRef.current = index
 
-  const solved = result !== null && result.status === 'solved' && result.series.length >= 2
+  const solved = result !== null && transientRan(result.status) && result.series.length >= 2
   const len = solved ? result.series.length : 0
   const i = clampIndex(index, len)
   const t = solved ? (result.series[i]?.time ?? 0) : 0

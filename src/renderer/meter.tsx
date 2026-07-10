@@ -2,7 +2,7 @@ import { useInternalNode, ViewportPortal } from '@xyflow/react'
 import type { Instance, World } from '../cross-fk-validator.ts'
 import { type Solution, solveDC } from '../dc-solver.ts'
 import { solveElectroThermal, solveTransientThermal, worldAtAmbient } from '../electro-thermal.ts'
-import { solveTransient } from '../transient-solver.ts'
+import { solveTransient, transientRan } from '../transient-solver.ts'
 import { fastestSourceHz, scopeWindow } from './scope.tsx'
 import { THEME } from './theme.ts'
 import { measureSeries } from './waveform-measure.ts'
@@ -359,7 +359,7 @@ function settledProbeSeries(
     duration: window.duration,
     ...(projectAmbientC !== undefined ? { projectAmbientC } : {}),
   })
-  if (result.status !== 'solved' || result.series.length < 8) return null
+  if (!transientRan(result.status) || result.series.length < 8) return null
   const settleTime = window.duration / 3
   const points = result.series.filter((p) => p.time >= settleTime)
   if (points.length < 4) return null
@@ -498,7 +498,7 @@ function runChargeWindow(
     timeStep: duration / steps,
     duration,
   })
-  if (result.status !== 'solved' || result.series.length < 8) return null
+  if (!transientRan(result.status) || result.series.length < 8) return null
   const series = result.series
   const probeVolts = series.map((p) => p.nodes.get(netA) ?? 0)
   // The test current follows from the source's Thévenin form: what the EMF

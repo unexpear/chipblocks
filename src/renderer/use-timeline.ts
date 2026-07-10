@@ -5,6 +5,7 @@ import { fuseIsIntact, switchIsClosed } from '../dc-solver.ts'
 import { solveTransientThermal } from '../electro-thermal.ts'
 import { worldWithCastLight } from '../light.ts'
 import type { TransientResult } from '../transient-solver.ts'
+import { transientRan } from '../transient-solver.ts'
 import { groundedComponent } from './canvas-to-world.ts'
 import { computeFront } from './front-propagation.ts'
 import type { FrontState } from './net-edge.tsx'
@@ -55,7 +56,12 @@ export function useTimeline(deps: {
   // The played-back instant: a point in the scope's transient record chosen by the playhead.
   // null = timeline closed, so the canvas shows the steady solve.
   const playbackFrame = useMemo(() => {
-    if (!timelineOpen || frontMode || timelineResult === null || timelineResult.status !== 'solved')
+    if (
+      !timelineOpen ||
+      frontMode ||
+      timelineResult === null ||
+      !transientRan(timelineResult.status)
+    )
       return null
     const series = timelineResult.series
     if (series.length === 0) return null
