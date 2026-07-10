@@ -16,27 +16,28 @@
  * to speed and R2/s grows. The electromagnetic torque is the air-gap power over the synchronous
  * speed, T = 3·I2²·(R2/s) / ω_s, which rises with slip to a BREAKDOWN (pull-out) torque, then falls.
  *
- * Honest scope: the steady-state per-phase circuit at a given supply voltage + line frequency (the
- * way induction motors are actually analyzed) — it solves for the operating slip where the torque
- * meets the load. In the TIME-DOMAIN solve the motor is a live load: the transient solver marches
- * the equivalent circuit as the real LADDER it is (stator R1 + L1, then the magnetizing Lm parallel
- * the rotor R2/s + L2, at the settled slip), so the scope shows the true lagging line current at the
- * right magnitude and phase at the line frequency — and at DC the inductances short, degenerating to
- * exactly the stator R1 the DC solver stamps (the two engines agree on any DC content). The slip is
- * QUASI-STATIC through a record (the relay-contacts convention) and comes from the NAMEPLATE
- * analysis — driving off-nameplate (a different source frequency or amplitude) keeps the nameplate
- * slip and reactances, and the solver says so in a warning; harmonic content of a non-sine drive
- * sees the fixed-slip ladder, not the per-harmonic slip of the real machine (documented, not faked).
- * The start transient (slip ramping 1 → rated as the rotor spins up — a dq / rotating-field dynamic
- * model) is the documented next rung. In the DC solve it appears only as its stator winding
- * resistance R1 (honestly, on DC an induction motor makes no torque — it just sits and heats).
- * Self-heating and thermal protection are unmodeled (no θ_JA is shipped; NOTE for whoever adds one:
- * the terminal power Σv·i is the INPUT power, ~80 % of which leaves as mechanical output at rated
- * load — heat is P_in − P_mech, never the whole terminal ledger). A balanced THREE-phase machine is
- * assumed (the single canvas AC source stands in for the per-phase line voltage); a true 3-phase
- * supply and the single-phase double-revolving-field machine are refinements. Sources: Tesla's 1888
- * polyphase patents; Steinmetz equivalent circuit; Fitzgerald, "Electric Machinery"; Chapman,
- * "Electric Machinery Fundamentals".
+ * Honest scope: THIS module is the steady-state per-phase analysis at the nameplate supply (the
+ * way induction motors are rated and read) — it solves for the operating slip where the torque
+ * meets the load, and powers the live readings (speed, slip, torque, currents, efficiency, power
+ * factor) and the stall check. In the TIME-DOMAIN solve the motor is the dq (stationary-frame)
+ * DYNAMIC model (induction-motor-dq.ts): given a rotor_inertia the rotor genuinely spins up from
+ * rest — the locked-rotor inrush, the torque climbing the torque–slip curve, the current tapering
+ * as the slip settles where torque meets load — and the marched steady state reduces exactly to
+ * this module's phasor circuit. The dynamic model is frequency- and waveform-agnostic (reactances
+ * convert to inductances once, at the nameplate frequency), so an off-nameplate drive is marched
+ * honestly; the solver still warns that the READINGS panel assumes the nameplate. Without a
+ * rotor_inertia the rotor is held at the nameplate operating speed (the quasi-static behavior,
+ * kept for old saved circuits) and the solver says so. At DC the machine makes no torque and
+ * degenerates to exactly the stator winding resistance R1 the DC solver stamps (the two engines
+ * agree on any DC content). Self-heating and thermal protection are unmodeled (no θ_JA is
+ * shipped; NOTE for whoever adds one: the terminal power Σv·i is the INPUT power, ~80 % of which
+ * leaves as mechanical output at rated load — heat is P_in − P_mech, never the whole terminal
+ * ledger). A balanced THREE-phase machine is assumed: the two-terminal canvas port carries ONE
+ * phase, and the dynamic model synthesizes the two unseen phases as the port waveform delayed by
+ * thirds of the drive period. Magnetic saturation, deep-bar/skin effect, and core loss are
+ * unmodeled refinements. Sources: Tesla's 1888 polyphase patents; Steinmetz equivalent circuit;
+ * Krause, "Analysis of Electric Machinery"; Fitzgerald, "Electric Machinery"; Chapman, "Electric
+ * Machinery Fundamentals".
  */
 
 import type { Instance } from './cross-fk-validator.ts'
@@ -136,8 +137,8 @@ export function electromagneticTorque(slip: number, p: InductionMotorParams): nu
 /**
  * The per-phase INPUT impedance of the equivalent circuit at a given slip: Z_in = R1 + jX1 + the
  * parallel of jXm and (R2/s + jX2) — the steady-state readings' source of truth (current + power
- * factor below). The time-domain solve marches the same circuit as its real LADDER (three R–L
- * branches, transient-solver.ts), whose input impedance at the line frequency equals exactly this.
+ * factor below). The time-domain solve marches the dq dynamic model (induction-motor-dq.ts),
+ * whose settled steady state reduces exactly to this impedance at the drive frequency.
  */
 export function inputImpedanceAtSlip(
   slip: number,

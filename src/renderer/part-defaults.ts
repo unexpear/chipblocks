@@ -138,6 +138,11 @@ const DEFAULTS: Record<string, Parameters> = {
     magnetizing_reactance: scalar(80, 'ohm'),
     load_torque: scalar(20, 'N*m'),
     viscous_friction: scalar(0.002, 'N*m*s/rad'),
+    // Rotor inertia for the time-domain spin-up: 0.0152 kg·m² — ABB M2BAX 112MLA 4 (4 kW,
+    // 4-pole, 50 Hz, IEC frame 112M; motor only, no coupled load), the "Moment of inertia
+    // J = 1/4 GD²" column of ABB catalog 9AKK107238 "General performance IE3 cast iron
+    // motors" (EN 11-2017) — a real machine matching these nameplate values.
+    rotor_inertia: scalar(0.0152, 'kg*m^2'),
     winding: { value: 'copper' },
   },
   crt: {
@@ -746,6 +751,7 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     magnetizing_reactance: 'magnetizing branch Xm (~80 Ω), the no-load magnetizing current',
     load_torque: 'shaft load (~20 N·m) for a ~4 kW class machine near rated slip',
     viscous_friction: 'windage + bearing loss',
+    rotor_inertia: 'J ~0.0152 kg·m² (ABB M2BAX 112MLA 4, 4 kW 4-pole) — sets the spin-up time',
   },
   crt: {
     beam_current: 'CRT beam current ~0.1-1 mA (oscilloscope / TV electron gun)',

@@ -18,22 +18,26 @@
 # (induction-motor-model.ts) and reports the speed, torque, running + starting current, mechanical
 # power, efficiency and power factor.
 #
-# Honest scope: the steady-state per-phase analysis at the nameplate supply voltage + line frequency
-# (the way induction motors ARE analyzed). In the TIME-DOMAIN solve it is a live load: the solver
-# marches the equivalent circuit as the real LADDER it is (stator R1 + L1, then the magnetizing Lm
-# in parallel with the rotor R2/s + L2, at the settled operating slip) — the scope shows the true
-# lagging line current at the right magnitude and phase, and at DC the inductances short so the
-# motor degenerates to exactly the stator R1 the DC solve uses (the engines agree on DC content).
-# The slip is quasi-static through a record (the relay-contacts convention) and comes from the
-# NAMEPLATE analysis: driving at a different frequency or amplitude keeps the nameplate slip and
-# reactances (the solver warns); the harmonics of a non-sine drive see the fixed-slip ladder, not
-# the per-harmonic slip of the real machine. The switch-on wiggle the scope shows is the R-L
-# circuit transient at the SETTLED slip (~2x peak), not the 5-7x locked-rotor mechanical start —
-# that start transient (slip ramping 1 → rated as the rotor spins up — a dq / rotating-field
-# dynamic model) is the documented next rung. Self-heating and thermal protection are unmodeled.
-# In the DC solve it appears only as its stator winding resistance R1 (on DC it makes no torque —
-# it just heats). A balanced THREE-phase machine is assumed; the single canvas AC source stands in
-# for the per-phase line voltage. A true 3-phase supply and the single-phase
+# Honest scope: the READINGS (speed, slip, torque, currents, efficiency, power factor) come from
+# the steady-state per-phase analysis at the nameplate supply voltage + line frequency (the way
+# induction motors ARE rated and read). In the TIME-DOMAIN solve the motor is the dq
+# (stationary-reference-frame) DYNAMIC model (induction-motor-dq.ts): switch the supply on and,
+# given a rotor_inertia, the rotor genuinely SPINS UP from rest — the scope shows the real
+# locked-rotor inrush current at standstill (5-7x running on typical industrial machines; ~4.4x
+# for the shipped defaults, whose per-unit stator resistance is on the high side) tapering to
+# the running current as the slip settles where the developed torque meets the load. The marched machine reduces exactly to the Steinmetz
+# circuit at steady state, and because its reactances convert to inductances once (at the
+# nameplate frequency) it is honest at ANY drive frequency or waveform — a 60 Hz or inverter
+# drive is marched for real (the solver still warns that the readings panel assumes the
+# nameplate). Without a rotor_inertia the rotor is held at the nameplate operating speed (the
+# older quasi-static behavior, kept so saved circuits keep solving) and the solver says so. The
+# two-terminal port carries ONE phase of the balanced machine; the two unseen phases are the port
+# waveform delayed by thirds of the drive period (before a delay elapses they read 0 V — phases
+# energizing staggered, like breaker poles closing in sequence), and the zero-sequence path
+# (a 4-wire-wye convention) is what keeps DC honest: on a battery the machine makes no torque and
+# degenerates to exactly the stator R1 the DC solve uses (the engines agree on DC content).
+# Self-heating and thermal protection are unmodeled; so are magnetic saturation, deep-bar/skin
+# effect, and core loss. A true 3-phase supply (three ports) and the single-phase
 # double-revolving-field machine are refinements.
 #
 # MUST validate against definition.schema.json.
@@ -42,7 +46,7 @@ id: induction_motor
 origin: builtin
 layer: primitive_device
 name: "AC induction motor (3-phase)"
-description: "A three-phase induction motor (Tesla, 1888). A polyphase stator winding makes a magnetic field that rotates at the synchronous speed, dragging a shorted squirrel-cage rotor that always lags by the slip — the lag is what induces the rotor currents that make the torque. Modeled by its per-phase equivalent circuit (Steinmetz): the solver finds the operating slip where the developed torque meets the load and reports the speed, torque, running and locked-rotor (starting) current, mechanical power, efficiency and power factor. Analyzed at its nameplate supply voltage and line frequency."
+description: "A three-phase induction motor (Tesla, 1888). A polyphase stator winding makes a magnetic field that rotates at the synchronous speed, dragging a shorted squirrel-cage rotor that always lags by the slip — the lag is what induces the rotor currents that make the torque. Readings come from its per-phase equivalent circuit (Steinmetz) at the nameplate supply — the operating slip where the developed torque meets the load, with speed, torque, running and locked-rotor (starting) current, mechanical power, efficiency and power factor. In the time domain it is the dq dynamic model — given a rotor inertia the rotor genuinely spins up from rest, drawing the real locked-rotor inrush that tapers as the slip settles."
 composition:
   requires:
     winding:
@@ -105,6 +109,11 @@ parameters:
     units: newton*meter
     required: false
     description: The shaft load torque opposing rotation. The motor settles at the slip where its developed torque equals this; beyond the breakdown torque it stalls.
+  rotor_inertia:
+    type: quantity
+    units: kilogram*meter^2
+    required: false
+    description: J, the rotor's moment of inertia. Sets the mechanical spin-up time — how long the locked-rotor inrush lasts as the machine accelerates from rest (the time-domain dq model integrates J*domega/dt = T_e - B*omega - T_load). Without it the rotor is held at the nameplate operating speed (quasi-static) and the solver says so. A ~4 kW 4-pole 112-frame machine is ~0.015 kg*m^2 (motor only, no coupled load).
   viscous_friction:
     type: quantity
     units: newton*meter*second/radian
@@ -128,25 +137,38 @@ extensions:
   user_extensible: true
   allowed_origins: [builtin, community, user_local, project]
 notes: |
-  Modeled by its per-phase equivalent circuit (Steinmetz), referred to the stator (V1 across
+  READINGS: the per-phase equivalent circuit (Steinmetz), referred to the stator (V1 across
   R1 + jX1, then jXm in parallel with R2/s + jX2 — induction-motor-model.ts). The solver computes
   the Thevenin equivalent seen by the rotor branch, then finds the operating slip where the
   developed torque T = 3*V_th^2*(R2/s) / (omega_s*((R_th + R2/s)^2 + (X_th + X2)^2)) equals the load
   + friction, on the stable branch below the breakdown slip; from it the speed, running stator
   current, power factor, locked-rotor (starting) current at s=1, mechanical power, efficiency and
-  slip are read. Synchronous speed omega_s = 4*pi*f/poles. Honest scope: a steady-state per-phase
-  analysis at the nameplate supply (the standard method). In the time-domain solve the motor is a
-  live load — the equivalent circuit marched as the real LADDER it is (stator R1 + L1, then the
-  magnetizing Lm parallel the rotor R2/s + L2, at the settled slip): the true lagging line current
-  at the line frequency, and exactly the stator R1 at DC (matching the DC solve). The slip is
-  quasi-static through a record and comes from the NAMEPLATE analysis — an off-nameplate drive
-  keeps the nameplate slip/reactances (the solver warns), and a non-sine drive's harmonics see the
-  fixed-slip ladder. Self-heating and thermal protection are unmodeled; NOTE for a future theta_JA:
-  the terminal power is the INPUT power, most of which leaves as mechanical output at rated load —
-  heat is P_in - P_mech, never the whole terminal ledger. The start transient (slip ramping
-  1 → rated — a dq / rotating-field dynamic model) is the documented next rung. In the DC solve it
-  appears only as its stator resistance R1 (no torque on DC). A balanced three-phase machine is
-  assumed (the single canvas AC source = the per-phase line voltage); a true 3-phase supply and the
-  single-phase double-revolving-field machine are refinements. Sources: Tesla's 1888 polyphase
-  patents; the Steinmetz equivalent circuit; Fitzgerald, "Electric Machinery"; Chapman, "Electric
-  Machinery Fundamentals".
+  slip are read. Synchronous speed omega_s = 4*pi*f/poles. TIME DOMAIN: the dq
+  (stationary-reference-frame) dynamic model (induction-motor-dq.ts) — stator + rotor flux
+  linkages in the alpha-beta frame, the zero-sequence current, and the rotor speed as states:
+  d(lambda_s)/dt = v - R_s*i_s; d(lambda_r)/dt = -R_r*i_r -/+ omega_re*lambda_r(cross);
+  T_e = (3/2)(P/2)(lambda_alpha*i_beta - lambda_beta*i_alpha); J*domega/dt = T_e - B*omega -
+  T_load (the load opposes motion; the shaft holds at rest until |T_e| exceeds it). At steady
+  state this reduces EXACTLY to the Steinmetz circuit (R2/s emerges from the rotor speed-voltage
+  term), so the marched waveform agrees with the readings at the nameplate; reactances convert to
+  inductances once (L = X / 2*pi*f_nameplate), making the march honest at any drive frequency or
+  waveform. The two unseen phases of the balanced machine are the port waveform delayed by thirds
+  of the drive period (0 V before a delay elapses — staggered energization; an un-energized phase
+  is held at 0 V, a stated fiction of the single-port representation). The zero-sequence path is
+  a 4-wire-wye convention: it is what makes a battery see exactly the stator R1 the DC solver
+  stamps, with zero torque, so the engines agree on DC. The port carries ONE phase's electrical
+  power; torque and mechanical power are whole-machine (three-phase) quantities, the same
+  convention the readings use. Fluxes integrate by the trapezoidal rule (backward-Euler's
+  first-order damping visibly inflates the settled slip at the machine's lightly-damped low-slip
+  operating point); the zero axis and the mechanical step stay implicit for robustness; the rotor
+  speed is frozen within each circuit step (the mechanical time constant dwarfs the step). The
+  solver refuses a time step at or past a third of the drive period (the unseen-phase synthesis
+  would silently corrupt) and says so. Without rotor_inertia the rotor is held at the nameplate
+  operating speed (quasi-static, the pre-dynamic behavior) with a warning. Self-heating and
+  thermal protection are unmodeled; NOTE for a future theta_JA: the terminal power is the INPUT
+  power, most of which leaves as mechanical output at rated load — heat is P_in - P_mech, never
+  the whole terminal ledger. Magnetic saturation, deep-bar/skin effect and core loss are
+  unmodeled refinements, as are a true 3-phase supply (three ports) and the single-phase
+  double-revolving-field machine. Sources: Tesla's 1888 polyphase patents; the Steinmetz
+  equivalent circuit; Krause, "Analysis of Electric Machinery" (the stationary-frame qd0 model);
+  Fitzgerald, "Electric Machinery"; Chapman, "Electric Machinery Fundamentals".
