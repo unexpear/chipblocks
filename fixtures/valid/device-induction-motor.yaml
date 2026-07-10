@@ -19,12 +19,22 @@
 # power, efficiency and power factor.
 #
 # Honest scope: the steady-state per-phase analysis at the nameplate supply voltage + line frequency
-# (the way induction motors ARE analyzed). It is NOT yet a live load in the instantaneous
-# DC/transient solve (a time-domain dq / rotating-field model is the substantial next rung); in the
-# DC solve it appears only as its stator winding resistance R1 (on DC it makes no torque — it just
-# heats). A balanced THREE-phase machine is assumed; the single canvas AC source stands in for the
-# per-phase line voltage. A true 3-phase supply and the single-phase double-revolving-field machine
-# are refinements.
+# (the way induction motors ARE analyzed). In the TIME-DOMAIN solve it is a live load: the solver
+# marches the equivalent circuit as the real LADDER it is (stator R1 + L1, then the magnetizing Lm
+# in parallel with the rotor R2/s + L2, at the settled operating slip) — the scope shows the true
+# lagging line current at the right magnitude and phase, and at DC the inductances short so the
+# motor degenerates to exactly the stator R1 the DC solve uses (the engines agree on DC content).
+# The slip is quasi-static through a record (the relay-contacts convention) and comes from the
+# NAMEPLATE analysis: driving at a different frequency or amplitude keeps the nameplate slip and
+# reactances (the solver warns); the harmonics of a non-sine drive see the fixed-slip ladder, not
+# the per-harmonic slip of the real machine. The switch-on wiggle the scope shows is the R-L
+# circuit transient at the SETTLED slip (~2x peak), not the 5-7x locked-rotor mechanical start —
+# that start transient (slip ramping 1 → rated as the rotor spins up — a dq / rotating-field
+# dynamic model) is the documented next rung. Self-heating and thermal protection are unmodeled.
+# In the DC solve it appears only as its stator winding resistance R1 (on DC it makes no torque —
+# it just heats). A balanced THREE-phase machine is assumed; the single canvas AC source stands in
+# for the per-phase line voltage. A true 3-phase supply and the single-phase
+# double-revolving-field machine are refinements.
 #
 # MUST validate against definition.schema.json.
 kind: primitive_device
@@ -125,10 +135,18 @@ notes: |
   + friction, on the stable branch below the breakdown slip; from it the speed, running stator
   current, power factor, locked-rotor (starting) current at s=1, mechanical power, efficiency and
   slip are read. Synchronous speed omega_s = 4*pi*f/poles. Honest scope: a steady-state per-phase
-  analysis at the nameplate supply (the standard method); NOT yet a live load in the instantaneous
-  DC/transient solve (a time-domain dq / rotating-field model is the substantial next rung), so in
-  the DC solve it appears only as its stator resistance R1 (no torque on DC). A balanced three-phase
-  machine is assumed (the single canvas AC source = the per-phase line voltage); a true 3-phase
-  supply and the single-phase double-revolving-field machine are refinements. Sources: Tesla's 1888
-  polyphase patents; the Steinmetz equivalent circuit; Fitzgerald, "Electric Machinery"; Chapman,
-  "Electric Machinery Fundamentals".
+  analysis at the nameplate supply (the standard method). In the time-domain solve the motor is a
+  live load — the equivalent circuit marched as the real LADDER it is (stator R1 + L1, then the
+  magnetizing Lm parallel the rotor R2/s + L2, at the settled slip): the true lagging line current
+  at the line frequency, and exactly the stator R1 at DC (matching the DC solve). The slip is
+  quasi-static through a record and comes from the NAMEPLATE analysis — an off-nameplate drive
+  keeps the nameplate slip/reactances (the solver warns), and a non-sine drive's harmonics see the
+  fixed-slip ladder. Self-heating and thermal protection are unmodeled; NOTE for a future theta_JA:
+  the terminal power is the INPUT power, most of which leaves as mechanical output at rated load —
+  heat is P_in - P_mech, never the whole terminal ledger. The start transient (slip ramping
+  1 → rated — a dq / rotating-field dynamic model) is the documented next rung. In the DC solve it
+  appears only as its stator resistance R1 (no torque on DC). A balanced three-phase machine is
+  assumed (the single canvas AC source = the per-phase line voltage); a true 3-phase supply and the
+  single-phase double-revolving-field machine are refinements. Sources: Tesla's 1888 polyphase
+  patents; the Steinmetz equivalent circuit; Fitzgerald, "Electric Machinery"; Chapman, "Electric
+  Machinery Fundamentals".

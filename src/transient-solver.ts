@@ -58,7 +58,7 @@
 
 import { ayrtonArcVoltage } from './arc-model.ts'
 import { bjtCurrents } from './bjt-model.ts'
-import type { Instance, World } from './cross-fk-validator.ts'
+import type { Instance, Net, World } from './cross-fk-validator.ts'
 import { CRT_DEFLECTION_INPUT_OHMS, crtParamsFromInstance, gridBrightness } from './crt-model.ts'
 import { solveDCRobust } from './dc-robust.ts'
 import {
@@ -112,6 +112,10 @@ import {
   zenerCompanionModel,
 } from './diode-model.ts'
 import { coilInductanceFromInstance } from './electromagnet-model.ts'
+import {
+  inductionMotorOperatingPoint,
+  inductionMotorParamsFromInstance,
+} from './induction-motor-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { ldrResistance } from './light.ts'
 import { mathInstance as math } from './mathjs-instance.ts'
@@ -186,6 +190,7 @@ export const TRANSIENT_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'inductor',
   'electromagnet',
   'dc_motor',
+  'induction_motor',
   'generator',
   'alternator',
   'alternator_three_phase',
@@ -1116,6 +1121,96 @@ function resolveInductor(inst: Instance, nodeIndex: Map<string, number>): Induct
   }
 }
 
+/**
+ * An AC induction motor resolved for the time loop: the Steinmetz per-phase equivalent circuit
+ * marched as the real LADDER it is — the stator branch R1 + L1 from the line terminal to the
+ * internal magnetizing node, then the magnetizing Lm in parallel with the rotor branch R2/s + L2
+ * down to the other terminal (each X converted to a real inductance at the line frequency; R2/s at
+ * the settled operating slip from the same torque-balance solve the readings use — quasi-static
+ * through a record, like the relay's settled contacts). Marching the ladder, not a collapsed R–L,
+ * is load-bearing honesty: at the line frequency it IS the input impedance the phasor analysis
+ * gives, and at DC its inductances short so the motor degenerates to exactly the stator R1 — the
+ * same resistance the DC solver stamps, so the scope and the meter can never disagree on DC
+ * content (a battery, a square wave's offset). The start transient (slip ramping 1 → rated as the
+ * rotor spins up — the dq dynamic model) is the documented next rung.
+ */
+function resolveInductionMotor(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+): { elements: InductorElement[]; stalled: boolean } | null {
+  const p = inductionMotorParamsFromInstance(inst)
+  if (p === undefined) return null
+  if (inst.connects?.length !== 2) return null
+  const c1 = inst.connects[0]
+  const c2 = inst.connects[1]
+  if (c1 === undefined || c2 === undefined) return null
+  // The ladder needs a conducting stator and a real magnetizing branch; leakages may be small but
+  // never negative. (The params reader already guarantees f > 0, poles > 0, R2 > 0.)
+  if (!(p.statorResistance > 0) || !(p.magnetizingReactance > 0)) return null
+  if (p.statorReactance < 0 || p.rotorReactance < 0) return null
+  const op = inductionMotorOperatingPoint(p)
+  const omega = 2 * Math.PI * p.frequency
+  const magnetizingNet = `${inst.id}.__magnetizing`
+  const iMag = nodeIndex.get(magnetizingNet)
+  const branch = (
+    id: string,
+    termA: string,
+    termB: string,
+    netA: string,
+    netB: string,
+    inductance: number,
+    windingOhms: number,
+  ): InductorElement => ({
+    id,
+    termA,
+    termB,
+    netA,
+    netB,
+    iA: netA === magnetizingNet ? iMag : nodeIndex.get(netA),
+    iB: netB === magnetizingNet ? iMag : nodeIndex.get(netB),
+    inductance,
+    windingOhms,
+    iPrev: 0,
+  })
+  return {
+    stalled: op.stalled,
+    elements: [
+      // Stator R1 + L1, line terminal → magnetizing node. Its branch current IS the line current,
+      // so it carries the part's OWN terminal labels — the meter/scope read the real line amps at
+      // both terminals (in at one, out the other).
+      branch(
+        inst.id,
+        c1.terminal,
+        c2.terminal,
+        c1.net,
+        magnetizingNet,
+        p.statorReactance / omega,
+        p.statorResistance,
+      ),
+      // Magnetizing Lm — the shunt that sets up the air-gap field.
+      branch(
+        `${inst.id}.__magnetizing`,
+        'magnetizing_node',
+        c2.terminal,
+        magnetizingNet,
+        c2.net,
+        p.magnetizingReactance / omega,
+        0,
+      ),
+      // Rotor branch R2/s + L2, referred to the stator, at the settled slip.
+      branch(
+        `${inst.id}.__rotor`,
+        'magnetizing_node',
+        c2.terminal,
+        magnetizingNet,
+        c2.net,
+        p.rotorReactance / omega,
+        p.rotorResistance / Math.max(op.slip, 1e-9),
+      ),
+    ],
+  }
+}
+
 function resolveMotor(inst: Instance, nodeIndex: Map<string, number>): MotorElement | null {
   // motorParamsFromInstance is mode-aware: in "design" mode L_a comes through and J is
   // derived from the rotor geometry, the same as k and R_a.
@@ -1955,7 +2050,20 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
     }
   }
 
-  const nodeIndex = assignNodeIndices(world.nets, ground)
+  // Each induction motor marches its REAL equivalent-circuit ladder — R1+L1 in series, then the
+  // magnetizing Lm in parallel with the rotor branch (R2/s + L2) — which needs one internal net (the
+  // magnetizing node) per motor. Minted here (immutably) so it gets a matrix index like any net. The
+  // ladder, not a collapsed R-L, is what keeps every engine honest: at the line frequency it IS the
+  // Steinmetz input impedance, and at DC its inductors short so the motor degenerates to exactly the
+  // stator R1 — the same resistance the DC solver stamps (the two engines can never disagree).
+  let netsForIndex: Map<string, Net> = world.nets
+  for (const inst of world.instances.values()) {
+    if (inst.definition !== 'induction_motor') continue
+    if (netsForIndex === world.nets) netsForIndex = new Map(world.nets)
+    const netId = `${inst.id}.__magnetizing`
+    netsForIndex.set(netId, { id: netId, kind: 'net', members: [] })
+  }
+  const nodeIndex = assignNodeIndices(netsForIndex, ground)
   const N = nodeIndex.size
   const vT = thermalVoltage()
 
@@ -2074,6 +2182,43 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
       const ind = resolveInductor(inst, nodeIndex)
       if (ind !== null) inductors.push(ind)
       else warnings.push(`Skipped ${inst.definition} '${inst.id}' (missing inductance or connects)`)
+    } else if (inst.definition === 'induction_motor') {
+      // The machine at its settled slip is its real equivalent-circuit LADDER (stator R1+L1, then
+      // Lm parallel the rotor R2/s+L2) — three branches on the inductor companions.
+      const im = resolveInductionMotor(inst, nodeIndex)
+      if (im === null) {
+        warnings.push(
+          `Skipped induction motor '${inst.id}' (needs both terminals wired and physical equivalent-circuit values: R1 > 0, Xm > 0, X1/X2 >= 0)`,
+        )
+      } else {
+        inductors.push(...im.elements)
+        if (im.stalled) {
+          warnings.push(
+            `Induction motor '${inst.id}' is STALLED — the load exceeds its breakdown torque; it draws the locked-rotor (starting) current`,
+          )
+        }
+        // The slip solve + reactances assume the NAMEPLATE supply (the part's own supply_voltage +
+        // line_frequency). If the canvas has AC sources and none is nameplate-compatible, say so —
+        // otherwise a 60 Hz source on a 50 Hz-nameplate motor would silently march the wrong machine.
+        const nameplateV = readScalarParam(inst, 'supply_voltage') ?? 0
+        const nameplateF = readScalarParam(inst, 'line_frequency') ?? 0
+        const acSources = [...world.instances.values()].filter(
+          (s) => s.definition === 'power_source' && (readScalarParam(s, 'ac_amplitude') ?? 0) > 0,
+        )
+        const nameplateCompatible = (s: Instance): boolean => {
+          const f = readScalarParam(s, 'frequency') ?? 0
+          const rms = (readScalarParam(s, 'ac_amplitude') ?? 0) / Math.SQRT2
+          return (
+            Math.abs(f - nameplateF) <= 0.01 * nameplateF &&
+            Math.abs(rms - nameplateV) <= 0.1 * nameplateV
+          )
+        }
+        if (acSources.length > 0 && !acSources.some(nameplateCompatible)) {
+          warnings.push(
+            `Induction motor '${inst.id}' is analyzed at its nameplate (${nameplateV} V RMS, ${nameplateF} Hz) but no source on the canvas matches — the slip and impedance assume the nameplate operating point`,
+          )
+        }
+      }
     } else if (inst.definition === 'dc_motor') {
       const motor = resolveMotor(inst, nodeIndex)
       if (motor !== null) motors.push(motor)

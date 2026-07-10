@@ -18,10 +18,21 @@
  *
  * Honest scope: the steady-state per-phase circuit at a given supply voltage + line frequency (the
  * way induction motors are actually analyzed) — it solves for the operating slip where the torque
- * meets the load. NOT YET wired as a live load in the instantaneous DC/transient solve (a time-domain
- * dq / rotating-field model is the substantial next rung); it is analyzed at its nameplate supply,
- * and in the DC solve it appears only as its stator winding resistance R1 (honestly, on DC an
- * induction motor makes no torque — it just sits and heats). A balanced THREE-phase machine is
+ * meets the load. In the TIME-DOMAIN solve the motor is a live load: the transient solver marches
+ * the equivalent circuit as the real LADDER it is (stator R1 + L1, then the magnetizing Lm parallel
+ * the rotor R2/s + L2, at the settled slip), so the scope shows the true lagging line current at the
+ * right magnitude and phase at the line frequency — and at DC the inductances short, degenerating to
+ * exactly the stator R1 the DC solver stamps (the two engines agree on any DC content). The slip is
+ * QUASI-STATIC through a record (the relay-contacts convention) and comes from the NAMEPLATE
+ * analysis — driving off-nameplate (a different source frequency or amplitude) keeps the nameplate
+ * slip and reactances, and the solver says so in a warning; harmonic content of a non-sine drive
+ * sees the fixed-slip ladder, not the per-harmonic slip of the real machine (documented, not faked).
+ * The start transient (slip ramping 1 → rated as the rotor spins up — a dq / rotating-field dynamic
+ * model) is the documented next rung. In the DC solve it appears only as its stator winding
+ * resistance R1 (honestly, on DC an induction motor makes no torque — it just sits and heats).
+ * Self-heating and thermal protection are unmodeled (no θ_JA is shipped; NOTE for whoever adds one:
+ * the terminal power Σv·i is the INPUT power, ~80 % of which leaves as mechanical output at rated
+ * load — heat is P_in − P_mech, never the whole terminal ledger). A balanced THREE-phase machine is
  * assumed (the single canvas AC source stands in for the per-phase line voltage); a true 3-phase
  * supply and the single-phase double-revolving-field machine are refinements. Sources: Tesla's 1888
  * polyphase patents; Steinmetz equivalent circuit; Fitzgerald, "Electric Machinery"; Chapman,
@@ -122,19 +133,33 @@ export function electromagneticTorque(slip: number, p: InductionMotorParams): nu
   return denom > 0 ? (3 * vTh * vTh * r2s) / (wSync * denom) : 0
 }
 
-/** Per-phase stator current magnitude (RMS, A) and power factor at a given slip. */
-function statorCurrentAndPf(
+/**
+ * The per-phase INPUT impedance of the equivalent circuit at a given slip: Z_in = R1 + jX1 + the
+ * parallel of jXm and (R2/s + jX2) — the steady-state readings' source of truth (current + power
+ * factor below). The time-domain solve marches the same circuit as its real LADDER (three R–L
+ * branches, transient-solver.ts), whose input impedance at the line frequency equals exactly this.
+ */
+export function inputImpedanceAtSlip(
   slip: number,
   p: InductionMotorParams,
-): { current: number; powerFactor: number } {
+): { resistance: number; reactance: number } {
   const r2s = slip <= 0 ? 1e12 : p.rotorResistance / slip
   const rotor: Cx = { re: r2s, im: p.rotorReactance }
   const mag: Cx = { re: 0, im: p.magnetizingReactance }
   const parallel = cDiv(cMul(mag, rotor), cAdd(mag, rotor))
   const zIn = cAdd({ re: p.statorResistance, im: p.statorReactance }, parallel)
-  const zMag = cAbs(zIn)
+  return { resistance: zIn.re, reactance: zIn.im }
+}
+
+/** Per-phase stator current magnitude (RMS, A) and power factor at a given slip. */
+function statorCurrentAndPf(
+  slip: number,
+  p: InductionMotorParams,
+): { current: number; powerFactor: number } {
+  const { resistance, reactance } = inputImpedanceAtSlip(slip, p)
+  const zMag = Math.hypot(resistance, reactance)
   if (!(zMag > 0)) return { current: 0, powerFactor: 0 }
-  return { current: p.supplyVoltage / zMag, powerFactor: zIn.re / zMag }
+  return { current: p.supplyVoltage / zMag, powerFactor: resistance / zMag }
 }
 
 /** The slip at peak (breakdown) torque: s_max = R2 / sqrt(R_th² + (X_th + X2)²). */
