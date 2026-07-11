@@ -69,7 +69,11 @@
  * the DC/zero-torque limits proven symbolically and numerically before implementation.
  */
 
-import { type InductionMotorParams, saturationCurveFromParams } from './induction-motor-model.ts'
+import {
+  doubleCageFromParams,
+  type InductionMotorParams,
+  saturationCurveFromParams,
+} from './induction-motor-model.ts'
 
 export type DqInductances = {
   statorOhms: number // R_s (Ω)
@@ -85,6 +89,11 @@ export type DqInductances = {
    *  the knee (PEAK resultant magnetizing flux linkage, V·s), incremental slope magnetizingSatH
    *  above it. Absent ⇒ the magnetizing branch stays linear. */
   saturation?: { kneeFluxVs: number; magnetizingSatH: number }
+  /** The second (inner/running) rotor cage of the deep-bar double-cage model, when the part
+   *  supplies it: its own resistance and leakage, coupled to everything else only through the
+   *  shared magnetizing branch. Present ⇒ the machine marches SIX flux states (two rotor
+   *  circuits per axis); absent ⇒ the four-state single-cage march, arithmetic untouched. */
+  cage2?: { rotorOhms2: number; rotorLeakage2H: number }
 }
 
 /** The effective inductance set at a (possibly saturated) chord magnetizing inductance. */
@@ -98,11 +107,68 @@ function effectiveL(
 }
 
 /**
+ * The double-cage per-axis inductance set at a chord L_m: the symmetric 3×3 flux–current matrix
+ * [[L_s, L_m, L_m], [L_m, L_r1, L_m], [L_m, L_m, L_r2]] (windings coupled only through the
+ * magnetizing branch) and its closed-form inverse Γ, so currents come from fluxes as i = Γ·λ.
+ * det = L_ls·L_lr1·L_lr2 + L_m·(L_ls·L_lr1 + L_ls·L_lr2 + L_lr1·L_lr2) — strictly positive
+ * whenever the single-cage flux model is regular (fluxDet > 0) and the inner cage has real
+ * leakage, so no new singularity gate is needed.
+ */
+function effectiveL6(L: DqInductances, lmEff: number): { g: number[][]; rotorOhms2: number } {
+  const cage2 = L.cage2 ?? { rotorOhms2: 0, rotorLeakage2H: 0 }
+  const a = L.statorLeakageH + lmEff // L_s
+  const b = L.rotorLeakageH + lmEff // L_r1
+  const c = cage2.rotorLeakage2H + lmEff // L_r2
+  const m = lmEff
+  const det = a * (b * c - m * m) - m * (m * c - m * m) + m * (m * m - b * m)
+  const g = [
+    [(b * c - m * m) / det, (m * m - m * c) / det, (m * m - b * m) / det],
+    [(m * m - m * c) / det, (a * c - m * m) / det, (m * m - a * m) / det],
+    [(m * m - b * m) / det, (m * m - a * m) / det, (a * b - m * m) / det],
+  ]
+  return { g, rotorOhms2: cage2.rotorOhms2 }
+}
+
+/** The 6-state A matrix of dλ/dt = A·λ + u — the double-cage generalization of stateMatrix,
+ *  ordering [λ_αs, λ_βs, λ_αr1, λ_βr1, λ_αr2, λ_βr2] (indices 0–3 keep the single-cage
+ *  meaning). Each cage obeys its own dλ_r = −R_r·i_r ∓ ω_re·λ_r(cross); currents via Γ. */
+function stateMatrix6(L: DqInductances, lmEff: number, omegaElectrical: number): number[][] {
+  const { g, rotorOhms2: Rr2 } = effectiveL6(L, lmEff)
+  const Rs = L.statorOhms
+  const Rr1 = L.rotorOhms
+  const w = omegaElectrical
+  const g0 = g[0] ?? []
+  const g1 = g[1] ?? []
+  const g2 = g[2] ?? []
+  return [
+    [-Rs * (g0[0] ?? 0), 0, -Rs * (g0[1] ?? 0), 0, -Rs * (g0[2] ?? 0), 0],
+    [0, -Rs * (g0[0] ?? 0), 0, -Rs * (g0[1] ?? 0), 0, -Rs * (g0[2] ?? 0)],
+    [-Rr1 * (g1[0] ?? 0), 0, -Rr1 * (g1[1] ?? 0), -w, -Rr1 * (g1[2] ?? 0), 0],
+    [0, -Rr1 * (g1[0] ?? 0), w, -Rr1 * (g1[1] ?? 0), 0, -Rr1 * (g1[2] ?? 0)],
+    [-Rr2 * (g2[0] ?? 0), 0, -Rr2 * (g2[1] ?? 0), 0, -Rr2 * (g2[2] ?? 0), -w],
+    [0, -Rr2 * (g2[0] ?? 0), 0, -Rr2 * (g2[1] ?? 0), w, -Rr2 * (g2[2] ?? 0)],
+  ]
+}
+
+/** Stator current from the 6-state flux vector on one axis: Γ row 0 over (λ_s, λ_r1, λ_r2) —
+ *  axis 0 (α) reads indices (0, 2, 4), axis 1 (β) reads (1, 3, 5). */
+function statorCurrent6(g: number[][], lam: number[], axis: 0 | 1): number {
+  const g0 = g[0] ?? []
+  return (
+    (g0[0] ?? 0) * (lam[axis] ?? 0) +
+    (g0[1] ?? 0) * (lam[axis + 2] ?? 0) +
+    (g0[2] ?? 0) * (lam[axis + 4] ?? 0)
+  )
+}
+
+/**
  * The CHORD magnetizing inductance at a given resultant magnetizing-flux magnitude — the
  * consistent choice for a flux-state model (i = Γ·λ at the same instant reproduces the exact
  * magnetization-curve point; the incremental slope belongs only in small-signal Jacobians and
  * would be grossly wrong here). Below the knee this returns the unsaturated constant DIRECTLY —
- * not λ/(λ/L_m) — so an unsaturated run is bit-identical to the linear model.
+ * not λ/(λ/L_m) — so an unsaturated run is bit-identical to the linear model. With the double
+ * cage the same expression still yields the magnetizing flux: λ_s − L_ls·i_s = L_m·(i_s + i_r1
+ * + i_r2), the total MMF times L_m.
  */
 function saturatedLmEff(L: DqInductances, lamMagnitude: number): number {
   const sat = L.saturation
@@ -124,8 +190,8 @@ type DqStamp = {
   targetTime: number
   conductance: number // G (S) of the Norton companion at the port
   historyCurrent: number // I_hist (A), flowing terminal_a → terminal_b
-  fluxKnown: Vec4 // λ at the target time if v_a were 0
-  fluxPerVolt: Vec4 // ∂λ/∂v_a
+  fluxKnown: number[] // λ at the target time if v_a were 0 (4 states; 6 with the double cage)
+  fluxPerVolt: number[] // ∂λ/∂v_a
   i0Known: number
   i0PerVolt: number
   uKnown: [number, number] // (v_α, v_β) at the target time, less v_a's (2/3)·v_a share
@@ -138,7 +204,7 @@ export type DqMotorCore = {
   mechanics: DqMechanics | null
   lockedOmega: number // mechanical rad/s used when mechanics is null
   period: number // the drive period T the two unseen phases are delayed by
-  flux: Vec4
+  flux: number[] // 4 states; 6 with the double cage
   i0: number
   omega: number // mechanical rad/s — the spin-up state
   torque: number // last committed T_e (N·m)
@@ -166,6 +232,17 @@ export function dqInductancesFromParams(p: InductionMotorParams): DqInductances 
     curve !== null
       ? { kneeFluxVs: curve.kneeFluxVs, magnetizingSatH: curve.saturatedXm / omegaNameplate }
       : undefined
+  // The second rotor cage (deep-bar double-cage model). Its 3×3 per-axis flux matrix is
+  // regular whenever the single-cage one is (fluxDet > 0) and the inner leakage is positive
+  // (the predicate requires it), so no new singularity gate is needed.
+  const cage2Params = doubleCageFromParams(p)
+  const cage2 =
+    cage2Params !== null
+      ? {
+          rotorOhms2: cage2Params.rotorResistance2,
+          rotorLeakage2H: cage2Params.rotorReactance2 / omegaNameplate,
+        }
+      : undefined
   return {
     statorOhms: p.statorResistance,
     rotorOhms: p.rotorResistance,
@@ -177,6 +254,7 @@ export function dqInductancesFromParams(p: InductionMotorParams): DqInductances 
     fluxDet,
     polePairs: p.poles / 2,
     ...(saturation !== undefined ? { saturation } : {}),
+    ...(cage2 !== undefined ? { cage2 } : {}),
   }
 }
 
@@ -191,7 +269,7 @@ export function createDqMotor(
     mechanics,
     lockedOmega,
     period,
-    flux: [0, 0, 0, 0],
+    flux: inductances.cage2 !== undefined ? [0, 0, 0, 0, 0, 0] : [0, 0, 0, 0],
     i0: 0,
     omega: mechanics === null ? lockedOmega : 0,
     torque: 0,
@@ -297,30 +375,57 @@ function stateMatrix(L: DqInductances, lmEff: number, omegaElectrical: number): 
  */
 export function dqStampMotor(core: DqMotorCore, targetTime: number, h: number): DqStamp {
   const L = core.inductances
-  const eff = effectiveL(L, core.lmEffH)
   const omegaElectrical = L.polePairs * core.omega
   const vB = delayedPortVoltage(core.history, targetTime - core.period / 3)
   const vC = delayedPortVoltage(core.history, targetTime - (2 * core.period) / 3)
   const uKnown: [number, number] = [-(vB + vC) / 3, (vB - vC) / Math.sqrt(3)]
   const v0Known = (vB + vC) / 3
 
-  const A = stateMatrix(L, core.lmEffH, omegaElectrical)
   const half = h / 2
-  const lhs = A.map((row, r) => row.map((v, c) => (r === c ? 1 : 0) - half * v))
-  // rhs1 = (I + (h/2)A)·λ + (h/2)·(u_prev + u_known); v_a's share of u_α enters via rhs2.
-  const rhs1: Vec4 = [0, 0, 0, 0]
-  for (let r = 0; r < 4; r++) {
-    let s = core.flux[r] ?? 0
-    for (let c = 0; c < 4; c++) s += half * (A[r]?.[c] ?? 0) * (core.flux[c] ?? 0)
-    rhs1[r] = s
+  let fluxKnown: number[]
+  let fluxPerVolt: number[]
+  let iAlphaKnown: number
+  let iAlphaPerVolt: number
+  if (L.cage2 === undefined) {
+    // The single-cage 4-state march — the pre-double-cage arithmetic, verbatim.
+    const eff = effectiveL(L, core.lmEffH)
+    const A = stateMatrix(L, core.lmEffH, omegaElectrical)
+    const lhs = A.map((row, r) => row.map((v, c) => (r === c ? 1 : 0) - half * v))
+    // rhs1 = (I + (h/2)A)·λ + (h/2)·(u_prev + u_known); v_a's share of u_α enters via rhs2.
+    const rhs1: Vec4 = [0, 0, 0, 0]
+    for (let r = 0; r < 4; r++) {
+      let s = core.flux[r] ?? 0
+      for (let c = 0; c < 4; c++) s += half * (A[r]?.[c] ?? 0) * (core.flux[c] ?? 0)
+      rhs1[r] = s
+    }
+    rhs1[0] += half * ((core.uPrev[0] ?? 0) + uKnown[0])
+    rhs1[1] += half * ((core.uPrev[1] ?? 0) + uKnown[1])
+    const rhs2: Vec4 = [h / 3, 0, 0, 0] // (h/2)·(2/3) — v_a's Clarke share of v_α
+    const solved = solve4Two(lhs, rhs1, rhs2)
+    fluxKnown = solved.x1
+    fluxPerVolt = solved.x2
+    iAlphaKnown = (eff.Lr * (fluxKnown[0] ?? 0) - eff.Lm * (fluxKnown[2] ?? 0)) / eff.D
+    iAlphaPerVolt = (eff.Lr * (fluxPerVolt[0] ?? 0) - eff.Lm * (fluxPerVolt[2] ?? 0)) / eff.D
+  } else {
+    // The double-cage 6-state march — same trapezoidal split, Γ-based currents.
+    const eff6 = effectiveL6(L, core.lmEffH)
+    const A = stateMatrix6(L, core.lmEffH, omegaElectrical)
+    const lhs = A.map((row, r) => row.map((v, c) => (r === c ? 1 : 0) - half * v))
+    const rhs1 = new Array<number>(6).fill(0)
+    for (let r = 0; r < 6; r++) {
+      let s = core.flux[r] ?? 0
+      for (let c = 0; c < 6; c++) s += half * (A[r]?.[c] ?? 0) * (core.flux[c] ?? 0)
+      rhs1[r] = s
+    }
+    rhs1[0] = (rhs1[0] ?? 0) + half * ((core.uPrev[0] ?? 0) + uKnown[0])
+    rhs1[1] = (rhs1[1] ?? 0) + half * ((core.uPrev[1] ?? 0) + uKnown[1])
+    const rhs2 = [h / 3, 0, 0, 0, 0, 0]
+    const [k, pv] = solveMulti(lhs, [rhs1, rhs2])
+    fluxKnown = k ?? new Array<number>(6).fill(0)
+    fluxPerVolt = pv ?? new Array<number>(6).fill(0)
+    iAlphaKnown = statorCurrent6(eff6.g, fluxKnown, 0)
+    iAlphaPerVolt = statorCurrent6(eff6.g, fluxPerVolt, 0)
   }
-  rhs1[0] += half * ((core.uPrev[0] ?? 0) + uKnown[0])
-  rhs1[1] += half * ((core.uPrev[1] ?? 0) + uKnown[1])
-  const rhs2: Vec4 = [h / 3, 0, 0, 0] // (h/2)·(2/3) — v_a's Clarke share of v_α
-  const { x1: fluxKnown, x2: fluxPerVolt } = solve4Two(lhs, rhs1, rhs2)
-
-  const iAlphaKnown = (eff.Lr * fluxKnown[0] - eff.Lm * fluxKnown[2]) / eff.D
-  const iAlphaPerVolt = (eff.Lr * fluxPerVolt[0] - eff.Lm * fluxPerVolt[2]) / eff.D
 
   // Zero axis, backward-Euler (robust across the staggered-start voltage steps):
   // i₀' = (L_ls·i₀ + h·v₀')/(L_ls + h·R_s), v₀' = v₀_known + v_a/3.
@@ -363,22 +468,35 @@ export function dqCommitMotor(core: DqMotorCore, portVolts: number, h: number): 
   const stamp = core.stamp
   if (stamp === null) return 0
   const L = core.inductances
-  const eff = effectiveL(L, core.lmEffH) // the SAME chord the stamp marched with
-  const flux: Vec4 = [0, 0, 0, 0]
-  for (let r = 0; r < 4; r++)
+  const n = L.cage2 === undefined ? 4 : 6
+  const flux = new Array<number>(n).fill(0)
+  for (let r = 0; r < n; r++)
     flux[r] = (stamp.fluxKnown[r] ?? 0) + (stamp.fluxPerVolt[r] ?? 0) * portVolts
-  const iAlpha = (eff.Lr * flux[0] - eff.Lm * flux[2]) / eff.D
-  const iBeta = (eff.Lr * flux[1] - eff.Lm * flux[3]) / eff.D
+  let iAlpha: number
+  let iBeta: number
+  if (L.cage2 === undefined) {
+    const eff = effectiveL(L, core.lmEffH) // the SAME chord the stamp marched with
+    iAlpha = (eff.Lr * (flux[0] ?? 0) - eff.Lm * (flux[2] ?? 0)) / eff.D
+    iBeta = (eff.Lr * (flux[1] ?? 0) - eff.Lm * (flux[3] ?? 0)) / eff.D
+  } else {
+    const eff6 = effectiveL6(L, core.lmEffH)
+    iAlpha = statorCurrent6(eff6.g, flux, 0)
+    iBeta = statorCurrent6(eff6.g, flux, 1)
+  }
   core.flux = flux
   core.i0 = stamp.i0Known + stamp.i0PerVolt * portVolts
-  core.torque = 1.5 * L.polePairs * (flux[0] * iBeta - flux[1] * iAlpha)
+  core.torque = 1.5 * L.polePairs * ((flux[0] ?? 0) * iBeta - (flux[1] ?? 0) * iAlpha)
   const mech = core.mechanics
   core.omega = mech === null ? core.lockedOmega : speedStep(core.omega, core.torque, mech, h)
   // The saturation state for the NEXT step: the chord L_m at the committed resultant
-  // magnetizing flux λ_m = λ_s − L_ls·i_s (lagged one step, like the frozen rotor speed).
+  // magnetizing flux λ_m = λ_s − L_ls·i_s (lagged one step, like the frozen rotor speed) —
+  // the same expression with the double cage (λ_m = L_m times the total MMF current).
   core.lmEffH = saturatedLmEff(
     L,
-    Math.hypot(flux[0] - L.statorLeakageH * iAlpha, flux[1] - L.statorLeakageH * iBeta),
+    Math.hypot(
+      (flux[0] ?? 0) - L.statorLeakageH * iAlpha,
+      (flux[1] ?? 0) - L.statorLeakageH * iBeta,
+    ),
   )
   // Arm the did-not-start check on any real drive: 1 mV sits orders of magnitude above solver
   // leakage around an undriven port yet below any voltage that could be meant as a drive.
@@ -441,9 +559,9 @@ type Dq3Stamp = {
   /** Full 4-port pieces, kept to reconstruct the open ports' voltages at commit. */
   fullG: number[][]
   fullIh: number[]
-  fluxKnown: Vec4
-  sensAlpha: Vec4
-  sensBeta: Vec4
+  fluxKnown: number[] // 4 states; 6 with the double cage
+  sensAlpha: number[]
+  sensBeta: number[]
   i0Known: number
   i0PerV0: number
 }
@@ -457,7 +575,7 @@ export type Dq3MotorCore = {
   /** The connected drive's period (nameplate when ambiguous) — only the did-not-start
    *  warning's minimum-window gate reads it; nothing is synthesized from it. */
   period: number
-  flux: Vec4
+  flux: number[] // 4 states; 6 with the double cage
   i0: number
   omega: number
   torque: number
@@ -480,7 +598,7 @@ export function createDqMotor3(
     lockedOmega,
     wired,
     period,
-    flux: [0, 0, 0, 0],
+    flux: inductances.cage2 !== undefined ? [0, 0, 0, 0, 0, 0] : [0, 0, 0, 0],
     i0: 0,
     omega: mechanics === null ? lockedOmega : 0,
     torque: 0,
@@ -527,33 +645,64 @@ function openPortVoltages(
  */
 export function dq3StampMotor(core: Dq3MotorCore, h: number): Dq3Stamp {
   const L = core.inductances
-  const eff = effectiveL(L, core.lmEffH)
-  const A = stateMatrix(L, core.lmEffH, L.polePairs * core.omega)
   const half = h / 2
-  const lhs = A.map((row, r) => row.map((v, c) => (r === c ? 1 : 0) - half * v))
-  const rhsHist: Vec4 = [0, 0, 0, 0]
-  for (let r = 0; r < 4; r++) {
-    let s = core.flux[r] ?? 0
-    for (let c = 0; c < 4; c++) s += half * (A[r]?.[c] ?? 0) * (core.flux[c] ?? 0)
-    rhsHist[r] = s
+  let fluxKnown: number[]
+  let sensAlpha: number[]
+  let sensBeta: number[]
+  let iAlphaHist: number
+  let iBetaHist: number
+  let K: number[][]
+  if (L.cage2 === undefined) {
+    // The single-cage 4-state solve — the pre-double-cage arithmetic, verbatim.
+    const eff = effectiveL(L, core.lmEffH)
+    const A = stateMatrix(L, core.lmEffH, L.polePairs * core.omega)
+    const lhs = A.map((row, r) => row.map((v, c) => (r === c ? 1 : 0) - half * v))
+    const rhsHist: Vec4 = [0, 0, 0, 0]
+    for (let r = 0; r < 4; r++) {
+      let s = core.flux[r] ?? 0
+      for (let c = 0; c < 4; c++) s += half * (A[r]?.[c] ?? 0) * (core.flux[c] ?? 0)
+      rhsHist[r] = s
+    }
+    rhsHist[0] += half * (core.uPrev[0] ?? 0)
+    rhsHist[1] += half * (core.uPrev[1] ?? 0)
+    const solved = solveMulti(lhs, [rhsHist, [half, 0, 0, 0], [0, half, 0, 0]])
+    fluxKnown = solved[0] ?? [0, 0, 0, 0]
+    sensAlpha = solved[1] ?? [0, 0, 0, 0]
+    sensBeta = solved[2] ?? [0, 0, 0, 0]
+    const iOf = (lam: number[], r0: number, r2: number) =>
+      (eff.Lr * (lam[r0] ?? 0) - eff.Lm * (lam[r2] ?? 0)) / eff.D
+    iAlphaHist = iOf(fluxKnown, 0, 2)
+    iBetaHist = iOf(fluxKnown, 1, 3)
+    K = [
+      [iOf(sensAlpha, 0, 2), iOf(sensBeta, 0, 2), 0],
+      [iOf(sensAlpha, 1, 3), iOf(sensBeta, 1, 3), 0],
+      [0, 0, 0],
+    ]
+  } else {
+    // The double-cage 6-state solve — same trapezoidal split, Γ-based currents.
+    const eff6 = effectiveL6(L, core.lmEffH)
+    const A = stateMatrix6(L, core.lmEffH, L.polePairs * core.omega)
+    const lhs = A.map((row, r) => row.map((v, c) => (r === c ? 1 : 0) - half * v))
+    const rhsHist = new Array<number>(6).fill(0)
+    for (let r = 0; r < 6; r++) {
+      let s = core.flux[r] ?? 0
+      for (let c = 0; c < 6; c++) s += half * (A[r]?.[c] ?? 0) * (core.flux[c] ?? 0)
+      rhsHist[r] = s
+    }
+    rhsHist[0] = (rhsHist[0] ?? 0) + half * (core.uPrev[0] ?? 0)
+    rhsHist[1] = (rhsHist[1] ?? 0) + half * (core.uPrev[1] ?? 0)
+    const solved = solveMulti(lhs, [rhsHist, [half, 0, 0, 0, 0, 0], [0, half, 0, 0, 0, 0]])
+    fluxKnown = solved[0] ?? new Array<number>(6).fill(0)
+    sensAlpha = solved[1] ?? new Array<number>(6).fill(0)
+    sensBeta = solved[2] ?? new Array<number>(6).fill(0)
+    iAlphaHist = statorCurrent6(eff6.g, fluxKnown, 0)
+    iBetaHist = statorCurrent6(eff6.g, fluxKnown, 1)
+    K = [
+      [statorCurrent6(eff6.g, sensAlpha, 0), statorCurrent6(eff6.g, sensBeta, 0), 0],
+      [statorCurrent6(eff6.g, sensAlpha, 1), statorCurrent6(eff6.g, sensBeta, 1), 0],
+      [0, 0, 0],
+    ]
   }
-  rhsHist[0] += half * (core.uPrev[0] ?? 0)
-  rhsHist[1] += half * (core.uPrev[1] ?? 0)
-  const [fluxKnown, sensAlpha, sensBeta] = solveMulti(lhs, [
-    rhsHist,
-    [half, 0, 0, 0],
-    [0, half, 0, 0],
-  ]) as [Vec4, Vec4, Vec4]
-
-  const iOf = (lam: Vec4, r0: number, r2: number) =>
-    (eff.Lr * (lam[r0] ?? 0) - eff.Lm * (lam[r2] ?? 0)) / eff.D
-  const iAlphaHist = iOf(fluxKnown, 0, 2)
-  const iBetaHist = iOf(fluxKnown, 1, 3)
-  const K: number[][] = [
-    [iOf(sensAlpha, 0, 2), iOf(sensBeta, 0, 2), 0],
-    [iOf(sensAlpha, 1, 3), iOf(sensBeta, 1, 3), 0],
-    [0, 0, 0],
-  ]
   const denom0 = L.statorLeakageH + h * L.statorOhms
   const i0Known = (L.statorLeakageH * core.i0) / denom0
   const i0PerV0 = h / denom0
@@ -621,28 +770,40 @@ export function dq3CommitMotor(core: Dq3MotorCore, wiredVolts: number[], h: numb
   const stamp = core.stamp
   if (stamp === null) return wiredVolts.map(() => 0)
   const L = core.inductances
-  const eff = effectiveL(L, core.lmEffH) // the SAME chord the stamp marched with
   const vFull = openPortVoltages(stamp, core.wired, wiredVolts)
   const vAlpha = T_IN_ALPHA.reduce((s, t, p) => s + t * (vFull[p] ?? 0), 0)
   const vBeta = T_IN_BETA.reduce((s, t, p) => s + t * (vFull[p] ?? 0), 0)
   const v0 = T_IN_ZERO.reduce((s, t, p) => s + t * (vFull[p] ?? 0), 0)
-  const flux: Vec4 = [0, 0, 0, 0]
-  for (let r = 0; r < 4; r++)
+  const n = L.cage2 === undefined ? 4 : 6
+  const flux = new Array<number>(n).fill(0)
+  for (let r = 0; r < n; r++)
     flux[r] =
       (stamp.fluxKnown[r] ?? 0) +
       (stamp.sensAlpha[r] ?? 0) * vAlpha +
       (stamp.sensBeta[r] ?? 0) * vBeta
-  const iAlpha = (eff.Lr * flux[0] - eff.Lm * flux[2]) / eff.D
-  const iBeta = (eff.Lr * flux[1] - eff.Lm * flux[3]) / eff.D
+  let iAlpha: number
+  let iBeta: number
+  if (L.cage2 === undefined) {
+    const eff = effectiveL(L, core.lmEffH) // the SAME chord the stamp marched with
+    iAlpha = (eff.Lr * (flux[0] ?? 0) - eff.Lm * (flux[2] ?? 0)) / eff.D
+    iBeta = (eff.Lr * (flux[1] ?? 0) - eff.Lm * (flux[3] ?? 0)) / eff.D
+  } else {
+    const eff6 = effectiveL6(L, core.lmEffH)
+    iAlpha = statorCurrent6(eff6.g, flux, 0)
+    iBeta = statorCurrent6(eff6.g, flux, 1)
+  }
   core.flux = flux
   core.i0 = core.wired[3] ? stamp.i0Known + stamp.i0PerV0 * v0 : 0
-  core.torque = 1.5 * L.polePairs * (flux[0] * iBeta - flux[1] * iAlpha)
+  core.torque = 1.5 * L.polePairs * ((flux[0] ?? 0) * iBeta - (flux[1] ?? 0) * iAlpha)
   const mech = core.mechanics
   core.omega = mech === null ? core.lockedOmega : speedStep(core.omega, core.torque, mech, h)
   // The saturation state for the NEXT step (lagged one step, like the frozen rotor speed).
   core.lmEffH = saturatedLmEff(
     L,
-    Math.hypot(flux[0] - L.statorLeakageH * iAlpha, flux[1] - L.statorLeakageH * iBeta),
+    Math.hypot(
+      (flux[0] ?? 0) - L.statorLeakageH * iAlpha,
+      (flux[1] ?? 0) - L.statorLeakageH * iBeta,
+    ),
   )
   if (Math.max(Math.abs(vAlpha), Math.abs(vBeta), Math.abs(v0)) > 1e-3) core.energized = true
   core.uPrev = [vAlpha, vBeta]

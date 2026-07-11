@@ -42,7 +42,17 @@
 # overvoltage and the no-load current rises super-linearly, the real overfluxing signature.
 # Leakage (rotor-slot-bridge) saturation stays unmodeled — that is where real machines get their
 # extra STARTING current — and a shorted cage suppresses transformer-style flux doubling at
-# switch-on. Self-heating, thermal protection, deep-bar/skin effect and core loss are unmodeled.
+# switch-on. DEEP-BAR / SKIN EFFECT is modeled when the part carries a second rotor cage
+# (rotor_resistance_2 + rotor_reactance_2): at standstill the rotor currents are at LINE
+# frequency, so they crowd into the top of deep rotor bars — high effective rotor resistance,
+# strong starting torque (the NEMA design B/C machines); at running slip (rotor frequency ~1 Hz)
+# the current spreads over the whole bar and the resistance drops. The DOUBLE CAGE captures this
+# with two real rotor circuits — an outer starting cage (the existing rotor params: high R, low
+# leakage) and an inner running cage (new params: low R, high leakage) — so the frequency
+# dependence emerges from real L/R branch dynamics at any waveform, no slip-dependent fudge. The
+# double-cage torque curve genuinely dips between the two cages' peaks (why NEMA defines
+# pull-up torque): a load sitting above that dip makes the machine start but hang at high slip -
+# CRAWLING, named by the solver. Self-heating, thermal protection and core loss are unmodeled.
 # A TRUE 3-phase hookup (three phase ports + the star point) ships as its
 # sibling part, induction_motor_three_phase - use that one for real reversal (swapped leads) and
 # single-phasing; the single-phase double-revolving-field machine remains a refinement.
@@ -105,7 +115,17 @@ parameters:
     type: quantity
     units: ohm
     required: true
-    description: X2, the rotor leakage reactance referred to the stator.
+    description: X2, the rotor leakage reactance referred to the stator. With a second cage present this pair becomes the OUTER (starting) cage — high resistance, low leakage.
+  rotor_resistance_2:
+    type: quantity
+    units: ohm
+    required: false
+    description: "The INNER (running) rotor cage's resistance referred to the stator — low, so the running machine is efficient. With rotor_reactance_2 it activates the DEEP-BAR DOUBLE-CAGE model: two real rotor circuits whose L/R dynamics make the rotor resistance effectively high at standstill (strong starting torque) and low at running slip. Fitted double-cage parameter sets for real catalog machines are published — e.g. Monjo, Kojooyan-Jafari, Corcoles and Pedra, IEEE Trans. Energy Conversion 30(2), 2015, Table II, whose circuit is exactly this one (two independent rotor branches coupled only through the magnetizing reactance): their ABB 45 kW 400 V 50 Hz 4-pole machine fits outer cage 0.524/0.130 ohm, inner cage 0.0604/0.428 ohm (per-phase wye, referred). Without both parameters the rotor stays a single cage, identically to before."
+  rotor_reactance_2:
+    type: quantity
+    units: ohm
+    required: false
+    description: "The INNER (running) cage's leakage reactance at the nameplate frequency, referred to the stator — HIGH (the deep bar sits far from the air gap), which is what chokes this cage at standstill and routes the starting current through the high-resistance outer cage. Must be positive; used only together with rotor_resistance_2. The classical rectangular-bar skin-effect law behind the two-cage fit: k_R = xi*(sinh 2xi + sin 2xi)/(cosh 2xi - cos 2xi) with xi = bar depth / skin depth, skin depth = sqrt(rho/(pi*mu*f*slip)) (Field/Emde, in Alger and Boldea-Nasar)."
   magnetizing_reactance:
     type: quantity
     units: ohm
@@ -155,12 +175,20 @@ extensions:
   allowed_origins: [builtin, community, user_local, project]
 notes: |
   READINGS: the per-phase equivalent circuit (Steinmetz), referred to the stator (V1 across
-  R1 + jX1, then jXm in parallel with R2/s + jX2 — induction-motor-model.ts). The solver computes
+  R1 + jX1, then jXm in parallel with the rotor branch — induction-motor-model.ts). The rotor
+  branch is R2/s + jX2 for the single cage, or the two cages in PARALLEL,
+  (R2/s + jX2) || (R2b/s + jX2b), when the deep-bar double cage is active. The solver computes
   the Thevenin equivalent seen by the rotor branch, then finds the operating slip where the
-  developed torque T = 3*V_th^2*(R2/s) / (omega_s*((R_th + R2/s)^2 + (X_th + X2)^2)) equals the load
-  + friction, on the stable branch below the breakdown slip; from it the speed, running stator
-  current, power factor, locked-rotor (starting) current at s=1, mechanical power, efficiency and
-  slip are read. Synchronous speed omega_s = 4*pi*f/poles. TIME DOMAIN: the dq
+  developed torque T = 3*V_th^2*Re(Z_rot(s)) / (omega_s*|Z_th + Z_rot(s)|^2) equals the load
+  + friction (for the single cage this is literally the textbook
+  T = 3*V_th^2*(R2/s) / (omega_s*((R_th + R2/s)^2 + (X_th + X2)^2)), found on the stable branch
+  below the breakdown slip). A double-cage torque curve is NOT single-peaked — pull-out maximum,
+  then a pull-up DIP, then a second rise toward standstill — so its operating point comes from a
+  multi-root-aware search that reports the point a from-rest start actually reaches; when a
+  better running point exists beyond a dip the load cannot cross, the machine is CRAWLING and
+  the solver says so. From the operating point the speed, running stator current, power factor,
+  locked-rotor (starting) current at s=1, mechanical power, efficiency and slip are read.
+  Synchronous speed omega_s = 4*pi*f/poles. TIME DOMAIN: the dq
   (stationary-reference-frame) dynamic model (induction-motor-dq.ts) — stator + rotor flux
   linkages in the alpha-beta frame, the zero-sequence current, and the rotor speed as states:
   d(lambda_s)/dt = v - R_s*i_s; d(lambda_r)/dt = -R_r*i_r -/+ omega_re*lambda_r(cross);
@@ -184,9 +212,17 @@ notes: |
   operating speed (quasi-static, the pre-dynamic behavior) with a warning. Self-heating and
   thermal protection are unmodeled; NOTE for a future theta_JA: the terminal power is the INPUT
   power, most of which leaves as mechanical output at rated load — heat is P_in - P_mech, never
-  the whole terminal ledger. Magnetic saturation, deep-bar/skin effect and core loss are
-  unmodeled refinements. The true 3-phase (three-port) machine ships separately as
-  induction_motor_three_phase; the single-phase double-revolving-field machine remains a
-  refinement. Sources: Tesla's 1888 polyphase patents; the Steinmetz
+  the whole terminal ledger. Magnetic saturation (opt-in via the magnetization-curve params) and
+  deep-bar/skin effect (opt-in via the second rotor cage: the time-domain model then marches SIX
+  flux states — two rotor circuits per axis — whose settled steady state is exactly the
+  parallel-two-cage phasor circuit the readings use) are both modeled; core loss remains an
+  unmodeled refinement. The true 3-phase (three-port) machine ships separately as
+  induction_motor_three_phase; the single-phase double-revolving-field machine ships as
+  induction_motor_single_phase. Sources: Tesla's 1888 polyphase patents; the Steinmetz
   equivalent circuit; Krause, "Analysis of Electric Machinery" (the stationary-frame qd0 model);
-  Fitzgerald, "Electric Machinery"; Chapman, "Electric Machinery Fundamentals".
+  Fitzgerald, "Electric Machinery"; Chapman, "Electric Machinery Fundamentals"; the double-cage
+  circuit and fitted catalog-machine parameters: Monjo, Kojooyan-Jafari, Corcoles and Pedra,
+  "Squirrel-cage induction motor parameter estimation using a variable frequency test," IEEE
+  Trans. Energy Conversion 30(2) 550-557, 2015 (their Fig. 2b seven-parameter circuit is this
+  exact topology - two independent rotor branches coupled only through Xm; full text verified
+  2026-07-11).

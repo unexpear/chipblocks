@@ -15,6 +15,7 @@ import {
 } from '../electromagnet-model.ts'
 import { electronDriftVelocityMS } from '../field-energy.ts'
 import {
+  doubleCageFromParams,
   inductionMotorOperatingPoint,
   inductionMotorParamsFromInstance,
   statorIsDelta,
@@ -953,12 +954,17 @@ function partCard(
       )
     }
     if (imParams !== undefined) {
+      if (doubleCageFromParams(imParams) !== null) {
+        lines.push(
+          'Its rotor is a DOUBLE CAGE (the deep-bar rotor): at standstill the rotor currents are at line frequency, so the inner cage’s high leakage chokes it and the current takes the high-resistance outer cage — strong starting torque; at running slip the two cages share the current as parallel resistances — efficient. The rotor branch is (R2/s + jX2) ∥ (R2b/s + jX2b).',
+        )
+      }
       const op = inductionMotorOperatingPoint(imParams)
       lines.push(
         `Synchronous speed = 120·f/poles = ${op.synchronousRpm.toFixed(0)} RPM. Under its load it settles at ${(op.slip * 100).toFixed(1)}% slip → ${op.rotorRpm.toFixed(0)} RPM, developing ${formatEng(op.torque, 'N·m')} of torque.`,
       )
       lines.push(
-        `It draws ${fmtA(op.statorCurrentRms)} running at ${op.powerFactor.toFixed(2)} power factor, but ${fmtA(op.startupCurrentRms)} at standstill (the locked-rotor inrush, ~${(op.startupCurrentRms / Math.max(op.statorCurrentRms, 1e-9)).toFixed(1)}× the running current). ${formatEng(op.mechanicalPowerW, 'W')} of mechanical output, ${(op.efficiency * 100).toFixed(0)}% efficient.${op.stalled ? ' (The load exceeds the breakdown torque — it would stall.)' : ''}`,
+        `It draws ${fmtA(op.statorCurrentRms)} running at ${op.powerFactor.toFixed(2)} power factor, but ${fmtA(op.startupCurrentRms)} at standstill (the locked-rotor inrush, ~${(op.startupCurrentRms / Math.max(op.statorCurrentRms, 1e-9)).toFixed(1)}× the running current). ${formatEng(op.mechanicalPowerW, 'W')} of mechanical output, ${(op.efficiency * 100).toFixed(0)}% efficient.${op.stalled ? ' (The load exceeds the breakdown torque — it would stall.)' : ''}${op.crawlBetterSlip !== undefined ? ' (CRAWLING: the torque dip between the two cages’ peaks sits below the load — a from-rest start hangs here instead of reaching the better running point.)' : ''}`,
       )
     }
     return {

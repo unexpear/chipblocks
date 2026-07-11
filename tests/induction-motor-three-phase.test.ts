@@ -18,6 +18,7 @@ import {
 import {
   type InductionMotorParams,
   inductionMotorOperatingPoint,
+  inductionMotorParamsFromInstance,
 } from '../src/induction-motor-model.ts'
 import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
 import { buildMathView } from '../src/renderer/math-view.ts'
@@ -567,5 +568,95 @@ describe('three-phase induction motor — DC sees the real winding topology, in 
     const reading = partReadings(one, solOne).get('m1')
     expect(reading?.speedRpm ?? 0).toBeGreaterThan(1300)
     expect(reading?.slipPercent ?? 0).toBeGreaterThan(0)
+  })
+})
+
+describe('three-phase induction motor — the deep-bar double cage on the three-port path', () => {
+  test('a delta stator refers the second cage like every impedance: both cage-2 params ÷3', () => {
+    const inst = {
+      id: 'm',
+      kind_ref: 'primitive_device',
+      definition: 'induction_motor_three_phase',
+      parameters: {
+        supply_voltage: scalar(230, 'volt'),
+        line_frequency: scalar(50, 'hertz'),
+        pole_count: scalar(4, 'dimensionless'),
+        stator_resistance: scalar(0.5, 'ohm'),
+        stator_reactance: scalar(1.5, 'ohm'),
+        rotor_resistance: scalar(1.2, 'ohm'),
+        rotor_reactance: scalar(1, 'ohm'),
+        magnetizing_reactance: scalar(40, 'ohm'),
+        rotor_resistance_2: scalar(0.35, 'ohm'),
+        rotor_reactance_2: scalar(2.5, 'ohm'),
+        stator_connection: { value: 'delta' },
+      },
+    }
+    const p = inductionMotorParamsFromInstance(inst as never)
+    expect(p?.rotorResistance2).toBeCloseTo(0.35 / 3, 12)
+    expect(p?.rotorReactance2).toBeCloseTo(2.5 / 3, 12)
+    // The same coils in delta start ~3× harder — with the double cage too.
+    const wye = inductionMotorParamsFromInstance({
+      ...inst,
+      parameters: { ...inst.parameters, stator_connection: { value: 'wye' } },
+    } as never)
+    expect(p).toBeDefined()
+    expect(wye).toBeDefined()
+    if (p === undefined || wye === undefined) throw new Error('unreachable')
+    const opDelta = inductionMotorOperatingPoint({ ...p, loadTorque: 40 })
+    const opWye = inductionMotorOperatingPoint({ ...wye, loadTorque: 40 })
+    expect(opDelta.startupCurrentRms / opWye.startupCurrentRms).toBeGreaterThan(2.9)
+    expect(opDelta.startupCurrentRms / opWye.startupCurrentRms).toBeLessThan(3.1)
+  })
+
+  test('the 6-state march runs the three-port composition too — settled onto the phasor point', () => {
+    const p: InductionMotorParams = {
+      supplyVoltage: 230,
+      frequency: 50,
+      poles: 4,
+      statorResistance: 0.5,
+      statorReactance: 1.5,
+      rotorResistance: 1.2,
+      rotorReactance: 1.0,
+      magnetizingReactance: 40,
+      rotorResistance2: 0.35,
+      rotorReactance2: 2.5,
+      loadTorque: 40,
+      viscousFriction: 0.005,
+    }
+    const op = inductionMotorOperatingPoint(p)
+    const L = dqInductancesFromParams(p)
+    expect(L).not.toBeNull()
+    if (L === null) throw new Error('unreachable')
+    const h = PERIOD / 400
+    const core = createDqMotor3(
+      L,
+      { rotorInertia: 0.05, viscousFriction: 0.005, loadTorque: 40 },
+      0,
+      [true, true, true, true],
+      PERIOD,
+    )
+    const V = 230 * Math.SQRT2
+    const w = 2 * Math.PI * 50
+    const steps = Math.round(2 / h)
+    const lastTwoCycles: number[] = []
+    for (let k = 1; k <= steps; k++) {
+      const t = k * h
+      dq3StampMotor(core, h)
+      const currents = dq3CommitMotor(
+        core,
+        [
+          V * Math.cos(w * t),
+          V * Math.cos(w * t - (2 * Math.PI) / 3),
+          V * Math.cos(w * t + (2 * Math.PI) / 3),
+          0,
+        ],
+        h,
+      )
+      if (k > steps - 800) lastTwoCycles.push(currents[0] ?? 0)
+    }
+    const wSync = (2 * Math.PI * 50) / 2
+    expect(Math.abs(1 - core.omega / wSync - op.slip)).toBeLessThan(1e-4)
+    const iRms = Math.sqrt(lastTwoCycles.reduce((s, i) => s + i * i, 0) / lastTwoCycles.length)
+    expect(Math.abs(iRms - op.statorCurrentRms) / op.statorCurrentRms).toBeLessThan(0.005)
   })
 })

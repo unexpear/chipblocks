@@ -127,6 +127,8 @@ import {
   dqStampMotor,
 } from './induction-motor-dq.ts'
 import {
+  crawlNote,
+  deepBarParamsNote,
   inductionMotorOperatingPoint,
   inductionMotorParamsFromInstance,
   saturatedAtNameplateNote,
@@ -1240,10 +1242,15 @@ function resolveInductionMotorDq(
   const inductances = dqInductancesFromParams(p)
   if (inductances === null) return null // both leakages zero — the flux model is singular
   const notes: string[] = []
-  for (const note of [saturationParamsNote(inst.id, p), saturatedAtNameplateNote(inst.id, p)]) {
+  const op = inductionMotorOperatingPoint(p)
+  for (const note of [
+    saturationParamsNote(inst.id, p),
+    saturatedAtNameplateNote(inst.id, p),
+    deepBarParamsNote(inst.id, p),
+    crawlNote(inst.id, op),
+  ]) {
     if (note !== null) notes.push(note)
   }
-  const op = inductionMotorOperatingPoint(p)
   const acDrives = connectedAcDrives(world, [c1.net, c2.net])
 
   // The unseen phases are delayed by thirds of the DRIVE period: the one distinct connected
@@ -1342,7 +1349,11 @@ function resolveInductionMotor3(
   const netOf = (terminal: string) => inst.connects?.find((c) => c.terminal === terminal)?.net
   const wired = DQ3_PORTS.map((t) => netOf(t) !== undefined) as [boolean, boolean, boolean, boolean]
   const notes: string[] = []
-  for (const note of [saturationParamsNote(inst.id, p), saturatedAtNameplateNote(inst.id, p)]) {
+  for (const note of [
+    saturationParamsNote(inst.id, p),
+    saturatedAtNameplateNote(inst.id, p),
+    deepBarParamsNote(inst.id, p),
+  ]) {
     if (note !== null) notes.push(note)
   }
   // A delta stator has no star point — the machine (referred to its exact equivalent wye by the
@@ -1365,6 +1376,8 @@ function resolveInductionMotor3(
     return { stalled: false, notes, acDrives: [] }
   }
   const op = inductionMotorOperatingPoint(p)
+  const crawl = crawlNote(inst.id, op)
+  if (crawl !== null) notes.push(crawl)
   const nets = wiredPorts.map((t) => netOf(t) ?? '')
   const acDrives = connectedAcDrives(world, nets)
   const rotorInertia = readScalarParam(inst, 'rotor_inertia')

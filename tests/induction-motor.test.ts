@@ -11,6 +11,13 @@
 import { describe, expect, test } from 'vitest'
 import { solveDC } from '../src/dc-solver.ts'
 import {
+  createDqMotor,
+  dqCommitMotor,
+  dqInductancesFromParams,
+  dqInitMotor,
+  dqStampMotor,
+} from '../src/induction-motor-dq.ts'
+import {
   electromagneticTorque,
   type InductionMotorParams,
   inductionMotorOperatingPoint,
@@ -595,6 +602,328 @@ describe('induction motor — the dq dynamic model in the time-domain solve', ()
       const p = inductionMotorParamsFromInstance(inst as never)
       expect(p?.kneeFluxVs).toBeCloseTo(1.2 / Math.sqrt(3), 10)
       expect(p?.saturatedMagnetizingReactance).toBeCloseTo(24 / 3, 10)
+    })
+  })
+
+  describe('deep-bar / skin effect — the double-cage rotor', () => {
+    // The design-verification prototype machine (a 230 V-per-phase 50 Hz 4-pole class): outer
+    // cage high-R low-X, inner cage low-R high-X. Marched AND analyzed at the same 230 V.
+    const dblParams = (loadTorque: number, viscousFriction = 0.005): InductionMotorParams => ({
+      supplyVoltage: 230,
+      frequency: 50,
+      poles: 4,
+      statorResistance: 0.5,
+      statorReactance: 1.5,
+      rotorResistance: 1.2,
+      rotorReactance: 1.0,
+      magnetizingReactance: 40,
+      rotorResistance2: 0.35,
+      rotorReactance2: 2.5,
+      loadTorque,
+      viscousFriction,
+    })
+    const DBL_OVERRIDES = {
+      stator_resistance: scalar(0.5, 'ohm'),
+      stator_reactance: scalar(1.5, 'ohm'),
+      rotor_resistance: scalar(1.2, 'ohm'),
+      rotor_reactance: scalar(1, 'ohm'),
+      magnetizing_reactance: scalar(40, 'ohm'),
+      rotor_resistance_2: scalar(0.35, 'ohm'),
+      rotor_reactance_2: scalar(2.5, 'ohm'),
+      viscous_friction: scalar(0.005, 'N*m*s/rad'),
+    }
+
+    /** The RUNNING-EQUIVALENT single cage: the one matching the double-cage machine's rotor
+     *  impedance exactly AT its operating slip (R2eq = s·Re(Z_rot(s)), X2eq = Im(Z_rot(s))) —
+     *  identical running point by construction, so any starting-torque difference is purely
+     *  the deep-bar physics. (X2∥X2b would be ~5× too little leakage — an unfair strawman.) */
+    const runningEquivalent = (p: InductionMotorParams, slip: number): InductionMotorParams => {
+      const a = { re: p.rotorResistance / slip, im: p.rotorReactance }
+      const b = { re: (p.rotorResistance2 ?? 0) / slip, im: p.rotorReactance2 ?? 0 }
+      const den = { re: a.re + b.re, im: a.im + b.im }
+      const num = { re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re }
+      const d2 = den.re * den.re + den.im * den.im
+      const zRot = {
+        re: (num.re * den.re + num.im * den.im) / d2,
+        im: (num.im * den.re - num.re * den.im) / d2,
+      }
+      const single = { ...p, rotorResistance: slip * zRot.re, rotorReactance: zRot.im }
+      delete (single as Record<string, unknown>).rotorResistance2
+      delete (single as Record<string, unknown>).rotorReactance2
+      return single
+    }
+
+    test('the cited ABB 45 kW machine: the double-cage fit reproduces the catalog starting torque — a single cage cannot', () => {
+      // Monjo, Kojooyan-Jafari, Córcoles & Pedra (IEEE Trans. Energy Conversion 30(2), 2015,
+      // Table II) fitted BOTH models to the same manufacturer-measured curves of one real ABB
+      // 45 kW 400 V 50 Hz 4-pole machine (catalog: T_start/T_N = 2.6, I_start/I_N = 6.0,
+      // T_N = 290.4 N·m, I_N = 86 A). Their circuit is exactly ours: two independent rotor
+      // branches coupled only through Xm. The double-cage fit lands on the catalog starting
+      // torque; the single-cage fit — the best single cage CAN do — misses it ~4×, which is
+      // precisely why deep-bar rotors need two cages to model.
+      const V = 400 / Math.sqrt(3)
+      const dbl: InductionMotorParams = {
+        supplyVoltage: V,
+        frequency: 50,
+        poles: 4,
+        statorResistance: 0.15289,
+        statorReactance: 0.13013,
+        rotorResistance: 0.52409, // outer cage (their branch 2: high R, low X)
+        rotorReactance: 0.13013,
+        magnetizingReactance: 7.7219,
+        rotorResistance2: 0.060444, // inner cage (their branch 1: low R, high X)
+        rotorReactance2: 0.42844,
+        loadTorque: 290.4,
+        viscousFriction: 0,
+      }
+      const single: InductionMotorParams = {
+        supplyVoltage: V,
+        frequency: 50,
+        poles: 4,
+        statorResistance: 0.15289,
+        statorReactance: 0.2432,
+        rotorResistance: 0.0544,
+        rotorReactance: 0.2432,
+        magnetizingReactance: 6.6005,
+        loadTorque: 290.4,
+        viscousFriction: 0,
+      }
+      const tN = 290.4
+      expect(electromagneticTorque(1, dbl) / tN).toBeGreaterThan(2.45) // catalog 2.6; model 2.56
+      expect(electromagneticTorque(1, dbl) / tN).toBeLessThan(2.65)
+      expect(electromagneticTorque(1, single) / tN).toBeLessThan(0.8) // the single cage's ceiling
+      const op = inductionMotorOperatingPoint(dbl)
+      expect(op.stalled).toBe(false)
+      expect(op.startupCurrentRms / 86).toBeGreaterThan(5.2) // catalog 6.0; model 5.6
+      expect(op.startupCurrentRms / 86).toBeLessThan(6.2)
+    })
+
+    test('against the running-equivalent single cage: same running point, >3× the locked-rotor torque', () => {
+      const dbl = dblParams(40)
+      const opDbl = inductionMotorOperatingPoint(dbl)
+      const single = runningEquivalent(dbl, opDbl.slip)
+      const opSingle = inductionMotorOperatingPoint(single)
+      // Identical running point by construction…
+      expect(Math.abs(opSingle.slip - opDbl.slip)).toBeLessThan(1e-5)
+      expect(
+        Math.abs(opSingle.statorCurrentRms - opDbl.statorCurrentRms) / opDbl.statorCurrentRms,
+      ).toBeLessThan(1e-3)
+      // …and the double cage starts more than 3× harder — the deep-bar payoff, isolated.
+      expect(electromagneticTorque(1, dbl)).toBeGreaterThan(3 * electromagneticTorque(1, single))
+    })
+
+    test('the 6-state march settles exactly onto the parallel-two-cage phasor circuit', () => {
+      const p = dblParams(40)
+      const op = inductionMotorOperatingPoint(p)
+      const L = dqInductancesFromParams(p)
+      expect(L).not.toBeNull()
+      if (L === null) throw new Error('unreachable')
+      const T = 1 / 50
+      const h = T / 400
+      const core = createDqMotor(
+        L,
+        { rotorInertia: 0.05, viscousFriction: 0.005, loadTorque: 40 },
+        0,
+        T,
+      )
+      const v = (t: number) => 230 * Math.SQRT2 * Math.cos(2 * Math.PI * 50 * t)
+      dqInitMotor(core, v(0))
+      const steps = Math.round(2 / h)
+      const lastTwoCycles: number[] = []
+      for (let k = 1; k <= steps; k++) {
+        const t = k * h
+        dqStampMotor(core, t, h)
+        const i = dqCommitMotor(core, v(t), h)
+        if (k > steps - 800) lastTwoCycles.push(i)
+      }
+      const wSync = synchronousSpeedRadPerSec(50, 4)
+      const slipMarch = 1 - core.omega / wSync
+      // Absolute slip error, not relative — the trapezoid's absolute error is what is bounded.
+      expect(Math.abs(slipMarch - op.slip)).toBeLessThan(1e-4)
+      const iRms = Math.sqrt(lastTwoCycles.reduce((s, i) => s + i * i, 0) / lastTwoCycles.length)
+      expect(Math.abs(iRms - op.statorCurrentRms) / op.statorCurrentRms).toBeLessThan(0.005)
+    })
+
+    test('a load only the deep-bar rotor can start: the running-equivalent machine never leaves standstill', () => {
+      const dbl = dblParams(40)
+      const opDbl = inductionMotorOperatingPoint(dbl)
+      const single = runningEquivalent(dbl, opDbl.slip)
+      // The equivalent single cage's starting torque sits BELOW the 40 N·m load (≈27 N·m)…
+      expect(electromagneticTorque(1, single)).toBeLessThan(40)
+      const cmpOverrides = {
+        ...DBL_OVERRIDES,
+        rotor_resistance: scalar(single.rotorResistance, 'ohm'),
+        rotor_reactance: scalar(single.rotorReactance, 'ohm'),
+      }
+      delete (cmpOverrides as Record<string, unknown>).rotor_resistance_2
+      delete (cmpOverrides as Record<string, unknown>).rotor_reactance_2
+      const stuck = runTransient(40, 40, 200, {}, 0.05, cmpOverrides)
+      expect(stuck.result.status).toBe('solved')
+      expect(stuck.result.warnings.some((w) => w.includes("'m1' did NOT start"))).toBe(true)
+      // …while the SAME machine with its real double cage runs straight up onto the phasor point.
+      const runs = runTransient(40, 100, 200, {}, 0.05, DBL_OVERRIDES)
+      expect(runs.result.warnings.some((w) => w.includes('did NOT start'))).toBe(false)
+      const settled = cycleStats(runs.world, runs.result)
+      expect(Math.abs(settled.iRms - opDbl.statorCurrentRms) / opDbl.statorCurrentRms).toBeLessThan(
+        0.03,
+      )
+    })
+
+    // The crawl machine (design-verified counterexample): pull-out max ≈95 N·m at s≈0.09, a
+    // pull-up DIP ≈87 N·m at s≈0.25, and T(1)≈130 N·m. A 90 N·m load fits UNDER the start
+    // torque but ABOVE the dip: the machine starts, then hangs at the high-slip stable root.
+    const crawlParams: InductionMotorParams = {
+      supplyVoltage: 230,
+      frequency: 60,
+      poles: 4,
+      statorResistance: 0.5,
+      statorReactance: 1.0,
+      rotorResistance: 2.5,
+      rotorReactance: 0.6,
+      magnetizingReactance: 30,
+      rotorResistance2: 0.35,
+      rotorReactance2: 3.5,
+      loadTorque: 90,
+      viscousFriction: 0,
+    }
+
+    test('CRAWLING: the readings report the hang point AND name the better unreachable point', () => {
+      const op = inductionMotorOperatingPoint(crawlParams)
+      expect(op.stalled).toBe(false)
+      expect(op.slip).toBeGreaterThan(0.34) // the high-slip stable root (≈0.353)
+      expect(op.slip).toBeLessThan(0.37)
+      expect(op.crawlBetterSlip ?? 0).toBeGreaterThan(0.055) // the unreachable run point (≈0.061)
+      expect(op.crawlBetterSlip ?? 0).toBeLessThan(0.07)
+      // A light load passes through the dip — clean start, no crawl report.
+      const light = inductionMotorOperatingPoint({ ...crawlParams, loadTorque: 40 })
+      expect(light.crawlBetterSlip).toBeUndefined()
+      expect(light.slip).toBeLessThan(0.02)
+      // A load beyond everything still stalls at locked rotor.
+      const heavy = inductionMotorOperatingPoint({ ...crawlParams, loadTorque: 200 })
+      expect(heavy.stalled).toBe(true)
+      expect(heavy.slip).toBe(1)
+    })
+
+    test('…and the from-rest march genuinely HANGS at that same high-slip point', () => {
+      const op = inductionMotorOperatingPoint(crawlParams)
+      const L = dqInductancesFromParams(crawlParams)
+      expect(L).not.toBeNull()
+      if (L === null) throw new Error('unreachable')
+      const T = 1 / 60
+      const h = T / 300
+      const core = createDqMotor(
+        L,
+        { rotorInertia: 0.03, viscousFriction: 0, loadTorque: 90 },
+        0,
+        T,
+      )
+      const v = (t: number) => 230 * Math.SQRT2 * Math.cos(2 * Math.PI * 60 * t)
+      dqInitMotor(core, v(0))
+      const steps = Math.round(0.8 / h)
+      for (let k = 1; k <= steps; k++) {
+        const t = k * h
+        dqStampMotor(core, t, h)
+        dqCommitMotor(core, v(t), h)
+      }
+      const slipMarch = 1 - core.omega / synchronousSpeedRadPerSec(60, 4)
+      expect(Math.abs(slipMarch - op.slip)).toBeLessThan(0.02) // hangs at s≈0.35…
+      expect(slipMarch).toBeGreaterThan(0.3) // …nowhere near the better point at s≈0.06
+    })
+
+    test('the transient solve NAMES the crawl', () => {
+      const crawlOverrides = {
+        stator_resistance: scalar(0.5, 'ohm'),
+        stator_reactance: scalar(1, 'ohm'),
+        rotor_resistance: scalar(2.5, 'ohm'),
+        rotor_reactance: scalar(0.6, 'ohm'),
+        magnetizing_reactance: scalar(30, 'ohm'),
+        rotor_resistance_2: scalar(0.35, 'ohm'),
+        rotor_reactance_2: scalar(3.5, 'ohm'),
+        line_frequency: scalar(60, 'hertz'),
+        viscous_friction: scalar(0, 'N*m*s/rad'),
+      }
+      const { result } = runTransient(90, 2, 400, { hz: 60 }, 0.03, crawlOverrides)
+      expect(result.status).toBe('solved')
+      expect(result.warnings.some((w) => w.includes("'m1' CRAWLS"))).toBe(true)
+    })
+
+    test('one cage parameter alone: a named note, and the march IS the single-cage march — sample for sample', () => {
+      // Both one-param directions AND a non-physical zero — each must warn by name and leave
+      // the machine exactly single-cage (a 0 Ω inner branch would be a superconducting cage).
+      const plain = runTransient(20, 3)
+      const partials = [
+        { rotor_resistance_2: scalar(0.6, 'ohm') },
+        { rotor_reactance_2: scalar(2.5, 'ohm') },
+        { rotor_resistance_2: scalar(0, 'ohm'), rotor_reactance_2: scalar(2.5, 'ohm') },
+      ]
+      for (const overrides of partials) {
+        const half = runTransient(20, 3, 1000, {}, INERTIA, overrides)
+        expect(half.result.status).toBe('solved')
+        expect(
+          half.result.warnings.some((w) => w.includes('deep-bar double cage needs BOTH')),
+        ).toBe(true)
+        expect(half.result.series.length).toBe(plain.result.series.length)
+        for (let k = 0; k < plain.result.series.length; k += 250) {
+          const iHalf = half.result.series[k]?.currents?.get('m1/terminal_a') ?? 0
+          const iPlain = plain.result.series[k]?.currents?.get('m1/terminal_a') ?? 0
+          expect(Math.abs(iHalf - iPlain)).toBeLessThan(1e-12)
+        }
+      }
+    })
+
+    test('DC parity holds with the second cage present: both engines see exactly R1', () => {
+      // At DC both rotor circuits carry nothing at steady state — the port is still just the
+      // stator winding, in the march AND the DC stamp.
+      const cage2 = {
+        rotor_resistance_2: scalar(0.6, 'ohm'),
+        rotor_reactance_2: scalar(8, 'ohm'),
+      }
+      const { world, result } = runTransient(20, 50, 40, { dc: 12 }, INERTIA, cage2)
+      expect(result.status).toBe('solved')
+      const iFinal = Math.abs(result.series.at(-1)?.currents?.get('m1/terminal_a') ?? 0)
+      expect(Math.abs(iFinal - 6) / 6).toBeLessThan(0.02) // 12 V / R1 = 6 A
+      const dc = solveDC(world)
+      expect(Math.abs(dc.branches.get('m1') ?? 0)).toBeCloseTo(6, 3)
+    })
+
+    test('saturation composes with the double cage: below the knee it IS the linear double cage', () => {
+      const cage2 = {
+        rotor_resistance_2: scalar(0.6, 'ohm'),
+        rotor_reactance_2: scalar(8, 'ohm'),
+      }
+      const linear = runTransient(20, 4, 1000, {}, INERTIA, cage2)
+      const saturated = runTransient(20, 4, 1000, {}, INERTIA, {
+        ...cage2,
+        magnetizing_knee_flux: scalar(1.1389, 'V*s'), // 1.1 pu — rated drive never crosses it
+        saturated_magnetizing_reactance: scalar(24, 'ohm'),
+      })
+      expect(saturated.result.series.length).toBe(linear.result.series.length)
+      for (let k = 0; k < linear.result.series.length; k += 250) {
+        const iLin = linear.result.series[k]?.currents?.get('m1/terminal_a') ?? 0
+        const iSat = saturated.result.series[k]?.currents?.get('m1/terminal_a') ?? 0
+        expect(Math.abs(iSat - iLin)).toBeLessThan(1e-12)
+      }
+    })
+
+    test('…and ABOVE the knee the double-cage machine genuinely saturates — the chord runs through the 6-state path', () => {
+      // The mutation the below-knee identity cannot see: pin the 6-state path's L_m to the
+      // unsaturated constant and nothing changes below the knee. Overvoltage no-load — the same
+      // overfluxing drive the single-cage saturation test pins — must draw super-linearly MORE
+      // than the linear double-cage machine, proving the lagged chord feeds effectiveL6 for real.
+      const cage2 = {
+        rotor_resistance_2: scalar(0.6, 'ohm'),
+        rotor_reactance_2: scalar(8, 'ohm'),
+      }
+      const lin = runTransient(0, 40, 400, { rms: 299 }, INERTIA, cage2)
+      const sat = runTransient(0, 40, 400, { rms: 299 }, INERTIA, {
+        ...cage2,
+        magnetizing_knee_flux: scalar(1.1389, 'V*s'),
+        saturated_magnetizing_reactance: scalar(24, 'ohm'),
+      })
+      const iLin = cycleStats(lin.world, lin.result).iRms
+      const iSat = cycleStats(sat.world, sat.result).iRms
+      expect(iSat / iLin).toBeGreaterThan(1.12)
+      expect(iSat / iLin).toBeLessThan(1.32)
     })
   })
 })

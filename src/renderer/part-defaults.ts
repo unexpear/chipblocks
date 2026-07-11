@@ -801,6 +801,10 @@ const PROVENANCE: Record<string, Record<string, string>> = {
       'optional saturation knee (PEAK V·s; typically 0.8–1.1× V·√2/ω — Hinkkanen 2010); needs the saturated slope too',
     saturated_magnetizing_reactance:
       'optional saturated slope above the knee (~0.3–0.7× Xm — Hinkkanen 2010); needs the knee too',
+    rotor_resistance_2:
+      'optional INNER (running) cage R — activates the deep-bar double cage (a fitted ABB 45 kW: 0.0604 Ω vs outer 0.524 — Monjo/Pedra 2015)',
+    rotor_reactance_2:
+      'optional INNER cage leakage X — HIGH, chokes it at standstill (the 45 kW fit: 0.428 Ω vs outer 0.130); needs rotor_resistance_2 too',
   },
   induction_motor_three_phase: {
     stator_connection: 'wye (star, neutral = star point) or delta (~3× starting torque + current)',
@@ -820,6 +824,10 @@ const PROVENANCE: Record<string, Record<string, string>> = {
       'optional saturation knee (PEAK V·s per winding; typically 0.8–1.1× V·√2/ω — Hinkkanen 2010)',
     saturated_magnetizing_reactance:
       'optional saturated slope above the knee (~0.3–0.7× Xm per winding — Hinkkanen 2010)',
+    rotor_resistance_2:
+      'optional INNER (running) cage R per winding — activates the deep-bar double cage (Monjo/Pedra 2015)',
+    rotor_reactance_2:
+      'optional INNER cage leakage X per winding — HIGH, chokes it at standstill; needs rotor_resistance_2 too',
   },
   induction_motor_single_phase: {
     supply_voltage: '110 V 60 Hz nameplate (Krause’s ¼-hp example machine)',
