@@ -320,6 +320,15 @@ export function useOscilloscope(deps: {
         inst.definition === 'transformer_center_tapped'
       ) {
         info.set(id, { currentKey: `${id}/primary_a`, label: `${id} · I(primary)` })
+      } else if (inst.definition === 'induction_motor_three_phase') {
+        // The line current into the machine's first WIRED phase (the solver records one per
+        // wired terminal; an open phase has no recorded current, and the neutral carries only
+        // the imbalance — misleading as "the" motor current).
+        const phase = ['phase_a', 'phase_b', 'phase_c'].find((t) =>
+          inst.connects?.some((c) => c.terminal === t),
+        )
+        if (phase === undefined) continue
+        info.set(id, { currentKey: `${id}/${phase}`, label: `${id} · I(${phase})` })
       } else if (
         inst.definition === 'resistor' ||
         inst.definition === 'thermistor' ||
@@ -329,6 +338,8 @@ export function useOscilloscope(deps: {
         inst.definition === 'inductor' ||
         inst.definition === 'electromagnet' ||
         inst.definition === 'dc_motor' ||
+        inst.definition === 'induction_motor' ||
+        inst.definition === 'induction_motor_single_phase' ||
         inst.definition === 'generator'
       ) {
         const c1 = inst.connects?.[0]
