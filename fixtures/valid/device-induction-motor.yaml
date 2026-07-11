@@ -36,8 +36,14 @@
 # energizing staggered, like breaker poles closing in sequence), and the zero-sequence path
 # (a 4-wire-wye convention) is what keeps DC honest: on a battery the machine makes no torque and
 # degenerates to exactly the stator R1 the DC solve uses (the engines agree on DC content).
-# Self-heating and thermal protection are unmodeled; so are magnetic saturation, deep-bar/skin
-# effect, and core loss. A TRUE 3-phase hookup (three phase ports + the star point) ships as its
+# MAGNETIC SATURATION of the magnetizing branch is modeled when the part carries its
+# magnetization curve (magnetizing_knee_flux + saturated_magnetizing_reactance, from a no-load
+# test): the chord L_m follows a two-slope curve on the resultant flux vector — drive it
+# overvoltage and the no-load current rises super-linearly, the real overfluxing signature.
+# Leakage (rotor-slot-bridge) saturation stays unmodeled — that is where real machines get their
+# extra STARTING current — and a shorted cage suppresses transformer-style flux doubling at
+# switch-on. Self-heating, thermal protection, deep-bar/skin effect and core loss are unmodeled.
+# A TRUE 3-phase hookup (three phase ports + the star point) ships as its
 # sibling part, induction_motor_three_phase - use that one for real reversal (swapped leads) and
 # single-phasing; the single-phase double-revolving-field machine remains a refinement.
 #
@@ -115,6 +121,16 @@ parameters:
     units: kilogram*meter^2
     required: false
     description: J, the rotor's moment of inertia. Sets the mechanical spin-up time — how long the locked-rotor inrush lasts as the machine accelerates from rest (the time-domain dq model integrates J*domega/dt = T_e - B*omega - T_load). Without it the rotor is held at the nameplate operating speed (quasi-static) and the solver says so. A ~4 kW 4-pole 112-frame machine is ~0.015 kg*m^2 (motor only, no coupled load).
+  magnetizing_knee_flux:
+    type: quantity
+    units: volt*second
+    required: false
+    description: The magnetization-curve KNEE — the PEAK resultant magnetizing flux linkage (V*s) where the core leaves the linear region. With saturated_magnetizing_reactance it activates magnetic saturation of the magnetizing branch in the time-domain model; without both the branch stays linear. Measured by the IEEE Std 112 no-load test (voltage swept 125% down to 25% of rated). Real industrial machines are typically already saturated AT the rated point (Hinkkanen et al., IEEE Trans. Ind. Applications 46(3), 2010) — knees commonly sit at ~0.8-1.1x the rated peak flux, V_rated*sqrt(2)/omega. PEAK convention, not RMS.
+  saturated_magnetizing_reactance:
+    type: quantity
+    units: ohm
+    required: false
+    description: The INCREMENTAL magnetizing slope above the knee, as a reactance at the nameplate frequency. Measured values run ~0.3-0.7x the unsaturated Xm at rated flux and fall further above it (Hinkkanen et al. 2010, Tables I-II — a 2.2 kW machine measured chord 1.584 pu vs incremental 0.506 pu at the rated point). Must sit below the unsaturated Xm; used only together with magnetizing_knee_flux.
   viscous_friction:
     type: quantity
     units: newton*meter*second/radian

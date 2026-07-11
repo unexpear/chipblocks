@@ -111,6 +111,16 @@ parameters:
     units: kilogram*meter^2
     required: false
     description: J, the rotor's moment of inertia. Sets the mechanical spin-up time - how long the locked-rotor inrush lasts as the machine accelerates from rest. Without it the rotor is held at the nameplate operating speed (quasi-static) and the solver says so. A ~4 kW 4-pole 112-frame machine is ~0.015 kg*m^2 (motor only, no coupled load).
+  magnetizing_knee_flux:
+    type: quantity
+    units: volt*second
+    required: false
+    description: The magnetization-curve KNEE - the PEAK resultant magnetizing flux linkage (V*s, PER WINDING; a delta stator refers it internally by 1/sqrt(3) with the winding) where the core leaves the linear region. With saturated_magnetizing_reactance it activates magnetic saturation of the magnetizing branch in the time-domain model; without both the branch stays linear. Measured by the IEEE Std 112 no-load test. Real machines are typically already saturated AT the rated point (Hinkkanen et al., IEEE Trans. Ind. Applications 46(3), 2010) - knees commonly ~0.8-1.1x the rated peak flux V_rated*sqrt(2)/omega. PEAK convention, not RMS.
+  saturated_magnetizing_reactance:
+    type: quantity
+    units: ohm
+    required: false
+    description: The INCREMENTAL magnetizing slope above the knee, as a per-winding reactance at the nameplate frequency (a delta stator refers it /3 with every winding impedance). Measured values run ~0.3-0.7x the unsaturated Xm at rated flux (Hinkkanen et al. 2010, Tables I-II). Must sit below the unsaturated Xm; used only together with magnetizing_knee_flux.
   viscous_friction:
     type: quantity
     units: newton*meter*second/radian
@@ -163,10 +173,19 @@ notes: |
   REAL delta winding resistances, so the DC picture stays physical. A wired neutral in delta is
   ignored with a warning (a delta has no star point). The delta's internal zero-sequence
   circulating loop carries no current here because the marched field model is
-  fundamental-sinusoidal (third-harmonic circulating currents arrive with magnetic saturation). Fluxes integrate by the trapezoidal rule; the zero axis
+  fundamental-sinusoidal — even with magnetic saturation on, which saturates the RESULTANT flux
+  vector rather than each phase, so no third-harmonic EMFs (their circulating current would need
+  a per-phase saturation model, an unmodeled rung). Fluxes integrate by the trapezoidal rule; the zero axis
   and mechanics stay implicit; the rotor speed is frozen within each circuit step. The load
-  opposes motion and the shaft holds at rest until the developed torque exceeds it.
-  Saturation, deep-bar/skin effect, core loss and self-heating are unmodeled rungs.
+  opposes motion and the shaft holds at rest until the developed torque exceeds it. MAGNETIC
+  SATURATION of the magnetizing branch runs when the part carries its magnetization curve
+  (magnetizing_knee_flux + saturated_magnetizing_reactance): the chord L_m follows a two-slope
+  curve on the RESULTANT flux vector, one step lagged like the frozen rotor speed - exact for
+  balanced sines, the standard main-flux space-vector approximation for unbalanced drives. It
+  does NOT generate per-phase third harmonics (the model saturates the resultant, not each
+  phase), so a delta's circulating current still reads zero; leakage (rotor-slot-bridge)
+  saturation and cross-saturation stay unmodeled too. Deep-bar/skin effect, core loss and
+  self-heating are unmodeled rungs.
   Sources: Tesla's 1888 polyphase patents; the Steinmetz equivalent circuit; Krause, "Analysis
   of Electric Machinery" (stationary-frame qd0); Fitzgerald, "Electric Machinery"; Chapman,
   "Electric Machinery Fundamentals".

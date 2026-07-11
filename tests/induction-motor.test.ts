@@ -14,6 +14,7 @@ import {
   electromagneticTorque,
   type InductionMotorParams,
   inductionMotorOperatingPoint,
+  inductionMotorParamsFromInstance,
   synchronousSpeedRadPerSec,
 } from '../src/induction-motor-model.ts'
 import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
@@ -481,6 +482,120 @@ describe('induction motor — the dq dynamic model in the time-domain solve', ()
     const altStats = cycleStats(world, result, period40)
     const srcStats = cycleStats(viaSource.world, viaSource.result, period40)
     expect(Math.abs(altStats.iRms - srcStats.iRms) / srcStats.iRms).toBeLessThan(0.02)
+  })
+
+  describe('magnetic saturation of the magnetizing branch', () => {
+    // Knee at 1.1 pu of the rated peak flux (V·√2/ω = 1.0354 V·s → 1.1389 V·s) and a saturated
+    // slope of 0.3·Xm = 24 Ω — inside the measured ranges (Hinkkanen et al. 2010: machines sit
+    // near or past the knee at rated; incremental slope ~0.3–0.7× the chord there).
+    const SAT = {
+      magnetizing_knee_flux: scalar(1.1389, 'V*s'),
+      saturated_magnetizing_reactance: scalar(24, 'ohm'),
+    }
+
+    test('below the knee the saturated machine IS the linear machine — sample for sample', () => {
+      // Rated drive never crosses a 1.1 pu knee (peak |λ_m| ≈ 0.96 pu even during the start), and
+      // below the knee the code returns the unsaturated constant directly — identical arithmetic,
+      // so the two runs must agree at every recorded instant, not just in aggregate.
+      const linear = runTransient(20, 6)
+      const saturated = runTransient(20, 6, 1000, {}, INERTIA, SAT)
+      expect(saturated.result.series.length).toBe(linear.result.series.length)
+      for (let k = 0; k < linear.result.series.length; k += 250) {
+        const iLin = linear.result.series[k]?.currents?.get('m1/terminal_a') ?? 0
+        const iSat = saturated.result.series[k]?.currents?.get('m1/terminal_a') ?? 0
+        expect(Math.abs(iSat - iLin)).toBeLessThan(1e-12)
+      }
+    })
+
+    test('overvoltage no-load current rises SUPER-linearly — the real overfluxing signature', () => {
+      // At 1.3 pu voltage the settled magnetizing flux sits past the knee: the linear model's
+      // current scales ×1.3, the saturated machine draws ~1.22× MORE than that (verified against
+      // an exact nonlinear reference during design). Balanced drive keeps the resultant flux
+      // constant, so the saturated current stays sinusoidal — the chord just drops.
+      const lin = runTransient(0, 40, 400, { rms: 299 })
+      const sat = runTransient(0, 40, 400, { rms: 299 }, INERTIA, SAT)
+      const iLin = cycleStats(lin.world, lin.result).iRms
+      const iSat = cycleStats(sat.world, sat.result).iRms
+      expect(iSat / iLin).toBeGreaterThan(1.12)
+      expect(iSat / iLin).toBeLessThan(1.32)
+    })
+
+    test('half a magnetization curve stays linear — warned by name', () => {
+      const { world, result } = runTransient(20, 2, 1000, {}, INERTIA, {
+        magnetizing_knee_flux: scalar(1.1389, 'V*s'),
+      })
+      expect(result.status).toBe('solved')
+      expect(result.warnings.some((w) => w.includes('magnetizing saturation needs BOTH'))).toBe(
+        true,
+      )
+      const linear = runTransient(20, 2)
+      const iLin = cycleStats(linear.world, linear.result).iRms
+      const iHalf = cycleStats(world, result).iRms
+      expect(Math.abs(iHalf - iLin)).toBeLessThan(1e-12)
+    })
+
+    test('a non-physical curve stays linear too — a saturated slope ABOVE Xm is refused', () => {
+      const { world, result } = runTransient(20, 2, 1000, {}, INERTIA, {
+        magnetizing_knee_flux: scalar(1.1389, 'V*s'),
+        saturated_magnetizing_reactance: scalar(120, 'ohm'), // above the 80 Ω Xm — nonsense
+      })
+      expect(result.warnings.some((w) => w.includes('magnetizing saturation needs BOTH'))).toBe(
+        true,
+      )
+      const linear = runTransient(20, 2)
+      expect(
+        Math.abs(cycleStats(world, result).iRms - cycleStats(linear.world, linear.result).iRms),
+      ).toBeLessThan(1e-12)
+    })
+
+    test('a knee BELOW rated flux warns: the machine saturates at its own nameplate drive', () => {
+      // Real machines commonly sit past the knee at rated (Hinkkanen 2010) — honest to model,
+      // but then the READINGS panel's linear analysis reads low, and the solver must say so.
+      const { result } = runTransient(20, 2, 1000, {}, INERTIA, {
+        magnetizing_knee_flux: scalar(0.9318, 'V*s'), // 0.9 pu of V·√2/ω
+        saturated_magnetizing_reactance: scalar(24, 'ohm'),
+      })
+      expect(result.status).toBe('solved')
+      expect(result.warnings.some((w) => w.includes('saturates at its nameplate drive'))).toBe(true)
+      // …and a knee above rated stays quiet.
+      const above = runTransient(20, 2, 1000, {}, INERTIA, SAT)
+      expect(above.result.warnings.some((w) => w.includes('saturates at its nameplate'))).toBe(
+        false,
+      )
+    })
+
+    test('the lagged chord is robust at a coarse step — T/100 lands near the T/400 answer', () => {
+      const fine = runTransient(0, 40, 400, { rms: 299 }, INERTIA, SAT)
+      const coarse = runTransient(0, 40, 100, { rms: 299 }, INERTIA, SAT)
+      expect(coarse.result.status).toBe('solved')
+      const iFine = cycleStats(fine.world, fine.result).iRms
+      const iCoarse = cycleStats(coarse.world, coarse.result).iRms
+      expect(Math.abs(iCoarse - iFine) / iFine).toBeLessThan(0.1)
+    })
+
+    test('a delta stator refers the curve with the winding: knee ÷√3, saturated slope ÷3', () => {
+      const inst = {
+        id: 'm',
+        kind_ref: 'primitive_device',
+        definition: 'induction_motor_three_phase',
+        parameters: {
+          supply_voltage: scalar(230, 'volt'),
+          line_frequency: scalar(50, 'hertz'),
+          pole_count: scalar(4, 'dimensionless'),
+          stator_resistance: scalar(2, 'ohm'),
+          stator_reactance: scalar(4, 'ohm'),
+          rotor_resistance: scalar(2, 'ohm'),
+          rotor_reactance: scalar(4, 'ohm'),
+          magnetizing_reactance: scalar(80, 'ohm'),
+          stator_connection: { value: 'delta' },
+          magnetizing_knee_flux: scalar(1.2, 'V*s'),
+          saturated_magnetizing_reactance: scalar(24, 'ohm'),
+        },
+      }
+      const p = inductionMotorParamsFromInstance(inst as never)
+      expect(p?.kneeFluxVs).toBeCloseTo(1.2 / Math.sqrt(3), 10)
+      expect(p?.saturatedMagnetizingReactance).toBeCloseTo(24 / 3, 10)
+    })
   })
 })
 

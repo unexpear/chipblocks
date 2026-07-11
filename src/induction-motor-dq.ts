@@ -18,7 +18,9 @@
  *
  * At steady state on a balanced sine this reduces EXACTLY to the Steinmetz per-phase circuit
  * Z_in = R₁ + jX₁ + jXm ∥ (R₂/s + jX₂) — the R₂/s term emerges from the −jω_re·λ_r rotor
- * speed-voltage — so the settled waveform agrees with the steady-state readings. Reactances
+ * speed-voltage — so the settled waveform agrees with the steady-state readings (below the
+ * magnetization knee; a machine whose knee sits under its rated flux saturates at nameplate and
+ * reads above the linear readings panel — the solver says so). Reactances
  * are converted to inductances at the nameplate frequency once (L = X/ω_np); inductances are
  * frequency-independent, so the marched machine is honest at ANY drive frequency or waveform.
  *
@@ -44,22 +46,70 @@
  * torque opposes motion and the shaft holds at rest until |T_e| exceeds it (a stiction-style
  * convention: the load alone never drives the rotor through zero).
  *
+ * MAGNETIC SATURATION (optional, both machines): when the part supplies its magnetization
+ * curve (a knee flux + a saturated slope), the MAGNETIZING inductance follows the CHORD of a
+ * two-slope λ–i curve at the magnitude of the resultant magnetizing flux vector, updated one
+ * step lagged like the frozen rotor speed (verified stable: the lag map's contraction factor is
+ * ~0.1 even in deep saturation; the chord — not the incremental slope — is the consistent
+ * choice for a flux-state model, and below the knee the code returns the unsaturated constant
+ * DIRECTLY, so an unsaturated run is bit-identical to the linear model). Leakage paths stay
+ * linear (air-dominated) — the extra STARTING current of real machines from rotor-slot-bridge
+ * (leakage) saturation is deliberately out of scope, and a shorted cage suppresses
+ * transformer-style flux-doubling at energization; the observable physics here is the
+ * super-linear no-load current at overvoltage. Saturation acts on the resultant space vector —
+ * exact for balanced sines (constant vector magnitude), the standard main-flux approximation
+ * for unbalanced drives (|λ_m| then pulsates at twice line frequency); per-tooth locality and
+ * cross-saturation are not modeled. Sources: Hinkkanen et al., "Small-Signal Modeling of Mutual
+ * Saturation in Induction Machines," IEEE Trans. Industry Applications 46(3), 2010 (measured
+ * chord vs incremental L_m at the rated point); IEEE Std 112 (the no-load test the curve comes
+ * from).
+ *
  * Verified against: Krause, "Analysis of Electric Machinery" (stationary-frame qd0 model);
  * Fitzgerald, "Electric Machinery"; the steady-state reduction to the Steinmetz circuit and
  * the DC/zero-torque limits proven symbolically and numerically before implementation.
  */
 
-import type { InductionMotorParams } from './induction-motor-model.ts'
+import { type InductionMotorParams, saturationCurveFromParams } from './induction-motor-model.ts'
 
 export type DqInductances = {
   statorOhms: number // R_s (Ω)
   rotorOhms: number // R_r referred to the stator (Ω)
   statorLeakageH: number // L_ls (H)
-  statorH: number // L_s = L_ls + L_m (H)
-  rotorH: number // L_r = L_lr + L_m (H)
-  magnetizingH: number // L_m (H)
-  fluxDet: number // D = L_s·L_r − L_m² (H²)
+  rotorLeakageH: number // L_lr (H)
+  statorH: number // L_s = L_ls + L_m (H), at the UNSATURATED L_m
+  rotorH: number // L_r = L_lr + L_m (H), at the UNSATURATED L_m
+  magnetizingH: number // L_m unsaturated (H) — the catalog Xm
+  fluxDet: number // D = L_s·L_r − L_m² (H²), at the unsaturated L_m
   polePairs: number // P/2
+  /** The two-slope magnetization curve, when the part supplies it: linear at magnetizingH up to
+   *  the knee (PEAK resultant magnetizing flux linkage, V·s), incremental slope magnetizingSatH
+   *  above it. Absent ⇒ the magnetizing branch stays linear. */
+  saturation?: { kneeFluxVs: number; magnetizingSatH: number }
+}
+
+/** The effective inductance set at a (possibly saturated) chord magnetizing inductance. */
+function effectiveL(
+  L: DqInductances,
+  lmEff: number,
+): { Ls: number; Lr: number; Lm: number; D: number } {
+  const Ls = L.statorLeakageH + lmEff
+  const Lr = L.rotorLeakageH + lmEff
+  return { Ls, Lr, Lm: lmEff, D: Ls * Lr - lmEff * lmEff }
+}
+
+/**
+ * The CHORD magnetizing inductance at a given resultant magnetizing-flux magnitude — the
+ * consistent choice for a flux-state model (i = Γ·λ at the same instant reproduces the exact
+ * magnetization-curve point; the incremental slope belongs only in small-signal Jacobians and
+ * would be grossly wrong here). Below the knee this returns the unsaturated constant DIRECTLY —
+ * not λ/(λ/L_m) — so an unsaturated run is bit-identical to the linear model.
+ */
+function saturatedLmEff(L: DqInductances, lamMagnitude: number): number {
+  const sat = L.saturation
+  if (sat === undefined || lamMagnitude <= sat.kneeFluxVs) return L.magnetizingH
+  const iMag =
+    sat.kneeFluxVs / L.magnetizingH + (lamMagnitude - sat.kneeFluxVs) / sat.magnetizingSatH
+  return lamMagnitude / iMag
 }
 
 export type DqMechanics = {
@@ -92,6 +142,7 @@ export type DqMotorCore = {
   i0: number
   omega: number // mechanical rad/s — the spin-up state
   torque: number // last committed T_e (N·m)
+  lmEffH: number // the chord magnetizing inductance for the NEXT step (saturation state)
   energized: boolean // the port has seen real voltage (gates the did-not-start warning)
   history: { t: number; v: number }[] // committed port-voltage samples (the phase delay line)
   uPrev: [number, number] // (v_α, v_β) at the last committed instant (trapezoid's left edge)
@@ -110,15 +161,22 @@ export function dqInductancesFromParams(p: InductionMotorParams): DqInductances 
   const rotorH = rotorLeakageH + magnetizingH
   const fluxDet = statorH * rotorH - magnetizingH * magnetizingH
   if (!(fluxDet > 0)) return null
+  const curve = saturationCurveFromParams(p)
+  const saturation =
+    curve !== null
+      ? { kneeFluxVs: curve.kneeFluxVs, magnetizingSatH: curve.saturatedXm / omegaNameplate }
+      : undefined
   return {
     statorOhms: p.statorResistance,
     rotorOhms: p.rotorResistance,
     statorLeakageH,
+    rotorLeakageH,
     statorH,
     rotorH,
     magnetizingH,
     fluxDet,
     polePairs: p.poles / 2,
+    ...(saturation !== undefined ? { saturation } : {}),
   }
 }
 
@@ -137,6 +195,7 @@ export function createDqMotor(
     i0: 0,
     omega: mechanics === null ? lockedOmega : 0,
     torque: 0,
+    lmEffH: inductances.magnetizingH,
     energized: false,
     history: [],
     uPrev: [0, 0],
@@ -217,9 +276,11 @@ function solve4Two(M: number[][], rhs1: Vec4, rhs2: Vec4): { x1: Vec4; x2: Vec4 
   return { x1: (x1 ?? [0, 0, 0, 0]) as Vec4, x2: (x2 ?? [0, 0, 0, 0]) as Vec4 }
 }
 
-/** The state matrix A of dλ/dt = A·λ + u at a frozen electrical rotor speed. */
-function stateMatrix(L: DqInductances, omegaElectrical: number): number[][] {
-  const { statorOhms: Rs, rotorOhms: Rr, statorH: Ls, rotorH: Lr, magnetizingH: Lm, fluxDet: D } = L
+/** The state matrix A of dλ/dt = A·λ + u at a frozen electrical rotor speed, evaluated at the
+ *  step's (possibly saturated, one step lagged — like the frozen speed) chord L_m. */
+function stateMatrix(L: DqInductances, lmEff: number, omegaElectrical: number): number[][] {
+  const { statorOhms: Rs, rotorOhms: Rr } = L
+  const { Ls, Lr, Lm, D } = effectiveL(L, lmEff)
   return [
     [(-Rs * Lr) / D, 0, (Rs * Lm) / D, 0],
     [0, (-Rs * Lr) / D, 0, (Rs * Lm) / D],
@@ -236,13 +297,14 @@ function stateMatrix(L: DqInductances, omegaElectrical: number): number[][] {
  */
 export function dqStampMotor(core: DqMotorCore, targetTime: number, h: number): DqStamp {
   const L = core.inductances
+  const eff = effectiveL(L, core.lmEffH)
   const omegaElectrical = L.polePairs * core.omega
   const vB = delayedPortVoltage(core.history, targetTime - core.period / 3)
   const vC = delayedPortVoltage(core.history, targetTime - (2 * core.period) / 3)
   const uKnown: [number, number] = [-(vB + vC) / 3, (vB - vC) / Math.sqrt(3)]
   const v0Known = (vB + vC) / 3
 
-  const A = stateMatrix(L, omegaElectrical)
+  const A = stateMatrix(L, core.lmEffH, omegaElectrical)
   const half = h / 2
   const lhs = A.map((row, r) => row.map((v, c) => (r === c ? 1 : 0) - half * v))
   // rhs1 = (I + (h/2)A)·λ + (h/2)·(u_prev + u_known); v_a's share of u_α enters via rhs2.
@@ -257,8 +319,8 @@ export function dqStampMotor(core: DqMotorCore, targetTime: number, h: number): 
   const rhs2: Vec4 = [h / 3, 0, 0, 0] // (h/2)·(2/3) — v_a's Clarke share of v_α
   const { x1: fluxKnown, x2: fluxPerVolt } = solve4Two(lhs, rhs1, rhs2)
 
-  const iAlphaKnown = (L.rotorH * fluxKnown[0] - L.magnetizingH * fluxKnown[2]) / L.fluxDet
-  const iAlphaPerVolt = (L.rotorH * fluxPerVolt[0] - L.magnetizingH * fluxPerVolt[2]) / L.fluxDet
+  const iAlphaKnown = (eff.Lr * fluxKnown[0] - eff.Lm * fluxKnown[2]) / eff.D
+  const iAlphaPerVolt = (eff.Lr * fluxPerVolt[0] - eff.Lm * fluxPerVolt[2]) / eff.D
 
   // Zero axis, backward-Euler (robust across the staggered-start voltage steps):
   // i₀' = (L_ls·i₀ + h·v₀')/(L_ls + h·R_s), v₀' = v₀_known + v_a/3.
@@ -300,16 +362,23 @@ export function dqCommitMotor(core: DqMotorCore, portVolts: number, h: number): 
   const stamp = core.stamp
   if (stamp === null) return 0
   const L = core.inductances
+  const eff = effectiveL(L, core.lmEffH) // the SAME chord the stamp marched with
   const flux: Vec4 = [0, 0, 0, 0]
   for (let r = 0; r < 4; r++)
     flux[r] = (stamp.fluxKnown[r] ?? 0) + (stamp.fluxPerVolt[r] ?? 0) * portVolts
-  const iAlpha = (L.rotorH * flux[0] - L.magnetizingH * flux[2]) / L.fluxDet
-  const iBeta = (L.rotorH * flux[1] - L.magnetizingH * flux[3]) / L.fluxDet
+  const iAlpha = (eff.Lr * flux[0] - eff.Lm * flux[2]) / eff.D
+  const iBeta = (eff.Lr * flux[1] - eff.Lm * flux[3]) / eff.D
   core.flux = flux
   core.i0 = stamp.i0Known + stamp.i0PerVolt * portVolts
   core.torque = 1.5 * L.polePairs * (flux[0] * iBeta - flux[1] * iAlpha)
   const mech = core.mechanics
   core.omega = mech === null ? core.lockedOmega : speedStep(core.omega, core.torque, mech, h)
+  // The saturation state for the NEXT step: the chord L_m at the committed resultant
+  // magnetizing flux λ_m = λ_s − L_ls·i_s (lagged one step, like the frozen rotor speed).
+  core.lmEffH = saturatedLmEff(
+    L,
+    Math.hypot(flux[0] - L.statorLeakageH * iAlpha, flux[1] - L.statorLeakageH * iBeta),
+  )
   // Arm the did-not-start check on any real drive: 1 mV sits orders of magnitude above solver
   // leakage around an undriven port yet below any voltage that could be meant as a drive.
   if (Math.abs(portVolts) > 1e-3) core.energized = true
@@ -391,6 +460,7 @@ export type Dq3MotorCore = {
   i0: number
   omega: number
   torque: number
+  lmEffH: number // the chord magnetizing inductance for the NEXT step (saturation state)
   energized: boolean
   uPrev: [number, number] // committed (v_α, v_β) — the trapezoid's left edge
   stamp: Dq3Stamp | null
@@ -413,6 +483,7 @@ export function createDqMotor3(
     i0: 0,
     omega: mechanics === null ? lockedOmega : 0,
     torque: 0,
+    lmEffH: inductances.magnetizingH,
     energized: false,
     uPrev: [0, 0],
     stamp: null,
@@ -455,7 +526,8 @@ function openPortVoltages(
  */
 export function dq3StampMotor(core: Dq3MotorCore, h: number): Dq3Stamp {
   const L = core.inductances
-  const A = stateMatrix(L, L.polePairs * core.omega)
+  const eff = effectiveL(L, core.lmEffH)
+  const A = stateMatrix(L, core.lmEffH, L.polePairs * core.omega)
   const half = h / 2
   const lhs = A.map((row, r) => row.map((v, c) => (r === c ? 1 : 0) - half * v))
   const rhsHist: Vec4 = [0, 0, 0, 0]
@@ -473,7 +545,7 @@ export function dq3StampMotor(core: Dq3MotorCore, h: number): Dq3Stamp {
   ]) as [Vec4, Vec4, Vec4]
 
   const iOf = (lam: Vec4, r0: number, r2: number) =>
-    (L.rotorH * (lam[r0] ?? 0) - L.magnetizingH * (lam[r2] ?? 0)) / L.fluxDet
+    (eff.Lr * (lam[r0] ?? 0) - eff.Lm * (lam[r2] ?? 0)) / eff.D
   const iAlphaHist = iOf(fluxKnown, 0, 2)
   const iBetaHist = iOf(fluxKnown, 1, 3)
   const K: number[][] = [
@@ -548,6 +620,7 @@ export function dq3CommitMotor(core: Dq3MotorCore, wiredVolts: number[], h: numb
   const stamp = core.stamp
   if (stamp === null) return wiredVolts.map(() => 0)
   const L = core.inductances
+  const eff = effectiveL(L, core.lmEffH) // the SAME chord the stamp marched with
   const vFull = openPortVoltages(stamp, core.wired, wiredVolts)
   const vAlpha = T_IN_ALPHA.reduce((s, t, p) => s + t * (vFull[p] ?? 0), 0)
   const vBeta = T_IN_BETA.reduce((s, t, p) => s + t * (vFull[p] ?? 0), 0)
@@ -558,13 +631,18 @@ export function dq3CommitMotor(core: Dq3MotorCore, wiredVolts: number[], h: numb
       (stamp.fluxKnown[r] ?? 0) +
       (stamp.sensAlpha[r] ?? 0) * vAlpha +
       (stamp.sensBeta[r] ?? 0) * vBeta
-  const iAlpha = (L.rotorH * flux[0] - L.magnetizingH * flux[2]) / L.fluxDet
-  const iBeta = (L.rotorH * flux[1] - L.magnetizingH * flux[3]) / L.fluxDet
+  const iAlpha = (eff.Lr * flux[0] - eff.Lm * flux[2]) / eff.D
+  const iBeta = (eff.Lr * flux[1] - eff.Lm * flux[3]) / eff.D
   core.flux = flux
   core.i0 = core.wired[3] ? stamp.i0Known + stamp.i0PerV0 * v0 : 0
   core.torque = 1.5 * L.polePairs * (flux[0] * iBeta - flux[1] * iAlpha)
   const mech = core.mechanics
   core.omega = mech === null ? core.lockedOmega : speedStep(core.omega, core.torque, mech, h)
+  // The saturation state for the NEXT step (lagged one step, like the frozen rotor speed).
+  core.lmEffH = saturatedLmEff(
+    L,
+    Math.hypot(flux[0] - L.statorLeakageH * iAlpha, flux[1] - L.statorLeakageH * iBeta),
+  )
   if (Math.max(Math.abs(vAlpha), Math.abs(vBeta), Math.abs(v0)) > 1e-3) core.energized = true
   core.uPrev = [vAlpha, vBeta]
   const wiredIdx: number[] = []

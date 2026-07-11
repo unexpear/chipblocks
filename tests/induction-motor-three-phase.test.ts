@@ -158,6 +158,32 @@ describe('three-phase induction motor — the real alternator drives the real mo
     expect(Math.abs(iA - op.statorCurrentRms) / op.statorCurrentRms).toBeLessThan(0.03)
   })
 
+  test('magnetic saturation runs through the three-port path too — a below-rated knee draws more', () => {
+    // Knee at 0.9 pu of the rated peak flux with a 0.3·Xm saturated slope: at the alternator's
+    // rated drive the resultant flux (~0.95 pu) sits past the knee, the chord drops, and the
+    // no-load current rises above the linear machine's. Pins the dq3 saturation path end to end.
+    const SAT3 = {
+      magnetizing_knee_flux: scalar(0.9318, 'V*s'),
+      saturated_magnetizing_reactance: scalar(24, 'ohm'),
+    }
+    const run = (overrides: Record<string, unknown>) => {
+      const result = solveTransient(alternatorRig(0, INERTIA, overrides), {
+        timeStep: PERIOD / 400,
+        duration: 40 * PERIOD,
+      })
+      const tEnd = result.series.at(-1)?.time ?? 0
+      return { result, iRms: rmsOf(result, 'm1/phase_a', tEnd - 2 * PERIOD, tEnd) }
+    }
+    const linear = run({})
+    const saturated = run(SAT3)
+    expect(saturated.result.status).toBe('solved')
+    expect(
+      saturated.result.warnings.some((w) => w.includes('saturates at its nameplate drive')),
+    ).toBe(true)
+    expect(saturated.iRms).toBeGreaterThan(1.05 * linear.iRms)
+    expect(saturated.iRms).toBeLessThan(2 * linear.iRms)
+  })
+
   test('a load beyond breakdown torque stalls it for real — sustained locked-rotor current', () => {
     const stalledOp = inductionMotorOperatingPoint(imParams(200))
     expect(stalledOp.stalled).toBe(true)

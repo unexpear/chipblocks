@@ -34,10 +34,13 @@
  * leaves as mechanical output at rated load — heat is P_in − P_mech, never the whole terminal
  * ledger). A balanced THREE-phase machine is assumed: the two-terminal canvas port carries ONE
  * phase, and the dynamic model synthesizes the two unseen phases as the port waveform delayed by
- * thirds of the drive period. Magnetic saturation, deep-bar/skin effect, and core loss are
- * unmodeled refinements. Sources: Tesla's 1888 polyphase patents; Steinmetz equivalent circuit;
- * Krause, "Analysis of Electric Machinery"; Fitzgerald, "Electric Machinery"; Chapman, "Electric
- * Machinery Fundamentals".
+ * thirds of the drive period. Magnetic saturation of the magnetizing branch runs in the
+ * time-domain model when the part carries its magnetization curve (magnetizing_knee_flux +
+ * saturated_magnetizing_reactance — see induction-motor-dq.ts); THIS module's steady analysis
+ * stays linear at the catalog Xm (the rated-point chord), consistent for knees at or above rated
+ * flux. Deep-bar/skin effect and core loss are unmodeled refinements. Sources: Tesla's 1888
+ * polyphase patents; Steinmetz equivalent circuit; Krause, "Analysis of Electric Machinery";
+ * Fitzgerald, "Electric Machinery"; Chapman, "Electric Machinery Fundamentals".
  */
 
 import type { Instance } from './cross-fk-validator.ts'
@@ -64,6 +67,13 @@ export type InductionMotorParams = {
   loadTorque: number
   /** Viscous friction / windage B (N·m·s/rad). */
   viscousFriction: number
+  /** Magnetizing saturation knee — the PEAK resultant magnetizing flux linkage (V·s) where the
+   *  core leaves the linear region. Optional; with saturatedMagnetizingReactance it activates
+   *  the two-slope magnetization curve in the time-domain model. */
+  kneeFluxVs?: number
+  /** The incremental magnetizing slope ABOVE the knee, as a reactance at the nameplate
+   *  frequency (Ω). Optional — see kneeFluxVs. */
+  saturatedMagnetizingReactance?: number
 }
 
 export type InductionMotorOperatingPoint = {
@@ -272,6 +282,12 @@ export function inductionMotorParamsFromInstance(inst: Instance): InductionMotor
     return undefined
   }
   const refer = statorIsDelta(inst) ? 1 / 3 : 1
+  // The saturation curve refers with the winding: inductance slopes like every impedance (÷3 in
+  // delta), but the knee is a FLUX LINKAGE — the equivalent-wye winding sees the delta winding's
+  // voltage ÷√3, and λ = ∫v·dt, so the knee refers ÷√3 (i_knee then refers ×√3, keeping
+  // L = λ/i consistent with the impedance referral).
+  const kneeFluxVs = readScalarParam(inst, 'magnetizing_knee_flux')
+  const saturatedXm = readScalarParam(inst, 'saturated_magnetizing_reactance')
   return {
     supplyVoltage,
     frequency,
@@ -283,5 +299,49 @@ export function inductionMotorParamsFromInstance(inst: Instance): InductionMotor
     magnetizingReactance: magnetizingReactance * refer,
     loadTorque: readScalarParam(inst, 'load_torque') ?? 0,
     viscousFriction: readScalarParam(inst, 'viscous_friction') ?? 0,
+    ...(kneeFluxVs !== undefined ? { kneeFluxVs: kneeFluxVs * Math.sqrt(refer) } : {}),
+    ...(saturatedXm !== undefined ? { saturatedMagnetizingReactance: saturatedXm * refer } : {}),
   }
+}
+
+/** The validated magnetization curve, or null — the ONE activation predicate every consumer
+ *  (the dq inductance builder and the warning below) shares: both parameters present, the knee
+ *  positive, the saturated slope positive and strictly below the unsaturated Xm (saturation
+ *  only ever LOWERS the magnetizing inductance). */
+export function saturationCurveFromParams(
+  p: InductionMotorParams,
+): { kneeFluxVs: number; saturatedXm: number } | null {
+  const knee = p.kneeFluxVs
+  const satX = p.saturatedMagnetizingReactance
+  if (knee === undefined || satX === undefined) return null
+  if (!(knee > 0) || !(satX > 0) || !(satX < p.magnetizingReactance)) return null
+  return { kneeFluxVs: knee, saturatedXm: satX }
+}
+
+/** A note when the saturation parameters cannot activate — exactly one given, or non-physical
+ *  values. Null when the pair is absent (the linear model, no note needed) or valid. */
+export function saturationParamsNote(id: string, p: InductionMotorParams): string | null {
+  if (p.kneeFluxVs === undefined && p.saturatedMagnetizingReactance === undefined) return null
+  if (saturationCurveFromParams(p) !== null) return null
+  return (
+    `Induction motor '${id}': magnetizing saturation needs BOTH magnetizing_knee_flux (> 0) and ` +
+    'saturated_magnetizing_reactance (> 0, below the unsaturated Xm) — the magnetizing branch ' +
+    'stays linear'
+  )
+}
+
+/** A note when the machine saturates at its own NAMEPLATE drive (the knee sits below the rated
+ *  peak flux V·√2/ω): real machines commonly do (Hinkkanen et al. 2010), but the READINGS panel
+ *  is the linear analysis at the catalog Xm — the marched current will read above it. */
+export function saturatedAtNameplateNote(id: string, p: InductionMotorParams): string | null {
+  const curve = saturationCurveFromParams(p)
+  if (curve === null) return null
+  const ratedPeakFlux = (p.supplyVoltage * Math.SQRT2) / (2 * Math.PI * p.frequency)
+  if (curve.kneeFluxVs >= ratedPeakFlux) return null
+  return (
+    `Induction motor '${id}': its magnetization knee (${curve.kneeFluxVs.toPrecision(3)} V·s) ` +
+    `sits below the rated peak flux (${ratedPeakFlux.toPrecision(3)} V·s) — the machine ` +
+    'saturates at its nameplate drive, so the time-domain current will read above the READINGS ' +
+    "panel's linear analysis (which uses the catalog Xm)"
+  )
 }

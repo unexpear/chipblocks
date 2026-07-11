@@ -770,6 +770,10 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     load_torque: 'shaft load (~20 N·m) for a ~4 kW class machine near rated slip',
     viscous_friction: 'windage + bearing loss',
     rotor_inertia: 'J ~0.0152 kg·m² (ABB M2BAX 112MLA 4, 4 kW 4-pole) — sets the spin-up time',
+    magnetizing_knee_flux:
+      'optional saturation knee (PEAK V·s; typically 0.8–1.1× V·√2/ω — Hinkkanen 2010); needs the saturated slope too',
+    saturated_magnetizing_reactance:
+      'optional saturated slope above the knee (~0.3–0.7× Xm — Hinkkanen 2010); needs the knee too',
   },
   induction_motor_three_phase: {
     stator_connection: 'wye (star, neutral = star point) or delta (~3× starting torque + current)',
@@ -785,6 +789,10 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     load_torque: 'shaft load (~20 N·m); above the STARTING torque it never leaves standstill',
     viscous_friction: 'windage + bearing loss',
     rotor_inertia: 'J ~0.0152 kg·m² (ABB M2BAX 112MLA 4, 4 kW 4-pole) — sets the spin-up time',
+    magnetizing_knee_flux:
+      'optional saturation knee (PEAK V·s per winding; typically 0.8–1.1× V·√2/ω — Hinkkanen 2010)',
+    saturated_magnetizing_reactance:
+      'optional saturated slope above the knee (~0.3–0.7× Xm per winding — Hinkkanen 2010)',
   },
   crt: {
     beam_current: 'CRT beam current ~0.1-1 mA (oscilloscope / TV electron gun)',

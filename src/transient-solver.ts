@@ -129,6 +129,8 @@ import {
 import {
   inductionMotorOperatingPoint,
   inductionMotorParamsFromInstance,
+  saturatedAtNameplateNote,
+  saturationParamsNote,
   statorIsDelta,
   synchronousSpeedRadPerSec,
 } from './induction-motor-model.ts'
@@ -1227,6 +1229,9 @@ function resolveInductionMotorDq(
   const inductances = dqInductancesFromParams(p)
   if (inductances === null) return null // both leakages zero — the flux model is singular
   const notes: string[] = []
+  for (const note of [saturationParamsNote(inst.id, p), saturatedAtNameplateNote(inst.id, p)]) {
+    if (note !== null) notes.push(note)
+  }
   const op = inductionMotorOperatingPoint(p)
   const acDrives = connectedAcDrives(world, [c1.net, c2.net])
 
@@ -1326,6 +1331,9 @@ function resolveInductionMotor3(
   const netOf = (terminal: string) => inst.connects?.find((c) => c.terminal === terminal)?.net
   const wired = DQ3_PORTS.map((t) => netOf(t) !== undefined) as [boolean, boolean, boolean, boolean]
   const notes: string[] = []
+  for (const note of [saturationParamsNote(inst.id, p), saturatedAtNameplateNote(inst.id, p)]) {
+    if (note !== null) notes.push(note)
+  }
   // A delta stator has no star point — the machine (referred to its exact equivalent wye by the
   // params reader) marches with a floating star, and a wire on the neutral terminal does nothing.
   if (statorIsDelta(inst) && wired[3]) {
