@@ -10,6 +10,10 @@ import {
   inductionMotorOperatingPoint,
   inductionMotorParamsFromInstance,
 } from '../induction-motor-model.ts'
+import {
+  singlePhaseMotorParamsFromInstance,
+  singlePhaseOperatingPoint,
+} from '../induction-motor-single-phase.ts'
 import { readEnumParam, readScalarParam } from '../instance-params.ts'
 import { laserOpticalPowerW } from '../laser-model.ts'
 import { arcLuminousFluxLumens } from '../light.ts'
@@ -254,6 +258,24 @@ export function partReadings(
       if (imParams !== undefined) {
         const op = inductionMotorOperatingPoint(imParams)
         reading.current = op.statorCurrentRms
+        reading.speedRpm = op.rotorRpm
+        reading.torqueNm = op.torque
+        reading.mechanicalPowerW = op.mechanicalPowerW
+        reading.efficiencyPercent = op.efficiency * 100
+        reading.slipPercent = op.slip * 100
+        reading.startupCurrentA = op.startupCurrentRms
+        reading.powerFactor = op.powerFactor
+      }
+    }
+
+    // Single-phase induction motor: the double-revolving-field steady analysis of the RUNNING
+    // machine (main winding, start switch open) — same in-solved-circuit gate as its siblings.
+    if (inst.definition === 'induction_motor_single_phase') {
+      const inSolvedCircuit = (inst.connects ?? []).some((c) => solution.nodes.has(c.net))
+      const spParams = inSolvedCircuit ? singlePhaseMotorParamsFromInstance(inst) : undefined
+      if (spParams !== undefined) {
+        const op = singlePhaseOperatingPoint(spParams)
+        reading.current = op.currentRms
         reading.speedRpm = op.rotorRpm
         reading.torqueNm = op.torque
         reading.mechanicalPowerW = op.mechanicalPowerW

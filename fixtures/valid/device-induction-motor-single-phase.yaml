@@ -1,0 +1,179 @@
+# Valid fixture: SINGLE-PHASE induction motor - the fan, fridge-compressor and washing-machine
+# machine, the most numerous motor in any home. A single winding on single-phase AC makes a
+# PULSATING field, which is exactly two counter-rotating half-strength fields - and at standstill
+# they cancel: ZERO starting torque, the single-phase curse. Real machines carry an AUXILIARY
+# start winding a quarter-turn around the stator whose current is pushed out of step with the
+# main's (by its own thin high-resistance wire in a split-phase machine, or by a series START
+# CAPACITOR in a capacitor-start one): two out-of-step currents in space quadrature make a
+# genuinely ROTATING field that starts the rotor. A CENTRIFUGAL SWITCH then drops the start
+# winding out at ~75% of synchronous speed, and the machine runs on the main winding alone -
+# the rotor, already turning, strengthens the field component rotating WITH it (slip s) and
+# weakens the one against it (slip 2 - s): the double-revolving-field running condition.
+#
+# All of that is REAL here: leave the machine's start winding out of action (switch_open_speed 0)
+# and it genuinely cannot start - the solver names it; with the aux + phase split it spins up,
+# the switch clicks out at speed, and the current drops to the main winding's running draw. The
+# torque genuinely pulsates at TWICE the line frequency (single-phase power does too) - the
+# scope shows a real 2f ripple on the current that a balanced three-phase machine does not have.
+#
+# Honest scope: the READINGS are the double-revolving-field steady analysis of the RUNNING
+# machine (main winding only, the standard method); the marched slip on a light rotor reads
+# slightly above the phasor value because the REAL 2f torque ripple wobbles the speed - the
+# scope shows the truth, the panel shows the constant-speed analysis (documented, not smoothed).
+# The reported locked-rotor current is the MAIN winding's; at start the aux branch adds to the
+# real draw (the transient shows the whole of it). Reversal (swapping the aux leads) is a
+# further rung, as are magnetizing saturation on this machine, deep-bar effect and core loss.
+# The shipped defaults are Krause's classic 1/4-hp 110 V 60 Hz example machine.
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: induction_motor_single_phase
+origin: builtin
+layer: primitive_device
+name: "AC induction motor (single-phase)"
+description: "A single-phase induction motor with its real starting mechanism - a main winding plus an auxiliary start winding in space quadrature (split-phase by default; give it a start capacitor for capacitor-start), and a centrifugal switch that drops the start winding out at speed. A single winding alone makes a pulsating field with ZERO starting torque - the aux winding's out-of-step current is what makes the field rotate and the rotor start; once turning it runs on the main winding by the double-revolving-field principle. The torque genuinely pulsates at twice the line frequency, the single-phase signature."
+composition:
+  requires:
+    winding:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  winding:
+    type: material_ref
+    satisfies_role: winding
+    required: true
+    default:
+      value: copper
+    description: The conductor both stator windings are wound from. Must conduct; copper is the standard.
+  supply_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: The nameplate RMS supply voltage. The READINGS analyze the running machine at this nameplate; the time-domain march follows whatever actually drives the terminals.
+  line_frequency:
+    type: quantity
+    units: hertz
+    required: true
+    description: The nameplate supply frequency. With the pole count it sets the synchronous speed n_s = 120*f/poles (1800 RPM for a 4-pole 60 Hz machine).
+  pole_count:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: The number of stator poles (even).
+  main_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: The MAIN (run) winding's resistance. At DC the port sees this (in parallel with the aux winding on a split-phase machine; a start capacitor blocks the aux at DC).
+  main_leakage_reactance:
+    type: quantity
+    units: ohm
+    required: true
+    description: The main winding's leakage reactance at the nameplate frequency.
+  rotor_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: R2, the rotor (squirrel-cage) resistance referred to the MAIN winding.
+  rotor_reactance:
+    type: quantity
+    units: ohm
+    required: true
+    description: X2, the rotor leakage reactance referred to the main winding.
+  magnetizing_reactance:
+    type: quantity
+    units: ohm
+    required: true
+    description: Xm, the magnetizing reactance referred to the main winding.
+  aux_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: The AUXILIARY (start) winding's resistance, as wound. A split-phase machine gets its phase split from this being deliberately high (thin wire) relative to its reactance.
+  aux_leakage_reactance:
+    type: quantity
+    units: ohm
+    required: true
+    description: The auxiliary winding's leakage reactance at the nameplate frequency.
+  aux_turns_ratio:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: a = N_aux/N_main, the effective turns ratio between the auxiliary and main windings. The model refers the aux branch to the main by it (R/a^2, L/a^2, C*a^2).
+  start_capacitance:
+    type: quantity
+    units: farad
+    required: false
+    description: A series START capacitor in the auxiliary branch - give one and the machine is capacitor-start (a bigger, better-phased starting torque); leave it out for a plain split-phase machine. Electrolytic start caps for 110 V fractional-hp motors run ~80-300 uF (Alabama Cooperative Extension ANR-2784).
+  switch_open_speed:
+    type: quantity
+    units: dimensionless
+    required: false
+    description: The centrifugal switch opens at this fraction of synchronous speed (default 0.75 - the classic ~75-80% figure; it disconnects the start winding once per run). Set 0 to model a machine whose start winding is out of action - it then honestly cannot start from rest.
+  load_torque:
+    type: quantity
+    units: newton*meter
+    required: false
+    description: The shaft load torque opposing rotation.
+  rotor_inertia:
+    type: quantity
+    units: kilogram*meter^2
+    required: false
+    description: J, the rotor's moment of inertia - sets the spin-up time. Without it the rotor is held at the nameplate running speed (quasi-static) and the solver says so. Krause's 1/4-hp example machine is 2.92e-3 kg*m^2.
+  viscous_friction:
+    type: quantity
+    units: newton*meter*second/radian
+    required: false
+    description: B, the windage + bearing loss.
+behaviors:
+  - electromechanical_coupling
+  - produces_magnetic_field
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  terminal_a:
+    description: One line terminal. Non-polar (AC) - both the main winding and the aux branch (with its cap + switch) sit across the two terminals inside.
+  terminal_b:
+    description: The other line terminal.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  READINGS: the double-revolving-field steady analysis of the RUNNING machine (main winding
+  only, switch open) - forward branch 0.5*[jXm || (R2/s + jX2)] at slip s, backward at 2 - s,
+  I1 = V/(R1 + jX1 + Z_f + Z_b), torque T = (P_gap,f - P_gap,b)/omega_sync, slip from the
+  torque balance on the stable branch (induction-motor-single-phase.ts). TIME DOMAIN: the
+  unsymmetrical two-phase cross-field model - main winding on the alpha axis, auxiliary on the
+  MINUS-beta axis (the mounting that makes a LEADING aux current excite the positive sequence
+  under this solver's rotor conventions), aux referred to the main by the turns ratio a
+  (R/a^2, L/a^2; the start cap as C' = a^2*C with v'_C = v_C/a, marched backward-Euler); the
+  flux-to-current inversion carries TWO determinants (the stator axes differ), and the torque
+  is the MUTUAL form T_e = (P/2)*L_m*(i_ar*i_bs - i_br*i_as) - the stator-flux form would add
+  a spurious leakage-difference term that position-independent leakages cannot make (both
+  corrections caught by the adversarial design verification, along with the exact reduction of
+  the main-only machine to the double-field circuit above). Per circuit step the machine is
+  linear at frozen rotor speed (trapezoid on the fluxes) - an exact one-port Norton; a
+  split-phase machine is the same system with 1/C' = 0. The CENTRIFUGAL SWITCH opens once per
+  run at switch_open_speed * synchronous, decided from the committed speed at a step boundary:
+  the aux stator state drops (its current forced to zero; the interrupted leakage energy is the
+  switch arc's - the ideal-switch convention), the rotor flux linkages carry CONTINUOUSLY (the
+  cage is closed), and the cap voltage freezes. Real switches re-close near half speed;
+  one-way-per-run is the start sequence, documented. At standstill with the aux out of action
+  the torque is IDENTICALLY zero (the alpha and beta axes decouple at zero speed) - the machine
+  honestly cannot start, and the solver names it. At DC the port sees the main winding's
+  resistance (parallel the aux on split-phase; a cap blocks it) in BOTH engines. Defaults:
+  Krause's classic 1/4-hp 110 V 60 Hz split-phase example machine (P.C. Krause, "Analysis of
+  Electric Machinery"; parameter set as reproduced in Bandhekar et al., IJCSN 2(3) 2013 /
+  arXiv:1307.0626 Table 1, whose internal consistency - Lm_aux = a^2*Lm_main, Rr_aux = a^2*
+  Rr_main - was verified; note that reproduction mislabels the rating as 230 V/50 Hz). Sources
+  also - Fitzgerald, "Electric Machinery" (double-revolving-field theory); Veinott,
+  "Fractional- and Subfractional-Horsepower Electric Motors"; MathWorks Simscape single-phase
+  machine documentation (Krause-based, cap-start defaults) as an independent cross-check.

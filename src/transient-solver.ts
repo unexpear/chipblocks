@@ -134,6 +134,16 @@ import {
   statorIsDelta,
   synchronousSpeedRadPerSec,
 } from './induction-motor-model.ts'
+import {
+  createSpMotor,
+  type SpMotorCore,
+  singlePhaseMotorParamsFromInstance,
+  singlePhaseOperatingPoint,
+  spCommitMotor,
+  spInductancesFromParams,
+  spInitMotor,
+  spStampMotor,
+} from './induction-motor-single-phase.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { ldrResistance } from './light.ts'
 import { mathInstance as math } from './mathjs-instance.ts'
@@ -210,6 +220,7 @@ export const TRANSIENT_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'dc_motor',
   'induction_motor',
   'induction_motor_three_phase',
+  'induction_motor_single_phase',
   'generator',
   'alternator',
   'alternator_three_phase',
@@ -1388,6 +1399,84 @@ function resolveInductionMotor3(
   }
 }
 
+/** A single-phase induction motor element — the two-terminal appliance (main + aux windings,
+ *  start cap and centrifugal switch all inside), a one-port Norton companion. */
+type InductionMotorSpElement = {
+  id: string
+  termA: string
+  termB: string
+  netA: string
+  netB: string
+  iA: number | undefined
+  iB: number | undefined
+  hasAcDrive: boolean
+  core: SpMotorCore
+}
+
+function resolveInductionMotorSp(
+  inst: Instance,
+  nodeIndex: Map<string, number>,
+  world: World,
+): {
+  element?: InductionMotorSpElement
+  stalled: boolean
+  notes: string[]
+  acDrives: { hz: number; rms: number }[]
+} | null {
+  const p = singlePhaseMotorParamsFromInstance(inst)
+  if (p === undefined) return null
+  if (inst.connects?.length !== 2) return null
+  const c1 = inst.connects[0]
+  const c2 = inst.connects[1]
+  if (c1 === undefined || c2 === undefined) return null
+  const inductances = spInductancesFromParams(p)
+  if (inductances === null) return null // a zero-leakage axis — the flux model is singular
+  const notes: string[] = []
+  const op = singlePhaseOperatingPoint(p)
+  const acDrives = connectedAcDrives(world, [c1.net, c2.net])
+  const acFrequencies = new Set(acDrives.map((d) => d.hz))
+  const driveHz = acFrequencies.size === 1 ? ([...acFrequencies][0] ?? p.frequency) : p.frequency
+  const rotorInertia = readScalarParam(inst, 'rotor_inertia')
+  const mechanics =
+    rotorInertia !== undefined && rotorInertia > 0
+      ? { rotorInertia, viscousFriction: p.viscousFriction, loadTorque: p.loadTorque }
+      : null
+  if (mechanics === null) {
+    notes.push(
+      `Induction motor '${inst.id}' has no rotor_inertia — the rotor is held at its nameplate ` +
+        'operating speed (quasi-static); set rotor_inertia (kg·m²) for the true spin-up',
+    )
+  }
+  const wSync = synchronousSpeedRadPerSec(p.frequency, p.poles)
+  // The no-inertia fallback holds the rotor at the nameplate RUNNING speed — but only when an
+  // AC drive actually shares the circuit. On a pure DC drive the machine cannot run at all:
+  // hold it at rest (centrifugal switch closed), so its DC port is main ∥ aux exactly like the
+  // DC solver's stamp — the engines must never disagree on DC.
+  const lockedOmega = acDrives.length > 0 ? (1 - op.slip) * wSync : 0
+  return {
+    stalled: op.stalled,
+    notes,
+    acDrives,
+    element: {
+      id: inst.id,
+      termA: c1.terminal,
+      termB: c2.terminal,
+      netA: c1.net,
+      netB: c2.net,
+      iA: nodeIndex.get(c1.net),
+      iB: nodeIndex.get(c2.net),
+      hasAcDrive: acDrives.length > 0,
+      core: createSpMotor(
+        inductances,
+        mechanics,
+        lockedOmega,
+        1 / driveHz,
+        p.switchOpenFraction * wSync,
+      ),
+    },
+  }
+}
+
 function resolveMotor(inst: Instance, nodeIndex: Map<string, number>): MotorElement | null {
   // motorParamsFromInstance is mode-aware: in "design" mode L_a comes through and J is
   // derived from the rotor geometry, the same as k and R_a.
@@ -2006,6 +2095,31 @@ function stampDq3MotorCompanion(
   }
 }
 
+/** Stamp the single-phase motor's one-port Norton — same shape as its dq sibling's. */
+function stampSpMotorCompanion(
+  m: InductionMotorSpElement,
+  dt: number,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  M: any,
+  // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
+  b: any,
+): void {
+  const { conductance, historyCurrent } = spStampMotor(m.core, dt)
+  const { iA, iB } = m
+  if (iA !== undefined) {
+    M.set([iA, iA], (M.get([iA, iA]) ?? 0) + conductance)
+    b.set([iA, 0], (b.get([iA, 0]) ?? 0) - historyCurrent)
+  }
+  if (iB !== undefined) {
+    M.set([iB, iB], (M.get([iB, iB]) ?? 0) + conductance)
+    b.set([iB, 0], (b.get([iB, 0]) ?? 0) + historyCurrent)
+  }
+  if (iA !== undefined && iB !== undefined) {
+    M.set([iA, iB], (M.get([iA, iB]) ?? 0) - conductance)
+    M.set([iB, iA], (M.get([iB, iA]) ?? 0) - conductance)
+  }
+}
+
 /** The readings panel is the steady-state analysis at the NAMEPLATE supply; when no AC drive on
  *  the machine's circuit matches it, say so (the time-domain march follows the actual drive). */
 function nameplateMismatchNote(
@@ -2328,6 +2442,7 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
   const motors: MotorElement[] = []
   const dqMotors: InductionMotorDqElement[] = []
   const dq3Motors: InductionMotor3Element[] = []
+  const spMotors: InductionMotorSpElement[] = []
   const generators: GeneratorElement[] = []
   const lines: TransmissionLineElement[] = []
   const transformers: TransformerElement[] = []
@@ -2457,6 +2572,27 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
           if (im.stalled) {
             warnings.push(
               `Induction motor '${inst.id}' is STALLED — the load exceeds its breakdown torque; it draws the locked-rotor (starting) current`,
+            )
+          }
+          const note = nameplateMismatchNote(inst, im.acDrives)
+          if (note !== null) warnings.push(note)
+        }
+      }
+    } else if (inst.definition === 'induction_motor_single_phase') {
+      // The single-phase machine: main + aux windings, start cap and centrifugal switch all
+      // real and inside the element (induction-motor-single-phase.ts).
+      const im = resolveInductionMotorSp(inst, nodeIndex, world)
+      if (im === null) {
+        warnings.push(
+          `Skipped single-phase induction motor '${inst.id}' (needs both terminals wired and physical winding values: R_main/R_aux/R2 > 0, Xm > 0, leakage reactances >= 0 with a nonzero total per axis, turns ratio > 0)`,
+        )
+      } else {
+        warnings.push(...im.notes)
+        if (im.element !== undefined) {
+          spMotors.push(im.element)
+          if (im.stalled) {
+            warnings.push(
+              `Induction motor '${inst.id}' is STALLED — the load exceeds what the running machine can carry`,
             )
           }
           const note = nameplateMismatchNote(inst, im.acDrives)
@@ -2749,6 +2885,7 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
       for (const motor of motors) stampFixedCurrent(motor.iA, motor.iB, motor.iPrev, b)
       // A dq motor holds zero port current at t = 0 — its fluxes cannot jump (inductive start).
       for (const m of dqMotors) stampFixedCurrent(m.iA, m.iB, 0, b)
+      for (const m of spMotors) stampFixedCurrent(m.iA, m.iB, 0, b)
       // Same for the three-phase machine: every winding starts at zero current (no stamp needed).
       for (const tr of transformers) {
         stampFixedCurrent(tr.iPA, tr.iPB, tr.i1Prev, b)
@@ -2766,6 +2903,7 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
       for (const motor of motors) stampMotorCompanion(motor, dt, M, b)
       for (const m of dqMotors) stampDqMotorCompanion(m, t, dt, M, b)
       for (const m of dq3Motors) stampDq3MotorCompanion(m, dt, M, b)
+      for (const m of spMotors) stampSpMotorCompanion(m, dt, M, b)
       for (const tr of transformers) stampTransformerCompanion(tr, dt, M, b)
       for (const tr of ctTransformers) stampCtTransformerCompanion(tr, dt, M, b)
     }
@@ -2968,6 +3106,15 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
     for (const m of dqMotors) {
       // The stamped Norton relation at this instant (fluxes cannot jump at switch-on, so t = 0
       // reads the held zero current).
+      const stamp = m.core.stamp
+      const amps =
+        mode === 'initial' || stamp === null
+          ? 0
+          : stamp.conductance * (volts(m.netA) - volts(m.netB)) + stamp.historyCurrent
+      through(m.id, m.termA, m.termB, amps)
+    }
+
+    for (const m of spMotors) {
       const stamp = m.core.stamp
       const amps =
         mode === 'initial' || stamp === null
@@ -3236,6 +3383,9 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
       m.nets.map((n) => initial.nodes.get(n) ?? 0),
     )
   }
+  for (const m of spMotors) {
+    spInitMotor(m.core, (initial.nodes.get(m.netA) ?? 0) - (initial.nodes.get(m.netB) ?? 0))
+  }
 
   // March forward with backward-Euler. Each step: converge the nonlinear solve
   // (warm-started from the previous operating point), record the sample WITH
@@ -3346,6 +3496,9 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
         dt,
       )
     }
+    for (const m of spMotors) {
+      spCommitMotor(m.core, (nodes.get(m.netA) ?? 0) - (nodes.get(m.netB) ?? 0), dt)
+    }
     for (const line of lines) recordLineSample(line, t, nodes)
     for (const tr of transformers) {
       // Same: this step's winding currents from the companion at the OLD history.
@@ -3392,17 +3545,11 @@ export function solveTransient(inputWorld: World, options: TransientOptions): Tr
   // all — and on DC there is no rotating field. The check is exact, not a heuristic: ω = 0 is
   // the stiction clamp having held (a rotor that broke away is strictly above zero, however
   // short the run), and a window under two drive periods is too short to claim anything.
-  const stuckMotors: { id: string; hasAcDrive: boolean; core: DqMotorCore | Dq3MotorCore }[] = [
-    ...dqMotors.map((m) => ({
-      id: m.id,
-      hasAcDrive: m.hasAcDrive,
-      core: m.core as DqMotorCore | Dq3MotorCore,
-    })),
-    ...dq3Motors.map((m) => ({
-      id: m.id,
-      hasAcDrive: m.hasAcDrive,
-      core: m.core as DqMotorCore | Dq3MotorCore,
-    })),
+  type StuckCore = DqMotorCore | Dq3MotorCore | SpMotorCore
+  const stuckMotors: { id: string; hasAcDrive: boolean; core: StuckCore }[] = [
+    ...dqMotors.map((m) => ({ id: m.id, hasAcDrive: m.hasAcDrive, core: m.core as StuckCore })),
+    ...dq3Motors.map((m) => ({ id: m.id, hasAcDrive: m.hasAcDrive, core: m.core as StuckCore })),
+    ...spMotors.map((m) => ({ id: m.id, hasAcDrive: m.hasAcDrive, core: m.core as StuckCore })),
   ]
   for (const m of stuckMotors) {
     const mech = m.core.mechanics

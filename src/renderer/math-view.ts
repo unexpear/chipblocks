@@ -19,6 +19,10 @@ import {
   inductionMotorParamsFromInstance,
   statorIsDelta,
 } from '../induction-motor-model.ts'
+import {
+  singlePhaseMotorParamsFromInstance,
+  singlePhaseOperatingPoint,
+} from '../induction-motor-single-phase.ts'
 import { readEnumParam, readScalarParam } from '../instance-params.ts'
 import {
   arcLuminousFluxLumens,
@@ -960,6 +964,26 @@ function partCard(
     return {
       id: inst.id,
       title: 'Induction motor — a rotating field drags the rotor (slip)',
+      lines,
+    }
+  }
+  if (def === 'induction_motor_single_phase') {
+    const spParams = singlePhaseMotorParamsFromInstance(inst)
+    lines.push(
+      'A single winding on single-phase AC makes a PULSATING field — exactly two counter-rotating half-strength fields, which cancel at standstill: zero starting torque, the single-phase curse. The auxiliary start winding (a quarter-turn around the stator, its current pushed out of step by thin high-resistance wire or a start capacitor) is what makes the field rotate and the rotor start; a centrifugal switch drops it out at ~75% speed, and the machine runs on the main winding by the double-revolving-field principle — the rotor strengthens the field turning with it (slip s) and weakens the one against it (slip 2 − s). The torque genuinely pulsates at twice the line frequency.',
+    )
+    if (spParams !== undefined) {
+      const op = singlePhaseOperatingPoint(spParams)
+      lines.push(
+        `Synchronous speed = 120·f/poles = ${op.synchronousRpm.toFixed(0)} RPM. Running (main winding only) it settles at ${(op.slip * 100).toFixed(1)}% slip → ${op.rotorRpm.toFixed(0)} RPM, developing ${formatEng(op.torque, 'N·m')} average torque.`,
+      )
+      lines.push(
+        `It draws ${fmtA(op.currentRms)} running at ${op.powerFactor.toFixed(2)} power factor (${fmtA(op.startupCurrentRms)} locked on the main winding alone — the start winding adds to the real starting draw). ${formatEng(op.mechanicalPowerW, 'W')} of mechanical output, ${(op.efficiency * 100).toFixed(0)}% efficient.${op.stalled ? ' (The load exceeds what the running machine can carry.)' : ''}`,
+      )
+    }
+    return {
+      id: inst.id,
+      title: 'Single-phase induction motor — two revolving fields and a start winding',
       lines,
     }
   }

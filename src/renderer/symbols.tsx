@@ -848,6 +848,42 @@ function InductionMotorGlyph() {
   )
 }
 
+/** Single-phase induction motor — the machine circle with "M" over "1~", a lead each side
+ *  (the aux winding, start cap and centrifugal switch live inside the two-terminal part). */
+function SinglePhaseInductionMotorGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>AC induction motor, single-phase</title>
+      {lead(0, 24)}
+      <circle cx={40} cy={MID} r={16} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      <text
+        x={40}
+        y={MID - 4}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={11}
+        fontWeight={700}
+        fill={STROKE}
+        fontFamily="system-ui, sans-serif"
+      >
+        M
+      </text>
+      <text
+        x={40}
+        y={MID + 7}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={8}
+        fill={STROKE}
+        fontFamily="system-ui, sans-serif"
+      >
+        1~
+      </text>
+      {lead(56, W)}
+    </svg>
+  )
+}
+
 /** Three-phase induction motor with a TRUE three-phase hookup — the same M/3~ machine circle,
  *  but the three phase leads fan in from the left edge and the wye star point (neutral) leads
  *  out the right, mirroring the three-phase alternator that feeds it. */
@@ -1855,6 +1891,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   alternator_three_phase: ThreePhaseAlternatorGlyph,
   induction_motor: InductionMotorGlyph,
   induction_motor_three_phase: ThreePhaseInductionMotorGlyph,
+  induction_motor_single_phase: SinglePhaseInductionMotorGlyph,
   transmission_line: TransmissionLineGlyph,
   led: LedGlyph,
   arc_lamp: ArcLampGlyph,
@@ -1952,6 +1989,7 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
     { id: 'phase_c', position: Position.Right, offset: 36 },
   ],
   induction_motor: TWO('terminal_a', 'terminal_b'),
+  induction_motor_single_phase: TWO('terminal_a', 'terminal_b'),
   // True three-phase motor: the phase leads down the left edge (fed from the alternator's fan),
   // the wye star point (neutral) out the right — wire it for 4-wire, leave it for 3-wire.
   induction_motor_three_phase: [

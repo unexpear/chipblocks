@@ -163,6 +163,33 @@ const DEFAULTS: Record<string, Parameters> = {
     rotor_inertia: scalar(0.0152, 'kg*m^2'),
     winding: { value: 'copper' },
   },
+  induction_motor_single_phase: {
+    // Krause's classic 1/4-hp 110 V 60 Hz SPLIT-PHASE example machine (P.C. Krause, "Analysis
+    // of Electric Machinery"; the parameter set as reproduced in Bandhekar et al., IJCSN 2(3)
+    // 2013 / arXiv:1307.0626 Table 1 — internal consistency Lm_aux = a²·Lm_main and
+    // Rr_aux = a²·Rr_main verified; that reproduction mislabels the rating as 230 V/50 Hz).
+    // Main R 2.02 Ω / X1 2.79 Ω; rotor (referred to main) R2 4.12 Ω / X2 2.11 Ω; Xm 66.8 Ω;
+    // aux (start) winding R 7.14 Ω / X 3.20 Ω, turns ratio a = 1.18; J = 2.92e-3 kg·m²;
+    // rated-class load ~1 N·m. No start capacitor by default (split-phase — the aux's high
+    // R/X makes the phase split); the centrifugal switch opens at 75% of synchronous speed
+    // (the classic ~75–80% figure; MathWorks' Krause-based block defaults to 80%).
+    supply_voltage: scalar(110, 'volt'),
+    line_frequency: scalar(60, 'hertz'),
+    pole_count: scalar(4, 'dimensionless'),
+    main_resistance: scalar(2.02, 'ohm'),
+    main_leakage_reactance: scalar(2.79, 'ohm'),
+    rotor_resistance: scalar(4.12, 'ohm'),
+    rotor_reactance: scalar(2.11, 'ohm'),
+    magnetizing_reactance: scalar(66.8, 'ohm'),
+    aux_resistance: scalar(7.14, 'ohm'),
+    aux_leakage_reactance: scalar(3.2, 'ohm'),
+    aux_turns_ratio: scalar(1.18, 'dimensionless'),
+    switch_open_speed: scalar(0.75, 'dimensionless'),
+    load_torque: scalar(1, 'N*m'),
+    rotor_inertia: scalar(2.92e-3, 'kg*m^2'),
+    viscous_friction: scalar(0.0005, 'N*m*s/rad'),
+    winding: { value: 'copper' },
+  },
   crt: {
     // A small cathode-ray tube (oscilloscope class). The electron gun draws ~0.1 mA from a 2 kV
     // anode (EHT); the grid bias (−10 V against a −50 V cutoff) sets ~80% brightness. Deflection
@@ -793,6 +820,24 @@ const PROVENANCE: Record<string, Record<string, string>> = {
       'optional saturation knee (PEAK V·s per winding; typically 0.8–1.1× V·√2/ω — Hinkkanen 2010)',
     saturated_magnetizing_reactance:
       'optional saturated slope above the knee (~0.3–0.7× Xm per winding — Hinkkanen 2010)',
+  },
+  induction_motor_single_phase: {
+    supply_voltage: '110 V 60 Hz nameplate (Krause’s ¼-hp example machine)',
+    line_frequency: '60 Hz — 1800 RPM synchronous at 4 poles',
+    pole_count: '4-pole fractional-horsepower machine',
+    main_resistance: 'main (run) winding R (Krause ¼-hp table: 2.02 Ω)',
+    main_leakage_reactance: 'main leakage X1 (2.79 Ω at 60 Hz)',
+    rotor_resistance: 'rotor R2 referred to the main (4.12 Ω)',
+    rotor_reactance: 'rotor leakage X2 (2.11 Ω)',
+    magnetizing_reactance: 'magnetizing Xm referred to the main (66.8 Ω)',
+    aux_resistance: 'start winding R (7.14 Ω — deliberately high: the split-phase phase shift)',
+    aux_leakage_reactance: 'start winding leakage X (3.20 Ω)',
+    aux_turns_ratio: 'a = N_aux/N_main = 1.18 (Krause table, consistency-verified)',
+    start_capacitance: 'optional — add ~80–300 µF (ACES ANR-2784) for capacitor-start',
+    switch_open_speed: 'centrifugal switch opens at 0.75× synchronous (classic ~75–80%)',
+    load_torque: '~1 N·m rated-class load for a ¼-hp machine',
+    rotor_inertia: 'J = 2.92e-3 kg·m² (Krause ¼-hp table) — sets the spin-up time',
+    viscous_friction: 'windage + bearing loss',
   },
   crt: {
     beam_current: 'CRT beam current ~0.1-1 mA (oscilloscope / TV electron gun)',
@@ -1451,7 +1496,11 @@ export function primaryValue(
     const v = amountOf(parameters, 'rated_anode_voltage')
     return v === undefined ? null : `${formatEng(v, 'V')} EHT`
   }
-  if (definition === 'induction_motor' || definition === 'induction_motor_three_phase') {
+  if (
+    definition === 'induction_motor' ||
+    definition === 'induction_motor_three_phase' ||
+    definition === 'induction_motor_single_phase'
+  ) {
     // Headline the synchronous speed (120·f/poles) — the field's rotation the rotor chases.
     const f = amountOf(parameters, 'line_frequency')
     const poles = amountOf(parameters, 'pole_count')

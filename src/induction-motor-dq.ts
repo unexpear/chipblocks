@@ -344,8 +344,9 @@ export function dqStampMotor(core: DqMotorCore, targetTime: number, h: number): 
 
 /** The rotor speed after one step: implicit in the friction, explicit in the (just-committed)
  *  torque, with the load always opposing motion and a stiction hold at standstill — the load
- *  torque alone never drives the shaft through zero. */
-function speedStep(omega: number, torque: number, mech: DqMechanics, h: number): number {
+ *  torque alone never drives the shaft through zero. Exported for the machine family (the
+ *  single-phase motor shares the identical mechanics convention). */
+export function speedStep(omega: number, torque: number, mech: DqMechanics, h: number): number {
   if (omega === 0 && Math.abs(torque) <= mech.loadTorque) return 0
   const direction = omega !== 0 ? Math.sign(omega) : Math.sign(torque)
   const next =
