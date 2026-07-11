@@ -129,6 +129,7 @@ import {
 import {
   inductionMotorOperatingPoint,
   inductionMotorParamsFromInstance,
+  statorIsDelta,
   synchronousSpeedRadPerSec,
 } from './induction-motor-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
@@ -1324,9 +1325,26 @@ function resolveInductionMotor3(
   if (inductances === null) return null // both leakages zero — the flux model is singular
   const netOf = (terminal: string) => inst.connects?.find((c) => c.terminal === terminal)?.net
   const wired = DQ3_PORTS.map((t) => netOf(t) !== undefined) as [boolean, boolean, boolean, boolean]
-  const wiredPorts = DQ3_PORTS.filter((_, i) => wired[i])
-  if (wiredPorts.length < 2) return null // no circuit through the machine
   const notes: string[] = []
+  // A delta stator has no star point — the machine (referred to its exact equivalent wye by the
+  // params reader) marches with a floating star, and a wire on the neutral terminal does nothing.
+  if (statorIsDelta(inst) && wired[3]) {
+    wired[3] = false
+    notes.push(
+      `Induction motor '${inst.id}' is delta-connected — a delta stator has no star point, so ` +
+        'its neutral terminal is not connected (unwire it, or set stator_connection to wye)',
+    )
+  }
+  const wiredPorts = DQ3_PORTS.filter((_, i) => wired[i])
+  if (wiredPorts.length < 2) {
+    // No circuit through the machine — say so (keeping any note already earned, e.g. the
+    // delta-neutral drop that may be what left it under-wired).
+    notes.push(
+      `Skipped three-phase induction motor '${inst.id}' (fewer than two of its terminals are ` +
+        'wired — no circuit through the machine)',
+    )
+    return { stalled: false, notes, acDrives: [] }
+  }
   const op = inductionMotorOperatingPoint(p)
   const nets = wiredPorts.map((t) => netOf(t) ?? '')
   const acDrives = connectedAcDrives(world, nets)

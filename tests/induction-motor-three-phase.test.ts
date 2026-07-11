@@ -49,7 +49,11 @@ const imParams = (loadTorque = 20, viscousFriction = 0.002): InductionMotorParam
   viscousFriction,
 })
 
-const motorParameters = (loadTorque: number, inertia: number | null) => ({
+const motorParameters = (
+  loadTorque: number,
+  inertia: number | null,
+  overrides: Record<string, unknown> = {},
+) => ({
   supply_voltage: scalar(230, 'volt'),
   line_frequency: scalar(50, 'hertz'),
   pole_count: scalar(4, 'dimensionless'),
@@ -61,6 +65,7 @@ const motorParameters = (loadTorque: number, inertia: number | null) => ({
   load_torque: scalar(loadTorque, 'N*m'),
   viscous_friction: scalar(0.002, 'N*m*s/rad'),
   ...(inertia === null ? {} : { rotor_inertia: scalar(inertia, 'kg*m^2') }),
+  ...overrides,
 })
 
 // A 2-pole-pair alternator at 1500 RPM makes exactly 50 Hz; k sized for 230 V RMS per phase.
@@ -69,7 +74,12 @@ const FLUX_LINKAGE = (230 * Math.SQRT2) / OMEGA_E
 
 /** The flagship rig: the real three-phase alternator wired phase-for-phase into the motor,
  *  star points joined and grounded — generation to rotation, all real parts. */
-const alternatorRig = (loadTorque: number, inertia: number | null) => {
+const alternatorRig = (
+  loadTorque: number,
+  inertia: number | null,
+  motorOverrides: Record<string, unknown> = {},
+  wireNeutral = true,
+) => {
   const nodes: CanvasNode[] = [
     {
       id: 'alt',
@@ -85,7 +95,7 @@ const alternatorRig = (loadTorque: number, inertia: number | null) => {
     {
       id: 'm1',
       definition: 'induction_motor_three_phase',
-      parameters: motorParameters(loadTorque, inertia),
+      parameters: motorParameters(loadTorque, inertia, motorOverrides),
     },
     { id: 'gnd', definition: 'ground' },
   ]
@@ -93,7 +103,7 @@ const alternatorRig = (loadTorque: number, inertia: number | null) => {
     g('alt', 'phase_a', 'm1', 'phase_a'),
     g('alt', 'phase_b', 'm1', 'phase_b'),
     g('alt', 'phase_c', 'm1', 'phase_c'),
-    g('alt', 'neutral', 'm1', 'neutral'),
+    ...(wireNeutral ? [g('alt', 'neutral', 'm1', 'neutral')] : []),
     g('alt', 'neutral', 'gnd', 'reference_terminal'),
   ]
   return canvasToWorld(nodes, edges)
@@ -159,6 +169,143 @@ describe('three-phase induction motor — the real alternator drives the real mo
     expect(Math.abs(iA - stalledOp.startupCurrentRms) / stalledOp.startupCurrentRms).toBeLessThan(
       0.03,
     )
+  })
+})
+
+describe('three-phase induction motor — the DELTA stator (wye-delta starting physics)', () => {
+  const DELTA = { stator_connection: { value: 'delta' } }
+  /** The same coils referred to their exact equivalent wye: every winding impedance / 3. */
+  const deltaOp = (loadTorque: number) =>
+    inductionMotorOperatingPoint({
+      ...imParams(loadTorque),
+      statorResistance: 2 / 3,
+      statorReactance: 4 / 3,
+      rotorResistance: 2 / 3,
+      rotorReactance: 4 / 3,
+      magnetizingReactance: 80 / 3,
+    })
+
+  test('the same coils at standstill pull exactly ~3× the line current in delta', () => {
+    // Hold both machines at standstill (a load beyond even the delta's breakdown torque) so the
+    // comparison is locked-rotor to locked-rotor: the delta windings see the full line-to-line
+    // voltage — 3× the wye's line current, the reason wye-delta starters exist.
+    const runLocked = (overrides: Record<string, unknown>, wireNeutral: boolean) => {
+      const result = solveTransient(alternatorRig(500, INERTIA, overrides, wireNeutral), {
+        timeStep: PERIOD / 1000,
+        duration: 5 * PERIOD,
+      })
+      const tEnd = result.series.at(-1)?.time ?? 0
+      return rmsOf(result, 'm1/phase_a', tEnd - 2 * PERIOD, tEnd)
+    }
+    const wyeLocked = runLocked({}, true)
+    const deltaLocked = runLocked(DELTA, false)
+    expect(deltaLocked / wyeLocked).toBeGreaterThan(2.9)
+    expect(deltaLocked / wyeLocked).toBeLessThan(3.1)
+  })
+
+  test('a delta machine spins up onto ITS phasor operating point (params referred / 3)', () => {
+    const delta = solveTransient(alternatorRig(20, INERTIA, DELTA, false), {
+      timeStep: PERIOD / 1000,
+      duration: 15 * PERIOD,
+    })
+    expect(delta.status).toBe('solved')
+    const tEnd = delta.series.at(-1)?.time ?? 0
+    const op = deltaOp(20)
+    expect(op.stalled).toBe(false)
+    const settled = rmsOf(delta, 'm1/phase_a', tEnd - 2 * PERIOD, tEnd)
+    expect(Math.abs(settled - op.statorCurrentRms) / op.statorCurrentRms).toBeLessThan(0.03)
+  })
+
+  test('a wired neutral on a delta stator is ignored, by name — a delta has no star point', () => {
+    const result = solveTransient(alternatorRig(20, INERTIA, DELTA, true), {
+      timeStep: PERIOD / 1000,
+      duration: 3 * PERIOD,
+    })
+    expect(result.status).toBe('solved')
+    expect(
+      result.warnings.some((w) => w.includes('delta-connected') && w.includes('no star point')),
+    ).toBe(true)
+    // The ignored neutral port records nothing — no zero-sequence path exists in delta.
+    expect(result.series.at(-1)?.currents?.get('m1/neutral')).toBeUndefined()
+  })
+
+  const deltaDcWorld = (wireC: boolean) => {
+    const nodes: CanvasNode[] = [
+      {
+        id: 'bat',
+        definition: 'power_source',
+        parameters: { nominal_voltage: scalar(12, 'volt'), internal_resistance: scalar(0, 'ohm') },
+      },
+      {
+        id: 'm1',
+        definition: 'induction_motor_three_phase',
+        parameters: motorParameters(20, INERTIA, DELTA),
+      },
+      { id: 'gnd', definition: 'ground' },
+    ]
+    const edges = [
+      g('bat', 'terminal_positive', 'm1', 'phase_a'),
+      g('m1', 'phase_b', 'bat', 'terminal_negative'),
+      ...(wireC ? [g('m1', 'phase_c', 'bat', 'terminal_negative')] : []),
+      g('gnd', 'reference_terminal', 'bat', 'terminal_negative'),
+    ]
+    return canvasToWorld(nodes, edges)
+  }
+
+  test('DC in delta with B and C tied together: the real winding network answers — both engines', () => {
+    // Windings of 2 Ω each; terminals B and C shorted, so winding bc is shorted out and windings
+    // ab ∥ ca carry the current: 2 ∥ 2 = 1 Ω → 12 A. The referred wye reproduces it exactly
+    // (R/3 legs → Y→Δ legs of R; a to the tied bc node: R ∥ R = 1 Ω).
+    const world = deltaDcWorld(true)
+    const sol = solveDC(world)
+    expect(sol.status).toBe('solved')
+    expect(Math.abs(sol.branches.get('bat') ?? 0)).toBeCloseTo(12, 4)
+    const transient = solveTransient(world, { timeStep: 0.005, duration: 6 })
+    const iFinal = Math.abs(transient.series.at(-1)?.currents?.get('m1/phase_a') ?? 0)
+    expect(Math.abs(iFinal - 12) / 12).toBeLessThan(0.02)
+  })
+
+  test('DC in delta line-to-line with C open: one winding parallel the other two in series', () => {
+    // Windings of 2 Ω: ab ∥ (ca + cb) = 2 ∥ 4 = 4/3 Ω → 12 V drives 9 A — both engines.
+    const world = deltaDcWorld(false)
+    const sol = solveDC(world)
+    expect(sol.status).toBe('solved')
+    expect(Math.abs(sol.branches.get('bat') ?? 0)).toBeCloseTo(9, 4)
+    const transient = solveTransient(world, { timeStep: 0.005, duration: 6 })
+    const iFinal = Math.abs(transient.series.at(-1)?.currents?.get('m1/phase_a') ?? 0)
+    expect(Math.abs(iFinal - 9) / 9).toBeLessThan(0.02)
+  })
+
+  test('delta single-phasing: one phase open, a loaded machine cannot start — named', () => {
+    const nodes: CanvasNode[] = [
+      {
+        id: 'v1',
+        definition: 'power_source',
+        parameters: {
+          nominal_voltage: scalar(0, 'volt'),
+          ac_amplitude: scalar(398 * Math.SQRT2, 'volt'),
+          frequency: scalar(50, 'hertz'),
+          internal_resistance: scalar(0, 'ohm'),
+        },
+      },
+      {
+        id: 'm1',
+        definition: 'induction_motor_three_phase',
+        parameters: motorParameters(5, INERTIA, DELTA),
+      },
+      { id: 'gnd', definition: 'ground' },
+    ]
+    const edges = [
+      g('v1', 'terminal_positive', 'm1', 'phase_a'),
+      g('m1', 'phase_b', 'v1', 'terminal_negative'),
+      g('v1', 'terminal_negative', 'gnd', 'reference_terminal'),
+    ]
+    const result = solveTransient(canvasToWorld(nodes, edges), {
+      timeStep: PERIOD / 1000,
+      duration: 5 * PERIOD,
+    })
+    expect(result.status).toBe('solved')
+    expect(result.warnings.some((w) => w.includes("'m1' did NOT start"))).toBe(true)
   })
 })
 

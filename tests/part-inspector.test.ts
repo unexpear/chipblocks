@@ -6,7 +6,8 @@
  */
 
 import { describe, expect, test } from 'vitest'
-import { paramMin } from '../src/renderer/part-inspector.tsx'
+import { defaultParameters } from '../src/renderer/part-defaults.ts'
+import { ENUM_PARAM_OPTIONS, paramMin } from '../src/renderer/part-inspector.tsx'
 
 describe('paramMin — the edit-time sign guard', () => {
   test('physical magnitudes are floored at 0 — a negative value cannot commit', () => {
@@ -31,5 +32,15 @@ describe('paramMin — the edit-time sign guard', () => {
     expect(paramMin('max_operating_temperature', 'degC')).toBeUndefined()
     // A kelvin value is absolute (≥ 0) — e.g. a thermistor's B coefficient — so it floors.
     expect(paramMin('beta_coefficient', 'kelvin')).toBe(0)
+  })
+})
+
+describe('enum parameters — every shipped enum has an editor', () => {
+  test('stator_connection is editable: a dropdown with wye + delta, defaulting to a listed value', () => {
+    const options = ENUM_PARAM_OPTIONS.stator_connection ?? []
+    expect(options.map((o) => o.value)).toEqual(['wye', 'delta'])
+    // The shipped default must be one of the dropdown's values — else the select renders blank.
+    const shipped = defaultParameters('induction_motor_three_phase').stator_connection?.value
+    expect(options.some((o) => o.value === shipped)).toBe(true)
   })
 })

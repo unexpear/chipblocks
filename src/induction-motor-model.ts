@@ -41,7 +41,7 @@
  */
 
 import type { Instance } from './cross-fk-validator.ts'
-import { readScalarParam } from './instance-params.ts'
+import { readEnumParam, readScalarParam } from './instance-params.ts'
 
 export type InductionMotorParams = {
   /** Per-phase supply voltage, RMS (V). */
@@ -224,8 +224,29 @@ export function inductionMotorOperatingPoint(
   }
 }
 
-/** Read an induction motor's parameters off an instance. Undefined when an essential one is missing
- *  or non-physical (a defined supply, frequency, poles and the equivalent-circuit values). */
+/** True when the instance declares a delta-connected stator (the three-phase part's
+ *  stator_connection parameter; absent or anything else ⇒ wye). Gated on the definition that
+ *  declares the parameter: a stray stator_connection on any other part must never split the
+ *  engines (only some consumers of the shared params reader would see the referral). */
+export function statorIsDelta(inst: Instance): boolean {
+  return (
+    inst.definition === 'induction_motor_three_phase' &&
+    readEnumParam(inst, 'stator_connection') === 'delta'
+  )
+}
+
+/**
+ * Read an induction motor's parameters off an instance. Undefined when an essential one is missing
+ * or non-physical (a defined supply, frequency, poles and the equivalent-circuit values).
+ *
+ * The impedance parameters are entered PER WINDING — the coils as wound. A DELTA-connected stator
+ * (stator_connection on the three-phase part) is referred to its exact equivalent wye by dividing
+ * every winding impedance by 3 (the textbook Δ→Y referral, exact for three identical windings at
+ * any excitation), so every consumer — the steady-state operating point, the dq inductances, the
+ * DC stamp — sees one consistent machine. That is why the same coils deliver 3× the starting
+ * torque (and pull 3× the line current) in delta: each winding sees the full line-to-line
+ * voltage instead of its 1/√3 share.
+ */
 export function inductionMotorParamsFromInstance(inst: Instance): InductionMotorParams | undefined {
   const supplyVoltage = readScalarParam(inst, 'supply_voltage')
   const frequency = readScalarParam(inst, 'line_frequency')
@@ -250,15 +271,16 @@ export function inductionMotorParamsFromInstance(inst: Instance): InductionMotor
   ) {
     return undefined
   }
+  const refer = statorIsDelta(inst) ? 1 / 3 : 1
   return {
     supplyVoltage,
     frequency,
     poles,
-    statorResistance,
-    statorReactance,
-    rotorResistance,
-    rotorReactance,
-    magnetizingReactance,
+    statorResistance: statorResistance * refer,
+    statorReactance: statorReactance * refer,
+    rotorResistance: rotorResistance * refer,
+    rotorReactance: rotorReactance * refer,
+    magnetizingReactance: magnetizingReactance * refer,
     loadTorque: readScalarParam(inst, 'load_torque') ?? 0,
     viscousFriction: readScalarParam(inst, 'viscous_friction') ?? 0,
   }

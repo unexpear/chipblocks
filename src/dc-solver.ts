@@ -38,6 +38,7 @@ import {
   ZENER_BREAKDOWN_IDEALITY,
   zenerCompanionModel,
 } from './diode-model.ts'
+import { inductionMotorParamsFromInstance, statorIsDelta } from './induction-motor-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { jfetMosfetParams } from './jfet-model.ts'
 import { ldrResistance, lightSensorCurrent } from './light.ts'
@@ -711,13 +712,23 @@ export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
         if (r1 !== undefined && r1 > 0 && aNet !== undefined && bNet !== undefined)
           stampConductance(nodeIndex, M, aNet, bNet, r1)
       } else if (inst.definition === 'induction_motor_three_phase') {
-        // At DC (at rest) each phase winding is its stator R1 to the star point. A wired neutral
-        // IS the star: three R1 wye legs. A floating star needs no internal node — the exact
-        // Y→Δ equivalent (3·R1 between phase pairs → line-to-line = 2·R1, two windings in
-        // series) or, with only two phases wired, that series pair directly. This is the
-        // at-rest limit: DC-injection braking of an already-spinning rotor is a transient story.
-        const r1 = readScalarParam(inst, 'stator_resistance')
-        const neutral = inst.connects?.find((c) => c.terminal === 'neutral')?.net
+        // At DC (at rest) each equivalent-wye winding is its referred stator R1 to the star
+        // point (the params reader refers a delta stator to its exact equivalent wye — the Y→Δ
+        // of which gives back the REAL delta winding resistances). A wired neutral IS the star:
+        // three R1 wye legs (a delta has no star point, so its neutral is ignored). A floating
+        // star needs no internal node — the exact Y→Δ equivalent (3·R1 between phase pairs →
+        // line-to-line = 2·R1, two windings in series) or, with only two phases wired, that
+        // series pair directly. This is the at-rest limit: DC-injection braking of an
+        // already-spinning rotor is a transient story.
+        // DC needs only the winding resistance — fall back to the raw value (with the delta
+        // referral) when the full nameplate reader refuses over an AC-only parameter.
+        const rawR1 = readScalarParam(inst, 'stator_resistance')
+        const r1 =
+          inductionMotorParamsFromInstance(inst)?.statorResistance ??
+          (rawR1 !== undefined ? rawR1 * (statorIsDelta(inst) ? 1 / 3 : 1) : undefined)
+        const neutral = statorIsDelta(inst)
+          ? undefined
+          : inst.connects?.find((c) => c.terminal === 'neutral')?.net
         const phaseNets = ['phase_a', 'phase_b', 'phase_c']
           .map((t) => inst.connects?.find((c) => c.terminal === t)?.net)
           .filter((n): n is string => n !== undefined)
@@ -735,6 +746,10 @@ export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
             const [pa, pb] = phaseNets
             if (pa !== undefined && pb !== undefined) stampConductance(nodeIndex, M, pa, pb, 2 * r1)
           }
+        } else if ((inst.connects ?? []).length >= 2) {
+          warnings.push(
+            `Skipped three-phase induction motor '${inst.id}' at DC (needs stator_resistance > 0)`,
+          )
         }
       } else if (inst.definition === 'alternator') {
         // An alternator's EMF averages to ZERO over a cycle — at DC it is just its winding

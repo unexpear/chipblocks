@@ -18,14 +18,17 @@
 # floating star of a 3-wire hookup, or an open phase) is eliminated exactly by its zero-current
 # condition - the textbook open-terminal reduction, verified against the phasor solution.
 #
-# Honest scope: wye (star) stator, star point on the neutral terminal - wire it for a 4-wire
-# hookup (zero-sequence path live, like the three-phase alternator's neutral), leave it unwired
-# for the common 3-wire machine (floating star, zero-sequence current identically zero). At DC
-# a phase-to-neutral loop sees exactly one winding R1; a line-to-line loop sees two windings in
-# series (2*R1) - both the DC solver's stamp and the transient's settled limit, so the engines
-# agree. A delta-connected stator is a further rung. Self-heating, saturation, deep-bar/skin
-# effect and core loss are unmodeled, as on the sibling. Without a rotor_inertia the rotor is
-# held at the nameplate operating speed (quasi-static) and the solver says so.
+# Honest scope: the stator connects in WYE (star point on the neutral terminal - wire it for a
+# 4-wire hookup, leave it unwired for the common 3-wire machine with its floating star) or in
+# DELTA (stator_connection parameter - each winding across a line pair, no star point; the same
+# coils then see the full line-to-line voltage, giving ~3x the starting torque and line current,
+# the physics behind wye-delta starters; internally the delta is referred to its exact
+# equivalent wye, winding impedances / 3). At DC a wye phase-to-neutral loop sees exactly one
+# winding R1 and a line-to-line loop two in series (2*R1); a delta line-to-line loop sees one
+# winding in parallel with the other two in series (2/3 of a winding) - the DC solver's stamp
+# and the transient's settled limit agree in every hookup. Self-heating, saturation,
+# deep-bar/skin effect and core loss are unmodeled, as on the sibling. Without a rotor_inertia
+# the rotor is held at the nameplate operating speed (quasi-static) and the solver says so.
 #
 # MUST validate against definition.schema.json.
 kind: primitive_device
@@ -51,11 +54,18 @@ parameters:
     default:
       value: copper
     description: The conductor the stator is wound from. Must conduct; copper is the standard.
+  stator_connection:
+    type: enum
+    required: false
+    allowed:
+      - wye
+      - delta
+    description: "How the three stator windings are connected - wye (star, the default; the star point is the neutral terminal) or delta (each winding across a line pair; no star point, so the neutral terminal is not connected). The impedance parameters below are per WINDING either way. The same coils in delta see the full line-to-line voltage instead of a 1/sqrt(3) share - about 3x the starting torque and 3x the line current, which is exactly why wye-delta STARTERS exist: start in wye (gentle), run in delta (full torque). Internally a delta is referred to its exact equivalent wye (every winding impedance / 3, the textbook transform, exact for identical windings at any excitation)."
   supply_voltage:
     type: quantity
     units: volt
     required: true
-    description: The per-phase (phase-to-neutral) RMS nameplate voltage. The READINGS analyze the machine at this nameplate; the time-domain march follows whatever actually drives the terminals. For a 400 V three-phase line the per-phase value is 230 V.
+    description: The LINE's phase-to-neutral RMS nameplate voltage - for a 400 V three-phase line enter 230 V. This is still the value to enter in DELTA (a real delta nameplate quotes the line-to-line voltage, which IS its winding voltage - so a machine rated 400 V delta on a 400 V line enters 230 here; each winding then sees the full 400 V because it sits across a line pair). The READINGS analyze the machine at this nameplate; the time-domain march follows whatever actually drives the terminals.
   line_frequency:
     type: quantity
     units: hertz
@@ -70,7 +80,7 @@ parameters:
     type: quantity
     units: ohm
     required: true
-    description: R1, the per-phase stator winding resistance. Sets part of the copper loss; at DC a phase-to-neutral loop is exactly this, a line-to-line loop two of these in series.
+    description: R1, the per-WINDING stator resistance (the coil as wound, either connection). Sets part of the copper loss. In wye, at DC a phase-to-neutral loop is exactly this and a line-to-line loop two in series; in delta a line-to-line loop sees one winding in parallel with the other two in series (2/3 of a winding).
   stator_reactance:
     type: quantity
     units: ohm
@@ -147,10 +157,16 @@ notes: |
   spinning rotor is unmodeled at DC). At DC the Math panel notes the machine's nets as balanced
   inside the solve rather than itemizing per-terminal currents (the multi-winding convention its
   three-phase alternator sibling also uses); the transient records every wired terminal's
-  current. Fluxes integrate by the trapezoidal rule; the zero axis
+  current. DELTA (stator_connection): the winding impedances are referred to the exact
+  equivalent wye (Z/3 - the textbook transform, exact for identical windings at any excitation)
+  and the machine marches with a floating star; the Y-to-delta of that equivalent gives back the
+  REAL delta winding resistances, so the DC picture stays physical. A wired neutral in delta is
+  ignored with a warning (a delta has no star point). The delta's internal zero-sequence
+  circulating loop carries no current here because the marched field model is
+  fundamental-sinusoidal (third-harmonic circulating currents arrive with magnetic saturation). Fluxes integrate by the trapezoidal rule; the zero axis
   and mechanics stay implicit; the rotor speed is frozen within each circuit step. The load
-  opposes motion and the shaft holds at rest until the developed torque exceeds it. Delta
-  stator, saturation, deep-bar/skin effect, core loss and self-heating are unmodeled rungs.
+  opposes motion and the shaft holds at rest until the developed torque exceeds it.
+  Saturation, deep-bar/skin effect, core loss and self-heating are unmodeled rungs.
   Sources: Tesla's 1888 polyphase patents; the Steinmetz equivalent circuit; Krause, "Analysis
   of Electric Machinery" (stationary-frame qd0); Fitzgerald, "Electric Machinery"; Chapman,
   "Electric Machinery Fundamentals".

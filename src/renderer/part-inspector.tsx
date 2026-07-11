@@ -72,6 +72,15 @@ const stepButton = (disabled: boolean): CSSProperties => ({
 })
 
 const LED_DEFINITIONS = new Set(['led', 'led_uv_algan'])
+/** Enum parameters editable as dropdowns — one entry per enum a shipped part exposes (the
+ *  bespoke design_mode / state selects predate this map and stay as they are). Exported so a
+ *  test can pin that every shipped enum parameter actually has an editor. */
+export const ENUM_PARAM_OPTIONS: Record<string, { value: string; label: string }[]> = {
+  stator_connection: [
+    { value: 'wye', label: 'wye (star point on the neutral)' },
+    { value: 'delta', label: 'delta (~3× starting torque + current)' },
+  ],
+}
 const MATERIAL_REF_KEYS = new Set([
   'resistive_material',
   'n_side',
@@ -897,6 +906,26 @@ export function PartInspector({
                 >
                   <option value="closed">closed</option>
                   <option value="open">open</option>
+                </select>
+              </label>
+            )
+          }
+          const enumOptions = ENUM_PARAM_OPTIONS[key]
+          if (enumOptions !== undefined && typeof param.value === 'string') {
+            return (
+              <label key={`${selected.id}:${key}`} style={row}>
+                <span style={{ color: THEME.textSoft }}>{humanize(key)}</span>
+                <select
+                  value={param.value}
+                  onChange={(e) => onEnum(key, e.target.value)}
+                  className="nodrag"
+                  style={{ ...field, maxWidth: 148 }}
+                >
+                  {enumOptions.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
                 </select>
               </label>
             )

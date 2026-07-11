@@ -149,6 +149,7 @@ const DEFAULTS: Record<string, Parameters> = {
     // The same ~4 kW 4-pole machine as induction_motor (same per-phase equivalent circuit and
     // the same cited ABB M2BAX 112MLA 4 rotor inertia), wired for a TRUE three-phase hookup:
     // phase A/B/C ports + the wye star point. Feed it from the 3φ alternator phase-for-phase.
+    stator_connection: { value: 'wye' },
     supply_voltage: scalar(230, 'volt'),
     line_frequency: scalar(50, 'hertz'),
     pole_count: scalar(4, 'dimensionless'),
@@ -771,7 +772,9 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     rotor_inertia: 'J ~0.0152 kg·m² (ABB M2BAX 112MLA 4, 4 kW 4-pole) — sets the spin-up time',
   },
   induction_motor_three_phase: {
-    supply_voltage: 'per-phase RMS nameplate (230 V phase of a 400 V 3-phase line)',
+    stator_connection: 'wye (star, neutral = star point) or delta (~3× starting torque + current)',
+    supply_voltage:
+      'the LINE’s phase-to-neutral RMS (230 V for a 400 V line) — in delta still 230 (a 400 V-delta machine on a 400 V line)',
     line_frequency: '50 Hz mains (60 Hz elsewhere)',
     pole_count: '4-pole → 1500 RPM synchronous at 50 Hz (120·f/poles)',
     stator_resistance: 'representative per-phase R1 (~2 Ω) for a ~4 kW machine',

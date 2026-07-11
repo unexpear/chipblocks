@@ -17,6 +17,7 @@ import { electronDriftVelocityMS } from '../field-energy.ts'
 import {
   inductionMotorOperatingPoint,
   inductionMotorParamsFromInstance,
+  statorIsDelta,
 } from '../induction-motor-model.ts'
 import { readEnumParam, readScalarParam } from '../instance-params.ts'
 import {
@@ -942,7 +943,9 @@ function partCard(
     )
     if (def === 'induction_motor_three_phase') {
       lines.push(
-        'This one takes its three phases on real wires (plus the wye star point): swap any two leads and the field sequence — and the rotation — reverses; lose a phase and the field stops rotating at standstill, so a loaded machine cannot start (single-phasing).',
+        statorIsDelta(inst)
+          ? 'This one takes its three phases on real wires, DELTA-connected — each winding sits across a line pair (no star point), seeing the full line-to-line voltage: ~3× the starting torque and line current of the same coils in wye, the physics behind wye-delta starters. Swap any two leads and the rotation reverses; lose a phase and a loaded machine cannot start (single-phasing).'
+          : 'This one takes its three phases on real wires (plus the wye star point): swap any two leads and the field sequence — and the rotation — reverses; lose a phase and the field stops rotating at standstill, so a loaded machine cannot start (single-phasing).',
       )
     }
     if (imParams !== undefined) {
