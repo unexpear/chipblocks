@@ -926,6 +926,188 @@ describe('induction motor — the dq dynamic model in the time-domain solve', ()
       expect(iSat / iLin).toBeLessThan(1.32)
     })
   })
+
+  describe('core loss — the iron branch', () => {
+    // The default ~4 kW machine plus a core-loss resistance. R_c ≈ 400 Ω on this machine dissipates
+    // a few hundred watts of iron loss (E_m ≈ 219 V at no load → ~360 W), a clearly measurable
+    // effect. All marched AND analyzed at the nameplate 230 V.
+    const RC = 400
+    const coreParams = (loadTorque: number): InductionMotorParams => ({
+      ...imParams(loadTorque),
+      coreLossResistance: RC,
+    })
+    const CORE_OVERRIDE = { core_loss_resistance: scalar(RC, 'ohm') }
+
+    /** Direct near-synchronous march of the 1-port machine (starts at the operating speed — this
+     *  pins the SETTLED point, not the seconds-long spin-up). */
+    const marchSettled = (p: InductionMotorParams, h = PERIOD / 400) => {
+      const L = dqInductancesFromParams(p)
+      if (L === null) throw new Error('null inductances')
+      const wSync = synchronousSpeedRadPerSec(50, 4)
+      const op = inductionMotorOperatingPoint(p)
+      const core = createDqMotor(
+        L,
+        { rotorInertia: 0.05, viscousFriction: p.viscousFriction, loadTorque: p.loadTorque },
+        0,
+        PERIOD,
+      )
+      core.omega = (1 - op.slip) * wSync
+      const v = (t: number) => 230 * Math.SQRT2 * Math.cos(2 * Math.PI * 50 * t)
+      dqInitMotor(core, v(0))
+      const steps = Math.round(2.5 / h)
+      const last: number[] = []
+      for (let k = 1; k <= steps; k++) {
+        const t = k * h
+        dqStampMotor(core, t, h)
+        const i = dqCommitMotor(core, v(t), h)
+        if (k > steps - 800) last.push(i)
+      }
+      const iRms = Math.sqrt(last.reduce((s, i) => s + i * i, 0) / last.length)
+      return { slip: 1 - core.omega / wSync, iRms, op }
+    }
+
+    test('readings: the iron branch draws more no-load current and lowers the efficiency', () => {
+      const lossless = inductionMotorOperatingPoint(imParams(0, 0))
+      const lossy = inductionMotorOperatingPoint(coreParams(0))
+      // No-load: the core-loss branch draws a real in-phase current on top of the magnetizing
+      // current, so both the current and (especially) the power factor rise.
+      expect(lossy.statorCurrentRms).toBeGreaterThan(lossless.statorCurrentRms)
+      expect(lossy.powerFactor).toBeGreaterThan(lossless.powerFactor * 1.3)
+      // Under load the efficiency honestly drops — the iron loss is real output the shaft never sees.
+      const loadedLossless = inductionMotorOperatingPoint(imParams(20))
+      const loadedLossy = inductionMotorOperatingPoint(coreParams(20))
+      expect(loadedLossy.efficiency).toBeLessThan(loadedLossless.efficiency)
+      // …but the developed torque is unchanged: the core loss sits outside the air gap.
+      expect(loadedLossy.torque).toBeCloseTo(loadedLossless.torque, 1)
+    })
+
+    test('the 6-state iron-loss march settles exactly onto the phasor circuit (R_c ∥ jXm ∥ Z_rot)', () => {
+      const { slip, iRms, op } = marchSettled(coreParams(20))
+      expect(Math.abs(slip - op.slip)).toBeLessThan(1e-4)
+      expect(Math.abs(iRms - op.statorCurrentRms) / op.statorCurrentRms).toBeLessThan(0.005)
+    })
+
+    test('the developed torque EXCLUDES the core loss — an unloaded machine does NOT run above synchronous', () => {
+      // The trap the shipped stator-flux torque form falls into: with the iron branch it books
+      // the core-loss power as shaft torque, settling an unloaded machine ABOVE synchronous speed
+      // (negative slip — free energy from a loss resistor). The magnetizing×rotor form excludes
+      // it, so a no-load machine settles at a small POSITIVE slip, below synchronous.
+      const { slip, op } = marchSettled(coreParams(0), PERIOD / 400)
+      expect(slip).toBeGreaterThan(0) // strictly sub-synchronous — no phantom accelerating torque
+      expect(Math.abs(slip - op.slip)).toBeLessThan(1e-4)
+    })
+
+    test('DC parity holds with the iron branch: both engines see exactly R1 (the core draws nothing at DC)', () => {
+      const { world, result } = runTransient(20, 50, 40, { dc: 12 }, INERTIA, CORE_OVERRIDE)
+      expect(result.status).toBe('solved')
+      const iFinal = Math.abs(result.series.at(-1)?.currents?.get('m1/terminal_a') ?? 0)
+      expect(Math.abs(iFinal - 6) / 6).toBeLessThan(0.02) // 12 V / R1 = 6 A
+      const dc = solveDC(world)
+      expect(Math.abs(dc.branches.get('m1') ?? 0)).toBeCloseTo(6, 3)
+    })
+
+    test('a non-physical R_c is refused by name, and the machine stays exactly lossless — sample for sample', () => {
+      const plain = runTransient(20, 3)
+      const zero = runTransient(20, 3, 1000, {}, INERTIA, {
+        core_loss_resistance: scalar(0, 'ohm'),
+      })
+      expect(zero.result.status).toBe('solved')
+      expect(
+        zero.result.warnings.some((w) => w.includes('core loss needs core_loss_resistance')),
+      ).toBe(true)
+      expect(zero.result.series.length).toBe(plain.result.series.length)
+      for (let k = 0; k < plain.result.series.length; k += 250) {
+        const iZero = zero.result.series[k]?.currents?.get('m1/terminal_a') ?? 0
+        const iPlain = plain.result.series[k]?.currents?.get('m1/terminal_a') ?? 0
+        expect(Math.abs(iZero - iPlain)).toBeLessThan(1e-12)
+      }
+    })
+
+    test('the LEAKAGE guard is load-bearing: R_c with a zero leakage stays lossless, not NaN', () => {
+      // The iron-loss march reads each winding current off its own leakage flux (i_s = (λ_s −
+      // λ_m)/L_ls), so a zero leakage would divide by zero. The predicate's X1/X2/Xm > 0 clause
+      // keeps such a machine on the lossless path — where L_ls never appears in a denominator —
+      // so it marches finite. A zero stator leakage clears the resolver's own guards (they only
+      // refuse a NEGATIVE reactance), so this is the case the iron branch alone must reject.
+      const plain = runTransient(20, 3, 1000, {}, INERTIA, { stator_reactance: scalar(0, 'ohm') })
+      const withRc = runTransient(20, 3, 1000, {}, INERTIA, {
+        stator_reactance: scalar(0, 'ohm'),
+        core_loss_resistance: scalar(400, 'ohm'),
+      })
+      expect(withRc.result.status).toBe('solved')
+      expect(withRc.result.warnings.some((w) => w.includes('X1, X2, Xm all > 0'))).toBe(true)
+      expect(withRc.result.series.length).toBe(plain.result.series.length)
+      for (let k = 0; k < plain.result.series.length; k += 250) {
+        const iRc = withRc.result.series[k]?.currents?.get('m1/terminal_a') ?? 0
+        const iPlain = plain.result.series[k]?.currents?.get('m1/terminal_a') ?? 0
+        expect(Number.isFinite(iRc)).toBe(true) // not NaN
+        expect(Math.abs(iRc - iPlain)).toBeLessThan(1e-12)
+      }
+    })
+
+    test('core loss composes with the double cage: the 8-state march settles onto ITS phasor circuit', () => {
+      const p: InductionMotorParams = {
+        ...imParams(20),
+        rotorResistance2: 0.6,
+        rotorReactance2: 8,
+        coreLossResistance: RC,
+      }
+      const { slip, iRms, op } = marchSettled(p)
+      expect(slip).toBeGreaterThan(0)
+      expect(Math.abs(slip - op.slip)).toBeLessThan(1e-4)
+      expect(Math.abs(iRms - op.statorCurrentRms) / op.statorCurrentRms).toBeLessThan(0.006)
+    })
+
+    test('core loss composes with saturation: below the knee bit-identical, above the knee still saturates', () => {
+      // Below the knee the chord is the unsaturated constant → the iron-loss march is identical
+      // with or without the (uncrossed) magnetization curve.
+      const linear = runTransient(20, 4, 1000, {}, INERTIA, CORE_OVERRIDE)
+      const belowKnee = runTransient(20, 4, 1000, {}, INERTIA, {
+        ...CORE_OVERRIDE,
+        magnetizing_knee_flux: scalar(1.1389, 'V*s'),
+        saturated_magnetizing_reactance: scalar(24, 'ohm'),
+      })
+      expect(belowKnee.result.series.length).toBe(linear.result.series.length)
+      for (let k = 0; k < linear.result.series.length; k += 250) {
+        const iLin = linear.result.series[k]?.currents?.get('m1/terminal_a') ?? 0
+        const iBk = belowKnee.result.series[k]?.currents?.get('m1/terminal_a') ?? 0
+        expect(Math.abs(iBk - iLin)).toBeLessThan(1e-12)
+      }
+      // Overvoltage past the knee: the iron-loss machine still overfluxes super-linearly (the
+      // chord reads |λ_m| straight off the new state and runs through the iron-loss matrices).
+      const lin = runTransient(0, 40, 400, { rms: 299 }, INERTIA, CORE_OVERRIDE)
+      const sat = runTransient(0, 40, 400, { rms: 299 }, INERTIA, {
+        ...CORE_OVERRIDE,
+        magnetizing_knee_flux: scalar(1.1389, 'V*s'),
+        saturated_magnetizing_reactance: scalar(24, 'ohm'),
+      })
+      expect(
+        cycleStats(sat.world, sat.result).iRms / cycleStats(lin.world, lin.result).iRms,
+      ).toBeGreaterThan(1.1)
+    })
+
+    test('a delta stator refers the core-loss resistance ÷3 like every impedance', () => {
+      const inst = {
+        id: 'm',
+        kind_ref: 'primitive_device',
+        definition: 'induction_motor_three_phase',
+        parameters: {
+          supply_voltage: scalar(230, 'volt'),
+          line_frequency: scalar(50, 'hertz'),
+          pole_count: scalar(4, 'dimensionless'),
+          stator_resistance: scalar(2, 'ohm'),
+          stator_reactance: scalar(4, 'ohm'),
+          rotor_resistance: scalar(2, 'ohm'),
+          rotor_reactance: scalar(4, 'ohm'),
+          magnetizing_reactance: scalar(80, 'ohm'),
+          core_loss_resistance: scalar(900, 'ohm'),
+          stator_connection: { value: 'delta' },
+        },
+      }
+      const p = inductionMotorParamsFromInstance(inst as never)
+      expect(p?.coreLossResistance).toBeCloseTo(900 / 3, 10)
+    })
+  })
 })
 
 describe('induction motor on DC — the branch current is recorded, so the books balance', () => {

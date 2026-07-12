@@ -660,3 +660,47 @@ describe('three-phase induction motor — the deep-bar double cage on the three-
     expect(Math.abs(iRms - op.statorCurrentRms) / op.statorCurrentRms).toBeLessThan(0.005)
   })
 })
+
+describe('three-phase induction motor — core loss on the three-port path', () => {
+  test('the iron-loss 6-state march runs the three-port composition — settled onto the phasor point', () => {
+    const p: InductionMotorParams = { ...imParams(20), coreLossResistance: 400 }
+    const op = inductionMotorOperatingPoint(p)
+    const L = dqInductancesFromParams(p)
+    expect(L).not.toBeNull()
+    if (L === null) throw new Error('unreachable')
+    const h = PERIOD / 400
+    const wSync = (2 * Math.PI * 50) / 2
+    const core = createDqMotor3(
+      L,
+      { rotorInertia: 0.05, viscousFriction: 0.002, loadTorque: 20 },
+      0,
+      [true, true, true, true],
+      PERIOD,
+    )
+    core.omega = (1 - op.slip) * wSync // pin the settled point, not the spin-up
+    const V = 230 * Math.SQRT2
+    const w = 2 * Math.PI * 50
+    const steps = Math.round(2.5 / h)
+    const last: number[] = []
+    for (let k = 1; k <= steps; k++) {
+      const t = k * h
+      dq3StampMotor(core, h)
+      const currents = dq3CommitMotor(
+        core,
+        [
+          V * Math.cos(w * t),
+          V * Math.cos(w * t - (2 * Math.PI) / 3),
+          V * Math.cos(w * t + (2 * Math.PI) / 3),
+          0,
+        ],
+        h,
+      )
+      if (k > steps - 800) last.push(currents[0] ?? 0)
+    }
+    const slip = 1 - core.omega / wSync
+    expect(slip).toBeGreaterThan(0) // sub-synchronous — the iron loss makes no shaft torque
+    expect(Math.abs(slip - op.slip)).toBeLessThan(1e-4)
+    const iRms = Math.sqrt(last.reduce((s, i) => s + i * i, 0) / last.length)
+    expect(Math.abs(iRms - op.statorCurrentRms) / op.statorCurrentRms).toBeLessThan(0.006)
+  })
+})

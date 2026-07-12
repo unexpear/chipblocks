@@ -52,7 +52,10 @@
 # dependence emerges from real L/R branch dynamics at any waveform, no slip-dependent fudge. The
 # double-cage torque curve genuinely dips between the two cages' peaks (why NEMA defines
 # pull-up torque): a load sitting above that dip makes the machine start but hang at high slip -
-# CRAWLING, named by the solver. Self-heating, thermal protection and core loss are unmodeled.
+# CRAWLING, named by the solver. CORE LOSS (iron loss) is modeled when the part carries a
+# core_loss_resistance: hysteresis + eddy loss on a resistance in parallel with the magnetizing
+# branch — it lowers the efficiency and draws real no-load current, but nothing at DC (constant
+# flux, no loss). Self-heating and thermal protection are unmodeled.
 # A TRUE 3-phase hookup (three phase ports + the star point) ships as its
 # sibling part, induction_motor_three_phase - use that one for real reversal (swapped leads) and
 # single-phasing; the single-phase double-revolving-field machine remains a refinement.
@@ -131,6 +134,11 @@ parameters:
     units: ohm
     required: true
     description: Xm, the magnetizing reactance — the shunt branch that sets up the air-gap field and draws the no-load magnetizing current.
+  core_loss_resistance:
+    type: quantity
+    units: ohm
+    required: false
+    description: "R_c, the core-loss (iron-loss) resistance, in PARALLEL with the magnetizing branch — hysteresis + eddy-current loss driven by the changing air-gap flux. Optional; with it the readings and the time-domain model both carry the iron loss (it draws nothing at DC, where the flux is constant). Derive it from a cited core-loss figure P_core and the air-gap EMF E_m: R_c = 3*E_m^2/P_core. Fitzgerald/Kingsley/Umans, Electric Machinery 6e, Problem 6.10 — a 460 V (line-line, Y) 25 kW 60 Hz 4-pole machine with 220 W core loss and E_m ~ 261 V at no load — gives R_c ~ 927 ohm. The book itself allows this exact placement (Rc in parallel with Xm)."
   load_torque:
     type: quantity
     units: newton*meter
@@ -212,15 +220,20 @@ notes: |
   operating speed (quasi-static, the pre-dynamic behavior) with a warning. Self-heating and
   thermal protection are unmodeled; NOTE for a future theta_JA: the terminal power is the INPUT
   power, most of which leaves as mechanical output at rated load — heat is P_in - P_mech, never
-  the whole terminal ledger. Magnetic saturation (opt-in via the magnetization-curve params) and
+  the whole terminal ledger. Magnetic saturation (opt-in via the magnetization-curve params),
   deep-bar/skin effect (opt-in via the second rotor cage: the time-domain model then marches SIX
   flux states — two rotor circuits per axis — whose settled steady state is exactly the
-  parallel-two-cage phasor circuit the readings use) are both modeled; core loss remains an
-  unmodeled refinement. The true 3-phase (three-port) machine ships separately as
+  parallel-two-cage phasor circuit the readings use) and CORE LOSS (opt-in via
+  core_loss_resistance: the iron branch promotes the magnetizing flux to a real marched state, so
+  the machine marches SIX states — or eight with the double cage — and the settled steady state is
+  the phasor circuit with R_c parallel the magnetizing branch; the developed torque still excludes
+  the iron loss, which dissipates on the stator side of the air gap and draws nothing at DC) are
+  all modeled. The true 3-phase (three-port) machine ships separately as
   induction_motor_three_phase; the single-phase double-revolving-field machine ships as
   induction_motor_single_phase. Sources: Tesla's 1888 polyphase patents; the Steinmetz
   equivalent circuit; Krause, "Analysis of Electric Machinery" (the stationary-frame qd0 model);
-  Fitzgerald, "Electric Machinery"; Chapman, "Electric Machinery Fundamentals"; the double-cage
+  Fitzgerald, "Electric Machinery" (6e Problem 6.10 — the cited core-loss example machine, which
+  allows R_c in parallel with Xm); Chapman, "Electric Machinery Fundamentals"; the double-cage
   circuit and fitted catalog-machine parameters: Monjo, Kojooyan-Jafari, Corcoles and Pedra,
   "Squirrel-cage induction motor parameter estimation using a variable frequency test," IEEE
   Trans. Energy Conversion 30(2) 550-557, 2015 (their Fig. 2b seven-parameter circuit is this

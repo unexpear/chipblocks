@@ -27,11 +27,12 @@
 # winding R1 and a line-to-line loop two in series (2*R1); a delta line-to-line loop sees one
 # winding in parallel with the other two in series (2/3 of a winding) - the DC solver's stamp
 # and the transient's settled limit agree in every hookup. Magnetic saturation (opt-in via the
-# magnetization-curve params) and deep-bar/skin effect (opt-in via the second rotor cage,
+# magnetization-curve params), deep-bar/skin effect (opt-in via the second rotor cage,
 # rotor_resistance_2 + rotor_reactance_2 - two real rotor circuits per axis, the strong-starting
-# NEMA design B/C rotor) are modeled, as on the sibling; self-heating and core loss are
-# unmodeled. Without a rotor_inertia the rotor is held at the nameplate operating speed
-# (quasi-static) and the solver says so.
+# NEMA design B/C rotor) and core loss (opt-in via core_loss_resistance - iron loss on a
+# resistance in parallel with the magnetizing branch) are all modeled, as on the sibling;
+# self-heating is unmodeled. Without a rotor_inertia the rotor is held at the nameplate operating
+# speed (quasi-static) and the solver says so.
 #
 # MUST validate against definition.schema.json.
 kind: primitive_device
@@ -109,6 +110,11 @@ parameters:
     units: ohm
     required: false
     description: "The INNER (running) cage's leakage reactance at the nameplate frequency, referred to the stator — HIGH (the deep bar sits far from the air gap), which chokes this cage at standstill and routes the starting current through the high-resistance outer cage. Positive; used only together with rotor_resistance_2."
+  core_loss_resistance:
+    type: quantity
+    units: ohm
+    required: false
+    description: "R_c, the core-loss (iron-loss) resistance per phase (referred; a delta stator refers it / 3), in PARALLEL with the magnetizing branch — hysteresis + eddy loss driven by the changing air-gap flux. Optional; carried in both the readings and the time-domain model, drawing nothing at DC. Derive from a cited core loss P_core and the air-gap EMF E_m: R_c = 3*E_m^2/P_core (Fitzgerald 6e Problem 6.10: a 460 V 25 kW 60 Hz machine, 220 W core loss, R_c ~ 927 ohm)."
   magnetizing_reactance:
     type: quantity
     units: ohm
@@ -202,9 +208,14 @@ notes: |
   SIX flux states (two rotor circuits per axis) whose settled steady state is exactly the
   parallel-two-cage phasor circuit the readings use; the double-cage torque curve's real
   pull-up DIP means a start can hang below its running point — CRAWLING, named by the solver.
-  Core loss and self-heating are unmodeled rungs.
+  CORE LOSS runs when the part carries core_loss_resistance: the iron branch promotes the
+  magnetizing flux to a real marched state (six states, or eight with the double cage), the
+  settled steady state is the phasor circuit with R_c parallel the magnetizing branch, the
+  developed torque still excludes the iron loss, and the core draws nothing at DC. Self-heating
+  is an unmodeled rung.
   Sources: Tesla's 1888 polyphase patents; the Steinmetz equivalent circuit; Krause, "Analysis
-  of Electric Machinery" (stationary-frame qd0); Fitzgerald, "Electric Machinery"; Chapman,
-  "Electric Machinery Fundamentals"; the double-cage circuit and fitted catalog-machine
-  parameters: Monjo, Kojooyan-Jafari, Corcoles and Pedra, IEEE Trans. Energy Conversion 30(2)
-  550-557, 2015 (Fig. 2b — this exact topology; full text verified 2026-07-11).
+  of Electric Machinery" (stationary-frame qd0); Fitzgerald, "Electric Machinery" (6e Problem
+  6.10 for the core-loss placement); Chapman, "Electric Machinery Fundamentals"; the double-cage
+  circuit and fitted catalog-machine parameters: Monjo, Kojooyan-Jafari, Corcoles and Pedra,
+  IEEE Trans. Energy Conversion 30(2) 550-557, 2015 (Fig. 2b — this exact topology; full text
+  verified 2026-07-11).

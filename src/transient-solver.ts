@@ -127,6 +127,7 @@ import {
   dqStampMotor,
 } from './induction-motor-dq.ts'
 import {
+  coreLossParamsNote,
   crawlNote,
   deepBarParamsNote,
   inductionMotorOperatingPoint,
@@ -1247,6 +1248,7 @@ function resolveInductionMotorDq(
     saturationParamsNote(inst.id, p),
     saturatedAtNameplateNote(inst.id, p),
     deepBarParamsNote(inst.id, p),
+    coreLossParamsNote(inst.id, p),
     crawlNote(inst.id, op),
   ]) {
     if (note !== null) notes.push(note)
@@ -1353,6 +1355,7 @@ function resolveInductionMotor3(
     saturationParamsNote(inst.id, p),
     saturatedAtNameplateNote(inst.id, p),
     deepBarParamsNote(inst.id, p),
+    coreLossParamsNote(inst.id, p),
   ]) {
     if (note !== null) notes.push(note)
   }

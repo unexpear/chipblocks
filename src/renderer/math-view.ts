@@ -15,6 +15,7 @@ import {
 } from '../electromagnet-model.ts'
 import { electronDriftVelocityMS } from '../field-energy.ts'
 import {
+  coreLossFromParams,
   doubleCageFromParams,
   inductionMotorOperatingPoint,
   inductionMotorParamsFromInstance,
@@ -957,6 +958,11 @@ function partCard(
       if (doubleCageFromParams(imParams) !== null) {
         lines.push(
           'Its rotor is a DOUBLE CAGE (the deep-bar rotor): at standstill the rotor currents are at line frequency, so the inner cage’s high leakage chokes it and the current takes the high-resistance outer cage — strong starting torque; at running slip the two cages share the current as parallel resistances — efficient. The rotor branch is (R2/s + jX2) ∥ (R2b/s + jX2b).',
+        )
+      }
+      if (coreLossFromParams(imParams) !== null) {
+        lines.push(
+          'It carries CORE LOSS: a resistance R_c in parallel with the magnetizing branch dissipates the hysteresis + eddy-current loss of the changing iron flux — real no-load current and a lower efficiency, but nothing at DC (constant flux, no loss).',
         )
       }
       const op = inductionMotorOperatingPoint(imParams)

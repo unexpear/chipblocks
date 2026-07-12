@@ -44,8 +44,12 @@
  * path (the strong starting torque of NEMA design B/C machines); at running slip they act as
  * parallel resistances (efficient). The double-cage torque curve is NOT single-peaked (pull-out
  * max → pull-up DIP → rise to standstill), so its operating point comes from a multi-root-aware
- * stable-crossing search, and a start that hangs below the dip is reported as CRAWLING. Core
- * loss remains an unmodeled refinement. Sources: Tesla's 1888
+ * stable-crossing search, and a start that hangs below the dip is reported as CRAWLING. CORE
+ * LOSS is modeled when the part carries core_loss_resistance: R_c sits in parallel with the
+ * magnetizing branch (hysteresis + eddy loss driven by the changing magnetizing flux — it draws
+ * nothing at DC), the Thévenin folds it in, the developed torque still excludes it (R_c
+ * dissipates on the stator side of the air gap), and the input power/efficiency pick it up
+ * automatically. Sources: Tesla's 1888
  * polyphase patents; Steinmetz equivalent circuit; Krause, "Analysis of Electric Machinery";
  * Fitzgerald, "Electric Machinery"; Chapman, "Electric Machinery Fundamentals".
  */
@@ -90,6 +94,10 @@ export type InductionMotorParams = {
    *  see rotorResistance2. The inner cage sits deep in the slot, so its leakage is HIGH: that
    *  is what chokes it at standstill and routes the starting current through the outer cage. */
   rotorReactance2?: number
+  /** Core-loss (iron-loss) resistance R_c (Ω, per phase, referred), in PARALLEL with the
+   *  magnetizing branch — hysteresis + eddy loss driven by the changing magnetizing flux.
+   *  Optional; activates the iron branch in both the readings and the time-domain model. */
+  coreLossResistance?: number
 }
 
 export type InductionMotorOperatingPoint = {
@@ -167,6 +175,30 @@ export function deepBarParamsNote(id: string, p: InductionMotorParams): string |
   )
 }
 
+/** The validated core-loss resistance, or null — the ONE activation predicate every consumer
+ *  shares. R_c must be positive, and every winding in play needs real leakage AND a real
+ *  magnetizing branch (X1, X2, Xm > 0; plus the inner cage's leakage when the double cage is
+ *  active) — the dynamic iron-loss formulation reads each winding current off its own leakage
+ *  flux and the magnetizing current off L_m. */
+export function coreLossFromParams(p: InductionMotorParams): { coreLossOhms: number } | null {
+  const rc = p.coreLossResistance
+  if (rc === undefined) return null
+  if (!(rc > 0)) return null
+  if (!(p.statorReactance > 0) || !(p.rotorReactance > 0) || !(p.magnetizingReactance > 0))
+    return null
+  return { coreLossOhms: rc }
+}
+
+/** A note when core_loss_resistance is present but cannot activate. Null when absent or valid. */
+export function coreLossParamsNote(id: string, p: InductionMotorParams): string | null {
+  if (p.coreLossResistance === undefined) return null
+  if (coreLossFromParams(p) !== null) return null
+  return (
+    `Induction motor '${id}': core loss needs core_loss_resistance > 0 and real leakage + ` +
+    'magnetizing reactances (X1, X2, Xm all > 0) — the iron stays lossless'
+  )
+}
+
 /** The rotor branch of the equivalent circuit at slip s: the single cage R2/s + jX2, or — when
  *  the second cage is active — the two cages in PARALLEL. The parallel combination IS the
  *  deep-bar physics in phasor form: at s = 1 the inner cage's high leakage chokes it and the
@@ -187,12 +219,30 @@ function rotorBranchImpedance(slip: number, p: InductionMotorParams): Cx {
 
 /** Thévenin equivalent seen by the rotor branch (folding in V1, R1, X1 and the magnetizing Xm). */
 function thevenin(p: InductionMotorParams): { vTh: number; rTh: number; xTh: number } {
-  const denom: Cx = { re: p.statorResistance, im: p.statorReactance + p.magnetizingReactance }
-  const vTh = cAbs(cDiv({ re: 0, im: p.supplyVoltage * p.magnetizingReactance }, denom))
-  const zTh = cDiv(
-    cMul({ re: 0, im: p.magnetizingReactance }, { re: p.statorResistance, im: p.statorReactance }),
-    denom,
-  )
+  const coreLoss = coreLossFromParams(p)
+  if (coreLoss === null) {
+    // The lossless literal arithmetic (bit-identical without core_loss_resistance).
+    const denom: Cx = { re: p.statorResistance, im: p.statorReactance + p.magnetizingReactance }
+    const vTh = cAbs(cDiv({ re: 0, im: p.supplyVoltage * p.magnetizingReactance }, denom))
+    const zTh = cDiv(
+      cMul(
+        { re: 0, im: p.magnetizingReactance },
+        { re: p.statorResistance, im: p.statorReactance },
+      ),
+      denom,
+    )
+    return { vTh, rTh: zTh.re, xTh: zTh.im }
+  }
+  // With the iron branch the shunt is Z_sh = R_c ∥ jXm — the same fold, complex-general. The
+  // Thévenin torque form downstream stays exact: it needs only |v_Th| and Z_Th, and the power
+  // into Z_rot is still the whole air-gap power (R_c dissipates on the stator side of the gap).
+  const mag: Cx = { re: 0, im: p.magnetizingReactance }
+  const rc: Cx = { re: coreLoss.coreLossOhms, im: 0 }
+  const zSh = cDiv(cMul(rc, mag), cAdd(rc, mag))
+  const z1: Cx = { re: p.statorResistance, im: p.statorReactance }
+  const denom = cAdd(z1, zSh)
+  const vTh = cAbs(cDiv(cMul({ re: p.supplyVoltage, im: 0 }, zSh), denom))
+  const zTh = cDiv(cMul(zSh, z1), denom)
   return { vTh, rTh: zTh.re, xTh: zTh.im }
 }
 
@@ -226,7 +276,20 @@ export function inputImpedanceAtSlip(
 ): { resistance: number; reactance: number } {
   const rotor = rotorBranchImpedance(slip, p)
   const mag: Cx = { re: 0, im: p.magnetizingReactance }
-  const parallel = cDiv(cMul(mag, rotor), cAdd(mag, rotor))
+  const coreLoss = coreLossFromParams(p)
+  if (coreLoss === null) {
+    // The lossless literal arithmetic (bit-identical without core_loss_resistance).
+    const parallel = cDiv(cMul(mag, rotor), cAdd(mag, rotor))
+    const zIn = cAdd({ re: p.statorResistance, im: p.statorReactance }, parallel)
+    return { resistance: zIn.re, reactance: zIn.im }
+  }
+  // Three-way shunt R_c ∥ jXm ∥ Z_rot(s) by admittance sum — the input current, power factor
+  // and so the input power (and efficiency) pick up the core loss with no further change.
+  const yShunt = cAdd(
+    cAdd(cDiv({ re: 1, im: 0 }, { re: coreLoss.coreLossOhms, im: 0 }), cDiv({ re: 1, im: 0 }, mag)),
+    cDiv({ re: 1, im: 0 }, rotor),
+  )
+  const parallel = cDiv({ re: 1, im: 0 }, yShunt)
   const zIn = cAdd({ re: p.statorResistance, im: p.statorReactance }, parallel)
   return { resistance: zIn.re, reactance: zIn.im }
 }
@@ -441,9 +504,11 @@ export function inductionMotorParamsFromInstance(inst: Instance): InductionMotor
   // L = λ/i consistent with the impedance referral).
   const kneeFluxVs = readScalarParam(inst, 'magnetizing_knee_flux')
   const saturatedXm = readScalarParam(inst, 'saturated_magnetizing_reactance')
-  // The second (inner) rotor cage refers like every impedance: plain ÷3 in delta.
+  // The second (inner) rotor cage and the core-loss resistance refer like every impedance:
+  // plain ÷3 in delta.
   const rotorResistance2 = readScalarParam(inst, 'rotor_resistance_2')
   const rotorReactance2 = readScalarParam(inst, 'rotor_reactance_2')
+  const coreLossResistance = readScalarParam(inst, 'core_loss_resistance')
   return {
     supplyVoltage,
     frequency,
@@ -459,6 +524,7 @@ export function inductionMotorParamsFromInstance(inst: Instance): InductionMotor
     ...(saturatedXm !== undefined ? { saturatedMagnetizingReactance: saturatedXm * refer } : {}),
     ...(rotorResistance2 !== undefined ? { rotorResistance2: rotorResistance2 * refer } : {}),
     ...(rotorReactance2 !== undefined ? { rotorReactance2: rotorReactance2 * refer } : {}),
+    ...(coreLossResistance !== undefined ? { coreLossResistance: coreLossResistance * refer } : {}),
   }
 }
 

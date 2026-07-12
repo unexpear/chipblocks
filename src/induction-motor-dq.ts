@@ -70,6 +70,7 @@
  */
 
 import {
+  coreLossFromParams,
   doubleCageFromParams,
   type InductionMotorParams,
   saturationCurveFromParams,
@@ -94,6 +95,19 @@ export type DqInductances = {
    *  shared magnetizing branch. Present ⇒ the machine marches SIX flux states (two rotor
    *  circuits per axis); absent ⇒ the four-state single-cage march, arithmetic untouched. */
   cage2?: { rotorOhms2: number; rotorLeakage2H: number }
+  /** The core-loss (iron) resistance across the magnetizing branch, when the part supplies it.
+   *  Present ⇒ the magnetizing flux λ_m becomes a real per-axis STATE (dλ_m/dt = R_c·i_Fe —
+   *  the iron branch carries the node voltage), every winding current reads diagonally off its
+   *  own leakage flux, and the machine marches 6 states (8 with the double cage). Absent ⇒ the
+   *  lossless paths, arithmetic untouched. */
+  coreLossOhms?: number
+}
+
+/** Flux-state count for a core: 4 lossless single-cage, 6 lossless double-cage OR iron-loss
+ *  single-cage, 8 iron-loss double-cage. */
+function stateCount(L: DqInductances): number {
+  const rotor = L.cage2 !== undefined ? 4 : 2
+  return 2 + rotor + (L.coreLossOhms !== undefined ? 2 : 0)
 }
 
 /** The effective inductance set at a (possibly saturated) chord magnetizing inductance. */
@@ -159,6 +173,91 @@ function statorCurrent6(g: number[][], lam: number[], axis: 0 | 1): number {
     (g0[1] ?? 0) * (lam[axis + 2] ?? 0) +
     (g0[2] ?? 0) * (lam[axis + 4] ?? 0)
   )
+}
+
+/** The rotor windings of a core (one or two cages) — the iron-loss (λ_m-state) formulation
+ *  iterates these for the state matrix, the currents and the torque. */
+function rotorWindings(L: DqInductances): { ohms: number; leakageH: number }[] {
+  const windings = [{ ohms: L.rotorOhms, leakageH: L.rotorLeakageH }]
+  if (L.cage2 !== undefined)
+    windings.push({ ohms: L.cage2.rotorOhms2, leakageH: L.cage2.rotorLeakage2H })
+  return windings
+}
+
+/**
+ * The iron-loss state matrix — n = 6 (single cage) or 8 (double cage), ordering
+ * [λ_αs, λ_βs, λ_αr1, λ_βr1 (, λ_αr2, λ_βr2), λ_αm, λ_βm]. With λ_m explicit every current is
+ * DIAGONAL in the states (no inverse): i_s = (λ_s − λ_m)/L_ls, i_rk = (λ_rk − λ_m)/L_lrk,
+ * i_m = λ_m/L_m (the chord L_m when saturation is active). The iron branch carries the
+ * magnetizing-node voltage: dλ_m/dt = R_c·i_Fe with i_Fe = i_s + Σi_rk − i_m — so at DC the
+ * settled flux makes i_Fe = 0 and the core dissipates nothing, and as R_c → ∞ the model
+ * converges to the lossless machine. Speed voltage acts on the FULL rotor flux λ_rk, as in
+ * every sibling path.
+ */
+function stateMatrixFe(L: DqInductances, lmEff: number, omegaElectrical: number): number[][] {
+  const rc = L.coreLossOhms ?? 0
+  const windings = rotorWindings(L)
+  const n = 4 + 2 * windings.length
+  const mA = n - 2
+  const mB = n - 1
+  const A: number[][] = Array.from({ length: n }, () => new Array<number>(n).fill(0))
+  const rowS = A[0]
+  const rowSb = A[1]
+  const rowMa = A[mA]
+  const rowMb = A[mB]
+  if (!rowS || !rowSb || !rowMa || !rowMb) return A
+  rowS[0] = -L.statorOhms / L.statorLeakageH
+  rowS[mA] = L.statorOhms / L.statorLeakageH
+  rowSb[1] = -L.statorOhms / L.statorLeakageH
+  rowSb[mB] = L.statorOhms / L.statorLeakageH
+  let mDiag = 1 / L.statorLeakageH + 1 / lmEff
+  rowMa[0] = rc / L.statorLeakageH
+  rowMb[1] = rc / L.statorLeakageH
+  windings.forEach((w, k) => {
+    const rA = 2 + 2 * k
+    const rB = rA + 1
+    const rowRa = A[rA]
+    const rowRb = A[rB]
+    if (!rowRa || !rowRb) return
+    rowRa[rA] = -w.ohms / w.leakageH
+    rowRa[mA] = w.ohms / w.leakageH
+    rowRa[rB] = -omegaElectrical
+    rowRb[rB] = -w.ohms / w.leakageH
+    rowRb[mB] = w.ohms / w.leakageH
+    rowRb[rA] = omegaElectrical
+    rowMa[rA] = rc / w.leakageH
+    rowMb[rB] = rc / w.leakageH
+    mDiag += 1 / w.leakageH
+  })
+  rowMa[mA] = -rc * mDiag
+  rowMb[mB] = -rc * mDiag
+  return A
+}
+
+/** Stator current on one axis in the iron-loss formulation: (λ_s − λ_m)/L_ls. */
+function statorCurrentFe(L: DqInductances, lam: number[], axis: 0 | 1): number {
+  const n = lam.length
+  return ((lam[axis] ?? 0) - (lam[n - 2 + axis] ?? 0)) / L.statorLeakageH
+}
+
+/** The developed (air-gap) torque in the iron-loss formulation:
+ *  T = (3/2)(P/2)·(λ_βm·Σ_k i_αrk − λ_αm·Σ_k i_βrk). The shipped stator form λ_s × i_s would
+ *  silently book the core-loss power as shaft torque (its i_s includes the iron-branch current
+ *  — the artifact equals exactly P_core/ω_sync, enough to settle an unloaded machine ABOVE
+ *  synchronous speed); this magnetizing×rotor form excludes it, reduces to the stator form as
+ *  R_c → ∞, and reproduces T = 3·|I_r|²·(R2/s)/ω_s per cage at balanced-sine steady state. */
+function torqueFe(L: DqInductances, lam: number[]): number {
+  const windings = rotorWindings(L)
+  const n = 4 + 2 * windings.length
+  const lamMa = lam[n - 2] ?? 0
+  const lamMb = lam[n - 1] ?? 0
+  let iRotA = 0
+  let iRotB = 0
+  windings.forEach((w, k) => {
+    iRotA += ((lam[2 + 2 * k] ?? 0) - lamMa) / w.leakageH
+    iRotB += ((lam[3 + 2 * k] ?? 0) - lamMb) / w.leakageH
+  })
+  return 1.5 * L.polePairs * (lamMb * iRotA - lamMa * iRotB)
 }
 
 /**
@@ -243,6 +342,13 @@ export function dqInductancesFromParams(p: InductionMotorParams): DqInductances 
           rotorLeakage2H: cage2Params.rotorReactance2 / omegaNameplate,
         }
       : undefined
+  // The iron branch needs every leakage in play strictly positive (its currents read off the
+  // leakage fluxes) — with the double cage active, that includes the inner cage's.
+  const coreLoss = coreLossFromParams(p)
+  const coreLossOhms =
+    coreLoss !== null && (cage2 === undefined || cage2.rotorLeakage2H > 0)
+      ? coreLoss.coreLossOhms
+      : undefined
   return {
     statorOhms: p.statorResistance,
     rotorOhms: p.rotorResistance,
@@ -255,6 +361,7 @@ export function dqInductancesFromParams(p: InductionMotorParams): DqInductances 
     polePairs: p.poles / 2,
     ...(saturation !== undefined ? { saturation } : {}),
     ...(cage2 !== undefined ? { cage2 } : {}),
+    ...(coreLossOhms !== undefined ? { coreLossOhms } : {}),
   }
 }
 
@@ -269,7 +376,7 @@ export function createDqMotor(
     mechanics,
     lockedOmega,
     period,
-    flux: inductances.cage2 !== undefined ? [0, 0, 0, 0, 0, 0] : [0, 0, 0, 0],
+    flux: new Array<number>(stateCount(inductances)).fill(0),
     i0: 0,
     omega: mechanics === null ? lockedOmega : 0,
     torque: 0,
@@ -386,7 +493,27 @@ export function dqStampMotor(core: DqMotorCore, targetTime: number, h: number): 
   let fluxPerVolt: number[]
   let iAlphaKnown: number
   let iAlphaPerVolt: number
-  if (L.cage2 === undefined) {
+  if (L.coreLossOhms !== undefined) {
+    // The iron-loss march (λ_m a real state; 6 or 8 states) — same trapezoidal split.
+    const n = stateCount(L)
+    const A = stateMatrixFe(L, core.lmEffH, omegaElectrical)
+    const lhs = A.map((row, r) => row.map((v, c) => (r === c ? 1 : 0) - half * v))
+    const rhs1 = new Array<number>(n).fill(0)
+    for (let r = 0; r < n; r++) {
+      let s = core.flux[r] ?? 0
+      for (let c = 0; c < n; c++) s += half * (A[r]?.[c] ?? 0) * (core.flux[c] ?? 0)
+      rhs1[r] = s
+    }
+    rhs1[0] = (rhs1[0] ?? 0) + half * ((core.uPrev[0] ?? 0) + uKnown[0])
+    rhs1[1] = (rhs1[1] ?? 0) + half * ((core.uPrev[1] ?? 0) + uKnown[1])
+    const rhs2 = new Array<number>(n).fill(0)
+    rhs2[0] = h / 3
+    const [k, pv] = solveMulti(lhs, [rhs1, rhs2])
+    fluxKnown = k ?? new Array<number>(n).fill(0)
+    fluxPerVolt = pv ?? new Array<number>(n).fill(0)
+    iAlphaKnown = statorCurrentFe(L, fluxKnown, 0)
+    iAlphaPerVolt = statorCurrentFe(L, fluxPerVolt, 0)
+  } else if (L.cage2 === undefined) {
     // The single-cage 4-state march — the pre-double-cage arithmetic, verbatim.
     const eff = effectiveL(L, core.lmEffH)
     const A = stateMatrix(L, core.lmEffH, omegaElectrical)
@@ -468,13 +595,16 @@ export function dqCommitMotor(core: DqMotorCore, portVolts: number, h: number): 
   const stamp = core.stamp
   if (stamp === null) return 0
   const L = core.inductances
-  const n = L.cage2 === undefined ? 4 : 6
+  const n = stateCount(L)
   const flux = new Array<number>(n).fill(0)
   for (let r = 0; r < n; r++)
     flux[r] = (stamp.fluxKnown[r] ?? 0) + (stamp.fluxPerVolt[r] ?? 0) * portVolts
   let iAlpha: number
   let iBeta: number
-  if (L.cage2 === undefined) {
+  if (L.coreLossOhms !== undefined) {
+    iAlpha = statorCurrentFe(L, flux, 0)
+    iBeta = statorCurrentFe(L, flux, 1)
+  } else if (L.cage2 === undefined) {
     const eff = effectiveL(L, core.lmEffH) // the SAME chord the stamp marched with
     iAlpha = (eff.Lr * (flux[0] ?? 0) - eff.Lm * (flux[2] ?? 0)) / eff.D
     iBeta = (eff.Lr * (flux[1] ?? 0) - eff.Lm * (flux[3] ?? 0)) / eff.D
@@ -485,19 +615,28 @@ export function dqCommitMotor(core: DqMotorCore, portVolts: number, h: number): 
   }
   core.flux = flux
   core.i0 = stamp.i0Known + stamp.i0PerVolt * portVolts
-  core.torque = 1.5 * L.polePairs * ((flux[0] ?? 0) * iBeta - (flux[1] ?? 0) * iAlpha)
+  // Torque: the iron-loss path must use the magnetizing×rotor form (the stator form would book
+  // the core-loss power as shaft torque); the lossless paths keep λ_s × i_s verbatim.
+  core.torque =
+    L.coreLossOhms !== undefined
+      ? torqueFe(L, flux)
+      : 1.5 * L.polePairs * ((flux[0] ?? 0) * iBeta - (flux[1] ?? 0) * iAlpha)
   const mech = core.mechanics
   core.omega = mech === null ? core.lockedOmega : speedStep(core.omega, core.torque, mech, h)
   // The saturation state for the NEXT step: the chord L_m at the committed resultant
   // magnetizing flux λ_m = λ_s − L_ls·i_s (lagged one step, like the frozen rotor speed) —
-  // the same expression with the double cage (λ_m = L_m times the total MMF current).
-  core.lmEffH = saturatedLmEff(
-    L,
-    Math.hypot(
-      (flux[0] ?? 0) - L.statorLeakageH * iAlpha,
-      (flux[1] ?? 0) - L.statorLeakageH * iBeta,
-    ),
-  )
+  // the same expression with the double cage (λ_m = L_m times the total MMF current); with the
+  // iron branch λ_m IS a state and the chord reads it directly (the same physical quantity).
+  core.lmEffH =
+    L.coreLossOhms !== undefined
+      ? saturatedLmEff(L, Math.hypot(flux[n - 2] ?? 0, flux[n - 1] ?? 0))
+      : saturatedLmEff(
+          L,
+          Math.hypot(
+            (flux[0] ?? 0) - L.statorLeakageH * iAlpha,
+            (flux[1] ?? 0) - L.statorLeakageH * iBeta,
+          ),
+        )
   // Arm the did-not-start check on any real drive: 1 mV sits orders of magnitude above solver
   // leakage around an undriven port yet below any voltage that could be meant as a drive.
   if (Math.abs(portVolts) > 1e-3) core.energized = true
@@ -598,7 +737,7 @@ export function createDqMotor3(
     lockedOmega,
     wired,
     period,
-    flux: inductances.cage2 !== undefined ? [0, 0, 0, 0, 0, 0] : [0, 0, 0, 0],
+    flux: new Array<number>(stateCount(inductances)).fill(0),
     i0: 0,
     omega: mechanics === null ? lockedOmega : 0,
     torque: 0,
@@ -652,7 +791,35 @@ export function dq3StampMotor(core: Dq3MotorCore, h: number): Dq3Stamp {
   let iAlphaHist: number
   let iBetaHist: number
   let K: number[][]
-  if (L.cage2 === undefined) {
+  if (L.coreLossOhms !== undefined) {
+    // The iron-loss solve (λ_m a real state; 6 or 8 states) — same trapezoidal split.
+    const n = stateCount(L)
+    const A = stateMatrixFe(L, core.lmEffH, L.polePairs * core.omega)
+    const lhs = A.map((row, r) => row.map((v, c) => (r === c ? 1 : 0) - half * v))
+    const rhsHist = new Array<number>(n).fill(0)
+    for (let r = 0; r < n; r++) {
+      let s = core.flux[r] ?? 0
+      for (let c = 0; c < n; c++) s += half * (A[r]?.[c] ?? 0) * (core.flux[c] ?? 0)
+      rhsHist[r] = s
+    }
+    rhsHist[0] = (rhsHist[0] ?? 0) + half * (core.uPrev[0] ?? 0)
+    rhsHist[1] = (rhsHist[1] ?? 0) + half * (core.uPrev[1] ?? 0)
+    const sA = new Array<number>(n).fill(0)
+    sA[0] = half
+    const sB = new Array<number>(n).fill(0)
+    sB[1] = half
+    const solved = solveMulti(lhs, [rhsHist, sA, sB])
+    fluxKnown = solved[0] ?? new Array<number>(n).fill(0)
+    sensAlpha = solved[1] ?? new Array<number>(n).fill(0)
+    sensBeta = solved[2] ?? new Array<number>(n).fill(0)
+    iAlphaHist = statorCurrentFe(L, fluxKnown, 0)
+    iBetaHist = statorCurrentFe(L, fluxKnown, 1)
+    K = [
+      [statorCurrentFe(L, sensAlpha, 0), statorCurrentFe(L, sensBeta, 0), 0],
+      [statorCurrentFe(L, sensAlpha, 1), statorCurrentFe(L, sensBeta, 1), 0],
+      [0, 0, 0],
+    ]
+  } else if (L.cage2 === undefined) {
     // The single-cage 4-state solve — the pre-double-cage arithmetic, verbatim.
     const eff = effectiveL(L, core.lmEffH)
     const A = stateMatrix(L, core.lmEffH, L.polePairs * core.omega)
@@ -774,7 +941,7 @@ export function dq3CommitMotor(core: Dq3MotorCore, wiredVolts: number[], h: numb
   const vAlpha = T_IN_ALPHA.reduce((s, t, p) => s + t * (vFull[p] ?? 0), 0)
   const vBeta = T_IN_BETA.reduce((s, t, p) => s + t * (vFull[p] ?? 0), 0)
   const v0 = T_IN_ZERO.reduce((s, t, p) => s + t * (vFull[p] ?? 0), 0)
-  const n = L.cage2 === undefined ? 4 : 6
+  const n = stateCount(L)
   const flux = new Array<number>(n).fill(0)
   for (let r = 0; r < n; r++)
     flux[r] =
@@ -783,7 +950,10 @@ export function dq3CommitMotor(core: Dq3MotorCore, wiredVolts: number[], h: numb
       (stamp.sensBeta[r] ?? 0) * vBeta
   let iAlpha: number
   let iBeta: number
-  if (L.cage2 === undefined) {
+  if (L.coreLossOhms !== undefined) {
+    iAlpha = statorCurrentFe(L, flux, 0)
+    iBeta = statorCurrentFe(L, flux, 1)
+  } else if (L.cage2 === undefined) {
     const eff = effectiveL(L, core.lmEffH) // the SAME chord the stamp marched with
     iAlpha = (eff.Lr * (flux[0] ?? 0) - eff.Lm * (flux[2] ?? 0)) / eff.D
     iBeta = (eff.Lr * (flux[1] ?? 0) - eff.Lm * (flux[3] ?? 0)) / eff.D
@@ -794,17 +964,26 @@ export function dq3CommitMotor(core: Dq3MotorCore, wiredVolts: number[], h: numb
   }
   core.flux = flux
   core.i0 = core.wired[3] ? stamp.i0Known + stamp.i0PerV0 * v0 : 0
-  core.torque = 1.5 * L.polePairs * ((flux[0] ?? 0) * iBeta - (flux[1] ?? 0) * iAlpha)
+  // Torque: magnetizing×rotor form on the iron-loss path (the stator form would book the
+  // core-loss power as shaft torque); the lossless paths keep λ_s × i_s verbatim.
+  core.torque =
+    L.coreLossOhms !== undefined
+      ? torqueFe(L, flux)
+      : 1.5 * L.polePairs * ((flux[0] ?? 0) * iBeta - (flux[1] ?? 0) * iAlpha)
   const mech = core.mechanics
   core.omega = mech === null ? core.lockedOmega : speedStep(core.omega, core.torque, mech, h)
-  // The saturation state for the NEXT step (lagged one step, like the frozen rotor speed).
-  core.lmEffH = saturatedLmEff(
-    L,
-    Math.hypot(
-      (flux[0] ?? 0) - L.statorLeakageH * iAlpha,
-      (flux[1] ?? 0) - L.statorLeakageH * iBeta,
-    ),
-  )
+  // The saturation state for the NEXT step (lagged one step, like the frozen rotor speed);
+  // with the iron branch λ_m IS a state and the chord reads it directly.
+  core.lmEffH =
+    L.coreLossOhms !== undefined
+      ? saturatedLmEff(L, Math.hypot(flux[n - 2] ?? 0, flux[n - 1] ?? 0))
+      : saturatedLmEff(
+          L,
+          Math.hypot(
+            (flux[0] ?? 0) - L.statorLeakageH * iAlpha,
+            (flux[1] ?? 0) - L.statorLeakageH * iBeta,
+          ),
+        )
   if (Math.max(Math.abs(vAlpha), Math.abs(vBeta), Math.abs(v0)) > 1e-3) core.energized = true
   core.uPrev = [vAlpha, vBeta]
   const wiredIdx: number[] = []
