@@ -6754,6 +6754,393 @@ function buildCharGen(): BlockData {
 /** The HELLO WORLD character generator: scan counters + message/font ROMs + column mux → video bit. */
 export const CHAR_GEN: BlockData = buildCharGen()
 
+// ==============================================================================================
+// MICROPROCESSOR ON-RAMP — a minimal stored-program CPU from real gates, the era-6 destination.
+// A SAP-1-DERIVED teaching computer (A. Malvino & J. Brown, "Digital Computer Electronics", 3rd
+// ed.; ADD/SUB/OUT/HLT are SAP-1, LDI/JMP/JZ are SAP-2-level), 4-bit to match the existing
+// nibble-wide blocks. Every part is a real gate composition that flattens to the FAST LOGIC engine
+// (so it simulates at gate speed, not the transistor scaling wall), and NOTHING sequences it in
+// code — a real clocked gate control does, exactly like the calculator's control unit. Increment
+// 1 here is the FETCH ENGINE: the machine reads a stored program out of memory, one instruction at
+// a time. Decode + execute, control flow, and data memory land in later increments.
+// ==============================================================================================
+
+/**
+ * An N-bit register WITH a LOAD ENABLE — N D flip-flops, each fronted by a per-bit 2:1 mux so the
+ * bit LOADS its D input when LOAD is high and HOLDS its own Q when LOAD is low (D = LOAD ? D_in :
+ * Q). A CPU's instruction register needs this: a plain register latches on every clock edge, but a
+ * CPU register must hold its word across all the edges when the control unit isn't loading it.
+ */
+function buildRegisterLoad(bits: number): BlockData {
+  const nodes: BlockData['nodes'] = []
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const rail: string[] = []
+  for (let i = 0; i < bits; i++) {
+    nodes.push({ id: `mx${i}`, definition: 'block', x: 120, y: 30 + i * 260, block: MUX2_1BIT })
+    nodes.push({
+      id: `ff${i}`,
+      definition: 'block',
+      x: 420,
+      y: 30 + i * 260,
+      block: D_FLIPFLOP_BLOCK,
+    })
+    rail.push(`mx${i}`, `ff${i}`)
+    edges.push({
+      id: `hold${i}`,
+      source: `ff${i}`,
+      sourceHandle: 'q',
+      target: `mx${i}`,
+      targetHandle: 'y',
+    })
+    edges.push({
+      id: `d${i}`,
+      source: `mx${i}`,
+      sourceHandle: 'out',
+      target: `ff${i}`,
+      targetHandle: 'd',
+    })
+    if (i > 0) {
+      edges.push({
+        id: `ld${i}`,
+        source: 'mx0',
+        sourceHandle: 'sel',
+        target: `mx${i}`,
+        targetHandle: 'sel',
+      })
+      edges.push({
+        id: `clk${i}`,
+        source: 'ff0',
+        sourceHandle: 'clk',
+        target: `ff${i}`,
+        targetHandle: 'clk',
+      })
+    }
+  }
+  edges.push(...chainRails(rail, 'rl'))
+  let left = 14
+  for (let i = 0; i < bits; i++) {
+    ports.push({
+      id: `d${i}`,
+      label: `D${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `mx${i}`, handleId: 'x' },
+    })
+    left += 14
+  }
+  ports.push({
+    id: 'load',
+    label: 'LOAD',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'mx0', handleId: 'sel' },
+  })
+  left += 14
+  ports.push({
+    id: 'clk',
+    label: 'CLK',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'ff0', handleId: 'clk' },
+  })
+  left += 14
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'ff0', handleId: 'gnd' },
+  })
+  let right = 14
+  for (let i = 0; i < bits; i++) {
+    ports.push({
+      id: `q${i}`,
+      label: `Q${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: `ff${i}`, handleId: 'q' },
+    })
+    right += 14
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'ff0', handleId: 'v_dd' },
+  })
+  return { name: `${bits}-bit Register (load-enable)`, origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/**
+ * INSTRUCTION ROM (16 words × 8 bits) — the stored program, held in REAL GATES. A 4-bit address
+ * (from the program counter) drives a 4-to-16 one-hot decoder (one minterm line per address); each
+ * of the 8 data-out bits is the OR of the address lines where that bit is a 1 in the program — the
+ * decoder + OR-plane ROM/PLA the same way binaryToSevenSegment bakes the hex font into gates. The
+ * PROGRAM is the OR-plane WIRING, chosen at build time. The simulation only ever evaluates gates:
+ * nothing reads the program table at run time (that would be code-in-the-loop, not a real ROM). A
+ * bit that is 0 in every word ties low (no minterm). Addresses past the program read 0 (a HLT).
+ */
+function buildInstructionRom(program: number[]): BlockData {
+  const nodes: BlockData['nodes'] = [
+    { id: 'dec', definition: 'block', x: 0, y: 0, block: binaryDecoder(4) },
+  ]
+  const edges: BlockData['edges'] = []
+  const ports: BlockData['ports'] = []
+  const rail: string[] = ['dec']
+  const LOW: LogicRef = { node: 'dec', handle: 'gnd' }
+  const dataRefs: LogicRef[] = []
+  for (let b = 0; b < 8; b++) {
+    const terms: LogicRef[] = []
+    for (let addr = 0; addr < 16; addr++) {
+      if ((((program[addr] ?? 0) >> b) & 1) === 1) terms.push({ node: 'dec', handle: `y${addr}` })
+    }
+    if (terms.length === 0) {
+      dataRefs.push(LOW) // this bit is 0 in every word — tie the output low
+    } else {
+      const tree = orReduce(terms, `rd${b}`, 1200 + b * 200)
+      nodes.push(...tree.nodes)
+      edges.push(...tree.edges)
+      rail.push(...tree.ids)
+      dataRefs.push(tree.out)
+    }
+  }
+  edges.push(...chainRails(rail, 'rom'))
+  let left = 14
+  for (let i = 0; i < 4; i++) {
+    ports.push({
+      id: `a${i}`,
+      label: `A${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: 'dec', handleId: `a${i}` },
+    })
+    left += 16
+  }
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'dec', handleId: 'gnd' },
+  })
+  let right = 14
+  for (let b = 0; b < 8; b++) {
+    const ref = dataRefs[b]
+    if (ref === undefined) continue
+    ports.push({
+      id: `d${b}`,
+      label: `D${b}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: ref.node, handleId: ref.handle },
+    })
+    right += 16
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'dec', handleId: 'v_dd' },
+  })
+  return { name: 'Instruction ROM (16×8)', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The CPU on-ramp's instruction set — SAP-1-derived (Malvino & Brown). Each 8-bit word is an
+ *  OPCODE (high nibble → D4..D7) plus a 4-bit OPERAND (low nibble → D0..D3). */
+export const CPU_OPCODES = {
+  HLT: 0x0,
+  LDI: 0x1,
+  ADD: 0x2,
+  SUB: 0x3,
+  OUT: 0x4,
+  JMP: 0x5,
+  JZ: 0x6,
+} as const
+const cpuInstr = (op: number, operand = 0): number => ((op & 0xf) << 4) | (operand & 0xf)
+
+/** The shipped demo program — 3 + 4 = 7, show it, halt. Execute lands in increment 2; increment 1
+ *  proves the machine FETCHES these words out of the ROM in program order. */
+export const CPU_DEMO_PROGRAM: number[] = [
+  cpuInstr(CPU_OPCODES.LDI, 3), // 0: ACC ← 3
+  cpuInstr(CPU_OPCODES.ADD, 4), // 1: ACC ← ACC + 4  (= 7)
+  cpuInstr(CPU_OPCODES.OUT), //    2: show ACC
+  cpuInstr(CPU_OPCODES.HLT), //    3: stop
+]
+
+/**
+ * FETCH ENGINE (CPU on-ramp, increment 1) — the stored-program heart, all real clocked gates on
+ * the fast logic engine: a PROGRAM COUNTER (loadable up-counter) walking an INSTRUCTION ROM
+ * through an INSTRUCTION REGISTER, sequenced by a real gate control (a binary T-state counter +
+ * one-hot decoder — never a code loop). Each instruction is fetched in two clocked microsteps:
+ *   T0  IR ← ROM[PC]        (load the instruction at the program counter)
+ *   T1  PC ← PC + 1         (advance to the next instruction) and reset the T-counter to T0
+ * so the IR presents the program's words one per instruction cycle. RESET synchronously homes
+ * PC = 0 and T = 0 (a real reset pin; all-zero power-up already lands on T0, but RESET makes it
+ * explicit and lets a program restart). The PC-load inputs (LOADPC + PL0..PL3) redirect the fetch
+ * — a JMP — proving non-sequential flow; the control unit will drive them internally once JMP
+ * lands (increment 3). No JS sequences any of this: the T-state counter + gate decode do it,
+ * exactly the buildCalcControlFsm discipline. Descend to see the counters, ROM, register, decoder.
+ */
+export function buildFetchEngine(program: number[] = CPU_DEMO_PROGRAM): BlockData {
+  const nodes: BlockData['nodes'] = [
+    { id: 'pc', definition: 'block', x: 0, y: 0, block: COUNTER_UP_EN_4 },
+    { id: 'rom', definition: 'block', x: 1400, y: 0, block: buildInstructionRom(program) },
+    { id: 'ir', definition: 'block', x: 2800, y: 0, block: buildRegisterLoad(8) },
+    { id: 'tcnt', definition: 'block', x: 0, y: 4000, block: COUNTER_UP_EN_3 },
+    { id: 'tdec', definition: 'block', x: 1000, y: 4000, block: BINARY_DECODER_3_8 },
+  ]
+  const edges: BlockData['edges'] = []
+  let ei = 0
+  const e = (s: string, sh: string, t: string, th: string) => {
+    edges.push({ id: `f${ei++}`, source: s, sourceHandle: sh, target: t, targetHandle: th })
+  }
+  // datapath: PC → ROM address; ROM data → IR; T-counter → T-state decoder
+  for (let i = 0; i < 4; i++) e('pc', `q${i}`, 'rom', `a${i}`)
+  for (let b = 0; b < 8; b++) e('rom', `d${b}`, 'ir', `d${b}`)
+  for (let i = 0; i < 3; i++) e('tcnt', `q${i}`, 'tdec', `a${i}`)
+  // one shared clock fanned to every sequential sub-block
+  e('pc', 'clk', 'ir', 'clk')
+  e('pc', 'clk', 'tcnt', 'clk')
+
+  // buffered external control inputs (a real chip's pins) — the FSM-input pattern.
+  const ctrlIns = ['reset', 'loadpc', 'pl0', 'pl1', 'pl2', 'pl3']
+  ctrlIns.forEach((s, i) => {
+    nodes.push({
+      id: `buf_${s}`,
+      definition: 'block',
+      x: -600,
+      y: 30 + i * 260,
+      block: BUFFER_BLOCK,
+    })
+  })
+  const IN = (s: string): LogicRef => ({ node: `buf_${s}`, handle: 'out' })
+  const HIGH: LogicRef = { node: 'pc', handle: 'v_dd' }
+  const LOW: LogicRef = { node: 'pc', handle: 'gnd' }
+  const RESET = IN('reset')
+
+  // combinational control (real gates via buildExpr):
+  //   IR loads at T0; PC increments at T1; the T-counter resets to 0 at T1 (2-state fetch cycle).
+  //   PC loads on RESET (value 0) or an external JMP (LOADPC, value PL). T-counter enable is always
+  //   on, its load = RESET or T1 with load value 0.
+  const ctx: ExprCtx = { nodes: [], edges: [], ids: [], n: 0 }
+  const pcLoad = buildExpr(['or', RESET, IN('loadpc')], ctx) // RESET or JMP
+  const notReset = buildExpr(['not', RESET], ctx)
+  const pcLval = [0, 1, 2, 3].map((i) => buildExpr(['and', IN(`pl${i}`), notReset], ctx)) // 0 on RESET, else PL
+  const tLoad = buildExpr(['or', RESET, { node: 'tdec', handle: 'y1' }], ctx) // reset the T-counter at T1
+  nodes.push(...ctx.nodes)
+  edges.push(...ctx.edges)
+
+  const link = (ref: LogicRef, node: string, port: string) => {
+    edges.push({
+      id: `f${ei++}`,
+      source: ref.node,
+      sourceHandle: ref.handle,
+      target: node,
+      targetHandle: port,
+    })
+  }
+  // IR load = T0; PC enable (increment) = T1 — direct one-hot lines off the T decoder
+  e('tdec', 'y0', 'ir', 'load')
+  e('tdec', 'y1', 'pc', 'en')
+  // PC load + load value
+  link(pcLoad, 'pc', 'load')
+  pcLval.forEach((ref, i) => {
+    link(ref, 'pc', `l${i}`)
+  })
+  // T-counter: always enabled, reset (load 0) at T1 / RESET
+  link(HIGH, 'tcnt', 'en')
+  link(tLoad, 'tcnt', 'load')
+  link(LOW, 'tcnt', 'l0')
+  link(LOW, 'tcnt', 'l1')
+  link(LOW, 'tcnt', 'l2')
+
+  edges.push(
+    ...chainRails(
+      ['pc', 'rom', 'ir', 'tcnt', 'tdec', ...ctrlIns.map((s) => `buf_${s}`), ...ctx.ids],
+      'fe',
+    ),
+  )
+
+  const ports: BlockData['ports'] = []
+  let left = 14
+  ports.push({
+    id: 'clk',
+    label: 'CLK',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'pc', handleId: 'clk' },
+  })
+  left += 14
+  ports.push({
+    id: 'reset',
+    label: 'RST',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'buf_reset', handleId: 'in' },
+  })
+  left += 14
+  ports.push({
+    id: 'loadpc',
+    label: 'LDPC',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'buf_loadpc', handleId: 'in' },
+  })
+  left += 14
+  for (let i = 0; i < 4; i++) {
+    ports.push({
+      id: `pl${i}`,
+      label: `PL${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `buf_pl${i}`, handleId: 'in' },
+    })
+    left += 14
+  }
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'pc', handleId: 'gnd' },
+  })
+  let right = 14
+  for (let b = 0; b < 8; b++) {
+    ports.push({
+      id: `ir${b}`,
+      label: `IR${b}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: 'ir', handleId: `q${b}` },
+    })
+    right += 14
+  }
+  for (let i = 0; i < 4; i++) {
+    ports.push({
+      id: `pc${i}`,
+      label: `PC${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: 'pc', handleId: `q${i}` },
+    })
+    right += 14
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'pc', handleId: 'v_dd' },
+  })
+  return { name: 'CPU Fetch Engine', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The CPU on-ramp's fetch engine — PC + instruction ROM + IR + a real gate T-state sequencer. */
+export const CPU_FETCH_ENGINE: BlockData = buildFetchEngine()
+
 /** Built-in blocks droppable from the palette, keyed by their palette definition id.
  *  The palette lists these like parts; App's drop handler turns one into a block node
  *  (a fresh deep copy) that descends + flattens like any user-grouped block. */
@@ -6788,6 +7175,7 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   logic_d_flipflop: D_FLIPFLOP_BLOCK,
   logic_register_4bit: REGISTER_4BIT,
   logic_register_bcd: BCD_REGISTER_10,
+  cpu_fetch_engine: CPU_FETCH_ENGINE,
   memory_sram_cell: SRAM_CELL_BLOCK,
   memory_sram_word_4bit: SRAM_WORD_4BIT,
   display_seven_segment: SEVEN_SEGMENT_DISPLAY,

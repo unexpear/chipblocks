@@ -173,6 +173,7 @@ export const PARTS: { definition: string; label: string }[] = [
   { definition: 'logic_register_4bit', label: '4-bit Reg' },
   { definition: 'logic_register_bcd', label: 'BCD Reg' },
   { definition: 'calculator', label: 'Calculator' },
+  { definition: 'cpu_fetch_engine', label: 'CPU Fetch' },
   { definition: 'memory_sram_cell', label: 'SRAM Cell' },
   { definition: 'memory_sram_word_4bit', label: 'SRAM 4-bit' },
   { definition: 'switch_spst_toggle', label: 'Switch' },
