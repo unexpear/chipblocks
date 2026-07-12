@@ -369,6 +369,7 @@ const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'induction_motor',
   'induction_motor_three_phase',
   'induction_motor_single_phase',
+  'induction_motor_shaded_pole',
   'crt',
   'transmission_line',
   'resistor',
@@ -769,6 +770,15 @@ export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
           if (auxInCircuit && rAux !== undefined && rAux > 0)
             stampConductance(nodeIndex, M, aNet, bNet, rAux)
         }
+      } else if (inst.definition === 'induction_motor_shaded_pole') {
+        // At DC (at rest) the shorted shading ring carries no steady current, so the port sees
+        // only the MAIN winding's resistance R1 — the same limit the transient march settles to.
+        const rMain = readScalarParam(inst, 'main_resistance')
+        const aNet = inst.connects?.find((c) => c.terminal === 'terminal_a')?.net
+        const bNet = inst.connects?.find((c) => c.terminal === 'terminal_b')?.net
+        if (rMain !== undefined && rMain > 0 && aNet !== undefined && bNet !== undefined) {
+          stampConductance(nodeIndex, M, aNet, bNet, rMain)
+        }
       } else if (inst.definition === 'alternator') {
         // An alternator's EMF averages to ZERO over a cycle — at DC it is just its winding
         // resistance (the sine lives in the transient solve; the DC panel shows the steady part).
@@ -1047,6 +1057,15 @@ export function solveDC(inputWorld: World, options?: SolveOptions): Solution {
       if (rMain !== undefined && rMain > 0 && aNet !== undefined && bNet !== undefined) {
         const g = 1 / rMain + (auxInCircuit && rAux !== undefined && rAux > 0 ? 1 / rAux : 0)
         branches.set(inst.id, ((nodes.get(aNet) ?? 0) - (nodes.get(bNet) ?? 0)) * g)
+      }
+    } else if (inst.definition === 'induction_motor_shaded_pole') {
+      // The port current is the MAIN winding's Ohm's-law current (the shorted ring carries no
+      // DC steady current), so the Math panel's KCL closes at the motor's nets.
+      const rMain = readScalarParam(inst, 'main_resistance')
+      const aNet = inst.connects?.find((c) => c.terminal === 'terminal_a')?.net
+      const bNet = inst.connects?.find((c) => c.terminal === 'terminal_b')?.net
+      if (rMain !== undefined && rMain > 0 && aNet !== undefined && bNet !== undefined) {
+        branches.set(inst.id, ((nodes.get(aNet) ?? 0) - (nodes.get(bNet) ?? 0)) / rMain)
       }
     } else if (inst.definition === 'vccs') {
       // Reported current = the output current it sources, g·V_control.

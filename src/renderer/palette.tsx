@@ -105,6 +105,7 @@ export const PARTS: { definition: string; label: string }[] = [
   { definition: 'induction_motor', label: 'AC Motor' },
   { definition: 'induction_motor_three_phase', label: '3φ AC Motor' },
   { definition: 'induction_motor_single_phase', label: '1φ AC Motor' },
+  { definition: 'induction_motor_shaded_pole', label: 'Shaded-Pole' },
   { definition: 'transmission_line', label: 'T-Line' },
   { definition: 'transformer', label: 'Transformer' },
   { definition: 'transformer_center_tapped', label: 'CT Transformer' },

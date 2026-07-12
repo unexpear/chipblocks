@@ -190,6 +190,28 @@ const DEFAULTS: Record<string, Parameters> = {
     viscous_friction: scalar(0.0005, 'N*m*s/rad'),
     winding: { value: 'copper' },
   },
+  induction_motor_shaded_pole: {
+    // The AKO-16 machine (Šarac & Atanasova-Pačemska, J. Electrical Engineering 67(4), 2016) —
+    // a 220 V 50 Hz 2-pole sub-fractional-hp fan motor, parameters referred to the main winding.
+    // Rated point ~0.126 A, ~0.018 N·m at slip 0.16. The direct main↔shading mutual X13 (175.91
+    // Ω, 8% of the magnetizing X12) is the entire source of starting torque. rotor_inertia is
+    // left off (quasi-static readings by default; the paper doesn't publish J) — add one for the
+    // dynamic spin-up.
+    supply_voltage: scalar(220, 'volt'),
+    line_frequency: scalar(50, 'hertz'),
+    pole_count: scalar(2, 'dimensionless'),
+    main_resistance: scalar(492.98, 'ohm'),
+    main_leakage_reactance: scalar(498.17, 'ohm'),
+    rotor_resistance: scalar(457.04, 'ohm'),
+    rotor_reactance: scalar(76.71, 'ohm'),
+    magnetizing_reactance: scalar(2163.3, 'ohm'),
+    shading_resistance: scalar(18474, 'ohm'),
+    shading_leakage_reactance: scalar(127.53, 'ohm'),
+    shading_mutual_reactance: scalar(175.91, 'ohm'),
+    load_torque: scalar(0.018, 'N*m'),
+    viscous_friction: scalar(1e-5, 'N*m*s/rad'),
+    winding: { value: 'copper' },
+  },
   crt: {
     // A small cathode-ray tube (oscilloscope class). The electron gun draws ~0.1 mA from a 2 kV
     // anode (EHT); the grid bias (−10 V against a −50 V cutoff) sets ~80% brightness. Deflection
@@ -851,6 +873,23 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     rotor_inertia: 'J = 2.92e-3 kg·m² (Krause ¼-hp table) — sets the spin-up time',
     viscous_friction: 'windage + bearing loss',
   },
+  induction_motor_shaded_pole: {
+    supply_voltage: '220 V 50 Hz nameplate (the AKO-16 fan motor — Šarac 2016)',
+    line_frequency: '50 Hz — 3000 RPM synchronous at 2 poles',
+    pole_count: '2-pole sub-fractional-hp fan motor',
+    main_resistance: 'R1, the main winding (AKO-16: 492.98 Ω) — the port sees this alone at DC',
+    main_leakage_reactance: 'X1, main leakage (498.17 Ω at 50 Hz)',
+    rotor_resistance: 'R2 referred to the main (457.04 Ω)',
+    rotor_reactance: 'X2 referred to the main (76.71 Ω)',
+    magnetizing_reactance: 'X12, main↔rotor mutual / magnetizing (2163.3 Ω)',
+    shading_resistance: 'R3, the shorted ring referred (18474 Ω — deliberately resistive)',
+    shading_leakage_reactance: 'X3, the ring leakage referred (127.53 Ω)',
+    shading_mutual_reactance:
+      'X13, the DIRECT main↔shading mutual (175.91 Ω) — the entire source of starting torque; 0 < X13 < X12',
+    load_torque: '~0.018 N·m rated fan load (starts from ~0 at standstill — a fan)',
+    rotor_inertia: 'optional J (~1e-6 kg·m² for a fan rotor; not in the paper) — sets spin-up',
+    viscous_friction: 'the fan windage + bearing loss',
+  },
   crt: {
     beam_current: 'CRT beam current ~0.1-1 mA (oscilloscope / TV electron gun)',
     grid_bias: 'grid bias that sets the brightness (0 = full beam, cutoff = blanked)',
@@ -1511,7 +1550,8 @@ export function primaryValue(
   if (
     definition === 'induction_motor' ||
     definition === 'induction_motor_three_phase' ||
-    definition === 'induction_motor_single_phase'
+    definition === 'induction_motor_single_phase' ||
+    definition === 'induction_motor_shaded_pole'
   ) {
     // Headline the synchronous speed (120·f/poles) — the field's rotation the rotor chases.
     const f = amountOf(parameters, 'line_frequency')

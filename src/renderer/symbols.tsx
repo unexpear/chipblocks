@@ -884,6 +884,44 @@ function SinglePhaseInductionMotorGlyph() {
   )
 }
 
+/** Shaded-pole induction motor — the M/1~ machine circle with a small solid bar across one side
+ *  of the pole face: the shorted shading ring that makes the weak self-starting field. */
+function ShadedPoleInductionMotorGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>AC induction motor, shaded-pole</title>
+      {lead(0, 24)}
+      <circle cx={40} cy={MID} r={16} fill="none" stroke={STROKE} strokeWidth={1.5} />
+      {/* the shading ring: a solid bar hugging the right of the pole */}
+      <rect x={51} y={MID - 8} width={3} height={16} fill={STROKE} />
+      <text
+        x={38}
+        y={MID - 4}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={11}
+        fontWeight={700}
+        fill={STROKE}
+        fontFamily="system-ui, sans-serif"
+      >
+        M
+      </text>
+      <text
+        x={38}
+        y={MID + 7}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={8}
+        fill={STROKE}
+        fontFamily="system-ui, sans-serif"
+      >
+        1~
+      </text>
+      {lead(56, W)}
+    </svg>
+  )
+}
+
 /** Three-phase induction motor with a TRUE three-phase hookup — the same M/3~ machine circle,
  *  but the three phase leads fan in from the left edge and the wye star point (neutral) leads
  *  out the right, mirroring the three-phase alternator that feeds it. */
@@ -1892,6 +1930,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   induction_motor: InductionMotorGlyph,
   induction_motor_three_phase: ThreePhaseInductionMotorGlyph,
   induction_motor_single_phase: SinglePhaseInductionMotorGlyph,
+  induction_motor_shaded_pole: ShadedPoleInductionMotorGlyph,
   transmission_line: TransmissionLineGlyph,
   led: LedGlyph,
   arc_lamp: ArcLampGlyph,
@@ -1990,6 +2029,7 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
   ],
   induction_motor: TWO('terminal_a', 'terminal_b'),
   induction_motor_single_phase: TWO('terminal_a', 'terminal_b'),
+  induction_motor_shaded_pole: TWO('terminal_a', 'terminal_b'),
   // True three-phase motor: the phase leads down the left edge (fed from the alternator's fan),
   // the wye star point (neutral) out the right — wire it for 4-wire, leave it for 3-wire.
   induction_motor_three_phase: [

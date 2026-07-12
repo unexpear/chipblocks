@@ -340,6 +340,7 @@ export function useOscilloscope(deps: {
         inst.definition === 'dc_motor' ||
         inst.definition === 'induction_motor' ||
         inst.definition === 'induction_motor_single_phase' ||
+        inst.definition === 'induction_motor_shaded_pole' ||
         inst.definition === 'generator'
       ) {
         const c1 = inst.connects?.[0]

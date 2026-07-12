@@ -11,6 +11,10 @@ import {
   inductionMotorParamsFromInstance,
 } from '../induction-motor-model.ts'
 import {
+  shadedPoleMotorParamsFromInstance,
+  shadedPoleOperatingPoint,
+} from '../induction-motor-shaded-pole.ts'
+import {
   singlePhaseMotorParamsFromInstance,
   singlePhaseOperatingPoint,
 } from '../induction-motor-single-phase.ts'
@@ -275,6 +279,24 @@ export function partReadings(
       const spParams = inSolvedCircuit ? singlePhaseMotorParamsFromInstance(inst) : undefined
       if (spParams !== undefined) {
         const op = singlePhaseOperatingPoint(spParams)
+        reading.current = op.currentRms
+        reading.speedRpm = op.rotorRpm
+        reading.torqueNm = op.torque
+        reading.mechanicalPowerW = op.mechanicalPowerW
+        reading.efficiencyPercent = op.efficiency * 100
+        reading.slipPercent = op.slip * 100
+        reading.startupCurrentA = op.startupCurrentRms
+        reading.powerFactor = op.powerFactor
+      }
+    }
+
+    // Shaded-pole induction motor: the steady-state phasor solve of the two-mutual model at its
+    // operating slip — same in-solved-circuit gate as its siblings.
+    if (inst.definition === 'induction_motor_shaded_pole') {
+      const inSolvedCircuit = (inst.connects ?? []).some((c) => solution.nodes.has(c.net))
+      const spParams = inSolvedCircuit ? shadedPoleMotorParamsFromInstance(inst) : undefined
+      if (spParams !== undefined) {
+        const op = shadedPoleOperatingPoint(spParams)
         reading.current = op.currentRms
         reading.speedRpm = op.rotorRpm
         reading.torqueNm = op.torque

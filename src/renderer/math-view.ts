@@ -22,6 +22,10 @@ import {
   statorIsDelta,
 } from '../induction-motor-model.ts'
 import {
+  shadedPoleMotorParamsFromInstance,
+  shadedPoleOperatingPoint,
+} from '../induction-motor-shaded-pole.ts'
+import {
   singlePhaseMotorParamsFromInstance,
   singlePhaseOperatingPoint,
 } from '../induction-motor-single-phase.ts'
@@ -996,6 +1000,26 @@ function partCard(
     return {
       id: inst.id,
       title: 'Single-phase induction motor — two revolving fields and a start winding',
+      lines,
+    }
+  }
+  if (def === 'induction_motor_shaded_pole') {
+    const spParams = shadedPoleMotorParamsFromInstance(inst)
+    lines.push(
+      'The cheapest AC motor: no start winding, no capacitor, no switch — just a short-circuited copper SHADING RING around part of each pole. As the main flux rises the ring’s induced current delays the flux in the shaded part, sweeping the pole flux from the unshaded toward the shaded side: a weak travelling field that self-starts the rotor (a pure single-phase machine makes exactly zero starting torque). The starting torque comes entirely from the direct main↔shading coupling; the direction is fixed by which side is shaded and cannot be reversed by swapping the leads.',
+    )
+    if (spParams !== undefined) {
+      const op = shadedPoleOperatingPoint(spParams)
+      lines.push(
+        `Synchronous speed = 120·f/poles = ${op.synchronousRpm.toFixed(0)} RPM. Under its load it settles at ${(op.slip * 100).toFixed(1)}% slip → ${op.rotorRpm.toFixed(0)} RPM, developing ${formatEng(op.torque, 'N·m')} of torque (its standstill self-starting torque is only ${formatEng(op.startingTorque, 'N·m')} — enough for a fan, which starts at ~zero load).`,
+      )
+      lines.push(
+        `It draws ${fmtA(op.currentRms)} running at ${op.powerFactor.toFixed(2)} power factor, ${formatEng(op.mechanicalPowerW, 'W')} of mechanical output at just ${(op.efficiency * 100).toFixed(0)}% efficiency — the ring burns power continuously.${op.stalled ? ' (The load exceeds what the running machine can carry.)' : ''}`,
+      )
+    }
+    return {
+      id: inst.id,
+      title: 'Shaded-pole motor — a shorted ring makes a weak travelling field',
       lines,
     }
   }

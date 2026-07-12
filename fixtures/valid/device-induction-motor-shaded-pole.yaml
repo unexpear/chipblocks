@@ -1,0 +1,181 @@
+# Valid fixture: SHADED-POLE induction motor - the cheapest, simplest AC motor there is, the one
+# in fans, microwave turntables and small blowers. A single main winding on single-phase AC makes
+# a pulsating field with ZERO starting torque (the single-phase curse); a shaded-pole motor beats
+# that with NO driven start winding, NO capacitor and NO centrifugal switch. Instead a
+# short-circuited copper SHADING RING sits around part of each pole. As the main flux rises the
+# ring's induced current (Lenz) delays the flux in the shaded portion, so the pole flux appears to
+# sweep from the unshaded toward the shaded side - a weak travelling field that gives a small but
+# genuinely NONZERO starting torque. The ring is dominantly resistive, which is what turns the lag
+# into a real phase shift. Direction is FIXED by which side is shaded (unshaded -> shaded) and
+# cannot be reversed by swapping the supply leads; efficiency is low (~20-30%), the ring burning
+# power continuously.
+#
+# All of that is REAL here: the starting torque comes entirely from the DIRECT main<->shading
+# magnetic coupling (the ring is NOT in exact space quadrature with the main - a single-magnetizing
+# quadrature model has identically zero starting torque, verified in the design pass), so the
+# machine carries a real displacement angle between the main and the ring. Drive it and the rotor
+# self-starts (unlike the pure single-phase machine); on DC the shorted ring carries no steady
+# current, so the port is just the main winding's resistance in both engines.
+#
+# Honest scope: this UNIFORM-air-gap model reproduces the running operating point but
+# UNDER-produces the starting torque of a real shaded-pole motor - real designs add a stepped
+# (reluctance-augmented) air gap that more than triples it (Nondahl, IEEE PAS-100, 1981), which is
+# not modeled; the machine here starts fan-type loads (near-zero torque at standstill), its natural
+# application. Magnetic saturation and core loss are not wired into this machine. Without a
+# rotor_inertia the rotor is held at the nameplate operating speed (quasi-static) and the solver
+# says so. The shipped defaults are the AKO-16 machine (Sarac & Atanasova-Pacemska 2016).
+#
+# MUST validate against definition.schema.json.
+kind: primitive_device
+id: induction_motor_shaded_pole
+origin: builtin
+layer: primitive_device
+name: "AC induction motor (shaded-pole)"
+description: "A shaded-pole induction motor - the cheapest AC motor, in fans and small blowers. A main winding plus a short-circuited copper shading ring around part of each pole: the ring delays the flux in the shaded portion, sweeping the pole flux from the unshaded toward the shaded side to make a weak travelling field that self-starts the rotor - no start winding, no capacitor, no centrifugal switch. Direction is fixed by which side is shaded and cannot be reversed electrically; efficiency is low. Starting torque is weak, so it drives fan-type loads that start at near-zero torque."
+composition:
+  requires:
+    winding:
+      kind: material
+      must_enable:
+        - electrical_conduction
+    endpoints:
+      kind: interface
+      min_count: 2
+parameters:
+  winding:
+    type: material_ref
+    satisfies_role: winding
+    required: true
+    default:
+      value: copper
+    description: The conductor the main winding and the shading ring are made of. Must conduct; copper is the standard (the ring is a solid copper band).
+  supply_voltage:
+    type: quantity
+    units: volt
+    required: true
+    description: The nameplate RMS supply voltage. The READINGS analyze the running machine at this nameplate; the time-domain march follows whatever actually drives the terminals.
+  line_frequency:
+    type: quantity
+    units: hertz
+    required: true
+    description: The nameplate supply frequency. With the pole count it sets the synchronous speed n_s = 120*f/poles (3000 RPM for a 2-pole 50 Hz machine).
+  pole_count:
+    type: quantity
+    units: dimensionless
+    required: true
+    description: The number of stator poles (even). Shaded-pole motors are typically 2- or 4-pole.
+  main_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: R1, the main winding's resistance. At DC (at rest) the port sees this alone - the shorted ring carries no steady current.
+  main_leakage_reactance:
+    type: quantity
+    units: ohm
+    required: true
+    description: X1, the main winding's leakage reactance at the nameplate frequency.
+  rotor_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: R2, the rotor (squirrel-cage) resistance referred to the main winding.
+  rotor_reactance:
+    type: quantity
+    units: ohm
+    required: true
+    description: X2, the rotor leakage reactance referred to the main winding.
+  magnetizing_reactance:
+    type: quantity
+    units: ohm
+    required: true
+    description: X12, the main-to-rotor mutual (magnetizing) reactance referred to the main winding - the air-gap magnetizing branch.
+  shading_resistance:
+    type: quantity
+    units: ohm
+    required: true
+    description: R3, the shading ring's resistance referred to the main winding. Deliberately dominant over its reactance (a resistive shorted band) - that is what turns the flux lag into a real phase shift that makes torque.
+  shading_leakage_reactance:
+    type: quantity
+    units: ohm
+    required: true
+    description: X3, the shading ring's leakage reactance referred to the main winding.
+  shading_mutual_reactance:
+    type: quantity
+    units: ohm
+    required: true
+    description: |
+      X13, the DIRECT main-to-shading mutual reactance (referred to the main). This is the ENTIRE
+      source of starting torque - it is nonzero because the ring is NOT in exact space quadrature
+      with the main; the displacement angle follows cos(gamma) = X13/X12, so X13 must be a real
+      fraction of the magnetizing reactance (0 < X13 < X12). The sign of the coupling (which side
+      is shaded) sets the fixed rotation direction. Set X13 -> 0 and the machine reverts to a pure
+      single-phase motor with zero starting torque.
+  load_torque:
+    type: quantity
+    units: newton*meter
+    required: false
+    description: |
+      The shaft load torque opposing rotation. Shaded-pole motors drive FAN loads (near-zero at
+      standstill, rising with speed) - the constant-load model here can start any load below the
+      weak standstill torque, and a heavier constant load reports did-not-start (honest for a
+      constant load; a real fan starts because its standstill torque is ~zero).
+  rotor_inertia:
+    type: quantity
+    units: kilogram*meter^2
+    required: false
+    description: |
+      J, the rotor's moment of inertia - sets the spin-up time. Without it the rotor is held at
+      the nameplate running speed (quasi-static) and the solver says so. Not published for the
+      AKO-16; a sub-fractional-horsepower fan rotor is of order 1e-6 kg*m^2 (estimate).
+  viscous_friction:
+    type: quantity
+    units: newton*meter*second/radian
+    required: false
+    description: B, the windage + bearing loss (the fan windage lives here).
+behaviors:
+  - electromechanical_coupling
+  - produces_magnetic_field
+  - conducts_current
+  - produces_joule_heat
+terminals:
+  terminal_a:
+    description: One line terminal. Non-polar (AC). Only the main winding connects to the terminals; the shading ring is a closed internal loop.
+  terminal_b:
+    description: The other line terminal.
+support:
+  model_status: defined
+  solver_status: builtin_simple
+extensions:
+  overridable: true
+  user_extensible: true
+  allowed_origins: [builtin, community, user_local, project]
+notes: |
+  MODEL: the non-quadrature three-winding cross-field machine, referred to the main - main (alpha),
+  shading ring (displaced by angle gamma, cos gamma = X13/X12), rotor cage (alpha, beta) - with the
+  full 4x4 coupled-inductance matrix (magnetizing L_m; the ring couples to the main and rotor-alpha
+  through L_m*cos gamma and to rotor-beta through L_m*sin gamma). The starting torque comes ENTIRELY
+  from the direct main<->shading coupling: a single-magnetizing QUADRATURE model gives identically
+  zero starting torque (the axes decouple at standstill and the shorted ring is never excited -
+  proven in the design pass), so this machine carries the real displacement angle. Currents come
+  from fluxes as i = L^-1*lambda; the shorted ring's terminal voltage is zero; the rotor rows carry
+  the speed voltages. The developed torque is T = (P/2)*L_m*(i_sbeta*i_ralpha - i_salpha*i_rbeta)
+  with i_salpha = i_main + i_ring*cos gamma and i_sbeta = i_ring*sin gamma - nonzero at standstill
+  (unlike the pure single-phase machine), its sign set by which side is shaded, invariant under
+  supply reversal. Only the main connects to the terminals, so the port current is the main current
+  and at DC the ring carries no steady current: the port degenerates to exactly the main resistance
+  R1 the DC solver stamps (the engines agree). READINGS: the steady-state phasor solve of the SAME
+  model at the operating slip (verified equal to the marched torque and current at every slip
+  during design), then the slip where the developed torque meets the load, on the stable branch.
+  Per circuit step the four flux states are linear at frozen rotor speed (trapezoid) - an exact
+  one-port Norton companion (G > 0). HONEST SCOPE: this uniform-air-gap model reproduces the
+  running operating point but under-produces the real starting torque; real shaded-pole motors add
+  a stepped (reluctance-augmented) air gap that more than triples it (Nondahl 1981), not modeled -
+  so the machine here starts fan-type (near-zero-at-standstill) loads, its natural application.
+  Magnetic saturation and core loss are not wired into this machine. Defaults: the AKO-16 machine
+  (220 V, 50 Hz, 2-pole), parameters referred to the main winding from D. Sarac and T.
+  Atanasova-Pacemska, "Determination of a shaded pole motor equivalent circuit," J. Electrical
+  Engineering 67(4) 253-260, 2016 (rated point ~0.126 A, ~0.018 N*m, ~23% efficiency at slip 0.16;
+  the moment of inertia is not published). Sources also - Trickey, "An Analysis of the Shaded-Pole
+  Motor," AIEE Trans. 55, 1936; Veinott, "Fractional- and Subfractional-Horsepower Electric
+  Motors"; Nondahl, "Equivalent circuit model of a shaded-pole induction motor," IEEE Trans. PAS-100,
+  1981 (the reluctance-augmentation the uniform-gap model here omits).
