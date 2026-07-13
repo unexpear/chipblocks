@@ -9,9 +9,11 @@
  */
 
 import { useMemo } from 'react'
+import type { TimingReport } from '../static-timing.ts'
 import { type CanvasEdgeLike, type CanvasNodeLike, flattenBlocks } from './blocks.ts'
 import { ANNOTATION_DEFINITIONS } from './part-defaults.ts'
 import { THEME } from './theme.ts'
+import { TimingPanel } from './timing-panel.tsx'
 
 type Tally = { label: string; count: number }
 
@@ -116,9 +118,23 @@ function Column({ title, rows, note }: { title: string; rows: Tally[]; note?: st
   )
 }
 
+/** The static-timing result the app already computes (max clock speed, critical path, slack) — the
+ *  Chip level's sign-off. `hasRegisters` is whether the design has a clocked element to sign off. */
+export type ChipTiming = { report: TimingReport; hasRegisters: boolean; clockDetected: boolean }
+
 /** The Chip level's editing surface — an absolute overlay over the still-mounted schematic, exactly
  *  like the Board overlay. Mounted only when the level is 'chip', so its projection only computes then. */
-export function ChipView({ nodes, edges }: { nodes: CanvasNodeLike[]; edges: CanvasEdgeLike[] }) {
+export function ChipView({
+  nodes,
+  edges,
+  timing,
+  light,
+}: {
+  nodes: CanvasNodeLike[]
+  edges: CanvasEdgeLike[]
+  timing: ChipTiming
+  light: boolean
+}) {
   const chip = useMemo(() => deriveChip(nodes, edges), [nodes, edges])
   const plural = (n: number, one: string) => `${n.toLocaleString()} ${one}${n === 1 ? '' : 's'}`
 
@@ -163,6 +179,38 @@ export function ChipView({ nodes, edges }: { nodes: CanvasNodeLike[]; edges: Can
           </div>
         ) : (
           <div style={{ maxWidth: 760 }}>
+            {/* TIMING SIGN-OFF — the static-timing analysis the app already computes, promoted here as
+                the Chip level's headline: the top clock speed and the critical path that limits it. The
+                delays are REAL (summed from the transistors). Shows for a clocked design (a CPU / register). */}
+            <div style={{ marginBottom: 26 }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: '.06em',
+                  textTransform: 'uppercase',
+                  color: THEME.textSoft,
+                  marginBottom: 10,
+                }}
+              >
+                Timing sign-off
+              </div>
+              {timing.hasRegisters ? (
+                <TimingPanel
+                  report={timing.report}
+                  clockDetected={timing.clockDetected}
+                  light={light}
+                />
+              ) : (
+                <div
+                  style={{ fontSize: 13, color: THEME.textFaint, lineHeight: 1.6, maxWidth: 560 }}
+                >
+                  No clocked elements yet — a chip's timing sign-off (its top clock speed and the
+                  critical path that limits it) appears once the design has a flip-flop or register,
+                  like the CPU.
+                </div>
+              )}
+            </div>
             <div style={{ fontSize: 14, color: THEME.textSoft, marginBottom: 18, lineHeight: 1.6 }}>
               This is your circuit projected into silicon — the parts you placed, flattened all the
               way down to the real devices they're made of. It's the design's inventory; the

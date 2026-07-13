@@ -5877,6 +5877,8 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           <ChipView
             nodes={nodes as unknown as BlockNodeLike[]}
             edges={edges as unknown as BlockEdgeLike[]}
+            timing={timing}
+            light={light}
           />
         )}
         {/* The BOARD WORKSPACE — the physical board as a full-size editing surface filling the main
