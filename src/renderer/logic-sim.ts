@@ -341,7 +341,7 @@ export type TruthTable = {
   rows: { in: boolean[]; out: boolean[] }[]
 }
 
-const POWER_PORT_IDS = new Set(['v_dd', 'vdd', 'vcc', 'gnd', 'vss', 'vee'])
+export const POWER_PORT_IDS = new Set(['v_dd', 'vdd', 'vcc', 'gnd', 'vss', 'vee'])
 const OUTPUT_PORT_IDS = new Set([
   'out',
   'q',
@@ -355,7 +355,7 @@ const OUTPUT_PORT_IDS = new Set([
   'carry_out',
   'borrow',
 ])
-const isOutputPort = (p: { id: string; drive?: string }): boolean =>
+export const isOutputPort = (p: { id: string; drive?: string }): boolean =>
   p.drive === 'push_pull' ||
   p.drive === 'open_collector' ||
   p.drive === 'tri_state' ||
