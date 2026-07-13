@@ -6958,6 +6958,8 @@ export const CPU_OPCODES = {
   OUT: 0x4,
   JMP: 0x5,
   JZ: 0x6,
+  LDA: 0x7, // load the accumulator from data memory address (the operand)
+  STA: 0x8, // store the accumulator to data memory address (the operand)
 } as const
 export const cpuInstr = (op: number, operand = 0): number => ((op & 0xf) << 4) | (operand & 0xf)
 
@@ -7142,6 +7144,169 @@ export function buildFetchEngine(program: number[] = CPU_DEMO_PROGRAM): BlockDat
 export const CPU_FETCH_ENGINE: BlockData = buildFetchEngine()
 
 /**
+ * DATA RAM (2^addrBits words × dataBits) — read/write memory held in REAL GATES (the CPU on-ramp's
+ * data memory). An address drives a one-hot decoder; a WRITE (we high) latches the din bus into the
+ * addressed word on the clock edge while every other word holds; a READ is combinational — dout always
+ * presents the addressed word through a one-hot mux. Built from gate registers + a decoder + AND/OR
+ * planes, so it flattens to the fast logic engine (unlike the 6T SRAM cell, which is real silicon to
+ * descend into). Because a block port maps to one internal handle, the din bus and the write-enable
+ * each fan out through a buffer, and the clock is fanned to every word by hand (rails carry only V+/GND).
+ * The words power up 0 in the simulator (undefined in real hardware) and are NOT reset-cleared — real
+ * memory persists — so a program must write a location before it reads it.
+ */
+export function buildDataRam(addrBits: number, dataBits: number): BlockData {
+  const words = 1 << addrBits
+  const nodes: BlockData['nodes'] = [
+    { id: 'dec', definition: 'block', x: 0, y: 0, block: binaryDecoder(addrBits) },
+  ]
+  for (let k = 0; k < words; k++) {
+    nodes.push({
+      id: `m${k}`,
+      definition: 'block',
+      x: 1400,
+      y: k * 320,
+      block: buildRegisterLoad(dataBits),
+    })
+  }
+  // input buffers: each din bit fans to every word; the write-enable fans to every word-load gate
+  for (let b = 0; b < dataBits; b++) {
+    nodes.push({
+      id: `bd${b}`,
+      definition: 'block',
+      x: 500,
+      y: -1600 - b * 200,
+      block: BUFFER_BLOCK,
+    })
+  }
+  nodes.push({ id: 'bwe', definition: 'block', x: 500, y: -2600, block: BUFFER_BLOCK })
+
+  const edges: BlockData['edges'] = []
+  let ei = 0
+  const e = (s: string, sh: string, t: string, th: string) => {
+    edges.push({ id: `r${ei++}`, source: s, sourceHandle: sh, target: t, targetHandle: th })
+  }
+  // one clock fanned to every word (chainRails carries only V+/GND, not the clock); din buses fanned
+  for (let k = 1; k < words; k++) e('m0', 'clk', `m${k}`, 'clk')
+  for (let b = 0; b < dataBits; b++) {
+    for (let k = 0; k < words; k++) e(`bd${b}`, 'out', `m${k}`, `d${b}`)
+  }
+
+  // write-enable + read-mux gates (real gates via buildExpr, in a local context)
+  const ctx: ExprCtx = { nodes: [], edges: [], ids: [], n: 0 }
+  const we: LogicRef = { node: 'bwe', handle: 'out' }
+  // each word loads when its one-hot decode line is high AND we is high — so only the addressed word writes
+  const loadRefs = Array.from({ length: words }, (_, k) =>
+    buildExpr(['and', { node: 'dec', handle: `y${k}` }, we], ctx),
+  )
+  // one-hot read mux: dout[b] = OR over words of (decode line AND that word's q bit) = MEM[address][b]
+  const doutRefs = Array.from({ length: dataBits }, (_, b) => {
+    let expr: LogicExpr = ['and', { node: 'dec', handle: 'y0' }, { node: 'm0', handle: `q${b}` }]
+    for (let k = 1; k < words; k++) {
+      expr = [
+        'or',
+        expr,
+        ['and', { node: 'dec', handle: `y${k}` }, { node: `m${k}`, handle: `q${b}` }],
+      ]
+    }
+    return buildExpr(expr, ctx)
+  })
+  nodes.push(...ctx.nodes)
+  edges.push(...ctx.edges)
+  loadRefs.forEach((ref, k) => {
+    edges.push({
+      id: `r${ei++}`,
+      source: ref.node,
+      sourceHandle: ref.handle,
+      target: `m${k}`,
+      targetHandle: 'load',
+    })
+  })
+
+  edges.push(
+    ...chainRails(
+      [
+        'dec',
+        ...Array.from({ length: words }, (_, k) => `m${k}`),
+        ...Array.from({ length: dataBits }, (_, b) => `bd${b}`),
+        'bwe',
+        ...ctx.ids,
+      ],
+      'ram',
+    ),
+  )
+
+  const ports: BlockData['ports'] = []
+  let left = 14
+  for (let i = 0; i < addrBits; i++) {
+    ports.push({
+      id: `a${i}`,
+      label: `A${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: 'dec', handleId: `a${i}` },
+    })
+    left += 14
+  }
+  for (let b = 0; b < dataBits; b++) {
+    ports.push({
+      id: `din${b}`,
+      label: `DIN${b}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `bd${b}`, handleId: 'in' },
+    })
+    left += 14
+  }
+  ports.push({
+    id: 'we',
+    label: 'WE',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'bwe', handleId: 'in' },
+  })
+  left += 14
+  ports.push({
+    id: 'clk',
+    label: 'CLK',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'm0', handleId: 'clk' },
+  })
+  left += 14
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'dec', handleId: 'gnd' },
+  })
+  let right = 14
+  for (let b = 0; b < dataBits; b++) {
+    const ref = doutRefs[b]
+    if (ref === undefined) continue
+    ports.push({
+      id: `dout${b}`,
+      label: `DOUT${b}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: ref.node, handleId: ref.handle },
+    })
+    right += 14
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'dec', handleId: 'v_dd' },
+  })
+  return { name: `Data RAM (${words}×${dataBits})`, origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** A 16-word × 4-bit data RAM — the CPU's read/write memory, all real gates. */
+export const CPU_DATA_RAM: BlockData = buildDataRam(4, 4)
+
+/**
  * THE CPU (fetch + decode + execute + control flow) — CPU on-ramp increments 2–3. The fetch engine's
  * PC + instruction ROM + IR + T-state sequencer, with a real DATAPATH: an ACCUMULATOR, the 4-bit
  * adder/subtractor as the ALU, an OPCODE DECODER, and an OUTPUT REGISTER — every one a gate block, so
@@ -7160,6 +7325,8 @@ export const CPU_FETCH_ENGINE: BlockData = buildFetchEngine()
  *                               field of an OUT can never leak into the shown value)
  *   JMP a   PC ← a             (unconditional jump — the operand is the target address 0..15)
  *   JZ a    PC ← a if ACC == 0 (conditional jump — the ZERO flag is a NOR of the accumulator bits)
+ *   LDA a   ACC ← MEM[a]       (load the accumulator from data memory; ACC's data is muxed ALU-vs-RAM)
+ *   STA a   MEM[a] ← ACC       (store the accumulator to data memory at the operand address)
  *   HLT     stop               (a self-holding HALT flip-flop freezes the machine in gates: NOT-HALT
  *                               holds the PC, IR, and T-counter, so no clock edge changes state; the
  *                               HALT output lets the JS harness stop clocking. RESET clears it.)
@@ -7167,9 +7334,11 @@ export const CPU_FETCH_ENGINE: BlockData = buildFetchEngine()
  * register, so at T2 it feeds its OLD value into the ALU while the same clock edge latches the new one
  * — no feedback race (the proven calculator ACC↔ALU pattern). PC-load is INTERNAL: RESET homes it to 0,
  * a taken jump loads the operand (the T1 increment is overwritten because load wins over count). The
- * program is baked into the ROM's gate OR-plane at build time. The accumulator and output register
- * power up undefined — a program must LDI before it reads the accumulator, and OUT is meaningful only
- * after it executes. With JMP + JZ the machine can loop and branch. Descend to see the datapath.
+ * program is baked into the ROM's gate OR-plane at build time; a 16-word gate DATA RAM (buildDataRam)
+ * holds variables that LDA/STA read and write, so the machine can keep state across a loop and run real
+ * algorithms (e.g. multiply by repeated addition). The accumulator, output register, and data memory
+ * power up undefined — a program must write before it reads. With JMP + JZ + memory the machine can
+ * loop, branch, and keep variables. Descend to see the datapath.
  */
 export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
   const nodes: BlockData['nodes'] = [
@@ -7183,6 +7352,11 @@ export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
     { id: 'alu', definition: 'block', x: 4200, y: 2200, block: CALCULATOR_4BIT },
     { id: 'outreg', definition: 'block', x: 5600, y: 0, block: buildRegisterLoad(4) },
     { id: 'halt', definition: 'block', x: 5600, y: 2200, block: D_FLIPFLOP_BLOCK },
+    { id: 'ram', definition: 'block', x: 2800, y: 6200, block: buildDataRam(4, 4) },
+    { id: 'accmux0', definition: 'block', x: 4200, y: 1000, block: MUX2_1BIT },
+    { id: 'accmux1', definition: 'block', x: 4200, y: 1300, block: MUX2_1BIT },
+    { id: 'accmux2', definition: 'block', x: 4200, y: 1600, block: MUX2_1BIT },
+    { id: 'accmux3', definition: 'block', x: 4200, y: 1900, block: MUX2_1BIT },
   ]
   const edges: BlockData['edges'] = []
   let ei = 0
@@ -7195,14 +7369,25 @@ export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
   for (let i = 0; i < 3; i++) e('tcnt', `q${i}`, 'tdec', `a${i}`) // T-counter → T-state decoder
   for (let i = 0; i < 4; i++) e('ir', `q${4 + i}`, 'opdec', `a${i}`) // IR opcode nibble → opcode decoder
   for (let i = 0; i < 4; i++) e('ir', `q${i}`, 'alu', `b${i}`) // IR operand nibble → ALU B
-  for (let i = 0; i < 4; i++) e('alu', `s${i}`, 'acc', `d${i}`) // ALU result → ACC data
   for (let i = 0; i < 4; i++) e('acc', `q${i}`, 'outreg', `d${i}`) // ACC → OUT register data (direct)
+  // data memory: address = the operand nibble, data-in = the accumulator (STA writes ACC to MEM[operand])
+  for (let i = 0; i < 4; i++) e('ir', `q${i}`, 'ram', `a${i}`)
+  for (let i = 0; i < 4; i++) e('acc', `q${i}`, 'ram', `din${i}`)
+  // the accumulator's data comes from the ALU normally, or from data memory on a LDA. Per-bit mux
+  // (SEL = isLda picks X = RAM, else Y = ALU); this REPLACES the old direct ALU → ACC data path.
+  for (let i = 0; i < 4; i++) {
+    e('ram', `dout${i}`, `accmux${i}`, 'x') // memory (chosen when isLda)
+    e('alu', `s${i}`, `accmux${i}`, 'y') // the ALU sum (chosen otherwise)
+    e('opdec', 'y7', `accmux${i}`, 'sel') // SEL = isLda (LDA = opcode 7)
+    e(`accmux${i}`, 'out', 'acc', `d${i}`) // → ACC data
+  }
   // one shared clock, fanned to every sequential sub-block
   e('pc', 'clk', 'ir', 'clk')
   e('pc', 'clk', 'tcnt', 'clk')
   e('pc', 'clk', 'acc', 'clk')
   e('pc', 'clk', 'outreg', 'clk')
   e('pc', 'clk', 'halt', 'clk') // the HALT latch shares the one clock
+  e('pc', 'clk', 'ram', 'clk') // …and the data memory
 
   // buffered external control input. RESET is the ONLY external control now — JMP/JZ drive the program
   // counter INTERNALLY (the fetch engine's external loadpc/pl scaffold is retired here).
@@ -7228,6 +7413,8 @@ export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
   const isJmp: LogicRef = { node: 'opdec', handle: 'y5' }
   const isJz: LogicRef = { node: 'opdec', handle: 'y6' }
   const isHlt: LogicRef = { node: 'opdec', handle: 'y0' }
+  const isLda: LogicRef = { node: 'opdec', handle: 'y7' }
+  const isSta: LogicRef = { node: 'opdec', handle: 'y8' }
   const t2: LogicRef = { node: 'tdec', handle: 'y2' } // the execute microstep
 
   // combinational control (real gates via buildExpr) plus the HALT latch.
@@ -7244,7 +7431,7 @@ export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
   const haltD = buildExpr(['and', notReset, ['or', haltQ, haltSet]], ctx) // hold once set; RESET clears
 
   // ZERO flag — NOR of the accumulator bits, high exactly when ACC == 0. Read combinationally off the
-  // accumulator; equivalent to a latched zero flag here, since only LDI/ADD/SUB change ACC and it holds.
+  // accumulator; equivalent to a latched zero flag here, since only LDI/ADD/SUB/LDA change ACC and it holds.
   const accIsZero = buildExpr(
     [
       'not',
@@ -7271,8 +7458,9 @@ export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
   const irLoad = buildExpr(['and', { node: 'tdec', handle: 'y0' }, notHalt], ctx) // IR load = T0
   const pcInc = buildExpr(['and', { node: 'tdec', handle: 'y1' }, notHalt], ctx) // PC increment = T1
   const tLoad = buildExpr(['or', RESET, ['and', t2, notHalt]], ctx) // reset the T-counter at T2 (RESET wins)
-  const accLoad = buildExpr(['and', t2, ['or', isLdi, ['or', isAdd, isSub]]], ctx) // ACC latches on execute
+  const accLoad = buildExpr(['and', t2, ['or', isLdi, ['or', isAdd, ['or', isSub, isLda]]]], ctx) // ACC latches on execute (incl. a LDA from memory)
   const outLoad = buildExpr(['and', t2, isOut], ctx) // OUT captures ACC on execute
+  const ramWe = buildExpr(['and', t2, isSta], ctx) // write data memory on a STA execute
   // ALU A = ACC, forced to 0 during LDI so the one adder computes 0 + operand
   const aGate = [0, 1, 2, 3].map((i) =>
     buildExpr(['and', { node: 'acc', handle: `q${i}` }, notLdi], ctx),
@@ -7309,6 +7497,7 @@ export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
   })
   link(accLoad, 'acc', 'load')
   link(outLoad, 'outreg', 'load')
+  link(ramWe, 'ram', 'we') // write the accumulator into data memory on a STA
 
   edges.push(
     ...chainRails(
@@ -7323,6 +7512,11 @@ export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
         'acc',
         'outreg',
         'halt',
+        'ram',
+        'accmux0',
+        'accmux1',
+        'accmux2',
+        'accmux3',
         ...ctrlIns.map((s) => `buf_${s}`),
         ...ctx.ids,
       ],
@@ -7404,8 +7598,8 @@ export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
   return { name: 'CPU (4-bit)', origin: { x: 0, y: 0 }, nodes, edges, ports }
 }
 
-/** The 4-bit teaching CPU — fetch + decode + execute + control flow (LDI/ADD/SUB/OUT/JMP/JZ/HLT),
- *  all real clocked gates on the fast logic engine. */
+/** The 4-bit teaching CPU — fetch + decode + execute + control flow + data memory
+ *  (LDI/ADD/SUB/OUT/JMP/JZ/LDA/STA/HLT), all real clocked gates on the fast logic engine. */
 export const CPU_4BIT: BlockData = buildCpu()
 
 /** Built-in blocks droppable from the palette, keyed by their palette definition id.
@@ -7444,6 +7638,7 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   logic_register_bcd: BCD_REGISTER_10,
   cpu_fetch_engine: CPU_FETCH_ENGINE,
   cpu_4bit: CPU_4BIT,
+  cpu_data_ram: CPU_DATA_RAM,
   memory_sram_cell: SRAM_CELL_BLOCK,
   memory_sram_word_4bit: SRAM_WORD_4BIT,
   display_seven_segment: SEVEN_SEGMENT_DISPLAY,

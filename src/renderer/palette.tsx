@@ -175,6 +175,7 @@ export const PARTS: { definition: string; label: string }[] = [
   { definition: 'calculator', label: 'Calculator' },
   { definition: 'cpu_fetch_engine', label: 'CPU Fetch' },
   { definition: 'cpu_4bit', label: 'CPU' },
+  { definition: 'cpu_data_ram', label: 'Data RAM' },
   { definition: 'memory_sram_cell', label: 'SRAM Cell' },
   { definition: 'memory_sram_word_4bit', label: 'SRAM 4-bit' },
   { definition: 'switch_spst_toggle', label: 'Switch' },
