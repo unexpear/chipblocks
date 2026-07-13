@@ -18,7 +18,9 @@ import {
   useReactFlow,
   useUpdateNodeInternals,
 } from '@xyflow/react'
+import { ChipView } from './chip-workspace.tsx'
 import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
+import type { WorkspaceMode } from './workspace.ts'
 import '@xyflow/react/dist/style.css'
 import './interactions.css'
 import {
@@ -631,14 +633,14 @@ function LevelBreadcrumb({
   onMode,
   light,
 }: {
-  mode: 'schematic' | 'board'
-  onMode: (m: 'schematic' | 'board') => void
+  mode: WorkspaceMode
+  onMode: (m: WorkspaceMode) => void
   light: boolean
 }) {
   const levels = [
     { id: 'schematic', label: 'Circuit', soon: false },
     { id: 'board', label: 'Board', soon: false },
-    { id: 'chip', label: 'Chip', soon: true },
+    { id: 'chip', label: 'Chip', soon: false },
     { id: 'system', label: 'System', soon: true },
   ] as const
   const bright = light ? THEME.borderSubtle : THEME.textBright
@@ -659,9 +661,7 @@ function LevelBreadcrumb({
       }}
     >
       {levels.map((lvl, i) => {
-        const on =
-          (lvl.id === 'board' && mode === 'board') ||
-          (lvl.id === 'schematic' && mode === 'schematic')
+        const on = lvl.id === mode
         return (
           <span key={lvl.id} style={{ display: 'flex', alignItems: 'center' }}>
             {i > 0 && <span style={{ color: faint, margin: '0 4px' }}>▸</span>}
@@ -669,7 +669,7 @@ function LevelBreadcrumb({
               type="button"
               disabled={lvl.soon}
               onClick={() => {
-                if (lvl.id === 'schematic' || lvl.id === 'board') onMode(lvl.id)
+                if (lvl.id !== 'system') onMode(lvl.id)
               }}
               title={lvl.soon ? `${lvl.label} — coming soon` : `Go to the ${lvl.label} level`}
               style={{
@@ -1554,9 +1554,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [pcbOpen, setPcbOpen] = useState(false)
   // Which surface the MAIN building area shows: the schematic canvas (default) or the full-size board
   // workspace — the board as a first-class editing surface, not just the dock panel. The panel stays.
-  const [workspaceMode, setWorkspaceMode] = useState<'schematic' | 'board'>('schematic')
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('schematic')
   const onWorkspace = useCallback(
-    () => setWorkspaceMode((m) => (m === 'board' ? 'schematic' : 'board')),
+    () => setWorkspaceMode((m) => (m === 'schematic' ? 'board' : 'schematic')),
     [],
   )
   // The PCB derivation (board → router → DRC) runs when EITHER the dock panel is open OR the board
@@ -2585,7 +2585,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         window.dispatchEvent(new Event('chipblocks:shortcuts'))
         return
       }
-      if (workspaceMode !== 'board' && eventMatchesBinding(event, keybinds.selectAll)) {
+      if (workspaceMode === 'schematic' && eventMatchesBinding(event, keybinds.selectAll)) {
         event.preventDefault()
         editActions.current.selectAll()
         return
@@ -2600,11 +2600,11 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         doRedo()
         return
       }
-      // The board workspace owns the main area — schematic copy/cut/paste/rotate/delete are inert here
-      // (rotating a board part is R on the focused board, handled inside PcbView). Esc abandons a
-      // half-drawn route (and drops the route tool back to Select).
-      if (workspaceMode === 'board') {
-        if (event.key === 'Escape') {
+      // A non-schematic level (Board or Chip) owns the main area — schematic copy/cut/paste/rotate/
+      // delete are inert here (rotating a board part is R on the focused board, handled inside PcbView).
+      // Esc abandons a half-drawn board route (and drops the route tool back to Select).
+      if (workspaceMode !== 'schematic') {
+        if (workspaceMode === 'board' && event.key === 'Escape') {
           setPendingRoute(null)
           setBoardTool('select')
         }
@@ -5802,8 +5802,16 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         gridTemplateAreas:
           '"crumb crumb crumb" "top top top" "left center right" "bottom bottom bottom"',
       }}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
+      onDragOver={(event) => {
+        // Dropping a palette part only makes sense on the schematic — gate it off under the Board /
+        // Chip overlay so a drop there can't silently add a part to the hidden circuit underneath.
+        if (workspaceMode !== 'schematic') return
+        onDragOver(event)
+      }}
+      onDrop={(event) => {
+        if (workspaceMode !== 'schematic') return
+        onDrop(event)
+      }}
     >
       <div style={{ gridArea: 'crumb' }}>
         <LevelBreadcrumb mode={workspaceMode} onMode={setWorkspaceMode} light={light} />
@@ -5813,7 +5821,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         data-workspace-mode={workspaceMode}
         onClickCapture={(event) => {
           // The board workspace owns the main area — schematic tool dispatch is inert under it.
-          if (workspaceMode === 'board') return
+          if (workspaceMode !== 'schematic') return
           // While the lasso is the active tool, clicks aimed at the CANVAS
           // must not reach React Flow — its pane click would clear the
           // selection the lasso just made. Clicks on overlay UI in this same
@@ -5831,26 +5839,26 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           connect.onConnectClick(event)
         }}
         onDoubleClickCapture={(event) => {
-          if (workspaceMode === 'board') return
+          if (workspaceMode !== 'schematic') return
           wire.onWireDoubleClick(event)
         }}
         onMouseMove={(event) => {
-          if (workspaceMode === 'board') return
+          if (workspaceMode !== 'schematic') return
           lastCursorFlow.current = screenToFlowPosition({ x: event.clientX, y: event.clientY })
           wire.onWireMove(event)
         }}
         onPointerDown={(event) => {
-          if (workspaceMode === 'board') return
+          if (workspaceMode !== 'schematic') return
           onLassoDown(event)
           onBoxDown(event)
         }}
         onPointerMove={(event) => {
-          if (workspaceMode === 'board') return
+          if (workspaceMode !== 'schematic') return
           onLassoMove(event)
           onBoxMove(event)
         }}
         onPointerUp={() => {
-          if (workspaceMode === 'board') return
+          if (workspaceMode !== 'schematic') return
           onLassoUp()
           onBoxUp()
         }}
@@ -5862,6 +5870,15 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           overflow: 'hidden',
         }}
       >
+        {/* The CHIP WORKSPACE — the design projected one layer further down, into silicon. Same overlay
+            pattern as the board: an opaque surface over the still-mounted schematic, whose pointer
+            handlers are gated off (workspaceMode !== 'schematic') so they don't fire underneath. */}
+        {workspaceMode === 'chip' && (
+          <ChipView
+            nodes={nodes as unknown as BlockNodeLike[]}
+            edges={edges as unknown as BlockEdgeLike[]}
+          />
+        )}
         {/* The BOARD WORKSPACE — the physical board as a full-size editing surface filling the main
             area, layered opaquely over the schematic (which stays mounted, its state intact). The
             ancestor's schematic pointer handlers are gated on schematic mode so they don't fire under

@@ -4,6 +4,7 @@ import { DeviceGlyph } from './symbols.tsx'
 import { THEME } from './theme.ts'
 import { WIRE_GAUGES } from './wire-length.ts'
 import { CURVE_SIZES } from './wire-path.ts'
+import type { WorkspaceMode } from './workspace.ts'
 
 /**
  * Tools toolbar (Sprint 19 S19-v3-10; physics controls S19-v3-14). Tools — as
@@ -263,7 +264,7 @@ export function ToolbarItems({
   onTimeline: () => void
   onBode: () => void
   onPcb: () => void
-  workspace: 'schematic' | 'board'
+  workspace: WorkspaceMode
   onWorkspace: () => void
   onMath: () => void
   onWorstCase: () => void
