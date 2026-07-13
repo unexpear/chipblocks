@@ -6959,7 +6959,7 @@ export const CPU_OPCODES = {
   JMP: 0x5,
   JZ: 0x6,
 } as const
-const cpuInstr = (op: number, operand = 0): number => ((op & 0xf) << 4) | (operand & 0xf)
+export const cpuInstr = (op: number, operand = 0): number => ((op & 0xf) << 4) | (operand & 0xf)
 
 /** The shipped demo program — 3 + 4 = 7, show it, halt. Execute lands in increment 2; increment 1
  *  proves the machine FETCHES these words out of the ROM in program order. */
@@ -7141,6 +7141,237 @@ export function buildFetchEngine(program: number[] = CPU_DEMO_PROGRAM): BlockDat
 /** The CPU on-ramp's fetch engine — PC + instruction ROM + IR + a real gate T-state sequencer. */
 export const CPU_FETCH_ENGINE: BlockData = buildFetchEngine()
 
+/**
+ * THE CPU (fetch + decode + execute) — CPU on-ramp increment 2. The fetch engine's PC + instruction
+ * ROM + IR + T-state sequencer, now with a real DATAPATH bolted on: an ACCUMULATOR, the 4-bit
+ * adder/subtractor as the ALU, an OPCODE DECODER, and an OUTPUT REGISTER — every one a gate block, so
+ * the whole processor still flattens to the fast logic engine (no transistor wall). It runs a tiny
+ * instruction set on real clocked gates, THREE microsteps per instruction, with nothing sequenced in
+ * code — the T-state counter + gate decode drive it, exactly the buildCalcControlFsm discipline:
+ *   T0  IR ← ROM[PC]     load the instruction
+ *   T1  PC ← PC + 1      advance the program counter
+ *   T2  execute          and reset the T-counter for the next instruction
+ * The instructions:
+ *   LDI n   ACC ← n            (the ALU's A side is gated to 0, so the one adder computes 0 + operand)
+ *   ADD n   ACC ← ACC + n
+ *   SUB n   ACC ← ACC − n      (two's complement; a 4-bit machine, so results wrap mod 16)
+ *   OUT     OUTREG ← ACC       (the output register's Q is the machine's result; its data comes
+ *                               straight off the accumulator, NOT through the ALU, so the operand
+ *                               field of an OUT can never leak into the shown value)
+ *   HLT     no-op for now      (the machine loops the program; a real halt flag lands in increment 3)
+ * Every op flows through the ONE adder/subtractor. The accumulator is a master-slave register, so at
+ * T2 it feeds its OLD value into the ALU while the same clock edge latches the new one — no feedback
+ * race (the proven calculator ACC↔ALU pattern). The program is baked into the ROM's gate OR-plane at
+ * build time. The accumulator and output register power up undefined — a program must LDI before it
+ * reads the accumulator, and OUT is meaningful only after it executes. Descend to see the datapath.
+ */
+export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
+  const nodes: BlockData['nodes'] = [
+    { id: 'pc', definition: 'block', x: 0, y: 0, block: COUNTER_UP_EN_4 },
+    { id: 'rom', definition: 'block', x: 1400, y: 0, block: buildInstructionRom(program) },
+    { id: 'ir', definition: 'block', x: 2800, y: 0, block: buildRegisterLoad(8) },
+    { id: 'tcnt', definition: 'block', x: 0, y: 4000, block: COUNTER_UP_EN_3 },
+    { id: 'tdec', definition: 'block', x: 1000, y: 4000, block: BINARY_DECODER_3_8 },
+    { id: 'opdec', definition: 'block', x: 2800, y: 4000, block: binaryDecoder(4) },
+    { id: 'acc', definition: 'block', x: 4200, y: 0, block: buildRegisterLoad(4) },
+    { id: 'alu', definition: 'block', x: 4200, y: 2200, block: CALCULATOR_4BIT },
+    { id: 'outreg', definition: 'block', x: 5600, y: 0, block: buildRegisterLoad(4) },
+  ]
+  const edges: BlockData['edges'] = []
+  let ei = 0
+  const e = (s: string, sh: string, t: string, th: string) => {
+    edges.push({ id: `c${ei++}`, source: s, sourceHandle: sh, target: t, targetHandle: th })
+  }
+  // datapath
+  for (let i = 0; i < 4; i++) e('pc', `q${i}`, 'rom', `a${i}`) // PC → ROM address
+  for (let b = 0; b < 8; b++) e('rom', `d${b}`, 'ir', `d${b}`) // ROM word → IR
+  for (let i = 0; i < 3; i++) e('tcnt', `q${i}`, 'tdec', `a${i}`) // T-counter → T-state decoder
+  for (let i = 0; i < 4; i++) e('ir', `q${4 + i}`, 'opdec', `a${i}`) // IR opcode nibble → opcode decoder
+  for (let i = 0; i < 4; i++) e('ir', `q${i}`, 'alu', `b${i}`) // IR operand nibble → ALU B
+  for (let i = 0; i < 4; i++) e('alu', `s${i}`, 'acc', `d${i}`) // ALU result → ACC data
+  for (let i = 0; i < 4; i++) e('acc', `q${i}`, 'outreg', `d${i}`) // ACC → OUT register data (direct)
+  // one shared clock, fanned to every sequential sub-block
+  e('pc', 'clk', 'ir', 'clk')
+  e('pc', 'clk', 'tcnt', 'clk')
+  e('pc', 'clk', 'acc', 'clk')
+  e('pc', 'clk', 'outreg', 'clk')
+
+  // buffered external control inputs (a real chip's pins)
+  const ctrlIns = ['reset', 'loadpc', 'pl0', 'pl1', 'pl2', 'pl3']
+  ctrlIns.forEach((s, i) => {
+    nodes.push({
+      id: `buf_${s}`,
+      definition: 'block',
+      x: -600,
+      y: 30 + i * 260,
+      block: BUFFER_BLOCK,
+    })
+  })
+  const IN = (s: string): LogicRef => ({ node: `buf_${s}`, handle: 'out' })
+  const HIGH: LogicRef = { node: 'pc', handle: 'v_dd' }
+  const LOW: LogicRef = { node: 'pc', handle: 'gnd' }
+  const RESET = IN('reset')
+
+  // opcode one-hot lines off the opcode decoder (HLT=0 is wired nowhere → a no-op)
+  const isLdi: LogicRef = { node: 'opdec', handle: 'y1' }
+  const isAdd: LogicRef = { node: 'opdec', handle: 'y2' }
+  const isSub: LogicRef = { node: 'opdec', handle: 'y3' }
+  const isOut: LogicRef = { node: 'opdec', handle: 'y4' }
+  const t2: LogicRef = { node: 'tdec', handle: 'y2' } // the execute microstep
+
+  // combinational control (real gates via buildExpr). The fetch control is unchanged from increment 1
+  // (IR load = T0, PC increment = T1, PC load on RESET or JMP); the 3-state cycle just moves the
+  // T-counter reset from T1 to T2 and ADDS the execute product terms — the sequencer is the same.
+  const ctx: ExprCtx = { nodes: [], edges: [], ids: [], n: 0 }
+  const notReset = buildExpr(['not', RESET], ctx)
+  const notLdi = buildExpr(['not', isLdi], ctx)
+  const pcLoad = buildExpr(['or', RESET, IN('loadpc')], ctx) // RESET or JMP
+  const pcLval = [0, 1, 2, 3].map((i) => buildExpr(['and', IN(`pl${i}`), notReset], ctx)) // 0 on RESET
+  const tLoad = buildExpr(['or', RESET, t2], ctx) // reset the T-counter at T2 → a 3-state cycle
+  const accLoad = buildExpr(['and', t2, ['or', isLdi, ['or', isAdd, isSub]]], ctx) // ACC latches on execute
+  const outLoad = buildExpr(['and', t2, isOut], ctx) // OUT captures ACC on execute
+  // ALU A = ACC, forced to 0 during LDI so the one adder computes 0 + operand
+  const aGate = [0, 1, 2, 3].map((i) =>
+    buildExpr(['and', { node: 'acc', handle: `q${i}` }, notLdi], ctx),
+  )
+  nodes.push(...ctx.nodes)
+  edges.push(...ctx.edges)
+
+  const link = (ref: LogicRef, node: string, port: string) => {
+    edges.push({
+      id: `c${ei++}`,
+      source: ref.node,
+      sourceHandle: ref.handle,
+      target: node,
+      targetHandle: port,
+    })
+  }
+  // fetch control (direct decoder lines)
+  e('tdec', 'y0', 'ir', 'load') // IR load = T0
+  e('tdec', 'y1', 'pc', 'en') // PC increment = T1
+  link(pcLoad, 'pc', 'load')
+  pcLval.forEach((ref, i) => {
+    link(ref, 'pc', `l${i}`)
+  })
+  link(HIGH, 'tcnt', 'en') // T-counter always enabled
+  link(tLoad, 'tcnt', 'load')
+  link(LOW, 'tcnt', 'l0')
+  link(LOW, 'tcnt', 'l1')
+  link(LOW, 'tcnt', 'l2')
+  // execute control
+  link(isSub, 'alu', 'sub') // ALU mode = the SUB opcode
+  aGate.forEach((ref, i) => {
+    link(ref, 'alu', `a${i}`)
+  })
+  link(accLoad, 'acc', 'load')
+  link(outLoad, 'outreg', 'load')
+
+  edges.push(
+    ...chainRails(
+      [
+        'pc',
+        'rom',
+        'ir',
+        'tcnt',
+        'tdec',
+        'opdec',
+        'alu',
+        'acc',
+        'outreg',
+        ...ctrlIns.map((s) => `buf_${s}`),
+        ...ctx.ids,
+      ],
+      'cpu',
+    ),
+  )
+
+  const ports: BlockData['ports'] = []
+  let left = 14
+  ports.push({
+    id: 'clk',
+    label: 'CLK',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'pc', handleId: 'clk' },
+  })
+  left += 14
+  ports.push({
+    id: 'reset',
+    label: 'RST',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'buf_reset', handleId: 'in' },
+  })
+  left += 14
+  ports.push({
+    id: 'loadpc',
+    label: 'LDPC',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'buf_loadpc', handleId: 'in' },
+  })
+  left += 14
+  for (let i = 0; i < 4; i++) {
+    ports.push({
+      id: `pl${i}`,
+      label: `PL${i}`,
+      side: 'left',
+      offset: left,
+      inner: { nodeId: `buf_pl${i}`, handleId: 'in' },
+    })
+    left += 14
+  }
+  ports.push({
+    id: 'gnd',
+    label: 'GND',
+    side: 'left',
+    offset: left,
+    inner: { nodeId: 'pc', handleId: 'gnd' },
+  })
+  let right = 14
+  for (let i = 0; i < 4; i++) {
+    ports.push({
+      id: `acc${i}`,
+      label: `ACC${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: 'acc', handleId: `q${i}` },
+    })
+    right += 14
+  }
+  for (let i = 0; i < 4; i++) {
+    ports.push({
+      id: `out${i}`,
+      label: `OUT${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: 'outreg', handleId: `q${i}` },
+    })
+    right += 14
+  }
+  for (let i = 0; i < 4; i++) {
+    ports.push({
+      id: `pc${i}`,
+      label: `PC${i}`,
+      side: 'right',
+      offset: right,
+      inner: { nodeId: 'pc', handleId: `q${i}` },
+    })
+    right += 14
+  }
+  ports.push({
+    id: 'v_dd',
+    label: 'V+',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'pc', handleId: 'v_dd' },
+  })
+  return { name: 'CPU (4-bit)', origin: { x: 0, y: 0 }, nodes, edges, ports }
+}
+
+/** The 4-bit teaching CPU — fetch + decode + execute (LDI/ADD/SUB/OUT), all real clocked gates. */
+export const CPU_4BIT: BlockData = buildCpu()
+
 /** Built-in blocks droppable from the palette, keyed by their palette definition id.
  *  The palette lists these like parts; App's drop handler turns one into a block node
  *  (a fresh deep copy) that descends + flattens like any user-grouped block. */
@@ -7176,6 +7407,7 @@ export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   logic_register_4bit: REGISTER_4BIT,
   logic_register_bcd: BCD_REGISTER_10,
   cpu_fetch_engine: CPU_FETCH_ENGINE,
+  cpu_4bit: CPU_4BIT,
   memory_sram_cell: SRAM_CELL_BLOCK,
   memory_sram_word_4bit: SRAM_WORD_4BIT,
   display_seven_segment: SEVEN_SEGMENT_DISPLAY,
