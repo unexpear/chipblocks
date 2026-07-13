@@ -7142,8 +7142,8 @@ export function buildFetchEngine(program: number[] = CPU_DEMO_PROGRAM): BlockDat
 export const CPU_FETCH_ENGINE: BlockData = buildFetchEngine()
 
 /**
- * THE CPU (fetch + decode + execute) — CPU on-ramp increment 2. The fetch engine's PC + instruction
- * ROM + IR + T-state sequencer, now with a real DATAPATH bolted on: an ACCUMULATOR, the 4-bit
+ * THE CPU (fetch + decode + execute + control flow) — CPU on-ramp increments 2–3. The fetch engine's
+ * PC + instruction ROM + IR + T-state sequencer, with a real DATAPATH: an ACCUMULATOR, the 4-bit
  * adder/subtractor as the ALU, an OPCODE DECODER, and an OUTPUT REGISTER — every one a gate block, so
  * the whole processor still flattens to the fast logic engine (no transistor wall). It runs a tiny
  * instruction set on real clocked gates, THREE microsteps per instruction, with nothing sequenced in
@@ -7158,12 +7158,18 @@ export const CPU_FETCH_ENGINE: BlockData = buildFetchEngine()
  *   OUT     OUTREG ← ACC       (the output register's Q is the machine's result; its data comes
  *                               straight off the accumulator, NOT through the ALU, so the operand
  *                               field of an OUT can never leak into the shown value)
- *   HLT     no-op for now      (the machine loops the program; a real halt flag lands in increment 3)
- * Every op flows through the ONE adder/subtractor. The accumulator is a master-slave register, so at
- * T2 it feeds its OLD value into the ALU while the same clock edge latches the new one — no feedback
- * race (the proven calculator ACC↔ALU pattern). The program is baked into the ROM's gate OR-plane at
- * build time. The accumulator and output register power up undefined — a program must LDI before it
- * reads the accumulator, and OUT is meaningful only after it executes. Descend to see the datapath.
+ *   JMP a   PC ← a             (unconditional jump — the operand is the target address 0..15)
+ *   JZ a    PC ← a if ACC == 0 (conditional jump — the ZERO flag is a NOR of the accumulator bits)
+ *   HLT     stop               (a self-holding HALT flip-flop freezes the machine in gates: NOT-HALT
+ *                               holds the PC, IR, and T-counter, so no clock edge changes state; the
+ *                               HALT output lets the JS harness stop clocking. RESET clears it.)
+ * Every arithmetic op flows through the ONE adder/subtractor. The accumulator is a master-slave
+ * register, so at T2 it feeds its OLD value into the ALU while the same clock edge latches the new one
+ * — no feedback race (the proven calculator ACC↔ALU pattern). PC-load is INTERNAL: RESET homes it to 0,
+ * a taken jump loads the operand (the T1 increment is overwritten because load wins over count). The
+ * program is baked into the ROM's gate OR-plane at build time. The accumulator and output register
+ * power up undefined — a program must LDI before it reads the accumulator, and OUT is meaningful only
+ * after it executes. With JMP + JZ the machine can loop and branch. Descend to see the datapath.
  */
 export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
   const nodes: BlockData['nodes'] = [
@@ -7176,6 +7182,7 @@ export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
     { id: 'acc', definition: 'block', x: 4200, y: 0, block: buildRegisterLoad(4) },
     { id: 'alu', definition: 'block', x: 4200, y: 2200, block: CALCULATOR_4BIT },
     { id: 'outreg', definition: 'block', x: 5600, y: 0, block: buildRegisterLoad(4) },
+    { id: 'halt', definition: 'block', x: 5600, y: 2200, block: D_FLIPFLOP_BLOCK },
   ]
   const edges: BlockData['edges'] = []
   let ei = 0
@@ -7195,9 +7202,11 @@ export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
   e('pc', 'clk', 'tcnt', 'clk')
   e('pc', 'clk', 'acc', 'clk')
   e('pc', 'clk', 'outreg', 'clk')
+  e('pc', 'clk', 'halt', 'clk') // the HALT latch shares the one clock
 
-  // buffered external control inputs (a real chip's pins)
-  const ctrlIns = ['reset', 'loadpc', 'pl0', 'pl1', 'pl2', 'pl3']
+  // buffered external control input. RESET is the ONLY external control now — JMP/JZ drive the program
+  // counter INTERNALLY (the fetch engine's external loadpc/pl scaffold is retired here).
+  const ctrlIns = ['reset']
   ctrlIns.forEach((s, i) => {
     nodes.push({
       id: `buf_${s}`,
@@ -7208,26 +7217,60 @@ export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
     })
   })
   const IN = (s: string): LogicRef => ({ node: `buf_${s}`, handle: 'out' })
-  const HIGH: LogicRef = { node: 'pc', handle: 'v_dd' }
   const LOW: LogicRef = { node: 'pc', handle: 'gnd' }
   const RESET = IN('reset')
 
-  // opcode one-hot lines off the opcode decoder (HLT=0 is wired nowhere → a no-op)
+  // opcode one-hot lines off the opcode decoder — each is one instruction; the decoder lights exactly one
   const isLdi: LogicRef = { node: 'opdec', handle: 'y1' }
   const isAdd: LogicRef = { node: 'opdec', handle: 'y2' }
   const isSub: LogicRef = { node: 'opdec', handle: 'y3' }
   const isOut: LogicRef = { node: 'opdec', handle: 'y4' }
+  const isJmp: LogicRef = { node: 'opdec', handle: 'y5' }
+  const isJz: LogicRef = { node: 'opdec', handle: 'y6' }
+  const isHlt: LogicRef = { node: 'opdec', handle: 'y0' }
   const t2: LogicRef = { node: 'tdec', handle: 'y2' } // the execute microstep
 
-  // combinational control (real gates via buildExpr). The fetch control is unchanged from increment 1
-  // (IR load = T0, PC increment = T1, PC load on RESET or JMP); the 3-state cycle just moves the
-  // T-counter reset from T1 to T2 and ADDS the execute product terms — the sequencer is the same.
+  // combinational control (real gates via buildExpr) plus the HALT latch.
   const ctx: ExprCtx = { nodes: [], edges: [], ids: [], n: 0 }
   const notReset = buildExpr(['not', RESET], ctx)
   const notLdi = buildExpr(['not', isLdi], ctx)
-  const pcLoad = buildExpr(['or', RESET, IN('loadpc')], ctx) // RESET or JMP
-  const pcLval = [0, 1, 2, 3].map((i) => buildExpr(['and', IN(`pl${i}`), notReset], ctx)) // 0 on RESET
-  const tLoad = buildExpr(['or', RESET, t2], ctx) // reset the T-counter at T2 → a 3-state cycle
+
+  // HALT — a self-holding flip-flop. It SETS when a HLT reaches execute and then holds itself set, so
+  // the machine freezes; RESET clears it. NOT-HALT gates every advance below, so once halted no clock
+  // edge changes any state (the JS harness also reads HALT and stops clocking — the calcSolve pattern).
+  const haltQ: LogicRef = { node: 'halt', handle: 'q' }
+  const notHalt = buildExpr(['not', haltQ], ctx)
+  const haltSet = buildExpr(['and', isHlt, t2], ctx)
+  const haltD = buildExpr(['and', notReset, ['or', haltQ, haltSet]], ctx) // hold once set; RESET clears
+
+  // ZERO flag — NOR of the accumulator bits, high exactly when ACC == 0. Read combinationally off the
+  // accumulator; equivalent to a latched zero flag here, since only LDI/ADD/SUB change ACC and it holds.
+  const accIsZero = buildExpr(
+    [
+      'not',
+      [
+        'or',
+        ['or', { node: 'acc', handle: 'q0' }, { node: 'acc', handle: 'q1' }],
+        ['or', { node: 'acc', handle: 'q2' }, { node: 'acc', handle: 'q3' }],
+      ],
+    ],
+    ctx,
+  )
+
+  // control flow — a jump is taken by JMP always, or by JZ when the accumulator is zero. On a taken jump
+  // the PC loads the operand (the target address 0..15); RESET homes it to 0. The T1 increment still
+  // happens, but a T2 load overwrites it (load wins over count), so the jump target wins.
+  const jumpTaken = buildExpr(['or', isJmp, ['and', isJz, accIsZero]], ctx)
+  const pcJump = buildExpr(['and', t2, jumpTaken], ctx)
+  const pcLoad = buildExpr(['or', RESET, pcJump], ctx)
+  const pcLval = [0, 1, 2, 3].map((i) =>
+    buildExpr(['and', { node: 'ir', handle: `q${i}` }, notReset], ctx),
+  ) // jump target = the operand nibble, 0 on RESET
+
+  // fetch + sequencer control, held by NOT-HALT so a halted machine cannot advance
+  const irLoad = buildExpr(['and', { node: 'tdec', handle: 'y0' }, notHalt], ctx) // IR load = T0
+  const pcInc = buildExpr(['and', { node: 'tdec', handle: 'y1' }, notHalt], ctx) // PC increment = T1
+  const tLoad = buildExpr(['or', RESET, ['and', t2, notHalt]], ctx) // reset the T-counter at T2 (RESET wins)
   const accLoad = buildExpr(['and', t2, ['or', isLdi, ['or', isAdd, isSub]]], ctx) // ACC latches on execute
   const outLoad = buildExpr(['and', t2, isOut], ctx) // OUT captures ACC on execute
   // ALU A = ACC, forced to 0 during LDI so the one adder computes 0 + operand
@@ -7246,18 +7289,19 @@ export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
       targetHandle: port,
     })
   }
-  // fetch control (direct decoder lines)
-  e('tdec', 'y0', 'ir', 'load') // IR load = T0
-  e('tdec', 'y1', 'pc', 'en') // PC increment = T1
+  // fetch + freeze control (gated decoder lines — held when the machine is halted)
+  link(irLoad, 'ir', 'load') // IR load = T0
+  link(pcInc, 'pc', 'en') // PC increment = T1
   link(pcLoad, 'pc', 'load')
   pcLval.forEach((ref, i) => {
     link(ref, 'pc', `l${i}`)
   })
-  link(HIGH, 'tcnt', 'en') // T-counter always enabled
+  link(notHalt, 'tcnt', 'en') // the T-counter runs unless the machine is halted
   link(tLoad, 'tcnt', 'load')
   link(LOW, 'tcnt', 'l0')
   link(LOW, 'tcnt', 'l1')
   link(LOW, 'tcnt', 'l2')
+  link(haltD, 'halt', 'd') // drive the self-holding HALT latch
   // execute control
   link(isSub, 'alu', 'sub') // ALU mode = the SUB opcode
   aGate.forEach((ref, i) => {
@@ -7278,6 +7322,7 @@ export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
         'alu',
         'acc',
         'outreg',
+        'halt',
         ...ctrlIns.map((s) => `buf_${s}`),
         ...ctx.ids,
       ],
@@ -7303,24 +7348,6 @@ export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
     inner: { nodeId: 'buf_reset', handleId: 'in' },
   })
   left += 14
-  ports.push({
-    id: 'loadpc',
-    label: 'LDPC',
-    side: 'left',
-    offset: left,
-    inner: { nodeId: 'buf_loadpc', handleId: 'in' },
-  })
-  left += 14
-  for (let i = 0; i < 4; i++) {
-    ports.push({
-      id: `pl${i}`,
-      label: `PL${i}`,
-      side: 'left',
-      offset: left,
-      inner: { nodeId: `buf_pl${i}`, handleId: 'in' },
-    })
-    left += 14
-  }
   ports.push({
     id: 'gnd',
     label: 'GND',
@@ -7360,6 +7387,14 @@ export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
     right += 14
   }
   ports.push({
+    id: 'halt',
+    label: 'HALT',
+    side: 'right',
+    offset: right,
+    inner: { nodeId: 'halt', handleId: 'q' },
+  })
+  right += 14
+  ports.push({
     id: 'v_dd',
     label: 'V+',
     side: 'right',
@@ -7369,7 +7404,8 @@ export function buildCpu(program: number[] = CPU_DEMO_PROGRAM): BlockData {
   return { name: 'CPU (4-bit)', origin: { x: 0, y: 0 }, nodes, edges, ports }
 }
 
-/** The 4-bit teaching CPU — fetch + decode + execute (LDI/ADD/SUB/OUT), all real clocked gates. */
+/** The 4-bit teaching CPU — fetch + decode + execute + control flow (LDI/ADD/SUB/OUT/JMP/JZ/HLT),
+ *  all real clocked gates on the fast logic engine. */
 export const CPU_4BIT: BlockData = buildCpu()
 
 /** Built-in blocks droppable from the palette, keyed by their palette definition id.

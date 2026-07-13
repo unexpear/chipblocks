@@ -63,14 +63,10 @@ function driver(cpu: BlockData) {
       w('eg', 'C', 'gnd', 'g', 'reference_terminal'),
       w('eclk', 'vclk', 'terminal_positive', 'C', 'clk'),
       w('erst', 'vrst', 'terminal_positive', 'C', 'reset'),
-      w('eldpc', 'vp', 'terminal_negative', 'C', 'loadpc'), // JMP unused here — tie LOADPC low
       w('epn', 'vp', 'terminal_negative', 'g', 'reference_terminal'),
       w('eclkn', 'vclk', 'terminal_negative', 'g', 'reference_terminal'),
       w('erstn', 'vrst', 'terminal_negative', 'g', 'reference_terminal'),
     ]
-    for (let i = 0; i < 4; i++) {
-      edges.push(w(`epl${i}`, 'vp', 'terminal_negative', 'C', `pl${i}`)) // PL0..3 tied low
-    }
     const r = simulateLogic(nodes, edges, state)
     const read = (prefix: string, bits: number) => {
       let v = 0
@@ -152,8 +148,9 @@ describe('CPU decode + execute — a real datapath driven by a real gate control
   })
 
   test('the accumulator accumulates across ADDs and holds across non-arithmetic ops', () => {
-    // A running sum: 1 + 2 + 3 = 6, then OUT, then HLT — ACC must hold 6 through OUT and HLT (the
-    // non-arithmetic ops leave acc_load low), proving the register holds and HLT is a real no-op.
+    // A running sum: 1 + 2 + 3 = 6, then OUT, then HLT — ACC must hold 6 through OUT and the HLT
+    // (the non-arithmetic ops leave acc_load low), proving the register holds its value. (HLT's own
+    // freeze behaviour is exercised in cpu-control-flow.test.ts; here it just must not disturb ACC.)
     const p = prog(
       [CPU_OPCODES.LDI, 1],
       [CPU_OPCODES.ADD, 2],
