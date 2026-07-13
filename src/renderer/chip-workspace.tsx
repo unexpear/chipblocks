@@ -8,9 +8,10 @@
  * steps; this level is honest about being the inventory, not yet the layout.
  */
 
-import { useMemo } from 'react'
+import { type ReactNode, useMemo } from 'react'
 import type { TimingReport } from '../static-timing.ts'
 import { type CanvasEdgeLike, type CanvasNodeLike, flattenBlocks } from './blocks.ts'
+import { type CellGeometry, designCellArea, PROCESS, standardCells } from './cell-layout.ts'
 import { ANNOTATION_DEFINITIONS } from './part-defaults.ts'
 import { THEME } from './theme.ts'
 import { TimingPanel } from './timing-panel.tsx'
@@ -118,6 +119,103 @@ function Column({ title, rows, note }: { title: string; rows: Tally[]; note?: st
   )
 }
 
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <div
+      style={{
+        fontSize: 11,
+        fontWeight: 700,
+        letterSpacing: '.06em',
+        textTransform: 'uppercase',
+        color: THEME.textSoft,
+        marginBottom: 10,
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
+const fmtArea = (um2: number): string =>
+  um2 >= 1e6 ? `${(um2 / 1e6).toFixed(2)} mm²` : `${Math.round(um2).toLocaleString()} µm²`
+
+/** A small glyph of a standard cell — a fixed-height box with VDD/VSS power rails top and bottom and
+ *  one vertical poly stripe per transistor column, drawn to the cell's real λ proportions. */
+function CellShape({ cell }: { cell: CellGeometry }) {
+  const H = 46
+  const s = H / cell.heightLambda // px per λ
+  const w = cell.widthLambda * s
+  const rail = PROCESS.railWidth.lambda * s
+  const margin = PROCESS.edgeMargin.lambda * s
+  const pitch = PROCESS.polyPitch.lambda * s
+  const polyW = Math.max(2, pitch * 0.28)
+  return (
+    <svg
+      width={w}
+      height={H}
+      viewBox={`0 0 ${w} ${H}`}
+      style={{ display: 'block' }}
+      aria-hidden="true"
+    >
+      <title>{`${cell.name} cell — ${cell.columns} column${cell.columns === 1 ? '' : 's'}`}</title>
+      <rect
+        x={0.5}
+        y={0.5}
+        width={w - 1}
+        height={H - 1}
+        rx={2}
+        fill={THEME.surfaceBase}
+        stroke={THEME.borderStrong}
+      />
+      <rect x={0} y={0} width={w} height={rail} fill={THEME.accentBlue} opacity={0.5} />
+      <rect x={0} y={H - rail} width={w} height={rail} fill={THEME.accentBlue} opacity={0.5} />
+      {Array.from({ length: cell.columns }, (_, i) => {
+        const x = margin + i * pitch + (pitch - polyW) / 2
+        return (
+          <rect
+            key={x}
+            x={x}
+            y={rail + 2}
+            width={polyW}
+            height={H - 2 * rail - 4}
+            fill={THEME.statusWarn}
+            opacity={0.85}
+          />
+        )
+      })}
+    </svg>
+  )
+}
+
+/** One cell in the library — its shape + name + real dimensions + estimated area. */
+function CellCard({ cell }: { cell: CellGeometry }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '10px 12px',
+        background: THEME.surfaceInput,
+        border: `1px solid ${THEME.borderSubtle}`,
+        borderRadius: 8,
+        minWidth: 190,
+      }}
+    >
+      <CellShape cell={cell} />
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 640, color: THEME.textBright }}>{cell.name}</div>
+        <div style={{ fontSize: 11.5, color: THEME.textSoft, fontVariantNumeric: 'tabular-nums' }}>
+          {cell.columns} col · {cell.widthUm.toFixed(1)} × {cell.heightUm.toFixed(0)} µm
+        </div>
+        <div style={{ fontSize: 11, color: THEME.textFaint }}>
+          {Math.round(cell.areaUm2)} µm²{cell.reliable ? '' : ' · approx.'}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /** The static-timing result the app already computes (max clock speed, critical path, slack) — the
  *  Chip level's sign-off. `hasRegisters` is whether the design has a clocked element to sign off. */
 export type ChipTiming = { report: TimingReport; hasRegisters: boolean; clockDetected: boolean }
@@ -136,6 +234,8 @@ export function ChipView({
   light: boolean
 }) {
   const chip = useMemo(() => deriveChip(nodes, edges), [nodes, edges])
+  const cells = useMemo(() => standardCells(), [])
+  const area = useMemo(() => designCellArea(nodes, edges), [nodes, edges])
   const plural = (n: number, one: string) => `${n.toLocaleString()} ${one}${n === 1 ? '' : 's'}`
 
   return (
@@ -164,7 +264,9 @@ export function ChipView({
         <span style={{ fontSize: 11, color: THEME.textFaint }}>
           {chip.isEmpty
             ? 'no design yet'
-            : `${plural(chip.partTotal, 'part')} · flattens to ${plural(chip.deviceTotal, 'device')}`}
+            : `${plural(chip.partTotal, 'part')} · flattens to ${plural(chip.deviceTotal, 'device')}${
+                area.cellCount > 0 ? ` · ~${fmtArea(area.areaUm2)} standard-cell silicon` : ''
+              }`}
         </span>
       </div>
 
@@ -183,18 +285,7 @@ export function ChipView({
                 the Chip level's headline: the top clock speed and the critical path that limits it. The
                 delays are REAL (summed from the transistors). Shows for a clocked design (a CPU / register). */}
             <div style={{ marginBottom: 26 }}>
-              <div
-                style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  letterSpacing: '.06em',
-                  textTransform: 'uppercase',
-                  color: THEME.textSoft,
-                  marginBottom: 10,
-                }}
-              >
-                Timing sign-off
-              </div>
+              <SectionLabel>Timing sign-off</SectionLabel>
               {timing.hasRegisters ? (
                 <TimingPanel
                   report={timing.report}
@@ -211,6 +302,18 @@ export function ChipView({
                 </div>
               )}
             </div>
+            {area.cellCount > 0 && (
+              <div style={{ marginBottom: 26 }}>
+                <SectionLabel>Silicon area (estimate)</SectionLabel>
+                <div style={{ fontSize: 15, color: THEME.textBright, fontWeight: 620 }}>
+                  {plural(area.cellCount, 'standard cell')} · ~{fmtArea(area.areaUm2)}
+                </div>
+                <div style={{ fontSize: 12, color: THEME.textFaint, marginTop: 4 }}>
+                  first-order estimate from the λ-scalable cell sizes
+                  {area.anyUnreliable ? ' (some transmission-gate cells are approximated)' : ''}
+                </div>
+              </div>
+            )}
             <div style={{ fontSize: 14, color: THEME.textSoft, marginBottom: 18, lineHeight: 1.6 }}>
               This is your circuit projected into silicon — the parts you placed, flattened all the
               way down to the real devices they're made of. It's the design's inventory; the
@@ -223,6 +326,32 @@ export function ChipView({
                 rows={chip.devices}
                 note="every primitive device the design flattens to"
               />
+            </div>
+
+            {/* STANDARD-CELL LIBRARY — each logic gate's real physical cell shape, sized from its own
+                transistors + the cited λ-scalable rules. The foundation of the coming floorplan/routing. */}
+            <div style={{ marginTop: 30 }}>
+              <SectionLabel>Standard-cell library</SectionLabel>
+              <div
+                style={{
+                  fontSize: 13,
+                  color: THEME.textFaint,
+                  marginBottom: 14,
+                  lineHeight: 1.6,
+                  maxWidth: 640,
+                }}
+              >
+                Every logic gate becomes a real standard cell — a fixed-height row of transistor
+                columns with power rails top and bottom. Sizes come from the λ-scalable CMOS rules
+                (Weste-Harris / MOSIS SCMOS, {PROCESS.node.split('—')[0]?.trim()}, λ ={' '}
+                {PROCESS.lambdaUm}
+                µm). A first-order area estimate, not exact layout.
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                {cells.map((c) => (
+                  <CellCard key={c.name} cell={c} />
+                ))}
+              </div>
             </div>
           </div>
         )}
