@@ -322,6 +322,40 @@ type ParsedModule = {
   dir: Map<string, 'input' | 'output' | 'inout'>
   gates: GateInst[]
   assigns: Assign[]
+  /** Net → bit width for declared buses (`[N:0] a` → 4). Absent ⇒ a 1-bit scalar. */
+  widths: Map<string, number>
+}
+
+/** A plain non-negative decimal integer (for a range bound), or undefined for anything else (a based literal
+ *  or a parameter expression — those buses are reported). */
+function intLiteral(v: string): number | undefined {
+  return /^[0-9][0-9_]*$/.test(v) ? Number.parseInt(v.replace(/_/g, ''), 10) : undefined
+}
+
+/** A `[ msb : lsb ]` range's bit width. Only descending, zero-based `[N:0]` is representable (right endpoint =
+ *  LSB); anything else (ascending, nonzero-based, non-constant) is reported. `inner` is the tokens between the
+ *  brackets. */
+function rangeWidth(inner: Tok[]): { width: number } | { bad: string } {
+  const nums = inner.filter((t) => t.k === 'num')
+  if (!inner.some((t) => t.v === ':') || nums.length !== 2)
+    return { bad: 'non-constant or malformed range' }
+  const msb = intLiteral((nums[0] as Tok).v)
+  const lsb = intLiteral((nums[1] as Tok).v)
+  if (msb === undefined || lsb === undefined) return { bad: 'non-integer range bound' }
+  if (lsb !== 0 || msb < 0)
+    return {
+      bad: `range [${msb}:${lsb}] must be [N:0] (ascending/nonzero-based buses are unsupported)`,
+    }
+  return { width: msb + 1 }
+}
+
+/** Read a declaration range at the cursor (positioned at `[`); leaves the cursor just past `]`. */
+function readRange(c: Cursor): { width: number } | { bad: string } {
+  c.next() // '['
+  const inner: Tok[] = []
+  while (!c.atEnd() && !c.is(']') && !c.is(';')) inner.push(c.next() as Tok)
+  if (c.is(']')) c.next()
+  return rangeWidth(inner)
 }
 
 /** A tiny cursor over the token stream. */
@@ -413,7 +447,8 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
 
   const dir = new Map<string, 'input' | 'output' | 'inout'>()
   const portOrder: string[] = []
-  if (c.is('(')) parseHeader(readGroup(c), portOrder, dir, warnings)
+  const widths = new Map<string, number>()
+  if (c.is('(')) parseHeader(readGroup(c), portOrder, dir, widths, warnings)
   if (c.is(';')) c.next()
 
   const gates: GateInst[] = []
@@ -425,11 +460,11 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
       continue
     }
     if (t.k === 'kw' && (t.v === 'input' || t.v === 'output' || t.v === 'inout')) {
-      parsePortDecl(c, dir, warnings)
+      parsePortDecl(c, dir, widths, warnings)
       continue
     }
     if (t.k === 'kw' && t.v === 'wire') {
-      parseNetDecl(c, warnings)
+      parseNetDecl(c, widths, warnings)
       continue
     }
     if (t.k === 'kw' && t.v === 'assign') {
@@ -474,7 +509,7 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     }
     c.next() // stray token — advance so the loop can never spin
   }
-  return { name: nameTok.v, portOrder, dir, gates, assigns }
+  return { name: nameTok.v, portOrder, dir, gates, assigns, widths }
 }
 
 /** Parse `assign <lhs> = <rhs> {, <lhs> = <rhs>} ;` into one Assign per comma-separated assignment. lhs and
@@ -514,16 +549,17 @@ function parseHeader(
   slices: Tok[][],
   portOrder: string[],
   dir: Map<string, 'input' | 'output' | 'inout'>,
+  widths: Map<string, number>,
   warnings: string[],
 ): void {
   const ansi = slices.some(
     (s) => s[0] !== undefined && ['input', 'output', 'inout'].includes(s[0].v),
   )
-  // In an ANSI header a direction keyword governs every following bare identifier until the NEXT
-  // direction keyword — `input a, b, output o` declares a AND b as inputs. So `d` persists across the
-  // comma-separated slices; `hasRange` is reset only when a new direction keyword appears.
+  // In an ANSI header a direction keyword governs every following bare identifier until the NEXT direction
+  // keyword — `input a, b, output o` declares a AND b as inputs. So `d` persists across the comma-separated
+  // slices; the range resets when a new direction keyword appears.
   let d: 'input' | 'output' | 'inout' | undefined
-  let hasRange = false
+  let width: number | 'bad' | undefined
   for (const s of slices) {
     if (s.length === 0) {
       warnings.push('null port position (empty port) is not representable — skipped')
@@ -538,14 +574,21 @@ function parseHeader(
         )
       continue
     }
-    for (const t of s) {
+    for (let i = 0; i < s.length; i++) {
+      const t = s[i] as Tok
       if (t.k === 'kw' && (t.v === 'input' || t.v === 'output' || t.v === 'inout')) {
         d = t.v
-        hasRange = false
-      } else if (t.k === 'p' && t.v === '[') hasRange = true
-      else if (t.k === 'id') {
-        if (hasRange) {
-          warnings.push(`vector/bus port "${t.v}" is not representable as a 1-bit pin — skipped`)
+        width = undefined
+      } else if (t.k === 'p' && t.v === '[') {
+        const inner: Tok[] = []
+        i += 1
+        while (i < s.length && s[i]?.v !== ']') inner.push(s[i++] as Tok)
+        const r = rangeWidth(inner)
+        width = 'bad' in r ? 'bad' : r.width
+        if ('bad' in r) warnings.push(`vector/bus header port range — ${r.bad} — skipped`)
+      } else if (t.k === 'id') {
+        if (width === 'bad') {
+          warnings.push(`vector/bus port "${t.v}" has an unsupported range — skipped`)
           continue
         }
         if (d === undefined) continue
@@ -555,6 +598,7 @@ function parseHeader(
         }
         portOrder.push(t.v)
         dir.set(t.v, d)
+        if (typeof width === 'number' && width > 1) widths.set(t.v, width)
       }
     }
   }
@@ -563,12 +607,13 @@ function parseHeader(
 function parsePortDecl(
   c: Cursor,
   dir: Map<string, 'input' | 'output' | 'inout'>,
+  widths: Map<string, number>,
   warnings: string[],
 ): void {
   const d = (c.next() as Tok).v as 'input' | 'output' | 'inout'
-  let hasRange = false
+  let width: number | 'bad' | undefined // the pending `[N:0]` range for the following ids
   while (!c.atEnd() && !c.is(';')) {
-    const t = c.next() as Tok
+    const t = c.peek() as Tok
     if (t.v === '=') {
       warnings.push(
         `line ${t.line}: port-declaration continuous assignment (${d} … = …) is behavioral/non-structural — reported, not built`,
@@ -577,28 +622,30 @@ function parsePortDecl(
       break
     }
     if (t.k === 'p' && t.v === '[') {
-      hasRange = true
-      while (!c.atEnd() && !c.is(']') && !c.is(';')) c.next()
-      if (c.is(']')) c.next()
+      const r = readRange(c)
+      width = 'bad' in r ? 'bad' : r.width
+      if ('bad' in r) warnings.push(`line ${t.line}: bus range on "${d}" — ${r.bad} — reported`)
       continue
     }
-    if (t.k === 'id') {
-      if (hasRange) {
-        warnings.push(`vector/bus port "${t.v}" is not representable as a 1-bit pin — skipped`)
-        continue
-      }
-      if (d === 'inout') {
-        warnings.push(`inout port "${t.v}" (bidirectional) is not representable — skipped`)
-        continue
-      }
-      dir.set(t.v, d)
+    c.next()
+    if (t.k !== 'id') continue
+    if (width === 'bad') {
+      warnings.push(`vector/bus port "${t.v}" has an unsupported range — skipped`)
+      continue
     }
+    if (d === 'inout') {
+      warnings.push(`inout port "${t.v}" (bidirectional) is not representable — skipped`)
+      continue
+    }
+    dir.set(t.v, d)
+    if (typeof width === 'number' && width > 1) widths.set(t.v, width)
   }
   if (c.is(';')) c.next()
 }
 
-function parseNetDecl(c: Cursor, warnings: string[]): void {
+function parseNetDecl(c: Cursor, widths: Map<string, number>, warnings: string[]): void {
   c.next() // 'wire'
+  let width: number | 'bad' | undefined
   while (!c.atEnd() && !c.is(';')) {
     const t = c.peek() as Tok
     if (t.v === '=') {
@@ -609,14 +656,13 @@ function parseNetDecl(c: Cursor, warnings: string[]): void {
       break
     }
     if (t.k === 'p' && t.v === '[') {
-      warnings.push(
-        `line ${t.line}: bus wire declaration is not modeled (only explicit per-bit gates are) — reported`,
-      )
-      while (!c.atEnd() && !c.is(']') && !c.is(';')) c.next()
-      if (c.is(']')) c.next()
+      const r = readRange(c)
+      width = 'bad' in r ? 'bad' : r.width
+      if ('bad' in r) warnings.push(`line ${t.line}: bus wire range — ${r.bad} — reported`)
       continue
     }
     c.next()
+    if (t.k === 'id' && typeof width === 'number' && width > 1) widths.set(t.v, width)
   }
   if (c.is(';')) c.next()
 }

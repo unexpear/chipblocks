@@ -193,11 +193,10 @@ describe('Verilog import — honesty (unsupported constructs are reported, never
     }
   })
 
-  test('an inout port and a vector port are each reported', () => {
+  test('an inout port is reported (a vector port is now supported — see the synth bus tests)', () => {
     expect(has(importVerilog('module m(io); inout io; endmodule').warnings, 'inout')).toBe(true)
-    expect(has(importVerilog('module m(a); input [3:0] a; endmodule').warnings, 'vector')).toBe(
-      true,
-    )
+    // a nonzero-based / ascending bus range is still reported (only [N:0] is representable)
+    expect(has(importVerilog('module m(a); input [7:4] a; endmodule').warnings, 'range')).toBe(true)
   })
 
   test('drive strength and delay are reported but the gate is still built', () => {

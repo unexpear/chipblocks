@@ -24,6 +24,27 @@ function assertFn(verilog: string, inNames: string[], fn: (b: boolean[]) => bool
 const mod = (ins: string, body: string): string =>
   `module m(${ins}, y); input ${ins}; output y; ${body} endmodule`
 
+// bus test helpers (shared by the 2b blocks)
+const num = (b: boolean[]): number => b.reduce((s, x, i) => s + (x ? 1 << i : 0), 0)
+const numBits = (v: number, w: number): boolean[] =>
+  Array.from({ length: w }, (_, i) => ((v >> i) & 1) === 1)
+/** Import a bus module and check its outputs against `fn` over the enumerated input bits. */
+const assertBus = (
+  verilog: string,
+  ins: string[],
+  outs: string[],
+  fn: (b: boolean[]) => boolean[],
+) => {
+  const { block, warnings } = importVerilog(verilog)
+  expect(warnings, `warnings: ${warnings.join(' | ')}`).toEqual([])
+  const tt = characterizeBlock(block as BlockData)
+  expect(tt).not.toBeNull()
+  if (tt === null) return
+  expect(tt.inputs).toEqual(ins)
+  expect(tt.outputs).toEqual(outs)
+  for (const row of tt.rows) expect(row.out, `in ${row.in.join(',')}`).toEqual(fn(row.in))
+}
+
 describe('RTL synthesis — boolean operators build the right gates', () => {
   test('the basic gates: & | ^ ~^ ~', () => {
     assertFn(
@@ -184,26 +205,20 @@ describe('RTL synthesis — honesty (unsupported → reported, never faked)', ()
     ).toBe(true)
   }
 
-  test('arithmetic + - * and shifts are reported (buses/arithmetic are a later increment)', () => {
-    reported(mod('a, b', 'assign y = a + b;'), 'not supported')
+  test('still-unsupported operators (* / % << >> < <= > >=) are reported', () => {
+    // (+ and - ARE supported now — see the 2b bus + arithmetic tests)
     reported(mod('a, b', 'assign y = a * b;'), 'not supported')
     reported(mod('a, b', 'assign y = a << b;'), 'not supported')
     reported(mod('a, b', 'assign y = a < b;'), 'not supported')
+    reported(mod('a, b', 'assign y = a % b;'), 'not supported')
   })
 
-  test('bit-select, concatenation, and multi-bit constants are reported', () => {
-    reported('module m(a, y); input [3:0] a; output y; assign y = a[0]; endmodule', 'bus support')
-    reported(mod('a, b', 'assign y = {a, b};'), 'bus support')
-    reported(mod('a', "assign y = a & 4'b1010;"), 'bus support')
-  })
-
-  test('driving an input, double-driving, and constant outputs are reported', () => {
+  test('driving an input and double-driving are reported', () => {
     reported('module m(a, b); input a; output b; assign a = b; endmodule', 'input port')
     reported(
       'module m(a, y); input a; output y; assign y = a; assign y = ~a; endmodule',
       'more than once',
     )
-    reported(mod('a', "assign y = a & 1'b0;"), 'constant')
   })
 
   test('a combinational loop is reported, not built', () => {
@@ -281,5 +296,199 @@ describe('RTL synthesis — regressions from the adversarial review', () => {
   test("a 1-bit sized literal whose value exceeds 1 (1'd3) truncates to its LSB", () => {
     // 1'd3 == 1'b1, so a & 1'd3 = a
     assertFn(mod('a', "assign y = a & 1'd3;"), ['a'], ([a]) => a as boolean)
+  })
+})
+
+describe('RTL synthesis — buses + arithmetic (increment 2b)', () => {
+  test('bitwise AND on 2-bit buses is per-bit', () => {
+    assertBus(
+      'module m(a, b, y); input [1:0] a, b; output [1:0] y; assign y = a & b; endmodule',
+      ['a[0]', 'a[1]', 'b[0]', 'b[1]'],
+      ['y[0]', 'y[1]'],
+      (i) => [(i[0] as boolean) && (i[2] as boolean), (i[1] as boolean) && (i[3] as boolean)],
+    )
+  })
+
+  test('a ripple-carry ADDER: assign s = a + b (3-bit result captures the carry)', () => {
+    assertBus(
+      'module m(a, b, s); input [1:0] a, b; output [2:0] s; assign s = a + b; endmodule',
+      ['a[0]', 'a[1]', 'b[0]', 'b[1]'],
+      ['s[0]', 's[1]', 's[2]'],
+      (i) =>
+        numBits(
+          num([i[0] as boolean, i[1] as boolean]) + num([i[2] as boolean, i[3] as boolean]),
+          3,
+        ),
+    )
+  })
+
+  test('the {cout, sum} = a + b idiom captures the carry in a concat target', () => {
+    assertBus(
+      'module m(a, b, cout, sum); input [1:0] a, b; output cout; output [1:0] sum; assign {cout, sum} = a + b; endmodule',
+      ['a[0]', 'a[1]', 'b[0]', 'b[1]'],
+      ['cout', 'sum[0]', 'sum[1]'],
+      (i) => {
+        const s = num([i[0] as boolean, i[1] as boolean]) + num([i[2] as boolean, i[3] as boolean])
+        const b3 = numBits(s, 3)
+        return [b3[2] as boolean, b3[0] as boolean, b3[1] as boolean]
+      },
+    )
+  })
+
+  test('SUBTRACTION: assign d = a - b (mod 4, two’s complement)', () => {
+    assertBus(
+      'module m(a, b, d); input [1:0] a, b; output [1:0] d; assign d = a - b; endmodule',
+      ['a[0]', 'a[1]', 'b[0]', 'b[1]'],
+      ['d[0]', 'd[1]'],
+      (i) =>
+        numBits(
+          (num([i[0] as boolean, i[1] as boolean]) - num([i[2] as boolean, i[3] as boolean]) + 4) %
+            4,
+          2,
+        ),
+    )
+  })
+
+  test('reduction operators: parity ^a, all-ones &a, any |a', () => {
+    assertBus(
+      'module m(a, p); input [2:0] a; output p; assign p = ^a; endmodule',
+      ['a[0]', 'a[1]', 'a[2]'],
+      ['p'],
+      (i) => [i.filter(Boolean).length % 2 === 1],
+    )
+    assertBus(
+      'module m(a, z); input [2:0] a; output z; assign z = &a; endmodule',
+      ['a[0]', 'a[1]', 'a[2]'],
+      ['z'],
+      (i) => [i.every(Boolean)],
+    )
+    assertBus(
+      'module m(a, z); input [2:0] a; output z; assign z = |a; endmodule',
+      ['a[0]', 'a[1]', 'a[2]'],
+      ['z'],
+      (i) => [i.some(Boolean)],
+    )
+  })
+
+  test('part-select a[2:1] and bit-select a[2] (unused bus bits drop out honestly)', () => {
+    // a[2:1] reads only bits 1,2 of the 4-bit a; the unused a0,a3 drop from the interface
+    const t = characterizeBlock(
+      importVerilog('module m(a, y); input [3:0] a; output [1:0] y; assign y = a[2:1]; endmodule')
+        .block as BlockData,
+    )
+    expect(t?.inputs).toEqual(['a[1]', 'a[2]'])
+    for (const row of t?.rows ?? []) expect(row.out).toEqual([row.in[0], row.in[1]]) // y0=a1, y1=a2
+    const t2 = characterizeBlock(
+      importVerilog('module m(a, y); input [3:0] a; output y; assign y = a[2]; endmodule')
+        .block as BlockData,
+    )
+    expect(t2?.inputs).toEqual(['a[2]'])
+    for (const row of t2?.rows ?? []) expect(row.out).toEqual([row.in[0]])
+  })
+
+  test('concatenation {a, b} puts a in the high bit', () => {
+    assertBus(
+      'module m(a, b, y); input a, b; output [1:0] y; assign y = {a, b}; endmodule',
+      ['a', 'b'],
+      ['y[0]', 'y[1]'],
+      (i) => [i[1] as boolean, i[0] as boolean],
+    )
+  })
+
+  test('zero-extension via a constant: y = {2’b0, a} ties the high bits low', () => {
+    assertBus(
+      "module m(a, y); input [1:0] a; output [3:0] y; assign y = {2'b0, a}; endmodule",
+      ['a[0]', 'a[1]'],
+      ['y[0]', 'y[1]', 'y[2]', 'y[3]'],
+      (i) => [i[0] as boolean, i[1] as boolean, false, false],
+    )
+  })
+
+  test('equality on buses: assign eq = (a == b)', () => {
+    assertBus(
+      'module m(a, b, eq); input [1:0] a, b; output eq; assign eq = (a == b); endmodule',
+      ['a[0]', 'a[1]', 'b[0]', 'b[1]'],
+      ['eq'],
+      (i) => [i[0] === i[2] && i[1] === i[3]],
+    )
+  })
+
+  test('a per-bit bus mux: assign y = s ? a : b', () => {
+    assertBus(
+      'module m(a, b, s, y); input [1:0] a, b; input s; output [1:0] y; assign y = s ? a : b; endmodule',
+      ['a[0]', 'a[1]', 'b[0]', 'b[1]', 's'],
+      ['y[0]', 'y[1]'],
+      (i) => (i[4] ? [i[0] as boolean, i[1] as boolean] : [i[2] as boolean, i[3] as boolean]),
+    )
+  })
+
+  test('a nonzero-based / ascending bus range is reported, not faked', () => {
+    const { warnings } = importVerilog(
+      'module m(a, y); input [7:4] a; output y; assign y = a[4]; endmodule',
+    )
+    expect(warnings.some((w) => w.toLowerCase().includes('range'))).toBe(true)
+  })
+})
+
+describe('RTL synthesis — 2b regressions from the adversarial review', () => {
+  test('cross-coupled bit-shuffle buses are ACYCLIC and build (not a false loop)', () => {
+    // p = {q[0], a}; q = {p[0], b}  →  p0=a, p1=q0=b, q0=b, q1=p0=a. No feedback.
+    assertBus(
+      'module m(a, b, p, q); input a, b; output [1:0] p, q; assign p = {q[0], a}; assign q = {p[0], b}; endmodule',
+      ['a', 'b'],
+      ['p[0]', 'p[1]', 'q[0]', 'q[1]'],
+      (i) => [i[0] as boolean, i[1] as boolean, i[1] as boolean, i[0] as boolean],
+    )
+  })
+
+  test('a single-bus bit-shuffle y = {y[0], a} is not a false self-loop', () => {
+    // y0 = a, y1 = y0 — a feed-forward shuffle, not feedback
+    const tt = characterizeBlock(
+      importVerilog('module m(a, y); input a; output [1:0] y; assign y = {y[0], a}; endmodule')
+        .block as BlockData,
+    )
+    expect(tt).not.toBeNull()
+    for (const row of tt?.rows ?? []) expect(row.out).toEqual([row.in[0], row.in[0]]) // y0=a, y1=y0=a
+  })
+
+  test('a user net named "syn0" (an internal wire) is not clobbered by fresh names', () => {
+    assertBus(
+      'module m(a, b, y); input a, b; output y; wire syn0; assign syn0 = a & b; assign y = syn0 | a; endmodule',
+      ['a', 'b'],
+      ['y'],
+      (i) => [i[0] as boolean],
+    ) // (a&b)|a = a
+  })
+
+  test('a bus bit a[1] and a distinct scalar net a1 stay separate (no name merge)', () => {
+    // a[1] (bus bit) and a1 (scalar) are DISTINCT signals — they must appear as two separate inputs, not
+    // merge into one net. (a[0] is unused → dropped.)
+    const tt = characterizeBlock(
+      importVerilog(
+        'module m(a, a1, y); input [1:0] a; input a1; output y; assign y = a[1] ^ a1; endmodule',
+      ).block as BlockData,
+    )
+    expect(tt?.inputs).toEqual(['a[1]', 'a1']) // TWO independent inputs (not merged to one)
+    for (const row of tt?.rows ?? []) expect(row.out).toEqual([row.in[0] !== row.in[1]]) // a[1] XOR a1
+  })
+
+  test('a constant tie shared with a dropped (looped) assign still drives the surviving assign', () => {
+    // the y assign self-loops on y[0] and is dropped, but z = 1'b1 (which reuses the tie-1) must still be 1
+    const { block } = importVerilog(
+      "module m(a, y, z); input a; output [1:0] y; output z; assign y = {1'b1, y[0]}; assign z = 1'b1; endmodule",
+    )
+    const tt = characterizeBlock(block as BlockData)
+    expect(tt).not.toBeNull()
+    if (tt === null) return
+    const zi = tt.outputs.indexOf('z')
+    expect(zi).toBeGreaterThanOrEqual(0)
+    for (const row of tt.rows) expect(row.out[zi]).toBe(true) // z = 1'b1 for all a
+  })
+
+  test('an out-of-range constant select reads x — reported, not silently 0', () => {
+    const { warnings } = importVerilog(
+      'module m(a, y); input [3:0] a; output y; assign y = a[5]; endmodule',
+    )
+    expect(warnings.some((w) => w.toLowerCase().includes('out of range'))).toBe(true)
   })
 })
