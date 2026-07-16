@@ -167,9 +167,11 @@ describe('Verilog import — structural Verilog → gates', () => {
 describe('Verilog import — honesty (unsupported constructs are reported, never faked)', () => {
   const has = (ws: string[], needle: string) => ws.some((w) => w.toLowerCase().includes(needle))
 
-  test('behavioral assign is reported and builds no gate', () => {
+  test('a behavioral always block is reported and builds no gate', () => {
+    // (`assign` is now SYNTHESIZED into gates — see verilog-synth.test.ts; `always` stays behavioral,
+    //  reported until sequential synthesis lands in a later increment.)
     const { block, warnings } = importVerilog(
-      'module m(a,b,y); input a,b; output y; assign y = a & b; endmodule',
+      'module m(a,b,y); input a,b; output y; always @* y = a & b; endmodule',
     )
     expect(has(warnings, 'behavioral')).toBe(true)
     expect(block).toBeNull() // no gate primitives → nothing built

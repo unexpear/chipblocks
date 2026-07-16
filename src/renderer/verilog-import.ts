@@ -30,6 +30,7 @@ import {
   XOR_BLOCK,
 } from './builtin-blocks.ts'
 import { POWER_PORT_IDS } from './logic-sim.ts'
+import { synthesizeAssigns } from './verilog-synth.ts'
 
 export type ImportResult = {
   block: BlockData | null
@@ -124,8 +125,8 @@ const KEYWORDS = new Set([
   ...OTHER_GATE_SWITCH,
 ])
 
-type Kind = 'id' | 'num' | 'kw' | 'p' | 'dir' | 'sys' | 'str' | 'unk'
-type Tok = { k: Kind; v: string; line: number }
+type Kind = 'id' | 'num' | 'kw' | 'p' | 'op' | 'dir' | 'sys' | 'str' | 'unk'
+export type Tok = { k: Kind; v: string; line: number }
 
 const isIdStart = (c: string): boolean => /[A-Za-z_]/.test(c)
 const isIdPart = (c: string): boolean => /[A-Za-z0-9_$]/.test(c)
@@ -274,8 +275,28 @@ function lex(src: string): { tokens: Tok[]; warnings: string[] } {
       continue
     }
 
-    if ('()[]{},;:.#=@'.includes(c)) {
+    // bracket / structural punctuation (depth-tracked by readGroup); ':' also separates ?: and h:l
+    if ('()[]{},;:.#@'.includes(c)) {
       push('p', c)
+      i += 1
+      continue
+    }
+    // expression operators — maximal munch (3-char, then 2-char, then 1-char) so `===`, `<<<`, `~&`,
+    // `==` lex as ONE token each (never `==` → two `=`, never `~&` → `~` then `&`).
+    const three = src.slice(i, i + 3)
+    const two = src.slice(i, i + 2)
+    if (OPS3.has(three)) {
+      push('op', three)
+      i += 3
+      continue
+    }
+    if (OPS2.has(two)) {
+      push('op', two)
+      i += 2
+      continue
+    }
+    if (OPS1.has(c)) {
+      push('op', c)
       i += 1
       continue
     }
@@ -285,13 +306,22 @@ function lex(src: string): { tokens: Tok[]; warnings: string[] } {
   return { tokens, warnings }
 }
 
+/** Verilog operators, grouped by length for the lexer's maximal-munch. `=` is the assignment token. */
+const OPS3 = new Set(['===', '!==', '<<<', '>>>', '==?', '!=?'])
+const OPS2 = new Set(['==', '!=', '<=', '>=', '<<', '>>', '&&', '||', '~&', '~|', '~^', '^~', '**'])
+const OPS1 = new Set(['&', '|', '^', '~', '!', '?', '+', '-', '*', '/', '%', '<', '>', '='])
+
 // ── structural parser ─────────────────────────────────────────────────────────
-type GateInst = { prim: string; terminals: string[] }
+export type GateInst = { prim: string; terminals: string[] }
+/** A continuous assignment `assign <lhs> = <rhs>;` captured as token spans; the synthesizer (verilog-synth)
+ *  parses the rhs into gates. */
+export type Assign = { lhs: Tok[]; rhs: Tok[]; line: number }
 type ParsedModule = {
   name: string
   portOrder: string[]
   dir: Map<string, 'input' | 'output' | 'inout'>
   gates: GateInst[]
+  assigns: Assign[]
 }
 
 /** A tiny cursor over the token stream. */
@@ -387,6 +417,7 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
   if (c.is(';')) c.next()
 
   const gates: GateInst[] = []
+  const assigns: Assign[] = []
   while (!c.atEnd() && !c.is('endmodule')) {
     const t = c.peek() as Tok
     if (t.k === 'dir') {
@@ -399,6 +430,10 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     }
     if (t.k === 'kw' && t.v === 'wire') {
       parseNetDecl(c, warnings)
+      continue
+    }
+    if (t.k === 'kw' && t.v === 'assign') {
+      assigns.push(...parseAssigns(c))
       continue
     }
     if (t.k === 'kw' && (N_INPUT[t.v] !== undefined || N_OUTPUT[t.v] !== undefined)) {
@@ -439,7 +474,39 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     }
     c.next() // stray token — advance so the loop can never spin
   }
-  return { name: nameTok.v, portOrder, dir, gates }
+  return { name: nameTok.v, portOrder, dir, gates, assigns }
+}
+
+/** Parse `assign <lhs> = <rhs> {, <lhs> = <rhs>} ;` into one Assign per comma-separated assignment. lhs and
+ *  rhs are captured as raw token spans; the synthesizer (verilog-synth.ts) parses + sizes + lowers them. */
+function parseAssigns(c: Cursor): Assign[] {
+  c.next() // 'assign'
+  const out: Assign[] = []
+  for (;;) {
+    const line = c.peek()?.line ?? 0
+    const lhs: Tok[] = []
+    while (!c.atEnd() && c.peek()?.v !== '=' && c.peek()?.v !== ';') lhs.push(c.next() as Tok)
+    if (c.peek()?.v !== '=') {
+      skipStatement(c)
+      break
+    }
+    c.next() // '='
+    const rhs: Tok[] = []
+    let depth = 0
+    while (!c.atEnd()) {
+      const t = c.peek() as Tok
+      if (t.k === 'p' && (t.v === '(' || t.v === '[' || t.v === '{')) depth += 1
+      else if (t.k === 'p' && (t.v === ')' || t.v === ']' || t.v === '}'))
+        depth = Math.max(0, depth - 1)
+      else if (depth === 0 && (t.v === ';' || t.v === ',')) break
+      rhs.push(c.next() as Tok)
+    }
+    out.push({ lhs, rhs, line })
+    const sep = c.peek()?.v
+    c.next() // consume ',' (more assignments) or ';' (done)
+    if (sep !== ',') break
+  }
+  return out
 }
 
 /** Header ports: ANSI (directions inline) or non-ANSI (bare id list, directions come from body decls). */
@@ -502,7 +569,7 @@ function parsePortDecl(
   let hasRange = false
   while (!c.atEnd() && !c.is(';')) {
     const t = c.next() as Tok
-    if (t.k === 'p' && t.v === '=') {
+    if (t.v === '=') {
       warnings.push(
         `line ${t.line}: port-declaration continuous assignment (${d} … = …) is behavioral/non-structural — reported, not built`,
       )
@@ -534,7 +601,7 @@ function parseNetDecl(c: Cursor, warnings: string[]): void {
   c.next() // 'wire'
   while (!c.atEnd() && !c.is(';')) {
     const t = c.peek() as Tok
-    if (t.k === 'p' && t.v === '=') {
+    if (t.v === '=') {
       warnings.push(
         `line ${t.line}: net-declaration continuous assignment (wire … = …) is behavioral/non-structural — reported, not built`,
       )
@@ -914,6 +981,8 @@ export function importVerilog(text: string): ImportResult {
     warnings.push('no module declaration found')
     return { block: null, warnings, moduleName: null }
   }
+  // Synthesize any continuous assignments into gates (appended to mod.gates), then lower everything.
+  synthesizeAssigns(mod, warnings)
   const block = lower(mod, warnings)
   if (block === null) warnings.push(`module "${mod.name}" has no gate primitives to build`)
   return { block, warnings, moduleName: mod.name }
