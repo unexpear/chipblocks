@@ -356,10 +356,12 @@ const OUTPUT_PORT_IDS = new Set([
   'borrow',
 ])
 export const isOutputPort = (p: { id: string; drive?: string }): boolean =>
-  p.drive === 'push_pull' ||
-  p.drive === 'open_collector' ||
-  p.drive === 'tri_state' ||
-  OUTPUT_PORT_IDS.has(p.id.toLowerCase())
+  // An explicit input drive wins over the name heuristic — a declared input named out/q/s/sum/… is an input.
+  p.drive !== 'input' &&
+  (p.drive === 'push_pull' ||
+    p.drive === 'open_collector' ||
+    p.drive === 'tri_state' ||
+    OUTPUT_PORT_IDS.has(p.id.toLowerCase()))
 
 /**
  * Characterize a COMBINATIONAL block: drive every input combination through the block's REAL circuit
