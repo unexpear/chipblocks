@@ -22,6 +22,7 @@ import type { BlockData, BlockInnerEdge, BlockInnerNode, BlockPort } from './blo
 import {
   AND_BLOCK,
   BUFFER_BLOCK,
+  D_FLIPFLOP_BLOCK,
   INVERTER_BLOCK,
   NAND2_BLOCK,
   NOR2_BLOCK,
@@ -30,7 +31,7 @@ import {
   XOR_BLOCK,
 } from './builtin-blocks.ts'
 import { POWER_PORT_IDS } from './logic-sim.ts'
-import { synthesizeAssigns } from './verilog-synth.ts'
+import { synthesizeBehavioral } from './verilog-synth.ts'
 
 export type ImportResult = {
   block: BlockData | null
@@ -316,12 +317,20 @@ export type GateInst = { prim: string; terminals: string[] }
 /** A continuous assignment `assign <lhs> = <rhs>;` captured as token spans; the synthesizer (verilog-synth)
  *  parses the rhs into gates. */
 export type Assign = { lhs: Tok[]; rhs: Tok[]; line: number }
+/** A clocked block `always @(posedge <clk>) <body>` captured as token spans; the synthesizer elaborates the
+ *  body into per-register next-state logic + flip-flops. */
+export type AlwaysBlock = { clk: string; body: Tok[]; line: number }
+/** A synthesized flip-flop: its D-input net, clock net, and Q-output net (one per registered bit). */
+export type FlopInst = { d: string; clk: string; q: string }
 type ParsedModule = {
   name: string
   portOrder: string[]
   dir: Map<string, 'input' | 'output' | 'inout'>
   gates: GateInst[]
   assigns: Assign[]
+  alwaysBlocks: AlwaysBlock[]
+  /** Filled by the synthesizer: one flip-flop per registered bit; lower() places each as a D_FLIPFLOP_BLOCK. */
+  flops: FlopInst[]
   /** Net → bit width for declared buses (`[N:0] a` → 4). Absent ⇒ a 1-bit scalar. */
   widths: Map<string, number>
 }
@@ -391,7 +400,12 @@ function skipStatement(c: Cursor): void {
     else if (t.k === 'kw' && t.v === 'end') {
       begin -= 1
       if (begin <= 0) return
-    } else if (t.k === 'p' && t.v === ';' && paren === 0 && begin === 0) return
+    } else if (t.k === 'p' && t.v === ';' && paren === 0 && begin === 0) {
+      // An unbraced `if (…) …; else …;` is ONE statement: the else-branch after this ';' belongs to it, so
+      // keep skipping rather than leaving it to be misread as a separate (bogus) construct.
+      if (c.peek()?.v === 'else') continue
+      return
+    }
   }
 }
 
@@ -453,6 +467,7 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
 
   const gates: GateInst[] = []
   const assigns: Assign[] = []
+  const alwaysBlocks: AlwaysBlock[] = []
   while (!c.atEnd() && !c.is('endmodule')) {
     const t = c.peek() as Tok
     if (t.k === 'dir') {
@@ -463,12 +478,19 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
       parsePortDecl(c, dir, widths, warnings)
       continue
     }
-    if (t.k === 'kw' && t.v === 'wire') {
-      parseNetDecl(c, widths, warnings)
+    if (t.k === 'kw' && (t.v === 'wire' || t.v === 'reg')) {
+      parseNetDecl(c, widths, warnings) // `reg [n:0] x;` captures a width exactly like `wire`
       continue
     }
     if (t.k === 'kw' && t.v === 'assign') {
       assigns.push(...parseAssigns(c))
+      continue
+    }
+    if (t.k === 'kw' && t.v === 'always') {
+      // A posedge-clocked always is CAPTURED for sequential synthesis; anything else (async reset, negedge,
+      // combinational @*, multiple edges) falls through to the behavioral report below.
+      const block = parseAlways(c, warnings)
+      if (block !== null) alwaysBlocks.push(block)
       continue
     }
     if (t.k === 'kw' && (N_INPUT[t.v] !== undefined || N_OUTPUT[t.v] !== undefined)) {
@@ -509,7 +531,111 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     }
     c.next() // stray token — advance so the loop can never spin
   }
-  return { name: nameTok.v, portOrder, dir, gates, assigns, widths }
+  return { name: nameTok.v, portOrder, dir, gates, assigns, alwaysBlocks, flops: [], widths }
+}
+
+/** Parse `always @(posedge <clk>) <body>`. Returns the captured block, or null (reporting a warning) for any
+ *  always the sequential synthesizer can't build: async reset, negedge, combinational @*, multiple edges. */
+function parseAlways(c: Cursor, warnings: string[]): AlwaysBlock | null {
+  const line = c.peek()?.line ?? 0
+  c.next() // 'always'
+  const report = (why: string): null => {
+    warnings.push(`line ${line}: always block — ${why} — reported, not built`)
+    skipStatement(c)
+    return null
+  }
+  if (!c.is('@')) return report('only edge-triggered @(posedge clk) blocks are synthesized')
+  c.next() // '@'
+  if (c.is('*'))
+    return report('combinational always @* is not supported (only clocked @(posedge clk))')
+  if (!c.is('(')) return report('sensitivity list must be @(posedge clk)')
+  const sens = readGroup(c) // depth-0 comma-separated slices inside @( … )
+  const flat = sens.flat()
+  // exactly `posedge <id>` — no `or`/comma (multiple/async — readGroup splits commas into separate slices),
+  // no `negedge`, no `*`
+  if (flat.some((t) => t.v === 'negedge'))
+    return report('negedge clocks are not supported (the flip-flop is positive-edge)')
+  if (sens.length > 1 || flat.some((t) => t.v === 'or'))
+    return report('multiple sensitivity signals (e.g. an async reset) are not supported')
+  if (flat.some((t) => t.v === '*'))
+    return report('combinational always @(*) is not supported (only clocked @(posedge clk))')
+  const posedgeIdx = flat.findIndex((t) => t.v === 'posedge')
+  if (posedgeIdx === -1) return report('only @(posedge clk) is supported')
+  const clkTok = flat[posedgeIdx + 1]
+  if (clkTok === undefined || clkTok.k !== 'id')
+    return report('the clock must be a simple net after posedge')
+  // Capture the body as ONE complete procedural statement (begin…end, if/else, and case…endcase aware) — the
+  // always body is a single statement, so stopping at the first ';' would truncate a multi-statement block.
+  const body: Tok[] = []
+  readStatementSpan(c, body)
+  return { clk: clkTok.v, body, line }
+}
+
+/** Append one complete procedural statement's tokens to `out`: a begin…end block, an if/else (both branches),
+ *  a case…endcase, or a plain statement up to its ';'. Nesting-aware so the synthesizer sees the whole body. */
+function readStatementSpan(c: Cursor, out: Tok[]): void {
+  if (c.atEnd()) return
+  const t = c.peek() as Tok
+  if (t.v === 'begin') {
+    out.push(c.next() as Tok)
+    let depth = 1
+    while (!c.atEnd() && depth > 0) {
+      const x = c.next() as Tok
+      if (x.k === 'kw' && x.v === 'begin') depth += 1
+      else if (x.k === 'kw' && x.v === 'end') depth -= 1
+      out.push(x)
+    }
+    return
+  }
+  if (t.v === 'case' || t.v === 'casex' || t.v === 'casez') {
+    out.push(c.next() as Tok)
+    let depth = 1
+    while (!c.atEnd() && depth > 0) {
+      const x = c.next() as Tok
+      if (x.v === 'case' || x.v === 'casex' || x.v === 'casez') depth += 1
+      else if (x.v === 'endcase') depth -= 1
+      out.push(x)
+    }
+    return
+  }
+  if (t.v === 'if') {
+    out.push(c.next() as Tok) // 'if'
+    if (c.is('(')) {
+      out.push(c.next() as Tok) // '('
+      let d = 1
+      while (!c.atEnd() && d > 0) {
+        const x = c.next() as Tok
+        if (x.v === '(') d += 1
+        else if (x.v === ')') d -= 1
+        out.push(x)
+      }
+    }
+    readStatementSpan(c, out) // then-branch
+    if (c.is('else')) {
+      out.push(c.next() as Tok)
+      readStatementSpan(c, out) // else-branch
+    }
+    return
+  }
+  // Procedural loops (for/while/repeat have a (…) header + a body; forever is just a body). The synthesizer
+  // rejects these, but the WHOLE statement must be captured so its inner ';'s don't spill into the parse.
+  if (t.v === 'for' || t.v === 'while' || t.v === 'repeat' || t.v === 'forever') {
+    out.push(c.next() as Tok)
+    if (t.v !== 'forever' && c.is('(')) {
+      out.push(c.next() as Tok) // '('
+      let d = 1
+      while (!c.atEnd() && d > 0) {
+        const x = c.next() as Tok
+        if (x.v === '(') d += 1
+        else if (x.v === ')') d -= 1
+        out.push(x)
+      }
+    }
+    readStatementSpan(c, out) // loop body
+    return
+  }
+  while (!c.atEnd() && !c.is(';')) out.push(c.next() as Tok)
+  if (c.is(';')) out.push(c.next() as Tok)
 }
 
 /** Parse `assign <lhs> = <rhs> {, <lhs> = <rhs>} ;` into one Assign per comma-separated assignment. lhs and
@@ -805,6 +931,7 @@ function lower(mod: ParsedModule, warnings: string[]): BlockData | null {
   let freshNet = 0
   const usedNets = new Set<string>()
   for (const g of mod.gates) for (const t of g.terminals) usedNets.add(t)
+  for (const f of mod.flops) for (const t of [f.d, f.clk, f.q]) usedNets.add(t)
   for (const p of mod.portOrder) usedNets.add(p)
   const newNet = (): string => {
     let name = `w_${freshNet++}`
@@ -830,6 +957,17 @@ function lower(mod: ParsedModule, warnings: string[]): BlockData | null {
     }
     const cell = N_OUTPUT[g.prim]
     if (cell !== undefined) lowerNOutput(g, cell, add)
+  }
+  // Sequential elements: one real positive-edge D flip-flop per registered bit. Its D-net is always a fresh
+  // name distinct from its Q-net, so the flop is a COMBINATIONAL CUT — the register→D-logic→register feedback
+  // closes only through net naming and resolves temporally across clocks (never a combinational loop). v_dd/gnd
+  // are re-chained with the gates below; qbar is left unconnected (no design reads it).
+  for (const f of mod.flops) {
+    add(D_FLIPFLOP_BLOCK, [
+      { pin: 'd', net: f.d, isOut: false },
+      { pin: 'clk', net: f.clk, isOut: false },
+      { pin: 'q', net: f.q, isOut: true },
+    ])
   }
   if (nodes.length === 0) return null
 
@@ -1027,8 +1165,9 @@ export function importVerilog(text: string): ImportResult {
     warnings.push('no module declaration found')
     return { block: null, warnings, moduleName: null }
   }
-  // Synthesize any continuous assignments into gates (appended to mod.gates), then lower everything.
-  synthesizeAssigns(mod, warnings)
+  // Synthesize behavioral RTL — continuous assignments into gates and clocked always-blocks into flip-flops
+  // + next-state gates (both appended to mod) — then lower everything.
+  synthesizeBehavioral(mod, warnings)
   const block = lower(mod, warnings)
   if (block === null) warnings.push(`module "${mod.name}" has no gate primitives to build`)
   return { block, warnings, moduleName: mod.name }

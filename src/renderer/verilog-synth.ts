@@ -15,7 +15,7 @@
  * nonzero-based selects — is REPORTED, never faked.
  */
 
-import type { Assign, GateInst, Tok } from './verilog-import.ts'
+import type { AlwaysBlock, Assign, FlopInst, GateInst, Tok } from './verilog-import.ts'
 
 // ── expression AST ────────────────────────────────────────────────────────────
 type Expr =
@@ -467,6 +467,8 @@ type SynthModule = {
   dir: Map<string, 'input' | 'output' | 'inout'>
   gates: GateInst[]
   assigns: Assign[]
+  alwaysBlocks: AlwaysBlock[]
+  flops: FlopInst[]
   widths: Map<string, number>
 }
 
@@ -528,11 +530,13 @@ function splitTopComma(toks: Tok[]): Tok[][] {
 }
 
 /**
- * Synthesize every continuous assignment into real gates (appended to `mod.gates`) and expand bus PORTS into
- * scalar bit-ports so the importer's lower() — which is purely scalar — wires + places everything unchanged.
- * Anything outside the supported subset is reported in `warnings` and NOT built.
+ * Synthesize behavioral RTL into real gates + flip-flops. Continuous assignments (`assign y = expr;`) become
+ * gates and clocked `always @(posedge clk)` blocks become one D flip-flop per registered bit plus the
+ * next-state gates that feed each D input — all appended to `mod` and expanded to scalar bit-nets so the
+ * importer's lower() (purely scalar) wires + places + powers everything unchanged. Bus PORTS are expanded to
+ * scalar bit-ports here too. Anything outside the supported subset is reported in `warnings` and NOT built.
  */
-export function synthesizeAssigns(mod: SynthModule, warnings: string[]): void {
+export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void {
   const widthOf = (name: string): number => mod.widths.get(name) ?? 1
   // A bus bit-net uses the Verilog bracket form a[i] — since `[`/`]` can't appear in a simple identifier, it
   // can never collide with a scalar net literally spelled `a0` (a real, silent-miscompile hazard otherwise).
@@ -553,15 +557,17 @@ export function synthesizeAssigns(mod: SynthModule, warnings: string[]): void {
   mod.portOrder = newOrder
   mod.dir = newDir
 
-  if (mod.assigns.length === 0) return
+  if (mod.assigns.length === 0 && mod.alwaysBlocks.length === 0) return
 
   // Fresh internal-net names dodge EVERY name that can already denote a net: bit-ports, structural gate
-  // terminals, declared bus bases, and any identifier used in an assign (an internal `wire syn0` shows up
-  // only there). Without this a user net named "syn0" is silently merged with a synthesized net.
+  // terminals, declared bus bases, any identifier used in an assign, AND any identifier inside an always
+  // block (a register or read-net named `syn0` lives only there). Without this a user net named "syn0" is
+  // silently merged with a synthesized net — a double-drive or a self-referential combinational loop.
   const used = new Set<string>(mod.dir.keys())
   for (const g of mod.gates) for (const t of g.terminals) used.add(t)
   for (const base of mod.widths.keys()) used.add(base)
   for (const a of mod.assigns) for (const t of [...a.lhs, ...a.rhs]) if (t.k === 'id') used.add(t.v)
+  for (const blk of mod.alwaysBlocks) for (const t of blk.body) if (t.k === 'id') used.add(t.v)
   let n = 0
   const fresh = (): string => {
     let name = `syn${n++}`
@@ -678,6 +684,96 @@ export function synthesizeAssigns(mod: SynthModule, warnings: string[]): void {
     }
     mod.gates.push(...b.gates)
   }
+
+  // ── clocked always-blocks → one D flip-flop per registered bit + its next-state gates ──────────────
+  // Nonblocking `<=` semantics: every read binds to the pre-edge value, statement order is irrelevant, and
+  // last-write-wins — so each register's next state is one combinational function of the CURRENT state and
+  // inputs. We elaborate the body to that per-register function, synthesize it with the SAME gate machinery
+  // as the assigns, and feed each bit into a real positive-edge D flip-flop. The flop is a combinational cut:
+  // its D-net is always distinct from its Q-net, so the state→next-state→state feedback closes only through
+  // net naming and resolves across clock edges (never a combinational loop).
+  const registered = new Set<string>()
+  for (const blk of mod.alwaysBlocks) {
+    const seq = parseProcedural(blk.body)
+    if (seq.t === 'bad') {
+      warnings.push(`line ${blk.line}: always block — ${seq.why} — reported, not built`)
+      continue
+    }
+    const written = new Set<string>()
+    const env = elaborate(seq, new Map(), written)
+    for (const r of written) {
+      if (registered.has(r)) {
+        warnings.push(
+          `register "${r}" is written by more than one always block — reported, not built`,
+        )
+        continue
+      }
+      const ast = env.get(r)
+      if (ast === undefined) continue
+      const bad = firstBad(ast)
+      if (bad !== undefined) {
+        warnings.push(`line ${blk.line}: register "${r}" not synthesized — ${bad}`)
+        continue
+      }
+      const oor = outOfRange(ast, widthOf)
+      if (oor !== undefined) {
+        warnings.push(`line ${blk.line}: ${oor} reads x in Verilog — reported, not built`)
+        continue
+      }
+      const w = widthOf(r)
+      const qBits = Array.from({ length: w }, (_, i) => bitNet(r, i))
+      // Driving an input port (scalar OR any bus bit) is illegal; a bit already sourced by a gate/assign is a
+      // multiple-driver conflict. Both are checked at the BIT level so a bus register is handled correctly.
+      const drivesInput = qBits.find((bn) => inputs.has(bn))
+      if (drivesInput !== undefined) {
+        warnings.push(
+          `line ${blk.line}: always block drives input port "${drivesInput}" — illegal, reported`,
+        )
+        continue
+      }
+      const conflict = qBits.find((bn) => driven.has(bn))
+      if (conflict !== undefined) {
+        warnings.push(
+          `register "${r}" bit "${conflict}" is already driven by a gate or assign — reported, not built`,
+        )
+        continue
+      }
+      // Synthesize the next-state logic, then one flop per bit. Buffer a pure hold (D-net === Q-net) so the
+      // flop's D and Q pins never land on the same net (which would short them).
+      const dGates: GateInst[] = []
+      const D = synthAt(ast, w, { gates: dGates, fresh, widthOf, bitNet })
+      const newFlops: FlopInst[] = []
+      let ok = true
+      for (let i = 0; i < w; i++) {
+        const qNet = bitNet(r, i)
+        const dbit = D[i] as Bit
+        let dNet: string
+        if (isC(dbit)) {
+          const t = tie(dbit.c)
+          if (t === undefined) {
+            ok = false
+            break
+          }
+          dNet = t
+        } else if (dbit.n === qNet) {
+          dNet = fresh()
+          dGates.push({ prim: 'buf', terminals: [dNet, qNet] })
+        } else dNet = dbit.n
+        newFlops.push({ d: dNet, clk: blk.clk, q: qNet })
+      }
+      if (!ok) {
+        warnings.push(
+          `register "${r}" needs a constant value but the module has no input to tie it to — reported, not built`,
+        )
+        continue
+      }
+      mod.gates.push(...dGates)
+      mod.flops.push(...newFlops)
+      for (let i = 0; i < w; i++) driven.add(bitNet(r, i))
+      registered.add(r)
+    }
+  }
+
   mod.gates.push(...tieGates) // tie drivers read only inputs → never on a cycle → always safe to keep
 }
 
@@ -740,4 +836,217 @@ function cycleNets(edges: Map<string, string[]>): Set<string> {
   }
   for (const node of edges.keys()) if ((state.get(node) ?? 0) === 0) visit(node)
   return onCycle
+}
+
+// ── procedural (always-block) parsing + elaboration ─────────────────────────────
+/** A statement inside a clocked always block. `bad` carries the first unsupported construct's reason. */
+type ProcStmt =
+  | { t: 'nb'; lhs: string; rhs: Expr } // nonblocking whole-signal assignment  reg <= expr
+  | { t: 'seq'; body: ProcStmt[] } // begin … end
+  | { t: 'if'; cond: Expr; conseq: ProcStmt; els?: ProcStmt }
+  | { t: 'bad'; why: string }
+
+/** Parse a clocked always body (its inner statements, no wrapping begin/end) into one procedural statement. */
+function parseProcedural(body: Tok[]): ProcStmt {
+  const ts = new TokStream(body)
+  const stmts: ProcStmt[] = []
+  while (ts.peek() !== undefined) {
+    const s = parseStmt(ts)
+    if (s.t === 'bad') return s
+    stmts.push(s)
+  }
+  if (stmts.length === 0) return { t: 'bad', why: 'the clocked block is empty' }
+  return stmts.length === 1 ? (stmts[0] as ProcStmt) : { t: 'seq', body: stmts }
+}
+
+function parseStmt(ts: TokStream): ProcStmt {
+  const t = ts.peek()
+  if (t === undefined) return { t: 'bad', why: 'unexpected end of the clocked block' }
+  if (t.v === 'begin') {
+    ts.next()
+    const body: ProcStmt[] = []
+    while (ts.peek() !== undefined && ts.peek()?.v !== 'end') {
+      const s = parseStmt(ts)
+      if (s.t === 'bad') return s
+      body.push(s)
+    }
+    if (ts.peek()?.v !== 'end') return { t: 'bad', why: 'a begin block is missing its "end"' }
+    ts.next()
+    return { t: 'seq', body }
+  }
+  if (t.v === 'if') {
+    ts.next()
+    if (ts.peek()?.v !== '(') return { t: 'bad', why: 'if is missing its "("' }
+    const cond = parseRhs(readParenToks(ts))
+    if (cond.t === 'bad') return { t: 'bad', why: `if condition — ${cond.why}` }
+    const conseq = parseStmt(ts)
+    if (conseq.t === 'bad') return conseq
+    if (ts.peek()?.v !== 'else') return { t: 'if', cond, conseq }
+    ts.next()
+    const els = parseStmt(ts)
+    if (els.t === 'bad') return els
+    return { t: 'if', cond, conseq, els }
+  }
+  if (t.v === 'case') return parseCase(ts)
+  if (t.v === 'casex' || t.v === 'casez')
+    return {
+      t: 'bad',
+      why: `${t.v} (x/z don't-care matching) is not representable in a 0/1 netlist`,
+    }
+  if (t.v === 'for' || t.v === 'while' || t.v === 'repeat' || t.v === 'forever')
+    return { t: 'bad', why: `procedural loops (${t.v}) are a later increment` }
+  return parseAssignStmt(ts)
+}
+
+/** Read a parenthesized group's inner tokens; cursor must be AT '('; leaves it just past the matching ')'. */
+function readParenToks(ts: TokStream): Tok[] {
+  ts.next() // '('
+  const inner: Tok[] = []
+  let depth = 1
+  while (ts.peek() !== undefined && depth > 0) {
+    const tk = ts.next() as Tok
+    if (tk.v === '(') depth++
+    else if (tk.v === ')') {
+      depth--
+      if (depth === 0) break
+    }
+    inner.push(tk)
+  }
+  return inner
+}
+
+/** Parse `lhs <= rhs ;` (nonblocking, whole-signal). Blocking `=` and select/concat targets are reported. */
+function parseAssignStmt(ts: TokStream): ProcStmt {
+  const toks: Tok[] = []
+  while (ts.peek() !== undefined && ts.peek()?.v !== ';') toks.push(ts.next() as Tok)
+  if (ts.peek()?.v === ';') ts.next()
+  let depth = 0
+  let opIdx = -1
+  for (let i = 0; i < toks.length; i++) {
+    const v = (toks[i] as Tok).v
+    if (v === '(' || v === '[' || v === '{') depth++
+    else if (v === ')' || v === ']' || v === '}') depth--
+    else if (depth === 0 && (v === '<=' || v === '=')) {
+      opIdx = i
+      break
+    }
+  }
+  if (opIdx === -1)
+    return { t: 'bad', why: 'a statement is neither a recognized construct nor an assignment' }
+  if ((toks[opIdx] as Tok).v === '=')
+    return {
+      t: 'bad',
+      why: "blocking assignment '=' in a clocked block — use nonblocking '<=' so all reads see the pre-clock value",
+    }
+  const lhs = toks.slice(0, opIdx)
+  if (lhs.length !== 1 || lhs[0]?.k !== 'id')
+    return {
+      t: 'bad',
+      why: 'only a whole-signal nonblocking target (reg <= …) is supported — a bit/part-select or concat target is a later increment',
+    }
+  const rhs = parseRhs(toks.slice(opIdx + 1))
+  if (rhs.t === 'bad') return { t: 'bad', why: rhs.why }
+  return { t: 'nb', lhs: (lhs[0] as Tok).v, rhs }
+}
+
+/** Parse a `case (sel) … endcase` and desugar it to a nested if/else chain (label match via `sel == label`,
+ *  multiple labels OR'd). casex/casez are rejected upstream. */
+function parseCase(ts: TokStream): ProcStmt {
+  ts.next() // 'case'
+  if (ts.peek()?.v !== '(') return { t: 'bad', why: 'case is missing its "("' }
+  const sel = parseRhs(readParenToks(ts))
+  if (sel.t === 'bad') return { t: 'bad', why: `case selector — ${sel.why}` }
+  const items: { labels: Expr[]; stmt: ProcStmt }[] = []
+  let dflt: ProcStmt | undefined
+  while (ts.peek() !== undefined && ts.peek()?.v !== 'endcase') {
+    if (ts.peek()?.v === 'default') {
+      ts.next()
+      if (ts.peek()?.v === ':') ts.next()
+      const s = parseStmt(ts)
+      if (s.t === 'bad') return s
+      dflt = s
+      continue
+    }
+    const labelToks: Tok[][] = []
+    let cur: Tok[] = []
+    let depth = 0
+    while (ts.peek() !== undefined) {
+      const v = ts.peek()?.v
+      if (depth === 0 && v === ':') {
+        ts.next()
+        break
+      }
+      const tk = ts.next() as Tok
+      if (tk.v === '(' || tk.v === '[' || tk.v === '{') depth++
+      else if (tk.v === ')' || tk.v === ']' || tk.v === '}') depth--
+      if (depth === 0 && tk.v === ',') {
+        labelToks.push(cur)
+        cur = []
+      } else cur.push(tk)
+    }
+    labelToks.push(cur)
+    const labels: Expr[] = []
+    for (const lt of labelToks) {
+      const le = parseRhs(lt)
+      if (le.t === 'bad') return { t: 'bad', why: `case label — ${le.why}` }
+      labels.push(le)
+    }
+    const s = parseStmt(ts)
+    if (s.t === 'bad') return s
+    items.push({ labels, stmt: s })
+  }
+  if (ts.peek()?.v !== 'endcase') return { t: 'bad', why: 'case is missing its "endcase"' }
+  ts.next()
+  let chain: ProcStmt = dflt ?? { t: 'seq', body: [] } // no default ⇒ hold
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i] as { labels: Expr[]; stmt: ProcStmt }
+    let cond: Expr | undefined
+    for (const lab of it.labels) {
+      const eq: Expr = { t: 'bin', op: '==', a: sel, b: lab }
+      cond = cond === undefined ? eq : { t: 'bin', op: '||', a: cond, b: eq }
+    }
+    if (cond === undefined) return { t: 'bad', why: 'a case item has no label' }
+    chain = { t: 'if', cond, conseq: it.stmt, els: chain }
+  }
+  return chain
+}
+
+/** Elaborate a procedural statement to each written signal's next-state expression. Every read binds to the
+ *  signal's PRE-clock value (`net(sig)`) — never an in-progress value — so nonblocking order-independence,
+ *  swaps, and last-write-wins all fall out. `written` accumulates every assigned signal (the registers). */
+function elaborate(
+  stmt: ProcStmt,
+  env: Map<string, Expr>,
+  written: Set<string>,
+): Map<string, Expr> {
+  switch (stmt.t) {
+    case 'nb': {
+      const e = new Map(env)
+      e.set(stmt.lhs, stmt.rhs)
+      written.add(stmt.lhs)
+      return e
+    }
+    case 'seq': {
+      let e = env
+      for (const s of stmt.body) e = elaborate(s, e, written)
+      return e
+    }
+    case 'if': {
+      const wThen = new Set<string>()
+      const wElse = new Set<string>()
+      const eThen = elaborate(stmt.conseq, env, wThen)
+      const eElse = stmt.els !== undefined ? elaborate(stmt.els, env, wElse) : env
+      const merged = new Map(env)
+      for (const sig of new Set([...wThen, ...wElse])) {
+        const hold: Expr = env.get(sig) ?? { t: 'net', name: sig }
+        const a = eThen.get(sig) ?? hold
+        const b = eElse.get(sig) ?? hold
+        merged.set(sig, { t: 'tern', c: stmt.cond, a, b })
+        written.add(sig)
+      }
+      return merged
+    }
+    default:
+      return env // 'bad' is intercepted before elaboration
+  }
 }
