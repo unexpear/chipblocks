@@ -360,7 +360,7 @@ export const isOutputPort = (p: { id: string; drive?: string }): boolean =>
   p.drive !== 'input' &&
   (p.drive === 'push_pull' ||
     p.drive === 'open_collector' ||
-    p.drive === 'tri_state' ||
+    p.drive === 'tristate' ||
     OUTPUT_PORT_IDS.has(p.id.toLowerCase()))
 
 /**

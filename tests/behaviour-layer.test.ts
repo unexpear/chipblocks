@@ -7,7 +7,7 @@
 
 import { describe, expect, test } from 'vitest'
 import { HALF_ADDER_BLOCK, NAND2_BLOCK, XOR_BLOCK } from '../src/renderer/builtin-blocks.ts'
-import { characterizeBlock, type TruthTable } from '../src/renderer/logic-sim.ts'
+import { characterizeBlock, isOutputPort, type TruthTable } from '../src/renderer/logic-sim.ts'
 
 /** Render a table as { 'ab' : 'outbits' } keyed by the input bits (inputs[0] is the first char). */
 const rowMap = (t: TruthTable): Record<string, string> =>
@@ -41,5 +41,29 @@ describe('characterizeBlock — behaviour generated from the real circuit', () =
     expect(table.outputs).toEqual(['sum', 'carry'])
     // sum = a XOR b, carry = a AND b; out bits are [sum, carry]
     expect(rowMap(table)).toEqual({ '00': '00', '10': '10', '01': '10', '11': '01' })
+  })
+})
+
+describe('isOutputPort — drive vs name classification', () => {
+  test('a tri-state output is an output even when its name is not in the output-name list (regression)', () => {
+    // DriveKind is 'tristate' (no underscore). isOutputPort once tested the underscored misspelling, so a
+    // real tri-state output pin named unconventionally slipped through as an input. Must be an output now.
+    expect(isOutputPort({ id: 'bus_o', drive: 'tristate' })).toBe(true)
+    expect(isOutputPort({ id: 'data_hiz', drive: 'tristate' })).toBe(true)
+  })
+
+  test('the other output drives classify as outputs regardless of name', () => {
+    expect(isOutputPort({ id: 'bus_o', drive: 'push_pull' })).toBe(true)
+    expect(isOutputPort({ id: 'bus_o', drive: 'open_collector' })).toBe(true)
+  })
+
+  test('an explicit input drive is never an output, even named like one', () => {
+    expect(isOutputPort({ id: 'out', drive: 'input' })).toBe(false)
+    expect(isOutputPort({ id: 'sum', drive: 'input' })).toBe(false)
+  })
+
+  test('with no drive, the output-name list still decides', () => {
+    expect(isOutputPort({ id: 'out' })).toBe(true)
+    expect(isOutputPort({ id: 'a' })).toBe(false)
   })
 })
