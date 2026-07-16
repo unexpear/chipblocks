@@ -10,6 +10,7 @@ import {
 import { DeviceGlyph } from './symbols.tsx'
 import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
 import { useShortcuts } from './use-shortcuts.tsx'
+import type { WorkspaceMode } from './workspace.ts'
 
 /**
  * Project browser (the startup screen) — the front door, modeled on Unreal's project
@@ -30,6 +31,8 @@ export type ProjectChoice = {
   loaded?: CircuitFile
   /** The .chipblocks file this project was opened from (for Save reusing the path + the MRU). */
   path?: string
+  /** Which workspace level the editor opens ON (Circuit ▸ Board ▸ Chip). Absent ⇒ Circuit (schematic). */
+  initialWorkspace?: WorkspaceMode
 }
 
 type Template = {
@@ -148,8 +151,18 @@ const CATEGORIES: Category[] = [
       },
     ],
   },
-  { id: 'board', label: 'Board / PCB', sub: 'Coming soon', soon: true, templates: [] },
-  { id: 'chip', label: 'Chip / IC', sub: 'Coming soon', soon: true, templates: [] },
+  {
+    id: 'board',
+    label: 'Board / PCB',
+    sub: 'Place parts, route copper, export Gerbers',
+    templates: [],
+  },
+  {
+    id: 'chip',
+    label: 'Chip / IC',
+    sub: 'Standard cells, floorplan, timing sign-off',
+    templates: [],
+  },
   { id: 'system', label: 'System', sub: 'Coming soon', soon: true, templates: [] },
 ]
 
@@ -562,6 +575,46 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                 </button>
               )
             })
+          ) : category && (category.id === 'board' || category.id === 'chip') ? (
+            <div
+              style={{
+                gridColumn: '1 / -1',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+                gap: 14,
+                padding: 28,
+              }}
+            >
+              <div style={{ color: MUTED, fontSize: 13, maxWidth: 540, lineHeight: 1.6 }}>
+                {category.id === 'board'
+                  ? 'The Board workspace lays your circuit out as a real PCB — footprints, copper routing, DRC, and the manufacturing files. Start here, then build your circuit and move along Circuit ▸ Board with the breadcrumb at the top.'
+                  : 'The Chip workspace projects your design onto silicon — a standard-cell library, area, and static-timing sign-off. Start here, then build your circuit and move along Circuit ▸ Chip with the breadcrumb at the top.'}
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  onCreate({
+                    template: '',
+                    templateName: category.label,
+                    name: category.id === 'board' ? 'MyBoard' : 'MyChip',
+                    depth: 'design',
+                    initialWorkspace: category.id as WorkspaceMode,
+                  })
+                }
+                style={{
+                  padding: '10px 18px',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: ACCENT,
+                  color: THEME.white,
+                  fontSize: 13.5,
+                  cursor: 'pointer',
+                }}
+              >
+                Start a {category.label} project →
+              </button>
+            </div>
           ) : (
             <div
               style={{
@@ -576,7 +629,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                 fontSize: 13,
               }}
             >
-              Coming soon — board, chip and system design arrive as ChipBlocks grows down the stack.
+              Coming soon — system-level design arrives as ChipBlocks grows up the stack.
             </div>
           )}
         </div>

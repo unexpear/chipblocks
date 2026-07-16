@@ -1591,9 +1591,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // PCB view: the physical layout — the footprinted parts placed on a board. Derived from the
   // schematic parts (each part → its footprint → a spot on the board); re-derives as parts change.
   const [pcbOpen, setPcbOpen] = useState(false)
-  // Which surface the MAIN building area shows: the schematic canvas (default) or the full-size board
-  // workspace — the board as a first-class editing surface, not just the dock panel. The panel stays.
-  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('schematic')
+  // Which surface the MAIN building area shows: the schematic canvas (default) or the full-size board /
+  // chip workspace — a first-class editing surface, not just the dock panel. Opening a Board/Chip project
+  // from the launcher lands the editor directly on that level (else Circuit); the breadcrumb travels.
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(
+    project.initialWorkspace ?? 'schematic',
+  )
   const onWorkspace = useCallback(
     () => setWorkspaceMode((m) => (m === 'schematic' ? 'board' : 'schematic')),
     [],
