@@ -39,9 +39,17 @@ if (process.env.CHIP_DEBUG_PORT) {
 
 const CIRCUIT_FILTERS = [{ name: 'ChipBlocks Circuit', extensions: ['chipblocks'] }]
 const NETLIST_FILTERS = [
-  { name: 'Schematic / netlist', extensions: ['cir', 'net', 'sp', 'spice', 'ckt', 'kicad_sch'] },
+  {
+    name: 'Schematic / netlist',
+    extensions: ['cir', 'net', 'sp', 'spice', 'ckt', 'kicad_sch', 'v', 'sv', 'verilog'],
+  },
   { name: 'SPICE netlist', extensions: ['cir', 'net', 'sp', 'spice', 'ckt'] },
   { name: 'KiCad schematic', extensions: ['kicad_sch'] },
+  { name: 'Verilog', extensions: ['v', 'sv', 'verilog'] },
+  { name: 'All files', extensions: ['*'] },
+]
+const VERILOG_FILTERS = [
+  { name: 'Verilog', extensions: ['v'] },
   { name: 'All files', extensions: ['*'] },
 ]
 
@@ -137,6 +145,25 @@ function registerNetlistExportHandler(window: BrowserWindow): void {
       await writeFile(picked.filePath, text, 'utf8')
     } catch (error) {
       dialog.showErrorBox('Could not export netlist', `Writing the file failed: ${String(error)}`)
+      return { ok: false }
+    }
+    return { ok: true, path: picked.filePath }
+  })
+}
+
+function registerVerilogExportHandler(window: BrowserWindow): void {
+  // The renderer answers an export request with the structural Verilog text; we pick a file and write it.
+  ipcMain.removeHandler('file:save-verilog')
+  ipcMain.handle('file:save-verilog', async (_event, text: string) => {
+    const picked = await dialog.showSaveDialog(window, {
+      filters: VERILOG_FILTERS,
+      defaultPath: 'design.v',
+    })
+    if (picked.canceled || picked.filePath === undefined) return { ok: false }
+    try {
+      await writeFile(picked.filePath, text, 'utf8')
+    } catch (error) {
+      dialog.showErrorBox('Could not export Verilog', `Writing the file failed: ${String(error)}`)
       return { ok: false }
     }
     return { ok: true, path: picked.filePath }
@@ -360,7 +387,7 @@ function installMenu(window: BrowserWindow): void {
           click: () => void openCircuit(window),
         },
         {
-          label: 'Import Netlist / Schematic…',
+          label: 'Import Netlist / Schematic / Verilog…',
           click: () => void importNetlist(window),
         },
         { type: 'separator' },
@@ -383,6 +410,10 @@ function installMenu(window: BrowserWindow): void {
         {
           label: 'Export Netlist…',
           click: () => window.webContents.send('file:export-netlist-request'),
+        },
+        {
+          label: 'Export Verilog…',
+          click: () => window.webContents.send('file:export-verilog-request'),
         },
         { type: 'separator' },
         { role: 'quit', label: 'Exit' },
@@ -619,6 +650,7 @@ function createWindow(): void {
   installMenu(window)
   registerSaveHandler(window)
   registerNetlistExportHandler(window)
+  registerVerilogExportHandler(window)
   registerFabZipExportHandler(window)
   registerCircuitOpenHandlers(window)
   registerKeybindHandlers(window)

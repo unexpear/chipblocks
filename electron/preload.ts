@@ -46,6 +46,11 @@ contextBridge.exposeInMainWorld('chipblocks', {
     subscribe('file:export-netlist-request', callback),
   saveNetlistData: (text: string): Promise<{ ok: boolean; path?: string }> =>
     ipcRenderer.invoke('file:save-netlist', text),
+  // Export Verilog: the File menu asks; the renderer answers with the structural Verilog text.
+  onExportVerilogRequest: (callback: () => void) =>
+    subscribe('file:export-verilog-request', callback),
+  saveVerilogData: (text: string): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('file:save-verilog', text),
   // Manufacturing ZIP (board road): the renderer builds the engine-owned archive bytes;
   // the main process picks a destination and writes them verbatim.
   saveFabZip: (data: Uint8Array): Promise<{ ok: boolean; path?: string }> =>

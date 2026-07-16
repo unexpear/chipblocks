@@ -232,6 +232,7 @@ import {
   registerUserPart,
   type UserPart,
 } from './user-parts.ts'
+import { isVerilogText, parseVerilogText, serializeVerilog } from './verilog-file.ts'
 import {
   findWireCrossings,
   netColor,
@@ -268,6 +269,8 @@ declare global {
       onNetlistOpened?: (callback: (text: string) => void) => void
       onExportNetlistRequest?: (callback: () => void) => void
       saveNetlistData?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      onExportVerilogRequest?: (callback: () => void) => void
+      saveVerilogData?: (text: string) => Promise<{ ok: boolean; path?: string }>
       saveFabZip?: (data: Uint8Array) => Promise<{ ok: boolean; path?: string }>
       readUserLibrary?: () => Promise<string | null>
       writeUserLibrary?: (text: string) => Promise<{ ok: boolean; path?: string }>
@@ -1254,6 +1257,31 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     })
   }, [nodes, edges])
 
+  // Export Verilog: serialize the canvas to a CircuitFile, then to a structural Verilog module (Net Labels
+  // become the module ports). Same flow as the SPICE export — hand the text to main, show the report.
+  useEffect(() => {
+    const bridge = window.chipblocks
+    if (bridge?.onExportVerilogRequest === undefined) return
+    bridge.onExportVerilogRequest(() => {
+      const file = serializeCircuit(
+        nodes.map((n) => ({ id: n.id, position: n.position, data: n.data as DeviceNodeData })),
+        edges,
+        projectAmbientRef.current,
+      )
+      const { verilog, unsupported, warnings } = serializeVerilog(file)
+      const gateCount = (verilog.match(/^\s*(and|or|not|nand|nor|xor|xnor|buf) g\d+\(/gm) ?? [])
+        .length
+      void bridge.saveVerilogData?.(verilog)
+      setNetlistReport({
+        kind: 'export',
+        count: gateCount,
+        unsupported,
+        warnings,
+        format: 'verilog',
+      })
+    })
+  }, [nodes, edges])
+
   // Hand-placed spots on the PCB (drag / R on the board) — the auto row only seeds where a part
   // starts. Declared up here because the file Open/Import handlers below must clear it: node ids
   // repeat across files (every canvas mints resistor_1 …), so a loaded circuit would otherwise
@@ -1311,11 +1339,14 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     const bridge = window.chipblocks
     if (bridge?.onNetlistOpened === undefined) return
     bridge.onNetlistOpened((text) => {
-      // SPICE and KiCad both arrive on this channel; tell them apart by the file's own header.
+      // SPICE, KiCad, and Verilog all arrive on this channel; tell them apart by the file's own shape.
       const isKicad = text.trimStart().startsWith('(kicad_sch')
-      const { circuit, unsupported, warnings } = isKicad
-        ? parseKicadSchematic(text)
-        : parseSpiceNetlist(text)
+      const isVerilog = !isKicad && isVerilogText(text)
+      const { circuit, unsupported, warnings } = isVerilog
+        ? parseVerilogText(text)
+        : isKicad
+          ? parseKicadSchematic(text)
+          : parseSpiceNetlist(text)
       checkpointAction('import netlist')
       projectAmbientRef.current = STANDARD_AMBIENT_C
       setProjectAmbientC(STANDARD_AMBIENT_C)
@@ -1325,7 +1356,15 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       setPcbPlacements(new Map()) // imported netlists start from their own auto board
       dropCount.current = maxIdSuffix(circuit.nodes)
       window.setTimeout(() => fitView({ padding: 0.15 }), 80)
-      setNetlistReport({ kind: 'import', count: circuit.nodes.length, unsupported, warnings })
+      // A Verilog import arrives as one circuit block; report its gate count, not the node count (1).
+      const count = isVerilog ? (circuit.nodes[0]?.block?.nodes.length ?? 0) : circuit.nodes.length
+      setNetlistReport({
+        kind: 'import',
+        count,
+        unsupported,
+        warnings,
+        ...(isVerilog ? { format: 'verilog' as const } : {}),
+      })
     })
   }, [setNodes, setEdges, fitView, checkpointAction])
 
