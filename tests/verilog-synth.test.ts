@@ -205,12 +205,11 @@ describe('RTL synthesis — honesty (unsupported → reported, never faked)', ()
     ).toBe(true)
   }
 
-  test('still-unsupported operators (* / % << >> < <= > >=) are reported', () => {
-    // (+ and - ARE supported now — see the 2b bus + arithmetic tests)
-    reported(mod('a, b', 'assign y = a * b;'), 'not supported')
-    reported(mod('a, b', 'assign y = a << b;'), 'not supported')
-    reported(mod('a, b', 'assign y = a < b;'), 'not supported')
+  test('still-unsupported operators (/ % **) are reported', () => {
+    // + - * << >> < <= > >= ARE supported now (see the arithmetic + shift/compare tests); / % ** are not
+    reported(mod('a, b', 'assign y = a / b;'), 'not supported')
     reported(mod('a, b', 'assign y = a % b;'), 'not supported')
+    reported(mod('a, b', 'assign y = a ** b;'), 'not supported')
   })
 
   test('driving an input and double-driving are reported', () => {
@@ -490,5 +489,180 @@ describe('RTL synthesis — 2b regressions from the adversarial review', () => {
       'module m(a, y); input [3:0] a; output y; assign y = a[5]; endmodule',
     )
     expect(warnings.some((w) => w.toLowerCase().includes('out of range'))).toBe(true)
+  })
+})
+
+describe('RTL synthesis — shifts + comparisons (increment 6a)', () => {
+  test('left shift by a constant, captured in a wider result (widening is not truncated)', () => {
+    // a << 2 with a 2-bit → the shifted bits must land at positions 2..3, not be truncated to a's width first
+    assertBus(
+      'module m(a, y); input [1:0] a; output [3:0] y; assign y = a << 2; endmodule',
+      ['a[0]', 'a[1]'],
+      ['y[0]', 'y[1]', 'y[2]', 'y[3]'],
+      (i) => numBits(num([i[0] as boolean, i[1] as boolean]) << 2, 4),
+    )
+  })
+
+  test('right shift by a constant zero-fills the top', () => {
+    assertBus(
+      'module m(a, y); input [2:0] a; output [2:0] y; assign y = a >> 1; endmodule',
+      ['a[0]', 'a[1]', 'a[2]'],
+      ['y[0]', 'y[1]', 'y[2]'],
+      (i) => numBits(num([i[0] as boolean, i[1] as boolean, i[2] as boolean]) >> 1, 3),
+    )
+  })
+
+  test('a VARIABLE left shift builds a barrel shifter: y = a << b', () => {
+    assertBus(
+      'module m(a, b, y); input [1:0] a; input [1:0] b; output [4:0] y; assign y = a << b; endmodule',
+      ['a[0]', 'a[1]', 'b[0]', 'b[1]'],
+      ['y[0]', 'y[1]', 'y[2]', 'y[3]', 'y[4]'],
+      (i) => {
+        const a = num([i[0] as boolean, i[1] as boolean])
+        const b = num([i[2] as boolean, i[3] as boolean])
+        return numBits((a << b) & 0x1f, 5)
+      },
+    )
+  })
+
+  test('a variable shift by ≥ the width falls off the end to 0 (barrel high-bit zeroing)', () => {
+    // y is only 2 bits, so any b ≥ 2 must yield 0 — the barrel stage for b[1] (shift by 2) must zero it
+    assertBus(
+      'module m(a, b, y); input [1:0] a; input [1:0] b; output [1:0] y; assign y = a << b; endmodule',
+      ['a[0]', 'a[1]', 'b[0]', 'b[1]'],
+      ['y[0]', 'y[1]'],
+      (i) => {
+        const a = num([i[0] as boolean, i[1] as boolean])
+        const b = num([i[2] as boolean, i[3] as boolean])
+        return numBits((a << b) & 0x3, 2)
+      },
+    )
+  })
+
+  test('unsigned magnitude comparisons: < <= > >=', () => {
+    const cmp = (op: string, f: (a: number, b: number) => boolean) =>
+      assertBus(
+        `module m(a, b, y); input [1:0] a; input [1:0] b; output y; assign y = a ${op} b; endmodule`,
+        ['a[0]', 'a[1]', 'b[0]', 'b[1]'],
+        ['y'],
+        (i) => [
+          f(num([i[0] as boolean, i[1] as boolean]), num([i[2] as boolean, i[3] as boolean])),
+        ],
+      )
+    cmp('<', (a, b) => a < b)
+    cmp('<=', (a, b) => a <= b)
+    cmp('>', (a, b) => a > b)
+    cmp('>=', (a, b) => a >= b)
+  })
+
+  test('a comparison of unequal-width operands compares at the wider width', () => {
+    assertBus(
+      'module m(a, b, y); input [1:0] a; input [2:0] b; output y; assign y = a < b; endmodule',
+      ['a[0]', 'a[1]', 'b[0]', 'b[1]', 'b[2]'],
+      ['y'],
+      (i) => [
+        num([i[0] as boolean, i[1] as boolean]) <
+          num([i[2] as boolean, i[3] as boolean, i[4] as boolean]),
+      ],
+    )
+  })
+
+  test('arithmetic shifts <<< / >>> and signed nets are reported, not faked', () => {
+    expect(
+      importVerilog(
+        'module m(a, y); input [3:0] a; output [3:0] y; assign y = a >>> 1; endmodule',
+      ).warnings.some((w) => /not supported|>>>/.test(w)),
+    ).toBe(true)
+    expect(
+      importVerilog(
+        'module m(a, y); input signed [3:0] a; output [3:0] y; assign y = a; endmodule',
+      ).warnings.some((w) => /signed/i.test(w)),
+    ).toBe(true)
+  })
+})
+
+describe('RTL synthesis — unsigned multiply (increment 6b)', () => {
+  test('a full product: p = a * b (2-bit × 2-bit → 4-bit)', () => {
+    assertBus(
+      'module m(a, b, p); input [1:0] a; input [1:0] b; output [3:0] p; assign p = a * b; endmodule',
+      ['a[0]', 'a[1]', 'b[0]', 'b[1]'],
+      ['p[0]', 'p[1]', 'p[2]', 'p[3]'],
+      (i) =>
+        numBits(
+          num([i[0] as boolean, i[1] as boolean]) * num([i[2] as boolean, i[3] as boolean]),
+          4,
+        ),
+    )
+  })
+
+  test('a wider product: p = a * b (3-bit × 3-bit → 6-bit, e.g. 3×3=9, 7×7=49)', () => {
+    assertBus(
+      'module m(a, b, p); input [2:0] a; input [2:0] b; output [5:0] p; assign p = a * b; endmodule',
+      ['a[0]', 'a[1]', 'a[2]', 'b[0]', 'b[1]', 'b[2]'],
+      ['p[0]', 'p[1]', 'p[2]', 'p[3]', 'p[4]', 'p[5]'],
+      (i) =>
+        numBits(
+          num([i[0] as boolean, i[1] as boolean, i[2] as boolean]) *
+            num([i[3] as boolean, i[4] as boolean, i[5] as boolean]),
+          6,
+        ),
+    )
+  })
+
+  test('a narrow context truncates the product mod 2^w', () => {
+    assertBus(
+      'module m(a, b, p); input [1:0] a; input [1:0] b; output [1:0] p; assign p = a * b; endmodule',
+      ['a[0]', 'a[1]', 'b[0]', 'b[1]'],
+      ['p[0]', 'p[1]'],
+      (i) =>
+        numBits(
+          (num([i[0] as boolean, i[1] as boolean]) * num([i[2] as boolean, i[3] as boolean])) & 0x3,
+          2,
+        ),
+    )
+  })
+
+  test('multiply by a constant folds (× 0, × 1, × 2 = << 1)', () => {
+    assertBus(
+      'module m(a, y); input [1:0] a; output [3:0] y; assign y = a * 2; endmodule',
+      ['a[0]', 'a[1]'],
+      ['y[0]', 'y[1]', 'y[2]', 'y[3]'],
+      (i) => numBits(num([i[0] as boolean, i[1] as boolean]) * 2, 4),
+    )
+  })
+})
+
+describe('RTL synthesis — multiply review regression (context-width right operand)', () => {
+  test('a compound right operand is NOT truncated to its self-width: a*(b+c) == (b+c)*a', () => {
+    const p1 = (i: boolean[]) => {
+      const a = num([i[0] as boolean, i[1] as boolean])
+      const bc = num([i[2] as boolean, i[3] as boolean]) + num([i[4] as boolean, i[5] as boolean])
+      return numBits((a * bc) & 0xf, 4)
+    }
+    assertBus(
+      'module m(a, b, c, p); input [1:0] a; input [1:0] b; input [1:0] c; output [3:0] p; assign p = a * (b + c); endmodule',
+      ['a[0]', 'a[1]', 'b[0]', 'b[1]', 'c[0]', 'c[1]'],
+      ['p[0]', 'p[1]', 'p[2]', 'p[3]'],
+      p1,
+    )
+    assertBus(
+      'module m(a, b, c, p); input [1:0] a; input [1:0] b; input [1:0] c; output [3:0] p; assign p = (b + c) * a; endmodule',
+      ['a[0]', 'a[1]', 'b[0]', 'b[1]', 'c[0]', 'c[1]'],
+      ['p[0]', 'p[1]', 'p[2]', 'p[3]'],
+      p1, // commutativity: same result whichever side the compound factor is on
+    )
+  })
+
+  test('a full-width product with a shifted right operand: a * (b << 1)', () => {
+    assertBus(
+      'module m(a, b, p); input [1:0] a; input [1:0] b; output [3:0] p; assign p = a * (b << 1); endmodule',
+      ['a[0]', 'a[1]', 'b[0]', 'b[1]'],
+      ['p[0]', 'p[1]', 'p[2]', 'p[3]'],
+      (i) => {
+        const a = num([i[0] as boolean, i[1] as boolean])
+        const b = num([i[2] as boolean, i[3] as boolean])
+        return numBits((a * ((b << 1) & 0xf)) & 0xf, 4)
+      },
+    )
   })
 })

@@ -569,6 +569,12 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     }
     c.next() // stray token — advance so the loop can never spin
   }
+  // The synthesizer is unsigned-only; a `signed` net would compute the wrong result for */comparisons/shifts,
+  // so flag it rather than silently treat it as unsigned.
+  if (toks.some((t) => t.k === 'kw' && t.v === 'signed'))
+    warnings.push(
+      'signed values are treated as UNSIGNED — reported (signed arithmetic is a later increment)',
+    )
   return { name: nameTok.v, portOrder, dir, gates, assigns, alwaysBlocks, flops: [], widths, mems }
 }
 

@@ -7,7 +7,11 @@
  * 2a shipped SCALAR boolean synthesis. 2b added BUSES + ARITHMETIC: multi-bit nets `[N:0]`, bit-select
  * a[i], part-select a[h:l], concatenation {a,b}, replication {n{a}}, reduction operators, and unsigned
  * ripple-carry `+`/`-` (a − b = a + ~b + 1). 3 added SEQUENTIAL logic (`always @(posedge clk)` → flip-flops).
- * 4 (memory, here) adds MEMORY ARRAYS + COMPUTED ADDRESSING: a `reg [D-1:0] m [0:W-1]` becomes W real D-bit
+ * 6 adds the remaining unsigned ARITHMETIC/RELATIONAL operators: logical shifts `<<`/`>>` (constant reindex or
+ * a barrel shifter — the left operand is context-sized, the amount self-determined), magnitude comparisons
+ * `< <= > >=` (a subtract's carry-out: a≥b ⟺ no borrow), and unsigned multiply `*` (a partial-product AND
+ * array summed at the context width). Signed values, `<<<`/`>>>`, and `/ % **` are still REPORTED, not faked.
+ * 4 (memory) adds MEMORY ARRAYS + COMPUTED ADDRESSING: a `reg [D-1:0] m [0:W-1]` becomes W real D-bit
  * word-registers; a read `m[addr]` synthesizes a one-hot address decoder + read mux (the gate Data RAM's read
  * path) and a clocked write `m[addr] <= x` synthesizes per-word write-enable logic — the address may be a
  * computed expression, not just a constant. Everything is BIT-BLASTED to scalar bit-nets (a bus `a` of width N
@@ -93,7 +97,29 @@ const INFIX_BP: Record<string, number> = {
   '%': 11,
   '**': 12,
 }
-const SUPPORTED_BIN = new Set(['||', '&&', '|', '^', '~^', '^~', '&', '==', '!=', '+', '-'])
+// Unsigned magnitude comparisons — 1-bit results, computed by a subtract's carry-out. `<<<`/`>>>` (arithmetic
+// shifts) are deliberately EXCLUDED — they're signed, so they stay reported until signed support lands.
+const RELATIONAL = new Set(['<', '<=', '>', '>='])
+const SUPPORTED_BIN = new Set([
+  '||',
+  '&&',
+  '|',
+  '^',
+  '~^',
+  '^~',
+  '&',
+  '==',
+  '!=',
+  '+',
+  '-',
+  '*',
+  '<<',
+  '>>',
+  '<',
+  '<=',
+  '>',
+  '>=',
+])
 const UNARY = new Set(['~', '!', '&', '|', '^', '~&', '~|', '~^', '^~', '+', '-'])
 const SUPPORTED_UN = new Set(['~', '!', '&', '|', '^', '~&', '~|', '~^', '^~'])
 
@@ -407,9 +433,12 @@ function selfWidth(e: Expr, w: (name: string) => number): number {
     case 'un':
       return e.op === '~' ? selfWidth(e.a, w) : 1 // ! and reductions are 1 bit
     case 'bin':
-      return e.op === '==' || e.op === '!=' || e.op === '&&' || e.op === '||'
-        ? 1
-        : Math.max(selfWidth(e.a, w), selfWidth(e.b, w)) // & | ^ ~^ + -
+      // == != && || and the magnitude comparisons are 1-bit; a shift's width is its LEFT operand's (the amount
+      // never widens it); everything else (& | ^ ~^ + - *) is max(operands).
+      if (RELATIONAL.has(e.op) || e.op === '==' || e.op === '!=' || e.op === '&&' || e.op === '||')
+        return 1
+      if (e.op === '<<' || e.op === '>>') return selfWidth(e.a, w)
+      return Math.max(selfWidth(e.a, w), selfWidth(e.b, w))
     case 'tern':
       return Math.max(selfWidth(e.a, w), selfWidth(e.b, w))
     case 'memread':
@@ -512,10 +541,85 @@ function synthAt(e: Expr, w: number, x: Ctx): Bit[] {
         )
         return resize([e.op === '==' ? eq : not1(eq, x)], w)
       }
-      // && ||
-      const ca = reduce(synthAt(e.a, selfWidth(e.a, x.widthOf), x), 'or', x)
-      const cb = reduce(synthAt(e.b, selfWidth(e.b, x.widthOf), x), 'or', x)
-      return resize([e.op === '&&' ? and1(ca, cb, x) : or1(ca, cb, x)], w)
+      if (e.op === '<<' || e.op === '>>') {
+        // Logical shift: the LEFT operand is context-sized to w (a widening shift keeps the shifted-in bits);
+        // the amount is self-determined and never widens the result. A constant amount reindexes; a variable
+        // amount is a barrel shifter — one stage per bit of the amount, each shifting by 2^j when that bit is
+        // set. Anything shifted past the width (including a huge amount) falls off the end to 0.
+        const left = e.op === '<<'
+        const la = synthAt(e.a, w, x)
+        const shiftBy = (srcBits: Bit[], amt: number): Bit[] =>
+          Array.from({ length: w }, (_, i) => {
+            const from = left ? i - amt : i + amt
+            return amt < w && from >= 0 && from < w ? (srcBits[from] as Bit) : ({ c: 0 } as Bit)
+          })
+        const k = foldConst(e.b, x.widthOf)
+        if (k !== undefined) return shiftBy(la, k)
+        const bw = selfWidth(e.b, x.widthOf)
+        const amtBits = synthAt(e.b, bw, x)
+        let cur = la
+        for (let j = 0; j < bw; j++) {
+          const shifted = shiftBy(cur, 2 ** j)
+          const sel = amtBits[j] as Bit
+          cur = cur.map((c, i) => mux1(sel, shifted[i] as Bit, c, x))
+        }
+        return cur
+      }
+      if (RELATIONAL.has(e.op)) {
+        // Unsigned magnitude comparison → 1 bit. a >= b ⟺ the carry-OUT of a + ~b + 1 (no borrow); the other
+        // three derive from it. The subtract keeps its carry-out (the +/- path above drops it, so this is its
+        // own loop). Operands are synthesized at the compare width, zero-extended.
+        const cw = Math.max(selfWidth(e.a, x.widthOf), selfWidth(e.b, x.widthOf))
+        const la = synthAt(e.a, cw, x)
+        const lb = synthAt(e.b, cw, x)
+        const geq = (p: Bit[], q: Bit[]): Bit => {
+          let carry: Bit = { c: 1 }
+          for (let i = 0; i < cw; i++)
+            carry = fullAdd(p[i] as Bit, not1(q[i] as Bit, x), carry, x).cout
+          return carry
+        }
+        const r =
+          e.op === '>='
+            ? geq(la, lb)
+            : e.op === '<'
+              ? not1(geq(la, lb), x)
+              : e.op === '<='
+                ? geq(lb, la)
+                : not1(geq(lb, la), x) // '>'  (a > b ⟺ ~(b >= a))
+        return resize([r], w)
+      }
+      if (e.op === '*') {
+        // Unsigned multiply: partial products summed at the context width w. BOTH operands are context-
+        // determined (IEEE §5.4.1), so each is synthesized at w — evaluating the right operand at its own
+        // self-width would truncate a compound factor like (b+c) before the multiply (and break a*b == b*a).
+        // For each bit j of b, add a shifted left by j (bit i takes a[i-j] AND b[j]); bits past w drop (mod
+        // 2^w). Zero/one operands and the high zero-extended bits of a narrow operand fold to no gates.
+        const la = synthAt(e.a, w, x)
+        const lb = synthAt(e.b, w, x)
+        let acc: Bit[] = resize([], w)
+        for (let j = 0; j < w; j++) {
+          const bj = lb[j] as Bit
+          let carry: Bit = { c: 0 }
+          const sum: Bit[] = []
+          for (let i = 0; i < w; i++) {
+            const ai = i - j
+            const pp: Bit = ai >= 0 && ai < w ? and1(la[ai] as Bit, bj, x) : { c: 0 }
+            const fa = fullAdd(acc[i] as Bit, pp, carry, x)
+            sum.push(fa.sum)
+            carry = fa.cout
+          }
+          acc = sum
+        }
+        return acc
+      }
+      if (e.op === '&&' || e.op === '||') {
+        const ca = reduce(synthAt(e.a, selfWidth(e.a, x.widthOf), x), 'or', x)
+        const cb = reduce(synthAt(e.b, selfWidth(e.b, x.widthOf), x), 'or', x)
+        return resize([e.op === '&&' ? and1(ca, cb, x) : or1(ca, cb, x)], w)
+      }
+      // Every supported binary op has a branch above; a bare fallthrough would silently miscompile a newly
+      // added op (as a 1-bit &&/||), so fail loudly instead — this only fires on a coding error.
+      throw new Error(`synthAt: no branch for binary operator "${e.op}"`)
     }
     case 'tern': {
       const sel = reduce(synthAt(e.c, selfWidth(e.c, x.widthOf), x), 'or', x) // nonzero test, 1 bit
