@@ -6,6 +6,7 @@
   "description": "ChipBlocks — ground-up electronics design system. Object-model schemas + cross-FK validator + DC/nonlinear solver + failure detector + Electron canvas.",
   "type": "module",
   "license": "MIT",
+  "author": "ChipBlocks contributors",
   "main": "./out/main/main.js",
   "engines": {
     "node": ">=22"
@@ -18,7 +19,9 @@
     "typecheck": "tsc --noEmit",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "preview": "electron-vite preview"
+    "preview": "electron-vite preview",
+    "package": "electron-vite build && electron-builder",
+    "package:dir": "electron-vite build && electron-builder --dir"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
@@ -29,6 +32,7 @@
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "electron": "^42.3.3",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "mathjs": "^15.2.0",
     "typescript": "^6.0.3",

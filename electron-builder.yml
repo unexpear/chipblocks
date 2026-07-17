@@ -1,0 +1,42 @@
+# electron-builder packaging config — turns the electron-vite build (out/) into a
+# standalone, branded ChipBlocks app. Run via `npm run package` (installer) or
+# `npm run package:dir` (unpacked folder, faster to smoke-test).
+#
+# appId matches electron/main.ts's app.setAppUserModelId('com.chipblocks.app') so
+# Windows groups the taskbar button + notifications under the same identity.
+appId: com.chipblocks.app
+productName: ChipBlocks
+copyright: © 2026 ChipBlocks contributors — MIT
+
+directories:
+  # Output goes to dist/ (already in .gitignore) so packages never get committed.
+  output: dist
+
+# App payload. The renderer bundles React/React Flow, and main/preload only need
+# `electron` + Node built-ins at runtime, so we ship the electron-vite output +
+# resources/ (main.ts reads resources/icon.ico at runtime) + package.json.
+# electron-builder still auto-includes production node_modules deps + package.json.
+files:
+  - out/**/*
+  - resources/**/*
+  - package.json
+
+# resources/ must be readable at runtime (the window icon), so keep it inside the
+# asar (default) — asar reads are transparent to fs. The .exe/taskbar icon below is
+# embedded by electron-builder itself, independent of the runtime read.
+win:
+  icon: resources/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+# A normal (not one-click) installer so the user can choose the folder + see the
+# ChipBlocks name throughout. Unsigned — no code-signing certificate is configured.
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-Setup-${version}.${ext}
+  shortcutName: ChipBlocks
+  uninstallDisplayName: ChipBlocks

@@ -2,7 +2,7 @@
 
 ChipBlocks depends on third-party software. This file lists each direct dependency, its license, copyright holder, source repository, and where to find the full license text. ChipBlocks complies with each license's redistribution requirements (preserving LICENSE files, preserving NOTICE content where present per Apache-2.0 §4(d), retaining attribution notices).
 
-> **Last verified:** 2026-07-05 — re-checked; the board-road toolchain (footprint model, copper router, DRC, Gerber/Excellon writers, manufacturing ZIP) and the from-scratch 3-D board engine added **NO new dependencies** (all original TypeScript). The dependency set is unchanged since the Sprint 18 Electron/React/React-Flow additions below. Originally added during v3 Sprint 12 when `mathjs` brought the first NOTICE-bearing dependency.
+> **Last verified:** 2026-07-17 — added `electron-builder` ^26.15.3 (MIT, dev-time-only packager) as the first new dependency since Sprint 18; verified MIT + no NOTICE + 0 production-dep vulnerabilities. Prior: 2026-07-05 — the board-road toolchain (footprint model, copper router, DRC, Gerber/Excellon writers, manufacturing ZIP) and the from-scratch 3-D board engine added **NO new dependencies** (all original TypeScript). Originally added during v3 Sprint 12 when `mathjs` brought the first NOTICE-bearing dependency.
 
 ---
 
@@ -62,6 +62,15 @@ ChipBlocks depends on third-party software. This file lists each direct dependen
 - **Source:** <https://github.com/DefinitelyTyped/DefinitelyTyped>
 - **License text:** `node_modules/@types/node/LICENSE` after `npm install`
 
+#### electron-builder
+- **Package:** `electron-builder` ^26.15.3 (with its core `app-builder-lib` ^26.15.3, also MIT)
+- **License:** MIT
+- **Copyright:** Copyright (c) 2015 Loopline Systems; maintained by Vladimir Krivosheev / electron-userland contributors
+- **Source:** <https://github.com/electron-userland/electron-builder>
+- **License text:** `node_modules/electron-builder/LICENSE` after `npm install`
+- **NOTICE:** none (`ls node_modules/electron-builder/NOTICE*` → absent)
+- **Usage tier:** dev-time only — packages the electron-vite `out/` build into a distributable at build time (`npm run package`); never present in the shipped runtime. `npm audit --omit=dev` reports **0 vulnerabilities**; the build-tool tree carries dev-only advisories (a `high` esbuild dev-server file-read on Windows) that do not reach the packaged app.
+
 ### Physics / math (Sprint 12+)
 
 #### mathjs
@@ -88,7 +97,7 @@ All MIT; none ship a NOTICE file (verified 2026-06-06 via `ls node_modules/<pkg>
 | `@vitejs/plugin-react` | ^5.2 | MIT | React JSX + fast-refresh | <https://github.com/vitejs/vite-plugin-react> |
 | `@types/react`, `@types/react-dom` | ^19 | MIT | types (DefinitelyTyped) | <https://github.com/DefinitelyTyped/DefinitelyTyped> |
 
-**Electron's bundled components.** Electron itself is MIT, but it bundles Chromium (BSD-3-Clause + many sub-licenses) and Node.js (MIT). Electron ships a `LICENSES.chromium.html` enumerating all bundled third-party licenses; when ChipBlocks is packaged into a distributable (electron-builder, a later sprint), that file travels with the app per Electron's redistribution terms. No GPL/AGPL in the bundled set — Chromium and Node are permissive. This is a ship-time obligation handled at packaging; the Sprint 18 MVP runs via `npm run dev` and doesn't redistribute.
+**Electron's bundled components.** Electron itself is MIT, but it bundles Chromium (BSD-3-Clause + many sub-licenses) and Node.js (MIT). Electron ships a `LICENSES.chromium.html` enumerating all bundled third-party licenses. As of 2026-07-17 ChipBlocks packages a distributable via **electron-builder** (`npm run package`), which copies Electron's `LICENSE.electron.txt` + `LICENSES.chromium.html` into the packaged app (`dist/win-unpacked/`) per Electron's redistribution terms. No GPL/AGPL in the bundled set — Chromium and Node are permissive. The packaged app is UNSIGNED (no code-signing certificate configured); Windows SmartScreen will warn on first run until the user (or a future signing step) signs it.
 
 ---
 
