@@ -116,6 +116,9 @@ export type CompiledLogic = {
   seeds: { net: string; high: boolean; nodeId?: string }[]
   /** Resolve a top-level (nodeId, handle) to its net — for reading outputs back. */
   portNet: (nodeId: string, handle: string) => string
+  /** One output net per feedback cycle (a latch's cut point) — the nets to kick to a start value at cold
+   *  power-up. One per independent cycle, so kicking them together matches kicking one flip-flop at a time. */
+  cutNets: string[]
 }
 
 /** Flatten + net-resolve a canvas once (see CompiledLogic). The heavy work; pair with stepLogic. */
@@ -192,7 +195,57 @@ export function compileLogic(nodes: CanvasNodeLike[], edges: CanvasEdgeLike[]): 
     const target = flat.portTarget.get(`${nodeId}/${handle}`)
     return target ? netOf(target.nodeId, target.handleId) : netOf(nodeId, handle)
   }
-  return { gates, seeds, portNet }
+
+  // Order the gates topologically — each placed AFTER the gates that drive its inputs — so stepLogic's sweep
+  // settles the combinational logic in a single pass. The old node-order list needed one sweep per logic
+  // level (a deep adder/multiplier tree = tens of sweeps over every gate). Feedback-cycle gates (a latch's
+  // cross-coupled pair) can't be ordered, so they're appended and left to the residual sweeps. This is purely
+  // a re-ordering: stepLogic still iterates to the same fixed point, so every result is bit-for-bit unchanged.
+  const producer = new Map<string, number>()
+  gates.forEach((g, i) => producer.set(g.out, i))
+  const indeg = new Array<number>(gates.length).fill(0)
+  const consumers: number[][] = gates.map(() => [])
+  gates.forEach((g, i) => {
+    for (const net of g.ins) {
+      const p = producer.get(net)
+      if (p !== undefined && p !== i) {
+        indeg[i] = (indeg[i] as number) + 1
+        ;(consumers[p] as number[]).push(i)
+      }
+    }
+  })
+  const ordered: CompiledLogic['gates'] = []
+  const cutNets: string[] = []
+  const placed = new Array<boolean>(gates.length).fill(false)
+  const queue: number[] = []
+  for (let i = 0; i < gates.length; i++) if (indeg[i] === 0) queue.push(i)
+  let head = 0
+  while (ordered.length < gates.length) {
+    if (head >= queue.length) {
+      // A feedback cycle stalled Kahn's. Almost all logic reads flip-flop outputs, and a flop is a small
+      // cross-coupled cycle, so leaving cycles for last would strand everything downstream of a flop. Instead
+      // CUT one feedback edge: force-place the unplaced gate with the fewest still-unresolved inputs (its
+      // feedback input reads last cycle's value from `state`, so its consumers can safely order after it).
+      // That gate is this cycle's cut point — record its output as a cold-start kick target.
+      let best = -1
+      for (let i = 0; i < gates.length; i++)
+        if (!placed[i] && (best < 0 || (indeg[i] as number) < (indeg[best] as number))) best = i
+      if (best < 0) break
+      indeg[best] = 0
+      queue.push(best)
+      cutNets.push((gates[best] as CompiledLogic['gates'][number]).out)
+    }
+    const i = queue[head++] as number
+    if (placed[i]) continue
+    placed[i] = true
+    ordered.push(gates[i] as CompiledLogic['gates'][number])
+    for (const c of consumers[i] as number[]) {
+      indeg[c] = (indeg[c] as number) - 1
+      if (indeg[c] === 0) queue.push(c)
+    }
+  }
+
+  return { gates: ordered, seeds, portNet, cutNets }
 }
 
 /**
@@ -235,12 +288,22 @@ export function stepLogic(
       }
     }
     if (!changed) {
-      // Settled — unless a feedback loop never started (its output is still undriven, with no held
-      // state to seed it). Kick one to a deterministic 0 (a real latch powers up to SOME state) and
-      // keep sweeping; the latch resolves from there.
-      const stuck = gates.find((g) => !value.has(g.out))
-      if (stuck === undefined) break
-      value.set(stuck.out, false)
+      // Settled — unless a feedback loop never started (its output is still undriven, with no held state to
+      // seed it). Kick each cycle's cut net to 0 (a real latch powers up to SOME state); they're one per
+      // independent cycle, so kicking them together settles to the same state as kicking one flip-flop at a
+      // time — but in a couple of sweeps, not one per flop (thousands, on a CPU cold start). A one-at-a-time
+      // fallback covers any cycle the cut list somehow missed.
+      let anyStuck = false
+      for (const net of compiled.cutNets)
+        if (!value.has(net)) {
+          value.set(net, false)
+          anyStuck = true
+        }
+      if (!anyStuck) {
+        const stuck = gates.find((g) => !value.has(g.out))
+        if (stuck === undefined) break
+        value.set(stuck.out, false)
+      }
       changed = true
     }
     if (sweep >= maxSweeps) {
