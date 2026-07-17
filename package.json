@@ -1,7 +1,7 @@
 {
   "name": "chipblocks-schemas",
   "productName": "ChipBlocks",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "ChipBlocks — ground-up electronics design system. Object-model schemas + cross-FK validator + DC/nonlinear solver + failure detector + Electron canvas.",
   "type": "module",
