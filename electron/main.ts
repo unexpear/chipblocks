@@ -616,6 +616,10 @@ function createWindow(): void {
     width: 1280,
     height: 860,
     title: 'ChipBlocks',
+    // The ChipBlocks mark — the window frame + (with setAppUserModelId below) the Windows taskbar button.
+    // resources/ lives beside package.json, which is app.getAppPath() in dev; a packaged build would ship it
+    // via extraResources (no packager configured yet).
+    icon: join(app.getAppPath(), 'resources', 'icon.ico'),
     backgroundColor: '#1e1e1e',
     webPreferences: {
       preload: join(moduleDir, '../preload/preload.cjs'),
@@ -658,6 +662,9 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  // Give Windows an explicit app id so the taskbar button + Task Manager identify this as ChipBlocks
+  // (its own icon + name) rather than grouping it under the generic Electron process. No-op off Windows.
+  app.setAppUserModelId('com.chipblocks.app')
   await loadKeybinds()
   installDevContentSecurityPolicy()
   createWindow()
