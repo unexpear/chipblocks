@@ -245,6 +245,57 @@ describe('pin-1 chamfers on the fabrication body outline', () => {
   })
 })
 
+describe('printed pin-1 / polarity markers on the silkscreen (assembly orientation)', () => {
+  // point → pad-rectangle distance (0 inside) — the exact metric the silk-over-pad DRC uses. A marker
+  // must clear every pad by at least its stroke half-width, or the fab would clip the ink off.
+  const distToPad = (px: number, py: number, pad: Footprint['pads'][number]) => {
+    const rx = pad.center.x - pad.size.w / 2
+    const ry = pad.center.y - pad.size.h / 2
+    const dx = Math.max(rx - px, 0, px - (rx + pad.size.w))
+    const dy = Math.max(ry - py, 0, py - (ry + pad.size.h))
+    return Math.hypot(dx, dy)
+  }
+  const silkClearsPads = (fp: Footprint) => {
+    for (const s of fp.silkscreen) {
+      const g = s.width / 2
+      const steps = Math.max(1, Math.ceil(Math.hypot(s.to.x - s.from.x, s.to.y - s.from.y) / 0.05))
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps
+        const px = s.from.x + (s.to.x - s.from.x) * t
+        const py = s.from.y + (s.to.y - s.from.y) * t
+        for (const pad of fp.pads) expect(distToPad(px, py, pad)).toBeGreaterThanOrEqual(g - 1e-9)
+      }
+    }
+  }
+
+  test('SOIC-8 prints a pin-1 dot above pad 1 (its 8 pads are otherwise identical), clear of every pad', () => {
+    // more than the 8 corner ticks alone — the added pin-1 dot
+    expect(FOOTPRINT_SOIC8.silkscreen.length).toBeGreaterThan(8)
+    // a closed dot centred ≈ (−2.475, −2.52): its vertices all sit within 0.2 mm of that point
+    const nearPin1 = FOOTPRINT_SOIC8.silkscreen.filter(
+      (s) => Math.hypot(s.from.x + 2.475, s.from.y + 2.52) < 0.2,
+    )
+    expect(nearPin1.length).toBeGreaterThanOrEqual(3)
+    silkClearsPads(FOOTPRINT_SOIC8)
+  })
+
+  test('SOD-123 prints a cathode band on the cathode (pad 1) side, clear of both pads', () => {
+    expect(FOOTPRINT_SOD123.silkscreen.length).toBeGreaterThan(8)
+    // a vertical bar (from.x === to.x) on the cathode (x < 0) side, spanning most of the body height
+    const band = FOOTPRINT_SOD123.silkscreen.find(
+      (s) => s.from.x === s.to.x && s.from.x < 0 && Math.abs(s.to.y - s.from.y) > 1,
+    )
+    expect(band).toBeDefined()
+    silkClearsPads(FOOTPRINT_SOD123)
+  })
+
+  test('a symmetric chip passive gets NO polarity marker — just the 8 corner ticks (nothing to orient)', () => {
+    for (const fp of [FOOTPRINT_0402, FOOTPRINT_0603, FOOTPRINT_0805, FOOTPRINT_1206]) {
+      expect(fp.silkscreen).toHaveLength(8)
+    }
+  })
+})
+
 describe('every built-in footprint is cited + physically valid (the anti-placeholder rule)', () => {
   const entries = Object.entries(BUILTIN_FOOTPRINTS)
 

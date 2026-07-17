@@ -390,6 +390,22 @@ function cornerTicksSilk(rect: Courtyard, tickMm = 0.5, width = 0.12): SilkLine[
 }
 
 /**
+ * A small pin-1 / polarity dot on the SILKSCREEN — a short closed polyline circle. A package whose PADS
+ * carry no orientation cue (SOIC's eight identical pads; a two-terminal SMD diode) would otherwise print
+ * no way to tell which end is which; this is the printed marker for it, the way a real IC wears a pin-1
+ * dot. The footprint places it clear of every pad, so the silk-over-pad DRC stays clean.
+ */
+function pin1Dot(cx: number, cy: number, radiusMm = 0.15, segments = 10, width = 0.12): SilkLine[] {
+  const pt = (i: number) => ({
+    x: cx + radiusMm * Math.cos((i / segments) * 2 * Math.PI),
+    y: cy + radiusMm * Math.sin((i / segments) * 2 * Math.PI),
+  })
+  const out: SilkLine[] = []
+  for (let i = 0; i < segments; i++) out.push({ from: pt(i), to: pt(i + 1), width })
+  return out
+}
+
+/**
  * SOIC-8 (3.9×4.9 mm body, 1.27 mm pitch) — the 8-lead small-outline IC, gull-wing SMD. Pad geometry is
  * the IPC-7351 / JEDEC MS-012 land pattern (ground-truthed against KiCad's Package_SO library); the fab
  * body is the real 3.9×4.9 mm outline. The SILK is ChipBlocks' own corner-tick rule (cornerTicksSilk),
@@ -458,8 +474,11 @@ export const FOOTPRINT_SOIC8: Footprint = {
       type: 'smd',
     },
   ],
-  // ChipBlocks' own corner-tick silk, computed from the courtyard (never copied from another tool).
-  silkscreen: cornerTicksSilk({ x: -3.7, y: -2.7, w: 7.4, h: 5.4 }),
+  // ChipBlocks' own corner-tick silk, computed from the courtyard (never copied from another tool), plus
+  // a pin-1 dot: the eight pads are identical, so without it the PRINTED board has no way to tell pin 1
+  // (the chamfer below is on the fab layer, which is not manufactured). The dot sits above pad 1, clear
+  // of its copper (pad 1 top edge is y = −2.205; the dot spans y ∈ [−2.67, −2.37]).
+  silkscreen: [...cornerTicksSilk({ x: -3.7, y: -2.7, w: 7.4, h: 5.4 }), ...pin1Dot(-2.475, -2.52)],
   // Body outline with the pin-1 (top-left) corner chamfered. KiCad marks SOIC pin-1 with a small beak
   // OUTSIDE the body; we chamfer the corner instead so the extruded 3-D body stays the true 3.9×4.9 mm.
   fabrication: chamferedRect(-1.95, -2.45, 1.95, 2.45, 0.5),
@@ -900,7 +919,13 @@ export const FOOTPRINT_SOD123: Footprint = {
       type: 'smd',
     },
   ],
-  silkscreen: cornerTicksSilk({ x: -2.35, y: -1.15, w: 4.7, h: 2.3 }),
+  // Corner ticks plus a CATHODE BAND — a vertical silk bar on the cathode (pad 1) side, set in the gap
+  // between the pads so it clears both copper (pad 1 right edge is x = −1.2; the bar sits at x = −1.0).
+  // Pad 1 is the cathode; this is the printed polarity cue, the way a real diode wears its band.
+  silkscreen: [
+    ...cornerTicksSilk({ x: -2.35, y: -1.15, w: 4.7, h: 2.3 }),
+    { from: { x: -1.0, y: -0.85 }, to: { x: -1.0, y: 0.85 }, width: 0.12 },
+  ],
   // The component body outline (F.Fab): the 2.8 × 1.8 mm body extent (F.Fab rect ±1.4 × ±0.9).
   fabrication: rectOutline(-1.4, -0.9, 1.4, 0.9),
   labels: {
