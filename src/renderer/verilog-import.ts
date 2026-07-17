@@ -326,6 +326,17 @@ export type FlopInst = { d: string; clk: string; q: string }
 /** A declared memory `reg [width-1:0] m [0:depth-1]` — `depth` words, each `width` bits. The synthesizer
  *  turns each word into real flip-flops and `m[addr]` into a decode/mux, exactly like the gate Data RAM. */
 export type MemInfo = { width: number; depth: number }
+/** A synthesizable Verilog `function`: its declared return width, its ordered inputs (each with a width), the
+ *  widths of any local `reg`/`integer` variables, and the executable body tokens (the statements after the
+ *  declarations). The synthesizer INLINES a call by materializing the args at each input's width, elaborating
+ *  the body, and synthesizing the return value at `retWidth` — every width exact (see verilog-synth.ts). */
+export type FuncDef = {
+  name: string
+  retWidth: number
+  inputs: { name: string; width: number }[]
+  localWidths: Map<string, number>
+  body: Tok[]
+}
 type ParsedModule = {
   name: string
   portOrder: string[]
@@ -339,6 +350,8 @@ type ParsedModule = {
   widths: Map<string, number>
   /** Memory name → {word width, depth} for declared arrays (`reg [D-1:0] m [0:W-1]`). */
   mems: Map<string, MemInfo>
+  /** Function name → its definition, inlined at each call site by the synthesizer. */
+  functions: Map<string, FuncDef>
 }
 
 /** A `[ msb : lsb ]` range's bit width. Both bounds are folded as constant expressions (a parameter has
@@ -685,6 +698,7 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
   const gates: GateInst[] = []
   const assigns: Assign[] = []
   const alwaysBlocks: AlwaysBlock[] = []
+  const functions = new Map<string, FuncDef>()
   while (!c.atEnd() && !c.is('endmodule')) {
     const t = c.peek() as Tok
     if (t.k === 'dir') {
@@ -719,6 +733,20 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
       // Already folded away by elaborateParams (its uses are now literals) — skip the declaration silently.
       c.next()
       skipStatement(c)
+      continue
+    }
+    if (t.k === 'kw' && t.v === 'function') {
+      parseFunction(c, functions, warnings)
+      continue
+    }
+    if (t.k === 'kw' && t.v === 'task') {
+      // Not yet synthesized — skip the WHOLE task (through endtask) so its input/reg decls don't leak into the
+      // module parser as phantom ports/nets (skipStatement would stop at the first ';' inside the task body).
+      warnings.push(
+        `line ${t.line}: "task" is a behavioral construct not yet synthesized — reported, not built`,
+      )
+      c.next()
+      skipToEnd(c, 'endtask')
       continue
     }
     if (t.k === 'kw' && OTHER_GATE_SWITCH.has(t.v)) {
@@ -765,7 +793,151 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     warnings.push(
       'signed values are treated as UNSIGNED — reported (signed arithmetic is a later increment)',
     )
-  return { name: nameTok.v, portOrder, dir, gates, assigns, alwaysBlocks, flops: [], widths, mems }
+  return {
+    name: nameTok.v,
+    portOrder,
+    dir,
+    gates,
+    assigns,
+    alwaysBlocks,
+    flops: [],
+    widths,
+    mems,
+    functions,
+  }
+}
+
+/** Parse a synthesizable `function … endfunction` into a FuncDef. Both header forms are handled: ANSI
+ *  `function [7:0] f(input [7:0] a, b);` and classic `function [7:0] f; input [7:0] a; …`. Input/reg/integer
+ *  declarations are pulled out (with widths); the remaining tokens are the executable body the synthesizer
+ *  elaborates + inlines. Parameters were already substituted to literals by elaborateParams. */
+function parseFunction(c: Cursor, functions: Map<string, FuncDef>, warnings: string[]): void {
+  const line = c.peek()?.line ?? 0
+  c.next() // 'function'
+  while (c.peek()?.k === 'kw' && ['automatic', 'signed'].includes(c.peek()?.v as string)) c.next()
+  let retWidth = 1
+  if (c.is('[')) {
+    const r = readRange(c)
+    if ('bad' in r) warnings.push(`line ${line}: function return range — ${r.bad} — reported`)
+    else retWidth = r.width
+  }
+  const nameTok = c.next()
+  if (nameTok === undefined || nameTok.k !== 'id') {
+    warnings.push(`line ${line}: malformed function declaration — reported`)
+    skipToEndfunction(c)
+    return
+  }
+  const name = nameTok.v
+  const inputs: { name: string; width: number }[] = []
+  const localWidths = new Map<string, number>()
+  // `bad` marks an unsupported declaration (an ascending/nonzero-based/parameterized range → what would be a
+  // silently-wrong width-1 signal). Rather than build the function at the wrong width, drop it + report; a call
+  // to it then reports as "unknown function". Never a silent miscompile.
+  const bad = { v: false }
+  if (c.is('(')) parseFunctionPorts(readGroup(c), inputs, warnings, bad)
+  if (c.is(';')) c.next()
+  const body: Tok[] = []
+  while (!c.atEnd() && !c.is('endfunction')) {
+    if (c.is('input')) {
+      collectDecl(c, (nm, w) => inputs.push({ name: nm, width: w }), warnings, bad)
+      continue
+    }
+    if (c.is('reg') || c.is('integer') || c.is('wire')) {
+      collectDecl(c, (nm, w) => localWidths.set(nm, w), warnings, bad)
+      continue
+    }
+    body.push(c.next() as Tok)
+  }
+  if (c.is('endfunction')) c.next()
+  if (bad.v) {
+    warnings.push(
+      `line ${line}: function "${name}" has an unsupported declaration — reported, not built`,
+    )
+    return
+  }
+  if (functions.has(name)) warnings.push(`line ${line}: function "${name}" redefined — reported`)
+  functions.set(name, { name, retWidth, inputs, localWidths, body })
+}
+
+/** Read one `<kw> [range]? name {, name} ;` declaration, calling `emit(name, width)` per name (the range is
+ *  shared across the comma list). Cursor starts AT the keyword; leaves it just past `;`. An `integer` is 32-bit;
+ *  an unsupported range sets `bad` (the function is then dropped, never built at a silently-wrong width). */
+function collectDecl(
+  c: Cursor,
+  emit: (name: string, width: number) => void,
+  warnings: string[],
+  bad: { v: boolean },
+): void {
+  const kw = c.next() // 'reg' | 'wire' | 'integer' | 'input'
+  let width = kw?.v === 'integer' ? 32 : 1
+  while (c.peek()?.k === 'kw' && c.peek()?.v === 'signed') c.next()
+  if (c.is('[')) {
+    const r = readRange(c)
+    if ('bad' in r) {
+      warnings.push(`function declaration range — ${r.bad} — reported`)
+      bad.v = true
+    } else width = r.width
+  }
+  while (!c.atEnd() && !c.is(';')) {
+    const t = c.next() as Tok
+    if (t.k === 'id') emit(t.v, width)
+  }
+  if (c.is(';')) c.next()
+}
+
+/** ANSI function port-list slices → inputs (a function has only inputs; a leading `input`/`signed` is skipped,
+ *  a range is sticky across a bare-name continuation, and a new `input` resets it). An unsupported range sets
+ *  `bad` so the function is dropped rather than built with a silently-wrong width-1 port. */
+function parseFunctionPorts(
+  slices: Tok[][],
+  inputs: { name: string; width: number }[],
+  warnings: string[],
+  bad: { v: boolean },
+): void {
+  let width = 1
+  for (const s of slices) {
+    let j = 0
+    let sawInput = false
+    while (
+      j < s.length &&
+      (s[j] as Tok).k === 'kw' &&
+      ['input', 'signed'].includes((s[j] as Tok).v)
+    ) {
+      if ((s[j] as Tok).v === 'input') sawInput = true
+      j += 1
+    }
+    if (sawInput) width = 1
+    if ((s[j] as Tok | undefined)?.v === '[') {
+      const inner: Tok[] = []
+      j += 1
+      while (j < s.length && (s[j] as Tok).v !== ']') inner.push(s[j++] as Tok)
+      if ((s[j] as Tok | undefined)?.v === ']') j += 1
+      const r = rangeWidth(inner)
+      if ('bad' in r) {
+        warnings.push(`function port range — ${r.bad} — reported`)
+        bad.v = true
+      } else width = r.width
+    }
+    if ((s[j] as Tok | undefined)?.k === 'id') inputs.push({ name: (s[j] as Tok).v, width })
+  }
+}
+
+/** Skip a `function`/`task` body to its `end*` keyword — but ONLY if that keyword exists before `endmodule`;
+ *  otherwise rewind (consume nothing) so a malformed function without `endfunction` doesn't swallow the real
+ *  module items that follow it. */
+function skipToEnd(c: Cursor, endKw: string): void {
+  const start = c.i
+  while (!c.atEnd() && !c.is('endmodule')) {
+    if (c.is(endKw)) {
+      c.next()
+      return
+    }
+    c.next()
+  }
+  c.i = start
+}
+function skipToEndfunction(c: Cursor): void {
+  skipToEnd(c, 'endfunction')
 }
 
 /** Parse an always block. `@(posedge clk)` → a clocked block (clk set); `@*` / `@(*)` / `@(a or b …)` with no

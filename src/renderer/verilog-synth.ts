@@ -23,7 +23,15 @@
  */
 
 import { constInt, MAX_REPL, splitOnColon } from './verilog-const.ts'
-import type { AlwaysBlock, Assign, FlopInst, GateInst, MemInfo, Tok } from './verilog-import.ts'
+import type {
+  AlwaysBlock,
+  Assign,
+  FlopInst,
+  FuncDef,
+  GateInst,
+  MemInfo,
+  Tok,
+} from './verilog-import.ts'
 
 /** Declared memories, by name (`reg [D-1:0] m [0:W-1]`). Threaded through the parser so `m[addr]` becomes a
  *  memory read/write rather than a (rejected) non-constant bit-select. */
@@ -41,6 +49,12 @@ type Expr =
   | { t: 'bin'; op: string; a: Expr; b: Expr }
   | { t: 'tern'; c: Expr; a: Expr; b: Expr }
   | { t: 'memread'; name: string; idx: Expr; width: number; depth: number } // m[addr] — a decode/read-mux
+  // a function call `f(a,b)`: inlined at its DECLARED return width (retWidth/fn are filled by bindCalls once
+  // the function table is known — at parse time only name+args exist).
+  | { t: 'call'; name: string; args: Expr[]; retWidth?: number; fn?: FuncDef }
+  // a self-determined WIDTH WALL: evaluate `of` at exactly `width` bits (truncate/zero-extend), regardless of
+  // the surrounding context — how a function's inputs/locals/return honor their declared widths exactly.
+  | { t: 'sized'; width: number; of: Expr }
   | { t: 'bad'; why: string }
 
 /** The synthetic net name of memory word k (bracket form — can't collide with a user simple identifier). */
@@ -51,6 +65,9 @@ const clog2 = (words: number): number => Math.max(1, Math.ceil(Math.log2(Math.ma
  *  throwaway context so it reuses synthAt's EXACT-width folding — `3+2` folds to 5, but a sized `4'd15+4'd1`
  *  wraps to 0 exactly as the hardware would, so no false out-of-range report. Any net reference ⇒ undefined. */
 function foldConst(e: Expr, widthOf: (n: string) => number): number | undefined {
+  // A function call is never a compile-time constant (it synthesizes gates) and can't inline in the throwaway
+  // fold ctx (no funcs/tie) — so treat any tree containing one as non-constant rather than fold it wrong.
+  if (hasCall(e)) return undefined
   let z = 0
   const bits = synthAt(e, selfWidth(e, widthOf), {
     gates: [],
@@ -229,6 +246,16 @@ function parsePrimary(ts: TokStream, mems: MemTable): Expr {
         }
       return { t: 'memread', name: t.v, idx, width: mem.width, depth: mem.depth }
     }
+    // A function call `f(arg, arg, …)`: an id followed by `(` is always a call in the expression subset (the
+    // only other id-then-paren is a module instance, never inside an expression). Resolved by bindCalls later.
+    if (ts.peek()?.v === '(') {
+      const argToks = readCallArgs(ts)
+      const args = argToks.map((a) => parseRhs(a, mems))
+      const bad = args.find((a) => a.t === 'bad')
+      if (bad !== undefined)
+        return { t: 'bad', why: `argument to "${t.v}" — ${(bad as { why: string }).why}` }
+      return { t: 'call', name: t.v, args }
+    }
     if (ts.peek()?.v === '[') return parseSelect(ts, t.v)
     return { t: 'net', name: t.v }
   }
@@ -358,8 +385,103 @@ function firstBad(e: Expr): string | undefined {
       return firstBad(e.of)
     case 'memread':
       return firstBad(e.idx)
+    case 'call': {
+      for (const a of e.args) {
+        const b = firstBad(a)
+        if (b !== undefined) return b
+      }
+      return undefined
+    }
+    case 'sized':
+      return firstBad(e.of)
     default:
       return undefined
+  }
+}
+
+/** The comma-separated argument spans of a call `f(a, b, …)`; cursor must be AT `(`, left just past `)`. */
+function readCallArgs(ts: TokStream): Tok[][] {
+  ts.next() // '('
+  const slices: Tok[][] = []
+  let cur: Tok[] = []
+  let depth = 1
+  let any = false
+  while (ts.peek() !== undefined && depth > 0) {
+    const tk = ts.next() as Tok
+    if (tk.v === '(' || tk.v === '[' || tk.v === '{') depth += 1
+    else if (tk.v === ')' || tk.v === ']' || tk.v === '}') {
+      depth -= 1
+      if (depth === 0) break
+    }
+    if (depth === 1 && tk.v === ',') {
+      slices.push(cur)
+      cur = []
+    } else {
+      cur.push(tk)
+      any = true
+    }
+  }
+  if (any || slices.length > 0) slices.push(cur)
+  return slices
+}
+
+/** Resolve every `call` node against the function table: fill its return width + definition, or turn it into a
+ *  `bad` (unknown function / wrong argument count). Runs on an ast BEFORE firstBad/selfWidth/synthAt so a
+ *  call's declared return width is known everywhere it matters. */
+function bindCalls(e: Expr, funcs: Map<string, FuncDef>): Expr {
+  switch (e.t) {
+    case 'call': {
+      const args = e.args.map((a) => bindCalls(a, funcs))
+      const fn = funcs.get(e.name)
+      if (fn === undefined) return { t: 'bad', why: `call to unknown function "${e.name}"` }
+      if (args.length !== fn.inputs.length)
+        return {
+          t: 'bad',
+          why: `function "${e.name}" takes ${fn.inputs.length} argument(s), got ${args.length}`,
+        }
+      return { t: 'call', name: e.name, args, retWidth: fn.retWidth, fn }
+    }
+    case 'un':
+      return { ...e, a: bindCalls(e.a, funcs) }
+    case 'bin':
+      return { ...e, a: bindCalls(e.a, funcs), b: bindCalls(e.b, funcs) }
+    case 'tern':
+      return { ...e, c: bindCalls(e.c, funcs), a: bindCalls(e.a, funcs), b: bindCalls(e.b, funcs) }
+    case 'concat':
+      return { ...e, parts: e.parts.map((p) => bindCalls(p, funcs)) }
+    case 'repl':
+      return { ...e, of: bindCalls(e.of, funcs) }
+    case 'memread':
+      return { ...e, idx: bindCalls(e.idx, funcs) }
+    case 'sized':
+      return { ...e, of: bindCalls(e.of, funcs) }
+    default:
+      return e
+  }
+}
+
+/** Does the tree contain a function call? A call synthesizes to gates (never a compile-time constant), so a
+ *  constant context (foldConst) that meets one must fall back to non-constant rather than fold it to 0. */
+function hasCall(e: Expr): boolean {
+  switch (e.t) {
+    case 'call':
+      return true
+    case 'un':
+      return hasCall(e.a)
+    case 'sized':
+      return hasCall(e.of)
+    case 'bin':
+      return hasCall(e.a) || hasCall(e.b)
+    case 'tern':
+      return hasCall(e.c) || hasCall(e.a) || hasCall(e.b)
+    case 'concat':
+      return e.parts.some(hasCall)
+    case 'repl':
+      return hasCall(e.of)
+    case 'memread':
+      return hasCall(e.idx)
+    default:
+      return false
   }
 }
 
@@ -371,6 +493,13 @@ type Ctx = {
   fresh: () => string
   widthOf: (name: string) => number
   bitNet: (name: string, i: number) => string
+  /** The module's functions (for inlining a `call`) and a per-call counter for unique inlined-net names. */
+  funcs?: Map<string, FuncDef>
+  callSeq?: { n: number }
+  /** Per-inline map of an inlined input bit-net → a folded constant argument bit. Read by the `net`/`bitsel`/
+   *  `partsel` cases so a constant function argument flows through as a real constant (no tie needed), and a
+   *  constant that reaches an output is tied/reported by the assign driver like any other constant. */
+  constNets?: Map<string, 0 | 1>
 }
 
 function not1(a: Bit, x: Ctx): Bit {
@@ -487,9 +616,22 @@ function selfWidth(e: Expr, w: (name: string) => number): number {
       return Math.max(selfWidth(e.a, w), selfWidth(e.b, w))
     case 'memread':
       return e.width
+    case 'call':
+      // A function call's width is its DECLARED return width — a self-determined wall, never the body's width.
+      return e.retWidth ?? 1
+    case 'sized':
+      return e.width
     default:
       return 1
   }
+}
+
+/** Bit i of a named signal — a folded constant if this is an inlined function-input bit set to a constant
+ *  argument (constNets), else the real bit-net. */
+function netBit(x: Ctx, name: string, i: number): Bit {
+  const bn = x.bitNet(name, i)
+  const c = x.constNets?.get(bn)
+  return c !== undefined ? { c } : { n: bn }
 }
 
 /** Synthesize an expression at context width `w`, returning a length-w bit-vector (LSB-first). Context is
@@ -506,18 +648,18 @@ function synthAt(e: Expr, w: number, x: Ctx): Bit[] {
     case 'net': {
       const nw = x.widthOf(e.name)
       return resize(
-        Array.from({ length: nw }, (_, i) => ({ n: x.bitNet(e.name, i) }) as Bit),
+        Array.from({ length: nw }, (_, i) => netBit(x, e.name, i)),
         w,
       )
     }
     case 'bitsel': {
       const inRange = e.index >= 0 && e.index < x.widthOf(e.name)
-      return resize([inRange ? { n: x.bitNet(e.name, e.index) } : { c: 0 }], w)
+      return resize([inRange ? netBit(x, e.name, e.index) : { c: 0 }], w)
     }
     case 'partsel': {
       const nw = x.widthOf(e.name)
       const bits: Bit[] = []
-      for (let k = e.lo; k <= e.hi; k++) bits.push(k < nw ? { n: x.bitNet(e.name, k) } : { c: 0 })
+      for (let k = e.lo; k <= e.hi; k++) bits.push(k < nw ? netBit(x, e.name, k) : { c: 0 })
       return resize(bits, w)
     }
     case 'concat': {
@@ -712,9 +854,72 @@ function synthAt(e: Expr, w: number, x: Ctx): Bit[] {
       }
       return resize(out, w)
     }
+    case 'sized':
+      // A width wall: evaluate `of` at exactly `width`, then re-fit to the surrounding context.
+      return resize(synthAt(e.of, e.width, x), w)
+    case 'call':
+      // Inline the function body as real gates at its declared return width (a self-determined wall), then fit.
+      return resize(e.fn === undefined ? [] : inlineCall(e.fn, e.args, x), w)
     default:
       return resize([], w) // 'bad' — gated out by firstBad()
   }
+}
+
+/**
+ * Inline a function call into REAL gates at the function's declared return width — the gate-materialization
+ * approach that makes every width EXACT (the reason the earlier symbolic-inlining attempt was reverted).
+ * Each argument is materialized at its formal's declared width (a self-determined wall) onto per-call-unique
+ * input nets; the body is elaborated with the SAME combinational machinery an `always @(*)` uses, with every
+ * function-scoped signal renamed per call (so repeated calls never alias) and each local/return read wrapped
+ * in a `sized` node at its declared width; the return value is then synthesized at retWidth. Nested calls are
+ * bound + inlined recursively (a cycle was already rejected in synthesizeBehavioral).
+ */
+function inlineCall(fn: FuncDef, args: Expr[], x: Ctx): Bit[] {
+  if (x.funcs === undefined || x.callSeq === undefined) return resize([], fn.retWidth)
+  const id = x.callSeq.n++
+  const prefix = `__fn${id}_${fn.name}_`
+  const fnWidth = new Map<string, number>()
+  for (const inp of fn.inputs) fnWidth.set(inp.name, inp.width)
+  for (const [nm, wd] of fn.localWidths) fnWidth.set(nm, wd)
+  fnWidth.set(fn.name, fn.retWidth) // the return variable is the function name
+  // Apply the function's widths ONLY to its own (prefixed) scoped names; anything else is a module net, whose
+  // width must come from the enclosing context — else an outer function's formal named like a module net the
+  // INNER function reads would steal its width.
+  const bodyWidthOf = (n: string): number =>
+    n.startsWith(prefix) ? (fnWidth.get(n.slice(prefix.length)) ?? 1) : x.widthOf(n)
+  const bodyBitNet = (n: string, i: number): string => (bodyWidthOf(n) === 1 ? n : `${n}[${i}]`)
+  const constNets = new Map<string, 0 | 1>()
+  const bodyCtx: Ctx = { ...x, widthOf: bodyWidthOf, bitNet: bodyBitNet, constNets }
+
+  // Materialize each argument at its formal's declared width, onto the renamed input net: a live bit is
+  // buffered; a constant bit is recorded in constNets (so it flows as a real constant with no tie needed).
+  for (let k = 0; k < fn.inputs.length; k++) {
+    const inp = fn.inputs[k] as { name: string; width: number }
+    const bits = synthAt(args[k] as Expr, inp.width, x)
+    for (let i = 0; i < inp.width; i++) {
+      const dest = bodyBitNet(prefix + inp.name, i)
+      const b = bits[i] as Bit
+      if (isC(b)) constNets.set(dest, b.c)
+      else x.gates.push({ prim: 'buf', terminals: [dest, b.n] })
+    }
+  }
+  // Rename every function-scoped identifier per call, then elaborate the body combinationally.
+  const bodyToks = fn.body.map((t) =>
+    t.k === 'id' && fnWidth.has(t.v) ? { ...t, v: prefix + t.v } : t,
+  )
+  const seq = parseProcedural(bodyToks, new Map(), true, bodyWidthOf)
+  // These three fall-throughs are defensive — validateFunctions has already dropped any function with a bad
+  // body / no return assignment / a bad nested call (a call to it then reports as "unknown function").
+  if (seq.t === 'bad') return resize([{ c: 0 }], fn.retWidth)
+  const written = new Set<string>()
+  const sizeOf = (name: string): number | undefined =>
+    name.startsWith(prefix) ? fnWidth.get(name.slice(prefix.length)) : undefined
+  const env = elaborate(seq, new Map(), written, sizeOf)
+  const retExpr = env.get(prefix + fn.name)
+  if (retExpr === undefined) return resize([{ c: 0 }], fn.retWidth)
+  const bound = bindCalls(retExpr, x.funcs)
+  if (firstBad(bound) !== undefined) return resize([{ c: 0 }], fn.retWidth)
+  return synthAt(bound, fn.retWidth, bodyCtx)
 }
 
 // ── the assign driver ───────────────────────────────────────────────────────────
@@ -727,6 +932,7 @@ type SynthModule = {
   flops: FlopInst[]
   widths: Map<string, number>
   mems: MemTable
+  functions: Map<string, FuncDef>
 }
 
 /** The target bit-nets of an lhs (`y`, `y[i]`, `y[h:l]`, or a concat of those), LSB-first. */
@@ -792,6 +998,79 @@ function splitTopComma(toks: Tok[]): Tok[][] {
   return out
 }
 
+/** Drop any function that (directly or indirectly) calls itself — a recursive function has no finite gate
+ *  inlining, so it's reported and removed (calls to it then report as "unknown function"). */
+function pruneRecursiveFunctions(functions: Map<string, FuncDef>, warnings: string[]): void {
+  if (functions.size === 0) return
+  const calls = new Map<string, Set<string>>()
+  for (const [name, fn] of functions) {
+    const s = new Set<string>()
+    for (let i = 0; i < fn.body.length; i++) {
+      const t = fn.body[i] as Tok
+      if (t.k === 'id' && functions.has(t.v) && (fn.body[i + 1] as Tok | undefined)?.v === '(')
+        s.add(t.v)
+    }
+    calls.set(name, s)
+  }
+  const state = new Map<string, 0 | 1 | 2>()
+  const onCycle = new Set<string>()
+  const stack: string[] = []
+  const visit = (n: string): void => {
+    state.set(n, 1)
+    stack.push(n)
+    for (const dep of calls.get(n) ?? []) {
+      const st = state.get(dep) ?? 0
+      if (st === 1) {
+        const from = stack.lastIndexOf(dep)
+        for (let i = from; i < stack.length; i++) onCycle.add(stack[i] as string)
+      } else if (st === 0) visit(dep)
+    }
+    stack.pop()
+    state.set(n, 2)
+  }
+  for (const n of functions.keys()) if ((state.get(n) ?? 0) === 0) visit(n)
+  for (const n of onCycle) {
+    warnings.push(`function "${n}" is recursive — not synthesizable, reported`)
+    functions.delete(n)
+  }
+}
+
+/** Why a function's body can't be synthesized, or undefined if it's fine. Parses + elaborates the body exactly
+ *  as inlineCall will (minus arg materialization + gates) and checks: it parses, it assigns its return, and the
+ *  returned expression (with nested calls bound) has no unsupported construct. */
+function functionBodyError(fn: FuncDef, functions: Map<string, FuncDef>): string | undefined {
+  const fnWidth = new Map<string, number>()
+  for (const inp of fn.inputs) fnWidth.set(inp.name, inp.width)
+  for (const [nm, wd] of fn.localWidths) fnWidth.set(nm, wd)
+  fnWidth.set(fn.name, fn.retWidth)
+  const widthOf = (n: string): number => fnWidth.get(n) ?? 1
+  const seq = parseProcedural(fn.body, new Map(), true, widthOf)
+  if (seq.t === 'bad') return seq.why
+  const written = new Set<string>()
+  const ret = elaborate(seq, new Map(), written).get(fn.name)
+  if (ret === undefined) return `it never assigns its return value "${fn.name}"`
+  return firstBad(bindCalls(ret, functions))
+}
+
+/** Drop + report every function whose body can't be synthesized, iterating to a fixpoint so a function that
+ *  calls a dropped one is dropped too. Then inlineCall only ever meets a valid function (its zero-return
+ *  fall-throughs are pure defense), and a call to a dropped function reports as "unknown function". This is the
+ *  gate that stops a broken body from silently inlining to all-zeros — the reverted feature's failure mode. */
+function validateFunctions(functions: Map<string, FuncDef>, warnings: string[]): void {
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const [name, fn] of [...functions]) {
+      const why = functionBodyError(fn, functions)
+      if (why !== undefined) {
+        warnings.push(`function "${name}" body is not synthesizable — ${why} — reported, not built`)
+        functions.delete(name)
+        changed = true
+      }
+    }
+  }
+}
+
 /**
  * Synthesize behavioral RTL into real gates + flip-flops. Continuous assignments (`assign y = expr;`) become
  * gates and clocked `always @(posedge clk)` blocks become one D flip-flop per registered bit plus the
@@ -800,6 +1079,11 @@ function splitTopComma(toks: Tok[]): Tok[][] {
  * scalar bit-ports here too. Anything outside the supported subset is reported in `warnings` and NOT built.
  */
 export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void {
+  // A recursive function can't be inlined to a finite gate netlist — drop the cycle before any call is bound
+  // (a call to a dropped function then reports as unknown), so inlineCall can never loop.
+  pruneRecursiveFunctions(mod.functions, warnings)
+  // Drop + report any function whose body is unsynthesizable, so a broken body can't silently inline to zeros.
+  validateFunctions(mod.functions, warnings)
   const widthOf = (name: string): number => mod.widths.get(name) ?? 1
   // A bus bit-net uses the Verilog bracket form a[i] — since `[`/`]` can't appear in a simple identifier, it
   // can never collide with a scalar net literally spelled `a0` (a real, silent-miscompile hazard otherwise).
@@ -876,6 +1160,18 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     return tie1
   }
 
+  // A shared per-module counter gives each inlined function call unique net names; funcs lets synthAt inline
+  // a `call`.
+  const callSeq = { n: 0 }
+  const synCtx = (gs: GateInst[]): Ctx => ({
+    gates: gs,
+    fresh,
+    widthOf,
+    bitNet,
+    funcs: mod.functions,
+    callSeq,
+  })
+
   const driven = new Set<string>()
   for (const g of mod.gates) for (const o of gateOutputs(g)) driven.add(o)
 
@@ -907,7 +1203,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       )
       continue
     }
-    const ast = parseRhs(a.rhs, mod.mems)
+    const ast = bindCalls(parseRhs(a.rhs, mod.mems), mod.functions)
     const bad = firstBad(ast)
     if (bad !== undefined) {
       warnings.push(`line ${a.line}: assign not synthesized — ${bad}`)
@@ -921,7 +1217,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       continue
     }
     const gates: GateInst[] = []
-    const rhs = synthAt(ast, targets.length, { gates, fresh, widthOf, bitNet })
+    const rhs = synthAt(ast, targets.length, synCtx(gates))
     let ok = true
     for (let i = 0; i < targets.length; i++) {
       const src = rhs[i] as Bit
@@ -965,8 +1261,9 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     const written = new Set<string>()
     const env = elaborate(seq, new Map(), written)
     for (const r of written) {
-      const ast = env.get(r)
-      if (ast === undefined) continue
+      const raw = env.get(r)
+      if (raw === undefined) continue
+      const ast = bindCalls(raw, mod.functions)
       const bad = firstBad(ast)
       if (bad !== undefined) {
         warnings.push(`line ${blk.line}: register "${r}" not synthesized — ${bad}`)
@@ -994,7 +1291,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
         continue
       }
       const gates: GateInst[] = []
-      const rhs = synthAt(ast, w, { gates, fresh, widthOf, bitNet })
+      const rhs = synthAt(ast, w, synCtx(gates))
       let ok = true
       for (let i = 0; i < w; i++) {
         const src = rhs[i] as Bit
@@ -1096,8 +1393,9 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
         )
         continue
       }
-      const ast = env.get(r)
-      if (ast === undefined) continue
+      const raw = env.get(r)
+      if (raw === undefined) continue
+      const ast = bindCalls(raw, mod.functions)
       const bad = firstBad(ast)
       if (bad !== undefined) {
         warnings.push(`line ${blk.line}: register "${r}" not synthesized — ${bad}`)
@@ -1129,7 +1427,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       // Synthesize the next-state logic, then one flop per bit. Buffer a pure hold (D-net === Q-net) so the
       // flop's D and Q pins never land on the same net (which would short them).
       const dGates: GateInst[] = []
-      const D = synthAt(ast, w, { gates: dGates, fresh, widthOf, bitNet })
+      const D = synthAt(ast, w, synCtx(dGates))
       const newFlops: FlopInst[] = []
       let ok = true
       for (let i = 0; i < w; i++) {
@@ -1214,6 +1512,15 @@ function outOfRange(e: Expr, w: (n: string) => number): string | undefined {
         ? `memory read ${e.name}[${v}] is out of range on the ${e.depth}-word memory "${e.name}" —`
         : undefined
     }
+    case 'call': {
+      for (const a of e.args) {
+        const r = outOfRange(a, w)
+        if (r !== undefined) return r
+      }
+      return undefined
+    }
+    case 'sized':
+      return outOfRange(e.of, w)
     default:
       return undefined
   }
@@ -1549,11 +1856,19 @@ function elaborate(
   stmt: ProcStmt,
   env: Map<string, Expr>,
   written: Set<string>,
+  // Optional per-signal declared width — when a function body is inlined, each assignment to a width-declared
+  // local/return is wrapped in a `sized` wall so its truncation is EXACT (not lost to symbolic substitution).
+  // The always-block callers pass nothing, so their behavior is unchanged.
+  sizeOf?: (name: string) => number | undefined,
 ): Map<string, Expr> {
+  const store = (sig: string, expr: Expr): Expr => {
+    const wd = sizeOf?.(sig)
+    return wd !== undefined ? { t: 'sized', width: wd, of: expr } : expr
+  }
   switch (stmt.t) {
     case 'nb': {
       const e = new Map(env)
-      e.set(stmt.lhs, stmt.blocking ? substBlocking(stmt.rhs, env) : stmt.rhs)
+      e.set(stmt.lhs, store(stmt.lhs, stmt.blocking ? substBlocking(stmt.rhs, env) : stmt.rhs))
       written.add(stmt.lhs)
       return e
     }
@@ -1574,20 +1889,20 @@ function elaborate(
     }
     case 'seq': {
       let e = env
-      for (const s of stmt.body) e = elaborate(s, e, written)
+      for (const s of stmt.body) e = elaborate(s, e, written, sizeOf)
       return e
     }
     case 'if': {
       const wThen = new Set<string>()
       const wElse = new Set<string>()
-      const eThen = elaborate(stmt.conseq, env, wThen)
-      const eElse = stmt.els !== undefined ? elaborate(stmt.els, env, wElse) : env
+      const eThen = elaborate(stmt.conseq, env, wThen, sizeOf)
+      const eElse = stmt.els !== undefined ? elaborate(stmt.els, env, wElse, sizeOf) : env
       const merged = new Map(env)
       for (const sig of new Set([...wThen, ...wElse])) {
         const hold: Expr = env.get(sig) ?? { t: 'net', name: sig }
         const a = eThen.get(sig) ?? hold
         const b = eElse.get(sig) ?? hold
-        merged.set(sig, { t: 'tern', c: stmt.cond, a, b })
+        merged.set(sig, store(sig, { t: 'tern', c: stmt.cond, a, b }))
         written.add(sig)
       }
       return merged
