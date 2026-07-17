@@ -383,6 +383,249 @@ describe('circuit blocks (S19-v3-67)', () => {
   })
 })
 
+describe('hand-laid copper (traces + vias)', () => {
+  // serializeCircuit(nodes, edges, ambient, sheet, placements, userParts, chipLayout, traces, vias)
+  const save = (traces?: unknown[], vias?: unknown[]): ReturnType<typeof deserializeCircuit> =>
+    deserializeCircuit(
+      JSON.stringify(
+        serializeCircuit(
+          nodes,
+          edges,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          traces as never,
+          vias as never,
+        ),
+      ),
+    )
+  const trace = {
+    net: 'GND',
+    widthMm: 0.25,
+    layer: 'top',
+    points: [
+      { x: 0, y: 0 },
+      { x: 5, y: 0 },
+    ],
+  }
+  const bottomTrace = {
+    net: 'VCC',
+    widthMm: 0.4,
+    layer: 'bottom',
+    points: [
+      { x: 5, y: 0 },
+      { x: 5, y: 8 },
+      { x: 12, y: 8 },
+    ],
+  }
+  const via = { net: 'GND', at: { x: 5, y: 0 }, diameterMm: 0.6, drillMm: 0.4 }
+
+  test('round-trips hand-laid traces + vias exactly; omitted when there are none', () => {
+    const r = save([trace, bottomTrace], [via])
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.file.traces).toEqual([trace, bottomTrace])
+      expect(r.file.vias).toEqual([via])
+    }
+    // no hand copper → the fields are omitted (older files / a fully auto-routed board)
+    const none = deserializeCircuit(JSON.stringify(serializeCircuit(nodes, edges)))
+    expect(none.ok).toBe(true)
+    if (none.ok) {
+      expect(none.file.traces).toBeUndefined()
+      expect(none.file.vias).toBeUndefined()
+    }
+  })
+
+  test('drops malformed traces but keeps the good ones', () => {
+    const r = save([
+      trace, // good
+      {
+        net: 'X',
+        widthMm: Number.NaN,
+        layer: 'top',
+        points: [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+        ],
+      }, // NaN → null → dropped
+      {
+        net: 'X',
+        widthMm: 0,
+        layer: 'top',
+        points: [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+        ],
+      }, // zero width → dropped
+      {
+        net: 'X',
+        widthMm: 0.2,
+        layer: 'middle',
+        points: [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+        ],
+      }, // bad layer → dropped
+      { net: 'X', widthMm: 0.2, layer: 'top', points: [{ x: 0, y: 0 }] }, // <2 points → dropped
+      {
+        widthMm: 0.2,
+        layer: 'top',
+        points: [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+        ],
+      }, // no net → dropped
+      {
+        net: 'X',
+        widthMm: 0.2,
+        layer: 'top',
+        points: [
+          { x: 0, y: 0 },
+          { x: Number.NaN, y: 0 },
+        ],
+      }, // bad point → dropped
+    ])
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.file.traces).toEqual([trace])
+  })
+
+  test('drops malformed vias but keeps the good ones', () => {
+    const r = save(undefined, [
+      via, // good
+      { net: 'X', at: { x: 1, y: 2 }, diameterMm: 0.6, drillMm: Number.NaN }, // NaN drill → dropped
+      { net: 'X', at: { x: 1, y: 2 }, diameterMm: 0, drillMm: 0.4 }, // zero diameter → dropped
+      { net: 'X', diameterMm: 0.6, drillMm: 0.4 }, // no point → dropped
+      { at: { x: 1, y: 2 }, diameterMm: 0.6, drillMm: 0.4 }, // no net → dropped
+    ])
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.file.vias).toEqual([via])
+  })
+
+  test('a traces / vias field that is not an array is dropped, not a reason to reject the circuit', () => {
+    const file = { ...serializeCircuit(nodes, edges), traces: 'nonsense', vias: 42 }
+    const r = deserializeCircuit(JSON.stringify(file))
+    expect(r.ok).toBe(true) // still loads
+    if (r.ok) {
+      expect(r.file.traces).toBeUndefined()
+      expect(r.file.vias).toBeUndefined()
+    }
+  })
+})
+
+describe('board stack-up (persisted so a 4-/6-layer board reopens as itself)', () => {
+  const stackOf = (stackup: unknown): ReturnType<typeof deserializeCircuit> =>
+    deserializeCircuit(
+      JSON.stringify(
+        serializeCircuit(
+          nodes,
+          edges,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          stackup as never,
+        ),
+      ),
+    )
+
+  test('round-trips a non-default stack-up (4-layer, 2.0 mm, 2 oz, ENIG); omitted when default', () => {
+    const stackup = {
+      thicknessMm: 2.0,
+      copperWeight: 'two_oz',
+      surfaceFinish: 'enig',
+      copperLayers: 4,
+    }
+    const r = stackOf(stackup)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.file.stackup).toEqual(stackup)
+    // the shipped 2-layer default is NOT written (older files / an untouched board read undefined)
+    const def = stackOf({
+      thicknessMm: 1.6,
+      copperWeight: 'one_oz',
+      surfaceFinish: 'hasl',
+      copperLayers: 2,
+    })
+    expect(def.ok).toBe(true)
+    if (def.ok) expect(def.file.stackup).toBeUndefined()
+  })
+
+  test('a malformed stack-up field falls back to the default, keeping the good ones', () => {
+    const file = {
+      ...serializeCircuit(nodes, edges),
+      stackup: {
+        thicknessMm: 'thick', // → default 1.6
+        copperWeight: 'two_oz', // valid → kept
+        surfaceFinish: 'chrome', // → default hasl
+        copperLayers: 4, // valid → kept
+      },
+    }
+    const r = deserializeCircuit(JSON.stringify(file))
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.file.stackup).toEqual({
+        thicknessMm: 1.6,
+        copperWeight: 'two_oz',
+        surfaceFinish: 'hasl',
+        copperLayers: 4,
+      })
+    }
+  })
+
+  test('a stackup that is not an object is dropped, not a reason to reject the circuit', () => {
+    const file = { ...serializeCircuit(nodes, edges), stackup: 'nonsense' }
+    const r = deserializeCircuit(JSON.stringify(file))
+    expect(r.ok).toBe(true) // still loads
+    if (r.ok) expect(r.file.stackup).toBeUndefined()
+  })
+
+  test('a 4-layer board with inner-layer hand copper round-trips BOTH the stack-up and the trace', () => {
+    // The review-caught orphaning: persisting a layer-tagged trace WITHOUT its layer count would restore
+    // the inner1 trace onto a board silently reverted to 2 layers, where it counts as routed but ships in
+    // no Gerber (a silently-wrong ZIP). Persisting the stack-up keeps the board 4-layer, so inner1 exists.
+    const stackup = {
+      thicknessMm: 1.6,
+      copperWeight: 'one_oz',
+      surfaceFinish: 'hasl',
+      copperLayers: 4,
+    }
+    const inner = {
+      net: 'GND',
+      widthMm: 0.25,
+      layer: 'inner1',
+      points: [
+        { x: 0, y: 0 },
+        { x: 4, y: 0 },
+      ],
+    }
+    const r = deserializeCircuit(
+      JSON.stringify(
+        serializeCircuit(
+          nodes,
+          edges,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          [inner] as never,
+          undefined,
+          stackup as never,
+        ),
+      ),
+    )
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.file.stackup?.copperLayers).toBe(4) // the board reopens as 4-layer…
+      expect(r.file.traces).toEqual([inner]) // …so its inner1 trace has a layer to live on
+    }
+  })
+})
+
 describe('maxIdSuffix', () => {
   test('the drop counter resumes above loaded ids', () => {
     expect(maxIdSuffix([{ id: 'resistor_7' }, { id: 'led_12' }, { id: 'ground_001' }])).toBe(12)

@@ -1,6 +1,8 @@
 import type { BlockData } from './blocks.ts'
 import { type ChipLayout, isEmptyChipLayout, sanitizeChipLayout } from './chip-layout.ts'
 import type { Parameters } from './part-defaults.ts'
+import { type CopperTrace, sanitizeCopper, type Via } from './pcb-route.ts'
+import { isDefaultStackupOptions, type StackupOptions, sanitizeStackup } from './pcb-stackup.ts'
 import type { SheetSettings } from './sheet-frame.tsx'
 import { validateUserPart } from './user-part-validate.ts'
 import type { UserPart } from './user-parts.ts'
@@ -81,6 +83,17 @@ export type CircuitFile = {
   /** User-authored custom parts used by this project, so the file is self-contained + portable; absent
    *  ⇒ none (older files). Validated on load by user-part-validate.ts (mirrors user-part.schema.json). */
   userParts?: UserPart[]
+  /** The board stack-up the user chose — copper-layer count, thickness, copper weight, surface finish;
+   *  absent ⇒ the shipped 2-layer default (older files). Saved so a 4-/6-layer board reopens as itself
+   *  (not silently reverted to 2-layer) AND so hand-laid copper on an inner layer keeps a layer to live
+   *  on. Sanitized on load by sanitizeStackup. */
+  stackup?: StackupOptions
+  /** Hand-laid copper the user drew on the board — traces + plated vias; absent ⇒ none (older files),
+   *  so the board loads with only the auto-router's copper. Saved so hand-routing survives a reload
+   *  (the auto-route itself is recomputed from placements, per the no-derived-data rule). Sanitized on
+   *  load by sanitizeCopper. */
+  traces?: CopperTrace[]
+  vias?: Via[]
   nodes: SavedNode[]
   wires: SavedWire[]
 }
@@ -184,6 +197,9 @@ export function serializeCircuit(
   placements?: readonly SavedPlacement[],
   userParts?: readonly UserPart[],
   chipLayout?: ChipLayout,
+  userTraces?: readonly CopperTrace[],
+  userVias?: readonly Via[],
+  stackup?: StackupOptions,
 ): CircuitFile {
   // Save only the user parts THIS circuit references (not the whole session registry, which is shared
   // across open tabs) — so the file is self-contained + portable without leaking unrelated parts.
@@ -201,6 +217,9 @@ export function serializeCircuit(
     ...(placements && placements.length > 0 ? { placements: [...placements] } : {}),
     ...(referencedUserParts.length > 0 ? { userParts: referencedUserParts } : {}),
     ...(chipLayout && !isEmptyChipLayout(chipLayout) ? { chipLayout } : {}),
+    ...(stackup && !isDefaultStackupOptions(stackup) ? { stackup } : {}),
+    ...(userTraces && userTraces.length > 0 ? { traces: [...userTraces] } : {}),
+    ...(userVias && userVias.length > 0 ? { vias: [...userVias] } : {}),
     nodes: nodes.map((n) => {
       const parameters = persistableParameters(n.data.parameters)
       return {
@@ -289,7 +308,17 @@ export function deserializeCircuit(text: string): DeserializeResult {
   // projectAmbientC drives the solve temperature; if present it must be a finite number.
   // A malformed one is DROPPED — not a reason to reject the whole circuit — so the returned
   // type is honest (a number or absent) and the loader falls back to the 25 °C default.
-  const { projectAmbientC, sheet, placements, userParts, chipLayout, ...rest } = file
+  const {
+    projectAmbientC,
+    sheet,
+    placements,
+    userParts,
+    chipLayout,
+    stackup,
+    traces,
+    vias,
+    ...rest
+  } = file
   const base = rest as CircuitFile
   const ambientOk = typeof projectAmbientC === 'number' && Number.isFinite(projectAmbientC)
   // A malformed sheet (not an object) is dropped, not a reason to reject the circuit; the loader
@@ -319,6 +348,12 @@ export function deserializeCircuit(text: string): DeserializeResult {
   // Chip layout: a malformed layer (or malformed overrides inside it) is dropped, not a reason to reject
   // the circuit — the chip level just re-generates its floorplan fresh, exactly like an older file.
   const cleanChipLayout = sanitizeChipLayout(chipLayout)
+  // Hand-laid copper: keep only well-formed traces + vias; a malformed one is dropped, not a reason to
+  // reject the circuit — that copper just doesn't come back (the auto-router still routes the rest).
+  const cleanCopper = sanitizeCopper(traces, vias)
+  // Board stack-up: a bad field falls to the shipped default rather than rejecting the circuit; a
+  // non-object is dropped entirely (the board loads on the 2-layer default, exactly like an older file).
+  const cleanStackup = sanitizeStackup(stackup)
   return {
     ok: true,
     file: {
@@ -328,6 +363,9 @@ export function deserializeCircuit(text: string): DeserializeResult {
       ...(cleanPlacements.length > 0 ? { placements: cleanPlacements } : {}),
       ...(cleanUserParts.length > 0 ? { userParts: cleanUserParts } : {}),
       ...(cleanChipLayout ? { chipLayout: cleanChipLayout } : {}),
+      ...(cleanStackup ? { stackup: cleanStackup } : {}),
+      ...(cleanCopper.traces.length > 0 ? { traces: cleanCopper.traces } : {}),
+      ...(cleanCopper.vias.length > 0 ? { vias: cleanCopper.vias } : {}),
     },
   }
 }

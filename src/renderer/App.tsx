@@ -171,6 +171,7 @@ import {
   type CopperTrace,
   DEFAULT_ROUTE_CLASS,
   mergeUserCopper,
+  routableCopperLayers,
   routeBoard,
   type Via,
 } from './pcb-route.ts'
@@ -1268,6 +1269,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         placementsToSaved(pcbPlacementsRef.current),
         allUserParts(),
         chipLayoutRef.current,
+        userTracesRef.current,
+        userViasRef.current,
+        pcbStackupOptionsRef.current,
       )
       void bridge.saveCircuitData(JSON.stringify(file, null, 2)).then((r) => {
         // A successful save lands the project in the "My Projects" list (by its file path).
@@ -1382,6 +1386,14 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       // Restore THIS file's chip floorplan layer (replacing the previous canvas's); older files with none
       // load with an empty layout, so the chip level re-generates its floorplan fresh from the design.
       setChipLayout(result.file.chipLayout ?? EMPTY_CHIP_LAYOUT)
+      // Restore THIS file's board stack-up (copper-layer count, thickness, weight, finish) — older files
+      // with none load on the 2-layer default. Set BEFORE the copper below so the restored inner-layer
+      // hand copper lands on a board that actually has those layers (the review-caught orphaning).
+      setPcbStackupOptions(result.file.stackup ?? DEFAULT_STACKUP_OPTIONS)
+      // Restore THIS file's hand-laid copper (replacing the previous canvas's — sanitized already by
+      // deserializeCircuit); older files with none load with only auto-routed copper.
+      setUserTraces(result.file.traces ?? [])
+      setUserVias(result.file.vias ?? [])
       setChipFloorplan(null) // re-generate the floorplan for the loaded design on next chip entry
       dropCount.current = maxIdSuffix(result.file.nodes)
       window.setTimeout(() => fitView({ padding: 0.15 }), 80)
@@ -1411,6 +1423,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       setEdges(flow.edges)
       setPcbPlacements(new Map()) // imported netlists start from their own auto board
       setChipLayout(EMPTY_CHIP_LAYOUT) // …and a fresh chip floorplan
+      setUserTraces([]) // …and no hand-laid copper (only what the auto-router lays)
+      setUserVias([])
+      setPcbStackupOptions(DEFAULT_STACKUP_OPTIONS) // …on the default 2-layer stack-up
       setChipFloorplan(null)
       dropCount.current = maxIdSuffix(circuit.nodes)
       window.setTimeout(() => fitView({ padding: 0.15 }), 80)
@@ -1764,6 +1779,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // a part drag (which re-runs the router) never wipes it; merged back in via pcbMergedRouting below.
   const [userTraces, setUserTraces] = useState<CopperTrace[]>([])
   const [userVias, setUserVias] = useState<Via[]>([])
+  // Live handles so the Save handler (registered above, before this declaration) reads the current
+  // hand-laid copper without re-registering on every trace/via — same pattern as pcbPlacementsRef.
+  const userTracesRef = useRef(userTraces)
+  userTracesRef.current = userTraces
+  const userViasRef = useRef(userVias)
+  userViasRef.current = userVias
   // The board-editing tool + the route being laid (click a pad → corners → a pad, like the wire tool).
   const [boardTool, setBoardTool] = useState<'select' | 'route' | 'via' | 'measure'>('select')
   const [pendingRoute, setPendingRoute] = useState<{
@@ -1846,6 +1867,11 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // Declared here (ahead of routing) because the router needs the copper-layer count.
   const [pcbStackupOptions, setPcbStackupOptions] =
     useState<StackupOptions>(DEFAULT_STACKUP_OPTIONS)
+  // A live handle for the Save handler (registered earlier) so a saved file carries the board's real
+  // stack-up — the copper-layer count in particular, so hand-laid inner-layer copper keeps a layer to
+  // live on across a reload (else it would be orphaned onto a reverted 2-layer board).
+  const pcbStackupOptionsRef = useRef(pcbStackupOptions)
+  pcbStackupOptionsRef.current = pcbStackupOptions
   const pcbStackup = useMemo(() => buildStackup(pcbStackupOptions), [pcbStackupOptions])
   // The ratsnest: the unrouted pad-to-pad connections the board owes, read from the SAME
   // canvas→world nets the solver uses (grounds + named rails merge exactly like they solve).
@@ -1868,10 +1894,18 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   )
   // The auto-router's copper unioned with the user's hand-drawn traces/vias — the SINGLE routing every
   // downstream reader uses (views, DRC, export). Merging also recomputes the owed list, so hand-routing
-  // a connection the auto-router couldn't take marks it done and lets the board export.
+  // a connection the auto-router couldn't take marks it done and lets the board export. The board's
+  // actual copper layers gate the hand copper: a trace on a layer the stack-up no longer has (an inner
+  // trace after reducing the layer count) ships in no Gerber, so it must NOT count as routed here.
   const pcbMergedRouting = useMemo(
-    () => mergeUserCopper(pcbRouting, userTraces, userVias),
-    [pcbRouting, userTraces, userVias],
+    () =>
+      mergeUserCopper(
+        pcbRouting,
+        userTraces,
+        userVias,
+        new Set(routableCopperLayers(pcbStackup.copperLayers)),
+      ),
+    [pcbRouting, userTraces, userVias, pcbStackup.copperLayers],
   )
   // Controlled impedance of a default-width outer trace on this stack-up (IPC-2141A microstrip), plus
   // the width that would hit 50 Ω — a live readout as the stack-up knobs change.

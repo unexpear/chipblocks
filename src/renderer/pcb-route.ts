@@ -160,6 +160,59 @@ export type BoardRouting = {
 }
 
 /**
+ * Validate hand-drawn copper loaded from a `.chipblocks` file (the twin of sanitizeChipLayout /
+ * the placements filter): keep only well-formed traces + vias, drop the rest. A malformed entry is
+ * NOT a reason to reject the whole file — that trace/via just doesn't come back, exactly like a bad
+ * placement falls back to its auto spot. A trace needs a net, a positive width, a real copper layer,
+ * and at least two finite points (a 1-point trace draws nothing); a via needs a net, a finite point,
+ * and positive drill + diameter. Untrusted input is `unknown` — this is the trust boundary.
+ */
+export function sanitizeCopper(
+  traces: unknown,
+  vias: unknown,
+): { traces: CopperTrace[]; vias: Via[] } {
+  const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+  const point = (p: unknown): p is Pt => {
+    const q = p as Record<string, unknown> | null
+    return q !== null && typeof q === 'object' && finite(q.x) && finite(q.y)
+  }
+  const layers = new Set<string>(ALL_COPPER_LAYERS)
+  const cleanTraces = Array.isArray(traces)
+    ? (traces as unknown[]).filter((t): t is CopperTrace => {
+        const q = t as Record<string, unknown> | null
+        return (
+          q !== null &&
+          typeof q === 'object' &&
+          typeof q.net === 'string' &&
+          finite(q.widthMm) &&
+          q.widthMm > 0 &&
+          typeof q.layer === 'string' &&
+          layers.has(q.layer) &&
+          Array.isArray(q.points) &&
+          q.points.length >= 2 &&
+          (q.points as unknown[]).every(point)
+        )
+      })
+    : []
+  const cleanVias = Array.isArray(vias)
+    ? (vias as unknown[]).filter((v): v is Via => {
+        const q = v as Record<string, unknown> | null
+        return (
+          q !== null &&
+          typeof q === 'object' &&
+          typeof q.net === 'string' &&
+          point(q.at) &&
+          finite(q.diameterMm) &&
+          q.diameterMm > 0 &&
+          finite(q.drillMm) &&
+          q.drillMm > 0
+        )
+      })
+    : []
+  return { traces: cleanTraces, vias: cleanVias }
+}
+
+/**
  * Merge the user's HAND-DRAWN copper into the auto-router's output, and RECOMPUTE which airwires are
  * still owed. Hand-drawn traces + vias are the exact same types the whole pipeline reads (the 3-D/2-D
  * views, DRC, and the Gerber/Excellon writers), so once they're in these arrays the copper is real end
@@ -167,14 +220,25 @@ export type BoardRouting = {
  * auto-routed copper. The keystone is `unrouted`: an airwire the auto-router couldn't take is dropped
  * from the owed list once the user's copper physically joins its two pads — otherwise a fully
  * hand-routed board would never satisfy the export gate (which refuses to ship an unrouted board).
+ *
+ * `validLayers` (the board's actual copper layers) guards a hand trace tagged with a layer the board no
+ * longer has — e.g. an inner-layer trace after the stack-up was reduced to fewer layers. Such copper
+ * ships in NO Gerber (the export only writes the layers the stack-up declares), so counting it as
+ * routed would let a physically-open net export as "fully routed" — a silently-wrong manufacturing ZIP.
+ * Those traces are dropped from the merge (they stay in the user's saved state, so restoring the layer
+ * count brings them back). Vias span every layer, so they always apply. Omit `validLayers` and nothing
+ * is filtered (the older single-board-config callers + tests).
  */
 export function mergeUserCopper(
   auto: BoardRouting,
   userTraces: CopperTrace[],
   userVias: Via[],
+  validLayers?: ReadonlySet<CopperLayer>,
 ): BoardRouting {
-  if (userTraces.length === 0 && userVias.length === 0) return auto
-  const traces = [...auto.traces, ...userTraces]
+  const keptTraces =
+    validLayers === undefined ? userTraces : userTraces.filter((t) => validLayers.has(t.layer))
+  if (keptTraces.length === 0 && userVias.length === 0) return auto
+  const traces = [...auto.traces, ...keptTraces]
   const vias = [...auto.vias, ...userVias]
   const unrouted = auto.unrouted.filter((aw) => !copperConnects(aw.from, aw.to, traces, vias))
   return { traces, vias, unrouted }

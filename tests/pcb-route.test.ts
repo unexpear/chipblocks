@@ -19,6 +19,7 @@ import {
   DEFAULT_ROUTE_CLASS,
   gridRouteMultiLayer,
   gridRouteTwoLayer,
+  mergeUserCopper,
   routableCopperLayers,
   routeBoard,
   twoLayerConnects,
@@ -695,5 +696,43 @@ describe('the 4-layer auto-router — gridRouteMultiLayer across inner copper', 
     expect(copperConnects({ x: 0, y: 0 }, { x: 10, y: 0 }, sig, vias)).toBe(true)
     // every emitted trace sits on a layer that a 4-layer board actually has
     for (const t of routing.traces) expect(routableCopperLayers(4)).toContain(t.layer)
+  })
+})
+
+describe('mergeUserCopper — hand copper on a layer the board does not have is not counted routed', () => {
+  // The manufacturing-safety invariant (review-caught): a hand trace tagged with a layer the stack-up no
+  // longer has (an inner trace after reducing the layer count) ships in NO Gerber, so it must not mark
+  // its net routed — otherwise a physically-open board exports as "fully routed". Filtered at the merge.
+  const auto = {
+    traces: [],
+    vias: [],
+    unrouted: [{ net: 'GND', from: { x: 0, y: 0 }, to: { x: 5, y: 0 } }],
+  }
+  const innerTrace = {
+    net: 'GND',
+    widthMm: 0.25,
+    layer: 'inner1' as const,
+    points: [
+      { x: 0, y: 0 },
+      { x: 5, y: 0 },
+    ],
+  }
+
+  test('an inner1 trace on a 2-layer board is dropped → the airwire stays unrouted', () => {
+    const merged = mergeUserCopper(auto, [innerTrace], [], new Set(routableCopperLayers(2)))
+    expect(merged.traces).toHaveLength(0) // the inner trace is not merged in
+    expect(merged.unrouted).toHaveLength(1) // …so the net is honestly still owed → export blocked
+  })
+
+  test('the SAME trace on a 4-layer board is kept → the airwire is routed', () => {
+    const merged = mergeUserCopper(auto, [innerTrace], [], new Set(routableCopperLayers(4)))
+    expect(merged.traces).toHaveLength(1)
+    expect(merged.unrouted).toHaveLength(0)
+  })
+
+  test('without validLayers nothing is filtered (older single-config callers unchanged)', () => {
+    const merged = mergeUserCopper(auto, [innerTrace], [])
+    expect(merged.traces).toHaveLength(1)
+    expect(merged.unrouted).toHaveLength(0)
   })
 })

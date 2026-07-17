@@ -307,6 +307,46 @@ export const DEFAULT_STACKUP_OPTIONS: StackupOptions = {
   copperLayers: 2,
 }
 
+/** True when the board is still on the shipped default stack-up (so the circuit file can omit it, the
+ *  way it omits the default ambient / an empty chip layout). */
+export function isDefaultStackupOptions(o: StackupOptions): boolean {
+  return (
+    o.thicknessMm === DEFAULT_STACKUP_OPTIONS.thicknessMm &&
+    o.copperWeight === DEFAULT_STACKUP_OPTIONS.copperWeight &&
+    o.surfaceFinish === DEFAULT_STACKUP_OPTIONS.surfaceFinish &&
+    (o.copperLayers ?? 2) === (DEFAULT_STACKUP_OPTIONS.copperLayers ?? 2)
+  )
+}
+
+/**
+ * Validate a board stack-up loaded from a `.chipblocks` file (the twin of sanitizeChipLayout /
+ * sanitizeCopper). The stack-up is UNTRUSTED file data; each field falls back to the shipped default if
+ * it is missing or invalid, so a partial/old/garbage stack-up still loads onto a sane board rather than
+ * rejecting the whole circuit. Returns undefined only when the value is not an object at all. Persisting
+ * this is load-bearing: hand-laid copper is tagged with a copper LAYER, so the board's layer count must
+ * survive a reload too, or an inner-layer trace would be orphaned onto a reverted 2-layer board.
+ */
+export function sanitizeStackup(options: unknown): StackupOptions | undefined {
+  if (typeof options !== 'object' || options === null) return undefined
+  const o = options as Record<string, unknown>
+  const def = DEFAULT_STACKUP_OPTIONS
+  const thicknessMm =
+    typeof o.thicknessMm === 'number' && Number.isFinite(o.thicknessMm) && o.thicknessMm > 0
+      ? o.thicknessMm
+      : def.thicknessMm
+  const copperWeight =
+    o.copperWeight === 'half_oz' || o.copperWeight === 'one_oz' || o.copperWeight === 'two_oz'
+      ? o.copperWeight
+      : def.copperWeight
+  const surfaceFinish =
+    typeof o.surfaceFinish === 'string' && Object.hasOwn(SURFACE_FINISHES, o.surfaceFinish)
+      ? (o.surfaceFinish as SurfaceFinishId)
+      : def.surfaceFinish
+  const copperLayers =
+    o.copperLayers === 2 || o.copperLayers === 4 || o.copperLayers === 6 ? o.copperLayers : 2
+  return { thicknessMm, copperWeight, surfaceFinish, copperLayers }
+}
+
 /**
  * Build an FR4 stack-up from the editable knobs (finished thickness, copper weight, surface finish,
  * copper-layer count). 2-layer is the standard KiCad build — solder mask / copper / FR4 core / copper

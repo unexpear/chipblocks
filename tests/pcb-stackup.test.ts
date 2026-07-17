@@ -20,6 +20,7 @@ import {
   microstripImpedanceOhms,
   STANDARD_BOARD_THICKNESSES_MM,
   SURFACE_FINISHES,
+  sanitizeStackup,
   striplineImpedanceOhms,
   traceAmpacity,
   traceImpedance,
@@ -30,6 +31,47 @@ import {
   viaAmpacity,
   widthForImpedance,
 } from '../src/renderer/pcb-stackup.ts'
+
+describe('sanitizeStackup — an untrusted stack-up loaded from a file', () => {
+  const DEF = { thicknessMm: 1.6, copperWeight: 'one_oz', surfaceFinish: 'hasl', copperLayers: 2 }
+  test('valid options round-trip untouched', () => {
+    const good = {
+      thicknessMm: 2.0,
+      copperWeight: 'two_oz',
+      surfaceFinish: 'enig',
+      copperLayers: 4,
+    }
+    expect(sanitizeStackup(good)).toEqual(good)
+  })
+  test('each invalid field falls back to the shipped default', () => {
+    expect(
+      sanitizeStackup({
+        thicknessMm: -1,
+        copperWeight: 'gold',
+        surfaceFinish: 'chrome',
+        copperLayers: 7,
+      }),
+    ).toEqual(DEF)
+  })
+  test('a non-object is dropped (undefined), not coerced', () => {
+    expect(sanitizeStackup('nonsense')).toBeUndefined()
+    expect(sanitizeStackup(null)).toBeUndefined()
+    expect(sanitizeStackup(42)).toBeUndefined()
+  })
+  test('an Object.prototype member name is NOT accepted as a surface finish (the `in` trap)', () => {
+    // 'constructor' / '__proto__' / 'toString' are INHERITED members: a naive `in SURFACE_FINISHES`
+    // check passes them, then SURFACE_FINISHES['constructor'] is the Object constructor (not a finish)
+    // and the fab-spec export crashes reading finish.provenance. They must fall back to the default.
+    for (const bad of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf']) {
+      const s = sanitizeStackup({ ...DEF, surfaceFinish: bad })
+      expect(s?.surfaceFinish).toBe('hasl')
+      // and the fallback is a REAL finish the export can read
+      expect(SURFACE_FINISHES[s?.surfaceFinish ?? 'hasl'].provenance.title.length).toBeGreaterThan(
+        0,
+      )
+    }
+  })
+})
 
 describe('copper weight → thickness (the trade unit)', () => {
   test('1 oz/ft² is the standard 35 µm; the others scale linearly', () => {
