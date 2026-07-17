@@ -6724,6 +6724,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             nodes={nodes as unknown as BlockNodeLike[]}
             edges={edges as unknown as BlockEdgeLike[]}
             timing={chipTiming}
+            overrides={chipLayout.overrides}
+            lens={chipLayout.lens ?? 'module'}
+            onLens={(mode) => setChipLayout((current) => ({ ...current, lens: mode }))}
             light={light}
           />
         )}

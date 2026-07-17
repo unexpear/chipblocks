@@ -13,7 +13,9 @@ import { type ReactNode, useMemo } from 'react'
 import type { TimingReport } from '../static-timing.ts'
 import { type CanvasEdgeLike, type CanvasNodeLike, flattenBlocks } from './blocks.ts'
 import { type CellGeometry, designCellArea, PROCESS, standardCells } from './cell-layout.ts'
-import { type Floorplan, placeCells } from './cell-place.ts'
+import { placeCells } from './cell-place.ts'
+import { ChipCanvas } from './chip-canvas.tsx'
+import type { ChipCellOverride, ChipLensMode } from './chip-layout.ts'
 import { ANNOTATION_DEFINITIONS } from './part-defaults.ts'
 import { THEME } from './theme.ts'
 import { TimingPanel } from './timing-panel.tsx'
@@ -218,153 +220,6 @@ function CellCard({ cell }: { cell: CellGeometry }) {
   )
 }
 
-/** False-colour per gate type, so the placed die reads as regions of like cells — a die-shot look.
- *  Fixed hues (not theme tokens) so the same gate is the same colour in light and dark. */
-const CELL_COLOR: Record<string, string> = {
-  NOT: '#5b8def',
-  Buffer: '#6fb1fc',
-  NAND: '#f2a541',
-  NOR: '#e5714f',
-  AND: '#3fb27f',
-  OR: '#67c99a',
-  XOR: '#b07fd6',
-  XNOR: '#8f6fd0',
-}
-const cellColor = (name: string): string => CELL_COLOR[name] ?? '#8a8f98'
-
-// Above this many cells we draw one rectangle per ROW instead of per cell, so the SVG element count
-// stays bounded (~row count, a few hundred at most) no matter how large the design — at the fit scale a
-// huge die's cells are sub-pixel anyway, so the row bands read the same. Verified fine per-cell at ~6.2k.
-const CELL_RENDER_CAP = 12000
-
-/** The placed floorplan drawn to scale — the design's gate cells packed into shared-rail rows, each a
- *  real λ-sized rectangle at a real position, fit into the pane. The first thing you can SEE laid out. */
-function FloorplanView({ plan, light }: { plan: Floorplan; light: boolean }) {
-  const maxW = 720
-  const maxH = 440
-  const scale = Math.min(maxW / plan.dieWidthLambda, maxH / plan.dieHeightLambda)
-  const w = plan.dieWidthLambda * scale
-  const h = plan.dieHeightLambda * scale
-  const present = [...new Set(plan.cells.map((c) => c.name))].sort()
-  // Per-cell tooltips are cheap in the dozens but bloat the DOM in the thousands — only for small designs.
-  const showTitles = plan.cells.length <= 1500
-  // Very large designs draw as row bands (one rect per row) to keep the element count bounded.
-  const perCell = plan.cells.length <= CELL_RENDER_CAP
-  const rowBands = useMemo(() => {
-    if (perCell) return []
-    const widthByRow = new Map<number, number>()
-    for (const c of plan.cells) {
-      const right = c.x + c.w
-      if (right > (widthByRow.get(c.row) ?? 0)) widthByRow.set(c.row, right)
-    }
-    return [...widthByRow.entries()].map(([row, width]) => ({ row, width }))
-  }, [plan, perCell])
-  return (
-    <div>
-      <div
-        style={{
-          fontSize: 14,
-          color: THEME.textBright,
-          fontWeight: 620,
-          fontVariantNumeric: 'tabular-nums',
-        }}
-      >
-        {plan.cells.length.toLocaleString()} cells placed in {plan.rows.toLocaleString()} rows · die
-        ≈ {plan.dieWidthUm.toFixed(0)} × {plan.dieHeightUm.toFixed(0)} µm ·{' '}
-        {(plan.utilization * 100).toFixed(0)}% cell utilization
-      </div>
-      <div style={{ fontSize: 12, color: THEME.textFaint, margin: '4px 0 12px', lineHeight: 1.6 }}>
-        Placement only — the gate cells packed into shared-rail rows (in flatten order). Wiring
-        (routing) and the design-rule check are the next silicon layers.
-        {perCell ? '' : ' Too many cells to draw individually — showing the placed rows as bands.'}
-      </div>
-      <div
-        style={{
-          display: 'inline-block',
-          border: `1px solid ${THEME.borderSubtle}`,
-          borderRadius: 8,
-          background: THEME.surfaceInput,
-          padding: 10,
-          maxWidth: '100%',
-          overflow: 'auto',
-        }}
-      >
-        <svg
-          width={w}
-          height={h}
-          viewBox={`0 0 ${plan.dieWidthLambda} ${plan.dieHeightLambda}`}
-          style={{ display: 'block' }}
-          role="img"
-          aria-label={`Chip floorplan: ${plan.cells.length} standard cells in ${plan.rows} rows`}
-        >
-          <rect
-            x={0}
-            y={0}
-            width={plan.dieWidthLambda}
-            height={plan.dieHeightLambda}
-            fill={THEME.surfaceBase}
-            stroke={light ? THEME.borderStrong : THEME.textSoft}
-            strokeWidth={1.5}
-            vectorEffect="non-scaling-stroke"
-          />
-          {perCell
-            ? plan.cells.map((c) => (
-                <rect
-                  key={c.id}
-                  x={c.x}
-                  y={c.y}
-                  width={c.w}
-                  height={c.h}
-                  fill={cellColor(c.name)}
-                  opacity={0.9}
-                >
-                  {showTitles ? (
-                    <title>{`${c.name} — ${(c.w * PROCESS.lambdaUm).toFixed(1)} × ${(c.h * PROCESS.lambdaUm).toFixed(0)} µm`}</title>
-                  ) : null}
-                </rect>
-              ))
-            : rowBands.map((b) => (
-                <rect
-                  key={b.row}
-                  x={0}
-                  y={b.row * PROCESS.rowHeight.lambda}
-                  width={b.width}
-                  height={PROCESS.rowHeight.lambda}
-                  fill={cellColor('AND')}
-                  opacity={0.85}
-                />
-              ))}
-        </svg>
-      </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 12 }}>
-        {(perCell ? present : []).map((name) => (
-          <span
-            key={name}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              fontSize: 12,
-              color: THEME.textSoft,
-            }}
-          >
-            <span
-              style={{
-                width: 12,
-                height: 12,
-                borderRadius: 3,
-                background: cellColor(name),
-                display: 'inline-block',
-              }}
-            />
-            {name}
-          </span>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 /** The static-timing result the app already computes (max clock speed, critical path, slack) — the
  *  Chip level's sign-off. `hasRegisters` is whether the design has a clocked element to sign off. */
 export type ChipTiming = { report: TimingReport; hasRegisters: boolean; clockDetected: boolean }
@@ -375,11 +230,18 @@ export function ChipView({
   nodes,
   edges,
   timing,
+  overrides,
+  lens,
+  onLens,
   light,
 }: {
   nodes: CanvasNodeLike[]
   edges: CanvasEdgeLike[]
   timing: ChipTiming
+  /** The persisted chip-layout layer's cell overrides + colouring lens (from App's chipLayout). */
+  overrides: ChipCellOverride[]
+  lens: ChipLensMode
+  onLens: (mode: ChipLensMode) => void
   light: boolean
 }) {
   const chip = useMemo(() => deriveChip(nodes, edges), [nodes, edges])
@@ -469,7 +331,13 @@ export function ChipView({
             {floorplan.cells.length > 0 && (
               <div style={{ marginBottom: 26 }}>
                 <SectionLabel>Floorplan (placed cells)</SectionLabel>
-                <FloorplanView plan={floorplan} light={light} />
+                <ChipCanvas
+                  plan={floorplan}
+                  overrides={overrides}
+                  lens={lens}
+                  onLens={onLens}
+                  light={light}
+                />
               </div>
             )}
             <div style={{ fontSize: 14, color: THEME.textSoft, marginBottom: 18, lineHeight: 1.6 }}>
