@@ -1,14 +1,15 @@
 /**
  * The Gerber Job File (.gbrjob). Jobs: it's valid JSON with the five sections a fab reads (Header,
  * GeneralSpecs, DesignRules, FilesAttributes, MaterialStackup); the general specs match the board
- * (layer count, finished thickness, finish); the FilesAttributes carry the JOB-FILE FileFunction
- * spelling (SolderMask / SolderPaste / Profile — distinct from the Gerber attribute spelling); the
- * material stack runs top → bottom; and the same board always yields the same manifest (deterministic).
+ * (layer count, finished thickness, finish); the FilesAttributes carry the SAME canonical FileFunction
+ * the sibling Gerbers embed (Soldermask / Paste / Profile,NP); the material stack lists only fabricated
+ * layers top → bottom (no solder paste); the finish is the spec's HASL spelling; the project GUID is a
+ * valid RFC-4122 v5 UUID; and the same board always yields the same manifest (deterministic).
  * Structure ground-truthed against KiCad 10.0.4's own kicad-cli output.
  */
 import { describe, expect, test } from 'vitest'
 import { deriveBoard } from '../src/renderer/pcb-board.ts'
-import { type GbrjobFileAttr, gerberJobFile } from '../src/renderer/pcb-gbrjob.ts'
+import { type GbrjobFileAttr, gerberJobFile, sha1Bytes } from '../src/renderer/pcb-gbrjob.ts'
 import { DEFAULT_ROUTE_CLASS } from '../src/renderer/pcb-route.ts'
 import { buildStackup, defaultStackup } from '../src/renderer/pcb-stackup.ts'
 
@@ -20,8 +21,8 @@ const board = deriveBoard([
 const files2: GbrjobFileAttr[] = [
   { path: 'board-F_Cu.gtl', function: 'Copper,L1,Top', polarity: 'Positive' },
   { path: 'board-B_Cu.gbl', function: 'Copper,L2,Bot', polarity: 'Positive' },
-  { path: 'board-F_Mask.gts', function: 'SolderMask,Top', polarity: 'Negative' },
-  { path: 'board-Edge_Cuts.gm1', function: 'Profile', polarity: 'Positive' },
+  { path: 'board-F_Mask.gts', function: 'Soldermask,Top', polarity: 'Negative' },
+  { path: 'board-Edge_Cuts.gm1', function: 'Profile,NP', polarity: 'Positive' },
 ]
 
 // biome-ignore lint/suspicious/noExplicitAny: parsing an arbitrary JSON structure for assertions
@@ -48,10 +49,13 @@ describe('gerberJobFile', () => {
     const job = parse()
     expect(job.GeneralSpecs.LayerNumber).toBe(2)
     expect(job.GeneralSpecs.BoardThickness).toBe(1.6)
-    expect(job.GeneralSpecs.Finish).toBe('HAL') // default is HASL — KiCad's job-file term is "HAL"
+    expect(job.GeneralSpecs.Finish).toBe('HASL SnPb') // the spec's canonical finish (deprecated "HAL")
     expect(job.GeneralSpecs.Size.X).toBeCloseTo(board.outline.w, 3)
     expect(job.GeneralSpecs.Size.Y).toBeCloseTo(board.outline.h, 3)
-    expect(job.GeneralSpecs.ProjectId.GUID).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-/) // a UUID-format id
+    // a valid RFC-4122 version-5 UUID: version nibble 5, variant nibble 8/9/a/b
+    expect(job.GeneralSpecs.ProjectId.GUID).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    )
   })
 
   test('DesignRules carry the net class clearance + minimum line width', () => {
@@ -61,29 +65,29 @@ describe('gerberJobFile', () => {
     expect(rule.MinLineWidth).toBe(DEFAULT_ROUTE_CLASS.traceWidthMm)
   })
 
-  test('FilesAttributes carry the JOB-FILE FileFunction spelling + polarity, path-for-path', () => {
+  test('FilesAttributes carry the canonical FileFunction + polarity, path-for-path', () => {
     const attrs = parse().FilesAttributes
     expect(attrs.map((a: { Path: string }) => a.Path)).toEqual(files2.map((f) => f.path))
     const mask = attrs.find((a: { Path: string }) => a.Path === 'board-F_Mask.gts')
-    expect(mask.FileFunction).toBe('SolderMask,Top') // job-file spelling (Gerber attr is "Soldermask")
+    expect(mask.FileFunction).toBe('Soldermask,Top') // same as the Gerber's own %TF.FileFunction
     expect(mask.FilePolarity).toBe('Negative')
     const edge = attrs.find((a: { Path: string }) => a.Path === 'board-Edge_Cuts.gm1')
-    expect(edge.FileFunction).toBe('Profile') // job-file spelling (Gerber attr is "Profile,NP")
+    expect(edge.FileFunction).toBe('Profile,NP') // the plating-span suffix the Gerber carries too
   })
 
-  test('MaterialStackup runs top → bottom: silk, paste, mask, copper, dielectric, copper, mask, paste, silk', () => {
+  test('MaterialStackup lists only fabricated layers top → bottom (no solder paste)', () => {
     const types = parse().MaterialStackup.map((m: { Type: string }) => m.Type)
     expect(types).toEqual([
       'Legend',
-      'SolderPaste',
       'SolderMask',
       'Copper',
       'Dielectric',
       'Copper',
       'SolderMask',
-      'SolderPaste',
       'Legend',
     ])
+    // solder paste is an assembly stencil, not a layer of the finished board — never listed
+    expect(types).not.toContain('SolderPaste')
     const fr4 = parse().MaterialStackup.find((m: { Type: string }) => m.Type === 'Dielectric')
     expect(fr4.Material).toBe('FR4')
   })
@@ -126,5 +130,35 @@ describe('gerberJobFile', () => {
       files: files2,
     })
     expect(a).toBe(b)
+  })
+})
+
+describe('project GUID — a deterministic, valid RFC-4122 v5 UUID', () => {
+  const guid = (name: string) =>
+    JSON.parse(
+      gerberJobFile({
+        board,
+        stackup: defaultStackup(),
+        cls: DEFAULT_ROUTE_CLASS,
+        when: WHEN,
+        files: files2,
+        projectName: name,
+      }),
+    ).GeneralSpecs.ProjectId.GUID
+
+  test('the SHA-1 matches the standard known-answer vector for "abc"', () => {
+    const hex = sha1Bytes([...'abc'].map((c) => c.charCodeAt(0)))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+    expect(hex).toBe('a9993e364706816aba3e25717850c26c9cd0d89d')
+  })
+
+  test('same name → same GUID; distinct names → distinct GUIDs', () => {
+    expect(guid('MyBoard')).toBe(guid('MyBoard'))
+    expect(guid('MyBoard')).not.toBe(guid('OtherBoard'))
+  })
+
+  test('names sharing the first 16 chars do NOT collide (the old-truncation bug)', () => {
+    expect(guid('ThisIsALongName_A')).not.toBe(guid('ThisIsALongName_B'))
   })
 })

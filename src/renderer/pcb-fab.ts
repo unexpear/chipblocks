@@ -362,6 +362,7 @@ export const FAB_FILE_NAMES = {
   topPaste: `${BASE}-F_Paste.gtp`,
   bottomPaste: `${BASE}-B_Paste.gbp`,
   topSilk: `${BASE}-F_Silkscreen.gto`,
+  bottomSilk: `${BASE}-B_Silkscreen.gbo`,
   edgeCuts: `${BASE}-Edge_Cuts.gm1`,
   drill: `${BASE}.drl`,
   gbrjob: `${BASE}-job.gbrjob`,
@@ -400,6 +401,7 @@ function buildReadme(inputs: FabInputs): string {
     `  ${FAB_FILE_NAMES.topPaste}   top solder-paste stencil apertures (SMD pads)`,
     `  ${FAB_FILE_NAMES.bottomPaste}   bottom paste (empty — no bottom-mounted parts)`,
     `  ${FAB_FILE_NAMES.topSilk} top silkscreen (part outlines + designators)`,
+    `  ${FAB_FILE_NAMES.bottomSilk}   bottom silkscreen (empty — no bottom-mounted parts)`,
     `  ${FAB_FILE_NAMES.edgeCuts}  board outline (the fab cuts this centreline)`,
     `  ${FAB_FILE_NAMES.drill}           plated drill hits (component holes + via holes)`,
     `  ${FAB_FILE_NAMES.gbrjob}      job manifest — names every Gerber's layer + the fab attributes`,
@@ -455,10 +457,10 @@ export function buildManufacturingZip(inputs: FabInputs): FabZip {
       gerberInnerCopper(board, ratsnest, routing, cl, layerNumber, when),
     )
   })
-  // The Gerber Job File's FilesAttributes — the exact Gerber set below, each with its JOB-FILE
-  // FileFunction (SolderMask / SolderPaste / Profile — the job file's spelling, distinct from the
-  // Gerber attribute's Soldermask / Paste / Profile,NP). The Excellon drill is NOT listed (KiCad keeps
-  // it separate — it's not a Gerber). Copper first (top → inner → bottom), then the outer layers.
+  // The Gerber Job File's FilesAttributes — the exact Gerber set below, each with the SAME canonical
+  // FileFunction its own Gerber embeds in %TF.FileFunction (Soldermask / Paste / Profile,NP), so a CAM
+  // tool that cross-checks the manifest against each file agrees. The Excellon drill is NOT listed
+  // (KiCad keeps it separate — it's not a Gerber). Copper first (top → inner → bottom), then the rest.
   const jobFiles: GbrjobFileAttr[] = [
     ...copper.map((cl, idx): GbrjobFileAttr => {
       const layerNumber = idx + 1
@@ -478,12 +480,13 @@ export function buildManufacturingZip(inputs: FabInputs): FabZip {
         polarity: 'Positive',
       }
     }),
-    { path: FAB_FILE_NAMES.topMask, function: 'SolderMask,Top', polarity: 'Negative' },
-    { path: FAB_FILE_NAMES.bottomMask, function: 'SolderMask,Bot', polarity: 'Negative' },
-    { path: FAB_FILE_NAMES.topPaste, function: 'SolderPaste,Top', polarity: 'Positive' },
-    { path: FAB_FILE_NAMES.bottomPaste, function: 'SolderPaste,Bot', polarity: 'Positive' },
+    { path: FAB_FILE_NAMES.topMask, function: 'Soldermask,Top', polarity: 'Negative' },
+    { path: FAB_FILE_NAMES.bottomMask, function: 'Soldermask,Bot', polarity: 'Negative' },
+    { path: FAB_FILE_NAMES.topPaste, function: 'Paste,Top', polarity: 'Positive' },
+    { path: FAB_FILE_NAMES.bottomPaste, function: 'Paste,Bot', polarity: 'Positive' },
     { path: FAB_FILE_NAMES.topSilk, function: 'Legend,Top', polarity: 'Positive' },
-    { path: FAB_FILE_NAMES.edgeCuts, function: 'Profile', polarity: 'Positive' },
+    { path: FAB_FILE_NAMES.bottomSilk, function: 'Legend,Bot', polarity: 'Positive' },
+    { path: FAB_FILE_NAMES.edgeCuts, function: 'Profile,NP', polarity: 'Positive' },
   ]
   const gbrjobText = gerberJobFile({
     board,
@@ -498,7 +501,8 @@ export function buildManufacturingZip(inputs: FabInputs): FabZip {
     text(FAB_FILE_NAMES.bottomMask, gerberMask(board, 'Bot', when)),
     text(FAB_FILE_NAMES.topPaste, gerberPaste(board, 'Top', when)),
     text(FAB_FILE_NAMES.bottomPaste, gerberPaste(board, 'Bot', when)),
-    text(FAB_FILE_NAMES.topSilk, gerberSilkscreen(board, when)),
+    text(FAB_FILE_NAMES.topSilk, gerberSilkscreen(board, 'Top', when)),
+    text(FAB_FILE_NAMES.bottomSilk, gerberSilkscreen(board, 'Bot', when)),
     text(FAB_FILE_NAMES.edgeCuts, gerberEdgeCuts(board.outline, when)),
     text(FAB_FILE_NAMES.drill, excellonDrill(board, routing, when, stackup.copperLayers)),
     text(FAB_FILE_NAMES.gbrjob, gbrjobText),

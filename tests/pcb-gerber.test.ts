@@ -80,6 +80,7 @@ describe('top copper', () => {
   test('carries the X2 header KiCad readers expect: 4.6 mm format, top-copper function', () => {
     expect(gerber).toContain('%FSLAX46Y46*%')
     expect(gerber).toContain('%MOMM*%')
+    expect(gerber).toContain('%TF.Part,Single*%') // this fabrication data is a single PCB
     expect(gerber).toContain('%TF.FileFunction,Copper,L1,Top*%')
     expect(gerber).toContain('%TF.FilePolarity,Positive*%')
     expect(gerber.trimEnd().endsWith('M02*')).toBe(true)
@@ -233,7 +234,7 @@ describe('solder paste — the stencil, reflow pads only', () => {
 describe('silkscreen and profile', () => {
   test('silk draws each footprint’s (own corner-tick) outline where the part sits, at its real line width', () => {
     const { board } = routedPair()
-    const silk = gerberSilkscreen(board, WHEN)
+    const silk = gerberSilkscreen(board, 'Top', WHEN)
     expect(silk).toContain('%TF.FileFunction,Legend,Top*%')
     expect(silk).toContain('C,0.120000') // the 0603’s silk width (ChipBlocks’ own cornerTicksSilk)
     // the corner ticks are stroked: a pen-up move (D02) then a pen-down draw (D01) per segment
@@ -251,6 +252,7 @@ describe('silkscreen and profile', () => {
         outline: { x: 0, y: 0, w: 20, h: 20 },
         placements: [{ partId: 'i', footprintId: 'R_0603_1608Metric', x: 10, y: 10, rotation: 0 }],
       },
+      'Top',
       WHEN,
     )
     expect(silk).toContain('C,0.150000') // SILK_TEXT.thicknessMm, cited from the KiCad defaults
@@ -266,9 +268,18 @@ describe('silkscreen and profile', () => {
           { partId: 'r#1', footprintId: 'R_0603_1608Metric', x: 10, y: 10, rotation: 0 },
         ],
       },
+      'Top',
       WHEN,
     )
     expect(silk).toContain("G04 'r#1': no glyph for #")
+  })
+
+  test('the bottom silkscreen is an empty legend file (no bottom-mounted parts) — the layer set is complete', () => {
+    const { board } = routedPair()
+    const bot = gerberSilkscreen(board, 'Bot', WHEN)
+    expect(bot).toContain('%TF.FileFunction,Legend,Bot*%') // it IS a Legend file…
+    expect(bot).not.toMatch(/D01\*/) // …with no drawn strokes (nothing mounts on the bottom yet)
+    expect(bot.trimEnd().endsWith('M02*')).toBe(true)
   })
 
   test('the profile is the outline rectangle, drawn as a closed centreline at the cited width', () => {
@@ -351,6 +362,22 @@ describe('the drill file — Excellon, decimal mm, ascending tools', () => {
     expect(withVia).toContain('T1C0.400') // 0.4 sorts before the 0.8 DIP and 1.0 header drills
     expect(withVia).toContain('T2C0.800')
     expect(withVia).toContain('X20.0Y-6.0')
+  })
+
+  test('a sub-micron hole centre keeps nanometre precision — the same grid as the copper Gerber', () => {
+    // The copper Gerber quantises to 1 nm (its 4.6 = mm×10⁶ format); the drill now matches, so a hole
+    // whose centre has a sub-micron fraction and its pad copper land on ONE grid and register — not the
+    // coarser 1 µm the drill rounded to before (which drilled up to 0.5 µm off the copper).
+    const withVia = excellonDrill(
+      TH_BOARD,
+      {
+        traces: [],
+        vias: [{ net: 'n1', at: { x: 20.1234567, y: 6 }, diameterMm: 0.6, drillMm: 0.4 }],
+        unrouted: [],
+      },
+      WHEN,
+    )
+    expect(withVia).toContain('X20.123457Y-6.0') // 6 decimals kept, not 20.123
   })
 })
 

@@ -191,6 +191,9 @@ function gerberHeader(
   const lines = [
     '%TF.GenerationSoftware,ChipBlocks,BoardExport,1*%',
     `%TF.CreationDate,${isoWithOffset(when)}*%`,
+    // Part,Single — this fabrication data is a single PCB (not a panel/array or a coupon), the X2
+    // file attribute a CAM tool reads to know what it is loading (Ucamco Gerber X2 spec §5.6.3).
+    '%TF.Part,Single*%',
     `%TF.FileFunction,${fileFunction}*%`,
   ]
   if (polarity !== null) lines.push(`%TF.FilePolarity,${polarity}*%`)
@@ -426,13 +429,15 @@ export function gerberPaste(board: Board, side: 'Top' | 'Bot', when: Date): stri
   ].join('\n')
 }
 
-/** Top silkscreen: every footprint's silk outline plus its reference DESIGNATOR (R1, C2 — the
+/** Silkscreen for a side: every footprint's silk outline plus its reference DESIGNATOR (R1, C2 — the
  *  short board name, not the schematic id), stroked in the board lettering font at KiCad's cited
  *  text size (SILK_TEXT). The text centres above the part's courtyard at any rotation
  *  (silkReferenceAnchor) — clear of the pads by the courtyard invariant, upright so it always
  *  reads left-to-right. A character the font cannot print keeps its space and is named in a G04
- *  comment — never dropped in silence. */
-export function gerberSilkscreen(board: Board, when: Date): string {
+ *  comment — never dropped in silence. No footprint mounts a part on the bottom yet, so the 'Bot'
+ *  silk is honestly EMPTY — but its file still ships, so the layer set is the complete standard
+ *  F.SilkS + B.SilkS pair (the empty B.Paste already ships the same way). */
+export function gerberSilkscreen(board: Board, side: 'Top' | 'Bot', when: Date): string {
   const apertures = new Apertures()
   const body: string[] = []
   let currentCode = -1
@@ -444,7 +449,8 @@ export function gerberSilkscreen(board: Board, when: Date): string {
     body.push(`${xy(from)}D02*`)
     body.push(`${xy(to)}D01*`)
   }
-  for (const placement of board.placements) {
+  const placements = side === 'Top' ? board.placements : []
+  for (const placement of placements) {
     const fp = footprintByPlacement(placement)
     if (fp === undefined) continue
     body.push(`%TO.C,${safeField(placement.partId)}*%`)
@@ -467,7 +473,7 @@ export function gerberSilkscreen(board: Board, when: Date): string {
     body.push('%TD*%')
   }
   return [
-    ...gerberHeader('Legend,Top', 'Positive', when),
+    ...gerberHeader(`Legend,${side}`, 'Positive', when),
     ...apertures.block(),
     ...body,
     'M02*',
@@ -515,12 +521,13 @@ export function gerberEdgeCuts(outline: BoardOutline, when: Date): string {
   ].join('\n')
 }
 
-/** Excellon coordinates: decimal millimetres, trailing zeros trimmed ('X137.16Y-120.095'), the
- *  format the drill header declares and KiCad emits. The decimal POINT is always kept — a bare
- *  integer ('X5') is legal Excellon that older CAM readers parse by the FMAT digit rules instead
- *  (off by 1000×); with the point present there is exactly one reading. */
+/** Excellon coordinates: decimal millimetres, trailing zeros trimmed ('X137.16Y-120.095'). Rounded to
+ *  the SAME 1 nm grid the copper Gerber uses (its 4.6 format = mm × 10⁶), so a hole centre and the pad
+ *  copper around it land on one grid and register exactly — not the coarser 1 µm the drill used before.
+ *  The decimal POINT is always kept — a bare integer ('X5') is legal Excellon that older CAM readers
+ *  parse by the FMAT digit rules instead (off by 1000×); with the point present there is one reading. */
 const drillNum = (mm: number): string => {
-  const s = String(Math.round(mm * 1000) / 1000)
+  const s = String(Math.round(mm * 1e6) / 1e6)
   return s.includes('.') ? s : `${s}.0`
 }
 
