@@ -56,6 +56,7 @@ export type ToolbarActionId =
   | 'bode'
   | 'pcb'
   | 'verilog'
+  | 'trace'
   | 'workspace'
   | 'group'
   | 'clipboard'
@@ -127,6 +128,14 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
     color: THEME.accentPurple,
     title:
       'Verilog — write hardware in Verilog and watch it synthesize live: syntax highlighting, a running report of exactly what will and won’t build into real gates, and a one-click Synthesize → canvas that drops the resulting gates and flip-flops onto the sheet.',
+  },
+  {
+    id: 'trace',
+    label: 'Trace',
+    icon: '⧗',
+    color: THEME.accentTimeline,
+    title:
+      'Run-trace — clock a digital design for many cycles and flag the odd ones: a cycle that never settled, a one-cycle glitch, a cycle that ran a much longer logic path, or outputs that depend on the flip-flops’ power-up state (a missing reset). Answers “is the 5th cycle different, on purpose or not?”.',
   },
   {
     id: 'group',
@@ -237,6 +246,7 @@ export function ToolbarItems({
   onBode,
   onPcb,
   onVerilog,
+  onTrace,
   workspace,
   onWorkspace,
   onMath,
@@ -275,6 +285,7 @@ export function ToolbarItems({
   onBode: () => void
   onPcb: () => void
   onVerilog: () => void
+  onTrace: () => void
   workspace: WorkspaceMode
   onWorkspace: () => void
   onMath: () => void
@@ -303,6 +314,7 @@ export function ToolbarItems({
     bode: onBode,
     pcb: onPcb,
     verilog: onVerilog,
+    trace: onTrace,
     workspace: onWorkspace,
     group: onGroup,
     clipboard: onClipboard,

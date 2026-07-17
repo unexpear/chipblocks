@@ -74,12 +74,28 @@ const supply = (high: boolean) =>
     // biome-ignore lint/suspicious/noExplicitAny: the harness only needs the voltage the logic sim reads
   }) as any
 
+/** The block-node id inside the test harness — reads go through `result.value(HARNESS_BLOCK_ID, portId)`. */
+export const HARNESS_BLOCK_ID = 'dbg'
+
+export type LogicHarness = {
+  compiled: CompiledLogic
+  /** Every input port id (the clock included), each wired to its own controllable source. */
+  driven: string[]
+  clockPortId: string | null
+  /** input port id → the harness source node id (the key stepLogic overrides address). */
+  srcId: Map<string, string>
+  /** Input signals grouped by name, LSB→MSB, clock excluded (what the user drives). */
+  inputSignals: DebugSignal[]
+  /** Output signals grouped by name. */
+  outputSignals: DebugSignal[]
+}
+
 /**
- * Build a step-debug session for a synthesized module, or null if it has no drivable inputs/outputs.
- * The harness wires a controllable power source onto every input port (the clock included), ground, and a
- * Vdd source if the module declares a supply pin — then compiles it once for fast repeated stepping.
+ * Wrap a synthesized module in a test harness — a controllable power source on every input port (clock
+ * included), ground, and a Vdd source if it declares a supply pin — and compile it ONCE. Shared by the
+ * step-debugger and the run-trace inspector. Returns null if the module has no drivable inputs/outputs.
  */
-export function createDebugSession(block: BlockData): DebugSession | null {
+export function buildLogicHarness(block: BlockData): LogicHarness | null {
   const nonPower = block.ports.filter((p) => !POWER_PORT_IDS.has(p.id.toLowerCase()))
   const outPorts = nonPower.filter(isOutputPort).map((p) => p.id)
   const inPorts = nonPower.filter((p) => !isOutputPort(p)).map((p) => p.id)
@@ -94,7 +110,7 @@ export function createDebugSession(block: BlockData): DebugSession | null {
   const srcId = new Map(driven.map((id, i) => [id, `dbg_s${i}`]))
 
   const nodes: CanvasNodeLike[] = [
-    { id: 'dbg', position: { x: 0, y: 0 }, data: { definition: 'block', block } },
+    { id: HARNESS_BLOCK_ID, position: { x: 0, y: 0 }, data: { definition: 'block', block } },
     { id: 'dbg_g', position: { x: 0, y: 0 }, data: { definition: 'ground' } },
     ...driven.map((id) => ({
       id: srcId.get(id) as string,
@@ -117,7 +133,7 @@ export function createDebugSession(block: BlockData): DebugSession | null {
         id: `e_${port}_p`,
         source: srcId.get(port) as string,
         sourceHandle: 'terminal_positive',
-        target: 'dbg',
+        target: HARNESS_BLOCK_ID,
         targetHandle: port,
       },
       {
@@ -134,7 +150,7 @@ export function createDebugSession(block: BlockData): DebugSession | null {
             id: 'e_vd',
             source: 'dbg_vd',
             sourceHandle: 'terminal_positive',
-            target: 'dbg',
+            target: HARNESS_BLOCK_ID,
             targetHandle: vddPort.id,
           },
         ]
@@ -143,7 +159,7 @@ export function createDebugSession(block: BlockData): DebugSession | null {
       ? [
           {
             id: 'e_gnd',
-            source: 'dbg',
+            source: HARNESS_BLOCK_ID,
             sourceHandle: gndPort.id,
             target: 'dbg_g',
             targetHandle: 'reference_terminal',
@@ -152,7 +168,24 @@ export function createDebugSession(block: BlockData): DebugSession | null {
       : []),
   ]
 
-  const compiled: CompiledLogic = compileLogic(nodes, edges)
+  return {
+    compiled: compileLogic(nodes, edges),
+    driven,
+    clockPortId,
+    srcId,
+    inputSignals: groupSignals(inPorts.filter((id) => id !== clockPortId)),
+    outputSignals: groupSignals(outPorts),
+  }
+}
+
+/**
+ * Build a step-debug session for a synthesized module, or null if it has no drivable inputs/outputs.
+ * Thin stateful wrapper over buildLogicHarness: hold input levels + flip-flop state, step the clock, read.
+ */
+export function createDebugSession(block: BlockData): DebugSession | null {
+  const harness = buildLogicHarness(block)
+  if (!harness) return null
+  const { compiled, driven, clockPortId, srcId } = harness
   const level = new Map<string, boolean>(driven.map((id) => [id, false]))
   let state = new Map<string, boolean>()
   let last: LogicResult | null = null
@@ -173,8 +206,8 @@ export function createDebugSession(block: BlockData): DebugSession | null {
   }
 
   const session: DebugSession = {
-    inputs: groupSignals(inPorts.filter((id) => id !== clockPortId)),
-    outputs: groupSignals(outPorts),
+    inputs: harness.inputSignals,
+    outputs: harness.outputSignals,
     clockPortId,
     setInput(portId, high) {
       if (level.has(portId)) level.set(portId, high)
@@ -203,14 +236,14 @@ export function createDebugSession(block: BlockData): DebugSession | null {
       settle(false)
     },
     read(portId) {
-      return last?.value('dbg', portId)
+      return last?.value(HARNESS_BLOCK_ID, portId)
     },
     readValue(name) {
       const sig = [...session.inputs, ...session.outputs].find((s) => s.name === name)
       if (!sig) return undefined
       let value = 0
       for (let i = 0; i < sig.bits.length; i++) {
-        const bit = last?.value('dbg', sig.bits[i] as string)
+        const bit = last?.value(HARNESS_BLOCK_ID, sig.bits[i] as string)
         if (bit === undefined) return undefined
         if (bit) value |= 1 << i
       }

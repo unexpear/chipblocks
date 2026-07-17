@@ -94,6 +94,10 @@ export type LogicResult = {
   value: (nodeId: string, handle: string) => boolean | undefined
   /** False if a feedback loop never reached a steady state (an oscillator / ring). */
   settled: boolean
+  /** How many gate-sweeps this settle took. With topo-ordered gates, pure combinational logic settles in 1;
+   *  a higher count means deeper feedback / a longer logic path was exercised — the run-trace's slow-cycle
+   *  signal. Diagnostic only; nothing about the settled result depends on it. */
+  sweeps: number
 }
 
 /** A power source reads as logic HIGH if it sits at least at the CMOS half-rail (2.5 V of a 5 V part). */
@@ -277,6 +281,7 @@ export function stepLogic(
     for (const [net, bit] of state) if (!value.has(net)) value.set(net, bit)
   }
   let settled = true
+  let sweeps = 0
   const gates = compiled.gates
   const maxSweeps = gates.length * 2 + 2
   for (let sweep = 0; ; sweep++) {
@@ -303,12 +308,16 @@ export function stepLogic(
         }
       if (!anyStuck) {
         const stuck = gates.find((g) => !value.has(g.out))
-        if (stuck === undefined) break
+        if (stuck === undefined) {
+          sweeps = sweep
+          break
+        }
         value.set(stuck.out, false)
       }
       changed = true
     }
     if (sweep >= maxSweeps) {
+      sweeps = sweep
       settled = false
       break
     }
@@ -321,6 +330,7 @@ export function stepLogic(
 
   return {
     settled,
+    sweeps,
     value: (nodeId, handle) => value.get(compiled.portNet(nodeId, handle)),
   }
 }

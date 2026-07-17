@@ -106,6 +106,7 @@ import {
   type LensMode,
 } from './lens.ts'
 import {
+  blockIsLogicCompatible,
   type CompiledLogic,
   compileLogic,
   isLogicGate,
@@ -194,6 +195,7 @@ import {
 import { ProjectBrowser, type ProjectChoice } from './project-browser.tsx'
 import { projectNameFromPath, recordRecentProject } from './recent-projects.ts'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
+import { runTrace } from './run-trace.ts'
 import { scanMatrixFromBuffer } from './scan-display.ts'
 import { SchematicHierarchy } from './schematic-hierarchy.tsx'
 import { fastestSourceHz, ScopePlot, scopeProbeKey, scopeWindow, TRACE_COLORS } from './scope.tsx'
@@ -212,6 +214,7 @@ import {
 } from './timing-graph.ts'
 import { TimingPanel } from './timing-panel.tsx'
 import { type Tool, ToolbarItems } from './toolbar.tsx'
+import { type TraceBlock, TraceInspector } from './trace-inspector.tsx'
 import { CheckpointContext } from './undo-context.ts'
 import { checkpoint, emptyHistory, redo, undo } from './undo-history.ts'
 import { formatEng } from './units.ts'
@@ -1616,6 +1619,21 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [pcbOpen, setPcbOpen] = useState(false)
   // Verilog IDE: write hardware in Verilog, watch it synthesize live, drop the resulting gates on the sheet.
   const [verilogOpen, setVerilogOpen] = useState(false)
+  // Run-trace inspector: clock a digital design N cycles and flag per-cycle anomalies.
+  const [traceOpen, setTraceOpen] = useState(false)
+  // The digital blocks on the canvas the trace inspector can clock (gates-all-the-way-down, with I/O).
+  // Only computed while the panel is open — the logic-compatibility check walks each block's internals.
+  const traceBlocks = useMemo<TraceBlock[]>(() => {
+    if (!traceOpen) return []
+    const out: TraceBlock[] = []
+    for (const n of nodes) {
+      const data = n.data as { block?: BlockData; label?: string }
+      if (n.type === 'block' && data.block && blockIsLogicCompatible(data.block)) {
+        out.push({ id: n.id, label: data.label ?? data.block.name, block: data.block })
+      }
+    }
+    return out
+  }, [traceOpen, nodes])
   // Which surface the MAIN building area shows: the schematic canvas (default) or the full-size board /
   // chip workspace — a first-class editing surface, not just the dock panel. Opening a Board/Chip project
   // from the launcher lands the editor directly on that level (else Circuit); the breadcrumb travels.
@@ -3919,6 +3937,27 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           synthesized: block !== null,
           gateCount: block?.nodes.length ?? 0,
           warnings,
+        }
+      },
+      // DEV: run the run-trace engine on a Verilog module and return the anomalies + per-cycle output values,
+      // so the whole trace path can be verified headlessly in the real app.
+      traceVerilog(text: string, cycles = 8, inputs?: Record<string, number>) {
+        const block = parseVerilogText(text).circuit.nodes[0]?.block ?? null
+        if (!block) return { ok: false as const, error: 'did not synthesize' }
+        const r = runTrace(block, cycles, new Map(Object.entries(inputs ?? {})))
+        if (!r) return { ok: false as const, error: 'no drivable I/O' }
+        return {
+          ok: true as const,
+          clocked: r.clocked,
+          registerCount: r.registerCount,
+          outputs: r.outputs.map((o) => o.name),
+          anomalies: r.anomalies.map((a) => ({ kind: a.kind, cycle: a.cycle, signal: a.signal })),
+          cycles: r.cycles.map((c) => ({
+            cycle: c.cycle,
+            settled: c.settled,
+            sweeps: c.sweeps,
+            values: Object.fromEntries(c.values),
+          })),
         }
       },
       // Audit the REAL drawn wire geometry against the REAL part boxes (ground truth — no DOM/timing/regex):
@@ -7185,6 +7224,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             onClose={() => setVerilogOpen(false)}
           />
         ) : null}
+        {traceOpen ? (
+          <TraceInspector blocks={traceBlocks} onClose={() => setTraceOpen(false)} />
+        ) : null}
         {newPartOpen ? (
           <UserPartEditor
             onClose={() => setNewPartOpen(false)}
@@ -7723,6 +7765,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 onBode={() => setBodeOpen((open) => !open)}
                 onPcb={() => setPcbOpen((open) => !open)}
                 onVerilog={() => setVerilogOpen((open) => !open)}
+                onTrace={() => setTraceOpen((open) => !open)}
                 workspace={workspaceMode}
                 onWorkspace={onWorkspace}
                 onWorstCase={runWorstCase}
