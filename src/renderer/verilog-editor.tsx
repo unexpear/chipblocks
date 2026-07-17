@@ -124,6 +124,29 @@ const FONT =
 const PAD = 10
 const LINE_HEIGHT = 20
 
+/** The identifier prefix being typed just before the caret (what autocomplete matches on). */
+export function prefixBefore(value: string, caret: number): string {
+  const m = /[A-Za-z_$][A-Za-z0-9_$]*$/.exec(value.slice(0, caret))
+  return m ? m[0] : ''
+}
+
+/** Completion candidates for a prefix: the language's keywords + gate primitives, plus every identifier
+ *  already written in the buffer (so a module's own declared signals — inputs, outputs, wires, regs —
+ *  autocomplete the moment they've been named once). Case-insensitive match, exact prefix excluded. */
+export function completionsFor(prefix: string, value: string): string[] {
+  const pool = new Set<string>([...KEYWORDS, ...GATE_KEYWORDS])
+  for (const t of tokenize(value)) {
+    if (t.type === 'ident' || t.type === 'keyword' || t.type === 'gate') pool.add(t.text)
+  }
+  const low = prefix.toLowerCase()
+  return [...pool]
+    .filter((w) => w !== prefix && w.toLowerCase().startsWith(low))
+    .sort()
+    .slice(0, 12)
+}
+
+type Autocomplete = { items: string[]; index: number; prefix: string; left: number; top: number }
+
 export type SynthDiagnostics = {
   block: BlockData | null
   warnings: string[]
@@ -149,9 +172,50 @@ export function VerilogEditor({
 }): JSX.Element {
   const [text, setText] = useState(initialText)
   const [diag, setDiag] = useState<SynthDiagnostics>(() => synthesize(initialText))
+  const [ac, setAc] = useState<Autocomplete | null>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const preRef = useRef<HTMLPreElement>(null)
   const gutterRef = useRef<HTMLDivElement>(null)
+  const pendingCaret = useRef<number | null>(null)
+
+  // One monospace character's width, measured once — the caret's pixel column is col × this, which is exact
+  // for a fixed-pitch font and lets the autocomplete popup sit right under the word being typed.
+  const charWidth = useMemo(() => {
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return 7.8
+    ctx.font = FONT
+    return ctx.measureText('MMMMMMMMMM').width / 10
+  }, [])
+
+  // Recompute the autocomplete popup from the current text + caret: the prefix under the caret, the matching
+  // candidates, and where to float the list (below the caret line, offset by column × char width).
+  const refreshAc = (value: string, caret: number) => {
+    const prefix = prefixBefore(value, caret)
+    const items = prefix.length >= 1 ? completionsFor(prefix, value) : []
+    if (items.length === 0) {
+      setAc(null)
+      return
+    }
+    const before = value.slice(0, caret)
+    const row = before.split('\n').length - 1
+    const col = before.length - (before.lastIndexOf('\n') + 1)
+    const ta = taRef.current
+    const left = PAD + col * charWidth - (ta?.scrollLeft ?? 0)
+    const top = PAD + (row + 1) * LINE_HEIGHT - (ta?.scrollTop ?? 0)
+    setAc({ items, index: 0, prefix, left, top })
+  }
+
+  const acceptCompletion = (word: string) => {
+    const ta = taRef.current
+    if (!ta || !ac) return
+    const caret = ta.selectionStart
+    const start = caret - ac.prefix.length
+    const next = text.slice(0, start) + word + text.slice(caret)
+    pendingCaret.current = start + word.length
+    setText(next)
+    setAc(null)
+  }
 
   // Live diagnostics: re-synthesize a short beat after typing stops, so the "what won't build" list is always
   // current without running the whole synthesizer on every keystroke.
@@ -159,6 +223,37 @@ export function VerilogEditor({
     const id = setTimeout(() => setDiag(synthesize(text)), 250)
     return () => clearTimeout(id)
   }, [text])
+
+  // After accepting a completion the text changed programmatically; put the caret back just past the inserted
+  // word (React resets it to the end on a controlled-value change otherwise).
+  useEffect(() => {
+    if (pendingCaret.current === null) return
+    const ta = taRef.current
+    if (ta) {
+      const caret = Math.min(pendingCaret.current, text.length)
+      ta.selectionStart = caret
+      ta.selectionEnd = caret
+      ta.focus()
+    }
+    pendingCaret.current = null
+  }, [text])
+
+  const onEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!ac) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setAc({ ...ac, index: (ac.index + 1) % ac.items.length })
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setAc({ ...ac, index: (ac.index - 1 + ac.items.length) % ac.items.length })
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault()
+      acceptCompletion(ac.items[ac.index] as string)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setAc(null)
+    }
+  }
 
   const tokens = useMemo(() => tokenize(text), [text])
   const lineCount = useMemo(() => text.split('\n').length, [text])
@@ -275,8 +370,16 @@ export function VerilogEditor({
           <textarea
             ref={taRef}
             value={text}
-            onChange={(e) => setText(e.target.value)}
-            onScroll={syncScroll}
+            onChange={(e) => {
+              setText(e.target.value)
+              refreshAc(e.target.value, e.target.selectionStart)
+            }}
+            onKeyDown={onEditorKeyDown}
+            onScroll={() => {
+              syncScroll()
+              setAc(null)
+            }}
+            onBlur={() => setAc(null)}
             spellCheck={false}
             style={{
               ...shared,
@@ -292,6 +395,54 @@ export function VerilogEditor({
               overflow: 'auto',
             }}
           />
+          {ac ? (
+            <ul
+              style={{
+                position: 'absolute',
+                left: ac.left,
+                top: ac.top,
+                margin: 0,
+                padding: 4,
+                listStyle: 'none',
+                minWidth: 160,
+                maxHeight: 220,
+                overflowY: 'auto',
+                background: 'var(--surfaceRaised)',
+                border: '1px solid var(--borderStrong)',
+                borderRadius: 6,
+                boxShadow: '0 6px 20px rgba(0,0,0,0.5)',
+                zIndex: 2,
+                font: FONT,
+              }}
+            >
+              {ac.items.map((item, i) => (
+                <li key={item}>
+                  <button
+                    type="button"
+                    // Keep focus in the textarea (so the caret restores) — commit on mousedown, before blur.
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      acceptCompletion(item)
+                    }}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '3px 8px',
+                      border: 0,
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                      font: 'inherit',
+                      background: i === ac.index ? 'var(--accentBlueDeep)' : 'transparent',
+                      color: i === ac.index ? 'var(--white)' : 'var(--textPrimary)',
+                    }}
+                  >
+                    {item}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       </div>
 

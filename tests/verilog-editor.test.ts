@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { STARTER_VERILOG, type Tok, tokenize } from '../src/renderer/verilog-editor.tsx'
+import {
+  completionsFor,
+  prefixBefore,
+  STARTER_VERILOG,
+  type Tok,
+  tokenize,
+} from '../src/renderer/verilog-editor.tsx'
 
 /** The one property the highlight overlay depends on: the token stream is a character-for-character copy of
  *  the source. If tokenize ever drops, reorders, or invents a character, the coloured <pre> layer slides out
@@ -53,5 +59,41 @@ describe('verilog editor tokenizer', () => {
     // Context-less based literal (e.g. `'d5`) still round-trips and lands as a number.
     expect(roundTrips("x = 'd5;")).toBe(true)
     expect(kinds("'d5")).toContainEqual(['number', "'d5"])
+  })
+})
+
+describe('verilog editor autocomplete', () => {
+  it('reads the identifier prefix immediately before the caret', () => {
+    expect(prefixBefore('assign co', 9)).toBe('co')
+    expect(prefixBefore('assign co = a & b', 9)).toBe('co') // caret mid-line, not end
+    expect(prefixBefore('a + ', 4)).toBe('') // caret after an operator/space → no prefix
+    expect(prefixBefore('wire [3:0] q', 12)).toBe('q')
+    expect(prefixBefore('2bad', 4)).toBe('bad') // a prefix can't start with a digit
+  })
+
+  it('completes language keywords by prefix', () => {
+    const c = completionsFor('mod', '')
+    expect(c).toContain('module')
+    expect(c.every((w) => w.toLowerCase().startsWith('mod'))).toBe(true)
+  })
+
+  it("completes a module's own declared signals once they've been named", () => {
+    const src = 'module m(input clk, input reset, output ready); wire count_next;'
+    // typing "re" should offer the declared reset/ready, not just keywords
+    const c = completionsFor('re', src)
+    expect(c).toContain('reset')
+    expect(c).toContain('ready')
+    expect(c).toContain('reg') // and the keyword still
+    // typing "count" offers the internal wire
+    expect(completionsFor('count', src)).toContain('count_next')
+  })
+
+  it('excludes the exact word already typed and is case-insensitive', () => {
+    expect(completionsFor('module', '')).not.toContain('module') // exact match is not a suggestion
+    expect(completionsFor('MOD', '')).toContain('module') // case-insensitive prefix
+  })
+
+  it('offers nothing for an unknown prefix with no matching identifiers', () => {
+    expect(completionsFor('zzq', 'module m(); endmodule')).toEqual([])
   })
 })
