@@ -42,6 +42,8 @@ export type DrcCode =
   | 'track-width'
   | 'via-size'
   | 'via-in-pad'
+  | 'annular-ring'
+  | 'drill-size'
   | 'hole-to-hole'
   | 'silk-over-pad'
   | 'over-current'
@@ -62,7 +64,16 @@ export type DrcViolation = {
  *  drill/annular/hole-spacing limits live in pcb-route's VIA_RULES so the router and this check
  *  can never disagree). */
 export const DRC_RULES: Record<
-  Exclude<DrcCode, 'copper-clearance' | 'via-size' | 'hole-to-hole' | 'over-current' | 'open-net'>,
+  Exclude<
+    DrcCode,
+    | 'copper-clearance'
+    | 'via-size'
+    | 'annular-ring'
+    | 'drill-size'
+    | 'hole-to-hole'
+    | 'over-current'
+    | 'open-net'
+  >,
   { limitMm: number; provenance: FootprintProvenance }
 > = {
   'silk-over-pad': {
@@ -319,7 +330,29 @@ export function runDrc(
     if (fp === undefined) continue
     for (const pad of fp.pads) {
       if (pad.holeDiameter === undefined) continue
-      holes.push({ at: placePoint(pl, pad.center), drillMm: pad.holeDiameter })
+      const at = placePoint(pl, pad.center)
+      holes.push({ at, drillMm: pad.holeDiameter })
+      // A plated COMPONENT hole needs the same drill floor + annular ring a via does — IPC-2221 sizes
+      // EVERY plated hole, not just fabricated vias. The shipped footprints are all sane, but a
+      // user-authored/edited one can under-drill or under-ring a pad; the fab would reject it (the drill
+      // breaks into the pad copper and opens the plated barrel), so DRC must catch it too. The ring is
+      // measured on the pad's SMALLEST copper dimension — the thinnest side around the hole.
+      const ref = pl.designator ?? pl.partId
+      if (pad.holeDiameter < VIA_RULES.min_drill.limitMm) {
+        out.push({
+          code: 'drill-size',
+          message: `${ref} pad ${pad.id}: a ${fmt(pad.holeDiameter)} mm hole is under the ${fmt(VIA_RULES.min_drill.limitMm)} mm minimum drill`,
+          at,
+        })
+      }
+      const annular = (Math.min(pad.size.w, pad.size.h) - pad.holeDiameter) / 2
+      if (annular < VIA_RULES.min_annular.limitMm) {
+        out.push({
+          code: 'annular-ring',
+          message: `${ref} pad ${pad.id}: a ${fmt(annular)} mm annular ring is under the ${fmt(VIA_RULES.min_annular.limitMm)} mm minimum (pad barely larger than its hole)`,
+          at,
+        })
+      }
     }
   }
   const minHoleGap = VIA_RULES.hole_to_hole.limitMm

@@ -4,10 +4,15 @@
  * position; copper hugging the board edge is caught with the cited 0.3 mm fab limit; and every rule
  * carries provenance (the anti-placeholder rule applies to manufacturing limits too).
  */
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
 import { canvasToWorld } from '../src/renderer/canvas-to-world.ts'
-import { BUILTIN_FOOTPRINTS } from '../src/renderer/footprint.ts'
-import { type BoardPart, computeRatsnest, deriveBoard } from '../src/renderer/pcb-board.ts'
+import { BUILTIN_FOOTPRINTS, type Footprint } from '../src/renderer/footprint.ts'
+import {
+  type Board,
+  type BoardPart,
+  computeRatsnest,
+  deriveBoard,
+} from '../src/renderer/pcb-board.ts'
 import { DRC_RULES, runDrc } from '../src/renderer/pcb-drc.ts'
 import { routeBoard } from '../src/renderer/pcb-route.ts'
 
@@ -505,5 +510,68 @@ describe('runDrc', () => {
       const withVia = { ...routing, vias: [{ net, at: mid, diameterMm: 0.6, drillMm: 0.4 }] }
       expect(openNet(runDrc(board, rn, withVia))).toEqual([])
     })
+  })
+})
+
+describe('runDrc — plated through-hole PAD geometry (annular ring + drill floor, IPC-2221)', () => {
+  // A plated component hole needs the same annular ring + drill floor a via does. Shipped footprints are
+  // all sane, so to exercise the check we inject a deliberately-bad footprint (the case a user-authored
+  // or edited footprint hits) and confirm DRC flags it — the identical geometry on a via was already
+  // caught, but a component pad slipped through before this rule.
+  const badId = '__TEST_BAD_THT__'
+  const fpWith = (holeDiameter: number, padMm: number): Footprint => ({
+    id: badId,
+    name: 'test THT',
+    description: 'a deliberately-bad through-hole pad for the DRC test',
+    pads: [
+      {
+        id: '1',
+        center: { x: 0, y: 0 },
+        size: { w: padMm, h: padMm },
+        shape: 'circle',
+        type: 'through_hole',
+        holeDiameter,
+      },
+    ],
+    silkscreen: [],
+    fabrication: [{ from: { x: -1, y: -1 }, to: { x: 1, y: -1 }, width: 0.1 }],
+    labels: { reference: { x: 0, y: 0 }, value: { x: 0, y: 0 }, fabReference: { x: 0, y: 0 } },
+    courtyard: { x: -1, y: -1, w: 2, h: 2 },
+    provenance: { source_type: 'reference', title: 'test', citation: 'test', confidence: 'high' },
+  })
+  const codesFor = (holeDiameter: number, padMm: number): string[] => {
+    BUILTIN_FOOTPRINTS[badId] = fpWith(holeDiameter, padMm)
+    const board: Board = {
+      outline: { x: 0, y: 0, w: 50, h: 50 },
+      placements: [
+        { partId: 'D1', footprintId: badId, x: 20, y: 20, rotation: 0, designator: 'D1' },
+      ],
+    }
+    const rn = { airwires: [], padBoxes: [] }
+    const routing = { traces: [], vias: [], unrouted: [] }
+    return runDrc(board, rn, routing).map((d) => d.code)
+  }
+  afterEach(() => {
+    delete BUILTIN_FOOTPRINTS[badId]
+  })
+
+  test('a pad barely larger than its hole is flagged annular-ring (0.025 mm < 0.05 mm)', () => {
+    // pad 0.85 mm, hole 0.8 mm → ring (0.85 − 0.8)/2 = 0.025 mm; the 0.8 mm drill is fine
+    const codes = codesFor(0.8, 0.85)
+    expect(codes).toContain('annular-ring')
+    expect(codes).not.toContain('drill-size')
+  })
+
+  test('a hole under the 0.3 mm drill floor is flagged drill-size', () => {
+    // pad 1.0 mm, hole 0.2 mm → drill 0.2 < 0.3; the (1.0 − 0.2)/2 = 0.4 mm ring is fine
+    const codes = codesFor(0.2, 1.0)
+    expect(codes).toContain('drill-size')
+    expect(codes).not.toContain('annular-ring')
+  })
+
+  test('a sane through-hole pad (1.6 mm pad, 0.8 mm hole — DIP-8 geometry) is clean', () => {
+    const codes = codesFor(0.8, 1.6) // ring 0.4 mm, drill 0.8 mm — both well within the floors
+    expect(codes).not.toContain('annular-ring')
+    expect(codes).not.toContain('drill-size')
   })
 })
