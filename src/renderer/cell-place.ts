@@ -128,3 +128,28 @@ export function placeCells(nodes: CanvasNodeLike[], edges: CanvasEdgeLike[]): Fl
     anyUnreliable: geos.some((g) => !g.reliable),
   }
 }
+
+/**
+ * A cheap structural fingerprint of the schematic — what the placement DEPENDS on: the parts (id +
+ * definition + any block name) and the wiring (edge endpoints), NOT their canvas positions (moving a
+ * part doesn't change the netlist). Over the TOP-LEVEL nodes/edges (a handful), not the flattened cells,
+ * so it's fast to recompute every render. Drives the "layout drifts from schematic" check: when this
+ * differs from the fingerprint the floorplan was generated at, the design changed underneath it.
+ */
+export function chipSignature(nodes: CanvasNodeLike[], edges: CanvasEdgeLike[]): string {
+  let h = 2166136261
+  const mix = (s: string) => {
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i)
+      h = Math.imul(h, 16777619)
+    }
+    h = Math.imul(h, 16777619) // separate fields so "ab"+"c" ≠ "a"+"bc"
+  }
+  for (const n of [...nodes].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+    mix(`${n.id}${n.data.definition}${n.data.block?.name ?? ''}`)
+  }
+  for (const e of [...edges].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+    mix(`${e.id}|${e.source}|${e.sourceHandle ?? ''}|${e.target}|${e.targetHandle ?? ''}`)
+  }
+  return `${(h >>> 0).toString(36)}:${nodes.length}:${edges.length}`
+}

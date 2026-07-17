@@ -18,6 +18,7 @@ import {
   useReactFlow,
   useUpdateNodeInternals,
 } from '@xyflow/react'
+import { chipSignature, type Floorplan, placeCells } from './cell-place.ts'
 import { type ChipLayout, EMPTY_CHIP_LAYOUT } from './chip-layout.ts'
 import { ChipView } from './chip-workspace.tsx'
 import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
@@ -1367,6 +1368,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       // Restore THIS file's chip floorplan layer (replacing the previous canvas's); older files with none
       // load with an empty layout, so the chip level re-generates its floorplan fresh from the design.
       setChipLayout(result.file.chipLayout ?? EMPTY_CHIP_LAYOUT)
+      setChipFloorplan(null) // re-generate the floorplan for the loaded design on next chip entry
       dropCount.current = maxIdSuffix(result.file.nodes)
       window.setTimeout(() => fitView({ padding: 0.15 }), 80)
     })
@@ -1395,6 +1397,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       setEdges(flow.edges)
       setPcbPlacements(new Map()) // imported netlists start from their own auto board
       setChipLayout(EMPTY_CHIP_LAYOUT) // …and a fresh chip floorplan
+      setChipFloorplan(null)
       dropCount.current = maxIdSuffix(circuit.nodes)
       window.setTimeout(() => fitView({ padding: 0.15 }), 80)
       // A Verilog import arrives as one circuit block; report its gate count, not the node count (1).
@@ -1699,6 +1702,34 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     })
     return { report, hasRegisters, clockDetected: Number.isFinite(clockPeriod) }
   }, [workspaceMode, nodes, edges, live, timing])
+
+  // The chip floorplan is GENERATED (placeCells) lazily when you ENTER the Chip level and then LIVES in
+  // app state, so leaving + re-entering the level doesn't re-derive it — the "stop re-deriving" fix. It
+  // regenerates only when you press Re-place; a cheap schematic fingerprint flags when it's gone stale.
+  const [chipFloorplan, setChipFloorplan] = useState<{ plan: Floorplan; signature: string } | null>(
+    null,
+  )
+  const chipLiveSignature = useMemo(
+    () => chipSignature(nodes as unknown as BlockNodeLike[], edges as unknown as BlockEdgeLike[]),
+    [nodes, edges],
+  )
+  const regenerateChipFloorplan = useCallback(() => {
+    setChipFloorplan({
+      plan: placeCells(nodes as unknown as BlockNodeLike[], edges as unknown as BlockEdgeLike[]),
+      signature: chipLiveSignature,
+    })
+  }, [nodes, edges, chipLiveSignature])
+  // Generate on entering the Chip level if there's none yet; never auto-regenerate afterwards — an edit
+  // raises the drift banner instead (the real-EDA "the layout is a separate artifact" model).
+  useEffect(() => {
+    if (workspaceMode === 'chip' && chipFloorplan === null) regenerateChipFloorplan()
+  }, [workspaceMode, chipFloorplan, regenerateChipFloorplan])
+  const chipDrift = chipFloorplan !== null && chipFloorplan.signature !== chipLiveSignature
+  // Re-place: regenerate from the current schematic, drop manual cell moves, and re-baseline the drift.
+  const onChipReplace = useCallback(() => {
+    regenerateChipFloorplan()
+    setChipLayout((current) => ({ ...current, overrides: [], sourceSignature: chipLiveSignature }))
+  }, [regenerateChipFloorplan, chipLiveSignature])
   // The PCB derivation (board → router → DRC) runs when EITHER the dock panel is open OR the board
   // workspace is showing — so the full-size workspace derives real copper without forcing the dock open.
   const pcbActive = pcbOpen || workspaceMode === 'board'
@@ -6724,9 +6755,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             nodes={nodes as unknown as BlockNodeLike[]}
             edges={edges as unknown as BlockEdgeLike[]}
             timing={chipTiming}
+            floorplan={chipFloorplan?.plan ?? null}
             overrides={chipLayout.overrides}
             lens={chipLayout.lens ?? 'module'}
             onLens={(mode) => setChipLayout((current) => ({ ...current, lens: mode }))}
+            drift={chipDrift}
+            onReplace={onChipReplace}
             light={light}
           />
         )}
