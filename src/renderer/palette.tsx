@@ -176,6 +176,7 @@ export const PARTS: { definition: string; label: string }[] = [
   { definition: 'cpu_fetch_engine', label: 'CPU Fetch' },
   { definition: 'cpu_4bit', label: 'CPU' },
   { definition: 'verilog_cpu', label: 'CPU (Verilog) ▶' },
+  { definition: 'verilog_cpu8', label: '8-bit CPU (Verilog) ▶' },
   { definition: 'cpu_data_ram', label: 'Data RAM' },
   { definition: 'memory_sram_cell', label: 'SRAM Cell' },
   { definition: 'memory_sram_word_4bit', label: 'SRAM 4-bit' },

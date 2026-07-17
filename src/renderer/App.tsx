@@ -41,6 +41,7 @@ import { LIGHT_SENSOR_DEFINITIONS, worldWithCastLight } from '../light.ts'
 import { solveWithRelays } from '../relay.ts'
 import { analyzeTiming } from '../static-timing.ts'
 import { STANDARD_AMBIENT_C } from '../thermal-model.ts'
+import { binaryToBcd8 } from './bin2bcd.ts'
 import { type AddableTerminal, BlockInspector, type BlockPortPatch } from './block-inspector.tsx'
 import { BlockViewer } from './block-viewer.tsx'
 import {
@@ -238,7 +239,7 @@ import {
   registerUserPart,
   type UserPart,
 } from './user-parts.ts'
-import { buildDemoCpu } from './verilog-cpu-demo.ts'
+import { buildDemoCpu, buildDemoCpu8 } from './verilog-cpu-demo.ts'
 import { isVerilogText, parseVerilogText, serializeVerilog } from './verilog-file.ts'
 import {
   findWireCrossings,
@@ -308,6 +309,12 @@ const dcSource = (v: number) => ({
 const vcpuRead4 = (r: LogicResult, port: string): number => {
   let v = 0
   for (let i = 0; i < 4; i++) if (r.value('vh', `${port}[${i}]`) === true) v |= 1 << i
+  return v
+}
+// Same, but for a named node (the 8-bit demo reads digits off the BCD converter as well as the CPU).
+const read4At = (r: LogicResult, node: string, port: string): number => {
+  let v = 0
+  for (let i = 0; i < 4; i++) if (r.value(node, `${port}[${i}]`) === true) v |= 1 << i
   return v
 }
 
@@ -3214,6 +3221,231 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     paintVcpu({ res: 0, acc: 0, pc: 0 })
   }, [setNodes, setEdges, checkpointAction, reSolve, READOUTS, paintVcpu])
 
+  // ── The 8-bit Verilog-CPU demo — bigger datapath, a hardware MULTIPLY, and a DECIMAL result readout ────
+  // The 8-bit CPU (verilog-cpu-demo.ts) uses the increment-6 operators as real hardware (× in one instruction).
+  // Its 8-bit output can't show on one hex digit, so the harness also holds the binary→BCD converter
+  // (bin2bcd.ts, real gates): the CPU's out feeds it, and its three decimal digits drive three seven-segment
+  // readouts as "120". This CPU is ~12k gates, so each solve is heavier than the 4-bit one — the run interval
+  // is slower to match.
+  const vcpu8CompiledRef = useRef<CompiledLogic | null>(null)
+  const vcpu8Solve = useCallback((clk: boolean, rst: boolean): LogicResult | null => {
+    if (vcpu8CompiledRef.current === null) {
+      const cpu = buildDemoCpu8('vh8')
+      const bcd = binaryToBcd8('b2b')
+      if (cpu === null || bcd === null) return null
+      const e = (id: string, s: string, sh: string, t: string, th: string) => ({
+        id,
+        source: s,
+        sourceHandle: sh,
+        target: t,
+        targetHandle: th,
+      })
+      const hn = [
+        { id: 'vh8', data: { definition: 'block', block: cpu } },
+        { id: 'b2b', data: { definition: 'block', block: bcd } },
+        { id: 'h8_vp', data: { definition: 'power_source', parameters: dcSource(5) } },
+        { id: 'h8_g', data: { definition: 'ground' } },
+        { id: 'h8_clk', data: { definition: 'power_source', parameters: dcSource(0) } },
+        { id: 'h8_rst', data: { definition: 'power_source', parameters: dcSource(0) } },
+      ]
+      const he = [
+        e('e8_vp', 'h8_vp', 'terminal_positive', 'vh8', 'v_dd'),
+        e('e8_g', 'vh8', 'gnd', 'h8_g', 'reference_terminal'),
+        e('e8_clk', 'h8_clk', 'terminal_positive', 'vh8', 'clk'),
+        e('e8_rst', 'h8_rst', 'terminal_positive', 'vh8', 'rst'),
+        e('e8_bvp', 'h8_vp', 'terminal_positive', 'b2b', 'v_dd'),
+        e('e8_bg', 'b2b', 'gnd', 'h8_g', 'reference_terminal'),
+        e('e8_vpn', 'h8_vp', 'terminal_negative', 'h8_g', 'reference_terminal'),
+        e('e8_clkn', 'h8_clk', 'terminal_negative', 'h8_g', 'reference_terminal'),
+        e('e8_rstn', 'h8_rst', 'terminal_negative', 'h8_g', 'reference_terminal'),
+      ]
+      for (let i = 0; i < 8; i++) he.push(e(`e8_ob${i}`, 'vh8', `out[${i}]`, 'b2b', `b[${i}]`))
+      vcpu8CompiledRef.current = compileLogic(
+        hn as unknown as BlockNodeLike[],
+        he as unknown as BlockEdgeLike[],
+      )
+    }
+    const overrides = new Map<string, boolean>([
+      ['h8_clk', clk],
+      ['h8_rst', rst],
+    ])
+    return stepLogic(vcpu8CompiledRef.current, overrides, logicStateRef.current)
+  }, [])
+  const paintVcpu8 = useCallback(
+    (vals: { h: number; t: number; o: number; pc: number }) => {
+      setNodes((cur) =>
+        cur.map((n) => {
+          const m = /^vc8_src_(h|t|o|pc)_(\d)$/.exec(n.id)
+          if (m === null) return n
+          const val =
+            m[1] === 'h' ? vals.h : m[1] === 't' ? vals.t : m[1] === 'o' ? vals.o : vals.pc
+          const hi = ((val >> Number(m[2])) & 1) === 1
+          return { ...n, data: { ...n.data, parameters: dcSource(hi ? 5 : 0) } }
+        }),
+      )
+    },
+    [setNodes],
+  )
+  const stepVcpu8 = useCallback(() => {
+    vcpu8Solve(false, false)
+    const r = vcpu8Solve(true, false)
+    if (r === null) return null
+    const snap = {
+      h: read4At(r, 'b2b', 'hundreds'),
+      t: read4At(r, 'b2b', 'tens'),
+      o: read4At(r, 'b2b', 'ones'),
+      pc: read4At(r, 'vh8', 'pcv'),
+      halted: r.value('vh8', 'halted') === true,
+    }
+    paintVcpu8({ h: snap.h, t: snap.t, o: snap.o, pc: snap.pc })
+    return { ...snap, out: snap.h * 100 + snap.t * 10 + snap.o }
+  }, [vcpu8Solve, paintVcpu8])
+  const runVcpu8 = useCallback(() => {
+    stopVcpu()
+    vcpuRunRef.current = window.setInterval(() => {
+      const snap = stepVcpu8()
+      if (snap === null || snap.halted) stopVcpu()
+    }, 450) // slower interval — the 8-bit CPU's solve is ~6× heavier than the 4-bit's
+  }, [stepVcpu8, stopVcpu])
+  const resetVcpu8 = useCallback(() => {
+    stopVcpu()
+    logicStateRef.current = new Map<string, boolean>()
+    vcpu8CompiledRef.current = null
+    paintVcpu8({ h: 0, t: 0, o: 0, pc: 0 })
+  }, [stopVcpu, paintVcpu8])
+
+  const placeVerilogCpu8Demo = useCallback(() => {
+    const decoder = BUILTIN_BLOCKS.logic_decoder_7seg
+    const display = BUILTIN_BLOCKS.display_seven_segment
+    if (!decoder || !display) return
+    checkpointAction('verilog cpu (8-bit)')
+    logicStateRef.current = new Map<string, boolean>()
+    vcpu8CompiledRef.current = null
+    const nodes: Record<string, unknown>[] = [
+      {
+        id: 'vc8_vp',
+        type: 'device',
+        position: { x: -360, y: 1240 },
+        data: { definition: 'power_source', label: 'V+', parameters: dcSource(5) },
+      },
+      {
+        id: 'vc8_g',
+        type: 'device',
+        position: { x: -240, y: 1240 },
+        data: { definition: 'ground', label: 'GND' },
+      },
+    ]
+    const edges: Record<string, unknown>[] = [
+      {
+        id: 'vc8_vpn',
+        type: 'net',
+        source: 'vc8_vp',
+        sourceHandle: 'terminal_negative',
+        target: 'vc8_g',
+        targetHandle: 'reference_terminal',
+      },
+    ]
+    // three decimal digits (hundreds/tens/ones) for the RESULT, then the program counter in hex
+    const readouts: { key: string; label: string }[] = [
+      { key: 'h', label: '100s' },
+      { key: 't', label: '10s' },
+      { key: 'o', label: '1s' },
+      { key: 'pc', label: 'PC' },
+    ]
+    readouts.forEach((ro, idx) => {
+      const cx = idx * 360
+      nodes.push({
+        id: `vc8_disp_${ro.key}`,
+        type: 'block',
+        position: { x: cx, y: 60 },
+        data: { definition: 'display_seven_segment', label: ro.label, block: display },
+      })
+      nodes.push({
+        id: `vc8_dec_${ro.key}`,
+        type: 'block',
+        position: { x: cx, y: 560 },
+        data: { definition: 'block', label: ro.label, block: decoder, fidelity: 'logic' },
+      })
+      for (const s of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) {
+        edges.push({
+          id: `vc8_sg_${ro.key}_${s}`,
+          type: 'net',
+          source: `vc8_dec_${ro.key}`,
+          sourceHandle: `seg_${s}`,
+          target: `vc8_disp_${ro.key}`,
+          targetHandle: `seg_${s}`,
+        })
+      }
+      edges.push({
+        id: `vc8_decvp_${ro.key}`,
+        type: 'net',
+        source: 'vc8_vp',
+        sourceHandle: 'terminal_positive',
+        target: `vc8_dec_${ro.key}`,
+        targetHandle: 'v_dd',
+      })
+      edges.push({
+        id: `vc8_decg_${ro.key}`,
+        type: 'net',
+        source: `vc8_dec_${ro.key}`,
+        sourceHandle: 'gnd',
+        target: 'vc8_g',
+        targetHandle: 'reference_terminal',
+      })
+      edges.push({
+        id: `vc8_dispc_${ro.key}`,
+        type: 'net',
+        source: `vc8_disp_${ro.key}`,
+        sourceHandle: 'common',
+        target: 'vc8_g',
+        targetHandle: 'reference_terminal',
+      })
+      for (let i = 0; i < 4; i++) {
+        nodes.push({
+          id: `vc8_src_${ro.key}_${i}`,
+          type: 'device',
+          position: { x: cx, y: 1080 + i * 90 },
+          data: { definition: 'power_source', label: '', parameters: dcSource(0) },
+        })
+        edges.push({
+          id: `vc8_srce_${ro.key}_${i}`,
+          type: 'net',
+          source: `vc8_src_${ro.key}_${i}`,
+          sourceHandle: 'terminal_positive',
+          target: `vc8_dec_${ro.key}`,
+          targetHandle: `d${i}`,
+        })
+        edges.push({
+          id: `vc8_srcg_${ro.key}_${i}`,
+          type: 'net',
+          source: `vc8_src_${ro.key}_${i}`,
+          sourceHandle: 'terminal_negative',
+          target: 'vc8_g',
+          targetHandle: 'reference_terminal',
+        })
+      }
+    })
+    const controls: { action: string; label: string }[] = [
+      { action: 'run8', label: '▶ Run' },
+      { action: 'step8', label: '⏭ Step' },
+      { action: 'reset8', label: '⟲ Reset' },
+    ]
+    controls.forEach((c, i) => {
+      nodes.push({
+        id: `vc8_ctrl_${c.action}`,
+        type: 'keycap',
+        draggable: false,
+        position: { x: i * 150, y: -180 },
+        data: { definition: 'keycap', label: c.label, demoAction: c.action },
+      })
+    })
+    setNodes(() => nodes as unknown as Node[])
+    setEdges(() => edges as unknown as Edge[])
+    setAutoRouteWires(true)
+    reSolve(nodes as unknown as Node[], edges as unknown as Edge[])
+    paintVcpu8({ h: 0, t: 0, o: 0, pc: 0 })
+  }, [setNodes, setEdges, checkpointAction, reSolve, paintVcpu8])
+
   const onDrop = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
       event.preventDefault()
@@ -3254,6 +3486,10 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       // The Verilog CPU demo lays out the readouts + Run/Step/Reset controls for a Verilog-synthesized CPU.
       if (definition === 'verilog_cpu') {
         placeVerilogCpuDemo()
+        return
+      }
+      if (definition === 'verilog_cpu8') {
+        placeVerilogCpu8Demo()
         return
       }
       // A built-in (e.g. the op-amp) drops as a block node — a fresh deep copy that
@@ -3297,6 +3533,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       snapToGrid,
       placeCalculator,
       placeVerilogCpuDemo,
+      placeVerilogCpu8Demo,
     ],
   )
 
@@ -3525,6 +3762,25 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         let ticks = 0
         for (let i = 0; i < maxTicks; i++) {
           snap = stepVcpu()
+          ticks = i + 1
+          if (snap === null || snap.halted) break
+        }
+        return { ...snap, ticks }
+      },
+      // DEV: the 8-bit CPU demo — hardware multiply, run to halt, decimal result read off the BCD converter.
+      verilogCpu8(maxTicks = 60) {
+        placeVerilogCpu8Demo()
+        let snap: {
+          h: number
+          t: number
+          o: number
+          pc: number
+          halted: boolean
+          out: number
+        } | null = null
+        let ticks = 0
+        for (let i = 0; i < maxTicks; i++) {
+          snap = stepVcpu8()
           ticks = i + 1
           if (snap === null || snap.halted) break
         }
@@ -6470,6 +6726,18 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                                   }
                                   if (demoAction === 'reset') {
                                     resetVcpu()
+                                    return
+                                  }
+                                  if (demoAction === 'run8') {
+                                    runVcpu8()
+                                    return
+                                  }
+                                  if (demoAction === 'step8') {
+                                    stepVcpu8()
+                                    return
+                                  }
+                                  if (demoAction === 'reset8') {
+                                    resetVcpu8()
                                     return
                                   }
                                   if (

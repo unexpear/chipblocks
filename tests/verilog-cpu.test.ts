@@ -16,11 +16,16 @@ import type { BlockData, CanvasEdgeLike, CanvasNodeLike } from '../src/renderer/
 import { simulateLogic } from '../src/renderer/logic-sim.ts'
 import {
   buildDemoCpu,
+  cpu8Verilog,
   cpuVerilog,
   DEMO_RESULT,
+  DEMO8_PROGRAM,
+  DEMO8_RESULT,
   instr,
+  instr12,
   multiplyProgram,
   OP,
+  OP8,
 } from '../src/renderer/verilog-cpu-demo.ts'
 import { importVerilog } from '../src/renderer/verilog-import.ts'
 
@@ -169,5 +174,57 @@ describe('a whole CPU written in Verilog builds itself from real gates and runs 
     }
     expect(halted).toBe(true)
     expect(readReg(last, 'out', 4)).toBe(11) // (5 + 6) mod 16
+  })
+})
+
+describe('the 8-bit CPU in Verilog uses the increment-6 operators as real hardware', () => {
+  const runToHalt = (program: number[], budget = 120) => {
+    const { block, warnings } = importVerilog(cpu8Verilog(program))
+    expect(warnings, `warnings: ${warnings.join(' | ')}`).toEqual([])
+    const cpu = block as BlockData
+    const state = new Map<string, boolean>()
+    tick(cpu, true, state) // reset
+    let halted = false
+    let last = solve(cpu, { rst: false, clk: false }, state)
+    for (let i = 0; i < budget && !halted; i++) {
+      last = tick(cpu, false, state)
+      halted = last.value('M', 'halted') === true
+    }
+    expect(halted, 'should reach HLT').toBe(true)
+    return readReg(last, 'out', 8)
+  }
+
+  test('the demo CPU multiplies 12 × 10 = 120 in ONE hardware-multiply instruction', () => {
+    expect(runToHalt(DEMO8_PROGRAM)).toBe(DEMO8_RESULT) // 120
+  })
+
+  test('shift instructions: 5 << 2 >> 1 = 10 (barrel shifters in the datapath)', () => {
+    const program = [
+      instr12(OP8.LDI, 5),
+      instr12(OP8.SHL, 2), // acc = 5 << 2 = 20
+      instr12(OP8.SHR, 1), // acc = 20 >> 1 = 10
+      instr12(OP8.OUT),
+      instr12(OP8.HLT),
+    ]
+    expect(runToHalt(program)).toBe(10)
+  })
+
+  test('a less-than comparison branch (JLT) is taken when acc < the immediate', () => {
+    // acc=3; JLT 4 compares acc < 4 and jumps to address 4 (taken) → loads 42; the fall-through path loads 99
+    const program = [
+      instr12(OP8.LDI, 3),
+      instr12(OP8.JLT, 4), // 3 < 4 → jump to addr 4
+      instr12(OP8.LDI, 99), // (skipped when the branch is taken)
+      instr12(OP8.HLT),
+      instr12(OP8.LDI, 42), // addr 4
+      instr12(OP8.OUT),
+      instr12(OP8.HLT),
+    ]
+    expect(runToHalt(program)).toBe(42)
+  })
+
+  test('a bigger multiply overflows the byte honestly (20 × 20 = 400 mod 256 = 144)', () => {
+    const program = [instr12(OP8.LDI, 20), instr12(OP8.MUL, 20), instr12(OP8.OUT), instr12(OP8.HLT)]
+    expect(runToHalt(program)).toBe(400 % 256) // 144 — real 8-bit wraparound, not a lie
   })
 })
