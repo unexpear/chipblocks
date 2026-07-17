@@ -108,6 +108,7 @@ import {
 import {
   type CompiledLogic,
   compileLogic,
+  isLogicGate,
   type LogicResult,
   type simulateLogic,
   stepLogic,
@@ -1622,6 +1623,42 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     () => setWorkspaceMode((m) => (m === 'schematic' ? 'board' : 'schematic')),
     [],
   )
+  // Chip-level timing sign-off: the same static-timing analysis, but on the design FLATTENED to gates + flip-
+  // flops first — so a hierarchical block's INTERNAL registers become the register nodes. The schematic-level
+  // `timing` sees a CPU as a single block and finds no register-to-register paths; flattening exposes them
+  // (thousands, on a CPU). Only computed at the Chip level (the flatten is heavy), reusing `timing` elsewhere.
+  const chipTiming = useMemo(() => {
+    if (workspaceMode !== 'chip') return timing
+    const supplyVoltage = live ? live.threshold * 2 : 5
+    let clockPeriod = Number.POSITIVE_INFINITY
+    for (const n of nodes) {
+      if ((n.data as { definition?: string })?.definition !== 'power_source') continue
+      const f = readScalarParam(
+        { parameters: (n.data as DeviceNodeData).parameters } as Instance,
+        'frequency',
+      )
+      if (f !== undefined && f > 0) clockPeriod = Math.min(clockPeriod, 1 / f)
+    }
+    // Descend through composite blocks + multi-bit registers, stopping at logic gates and the atomic D
+    // flip-flop (the register the synthesizer and register blocks are built from) so the flops read as
+    // registers and the gates between them as combinational paths.
+    const flat = flattenBlocks(
+      nodes as unknown as BlockNodeLike[],
+      edges as unknown as BlockEdgeLike[],
+      (b) => isLogicGate(b) || b.name === 'D Flip-Flop',
+    )
+    const timingOpts = { wireCapacitance: 5e-12, defaultInputCapacitance: 120e-12 }
+    const paths = traceTimingPaths(flat.nodes, flat.edges, {
+      supplyVoltage,
+      ...timingOpts,
+    })
+    const report = analyzeTiming(paths, flipFlopTiming(supplyVoltage, timingOpts), clockPeriod, 0)
+    const hasRegisters = flat.nodes.some((n) => {
+      const b = (n.data as { block?: BlockData })?.block
+      return b ? isClockedBlock(b) : false
+    })
+    return { report, hasRegisters, clockDetected: Number.isFinite(clockPeriod) }
+  }, [workspaceMode, nodes, edges, live, timing])
   // The PCB derivation (board → router → DRC) runs when EITHER the dock panel is open OR the board
   // workspace is showing — so the full-size workspace derives real copper without forcing the dock open.
   const pcbActive = pcbOpen || workspaceMode === 'board'
@@ -3785,6 +3822,61 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           if (snap === null || snap.halted) break
         }
         return { ...snap, ticks }
+      },
+      // DEV: place the Verilog-synthesized CPU as a BLOCK on the canvas (not the harness demo) and switch to
+      // the Chip level, so the standard-cell area + timing sign-off flatten the real gates — the RTL→silicon
+      // translation. Returns nothing readable synchronously; read the Chip panel DOM after.
+      chipCpu() {
+        checkpointAction('dev: chip cpu')
+        const cpu = buildDemoCpu('chipcpu')
+        if (cpu === null) return 'build failed'
+        const e = (id: string, s: string, sh: string, t: string, th: string) => ({
+          id,
+          type: 'net',
+          source: s,
+          sourceHandle: sh,
+          target: t,
+          targetHandle: th,
+        })
+        const nodes = [
+          {
+            id: 'cc_cpu',
+            type: 'block',
+            position: { x: 0, y: 0 },
+            data: { definition: 'block', label: 'CPU (Verilog)', block: cpu, fidelity: 'logic' },
+          },
+          {
+            id: 'cc_vp',
+            type: 'device',
+            position: { x: -520, y: 0 },
+            data: { definition: 'power_source', label: 'V+', parameters: dcSource(5) },
+          },
+          {
+            id: 'cc_g',
+            type: 'device',
+            position: { x: -520, y: 200 },
+            data: { definition: 'ground', label: 'GND' },
+          },
+          {
+            id: 'cc_clk',
+            type: 'device',
+            position: { x: -520, y: 400 },
+            data: { definition: 'power_source', label: 'CLK', parameters: dcSource(0) },
+          },
+        ]
+        const edges = [
+          e('cc_e1', 'cc_vp', 'terminal_positive', 'cc_cpu', 'v_dd'),
+          e('cc_e2', 'cc_cpu', 'gnd', 'cc_g', 'reference_terminal'),
+          e('cc_e3', 'cc_clk', 'terminal_positive', 'cc_cpu', 'clk'),
+          e('cc_e4', 'cc_cpu', 'rst', 'cc_g', 'reference_terminal'),
+          e('cc_e5', 'cc_vp', 'terminal_negative', 'cc_g', 'reference_terminal'),
+          e('cc_e6', 'cc_clk', 'terminal_negative', 'cc_g', 'reference_terminal'),
+        ]
+        setNodes(() => nodes as unknown as Node[])
+        setEdges(() => edges as unknown as Edge[])
+        reSolve(nodes as unknown as Node[], edges as unknown as Edge[])
+        setWorkspaceMode('chip')
+        return 'placed the Verilog CPU at the Chip level'
       },
       // Audit the REAL drawn wire geometry against the REAL part boxes (ground truth — no DOM/timing/regex):
       // how many drawn wire segments run diagonally, and how many cut through a part's interior (a >10px
@@ -6450,7 +6542,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           <ChipView
             nodes={nodes as unknown as BlockNodeLike[]}
             edges={edges as unknown as BlockEdgeLike[]}
-            timing={timing}
+            timing={chipTiming}
             light={light}
           />
         )}
