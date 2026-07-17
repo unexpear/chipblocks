@@ -228,8 +228,15 @@ describe('parameters — review hardening', () => {
     )
   })
 
-  test("a signed based literal (n'sd…) is reported (treated as unsigned, never silently)", () => {
-    reported("module m(a, y); input [3:0] a; output y; assign y = (a > 4'sd2); endmodule", 'signed')
+  test('a signed based literal in a MIXED (unsigned) context does an unsigned compare, no warning', () => {
+    // a is unsigned, so `a > 4'sd2` is an UNSIGNED compare (a > 2). Signed semantics are covered in
+    // verilog-signed.test.ts; here the point is it builds cleanly (the old 'treated as unsigned' warning is gone).
+    assertBus(
+      "module m(a, y); input [3:0] a; output y; assign y = (a > 4'sd2); endmodule",
+      busIn('a', 4),
+      ['y'],
+      (bits) => [num(bits.slice(0, 4)) > 2],
+    )
   })
 
   test('a parameter underflow [W-1:0] with W=0 is reported, not built as a multi-gigabit bus', () => {

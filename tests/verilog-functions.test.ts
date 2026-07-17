@@ -201,10 +201,10 @@ describe('functions — honest reporting', () => {
 
 // Regression guards for the adversarial review of the function inliner (the silent-zero class it flagged).
 describe('functions — review hardening', () => {
-  test('an unsynthesizable BODY (<<< in it) is reported, not silently inlined to zero', () => {
+  test('an unsynthesizable BODY (** in it) is reported, not silently inlined to zero', () => {
     reported(
       'module m(p, y); input [3:0] p; output [3:0] y;' +
-        ' function [3:0] f(input [3:0] a); reg [3:0] t; begin t = a <<< 1; f = t; end endfunction' +
+        ' function [3:0] f(input [3:0] a); reg [3:0] t; begin t = a ** 2; f = t; end endfunction' +
         ' assign y = f(p); endmodule',
       'not synthesizable',
     )

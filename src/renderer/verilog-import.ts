@@ -364,6 +364,8 @@ type ParsedModule = {
   functions: Map<string, FuncDef>
   /** Task name → its definition, inlined at each (combinational) call statement. */
   tasks: Map<string, TaskDef>
+  /** Names of `signed` nets/ports (drive sign-extension + signed comparisons/shifts/divide). */
+  signed: Set<string>
 }
 
 /** A `[ msb : lsb ]` range's bit width. Both bounds are folded as constant expressions (a parameter has
@@ -468,6 +470,7 @@ function readParamList(
         continue
       }
       if (v !== undefined && ['signed', 'integer', 'real', 'time', 'realtime'].includes(v)) {
+        if (v === 'signed') warnings.push('a signed parameter is treated as UNSIGNED — reported')
         i += 1
         continue
       }
@@ -697,6 +700,7 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
   const portOrder: string[] = []
   const widths = new Map<string, number>()
   const mems = new Map<string, MemInfo>()
+  const signed = new Set<string>()
   // A `#( … )` parameter-port list: its defaults were already folded + substituted by elaborateParams, so
   // just consume the group here. Without this the cursor would sit on `#`, the port `(` would never be read,
   // and a parameterized module would silently lose its ENTIRE port list.
@@ -704,7 +708,7 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     c.next()
     if (c.is('(')) readGroup(c)
   }
-  if (c.is('(')) parseHeader(readGroup(c), portOrder, dir, widths, warnings)
+  if (c.is('(')) parseHeader(readGroup(c), portOrder, dir, widths, signed, warnings)
   if (c.is(';')) c.next()
 
   const gates: GateInst[] = []
@@ -719,12 +723,12 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
       continue
     }
     if (t.k === 'kw' && (t.v === 'input' || t.v === 'output' || t.v === 'inout')) {
-      parsePortDecl(c, dir, widths, warnings)
+      parsePortDecl(c, dir, widths, signed, warnings)
       continue
     }
     if (t.k === 'kw' && (t.v === 'wire' || t.v === 'reg')) {
       // `reg [n:0] x;` captures a width like `wire`; `reg [d:0] m [0:w-1];` captures a memory
-      parseNetDecl(c, widths, mems, warnings)
+      parseNetDecl(c, widths, mems, signed, warnings)
       continue
     }
     if (t.k === 'kw' && t.v === 'assign') {
@@ -790,16 +794,6 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     }
     c.next() // stray token — advance so the loop can never spin
   }
-  // The synthesizer is unsigned-only; a `signed` net would compute the wrong result for */comparisons/shifts,
-  // so flag it rather than silently treat it as unsigned. A signed BASED LITERAL (`8'sd255`) lexes as one
-  // `num` token — never the `signed` keyword — so it's checked separately, or it would fold silently unsigned.
-  if (
-    toks.some((t) => t.k === 'kw' && t.v === 'signed') ||
-    toks.some((t) => t.k === 'num' && /^\d*'[sS]/.test(t.v))
-  )
-    warnings.push(
-      'signed values are treated as UNSIGNED — reported (signed arithmetic is a later increment)',
-    )
   return {
     name: nameTok.v,
     portOrder,
@@ -812,6 +806,7 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     mems,
     functions,
     tasks,
+    signed,
   }
 }
 
@@ -822,7 +817,11 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
 function parseFunction(c: Cursor, functions: Map<string, FuncDef>, warnings: string[]): void {
   const line = c.peek()?.line ?? 0
   c.next() // 'function'
-  while (c.peek()?.k === 'kw' && ['automatic', 'signed'].includes(c.peek()?.v as string)) c.next()
+  while (c.peek()?.k === 'kw' && ['automatic', 'signed'].includes(c.peek()?.v as string)) {
+    if (c.peek()?.v === 'signed')
+      warnings.push(`line ${line}: a signed function return is treated as UNSIGNED — reported`)
+    c.next()
+  }
   let retWidth = 1
   if (c.is('[')) {
     const r = readRange(c)
@@ -878,7 +877,10 @@ function collectDecl(
 ): void {
   const kw = c.next() // 'reg' | 'wire' | 'integer' | 'input'
   let width = kw?.v === 'integer' ? 32 : 1
-  while (c.peek()?.k === 'kw' && c.peek()?.v === 'signed') c.next()
+  while (c.peek()?.k === 'kw' && c.peek()?.v === 'signed') {
+    warnings.push('a `signed` declaration inside a function/task is treated as UNSIGNED — reported')
+    c.next()
+  }
   if (c.is('[')) {
     const r = readRange(c)
     if ('bad' in r) {
@@ -912,6 +914,8 @@ function parseFunctionPorts(
       ['input', 'signed'].includes((s[j] as Tok).v)
     ) {
       if ((s[j] as Tok).v === 'input') sawInput = true
+      if ((s[j] as Tok).v === 'signed')
+        warnings.push('a signed function argument is treated as UNSIGNED — reported')
       j += 1
     }
     if (sawInput) width = 1
@@ -954,7 +958,11 @@ function skipToEndfunction(c: Cursor): void {
 function parseTask(c: Cursor, tasks: Map<string, TaskDef>, warnings: string[]): void {
   const line = c.peek()?.line ?? 0
   c.next() // 'task'
-  while (c.peek()?.k === 'kw' && ['automatic', 'signed'].includes(c.peek()?.v as string)) c.next()
+  while (c.peek()?.k === 'kw' && ['automatic', 'signed'].includes(c.peek()?.v as string)) {
+    if (c.peek()?.v === 'signed')
+      warnings.push(`line ${line}: a signed task declaration is treated as UNSIGNED — reported`)
+    c.next()
+  }
   const nameTok = c.next()
   if (nameTok === undefined || nameTok.k !== 'id') {
     warnings.push(`line ${line}: malformed task declaration — reported`)
@@ -1031,6 +1039,7 @@ function parseTaskPorts(
         dir = v
         sawDir = true
       }
+      if (v === 'signed') warnings.push('a signed task argument is treated as UNSIGNED — reported')
       j += 1
     }
     if (sawDir) width = 1
@@ -1196,6 +1205,7 @@ function parseHeader(
   portOrder: string[],
   dir: Map<string, 'input' | 'output' | 'inout'>,
   widths: Map<string, number>,
+  signed: Set<string>,
   warnings: string[],
 ): void {
   const ansi = slices.some(
@@ -1203,9 +1213,10 @@ function parseHeader(
   )
   // In an ANSI header a direction keyword governs every following bare identifier until the NEXT direction
   // keyword — `input a, b, output o` declares a AND b as inputs. So `d` persists across the comma-separated
-  // slices; the range resets when a new direction keyword appears.
+  // slices; the range + signedness reset when a new direction keyword appears.
   let d: 'input' | 'output' | 'inout' | undefined
   let width: number | 'bad' | undefined
+  let sgn = false
   for (const s of slices) {
     if (s.length === 0) {
       warnings.push('null port position (empty port) is not representable — skipped')
@@ -1225,6 +1236,9 @@ function parseHeader(
       if (t.k === 'kw' && (t.v === 'input' || t.v === 'output' || t.v === 'inout')) {
         d = t.v
         width = undefined
+        sgn = false
+      } else if (t.k === 'kw' && t.v === 'signed') {
+        sgn = true
       } else if (t.k === 'p' && t.v === '[') {
         const inner: Tok[] = []
         i += 1
@@ -1245,6 +1259,7 @@ function parseHeader(
         portOrder.push(t.v)
         dir.set(t.v, d)
         if (typeof width === 'number' && width > 1) widths.set(t.v, width)
+        if (sgn) signed.add(t.v)
       }
     }
   }
@@ -1254,10 +1269,12 @@ function parsePortDecl(
   c: Cursor,
   dir: Map<string, 'input' | 'output' | 'inout'>,
   widths: Map<string, number>,
+  signed: Set<string>,
   warnings: string[],
 ): void {
   const d = (c.next() as Tok).v as 'input' | 'output' | 'inout'
   let width: number | 'bad' | undefined // the pending `[N:0]` range for the following ids
+  let sgn = false
   while (!c.atEnd() && !c.is(';')) {
     const t = c.peek() as Tok
     if (t.v === '=') {
@@ -1266,6 +1283,11 @@ function parsePortDecl(
       )
       while (!c.atEnd() && !c.is(';')) c.next()
       break
+    }
+    if (t.k === 'kw' && t.v === 'signed') {
+      sgn = true
+      c.next()
+      continue
     }
     if (t.k === 'p' && t.v === '[') {
       const r = readRange(c)
@@ -1285,6 +1307,7 @@ function parsePortDecl(
     }
     dir.set(t.v, d)
     if (typeof width === 'number' && width > 1) widths.set(t.v, width)
+    if (sgn) signed.add(t.v)
   }
   if (c.is(';')) c.next()
 }
@@ -1293,10 +1316,12 @@ function parseNetDecl(
   c: Cursor,
   widths: Map<string, number>,
   mems: Map<string, MemInfo>,
+  signed: Set<string>,
   warnings: string[],
 ): void {
   c.next() // 'wire' or 'reg'
   let width: number | 'bad' | undefined
+  let sgn = false
   while (!c.atEnd() && !c.is(';')) {
     const t = c.peek() as Tok
     if (t.v === '=') {
@@ -1305,6 +1330,11 @@ function parseNetDecl(
       )
       while (!c.atEnd() && !c.is(';')) c.next()
       break
+    }
+    if (t.k === 'kw' && t.v === 'signed') {
+      sgn = true
+      c.next()
+      continue
     }
     if (t.k === 'p' && t.v === '[') {
       const r = readRange(c)
@@ -1329,9 +1359,11 @@ function parseNetDecl(
         continue
       }
       mems.set(t.v, { width: typeof width === 'number' ? width : 1, depth: dr.depth })
+      if (sgn) signed.add(t.v) // a `reg signed […] m […]` — its words read sign-extended
       continue
     }
     if (typeof width === 'number' && width > 1) widths.set(t.v, width)
+    if (sgn) signed.add(t.v)
   }
   if (c.is(';')) c.next()
 }

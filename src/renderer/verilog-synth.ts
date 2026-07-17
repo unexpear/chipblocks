@@ -42,7 +42,7 @@ type MemTable = Map<string, MemInfo>
 // ── expression AST ────────────────────────────────────────────────────────────
 type Expr =
   | { t: 'net'; name: string }
-  | { t: 'const'; bits: (0 | 1)[] } // LSB-first, length = width
+  | { t: 'const'; bits: (0 | 1)[]; signed?: boolean } // LSB-first, length = width; signed = an `'sd`/plain-int literal
   | { t: 'bitsel'; name: string; index: number }
   | { t: 'partsel'; name: string; hi: number; lo: number }
   | { t: 'concat'; parts: Expr[] } // MSB-first (leftmost is the high bits)
@@ -57,6 +57,8 @@ type Expr =
   // a self-determined WIDTH WALL: evaluate `of` at exactly `width` bits (truncate/zero-extend), regardless of
   // the surrounding context — how a function's inputs/locals/return honor their declared widths exactly.
   | { t: 'sized'; width: number; of: Expr }
+  // a `$signed(x)` / `$unsigned(x)` cast: re-interpret `of` as signed / unsigned (changes only how it extends).
+  | { t: 'cast'; signed: boolean; of: Expr }
   | { t: 'bad'; why: string }
 
 /** The synthetic net name of memory word k (bracket form — can't collide with a user simple identifier). */
@@ -71,7 +73,7 @@ function foldConst(e: Expr, widthOf: (n: string) => number): number | undefined 
   // fold ctx (no funcs/tie) — so treat any tree containing one as non-constant rather than fold it wrong.
   if (hasCall(e)) return undefined
   let z = 0
-  const bits = synthAt(e, selfWidth(e, widthOf), {
+  const bits = synthAt(e, selfWidth(e, widthOf), false, {
     gates: [],
     fresh: () => `#fold${z++}`,
     widthOf,
@@ -117,8 +119,7 @@ const INFIX_BP: Record<string, number> = {
   '%': 11,
   '**': 12,
 }
-// Unsigned magnitude comparisons — 1-bit results, computed by a subtract's carry-out. `<<<`/`>>>` (arithmetic
-// shifts) are deliberately EXCLUDED — they're signed, so they stay reported until signed support lands.
+// Magnitude comparisons — 1-bit results, computed by a subtract's carry-out (signed when both operands are).
 const RELATIONAL = new Set(['<', '<=', '>', '>='])
 const SUPPORTED_BIN = new Set([
   '||',
@@ -137,13 +138,15 @@ const SUPPORTED_BIN = new Set([
   '%',
   '<<',
   '>>',
+  '<<<', // arithmetic left shift = logical left shift
+  '>>>', // arithmetic right shift (sign-fill for a signed left operand)
   '<',
   '<=',
   '>',
   '>=',
 ])
 const UNARY = new Set(['~', '!', '&', '|', '^', '~&', '~|', '~^', '^~', '+', '-'])
-const SUPPORTED_UN = new Set(['~', '!', '&', '|', '^', '~&', '~|', '~^', '^~'])
+const SUPPORTED_UN = new Set(['~', '!', '&', '|', '^', '~&', '~|', '~^', '^~', '+', '-'])
 
 class TokStream {
   i = 0
@@ -229,6 +232,14 @@ function parsePrimary(ts: TokStream, mems: MemTable): Expr {
     if (ts.peek()?.v !== ')') return { t: 'bad', why: 'missing ")"' }
     ts.next()
     return e
+  }
+  if (t.k === 'sys' && (t.v === '$signed' || t.v === '$unsigned')) {
+    if (ts.peek()?.v !== '(') return { t: 'bad', why: `${t.v} must be called as ${t.v}(expr)` }
+    const argToks = readCallArgs(ts)
+    if (argToks.length !== 1) return { t: 'bad', why: `${t.v} takes exactly one argument` }
+    const of = parseRhs(argToks[0] as Tok[], mems)
+    if (of.t === 'bad') return of
+    return { t: 'cast', signed: t.v === '$signed', of }
   }
   if (t.v === '{') return parseBraces(ts, mems)
   if (t.k === 'num') return constExpr(t.v)
@@ -339,17 +350,20 @@ function parseConcatBody(ts: TokStream, mems: MemTable): Expr {
   return parts.length === 1 ? (parts[0] as Expr) : { t: 'concat', parts }
 }
 
-/** A Verilog integer literal → its LSB-first constant bits, or `bad` for x/z / unparseable. */
+/** A Verilog integer literal → its LSB-first constant bits, or `bad` for x/z / unparseable. A plain unsized
+ *  decimal (`42`) and an `'s`-marked based literal (`4'sd3`) are SIGNED (IEEE §3.11.1); a sized unsigned based
+ *  literal (`4'd3`) is unsigned. */
 function constExpr(v: string): Expr {
-  const based = v.match(/^(\d*)'[sS]?([bBoOdDhH])([0-9a-fA-FxXzZ?_]+)$/)
+  const based = v.match(/^(\d*)'([sS]?)([bBoOdDhH])([0-9a-fA-FxXzZ?_]+)$/)
   if (based === null) {
-    if (/^[0-9][0-9_]*$/.test(v)) return bitsOf(BigInt(v.replace(/_/g, '')), 32)
+    if (/^[0-9][0-9_]*$/.test(v)) return bitsOf(BigInt(v.replace(/_/g, '')), 32, true)
     return { t: 'bad', why: `constant "${v}"` }
   }
   const width = based[1] === '' ? 32 : Number.parseInt(based[1] as string, 10)
-  const digits = (based[3] as string).replace(/_/g, '')
+  const signed = based[2] !== ''
+  const digits = (based[4] as string).replace(/_/g, '')
   if (/[xXzZ?]/.test(digits)) return { t: 'bad', why: 'x/z constant is not representable' }
-  const base = { b: 2, o: 8, d: 10, h: 16 }[(based[2] as string).toLowerCase()] as number
+  const base = { b: 2, o: 8, d: 10, h: 16 }[(based[3] as string).toLowerCase()] as number
   const val =
     base === 16
       ? BigInt(`0x${digits}`)
@@ -358,12 +372,12 @@ function constExpr(v: string): Expr {
         : base === 2
           ? BigInt(`0b${digits}`)
           : BigInt(digits)
-  return bitsOf(val, width)
+  return bitsOf(val, width, signed)
 }
-function bitsOf(val: bigint, width: number): Expr {
+function bitsOf(val: bigint, width: number, signed = false): Expr {
   const bits: (0 | 1)[] = []
   for (let i = 0; i < width; i++) bits.push(Number((val >> BigInt(i)) & 1n) as 0 | 1)
-  return { t: 'const', bits }
+  return signed ? { t: 'const', bits, signed: true } : { t: 'const', bits }
 }
 
 /** The first unsupported construct in the tree, or undefined if fully supported. */
@@ -395,6 +409,7 @@ function firstBad(e: Expr): string | undefined {
       return undefined
     }
     case 'sized':
+    case 'cast':
       return firstBad(e.of)
     default:
       return undefined
@@ -456,6 +471,7 @@ function bindCalls(e: Expr, funcs: Map<string, FuncDef>): Expr {
     case 'memread':
       return { ...e, idx: bindCalls(e.idx, funcs) }
     case 'sized':
+    case 'cast':
       return { ...e, of: bindCalls(e.of, funcs) }
     default:
       return e
@@ -471,6 +487,7 @@ function hasCall(e: Expr): boolean {
     case 'un':
       return hasCall(e.a)
     case 'sized':
+    case 'cast':
       return hasCall(e.of)
     case 'bin':
       return hasCall(e.a) || hasCall(e.b)
@@ -495,6 +512,8 @@ type Ctx = {
   fresh: () => string
   widthOf: (name: string) => number
   bitNet: (name: string, i: number) => string
+  /** Whether a declared net is `signed` (drives sign- vs zero-extension); absent ⇒ everything unsigned. */
+  signedOf?: (name: string) => boolean
   /** The module's functions (for inlining a `call`) and a per-call counter for unique inlined-net names. */
   funcs?: Map<string, FuncDef>
   callSeq?: { n: number }
@@ -606,13 +625,15 @@ function selfWidth(e: Expr, w: (name: string) => number): number {
     case 'repl':
       return e.count * selfWidth(e.of, w)
     case 'un':
-      return e.op === '~' ? selfWidth(e.a, w) : 1 // ! and reductions are 1 bit
+      // ~ - + preserve the operand width; ! and the reductions are 1 bit
+      return e.op === '~' || e.op === '-' || e.op === '+' ? selfWidth(e.a, w) : 1
     case 'bin':
       // == != && || and the magnitude comparisons are 1-bit; a shift's width is its LEFT operand's (the amount
       // never widens it); everything else (& | ^ ~^ + - *) is max(operands).
       if (RELATIONAL.has(e.op) || e.op === '==' || e.op === '!=' || e.op === '&&' || e.op === '||')
         return 1
-      if (e.op === '<<' || e.op === '>>') return selfWidth(e.a, w)
+      if (e.op === '<<' || e.op === '>>' || e.op === '<<<' || e.op === '>>>')
+        return selfWidth(e.a, w)
       return Math.max(selfWidth(e.a, w), selfWidth(e.b, w))
     case 'tern':
       return Math.max(selfWidth(e.a, w), selfWidth(e.b, w))
@@ -623,6 +644,8 @@ function selfWidth(e: Expr, w: (name: string) => number): number {
       return e.retWidth ?? 1
     case 'sized':
       return e.width
+    case 'cast':
+      return selfWidth(e.of, w) // $signed/$unsigned change only signedness, not width
     default:
       return 1
   }
@@ -636,22 +659,86 @@ function netBit(x: Ctx, name: string, i: number): Bit {
   return c !== undefined ? { c } : { n: bn }
 }
 
-/** Synthesize an expression at context width `w`, returning a length-w bit-vector (LSB-first). Context is
- *  pushed down into the width-preserving operators (~ & | ^ ~^ + - and both ?: arms) and STOPS at the
- *  self-determined width walls (concat/replication elements, == != operands, reductions, logical, the ternary
- *  condition), which re-establish their own width and zero-extend their result. */
-function synthAt(e: Expr, w: number, x: Ctx): Bit[] {
+/** Whether an expression is SIGNED per IEEE 1364-2005 §5.5.1: a signed net / signed-literal const; `~ - +` of a
+ *  signed operand; a shift with a signed left operand; `+ - * / % & | ^ ~^` and `?:` signed iff ALL operands
+ *  are signed; a `$signed` cast. Bit/part-selects, concat, replication, comparisons, reductions, and (for now)
+ *  function calls are UNSIGNED — any of them as an operand makes the whole expression unsigned. */
+function isSigned(e: Expr, sgnOf: (n: string) => boolean): boolean {
+  switch (e.t) {
+    case 'net':
+      return sgnOf(e.name)
+    case 'const':
+      return e.signed === true
+    case 'un':
+      return e.op === '~' || e.op === '-' || e.op === '+' ? isSigned(e.a, sgnOf) : false
+    case 'bin':
+      if (e.op === '<<' || e.op === '>>' || e.op === '<<<' || e.op === '>>>')
+        return isSigned(e.a, sgnOf)
+      if (RELATIONAL.has(e.op) || e.op === '==' || e.op === '!=' || e.op === '&&' || e.op === '||')
+        return false
+      return isSigned(e.a, sgnOf) && isSigned(e.b, sgnOf)
+    case 'tern':
+      return isSigned(e.a, sgnOf) && isSigned(e.b, sgnOf)
+    case 'cast':
+      return e.signed
+    case 'memread':
+      return sgnOf(e.name) // a `reg signed […] m […]` reads signed words
+    case 'sized':
+      return isSigned(e.of, sgnOf)
+    default:
+      return false // bitsel, partsel, concat, repl, memread, call
+  }
+}
+
+/** Extend/truncate to width w, replicating the SIGN bit (top bit) when `signed`, else zero-filling. */
+function resizeSigned(bits: Bit[], w: number, signed: boolean): Bit[] {
+  if (bits.length >= w) return bits.slice(0, w)
+  const fill: Bit = signed && bits.length > 0 ? (bits[bits.length - 1] as Bit) : { c: 0 }
+  const out = bits.slice()
+  while (out.length < w) out.push(fill)
+  return out
+}
+
+/** Two's-complement negate a bit-vector (~bits + 1) at its own width. */
+function negate(bits: Bit[], x: Ctx): Bit[] {
+  let carry: Bit = { c: 1 }
+  const out: Bit[] = []
+  for (const b of bits) {
+    const fa = fullAdd(not1(b, x), { c: 0 }, carry, x)
+    out.push(fa.sum)
+    carry = fa.cout
+  }
+  return out
+}
+
+/** `doNeg ? -bits : bits`, per-bit muxed (for the sign-magnitude divide path). */
+function condNegate(bits: Bit[], doNeg: Bit, x: Ctx): Bit[] {
+  if (isC(doNeg)) return doNeg.c === 1 ? negate(bits, x) : bits
+  const neg = negate(bits, x)
+  return bits.map((b, i) => mux1(doNeg, neg[i] as Bit, b, x))
+}
+
+/** Synthesize an expression at context width `w`, returning a length-w bit-vector (LSB-first). Both the context
+ *  WIDTH `w` and the context SIGNEDNESS `sgn` are pushed down into the width-preserving operators (~ - + & | ^
+ *  ~^ + - * and both ?: arms) — `sgn` decides SIGN- vs ZERO-extension when a narrower value is widened — and
+ *  STOP at the self-determined walls (concat/replication elements, comparison operands, reductions, logical,
+ *  the ternary condition, a shift's amount), which re-establish their own width + signedness. `sgn` matches the
+ *  containing expression's signedness (IEEE 1364-2005 §5.5.1: signed iff ALL operands are signed). */
+function synthAt(e: Expr, w: number, sgn: boolean, x: Ctx): Bit[] {
+  const S = x.signedOf ?? noSign
   switch (e.t) {
     case 'const':
-      return resize(
+      return resizeSigned(
         e.bits.map((b) => ({ c: b }) as Bit),
         w,
+        sgn,
       )
     case 'net': {
       const nw = x.widthOf(e.name)
-      return resize(
+      return resizeSigned(
         Array.from({ length: nw }, (_, i) => netBit(x, e.name, i)),
         w,
+        sgn,
       )
     }
     case 'bitsel': {
@@ -665,23 +752,25 @@ function synthAt(e: Expr, w: number, x: Ctx): Bit[] {
       return resize(bits, w)
     }
     case 'concat': {
-      // MSB-first parts → an LSB-first bit-vector (walk parts in reverse, each at its own self-width)
+      // MSB-first parts → an LSB-first bit-vector (each at its own self-width, UNSIGNED — a concat is unsigned).
       const bits: Bit[] = []
       for (let i = e.parts.length - 1; i >= 0; i--) {
         const p = e.parts[i] as Expr
-        bits.push(...synthAt(p, selfWidth(p, x.widthOf), x))
+        bits.push(...synthAt(p, selfWidth(p, x.widthOf), false, x))
       }
       return resize(bits, w)
     }
     case 'repl': {
-      const elem = synthAt(e.of, selfWidth(e.of, x.widthOf), x)
+      const elem = synthAt(e.of, selfWidth(e.of, x.widthOf), false, x)
       const bits: Bit[] = []
       for (let i = 0; i < e.count; i++) bits.push(...elem)
       return resize(bits, w)
     }
     case 'un': {
-      if (e.op === '~') return synthAt(e.a, w, x).map((b) => not1(b, x))
-      const operand = synthAt(e.a, selfWidth(e.a, x.widthOf), x)
+      if (e.op === '~') return synthAt(e.a, w, sgn, x).map((b) => not1(b, x))
+      if (e.op === '+') return synthAt(e.a, w, sgn, x)
+      if (e.op === '-') return negate(synthAt(e.a, w, sgn, x), x)
+      const operand = synthAt(e.a, selfWidth(e.a, x.widthOf), false, x) // reductions: self-width, unsigned
       const r =
         e.op === '!'
           ? not1(reduce(operand, 'or', x), x)
@@ -699,15 +788,19 @@ function synthAt(e: Expr, w: number, x: Ctx): Bit[] {
       return resize([r], w)
     }
     case 'bin': {
+      // The width-preserving (context-determined) operators — & | ^ ~^ + - * / % and both ?: arms — extend
+      // their operands with the CONTEXT signedness `sgn` (the maximal region's sign, IEEE §5.5.1), NOT a
+      // locally-recomputed one: a signed sub-expression nested inside an unsigned region is treated unsigned.
+      // Only the self-determined walls (== != < <= > >=, reductions, concat/repl, the shift amount) re-root.
       if (e.op === '&' || e.op === '|' || e.op === '^' || e.op === '~^' || e.op === '^~') {
-        const la = synthAt(e.a, w, x)
-        const lb = synthAt(e.b, w, x)
+        const la = synthAt(e.a, w, sgn, x)
+        const lb = synthAt(e.b, w, sgn, x)
         const prim = e.op === '&' ? 'and' : e.op === '|' ? 'or' : e.op === '^' ? 'xor' : 'xnor'
         return la.map((_, i) => g2(prim, la[i] as Bit, lb[i] as Bit, x))
       }
       if (e.op === '+' || e.op === '-') {
-        const la = synthAt(e.a, w, x)
-        const lbRaw = synthAt(e.b, w, x)
+        const la = synthAt(e.a, w, sgn, x)
+        const lbRaw = synthAt(e.b, w, sgn, x)
         const lb = e.op === '-' ? lbRaw.map((b) => not1(b, x)) : lbRaw
         let carry: Bit = { c: e.op === '-' ? 1 : 0 } // subtract = a + ~b + 1
         const sum: Bit[] = []
@@ -720,8 +813,9 @@ function synthAt(e: Expr, w: number, x: Ctx): Bit[] {
       }
       if (e.op === '==' || e.op === '!=') {
         const cw = Math.max(selfWidth(e.a, x.widthOf), selfWidth(e.b, x.widthOf))
-        const la = synthAt(e.a, cw, x)
-        const lb = synthAt(e.b, cw, x)
+        const eqSgn = isSigned(e.a, S) && isSigned(e.b, S)
+        const la = synthAt(e.a, cw, eqSgn, x)
+        const lb = synthAt(e.b, cw, eqSgn, x)
         const eq = reduce(
           la.map((_, i) => xnor1(la[i] as Bit, lb[i] as Bit, x)),
           'and',
@@ -729,22 +823,26 @@ function synthAt(e: Expr, w: number, x: Ctx): Bit[] {
         )
         return resize([e.op === '==' ? eq : not1(eq, x)], w)
       }
-      if (e.op === '<<' || e.op === '>>') {
-        // Logical shift: the LEFT operand is context-sized to w (a widening shift keeps the shifted-in bits);
-        // the amount is self-determined and never widens the result. A constant amount reindexes; a variable
-        // amount is a barrel shifter — one stage per bit of the amount, each shifting by 2^j when that bit is
-        // set. Anything shifted past the width (including a huge amount) falls off the end to 0.
-        const left = e.op === '<<'
-        const la = synthAt(e.a, w, x)
+      if (e.op === '<<' || e.op === '>>' || e.op === '<<<' || e.op === '>>>') {
+        // Shift: the LEFT operand is context-sized to w (signedness = its own); the amount is self-determined
+        // and never widens. `<<`/`<<<` fill 0 at the bottom; `>>` fills 0 at the top; `>>>` (arithmetic) fills
+        // the SIGN bit at the top iff the left operand is signed. A constant amount reindexes; a variable amount
+        // is a barrel shifter. Anything shifted past the width falls off to the fill bit.
+        const left = e.op === '<<' || e.op === '<<<'
+        const la = synthAt(e.a, w, sgn, x)
+        // >>> arithmetic-fills the sign bit only when the CONTEXT is signed (an unsigned context makes it a
+        // logical shift), so `u + (a >>> 1)` zero-fills even for a signed `a`.
+        const topFill: Bit = e.op === '>>>' && sgn && w > 0 ? (la[w - 1] as Bit) : { c: 0 }
         const shiftBy = (srcBits: Bit[], amt: number): Bit[] =>
           Array.from({ length: w }, (_, i) => {
             const from = left ? i - amt : i + amt
-            return amt < w && from >= 0 && from < w ? (srcBits[from] as Bit) : ({ c: 0 } as Bit)
+            if (from >= 0 && from < w) return srcBits[from] as Bit
+            return left ? ({ c: 0 } as Bit) : topFill // bottom-fill 0 on <<, top-fill on >> / >>>
           })
         const k = foldConst(e.b, x.widthOf)
         if (k !== undefined) return shiftBy(la, k)
         const bw = selfWidth(e.b, x.widthOf)
-        const amtBits = synthAt(e.b, bw, x)
+        const amtBits = synthAt(e.b, bw, false, x)
         let cur = la
         for (let j = 0; j < bw; j++) {
           const shifted = shiftBy(cur, 2 ** j)
@@ -754,12 +852,16 @@ function synthAt(e: Expr, w: number, x: Ctx): Bit[] {
         return cur
       }
       if (RELATIONAL.has(e.op)) {
-        // Unsigned magnitude comparison → 1 bit. a >= b ⟺ the carry-OUT of a + ~b + 1 (no borrow); the other
-        // three derive from it. The subtract keeps its carry-out (the +/- path above drops it, so this is its
-        // own loop). Operands are synthesized at the compare width, zero-extended.
+        // Magnitude comparison → 1 bit. a >= b ⟺ the carry-OUT of a + ~b + 1 (no borrow). When BOTH operands
+        // are signed, a signed comparison = the unsigned comparison with both sign bits FLIPPED (bias by
+        // 2^(cw−1), which maps the signed order onto the unsigned order). Operands are extended at the compare
+        // width with that signedness.
         const cw = Math.max(selfWidth(e.a, x.widthOf), selfWidth(e.b, x.widthOf))
-        const la = synthAt(e.a, cw, x)
-        const lb = synthAt(e.b, cw, x)
+        const cmpSgn = isSigned(e.a, S) && isSigned(e.b, S)
+        const flip = (bits: Bit[]): Bit[] =>
+          cmpSgn ? bits.map((b, i) => (i === cw - 1 ? not1(b, x) : b)) : bits
+        const la = flip(synthAt(e.a, cw, cmpSgn, x))
+        const lb = flip(synthAt(e.b, cw, cmpSgn, x))
         const geq = (p: Bit[], q: Bit[]): Bit => {
           let carry: Bit = { c: 1 }
           for (let i = 0; i < cw; i++)
@@ -777,13 +879,11 @@ function synthAt(e: Expr, w: number, x: Ctx): Bit[] {
         return resize([r], w)
       }
       if (e.op === '*') {
-        // Unsigned multiply: partial products summed at the context width w. BOTH operands are context-
-        // determined (IEEE §5.4.1), so each is synthesized at w — evaluating the right operand at its own
-        // self-width would truncate a compound factor like (b+c) before the multiply (and break a*b == b*a).
-        // For each bit j of b, add a shifted left by j (bit i takes a[i-j] AND b[j]); bits past w drop (mod
-        // 2^w). Zero/one operands and the high zero-extended bits of a narrow operand fold to no gates.
-        const la = synthAt(e.a, w, x)
-        const lb = synthAt(e.b, w, x)
+        // Multiply: partial products summed at the context width w. BOTH operands are context-determined (IEEE
+        // §5.4.1), extended to w with the product's signedness (sign-extended if both operands are signed), so
+        // the low w bits are correct for signed as well as unsigned. Bits past w drop (mod 2^w).
+        const la = synthAt(e.a, w, sgn, x)
+        const lb = synthAt(e.b, w, sgn, x)
         let acc: Bit[] = resize([], w)
         for (let j = 0; j < w; j++) {
           const bj = lb[j] as Bit
@@ -801,20 +901,26 @@ function synthAt(e: Expr, w: number, x: Ctx): Bit[] {
         return acc
       }
       if (e.op === '/' || e.op === '%') {
-        // Unsigned division (restoring). `/` → quotient, `%` → remainder. Division depends on the operands'
-        // HIGH bits, so — UNLIKE + - * (modular: kept low bits need only the low operand bits) — it must be
-        // evaluated at the FULL width even when the assignment target is NARROWER. Compute at
-        // L = max(context, both operand self-widths), then truncate the result to the context width w. This
-        // mirrors how == / < re-establish their own width. Constant a op b still folds via foldConst.
+        // Division depends on the operands' HIGH bits, so it is evaluated at the FULL width L = max(context,
+        // both self-widths) then truncated to w (mirroring ==/<). SIGNED division (both operands signed) is
+        // sign-magnitude: divide the magnitudes, then set the quotient sign to a^b and the remainder sign to a.
         const evalW = Math.max(w, selfWidth(e.a, x.widthOf), selfWidth(e.b, x.widthOf))
-        const la = synthAt(e.a, evalW, x)
-        const lb = synthAt(e.b, evalW, x)
+        const la = synthAt(e.a, evalW, sgn, x)
+        const lb = synthAt(e.b, evalW, sgn, x)
+        if (sgn) {
+          const aNeg = la[evalW - 1] as Bit
+          const bNeg = lb[evalW - 1] as Bit
+          const { q, rem } = divmod(condNegate(la, aNeg, x), condNegate(lb, bNeg, x), evalW, x)
+          const res =
+            e.op === '/' ? condNegate(q, xor1(aNeg, bNeg, x), x) : condNegate(rem, aNeg, x)
+          return resize(res, w)
+        }
         const { q, rem } = divmod(la, lb, evalW, x)
         return resize(e.op === '/' ? q : rem, w)
       }
       if (e.op === '&&' || e.op === '||') {
-        const ca = reduce(synthAt(e.a, selfWidth(e.a, x.widthOf), x), 'or', x)
-        const cb = reduce(synthAt(e.b, selfWidth(e.b, x.widthOf), x), 'or', x)
+        const ca = reduce(synthAt(e.a, selfWidth(e.a, x.widthOf), false, x), 'or', x)
+        const cb = reduce(synthAt(e.b, selfWidth(e.b, x.widthOf), false, x), 'or', x)
         return resize([e.op === '&&' ? and1(ca, cb, x) : or1(ca, cb, x)], w)
       }
       // Every supported binary op has a branch above; a bare fallthrough would silently miscompile a newly
@@ -822,10 +928,10 @@ function synthAt(e: Expr, w: number, x: Ctx): Bit[] {
       throw new Error(`synthAt: no branch for binary operator "${e.op}"`)
     }
     case 'tern': {
-      const sel = reduce(synthAt(e.c, selfWidth(e.c, x.widthOf), x), 'or', x) // nonzero test, 1 bit
-      if (isC(sel)) return synthAt(sel.c === 1 ? e.a : e.b, w, x)
-      const la = synthAt(e.a, w, x)
-      const lb = synthAt(e.b, w, x)
+      const sel = reduce(synthAt(e.c, selfWidth(e.c, x.widthOf), false, x), 'or', x) // nonzero test, 1 bit
+      if (isC(sel)) return synthAt(sel.c === 1 ? e.a : e.b, w, sgn, x)
+      const la = synthAt(e.a, w, sgn, x)
+      const lb = synthAt(e.b, w, sgn, x)
       return la.map((_, i) => mux1(sel, la[i] as Bit, lb[i] as Bit, x))
     }
     case 'memread': {
@@ -835,7 +941,7 @@ function synthAt(e: Expr, w: number, x: Ctx): Bit[] {
       // the FULL address width (never fewer than clog2(depth)) so a too-wide address's high bits force a
       // no-match (reads 0) instead of aliasing onto a low word — the write path compares at this width too.
       const addrW = Math.max(clog2(e.depth), selfWidth(e.idx, x.widthOf))
-      const addr = synthAt(e.idx, addrW, x)
+      const addr = synthAt(e.idx, addrW, false, x)
       const oneHot: Bit[] = []
       for (let k = 0; k < e.depth; k++) {
         let match: Bit = { c: 1 }
@@ -854,18 +960,25 @@ function synthAt(e: Expr, w: number, x: Ctx): Bit[] {
         }
         out.push(acc)
       }
-      return resize(out, w)
+      return resizeSigned(out, w, sgn)
     }
     case 'sized':
-      // A width wall: evaluate `of` at exactly `width`, then re-fit to the surrounding context.
-      return resize(synthAt(e.of, e.width, x), w)
+      // A width wall: evaluate `of` at exactly `width` (with its own signedness), then re-fit to the context.
+      return resizeSigned(synthAt(e.of, e.width, isSigned(e.of, S), x), w, sgn)
     case 'call':
       // Inline the function body as real gates at its declared return width (a self-determined wall), then fit.
       return resize(e.fn === undefined ? [] : inlineCall(e.fn, e.args, x), w)
+    case 'cast':
+      // $signed/$unsigned only change `of`'s SELF-signedness (via isSigned, which the parent reads to set the
+      // context sgn); the extension here uses the inherited `sgn`, so `$signed(a) | b` (an unsigned `|`) zero-
+      // extends. Evaluate `of` at its own self-width, then extend to the context.
+      return resizeSigned(synthAt(e.of, selfWidth(e.of, x.widthOf), false, x), w, sgn)
     default:
       return resize([], w) // 'bad' — gated out by firstBad()
   }
 }
+
+const noSign = (): boolean => false
 
 /**
  * Inline a function call into REAL gates at the function's declared return width — the gate-materialization
@@ -897,7 +1010,7 @@ function inlineCall(fn: FuncDef, args: Expr[], x: Ctx): Bit[] {
   // buffered; a constant bit is recorded in constNets (so it flows as a real constant with no tie needed).
   for (let k = 0; k < fn.inputs.length; k++) {
     const inp = fn.inputs[k] as { name: string; width: number }
-    const bits = synthAt(args[k] as Expr, inp.width, x)
+    const bits = synthAt(args[k] as Expr, inp.width, false, x)
     for (let i = 0; i < inp.width; i++) {
       const dest = bodyBitNet(prefix + inp.name, i)
       const b = bits[i] as Bit
@@ -921,7 +1034,7 @@ function inlineCall(fn: FuncDef, args: Expr[], x: Ctx): Bit[] {
   if (retExpr === undefined) return resize([{ c: 0 }], fn.retWidth)
   const bound = bindCalls(retExpr, x.funcs)
   if (firstBad(bound) !== undefined) return resize([{ c: 0 }], fn.retWidth)
-  return synthAt(bound, fn.retWidth, bodyCtx)
+  return synthAt(bound, fn.retWidth, false, bodyCtx)
 }
 
 // ── the assign driver ───────────────────────────────────────────────────────────
@@ -936,6 +1049,7 @@ type SynthModule = {
   mems: MemTable
   functions: Map<string, FuncDef>
   tasks: Map<string, TaskDef>
+  signed: Set<string>
 }
 
 /** The target bit-nets of an lhs (`y`, `y[i]`, `y[h:l]`, or a concat of those), LSB-first. */
@@ -1262,6 +1376,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   // A bus bit-net uses the Verilog bracket form a[i] — since `[`/`]` can't appear in a simple identifier, it
   // can never collide with a scalar net literally spelled `a0` (a real, silent-miscompile hazard otherwise).
   const bitNet = (name: string, i: number): string => (widthOf(name) === 1 ? name : `${name}[${i}]`)
+  const signedOf = (name: string): boolean => mod.signed.has(name)
 
   // Expand declared bus ports into scalar bit-ports (a[3:0] → a[0]..a[3]), preserving direction + order.
   const newOrder: string[] = []
@@ -1344,6 +1459,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     bitNet,
     funcs: mod.functions,
     callSeq,
+    signedOf,
   })
   const taskCtx = (comb: boolean): TaskCtx => ({
     tasks: mod.tasks,
@@ -1403,7 +1519,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       continue
     }
     const gates: GateInst[] = []
-    const rhs = synthAt(ast, targets.length, synCtx(gates))
+    const rhs = synthAt(ast, targets.length, isSigned(ast, signedOf), synCtx(gates))
     let ok = true
     for (let i = 0; i < targets.length; i++) {
       const src = rhs[i] as Bit
@@ -1479,7 +1595,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
         continue
       }
       const gates: GateInst[] = []
-      const rhs = synthAt(ast, w, synCtx(gates))
+      const rhs = synthAt(ast, w, isSigned(ast, signedOf), synCtx(gates))
       let ok = true
       for (let i = 0; i < w; i++) {
         const src = rhs[i] as Bit
@@ -1617,7 +1733,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       // Synthesize the next-state logic, then one flop per bit. Buffer a pure hold (D-net === Q-net) so the
       // flop's D and Q pins never land on the same net (which would short them).
       const dGates: GateInst[] = []
-      const D = synthAt(ast, w, synCtx(dGates))
+      const D = synthAt(ast, w, isSigned(ast, signedOf), synCtx(dGates))
       const newFlops: FlopInst[] = []
       let ok = true
       for (let i = 0; i < w; i++) {
@@ -1710,6 +1826,7 @@ function outOfRange(e: Expr, w: (n: string) => number): string | undefined {
       return undefined
     }
     case 'sized':
+    case 'cast':
       return outOfRange(e.of, w)
     default:
       return undefined

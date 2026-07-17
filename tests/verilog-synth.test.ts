@@ -566,17 +566,14 @@ describe('RTL synthesis — shifts + comparisons (increment 6a)', () => {
     )
   })
 
-  test('arithmetic shifts <<< / >>> and signed nets are reported, not faked', () => {
-    expect(
-      importVerilog(
-        'module m(a, y); input [3:0] a; output [3:0] y; assign y = a >>> 1; endmodule',
-      ).warnings.some((w) => /not supported|>>>/.test(w)),
-    ).toBe(true)
-    expect(
-      importVerilog(
-        'module m(a, y); input signed [3:0] a; output [3:0] y; assign y = a; endmodule',
-      ).warnings.some((w) => /signed/i.test(w)),
-    ).toBe(true)
+  test('arithmetic shifts <<< / >>> synthesize — on an UNSIGNED value >>> fills 0 (= >>)', () => {
+    // Signed >>> (sign-fill) + signed nets are covered in verilog-signed.test.ts; here a is unsigned so >>> = >>.
+    assertBus(
+      'module m(a, y); input [3:0] a; output [3:0] y; assign y = a >>> 1; endmodule',
+      ['a[0]', 'a[1]', 'a[2]', 'a[3]'],
+      ['y[0]', 'y[1]', 'y[2]', 'y[3]'],
+      (b) => numBits(num(b) >> 1, 4),
+    )
   })
 })
 
