@@ -1,4 +1,5 @@
 import type { BlockData } from './blocks.ts'
+import { type ChipLayout, isEmptyChipLayout, sanitizeChipLayout } from './chip-layout.ts'
 import type { Parameters } from './part-defaults.ts'
 import type { SheetSettings } from './sheet-frame.tsx'
 import { validateUserPart } from './user-part-validate.ts'
@@ -74,6 +75,9 @@ export type CircuitFile = {
   sheet?: SheetSettings
   /** Hand-placed board positions/rotations; absent ⇒ every part starts on its auto spot (older files). */
   placements?: SavedPlacement[]
+  /** The chip floorplan's own layer — cell-placement overrides + lens + schematic fingerprint; absent ⇒
+   *  the chip layout was never touched (older files), so it re-generates fresh from the design. */
+  chipLayout?: ChipLayout
   /** User-authored custom parts used by this project, so the file is self-contained + portable; absent
    *  ⇒ none (older files). Validated on load by user-part-validate.ts (mirrors user-part.schema.json). */
   userParts?: UserPart[]
@@ -179,6 +183,7 @@ export function serializeCircuit(
   sheet?: SheetSettings,
   placements?: readonly SavedPlacement[],
   userParts?: readonly UserPart[],
+  chipLayout?: ChipLayout,
 ): CircuitFile {
   // Save only the user parts THIS circuit references (not the whole session registry, which is shared
   // across open tabs) — so the file is self-contained + portable without leaking unrelated parts.
@@ -195,6 +200,7 @@ export function serializeCircuit(
     ...(sheet ? { sheet } : {}),
     ...(placements && placements.length > 0 ? { placements: [...placements] } : {}),
     ...(referencedUserParts.length > 0 ? { userParts: referencedUserParts } : {}),
+    ...(chipLayout && !isEmptyChipLayout(chipLayout) ? { chipLayout } : {}),
     nodes: nodes.map((n) => {
       const parameters = persistableParameters(n.data.parameters)
       return {
@@ -283,7 +289,7 @@ export function deserializeCircuit(text: string): DeserializeResult {
   // projectAmbientC drives the solve temperature; if present it must be a finite number.
   // A malformed one is DROPPED — not a reason to reject the whole circuit — so the returned
   // type is honest (a number or absent) and the loader falls back to the 25 °C default.
-  const { projectAmbientC, sheet, placements, userParts, ...rest } = file
+  const { projectAmbientC, sheet, placements, userParts, chipLayout, ...rest } = file
   const base = rest as CircuitFile
   const ambientOk = typeof projectAmbientC === 'number' && Number.isFinite(projectAmbientC)
   // A malformed sheet (not an object) is dropped, not a reason to reject the circuit; the loader
@@ -310,6 +316,9 @@ export function deserializeCircuit(text: string): DeserializeResult {
   const cleanUserParts = Array.isArray(userParts)
     ? userParts.map((p) => validateUserPart(p)).filter((p): p is UserPart => p !== null)
     : []
+  // Chip layout: a malformed layer (or malformed overrides inside it) is dropped, not a reason to reject
+  // the circuit — the chip level just re-generates its floorplan fresh, exactly like an older file.
+  const cleanChipLayout = sanitizeChipLayout(chipLayout)
   return {
     ok: true,
     file: {
@@ -318,6 +327,7 @@ export function deserializeCircuit(text: string): DeserializeResult {
       ...(sheetOk ? { sheet: sheet as SheetSettings } : {}),
       ...(cleanPlacements.length > 0 ? { placements: cleanPlacements } : {}),
       ...(cleanUserParts.length > 0 ? { userParts: cleanUserParts } : {}),
+      ...(cleanChipLayout ? { chipLayout: cleanChipLayout } : {}),
     },
   }
 }

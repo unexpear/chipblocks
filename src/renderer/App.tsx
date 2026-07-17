@@ -18,6 +18,7 @@ import {
   useReactFlow,
   useUpdateNodeInternals,
 } from '@xyflow/react'
+import { type ChipLayout, EMPTY_CHIP_LAYOUT } from './chip-layout.ts'
 import { ChipView } from './chip-workspace.tsx'
 import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
 import type { WorkspaceMode } from './workspace.ts'
@@ -1251,6 +1252,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         sheetSettingsRef.current,
         placementsToSaved(pcbPlacementsRef.current),
         allUserParts(),
+        chipLayoutRef.current,
       )
       void bridge.saveCircuitData(JSON.stringify(file, null, 2)).then((r) => {
         // A successful save lands the project in the "My Projects" list (by its file path).
@@ -1322,6 +1324,13 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const pcbPlacementsRef = useRef(pcbPlacements)
   pcbPlacementsRef.current = pcbPlacements
 
+  // The chip floorplan's own persisted layer (cell overrides + lens + schematic fingerprint) — the twin
+  // of pcbPlacements one level down. Starts empty (the floorplan auto-generates); saved + loaded so a
+  // laid-out chip survives a reload. A live ref for the Save handler + undo snapshot, same as the board.
+  const [chipLayout, setChipLayout] = useState<ChipLayout>(EMPTY_CHIP_LAYOUT)
+  const chipLayoutRef = useRef(chipLayout)
+  chipLayoutRef.current = chipLayout
+
   // Load: the main process already validated the file; rebuild the canvas from
   // it, resume the drop counter above the loaded ids, and re-fit the view. The
   // always-on physics effect re-solves the loaded circuit automatically.
@@ -1355,6 +1364,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       // Restore THIS file's hand placements (replacing the previous canvas's — ids repeat across files,
       // so we never inherit the old ones); older files with none load onto their auto board.
       setPcbPlacements(placementsFromSaved(result.file.placements))
+      // Restore THIS file's chip floorplan layer (replacing the previous canvas's); older files with none
+      // load with an empty layout, so the chip level re-generates its floorplan fresh from the design.
+      setChipLayout(result.file.chipLayout ?? EMPTY_CHIP_LAYOUT)
       dropCount.current = maxIdSuffix(result.file.nodes)
       window.setTimeout(() => fitView({ padding: 0.15 }), 80)
     })
@@ -1382,6 +1394,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       setNodes(flow.nodes)
       setEdges(flow.edges)
       setPcbPlacements(new Map()) // imported netlists start from their own auto board
+      setChipLayout(EMPTY_CHIP_LAYOUT) // …and a fresh chip floorplan
       dropCount.current = maxIdSuffix(circuit.nodes)
       window.setTimeout(() => fitView({ padding: 0.15 }), 80)
       // A Verilog import arrives as one circuit block; report its gate count, not the node count (1).

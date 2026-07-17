@@ -118,6 +118,66 @@ describe('serialize → deserialize round-trip', () => {
     if (r.ok) expect(r.file.placements).toBeUndefined()
   })
 
+  test('round-trips the chip floorplan layer (overrides + lens + signature); omitted when empty', () => {
+    const chipLayout = {
+      overrides: [
+        { id: 'cpu.alu.g0', x: 100, y: 0 },
+        { id: 'cpu.pc.g3', x: 24, y: 90 },
+      ],
+      lens: 'module' as const,
+      sourceSignature: 'sig-6152',
+    }
+    const r = deserializeCircuit(
+      JSON.stringify(
+        serializeCircuit(nodes, edges, undefined, undefined, undefined, undefined, chipLayout),
+      ),
+    )
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.file.chipLayout).toEqual(chipLayout)
+    // an empty layout is not written → an older file / untouched chip level reads undefined
+    const none = deserializeCircuit(JSON.stringify(serializeCircuit(nodes, edges)))
+    expect(none.ok).toBe(true)
+    if (none.ok) expect(none.file.chipLayout).toBeUndefined()
+    const empty = deserializeCircuit(
+      JSON.stringify(
+        serializeCircuit(nodes, edges, undefined, undefined, undefined, undefined, {
+          overrides: [],
+        }),
+      ),
+    )
+    expect(empty.ok).toBe(true)
+    if (empty.ok) expect(empty.file.chipLayout).toBeUndefined()
+  })
+
+  test('drops malformed chip-layout overrides + a bad lens, keeps the good parts', () => {
+    const file = {
+      ...serializeCircuit(nodes, edges),
+      chipLayout: {
+        overrides: [
+          { id: 'good', x: 1, y: 2 },
+          { id: 'nan', x: Number.NaN, y: 2 }, // not finite → dropped
+          { x: 1, y: 2 }, // missing id → dropped
+        ],
+        lens: 'rainbow', // not a known lens → dropped
+        sourceSignature: 'sig',
+      },
+    }
+    const r = deserializeCircuit(JSON.stringify(file))
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.file.chipLayout?.overrides).toEqual([{ id: 'good', x: 1, y: 2 }])
+      expect(r.file.chipLayout?.lens).toBeUndefined()
+      expect(r.file.chipLayout?.sourceSignature).toBe('sig')
+    }
+  })
+
+  test('a chipLayout that is not an object is dropped, not a reason to reject the circuit', () => {
+    const file = { ...serializeCircuit(nodes, edges), chipLayout: 'nonsense' }
+    const r = deserializeCircuit(JSON.stringify(file))
+    expect(r.ok).toBe(true) // still loads
+    if (r.ok) expect(r.file.chipLayout).toBeUndefined()
+  })
+
   test('a malformed projectAmbientC is dropped, not passed through as a fake number', () => {
     // The loader and the type both expect a number; a string / null / wrong type must not
     // ride through typed as one. The circuit still loads — the ambient just falls to default.
