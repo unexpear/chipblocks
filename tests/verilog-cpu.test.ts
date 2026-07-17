@@ -14,6 +14,14 @@
 import { describe, expect, test } from 'vitest'
 import type { BlockData, CanvasEdgeLike, CanvasNodeLike } from '../src/renderer/blocks.ts'
 import { simulateLogic } from '../src/renderer/logic-sim.ts'
+import {
+  buildDemoCpu,
+  cpuVerilog,
+  DEMO_RESULT,
+  instr,
+  multiplyProgram,
+  OP,
+} from '../src/renderer/verilog-cpu-demo.ts'
 import { importVerilog } from '../src/renderer/verilog-import.ts'
 
 const supply = (volts: number) => ({
@@ -69,73 +77,9 @@ const readReg = (
   return v
 }
 
-// ── the CPU, authored in Verilog ────────────────────────────────────────────────
-// 4-bit datapath; 8-bit instruction = {opcode[3:0], operand[3:0]}. Three microsteps per instruction:
-//   T0  ir  <- rom[pc]     load the instruction
-//   T1  pc  <- pc + 1      advance the program counter
-//   T2  execute            (a taken jump overwrites the T1 increment; load wins)
-const OP = { LDI: 1, ADD: 2, SUB: 3, OUT: 4, JMP: 5, JZ: 6, LDA: 7, STA: 8, HLT: 15 } as const
-const instr = (op: number, arg = 0): number => ((op << 4) | (arg & 0xf)) & 0xff
-
-// Multiply 3 × 4 by repeated addition: mem[0] = running sum, mem[1] = loop counter.
-const PROGRAM: number[] = [
-  instr(OP.LDI, 0), //  0: acc = 0
-  instr(OP.STA, 0), //  1: mem[0] = 0        (sum)
-  instr(OP.LDI, 3), //  2: acc = 3
-  instr(OP.STA, 1), //  3: mem[1] = 3        (counter)
-  instr(OP.LDA, 0), //  4: acc = sum         ← loop
-  instr(OP.ADD, 4), //  5: acc = sum + 4
-  instr(OP.STA, 0), //  6: sum = acc
-  instr(OP.LDA, 1), //  7: acc = counter
-  instr(OP.SUB, 1), //  8: acc = counter - 1
-  instr(OP.STA, 1), //  9: counter = acc
-  instr(OP.JZ, 12), // 10: if acc == 0 goto end
-  instr(OP.JMP, 4), // 11: goto loop
-  instr(OP.LDA, 0), // 12: acc = sum (= 12)  ← end
-  instr(OP.OUT), //    13: out = acc
-  instr(OP.HLT), //    14: halt
-  0, //                15: (unused)
-]
-
-/** The instruction ROM as a combinational `assign`: a pc-keyed ternary chain of the program's bytes. */
-function romAssign(program: number[]): string {
-  const chain = program
-    .map((byte, addr) => `(pc == 4'd${addr}) ? 8'h${byte.toString(16).padStart(2, '0')} : `)
-    .join('\n           ')
-  return `assign rom = ${chain}8'h00;`
-}
-
-function cpuVerilog(program: number[]): string {
-  return `module cpu(input clk, input rst, output reg [3:0] out, output reg halted);
-      reg [3:0] pc;
-      reg [7:0] ir;
-      reg [1:0] t;
-      reg [3:0] acc;
-      reg [3:0] mem [0:15];
-      wire [7:0] rom;
-      ${romAssign(program)}
-      always @(posedge clk) begin
-        if (rst) begin
-          pc <= 4'd0; ir <= 8'd0; t <= 2'd0; acc <= 4'd0; out <= 4'd0; halted <= 1'b0;
-        end else if (!halted) begin
-          t <= (t == 2'd2) ? 2'd0 : t + 2'd1;
-          if (t == 2'd0) ir <= rom;
-          if (t == 2'd1) pc <= pc + 4'd1;
-          if (t == 2'd2) case (ir[7:4])
-            4'd1:  acc <= ir[3:0];             // LDI
-            4'd2:  acc <= acc + ir[3:0];       // ADD
-            4'd3:  acc <= acc - ir[3:0];       // SUB
-            4'd4:  out <= acc;                 // OUT
-            4'd5:  pc <= ir[3:0];              // JMP
-            4'd6:  if (acc == 4'd0) pc <= ir[3:0];   // JZ
-            4'd7:  acc <= mem[ir[3:0]];        // LDA
-            4'd8:  mem[ir[3:0]] <= acc;        // STA
-            4'd15: halted <= 1'b1;             // HLT
-          endcase
-        end
-      end
-    endmodule`
-}
+// The CPU generator is shared with the in-app "watch it run" demo — one source of truth (no drift between the
+// processor the app builds and the one this test proves). This test uses 3 × 4 = 12 (the flagship result).
+const PROGRAM = multiplyProgram(3, 4)
 
 describe('a whole CPU written in Verilog builds itself from real gates and runs a program', () => {
   test('the CPU imports to one gate block with no unbuildable constructs', () => {
@@ -175,6 +119,24 @@ describe('a whole CPU written in Verilog builds itself from real gates and runs 
     expect(halted, 'the CPU should reach HLT within the tick budget').toBe(true)
     expect(last.settled, 'the gate network must converge on every solve').toBe(true)
     expect(readReg(last, 'out', 4)).toBe(12) // 3 × 4 = 12, computed on real gates
+  })
+
+  test('the in-app demo CPU (buildDemoCpu) computes 3 × 3 = 9 with live pc/acc readouts — the app block', () => {
+    const cpu = buildDemoCpu()
+    expect(cpu).not.toBeNull()
+    const state = new Map<string, boolean>()
+    tick(cpu as BlockData, true, state)
+    let halted = false
+    let last = solve(cpu as BlockData, { rst: false, clk: false }, state)
+    for (let i = 0; i < 400 && !halted; i++) {
+      last = tick(cpu as BlockData, false, state)
+      halted = last.value('M', 'halted') === true
+    }
+    expect(halted).toBe(true)
+    expect(readReg(last, 'out', 4)).toBe(DEMO_RESULT) // 9 = 3 × 3, a single hex digit for the 7-seg display
+    // the demo's debug readouts the on-screen displays hang off: accumulator holds the answer, pc reached HLT
+    expect(readReg(last, 'accv', 4)).toBe(9)
+    expect(readReg(last, 'pcv', 4)).toBe(15)
   })
 
   test('a non-terminating program does NOT report halted (the halt check has teeth)', () => {
