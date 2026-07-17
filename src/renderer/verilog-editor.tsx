@@ -11,6 +11,7 @@
 
 import { type JSX, useEffect, useMemo, useRef, useState } from 'react'
 import type { BlockData } from './blocks.ts'
+import { createDebugSession, type DebugSession, type DebugSignal } from './verilog-debug.ts'
 import { importVerilog } from './verilog-import.ts'
 
 const KEYWORDS = new Set([
@@ -161,6 +162,82 @@ function synthesize(text: string): SynthDiagnostics {
   return { block, warnings, moduleName, gateCount: block ? block.nodes.length : 0 }
 }
 
+/** One signal in the debugger: its name, its bits shown MSB→LSB as 0/1 cells (clickable when it's an input
+ *  you drive), and its value in decimal. Reading straight off the live session, so it's the real state. */
+function SignalRow({
+  sig,
+  read,
+  onToggleBit,
+  editable,
+}: {
+  sig: DebugSignal
+  read: (portId: string) => boolean | undefined
+  onToggleBit?: (portId: string) => void
+  editable: boolean
+}): JSX.Element {
+  let value = 0
+  let known = true
+  sig.bits.forEach((id, i) => {
+    const b = read(id)
+    if (b === undefined) known = false
+    else if (b) value |= 1 << i
+  })
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+      <span
+        style={{
+          width: 92,
+          color: 'var(--textSoft)',
+          fontFamily: 'monospace',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+        title={sig.name}
+      >
+        {sig.name}
+      </span>
+      <div style={{ display: 'flex', gap: 2 }}>
+        {[...sig.bits].reverse().map((id) => {
+          const hi = read(id) === true
+          return (
+            <button
+              key={id}
+              type="button"
+              disabled={!editable}
+              onClick={() => onToggleBit?.(id)}
+              style={{
+                width: 20,
+                height: 22,
+                border: '1px solid var(--borderStrong)',
+                borderRadius: 3,
+                fontFamily: 'monospace',
+                fontSize: 12,
+                cursor: editable ? 'pointer' : 'default',
+                background: hi ? 'var(--accentLime)' : 'var(--surfaceBase)',
+                color: hi ? '#0b0b0d' : 'var(--textFaint)',
+              }}
+            >
+              {hi ? '1' : '0'}
+            </button>
+          )
+        })}
+      </div>
+      <span
+        style={{
+          marginLeft: 'auto',
+          color: 'var(--textBright)',
+          fontFamily: 'monospace',
+          minWidth: 34,
+          textAlign: 'right',
+        }}
+      >
+        {known ? value : '—'}
+      </span>
+    </div>
+  )
+}
+
 export function VerilogEditor({
   initialText,
   onSynthesize,
@@ -173,6 +250,12 @@ export function VerilogEditor({
   const [text, setText] = useState(initialText)
   const [diag, setDiag] = useState<SynthDiagnostics>(() => synthesize(initialText))
   const [ac, setAc] = useState<Autocomplete | null>(null)
+  // The step-debugger: a live session over the synthesized gates, plus a tick to re-render after each step
+  // (the session is mutable, so a bump forces a fresh read of its values). `cycle` counts clock edges.
+  const [dbg, setDbg] = useState<DebugSession | null>(null)
+  const [, bumpDbg] = useState(0)
+  const [cycle, setCycle] = useState(0)
+  const refreshDbg = () => bumpDbg((t) => t + 1)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const preRef = useRef<HTMLPreElement>(null)
   const gutterRef = useRef<HTMLDivElement>(null)
@@ -216,6 +299,50 @@ export function VerilogEditor({
     setText(next)
     setAc(null)
   }
+
+  // Editing the source invalidates any running debug session — the gates you were stepping no longer match
+  // what's on screen. Close it so the user re-opens it against the current design.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on text only
+  useEffect(() => {
+    setDbg(null)
+    setCycle(0)
+  }, [text])
+
+  // Build the (heavy: compiles the gates) session once per synthesized design, not per render. Doubles as the
+  // "can this be debugged?" test and as the session Debug turns on.
+  const debugSession = useMemo(
+    () => (diag.block ? createDebugSession(diag.block) : null),
+    [diag.block],
+  )
+
+  const startDebug = () => {
+    if (!debugSession) return
+    debugSession.reset()
+    setDbg(debugSession)
+    setCycle(0)
+    refreshDbg()
+  }
+  const stepDebug = () => {
+    if (!dbg) return
+    dbg.step()
+    if (dbg.clockPortId) setCycle((c) => c + 1)
+    refreshDbg()
+  }
+  const resetDebug = () => {
+    if (!dbg) return
+    dbg.reset()
+    setCycle(0)
+    refreshDbg()
+  }
+  const toggleInputBit = (portId: string) => {
+    if (!dbg) return
+    dbg.setInput(portId, dbg.read(portId) !== true)
+    // A combinational design shows the effect immediately; a clocked one waits for the next edge.
+    if (!dbg.clockPortId) dbg.step()
+    refreshDbg()
+  }
+
+  const canDebug = debugSession !== null
 
   // Live diagnostics: re-synthesize a short beat after typing stops, so the "what won't build" list is always
   // current without running the whole synthesizer on every keystroke.
@@ -446,6 +573,119 @@ export function VerilogEditor({
         </div>
       </div>
 
+      {dbg ? (
+        <div
+          style={{
+            borderTop: '1px solid var(--borderSubtle)',
+            background: 'var(--surfacePanel)',
+            padding: '8px 12px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            maxHeight: 260,
+            minHeight: 0,
+            flexShrink: 1,
+            overflowY: 'auto',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              fontSize: 12,
+              color: 'var(--textBright)',
+            }}
+          >
+            <strong>Debugger</strong>
+            <span style={{ color: 'var(--textSoft)' }}>
+              {dbg.clockPortId ? `${dbg.clockPortId} · cycle ${cycle}` : 'combinational'}
+            </span>
+            {!dbg.settled && (
+              <span style={{ color: 'var(--statusWarn)' }}>
+                ⚠ never settles (a loop with no clock)
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setDbg(null)}
+              style={{
+                marginLeft: 'auto',
+                background: 'transparent',
+                border: 0,
+                color: 'var(--textSoft)',
+                cursor: 'pointer',
+                fontSize: 12,
+              }}
+            >
+              close
+            </button>
+          </div>
+
+          {dbg.inputs.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {dbg.inputs.map((sig) => (
+                <SignalRow
+                  key={sig.name}
+                  sig={sig}
+                  read={(id) => dbg.read(id)}
+                  onToggleBit={toggleInputBit}
+                  editable
+                />
+              ))}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              type="button"
+              onClick={stepDebug}
+              style={{
+                padding: '5px 12px',
+                borderRadius: 6,
+                border: '1px solid var(--borderStrong)',
+                background: 'var(--accentBlueDeep)',
+                color: 'var(--white)',
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              {dbg.clockPortId ? '▸ Pulse clock' : '▸ Step'}
+            </button>
+            <button
+              type="button"
+              onClick={resetDebug}
+              style={{
+                padding: '5px 12px',
+                borderRadius: 6,
+                border: '1px solid var(--borderStrong)',
+                background: 'var(--surfaceRaised)',
+                color: 'var(--textPrimary)',
+                cursor: 'pointer',
+                fontSize: 12,
+              }}
+            >
+              ⟲ Reset
+            </button>
+          </div>
+
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+              borderTop: '1px dashed var(--borderSubtle)',
+              paddingTop: 8,
+            }}
+          >
+            {dbg.outputs.map((sig) => (
+              <SignalRow key={sig.name} sig={sig} read={(id) => dbg.read(id)} editable={false} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       <footer
         style={{
           borderTop: '1px solid var(--borderSubtle)',
@@ -478,7 +718,25 @@ export function VerilogEditor({
             </div>
           )}
         </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button
+            type="button"
+            disabled={!canDebug}
+            onClick={dbg ? () => setDbg(null) : startDebug}
+            title="Step the synthesized gates one clock at a time and watch every signal"
+            style={{
+              padding: '6px 14px',
+              borderRadius: 6,
+              border: '1px solid var(--borderStrong)',
+              background: dbg ? 'var(--accentPurple)' : 'var(--surfaceRaised)',
+              color: canDebug ? (dbg ? 'var(--white)' : 'var(--textPrimary)') : 'var(--textFaint)',
+              cursor: canDebug ? 'pointer' : 'default',
+              fontSize: 12,
+              fontWeight: 600,
+            }}
+          >
+            {dbg ? 'Debugging…' : '🐞 Debug'}
+          </button>
           <button
             type="button"
             disabled={diag.block === null}
