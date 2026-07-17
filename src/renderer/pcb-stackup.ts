@@ -504,7 +504,7 @@ export const IPC2221 = {
     source_type: 'standard',
     title: 'IPC-2221 trace ampacity: I = k·ΔT^0.44·A^0.725 (k ext 0.048, int 0.024)',
     citation:
-      'IPC-2221A §6.2 conductor sizing charts, curve-fit: I = k·ΔT^0.44·A^0.725 with A the cross-section in mil² and ΔT the allowed temperature rise in °C; k = 0.048 for external conductors, 0.024 for internal. The charts trace to 1955 U.S. NBS/Navy free-air data (the internal constant is the external simply halved, no in-board testing), so the rule is CONSERVATIVE — it oversizes; the modern IPC-2152 (2009) corrects it with real in-board measurements for tighter, design-specific sizing.',
+      'IPC-2221A §6.2 conductor sizing charts, curve-fit: I = k·ΔT^0.44·A^0.725 with A the cross-section in mil² and ΔT the allowed temperature rise in °C; k = 0.048 for external conductors, 0.024 for internal. The charts trace to 1955 U.S. NBS/Navy free-air data (the internal constant is the external simply halved, no in-board testing). It is a rough approximation: generally conservative (oversizing) for internal conductors, but IPC-2152 (2009), from real in-board measurements, found the EXTERNAL-conductor curve can be NON-conservative — it can predict a higher safe current than a laminated board actually tolerates. IPC-2152 corrects both with measured, design-specific sizing and is the authority for a manufactured board.',
     confidence: 'high',
     url: 'https://www.ipc.org',
     date_accessed: '2026-07-04',
@@ -548,13 +548,15 @@ export const VIA_PLATING_PROVENANCE: FootprintProvenance = {
 
 /**
  * A plated via's current-carrying capacity (A), IPC-2221 applied to the barrel: I = k·ΔT^0.44·A^0.725
- * with A the barrel WALL cross-section — the copper annulus around the drilled hole, area
- * π·plating·(drill + plating). A via is buried in the board, so it uses the INTERNAL constant (like an
- * inner trace). A conservative first-pass number; a real board's via ampacity depends on its length
- * and the planes it ties to, which a thermal solver would model.
+ * with A the barrel WALL cross-section — the copper annulus that lines the drilled hole. `drillMm` is
+ * the drill-bit (pre-plating) diameter — the Excellon "drill" — so the plating grows INWARD from the
+ * drilled wall and the annulus is π·plating·(drill − plating), NOT (drill + plating) (which would
+ * overstate the copper). A via is buried in the board, so it uses the INTERNAL constant (like an inner
+ * trace). A conservative first-pass number; a real board's via ampacity depends on its length and the
+ * planes it ties to, which a thermal solver would model.
  */
 export function viaAmpacity(drillMm: number, platingMm = VIA_PLATING_MM, deltaTempC = 10): number {
-  const areaMm2 = Math.PI * platingMm * (drillMm + platingMm)
+  const areaMm2 = Math.PI * platingMm * (drillMm - platingMm)
   const areaMil2 = areaMm2 * MM2_PER_MIL2
   if (areaMil2 <= 0 || deltaTempC <= 0) return 0
   return IPC2221.kInternal * deltaTempC ** 0.44 * areaMil2 ** 0.725

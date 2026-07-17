@@ -313,9 +313,10 @@ describe('IPC-2221 trace current capacity — I = k·ΔT^0.44·A^0.725', () => {
   })
 
   test('a plated via barrel carries far less than a wide trace — the current bottleneck', () => {
-    // 0.4 mm drill, 20 µm plating: A = π·0.02·0.42 mm² ≈ 40.9 mil²; I = 0.024·10^0.44·40.9^0.725 ≈ 0.97 A.
+    // 0.4 mm drill-bit, 20 µm plating lining the wall INWARD: A = π·0.02·(0.4−0.02) mm² ≈ 37.0 mil²;
+    // I = 0.024·10^0.44·37.0^0.725 ≈ 0.91 A. (Using (drill+plating) would overstate the copper.)
     const i = viaAmpacity(0.4, VIA_PLATING_MM, 10)
-    expect(i).toBeCloseTo(0.97, 1)
+    expect(i).toBeCloseTo(0.91, 1)
     // a smaller drill = less barrel copper = lower ampacity
     expect(viaAmpacity(0.3, VIA_PLATING_MM, 10)).toBeLessThan(viaAmpacity(0.6, VIA_PLATING_MM, 10))
     expect(VIA_PLATING_PROVENANCE.confidence).toBe('high')
