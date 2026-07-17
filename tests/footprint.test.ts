@@ -290,9 +290,15 @@ describe('printed pin-1 / polarity markers on the silkscreen (assembly orientati
   })
 
   test('a symmetric chip passive gets NO polarity marker — just the 8 corner ticks (nothing to orient)', () => {
-    for (const fp of [FOOTPRINT_0402, FOOTPRINT_0603, FOOTPRINT_0805, FOOTPRINT_1206]) {
+    for (const fp of [FOOTPRINT_0603, FOOTPRINT_0805, FOOTPRINT_1206]) {
       expect(fp.silkscreen).toHaveLength(8)
     }
+  })
+
+  test('the 0402 omits silkscreen entirely — its courtyard is too tight to clear the pads', () => {
+    // pads ±0.32 mm vs courtyard ±0.47 mm = a 0.15 mm gap; a 0.12 mm silk stroke there would sit < 0.1 mm
+    // from the pad copper, so (like real 0402 land patterns) there is no F.SilkS at all.
+    expect(FOOTPRINT_0402.silkscreen).toHaveLength(0)
   })
 })
 

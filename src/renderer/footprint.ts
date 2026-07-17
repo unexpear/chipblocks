@@ -209,7 +209,12 @@ export const FOOTPRINT_0402: Footprint = {
       type: 'smd',
     },
   ],
-  silkscreen: cornerTicksSilk({ x: -0.93, y: -0.47, w: 1.86, h: 0.94 }),
+  // NO silkscreen on the 0402: its courtyard sits only 0.15 mm from the pad copper (pads ±0.32 mm,
+  // courtyard ±0.47 mm in Y), so any silk stroke at the outline would clear the pad by < 0.1 mm — under
+  // the ~0.15 mm most fabs want, and a corner tick would run right alongside the pad edge. This is why
+  // real 0402 land patterns omit F.SilkS; the part is on the fab/assembly layer (below) instead. The
+  // 0603 and up have room and keep their corner ticks.
+  silkscreen: [],
   // The component body outline (F.Fab): the 1.05 × 0.54 mm chip body extent (F.Fab rect ±0.525 × ±0.27).
   fabrication: rectOutline(-0.525, -0.27, 0.525, 0.27),
   labels: {
