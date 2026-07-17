@@ -4,18 +4,25 @@
  * higher-level expression and feeds them to the SAME lowering (so they wire + place + power like any drawn
  * gate; the gates stay the real, simulatable source of truth).
  *
- * 2a shipped SCALAR boolean synthesis. 2b (here) adds BUSES + ARITHMETIC: multi-bit nets `[N:0]`, bit-select
+ * 2a shipped SCALAR boolean synthesis. 2b added BUSES + ARITHMETIC: multi-bit nets `[N:0]`, bit-select
  * a[i], part-select a[h:l], concatenation {a,b}, replication {n{a}}, reduction operators, and unsigned
- * ripple-carry `+`/`-` (a − b = a + ~b + 1). Everything is BIT-BLASTED to scalar bit-nets (a bus `a` of
- * width N → bit-nets a[0]…a[N-1], LSB = a[0]; brackets can't appear in a simple identifier, so a bus bit
- * never collides with a scalar net) and synthesized bit-by-bit with two-pass, context-determined width
- * sizing (self-width bottom-up, then the assignment's context width pushed down into the arithmetic/bitwise
- * operands). Precedence + widths + operator constructions were adversarially verified vs IEEE 1364-2005 (65
- * rules, 0 refuted). Anything still out of scope — `* / % << >> ** < <= > >=`, signed, x/z, non-constant or
- * nonzero-based selects — is REPORTED, never faked.
+ * ripple-carry `+`/`-` (a − b = a + ~b + 1). 3 added SEQUENTIAL logic (`always @(posedge clk)` → flip-flops).
+ * 4 (memory, here) adds MEMORY ARRAYS + COMPUTED ADDRESSING: a `reg [D-1:0] m [0:W-1]` becomes W real D-bit
+ * word-registers; a read `m[addr]` synthesizes a one-hot address decoder + read mux (the gate Data RAM's read
+ * path) and a clocked write `m[addr] <= x` synthesizes per-word write-enable logic — the address may be a
+ * computed expression, not just a constant. Everything is BIT-BLASTED to scalar bit-nets (a bus `a` of width N
+ * → bit-nets a[0]…a[N-1], LSB = a[0]; memory word k → the register m[k]; brackets can't appear in a simple
+ * identifier, so neither collides with a scalar net) and synthesized bit-by-bit with two-pass, context-
+ * determined width sizing. Precedence + widths + operator constructions were adversarially verified vs IEEE
+ * 1364-2005. Anything still out of scope — `* / % << >> ** < <= > >=`, signed, x/z, non-constant or nonzero-
+ * based selects, a bit-select on a memory read, an unclocked assign to a memory — is REPORTED, never faked.
  */
 
-import type { AlwaysBlock, Assign, FlopInst, GateInst, Tok } from './verilog-import.ts'
+import type { AlwaysBlock, Assign, FlopInst, GateInst, MemInfo, Tok } from './verilog-import.ts'
+
+/** Declared memories, by name (`reg [D-1:0] m [0:W-1]`). Threaded through the parser so `m[addr]` becomes a
+ *  memory read/write rather than a (rejected) non-constant bit-select. */
+type MemTable = Map<string, MemInfo>
 
 // ── expression AST ────────────────────────────────────────────────────────────
 type Expr =
@@ -28,7 +35,32 @@ type Expr =
   | { t: 'un'; op: string; a: Expr }
   | { t: 'bin'; op: string; a: Expr; b: Expr }
   | { t: 'tern'; c: Expr; a: Expr; b: Expr }
+  | { t: 'memread'; name: string; idx: Expr; width: number; depth: number } // m[addr] — a decode/read-mux
   | { t: 'bad'; why: string }
+
+/** The synthetic net name of memory word k (bracket form — can't collide with a user simple identifier). */
+const memWord = (name: string, k: number): string => `${name}[${k}]`
+/** Address-bus width for a W-word memory (⌈log2 W⌉, at least 1). */
+const clog2 = (words: number): number => Math.max(1, Math.ceil(Math.log2(Math.max(2, words))))
+/** The value of an expression that folds to a constant (all bits known), else undefined. Synthesizes into a
+ *  throwaway context so it reuses synthAt's EXACT-width folding — `3+2` folds to 5, but a sized `4'd15+4'd1`
+ *  wraps to 0 exactly as the hardware would, so no false out-of-range report. Any net reference ⇒ undefined. */
+function foldConst(e: Expr, widthOf: (n: string) => number): number | undefined {
+  let z = 0
+  const bits = synthAt(e, selfWidth(e, widthOf), {
+    gates: [],
+    fresh: () => `#fold${z++}`,
+    widthOf,
+    bitNet: (n, i) => `${n}[${i}]`,
+  })
+  let v = 0
+  for (let i = 0; i < bits.length; i++) {
+    const b = bits[i]
+    if (b === undefined || !isC(b)) return undefined
+    if (b.c) v += 2 ** i
+  }
+  return v
+}
 
 /** Binary-operator binding power (higher binds tighter), the IEEE 1364-2005 Table 5-4 ladder. `?:` (loosest)
  *  is handled specially. Unsupported operators still get real slots so supported neighbours group correctly. */
@@ -76,28 +108,28 @@ class TokStream {
   }
 }
 
-function parseRhs(tokens: Tok[]): Expr {
+function parseRhs(tokens: Tok[], mems: MemTable): Expr {
   const ts = new TokStream(tokens)
   if (ts.peek() === undefined) return { t: 'bad', why: 'empty right-hand side' }
-  const e = parseExpr(ts, 0)
+  const e = parseExpr(ts, 0, mems)
   if (e.t === 'bad') return e
   if (ts.peek() !== undefined)
     return { t: 'bad', why: `trailing "${ts.peek()?.v}" after the expression` }
   return e
 }
 
-function parseExpr(ts: TokStream, minBP: number): Expr {
-  let left = parseUnary(ts)
+function parseExpr(ts: TokStream, minBP: number, mems: MemTable): Expr {
+  let left = parseUnary(ts, mems)
   for (;;) {
     const t = ts.peek()
     if (t === undefined) break
     if (t.v === '?') {
       if (1 < minBP) break
       ts.next()
-      const then = parseExpr(ts, 0)
+      const then = parseExpr(ts, 0, mems)
       if (ts.peek()?.v !== ':') return { t: 'bad', why: 'conditional ?: is missing its ":"' }
       ts.next()
-      const els = parseExpr(ts, 1)
+      const els = parseExpr(ts, 1, mems)
       left = { t: 'tern', c: left, a: then, b: els }
       continue
     }
@@ -107,35 +139,67 @@ function parseExpr(ts: TokStream, minBP: number): Expr {
     if (!SUPPORTED_BIN.has(t.v))
       return { t: 'bad', why: `operator "${t.v}" is not supported (a later increment)` }
     ts.next()
-    const right = parseExpr(ts, bp + 1)
+    const right = parseExpr(ts, bp + 1, mems)
     left = { t: 'bin', op: t.v, a: left, b: right }
   }
   return left
 }
 
-function parseUnary(ts: TokStream): Expr {
+function parseUnary(ts: TokStream, mems: MemTable): Expr {
   const t = ts.peek()
   if (t?.k === 'op' && UNARY.has(t.v)) {
     if (!SUPPORTED_UN.has(t.v))
       return { t: 'bad', why: `unary "${t.v}" is not supported (a later increment)` }
     ts.next()
-    return { t: 'un', op: t.v, a: parseUnary(ts) }
+    return { t: 'un', op: t.v, a: parseUnary(ts, mems) }
   }
-  return parsePrimary(ts)
+  return parsePrimary(ts, mems)
 }
 
-function parsePrimary(ts: TokStream): Expr {
+/** Read the tokens inside a `[ … ]` at the cursor (positioned just past `[`), balancing nested brackets, and
+ *  leave the cursor just past the matching `]`. */
+function readBracket(ts: TokStream): Tok[] {
+  const inner: Tok[] = []
+  let depth = 1
+  while (ts.peek() !== undefined && depth > 0) {
+    const tk = ts.next() as Tok
+    if (tk.v === '[') depth++
+    else if (tk.v === ']') {
+      depth--
+      if (depth === 0) break
+    }
+    inner.push(tk)
+  }
+  return inner
+}
+
+function parsePrimary(ts: TokStream, mems: MemTable): Expr {
   const t = ts.next()
   if (t === undefined) return { t: 'bad', why: 'unexpected end of expression' }
   if (t.v === '(') {
-    const e = parseExpr(ts, 0)
+    const e = parseExpr(ts, 0, mems)
     if (ts.peek()?.v !== ')') return { t: 'bad', why: 'missing ")"' }
     ts.next()
     return e
   }
-  if (t.v === '{') return parseBraces(ts)
+  if (t.v === '{') return parseBraces(ts, mems)
   if (t.k === 'num') return constExpr(t.v)
   if (t.k === 'id') {
+    const mem = mems.get(t.v)
+    if (mem !== undefined) {
+      // A memory read m[addr]: parse the index as a FULL expression (it may be computed, unlike a bit-select).
+      if (ts.peek()?.v !== '[')
+        return { t: 'bad', why: `memory "${t.v}" used as a plain value — index it as ${t.v}[addr]` }
+      ts.next() // '['
+      const idx = parseRhs(readBracket(ts), mems)
+      if (idx.t === 'bad') return { t: 'bad', why: `memory index — ${idx.why}` }
+      if (ts.peek()?.v === '[')
+        return {
+          t: 'bad',
+          why: `a bit-select on a memory read (${t.v}[addr][b]) is a later increment`,
+        }
+      return { t: 'memread', name: t.v, idx, width: mem.width, depth: mem.depth }
+    }
     if (ts.peek()?.v === '[') return parseSelect(ts, t.v)
     return { t: 'net', name: t.v }
   }
@@ -166,14 +230,14 @@ function parseSelect(ts: TokStream, name: string): Expr {
 }
 
 /** `{ e0, e1, … }` concatenation or `{ n { e } }` replication. */
-function parseBraces(ts: TokStream): Expr {
+function parseBraces(ts: TokStream, mems: MemTable): Expr {
   // replication if the first inner token is a plain constant immediately followed by '{'
   const first = ts.peek()
   if (first?.k === 'num' && ts.peek(1)?.v === '{') {
     const count = intOf(first.v)
     ts.next() // count
     ts.next() // inner '{'
-    const of = parseConcatBody(ts)
+    const of = parseConcatBody(ts, mems)
     if (of.t === 'bad') return of
     if (ts.peek()?.v !== '}') return { t: 'bad', why: 'missing "}" after replication' }
     ts.next()
@@ -181,14 +245,14 @@ function parseBraces(ts: TokStream): Expr {
       return { t: 'bad', why: 'a non-constant replication count needs a later increment' }
     return { t: 'repl', count, of }
   }
-  return parseConcatBody(ts)
+  return parseConcatBody(ts, mems)
 }
 
 /** The comma-separated body of a `{ … }`, up to (not consuming) the matching '}'. */
-function parseConcatBody(ts: TokStream): Expr {
+function parseConcatBody(ts: TokStream, mems: MemTable): Expr {
   const parts: Expr[] = []
   for (;;) {
-    const e = parseExpr(ts, 0)
+    const e = parseExpr(ts, 0, mems)
     if (e.t === 'bad') return e
     parts.push(e)
     if (ts.peek()?.v === ',') {
@@ -251,6 +315,8 @@ function firstBad(e: Expr): string | undefined {
       return undefined
     case 'repl':
       return firstBad(e.of)
+    case 'memread':
+      return firstBad(e.idx)
     default:
       return undefined
   }
@@ -346,6 +412,8 @@ function selfWidth(e: Expr, w: (name: string) => number): number {
         : Math.max(selfWidth(e.a, w), selfWidth(e.b, w)) // & | ^ ~^ + -
     case 'tern':
       return Math.max(selfWidth(e.a, w), selfWidth(e.b, w))
+    case 'memread':
+      return e.width
     default:
       return 1
   }
@@ -456,6 +524,34 @@ function synthAt(e: Expr, w: number, x: Ctx): Bit[] {
       const lb = synthAt(e.b, w, x)
       return la.map((_, i) => mux1(sel, la[i] as Bit, lb[i] as Bit, x))
     }
+    case 'memread': {
+      // The gate Data RAM's read path: decode the address to one-hot lines, then OR each word gated by its
+      // line. Synthesize the address ONCE (shared bits), so a plain-net address builds just a decoder — not W
+      // copies of the address datapath. A constant address folds the decode to a single live word. Decode on
+      // the FULL address width (never fewer than clog2(depth)) so a too-wide address's high bits force a
+      // no-match (reads 0) instead of aliasing onto a low word — the write path compares at this width too.
+      const addrW = Math.max(clog2(e.depth), selfWidth(e.idx, x.widthOf))
+      const addr = synthAt(e.idx, addrW, x)
+      const oneHot: Bit[] = []
+      for (let k = 0; k < e.depth; k++) {
+        let match: Bit = { c: 1 }
+        for (let j = 0; j < addrW; j++) {
+          const wantOne = ((k >> j) & 1) === 1
+          match = and1(match, wantOne ? (addr[j] as Bit) : not1(addr[j] as Bit, x), x)
+        }
+        oneHot.push(match)
+      }
+      const out: Bit[] = []
+      for (let b = 0; b < e.width; b++) {
+        let acc: Bit = { c: 0 }
+        for (let k = 0; k < e.depth; k++) {
+          const wordBit: Bit = { n: x.bitNet(memWord(e.name, k), b) }
+          acc = or1(acc, and1(oneHot[k] as Bit, wordBit, x), x)
+        }
+        out.push(acc)
+      }
+      return resize(out, w)
+    }
     default:
       return resize([], w) // 'bad' — gated out by firstBad()
   }
@@ -470,6 +566,7 @@ type SynthModule = {
   alwaysBlocks: AlwaysBlock[]
   flops: FlopInst[]
   widths: Map<string, number>
+  mems: MemTable
 }
 
 /** The target bit-nets of an lhs (`y`, `y[i]`, `y[h:l]`, or a concat of those), LSB-first. */
@@ -568,6 +665,19 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   for (const base of mod.widths.keys()) used.add(base)
   for (const a of mod.assigns) for (const t of [...a.lhs, ...a.rhs]) if (t.k === 'id') used.add(t.v)
   for (const blk of mod.alwaysBlocks) for (const t of blk.body) if (t.k === 'id') used.add(t.v)
+
+  // Each memory word becomes a real D-bit register named with the bracket form mem[k]. Register its width so
+  // bitNet/widthOf treat the word like any bus, and reserve the name. A user net that already spells mem[k]
+  // (only possible via an escaped identifier) would silently merge with the word — reported, not merged.
+  for (const [name, info] of mod.mems) {
+    for (let k = 0; k < info.depth; k++) {
+      const wsig = memWord(name, k)
+      if (used.has(wsig))
+        warnings.push(`memory word "${wsig}" collides with a net of the same name — reported`)
+      used.add(wsig)
+      if (info.width > 1) mod.widths.set(wsig, info.width)
+    }
+  }
   let n = 0
   const fresh = (): string => {
     let name = `syn${n++}`
@@ -605,6 +715,14 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
 
   const built: { targets: string[]; gates: GateInst[] }[] = []
   for (const a of mod.assigns) {
+    // A memory can only be written by a clocked always block (its words are flip-flops); an unclocked
+    // continuous assign to mem[addr] would need a latch + decode we don't model — reported.
+    if (a.lhs[0]?.k === 'id' && mod.mems.has(a.lhs[0].v)) {
+      warnings.push(
+        `line ${a.line}: continuous assign to memory "${a.lhs[0].v}" (unclocked array write) is not supported — write it in an always @(posedge clk) block — reported, not built`,
+      )
+      continue
+    }
     const lb = lhsBits(a.lhs, widthOf, bitNet)
     if ('bad' in lb) {
       warnings.push(`line ${a.line}: assign target — ${lb.bad} — reported, not built`)
@@ -623,7 +741,7 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
       )
       continue
     }
-    const ast = parseRhs(a.rhs)
+    const ast = parseRhs(a.rhs, mod.mems)
     const bad = firstBad(ast)
     if (bad !== undefined) {
       warnings.push(`line ${a.line}: assign not synthesized — ${bad}`)
@@ -693,16 +811,45 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   // its D-net is always distinct from its Q-net, so the state→next-state→state feedback closes only through
   // net naming and resolves across clock edges (never a combinational loop).
   const registered = new Set<string>()
+  const badMem = new Set<string>() // memories with a faulty store (address/value) — reported once, not built
+  const reportedMem = new Set<string>() // memory bases already reported for a multi-block-drive conflict
+  const memBaseOf = (r: string): string | undefined => {
+    const m = /^(.*)\[\d+\]$/.exec(r)
+    return m !== null && mod.mems.has(m[1] as string) ? (m[1] as string) : undefined
+  }
   for (const blk of mod.alwaysBlocks) {
-    const seq = parseProcedural(blk.body)
+    const seq = parseProcedural(blk.body, mod.mems)
     if (seq.t === 'bad') {
       warnings.push(`line ${blk.line}: always block — ${seq.why} — reported, not built`)
       continue
     }
+    // Validate each store address ONCE (a memwrite fans out to `depth` word-registers, so a per-word check
+    // would report the same fault `depth` times). A faulty store marks the whole memory not-built.
+    for (const mw of collectMemWrites(seq)) {
+      const bad = firstBad(mw.idx) ?? firstBad(mw.rhs)
+      const oor = outOfRange(mw.idx, widthOf) ?? outOfRange(mw.rhs, widthOf)
+      const v = foldConst(mw.idx, widthOf)
+      const oob = v !== undefined && v >= mw.depth
+      if (bad === undefined && oor === undefined && !oob) continue
+      const why = bad ?? (oob ? `store address ${v} is out of range` : `${oor} reads x in Verilog`)
+      warnings.push(`line ${blk.line}: store to "${mw.name}" — ${why} — reported, not built`)
+      badMem.add(mw.name)
+    }
     const written = new Set<string>()
     const env = elaborate(seq, new Map(), written)
     for (const r of written) {
+      const base = memBaseOf(r)
+      if (base !== undefined && badMem.has(base)) continue // faulty store, already reported above
       if (registered.has(r)) {
+        if (base !== undefined) {
+          if (!reportedMem.has(base)) {
+            warnings.push(
+              `memory "${base}" is written by more than one always block — reported, not built`,
+            )
+            reportedMem.add(base)
+          }
+          continue
+        }
         warnings.push(
           `register "${r}" is written by more than one always block — reported, not built`,
         )
@@ -774,6 +921,22 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     }
   }
 
+  // A memory that is read but never written has undriven word registers (its read-mux inputs float). Real
+  // memory powers up undefined, so this is a write-before-read hazard worth surfacing rather than a hard error.
+  for (const [name, info] of mod.mems) {
+    const anyWritten = Array.from({ length: info.depth }, (_, k) => memWord(name, k)).some((w) =>
+      registered.has(w),
+    )
+    if (anyWritten) continue
+    const isRead =
+      mod.assigns.some((a) => a.rhs.some((t) => t.v === name)) ||
+      mod.alwaysBlocks.some((b) => b.body.some((t) => t.v === name))
+    if (isRead)
+      warnings.push(
+        `memory "${name}" is read but never written — its words are undriven (write a location before reading it)`,
+      )
+  }
+
   mod.gates.push(...tieGates) // tie drivers read only inputs → never on a cycle → always safe to keep
 }
 
@@ -802,6 +965,14 @@ function outOfRange(e: Expr, w: (n: string) => number): string | undefined {
       return undefined
     case 'repl':
       return outOfRange(e.of, w)
+    case 'memread': {
+      const inner = outOfRange(e.idx, w)
+      if (inner !== undefined) return inner
+      const v = foldConst(e.idx, w)
+      return v !== undefined && v >= e.depth
+        ? `memory read ${e.name}[${v}] is out of range on the ${e.depth}-word memory "${e.name}" —`
+        : undefined
+    }
     default:
       return undefined
   }
@@ -842,16 +1013,17 @@ function cycleNets(edges: Map<string, string[]>): Set<string> {
 /** A statement inside a clocked always block. `bad` carries the first unsupported construct's reason. */
 type ProcStmt =
   | { t: 'nb'; lhs: string; rhs: Expr } // nonblocking whole-signal assignment  reg <= expr
+  | { t: 'memwrite'; name: string; idx: Expr; rhs: Expr; depth: number } // m[addr] <= expr
   | { t: 'seq'; body: ProcStmt[] } // begin … end
   | { t: 'if'; cond: Expr; conseq: ProcStmt; els?: ProcStmt }
   | { t: 'bad'; why: string }
 
 /** Parse a clocked always body (its inner statements, no wrapping begin/end) into one procedural statement. */
-function parseProcedural(body: Tok[]): ProcStmt {
+function parseProcedural(body: Tok[], mems: MemTable): ProcStmt {
   const ts = new TokStream(body)
   const stmts: ProcStmt[] = []
   while (ts.peek() !== undefined) {
-    const s = parseStmt(ts)
+    const s = parseStmt(ts, mems)
     if (s.t === 'bad') return s
     stmts.push(s)
   }
@@ -859,14 +1031,14 @@ function parseProcedural(body: Tok[]): ProcStmt {
   return stmts.length === 1 ? (stmts[0] as ProcStmt) : { t: 'seq', body: stmts }
 }
 
-function parseStmt(ts: TokStream): ProcStmt {
+function parseStmt(ts: TokStream, mems: MemTable): ProcStmt {
   const t = ts.peek()
   if (t === undefined) return { t: 'bad', why: 'unexpected end of the clocked block' }
   if (t.v === 'begin') {
     ts.next()
     const body: ProcStmt[] = []
     while (ts.peek() !== undefined && ts.peek()?.v !== 'end') {
-      const s = parseStmt(ts)
+      const s = parseStmt(ts, mems)
       if (s.t === 'bad') return s
       body.push(s)
     }
@@ -877,17 +1049,17 @@ function parseStmt(ts: TokStream): ProcStmt {
   if (t.v === 'if') {
     ts.next()
     if (ts.peek()?.v !== '(') return { t: 'bad', why: 'if is missing its "("' }
-    const cond = parseRhs(readParenToks(ts))
+    const cond = parseRhs(readParenToks(ts), mems)
     if (cond.t === 'bad') return { t: 'bad', why: `if condition — ${cond.why}` }
-    const conseq = parseStmt(ts)
+    const conseq = parseStmt(ts, mems)
     if (conseq.t === 'bad') return conseq
     if (ts.peek()?.v !== 'else') return { t: 'if', cond, conseq }
     ts.next()
-    const els = parseStmt(ts)
+    const els = parseStmt(ts, mems)
     if (els.t === 'bad') return els
     return { t: 'if', cond, conseq, els }
   }
-  if (t.v === 'case') return parseCase(ts)
+  if (t.v === 'case') return parseCase(ts, mems)
   if (t.v === 'casex' || t.v === 'casez')
     return {
       t: 'bad',
@@ -895,7 +1067,7 @@ function parseStmt(ts: TokStream): ProcStmt {
     }
   if (t.v === 'for' || t.v === 'while' || t.v === 'repeat' || t.v === 'forever')
     return { t: 'bad', why: `procedural loops (${t.v}) are a later increment` }
-  return parseAssignStmt(ts)
+  return parseAssignStmt(ts, mems)
 }
 
 /** Read a parenthesized group's inner tokens; cursor must be AT '('; leaves it just past the matching ')'. */
@@ -915,8 +1087,9 @@ function readParenToks(ts: TokStream): Tok[] {
   return inner
 }
 
-/** Parse `lhs <= rhs ;` (nonblocking, whole-signal). Blocking `=` and select/concat targets are reported. */
-function parseAssignStmt(ts: TokStream): ProcStmt {
+/** Parse `lhs <= rhs ;` (nonblocking). Whole-signal (`reg <= …`) and memory (`mem[addr] <= …`) targets build;
+ *  blocking `=`, bit/part-select and concat targets are reported. */
+function parseAssignStmt(ts: TokStream, mems: MemTable): ProcStmt {
   const toks: Tok[] = []
   while (ts.peek() !== undefined && ts.peek()?.v !== ';') toks.push(ts.next() as Tok)
   if (ts.peek()?.v === ';') ts.next()
@@ -939,22 +1112,33 @@ function parseAssignStmt(ts: TokStream): ProcStmt {
       why: "blocking assignment '=' in a clocked block — use nonblocking '<=' so all reads see the pre-clock value",
     }
   const lhs = toks.slice(0, opIdx)
+  const rhs = parseRhs(toks.slice(opIdx + 1), mems)
+  if (rhs.t === 'bad') return { t: 'bad', why: rhs.why }
+  // Memory write `mem[addr] <= rhs`: the address may be computed, so parse it as a full expression.
+  const mem = lhs[0]?.k === 'id' ? mems.get(lhs[0].v) : undefined
+  if (mem !== undefined && lhs[0] !== undefined) {
+    if (lhs[1]?.v !== '[' || lhs[lhs.length - 1]?.v !== ']' || lhs.length < 4)
+      return { t: 'bad', why: `memory "${lhs[0].v}" must be written as ${lhs[0].v}[addr] <= …` }
+    const idx = parseRhs(lhs.slice(2, -1), mems)
+    if (idx.t === 'bad') return { t: 'bad', why: `memory index — ${idx.why}` }
+    // The store address is validated once, width-correctly, in synthesizeBehavioral (it needs the width table);
+    // doing it here would fire per-word and miss constant-folded addresses.
+    return { t: 'memwrite', name: lhs[0].v, idx, rhs, depth: mem.depth }
+  }
   if (lhs.length !== 1 || lhs[0]?.k !== 'id')
     return {
       t: 'bad',
       why: 'only a whole-signal nonblocking target (reg <= …) is supported — a bit/part-select or concat target is a later increment',
     }
-  const rhs = parseRhs(toks.slice(opIdx + 1))
-  if (rhs.t === 'bad') return { t: 'bad', why: rhs.why }
   return { t: 'nb', lhs: (lhs[0] as Tok).v, rhs }
 }
 
 /** Parse a `case (sel) … endcase` and desugar it to a nested if/else chain (label match via `sel == label`,
  *  multiple labels OR'd). casex/casez are rejected upstream. */
-function parseCase(ts: TokStream): ProcStmt {
+function parseCase(ts: TokStream, mems: MemTable): ProcStmt {
   ts.next() // 'case'
   if (ts.peek()?.v !== '(') return { t: 'bad', why: 'case is missing its "("' }
-  const sel = parseRhs(readParenToks(ts))
+  const sel = parseRhs(readParenToks(ts), mems)
   if (sel.t === 'bad') return { t: 'bad', why: `case selector — ${sel.why}` }
   const items: { labels: Expr[]; stmt: ProcStmt }[] = []
   let dflt: ProcStmt | undefined
@@ -962,7 +1146,7 @@ function parseCase(ts: TokStream): ProcStmt {
     if (ts.peek()?.v === 'default') {
       ts.next()
       if (ts.peek()?.v === ':') ts.next()
-      const s = parseStmt(ts)
+      const s = parseStmt(ts, mems)
       if (s.t === 'bad') return s
       dflt = s
       continue
@@ -987,11 +1171,11 @@ function parseCase(ts: TokStream): ProcStmt {
     labelToks.push(cur)
     const labels: Expr[] = []
     for (const lt of labelToks) {
-      const le = parseRhs(lt)
+      const le = parseRhs(lt, mems)
       if (le.t === 'bad') return { t: 'bad', why: `case label — ${le.why}` }
       labels.push(le)
     }
-    const s = parseStmt(ts)
+    const s = parseStmt(ts, mems)
     if (s.t === 'bad') return s
     items.push({ labels, stmt: s })
   }
@@ -1011,6 +1195,22 @@ function parseCase(ts: TokStream): ProcStmt {
   return chain
 }
 
+/** Every memory write in a procedural statement. A memwrite elaborates to `depth` word-registers, so its
+ *  store address is validated against this list ONCE — a per-register check would report an address fault
+ *  `depth` times over. */
+function collectMemWrites(stmt: ProcStmt): { name: string; idx: Expr; rhs: Expr; depth: number }[] {
+  switch (stmt.t) {
+    case 'memwrite':
+      return [{ name: stmt.name, idx: stmt.idx, rhs: stmt.rhs, depth: stmt.depth }]
+    case 'seq':
+      return stmt.body.flatMap(collectMemWrites)
+    case 'if':
+      return [...collectMemWrites(stmt.conseq), ...(stmt.els ? collectMemWrites(stmt.els) : [])]
+    default:
+      return []
+  }
+}
+
 /** Elaborate a procedural statement to each written signal's next-state expression. Every read binds to the
  *  signal's PRE-clock value (`net(sig)`) — never an in-progress value — so nonblocking order-independence,
  *  swaps, and last-write-wins all fall out. `written` accumulates every assigned signal (the registers). */
@@ -1024,6 +1224,21 @@ function elaborate(
       const e = new Map(env)
       e.set(stmt.lhs, stmt.rhs)
       written.add(stmt.lhs)
+      return e
+    }
+    case 'memwrite': {
+      // A write to one COMPUTED word desugars to a conditional next-state for EVERY word: word k takes the new
+      // value when the address equals k, else it holds. The enclosing if-conditions (write-enable, etc.) wrap
+      // each of these via the normal tern merge, giving exactly the gate Data RAM's per-word load logic.
+      const e = new Map(env)
+      const addrBits = clog2(stmt.depth)
+      for (let k = 0; k < stmt.depth; k++) {
+        const wsig = memWord(stmt.name, k)
+        const prior: Expr = env.get(wsig) ?? { t: 'net', name: wsig }
+        const hit: Expr = { t: 'bin', op: '==', a: stmt.idx, b: bitsOf(BigInt(k), addrBits) }
+        e.set(wsig, { t: 'tern', c: hit, a: stmt.rhs, b: prior })
+        written.add(wsig)
+      }
       return e
     }
     case 'seq': {

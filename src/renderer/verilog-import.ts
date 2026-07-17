@@ -322,6 +322,9 @@ export type Assign = { lhs: Tok[]; rhs: Tok[]; line: number }
 export type AlwaysBlock = { clk: string; body: Tok[]; line: number }
 /** A synthesized flip-flop: its D-input net, clock net, and Q-output net (one per registered bit). */
 export type FlopInst = { d: string; clk: string; q: string }
+/** A declared memory `reg [width-1:0] m [0:depth-1]` — `depth` words, each `width` bits. The synthesizer
+ *  turns each word into real flip-flops and `m[addr]` into a decode/mux, exactly like the gate Data RAM. */
+export type MemInfo = { width: number; depth: number }
 type ParsedModule = {
   name: string
   portOrder: string[]
@@ -333,6 +336,8 @@ type ParsedModule = {
   flops: FlopInst[]
   /** Net → bit width for declared buses (`[N:0] a` → 4). Absent ⇒ a 1-bit scalar. */
   widths: Map<string, number>
+  /** Memory name → {word width, depth} for declared arrays (`reg [D-1:0] m [0:W-1]`). */
+  mems: Map<string, MemInfo>
 }
 
 /** A plain non-negative decimal integer (for a range bound), or undefined for anything else (a based literal
@@ -345,6 +350,10 @@ function intLiteral(v: string): number | undefined {
  *  LSB); anything else (ascending, nonzero-based, non-constant) is reported. `inner` is the tokens between the
  *  brackets. */
 function rangeWidth(inner: Tok[]): { width: number } | { bad: string } {
+  // Only bare integer bounds — reject anything with an identifier/operator (e.g. a parameter `[WIDTH-1:0]`),
+  // which would otherwise slip through the two-num check with a silently wrong width.
+  if (inner.some((t) => t.k !== 'num' && t.v !== ':'))
+    return { bad: 'non-constant range (parameterized bounds are unsupported)' }
   const nums = inner.filter((t) => t.k === 'num')
   if (!inner.some((t) => t.v === ':') || nums.length !== 2)
     return { bad: 'non-constant or malformed range' }
@@ -365,6 +374,33 @@ function readRange(c: Cursor): { width: number } | { bad: string } {
   while (!c.atEnd() && !c.is(']') && !c.is(';')) inner.push(c.next() as Tok)
   if (c.is(']')) c.next()
   return rangeWidth(inner)
+}
+
+/** A memory depth range `[0 : W-1]` (ascending, zero-based) → its word count W. Descending / nonzero-based /
+ *  non-constant array ranges are reported: the synthesizer maps word k ↔ address k, so it needs `[0:W-1]`. */
+function depthRange(inner: Tok[]): { depth: number } | { bad: string } {
+  // Only bare integer bounds — a parameterized `[0:DEPTH-1]` has two num tokens (0 and 1) and would otherwise
+  // slip through as a silently-wrong 2-word memory.
+  if (inner.some((t) => t.k !== 'num' && t.v !== ':'))
+    return { bad: 'non-constant array range (parameterized depth is unsupported)' }
+  const nums = inner.filter((t) => t.k === 'num')
+  if (!inner.some((t) => t.v === ':') || nums.length !== 2)
+    return { bad: 'non-constant or malformed array range' }
+  const lo = intLiteral((nums[0] as Tok).v)
+  const hi = intLiteral((nums[1] as Tok).v)
+  if (lo === undefined || hi === undefined) return { bad: 'non-integer array bound' }
+  if (lo !== 0 || hi < lo)
+    return { bad: `array range [${lo}:${hi}] must be [0:N-1] (ascending, zero-based)` }
+  return { depth: hi + 1 }
+}
+
+/** Read a memory depth range at the cursor (positioned at the second `[`); leaves it just past `]`. */
+function readDepthRange(c: Cursor): { depth: number } | { bad: string } {
+  c.next() // '['
+  const inner: Tok[] = []
+  while (!c.atEnd() && !c.is(']') && !c.is(';')) inner.push(c.next() as Tok)
+  if (c.is(']')) c.next()
+  return depthRange(inner)
 }
 
 /** A tiny cursor over the token stream. */
@@ -462,6 +498,7 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
   const dir = new Map<string, 'input' | 'output' | 'inout'>()
   const portOrder: string[] = []
   const widths = new Map<string, number>()
+  const mems = new Map<string, MemInfo>()
   if (c.is('(')) parseHeader(readGroup(c), portOrder, dir, widths, warnings)
   if (c.is(';')) c.next()
 
@@ -479,7 +516,8 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
       continue
     }
     if (t.k === 'kw' && (t.v === 'wire' || t.v === 'reg')) {
-      parseNetDecl(c, widths, warnings) // `reg [n:0] x;` captures a width exactly like `wire`
+      // `reg [n:0] x;` captures a width like `wire`; `reg [d:0] m [0:w-1];` captures a memory
+      parseNetDecl(c, widths, mems, warnings)
       continue
     }
     if (t.k === 'kw' && t.v === 'assign') {
@@ -531,7 +569,7 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     }
     c.next() // stray token — advance so the loop can never spin
   }
-  return { name: nameTok.v, portOrder, dir, gates, assigns, alwaysBlocks, flops: [], widths }
+  return { name: nameTok.v, portOrder, dir, gates, assigns, alwaysBlocks, flops: [], widths, mems }
 }
 
 /** Parse `always @(posedge <clk>) <body>`. Returns the captured block, or null (reporting a warning) for any
@@ -769,8 +807,13 @@ function parsePortDecl(
   if (c.is(';')) c.next()
 }
 
-function parseNetDecl(c: Cursor, widths: Map<string, number>, warnings: string[]): void {
-  c.next() // 'wire'
+function parseNetDecl(
+  c: Cursor,
+  widths: Map<string, number>,
+  mems: Map<string, MemInfo>,
+  warnings: string[],
+): void {
+  c.next() // 'wire' or 'reg'
   let width: number | 'bad' | undefined
   while (!c.atEnd() && !c.is(';')) {
     const t = c.peek() as Tok
@@ -788,7 +831,25 @@ function parseNetDecl(c: Cursor, widths: Map<string, number>, warnings: string[]
       continue
     }
     c.next()
-    if (t.k === 'id' && typeof width === 'number' && width > 1) widths.set(t.v, width)
+    if (t.k !== 'id') continue
+    // A SECOND range after the id makes this a MEMORY (`reg [D-1:0] m [0:W-1]`): the first range gives the
+    // word width, this one the depth. Register it as an array (not a plain bus) so mem[addr] can read/write it.
+    if (c.is('[')) {
+      const dr = readDepthRange(c)
+      if ('bad' in dr) {
+        warnings.push(
+          `line ${t.line}: memory "${t.v}" array range — ${dr.bad} — reported, not built`,
+        )
+        continue
+      }
+      if (width === 'bad') {
+        warnings.push(`line ${t.line}: memory "${t.v}" has an unsupported word range — reported`)
+        continue
+      }
+      mems.set(t.v, { width: typeof width === 'number' ? width : 1, depth: dr.depth })
+      continue
+    }
+    if (typeof width === 'number' && width > 1) widths.set(t.v, width)
   }
   if (c.is(';')) c.next()
 }
