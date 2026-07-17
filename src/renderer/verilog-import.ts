@@ -31,6 +31,7 @@ import {
   XOR_BLOCK,
 } from './builtin-blocks.ts'
 import { POWER_PORT_IDS } from './logic-sim.ts'
+import { type ConstVal, evalConst, MAX_WIDTH, splitOnColon } from './verilog-const.ts'
 import { synthesizeBehavioral } from './verilog-synth.ts'
 
 export type ImportResult = {
@@ -340,30 +341,29 @@ type ParsedModule = {
   mems: Map<string, MemInfo>
 }
 
-/** A plain non-negative decimal integer (for a range bound), or undefined for anything else (a based literal
- *  or a parameter expression — those buses are reported). */
-function intLiteral(v: string): number | undefined {
-  return /^[0-9][0-9_]*$/.test(v) ? Number.parseInt(v.replace(/_/g, ''), 10) : undefined
-}
-
-/** A `[ msb : lsb ]` range's bit width. Only descending, zero-based `[N:0]` is representable (right endpoint =
- *  LSB); anything else (ascending, nonzero-based, non-constant) is reported. `inner` is the tokens between the
- *  brackets. */
-function rangeWidth(inner: Tok[]): { width: number } | { bad: string } {
-  // Only bare integer bounds — reject anything with an identifier/operator (e.g. a parameter `[WIDTH-1:0]`),
-  // which would otherwise slip through the two-num check with a silently wrong width.
-  if (inner.some((t) => t.k !== 'num' && t.v !== ':'))
-    return { bad: 'non-constant range (parameterized bounds are unsupported)' }
-  const nums = inner.filter((t) => t.k === 'num')
-  if (!inner.some((t) => t.v === ':') || nums.length !== 2)
-    return { bad: 'non-constant or malformed range' }
-  const msb = intLiteral((nums[0] as Tok).v)
-  const lsb = intLiteral((nums[1] as Tok).v)
-  if (msb === undefined || lsb === undefined) return { bad: 'non-integer range bound' }
+/** A `[ msb : lsb ]` range's bit width. Both bounds are folded as constant expressions (a parameter has
+ *  already been substituted to a literal by elaborateParams, so `[WIDTH-1:0]` arrives as `[8-1:0]`). Only
+ *  descending, zero-based `[N:0]` is representable (right endpoint = LSB); anything else is reported. */
+function rangeWidth(
+  inner: Tok[],
+  params?: Map<string, ConstVal>,
+): { width: number } | { bad: string } {
+  const parts = splitOnColon(inner)
+  if (parts === undefined) return { bad: 'non-constant or malformed range' }
+  const hi = evalConst(parts[0], params)
+  const lo = evalConst(parts[1], params)
+  if (hi === undefined || lo === undefined)
+    return { bad: 'non-constant range (bounds must fold to a constant)' }
+  const msb = Number(hi.value)
+  const lsb = Number(lo.value)
   if (lsb !== 0 || msb < 0)
     return {
       bad: `range [${msb}:${lsb}] must be [N:0] (ascending/nonzero-based buses are unsupported)`,
     }
+  // An unsigned underflow (a parameter `[W-1:0]` with W=0 wraps to ~4.3 billion) or a huge literal would size
+  // a multi-gigabit bus and hang the synthesizer — report it rather than try to build it.
+  if (msb + 1 > MAX_WIDTH)
+    return { bad: `bus width ${msb + 1} is unreasonably large (a parameter underflow?) — reported` }
   return { width: msb + 1 }
 }
 
@@ -376,22 +376,28 @@ function readRange(c: Cursor): { width: number } | { bad: string } {
   return rangeWidth(inner)
 }
 
-/** A memory depth range `[0 : W-1]` (ascending, zero-based) → its word count W. Descending / nonzero-based /
- *  non-constant array ranges are reported: the synthesizer maps word k ↔ address k, so it needs `[0:W-1]`. */
-function depthRange(inner: Tok[]): { depth: number } | { bad: string } {
-  // Only bare integer bounds — a parameterized `[0:DEPTH-1]` has two num tokens (0 and 1) and would otherwise
-  // slip through as a silently-wrong 2-word memory.
-  if (inner.some((t) => t.k !== 'num' && t.v !== ':'))
-    return { bad: 'non-constant array range (parameterized depth is unsupported)' }
-  const nums = inner.filter((t) => t.k === 'num')
-  if (!inner.some((t) => t.v === ':') || nums.length !== 2)
-    return { bad: 'non-constant or malformed array range' }
-  const lo = intLiteral((nums[0] as Tok).v)
-  const hi = intLiteral((nums[1] as Tok).v)
-  if (lo === undefined || hi === undefined) return { bad: 'non-integer array bound' }
-  if (lo !== 0 || hi < lo)
-    return { bad: `array range [${lo}:${hi}] must be [0:N-1] (ascending, zero-based)` }
-  return { depth: hi + 1 }
+/** A memory depth range `[0 : W-1]` (ascending, zero-based) → its word count W. Bounds fold as constant
+ *  expressions (parameters already substituted). Descending / nonzero-based ranges are reported: the
+ *  synthesizer maps word k ↔ address k, so it needs `[0:W-1]`. */
+function depthRange(
+  inner: Tok[],
+  params?: Map<string, ConstVal>,
+): { depth: number } | { bad: string } {
+  const parts = splitOnColon(inner)
+  if (parts === undefined) return { bad: 'non-constant or malformed array range' }
+  const lo = evalConst(parts[0], params)
+  const hi = evalConst(parts[1], params)
+  if (lo === undefined || hi === undefined)
+    return { bad: 'non-constant array range (bounds must fold to a constant)' }
+  const loN = Number(lo.value)
+  const hiN = Number(hi.value)
+  if (loN !== 0 || hiN < loN)
+    return { bad: `array range [${loN}:${hiN}] must be [0:N-1] (ascending, zero-based)` }
+  if (hiN + 1 > MAX_WIDTH)
+    return {
+      bad: `memory depth ${hiN + 1} is unreasonably large (a parameter underflow?) — reported`,
+    }
+  return { depth: hiN + 1 }
 }
 
 /** Read a memory depth range at the cursor (positioned at the second `[`); leaves it just past `]`. */
@@ -401,6 +407,173 @@ function readDepthRange(c: Cursor): { depth: number } | { bad: string } {
   while (!c.atEnd() && !c.is(']') && !c.is(';')) inner.push(c.next() as Tok)
   if (c.is(']')) c.next()
   return depthRange(inner)
+}
+
+// ── parameter elaboration ────────────────────────────────────────────────────────
+// A `parameter`/`localparam` is a compile-time constant. We elaborate it away BEFORE the module is parsed:
+// scan the first module for every parameter declaration (header `#(…)` and body), fold each default to an
+// {value, width}, then SUBSTITUTE every use of the parameter name with its sized literal (`W` → `8'd8`). The
+// structural parser + the expression synthesizer then see only literals — no parameter plumbing threads
+// through the width-fragile select/range/replication code, and a bus `[W-1:0]` becomes a real `[8-1:0]` that
+// rangeWidth folds. A parameter without a constant default (or a name used before it is declared) is REPORTED
+// and left as-is (its uses stay identifiers), never silently defaulted.
+
+/** Consume one comma-separated parameter list starting just past the `parameter`/`localparam` keyword. Folds
+ *  each item into `params` (in source order, so a later item may reference an earlier one). Returns the index
+ *  just past the list (at its `;`, or at the `)` that closes a `#(…)` header). */
+function readParamList(
+  toks: Tok[],
+  start: number,
+  params: Map<string, ConstVal>,
+  warnings: string[],
+): number {
+  let i = start
+  // The type/range prefix (`[7:0]`, `signed`, `integer`) applies to EVERY name in one declaration —
+  // `parameter [7:0] A = 5, B = 2;` makes BOTH 8-bit — so the range is sticky across the comma list. A
+  // repeated `parameter`/`localparam` keyword (ANSI headers) starts a fresh item, resetting the range.
+  let range: Tok[] | undefined
+  for (;;) {
+    for (;;) {
+      // `integer`/`real`/`time` lex as plain identifiers (not keywords), so match by VALUE not kind — else a
+      // `parameter integer W = …` would read `integer` as the name and drop W (a silent wrong-value hazard).
+      const v = (toks[i] as Tok | undefined)?.v
+      if (v === 'parameter' || v === 'localparam') {
+        range = undefined
+        i += 1
+        continue
+      }
+      if (v !== undefined && ['signed', 'integer', 'real', 'time', 'realtime'].includes(v)) {
+        i += 1
+        continue
+      }
+      break
+    }
+    if ((toks[i] as Tok | undefined)?.v === '[') {
+      i += 1
+      range = []
+      while (i < toks.length && (toks[i] as Tok).v !== ']') range.push(toks[i++] as Tok)
+      if ((toks[i] as Tok | undefined)?.v === ']') i += 1
+    }
+    const nameTok = toks[i] as Tok | undefined
+    if (nameTok === undefined || nameTok.k !== 'id') return i
+    i += 1
+    if ((toks[i] as Tok | undefined)?.v !== '=') {
+      warnings.push(`parameter "${nameTok.v}" has no default value — reported, not elaborated`)
+      // skip to the next separator so the scan resyncs
+      while (i < toks.length && ![',', ';', ')'].includes((toks[i] as Tok).v)) i += 1
+    } else {
+      i += 1 // '='
+      const rhs: Tok[] = []
+      let depth = 0
+      while (i < toks.length) {
+        const tk = toks[i] as Tok
+        if (tk.v === '(' || tk.v === '[' || tk.v === '{') depth += 1
+        else if (tk.v === ')' || tk.v === ']' || tk.v === '}') {
+          if (depth === 0) break // the `)` that closes a `#(…)` header
+          depth -= 1
+        } else if (depth === 0 && (tk.v === ',' || tk.v === ';')) break
+        rhs.push(tk)
+        i += 1
+      }
+      const val = evalConst(rhs, params)
+      if (val === undefined) {
+        warnings.push(
+          `parameter "${nameTok.v}" default is not a constant expression — reported, not elaborated`,
+        )
+      } else if (range !== undefined) {
+        const rw = rangeWidth(range, params)
+        if ('bad' in rw) warnings.push(`parameter "${nameTok.v}" range — ${rw.bad} — reported`)
+        else params.set(nameTok.v, { value: val.value % (1n << BigInt(rw.width)), width: rw.width })
+      } else {
+        params.set(nameTok.v, val)
+      }
+    }
+    if ((toks[i] as Tok | undefined)?.v === ',') {
+      i += 1
+      continue
+    }
+    if ((toks[i] as Tok | undefined)?.v === ';') i += 1
+    return i
+  }
+}
+
+/** Fold every parameter/localparam default in the module's token span into a value table. */
+function collectParams(span: Tok[], warnings: string[]): Map<string, ConstVal> {
+  const params = new Map<string, ConstVal>()
+  let i = 0
+  while (i < span.length) {
+    const t = span[i] as Tok
+    if (t.k === 'kw' && (t.v === 'parameter' || t.v === 'localparam')) {
+      i = readParamList(span, i + 1, params, warnings)
+      continue
+    }
+    i += 1
+  }
+  return params
+}
+
+/** Replace every identifier token that names a parameter with its sized literal (`W` → `8'd8`). */
+function substituteParams(span: Tok[], params: Map<string, ConstVal>): Tok[] {
+  return span.map((t) => {
+    if (t.k !== 'id') return t
+    const p = params.get(t.v)
+    return p === undefined ? t : { k: 'num', v: `${p.width}'d${p.value.toString()}`, line: t.line }
+  })
+}
+
+/** Parameter names that ALSO appear as a declared net/port/instance identifier — an illegal redeclaration.
+ *  Substituting such a name (`W` → `8'd8`) would corrupt structure: a gate `and G(...)` becomes `and 8'd2(…)`
+ *  and is silently dropped, a port `\W` vanishes. We detect the collision so those uses are REPORTED and the
+ *  name is left un-substituted (the gate/port survives), rather than a gate disappearing with no warning. A
+ *  structural position is: an id right before `(` (a gate/module INSTANCE name), or an id declared after an
+ *  input/output/inout/wire/reg keyword (a net/port NAME — a `[range]` is skipped, so a `[W-1:0]` USE isn't
+ *  mistaken for a declaration). */
+function collidingParamNames(span: Tok[], params: Map<string, ConstVal>): Set<string> {
+  const collide = new Set<string>()
+  const flag = (name: string): void => {
+    if (params.has(name)) collide.add(name)
+  }
+  for (let i = 0; i < span.length; i++) {
+    const t = span[i] as Tok
+    if (t.k === 'id' && (span[i + 1] as Tok | undefined)?.v === '(') flag(t.v) // instance name
+    if (t.k === 'kw' && ['input', 'output', 'inout', 'wire', 'reg'].includes(t.v)) {
+      let depth = 0
+      for (let j = i + 1; j < span.length; j++) {
+        const u = span[j] as Tok
+        if (u.v === '[') depth += 1
+        else if (u.v === ']') depth -= 1
+        else if (depth === 0 && u.v === ';') break
+        else if (depth === 0 && u.k === 'id') flag(u.v)
+      }
+    }
+  }
+  return collide
+}
+
+/** Elaborate parameters within the FIRST module only (params are module-scoped; a same-named parameter in a
+ *  later module must not rewrite this one's nets), returning the token stream with every use substituted. */
+function elaborateParams(toks: Tok[], warnings: string[]): Tok[] {
+  const start = toks.findIndex((t) => t.k === 'kw' && t.v === 'module')
+  if (start === -1) return toks
+  let end = toks.length
+  for (let i = start + 1; i < toks.length; i++) {
+    if ((toks[i] as Tok).k === 'kw' && (toks[i] as Tok).v === 'endmodule') {
+      end = i + 1
+      break
+    }
+  }
+  const span = toks.slice(start, end)
+  const params = collectParams(span, warnings)
+  // A parameter whose name collides with a declared net/port/instance is an illegal redeclaration — report it
+  // and DON'T substitute (so the gate/port keeps its real name and survives, instead of being silently mangled).
+  for (const name of collidingParamNames(span, params)) {
+    warnings.push(
+      `parameter "${name}" collides with a net/port/instance of the same name — reported, not substituted`,
+    )
+    params.delete(name)
+  }
+  if (params.size === 0) return toks
+  return [...toks.slice(0, start), ...substituteParams(span, params), ...toks.slice(end)]
 }
 
 /** A tiny cursor over the token stream. */
@@ -499,6 +672,13 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
   const portOrder: string[] = []
   const widths = new Map<string, number>()
   const mems = new Map<string, MemInfo>()
+  // A `#( … )` parameter-port list: its defaults were already folded + substituted by elaborateParams, so
+  // just consume the group here. Without this the cursor would sit on `#`, the port `(` would never be read,
+  // and a parameterized module would silently lose its ENTIRE port list.
+  if (c.is('#')) {
+    c.next()
+    if (c.is('(')) readGroup(c)
+  }
   if (c.is('(')) parseHeader(readGroup(c), portOrder, dir, widths, warnings)
   if (c.is(';')) c.next()
 
@@ -533,6 +713,12 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     }
     if (t.k === 'kw' && (N_INPUT[t.v] !== undefined || N_OUTPUT[t.v] !== undefined)) {
       parseGateStatement(c, gates, warnings)
+      continue
+    }
+    if (t.k === 'kw' && (t.v === 'parameter' || t.v === 'localparam')) {
+      // Already folded away by elaborateParams (its uses are now literals) — skip the declaration silently.
+      c.next()
+      skipStatement(c)
       continue
     }
     if (t.k === 'kw' && OTHER_GATE_SWITCH.has(t.v)) {
@@ -570,8 +756,12 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     c.next() // stray token — advance so the loop can never spin
   }
   // The synthesizer is unsigned-only; a `signed` net would compute the wrong result for */comparisons/shifts,
-  // so flag it rather than silently treat it as unsigned.
-  if (toks.some((t) => t.k === 'kw' && t.v === 'signed'))
+  // so flag it rather than silently treat it as unsigned. A signed BASED LITERAL (`8'sd255`) lexes as one
+  // `num` token — never the `signed` keyword — so it's checked separately, or it would fold silently unsigned.
+  if (
+    toks.some((t) => t.k === 'kw' && t.v === 'signed') ||
+    toks.some((t) => t.k === 'num' && /^\d*'[sS]/.test(t.v))
+  )
     warnings.push(
       'signed values are treated as UNSIGNED — reported (signed arithmetic is a later increment)',
     )
@@ -1232,7 +1422,10 @@ export function importVerilog(text: string): ImportResult {
     warnings.push(
       `${moduleCount} modules found; only the first is imported (hierarchy is a later step)`,
     )
-  const mod = parseModule(tokens, warnings)
+  // Fold + substitute parameters/localparams into literals before parsing, so buses like `[W-1:0]` size
+  // correctly and no parameter plumbing threads through the structural + expression parsers.
+  const elaborated = elaborateParams(tokens, warnings)
+  const mod = parseModule(elaborated, warnings)
   if (mod === null) {
     warnings.push('no module declaration found')
     return { block: null, warnings, moduleName: null }

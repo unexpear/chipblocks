@@ -22,6 +22,7 @@
  * based selects, a bit-select on a memory read, an unclocked assign to a memory — is REPORTED, never faked.
  */
 
+import { constInt, MAX_REPL, splitOnColon } from './verilog-const.ts'
 import type { AlwaysBlock, Assign, FlopInst, GateInst, MemInfo, Tok } from './verilog-import.ts'
 
 /** Declared memories, by name (`reg [D-1:0] m [0:W-1]`). Threaded through the parser so `m[addr]` becomes a
@@ -234,35 +235,46 @@ function parsePrimary(ts: TokStream, mems: MemTable): Expr {
   return { t: 'bad', why: `unexpected "${t.v}"` }
 }
 
-/** After an id, a `[ … ]`: bit-select `[i]` or part-select `[h:l]` (constant bounds only). */
+/** After an id, a `[ … ]`: bit-select `[i]` or part-select `[h:l]`. Bounds fold as constant expressions
+ *  (a parameter has already been substituted to a literal), so `[W-1:0]` / `[W-1]` size correctly. */
 function parseSelect(ts: TokStream, name: string): Expr {
   ts.next() // '['
   const inner: Tok[] = []
-  while (ts.peek() !== undefined && ts.peek()?.v !== ']') inner.push(ts.next() as Tok)
+  let depth = 0
+  while (ts.peek() !== undefined && !(depth === 0 && ts.peek()?.v === ']')) {
+    const tk = ts.next() as Tok
+    if (tk.v === '[' || tk.v === '(' || tk.v === '{') depth += 1
+    else if (tk.v === ']' || tk.v === ')' || tk.v === '}') depth -= 1
+    inner.push(tk)
+  }
   if (ts.peek()?.v !== ']') return { t: 'bad', why: 'missing "]"' }
   ts.next()
-  const nums = inner.filter((x) => x.k === 'num').map((x) => intOf(x.v))
-  if (inner.some((x) => x.v === ':')) {
-    if (nums.length !== 2 || nums[0] === undefined || nums[1] === undefined)
+  const parts = splitOnColon(inner)
+  if (parts !== undefined) {
+    // an indexed part-select a[b+:W] / a[b-:W] (a trailing '+'/'-' before the ':') is a later increment
+    const last = parts[0][parts[0].length - 1]
+    if (last?.v === '+' || last?.v === '-')
+      return { t: 'bad', why: 'an indexed part-select a[b+:W] needs a later increment' }
+    const hi = constInt(parts[0])
+    const lo = constInt(parts[1])
+    if (hi === undefined || lo === undefined)
       return { t: 'bad', why: 'a non-constant part-select needs a later increment' }
-    const hi = nums[0] as number
-    const lo = nums[1] as number
     if (hi < lo) return { t: 'bad', why: 'ascending part-select is unsupported' }
     return { t: 'partsel', name, hi, lo }
   }
-  if (inner.some((x) => x.v === '+' || x.v === '-'))
-    return { t: 'bad', why: 'an indexed part-select a[b+:W] needs a later increment' }
-  if (nums.length !== 1 || nums[0] === undefined)
+  const index = constInt(inner)
+  if (index === undefined)
     return { t: 'bad', why: 'a non-constant bit-select needs a later increment' }
-  return { t: 'bitsel', name, index: nums[0] as number }
+  return { t: 'bitsel', name, index }
 }
 
 /** `{ e0, e1, … }` concatenation or `{ n { e } }` replication. */
 function parseBraces(ts: TokStream, mems: MemTable): Expr {
-  // replication if the first inner token is a plain constant immediately followed by '{'
+  // replication if the first inner token is a constant immediately followed by '{' (a parameter count `{W{…}}`
+  // has already been substituted to a single sized-literal token, so it still matches this `num {` shape).
   const first = ts.peek()
   if (first?.k === 'num' && ts.peek(1)?.v === '{') {
-    const count = intOf(first.v)
+    const count = constInt([first])
     ts.next() // count
     ts.next() // inner '{'
     const of = parseConcatBody(ts, mems)
@@ -271,6 +283,10 @@ function parseBraces(ts: TokStream, mems: MemTable): Expr {
     ts.next()
     if (count === undefined || count < 0)
       return { t: 'bad', why: 'a non-constant replication count needs a later increment' }
+    // Guard an underflowed/huge count (a parameter `{W-1{…}}` with W=0 wraps to ~4.3 billion) before the
+    // replication loop expands it into billions of bits and hangs.
+    if (count > MAX_REPL)
+      return { t: 'bad', why: `replication count ${count} is unreasonably large — reported` }
     return { t: 'repl', count, of }
   }
   return parseConcatBody(ts, mems)
@@ -293,9 +309,6 @@ function parseConcatBody(ts: TokStream, mems: MemTable): Expr {
   ts.next()
   return parts.length === 1 ? (parts[0] as Expr) : { t: 'concat', parts }
 }
-
-const intOf = (v: string): number | undefined =>
-  /^[0-9][0-9_]*$/.test(v) ? Number.parseInt(v.replace(/_/g, ''), 10) : undefined
 
 /** A Verilog integer literal → its LSB-first constant bits, or `bad` for x/z / unparseable. */
 function constExpr(v: string): Expr {
@@ -739,19 +752,25 @@ function lhsBits(
     return { bits: Array.from({ length: widthOf(name) }, (_, i) => bitNet(name, i)) }
   if (toks[1]?.v === '[') {
     const inner = toks.slice(2).filter((t) => t.v !== ']')
-    const nums = inner.filter((t) => t.k === 'num').map((t) => intOf(t.v))
-    if (inner.some((t) => t.v === ':')) {
-      if (nums.length !== 2 || nums[0] === undefined || nums[1] === undefined)
-        return { bad: 'non-constant part-select target' }
-      const hi = nums[0] as number
-      const lo = nums[1] as number
+    // An out-of-range LHS select would mint a phantom bit-net (e.g. y[9] on a 4-bit y) that no read ever sees,
+    // silently leaving the real net undriven — in Verilog it writes x. Report it, exactly as the read side does.
+    const width = widthOf(name)
+    const parts = splitOnColon(inner)
+    if (parts !== undefined) {
+      const hi = constInt(parts[0])
+      const lo = constInt(parts[1])
+      if (hi === undefined || lo === undefined) return { bad: 'non-constant part-select target' }
       if (hi < lo) return { bad: 'ascending part-select target is unsupported' }
+      if (hi >= width)
+        return { bad: `part-select target [${hi}:${lo}] is out of range for "${name}"` }
       const bits: string[] = []
       for (let k = lo; k <= hi; k++) bits.push(bitNet(name, k))
       return { bits }
     }
-    if (nums.length !== 1 || nums[0] === undefined) return { bad: 'non-constant bit-select target' }
-    return { bits: [bitNet(name, nums[0] as number)] }
+    const index = constInt(inner)
+    if (index === undefined) return { bad: 'non-constant bit-select target' }
+    if (index >= width) return { bad: `bit-select target "${name}[${index}]" is out of range` }
+    return { bits: [bitNet(name, index)] }
   }
   return { bad: 'unrecognized assign target' }
 }
