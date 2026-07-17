@@ -57,6 +57,7 @@ export type ToolbarActionId =
   | 'pcb'
   | 'verilog'
   | 'trace'
+  | 'stress'
   | 'workspace'
   | 'group'
   | 'clipboard'
@@ -136,6 +137,14 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
     color: THEME.accentTimeline,
     title:
       'Run-trace — clock a digital design for many cycles and flag the odd ones: a cycle that never settled, a one-cycle glitch, a cycle that ran a much longer logic path, or outputs that depend on the flip-flops’ power-up state (a missing reset). Answers “is the 5th cycle different, on purpose or not?”.',
+  },
+  {
+    id: 'stress',
+    label: 'Stress',
+    icon: '🌡',
+    color: THEME.statusDanger,
+    title:
+      'Stress bench — ramp the ambient temperature, the supply voltage, or a component’s value across a range and see, part by part, the safe operating window and exactly where each part gives out (and why). Runs the real electro-thermal solver + failure checks at every point.',
   },
   {
     id: 'group',
@@ -247,6 +256,7 @@ export function ToolbarItems({
   onPcb,
   onVerilog,
   onTrace,
+  onStress,
   workspace,
   onWorkspace,
   onMath,
@@ -286,6 +296,7 @@ export function ToolbarItems({
   onPcb: () => void
   onVerilog: () => void
   onTrace: () => void
+  onStress: () => void
   workspace: WorkspaceMode
   onWorkspace: () => void
   onMath: () => void
@@ -315,6 +326,7 @@ export function ToolbarItems({
     pcb: onPcb,
     verilog: onVerilog,
     trace: onTrace,
+    stress: onStress,
     workspace: onWorkspace,
     group: onGroup,
     clipboard: onClipboard,

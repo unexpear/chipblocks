@@ -202,6 +202,8 @@ import { fastestSourceHz, ScopePlot, scopeProbeKey, scopeWindow, TRACE_COLORS } 
 import { H_DIVISIONS, scopeRecordSteps } from './scope-scales.ts'
 import { DEFAULT_SHEET, SheetFrame, type SheetSettings } from './sheet-frame.tsx'
 import { parseSpiceNetlist, serializeSpiceNetlist } from './spice-netlist.ts'
+import { runStressSweep } from './stress-bench.ts'
+import { StressBench } from './stress-bench-panel.tsx'
 import { type DeviceNodeData, type Fidelity, nodeTypes, terminalsOf } from './symbols.tsx'
 import { tileRow } from './tiling.ts'
 import { frameLensRange } from './timeline.ts'
@@ -1621,6 +1623,8 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [verilogOpen, setVerilogOpen] = useState(false)
   // Run-trace inspector: clock a digital design N cycles and flag per-cycle anomalies.
   const [traceOpen, setTraceOpen] = useState(false)
+  // Stress bench: ramp ambient / supply / a component's value and map each part's safe operating window.
+  const [stressOpen, setStressOpen] = useState(false)
   // The digital blocks on the canvas the trace inspector can clock (gates-all-the-way-down, with I/O).
   // Only computed while the panel is open — the logic-compatibility check walks each block's internals.
   const traceBlocks = useMemo<TraceBlock[]>(() => {
@@ -3957,6 +3961,86 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             settled: c.settled,
             sweeps: c.sweeps,
             values: Object.fromEntries(c.values),
+          })),
+        }
+      },
+      // DEV: place a battery + 100Ω/0.25W resistor + ground, open the stress bench, and sweep the supply —
+      // proves the whole stress path in the real app (the resistor overpowers above ~5 V).
+      stressDemo() {
+        const sc = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
+        const nn = [
+          {
+            id: 'sd_bat',
+            type: 'device',
+            position: { x: -220, y: 0 },
+            data: {
+              definition: 'power_source',
+              label: 'V+',
+              parameters: { nominal_voltage: sc(1, 'volt'), internal_resistance: sc(1, 'ohm') },
+            },
+          },
+          {
+            id: 'sd_r',
+            type: 'device',
+            position: { x: 40, y: 0 },
+            data: {
+              definition: 'resistor',
+              label: 'R1',
+              parameters: { resistance: sc(100, 'ohm'), power_rating: sc(0.25, 'watt') },
+            },
+          },
+          {
+            id: 'sd_g',
+            type: 'device',
+            position: { x: -220, y: 180 },
+            data: { definition: 'ground', label: 'GND' },
+          },
+        ] as unknown as Node[]
+        const ee = [
+          {
+            id: 'sd_e1',
+            source: 'sd_bat',
+            sourceHandle: 'terminal_positive',
+            target: 'sd_r',
+            targetHandle: 'terminal_a',
+          },
+          {
+            id: 'sd_e2',
+            source: 'sd_r',
+            sourceHandle: 'terminal_b',
+            target: 'sd_bat',
+            targetHandle: 'terminal_negative',
+          },
+          {
+            id: 'sd_e3',
+            source: 'sd_g',
+            sourceHandle: 'reference_terminal',
+            target: 'sd_bat',
+            targetHandle: 'terminal_negative',
+          },
+        ] as unknown as Edge[]
+        setNodes(() => nn)
+        setEdges(() => ee)
+        setStressOpen(true)
+        const r = runStressSweep(
+          nn,
+          ee,
+          { kind: 'param', targets: [{ nodeId: 'sd_bat', param: 'nominal_voltage' }] },
+          1,
+          20,
+          20,
+          25,
+        )
+        return {
+          totalParts: r.totalParts,
+          noFailure: r.noFailure,
+          safeWindow: r.safeWindow,
+          failingParts: r.failingParts.map((p) => ({
+            partId: p.partId,
+            firstFailValue: p.firstFailValue,
+            worstCode: p.worstCode,
+            safeFrom: p.safeFrom,
+            safeTo: p.safeTo,
           })),
         }
       },
@@ -7227,6 +7311,14 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         {traceOpen ? (
           <TraceInspector blocks={traceBlocks} onClose={() => setTraceOpen(false)} />
         ) : null}
+        {stressOpen ? (
+          <StressBench
+            nodes={nodes}
+            edges={edges}
+            baseAmbientC={projectAmbientC}
+            onClose={() => setStressOpen(false)}
+          />
+        ) : null}
         {newPartOpen ? (
           <UserPartEditor
             onClose={() => setNewPartOpen(false)}
@@ -7766,6 +7858,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 onPcb={() => setPcbOpen((open) => !open)}
                 onVerilog={() => setVerilogOpen((open) => !open)}
                 onTrace={() => setTraceOpen((open) => !open)}
+                onStress={() => setStressOpen((open) => !open)}
                 workspace={workspaceMode}
                 onWorkspace={onWorkspace}
                 onWorstCase={runWorstCase}
