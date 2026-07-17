@@ -202,7 +202,9 @@ export function compileLogic(nodes: CanvasNodeLike[], edges: CanvasEdgeLike[]): 
   // cross-coupled pair) can't be ordered, so they're appended and left to the residual sweeps. This is purely
   // a re-ordering: stepLogic still iterates to the same fixed point, so every result is bit-for-bit unchanged.
   const producer = new Map<string, number>()
-  gates.forEach((g, i) => producer.set(g.out, i))
+  gates.forEach((g, i) => {
+    producer.set(g.out, i)
+  })
   const indeg = new Array<number>(gates.length).fill(0)
   const consumers: number[][] = gates.map(() => [])
   gates.forEach((g, i) => {
