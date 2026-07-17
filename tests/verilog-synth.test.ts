@@ -729,3 +729,97 @@ describe('RTL synthesis — divide + modulo (unsigned)', () => {
     )
   })
 })
+
+describe('RTL synthesis — combinational always blocks', () => {
+  test('a @(*) mux with blocking =', () => {
+    assertFn(
+      'module m(sel, a, b, y); input sel, a, b; output reg y; always @(*) y = sel ? a : b; endmodule',
+      ['sel', 'a', 'b'],
+      ([sel, a, b]) => ((sel as boolean) ? (a as boolean) : (b as boolean)),
+    )
+  })
+
+  test('the bare @* form works too', () => {
+    assertFn(
+      'module m(a, b, y); input a, b; output reg y; always @* y = a & b; endmodule',
+      ['a', 'b'],
+      ([a, b]) => (a as boolean) && (b as boolean),
+    )
+  })
+
+  test('blocking temps chain: t = a & b; y = t | c (reads the just-written temp)', () => {
+    assertFn(
+      'module m(a, b, c, y); input a, b, c; output reg y; reg t; always @(*) begin t = a & b; y = t | c; end endmodule',
+      ['a', 'b', 'c'],
+      ([a, b, c]) => ((a as boolean) && (b as boolean)) || (c as boolean),
+    )
+  })
+
+  test('a case decoder in @(*) → a 4-bit one-hot bus', () => {
+    assertBus(
+      'module m(s, y); input [1:0] s; output reg [3:0] y;' +
+        ' always @(*) case (s) 0: y = 1; 1: y = 2; 2: y = 4; default: y = 8; endcase endmodule',
+      ['s[0]', 's[1]'],
+      ['y[0]', 'y[1]', 'y[2]', 'y[3]'],
+      (i) => numBits([1, 2, 4, 8][num([i[0] as boolean, i[1] as boolean])] as number, 4),
+    )
+  })
+
+  test('blocking temp REUSE is correct: t=a&b; y=t; t=c&d; z=t → y=a&b, z=c&d (not both c&d)', () => {
+    assertBus(
+      'module m(a, b, c, d, y, z); input a, b, c, d; output reg y; output reg z; reg t;' +
+        ' always @(*) begin t = a & b; y = t; t = c & d; z = t; end endmodule',
+      ['a', 'b', 'c', 'd'],
+      ['y', 'z'],
+      (i) => [(i[0] as boolean) && (i[1] as boolean), (i[2] as boolean) && (i[3] as boolean)],
+    )
+  })
+
+  test('a blocking self-update after an assign builds (not a loop): y=a; y=y+1 → a+1', () => {
+    assertBus(
+      'module m(a, y); input [1:0] a; output reg [1:0] y;' +
+        ' always @(*) begin y = a; y = y + 1; end endmodule',
+      ['a[0]', 'a[1]'],
+      ['y[0]', 'y[1]'],
+      (i) => numBits((num([i[0] as boolean, i[1] as boolean]) + 1) & 3, 2),
+    )
+  })
+
+  test('a FULLY-COVERED case with no default builds (no latch): case(s) covers 0..3', () => {
+    assertBus(
+      'module m(s, a, b, c, d, y); input [1:0] s; input a, b, c, d; output reg y;' +
+        ' always @(*) case (s) 0: y = a; 1: y = b; 2: y = c; 3: y = d; endcase endmodule',
+      ['s[0]', 's[1]', 'a', 'b', 'c', 'd'],
+      ['y'],
+      (i) => {
+        const s = num([i[0] as boolean, i[1] as boolean])
+        return [[i[2], i[3], i[4], i[5]][s] as boolean]
+      },
+    )
+  })
+
+  test('a NON-fully-covered case with no default still infers a latch → reported (not silently built)', () => {
+    const { warnings } = importVerilog(
+      'module m(s, a, b, y); input [1:0] s; input a, b; output reg y;' +
+        ' always @(*) case (s) 0: y = a; 1: y = b; endcase endmodule',
+    )
+    expect(warnings.some((w) => w.toLowerCase().includes('loop'))).toBe(true)
+  })
+
+  test('an incomplete assignment infers a latch → reported (a comb feedback loop), not built', () => {
+    const { warnings } = importVerilog(
+      'module m(en, d, y); input en, d; output reg y; always @(*) if (en) y = d; endmodule',
+    )
+    expect(
+      warnings.some((w) => w.toLowerCase().includes('loop')),
+      `warnings: ${warnings.join(' | ')}`,
+    ).toBe(true)
+  })
+
+  test("a clocked block still REJECTS blocking '=' (only combinational blocks allow it)", () => {
+    const { warnings } = importVerilog(
+      'module m(clk, a, q); input clk, a; output reg q; always @(posedge clk) q = a; endmodule',
+    )
+    expect(warnings.some((w) => w.toLowerCase().includes('blocking'))).toBe(true)
+  })
+})

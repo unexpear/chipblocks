@@ -167,14 +167,12 @@ describe('Verilog import — structural Verilog → gates', () => {
 describe('Verilog import — honesty (unsupported constructs are reported, never faked)', () => {
   const has = (ws: string[], needle: string) => ws.some((w) => w.toLowerCase().includes(needle))
 
-  test('a combinational always @* is reported and builds no gate', () => {
-    // (`assign` and clocked `always @(posedge clk)` are now SYNTHESIZED — see verilog-synth.test.ts and
-    //  verilog-sequential.test.ts. A COMBINATIONAL `always @*` is still reported, not built.)
+  test('a combinational always @* is now SYNTHESIZED into gates (see verilog-synth.test.ts for the truth tables)', () => {
     const { block, warnings } = importVerilog(
-      'module m(a,b,y); input a,b; output y; always @* y = a & b; endmodule',
+      'module m(input a, input b, output reg y); always @* y = a & b; endmodule',
     )
-    expect(has(warnings, 'combinational')).toBe(true)
-    expect(block).toBeNull() // no gate primitives → nothing built
+    expect(warnings, `warnings: ${warnings.join(' | ')}`).toEqual([])
+    expect(block).not.toBeNull()
   })
 
   test('a non-primitive module/UDP instance is reported, not synthesized', () => {

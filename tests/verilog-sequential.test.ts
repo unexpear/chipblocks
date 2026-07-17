@@ -226,11 +226,11 @@ describe('sequential synthesis — honest reporting of what cannot be built', ()
     expect(warnings.some((x) => /negedge/i.test(x))).toBe(true)
   })
 
-  test('a combinational always @(*) is reported (only clocked blocks synthesize here)', () => {
+  test('a combinational always @(*) now SYNTHESIZES to gates (no warning) — see verilog-synth.test.ts', () => {
     const warnings = warnOf(
       'module m(input a, input b, output reg y); always @(*) y = a & b; endmodule',
     )
-    expect(warnings.some((x) => /always/i.test(x) && /combinational|@\(\*\)|\*/.test(x))).toBe(true)
+    expect(warnings, `warnings: ${warnings.join(' | ')}`).toEqual([])
   })
 
   test('a clocked block that drives a BUS input port is reported at the bit level', () => {

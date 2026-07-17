@@ -317,9 +317,9 @@ export type GateInst = { prim: string; terminals: string[] }
 /** A continuous assignment `assign <lhs> = <rhs>;` captured as token spans; the synthesizer (verilog-synth)
  *  parses the rhs into gates. */
 export type Assign = { lhs: Tok[]; rhs: Tok[]; line: number }
-/** A clocked block `always @(posedge <clk>) <body>` captured as token spans; the synthesizer elaborates the
- *  body into per-register next-state logic + flip-flops. */
-export type AlwaysBlock = { clk: string; body: Tok[]; line: number }
+/** An always block captured as token spans; the synthesizer elaborates the body. `clk` is the clock net for a
+ *  `@(posedge clk)` block (→ flip-flops) or null for a combinational `@(*)`/`@*`/`@(a or b)` block (→ gates). */
+export type AlwaysBlock = { clk: string | null; body: Tok[]; line: number }
 /** A synthesized flip-flop: its D-input net, clock net, and Q-output net (one per registered bit). */
 export type FlopInst = { d: string; clk: string; q: string }
 /** A declared memory `reg [width-1:0] m [0:depth-1]` — `depth` words, each `width` bits. The synthesizer
@@ -578,8 +578,9 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
   return { name: nameTok.v, portOrder, dir, gates, assigns, alwaysBlocks, flops: [], widths, mems }
 }
 
-/** Parse `always @(posedge <clk>) <body>`. Returns the captured block, or null (reporting a warning) for any
- *  always the sequential synthesizer can't build: async reset, negedge, combinational @*, multiple edges. */
+/** Parse an always block. `@(posedge clk)` → a clocked block (clk set); `@*` / `@(*)` / `@(a or b …)` with no
+ *  edge → a combinational block (clk null). Returns null (with a warning) for the forms neither path builds:
+ *  negedge, or a mixed edge/level sensitivity. */
 function parseAlways(c: Cursor, warnings: string[]): AlwaysBlock | null {
   const line = c.peek()?.line ?? 0
   c.next() // 'always'
@@ -588,31 +589,35 @@ function parseAlways(c: Cursor, warnings: string[]): AlwaysBlock | null {
     skipStatement(c)
     return null
   }
-  if (!c.is('@')) return report('only edge-triggered @(posedge clk) blocks are synthesized')
+  const capture = (clk: string | null): AlwaysBlock => {
+    // The body is ONE complete procedural statement (begin…end / if-else / case…endcase aware), so stopping
+    // at the first ';' can't truncate a multi-statement block.
+    const body: Tok[] = []
+    readStatementSpan(c, body)
+    return { clk, body, line }
+  }
+  if (!c.is('@')) return report('only @(…) / @* sensitivity-list always blocks are synthesized')
   c.next() // '@'
-  if (c.is('*'))
-    return report('combinational always @* is not supported (only clocked @(posedge clk))')
-  if (!c.is('(')) return report('sensitivity list must be @(posedge clk)')
+  if (c.is('*')) {
+    c.next() // bare @* → combinational
+    return capture(null)
+  }
+  if (!c.is('(')) return report('sensitivity list must be @(…) or @*')
   const sens = readGroup(c) // depth-0 comma-separated slices inside @( … )
   const flat = sens.flat()
-  // exactly `posedge <id>` — no `or`/comma (multiple/async — readGroup splits commas into separate slices),
-  // no `negedge`, no `*`
   if (flat.some((t) => t.v === 'negedge'))
     return report('negedge clocks are not supported (the flip-flop is positive-edge)')
-  if (sens.length > 1 || flat.some((t) => t.v === 'or'))
-    return report('multiple sensitivity signals (e.g. an async reset) are not supported')
-  if (flat.some((t) => t.v === '*'))
-    return report('combinational always @(*) is not supported (only clocked @(posedge clk))')
   const posedgeIdx = flat.findIndex((t) => t.v === 'posedge')
-  if (posedgeIdx === -1) return report('only @(posedge clk) is supported')
+  if (posedgeIdx === -1) return capture(null) // no edge → combinational (@(*) or @(a or b …))
+  // Clocked: exactly `posedge <id>` — no `or`/comma (a second slice or an `or` means a mixed/async list).
+  if (sens.length > 1 || flat.some((t) => t.v === 'or'))
+    return report(
+      'an edge mixed with other sensitivity signals (e.g. an async reset) is not supported',
+    )
   const clkTok = flat[posedgeIdx + 1]
   if (clkTok === undefined || clkTok.k !== 'id')
     return report('the clock must be a simple net after posedge')
-  // Capture the body as ONE complete procedural statement (begin…end, if/else, and case…endcase aware) — the
-  // always body is a single statement, so stopping at the first ';' would truncate a multi-statement block.
-  const body: Tok[] = []
-  readStatementSpan(c, body)
-  return { clk: clkTok.v, body, line }
+  return capture(clkTok.v)
 }
 
 /** Append one complete procedural statement's tokens to `out`: a begin…end block, an if/else (both branches),

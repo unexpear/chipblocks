@@ -923,6 +923,80 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     built.push({ targets, gates })
   }
 
+  // ── combinational always-blocks (@(*) / @* / @(a or b)) → the assigned registers become COMBINATIONAL
+  // functions, driven exactly like continuous assigns. Elaborate the body with the same nonblocking machinery
+  // the clocked path uses (for pure combinational logic every net settles the same regardless of =/<= — only
+  // the simulation scheduling differs, not the synthesized steady state), then buffer each written register's
+  // bits onto its net. Joining `built` means the combinational-loop guard below AUTOMATICALLY catches an
+  // inferred latch: an incomplete assignment (an if/case with no else/default) holds the register, i.e. feeds
+  // it back on itself, which is a real combinational cycle — reported, not built. ──────────────────────────
+  for (const blk of mod.alwaysBlocks) {
+    if (blk.clk !== null) continue // clocked → flip-flops, handled after the loop guard
+    const seq = parseProcedural(blk.body, mod.mems, true, widthOf) // comb: blocking `=` + full-case coverage
+    if (seq.t === 'bad') {
+      warnings.push(`line ${blk.line}: always block — ${seq.why} — reported, not built`)
+      continue
+    }
+    if (collectMemWrites(seq).length > 0) {
+      warnings.push(
+        `line ${blk.line}: a combinational always block can't write a memory (an array write needs a clock) — reported, not built`,
+      )
+      continue
+    }
+    const written = new Set<string>()
+    const env = elaborate(seq, new Map(), written)
+    for (const r of written) {
+      const ast = env.get(r)
+      if (ast === undefined) continue
+      const bad = firstBad(ast)
+      if (bad !== undefined) {
+        warnings.push(`line ${blk.line}: register "${r}" not synthesized — ${bad}`)
+        continue
+      }
+      const oor = outOfRange(ast, widthOf)
+      if (oor !== undefined) {
+        warnings.push(`line ${blk.line}: ${oor} reads x in Verilog — reported, not built`)
+        continue
+      }
+      const w = widthOf(r)
+      const targets = Array.from({ length: w }, (_, i) => bitNet(r, i))
+      const inputTarget = targets.find((tb) => inputs.has(tb))
+      if (inputTarget !== undefined) {
+        warnings.push(
+          `line ${blk.line}: combinational always drives input port "${inputTarget}" — illegal, reported`,
+        )
+        continue
+      }
+      const conflict = targets.find((tb) => driven.has(tb))
+      if (conflict !== undefined) {
+        warnings.push(
+          `register "${r}" bit "${conflict}" is already driven by a gate or assign — reported, not built`,
+        )
+        continue
+      }
+      const gates: GateInst[] = []
+      const rhs = synthAt(ast, w, { gates, fresh, widthOf, bitNet })
+      let ok = true
+      for (let i = 0; i < w; i++) {
+        const src = rhs[i] as Bit
+        const from = isC(src) ? tie(src.c) : src.n
+        if (from === undefined) {
+          ok = false
+          break
+        }
+        gates.push({ prim: 'buf', terminals: [targets[i] as string, from] })
+      }
+      if (!ok) {
+        warnings.push(
+          `line ${blk.line}: register "${r}" needs a constant driver but the module has no input to tie to — reported, not built`,
+        )
+        continue
+      }
+      for (const tb of targets) driven.add(tb)
+      built.push({ targets, gates })
+    }
+  }
+
   // Combinational-loop guard over the full PER-GATE driver graph — every structural gate, every synthesized
   // gate, and the tie gates. Each gate's output net depends on its input nets; a genuine feedback cycle
   // (assign feeding its own target, directly or through a structural gate) is reported and NOT built, while
@@ -965,7 +1039,8 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     return m !== null && mod.mems.has(m[1] as string) ? (m[1] as string) : undefined
   }
   for (const blk of mod.alwaysBlocks) {
-    const seq = parseProcedural(blk.body, mod.mems)
+    if (blk.clk === null) continue // combinational — handled above as continuous drives, not flip-flops
+    const seq = parseProcedural(blk.body, mod.mems, false, widthOf)
     if (seq.t === 'bad') {
       warnings.push(`line ${blk.line}: always block — ${seq.why} — reported, not built`)
       continue
@@ -1159,33 +1234,49 @@ function cycleNets(edges: Map<string, string[]>): Set<string> {
 // ── procedural (always-block) parsing + elaboration ─────────────────────────────
 /** A statement inside a clocked always block. `bad` carries the first unsupported construct's reason. */
 type ProcStmt =
-  | { t: 'nb'; lhs: string; rhs: Expr } // nonblocking whole-signal assignment  reg <= expr
+  // whole-signal assignment. `blocking` (a combinational-block `=`) means later reads in the same block see
+  // THIS value (elaborate forward-substitutes it); nonblocking `<=` reads the pre-block value.
+  | { t: 'nb'; lhs: string; rhs: Expr; blocking?: boolean }
   | { t: 'memwrite'; name: string; idx: Expr; rhs: Expr; depth: number } // m[addr] <= expr
   | { t: 'seq'; body: ProcStmt[] } // begin … end
   | { t: 'if'; cond: Expr; conseq: ProcStmt; els?: ProcStmt }
   | { t: 'bad'; why: string }
 
 /** Parse a clocked always body (its inner statements, no wrapping begin/end) into one procedural statement. */
-function parseProcedural(body: Tok[], mems: MemTable): ProcStmt {
+// `comb` = a combinational always block (@*); it permits blocking `=` (the conventional comb form). A clocked
+// block leaves it false, so blocking `=` there stays reported (it would build the wrong hardware).
+// `widthOf` (present only when synthesizing, where the width table exists) lets a COMBINATIONAL case with no
+// default but full selector coverage build instead of inferring a latch.
+function parseProcedural(
+  body: Tok[],
+  mems: MemTable,
+  comb = false,
+  widthOf?: (n: string) => number,
+): ProcStmt {
   const ts = new TokStream(body)
   const stmts: ProcStmt[] = []
   while (ts.peek() !== undefined) {
-    const s = parseStmt(ts, mems)
+    const s = parseStmt(ts, mems, comb, widthOf)
     if (s.t === 'bad') return s
     stmts.push(s)
   }
-  if (stmts.length === 0) return { t: 'bad', why: 'the clocked block is empty' }
+  if (stmts.length === 0) return { t: 'bad', why: 'the always block is empty' }
   return stmts.length === 1 ? (stmts[0] as ProcStmt) : { t: 'seq', body: stmts }
 }
 
-function parseStmt(ts: TokStream, mems: MemTable): ProcStmt {
+function parseStmt(
+  ts: TokStream,
+  mems: MemTable,
+  comb: boolean,
+  widthOf?: (n: string) => number,
+): ProcStmt {
   const t = ts.peek()
-  if (t === undefined) return { t: 'bad', why: 'unexpected end of the clocked block' }
+  if (t === undefined) return { t: 'bad', why: 'unexpected end of the always block' }
   if (t.v === 'begin') {
     ts.next()
     const body: ProcStmt[] = []
     while (ts.peek() !== undefined && ts.peek()?.v !== 'end') {
-      const s = parseStmt(ts, mems)
+      const s = parseStmt(ts, mems, comb, widthOf)
       if (s.t === 'bad') return s
       body.push(s)
     }
@@ -1198,15 +1289,15 @@ function parseStmt(ts: TokStream, mems: MemTable): ProcStmt {
     if (ts.peek()?.v !== '(') return { t: 'bad', why: 'if is missing its "("' }
     const cond = parseRhs(readParenToks(ts), mems)
     if (cond.t === 'bad') return { t: 'bad', why: `if condition — ${cond.why}` }
-    const conseq = parseStmt(ts, mems)
+    const conseq = parseStmt(ts, mems, comb, widthOf)
     if (conseq.t === 'bad') return conseq
     if (ts.peek()?.v !== 'else') return { t: 'if', cond, conseq }
     ts.next()
-    const els = parseStmt(ts, mems)
+    const els = parseStmt(ts, mems, comb, widthOf)
     if (els.t === 'bad') return els
     return { t: 'if', cond, conseq, els }
   }
-  if (t.v === 'case') return parseCase(ts, mems)
+  if (t.v === 'case') return parseCase(ts, mems, comb, widthOf)
   if (t.v === 'casex' || t.v === 'casez')
     return {
       t: 'bad',
@@ -1214,7 +1305,7 @@ function parseStmt(ts: TokStream, mems: MemTable): ProcStmt {
     }
   if (t.v === 'for' || t.v === 'while' || t.v === 'repeat' || t.v === 'forever')
     return { t: 'bad', why: `procedural loops (${t.v}) are a later increment` }
-  return parseAssignStmt(ts, mems)
+  return parseAssignStmt(ts, mems, comb)
 }
 
 /** Read a parenthesized group's inner tokens; cursor must be AT '('; leaves it just past the matching ')'. */
@@ -1236,7 +1327,7 @@ function readParenToks(ts: TokStream): Tok[] {
 
 /** Parse `lhs <= rhs ;` (nonblocking). Whole-signal (`reg <= …`) and memory (`mem[addr] <= …`) targets build;
  *  blocking `=`, bit/part-select and concat targets are reported. */
-function parseAssignStmt(ts: TokStream, mems: MemTable): ProcStmt {
+function parseAssignStmt(ts: TokStream, mems: MemTable, comb: boolean): ProcStmt {
   const toks: Tok[] = []
   while (ts.peek() !== undefined && ts.peek()?.v !== ';') toks.push(ts.next() as Tok)
   if (ts.peek()?.v === ';') ts.next()
@@ -1253,7 +1344,10 @@ function parseAssignStmt(ts: TokStream, mems: MemTable): ProcStmt {
   }
   if (opIdx === -1)
     return { t: 'bad', why: 'a statement is neither a recognized construct nor an assignment' }
-  if ((toks[opIdx] as Tok).v === '=')
+  // Blocking `=` is the conventional form in a combinational block (allowed); in a CLOCKED block it builds the
+  // wrong hardware (reads should see the pre-clock value), so there it stays reported. Both map to the same
+  // 'nb' node — for the pure combinational logic we synthesize, the settled result is identical either way.
+  if (!comb && (toks[opIdx] as Tok).v === '=')
     return {
       t: 'bad',
       why: "blocking assignment '=' in a clocked block — use nonblocking '<=' so all reads see the pre-clock value",
@@ -1277,12 +1371,57 @@ function parseAssignStmt(ts: TokStream, mems: MemTable): ProcStmt {
       t: 'bad',
       why: 'only a whole-signal nonblocking target (reg <= …) is supported — a bit/part-select or concat target is a later increment',
     }
-  return { t: 'nb', lhs: (lhs[0] as Tok).v, rhs }
+  return { t: 'nb', lhs: (lhs[0] as Tok).v, rhs, blocking: (toks[opIdx] as Tok).v === '=' }
+}
+
+/** Forward-substitute a blocking read: replace each read of a signal already assigned in this block with the
+ *  value it was assigned (so `t = a&b; y = t` gives y = a&b, and a reassignment `t = c&d` later doesn't
+ *  corrupt the earlier read). A whole-signal read substitutes directly; a bit/part-select can only retarget a
+ *  simple net-alias, so selecting a bit of a signal assigned a non-trivial expression is reported, not faked. */
+function substBlocking(e: Expr, env: Map<string, Expr>): Expr {
+  switch (e.t) {
+    case 'net':
+      return env.get(e.name) ?? e
+    case 'bitsel':
+    case 'partsel': {
+      const v = env.get(e.name)
+      if (v === undefined) return e
+      if (v.t === 'net') return { ...e, name: v.name } // aliased net → retarget the select
+      return {
+        t: 'bad',
+        why: `a bit/part-select of "${e.name}" after it was assigned an expression earlier in the same combinational block is a later increment`,
+      }
+    }
+    case 'un':
+      return { ...e, a: substBlocking(e.a, env) }
+    case 'bin':
+      return { ...e, a: substBlocking(e.a, env), b: substBlocking(e.b, env) }
+    case 'tern':
+      return {
+        ...e,
+        c: substBlocking(e.c, env),
+        a: substBlocking(e.a, env),
+        b: substBlocking(e.b, env),
+      }
+    case 'concat':
+      return { ...e, parts: e.parts.map((p) => substBlocking(p, env)) }
+    case 'repl':
+      return { ...e, of: substBlocking(e.of, env) }
+    case 'memread':
+      return { ...e, idx: substBlocking(e.idx, env) }
+    default:
+      return e // const, bad
+  }
 }
 
 /** Parse a `case (sel) … endcase` and desugar it to a nested if/else chain (label match via `sel == label`,
  *  multiple labels OR'd). casex/casez are rejected upstream. */
-function parseCase(ts: TokStream, mems: MemTable): ProcStmt {
+function parseCase(
+  ts: TokStream,
+  mems: MemTable,
+  comb: boolean,
+  widthOf?: (n: string) => number,
+): ProcStmt {
   ts.next() // 'case'
   if (ts.peek()?.v !== '(') return { t: 'bad', why: 'case is missing its "("' }
   const sel = parseRhs(readParenToks(ts), mems)
@@ -1293,7 +1432,7 @@ function parseCase(ts: TokStream, mems: MemTable): ProcStmt {
     if (ts.peek()?.v === 'default') {
       ts.next()
       if (ts.peek()?.v === ':') ts.next()
-      const s = parseStmt(ts, mems)
+      const s = parseStmt(ts, mems, comb, widthOf)
       if (s.t === 'bad') return s
       dflt = s
       continue
@@ -1322,14 +1461,38 @@ function parseCase(ts: TokStream, mems: MemTable): ProcStmt {
       if (le.t === 'bad') return { t: 'bad', why: `case label — ${le.why}` }
       labels.push(le)
     }
-    const s = parseStmt(ts, mems)
+    const s = parseStmt(ts, mems, comb, widthOf)
     if (s.t === 'bad') return s
     items.push({ labels, stmt: s })
   }
   if (ts.peek()?.v !== 'endcase') return { t: 'bad', why: 'case is missing its "endcase"' }
   ts.next()
-  let chain: ProcStmt = dflt ?? { t: 'seq', body: [] } // no default ⇒ hold
-  for (let i = items.length - 1; i >= 0; i--) {
+
+  // A COMBINATIONAL case with NO default that fully covers the selector's value space has no latch — the
+  // "missing default" is unreachable. Detect that (constant labels exhausting 2^width) and drop the last
+  // item's condition so it becomes the unconditional terminal branch, rather than a self-holding latch that
+  // the loop guard would (correctly, for an INCOMPLETE case) reject. A clocked case keeps its hold — there a
+  // register that isn't reassigned simply holds through its flip-flop.
+  let full = false
+  if (comb && dflt === undefined && widthOf !== undefined && items.length > 0) {
+    const w = selfWidth(sel, widthOf)
+    if (w <= 12) {
+      const covered = new Set<number>()
+      let allConst = true
+      for (const it of items)
+        for (const lab of it.labels) {
+          const v = foldConst(lab, widthOf)
+          if (v === undefined) allConst = false
+          else covered.add(v % 2 ** w)
+        }
+      full = allConst && covered.size === 2 ** w
+    }
+  }
+  const lastItem = full
+    ? (items[items.length - 1] as { labels: Expr[]; stmt: ProcStmt })
+    : undefined
+  let chain: ProcStmt = lastItem ? lastItem.stmt : (dflt ?? { t: 'seq', body: [] }) // no default ⇒ hold
+  for (let i = items.length - (full ? 2 : 1); i >= 0; i--) {
     const it = items[i] as { labels: Expr[]; stmt: ProcStmt }
     let cond: Expr | undefined
     for (const lab of it.labels) {
@@ -1358,9 +1521,11 @@ function collectMemWrites(stmt: ProcStmt): { name: string; idx: Expr; rhs: Expr;
   }
 }
 
-/** Elaborate a procedural statement to each written signal's next-state expression. Every read binds to the
- *  signal's PRE-clock value (`net(sig)`) — never an in-progress value — so nonblocking order-independence,
- *  swaps, and last-write-wins all fall out. `written` accumulates every assigned signal (the registers). */
+/** Elaborate a procedural statement to each written signal's next-state expression. A NONBLOCKING read binds
+ *  to the signal's PRE-block value (`net(sig)`) — so nonblocking order-independence, swaps, and last-write-wins
+ *  fall out (clocked blocks). A BLOCKING read (a combinational-block `=`) is forward-substituted with the
+ *  in-progress value, so `t=a&b; y=t; t=c&d; z=t` correctly gives y=a&b, z=c&d. `written` accumulates every
+ *  assigned signal. */
 function elaborate(
   stmt: ProcStmt,
   env: Map<string, Expr>,
@@ -1369,7 +1534,7 @@ function elaborate(
   switch (stmt.t) {
     case 'nb': {
       const e = new Map(env)
-      e.set(stmt.lhs, stmt.rhs)
+      e.set(stmt.lhs, stmt.blocking ? substBlocking(stmt.rhs, env) : stmt.rhs)
       written.add(stmt.lhs)
       return e
     }
