@@ -40,7 +40,10 @@ export const LOGIC_PRIMITIVES: Record<string, LogicSpec> = {
 
 /** Is this block a logic gate the simulator evaluates directly (rather than expanding to MOSFETs)? */
 export function isLogicGate(block: BlockData): boolean {
-  return block.name in LOGIC_PRIMITIVES
+  // Object.hasOwn, NOT `block.name in LOGIC_PRIMITIVES`: a (user-authored / loaded) block named
+  // 'constructor' or '__proto__' matches an inherited member with `in`, then LOGIC_PRIMITIVES[name].fn
+  // is undefined → a crash mid-solve. hasOwn only accepts a real gate name.
+  return Object.hasOwn(LOGIC_PRIMITIVES, block.name)
 }
 
 /** The non-gate parts the logic engine handles (sources/ground seed nets, switches conduct, junctions

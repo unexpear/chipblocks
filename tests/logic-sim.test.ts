@@ -8,7 +8,7 @@
 import { describe, expect, test } from 'vitest'
 import type { BlockData, CanvasEdgeLike, CanvasNodeLike } from '../src/renderer/blocks.ts'
 import { CALCULATOR_4BIT, HEX_DECODER_7SEG } from '../src/renderer/builtin-blocks.ts'
-import { simulateLogic } from '../src/renderer/logic-sim.ts'
+import { isLogicGate, simulateLogic } from '../src/renderer/logic-sim.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
 const supply = (volts: number) => ({
@@ -125,5 +125,16 @@ describe('logic-level simulator — digital blocks evaluated as 0/1, no transist
     // 256 full-calculator evaluations in a flash — the transistor solver could not do even one of
     // these in the time this whole sweep takes. (Generous bound so it never flakes on a slow box.)
     expect(worst).toBeLessThan(5000)
+  })
+})
+
+describe('isLogicGate — a prototype-member name is NOT a gate (the `in` trap)', () => {
+  test('a real gate name matches; constructor / __proto__ / toString do not', () => {
+    expect(isLogicGate({ name: 'AND' } as BlockData)).toBe(true)
+    // With `in` these inherited members would falsely read as gates, then LOGIC_PRIMITIVES[name].fn is
+    // undefined and the solve crashes; Object.hasOwn rejects them.
+    for (const name of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+      expect(isLogicGate({ name } as BlockData)).toBe(false)
+    }
   })
 })

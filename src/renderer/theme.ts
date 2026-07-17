@@ -160,7 +160,10 @@ export function isLight(name: ThemeName): boolean {
 export function loadTheme(): ThemeName {
   if (typeof localStorage === 'undefined') return 'midnight'
   const saved = localStorage.getItem(STORAGE_KEY)
-  return saved && saved in THEMES ? (saved as ThemeName) : 'midnight'
+  // Object.hasOwn, NOT `saved in THEMES`: a corrupt localStorage value like 'constructor' / '__proto__'
+  // matches an inherited member with `in`, then THEMES['constructor'] is the Object ctor (no CSS vars) →
+  // a broken UI. hasOwn only accepts a real theme key.
+  return saved !== null && Object.hasOwn(THEMES, saved) ? (saved as ThemeName) : 'midnight'
 }
 
 /** Persist a theme choice. */

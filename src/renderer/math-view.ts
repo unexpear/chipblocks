@@ -124,7 +124,7 @@ export function unitsKeyFor(lines: string[]): string[] {
   for (const match of text.matchAll(pattern)) {
     const prefix = match[1] ?? ''
     const unit = match[2] ?? ''
-    if (!(unit in UNIT_NAMES)) continue
+    if (!Object.hasOwn(UNIT_NAMES, unit)) continue // hasOwn, not `in` (no inherited-member match)
     baseUnits.add(unit)
     if (prefix !== '') combos.add(`${prefix}${unit}`)
   }
