@@ -1102,19 +1102,33 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // stack. Snapshots are deep copies (later edits can't reach back into
   // history); restoring re-solves, so the physics always matches the canvas.
   const undoHistory = useRef(
-    emptyHistory<{ nodes: Node[]; edges: Edge[]; placements: SavedPlacement[] }>(),
+    emptyHistory<{
+      nodes: Node[]
+      edges: Edge[]
+      placements: SavedPlacement[]
+      chipLayout: ChipLayout
+    }>(),
   )
   const snapshotCanvas = useCallback((): {
     nodes: Node[]
     edges: Edge[]
     placements: SavedPlacement[]
+    chipLayout: ChipLayout
   } => {
     const canvas = JSON.parse(
       JSON.stringify({ nodes: nodesRef.current, edges: edgesRef.current }),
     ) as { nodes: Node[]; edges: Edge[] }
-    // Board hand-placements ride the SAME undo snapshot as the canvas, so a board drag/rotate undoes
-    // together with the parts + wires (they're one document).
-    return { ...canvas, placements: placementsToSaved(pcbPlacementsRef.current) }
+    // Board hand-placements AND the chip layout (cell overrides + lens) ride the SAME undo snapshot as
+    // the canvas, so a board drag/rotate or a chip cell move undoes together with the parts + wires
+    // (they're one document). The chip layout is copied (fresh overrides array) so history can't be mutated.
+    return {
+      ...canvas,
+      placements: placementsToSaved(pcbPlacementsRef.current),
+      chipLayout: {
+        ...chipLayoutRef.current,
+        overrides: [...chipLayoutRef.current.overrides],
+      },
+    }
   }, [])
   const checkpointAction = useCallback(
     (tag: string) => {
@@ -1578,6 +1592,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     setNodes(result.restored.nodes)
     setEdges(result.restored.edges)
     setPcbPlacements(placementsFromSaved(result.restored.placements))
+    setChipLayout(result.restored.chipLayout ?? EMPTY_CHIP_LAYOUT)
     reSolve(result.restored.nodes, result.restored.edges)
   }, [snapshotCanvas, setNodes, setEdges, reSolve])
   const doRedo = useCallback(() => {
@@ -1587,6 +1602,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     setNodes(result.restored.nodes)
     setEdges(result.restored.edges)
     setPcbPlacements(placementsFromSaved(result.restored.placements))
+    setChipLayout(result.restored.chipLayout ?? EMPTY_CHIP_LAYOUT)
     reSolve(result.restored.nodes, result.restored.edges)
   }, [snapshotCanvas, setNodes, setEdges, reSolve])
   const [crtTraces, setCrtTraces] = useState<
@@ -1730,6 +1746,17 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     regenerateChipFloorplan()
     setChipLayout((current) => ({ ...current, overrides: [], sourceSignature: chipLiveSignature }))
   }, [regenerateChipFloorplan, chipLiveSignature])
+  // Drag a cell to a new spot → record a placement override (checkpointed for undo, like a board move).
+  const onChipCellMove = useCallback(
+    (cellId: string, x: number, y: number) => {
+      checkpointAction('chip cell move')
+      setChipLayout((current) => ({
+        ...current,
+        overrides: [...current.overrides.filter((o) => o.id !== cellId), { id: cellId, x, y }],
+      }))
+    },
+    [checkpointAction],
+  )
   // The PCB derivation (board → router → DRC) runs when EITHER the dock panel is open OR the board
   // workspace is showing — so the full-size workspace derives real copper without forcing the dock open.
   const pcbActive = pcbOpen || workspaceMode === 'board'
@@ -6761,6 +6788,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             onLens={(mode) => setChipLayout((current) => ({ ...current, lens: mode }))}
             drift={chipDrift}
             onReplace={onChipReplace}
+            onMoveCell={onChipCellMove}
             light={light}
           />
         )}

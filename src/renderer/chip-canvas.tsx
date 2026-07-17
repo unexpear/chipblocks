@@ -36,7 +36,7 @@ function fitView(die: { w: number; h: number }, aspect: number): View {
 }
 
 /** base floorplan ⊕ persisted overrides (an override wins on id; size/name/row stay from the base). */
-function mergeOverrides(cells: PlacedCell[], overrides: ChipCellOverride[]): PlacedCell[] {
+export function mergeOverrides(cells: PlacedCell[], overrides: ChipCellOverride[]): PlacedCell[] {
   if (overrides.length === 0) return cells
   const by = new Map(overrides.map((o) => [o.id, o]))
   return cells.map((c) => {
@@ -56,12 +56,15 @@ export function ChipCanvas({
   overrides,
   lens,
   onLens,
+  onMoveCell,
   light,
 }: {
   plan: Floorplan
   overrides: ChipCellOverride[]
   lens: ChipLensMode
   onLens: (mode: ChipLensMode) => void
+  /** Commit a dragged cell's new position (λ). */
+  onMoveCell?: (cellId: string, x: number, y: number) => void
   light: boolean
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null)
@@ -85,6 +88,15 @@ export function ChipCanvas({
   const [view, setView] = useState<View>(() => fitView(die, 16 / 9))
   const [selected, setSelected] = useState<string | null>(null)
   const pan = useRef<{ px: number; py: number; view: View } | null>(null)
+  const drag = useRef<{
+    id: string
+    startX: number
+    startY: number
+    cellX: number
+    cellY: number
+    moved: boolean
+  } | null>(null)
+  const [dragPos, setDragPos] = useState<{ id: string; x: number; y: number } | null>(null)
 
   // Re-fit when a different design is placed (die identity changes) — but not on every pan/zoom.
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-fit only when the die dimensions change
@@ -121,6 +133,15 @@ export function ChipCanvas({
     const id = (e.target as Element).getAttribute?.('data-cell-id')
     if (id) {
       setSelected(id)
+      // click-drag a cell → move it (if editing is enabled); a click without moving just selects.
+      const cell = onMoveCell ? cells.find((c) => c.id === id) : undefined
+      if (cell) {
+        const p = toLambda(e.clientX, e.clientY)
+        drag.current = { id, startX: p.x, startY: p.y, cellX: cell.x, cellY: cell.y, moved: false }
+        try {
+          ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
+        } catch {}
+      }
       return
     }
     // empty space → begin panning
@@ -128,6 +149,19 @@ export function ChipCanvas({
     ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
   }
   const onPointerMove = (e: React.PointerEvent) => {
+    if (drag.current) {
+      const d = drag.current
+      const p = toLambda(e.clientX, e.clientY)
+      if (Math.abs(p.x - d.startX) > 1 || Math.abs(p.y - d.startY) > 1) d.moved = true
+      const rowH = PROCESS.rowHeight.lambda
+      // snap Y to the row grid so cells stay on shared-rail rows; X is free (rounded to a whole λ).
+      setDragPos({
+        id: d.id,
+        x: Math.round(d.cellX + (p.x - d.startX)),
+        y: Math.max(0, Math.round((d.cellY + (p.y - d.startY)) / rowH) * rowH),
+      })
+      return
+    }
     const p = pan.current
     if (!p) return
     const el = svgRef.current
@@ -138,6 +172,11 @@ export function ChipCanvas({
     setView({ ...p.view, x: p.view.x - dx, y: p.view.y - dy })
   }
   const endPan = () => {
+    if (drag.current) {
+      if (drag.current.moved && dragPos && onMoveCell) onMoveCell(dragPos.id, dragPos.x, dragPos.y)
+      drag.current = null
+      setDragPos(null)
+    }
     pan.current = null
   }
 
@@ -197,7 +236,7 @@ export function ChipCanvas({
           Fit
         </button>
         <span style={{ fontSize: 11, color: THEME.textFaint }}>
-          drag to pan · scroll to zoom · click a cell
+          drag empty space to pan · scroll to zoom · drag a cell to move it
         </span>
         {selectedCell && (
           <span
@@ -225,7 +264,7 @@ export function ChipCanvas({
           preserveAspectRatio="xMidYMid meet"
           style={{
             display: 'block',
-            cursor: pan.current ? 'grabbing' : 'grab',
+            cursor: pan.current || drag.current ? 'grabbing' : 'grab',
             touchAction: 'none',
           }}
           onWheel={onWheel}
@@ -247,18 +286,21 @@ export function ChipCanvas({
             vectorEffect="non-scaling-stroke"
           />
           {perCell
-            ? cells.map((c) => (
-                <rect
-                  key={c.id}
-                  data-cell-id={c.id}
-                  x={c.x}
-                  y={c.y}
-                  width={c.w}
-                  height={c.h}
-                  fill={colorer(c)}
-                  opacity={0.9}
-                />
-              ))
+            ? cells.map((c) => {
+                const dp = dragPos && dragPos.id === c.id ? dragPos : null
+                return (
+                  <rect
+                    key={c.id}
+                    data-cell-id={c.id}
+                    x={dp ? dp.x : c.x}
+                    y={dp ? dp.y : c.y}
+                    width={c.w}
+                    height={c.h}
+                    fill={colorer(c)}
+                    opacity={dp ? 1 : 0.9}
+                  />
+                )
+              })
             : rowBands.map((b) => (
                 <rect
                   key={b.row}
@@ -272,8 +314,8 @@ export function ChipCanvas({
               ))}
           {selectedCell && (
             <rect
-              x={selectedCell.x}
-              y={selectedCell.y}
+              x={dragPos && dragPos.id === selectedCell.id ? dragPos.x : selectedCell.x}
+              y={dragPos && dragPos.id === selectedCell.id ? dragPos.y : selectedCell.y}
               width={selectedCell.w}
               height={selectedCell.h}
               fill="none"

@@ -236,6 +236,7 @@ export function ChipView({
   onLens,
   drift,
   onReplace,
+  onMoveCell,
   light,
 }: {
   nodes: CanvasNodeLike[]
@@ -251,6 +252,8 @@ export function ChipView({
   /** True when the schematic changed since the floorplan was generated — the layout is stale until re-placed. */
   drift: boolean
   onReplace: () => void
+  /** Drag a cell → record a placement override (undoable). */
+  onMoveCell: (cellId: string, x: number, y: number) => void
   light: boolean
 }) {
   const chip = useMemo(() => deriveChip(nodes, edges), [nodes, edges])
@@ -375,6 +378,7 @@ export function ChipView({
                   overrides={overrides}
                   lens={lens}
                   onLens={onLens}
+                  onMoveCell={onMoveCell}
                   light={light}
                 />
               </div>
