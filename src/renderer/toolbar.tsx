@@ -55,6 +55,7 @@ export type ToolbarActionId =
   | 'timeline'
   | 'bode'
   | 'pcb'
+  | 'verilog'
   | 'workspace'
   | 'group'
   | 'clipboard'
@@ -118,6 +119,14 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
     color: THEME.statusOk,
     title:
       'PCB — the physical layout in a side panel: every part that has a footprint placed on a board, copper pads and all. The first physical form of the circuit, on the road to the manufacturing files.',
+  },
+  {
+    id: 'verilog',
+    label: 'Verilog',
+    icon: '⌨',
+    color: THEME.accentPurple,
+    title:
+      'Verilog — write hardware in Verilog and watch it synthesize live: syntax highlighting, a running report of exactly what will and won’t build into real gates, and a one-click Synthesize → canvas that drops the resulting gates and flip-flops onto the sheet.',
   },
   {
     id: 'group',
@@ -227,6 +236,7 @@ export function ToolbarItems({
   onTimeline,
   onBode,
   onPcb,
+  onVerilog,
   workspace,
   onWorkspace,
   onMath,
@@ -264,6 +274,7 @@ export function ToolbarItems({
   onTimeline: () => void
   onBode: () => void
   onPcb: () => void
+  onVerilog: () => void
   workspace: WorkspaceMode
   onWorkspace: () => void
   onMath: () => void
@@ -291,6 +302,7 @@ export function ToolbarItems({
     timeline: onTimeline,
     bode: onBode,
     pcb: onPcb,
+    verilog: onVerilog,
     workspace: onWorkspace,
     group: onGroup,
     clipboard: onClipboard,

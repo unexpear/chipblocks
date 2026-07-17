@@ -241,6 +241,7 @@ import {
   type UserPart,
 } from './user-parts.ts'
 import { buildDemoCpu, buildDemoCpu8 } from './verilog-cpu-demo.ts'
+import { STARTER_VERILOG, VerilogEditor } from './verilog-editor.tsx'
 import { isVerilogText, parseVerilogText, serializeVerilog } from './verilog-file.ts'
 import {
   findWireCrossings,
@@ -1613,6 +1614,8 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // PCB view: the physical layout — the footprinted parts placed on a board. Derived from the
   // schematic parts (each part → its footprint → a spot on the board); re-derives as parts change.
   const [pcbOpen, setPcbOpen] = useState(false)
+  // Verilog IDE: write hardware in Verilog, watch it synthesize live, drop the resulting gates on the sheet.
+  const [verilogOpen, setVerilogOpen] = useState(false)
   // Which surface the MAIN building area shows: the schematic canvas (default) or the full-size board /
   // chip workspace — a first-class editing surface, not just the dock panel. Opening a Board/Chip project
   // from the launcher lands the editor directly on that level (else Circuit); the breadcrumb travels.
@@ -3133,6 +3136,31 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     paintVcpu({ res: 0, acc: 0, pc: 0 })
   }, [stopVcpu, paintVcpu])
 
+  // The Verilog IDE's "Synthesize → canvas": drop the freshly-synthesized module onto the sheet as ONE
+  // descend-able circuit block (its real gates + flip-flops inside), the same shape a .v file import lands as.
+  // Placed at the middle of the current view, appended (not replacing) so it joins whatever is already drawn.
+  const synthesizeVerilogToCanvas = useCallback(
+    (block: BlockData, moduleName: string) => {
+      checkpointAction('synthesize verilog')
+      dropCount.current += 1
+      const safe = moduleName.replace(/[^A-Za-z0-9_]/g, '_') || 'verilog'
+      const clone = cloneBlockData(block, String(dropCount.current))
+      const position = screenToFlowPosition({
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+      })
+      setNodes((current) =>
+        current.concat({
+          id: `${safe}_${dropCount.current}`,
+          type: 'block',
+          position,
+          data: { definition: 'block', label: clone.name, block: clone },
+        }),
+      )
+    },
+    [checkpointAction, screenToFlowPosition, setNodes],
+  )
+
   const placeVerilogCpuDemo = useCallback(() => {
     const decoder = BUILTIN_BLOCKS.logic_decoder_7seg
     const display = BUILTIN_BLOCKS.display_seven_segment
@@ -3877,6 +3905,21 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         reSolve(nodes as unknown as Node[], edges as unknown as Edge[])
         setWorkspaceMode('chip')
         return 'placed the Verilog CPU at the Chip level'
+      },
+      // DEV: open the Verilog IDE, and (if given text) exercise its Synthesize→canvas path headlessly —
+      // returns the live synthesis diagnostics (cells built + what won't build) the editor would show.
+      verilogIde(text?: string) {
+        setVerilogOpen(true)
+        if (typeof text !== 'string') return { opened: true }
+        const { circuit, warnings } = parseVerilogText(text)
+        const block = circuit.nodes[0]?.block ?? null
+        if (block) synthesizeVerilogToCanvas(block, block.name)
+        return {
+          opened: true,
+          synthesized: block !== null,
+          gateCount: block?.nodes.length ?? 0,
+          warnings,
+        }
       },
       // Audit the REAL drawn wire geometry against the REAL part boxes (ground truth — no DOM/timing/regex):
       // how many drawn wire segments run diagonally, and how many cut through a part's interior (a >10px
@@ -7135,6 +7178,13 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           <NetlistReportCard report={netlistReport} onDismiss={() => setNetlistReport(null)} />
         ) : null}
         {pickerOpen ? <PartPicker onPick={placePart} onClose={() => setPickerOpen(false)} /> : null}
+        {verilogOpen ? (
+          <VerilogEditor
+            initialText={STARTER_VERILOG}
+            onSynthesize={synthesizeVerilogToCanvas}
+            onClose={() => setVerilogOpen(false)}
+          />
+        ) : null}
         {newPartOpen ? (
           <UserPartEditor
             onClose={() => setNewPartOpen(false)}
@@ -7672,6 +7722,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 onMath={() => setShowMath((open) => !open)}
                 onBode={() => setBodeOpen((open) => !open)}
                 onPcb={() => setPcbOpen((open) => !open)}
+                onVerilog={() => setVerilogOpen((open) => !open)}
                 workspace={workspaceMode}
                 onWorkspace={onWorkspace}
                 onWorstCase={runWorstCase}
