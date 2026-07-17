@@ -14,7 +14,7 @@ import {
   deriveBoard,
 } from '../src/renderer/pcb-board.ts'
 import { DRC_RULES, runDrc } from '../src/renderer/pcb-drc.ts'
-import { routeBoard } from '../src/renderer/pcb-route.ts'
+import { DEFAULT_ROUTE_CLASS, routeBoard } from '../src/renderer/pcb-route.ts'
 
 const parts = (defs: [string, string][]): BoardPart[] =>
   defs.map(([id, definition]) => ({ id, definition }))
@@ -573,5 +573,51 @@ describe('runDrc — plated through-hole PAD geometry (annular ring + drill floo
     const codes = codesFor(0.8, 1.6) // ring 0.4 mm, drill 0.8 mm — both well within the floors
     expect(codes).not.toContain('annular-ring')
     expect(codes).not.toContain('drill-size')
+  })
+})
+
+describe('runDrc — absolute copper-clearance floor (a net class cannot be tightened below the fab min)', () => {
+  // Two parallel top-layer traces (width 0.25) of DIFFERENT nets; clearanceViolations flags them when the
+  // copper EDGES are closer than the enforced clearance (centreline gap ≤ width + clearance).
+  const twoTraces = (centreGapMm: number) => ({
+    traces: [
+      {
+        net: 'a',
+        widthMm: 0.25,
+        layer: 'top' as const,
+        points: [
+          { x: 0, y: 0 },
+          { x: 5, y: 0 },
+        ],
+      },
+      {
+        net: 'b',
+        widthMm: 0.25,
+        layer: 'top' as const,
+        points: [
+          { x: 0, y: centreGapMm },
+          { x: 5, y: centreGapMm },
+        ],
+      },
+    ],
+    vias: [],
+    unrouted: [],
+  })
+  const board: Board = { outline: { x: -5, y: -5, w: 30, h: 30 }, placements: [] }
+  const rn = { airwires: [], padBoxes: [] }
+  const tight = { ...DEFAULT_ROUTE_CLASS, clearanceMm: 0.05 } // user tightened BELOW the 0.127 mm floor
+  const clearance = (result: ReturnType<typeof runDrc>) =>
+    result.filter((d) => d.code === 'copper-clearance')
+
+  test('a 0.1 mm copper gap that CLEARS the tightened 0.05 mm class is still flagged (below the 0.127 mm floor)', () => {
+    // centre gap 0.35 → edge gap 0.1 mm: > the 0.05 class (would be clean) but < the 0.127 fab floor
+    const flagged = clearance(runDrc(board, rn, twoTraces(0.35), tight))
+    expect(flagged.length).toBeGreaterThan(0)
+    expect(flagged[0]?.message).toContain('fab minimum')
+  })
+
+  test('a comfortable 0.2 mm copper gap on the same tight class is clean (above the floor)', () => {
+    // centre gap 0.45 → edge gap 0.2 mm ≥ the 0.127 fab floor
+    expect(clearance(runDrc(board, rn, twoTraces(0.45), tight))).toHaveLength(0)
   })
 })

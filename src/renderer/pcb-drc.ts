@@ -53,6 +53,22 @@ export type DrcCode =
  *  conservative sizing point. A trace exceeding its ampacity at this rise runs hotter and ages fast. */
 export const OVER_CURRENT_DELTA_T_C = 10
 
+/** The absolute fab floor for copper-to-copper spacing. The per-net-class clearance is USER-settable, so
+ *  the copper-clearance check enforces the LARGER of the net class and this floor — the spacing twin of
+ *  the cited track-width floor. Without it, tightening a net class below what any fab can hold would
+ *  report sub-manufacturable spacing as clean. */
+export const COPPER_CLEARANCE_FLOOR_MM = 0.127
+
+export const COPPER_CLEARANCE_FLOOR_PROVENANCE: FootprintProvenance = {
+  source_type: 'reference',
+  title: 'Minimum copper-to-copper spacing 0.127 mm (5 mil) — common fab capability',
+  citation:
+    'JLCPCB PCB capabilities: minimum trace-to-trace / trace-to-pad spacing 0.127 mm (5 mil) on the standard process (0.0889 mm / 3.5 mil advanced). Used as the hard spacing floor a user-tightened net class cannot go below — the spacing counterpart to the track-width floor.',
+  confidence: 'high',
+  url: 'https://jlcpcb.com/capabilities/pcb-capabilities',
+  date_accessed: '2026-07-17',
+}
+
 export type DrcViolation = {
   code: DrcCode
   message: string
@@ -215,11 +231,22 @@ export function runDrc(
 ): DrcViolation[] {
   const out: DrcViolation[] = []
 
-  // Copper-to-copper clearance (traces + pads, cross-net) — the audit the router itself honours.
-  for (const v of clearanceViolations(routing, ratsnest.padBoxes, cls)) {
+  // Copper-to-copper clearance (traces + pads, cross-net) — the audit the router itself honours, but
+  // enforced at the LARGER of the net class and the absolute fab floor, so a net class tightened below
+  // what any fab can hold (sub-manufacturable spacing) is still caught (the spacing twin of the
+  // track-width floor). For a normal board (clearance ≥ the floor) this is exactly the net-class value.
+  const enforcedClearance = Math.max(cls.clearanceMm, COPPER_CLEARANCE_FLOOR_MM)
+  const clearanceCls =
+    enforcedClearance === cls.clearanceMm ? cls : { ...cls, clearanceMm: enforcedClearance }
+  const belowFloor = cls.clearanceMm < COPPER_CLEARANCE_FLOOR_MM
+  for (const v of clearanceViolations(routing, ratsnest.padBoxes, clearanceCls)) {
     out.push({
       code: 'copper-clearance',
-      message: `${v.kind === 'pad-pad' ? 'pads' : v.kind === 'trace-trace' ? 'traces' : 'trace and pad'} of two nets closer than ${fmt(cls.clearanceMm)} mm`,
+      message:
+        `${v.kind === 'pad-pad' ? 'pads' : v.kind === 'trace-trace' ? 'traces' : 'trace and pad'} of two nets closer than ${fmt(enforcedClearance)} mm` +
+        (belowFloor
+          ? ` (the ${fmt(COPPER_CLEARANCE_FLOOR_MM)} mm fab minimum — the net class's ${fmt(cls.clearanceMm)} mm is below it)`
+          : ''),
       at: v.at,
     })
   }
