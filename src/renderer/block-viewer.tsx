@@ -1,13 +1,14 @@
 import {
   Background,
   BackgroundVariant,
+  type Node as FlowNode,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
   useStore,
   ViewportPortal,
 } from '@xyflow/react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { BlockData } from './blocks.ts'
 import type { Point } from './net-edge.tsx'
 import { type Box, type Dir, orthogonalRoute, routesOverlap } from './orthogonal-route.ts'
@@ -27,6 +28,12 @@ import { findWireCrossings, netColor, type WireMeta } from './wire-crossings.tsx
  */
 
 const NO_EDGES: never[] = []
+
+// How many parts we'll draw in one descend level before showing a notice instead. Every hierarchical
+// level (a CPU's sub-blocks, a register's flip-flops, a gate's transistors) is a modest fan-out — well
+// under this. A FLAT block (e.g. a whole CPU synthesized straight to gates) can hold thousands of parts;
+// rendering that many read-only nodes + routing every wire wedges the pane, so we refuse and say why.
+const MAX_DESCEND_NODES = 400
 
 /** Which edge of its part a pin sits on = the direction a wire leaves it (perpendicular to that edge). */
 const edgeDir = (p: Point, box: Box): Dir => {
@@ -252,31 +259,41 @@ export function BlockViewer({
   colorWires: boolean
 }) {
   const border = light ? `1px solid ${THEME.textPrimary}` : `1px solid ${THEME.borderSubtle}`
+  // Descend STACK: the path from the canvas block down through the sub-blocks the user drilled into.
+  // Double-clicking a sub-block pushes it; a breadcrumb crumb pops back to that level. So a CPU opens at
+  // its datapath, and you keep going — register → D flip-flop → NAND gate — to the real parts underneath.
+  // The drill trail starts at this block's top level. Opening a DIFFERENT canvas block resets the trail
+  // because App keys this component on the block's node id (`key={viewBlockId}`), so it remounts fresh —
+  // we deliberately do NOT reset on the `block` prop's object identity, which churns on unrelated undo/
+  // redo (a deep-cloned snapshot) and would otherwise collapse the drill back to the top mid-inspection.
+  const [stack, setStack] = useState<BlockData[]>([block])
+  const current = stack[stack.length - 1] ?? block
+  const tooMany = current.nodes.length > MAX_DESCEND_NODES
   const wires = useMemo<DescendWire[]>(
     () =>
-      block.edges.map((e) => ({
+      current.edges.map((e) => ({
         id: e.id,
         source: e.source,
         sourceHandle: e.sourceHandle,
         target: e.target,
         targetHandle: e.targetHandle,
       })),
-    [block],
+    [current],
   )
   // The frame for the view, from the block's own part layout (positions are part top-lefts; pad for the
   // parts' sizes + breathing room). Used because React Flow can't fitView these unmeasured nodes.
   const fitBox = useMemo(() => {
-    const xs = block.nodes.map((n) => n.x)
-    const ys = block.nodes.map((n) => n.y)
+    const xs = current.nodes.map((n) => n.x)
+    const ys = current.nodes.map((n) => n.y)
     const minX = Math.min(0, ...xs)
     const minY = Math.min(0, ...ys)
     const maxX = Math.max(0, ...xs)
     const maxY = Math.max(0, ...ys)
     return { x: minX - 40, y: minY - 40, width: maxX - minX + 200, height: maxY - minY + 160 }
-  }, [block])
+  }, [current])
   const nodes = useMemo(
     () =>
-      block.nodes.map((n) => ({
+      current.nodes.map((n) => ({
         id: n.id,
         type: n.block ? 'block' : n.definition === 'junction' ? 'junction' : 'device',
         position: { x: n.x, y: n.y },
@@ -290,8 +307,14 @@ export function BlockViewer({
           ...(n.block ? { block: n.block } : {}),
         },
       })),
-    [block],
+    [current],
   )
+  // Double-click a sub-block inside the view → descend one level deeper into ITS real parts. A leaf part
+  // (a gate, a source) has no inner block, so double-clicking it does nothing — that's the bottom.
+  const descendInto = useCallback((_event: React.MouseEvent, node: FlowNode) => {
+    const inner = (node.data as { block?: BlockData }).block
+    if (inner) setStack((s) => [...s, inner])
+  }, [])
 
   return (
     <div
@@ -319,54 +342,139 @@ export function BlockViewer({
       {/* Read-only inside view: hide the part PIN handles so the schematic reads with clean junction
           dots — a FILLED dot = a real connection, an OPEN dot = a crossing — not a dot at every pin. */}
       <style>{`.descend-modal .react-flow__handle{opacity:0}`}</style>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <div style={{ fontSize: 14, fontWeight: 700 }}>{block.name} — inside the block</div>
-        <span style={{ color: light ? THEME.textFaint : THEME.textMuted, fontSize: 11 }}>
-          the real parts; the solver computes THESE every time
-        </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <div style={{ fontSize: 14, fontWeight: 700 }}>{current.name} — inside the block</div>
+        {stack.length === 1 ? (
+          <button
+            type="button"
+            onClick={onUngroup}
+            title="Explode the block back into its parts on the canvas (edit, then group again)"
+            style={viewerButton(light)}
+          >
+            ⧉ Ungroup
+          </button>
+        ) : null}
         <button
           type="button"
-          onClick={onUngroup}
-          title="Explode the block back into its parts on the canvas (edit, then group again)"
-          style={viewerButton(light)}
+          onClick={onClose}
+          style={{ ...viewerButton(light), marginLeft: stack.length === 1 ? 4 : 'auto' }}
         >
-          ⧉ Ungroup
-        </button>
-        <button type="button" onClick={onClose} style={{ ...viewerButton(light), marginLeft: 4 }}>
           ✕ Close
         </button>
       </div>
+      {/* Breadcrumb trail once you've drilled below the top; at the top, a one-line "double-click to go
+          deeper" hint so the drill-down is discoverable. Each crumb pops back to that level. */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 3,
+          flexWrap: 'wrap',
+          marginBottom: 6,
+          fontSize: 11,
+          color: light ? THEME.textFaint : THEME.textMuted,
+        }}
+      >
+        {stack.length === 1 ? (
+          <span>
+            the real parts; the solver computes THESE — double-click a sub-block to go deeper
+          </span>
+        ) : (
+          stack.map((b, i) => (
+            <button
+              key={stack
+                .slice(0, i + 1)
+                .map((x) => x.name)
+                .join('>')}
+              type="button"
+              onClick={() => setStack((s) => s.slice(0, i + 1))}
+              title={i < stack.length - 1 ? `Back to ${b.name}` : b.name}
+              style={crumbButton(light, i === stack.length - 1)}
+            >
+              {i > 0 ? '▸ ' : ''}
+              {b.name}
+            </button>
+          ))
+        )}
+      </div>
       <div style={{ flex: 1, minHeight: 0, border, borderRadius: 6, overflow: 'hidden' }}>
-        <ReactFlowProvider>
-          {/* No `fitView` — React Flow can't fit these unmeasured nodes (it zooms to one part). We frame
-              the view ourselves from the block's layout (DescendWires → fitBounds(fitBox)). */}
-          <ReactFlow
-            nodes={nodes}
-            edges={NO_EDGES}
-            nodeTypes={nodeTypes}
-            colorMode={light ? 'light' : 'dark'}
-            minZoom={0.001}
-            maxZoom={1000}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            elementsSelectable={false}
-            zoomOnDoubleClick={false}
-            proOptions={{ hideAttribution: true }}
+        {tooMany ? (
+          <div
+            style={{
+              height: '100%',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              padding: 24,
+              textAlign: 'center',
+              color: light ? THEME.borderStrong : THEME.textSoft,
+            }}
           >
-            {/* We draw the internal wires (React Flow won't measure these nodes), routed AROUND the
-                parts; DescendWires also frames the view and marks junctions (filled dot = connection,
-                open dot = crossing) — optionally tinting each wire by its net. */}
-            <DescendWires wires={wires} fitBox={fitBox} light={light} colorWires={colorWires} />
-            <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
-          </ReactFlow>
-        </ReactFlowProvider>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>
+              {current.nodes.length.toLocaleString()} parts — too many to draw at once
+            </div>
+            <div style={{ fontSize: 11, color: light ? THEME.textFaint : THEME.textMuted }}>
+              {stack.length > 1
+                ? 'Step back to a smaller level to see the parts drawn.'
+                : 'This block is flat (no sub-blocks). Ungroup to work with the parts on the canvas.'}
+            </div>
+          </div>
+        ) : (
+          <ReactFlowProvider>
+            {/* No `fitView` — React Flow can't fit these unmeasured nodes (it zooms to one part). We frame
+                the view ourselves from the block's layout (DescendWires → fitBounds(fitBox)). */}
+            <ReactFlow
+              nodes={nodes}
+              edges={NO_EDGES}
+              nodeTypes={nodeTypes}
+              colorMode={light ? 'light' : 'dark'}
+              minZoom={0.001}
+              maxZoom={1000}
+              nodesDraggable={false}
+              nodesConnectable={false}
+              elementsSelectable={false}
+              zoomOnDoubleClick={false}
+              onNodeDoubleClick={descendInto}
+              proOptions={{ hideAttribution: true }}
+            >
+              {/* We draw the internal wires (React Flow won't measure these nodes), routed AROUND the
+                  parts; DescendWires also frames the view and marks junctions (filled dot = connection,
+                  open dot = crossing) — optionally tinting each wire by its net. */}
+              <DescendWires wires={wires} fitBox={fitBox} light={light} colorWires={colorWires} />
+              <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
+            </ReactFlow>
+          </ReactFlowProvider>
+        )}
       </div>
       <div style={{ color: light ? THEME.textFaint : THEME.textMuted, fontSize: 10, marginTop: 6 }}>
         Ports:{' '}
-        {block.ports.map((p) => p.label).join(' · ') || 'none — nothing wired across the boundary'}
+        {current.ports.map((p) => p.label).join(' · ') ||
+          'none — nothing wired across the boundary'}
       </div>
     </div>
   )
+}
+
+function crumbButton(light: boolean, isCurrent: boolean): React.CSSProperties {
+  return {
+    padding: '1px 5px',
+    borderRadius: 4,
+    cursor: isCurrent ? 'default' : 'pointer',
+    fontSize: 11,
+    fontWeight: isCurrent ? 700 : 400,
+    background: 'transparent',
+    border: 'none',
+    color: isCurrent
+      ? light
+        ? THEME.borderStrong
+        : THEME.textPrimary
+      : light
+        ? THEME.textFaint
+        : THEME.textMuted,
+    textDecoration: isCurrent ? 'none' : 'underline',
+  }
 }
 
 function viewerButton(light: boolean): React.CSSProperties {

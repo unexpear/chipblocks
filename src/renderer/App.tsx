@@ -7639,6 +7639,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         {/* Descend view — the real circuit inside a block. */}
         {viewedBlock !== null && viewBlockId !== null ? (
           <BlockViewer
+            // Key on the viewed block's node id so switching to a DIFFERENT block remounts a fresh drill
+            // trail, while an unrelated re-render (a solve, an undo that deep-clones nodes) keeps the trail.
+            key={viewBlockId}
             block={viewedBlock}
             onUngroup={() => handleUngroup(viewBlockId)}
             onClose={() => setViewBlockId(null)}
