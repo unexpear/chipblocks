@@ -6728,236 +6728,236 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           />
         )}
         {/* The BOARD WORKSPACE — the physical board as a full-size editing surface filling the main
-            area, layered opaquely over the schematic (which stays mounted, its state intact). The
-            ancestor's schematic pointer handlers are gated on schematic mode so they don't fire under
-            the board. The dock PCB panel still works independently. */}
-        {workspaceMode === 'board' && (
+            area, layered opaquely over the schematic (which stays mounted, its state intact). It stays
+            MOUNTED and is shown/hidden via `display`, so switching levels never unmounts + re-derives +
+            re-fits it (the 3D camera + view mode persist; the board views have no animation loop, so a
+            hidden board costs nothing). The ancestor's schematic pointer handlers are gated on schematic
+            mode so they don't fire under the board. The dock PCB panel still works independently. */}
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 40,
+            background: THEME.surfaceBase,
+            display: workspaceMode === 'board' ? 'flex' : 'none',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
           <div
             style={{
-              position: 'absolute',
-              inset: 0,
-              zIndex: 40,
-              background: THEME.surfaceBase,
               display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden',
+              alignItems: 'center',
+              gap: 12,
+              padding: '8px 12px',
+              borderBottom: `1px solid ${THEME.borderSubtle}`,
+              flexWrap: 'wrap',
             }}
           >
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                padding: '8px 12px',
-                borderBottom: `1px solid ${THEME.borderSubtle}`,
-                flexWrap: 'wrap',
-              }}
-            >
-              <span style={{ fontSize: 12, color: THEME.textSoft, fontWeight: 600 }}>Board</span>
-              <span style={{ fontSize: 11, color: THEME.textFaint }}>
-                {pcbBoard.placements.length} part{pcbBoard.placements.length === 1 ? '' : 's'} ·{' '}
-                {pcbBoard.outline.w.toFixed(1)} × {pcbBoard.outline.h.toFixed(1)} mm
-                {pcbRatsnest.airwires.length > 0 &&
-                  ` · ${pcbRatsnest.airwires.length - pcbMergedRouting.unrouted.length}/${pcbRatsnest.airwires.length} routed`}
-                {pcbDrc.length > 0 && (
-                  <span style={{ color: THEME.statusDanger }}> · DRC: {pcbDrc.length}</span>
-                )}
-                {pcbOverCurrentUnevaluated && (
-                  <span
-                    style={{ color: THEME.statusWarn }}
-                    title="This board's currents weren't solved (a digital / logic board), so trace over-current couldn't be checked."
-                  >
-                    {' '}
-                    · over-current not checked
-                  </span>
-                )}
-              </span>
-              <PcbViewControls
-                mode={pcbViewMode}
-                onMode={setPcbViewMode}
-                layers={pcbLayers}
-                activeLayerIndex={pcbActiveLayerIndex}
-                onStep={stepPcbLayer}
-              />
-              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <button
-                  type="button"
-                  onClick={() => setBoardTool((t) => (t === 'route' ? 'select' : 'route'))}
-                  title="Route tool — click a pad to start, click to drop corners, click a same-net pad to finish. Draws real copper on the active layer that ships in the Gerbers. Works on the flat board AND directly in the 3-D view (click to route, drag to orbit)."
-                  style={{
-                    border: `1px solid ${THEME.borderStrong}`,
-                    background: boardTool === 'route' ? THEME.accentBlue : THEME.surfaceInput,
-                    color: boardTool === 'route' ? '#0b1220' : THEME.textSoft,
-                    borderRadius: 4,
-                    fontSize: 11,
-                    padding: '2px 10px',
-                    cursor: 'pointer',
-                  }}
+            <span style={{ fontSize: 12, color: THEME.textSoft, fontWeight: 600 }}>Board</span>
+            <span style={{ fontSize: 11, color: THEME.textFaint }}>
+              {pcbBoard.placements.length} part{pcbBoard.placements.length === 1 ? '' : 's'} ·{' '}
+              {pcbBoard.outline.w.toFixed(1)} × {pcbBoard.outline.h.toFixed(1)} mm
+              {pcbRatsnest.airwires.length > 0 &&
+                ` · ${pcbRatsnest.airwires.length - pcbMergedRouting.unrouted.length}/${pcbRatsnest.airwires.length} routed`}
+              {pcbDrc.length > 0 && (
+                <span style={{ color: THEME.statusDanger }}> · DRC: {pcbDrc.length}</span>
+              )}
+              {pcbOverCurrentUnevaluated && (
+                <span
+                  style={{ color: THEME.statusWarn }}
+                  title="This board's currents weren't solved (a digital / logic board), so trace over-current couldn't be checked."
                 >
-                  ▬ Route
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBoardTool((t) => (t === 'via' ? 'select' : 'via'))}
-                  title="Via tool — click on copper (a pad or a trace) to drop a plated via there: the vertical jump that carries the net between the two copper layers. Shows as a real barrel in the 3-D view."
-                  style={{
-                    border: `1px solid ${THEME.borderStrong}`,
-                    background: boardTool === 'via' ? THEME.accentBlue : THEME.surfaceInput,
-                    color: boardTool === 'via' ? '#0b1220' : THEME.textSoft,
-                    borderRadius: 4,
-                    fontSize: 11,
-                    padding: '2px 10px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  ⊙ Via
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBoardTool((t) => (t === 'measure' ? 'select' : 'measure'))}
-                  title="Measure tool — a dimensional ruler. Click two points on the board to measure the distance between them (mm / cm / in / mil / µm); clicks snap to pad centres. Distinct from the multimeter, which measures electrical quantities."
-                  style={{
-                    border: `1px solid ${THEME.borderStrong}`,
-                    background: boardTool === 'measure' ? THEME.accentBlue : THEME.surfaceInput,
-                    color: boardTool === 'measure' ? '#0b1220' : THEME.textSoft,
-                    borderRadius: 4,
-                    fontSize: 11,
-                    padding: '2px 10px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  📏 Measure
-                </button>
-                {boardTool === 'measure' && (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <select
-                      value={measureUnit}
-                      onChange={(e) => setMeasureUnit(e.target.value as MeasureUnit)}
-                      title="Measurement unit"
-                      style={{
-                        background: THEME.surfaceInput,
-                        color: THEME.textSoft,
-                        border: `1px solid ${THEME.borderStrong}`,
-                        borderRadius: 4,
-                        fontSize: 11,
-                        padding: '1px 4px',
-                      }}
-                    >
-                      {MEASURE_UNITS.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.label}
-                        </option>
-                      ))}
-                    </select>
-                    {measurements.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMeasurements([])
-                          setPendingMeasureA(null)
-                        }}
-                        title="Clear all measurements"
-                        style={{
-                          border: `1px solid ${THEME.borderStrong}`,
-                          background: THEME.surfaceInput,
-                          color: THEME.textSoft,
-                          borderRadius: 4,
-                          fontSize: 11,
-                          padding: '2px 8px',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Clear ({measurements.length})
-                      </button>
-                    )}
-                  </span>
-                )}
-                {boardTool === 'route' &&
-                  (() => {
-                    const copperSheets = pcbLayers.filter((l) => l.kind === 'copper')
-                    return (
-                      <span style={{ display: 'flex', gap: 0 }}>
-                        {copperSheets.map((l, i) => (
-                          <button
-                            key={l.id}
-                            type="button"
-                            onClick={() => setPcbActiveLayerId(l.id)}
-                            title={`Route on ${l.name}${l.id === 'f_cu' || l.id === 'b_cu' ? '' : ' (buried inner layer)'}`}
-                            style={{
-                              border: `1px solid ${THEME.borderStrong}`,
-                              background: pcbActiveLayerId === l.id ? l.color : THEME.surfaceInput,
-                              color: pcbActiveLayerId === l.id ? '#0b1220' : THEME.textSoft,
-                              borderRadius:
-                                i === 0
-                                  ? '4px 0 0 4px'
-                                  : i === copperSheets.length - 1
-                                    ? '0 4px 4px 0'
-                                    : '0',
-                              borderLeft: i === 0 ? undefined : 'none',
-                              fontSize: 11,
-                              padding: '2px 8px',
-                              cursor: 'pointer',
-                            }}
-                          >
-                            {l.id === 'f_cu'
-                              ? 'Top'
-                              : l.id === 'b_cu'
-                                ? 'Bottom'
-                                : l.name.replace('.Cu', '')}
-                          </button>
-                        ))}
-                      </span>
-                    )
-                  })()}
-              </span>
-            </div>
-            <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
-              {pcbBoard.placements.length > 0 ? (
-                <BoardView
-                  board={pcbBoard}
-                  stackup={pcbStackup}
-                  routing={pcbMergedRouting}
-                  drcMarkers={pcbDrc.map((v) => v.at)}
-                  mode={pcbViewMode}
-                  activeLayer={pcbActiveLayerId}
-                  pxPerMm={16}
-                  viewHeight={560}
-                  coordinateGrid
-                  recesses={boardRecesses}
-                  onMove={onPcbMove}
-                  onMoveStart={onPcbMoveStart}
-                  onRotate={onPcbRotate}
-                  route={{
-                    active: boardTool === 'route',
-                    layer: activeCopperLayer,
-                    padBoxes: pcbRatsnest.padBoxes,
-                    onClick: onBoardRouteClick,
-                    onMove: onBoardRouteMove,
-                    viaActive: boardTool === 'via',
-                    onViaClick: onBoardViaClick,
-                    cursor: routeCursor,
-                    color: pcbLayers.find((l) => l.id === pcbActiveLayerId)?.color ?? '#ffcf6b',
-                    ...(pendingRoute ? { pendingPoints: pendingRoute.points } : {}),
-                  }}
-                  measure={{
-                    active: boardTool === 'measure',
-                    unit: measureUnit,
-                    measurements,
-                    pendingA: pendingMeasureA,
-                    cursor: measureCursor,
-                    onClick: onBoardMeasureClick,
-                    onMove: onBoardMeasureMove,
-                  }}
-                />
-              ) : (
-                <span style={{ fontSize: 12, color: THEME.textFaint }}>
-                  No parts with footprints on the board yet — add parts in the schematic (resistors,
-                  capacitors, ICs…) and they appear here as real footprints to place.
+                  {' '}
+                  · over-current not checked
                 </span>
               )}
-            </div>
+            </span>
+            <PcbViewControls
+              mode={pcbViewMode}
+              onMode={setPcbViewMode}
+              layers={pcbLayers}
+              activeLayerIndex={pcbActiveLayerIndex}
+              onStep={stepPcbLayer}
+            />
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button
+                type="button"
+                onClick={() => setBoardTool((t) => (t === 'route' ? 'select' : 'route'))}
+                title="Route tool — click a pad to start, click to drop corners, click a same-net pad to finish. Draws real copper on the active layer that ships in the Gerbers. Works on the flat board AND directly in the 3-D view (click to route, drag to orbit)."
+                style={{
+                  border: `1px solid ${THEME.borderStrong}`,
+                  background: boardTool === 'route' ? THEME.accentBlue : THEME.surfaceInput,
+                  color: boardTool === 'route' ? '#0b1220' : THEME.textSoft,
+                  borderRadius: 4,
+                  fontSize: 11,
+                  padding: '2px 10px',
+                  cursor: 'pointer',
+                }}
+              >
+                ▬ Route
+              </button>
+              <button
+                type="button"
+                onClick={() => setBoardTool((t) => (t === 'via' ? 'select' : 'via'))}
+                title="Via tool — click on copper (a pad or a trace) to drop a plated via there: the vertical jump that carries the net between the two copper layers. Shows as a real barrel in the 3-D view."
+                style={{
+                  border: `1px solid ${THEME.borderStrong}`,
+                  background: boardTool === 'via' ? THEME.accentBlue : THEME.surfaceInput,
+                  color: boardTool === 'via' ? '#0b1220' : THEME.textSoft,
+                  borderRadius: 4,
+                  fontSize: 11,
+                  padding: '2px 10px',
+                  cursor: 'pointer',
+                }}
+              >
+                ⊙ Via
+              </button>
+              <button
+                type="button"
+                onClick={() => setBoardTool((t) => (t === 'measure' ? 'select' : 'measure'))}
+                title="Measure tool — a dimensional ruler. Click two points on the board to measure the distance between them (mm / cm / in / mil / µm); clicks snap to pad centres. Distinct from the multimeter, which measures electrical quantities."
+                style={{
+                  border: `1px solid ${THEME.borderStrong}`,
+                  background: boardTool === 'measure' ? THEME.accentBlue : THEME.surfaceInput,
+                  color: boardTool === 'measure' ? '#0b1220' : THEME.textSoft,
+                  borderRadius: 4,
+                  fontSize: 11,
+                  padding: '2px 10px',
+                  cursor: 'pointer',
+                }}
+              >
+                📏 Measure
+              </button>
+              {boardTool === 'measure' && (
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <select
+                    value={measureUnit}
+                    onChange={(e) => setMeasureUnit(e.target.value as MeasureUnit)}
+                    title="Measurement unit"
+                    style={{
+                      background: THEME.surfaceInput,
+                      color: THEME.textSoft,
+                      border: `1px solid ${THEME.borderStrong}`,
+                      borderRadius: 4,
+                      fontSize: 11,
+                      padding: '1px 4px',
+                    }}
+                  >
+                    {MEASURE_UNITS.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.label}
+                      </option>
+                    ))}
+                  </select>
+                  {measurements.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMeasurements([])
+                        setPendingMeasureA(null)
+                      }}
+                      title="Clear all measurements"
+                      style={{
+                        border: `1px solid ${THEME.borderStrong}`,
+                        background: THEME.surfaceInput,
+                        color: THEME.textSoft,
+                        borderRadius: 4,
+                        fontSize: 11,
+                        padding: '2px 8px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Clear ({measurements.length})
+                    </button>
+                  )}
+                </span>
+              )}
+              {boardTool === 'route' &&
+                (() => {
+                  const copperSheets = pcbLayers.filter((l) => l.kind === 'copper')
+                  return (
+                    <span style={{ display: 'flex', gap: 0 }}>
+                      {copperSheets.map((l, i) => (
+                        <button
+                          key={l.id}
+                          type="button"
+                          onClick={() => setPcbActiveLayerId(l.id)}
+                          title={`Route on ${l.name}${l.id === 'f_cu' || l.id === 'b_cu' ? '' : ' (buried inner layer)'}`}
+                          style={{
+                            border: `1px solid ${THEME.borderStrong}`,
+                            background: pcbActiveLayerId === l.id ? l.color : THEME.surfaceInput,
+                            color: pcbActiveLayerId === l.id ? '#0b1220' : THEME.textSoft,
+                            borderRadius:
+                              i === 0
+                                ? '4px 0 0 4px'
+                                : i === copperSheets.length - 1
+                                  ? '0 4px 4px 0'
+                                  : '0',
+                            borderLeft: i === 0 ? undefined : 'none',
+                            fontSize: 11,
+                            padding: '2px 8px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {l.id === 'f_cu'
+                            ? 'Top'
+                            : l.id === 'b_cu'
+                              ? 'Bottom'
+                              : l.name.replace('.Cu', '')}
+                        </button>
+                      ))}
+                    </span>
+                  )
+                })()}
+            </span>
           </div>
-        )}
+          <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
+            {pcbBoard.placements.length > 0 ? (
+              <BoardView
+                board={pcbBoard}
+                stackup={pcbStackup}
+                routing={pcbMergedRouting}
+                drcMarkers={pcbDrc.map((v) => v.at)}
+                mode={pcbViewMode}
+                activeLayer={pcbActiveLayerId}
+                pxPerMm={16}
+                viewHeight={560}
+                coordinateGrid
+                recesses={boardRecesses}
+                onMove={onPcbMove}
+                onMoveStart={onPcbMoveStart}
+                onRotate={onPcbRotate}
+                route={{
+                  active: boardTool === 'route',
+                  layer: activeCopperLayer,
+                  padBoxes: pcbRatsnest.padBoxes,
+                  onClick: onBoardRouteClick,
+                  onMove: onBoardRouteMove,
+                  viaActive: boardTool === 'via',
+                  onViaClick: onBoardViaClick,
+                  cursor: routeCursor,
+                  color: pcbLayers.find((l) => l.id === pcbActiveLayerId)?.color ?? '#ffcf6b',
+                  ...(pendingRoute ? { pendingPoints: pendingRoute.points } : {}),
+                }}
+                measure={{
+                  active: boardTool === 'measure',
+                  unit: measureUnit,
+                  measurements,
+                  pendingA: pendingMeasureA,
+                  cursor: measureCursor,
+                  onClick: onBoardMeasureClick,
+                  onMove: onBoardMeasureMove,
+                }}
+              />
+            ) : (
+              <span style={{ fontSize: 12, color: THEME.textFaint }}>
+                No parts with footprints on the board yet — add parts in the schematic (resistors,
+                capacitors, ICs…) and they appear here as real footprints to place.
+              </span>
+            )}
+          </div>
+        </div>
         <HealthContext.Provider value={shownHealth}>
           <CrtScreenContext.Provider value={crtScreens}>
             <LensContext.Provider value={lensState}>
