@@ -259,15 +259,16 @@ describe('functions — review hardening', () => {
     )
   })
 
-  test('a task no longer corrupts the parse — its decls do not leak as ports, the real gate builds', () => {
+  test('a task definition does not corrupt the parse — its decls do not leak as ports, the real gate builds', () => {
+    // The task is captured as a whole unit (uncalled → no warning); its `input b` must NOT leak in as a module
+    // port, and the `buf g(y, a)` that follows it must still build (y = a).
     const { block, warnings } = importVerilog(
       'module m(a, y); input a; output y; task t; input b; begin end endtask buf g(y, a); endmodule',
     )
-    expect(warnings.some((w) => w.toLowerCase().includes('task'))).toBe(true)
+    expect(warnings, `warnings: ${warnings.join(' | ')}`).toEqual([])
     const tt = characterizeBlock(block as BlockData)
     expect(tt).not.toBeNull()
     if (tt === null) return
-    // `b` (the task's input) must NOT have leaked in as a module port; only `a` drives `y = a`.
     expect(tt.inputs).toEqual(['a'])
     for (const row of tt.rows) expect(row.out).toEqual([row.in[0]])
   })

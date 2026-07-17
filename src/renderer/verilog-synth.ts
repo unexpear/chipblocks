@@ -30,6 +30,8 @@ import type {
   FuncDef,
   GateInst,
   MemInfo,
+  TaskArg,
+  TaskDef,
   Tok,
 } from './verilog-import.ts'
 
@@ -933,6 +935,7 @@ type SynthModule = {
   widths: Map<string, number>
   mems: MemTable
   functions: Map<string, FuncDef>
+  tasks: Map<string, TaskDef>
 }
 
 /** The target bit-nets of an lhs (`y`, `y[i]`, `y[h:l]`, or a concat of those), LSB-first. */
@@ -1035,6 +1038,20 @@ function pruneRecursiveFunctions(functions: Map<string, FuncDef>, warnings: stri
   }
 }
 
+/** Whether a procedural tree contains a task-call statement (illegal inside a function body). */
+function containsTaskCall(stmt: ProcStmt): boolean {
+  switch (stmt.t) {
+    case 'taskcall':
+      return true
+    case 'seq':
+      return stmt.body.some(containsTaskCall)
+    case 'if':
+      return containsTaskCall(stmt.conseq) || (stmt.els !== undefined && containsTaskCall(stmt.els))
+    default:
+      return false
+  }
+}
+
 /** Why a function's body can't be synthesized, or undefined if it's fine. Parses + elaborates the body exactly
  *  as inlineCall will (minus arg materialization + gates) and checks: it parses, it assigns its return, and the
  *  returned expression (with nested calls bound) has no unsupported construct. */
@@ -1046,6 +1063,7 @@ function functionBodyError(fn: FuncDef, functions: Map<string, FuncDef>): string
   const widthOf = (n: string): number => fnWidth.get(n) ?? 1
   const seq = parseProcedural(fn.body, new Map(), true, widthOf)
   if (seq.t === 'bad') return seq.why
+  if (containsTaskCall(seq)) return 'a function cannot call a task'
   const written = new Set<string>()
   const ret = elaborate(seq, new Map(), written).get(fn.name)
   if (ret === undefined) return `it never assigns its return value "${fn.name}"`
@@ -1068,6 +1086,162 @@ function validateFunctions(functions: Map<string, FuncDef>, warnings: string[]):
         changed = true
       }
     }
+  }
+}
+
+type TaskCtx = {
+  tasks: Map<string, TaskDef>
+  funcs: Map<string, FuncDef>
+  mems: MemTable
+  comb: boolean
+  callSeq: { n: number }
+  widthOf: (n: string) => number
+  registerWidth: (name: string, w: number) => void
+  /** Tasks currently being inlined (to reject direct/indirect task recursion). */
+  stack: Set<string>
+}
+
+/** Wrap every blocking store to a task-scoped signal in a `sized` width wall so an intermediate local truncates
+ *  to its declared width EXACTLY — the same guarantee the function inliner gets from elaborate's sizeOf, applied
+ *  here at the statement level because the task body is spliced into the caller's (sizeOf-less) elaboration. */
+function wrapStores(stmt: ProcStmt, sizeOf: (n: string) => number | undefined): ProcStmt {
+  switch (stmt.t) {
+    case 'nb': {
+      const wd = sizeOf(stmt.lhs)
+      return wd === undefined ? stmt : { ...stmt, rhs: { t: 'sized', width: wd, of: stmt.rhs } }
+    }
+    case 'seq':
+      return { t: 'seq', body: stmt.body.map((s) => wrapStores(s, sizeOf)) }
+    case 'if': {
+      const conseq = wrapStores(stmt.conseq, sizeOf)
+      return stmt.els === undefined
+        ? { t: 'if', cond: stmt.cond, conseq }
+        : { t: 'if', cond: stmt.cond, conseq, els: wrapStores(stmt.els, sizeOf) }
+    }
+    default:
+      return stmt
+  }
+}
+
+/** Every signal a procedural tree assigns (nb lhs / memwrite name). */
+function collectAssigned(stmt: ProcStmt, out: Set<string>): void {
+  switch (stmt.t) {
+    case 'nb':
+      out.add(stmt.lhs)
+      break
+    case 'memwrite':
+      out.add(stmt.name)
+      break
+    case 'seq':
+      for (const s of stmt.body) collectAssigned(s, out)
+      break
+    case 'if':
+      collectAssigned(stmt.conseq, out)
+      if (stmt.els !== undefined) collectAssigned(stmt.els, out)
+      break
+  }
+}
+
+/** Inline one task-call statement into a `seq`: input/inout args bound (sized to the arg's declared width)
+ *  before the per-call-renamed body; output/inout args written back (sized) after it; every intermediate local
+ *  wrapped in its own width wall (wrapStores); nested task calls inlined recursively (recursion rejected). Only
+ *  a combinational, non-conditional call is inlined — a clocked call, a call inside an if/case, an unknown/
+ *  recursive task, a wrong arg count, an unsynthesizable body, a never-assigned output, or a non-net output
+ *  target is reported (a `bad` node), never faked. */
+function expandTaskCall(name: string, argSpans: Tok[][], x: TaskCtx): ProcStmt {
+  if (!x.comb)
+    return { t: 'bad', why: 'a task call in a clocked always block is a later increment' }
+  if (x.stack.has(name)) return { t: 'bad', why: `task "${name}" is recursive — not synthesizable` }
+  const task = x.tasks.get(name)
+  if (task === undefined) return { t: 'bad', why: `call to unknown task "${name}"` }
+  if (argSpans.length !== task.args.length)
+    return {
+      t: 'bad',
+      why: `task "${name}" takes ${task.args.length} argument(s), got ${argSpans.length}`,
+    }
+  const id = x.callSeq.n++
+  const prefix = `__tsk${id}_${name}_`
+  const scopeWidth = new Map<string, number>()
+  for (const a of task.args) scopeWidth.set(a.name, a.width)
+  for (const [nm, wd] of task.localWidths) scopeWidth.set(nm, wd)
+  for (const [nm, wd] of scopeWidth) x.registerWidth(prefix + nm, wd)
+  const bodyToks = task.body.map((t) =>
+    t.k === 'id' && scopeWidth.has(t.v) ? { ...t, v: prefix + t.v } : t,
+  )
+  const parsedBody = parseProcedural(bodyToks, x.mems, true, x.widthOf)
+  if (parsedBody.t === 'bad') return { t: 'bad', why: `task "${name}" body — ${parsedBody.why}` }
+  // Inline any nested task call in the body (recursion-guarded); its top level is not conditional.
+  const nested = expandTaskCalls(parsedBody, { ...x, stack: new Set([...x.stack, name]) }, false)
+  if (nested.t === 'bad') return nested
+  // Width walls on every intermediate local/arg store, exactly like the function inliner.
+  const sizeOf = (n: string): number | undefined =>
+    n.startsWith(prefix) ? scopeWidth.get(n.slice(prefix.length)) : undefined
+  const walledBody = wrapStores(nested, sizeOf)
+  const assigned = new Set<string>()
+  collectAssigned(walledBody, assigned)
+  const pre: ProcStmt[] = []
+  const post: ProcStmt[] = []
+  for (let k = 0; k < task.args.length; k++) {
+    const a = task.args[k] as TaskArg
+    if (a.dir === 'input' || a.dir === 'inout') {
+      const argExpr = bindCalls(parseRhs(argSpans[k] as Tok[], x.mems), x.funcs)
+      const eb = firstBad(argExpr)
+      if (eb !== undefined) return { t: 'bad', why: `task "${name}" argument "${a.name}" — ${eb}` }
+      pre.push({
+        t: 'nb',
+        lhs: prefix + a.name,
+        rhs: { t: 'sized', width: a.width, of: argExpr },
+        blocking: true,
+      })
+    }
+    if (a.dir === 'output' || a.dir === 'inout') {
+      if (!assigned.has(prefix + a.name))
+        return { t: 'bad', why: `task "${name}" output "${a.name}" is never assigned` }
+      const lhs = argSpans[k] as Tok[]
+      if (lhs.length !== 1 || lhs[0]?.k !== 'id')
+        return {
+          t: 'bad',
+          why: `task "${name}" output "${a.name}" must be written to a simple net`,
+        }
+      post.push({
+        t: 'nb',
+        lhs: (lhs[0] as Tok).v,
+        rhs: { t: 'sized', width: a.width, of: { t: 'net', name: prefix + a.name } },
+        blocking: true,
+      })
+    }
+  }
+  return { t: 'seq', body: [...pre, walledBody, ...post] }
+}
+
+/** Replace every task-call in a procedural tree with its inlined seq. A task call inside an if/case branch is
+ *  reported (its per-call temporaries would self-hold in the untaken branch → spurious combinational loops) —
+ *  a later increment; a failed inline propagates as `bad`. */
+function expandTaskCalls(stmt: ProcStmt, x: TaskCtx, conditional: boolean): ProcStmt {
+  switch (stmt.t) {
+    case 'taskcall':
+      return conditional
+        ? { t: 'bad', why: 'a task call inside an if/case branch is a later increment' }
+        : expandTaskCall(stmt.name, stmt.argSpans, x)
+    case 'seq': {
+      const body: ProcStmt[] = []
+      for (const s of stmt.body) {
+        const e = expandTaskCalls(s, x, conditional)
+        if (e.t === 'bad') return e
+        body.push(e)
+      }
+      return { t: 'seq', body }
+    }
+    case 'if': {
+      const conseq = expandTaskCalls(stmt.conseq, x, true)
+      if (conseq.t === 'bad') return conseq
+      if (stmt.els === undefined) return { t: 'if', cond: stmt.cond, conseq }
+      const els = expandTaskCalls(stmt.els, x, true)
+      if (els.t === 'bad') return els
+      return { t: 'if', cond: stmt.cond, conseq, els }
+    }
+    default:
+      return stmt
   }
 }
 
@@ -1171,6 +1345,18 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
     funcs: mod.functions,
     callSeq,
   })
+  const taskCtx = (comb: boolean): TaskCtx => ({
+    tasks: mod.tasks,
+    funcs: mod.functions,
+    mems: mod.mems,
+    comb,
+    callSeq,
+    widthOf,
+    registerWidth: (name, wd) => {
+      if (wd > 1) mod.widths.set(name, wd)
+    },
+    stack: new Set(),
+  })
 
   const driven = new Set<string>()
   for (const g of mod.gates) for (const o of gateOutputs(g)) driven.add(o)
@@ -1247,7 +1433,9 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   // it back on itself, which is a real combinational cycle — reported, not built. ──────────────────────────
   for (const blk of mod.alwaysBlocks) {
     if (blk.clk !== null) continue // clocked → flip-flops, handled after the loop guard
-    const seq = parseProcedural(blk.body, mod.mems, true, widthOf) // comb: blocking `=` + full-case coverage
+    const parsed = parseProcedural(blk.body, mod.mems, true, widthOf) // comb: blocking `=` + full-case coverage
+    // Inline any task call (inputs bound, outputs written back) before elaboration.
+    const seq = parsed.t === 'bad' ? parsed : expandTaskCalls(parsed, taskCtx(true), false)
     if (seq.t === 'bad') {
       warnings.push(`line ${blk.line}: always block — ${seq.why} — reported, not built`)
       continue
@@ -1356,7 +1544,9 @@ export function synthesizeBehavioral(mod: SynthModule, warnings: string[]): void
   }
   for (const blk of mod.alwaysBlocks) {
     if (blk.clk === null) continue // combinational — handled above as continuous drives, not flip-flops
-    const seq = parseProcedural(blk.body, mod.mems, false, widthOf)
+    const parsed = parseProcedural(blk.body, mod.mems, false, widthOf)
+    // A task call in a clocked block is reported (expandTaskCalls with comb=false); a block without one passes.
+    const seq = parsed.t === 'bad' ? parsed : expandTaskCalls(parsed, taskCtx(false), false)
     if (seq.t === 'bad') {
       warnings.push(`line ${blk.line}: always block — ${seq.why} — reported, not built`)
       continue
@@ -1566,6 +1756,9 @@ type ProcStmt =
   | { t: 'memwrite'; name: string; idx: Expr; rhs: Expr; depth: number } // m[addr] <= expr
   | { t: 'seq'; body: ProcStmt[] } // begin … end
   | { t: 'if'; cond: Expr; conseq: ProcStmt; els?: ProcStmt }
+  // a task-call STATEMENT `t(a, b);` — expanded (inputs bound, outputs written back) by expandTaskCalls before
+  // elaboration; the raw argument token spans are resolved against the task's arg directions there.
+  | { t: 'taskcall'; name: string; argSpans: Tok[][]; line: number }
   | { t: 'bad'; why: string }
 
 /** Parse a clocked always body (its inner statements, no wrapping begin/end) into one procedural statement. */
@@ -1631,6 +1824,14 @@ function parseStmt(
     }
   if (t.v === 'for' || t.v === 'while' || t.v === 'repeat' || t.v === 'forever')
     return { t: 'bad', why: `procedural loops (${t.v}) are a later increment` }
+  // A statement `name ( … ) ;` is a task call (the only id-then-paren statement form); expandTaskCalls inlines
+  // it. An assignment starts `name =`/`name[i] =`/`{…} =` instead, so this never shadows one.
+  if (t.k === 'id' && ts.peek(1)?.v === '(') {
+    ts.next() // task name
+    const argSpans = readCallArgs(ts)
+    if (ts.peek()?.v === ';') ts.next()
+    return { t: 'taskcall', name: t.v, argSpans, line: t.line }
+  }
   return parseAssignStmt(ts, mems, comb)
 }
 

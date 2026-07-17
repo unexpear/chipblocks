@@ -337,6 +337,16 @@ export type FuncDef = {
   localWidths: Map<string, number>
   body: Tok[]
 }
+/** A synthesizable Verilog `task`: its ordered args (each with a direction + width), local widths, and body.
+ *  The synthesizer INLINES a call inside a combinational always block — inputs bound at their width, outputs
+ *  written back to the caller's signals (see verilog-synth.ts). */
+export type TaskArg = { name: string; width: number; dir: 'input' | 'output' | 'inout' }
+export type TaskDef = {
+  name: string
+  args: TaskArg[]
+  localWidths: Map<string, number>
+  body: Tok[]
+}
 type ParsedModule = {
   name: string
   portOrder: string[]
@@ -352,6 +362,8 @@ type ParsedModule = {
   mems: Map<string, MemInfo>
   /** Function name → its definition, inlined at each call site by the synthesizer. */
   functions: Map<string, FuncDef>
+  /** Task name → its definition, inlined at each (combinational) call statement. */
+  tasks: Map<string, TaskDef>
 }
 
 /** A `[ msb : lsb ]` range's bit width. Both bounds are folded as constant expressions (a parameter has
@@ -699,6 +711,7 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
   const assigns: Assign[] = []
   const alwaysBlocks: AlwaysBlock[] = []
   const functions = new Map<string, FuncDef>()
+  const tasks = new Map<string, TaskDef>()
   while (!c.atEnd() && !c.is('endmodule')) {
     const t = c.peek() as Tok
     if (t.k === 'dir') {
@@ -740,13 +753,7 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
       continue
     }
     if (t.k === 'kw' && t.v === 'task') {
-      // Not yet synthesized — skip the WHOLE task (through endtask) so its input/reg decls don't leak into the
-      // module parser as phantom ports/nets (skipStatement would stop at the first ';' inside the task body).
-      warnings.push(
-        `line ${t.line}: "task" is a behavioral construct not yet synthesized — reported, not built`,
-      )
-      c.next()
-      skipToEnd(c, 'endtask')
+      parseTask(c, tasks, warnings)
       continue
     }
     if (t.k === 'kw' && OTHER_GATE_SWITCH.has(t.v)) {
@@ -804,6 +811,7 @@ function parseModule(toks: Tok[], warnings: string[]): ParsedModule | null {
     widths,
     mems,
     functions,
+    tasks,
   }
 }
 
@@ -938,6 +946,107 @@ function skipToEnd(c: Cursor, endKw: string): void {
 }
 function skipToEndfunction(c: Cursor): void {
   skipToEnd(c, 'endfunction')
+}
+
+/** Parse a `task … endtask` into a TaskDef. Args carry a DIRECTION (input/output/inout); the synthesizer
+ *  inlines a call inside a combinational always block, binding inputs and writing outputs back. Both header
+ *  forms are handled. An unsupported declaration drops the task (a call to it then reports as unknown). */
+function parseTask(c: Cursor, tasks: Map<string, TaskDef>, warnings: string[]): void {
+  const line = c.peek()?.line ?? 0
+  c.next() // 'task'
+  while (c.peek()?.k === 'kw' && ['automatic', 'signed'].includes(c.peek()?.v as string)) c.next()
+  const nameTok = c.next()
+  if (nameTok === undefined || nameTok.k !== 'id') {
+    warnings.push(`line ${line}: malformed task declaration — reported`)
+    skipToEnd(c, 'endtask')
+    return
+  }
+  const name = nameTok.v
+  const args: TaskArg[] = []
+  const localWidths = new Map<string, number>()
+  const bad = { v: false }
+  if (c.is('(')) parseTaskPorts(readGroup(c), args, warnings, bad)
+  if (c.is(';')) c.next()
+  // A task missing its `endtask` must NOT swallow the real module items that follow it — if there is no
+  // `endtask` before `endmodule`, rewind to just after the header and report, so those gates still parse.
+  const bodyStart = c.i
+  const body: Tok[] = []
+  while (!c.atEnd() && !c.is('endtask') && !c.is('endmodule')) {
+    const kw = c.peek()?.v
+    if (kw === 'input' || kw === 'output' || kw === 'inout') {
+      const dir = kw
+      collectDecl(c, (nm, w) => args.push({ name: nm, width: w, dir }), warnings, bad)
+      continue
+    }
+    if (kw === 'reg' || kw === 'integer' || kw === 'wire') {
+      collectDecl(c, (nm, w) => localWidths.set(nm, w), warnings, bad)
+      continue
+    }
+    body.push(c.next() as Tok)
+  }
+  if (!c.is('endtask')) {
+    warnings.push(`line ${line}: task "${name}" is missing its "endtask" — reported, not built`)
+    c.i = bodyStart
+    return
+  }
+  c.next() // 'endtask'
+  // A local that shadows an argument name is an illegal redeclaration (and would silently overwrite the arg's
+  // width) — report + drop rather than build the wrong widths.
+  if (args.some((a) => localWidths.has(a.name))) {
+    warnings.push(
+      `line ${line}: task "${name}" redeclares an argument as a local — reported, not built`,
+    )
+    return
+  }
+  if (bad.v) {
+    warnings.push(
+      `line ${line}: task "${name}" has an unsupported declaration — reported, not built`,
+    )
+    return
+  }
+  if (tasks.has(name)) warnings.push(`line ${line}: task "${name}" redefined — reported`)
+  tasks.set(name, { name, args, localWidths, body })
+}
+
+/** ANSI task port-list slices → args with directions (input/output/inout, a range, both sticky across a
+ *  bare-name continuation). An unsupported range sets `bad` so the task is dropped rather than mis-sized. */
+function parseTaskPorts(
+  slices: Tok[][],
+  args: TaskArg[],
+  warnings: string[],
+  bad: { v: boolean },
+): void {
+  let width = 1
+  let dir: 'input' | 'output' | 'inout' = 'input'
+  for (const s of slices) {
+    let j = 0
+    let sawDir = false
+    while (
+      j < s.length &&
+      (s[j] as Tok).k === 'kw' &&
+      ['input', 'output', 'inout', 'signed'].includes((s[j] as Tok).v)
+    ) {
+      const v = (s[j] as Tok).v
+      if (v === 'input' || v === 'output' || v === 'inout') {
+        dir = v
+        sawDir = true
+      }
+      j += 1
+    }
+    if (sawDir) width = 1
+    if ((s[j] as Tok | undefined)?.v === '[') {
+      const inner: Tok[] = []
+      j += 1
+      while (j < s.length && (s[j] as Tok).v !== ']') inner.push(s[j++] as Tok)
+      if ((s[j] as Tok | undefined)?.v === ']') j += 1
+      const r = rangeWidth(inner)
+      if ('bad' in r) {
+        warnings.push(`task port range — ${r.bad} — reported`)
+        bad.v = true
+      } else width = r.width
+    }
+    if ((s[j] as Tok | undefined)?.k === 'id') args.push({ name: (s[j] as Tok).v, width, dir })
+  }
 }
 
 /** Parse an always block. `@(posedge clk)` → a clocked block (clk set); `@*` / `@(*)` / `@(a or b …)` with no
