@@ -40,3 +40,22 @@ nsis:
   artifactName: ${productName}-Setup-${version}.${ext}
   shortcutName: ChipBlocks
   uninstallDisplayName: ChipBlocks
+
+# macOS build (produced only on a macOS runner — see .github/workflows/build.yml;
+# electron-builder can't cross-build a real Mac app from Windows/Linux). icns is
+# generated from the 512px PNG. Unsigned + un-notarized: macOS Gatekeeper will
+# quarantine it until the user right-click-opens (or a future signing/notarize step).
+mac:
+  icon: resources/icon.png
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+
+# Linux build (produced only on a Linux runner). AppImage is the portable, no-install
+# format — one self-contained file that runs on most distros.
+linux:
+  icon: resources/icon.png
+  category: Development
+  target:
+    - AppImage

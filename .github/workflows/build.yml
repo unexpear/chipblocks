@@ -1,0 +1,73 @@
+# Build ChipBlocks distributables on all three desktop platforms.
+#
+# Why this exists: electron-builder can only build a real app for the OS it runs on
+# (a macOS .dmg needs a Mac, etc.). GitHub's hosted runners give us a Windows, a
+# macOS, and a Linux machine for free, so this matrix produces every installer
+# without owning those machines.
+#
+# It does NOT publish anything — each run just uploads the built installers as
+# downloadable artifacts on the run's summary page. Grab them from the Actions tab.
+#
+# Runs when you click "Run workflow" (Actions tab) or when you push a version tag
+# like v0.1.0.
+name: Build distributables
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - 'v*'
+
+# A newer run for the same ref cancels an in-flight older one.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: we only read the repo and upload artifacts — never write releases.
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build + package
+        # `--publish never` is REQUIRED: on a v* tag push electron-builder would
+        # otherwise try to create a GitHub Release (it infers the repo from the git
+        # remote). We only want downloadable artifacts, never a publish. npm appends
+        # the flag to the end of the script → `electron-vite build && electron-builder --publish never`.
+        run: npm run package -- --publish never
+        env:
+          # Unsigned on every platform (no certificate configured). Without this,
+          # electron-builder tries to auto-discover a macOS signing identity and
+          # fails the mac job.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: chipblocks-${{ matrix.os }}
+          if-no-files-found: warn
+          retention-days: 14
+          # Each OS produces only its own formats; the rest are simply absent.
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.zip
+            dist/*.AppImage
