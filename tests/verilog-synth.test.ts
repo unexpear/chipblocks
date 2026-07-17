@@ -205,10 +205,9 @@ describe('RTL synthesis — honesty (unsupported → reported, never faked)', ()
     ).toBe(true)
   }
 
-  test('still-unsupported operators (/ % **) are reported', () => {
-    // + - * << >> < <= > >= ARE supported now (see the arithmetic + shift/compare tests); / % ** are not
-    reported(mod('a, b', 'assign y = a / b;'), 'not supported')
-    reported(mod('a, b', 'assign y = a % b;'), 'not supported')
+  test('the still-unsupported operator (**) is reported', () => {
+    // + - * / % << >> < <= > >= ARE supported now (see the arithmetic + divide + shift/compare tests);
+    // ** (power) is not.
     reported(mod('a, b', 'assign y = a ** b;'), 'not supported')
   })
 
@@ -663,6 +662,70 @@ describe('RTL synthesis — multiply review regression (context-width right oper
         const b = num([i[2] as boolean, i[3] as boolean])
         return numBits((a * ((b << 1) & 0xf)) & 0xf, 4)
       },
+    )
+  })
+})
+
+describe('RTL synthesis — divide + modulo (unsigned)', () => {
+  const busIns = ['a[0]', 'a[1]', 'a[2]', 'b[0]', 'b[1]', 'b[2]']
+  const a3 = (i: boolean[]) => num([i[0] as boolean, i[1] as boolean, i[2] as boolean])
+  const b3 = (i: boolean[]) => num([i[3] as boolean, i[4] as boolean, i[5] as boolean])
+
+  test('DIVIDE: q = a / b over all 3-bit inputs (÷0 → all ones)', () => {
+    assertBus(
+      'module m(a, b, q); input [2:0] a, b; output [2:0] q; assign q = a / b; endmodule',
+      busIns,
+      ['q[0]', 'q[1]', 'q[2]'],
+      (i) => numBits(b3(i) === 0 ? 7 : Math.floor(a3(i) / b3(i)), 3),
+    )
+  })
+
+  test('MODULO: r = a % b over all 3-bit inputs (%0 → a)', () => {
+    assertBus(
+      'module m(a, b, r); input [2:0] a, b; output [2:0] r; assign r = a % b; endmodule',
+      busIns,
+      ['r[0]', 'r[1]', 'r[2]'],
+      (i) => numBits(b3(i) === 0 ? a3(i) : a3(i) % b3(i), 3),
+    )
+  })
+
+  test('divide + modulo together satisfy a = (a/b)*b + a%b for b != 0', () => {
+    assertBus(
+      'module m(a, b, q, r); input [2:0] a, b; output [2:0] q; output [2:0] r;' +
+        ' assign q = a / b; assign r = a % b; endmodule',
+      busIns,
+      ['q[0]', 'q[1]', 'q[2]', 'r[0]', 'r[1]', 'r[2]'],
+      (i) => {
+        const a = a3(i)
+        const b = b3(i)
+        const q = b === 0 ? 7 : Math.floor(a / b)
+        const r = b === 0 ? a : a % b
+        return [...numBits(q, 3), ...numBits(r, 3)]
+      },
+    )
+  })
+
+  test('a NARROWING divide evaluates operands at FULL width, then truncates the result', () => {
+    // y is only 2 bits, but a/b must be computed at the operands' 4-bit width and THEN truncated — division
+    // depends on the high bits, so truncating the operands first (as + - * safely can) would be wrong.
+    assertBus(
+      'module m(a, b, y); input [3:0] a, b; output [1:0] y; assign y = a / b; endmodule',
+      ['a[0]', 'a[1]', 'a[2]', 'a[3]', 'b[0]', 'b[1]', 'b[2]', 'b[3]'],
+      ['y[0]', 'y[1]'],
+      (i) => {
+        const a = num([i[0] as boolean, i[1] as boolean, i[2] as boolean, i[3] as boolean])
+        const b = num([i[4] as boolean, i[5] as boolean, i[6] as boolean, i[7] as boolean])
+        return numBits((b === 0 ? 15 : Math.floor(a / b)) & 3, 2)
+      },
+    )
+  })
+
+  test('a constant divisor folds (a / 2 == a >> 1 for unsigned)', () => {
+    assertBus(
+      'module m(a, y); input [2:0] a; output [2:0] y; assign y = a / 2; endmodule',
+      ['a[0]', 'a[1]', 'a[2]'],
+      ['y[0]', 'y[1]', 'y[2]'],
+      (i) => numBits(Math.floor(a3([...i, false, false, false]) / 2), 3),
     )
   })
 })

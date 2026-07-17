@@ -113,6 +113,8 @@ const SUPPORTED_BIN = new Set([
   '+',
   '-',
   '*',
+  '/',
+  '%',
   '<<',
   '>>',
   '<',
@@ -415,6 +417,35 @@ function mux1(sel: Bit, t: Bit, f: Bit, x: Ctx): Bit {
   return or1(and1(t, sel, x), and1(f, not1(sel, x), x), x)
 }
 
+/**
+ * Unsigned restoring division at width w → { q: quotient, rem: remainder }, both length w. Each of the w
+ * steps shifts the partial remainder in one dividend bit then does a (w+1)-bit trial subtract of the divisor;
+ * if the remainder is still ≥ the divisor it keeps the difference and sets the quotient bit, else it restores.
+ * ~w² gates. Divide-by-zero yields an all-ones quotient and the dividend as the remainder — real Verilog is
+ * x there, but x isn't modelled, so this is the defined stand-in (documented, not faked).
+ */
+function divmod(a: Bit[], b: Bit[], w: number, x: Ctx): { q: Bit[]; rem: Bit[] } {
+  const bExt: Bit[] = [...b, { c: 0 }] // divisor zero-extended to w+1 bits
+  let rem: Bit[] = resize([], w + 1) // partial remainder, starts 0
+  const q: Bit[] = new Array<Bit>(w)
+  for (let i = w - 1; i >= 0; i--) {
+    // rem = (rem << 1) | a[i]: bit 0 becomes a[i], the rest shift up (the restored top bit is 0, so it drops)
+    rem = [a[i] as Bit, ...rem.slice(0, w)]
+    // trial subtract: rem + ~bExt + 1; the carry-out is 1 exactly when rem ≥ divisor
+    let carry: Bit = { c: 1 }
+    const diff: Bit[] = []
+    for (let k = 0; k <= w; k++) {
+      const fa = fullAdd(rem[k] as Bit, not1(bExt[k] as Bit, x), carry, x)
+      diff.push(fa.sum)
+      carry = fa.cout
+    }
+    const ge = carry
+    q[i] = ge
+    rem = rem.map((r, k) => mux1(ge, diff[k] as Bit, r, x))
+  }
+  return { q, rem: rem.slice(0, w) }
+}
+
 /** The self-determined width of an expression (bottom-up pass). */
 function selfWidth(e: Expr, w: (name: string) => number): number {
   switch (e.t) {
@@ -611,6 +642,18 @@ function synthAt(e: Expr, w: number, x: Ctx): Bit[] {
           acc = sum
         }
         return acc
+      }
+      if (e.op === '/' || e.op === '%') {
+        // Unsigned division (restoring). `/` → quotient, `%` → remainder. Division depends on the operands'
+        // HIGH bits, so — UNLIKE + - * (modular: kept low bits need only the low operand bits) — it must be
+        // evaluated at the FULL width even when the assignment target is NARROWER. Compute at
+        // L = max(context, both operand self-widths), then truncate the result to the context width w. This
+        // mirrors how == / < re-establish their own width. Constant a op b still folds via foldConst.
+        const evalW = Math.max(w, selfWidth(e.a, x.widthOf), selfWidth(e.b, x.widthOf))
+        const la = synthAt(e.a, evalW, x)
+        const lb = synthAt(e.b, evalW, x)
+        const { q, rem } = divmod(la, lb, evalW, x)
+        return resize(e.op === '/' ? q : rem, w)
       }
       if (e.op === '&&' || e.op === '||') {
         const ca = reduce(synthAt(e.a, selfWidth(e.a, x.widthOf), x), 'or', x)
