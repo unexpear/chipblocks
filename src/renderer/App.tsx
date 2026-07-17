@@ -104,7 +104,13 @@ import {
   LensContext,
   type LensMode,
 } from './lens.ts'
-import { type CompiledLogic, compileLogic, type simulateLogic, stepLogic } from './logic-sim.ts'
+import {
+  type CompiledLogic,
+  compileLogic,
+  type LogicResult,
+  type simulateLogic,
+  stepLogic,
+} from './logic-sim.ts'
 import { materialCapabilities, validMaterialsByRole } from './material-roles.ts'
 import { MathPanel } from './math-panel.tsx'
 import { buildMathView } from './math-view.ts'
@@ -232,6 +238,7 @@ import {
   registerUserPart,
   type UserPart,
 } from './user-parts.ts'
+import { buildDemoCpu } from './verilog-cpu-demo.ts'
 import { isVerilogText, parseVerilogText, serializeVerilog } from './verilog-file.ts'
 import {
   findWireCrossings,
@@ -296,6 +303,13 @@ const dcSource = (v: number) => ({
   nominal_voltage: { value: { kind: 'scalar', amount: v, unit: 'volt' } },
   internal_resistance: { value: { kind: 'scalar', amount: 0, unit: 'ohm' } },
 })
+
+// Read a 4-bit unsigned value off the Verilog-CPU harness node's bit-ports port[0..3] (LSB = port[0]).
+const vcpuRead4 = (r: LogicResult, port: string): number => {
+  let v = 0
+  for (let i = 0; i < 4; i++) if (r.value('vh', `${port}[${i}]`) === true) v |= 1 << i
+  return v
+}
 
 // The calculator keypad → the real CALCULATOR block's one-hot key inputs (the inverse of the test
 // oracle's lineFor). The brain is the gate FSM; a press just asserts one key line for one clock edge.
@@ -2966,6 +2980,240 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     reSolve(nodes as unknown as Node[], edges as unknown as Edge[])
   }, [setNodes, setEdges, checkpointAction, reSolve])
 
+  // ── The Verilog-CPU demo: watch a CPU authored in Verilog run on real gates ──────────────────────────
+  // The processor from verilog-cpu-demo.ts is SYNTHESIZED from Verilog (importVerilog → real gate + flip-flop
+  // cells) and clocked in an off-canvas logic harness (compiled ONCE, like the calculator's brain — fast, and
+  // its outputs are easy to read). Each rising edge advances it one microstep; the pc / accumulator / result
+  // are painted onto three on-canvas seven-segment readouts (their input sources rewritten, exactly the
+  // pressCalcKey protocol), so the display re-solves and lights. No code sequences it — the gate T-state
+  // counter + gate-decoded control do, on the persistent flip-flop memory (logicStateRef).
+  const READOUTS = useMemo(
+    () => [
+      { key: 'res', port: 'out', label: 'RESULT' },
+      { key: 'acc', port: 'accv', label: 'ACC' },
+      { key: 'pc', port: 'pcv', label: 'PC' },
+    ],
+    [],
+  )
+  const vcpuCompiledRef = useRef<CompiledLogic | null>(null)
+  const vcpuRunRef = useRef<number | null>(null)
+  const vcpuSolve = useCallback((clk: boolean, rst: boolean): LogicResult | null => {
+    if (vcpuCompiledRef.current === null) {
+      const block = buildDemoCpu('vh')
+      if (block === null) return null
+      const e = (id: string, s: string, sh: string, t: string, th: string) => ({
+        id,
+        source: s,
+        sourceHandle: sh,
+        target: t,
+        targetHandle: th,
+      })
+      const hn = [
+        { id: 'vh', data: { definition: 'block', block } },
+        { id: 'h_vp', data: { definition: 'power_source', parameters: dcSource(5) } },
+        { id: 'h_g', data: { definition: 'ground' } },
+        { id: 'h_clk', data: { definition: 'power_source', parameters: dcSource(0) } },
+        { id: 'h_rst', data: { definition: 'power_source', parameters: dcSource(0) } },
+      ]
+      const he = [
+        e('e_vp', 'h_vp', 'terminal_positive', 'vh', 'v_dd'),
+        e('e_g', 'vh', 'gnd', 'h_g', 'reference_terminal'),
+        e('e_clk', 'h_clk', 'terminal_positive', 'vh', 'clk'),
+        e('e_rst', 'h_rst', 'terminal_positive', 'vh', 'rst'),
+        e('e_vpn', 'h_vp', 'terminal_negative', 'h_g', 'reference_terminal'),
+        e('e_clkn', 'h_clk', 'terminal_negative', 'h_g', 'reference_terminal'),
+        e('e_rstn', 'h_rst', 'terminal_negative', 'h_g', 'reference_terminal'),
+      ]
+      vcpuCompiledRef.current = compileLogic(
+        hn as unknown as BlockNodeLike[],
+        he as unknown as BlockEdgeLike[],
+      )
+    }
+    const overrides = new Map<string, boolean>([
+      ['h_clk', clk],
+      ['h_rst', rst],
+    ])
+    return stepLogic(vcpuCompiledRef.current, overrides, logicStateRef.current)
+  }, [])
+  // Paint the three readout digits from a {res, acc, pc} snapshot: rewrite each decoder's four input sources,
+  // and the always-on solver re-lights the seven-segment faces (the readout circuits have no flip-flops, so a
+  // single re-solve suffices — no low/high edge needed on the display side).
+  const paintVcpu = useCallback(
+    (vals: { res: number; acc: number; pc: number }) => {
+      setNodes((cur) =>
+        cur.map((n) => {
+          const m = /^vc_src_(res|acc|pc)_(\d)$/.exec(n.id)
+          if (m === null) return n
+          const val = m[1] === 'res' ? vals.res : m[1] === 'acc' ? vals.acc : vals.pc
+          const hi = ((val >> Number(m[2])) & 1) === 1
+          return { ...n, data: { ...n.data, parameters: dcSource(hi ? 5 : 0) } }
+        }),
+      )
+    },
+    [setNodes],
+  )
+  // One microstep: a rising clock edge (clk low so the master latches, then clk high so the slave commits),
+  // then paint the new pc / acc / result. Returns the snapshot (halted tells the run loop when to stop).
+  const stepVcpu = useCallback(() => {
+    vcpuSolve(false, false)
+    const r = vcpuSolve(true, false)
+    if (r === null) return null
+    const snap = {
+      res: vcpuRead4(r, 'out'),
+      acc: vcpuRead4(r, 'accv'),
+      pc: vcpuRead4(r, 'pcv'),
+      halted: r.value('vh', 'halted') === true,
+    }
+    paintVcpu(snap)
+    return snap
+  }, [vcpuSolve, paintVcpu])
+  const stopVcpu = useCallback(() => {
+    if (vcpuRunRef.current !== null) {
+      window.clearInterval(vcpuRunRef.current)
+      vcpuRunRef.current = null
+    }
+  }, [])
+  const runVcpu = useCallback(() => {
+    stopVcpu()
+    vcpuRunRef.current = window.setInterval(() => {
+      const snap = stepVcpu()
+      if (snap === null || snap.halted) stopVcpu()
+    }, 220)
+  }, [stepVcpu, stopVcpu])
+  // Reset = power-on: clear the flip-flop memory (all registers → 0, exactly the machine's reset state) and
+  // blank the readouts, ready to run the program again from the top.
+  const resetVcpu = useCallback(() => {
+    stopVcpu()
+    logicStateRef.current = new Map<string, boolean>()
+    vcpuCompiledRef.current = null
+    paintVcpu({ res: 0, acc: 0, pc: 0 })
+  }, [stopVcpu, paintVcpu])
+
+  const placeVerilogCpuDemo = useCallback(() => {
+    const decoder = BUILTIN_BLOCKS.logic_decoder_7seg
+    const display = BUILTIN_BLOCKS.display_seven_segment
+    if (!decoder || !display) return
+    checkpointAction('verilog cpu')
+    logicStateRef.current = new Map<string, boolean>() // power-on
+    vcpuCompiledRef.current = null // fresh harness for this placement
+    const nodes: Record<string, unknown>[] = [
+      {
+        id: 'vc_vp',
+        type: 'device',
+        position: { x: -360, y: 1240 },
+        data: { definition: 'power_source', label: 'V+', parameters: dcSource(5) },
+      },
+      {
+        id: 'vc_g',
+        type: 'device',
+        position: { x: -240, y: 1240 },
+        data: { definition: 'ground', label: 'GND' },
+      },
+    ]
+    const edges: Record<string, unknown>[] = [
+      {
+        id: 'vc_vpn',
+        type: 'net',
+        source: 'vc_vp',
+        sourceHandle: 'terminal_negative',
+        target: 'vc_g',
+        targetHandle: 'reference_terminal',
+      },
+    ]
+    READOUTS.forEach((ro, idx) => {
+      const cx = idx * 360
+      nodes.push({
+        id: `vc_disp_${ro.key}`,
+        type: 'block',
+        position: { x: cx, y: 60 },
+        data: { definition: 'display_seven_segment', label: ro.label, block: display },
+      })
+      nodes.push({
+        id: `vc_dec_${ro.key}`,
+        type: 'block',
+        position: { x: cx, y: 560 },
+        data: { definition: 'block', label: ro.label, block: decoder, fidelity: 'logic' },
+      })
+      for (const s of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) {
+        edges.push({
+          id: `vc_sg_${ro.key}_${s}`,
+          type: 'net',
+          source: `vc_dec_${ro.key}`,
+          sourceHandle: `seg_${s}`,
+          target: `vc_disp_${ro.key}`,
+          targetHandle: `seg_${s}`,
+        })
+      }
+      edges.push({
+        id: `vc_decvp_${ro.key}`,
+        type: 'net',
+        source: 'vc_vp',
+        sourceHandle: 'terminal_positive',
+        target: `vc_dec_${ro.key}`,
+        targetHandle: 'v_dd',
+      })
+      edges.push({
+        id: `vc_decg_${ro.key}`,
+        type: 'net',
+        source: `vc_dec_${ro.key}`,
+        sourceHandle: 'gnd',
+        target: 'vc_g',
+        targetHandle: 'reference_terminal',
+      })
+      edges.push({
+        id: `vc_dispc_${ro.key}`,
+        type: 'net',
+        source: `vc_disp_${ro.key}`,
+        sourceHandle: 'common',
+        target: 'vc_g',
+        targetHandle: 'reference_terminal',
+      })
+      for (let i = 0; i < 4; i++) {
+        nodes.push({
+          id: `vc_src_${ro.key}_${i}`,
+          type: 'device',
+          position: { x: cx, y: 1080 + i * 90 },
+          data: { definition: 'power_source', label: '', parameters: dcSource(0) },
+        })
+        edges.push({
+          id: `vc_srce_${ro.key}_${i}`,
+          type: 'net',
+          source: `vc_src_${ro.key}_${i}`,
+          sourceHandle: 'terminal_positive',
+          target: `vc_dec_${ro.key}`,
+          targetHandle: `d${i}`,
+        })
+        edges.push({
+          id: `vc_srcg_${ro.key}_${i}`,
+          type: 'net',
+          source: `vc_src_${ro.key}_${i}`,
+          sourceHandle: 'terminal_negative',
+          target: 'vc_g',
+          targetHandle: 'reference_terminal',
+        })
+      }
+    })
+    const controls: { action: string; label: string }[] = [
+      { action: 'run', label: '▶ Run' },
+      { action: 'step', label: '⏭ Step' },
+      { action: 'reset', label: '⟲ Reset' },
+    ]
+    controls.forEach((c, i) => {
+      nodes.push({
+        id: `vc_ctrl_${c.action}`,
+        type: 'keycap',
+        draggable: false,
+        position: { x: i * 150, y: -180 },
+        data: { definition: 'keycap', label: c.label, demoAction: c.action },
+      })
+    })
+    setNodes(() => nodes as unknown as Node[])
+    setEdges(() => edges as unknown as Edge[])
+    setAutoRouteWires(true)
+    reSolve(nodes as unknown as Node[], edges as unknown as Edge[])
+    paintVcpu({ res: 0, acc: 0, pc: 0 })
+  }, [setNodes, setEdges, checkpointAction, reSolve, READOUTS, paintVcpu])
+
   const onDrop = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
       event.preventDefault()
@@ -3003,6 +3251,11 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         placeCalculator()
         return
       }
+      // The Verilog CPU demo lays out the readouts + Run/Step/Reset controls for a Verilog-synthesized CPU.
+      if (definition === 'verilog_cpu') {
+        placeVerilogCpuDemo()
+        return
+      }
       // A built-in (e.g. the op-amp) drops as a block node — a fresh deep copy that
       // descends + flattens to its real transistors like any user-grouped block.
       const builtinBlock = BUILTIN_BLOCKS[definition]
@@ -3036,7 +3289,15 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         }),
       )
     },
-    [screenToFlowPosition, setNodes, nodes, checkpointAction, snapToGrid, placeCalculator],
+    [
+      screenToFlowPosition,
+      setNodes,
+      nodes,
+      checkpointAction,
+      snapToGrid,
+      placeCalculator,
+      placeVerilogCpuDemo,
+    ],
   )
 
   // Place a part from the Add-Part pop-up — the same node-creation as a drop, but centred in the
@@ -3255,6 +3516,20 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       } as Node
     }
     const api = {
+      // DEV: place the Verilog-CPU demo and run it to completion on the real gate harness, returning the final
+      // pc / accumulator / result the on-canvas readouts show. Proves the whole path in the real app — a CPU
+      // synthesized from Verilog, clocked on real flip-flops, computing its answer.
+      verilogCpu(maxTicks = 250) {
+        placeVerilogCpuDemo()
+        let snap: { res: number; acc: number; pc: number; halted: boolean } | null = null
+        let ticks = 0
+        for (let i = 0; i < maxTicks; i++) {
+          snap = stepVcpu()
+          ticks = i + 1
+          if (snap === null || snap.halted) break
+        }
+        return { ...snap, ticks }
+      },
       // Audit the REAL drawn wire geometry against the REAL part boxes (ground truth — no DOM/timing/regex):
       // how many drawn wire segments run diagonally, and how many cut through a part's interior (a >10px
       // margin ignores the legitimate landing on a pin sitting on a part edge).
@@ -6180,6 +6455,21 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                                   const calcKey = (node.data as DeviceNodeData).calcKey
                                   if (typeof calcKey === 'string') {
                                     pressCalcKey(calcKey)
+                                    return
+                                  }
+                                  // A Verilog-CPU demo control (Run / Step / Reset) — a clickable button node.
+                                  const demoAction = (node.data as { demoAction?: string })
+                                    .demoAction
+                                  if (demoAction === 'run') {
+                                    runVcpu()
+                                    return
+                                  }
+                                  if (demoAction === 'step') {
+                                    stepVcpu()
+                                    return
+                                  }
+                                  if (demoAction === 'reset') {
+                                    resetVcpu()
                                     return
                                   }
                                   if (
