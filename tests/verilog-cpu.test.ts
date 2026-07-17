@@ -144,6 +144,19 @@ describe('a whole CPU written in Verilog builds itself from real gates and runs 
     expect(block).not.toBeNull()
   })
 
+  test('the imported CPU is genuinely real flip-flops and gates — no faked or opaque nodes', () => {
+    // Proves the headline claim IN the test: the block is nothing but real cells. Every top-level node is a
+    // composite cell (never a placeholder), with exactly one D flip-flop per state bit and a large body of
+    // real logic gates around them.
+    const { block } = importVerilog(cpuVerilog(PROGRAM))
+    const cpu = block as BlockData
+    expect(cpu.nodes.every((n) => n.definition === 'block' && n.block != null)).toBe(true)
+    // pc4 + ir8 + t2 + acc4 + out4 + halted1 + mem(16×4) = 87 real positive-edge D flip-flops
+    const flops = cpu.nodes.filter((n) => n.block?.name === 'D Flip-Flop')
+    expect(flops.length).toBe(87)
+    expect(cpu.nodes.length - flops.length).toBeGreaterThan(200) // surrounded by real logic gates
+  })
+
   test('it multiplies 3 × 4 by repeated addition and halts with 12 in the output register', () => {
     const { block } = importVerilog(cpuVerilog(PROGRAM))
     const cpu = block as BlockData
@@ -151,13 +164,31 @@ describe('a whole CPU written in Verilog builds itself from real gates and runs 
     tick(cpu, true, state) // reset: pc/acc/out/halted ← 0
 
     let halted = false
+    let earlyOut = -1
     let last = solve(cpu, { rst: false, clk: false }, state)
     for (let i = 0; i < 400 && !halted; i++) {
       last = tick(cpu, false, state)
+      if (i === 10) earlyOut = readReg(last, 'out', 4) // OUT hasn't run yet — result is still building
       halted = last.value('M', 'halted') === true
     }
+    expect(earlyOut).toBe(0) // proof the 12 is computed over real clocked steps, not a combinational shortcut
     expect(halted, 'the CPU should reach HLT within the tick budget').toBe(true)
+    expect(last.settled, 'the gate network must converge on every solve').toBe(true)
     expect(readReg(last, 'out', 4)).toBe(12) // 3 × 4 = 12, computed on real gates
+  })
+
+  test('a non-terminating program does NOT report halted (the halt check has teeth)', () => {
+    // A negative control: `JMP 0` loops forever, so the machine must never set halted — proving the halt
+    // assertions above catch a real HLT, not a net that trivially reads true.
+    const { block } = importVerilog(cpuVerilog([instr(OP.JMP, 0)]))
+    const cpu = block as BlockData
+    const state = new Map<string, boolean>()
+    tick(cpu, true, state)
+    let halted = false
+    for (let i = 0; i < 40 && !halted; i++) {
+      halted = tick(cpu, false, state).value('M', 'halted') === true
+    }
+    expect(halted).toBe(false)
   })
 
   test('a different program (5 + 6 = 11) runs on the same CPU', () => {
