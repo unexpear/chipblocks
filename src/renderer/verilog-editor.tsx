@@ -242,10 +242,13 @@ export function VerilogEditor({
   initialText,
   onSynthesize,
   onClose,
+  onTextChange,
 }: {
   initialText: string
   onSynthesize: (block: BlockData, moduleName: string) => void
   onClose: () => void
+  /** Reports the current text up so the parent can keep it across close/reopen. */
+  onTextChange?: (text: string) => void
 }): JSX.Element {
   const [text, setText] = useState(initialText)
   const [diag, setDiag] = useState<SynthDiagnostics>(() => synthesize(initialText))
@@ -260,6 +263,11 @@ export function VerilogEditor({
   const preRef = useRef<HTMLPreElement>(null)
   const gutterRef = useRef<HTMLDivElement>(null)
   const pendingCaret = useRef<number | null>(null)
+
+  // Report the text up so the parent can keep it across a close/reopen (the editor unmounts on close).
+  useEffect(() => {
+    onTextChange?.(text)
+  }, [text, onTextChange])
 
   // One monospace character's width, measured once — the caret's pixel column is col × this, which is exact
   // for a fixed-pitch font and lets the autocomplete popup sit right under the word being typed.

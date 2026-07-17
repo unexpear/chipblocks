@@ -1621,6 +1621,8 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [pcbOpen, setPcbOpen] = useState(false)
   // Verilog IDE: write hardware in Verilog, watch it synthesize live, drop the resulting gates on the sheet.
   const [verilogOpen, setVerilogOpen] = useState(false)
+  // The editor's text, kept here so it survives closing + reopening the panel (the editor unmounts on close).
+  const [verilogText, setVerilogText] = useState(STARTER_VERILOG)
   // Run-trace inspector: clock a digital design N cycles and flag per-cycle anomalies.
   const [traceOpen, setTraceOpen] = useState(false)
   // Stress bench: ramp ambient / supply / a component's value and map each part's safe operating window.
@@ -7303,7 +7305,8 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         {pickerOpen ? <PartPicker onPick={placePart} onClose={() => setPickerOpen(false)} /> : null}
         {verilogOpen ? (
           <VerilogEditor
-            initialText={STARTER_VERILOG}
+            initialText={verilogText}
+            onTextChange={setVerilogText}
             onSynthesize={synthesizeVerilogToCanvas}
             onClose={() => setVerilogOpen(false)}
           />
