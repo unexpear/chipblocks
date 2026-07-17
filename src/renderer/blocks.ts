@@ -208,7 +208,9 @@ export function blockLayout(
     top: [],
     bottom: [],
   }
-  for (const p of ports) bySide[p.side].push(p)
+  // Object.hasOwn guards the push: a loaded grouped block's port side is untrusted, and bySide['constructor']
+  // / ['__proto__'] resolves to an inherited member (no .push) → a crash. A bogus side is skipped.
+  for (const p of ports) if (Object.hasOwn(bySide, p.side)) bySide[p.side].push(p)
   const vMax = Math.max(bySide.left.length, bySide.right.length)
   const hMax = Math.max(bySide.top.length, bySide.bottom.length)
   const height = size?.height ?? Math.max(BLOCK_MIN_H, vMax * PORT_SPACING + PORT_PAD)

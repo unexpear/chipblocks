@@ -910,7 +910,12 @@ export function PartInspector({
               </label>
             )
           }
-          const enumOptions = ENUM_PARAM_OPTIONS[key]
+          // Object.hasOwn, not `ENUM_PARAM_OPTIONS[key]`: an untrusted param key ('constructor' etc.) from
+          // a loaded part returns the inherited Object ctor (not undefined), so the guard below would pass
+          // and the enum <select> render garbage. hasOwn only matches a real enum-param.
+          const enumOptions = Object.hasOwn(ENUM_PARAM_OPTIONS, key)
+            ? ENUM_PARAM_OPTIONS[key]
+            : undefined
           if (enumOptions !== undefined && typeof param.value === 'string') {
             return (
               <label key={`${selected.id}:${key}`} style={row}>

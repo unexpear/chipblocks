@@ -1251,7 +1251,10 @@ export function defaultProvenance(definition: string, key: string): string | und
 
 /** A real, cited default parameter set for a freshly-dropped part (a fresh copy; editable). */
 export function defaultParameters(definition: string): Parameters {
-  const preset = DEFAULTS[definition]
+  // Object.hasOwn, not `DEFAULTS[definition]`: `definition` is an untrusted string from a loaded file, and
+  // DEFAULTS['constructor'] returns the inherited Object ctor (truthy) → JSON.parse(JSON.stringify(fn)) is
+  // JSON.parse(undefined) → SyntaxError. hasOwn only reads a real preset.
+  const preset = Object.hasOwn(DEFAULTS, definition) ? DEFAULTS[definition] : undefined
   if (preset) return JSON.parse(JSON.stringify(preset)) as Parameters
   const userPart = getUserPart(definition)
   // A part that behaves as a real device gets THAT device's cited defaults (so a placed instance solves

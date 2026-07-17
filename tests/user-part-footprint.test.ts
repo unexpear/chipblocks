@@ -51,6 +51,17 @@ describe('footprintForPart for a custom part', () => {
     expect(footprintForPart('my_sensor')?.id).toBe('R_0603_1608Metric')
   })
 
+  test('a prototype-member footprintId ("constructor" / "__proto__") is rejected, not crashed on', () => {
+    // A corrupt/hostile user part whose footprintId is an inherited Object member: BUILTIN_FOOTPRINTS
+    // ['constructor'] is the Object ctor (NOT undefined), so a naive `fp !== undefined && fp.pads.length`
+    // would throw. Object.hasOwn rejects it → undefined (the part is honestly unfootprinted).
+    registerUserPart({ ...twoPin, id: 'my_bad', footprintId: 'constructor' })
+    expect(footprintForPart('my_bad')).toBeUndefined()
+    // …and a prototype-member per-instance OVERRIDE falls back to the declared footprint, not a crash.
+    registerUserPart(twoPin)
+    expect(footprintForPart('my_sensor', '__proto__')?.id).toBe('R_0603_1608Metric')
+  })
+
   test('a per-instance override that FITS wins; one too small falls back to the default', () => {
     registerUserPart(twoPin)
     expect(footprintForPart('my_sensor', 'R_0805_2012Metric')?.id).toBe('R_0805_2012Metric')

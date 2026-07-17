@@ -2265,7 +2265,12 @@ export function terminalsOf(
   // A user-authored part draws its terminals from its pin spec (a labelled box), not a hardcoded map.
   const userPart = getUserPart(definition)
   if (userPart !== undefined) return userPartTerminals(userPart)
-  return TERMINALS[definition] ?? FALLBACK_TERMINALS
+  // Object.hasOwn, not `TERMINALS[definition] ?? …`: an untrusted definition ('constructor' etc.) from a
+  // loaded file returns the inherited Object ctor (not nullish), so `??` alone would return THAT instead
+  // of the fallback. hasOwn only matches a real terminal spec.
+  return (
+    (Object.hasOwn(TERMINALS, definition) ? TERMINALS[definition] : undefined) ?? FALLBACK_TERMINALS
+  )
 }
 
 /** Simulation fidelity for a block (the complexity-layer system). 'transistor' = the full analog
@@ -2506,7 +2511,10 @@ export function DeviceGlyph({
   if (definition === 'net_label') {
     return <NetLabelGlyph name={stringValue(parameters, 'net_name') ?? '+5V'} />
   }
-  const Glyph = GLYPHS[definition]
+  // Object.hasOwn, not `GLYPHS[definition]`: an untrusted definition ('constructor' etc.) from a loaded
+  // file returns the inherited Object ctor (truthy), so `<Glyph />` would try to render it as a component
+  // and throw. hasOwn only matches a real glyph; anything else falls through to the user-part/name box.
+  const Glyph = Object.hasOwn(GLYPHS, definition) ? GLYPHS[definition] : undefined
   if (Glyph) return <Glyph />
   // A user-authored part draws its own labelled box from its pin spec (matching terminalsOf's handles),
   // so a definition that isn't hardcoded here still renders instead of falling back to a bare name box.

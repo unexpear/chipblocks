@@ -572,7 +572,12 @@ export function serializeSpiceNetlist(circuit: CircuitFile): SpiceExportResult {
       continue
     }
     if (ANNOTATION_DEFINITIONS.has(node.definition)) continue
-    const card = EXPORT_CARDS[node.definition]
+    // Object.hasOwn, not `EXPORT_CARDS[node.definition]`: an untrusted definition ('constructor' etc.)
+    // from a loaded file returns the inherited Object ctor (not undefined), so the guard below would pass
+    // and `card.terminals.map` crash. hasOwn only matches a real export card.
+    const card = Object.hasOwn(EXPORT_CARDS, node.definition)
+      ? EXPORT_CARDS[node.definition]
+      : undefined
     if (card === undefined) {
       unsupported.push(`${node.id} (${node.definition})`)
       comments.push(`* ${node.id} (${node.definition}): no SPICE equivalent — omitted`)

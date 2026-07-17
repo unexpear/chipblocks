@@ -9,7 +9,10 @@ import { getUserPart, type UserPart } from './user-parts.ts'
  */
 function userPartFootprint(userPart: UserPart, chosenId?: string): Footprint | undefined {
   const fits = (id: string | undefined): Footprint | undefined => {
-    if (id === undefined) return undefined
+    // Object.hasOwn guards the lookup: a user part's persisted footprintId is untrusted, and
+    // BUILTIN_FOOTPRINTS['constructor'] / ['__proto__'] returns an inherited member (not undefined),
+    // whose `.pads` is undefined → a crash on `.length`. hasOwn only accepts a real footprint id.
+    if (id === undefined || !Object.hasOwn(BUILTIN_FOOTPRINTS, id)) return undefined
     const fp = BUILTIN_FOOTPRINTS[id]
     return fp !== undefined && fp.pads.length >= userPart.pins.length ? fp : undefined
   }
@@ -61,7 +64,10 @@ export const PART_FOOTPRINTS: Record<string, { default: string; options: string[
  * default. `undefined` when the part has no real footprint yet (honest — never a wrong package).
  */
 export function footprintForPart(definition: string, chosenId?: string): Footprint | undefined {
-  const entry = PART_FOOTPRINTS[definition]
+  // Object.hasOwn, not `PART_FOOTPRINTS[definition]`: an untrusted definition ('constructor' etc.) from a
+  // loaded file returns the inherited Object ctor (truthy), so the guard below would pass and
+  // `entry.options.includes` crash. hasOwn only matches a real mapping.
+  const entry = Object.hasOwn(PART_FOOTPRINTS, definition) ? PART_FOOTPRINTS[definition] : undefined
   if (entry !== undefined) {
     const id = chosenId !== undefined && entry.options.includes(chosenId) ? chosenId : entry.default
     return BUILTIN_FOOTPRINTS[id]
