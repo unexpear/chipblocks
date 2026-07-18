@@ -24,6 +24,7 @@ import { mergeOverrides } from './chip-canvas.tsx'
 import { type ChipLayout, EMPTY_CHIP_LAYOUT } from './chip-layout.ts'
 import { ChipView } from './chip-workspace.tsx'
 import { floorplanToGds, writeGds } from './gds.ts'
+import { namedCellLvs, summarizeLvs } from './lvs.ts'
 import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
 import type { WorkspaceMode } from './workspace.ts'
 import '@xyflow/react/dist/style.css'
@@ -1791,6 +1792,8 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         warnings.push('Some cells are flagged unreliable in the floorplan (reported, not omitted).')
       const drc = namedCellDrc(plan.cells.map((c) => c.name))
       if (drc.length > 0) warnings.push(summarizeDrc(drc))
+      const lvs = namedCellLvs(plan.cells.map((c) => c.name))
+      if (lvs.length > 0) warnings.push(summarizeLvs(lvs))
       setNetlistReport({
         kind: 'export',
         count: plan.cells.length,

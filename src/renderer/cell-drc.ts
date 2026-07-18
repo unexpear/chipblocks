@@ -200,7 +200,7 @@ export function cellDrc(rects: CellRect[]): DrcViolation[] {
   return violations
 }
 
-const STANDARD_CELL_BLOCKS: readonly BlockData[] = [
+export const STANDARD_CELL_BLOCKS: readonly BlockData[] = [
   INVERTER_BLOCK,
   BUFFER_BLOCK,
   NAND2_BLOCK,
