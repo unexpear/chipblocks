@@ -41,17 +41,10 @@ type Template = {
   desc: string
   /** A representative part whose symbol is the card thumbnail (none = a blank start). */
   glyph?: string
-  /** Designable parts show the use-as-a-block / design-it depth switch. */
+  /** Designable parts show the use-as-a-block / design-it depth switch (a materials-first preview). */
   designable?: boolean
   featured?: boolean
   includes: string[]
-  /** The design-depth preview (right rail) for a DESIGNABLE part — its own internals, so a transformer
-   *  shows a core + windings and a relay shows a coil + contacts, NOT the motor's. `design` = the fields
-   *  shown under "Design it" (build it from these), `block` = the headline numbers under "Use as a block",
-   *  `note` = the line beneath the design fields. Absent ⇒ a generic materials-first preview. */
-  design?: [string, string][]
-  block?: [string, string][]
-  note?: string
   /** Suggested project name when this template is picked, before the user types their own. */
   defaultName?: string
   /** The workspace level the editor opens ON (Board / Chip start there instead of the schematic). */
@@ -87,25 +80,9 @@ const CATEGORIES: Category[] = [
       {
         id: 'blank-circ',
         name: 'Blank circuit',
-        desc: 'A clean canvas — drop in parts and wire them up.',
+        desc: 'A clean canvas — drop parts from the palette and wire them up. DC + transient sim live.',
         includes: ['Empty schematic', 'Full parts palette', 'DC + transient sim'],
         defaultName: 'MyCircuit',
-      },
-      {
-        id: 'amp',
-        name: 'Amplifier',
-        desc: 'A gain stage to tune and probe.',
-        glyph: 'op_amp',
-        includes: ['Transistor / op-amp stage', 'Bias network', 'Scope on the output'],
-        defaultName: 'MyAmp',
-      },
-      {
-        id: 'psu',
-        name: 'Power supply',
-        desc: 'Rectify, smooth and regulate a DC rail.',
-        glyph: 'diode_silicon_rectifier',
-        includes: ['Transformer + bridge', 'Filter capacitor', 'Regulator + load'],
-        defaultName: 'MyPSU',
       },
     ],
   },
@@ -117,91 +94,10 @@ const CATEGORIES: Category[] = [
       {
         id: 'blank-comp',
         name: 'Blank component',
-        desc: 'Start from raw materials and build a part up.',
+        desc: 'Start from raw materials and build a part up — or drop a ready part (motor, transformer, relay…) from the palette and open it to design its internals.',
         designable: true,
         includes: ['Empty assembly', 'Materials catalog', 'Derived terminal behaviour'],
         defaultName: 'MyPart',
-      },
-      {
-        id: 'dc-motor',
-        name: 'DC motor',
-        desc: 'A brushed motor — use it as a block, or open it up and design the stator, magnets and winding.',
-        glyph: 'dc_motor',
-        designable: true,
-        featured: true,
-        includes: ['Stator core + magnets', 'Armature winding', 'Rotor geometry'],
-        defaultName: 'MyMotor',
-        design: [
-          ['Stator core', 'Soft iron'],
-          ['Magnets', 'Ferrite'],
-          ['Winding', '500 turns · 26 AWG'],
-        ],
-        block: [
-          ['Torque constant k', '0.02 V·s/rad'],
-          ['Winding R', '2 Ω'],
-          ['No-load speed', '5,600 RPM'],
-        ],
-        note: '↓ torque, speed & resistance derive from these',
-      },
-      {
-        id: 'transformer',
-        name: 'Transformer',
-        desc: 'Two coupled windings on a shared core — use it as a block, or design the core and windings.',
-        glyph: 'transformer',
-        designable: true,
-        includes: ['Core material', 'Primary + secondary', 'Turns ratio'],
-        defaultName: 'MyTransformer',
-        design: [
-          ['Core', 'Laminated Si-steel'],
-          ['Primary', '230 V · 500 t'],
-          ['Secondary', '23 V · 50 t'],
-        ],
-        block: [
-          ['Turns ratio', '10 : 1'],
-          ['Primary L', '2.2 H'],
-          ['Rating', '5 VA'],
-        ],
-        note: '↓ turns ratio & regulation derive from these',
-      },
-      {
-        id: 'electromagnet',
-        name: 'Electromagnet',
-        desc: 'A coil on a core — the field is the point. Use it as a block, or design the core and winding.',
-        glyph: 'electromagnet',
-        designable: true,
-        includes: ['Core + permeability', 'Winding turns', 'Field + pull force'],
-        defaultName: 'MyMagnet',
-        design: [
-          ['Core', 'Soft iron'],
-          ['Winding', '300 turns · 26 AWG'],
-          ['Drive', '0.5 A'],
-        ],
-        block: [
-          ['MMF', '150 A·turns'],
-          ['Pull force', '~5 N'],
-          ['Coil R', '8 Ω'],
-        ],
-        note: '↓ field strength & pull force derive from these',
-      },
-      {
-        id: 'relay',
-        name: 'Relay',
-        desc: 'A coil that throws a switch — use it as a block, or design the coil, contacts and spring.',
-        glyph: 'relay',
-        designable: true,
-        includes: ['Coil (electromagnet)', 'Contacts', 'Pull-in / drop-out'],
-        defaultName: 'MyRelay',
-        design: [
-          ['Coil', '400 turns · 30 AWG'],
-          ['Contacts', 'SPDT · AgNi'],
-          ['Return spring', '2 mN'],
-        ],
-        block: [
-          ['Coil', '5 V · 40 mA'],
-          ['Pull-in', '3.8 V'],
-          ['Contact rating', '2 A · 30 V'],
-        ],
-        note: '↓ pull-in & drop-out voltages derive from these',
       },
     ],
   },
@@ -213,17 +109,9 @@ const CATEGORIES: Category[] = [
       {
         id: 'blank-log',
         name: 'Blank logic',
-        desc: 'Build from real transistor gates up.',
+        desc: 'Build from real transistor gates up — drop gates, flip-flops and registers from the palette. Live truth tables.',
         includes: ['Logic palette', 'Live truth tables', 'From-transistors view'],
         defaultName: 'MyLogic',
-      },
-      {
-        id: 'register',
-        name: 'Register',
-        desc: 'Flip-flops that latch a word.',
-        glyph: 'logic_register_4bit',
-        includes: ['D flip-flops', 'Clock', '4-bit word'],
-        defaultName: 'MyRegister',
       },
     ],
   },
@@ -424,11 +312,10 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
 
   // The design-depth preview is THIS template's own internals (a transformer's core + windings, a relay's
   // coil + contacts, …) — not the motor's. Falls back to a generic materials-first preview.
-  const depthFields =
-    depth === 'design' ? (template?.design ?? GENERIC_DESIGN) : (template?.block ?? GENERIC_BLOCK)
+  const depthFields = depth === 'design' ? GENERIC_DESIGN : GENERIC_BLOCK
   const depthNote =
     depth === 'design'
-      ? (template?.note ?? '↓ the terminal behaviour derives from these')
+      ? '↓ the terminal behaviour derives from these'
       : 'Type the headline numbers; skip the internals.'
 
   return (

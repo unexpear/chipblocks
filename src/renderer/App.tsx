@@ -832,26 +832,10 @@ export function App() {
 
 /** The parts a template drops onto a fresh canvas (placed, not yet wired). A template
  *  not listed here opens a blank canvas — the relevant parts are in the palette. */
-const TEMPLATE_PARTS: Record<string, { def: string; x: number; y: number }[]> = {
-  'dc-motor': [
-    { def: 'power_source', x: 80, y: 180 },
-    { def: 'dc_motor', x: 380, y: 180 },
-    { def: 'ground', x: 80, y: 380 },
-  ],
-  electromagnet: [
-    { def: 'power_source', x: 80, y: 180 },
-    { def: 'electromagnet', x: 380, y: 180 },
-    { def: 'ground', x: 80, y: 380 },
-  ],
-  transformer: [{ def: 'transformer', x: 260, y: 220 }],
-  relay: [{ def: 'relay', x: 260, y: 220 }],
-  psu: [
-    { def: 'power_source', x: 80, y: 220 },
-    { def: 'transformer', x: 340, y: 220 },
-  ],
-  amp: [{ def: 'op_amp', x: 260, y: 220 }],
-  register: [{ def: 'logic_register_4bit', x: 240, y: 220 }],
-}
+// A project template can pre-place (and later pre-wire) a starter circuit, keyed by the browser's template
+// id. Empty for now: the level starts collapsed to a blank canvas and the parts live in the palette (the
+// block system) — real, wired templates land here as a later pass.
+const TEMPLATE_PARTS: Record<string, { def: string; x: number; y: number }[]> = {}
 
 function templateNodes(template: string, depth: 'block' | 'design'): Node[] {
   const parts = TEMPLATE_PARTS[template] ?? []
