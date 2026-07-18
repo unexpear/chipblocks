@@ -206,6 +206,7 @@ import {
 } from './pipeline/solve-canvas.ts'
 import { ProjectBrowser, type ProjectChoice } from './project-browser.tsx'
 import { projectNameFromPath, recordRecentProject } from './recent-projects.ts'
+import { ReflectionPanel } from './reflection-panel.tsx'
 import { deriveResistorOhms, resistivityOhmM } from './resistor-derive.ts'
 import { runTrace } from './run-trace.ts'
 import { scanMatrixFromBuffer } from './scan-display.ts'
@@ -237,6 +238,7 @@ import { useConnectTool } from './use-connect-tool.ts'
 import { useMultimeter } from './use-multimeter.ts'
 import { useOscilloscope } from './use-oscilloscope.ts'
 import { usePanelLayout } from './use-panel-layout.ts'
+import { useReflection } from './use-reflection.ts'
 import { useSelectionGestures } from './use-selection-gestures.ts'
 import { useShortcuts } from './use-shortcuts.tsx'
 import { useTimeline } from './use-timeline.ts'
@@ -2412,6 +2414,17 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     bodeWorld,
     onBodeProbeClick,
   } = useBode({ solvedWorld, tool })
+  // The 1-port Reflection tool (RF) — the frequency-domain sibling of Bode, same shape.
+  const {
+    reflectionOpen,
+    setReflectionOpen,
+    reflectionPort,
+    setReflectionPort,
+    reflectionPicking,
+    setReflectionPicking,
+    reflectionWorld,
+    onReflectionProbeClick,
+  } = useReflection({ solvedWorld, tool })
   const mathView = useMemo(
     () =>
       showMath
@@ -6944,6 +6957,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             return
           }
           if (onBodeProbeClick(event)) return
+          if (onReflectionProbeClick(event)) return
           if (onScopeProbeClick(event)) return
           onMeterClick(event)
           wire.onWireClick(event)
@@ -8146,6 +8160,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 onTimeline={() => setTimelineOpen((open) => !open)}
                 onMath={() => setShowMath((open) => !open)}
                 onBode={() => setBodeOpen((open) => !open)}
+                onReflection={() => setReflectionOpen((open) => !open)}
                 onPcb={() => setPcbOpen((open) => !open)}
                 onVerilog={() => setVerilogOpen((open) => !open)}
                 onTrace={() => setTraceOpen((open) => !open)}
@@ -8391,7 +8406,35 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 outputNet={bodeOutputNet}
                 onOutputNet={setBodeOutputNet}
                 picking={bodePicking}
-                onPickToggle={() => setBodePicking((p) => !p)}
+                onPickToggle={() => {
+                  // Arm Bode's picker and disarm Reflection's — only one canvas picker at a time, so the
+                  // shared click chain can't let one tool steal the other's terminal click.
+                  setBodePicking((p) => !p)
+                  setReflectionPicking(false)
+                }}
+              />
+            ),
+          },
+          reflection: {
+            title: 'Reflection',
+            visible: reflectionOpen,
+            content: (
+              <ReflectionPanel
+                world={reflectionWorld}
+                temperaturesC={solvedTemperatures}
+                light={light}
+                onClose={() => {
+                  setReflectionOpen(false)
+                  setReflectionPicking(false)
+                }}
+                port={reflectionPort}
+                onPort={setReflectionPort}
+                picking={reflectionPicking}
+                onPickToggle={() => {
+                  // Arm Reflection's picker and disarm Bode's (see the Bode toggle) — mutually exclusive.
+                  setReflectionPicking((p) => !p)
+                  setBodePicking(false)
+                }}
               />
             ),
           },
@@ -8859,6 +8902,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             'scope',
             'timeline',
             'bode',
+            'reflection',
             'pcb',
             'timing',
           ],

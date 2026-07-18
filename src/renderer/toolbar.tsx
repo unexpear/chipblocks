@@ -54,6 +54,7 @@ export type ToolbarActionId =
   | 'scope'
   | 'timeline'
   | 'bode'
+  | 'reflection'
   | 'pcb'
   | 'verilog'
   | 'trace'
@@ -113,6 +114,14 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
     color: THEME.accentBlueBright,
     title:
       "Bode — the frequency response: pick an input source and an output node and see gain (dB) and phase vs frequency. Reads off the RC/filter corner, an amplifier's roll-off and phase margin, or a transmission line's quarter-wave resonances.",
+  },
+  {
+    id: 'reflection',
+    label: 'Reflect',
+    icon: '⟲',
+    color: THEME.accentBlueBright,
+    title:
+      'Reflection (RF) — how well a port is matched: pick a Port and a reference impedance (50 Ω) and see the return loss (dB) and VSWR vs frequency, plus the complex input impedance Zin. Peaks in return loss are the frequencies where the input is matched and reflects the least.',
   },
   {
     id: 'pcb',
@@ -253,6 +262,7 @@ export function ToolbarItems({
   onScope,
   onTimeline,
   onBode,
+  onReflection,
   onPcb,
   onVerilog,
   onTrace,
@@ -293,6 +303,7 @@ export function ToolbarItems({
   onScope: () => void
   onTimeline: () => void
   onBode: () => void
+  onReflection: () => void
   onPcb: () => void
   onVerilog: () => void
   onTrace: () => void
@@ -323,6 +334,7 @@ export function ToolbarItems({
     scope: onScope,
     timeline: onTimeline,
     bode: onBode,
+    reflection: onReflection,
     pcb: onPcb,
     verilog: onVerilog,
     trace: onTrace,
