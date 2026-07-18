@@ -259,19 +259,16 @@ function buildTopology(world: World, temperaturesC?: Map<string, number>): Topol
 /** Solve the linear circuit at angular frequency omega; return the complex node
  *  voltage at `outputNet` with a unit phasor on `inputSource` (all other sources
  *  AC-grounded). */
-function solveAtOmega(
-  world: World,
-  topo: Topology,
-  inputSource: string,
-  outputNet: string,
-  omega: number,
-): Complex | null {
+/**
+ * Build + LU-solve the complex MNA system at ω, driving `inputSource` with a unit phasor and AC-grounding
+ * every other source. Returns the raw solution vector — node voltages first, then the branch-current
+ * unknowns (voltage sources, shorts, transformers, CCCS) — or null if singular. Assumes dim > 0 (callers
+ * guard). Both the gain/phase read and the input-impedance read pull what they need out of this one solve.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: mathjs lusolve return is polymorphic
+function solveSystem(world: World, topo: Topology, inputSource: string, omega: number): any {
   const { ground, nodeIndex, vsources, shorts, dim } = topo
-  if (dim === 0) return { re: 0, im: 0 }
   const idx = (net: string) => (net === ground ? -1 : (nodeIndex.get(net) ?? -1))
-  // Unknown input source or output net → NaN, not a misleading 0 (a real ground output stays 0).
-  if (!vsources.some((vs) => vs.id === inputSource)) return null
-  if (idx(outputNet) < 0 && outputNet !== ground) return null
 
   // biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix is polymorphic
   const M: any = math.zeros(dim, dim)
@@ -516,17 +513,70 @@ function solveAtOmega(
   // make the matrix singular; negligible for any grounded circuit.
   for (let i = 0; i < nodeIndex.size; i++) accumulate(i, i, AC_GMIN, 0)
 
-  // biome-ignore lint/suspicious/noExplicitAny: mathjs lusolve return is polymorphic
-  let solution: any
   try {
-    solution = math.lusolve(M, rhs)
+    return math.lusolve(M, rhs)
   } catch {
     return null // singular matrix
   }
+}
+
+/** Read the complex phasor at solution-vector row `row` (a node voltage or a branch current). mathjs returns
+ *  a plain number for a purely-real entry, else a {re,im} Complex. */
+// biome-ignore lint/suspicious/noExplicitAny: mathjs Matrix.get is polymorphic
+function readComplex(solution: any, row: number): Complex {
+  const v = solution.get([row, 0])
+  return typeof v === 'number' ? { re: v, im: 0 } : { re: v.re, im: v.im }
+}
+
+/** Complex divide a / b for {re,im}. A zero divisor (never reached with AC_GMIN loading every node) → 0. */
+function cDiv(a: Complex, b: Complex): Complex {
+  const d = b.re * b.re + b.im * b.im
+  if (d === 0) return { re: 0, im: 0 }
+  return { re: (a.re * b.re + a.im * b.im) / d, im: (a.im * b.re - a.re * b.im) / d }
+}
+
+/** Gain/phase of `outputNet` driven by `inputSource` at ω — reads the output node voltage from the solve. */
+function solveAtOmega(
+  world: World,
+  topo: Topology,
+  inputSource: string,
+  outputNet: string,
+  omega: number,
+): Complex | null {
+  const { ground, nodeIndex, vsources, dim } = topo
+  if (dim === 0) return { re: 0, im: 0 }
+  const idx = (net: string) => (net === ground ? -1 : (nodeIndex.get(net) ?? -1))
+  // Unknown input source or output net → NaN, not a misleading 0 (a real ground output stays 0).
+  if (!vsources.some((vs) => vs.id === inputSource)) return null
+  if (idx(outputNet) < 0 && outputNet !== ground) return null
+  const solution = solveSystem(world, topo, inputSource, omega)
+  if (solution === null) return null
   const outIdx = idx(outputNet)
   if (outIdx < 0) return { re: 0, im: 0 }
-  const v = solution.get([outIdx, 0])
-  return typeof v === 'number' ? { re: v, im: 0 } : { re: v.re, im: v.im }
+  return readComplex(solution, outIdx)
+}
+
+/**
+ * The complex input impedance looking INTO the port `inputSource` at ω. It is driven with a unit phasor
+ * (V = 1∠0); the source's branch-current unknown is the current flowing from its + node INTO the source, so
+ * the current into the external network is its negative — hence Zin = V / I_network = 1 / (−I_branch) =
+ * −1 / I_branch. (The sign is pinned by the single-resistor test: a port across R gives Zin ≈ R.) Returns
+ * null if singular or the source isn't in the circuit. AC_GMIN keeps I_branch off exact zero, so an open
+ * port reads a large finite Zin (Γ → +1) rather than dividing by zero.
+ */
+function portZinAtOmega(
+  world: World,
+  topo: Topology,
+  inputSource: string,
+  omega: number,
+): Complex | null {
+  const { nodeIndex, vsources, dim } = topo
+  if (dim === 0) return null
+  const k = vsources.findIndex((vs) => vs.id === inputSource)
+  if (k < 0) return null
+  const solution = solveSystem(world, topo, inputSource, omega)
+  if (solution === null) return null
+  return cDiv({ re: -1, im: 0 }, readComplex(solution, nodeIndex.size + k))
 }
 
 export type AcPoint = { frequencyHz: number; gain: number; gainDb: number; phaseDeg: number }
@@ -576,6 +626,98 @@ export function acSweep(world: World, opts: AcSweepOptions): AcPoint[] {
     const f = opts.fStartHz * 10 ** ((s / steps) * decades)
     const vout = solveAtOmega(world, topo, opts.inputSource, opts.outputNet, 2 * Math.PI * f)
     points.push(toPoint(f, vout))
+  }
+  return points
+}
+
+// ---- 1-port reflection (RF): Zin → Γ, return loss, VSWR against a reference impedance Z0 ----
+
+export type ReflectionPoint = {
+  frequencyHz: number
+  /** Complex input impedance Zin looking into the port (Ω). */
+  zinRe: number
+  zinIm: number
+  /** Complex reflection coefficient Γ = (Zin − Z0)/(Zin + Z0). */
+  gammaRe: number
+  gammaIm: number
+  /** |Γ| — 0 matched, 1 fully reflecting; can exceed 1 for an active (negative-resistance) port. */
+  gammaMag: number
+  /** Return loss −20·log10|Γ| (dB): +∞ matched, 0 at |Γ|=1, negative for an active port. */
+  returnLossDb: number
+  /** Voltage standing-wave ratio (1+|Γ|)/(1−|Γ|): 1 matched, +∞ at/above |Γ|=1. */
+  vswr: number
+}
+export type ReflectionOptions = {
+  /** The port's driving source (a power_source id) — a unit phasor is applied here to read Zin. */
+  inputSource: string
+  /** Reference impedance Z0 (Ω) the reflection is measured against; default 50. */
+  z0Ohms?: number
+  temperaturesC?: Map<string, number>
+}
+export type ReflectionSweepOptions = ReflectionOptions & {
+  fStartHz: number
+  fStopHz: number
+  pointsPerDecade: number
+}
+
+const DEFAULT_Z0_OHMS = 50
+const z0Of = (opts: ReflectionOptions): number =>
+  opts.z0Ohms && opts.z0Ohms > 0 ? opts.z0Ohms : DEFAULT_Z0_OHMS
+
+/** Turn a complex Zin into Γ / return loss / VSWR against a real Z0. A null Zin (no solve) → all NaN. */
+const reflectionPoint = (frequencyHz: number, zin: Complex | null, z0: number): ReflectionPoint => {
+  if (zin === null) {
+    const nan = Number.NaN
+    return {
+      frequencyHz,
+      zinRe: nan,
+      zinIm: nan,
+      gammaRe: nan,
+      gammaIm: nan,
+      gammaMag: nan,
+      returnLossDb: nan,
+      vswr: nan,
+    }
+  }
+  const gamma = cDiv({ re: zin.re - z0, im: zin.im }, { re: zin.re + z0, im: zin.im })
+  const mag = cAbs(gamma.re, gamma.im)
+  return {
+    frequencyHz,
+    zinRe: zin.re,
+    zinIm: zin.im,
+    gammaRe: gamma.re,
+    gammaIm: gamma.im,
+    gammaMag: mag,
+    returnLossDb: mag > 0 ? -20 * Math.log10(mag) : Number.POSITIVE_INFINITY,
+    vswr: mag < 1 ? (1 + mag) / (1 - mag) : Number.POSITIVE_INFINITY,
+  }
+}
+
+/** The 1-port reflection (Zin, Γ, return loss, VSWR) looking into the port at a single frequency. */
+export function portReflection(
+  world: World,
+  opts: ReflectionOptions,
+  frequencyHz: number,
+): ReflectionPoint {
+  const z0 = z0Of(opts)
+  const topo = buildTopology(world, opts.temperaturesC)
+  if (topo === null) return reflectionPoint(frequencyHz, null, z0)
+  const zin = portZinAtOmega(world, topo, opts.inputSource, 2 * Math.PI * frequencyHz)
+  return reflectionPoint(frequencyHz, zin, z0)
+}
+
+/** A logarithmic reflection sweep — the 1-port RF answer a Bode-style Reflection panel plots. */
+export function portReflectionSweep(world: World, opts: ReflectionSweepOptions): ReflectionPoint[] {
+  const z0 = z0Of(opts)
+  const topo = buildTopology(world, opts.temperaturesC)
+  if (topo === null) return []
+  const decades = Math.log10(opts.fStopHz / opts.fStartHz)
+  const steps = Math.max(1, Math.round(decades * opts.pointsPerDecade))
+  const points: ReflectionPoint[] = []
+  for (let s = 0; s <= steps; s++) {
+    const f = opts.fStartHz * 10 ** ((s / steps) * decades)
+    const zin = portZinAtOmega(world, topo, opts.inputSource, 2 * Math.PI * f)
+    points.push(reflectionPoint(f, zin, z0))
   }
   return points
 }
