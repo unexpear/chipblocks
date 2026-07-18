@@ -4,7 +4,7 @@ import { fuseIsIntact, relayCoilEnergized, switchIsClosed } from './dc-solver.ts
 import { coilInductanceFromInstance } from './electromagnet-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { mathInstance as math } from './mathjs-instance.ts'
-import { returnLossDbFromGamma, vswrFromGamma } from './rf-math.ts'
+import { dbFromAmplitudeRatio, returnLossDbFromGamma, vswrFromGamma } from './rf-math.ts'
 import {
   type BjtSmallSignal,
   bjtSmallSignalModel,
@@ -767,6 +767,195 @@ export function portReflectionSweep(world: World, opts: ReflectionSweepOptions):
     const f = opts.fStartHz * 10 ** ((s / steps) * decades)
     const zin = portZinAtOmega(world, topo, opts.inputSource, 2 * Math.PI * f)
     points.push(reflectionPoint(f, zin, z0))
+  }
+  return points
+}
+
+// ---- 2-port S-parameters (RF): the scattering matrix S11/S21/S12/S22 against Z0 ----
+
+export type SParamPoint = {
+  frequencyHz: number
+  /** The complex scattering parameters (linear). S11/S22 = input/output reflection with the far port matched;
+   *  S21/S12 = forward/reverse transmission — S21 IS the honest small-signal "gain" (a ratio of Z0-referenced
+   *  travelling waves), which for a passive network is ≤ 1. */
+  s11: Complex
+  s21: Complex
+  s12: Complex
+  s22: Complex
+  /** Magnitudes in dB (20·log10|S|): |S21| in dB is insertion gain/loss, |S11| in dB is −return loss. */
+  s11Db: number
+  s21Db: number
+  s12Db: number
+  s22Db: number
+  /** Phases (degrees). |S21|'s phase slope vs frequency is the group delay. */
+  s11Deg: number
+  s21Deg: number
+  s12Deg: number
+  s22Deg: number
+}
+export type SParamOptions = {
+  /** The two measurement ports (reference_port / source instance ids). */
+  port1: string
+  port2: string
+  /** Reference impedance Z0 (Ω) the waves are defined against; default 50. */
+  z0Ohms?: number
+  temperaturesC?: Map<string, number>
+}
+export type SParamSweepOptions = SParamOptions & {
+  fStartHz: number
+  fStopHz: number
+  pointsPerDecade: number
+}
+
+const scalarParam = (amount: number, unit: string) => ({
+  value: { kind: 'scalar' as const, amount, unit },
+})
+/** The two nets a 2-terminal port instance touches (+ / −), or null if it isn't wired on both. */
+function portNets(inst: Instance | undefined): { pNet: string; nNet: string } | null {
+  if (inst === undefined) return null
+  const p = inst.connects?.find((c) => c.terminal === 'terminal_positive')?.net
+  const n = inst.connects?.find((c) => c.terminal === 'terminal_negative')?.net
+  return p !== undefined && n !== undefined ? { pNet: p, nNet: n } : null
+}
+
+/**
+ * One column of the scattering matrix: DRIVE `driveId` with a Z0-referenced generator (a unit-phasor source in
+ * series with Z0) and TERMINATE `termId` in Z0, then read the two port voltages back. Because the generator's
+ * open-circuit voltage is 1, the reflected wave at the driven port is Sdd = 2·Vd − 1 and the transmitted wave
+ * at the far port is Sod = 2·Vo (standard travelling-wave algebra: a_drive = Vs/(2√Z0) = 1/(2√Z0), and with the
+ * far port matched b_term = Vo/√Z0, b_drive = (Vd − Z0·I)/(2√Z0) = Vd/√Z0 − a_drive). Both ports are replaced,
+ * so a reference_port (open) or a source used as a port never fights the measurement. Null if unsolvable.
+ */
+function sParamColumn(
+  world: World,
+  driveId: string,
+  termId: string,
+  z0: number,
+  omega: number,
+  temperaturesC?: Map<string, number>,
+): { reflect: Complex; thru: Complex } | null {
+  const drive = portNets(world.instances.get(driveId))
+  const term = portNets(world.instances.get(termId))
+  if (drive === null || term === null || driveId === termId) return null
+
+  const instances = new Map(world.instances)
+  instances.delete(driveId)
+  instances.delete(termId)
+  const nets = new Map(world.nets)
+  // Collision-free synthetic names: a hand-crafted or imported DUT could (however unlikely) already carry a
+  // `__sparam_*` id/net, and Map.set would silently overwrite the real part — a wrong answer, not an error.
+  const freeInstId = (base: string) => {
+    if (!instances.has(base)) return base
+    let n = 1
+    while (instances.has(`${base}_${n}`)) n++
+    return `${base}_${n}`
+  }
+  let genHot = `__sparam_gen_hot__${driveId}`
+  for (let n = 1; nets.has(genHot); n++) genHot = `__sparam_gen_hot__${driveId}_${n}`
+  const genId = freeInstId('__sparam_gen__')
+  const rgenId = freeInstId('__sparam_rgen__')
+  const rtermId = freeInstId('__sparam_rterm__')
+  const conn = (net: string, terminal: string, of: string) => ({ net, terminal, of })
+  instances.set(genId, {
+    id: genId,
+    kind_ref: 'primitive_device',
+    definition: 'power_source',
+    parameters: { nominal_voltage: scalarParam(0, 'volt') },
+    connects: [
+      conn(genHot, 'terminal_positive', genId),
+      conn(drive.nNet, 'terminal_negative', genId),
+    ],
+  })
+  instances.set(rgenId, {
+    id: rgenId,
+    kind_ref: 'primitive_device',
+    definition: 'resistor',
+    parameters: { resistance: scalarParam(z0, 'ohm') },
+    connects: [conn(genHot, 'terminal_a', rgenId), conn(drive.pNet, 'terminal_b', rgenId)],
+  })
+  instances.set(rtermId, {
+    id: rtermId,
+    kind_ref: 'primitive_device',
+    definition: 'resistor',
+    parameters: { resistance: scalarParam(z0, 'ohm') },
+    connects: [conn(term.pNet, 'terminal_a', rtermId), conn(term.nNet, 'terminal_b', rtermId)],
+  })
+  nets.set(genHot, { id: genHot, kind: 'net', members: [] })
+  const modWorld: World = { ...world, instances, nets }
+
+  const topo = buildTopology(modWorld, temperaturesC)
+  if (topo === null) return null
+  const solution = solveSystem(modWorld, topo, genId, omega)
+  if (solution === null) return null
+
+  const vAt = (net: string): Complex => {
+    const i = net === topo.ground ? -1 : (topo.nodeIndex.get(net) ?? -1)
+    return i < 0 ? { re: 0, im: 0 } : readComplex(solution, i)
+  }
+  const across = (pNet: string, nNet: string): Complex => {
+    const p = vAt(pNet)
+    const n = vAt(nNet)
+    return { re: p.re - n.re, im: p.im - n.im }
+  }
+  const vd = across(drive.pNet, drive.nNet)
+  const vo = across(term.pNet, term.nNet)
+  return { reflect: { re: 2 * vd.re - 1, im: 2 * vd.im }, thru: { re: 2 * vo.re, im: 2 * vo.im } }
+}
+
+const NAN_C: Complex = { re: Number.NaN, im: Number.NaN }
+const sParamPoint = (
+  frequencyHz: number,
+  s: { s11: Complex; s21: Complex; s12: Complex; s22: Complex } | null,
+): SParamPoint => {
+  const p = s ?? { s11: NAN_C, s21: NAN_C, s12: NAN_C, s22: NAN_C }
+  const db = (c: Complex) => dbFromAmplitudeRatio(cAbs(c.re, c.im))
+  const deg = (c: Complex) => cArgDeg(c.re, c.im)
+  return {
+    frequencyHz,
+    s11: p.s11,
+    s21: p.s21,
+    s12: p.s12,
+    s22: p.s22,
+    s11Db: db(p.s11),
+    s21Db: db(p.s21),
+    s12Db: db(p.s12),
+    s22Db: db(p.s22),
+    s11Deg: deg(p.s11),
+    s21Deg: deg(p.s21),
+    s12Deg: deg(p.s12),
+    s22Deg: deg(p.s22),
+  }
+}
+
+const sParamsAtOmega = (
+  world: World,
+  opts: SParamOptions,
+  omega: number,
+): { s11: Complex; s21: Complex; s12: Complex; s22: Complex } | null => {
+  const z0 = opts.z0Ohms && opts.z0Ohms > 0 ? opts.z0Ohms : DEFAULT_Z0_OHMS
+  const fwd = sParamColumn(world, opts.port1, opts.port2, z0, omega, opts.temperaturesC)
+  const rev = sParamColumn(world, opts.port2, opts.port1, z0, omega, opts.temperaturesC)
+  if (fwd === null || rev === null) return null
+  return { s11: fwd.reflect, s21: fwd.thru, s22: rev.reflect, s12: rev.thru }
+}
+
+/** The full 2-port scattering matrix (S11/S21/S12/S22) at a single frequency. */
+export function portSParameters(
+  world: World,
+  opts: SParamOptions,
+  frequencyHz: number,
+): SParamPoint {
+  return sParamPoint(frequencyHz, sParamsAtOmega(world, opts, 2 * Math.PI * frequencyHz))
+}
+
+/** A logarithmic S-parameter sweep — an S21/S11 vs frequency plot's worth of points. */
+export function portSParameterSweep(world: World, opts: SParamSweepOptions): SParamPoint[] {
+  const decades = Math.log10(opts.fStopHz / opts.fStartHz)
+  const steps = Math.max(1, Math.round(decades * opts.pointsPerDecade))
+  const points: SParamPoint[] = []
+  for (let s = 0; s <= steps; s++) {
+    const f = opts.fStartHz * 10 ** ((s / steps) * decades)
+    points.push(sParamPoint(f, sParamsAtOmega(world, opts, 2 * Math.PI * f)))
   }
   return points
 }
