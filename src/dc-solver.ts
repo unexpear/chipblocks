@@ -385,6 +385,7 @@ const DC_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   'capacitor', // an open circuit at DC
   'ground', // the reference-node marker — defines a net, no device to stamp
   'light_source', // environmental (no electrical terminals)
+  'reference_port', // an RF measurement port — an ideal AC stimulus, an open at DC
 ])
 
 export function solveDC(inputWorld: World, options?: SolveOptions): Solution {

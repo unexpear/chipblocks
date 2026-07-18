@@ -9,8 +9,14 @@
  * The single-resistor case also PINS the branch-current sign (the easy-to-invert part of the extraction).
  */
 import { describe, expect, test } from 'vitest'
-import { portReflection, portReflectionSweep, type ReflectionOptions } from '../src/ac-analysis.ts'
+import {
+  acResponse,
+  portReflection,
+  portReflectionSweep,
+  type ReflectionOptions,
+} from '../src/ac-analysis.ts'
 import type { World } from '../src/cross-fk-validator.ts'
+import { solveDCRobust } from '../src/dc-robust.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
 
@@ -201,6 +207,77 @@ describe('portReflectionSweep', () => {
       pointsPerDecade: 3,
     })
     for (const p of pts) expect(p.gammaMag).toBeCloseTo(0.5, 3)
+  })
+})
+
+describe('the reference_port part — a driver only in reflection, an open otherwise', () => {
+  test('a reference_port can BE the port (reflection drives it, reads Zin = R)', () => {
+    const w = makeWorld()
+    ensureNet(w, 'gnd', true)
+    addPart(w, 'port', 'reference_port', { reference_impedance: scalar(50, 'ohm') }, [
+      { net: 'in', terminal: 'terminal_positive' },
+      { net: 'gnd', terminal: 'terminal_negative' },
+    ])
+    addPart(w, 'rload', 'resistor', { resistance: scalar(150, 'ohm') }, [
+      { net: 'in', terminal: 'terminal_a' },
+      { net: 'gnd', terminal: 'terminal_b' },
+    ])
+    const p = portReflection(w, { inputSource: 'port', z0Ohms: 50 }, F)
+    expect(p.zinRe).toBeCloseTo(150, 1)
+    expect(p.gammaMag).toBeCloseTo(0.5, 3)
+  })
+
+  test('a reference_port does NOT short a Bode analysis — it is an open outside reflection', () => {
+    // RC low-pass driven by a power_source; hang a reference_port from `out` to gnd. If the port shorted
+    // (like a real vsource would), `out` would collapse; because it is an open, the −3 dB corner is intact.
+    const R = 1000
+    const C = 1e-6
+    const fc = 1 / (2 * Math.PI * R * C)
+    const rc = (withPort: boolean): World => {
+      const w = makeWorld()
+      ensureNet(w, 'gnd', true)
+      addPart(w, 'vin', 'power_source', { nominal_voltage: scalar(1, 'volt') }, [
+        { net: 'in', terminal: 'terminal_positive' },
+        { net: 'gnd', terminal: 'terminal_negative' },
+      ])
+      addPart(w, 'r1', 'resistor', { resistance: scalar(R, 'ohm') }, [
+        { net: 'in', terminal: 'terminal_a' },
+        { net: 'out', terminal: 'terminal_b' },
+      ])
+      addPart(w, 'c1', 'capacitor', { capacitance: scalar(C, 'farad') }, [
+        { net: 'out', terminal: 'terminal_a' },
+        { net: 'gnd', terminal: 'terminal_b' },
+      ])
+      if (withPort) {
+        addPart(w, 'port', 'reference_port', { reference_impedance: scalar(50, 'ohm') }, [
+          { net: 'out', terminal: 'terminal_positive' },
+          { net: 'gnd', terminal: 'terminal_negative' },
+        ])
+      }
+      return w
+    }
+    const bode = (w: World) => acResponse(w, { inputSource: 'vin', outputNet: 'out' }, fc).gainDb
+    expect(bode(rc(true))).toBeCloseTo(bode(rc(false)), 6) // the port changed nothing
+    expect(bode(rc(true))).toBeCloseTo(-3.0103, 2) // still the textbook −3 dB corner
+  })
+
+  test('a reference_port is an open at DC — no unsupported-element warning', () => {
+    const w = makeWorld()
+    ensureNet(w, 'gnd', true)
+    addPart(w, 'vin', 'power_source', { nominal_voltage: scalar(5, 'volt') }, [
+      { net: 'in', terminal: 'terminal_positive' },
+      { net: 'gnd', terminal: 'terminal_negative' },
+    ])
+    addPart(w, 'r1', 'resistor', { resistance: scalar(1000, 'ohm') }, [
+      { net: 'in', terminal: 'terminal_a' },
+      { net: 'gnd', terminal: 'terminal_b' },
+    ])
+    addPart(w, 'port', 'reference_port', { reference_impedance: scalar(50, 'ohm') }, [
+      { net: 'in', terminal: 'terminal_positive' },
+      { net: 'gnd', terminal: 'terminal_negative' },
+    ])
+    const res = solveDCRobust(w)
+    expect(res.warnings.some((warn) => /unsupported/i.test(warn) && /port/.test(warn))).toBe(false)
   })
 })
 

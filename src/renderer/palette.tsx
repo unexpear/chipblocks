@@ -107,6 +107,7 @@ export const PARTS: { definition: string; label: string }[] = [
   { definition: 'induction_motor_single_phase', label: '1φ AC Motor' },
   { definition: 'induction_motor_shaded_pole', label: 'Shaded-Pole' },
   { definition: 'transmission_line', label: 'T-Line' },
+  { definition: 'reference_port', label: 'Port' },
   { definition: 'transformer', label: 'Transformer' },
   { definition: 'transformer_center_tapped', label: 'CT Transformer' },
   { definition: 'diode_silicon_rectifier', label: 'Diode' },

@@ -274,6 +274,7 @@ export const TRANSIENT_SUPPORTED_DEFINITIONS: ReadonlySet<string> = new Set([
   // Legitimately produce no transient stamp (not unsupported):
   'ground', // the reference-node marker — defines a net, no device to stamp
   'light_source', // environmental (no electrical terminals)
+  'reference_port', // an RF measurement port — a frequency-domain construct, an open in the time domain
 ])
 
 export type TransientOptions = {

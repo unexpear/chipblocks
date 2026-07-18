@@ -83,6 +83,14 @@ const DEFAULTS: Record<string, Parameters> = {
     // out). 1 = a supply rail lead whose return is bonded to ground.
     terminal_count: scalar(2, 'count'),
   },
+  reference_port: {
+    // An RF reference / measurement port (like a VNA port). Its reference impedance is what the reflection
+    // (Γ, return loss, VSWR) is measured against; 50 Ω is the near-universal RF system value — a compromise
+    // between coax's ~30 Ω peak power handling and ~77 Ω minimum loss (Bird/IEC 60169; the Analog Devices
+    // "Why 50 Ohms?" note). The port is an ideal stimulus for a reflection sweep and an OPEN otherwise, so it
+    // never disturbs a DC / transient / Bode analysis.
+    reference_impedance: scalar(50, 'ohm'),
+  },
   vccs: {
     // Transconductance g (siemens = A/V). 1 mS is a usable small-signal starting
     // value; an ideal controlled source has no canonical g (like a transistor's
@@ -1410,6 +1418,10 @@ export function primaryValue(
     if (ac > 0 && f > 0) return `${formatEng(ac, 'V')}~ ${formatEng(f, 'Hz')}`
     const v = amountOf(parameters, 'nominal_voltage')
     return v === undefined ? null : `${v} V`
+  }
+  if (definition === 'reference_port') {
+    const z = amountOf(parameters, 'reference_impedance')
+    return z === undefined ? null : `${formatEng(z, 'Ω')} port`
   }
   if (definition === 'vccs') {
     const g = amountOf(parameters, 'transconductance')

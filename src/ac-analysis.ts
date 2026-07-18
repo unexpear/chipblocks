@@ -141,7 +141,11 @@ function acShortPair(inst: Instance): { aNet: string; bNet: string } | null {
   }
 }
 
-function buildTopology(world: World, temperaturesC?: Map<string, number>): Topology | null {
+function buildTopology(
+  world: World,
+  temperaturesC?: Map<string, number>,
+  portSourceId?: string,
+): Topology | null {
   let ground: string | undefined
   for (const net of world.nets.values()) if (net.type === 'ground') ground = net.id
   if (ground === undefined) return null
@@ -150,7 +154,12 @@ function buildTopology(world: World, temperaturesC?: Map<string, number>): Topol
   for (const net of world.nets.values()) {
     if (net.id !== ground) nodeIndex.set(net.id, nodeIndex.size)
   }
-  const vsources = [...world.instances.values()].filter((i) => i.definition === 'power_source')
+  // Ordinary drivers are the power sources. A `reference_port` is an OPEN everywhere (DC, transient, Bode)
+  // EXCEPT the one reflection measures — passed as `portSourceId`, it joins the drivers just for that solve,
+  // so it is driven with the unit phasor and gets a branch-current row (Zin) without shorting other analyses.
+  const vsources = [...world.instances.values()].filter(
+    (i) => i.definition === 'power_source' || i.id === portSourceId,
+  )
   const idx = (net: string) => (net === ground ? -1 : (nodeIndex.get(net) ?? -1))
 
   // 0 V shorts the DC/transient engines also stamp — wires (their tiny series R is negligible at
@@ -700,7 +709,7 @@ export function portReflection(
   frequencyHz: number,
 ): ReflectionPoint {
   const z0 = z0Of(opts)
-  const topo = buildTopology(world, opts.temperaturesC)
+  const topo = buildTopology(world, opts.temperaturesC, opts.inputSource)
   if (topo === null) return reflectionPoint(frequencyHz, null, z0)
   const zin = portZinAtOmega(world, topo, opts.inputSource, 2 * Math.PI * frequencyHz)
   return reflectionPoint(frequencyHz, zin, z0)
@@ -709,7 +718,7 @@ export function portReflection(
 /** A logarithmic reflection sweep — the 1-port RF answer a Bode-style Reflection panel plots. */
 export function portReflectionSweep(world: World, opts: ReflectionSweepOptions): ReflectionPoint[] {
   const z0 = z0Of(opts)
-  const topo = buildTopology(world, opts.temperaturesC)
+  const topo = buildTopology(world, opts.temperaturesC, opts.inputSource)
   if (topo === null) return []
   const decades = Math.log10(opts.fStopHz / opts.fStartHz)
   const steps = Math.max(1, Math.round(decades * opts.pointsPerDecade))

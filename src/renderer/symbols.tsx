@@ -1228,6 +1228,26 @@ function CtTransformerGlyph() {
 }
 
 /** Capacitor — IEC 60617: two parallel plates with a gap. */
+/** RF reference / measurement port — a circle on a two-lead stalk with an arrow pointing INTO the circuit
+ *  under test (the direction the reflection looks). The circle echoes a source; the arrow marks it a port. */
+function ReferencePortGlyph() {
+  return (
+    <svg width={W} height={H}>
+      <title>reference port</title>
+      {lead(0, 28)}
+      <circle cx={40} cy={MID} r={12} fill="none" stroke={STROKE} strokeWidth={2} />
+      <line x1={34} y1={MID} x2={45} y2={MID} stroke={STROKE} strokeWidth={2} />
+      <polyline
+        points={`41,${MID - 4} 45,${MID} 41,${MID + 4}`}
+        fill="none"
+        stroke={STROKE}
+        strokeWidth={2}
+      />
+      {lead(52, W)}
+    </svg>
+  )
+}
+
 function CapacitorGlyph() {
   return (
     <svg width={W} height={H}>
@@ -1932,6 +1952,7 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
   induction_motor_single_phase: SinglePhaseInductionMotorGlyph,
   induction_motor_shaded_pole: ShadedPoleInductionMotorGlyph,
   transmission_line: TransmissionLineGlyph,
+  reference_port: ReferencePortGlyph,
   led: LedGlyph,
   arc_lamp: ArcLampGlyph,
   neon_lamp: NeonLampGlyph,
@@ -2058,6 +2079,7 @@ const TERMINALS: Record<string, { id: string; position: Position; offset?: numbe
     { id: 'far_b', position: Position.Right, offset: 30 },
   ],
   power_source: TWO('terminal_positive', 'terminal_negative'),
+  reference_port: TWO('terminal_positive', 'terminal_negative'),
   // Dependent sources — control sense on the left (offsets 14/30), the controlled output on the
   // right (14/30): a 4-terminal part you wire the control across (VCCS) or in series with (CCCS).
   vccs: [
