@@ -996,6 +996,128 @@ const TEMPLATE_FLOWS: Record<
       ['Vneg', 'terminal_negative', 'G', 'reference_terminal'],
     ],
   },
+  // The classic common-emitter gain stage: R1/R2 divider bias, Rc load, Re degeneration with a bypass cap,
+  // input coupled in through Cin. Biased in the active region (Vc ≈ 5.4 V) so it amplifies cleanly, then
+  // clips when driven hard (open the Distortion panel).
+  'ce-amp': {
+    parts: [
+      {
+        id: 'Vcc',
+        def: 'power_source',
+        x: 120,
+        y: 60,
+        params: { nominal_voltage: tplScalar(12, 'volt') },
+      },
+      {
+        id: 'Vin',
+        def: 'power_source',
+        x: 60,
+        y: 320,
+        params: {
+          nominal_voltage: tplScalar(0, 'volt'),
+          ac_amplitude: tplScalar(0.01, 'volt'),
+          frequency: tplScalar(1000, 'hertz'),
+        },
+      },
+      {
+        id: 'R1',
+        def: 'resistor',
+        x: 300,
+        y: 120,
+        params: { resistance: tplScalar(47000, 'ohm') },
+      },
+      {
+        id: 'R2',
+        def: 'resistor',
+        x: 300,
+        y: 440,
+        params: { resistance: tplScalar(10000, 'ohm') },
+      },
+      { id: 'Rc', def: 'resistor', x: 520, y: 120, params: { resistance: tplScalar(4700, 'ohm') } },
+      { id: 'Re', def: 'resistor', x: 460, y: 500, params: { resistance: tplScalar(1000, 'ohm') } },
+      {
+        id: 'Ce',
+        def: 'capacitor',
+        x: 620,
+        y: 500,
+        params: { capacitance: tplScalar(1e-4, 'farad') },
+      },
+      {
+        id: 'Cin',
+        def: 'capacitor',
+        x: 200,
+        y: 300,
+        params: { capacitance: tplScalar(1e-6, 'farad') },
+      },
+      { id: 'Q1', def: 'transistor_bjt_npn', x: 460, y: 300 },
+      { id: 'G', def: 'ground', x: 120, y: 560 },
+    ],
+    wires: [
+      ['Vcc', 'terminal_positive', 'R1', 'terminal_a'],
+      ['R1', 'terminal_b', 'Q1', 'base'],
+      ['R2', 'terminal_a', 'Q1', 'base'],
+      ['R2', 'terminal_b', 'G', 'reference_terminal'],
+      ['Vcc', 'terminal_positive', 'Rc', 'terminal_a'],
+      ['Rc', 'terminal_b', 'Q1', 'collector'],
+      ['Q1', 'emitter', 'Re', 'terminal_a'],
+      ['Re', 'terminal_b', 'G', 'reference_terminal'],
+      ['Q1', 'emitter', 'Ce', 'terminal_a'],
+      ['Ce', 'terminal_b', 'G', 'reference_terminal'],
+      ['Vin', 'terminal_positive', 'Cin', 'terminal_a'],
+      ['Cin', 'terminal_b', 'Q1', 'base'],
+      ['Vin', 'terminal_negative', 'G', 'reference_terminal'],
+      ['Vcc', 'terminal_negative', 'G', 'reference_terminal'],
+    ],
+  },
+  // A full-wave bridge rectifier: four diodes turn the AC both-halves positive, a 470 µF cap smooths it, a
+  // 1 kΩ load draws the rail. Run the scope — the AC becomes a ≈ 10.6 V DC rail (12 V peak − two diode drops).
+  'bridge-rectifier': {
+    parts: [
+      {
+        id: 'Vac',
+        def: 'power_source',
+        x: 80,
+        y: 260,
+        params: {
+          nominal_voltage: tplScalar(0, 'volt'),
+          ac_amplitude: tplScalar(12, 'volt'),
+          frequency: tplScalar(60, 'hertz'),
+        },
+      },
+      { id: 'D1', def: 'diode_silicon_rectifier', x: 320, y: 120 },
+      { id: 'D2', def: 'diode_silicon_rectifier', x: 320, y: 300 },
+      { id: 'D3', def: 'diode_silicon_rectifier', x: 320, y: 420 },
+      { id: 'D4', def: 'diode_silicon_rectifier', x: 320, y: 540 },
+      {
+        id: 'Cf',
+        def: 'capacitor',
+        x: 600,
+        y: 260,
+        params: { capacitance: tplScalar(4.7e-4, 'farad') },
+      },
+      {
+        id: 'Rload',
+        def: 'resistor',
+        x: 760,
+        y: 260,
+        params: { resistance: tplScalar(1000, 'ohm') },
+      },
+      { id: 'G', def: 'ground', x: 600, y: 520 },
+    ],
+    wires: [
+      ['Vac', 'terminal_positive', 'D1', 'anode'],
+      ['Vac', 'terminal_negative', 'D2', 'anode'],
+      ['D1', 'cathode', 'D2', 'cathode'],
+      ['D2', 'cathode', 'Cf', 'terminal_a'],
+      ['Cf', 'terminal_a', 'Rload', 'terminal_a'],
+      ['D3', 'cathode', 'D1', 'anode'],
+      ['D4', 'cathode', 'D2', 'anode'],
+      ['D3', 'anode', 'G', 'reference_terminal'],
+      ['D4', 'anode', 'G', 'reference_terminal'],
+      ['Cf', 'terminal_b', 'G', 'reference_terminal'],
+      ['Rload', 'terminal_b', 'G', 'reference_terminal'],
+    ],
+  },
 }
 
 /** Turn a template id into a wired starting flow — device + block nodes and the net edges between them. */

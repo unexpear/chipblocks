@@ -116,6 +116,22 @@ const CATEGORIES: Category[] = [
         includes: ['Op-amp on ±15 V', 'Rf = Rg = 10 kΩ (gain 2)', '1 kHz input tone'],
         defaultName: 'MyAmp',
       },
+      {
+        id: 'ce-amp',
+        name: 'Common-emitter amp',
+        desc: 'The classic single-transistor gain stage — divider bias, collector load, bypassed emitter. Biased in the active region (Vc ≈ 5.4 V); drive it and watch it amplify, then clip.',
+        glyph: 'transistor_bjt_npn',
+        includes: ['NPN + divider bias', 'Rc = 4.7 kΩ, Re = 1 kΩ', 'Bypass + coupling caps'],
+        defaultName: 'MyBJTamp',
+      },
+      {
+        id: 'bridge-rectifier',
+        name: 'Bridge rectifier',
+        desc: 'A full-wave bridge — four diodes + a 470 µF smoothing cap turn 12 V AC into a ≈ 10.6 V DC rail. Run the scope to watch the AC become DC.',
+        glyph: 'diode_silicon_rectifier',
+        includes: ['4-diode bridge', '470 µF filter cap', '1 kΩ load'],
+        defaultName: 'MyPSU',
+      },
     ],
   },
   {
