@@ -7,7 +7,8 @@
  */
 import { describe, expect, test } from 'vitest'
 import { PROCESS } from '../src/renderer/cell-layout.ts'
-import type { Floorplan } from '../src/renderer/cell-place.ts'
+import type { Floorplan, PlacedCell } from '../src/renderer/cell-place.ts'
+import { cellBlock, cellPolygons, extractNetlist } from '../src/renderer/cell-polygons.ts'
 import {
   floorplanToGds,
   type GdsLibrary,
@@ -55,6 +56,7 @@ const REC = {
   XY: 0x10,
   ENDEL: 0x11,
   SNAME: 0x12,
+  STRANS: 0x1a,
 }
 const asciiOf = (d: Uint8Array): string => {
   let s = ''
@@ -280,5 +282,116 @@ describe('gdsName — legal GDSII cell names', () => {
     expect(gdsName('a'.repeat(40)).length).toBe(32)
     expect(gdsName('###')).toBe('___')
     expect(gdsName('')).toBe('CELL')
+  })
+})
+
+describe('floorplanToGds — N / FS row mirroring for a legal power grid', () => {
+  const nm = (lambda: number) => Math.round(lambda * PROCESS.lambdaUm * 1000)
+  const H = PROCESS.rowHeight.lambda
+  const cell = (id: string, row: number): PlacedCell => ({
+    id,
+    name: 'AND',
+    x: 0,
+    y: row * H,
+    w: 32,
+    h: H,
+    row,
+    reliable: true,
+  })
+  // three stacked rows so the FS y-reference (row TOP) is DISTINCT from the N one (row bottom).
+  const stack = (rows: number): Floorplan => ({
+    cells: Array.from({ length: rows }, (_, r) => cell(`g${r}`, r)),
+    rows,
+    dieWidthLambda: 32,
+    dieHeightLambda: rows * H,
+    dieWidthUm: 32 * PROCESS.lambdaUm,
+    dieHeightUm: rows * H * PROCESS.lambdaUm,
+    cellAreaLambda2: rows * 32 * H,
+    dieAreaLambda2: rows * 32 * H,
+    utilization: 1,
+    anyUnreliable: false,
+  })
+
+  // Walk the top structure's SREFs, capturing the optional STRANS (reflection) that may sit between SNAME
+  // and XY — so this reader is correct whether or not a placement is flipped.
+  type Sref = { name: string; reflect: number | null; x: number; y: number }
+  const srefsOf = (fp: Floorplan): Sref[] => {
+    const recs = parseRecords(writeGds(floorplanToGds(fp, { topName: 'demo' }), WHEN))
+    const top = structuresOf(recs).find((s) => s.name === 'demo')
+    if (top === undefined) throw new Error('no top structure')
+    const out: Sref[] = []
+    for (let i = 0; i < top.recs.length; i++) {
+      if ((top.recs[i] as Rec).rtype !== REC.SREF) continue
+      let name = ''
+      let reflect: number | null = null
+      let xy: [number, number] = [0, 0]
+      for (let j = i + 1; j < top.recs.length; j++) {
+        const r = top.recs[j] as Rec
+        if (r.rtype === REC.ENDEL) break
+        if (r.rtype === REC.SNAME) name = asciiOf(r.data)
+        // STRANS is an unsigned bit-array, not a signed int — read it unsigned (0x8000 = the reflect bit).
+        else if (r.rtype === REC.STRANS)
+          reflect = ((r.data[0] as number) << 8) | (r.data[1] as number)
+        else if (r.rtype === REC.XY) xy = [i32(r.data, 0), i32(r.data, 4)]
+      }
+      out.push({ name, reflect, x: xy[0], y: xy[1] })
+    }
+    return out
+  }
+
+  test('odd rows carry an STRANS reflection (bit 0 = 0x8000); even rows carry none', () => {
+    const dieH = 3 * H
+    const srefs = srefsOf(stack(3))
+    expect(srefs).toHaveLength(3)
+    // row 0 (N): no STRANS, referenced at its GDS bottom = flipY(y + h)
+    expect(srefs[0]?.reflect).toBeNull()
+    expect(srefs[0]?.y).toBe(nm(dieH - (0 + H)))
+    // row 1 (FS): STRANS with the reflect bit, referenced at the row TOP = flipY(y) (NOT the bottom)
+    expect(srefs[1]?.reflect).toBe(0x8000)
+    expect(srefs[1]?.y).toBe(nm(dieH - H)) // = flipY(90); the N formula would give flipY(180) = nm(90)
+    expect(srefs[1]?.y).not.toBe(nm(dieH - (H + H)))
+    // row 2 (N): no STRANS again
+    expect(srefs[2]?.reflect).toBeNull()
+    expect(srefs[2]?.y).toBe(nm(dieH - (2 * H + H)))
+  })
+
+  test('the flip makes adjacent rows abut rail-to-rail on the SAME net (legal PDN)', () => {
+    // Pull the cell's real VSS/VDD rail bands, then push each through the SREF transform the writer emitted
+    // (N: y + ly; FS: refY − ly, the x-axis mirror) — the two rows must share a rail, not clash VDD-vs-VSS.
+    const block = cellBlock('AND')
+    if (!block) throw new Error('no AND block')
+    const net = extractNetlist(block)
+    const rails = cellPolygons(block).rects.filter(
+      (r) => r.layer === 'met1' && (r.net === net.vss || r.net === net.vdd),
+    )
+    const vss = rails.find((r) => r.net === net.vss)
+    const vdd = rails.find((r) => r.net === net.vdd)
+    if (!vss || !vdd) throw new Error('cell is missing a power rail')
+
+    const srefs = srefsOf(stack(2)) // two rows → one internal boundary
+    // absolute GDS y-band [lo, hi] of a local rail rect under an SREF's transform
+    const band = (s: Sref, y: number, h: number): [number, number] =>
+      s.reflect ? [s.y - nm(y + h), s.y - nm(y)] : [s.y + nm(y), s.y + nm(y + h)]
+    const row0 = {
+      vss: band(srefs[0] as Sref, vss.y, vss.h),
+      vdd: band(srefs[0] as Sref, vdd.y, vdd.h),
+    }
+    const row1 = {
+      vss: band(srefs[1] as Sref, vss.y, vss.h),
+      vdd: band(srefs[1] as Sref, vdd.y, vdd.h),
+    }
+
+    const boundary = nm(H) // the shared internal row edge (2-row die, dieH = 180)
+    // row 0 is N (VSS at its bottom), row 1 is FS (VSS flipped to its top) → both VSS meet AT the boundary
+    expect(row0.vss).toContain(boundary)
+    expect(row1.vss).toContain(boundary)
+    // and it is genuinely a shared VSS rail: neither VDD rail touches that boundary (they sit at the die edges)
+    expect(row0.vdd).not.toContain(boundary)
+    expect(row1.vdd).not.toContain(boundary)
+    // the two VSS rails coincide edge-to-edge, forming one continuous strap across the boundary
+    expect(
+      (row0.vss[0] === boundary && row1.vss[1] === boundary) ||
+        (row0.vss[1] === boundary && row1.vss[0] === boundary),
+    ).toBe(true)
   })
 })

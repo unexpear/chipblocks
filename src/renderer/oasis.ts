@@ -16,7 +16,7 @@
  */
 
 import { PROCESS } from './cell-layout.ts'
-import type { Floorplan } from './cell-place.ts'
+import { cellOrient, type Floorplan } from './cell-place.ts'
 import { cellBlock, cellPolygons } from './cell-polygons.ts'
 import { gdsName } from './gds.ts'
 import { type GdsPair, gdsOf, PR_BOUNDARY } from './pdk.ts'
@@ -225,7 +225,16 @@ export function floorplanToOasis(
         })
         gateCells.push({ name: cellName, rects: local })
       }
-      placements.push({ cell: cellName, x: CELL_NM(c.x), y: flipY(c.y + c.h) })
+      // Same rule as the GDS SREF: an N cell references its row bottom (flipY(c.y + c.h)); an FS cell is
+      // flipped about the x-axis (info-byte F flag) and references the row TOP (flipY(c.y)) so the mirrored
+      // cell still fills the band — the odd-row flip that abuts the power rails on the same net.
+      const flip = cellOrient(c) === 'FS'
+      placements.push({
+        cell: cellName,
+        x: CELL_NM(c.x),
+        y: flip ? flipY(c.y) : flipY(c.y + c.h),
+        flip,
+      })
     }
   }
 

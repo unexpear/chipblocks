@@ -13,12 +13,12 @@
  *
  * HONEST SCOPE (see lef.ts): PINS and NETS are emitted as empty stubs — this is a PLACED design, not a
  * connected one, so OpenROAD can inspect/re-place it but cannot route or time it without a Liberty library
- * and real connectivity. All rows/components are orientation N (matching the GDS), so adjacent rails abut
- * VDD-to-VSS — an interchange artifact, not a legalized power grid.
+ * and real connectivity. Rows alternate orientation N / FS (even / odd), matching the GDS + OASIS, so
+ * adjacent rows abut rail-to-rail on the SAME net (VDD∥VDD, VSS∥VSS) — a legal, shareable power grid.
  */
 
 import { PROCESS } from './cell-layout.ts'
-import type { Floorplan } from './cell-place.ts'
+import { cellOrient, type Floorplan, orientForRow } from './cell-place.ts'
 import { gdsName } from './gds.ts'
 import { dbu, LEF_SITE } from './lef.ts'
 
@@ -50,9 +50,12 @@ export function floorplanToDef(
     `DIEAREA ( 0 0 ) ( ${dbu(fp.dieWidthLambda)} ${dbu(fp.dieHeightLambda)} ) ;`,
   ]
   for (let r = 0; r < fp.rows; r++) {
-    // DEF is y-up; row r (from the top, y-down) sits at bottom-y = dieHeight − (r+1)·rowHeight.
+    // DEF is y-up; row r (from the top, y-down) sits at bottom-y = dieHeight − (r+1)·rowHeight. Even rows
+    // are N, odd rows FS — the flipped rows share power rails with their neighbours (legal PDN).
     const y = dbu(fp.dieHeightLambda - (r + 1) * rowH)
-    lines.push(`ROW ROW_${r} ${LEF_SITE} 0 ${y} N DO ${nSites} BY 1 STEP ${siteStep} 0 ;`)
+    lines.push(
+      `ROW ROW_${r} ${LEF_SITE} 0 ${y} ${orientForRow(r)} DO ${nSites} BY 1 STEP ${siteStep} 0 ;`,
+    )
   }
 
   lines.push(`COMPONENTS ${fp.cells.length} ;`)
@@ -66,9 +69,15 @@ export function floorplanToDef(
     }
     usedIds.add(id)
     const master = gdsName(`cell_${c.name}`)
+    // DEF places the cell origin (its lower-left) at the point AFTER the orientation is applied. For N that
+    // is the cell's bottom-left (dieHeight − (y+h)); for FS the x-axis flip sends the origin to the top edge
+    // (dieHeight − y), so the flipped cell still lands in its row band. Orientation from the LIVE y, so a
+    // dragged cell re-orients to whichever band it now sits in.
+    const orient = cellOrient(c)
     const x = dbu(c.x)
-    const y = dbu(fp.dieHeightLambda - (c.y + c.h)) // flip to DEF y-up, bottom-left of the cell
-    lines.push(`   - ${id} ${master} + PLACED ( ${x} ${y} ) N ;`)
+    const y =
+      orient === 'FS' ? dbu(fp.dieHeightLambda - c.y) : dbu(fp.dieHeightLambda - (c.y + c.h))
+    lines.push(`   - ${id} ${master} + PLACED ( ${x} ${y} ) ${orient} ;`)
   }
   lines.push('END COMPONENTS')
   lines.push('PINS 0 ;', 'END PINS')

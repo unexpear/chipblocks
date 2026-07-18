@@ -49,7 +49,7 @@ describe('floorplanToDef', () => {
   test('one COMPONENT per placed cell, each on the site grid and inside the die', () => {
     const { text, components } = floorplanToDef(fp)
     expect(components).toBe(fp.cells.length)
-    const placed = [...text.matchAll(/- \S+ (\S+) \+ PLACED \( (\d+) (\d+) \) N ;/g)]
+    const placed = [...text.matchAll(/- \S+ (\S+) \+ PLACED \( (\d+) (\d+) \) (N|FS) ;/g)]
     expect(placed).toHaveLength(fp.cells.length)
     for (const m of placed) {
       const x = Number(m[2])
@@ -63,11 +63,30 @@ describe('floorplanToDef', () => {
     expect(text).toContain(`COMPONENTS ${fp.cells.length} ;`)
   })
 
-  test('one ROW per floorplan row, all orientation N', () => {
+  test('rows alternate orientation N / FS for a legal power grid', () => {
     const { text } = floorplanToDef(fp)
-    const rows = [...text.matchAll(/^ROW ROW_\d+ /gm)]
+    const rows = [...text.matchAll(/^ROW ROW_(\d+) \S+ \d+ \d+ (N|FS) DO /gm)]
     expect(rows).toHaveLength(fp.rows)
-    expect([...text.matchAll(/^ROW [^\n]* N DO /gm)]).toHaveLength(fp.rows)
+    for (const m of rows) {
+      const r = Number(m[1])
+      expect(m[2]).toBe(r % 2 === 0 ? 'N' : 'FS') // even N, odd FS — rails abut same-net
+    }
+  })
+
+  test('an FS (odd-row) component is placed at its row top; an N component at the row bottom', () => {
+    const { text } = floorplanToDef(fp)
+    const comp = (id: string) => {
+      const m = text.match(new RegExp(`- ${id} \\S+ \\+ PLACED \\( \\d+ (\\d+) \\) (N|FS) ;`))
+      if (!m) throw new Error(`no component ${id}`)
+      return { y: Number(m[1]), orient: m[2] }
+    }
+    const u0 = comp('u0') // NOT, row 0 → N, at the row bottom = dieH − (0 + 90)
+    expect(u0.orient).toBe('N')
+    expect(u0.y).toBe(dbu(180 - (0 + 90)))
+    const u1 = comp('u1') // NAND, row 1 → FS, at the row TOP = dieH − 90 (the N formula would give dieH−180)
+    expect(u1.orient).toBe('FS')
+    expect(u1.y).toBe(dbu(180 - 90))
+    expect(u1.y).not.toBe(dbu(180 - (90 + 90)))
   })
 
   test('every DEF component master is a MACRO defined by the matching LEF (no dangling master)', () => {

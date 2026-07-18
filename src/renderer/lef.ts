@@ -14,8 +14,8 @@
  * cited to Harris E158 / MOSIS SCMOS, NOT SKY130 silicon µm; a full OpenROAD flow additionally needs a
  * Liberty (.lib) timing library, DEF connectivity (NETS/PINS — emitted empty here), and LEF VIA / DEF TRACKS
  * for detailed routing. Cells are the same teaching geometry gds.ts exports (no well/substrate taps; relaxed
- * stage-boundary contacts). Rows are all orientation N, so adjacent rails abut VDD-to-VSS — an interchange
- * artifact for inspection, not a legalized power grid.
+ * stage-boundary contacts). Every MACRO declares SYMMETRY X Y, so the DEF's odd rows can legally place the
+ * cell flipped (FS) to abut power rails on the same net — a legal, shareable grid, not an all-N artifact.
  */
 
 import type { BlockData } from './blocks.ts'
@@ -102,6 +102,7 @@ function blackBoxMacro(macroName: string, widthLambda: number): string {
     `MACRO ${macroName}`,
     '  CLASS CORE ;',
     `  SIZE ${um(widthLambda)} BY ${um(ROW_H)} ;`,
+    '  SYMMETRY X Y ;', // permit the FS (x-axis flip) an odd row places it in — matching the gate MACROs
     `  SITE ${LEF_SITE} ;`,
     '  OBS',
     '    LAYER met1 ;',

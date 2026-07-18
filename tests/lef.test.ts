@@ -83,6 +83,8 @@ describe('the cell MACROs', () => {
     expect(text).toContain('MACRO cell_MYSTERY')
     expect(text).toContain('OBS')
     expect(text).not.toContain('PIN ')
+    // must permit the FS flip an odd row places it in — else OpenROAD rejects the placement orientation
+    expect(text).toContain('SYMMETRY X Y ;')
   })
 
   test('standardCellLef covers all 8 gates + the tech LEF, deterministically', () => {

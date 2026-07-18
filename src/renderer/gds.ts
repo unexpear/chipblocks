@@ -1,5 +1,5 @@
 import { PROCESS } from './cell-layout.ts'
-import type { Floorplan } from './cell-place.ts'
+import { cellOrient, type Floorplan } from './cell-place.ts'
 import { cellBlock, cellPolygons } from './cell-polygons.ts'
 import { type GdsPair, gdsOf, PR_BOUNDARY } from './pdk.ts'
 
@@ -35,18 +35,24 @@ const REC = {
   BOUNDARY: [0x08, 0x00],
   SREF: [0x0a, 0x00],
   SNAME: [0x12, 0x06],
+  STRANS: [0x1a, 0x01],
   LAYER: [0x0d, 0x02],
   DATATYPE: [0x0e, 0x02],
   XY: [0x10, 0x03],
   ENDEL: [0x11, 0x00],
 } as const
 
+/** STRANS bit 0 (the most-significant bit, GDSII numbers bits from the left) = reflect about the x-axis
+ *  before rotation — the transform that turns an N placement into FS (top/bottom mirrored). */
+const STRANS_REFLECT = 0x8000
+
 /** A point in DATABASE units (integer nm). */
 export type GdsPoint = { x: number; y: number }
 /** A filled polygon on one layer. `points` is the closed ring (first === last). */
 export type GdsBoundary = { kind: 'boundary'; layer: number; datatype: number; points: GdsPoint[] }
-/** A placed reference to another structure (hierarchy), at (x, y) in database units. */
-export type GdsSref = { kind: 'sref'; structure: string; x: number; y: number }
+/** A placed reference to another structure (hierarchy), at (x, y) in database units. `reflect` mirrors the
+ *  referenced cell about the x-axis before placing it (an STRANS record) — the FS row orientation. */
+export type GdsSref = { kind: 'sref'; structure: string; x: number; y: number; reflect?: boolean }
 export type GdsElement = GdsBoundary | GdsSref
 export type GdsStructure = { name: string; elements: GdsElement[] }
 export type GdsLibrary = {
@@ -147,6 +153,9 @@ export function writeGds(lib: GdsLibrary, when: Date): Uint8Array {
       } else {
         record(out, REC.SREF, [])
         record(out, REC.SNAME, asciiData(el.structure))
+        // STRANS goes between SNAME and XY (GDSII element order). Emit it only when reflected, so an
+        // un-flipped SREF stays byte-identical to before this feature.
+        if (el.reflect) record(out, REC.STRANS, i2(STRANS_REFLECT))
         const xy: number[] = []
         pushI32(xy, el.x)
         pushI32(xy, el.y)
@@ -250,8 +259,18 @@ export function floorplanToGds(
       structureFor.set(c.name, structName)
       cellStructures.push(struct)
     }
-    // SREF: land the cell's local (0,0) at its GDS bottom-left (= flipY(c.y + c.h)).
-    topElements.push({ kind: 'sref', structure: structName, x: toNm(c.x), y: flipY(c.y + c.h) })
+    // SREF: an N cell lands its local (0,0) at the row's GDS bottom-left (flipY(c.y + c.h)). An FS cell is
+    // reflected about the x-axis, which maps its local y∈[0,h] to [−h,0]; referencing the row TOP
+    // (flipY(c.y)) shifts that back up so the flipped cell still fills the same row band, its VDD/VSS rails
+    // now swapped top↔bottom to abut the neighbours on the same net.
+    const flip = cellOrient(c) === 'FS'
+    topElements.push({
+      kind: 'sref',
+      structure: structName,
+      x: toNm(c.x),
+      y: flip ? flipY(c.y) : flipY(c.y + c.h),
+      ...(flip ? { reflect: true } : {}),
+    })
   }
 
   const topName = gdsName(options.topName ?? 'chipblocks_top')

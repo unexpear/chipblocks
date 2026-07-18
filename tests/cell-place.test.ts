@@ -9,7 +9,12 @@ import { describe, expect, test } from 'vitest'
 import type { CanvasNodeLike } from '../src/renderer/blocks.ts'
 import { CPU_4BIT, NAND2_BLOCK } from '../src/renderer/builtin-blocks.ts'
 import { PROCESS } from '../src/renderer/cell-layout.ts'
-import { placeCells } from '../src/renderer/cell-place.ts'
+import {
+  cellOrient,
+  orientForRow,
+  type PlacedCell,
+  placeCells,
+} from '../src/renderer/cell-place.ts'
 
 const nand = (id: string): CanvasNodeLike => ({
   id,
@@ -107,5 +112,48 @@ describe('standard-cell placement — the floorplan', () => {
     expect(fp.utilization).toBeGreaterThan(0)
     expect(fp.utilization).toBeLessThanOrEqual(1)
     assertLegalPlacement(fp)
+  })
+})
+
+describe('row orientation — N / FS alternation for a legal power grid', () => {
+  const H = PROCESS.rowHeight.lambda
+  const at = (y: number): PlacedCell => ({
+    id: 'c',
+    name: 'AND',
+    x: 0,
+    y,
+    w: 32,
+    h: H,
+    row: 0,
+    reliable: true,
+  })
+
+  test('even rows are N, odd rows FS', () => {
+    expect(orientForRow(0)).toBe('N')
+    expect(orientForRow(1)).toBe('FS')
+    expect(orientForRow(2)).toBe('N')
+    expect(orientForRow(3)).toBe('FS')
+  })
+
+  test('cellOrient reads the band from the live y', () => {
+    expect(cellOrient(at(0))).toBe('N') // band 0
+    expect(cellOrient(at(H))).toBe('FS') // band 1
+    expect(cellOrient(at(2 * H))).toBe('N') // band 2
+  })
+
+  test('cellOrient ignores a stale row field — a dragged cell re-orients to its new band', () => {
+    // drag-to-move updates y but leaves `row` behind; orientation must follow y, or the moved cell's rails
+    // would abut the wrong net.
+    const dragged: PlacedCell = { ...at(H), row: 0 } // y in band 1, but row still says 0
+    expect(dragged.row).toBe(0)
+    expect(cellOrient(dragged)).toBe('FS') // from y (band 1), not the stale row 0
+  })
+
+  test('a real placed floorplan alternates orientation by band', () => {
+    const fp = placeCells([block('cpu', CPU_4BIT)], [])
+    expect(fp.rows).toBeGreaterThan(1)
+    for (const c of fp.cells) {
+      expect(cellOrient(c)).toBe(orientForRow(Math.round(c.y / PROCESS.rowHeight.lambda)))
+    }
   })
 })

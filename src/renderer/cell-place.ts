@@ -50,6 +50,31 @@ export type Floorplan = {
   anyUnreliable: boolean
 }
 
+/** A row's placement orientation. `N` = as-drawn; `FS` = flipped about the x-axis (top/bottom mirrored). */
+export type CellOrient = 'N' | 'FS'
+
+/**
+ * The orientation for row `row`: even rows N, odd rows FS. A cell is drawn with its VSS rail at the bottom
+ * and VDD at the top; flipping every other row about the x-axis makes adjacent rows abut rail-to-rail on the
+ * SAME net (VDD∥VDD, VSS∥VSS) instead of VDD-against-VSS — the standard-cell trick that yields a legal,
+ * shareable power grid. Even/odd of the row index is all that matters; the Y-flip to a y-up layout format
+ * preserves adjacency, so the same rule gives correct same-net abutment in every export.
+ */
+export const orientForRow = (row: number): CellOrient => (row % 2 === 0 ? 'N' : 'FS')
+
+/**
+ * The orientation of a placed cell, derived from its LIVE y — NOT the stale `row` field, which a
+ * drag-to-move leaves behind (the cell's y updates, its `row` does not). Rows are `rowHeightLambda` tall
+ * (default = the process row height), so the band index is round(y / rowHeight).
+ */
+export function cellOrient(
+  cell: PlacedCell,
+  rowHeightLambda: number = PROCESS.rowHeight.lambda,
+): CellOrient {
+  const band = rowHeightLambda > 0 ? Math.round(cell.y / rowHeightLambda) : 0
+  return orientForRow(band)
+}
+
 const EMPTY: Floorplan = {
   cells: [],
   rows: 0,

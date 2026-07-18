@@ -293,6 +293,45 @@ describe('floorplanToOasis — the placed floorplan becomes OASIS geometry', () 
   })
 })
 
+describe('floorplanToOasis — N / FS row mirroring (placement flip flag)', () => {
+  const nm = (lambda: number) => Math.round(lambda * PROCESS.lambdaUm * 1000)
+  const H = PROCESS.rowHeight.lambda
+  // three stacked AND rows so the FS y-reference (row TOP) is DISTINCT from the N one (row bottom).
+  const stack: Floorplan = {
+    cells: [
+      { id: 'g0', name: 'AND', x: 0, y: 0, w: 32, h: H, row: 0, reliable: true },
+      { id: 'g1', name: 'AND', x: 0, y: H, w: 32, h: H, row: 1, reliable: true },
+      { id: 'g2', name: 'AND', x: 0, y: 2 * H, w: 32, h: H, row: 2, reliable: true },
+    ],
+    rows: 3,
+    dieWidthLambda: 32,
+    dieHeightLambda: 3 * H,
+    dieWidthUm: 32 * PROCESS.lambdaUm,
+    dieHeightUm: 3 * H * PROCESS.lambdaUm,
+    cellAreaLambda2: 3 * 32 * H,
+    dieAreaLambda2: 3 * 32 * H,
+    utilization: 1,
+    anyUnreliable: false,
+  }
+
+  test('odd-row placements set the flip flag (info 0xB1) and reference the row top; even rows 0xB0', () => {
+    const dieH = 3 * H
+    const p = parseOasis(writeOasis(floorplanToOasis(stack, { topName: 'demo' })))
+    const places = p.placements.get('demo') as Placement[]
+    expect(places).toHaveLength(3)
+    // row 0 (N): C|X|Y, no flip; referenced at the GDS row bottom = flipY(y + h)
+    expect(places[0]?.info).toBe(0xb0)
+    expect(places[0]?.y).toBe(nm(dieH - (0 + H)))
+    // row 1 (FS): the F flag adds 0x01 → 0xB1; referenced at the row TOP = flipY(y), not the bottom
+    expect(places[1]?.info).toBe(0xb1)
+    expect(places[1]?.y).toBe(nm(dieH - H))
+    expect(places[1]?.y).not.toBe(nm(dieH - (H + H)))
+    // row 2 (N) again
+    expect(places[2]?.info).toBe(0xb0)
+    expect(places[2]?.y).toBe(nm(dieH - (2 * H + H)))
+  })
+})
+
 describe('oasisName', () => {
   test('whitespace → underscore, out-of-set dropped, never empty', () => {
     expect(oasisName('AND gate')).toBe('AND_gate')
