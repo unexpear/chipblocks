@@ -96,6 +96,7 @@ import {
 import { ClipboardPanel } from './clipboard-panel.tsx'
 import { ContextMenu } from './context-menu.tsx'
 import { CoordinateAxes } from './coordinate-axes.tsx'
+import { DistortionPanel } from './distortion-panel.tsx'
 import { DockablePanel } from './dockable-panel.tsx'
 import { BOM_VALUE_PARAMS, terminalForPad } from './footprint-assignment.ts'
 import {
@@ -235,6 +236,7 @@ import { checkpoint, emptyHistory, redo, undo } from './undo-history.ts'
 import { formatEng } from './units.ts'
 import { useBode } from './use-bode.ts'
 import { useConnectTool } from './use-connect-tool.ts'
+import { useDistortion } from './use-distortion.ts'
 import { useMultimeter } from './use-multimeter.ts'
 import { useOscilloscope } from './use-oscilloscope.ts'
 import { usePanelLayout } from './use-panel-layout.ts'
@@ -2425,6 +2427,18 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     reflectionWorld,
     onReflectionProbeClick,
   } = useReflection({ solvedWorld, tool })
+  // The large-signal Distortion tool (RF) — drives hard through the transient+FFT engine, same probe shape.
+  const {
+    distortionOpen,
+    setDistortionOpen,
+    distortionSource,
+    setDistortionSource,
+    distortionOutputNet,
+    distortionPicking,
+    setDistortionPicking,
+    distortionWorld,
+    onDistortionProbeClick,
+  } = useDistortion({ solvedWorld, tool })
   const mathView = useMemo(
     () =>
       showMath
@@ -6958,6 +6972,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           }
           if (onBodeProbeClick(event)) return
           if (onReflectionProbeClick(event)) return
+          if (onDistortionProbeClick(event)) return
           if (onScopeProbeClick(event)) return
           onMeterClick(event)
           wire.onWireClick(event)
@@ -8161,6 +8176,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 onMath={() => setShowMath((open) => !open)}
                 onBode={() => setBodeOpen((open) => !open)}
                 onReflection={() => setReflectionOpen((open) => !open)}
+                onDistortion={() => setDistortionOpen((open) => !open)}
                 onPcb={() => setPcbOpen((open) => !open)}
                 onVerilog={() => setVerilogOpen((open) => !open)}
                 onTrace={() => setTraceOpen((open) => !open)}
@@ -8407,10 +8423,11 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 onOutputNet={setBodeOutputNet}
                 picking={bodePicking}
                 onPickToggle={() => {
-                  // Arm Bode's picker and disarm Reflection's — only one canvas picker at a time, so the
+                  // Arm Bode's picker and disarm the other canvas pickers — only one at a time, so the
                   // shared click chain can't let one tool steal the other's terminal click.
                   setBodePicking((p) => !p)
                   setReflectionPicking(false)
+                  setDistortionPicking(false)
                 }}
               />
             ),
@@ -8431,9 +8448,35 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 onPort={setReflectionPort}
                 picking={reflectionPicking}
                 onPickToggle={() => {
-                  // Arm Reflection's picker and disarm Bode's (see the Bode toggle) — mutually exclusive.
+                  // Arm Reflection's picker and disarm the others (see the Bode toggle) — mutually exclusive.
                   setReflectionPicking((p) => !p)
                   setBodePicking(false)
+                  setDistortionPicking(false)
+                }}
+              />
+            ),
+          },
+          distortion: {
+            title: 'Distortion',
+            visible: distortionOpen,
+            content: (
+              <DistortionPanel
+                world={distortionWorld}
+                temperaturesC={solvedTemperatures}
+                light={light}
+                onClose={() => {
+                  setDistortionOpen(false)
+                  setDistortionPicking(false)
+                }}
+                source={distortionSource}
+                onSource={setDistortionSource}
+                outputNet={distortionOutputNet}
+                picking={distortionPicking}
+                onPickToggle={() => {
+                  // Arm Distortion's picker and disarm the others — mutually exclusive across all pickers.
+                  setDistortionPicking((p) => !p)
+                  setBodePicking(false)
+                  setReflectionPicking(false)
                 }}
               />
             ),
@@ -8903,6 +8946,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             'timeline',
             'bode',
             'reflection',
+            'distortion',
             'pcb',
             'timing',
           ],

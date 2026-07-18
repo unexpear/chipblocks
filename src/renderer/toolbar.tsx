@@ -55,6 +55,7 @@ export type ToolbarActionId =
   | 'timeline'
   | 'bode'
   | 'reflection'
+  | 'distortion'
   | 'pcb'
   | 'verilog'
   | 'trace'
@@ -122,6 +123,14 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
     color: THEME.accentBlueBright,
     title:
       'Reflection (RF) — how well a port is matched: pick a Port and a reference impedance (50 Ω) and see the return loss (dB) and VSWR vs frequency, plus the complex input impedance Zin. Peaks in return loss are the frequencies where the input is matched and reflects the least.',
+  },
+  {
+    id: 'distortion',
+    label: 'Distort',
+    icon: '⋀',
+    color: THEME.lensTemp,
+    title:
+      'Distortion (large-signal RF) — how a stage behaves when driven hard: pick a drive source and probe an output, and it drives the circuit through the nonlinear time-domain solver + FFT to show the gain-compression curve (with the 1-dB compression point, P1dB) and the harmonic spectrum (with THD %). These are the large-signal numbers the small-signal Bode/Reflection views cannot give.',
   },
   {
     id: 'pcb',
@@ -263,6 +272,7 @@ export function ToolbarItems({
   onTimeline,
   onBode,
   onReflection,
+  onDistortion,
   onPcb,
   onVerilog,
   onTrace,
@@ -304,6 +314,7 @@ export function ToolbarItems({
   onTimeline: () => void
   onBode: () => void
   onReflection: () => void
+  onDistortion: () => void
   onPcb: () => void
   onVerilog: () => void
   onTrace: () => void
@@ -335,6 +346,7 @@ export function ToolbarItems({
     timeline: onTimeline,
     bode: onBode,
     reflection: onReflection,
+    distortion: onDistortion,
     pcb: onPcb,
     verilog: onVerilog,
     trace: onTrace,
