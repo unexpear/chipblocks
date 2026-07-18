@@ -56,6 +56,7 @@ export type ToolbarActionId =
   | 'bode'
   | 'reflection'
   | 'distortion'
+  | 'sparam'
   | 'pcb'
   | 'verilog'
   | 'trace'
@@ -131,6 +132,14 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
     color: THEME.lensTemp,
     title:
       'Distortion (large-signal RF) — how a stage behaves when driven hard: pick a drive source and probe an output, and it drives the circuit through the nonlinear time-domain solver + FFT to show the gain-compression curve (with the 1-dB compression point, P1dB) and the harmonic spectrum (with THD %). These are the large-signal numbers the small-signal Bode/Reflection views cannot give.',
+  },
+  {
+    id: 'sparam',
+    label: 'S-params',
+    icon: '⧉',
+    color: THEME.accentBlueBright,
+    title:
+      'S-parameters (2-port RF) — pick two Ports and a reference impedance (50 Ω) to see the scattering matrix vs frequency: transmission |S21|/|S12| in dB (the honest gain / insertion loss — a passive part never exceeds 0 dB) and match |S11|/|S22| in dB (how much each port reflects). The 50 Ω language every RF datasheet speaks in.',
   },
   {
     id: 'pcb',
@@ -273,6 +282,7 @@ export function ToolbarItems({
   onBode,
   onReflection,
   onDistortion,
+  onSParam,
   onPcb,
   onVerilog,
   onTrace,
@@ -315,6 +325,7 @@ export function ToolbarItems({
   onBode: () => void
   onReflection: () => void
   onDistortion: () => void
+  onSParam: () => void
   onPcb: () => void
   onVerilog: () => void
   onTrace: () => void
@@ -347,6 +358,7 @@ export function ToolbarItems({
     bode: onBode,
     reflection: onReflection,
     distortion: onDistortion,
+    sparam: onSParam,
     pcb: onPcb,
     verilog: onVerilog,
     trace: onTrace,

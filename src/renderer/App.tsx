@@ -215,6 +215,7 @@ import { SchematicHierarchy } from './schematic-hierarchy.tsx'
 import { fastestSourceHz, ScopePlot, scopeProbeKey, scopeWindow, TRACE_COLORS } from './scope.tsx'
 import { H_DIVISIONS, scopeRecordSteps } from './scope-scales.ts'
 import { DEFAULT_SHEET, SheetFrame, type SheetSettings } from './sheet-frame.tsx'
+import { SParamPanel } from './sparam-panel.tsx'
 import { parseSpiceNetlist, serializeSpiceNetlist } from './spice-netlist.ts'
 import { runStressSweep } from './stress-bench.ts'
 import { StressBench } from './stress-bench-panel.tsx'
@@ -243,6 +244,7 @@ import { usePanelLayout } from './use-panel-layout.ts'
 import { useReflection } from './use-reflection.ts'
 import { useSelectionGestures } from './use-selection-gestures.ts'
 import { useShortcuts } from './use-shortcuts.tsx'
+import { useSParam } from './use-sparam.ts'
 import { useTimeline } from './use-timeline.ts'
 import { useWireTool } from './use-wire-tool.ts'
 import {
@@ -2439,6 +2441,16 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     distortionWorld,
     onDistortionProbeClick,
   } = useDistortion({ solvedWorld, tool })
+  // The 2-port S-parameter tool (RF) — two named ports (dropdowns, no probe), same grounded AC solve.
+  const {
+    sparamOpen,
+    setSparamOpen,
+    sparamPort1,
+    setSparamPort1,
+    sparamPort2,
+    setSparamPort2,
+    sparamWorld,
+  } = useSParam({ solvedWorld })
   const mathView = useMemo(
     () =>
       showMath
@@ -8177,6 +8189,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 onBode={() => setBodeOpen((open) => !open)}
                 onReflection={() => setReflectionOpen((open) => !open)}
                 onDistortion={() => setDistortionOpen((open) => !open)}
+                onSParam={() => setSparamOpen((open) => !open)}
                 onPcb={() => setPcbOpen((open) => !open)}
                 onVerilog={() => setVerilogOpen((open) => !open)}
                 onTrace={() => setTraceOpen((open) => !open)}
@@ -8478,6 +8491,22 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                   setBodePicking(false)
                   setReflectionPicking(false)
                 }}
+              />
+            ),
+          },
+          sparam: {
+            title: 'S-parameters',
+            visible: sparamOpen,
+            content: (
+              <SParamPanel
+                world={sparamWorld}
+                temperaturesC={solvedTemperatures}
+                light={light}
+                onClose={() => setSparamOpen(false)}
+                port1={sparamPort1}
+                onPort1={setSparamPort1}
+                port2={sparamPort2}
+                onPort2={setSparamPort2}
               />
             ),
           },
@@ -8947,6 +8976,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             'bode',
             'reflection',
             'distortion',
+            'sparam',
             'pcb',
             'timing',
           ],
