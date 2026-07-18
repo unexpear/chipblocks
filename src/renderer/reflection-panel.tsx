@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { portReflectionSweep } from '../ac-analysis.ts'
 import type { World } from '../cross-fk-validator.ts'
 import { readScalarParam } from '../instance-params.ts'
+import { RL_PLOT_MAX, reflectionView, VSWR_PLOT_MAX } from './reflection-view.ts'
 import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
 
@@ -24,10 +25,6 @@ const PAD = { left: 52, right: 16, top: 12, bottom: 18 }
 const INNER_W = PLOT_W - PAD.left - PAD.right
 const RL_COLOR = THEME.accentBlueBright
 const VSWR_COLOR = THEME.lensTemp
-/** A perfect match sends return loss → +∞ and VSWR is 1; a total reflection sends VSWR → +∞. Clamp both
- *  for plotting so an infinite spike doesn't blow up the axis. */
-const RL_PLOT_MAX = 60
-const VSWR_PLOT_MAX = 20
 const PORT_DEFINITIONS = new Set(['power_source', 'reference_port'])
 
 const RANGES: { label: string; lo: number; hi: number }[] = [
@@ -36,20 +33,6 @@ const RANGES: { label: string; lo: number; hi: number }[] = [
   { label: '1 MHz – 10 GHz', lo: 1e6, hi: 1e10 },
   { label: '10 MHz – 100 GHz', lo: 1e7, hi: 1e11 },
 ]
-
-const niceFloor = (v: number, step: number) => Math.floor(v / step) * step
-const niceCeil = (v: number, step: number) => Math.ceil(v / step) * step
-/** Pad [min,max] to a minimum span, snapped to a step, centered on the data. */
-function axisRange(min: number, max: number, step: number, minSpan: number): [number, number] {
-  let lo = niceFloor(min, step)
-  let hi = niceCeil(max, step)
-  if (hi - lo < minSpan) {
-    const mid = (lo + hi) / 2
-    lo = niceFloor(mid - minSpan / 2, step)
-    hi = niceCeil(mid + minSpan / 2, step)
-  }
-  return [lo, hi]
-}
 
 export function ReflectionPanel({
   world,
@@ -125,15 +108,12 @@ export function ReflectionPanel({
   const decades: number[] = []
   for (let d = Math.ceil(logLo); d <= Math.floor(logHi); d++) decades.push(10 ** d)
 
-  const rls = sweep.map((p) => Math.min(p.returnLossDb, RL_PLOT_MAX))
-  const vswrs = sweep.map((p) => Math.min(p.vswr, VSWR_PLOT_MAX))
-  const [rlLo, rlHi] = sweep.length
-    ? axisRange(Math.min(...rls), Math.max(...rls), 10, 30)
-    : [0, 30]
-  // VSWR has a hard physical floor of 1 (a perfect match) — build its axis UP from 1, never below (the
-  // symmetric axisRange re-centers and would draw impossible sub-1 gridlines for a well-matched port).
-  const vLo = 1
-  const vHi = sweep.length ? Math.max(3, niceCeil(Math.max(...vswrs), 1)) : 4
+  // The plot model — clamps, axes (VSWR floored at 1), and the best match — is a pure, unit-tested function
+  // (reflection-view.ts); the panel only maps it to SVG. `best` is null for an empty sweep.
+  const view = reflectionView(sweep)
+  const [rlLo, rlHi] = view.rlAxis
+  const [vLo, vHi] = view.vswrAxis
+  const best = view.best
 
   const rlTop = PAD.top
   const rlBot = RL_H - PAD.bottom
@@ -143,17 +123,11 @@ export function ReflectionPanel({
   const yVswr = (v: number) => vTop + ((vHi - v) / (vHi - vLo)) * (vBot - vTop)
 
   const rlPts = sweep
-    .map((p) => `${xOf(p.frequencyHz)},${yRl(Math.min(p.returnLossDb, RL_PLOT_MAX))}`)
+    .map((p, i) => `${xOf(p.frequencyHz)},${yRl(view.rlClamped[i] as number)}`)
     .join(' ')
   const vswrPts = sweep
-    .map((p) => `${xOf(p.frequencyHz)},${yVswr(Math.min(p.vswr, VSWR_PLOT_MAX))}`)
+    .map((p, i) => `${xOf(p.frequencyHz)},${yVswr(view.vswrClamped[i] as number)}`)
     .join(' ')
-
-  // The best match in the band: the frequency of maximum return loss (deepest dip in |Γ|).
-  const best = sweep.reduce<(typeof sweep)[number] | null>(
-    (b, p) => (b === null || p.returnLossDb > b.returnLossDb ? p : b),
-    null,
-  )
 
   const rlGrid: number[] = []
   for (let db = rlLo; db <= rlHi + 0.001; db += 10) rlGrid.push(db)
