@@ -18,6 +18,7 @@ import {
   useReactFlow,
   useUpdateNodeInternals,
 } from '@xyflow/react'
+import { namedCellDrc, summarizeDrc } from './cell-drc.ts'
 import { chipSignature, type Floorplan, placeCells } from './cell-place.ts'
 import { mergeOverrides } from './chip-canvas.tsx'
 import { type ChipLayout, EMPTY_CHIP_LAYOUT } from './chip-layout.ts'
@@ -1788,6 +1789,8 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             ]
       if (plan.anyUnreliable)
         warnings.push('Some cells are flagged unreliable in the floorplan (reported, not omitted).')
+      const drc = namedCellDrc(plan.cells.map((c) => c.name))
+      if (drc.length > 0) warnings.push(summarizeDrc(drc))
       setNetlistReport({
         kind: 'export',
         count: plan.cells.length,
