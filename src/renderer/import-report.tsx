@@ -10,7 +10,7 @@ export type NetlistReport = {
   /** Converted, but with a stated assumption (a defaulted model, an ignored bulk node, auto-layout…). */
   warnings: string[]
   /** The interchange format — tunes the wording; absent ⇒ the SPICE / netlist wording. */
-  format?: 'verilog' | 'gds' | 'lef' | 'def' | 'oas'
+  format?: 'verilog' | 'gds' | 'lef' | 'def' | 'oas' | 'lib'
 }
 
 /**
@@ -45,6 +45,8 @@ export function NetlistReportCard({
       return `Exported a standard-cell library (LEF) — ${report.count} macro${plural}`
     if (report.format === 'def')
       return `Exported a placed design (DEF) — ${report.count} component${plural}`
+    if (report.format === 'lib')
+      return `Exported a timing library (Liberty) — ${report.count} cell${plural}`
     return isImport
       ? `Imported ${report.count} part${plural} from the netlist`
       : `Exported ${report.count} part${plural} to a netlist`
@@ -57,6 +59,7 @@ export function NetlistReportCard({
     if (report.format === 'gds' || report.format === 'oas') return 'Could not place'
     if (report.format === 'lef') return 'Not a primitive cell — black-boxed'
     if (report.format === 'def') return 'Could not place'
+    if (report.format === 'lib') return 'Not a primitive cell — omitted (untimed)'
     return isImport
       ? 'Could not convert — left out of the circuit'
       : 'Could not export — no SPICE equivalent'

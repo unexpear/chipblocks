@@ -26,6 +26,7 @@ import { ChipView } from './chip-workspace.tsx'
 import { floorplanToDef } from './def.ts'
 import { floorplanToGds, writeGds } from './gds.ts'
 import { floorplanToLef } from './lef.ts'
+import { floorplanToLib } from './liberty.ts'
 import { namedCellLvs, summarizeLvs } from './lvs.ts'
 import { floorplanToOasis, writeOasis } from './oasis.ts'
 import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
@@ -304,6 +305,8 @@ declare global {
       saveLefData?: (text: string) => Promise<{ ok: boolean; path?: string }>
       onExportDefRequest?: (callback: () => void) => void
       saveDefData?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      onExportLibRequest?: (callback: () => void) => void
+      saveLibData?: (text: string) => Promise<{ ok: boolean; path?: string }>
       onExportOasisRequest?: (callback: () => void) => void
       saveOasisData?: (data: Uint8Array) => Promise<{ ok: boolean; path?: string }>
       readUserLibrary?: () => Promise<string | null>
@@ -1845,6 +1848,27 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           'Standard-cell library (LEF) for OpenROAD: C5N λ-scaled teaching geometry on SKY130 layer names; the tech-LEF rules are the λ×0.3 µm cell rules (met1 0.9 / li1 0.6 / pitch 1.5), NOT SKY130 silicon rules. For placement inspection/re-placement — a full flow also needs a Liberty timing library. Unknown cell types fall back to a black-box macro.',
         ],
         format: 'lef',
+      })
+    })
+  }, [buildChipPlan])
+
+  // Export Liberty: the .lib timing library (liberty.ts) for the cells this design uses — the last piece of
+  // the OpenROAD signoff round-trip (LEF geometry + DEF placement/connectivity + Liberty timing).
+  useEffect(() => {
+    const bridge = window.chipblocks
+    if (bridge?.onExportLibRequest === undefined) return
+    bridge.onExportLibRequest(() => {
+      const plan = buildChipPlan()
+      const { text, cells, fallbacks } = floorplanToLib(plan)
+      void bridge.saveLibData?.(text)
+      setNetlistReport({
+        kind: 'export',
+        count: cells,
+        unsupported: fallbacks,
+        warnings: [
+          'Timing library (Liberty) for OpenROAD STA: real single-stage RC delays (t = ln2·R·C) from the app’s own timing engine, but at the DISCRETE 2N7000/BS250 constants (k, C_iss 60 pF) the app is built on — real physics at the ns scale of 5 V discrete logic, NOT on-chip C5N per-area silicon. Rise/fall share the worst-case drive R; input-slew dependence is not modelled; a composite cell (AND/OR/XOR) is timed at its output stage. Unknown cell types are omitted (an untimed cell would mislead the STA).',
+        ],
+        format: 'lib',
       })
     })
   }, [buildChipPlan])

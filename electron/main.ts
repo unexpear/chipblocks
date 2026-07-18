@@ -68,6 +68,10 @@ const DEF_FILTERS = [
   { name: 'DEF placed design', extensions: ['def'] },
   { name: 'All files', extensions: ['*'] },
 ]
+const LIB_FILTERS = [
+  { name: 'Liberty timing library', extensions: ['lib'] },
+  { name: 'All files', extensions: ['*'] },
+]
 
 /** The file the window is working on (drives plain Save + the window title). */
 let currentCircuitPath: string | null = null
@@ -276,6 +280,7 @@ function registerLefDefExportHandlers(window: BrowserWindow): void {
   }
   textExport('file:save-lef', LEF_FILTERS, 'design.lef', 'LEF')
   textExport('file:save-def', DEF_FILTERS, 'design.def', 'DEF')
+  textExport('file:save-lib', LIB_FILTERS, 'design.lib', 'Liberty')
 }
 
 /** Read + validate a .chipblocks file at `path` (shared by the open-into-a-new-tab handlers below,
@@ -515,6 +520,10 @@ function installMenu(window: BrowserWindow): void {
         {
           label: 'Export DEF…',
           click: () => window.webContents.send('file:export-def-request'),
+        },
+        {
+          label: 'Export Liberty…',
+          click: () => window.webContents.send('file:export-lib-request'),
         },
         { type: 'separator' },
         { role: 'quit', label: 'Exit' },

@@ -71,6 +71,10 @@ contextBridge.exposeInMainWorld('chipblocks', {
   onExportDefRequest: (callback: () => void) => subscribe('file:export-def-request', callback),
   saveDefData: (text: string): Promise<{ ok: boolean; path?: string }> =>
     ipcRenderer.invoke('file:save-def', text),
+  // Export Liberty (the .lib timing library that completes the OpenROAD signoff round-trip).
+  onExportLibRequest: (callback: () => void) => subscribe('file:export-lib-request', callback),
+  saveLibData: (text: string): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('file:save-lib', text),
   // Personal parts library (user-made parts, slice 3b): the parts you author persist to
   // ~/.chipblocks/user-parts.json so they follow you across projects. Main does the raw file I/O;
   // the renderer owns the format. Read returns the file text (or null when there's no library yet).
