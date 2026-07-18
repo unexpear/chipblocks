@@ -4,6 +4,7 @@ import { fuseIsIntact, relayCoilEnergized, switchIsClosed } from './dc-solver.ts
 import { coilInductanceFromInstance } from './electromagnet-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
 import { mathInstance as math } from './mathjs-instance.ts'
+import { returnLossDbFromGamma, vswrFromGamma } from './rf-math.ts'
 import {
   type BjtSmallSignal,
   bjtSmallSignalModel,
@@ -697,8 +698,8 @@ const reflectionPoint = (frequencyHz: number, zin: Complex | null, z0: number): 
     gammaRe: gamma.re,
     gammaIm: gamma.im,
     gammaMag: mag,
-    returnLossDb: mag > 0 ? -20 * Math.log10(mag) : Number.POSITIVE_INFINITY,
-    vswr: mag < 1 ? (1 + mag) / (1 - mag) : Number.POSITIVE_INFINITY,
+    returnLossDb: returnLossDbFromGamma(mag),
+    vswr: vswrFromGamma(mag),
   }
 }
 
