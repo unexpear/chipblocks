@@ -52,6 +52,10 @@ const VERILOG_FILTERS = [
   { name: 'Verilog', extensions: ['v'] },
   { name: 'All files', extensions: ['*'] },
 ]
+const GDS_FILTERS = [
+  { name: 'GDSII layout', extensions: ['gds'] },
+  { name: 'All files', extensions: ['*'] },
+]
 
 /** The file the window is working on (drives plain Save + the window title). */
 let currentCircuitPath: string | null = null
@@ -187,6 +191,26 @@ function registerFabZipExportHandler(window: BrowserWindow): void {
         'Could not export manufacturing ZIP',
         `Writing the file failed: ${String(error)}`,
       )
+      return { ok: false }
+    }
+    return { ok: true, path: picked.filePath }
+  })
+}
+
+function registerGdsExportHandler(window: BrowserWindow): void {
+  // The renderer sends the placed chip floorplan's GDSII bytes (built by the deterministic gds.ts writer);
+  // we pick a file and write them verbatim. Binary, like the fab-ZIP path — never re-encoded.
+  ipcMain.removeHandler('file:save-gds')
+  ipcMain.handle('file:save-gds', async (_event, data: Uint8Array) => {
+    const picked = await dialog.showSaveDialog(window, {
+      filters: GDS_FILTERS,
+      defaultPath: 'layout.gds',
+    })
+    if (picked.canceled || picked.filePath === undefined) return { ok: false }
+    try {
+      await writeFile(picked.filePath, Buffer.from(data))
+    } catch (error) {
+      dialog.showErrorBox('Could not export GDSII', `Writing the file failed: ${String(error)}`)
       return { ok: false }
     }
     return { ok: true, path: picked.filePath }
@@ -414,6 +438,10 @@ function installMenu(window: BrowserWindow): void {
         {
           label: 'Export Verilog…',
           click: () => window.webContents.send('file:export-verilog-request'),
+        },
+        {
+          label: 'Export GDS…',
+          click: () => window.webContents.send('file:export-gds-request'),
         },
         { type: 'separator' },
         { role: 'quit', label: 'Exit' },
@@ -656,6 +684,7 @@ function createWindow(): void {
   registerNetlistExportHandler(window)
   registerVerilogExportHandler(window)
   registerFabZipExportHandler(window)
+  registerGdsExportHandler(window)
   registerCircuitOpenHandlers(window)
   registerKeybindHandlers(window)
   registerUserLibraryHandlers()

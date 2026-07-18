@@ -10,7 +10,7 @@ export type NetlistReport = {
   /** Converted, but with a stated assumption (a defaulted model, an ignored bulk node, auto-layout…). */
   warnings: string[]
   /** The interchange format — tunes the wording; absent ⇒ the SPICE / netlist wording. */
-  format?: 'verilog'
+  format?: 'verilog' | 'gds'
 }
 
 /**
@@ -26,23 +26,31 @@ export function NetlistReportCard({
   onDismiss: () => void
 }) {
   const isImport = report.kind === 'import'
-  const isVerilog = report.format === 'verilog'
-  const noun = isVerilog ? 'gate' : 'part'
   const plural = report.count === 1 ? '' : 's'
-  const title = isVerilog
-    ? isImport
-      ? `Imported a Verilog module — ${report.count} gate${plural}`
-      : `Exported ${report.count} gate${plural} as Verilog`
-    : isImport
-      ? `Imported ${report.count} ${noun}${plural} from the netlist`
-      : `Exported ${report.count} ${noun}${plural} to a netlist`
-  const unsupportedTitle = isVerilog
-    ? isImport
-      ? 'Could not represent — reported, not built'
-      : 'Could not export — not a logic gate'
-    : isImport
+
+  const title = (() => {
+    if (report.format === 'verilog')
+      return isImport
+        ? `Imported a Verilog module — ${report.count} gate${plural}`
+        : `Exported ${report.count} gate${plural} as Verilog`
+    if (report.format === 'gds')
+      return isImport
+        ? `Imported ${report.count} cell${plural} from GDSII`
+        : `Exported ${report.count} cell${plural} as GDSII`
+    return isImport
+      ? `Imported ${report.count} part${plural} from the netlist`
+      : `Exported ${report.count} part${plural} to a netlist`
+  })()
+  const unsupportedTitle = (() => {
+    if (report.format === 'verilog')
+      return isImport
+        ? 'Could not represent — reported, not built'
+        : 'Could not export — not a logic gate'
+    if (report.format === 'gds') return 'Could not place'
+    return isImport
       ? 'Could not convert — left out of the circuit'
       : 'Could not export — no SPICE equivalent'
+  })()
 
   const section = (heading: string, items: string[], color: string) =>
     items.length === 0 ? null : (

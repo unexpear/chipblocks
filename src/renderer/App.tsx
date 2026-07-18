@@ -19,8 +19,10 @@ import {
   useUpdateNodeInternals,
 } from '@xyflow/react'
 import { chipSignature, type Floorplan, placeCells } from './cell-place.ts'
+import { mergeOverrides } from './chip-canvas.tsx'
 import { type ChipLayout, EMPTY_CHIP_LAYOUT } from './chip-layout.ts'
 import { ChipView } from './chip-workspace.tsx'
+import { floorplanToGds, writeGds } from './gds.ts'
 import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
 import type { WorkspaceMode } from './workspace.ts'
 import '@xyflow/react/dist/style.css'
@@ -290,6 +292,8 @@ declare global {
       onExportVerilogRequest?: (callback: () => void) => void
       saveVerilogData?: (text: string) => Promise<{ ok: boolean; path?: string }>
       saveFabZip?: (data: Uint8Array) => Promise<{ ok: boolean; path?: string }>
+      onExportGdsRequest?: (callback: () => void) => void
+      saveGdsData?: (data: Uint8Array) => Promise<{ ok: boolean; path?: string }>
       readUserLibrary?: () => Promise<string | null>
       writeUserLibrary?: (text: string) => Promise<{ ok: boolean; path?: string }>
       getKeybinds?: () => Promise<Record<string, string>>
@@ -1761,6 +1765,38 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     regenerateChipFloorplan()
     setChipLayout((current) => ({ ...current, overrides: [], sourceSignature: chipLiveSignature }))
   }, [regenerateChipFloorplan, chipLiveSignature])
+
+  // Export GDS: turn the placed chip floorplan into a real GDSII byte stream (gds.ts) and hand the bytes
+  // to main to write — the chip-side twin of the manufacturing-ZIP export, and the "exportable" payoff of
+  // the chip-physical chapter (the .gds opens in Magic / KLayout / OpenROAD). We export exactly what the
+  // Chip canvas shows: the live floorplan (generated fresh from the schematic if the level was never
+  // entered) with the user's hand-placement overrides applied.
+  useEffect(() => {
+    const bridge = window.chipblocks
+    if (bridge?.onExportGdsRequest === undefined) return
+    bridge.onExportGdsRequest(() => {
+      const base =
+        chipFloorplan?.plan ??
+        placeCells(nodes as unknown as BlockNodeLike[], edges as unknown as BlockEdgeLike[])
+      const plan: Floorplan = { ...base, cells: mergeOverrides(base.cells, chipLayout.overrides) }
+      void bridge.saveGdsData?.(writeGds(floorplanToGds(plan), new Date()))
+      const warnings =
+        plan.cells.length === 0
+          ? ['The chip floorplan is empty — nothing to place.']
+          : [
+              'Cells are place-and-route outlines on prBoundary (235/4); real per-layer polygons come at the next step.',
+            ]
+      if (plan.anyUnreliable)
+        warnings.push('Some cells are flagged unreliable in the floorplan (reported, not omitted).')
+      setNetlistReport({
+        kind: 'export',
+        count: plan.cells.length,
+        unsupported: [],
+        warnings,
+        format: 'gds',
+      })
+    })
+  }, [chipFloorplan, chipLayout, nodes, edges])
   // Drag a cell to a new spot → record a placement override (checkpointed for undo, like a board move).
   const onChipCellMove = useCallback(
     (cellId: string, x: number, y: number) => {

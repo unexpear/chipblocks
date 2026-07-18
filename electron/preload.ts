@@ -55,6 +55,11 @@ contextBridge.exposeInMainWorld('chipblocks', {
   // the main process picks a destination and writes them verbatim.
   saveFabZip: (data: Uint8Array): Promise<{ ok: boolean; path?: string }> =>
     ipcRenderer.invoke('file:save-fab-zip', data),
+  // Export GDS (chip-physical chapter): the File menu asks; the renderer builds the placed
+  // floorplan's GDSII bytes (gds.ts) and hands them over; main picks a file and writes them verbatim.
+  onExportGdsRequest: (callback: () => void) => subscribe('file:export-gds-request', callback),
+  saveGdsData: (data: Uint8Array): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('file:save-gds', data),
   // Personal parts library (user-made parts, slice 3b): the parts you author persist to
   // ~/.chipblocks/user-parts.json so they follow you across projects. Main does the raw file I/O;
   // the renderer owns the format. Read returns the file text (or null when there's no library yet).
