@@ -337,16 +337,20 @@ function solveSystem(world: World, topo: Topology, inputSource: string, omega: n
         stampY(idx(ca), idx(cb), 1 / coilR, 0)
       }
     } else if (inst.definition === 'transmission_line') {
-      // Lossless line, frequency domain. Its electrical length θ = ω·τ = 2π·(length/λ) is
-      // where the WAVELENGTH shows up explicitly. The 2-port admittance matrix is
-      //   Y11 = Y22 = −j·Y0·cot θ,   Y12 = Y21 = +j·Y0·csc θ   (Y0 = 1/Z0),
-      // purely reactive (lossless). At θ = π/2 — a quarter wavelength — it flips the load:
-      // Z_in = Z0²/Z_L (a shorted far end looks open, an open far end looks shorted). Near a
-      // half-wave (θ = nπ) the lossless line is a transparent but infinite-Q resonance, so
-      // sin θ → 0 makes the admittances blow up — clamp it off exact zero to avoid a NaN.
+      // A general (possibly LOSSY) line from the telegrapher's equations. Its electrical length θ = ω·τ is
+      // where the WAVELENGTH appears. Total series impedance Z = R·ℓ + jωL·ℓ = R·ℓ + j·Z0·θ; total shunt
+      // admittance Y = G·ℓ + jωC·ℓ = G·ℓ + j·θ/Z0 (using Z0 = √(L/C) and ωL·ℓ = Z0·θ, ωC·ℓ = θ/Z0). The
+      // complex propagation γℓ = √(ZY) and characteristic impedance Zc = √(Z/Y) give the 2-port admittances
+      //   Y11 = Y22 = coth(γℓ)/Zc,   Y12 = Y21 = −csch(γℓ)/Zc.
+      // With R = G = 0 this reduces EXACTLY to the lossless −j·Y0·cot θ / +j·Y0·csc θ (γℓ → jθ, Zc → Z0);
+      // adding R (conductor) / G (dielectric) makes the line ATTENUATE — a shorted line's input picks up a
+      // real (loss) part and stops reflecting everything. A near-lossless half-wave (sinh γℓ → 0, an
+      // infinite-Q resonance) is clamped off zero to avoid a NaN.
       const z0 = readScalarParam(inst, 'characteristic_impedance')
       const length = readScalarParam(inst, 'length')
       const vf = readScalarParam(inst, 'velocity_factor')
+      const rPerMeter = readScalarParam(inst, 'series_resistance') ?? 0
+      const gPerMeter = readScalarParam(inst, 'shunt_conductance') ?? 0
       const netOf = (t: string) => inst.connects?.find((conn) => conn.terminal === t)?.net
       const na = netOf('near_a')
       const nb = netOf('near_b')
@@ -354,14 +358,18 @@ function solveSystem(world: World, topo: Topology, inputSource: string, omega: n
       const fb = netOf('far_b')
       if (z0 && z0 > 0 && length !== undefined && vf && vf > 0 && na && nb && fa && fb) {
         const theta = omega * propagationDelayS(length, vf)
-        let sin = Math.sin(theta)
-        if (Math.abs(sin) < 1e-12) sin = sin < 0 ? -1e-12 : 1e-12
-        const y0 = 1 / z0
-        const yDiag = (-y0 * Math.cos(theta)) / sin // −Y0·cot θ
-        const yCouple = y0 / sin // +Y0·csc θ
-        stampY(idx(na), idx(nb), 0, yDiag)
-        stampY(idx(fa), idx(fb), 0, yDiag)
-        stampCoupling(idx(na), idx(nb), idx(fa), idx(fb), 0, yCouple)
+        const zSeries: Complex = { re: rPerMeter * length, im: z0 * theta } // R·ℓ + jωL·ℓ
+        const yShunt: Complex = { re: gPerMeter * length, im: theta / z0 } // G·ℓ + jωC·ℓ
+        const gammaL = cSqrt(cMul(zSeries, yShunt)) // √(ZY)
+        const zc = cSqrt(cDiv(zSeries, yShunt)) // √(Z/Y)
+        let sinhG = cSinh(gammaL)
+        // A near-lossless half-wave (γℓ → jnπ) has sinh → 0 — an infinite-Q resonance; clamp off zero.
+        if (Math.hypot(sinhG.re, sinhG.im) < 1e-12) sinhG = { re: 1e-12, im: 1e-12 }
+        const y11 = cDiv(cDiv(cCosh(gammaL), sinhG), zc) // coth(γℓ)/Zc
+        const y12 = cDiv({ re: -1, im: 0 }, cMul(zc, sinhG)) // −csch(γℓ)/Zc
+        stampY(idx(na), idx(nb), y11.re, y11.im)
+        stampY(idx(fa), idx(fb), y11.re, y11.im)
+        stampCoupling(idx(na), idx(nb), idx(fa), idx(fb), y12.re, y12.im)
       }
     } else if (inst.definition === 'vccs') {
       // A VCCS: output current g·(v_cP − v_cN) — the same real transconductance stamp the
@@ -544,6 +552,27 @@ function cDiv(a: Complex, b: Complex): Complex {
   if (d === 0) return { re: 0, im: 0 }
   return { re: (a.re * b.re + a.im * b.im) / d, im: (a.im * b.re - a.re * b.im) / d }
 }
+// The few complex functions the lossy transmission line needs (mathjs's typed returns don't narrow cleanly
+// through sqrt/sinh, so these plain {re,im} versions keep the stamp type-clean and self-contained).
+const cMul = (a: Complex, b: Complex): Complex => ({
+  re: a.re * b.re - a.im * b.im,
+  im: a.re * b.im + a.im * b.re,
+})
+/** Principal complex square root. */
+function cSqrt(z: Complex): Complex {
+  const r = Math.hypot(z.re, z.im)
+  const re = Math.sqrt((r + z.re) / 2)
+  const im = Math.sqrt((r - z.re) / 2)
+  return { re, im: z.im < 0 ? -im : im }
+}
+const cSinh = (z: Complex): Complex => ({
+  re: Math.sinh(z.re) * Math.cos(z.im),
+  im: Math.cosh(z.re) * Math.sin(z.im),
+})
+const cCosh = (z: Complex): Complex => ({
+  re: Math.cosh(z.re) * Math.cos(z.im),
+  im: Math.sinh(z.re) * Math.sin(z.im),
+})
 
 /** Gain/phase of `outputNet` driven by `inputSource` at ω — reads the output node voltage from the solve. */
 function solveAtOmega(

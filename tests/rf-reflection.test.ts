@@ -281,6 +281,63 @@ describe('the reference_port part — a driver only in reflection, an open other
   })
 })
 
+describe('a lossy transmission line attenuates (R + G telegrapher loss)', () => {
+  // A SHORTED line: lossless it reflects everything (Zin purely reactive, |Γ|=1); with series loss it
+  // absorbs some of the wave, so Zin picks up a real part and |Γ| drops below 1.
+  const shortedLine = (rPerMeter: number, gPerMeter = 0): World => {
+    const w = makeWorld()
+    ensureNet(w, 'gnd', true)
+    addPart(w, 'p1', 'power_source', { nominal_voltage: scalar(1, 'volt') }, [
+      { net: 'in', terminal: 'terminal_positive' },
+      { net: 'gnd', terminal: 'terminal_negative' },
+    ])
+    addPart(
+      w,
+      'tl',
+      'transmission_line',
+      {
+        characteristic_impedance: scalar(50, 'ohm'),
+        length: scalar(10, 'meter'),
+        velocity_factor: scalar(0.66, 'dimensionless'),
+        series_resistance: scalar(rPerMeter, 'ohm/meter'),
+        shunt_conductance: scalar(gPerMeter, 'siemens/meter'),
+      },
+      [
+        { net: 'in', terminal: 'near_a' },
+        { net: 'gnd', terminal: 'near_b' },
+        { net: 'gnd', terminal: 'far_a' }, // far end shorted (both far terminals to ground)
+        { net: 'gnd', terminal: 'far_b' },
+      ],
+    )
+    return w
+  }
+  const F_MID = 2.5e6 // θ ≈ π/4 at this length — away from the short/quarter-wave extremes
+
+  test('a lossless shorted line reflects everything (Zin reactive, |Γ| ≈ 1)', () => {
+    const p = portReflection(shortedLine(0), OPTS, F_MID)
+    expect(Math.abs(p.zinRe)).toBeLessThan(1) // essentially no real (loss) part
+    expect(p.gammaMag).toBeGreaterThan(0.999)
+  })
+
+  test('series loss gives the input a real (loss) part and drops |Γ| below 1', () => {
+    const p = portReflection(shortedLine(5), OPTS, F_MID)
+    expect(p.zinRe).toBeGreaterThan(1) // the conductor loss appears as input resistance
+    expect(p.gammaMag).toBeLessThan(0.98)
+  })
+
+  test('more loss ⇒ less reflection in the absorption regime, and G loses too', () => {
+    // In the low-loss (absorption-dominated) regime |Γ| decreases as loss grows: 1 (lossless) > R=1 > R=5.
+    // (At very high loss it turns back up as the lossy line's own Zc mismatches Z₀ — so this is the
+    // absorption regime, not a claim of global monotonicity.)
+    const g1 = portReflection(shortedLine(1), OPTS, F_MID).gammaMag
+    const g5 = portReflection(shortedLine(5), OPTS, F_MID).gammaMag
+    expect(g1).toBeLessThan(0.999) // any loss reflects less than the lossless 1
+    expect(g5).toBeLessThan(g1) // more loss, less reflection
+    // dielectric (shunt) loss absorbs too — G alone (no series R) still drops |Γ| below 1
+    expect(portReflection(shortedLine(0, 1e-3), OPTS, F_MID).gammaMag).toBeLessThan(0.999)
+  })
+})
+
 describe('portReflection — degenerate inputs', () => {
   test('no ground net ⇒ empty sweep, NaN single point', () => {
     const w = makeWorld() // no ground

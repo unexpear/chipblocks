@@ -324,6 +324,13 @@ const DEFAULTS: Record<string, Parameters> = {
     characteristic_impedance: scalar(300, 'ohm'),
     length: scalar(300, 'meter'),
     velocity_factor: scalar(0.95, 'dimensionless'),
+    // The telegrapher loss terms, per unit length: series conductor resistance R (Ω/m) and shunt
+    // dielectric conductance G (S/m). Default 0 = an IDEAL lossless line (the historical behaviour). A real
+    // line has both — RG-58 coax is ~0.5 Ω/m and a low-loss dielectric ~1 µS/m at HF — but those are also
+    // frequency-dependent (skin effect ∝ √f, dielectric ∝ f); here they are the constant telegrapher terms,
+    // the frequency dependence is a later step. Franklin/Pozar "Microwave Engineering" §2.1.
+    series_resistance: scalar(0, 'ohm/meter'),
+    shunt_conductance: scalar(0, 'siemens/meter'),
   },
   transformer: {
     // Small EI mains transformer class, ~1:10 step-up from the low-voltage winding
