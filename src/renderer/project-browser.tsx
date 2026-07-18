@@ -45,7 +45,27 @@ type Template = {
   designable?: boolean
   featured?: boolean
   includes: string[]
+  /** The design-depth preview (right rail) for a DESIGNABLE part — its own internals, so a transformer
+   *  shows a core + windings and a relay shows a coil + contacts, NOT the motor's. `design` = the fields
+   *  shown under "Design it" (build it from these), `block` = the headline numbers under "Use as a block",
+   *  `note` = the line beneath the design fields. Absent ⇒ a generic materials-first preview. */
+  design?: [string, string][]
+  block?: [string, string][]
+  note?: string
+  /** Suggested project name when this template is picked, before the user types their own. */
+  defaultName?: string
 }
+
+const GENERIC_DESIGN: [string, string][] = [
+  ['Material', 'from the catalog'],
+  ['Geometry', 'your dimensions'],
+  ['Terminals', 'derived behaviour'],
+]
+const GENERIC_BLOCK: [string, string][] = [
+  ['Headline values', 'typed'],
+  ['Terminals', 'named'],
+  ['Behaviour', 'black-box'],
+]
 
 type Category = {
   id: string
@@ -67,6 +87,7 @@ const CATEGORIES: Category[] = [
         name: 'Blank circuit',
         desc: 'A clean canvas — drop in parts and wire them up.',
         includes: ['Empty schematic', 'Full parts palette', 'DC + transient sim'],
+        defaultName: 'MyCircuit',
       },
       {
         id: 'amp',
@@ -74,6 +95,7 @@ const CATEGORIES: Category[] = [
         desc: 'A gain stage to tune and probe.',
         glyph: 'op_amp',
         includes: ['Transistor / op-amp stage', 'Bias network', 'Scope on the output'],
+        defaultName: 'MyAmp',
       },
       {
         id: 'psu',
@@ -81,6 +103,7 @@ const CATEGORIES: Category[] = [
         desc: 'Rectify, smooth and regulate a DC rail.',
         glyph: 'diode_silicon_rectifier',
         includes: ['Transformer + bridge', 'Filter capacitor', 'Regulator + load'],
+        defaultName: 'MyPSU',
       },
     ],
   },
@@ -95,6 +118,7 @@ const CATEGORIES: Category[] = [
         desc: 'Start from raw materials and build a part up.',
         designable: true,
         includes: ['Empty assembly', 'Materials catalog', 'Derived terminal behaviour'],
+        defaultName: 'MyPart',
       },
       {
         id: 'dc-motor',
@@ -104,30 +128,78 @@ const CATEGORIES: Category[] = [
         designable: true,
         featured: true,
         includes: ['Stator core + magnets', 'Armature winding', 'Rotor geometry'],
+        defaultName: 'MyMotor',
+        design: [
+          ['Stator core', 'Soft iron'],
+          ['Magnets', 'Ferrite'],
+          ['Winding', '500 turns · 26 AWG'],
+        ],
+        block: [
+          ['Torque constant k', '0.02 V·s/rad'],
+          ['Winding R', '2 Ω'],
+          ['No-load speed', '5,600 RPM'],
+        ],
+        note: '↓ torque, speed & resistance derive from these',
       },
       {
         id: 'transformer',
         name: 'Transformer',
-        desc: 'Two coupled windings on a shared core.',
+        desc: 'Two coupled windings on a shared core — use it as a block, or design the core and windings.',
         glyph: 'transformer',
         designable: true,
         includes: ['Core material', 'Primary + secondary', 'Turns ratio'],
+        defaultName: 'MyTransformer',
+        design: [
+          ['Core', 'Laminated Si-steel'],
+          ['Primary', '230 V · 500 t'],
+          ['Secondary', '23 V · 50 t'],
+        ],
+        block: [
+          ['Turns ratio', '10 : 1'],
+          ['Primary L', '2.2 H'],
+          ['Rating', '5 VA'],
+        ],
+        note: '↓ turns ratio & regulation derive from these',
       },
       {
         id: 'electromagnet',
         name: 'Electromagnet',
-        desc: 'A coil on a core — the field is the point.',
+        desc: 'A coil on a core — the field is the point. Use it as a block, or design the core and winding.',
         glyph: 'electromagnet',
         designable: true,
         includes: ['Core + permeability', 'Winding turns', 'Field + pull force'],
+        defaultName: 'MyMagnet',
+        design: [
+          ['Core', 'Soft iron'],
+          ['Winding', '300 turns · 26 AWG'],
+          ['Drive', '0.5 A'],
+        ],
+        block: [
+          ['MMF', '150 A·turns'],
+          ['Pull force', '~5 N'],
+          ['Coil R', '8 Ω'],
+        ],
+        note: '↓ field strength & pull force derive from these',
       },
       {
         id: 'relay',
         name: 'Relay',
-        desc: 'A coil that throws a switch.',
+        desc: 'A coil that throws a switch — use it as a block, or design the coil, contacts and spring.',
         glyph: 'relay',
         designable: true,
         includes: ['Coil (electromagnet)', 'Contacts', 'Pull-in / drop-out'],
+        defaultName: 'MyRelay',
+        design: [
+          ['Coil', '400 turns · 30 AWG'],
+          ['Contacts', 'SPDT · AgNi'],
+          ['Return spring', '2 mN'],
+        ],
+        block: [
+          ['Coil', '5 V · 40 mA'],
+          ['Pull-in', '3.8 V'],
+          ['Contact rating', '2 A · 30 V'],
+        ],
+        note: '↓ pull-in & drop-out voltages derive from these',
       },
     ],
   },
@@ -141,6 +213,7 @@ const CATEGORIES: Category[] = [
         name: 'Blank logic',
         desc: 'Build from real transistor gates up.',
         includes: ['Logic palette', 'Live truth tables', 'From-transistors view'],
+        defaultName: 'MyLogic',
       },
       {
         id: 'register',
@@ -148,6 +221,7 @@ const CATEGORIES: Category[] = [
         desc: 'Flip-flops that latch a word.',
         glyph: 'logic_register_4bit',
         includes: ['D flip-flops', 'Clock', '4-bit word'],
+        defaultName: 'MyRegister',
       },
     ],
   },
@@ -233,16 +307,28 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
   // Settings ▸ Shortcuts works here too (not only in the editor).
   const { panel: shortcutsPanel } = useShortcuts(light)
 
+  const [nameEdited, setNameEdited] = useState(false)
   const category = useMemo(() => CATEGORIES.find((c) => c.id === catId), [catId])
   const template = useMemo(
     () => category?.templates.find((t) => t.id === tplId) ?? null,
     [category, tplId],
   )
 
+  // A sensible starting name for a template — its own `defaultName`, else "My" + the template name. Only
+  // applied while the user hasn't typed their own, so switching Transformer ▸ Relay re-suggests, but a
+  // hand-typed name is left alone.
+  const defaultNameFor = (t?: Template | null) =>
+    t?.defaultName ?? `My${(t?.name ?? 'Project').replace(/[^A-Za-z0-9]/g, '')}`
+  const suggestName = (t?: Template | null) => {
+    if (!nameEdited) setName(defaultNameFor(t))
+  }
+
   const pickCategory = (c: Category) => {
     setCatId(c.id)
-    setTplId(c.templates[0]?.id ?? '')
+    const first = c.templates[0]
+    setTplId(first?.id ?? '')
     setDepth('design')
+    suggestName(first)
     if (c.id === 'recent') refreshProjects() // re-scan + pick up anything saved since mount
   }
 
@@ -310,18 +396,14 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
     setRecents(listRecentProjects())
   }
 
+  // The design-depth preview is THIS template's own internals (a transformer's core + windings, a relay's
+  // coil + contacts, …) — not the motor's. Falls back to a generic materials-first preview.
   const depthFields =
+    depth === 'design' ? (template?.design ?? GENERIC_DESIGN) : (template?.block ?? GENERIC_BLOCK)
+  const depthNote =
     depth === 'design'
-      ? [
-          ['Stator core', 'Soft iron'],
-          ['Magnets', 'Ferrite'],
-          ['Winding', '500 turns · 26 AWG'],
-        ]
-      : [
-          ['Torque constant k', '0.02 V·s/rad'],
-          ['Winding R', '2 Ω'],
-          ['No-load speed', '5,600 RPM'],
-        ]
+      ? (template?.note ?? '↓ the terminal behaviour derives from these')
+      : 'Type the headline numbers; skip the internals.'
 
   return (
     <div
@@ -554,6 +636,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                   onClick={() => {
                     setTplId(t.id)
                     setDepth('design')
+                    suggestName(t)
                   }}
                   style={{
                     display: 'flex',
@@ -729,9 +812,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                       </div>
                     ))}
                     <div style={{ fontSize: 11, color: ACCENT_TEXT, marginTop: 6 }}>
-                      {depth === 'design'
-                        ? '↓ torque, speed & resistance derive from these'
-                        : 'Type the headline numbers; skip the internals.'}
+                      {depthNote}
                     </div>
                   </div>
                 </div>
@@ -774,7 +855,10 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
         <span style={{ fontSize: 13, color: MUTED }}>Name</span>
         <input
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => {
+            setName(e.target.value)
+            setNameEdited(true)
+          }}
           aria-label="Project name"
           style={{
             width: 200,
