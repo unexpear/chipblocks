@@ -122,6 +122,21 @@ export const SKY130_LAYERS_PROVENANCE: FootprintProvenance = {
   date_accessed: '2026-07-17',
 }
 
+/** The cell-boundary annotation layer (SKY130 `prBoundary` = 235/4). Not a FABRICATED layer — it marks a
+ *  standard cell's place-and-route outline, so it is kept out of SKY130_LAYERS (the real silicon layers)
+ *  and used only to draw cell/die outlines in an exported .gds (a KLayout/Magic user sees the floorplan). */
+export const PR_BOUNDARY: GdsPair = { layer: 235, datatype: 4 }
+
+export const PR_BOUNDARY_PROVENANCE: FootprintProvenance = {
+  source_type: 'reference',
+  title: 'SKY130 prBoundary (cell place-and-route outline) — GDS 235/4',
+  citation:
+    'SkyWater SKY130 layer `prBoundary` = GDS layer 235, datatype 4 — the standard-cell / place-and-route boundary annotation layer (not a fabricated mask layer). Used to draw cell + die outlines in an exported GDSII.',
+  confidence: 'high',
+  url: 'https://skywater-pdk.readthedocs.io/en/main/rules/layers.html',
+  date_accessed: '2026-07-17',
+}
+
 /** name → layer, via a Map (not a plain-object index — an untrusted PDK name must not reach an inherited
  *  Object member; see the prototype-pollution hardening). */
 const LAYER_BY_NAME: ReadonlyMap<string, PdkLayer> = new Map(SKY130_LAYERS.map((l) => [l.name, l]))
