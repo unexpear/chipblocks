@@ -4,6 +4,7 @@ import type { Floorplan } from '../src/renderer/cell-place.ts'
 import { cellBlock, cellPolygons } from '../src/renderer/cell-polygons.ts'
 import { defName, floorplanToDef } from '../src/renderer/def.ts'
 import { dbu, floorplanToLef } from '../src/renderer/lef.ts'
+import type { TopNetlist } from '../src/renderer/top-netlist.ts'
 
 const width = (name: string) => {
   const b = cellBlock(name)
@@ -121,6 +122,94 @@ describe('floorplanToDef', () => {
 
   test('is deterministic', () => {
     expect(floorplanToDef(fp).text).toBe(floorplanToDef(fp).text)
+  })
+})
+
+describe('floorplanToDef — connectivity (NETS / PINS / SPECIALNETS)', () => {
+  // a netlist whose instIds match the module `fp` cells (u0 = NOT, u1 = NAND); `ghost` is not placed.
+  const netlist: TopNetlist = {
+    hasCells: true,
+    tieConnections: [],
+    signalNets: [
+      {
+        name: 'n0',
+        connections: [
+          { instId: 'u0', pin: 'Y' },
+          { instId: 'u1', pin: 'A' },
+        ],
+      },
+      {
+        name: 'RESULT',
+        connections: [{ instId: 'u1', pin: 'Y' }],
+        pin: { name: 'RESULT', direction: 'OUTPUT' },
+      },
+      { name: 'orphan', connections: [{ instId: 'ghost', pin: 'A' }] },
+    ],
+  }
+
+  test('the power grid is two SPECIALNETS wildcards whenever cells exist', () => {
+    const { text } = floorplanToDef(fp)
+    expect(text).toContain('SPECIALNETS 2 ;')
+    expect(text).toContain('- VDD ( * VDD ) + USE POWER ;')
+    expect(text).toContain('- VSS ( * VSS ) + USE GROUND ;')
+  })
+
+  test('an empty floorplan emits no SPECIALNETS', () => {
+    const empty = mkFloorplan([], 0, 0, 0)
+    expect(floorplanToDef(empty).text).toContain('SPECIALNETS 0 ;')
+  })
+
+  test('a netlist populates NETS with remapped connections; unplaced cells are dropped', () => {
+    const { text } = floorplanToDef(fp, { netlist })
+    // orphan references a cell that was not placed → its net drops out entirely
+    expect(text).toContain('NETS 2 ;')
+    expect(text).toContain('- n0 ( u0 Y ) ( u1 A ) + USE SIGNAL ;')
+    expect(text).not.toContain('orphan')
+    // a labelled net also lists its ( PIN <name> ) terminal
+    expect(text).toContain('- RESULT ( u1 Y ) ( PIN RESULT ) + USE SIGNAL ;')
+  })
+
+  test('a netlist populates PINS from the labelled nets, with direction', () => {
+    const { text } = floorplanToDef(fp, { netlist })
+    expect(text).toContain('PINS 1 ;')
+    expect(text).toContain('- RESULT + NET RESULT + DIRECTION OUTPUT + USE SIGNAL ;')
+  })
+
+  test('the returned nets/pins counts equal what was actually emitted (not what was requested)', () => {
+    // the netlist requests 3 signal nets + 1 pin, but the `orphan` net (unplaced cell) is dropped → nets:2.
+    const { nets, pins } = floorplanToDef(fp, { netlist })
+    expect(nets).toBe(2)
+    expect(pins).toBe(1)
+  })
+
+  test('a constant tie is appended to the matching SPECIALNETS rail', () => {
+    const tied: TopNetlist = {
+      hasCells: true,
+      signalNets: [],
+      tieConnections: [
+        { rail: 'VDD', instId: 'u1', pin: 'A' },
+        { rail: 'VSS', instId: 'u0', pin: 'Y' },
+      ],
+    }
+    const { text } = floorplanToDef(fp, { netlist: tied })
+    expect(text).toContain('- VDD ( * VDD ) ( u1 A ) + USE POWER ;')
+    expect(text).toContain('- VSS ( * VSS ) ( u0 Y ) + USE GROUND ;')
+  })
+
+  test('without a netlist the connectivity sections stay empty (placement-only interchange)', () => {
+    const { text } = floorplanToDef(fp)
+    expect(text).toContain('PINS 0 ;')
+    expect(text).toContain('NETS 0 ;')
+  })
+
+  test('sections appear in DEF order: COMPONENTS → PINS → SPECIALNETS → NETS → END DESIGN', () => {
+    const { text } = floorplanToDef(fp, { netlist })
+    const at = (marker: string) => text.indexOf(marker)
+    expect(at('END COMPONENTS')).toBeGreaterThan(-1)
+    expect(at('END COMPONENTS')).toBeLessThan(at('PINS 1 ;'))
+    expect(at('PINS 1 ;')).toBeLessThan(at('SPECIALNETS 2 ;'))
+    expect(at('SPECIALNETS 2 ;')).toBeLessThan(at('NETS 2 ;'))
+    expect(at('NETS 2 ;')).toBeLessThan(at('END DESIGN'))
   })
 })
 

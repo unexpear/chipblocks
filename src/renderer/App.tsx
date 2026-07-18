@@ -29,6 +29,7 @@ import { floorplanToLef } from './lef.ts'
 import { namedCellLvs, summarizeLvs } from './lvs.ts'
 import { floorplanToOasis, writeOasis } from './oasis.ts'
 import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
+import { extractTopNetlist, type TopNetlist } from './top-netlist.ts'
 import type { WorkspaceMode } from './workspace.ts'
 import '@xyflow/react/dist/style.css'
 import './interactions.css'
@@ -1752,17 +1753,25 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // The chip floorplan is GENERATED (placeCells) lazily when you ENTER the Chip level and then LIVES in
   // app state, so leaving + re-entering the level doesn't re-derive it — the "stop re-deriving" fix. It
   // regenerates only when you press Re-place; a cheap schematic fingerprint flags when it's gone stale.
-  const [chipFloorplan, setChipFloorplan] = useState<{ plan: Floorplan; signature: string } | null>(
-    null,
-  )
+  const [chipFloorplan, setChipFloorplan] = useState<{
+    plan: Floorplan
+    signature: string
+    netlist: TopNetlist
+  } | null>(null)
   const chipLiveSignature = useMemo(
     () => chipSignature(nodes as unknown as BlockNodeLike[], edges as unknown as BlockEdgeLike[]),
     [nodes, edges],
   )
   const regenerateChipFloorplan = useCallback(() => {
+    // Capture the connectivity from the SAME schematic snapshot as the placement, so the DEF's COMPONENTS
+    // and its NETS/PINS can never describe different design states (they'd otherwise diverge under drift).
     setChipFloorplan({
       plan: placeCells(nodes as unknown as BlockNodeLike[], edges as unknown as BlockEdgeLike[]),
       signature: chipLiveSignature,
+      netlist: extractTopNetlist(
+        nodes as unknown as BlockNodeLike[],
+        edges as unknown as BlockEdgeLike[],
+      ),
     })
   }, [nodes, edges, chipLiveSignature])
   // Generate on entering the Chip level if there's none yet; never auto-regenerate afterwards — an edit
@@ -1846,13 +1855,18 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     if (bridge?.onExportDefRequest === undefined) return
     bridge.onExportDefRequest(() => {
       const plan = buildChipPlan()
-      const { text, components } = floorplanToDef(plan)
+      // Use the netlist captured WITH the snapshot so it matches the placed cells' ids; only the
+      // never-entered path (no snapshot) falls back to a fresh extract, where buildChipPlan also placed fresh.
+      const netlist =
+        chipFloorplan?.netlist ??
+        extractTopNetlist(nodes as unknown as BlockNodeLike[], edges as unknown as BlockEdgeLike[])
+      const { text, components, nets, pins } = floorplanToDef(plan, { netlist })
       void bridge.saveDefData?.(text)
       const warnings =
         plan.cells.length === 0
           ? ['The chip floorplan is empty — nothing to place.']
           : [
-              'Placed design (DEF) for OpenROAD: rows/cells are all orientation N (matching the GDS), so adjacent rails abut VDD-to-VSS — a placement interchange for inspection/re-placement, not a legalized power grid. PINS/NETS are empty (no connectivity round-trip this step).',
+              `Placed + connected design (DEF) for OpenROAD: rows alternate N/FS so power rails abut same-net (legal grid); ${nets} signal net(s) + ${pins} top-level pin(s) + the VDD/VSS power rails are emitted, so a router/timer can consume it (with the Liberty library). Top-level pins are inferred from named net-labels; power uses the * VDD / * VSS wildcard.`,
             ]
       const drc = namedCellDrc(plan.cells.map((c) => c.name))
       if (drc.length > 0) warnings.push(summarizeDrc(drc))
@@ -1866,7 +1880,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         format: 'def',
       })
     })
-  }, [buildChipPlan])
+  }, [buildChipPlan, chipFloorplan, nodes, edges])
 
   // Export OASIS: the compact-binary layout (oasis.ts) — the same geometry as the .gds, smaller file.
   useEffect(() => {

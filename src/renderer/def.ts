@@ -11,16 +11,20 @@
  * inlining geometry — the same one-definition-per-gate-type, placed-by-reference shape the OASIS/GDS writers
  * emit — so the three exports describe one identical hierarchy in three formats.
  *
- * HONEST SCOPE (see lef.ts): PINS and NETS are emitted as empty stubs — this is a PLACED design, not a
- * connected one, so OpenROAD can inspect/re-place it but cannot route or time it without a Liberty library
- * and real connectivity. Rows alternate orientation N / FS (even / odd), matching the GDS + OASIS, so
- * adjacent rows abut rail-to-rail on the SAME net (VDD∥VDD, VSS∥VSS) — a legal, shareable power grid.
+ * CONNECTIVITY (signoff follow-up C1): pass `options.netlist` (from top-netlist.ts) to populate the NETS,
+ * PINS and SPECIALNETS sections — WHICH cell output drives which cell inputs, the design's top-level I/O,
+ * and the power rails — so a tool can route + time the design, not only inspect the placement. Power is the
+ * standard `* VDD` / `* VSS` wildcard (every primitive cell has those pins). Without a netlist the sections
+ * stay empty (a placement-only interchange). A Liberty timing library (liberty.ts) completes the round-trip.
+ * Rows alternate orientation N / FS (even / odd), matching the GDS + OASIS, so adjacent rows abut
+ * rail-to-rail on the SAME net (VDD∥VDD, VSS∥VSS) — a legal, shareable power grid.
  */
 
 import { PROCESS } from './cell-layout.ts'
 import { cellOrient, type Floorplan, orientForRow } from './cell-place.ts'
 import { gdsName } from './gds.ts'
 import { dbu, LEF_SITE } from './lef.ts'
+import type { TopNetlist } from './top-netlist.ts'
 
 /** A DEF-legal identifier: keep [A-Za-z0-9_], never empty. */
 export function defName(raw: string): string {
@@ -29,13 +33,14 @@ export function defName(raw: string): string {
 }
 
 /**
- * Turn a placed floorplan into a DEF placed-design text. `components` is the instance count (= placed
- * cells). Never throws; an empty floorplan yields a valid empty design.
+ * Turn a placed floorplan into a DEF placed-design text. `components` is the instance count (= placed cells);
+ * `nets` / `pins` are the counts ACTUALLY emitted (after remapping to placed cells), so a caller can report
+ * what the file really contains. Never throws; an empty floorplan yields a valid empty design.
  */
 export function floorplanToDef(
   fp: Floorplan,
-  options: { design?: string } = {},
-): { text: string; components: number } {
+  options: { design?: string; netlist?: TopNetlist } = {},
+): { text: string; components: number; nets: number; pins: number } {
   const design = gdsName(options.design ?? 'chipblocks_top')
   const rowH = PROCESS.rowHeight.lambda
   const siteStep = dbu(PROCESS.polyPitch.lambda) // site width in dbu (2400)
@@ -60,6 +65,7 @@ export function floorplanToDef(
 
   lines.push(`COMPONENTS ${fp.cells.length} ;`)
   const usedIds = new Set<string>()
+  const defIdOf = new Map<string, string>() // flat gate node id (= PlacedCell id) → its unique DEF instance id
   for (const c of fp.cells) {
     let id = defName(c.id)
     if (usedIds.has(id)) {
@@ -68,6 +74,7 @@ export function floorplanToDef(
       id = `${id}_${k}`
     }
     usedIds.add(id)
+    defIdOf.set(c.id, id)
     const master = gdsName(`cell_${c.name}`)
     // DEF places the cell origin (its lower-left) at the point AFTER the orientation is applied. For N that
     // is the cell's bottom-left (dieHeight − (y+h)); for FS the x-axis flip sends the origin to the top edge
@@ -80,8 +87,57 @@ export function floorplanToDef(
     lines.push(`   - ${id} ${master} + PLACED ( ${x} ${y} ) ${orient} ;`)
   }
   lines.push('END COMPONENTS')
-  lines.push('PINS 0 ;', 'END PINS')
-  lines.push('NETS 0 ;', 'END NETS')
+
+  // PINS — the design's top-level I/O, inferred from named net-labels (top-netlist.ts). Empty without a netlist.
+  const pinNets = options.netlist?.signalNets.filter((n) => n.pin !== undefined) ?? []
+  lines.push(`PINS ${pinNets.length} ;`)
+  for (const net of pinNets) {
+    const pin = net.pin as NonNullable<(typeof net)['pin']>
+    lines.push(`   - ${pin.name} + NET ${net.name} + DIRECTION ${pin.direction} + USE SIGNAL ;`)
+  }
+  lines.push('END PINS')
+
+  // SPECIALNETS — the power grid. Every primitive cell's LEF MACRO has VDD/VSS pins, so the `* <pin>`
+  // wildcard ties them all to the two global rails (a black-box cell without power pins is the exception).
+  // A gate signal pin hard-tied to a power/ground SYMBOL (a constant) is appended to the matching rail.
+  const railTerms = (rail: 'VDD' | 'VSS') =>
+    (options.netlist?.tieConnections ?? [])
+      .filter((t) => t.rail === rail)
+      .map((t) => {
+        const inst = defIdOf.get(t.instId)
+        return inst === undefined ? '' : ` ( ${inst} ${t.pin} )`
+      })
+      .join('')
+  if (fp.cells.length > 0) {
+    lines.push('SPECIALNETS 2 ;')
+    lines.push(`   - VDD ( * VDD )${railTerms('VDD')} + USE POWER ;`)
+    lines.push(`   - VSS ( * VSS )${railTerms('VSS')} + USE GROUND ;`)
+    lines.push('END SPECIALNETS')
+  } else {
+    lines.push('SPECIALNETS 0 ;', 'END SPECIALNETS')
+  }
+
+  // NETS — the signal connectivity: each gate output to the gate inputs it drives. Remap every connection's
+  // flat gate id to its DEF instance id; a labelled (I/O) net also lists its ( PIN <name> ) terminal.
+  const netLines: string[] = []
+  for (const net of options.netlist?.signalNets ?? []) {
+    const terms = net.connections
+      .map((c) => {
+        const inst = defIdOf.get(c.instId)
+        return inst === undefined ? undefined : `( ${inst} ${c.pin} )`
+      })
+      .filter((t): t is string => t !== undefined)
+    if (terms.length === 0) continue // no placed cell on this net
+    const pinTerm = net.pin !== undefined ? ` ( PIN ${net.pin.name} )` : ''
+    netLines.push(`   - ${net.name} ${terms.join(' ')}${pinTerm} + USE SIGNAL ;`)
+  }
+  lines.push(`NETS ${netLines.length} ;`, ...netLines, 'END NETS')
+
   lines.push('END DESIGN')
-  return { text: lines.join('\n'), components: fp.cells.length }
+  return {
+    text: lines.join('\n'),
+    components: fp.cells.length,
+    nets: netLines.length,
+    pins: pinNets.length,
+  }
 }
