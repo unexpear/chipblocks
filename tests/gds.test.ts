@@ -16,7 +16,7 @@ import {
   rectRing,
   writeGds,
 } from '../src/renderer/gds.ts'
-import { PR_BOUNDARY } from '../src/renderer/pdk.ts'
+import { gdsOf, PR_BOUNDARY } from '../src/renderer/pdk.ts'
 
 const WHEN = new Date(2026, 6, 17, 12, 0, 0)
 
@@ -49,10 +49,31 @@ const REC = {
   STRNAME: 0x06,
   ENDSTR: 0x07,
   BOUNDARY: 0x08,
+  SREF: 0x0a,
   LAYER: 0x0d,
   DATATYPE: 0x0e,
   XY: 0x10,
   ENDEL: 0x11,
+  SNAME: 0x12,
+}
+const asciiOf = (d: Uint8Array): string => {
+  let s = ''
+  for (const b of d) if (b !== 0) s += String.fromCharCode(b)
+  return s
+}
+// Partition a record stream into its structures: name + the records between BGNSTR…ENDSTR.
+function structuresOf(recs: Rec[]): { name: string; recs: Rec[] }[] {
+  const out: { name: string; recs: Rec[] }[] = []
+  let current: { name: string; recs: Rec[] } | null = null
+  for (const r of recs) {
+    if (r.rtype === REC.BGNSTR) current = { name: '', recs: [] }
+    else if (r.rtype === REC.STRNAME && current) current.name = asciiOf(r.data)
+    else if (r.rtype === REC.ENDSTR && current) {
+      out.push(current)
+      current = null
+    } else if (current) current.recs.push(r)
+  }
+  return out
 }
 const i16 = (d: Uint8Array, o: number) => {
   const v = ((d[o] as number) << 8) | (d[o + 1] as number)
@@ -140,56 +161,115 @@ describe('writeGds — a well-formed GDSII stream', () => {
 })
 
 describe('floorplanToGds — the placed floorplan becomes real GDS geometry', () => {
+  // realistic λ dimensions: AND/OR cells are 32 λ wide and the row height is 90 λ (so the SREF'd polygons
+  // coincide with the prBoundary outline). Two of the same type + one unmapped cell exercise dedup + fallback.
   const fp: Floorplan = {
     cells: [
-      { id: 'g1', name: 'AND', x: 0, y: 0, w: 10, h: 8, row: 0, reliable: true },
-      { id: 'g2', name: 'OR', x: 10, y: 0, w: 12, h: 8, row: 0, reliable: true },
+      { id: 'g1', name: 'AND', x: 0, y: 0, w: 32, h: 90, row: 0, reliable: true },
+      { id: 'g2', name: 'OR', x: 32, y: 0, w: 32, h: 90, row: 0, reliable: true },
+      { id: 'g3', name: 'AND', x: 64, y: 0, w: 32, h: 90, row: 0, reliable: true },
+      { id: 'g4', name: 'MYSTERY', x: 96, y: 0, w: 16, h: 90, row: 0, reliable: true },
     ],
     rows: 1,
-    dieWidthLambda: 22,
-    dieHeightLambda: 8,
-    dieWidthUm: 22 * PROCESS.lambdaUm,
-    dieHeightUm: 8 * PROCESS.lambdaUm,
-    cellAreaLambda2: 176,
-    dieAreaLambda2: 176,
+    dieWidthLambda: 112,
+    dieHeightLambda: 90,
+    dieWidthUm: 112 * PROCESS.lambdaUm,
+    dieHeightUm: 90 * PROCESS.lambdaUm,
+    cellAreaLambda2: 112 * 90,
+    dieAreaLambda2: 112 * 90,
     utilization: 1,
     anyUnreliable: false,
   }
+  const nm = (lambda: number) => Math.round(lambda * PROCESS.lambdaUm * 1000)
 
-  test('every cell + the die outline is a BOUNDARY on prBoundary (235/4), in λ→nm database units', () => {
-    expect(PROCESS.lambdaUm).toBe(0.3) // the conversion the coords below depend on: λ → 300 nm
-    const nm = (lambda: number) => Math.round(lambda * PROCESS.lambdaUm * 1000)
+  test('λ is 0.3 µm — the conversion the coordinates below depend on', () => {
+    expect(PROCESS.lambdaUm).toBe(0.3) // λ → 300 nm
+  })
+
+  test('each unique mapped gate is one cell STRUCTURE (dedup); MYSTERY has none', () => {
+    const structs = structuresOf(
+      parseRecords(writeGds(floorplanToGds(fp, { topName: 'demo' }), WHEN)),
+    )
+    const names = structs.map((s) => s.name)
+    expect(names).toContain('cell_AND')
+    expect(names).toContain('cell_OR')
+    expect(names).not.toContain('cell_MYSTERY') // unmapped → outline only, no fabricated geometry
+    // AND appears twice in the floorplan but is emitted as ONE structure
+    expect(names.filter((n) => n === 'cell_AND')).toHaveLength(1)
+  })
+
+  test('cell_AND carries real per-layer polygons (poly/diff/nwell/met1), 3 poly columns', () => {
+    const structs = structuresOf(parseRecords(writeGds(floorplanToGds(fp), WHEN)))
+    const and = structs.find((s) => s.name === 'cell_AND')
+    if (and === undefined) throw new Error('no cell_AND structure')
+    // each BOUNDARY is followed by LAYER then DATATYPE — key on the (layer, datatype) PAIR, since poly
+    // (66/20) and licon1 (66/44) share a layer number.
+    const pairs: string[] = []
+    for (let i = 0; i < and.recs.length; i++) {
+      if ((and.recs[i] as Rec).rtype !== REC.BOUNDARY) continue
+      const layer = i16((and.recs[i + 1] as Rec).data, 0)
+      const datatype = i16((and.recs[i + 2] as Rec).data, 0)
+      pairs.push(`${layer}/${datatype}`)
+    }
+    const key = (name: 'poly' | 'diff' | 'nwell' | 'met1') => {
+      const g = gdsOf(name)
+      return `${g?.layer}/${g?.datatype}`
+    }
+    for (const name of ['poly', 'diff', 'nwell', 'met1'] as const) {
+      expect(pairs.includes(key(name)), `cell_AND on ${name}`).toBe(true)
+    }
+    expect(pairs.filter((p) => p === key('poly'))).toHaveLength(3) // 3 input columns
+    // no polygon on prBoundary inside a cell structure — that layer is the top-level outline only
+    expect(pairs.some((p) => p.startsWith(`${PR_BOUNDARY.layer}/`))).toBe(false)
+  })
+
+  test('the top structure SREFs each mapped cell at its flipped (x, y); MYSTERY is not placed', () => {
     const recs = parseRecords(writeGds(floorplanToGds(fp, { topName: 'demo' }), WHEN))
-    const boundaries = recs.filter((r) => r.rtype === REC.BOUNDARY)
-    expect(boundaries).toHaveLength(3) // die outline + 2 cells
-    // every one is on prBoundary 235/4
+    const top = structuresOf(recs).find((s) => s.name === 'demo')
+    if (top === undefined) throw new Error('no top structure')
+    // 3 mapped cells (g1, g2, g3) → 3 SREFs; MYSTERY not placed
+    const srefNames: string[] = []
+    const srefXY: [number, number][] = []
+    for (let i = 0; i < top.recs.length; i++) {
+      const r = top.recs[i] as Rec
+      if (r.rtype === REC.SNAME) srefNames.push(asciiOf(r.data))
+      if (r.rtype === REC.SREF) {
+        const xy = top.recs[i + 2] as Rec // SREF, SNAME, XY
+        srefXY.push([i32(xy.data, 0), i32(xy.data, 4)])
+      }
+    }
+    expect(srefNames.sort()).toEqual(['cell_AND', 'cell_AND', 'cell_OR'])
+    // g1 (AND) at x0, y flipped: dieH 90 − (0 + 90) = 0
+    expect(srefXY).toContainEqual([nm(0), nm(0)])
+    // g3 (AND) at x64
+    expect(srefXY).toContainEqual([nm(64), nm(0)])
+  })
+
+  test('the top structure keeps a prBoundary outline per cell + the die outline', () => {
+    const recs = parseRecords(writeGds(floorplanToGds(fp, { topName: 'demo' }), WHEN))
+    const top = structuresOf(recs).find((s) => s.name === 'demo')
+    if (top === undefined) throw new Error('no top structure')
+    // every BOUNDARY in the TOP structure is on prBoundary 235/4 (die + 4 cell outlines = 5)
+    const prLayers = top.recs.filter((r) => r.rtype === REC.LAYER).map((r) => i16(r.data, 0))
+    expect(prLayers).toHaveLength(5)
+    for (const l of prLayers) expect(l).toBe(PR_BOUNDARY.layer)
+  })
+
+  test('cellPolygons:false gives the legacy outline-only shape (prBoundary rects, no SREFs)', () => {
+    const recs = parseRecords(writeGds(floorplanToGds(fp, { cellPolygons: false }), WHEN))
+    expect(recs.filter((r) => r.rtype === REC.SREF)).toHaveLength(0)
+    expect(recs.filter((r) => r.rtype === REC.BGNSTR)).toHaveLength(1) // just the top structure
+    expect(recs.filter((r) => r.rtype === REC.BOUNDARY)).toHaveLength(5) // die + 4 cell outlines
     for (const r of recs) {
       if (r.rtype === REC.LAYER) expect(i16(r.data, 0)).toBe(PR_BOUNDARY.layer)
-      if (r.rtype === REC.DATATYPE) expect(i16(r.data, 0)).toBe(PR_BOUNDARY.datatype)
     }
-    // collect the XY rings and check the die outline (0,0)-(dieW,dieH) is one of them
-    const rings = recs
-      .filter((r) => r.rtype === REC.XY)
-      .map((r) =>
-        Array.from({ length: r.data.length / 8 }, (_, k) => [
-          i32(r.data, k * 8),
-          i32(r.data, k * 8 + 4),
-        ]),
-      )
-    const dieRing = rings.find((ring) => ring.some(([x, y]) => x === nm(22) && y === nm(8)))
-    expect(dieRing, 'die outline present').toBeDefined()
-    // cell g1 spans x 0..10 λ, and Y is flipped (die height 8 λ, cell at top y=0 → GDS y 0..2400)
-    const g1 = rings.find(
-      (ring) => ring.some(([x]) => x === nm(10)) && !ring.some(([x]) => x === nm(22)),
-    )
-    expect(g1, 'cell g1 rectangle present').toBeDefined()
-    expect(g1?.every(([, y]) => y === 0 || y === nm(8))).toBe(true)
   })
 
   test('an empty floorplan yields a valid but geometry-free library (no crash)', () => {
     const empty: Floorplan = { ...fp, cells: [], dieWidthLambda: 0, dieHeightLambda: 0 }
     const recs = parseRecords(writeGds(floorplanToGds(empty), WHEN))
     expect(recs.filter((r) => r.rtype === REC.BOUNDARY)).toHaveLength(0)
+    expect(recs.filter((r) => r.rtype === REC.SREF)).toHaveLength(0)
     expect(recs.at(-1)?.rtype).toBe(REC.ENDLIB) // still a well-formed library
   })
 })

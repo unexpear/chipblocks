@@ -1,6 +1,7 @@
 import { PROCESS } from './cell-layout.ts'
 import type { Floorplan } from './cell-place.ts'
-import { type GdsPair, PR_BOUNDARY } from './pdk.ts'
+import { cellBlock, cellPolygons } from './cell-polygons.ts'
+import { type GdsPair, gdsOf, PR_BOUNDARY } from './pdk.ts'
 
 /**
  * The GDSII writer — the chip-side twin of pcb-gerber.ts: it turns the placed floorplan into a real
@@ -176,45 +177,88 @@ export function gdsName(raw: string): string {
   return cleaned.length > 0 ? cleaned : 'CELL'
 }
 
+const CELL_NM = (lambda: number): number => Math.round(lambda * PROCESS.lambdaUm * 1000)
+
 /**
- * Build a GDS library from the placed floorplan: each placed cell becomes a BOUNDARY rectangle on the
- * PDK's cell-boundary (prBoundary) layer, plus the die outline. λ → database nm via the process
- * (PROCESS.lambdaUm µm/λ, on a 1 nm grid). Y is FLIPPED to GDSII's y-up convention (the floorplan is
- * y-down, top-left origin). The cells are placeholders — real per-layer polygons come at the cell-layout
- * step; this is the first mask-ready, tool-openable artifact.
+ * A standard-cell gate as its own GDS STRUCTURE — the real per-layer polygons (cell-polygons.ts) on the
+ * SKY130 layer numbers (pdk.ts). Cell-local, bottom-left origin, y-up. Returns undefined for a name that is
+ * not one of the primitive gates (the caller then falls back to a prBoundary outline). Each cell type is
+ * emitted ONCE and SREF-placed wherever it appears — the hierarchy a real layout uses.
+ */
+export function cellToStructure(name: string): GdsStructure | undefined {
+  const block = cellBlock(name)
+  if (!block) return undefined
+  const layout = cellPolygons(block)
+  const elements: GdsElement[] = layout.rects.map((r) => {
+    // every CellLayerName is a real SKY130 layer name; fall back visibly to prBoundary if one ever isn't.
+    const pair = gdsOf(r.layer) ?? PR_BOUNDARY
+    return {
+      kind: 'boundary',
+      layer: pair.layer,
+      datatype: pair.datatype,
+      points: rectRing(CELL_NM(r.x), CELL_NM(r.y), CELL_NM(r.x + r.w), CELL_NM(r.y + r.h)),
+    }
+  })
+  return { name: gdsName(`cell_${name}`), elements }
+}
+
+/**
+ * Build a GDS library from the placed floorplan. Each unique gate type becomes one cell STRUCTURE of real
+ * per-layer polygons (cell-polygons.ts), SREF-placed at every location it appears; the top structure holds
+ * the die outline + a prBoundary outline per cell (kept for visualisation) + the SREFs. A cell whose name
+ * is not a primitive gate keeps only its prBoundary outline — an honest fallback, never fabricated geometry.
+ * λ → database nm via the process (PROCESS.lambdaUm µm/λ, 1 nm grid); Y is FLIPPED to GDSII's y-up (the
+ * floorplan is y-down, top-left). Set `cellPolygons: false` for the outline-only legacy shape.
  */
 export function floorplanToGds(
   floorplan: Floorplan,
-  options: { topName?: string; boundaryLayer?: GdsPair } = {},
+  options: { topName?: string; boundaryLayer?: GdsPair; cellPolygons?: boolean } = {},
 ): GdsLibrary {
   const layer = options.boundaryLayer ?? PR_BOUNDARY
-  const nmPerLambda = PROCESS.lambdaUm * 1000 // λ → µm → nm (1 nm database grid)
-  const toNm = (lambda: number) => Math.round(lambda * nmPerLambda)
+  const withPolygons = options.cellPolygons !== false
+  const toNm = CELL_NM
   const dieH = floorplan.dieHeightLambda
   const flipY = (yLambda: number) => toNm(dieH - yLambda) // y-down floorplan → y-up GDS
 
-  const elements: GdsElement[] = []
+  const topElements: GdsElement[] = []
   // The die outline first (bottom-left origin at 0,0).
   if (floorplan.dieWidthLambda > 0 && dieH > 0) {
-    elements.push({
+    topElements.push({
       kind: 'boundary',
       layer: layer.layer,
       datatype: layer.datatype,
       points: rectRing(0, 0, toNm(floorplan.dieWidthLambda), toNm(dieH)),
     })
   }
+
+  const cellStructures: GdsStructure[] = []
+  const structureFor = new Map<string, string>() // cell name → structure name (emit each type once)
   for (const c of floorplan.cells) {
-    elements.push({
+    // a prBoundary outline for every cell (mapped or not), so the floorplan is always visible.
+    topElements.push({
       kind: 'boundary',
       layer: layer.layer,
       datatype: layer.datatype,
       points: rectRing(toNm(c.x), flipY(c.y + c.h), toNm(c.x + c.w), flipY(c.y)),
     })
+    if (!withPolygons || !cellBlock(c.name)) continue
+    let structName = structureFor.get(c.name)
+    if (structName === undefined) {
+      const struct = cellToStructure(c.name)
+      if (!struct) continue
+      structName = struct.name
+      structureFor.set(c.name, structName)
+      cellStructures.push(struct)
+    }
+    // SREF: land the cell's local (0,0) at its GDS bottom-left (= flipY(c.y + c.h)).
+    topElements.push({ kind: 'sref', structure: structName, x: toNm(c.x), y: flipY(c.y + c.h) })
   }
+
+  const topName = gdsName(options.topName ?? 'chipblocks_top')
   return {
-    name: gdsName(options.topName ?? 'chipblocks_top'),
+    name: topName,
     userUnitMeters: 1e-6, // 1 µm user unit
     dbUnitMeters: 1e-9, // 1 nm database grid
-    structures: [{ name: gdsName(options.topName ?? 'chipblocks_top'), elements }],
+    structures: [...cellStructures, { name: topName, elements: topElements }],
   }
 }

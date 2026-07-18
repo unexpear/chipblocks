@@ -1784,7 +1784,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         plan.cells.length === 0
           ? ['The chip floorplan is empty — nothing to place.']
           : [
-              'Cells are place-and-route outlines on prBoundary (235/4); real per-layer polygons come at the next step.',
+              'Cells carry real per-layer polygons (poly/diff/nwell/li1/met1) on SKY130 layer numbers with C5N λ-scaled teaching geometry — opens in KLayout/Magic, but is not a foundry-DRC-clean cell (no well/substrate taps; relaxed contacts at stage boundaries). Unknown cell types fall back to a prBoundary outline.',
             ]
       if (plan.anyUnreliable)
         warnings.push('Some cells are flagged unreliable in the floorplan (reported, not omitted).')
