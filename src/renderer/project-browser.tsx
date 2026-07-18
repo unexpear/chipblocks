@@ -54,6 +54,8 @@ type Template = {
   note?: string
   /** Suggested project name when this template is picked, before the user types their own. */
   defaultName?: string
+  /** The workspace level the editor opens ON (Board / Chip start there instead of the schematic). */
+  initialWorkspace?: WorkspaceMode
 }
 
 const GENERIC_DESIGN: [string, string][] = [
@@ -229,13 +231,31 @@ const CATEGORIES: Category[] = [
     id: 'board',
     label: 'Board / PCB',
     sub: 'Place parts, route copper, export Gerbers',
-    templates: [],
+    templates: [
+      {
+        id: 'blank-board',
+        name: 'Blank board',
+        desc: 'An empty PCB — place footprints, route copper, run DRC and export the Gerbers. Draw the schematic first, then move Circuit ▸ Board with the breadcrumb.',
+        includes: ['Footprint placement', 'Copper + via routing', 'DRC · Gerber / drill export'],
+        initialWorkspace: 'board',
+        defaultName: 'MyBoard',
+      },
+    ],
   },
   {
     id: 'chip',
     label: 'Chip / IC',
     sub: 'Standard cells, floorplan, timing sign-off',
-    templates: [],
+    templates: [
+      {
+        id: 'blank-chip',
+        name: 'Blank chip',
+        desc: 'An empty silicon floorplan — standard cells, placement and static-timing sign-off. Build the logic first, then move Circuit ▸ Chip with the breadcrumb.',
+        includes: ['Standard-cell library', 'Floorplan + area', 'Static-timing sign-off'],
+        initialWorkspace: 'chip',
+        defaultName: 'MyChip',
+      },
+    ],
   },
   { id: 'system', label: 'System', sub: 'Coming soon', soon: true, templates: [] },
 ]
@@ -334,7 +354,13 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
 
   const create = () => {
     if (!template) return
-    onCreate({ template: template.id, templateName: template.name, name, depth })
+    onCreate({
+      template: template.id,
+      templateName: template.name,
+      name,
+      depth,
+      ...(template.initialWorkspace ? { initialWorkspace: template.initialWorkspace } : {}),
+    })
   }
 
   // "My Projects": the saved .chipblocks files, and opening one (or an arbitrary file) into a new tab.
@@ -658,46 +684,6 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                 </button>
               )
             })
-          ) : category && (category.id === 'board' || category.id === 'chip') ? (
-            <div
-              style={{
-                gridColumn: '1 / -1',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'flex-start',
-                gap: 14,
-                padding: 28,
-              }}
-            >
-              <div style={{ color: MUTED, fontSize: 13, maxWidth: 540, lineHeight: 1.6 }}>
-                {category.id === 'board'
-                  ? 'The Board workspace lays your circuit out as a real PCB — footprints, copper routing, DRC, and the manufacturing files. Start here, then build your circuit and move along Circuit ▸ Board with the breadcrumb at the top.'
-                  : 'The Chip workspace projects your design onto silicon — a standard-cell library, area, and static-timing sign-off. Start here, then build your circuit and move along Circuit ▸ Chip with the breadcrumb at the top.'}
-              </div>
-              <button
-                type="button"
-                onClick={() =>
-                  onCreate({
-                    template: '',
-                    templateName: category.label,
-                    name: category.id === 'board' ? 'MyBoard' : 'MyChip',
-                    depth: 'design',
-                    initialWorkspace: category.id as WorkspaceMode,
-                  })
-                }
-                style={{
-                  padding: '10px 18px',
-                  borderRadius: 8,
-                  border: 'none',
-                  background: ACCENT,
-                  color: THEME.white,
-                  fontSize: 13.5,
-                  cursor: 'pointer',
-                }}
-              >
-                Start a {category.label} project →
-              </button>
-            </div>
           ) : (
             <div
               style={{
@@ -705,14 +691,20 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
-                gap: 8,
+                gap: 10,
                 color: MUTED,
                 textAlign: 'center',
                 padding: 40,
                 fontSize: 13,
+                lineHeight: 1.6,
               }}
             >
-              Coming soon — system-level design arrives as ChipBlocks grows up the stack.
+              <div style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>System — coming soon</div>
+              <div style={{ maxWidth: 460 }}>
+                System-level design — assemblies, enclosures and firmware wired across several
+                boards — arrives as ChipBlocks grows up the stack. For now, design at the Circuit,
+                Component, Board and Chip levels and move between them with the breadcrumb.
+              </div>
             </div>
           )}
         </div>
