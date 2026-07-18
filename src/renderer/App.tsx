@@ -1879,7 +1879,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         plan.cells.length === 0
           ? ['The chip floorplan is empty — nothing to place.']
           : [
-              'Cells carry real per-layer polygons (poly/diff/nwell/li1/met1) on SKY130 layer numbers with C5N λ-scaled teaching geometry — opens in KLayout (OASIS is a KLayout/OpenROAD format; Magic reads GDSII), but is not a foundry-DRC-clean cell. Flattened (no cell hierarchy/repetition yet); unknown cell types fall back to a prBoundary outline.',
+              'Cells carry real per-layer polygons (poly/diff/nwell/li1/met1) on SKY130 layer numbers with C5N λ-scaled teaching geometry — opens in KLayout (OASIS is a KLayout/OpenROAD format; Magic reads GDSII), but is not a foundry-DRC-clean cell. Hierarchical (one cell per gate type, placed by reference); unknown cell types fall back to a prBoundary outline.',
             ]
       if (plan.anyUnreliable)
         warnings.push('Some cells are flagged unreliable in the floorplan (reported, not omitted).')

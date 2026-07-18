@@ -7,8 +7,9 @@
  * same floorplan serialize far smaller. This emits the SAME geometry floorplanToGds does, byte-position
  * identical (same λ→nm rounding + Y-flip), just in the OASIS encoding.
  *
- * SCOPE (honest): this FLATTENS everything into one top cell (no cell hierarchy / PLACEMENT / repetition
- * yet) with validation-scheme 0 (no checksum). The geometry is the C5N λ-scaled TEACHING cells on SKY130
+ * SCOPE (honest): HIERARCHICAL like the GDS — one CELL per unique gate + a PLACEMENT (id 17) per instance,
+ * the die + per-cell prBoundary outlines on the top cell — with validation-scheme 0 (no checksum). The
+ * geometry is the C5N λ-scaled TEACHING cells on SKY130
  * layer numbers (same as the .gds) — for inspection in KLayout, not a foundry sign-off artifact.
  * Unlike writeGds(lib, when), writeOasis takes no timestamp (OASIS timestamps are optional) so it is
  * deterministic by construction.
@@ -17,6 +18,7 @@
 import { PROCESS } from './cell-layout.ts'
 import type { Floorplan } from './cell-place.ts'
 import { cellBlock, cellPolygons } from './cell-polygons.ts'
+import { gdsName } from './gds.ts'
 import { type GdsPair, gdsOf, PR_BOUNDARY } from './pdk.ts'
 
 // ---- primitive encoders (build a number[] and Uint8Array.from at the end, like gds.ts) ----
@@ -76,7 +78,9 @@ export type OasisRect = {
   w: number
   h: number
 }
-export type OasisCell = { name: string; rects: OasisRect[] }
+/** A reference placing a previously-defined cell at (x, y) in database units; `flip` = the N/FS mirror. */
+export type OasisPlacement = { cell: string; x: number; y: number; flip?: boolean }
+export type OasisCell = { name: string; rects: OasisRect[]; placements?: OasisPlacement[] }
 /** unitPerMicron = database units per micron (1000 ⇒ a 1 nm grid). */
 export type OasisLayout = { cells: OasisCell[]; unitPerMicron: number }
 
@@ -133,6 +137,16 @@ export function writeOasis(layout: OasisLayout): Uint8Array {
       mW = r.w
       mH = r.h
     }
+    // PLACEMENT (id 17) references a previously-defined cell by name at (x,y). Info-byte CNXYRAAF (a
+    // DIFFERENT bit layout from the RECTANGLE's SWHXYRDL): C=0x80 explicit cell-name, X=0x20, Y=0x10,
+    // F=0x01 flip-about-x (the N/FS mirror). We always set C|X|Y (0xB0), and F for a flipped placement.
+    for (const p of cell.placements ?? []) {
+      pushUInt(out, 17)
+      out.push(p.flip ? 0xb1 : 0xb0)
+      pushString(out, p.cell)
+      pushSInt(out, p.x)
+      pushSInt(out, p.y)
+    }
   }
 
   // END (id 2): a padding b-string + validation-scheme 0, the whole record padded to exactly 256 bytes.
@@ -147,11 +161,11 @@ export function writeOasis(layout: OasisLayout): Uint8Array {
 const CELL_NM = (lambda: number): number => Math.round(lambda * PROCESS.lambdaUm * 1000)
 
 /**
- * Build an OASIS layout from the placed floorplan — the SAME geometry as floorplanToGds, flattened into one
- * top cell: the die outline + a prBoundary outline per placed cell + (cellPolygons default on) the real
- * per-layer polygons of each mapped cell, translated to absolute coordinates. λ → nm via the process; Y is
- * FLIPPED to y-up exactly as floorplanToGds flips it, with the same two-step rounding, so an exported .oas
- * and .gds place geometry on identical coordinates. An unmapped cell contributes only its outline.
+ * Build a HIERARCHICAL OASIS layout from the placed floorplan — mirroring the GDS SREF hierarchy in gds.ts:
+ * one CELL per unique gate type (its cell-local polygons) + a top cell that holds the die + per-cell
+ * prBoundary outlines and one PLACEMENT per instance referencing its gate cell. λ → nm via the process; the
+ * placement origin + cell-local geometry reproduce the same absolute coordinates the .gds emits (identical
+ * two-step rounding + Y-flip). An unmapped cell keeps only its outline (no placement, no fabricated cell).
  */
 export function floorplanToOasis(
   floorplan: Floorplan,
@@ -162,9 +176,9 @@ export function floorplanToOasis(
   const dieH = floorplan.dieHeightLambda
   const flipY = (yLambda: number) => CELL_NM(dieH - yLambda)
 
-  const rects: OasisRect[] = []
+  const topRects: OasisRect[] = []
   if (floorplan.dieWidthLambda > 0 && dieH > 0) {
-    rects.push({
+    topRects.push({
       layer: boundary.layer,
       datatype: boundary.datatype,
       x: 0,
@@ -173,11 +187,11 @@ export function floorplanToOasis(
       h: CELL_NM(dieH),
     })
   }
-  // prBoundary outline per placed cell (mapped or not) — visualisation, always emitted.
+  // prBoundary outline per placed cell (mapped or not) — visualisation, always on the top cell.
   for (const c of floorplan.cells) {
     const x0 = CELL_NM(c.x)
     const y0 = flipY(c.y + c.h)
-    rects.push({
+    topRects.push({
       layer: boundary.layer,
       datatype: boundary.datatype,
       x: x0,
@@ -186,29 +200,39 @@ export function floorplanToOasis(
       h: flipY(c.y) - y0,
     })
   }
-  // real per-layer polygons of each mapped cell, translated to absolute coordinates.
+
+  // one CELL per unique mapped gate (cell-local, upright) + a PLACEMENT per instance.
+  const gateCells: OasisCell[] = []
+  const placements: OasisPlacement[] = []
+  const seen = new Set<string>()
   if (withPolygons) {
     for (const c of floorplan.cells) {
       const block = cellBlock(c.name)
-      if (!block) continue
-      const cx = CELL_NM(c.x)
-      const cy = flipY(c.y + c.h)
-      for (const r of cellPolygons(block).rects) {
-        const pair = gdsOf(r.layer) ?? PR_BOUNDARY
-        rects.push({
-          layer: pair.layer,
-          datatype: pair.datatype,
-          x: cx + CELL_NM(r.x),
-          y: cy + CELL_NM(r.y),
-          w: CELL_NM(r.w),
-          h: CELL_NM(r.h),
+      if (!block) continue // unmapped: outline only, no placement, no cell
+      const cellName = gdsName(`cell_${c.name}`)
+      if (!seen.has(c.name)) {
+        seen.add(c.name)
+        const local = cellPolygons(block).rects.map((r) => {
+          const pair = gdsOf(r.layer) ?? PR_BOUNDARY
+          return {
+            layer: pair.layer,
+            datatype: pair.datatype,
+            x: CELL_NM(r.x),
+            y: CELL_NM(r.y),
+            w: CELL_NM(r.w),
+            h: CELL_NM(r.h),
+          }
         })
+        gateCells.push({ name: cellName, rects: local })
       }
+      placements.push({ cell: cellName, x: CELL_NM(c.x), y: flipY(c.y + c.h) })
     }
   }
 
-  return {
-    unitPerMicron: 1000,
-    cells: [{ name: oasisName(options.topName ?? 'chipblocks_top'), rects }],
+  const top: OasisCell = {
+    name: oasisName(options.topName ?? 'chipblocks_top'),
+    rects: topRects,
+    placements,
   }
+  return { unitPerMicron: 1000, cells: [...gateCells, top] }
 }

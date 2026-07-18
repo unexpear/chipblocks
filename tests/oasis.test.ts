@@ -7,6 +7,7 @@
 import { describe, expect, test } from 'vitest'
 import { PROCESS } from '../src/renderer/cell-layout.ts'
 import type { Floorplan } from '../src/renderer/cell-place.ts'
+import { cellToStructure } from '../src/renderer/gds.ts'
 import { floorplanToOasis, type OasisLayout, oasisName, writeOasis } from '../src/renderer/oasis.ts'
 import { gdsOf, PR_BOUNDARY } from '../src/renderer/pdk.ts'
 
@@ -23,10 +24,13 @@ type Rect = {
   y: number
   info: number
 }
+type Placement = { cell: string; x: number; y: number; info: number }
 type Parsed = {
   version: string
   unitPerMicron: number
   cells: Map<string, Rect[]>
+  cellDefs: string[] // raw id-14 CELL names in file order — a Map collapses duplicates, so keep the sequence
+  placements: Map<string, Placement[]>
   endLength: number
   cursor: number
 }
@@ -68,6 +72,8 @@ function parseOasis(bytes: Uint8Array): Parsed {
   for (let i = 0; i < 12; i++) expect(readUInt(bytes, c), `table offset ${i}`).toBe(0)
 
   const cells = new Map<string, Rect[]>()
+  const cellDefs: string[] = []
+  const placements = new Map<string, Placement[]>()
   let cell = ''
   let mLayer = 0
   let mDatatype = 0
@@ -79,13 +85,22 @@ function parseOasis(bytes: Uint8Array): Parsed {
     const id = readUInt(bytes, c)
     if (id === 14) {
       cell = readString(bytes, c)
+      cellDefs.push(cell)
       cells.set(cell, [])
+      placements.set(cell, [])
       mLayer = 0
       mDatatype = 0
       mW = 0
       mH = 0
     } else if (id === 15) {
       // XYABSOLUTE — no operands
+    } else if (id === 17) {
+      const info = bytes[c.i] as number
+      c.i += 1
+      const pcell = readString(bytes, c) // C=1 N=0 → explicit cell-name string
+      const px = readSInt(bytes, c) // X=1 → signed x
+      const py = readSInt(bytes, c) // Y=1 → signed y
+      ;(placements.get(cell) as Placement[]).push({ cell: pcell, x: px, y: py, info })
     } else if (id === 20) {
       const info = bytes[c.i] as number
       c.i += 1
@@ -114,7 +129,7 @@ function parseOasis(bytes: Uint8Array): Parsed {
       throw new Error(`unknown OASIS record id ${id}`)
     }
   }
-  return { version, unitPerMicron, cells, endLength, cursor: c.i }
+  return { version, unitPerMicron, cells, cellDefs, placements, endLength, cursor: c.i }
 }
 
 describe('OASIS primitives (base-128 varints + modal encoding)', () => {
@@ -174,35 +189,93 @@ describe('floorplanToOasis — the placed floorplan becomes OASIS geometry', () 
     expect(PROCESS.lambdaUm).toBe(0.3)
   })
 
-  test('one flattened top cell; die + 4 cell outlines on prBoundary, real polygons on real layers', () => {
-    const p = parseOasis(writeOasis(floorplanToOasis(fp, { topName: 'demo' })))
-    expect([...p.cells.keys()]).toEqual(['demo'])
-    const rects = p.cells.get('demo') as Rect[]
-    const pr = rects.filter(
-      (r) => r.layer === PR_BOUNDARY.layer && r.datatype === PR_BOUNDARY.datatype,
-    )
-    expect(pr).toHaveLength(5) // die + 4 cell outlines
+  // canonical (layer/datatype/x/y/w/h) multiset — for comparing an OASIS cell to a GDS structure
+  const canonRects = (
+    rects: { layer: number; datatype: number; x: number; y: number; w: number; h: number }[],
+  ) => rects.map((r) => `${r.layer}/${r.datatype} ${r.x},${r.y} ${r.w}x${r.h}`).sort()
+
+  test('hierarchical: a top cell + one cell per gate type, placed by reference (MYSTERY unmapped)', () => {
+    const bytes = writeOasis(floorplanToOasis(fp, { topName: 'demo' }))
+    const p = parseOasis(bytes)
+    // the top cell + a cell per UNIQUE mapped gate — AND appears twice but is DEFINED once (dedup); the
+    // unmapped MYSTERY gets no cell of its own.
+    expect(p.cells.has('demo')).toBe(true)
+    expect(p.cells.has('cell_AND')).toBe(true)
+    expect(p.cells.has('cell_OR')).toBe(true)
+    expect(p.cells.has('cell_MYSTERY')).toBe(false)
+    expect(p.cells.size).toBe(3) // demo + cell_AND + cell_OR
+    // dedup pinned against the RAW id-14 sequence — a Map would silently collapse a duplicate CELL record,
+    // so a dropped `seen` guard (emitting cell_AND twice — invalid OASIS) must fail HERE, not pass green.
+    expect(p.cellDefs).toHaveLength(3)
+    expect(p.cellDefs.filter((n) => n === 'cell_AND')).toHaveLength(1)
+    expect(new Set(p.cellDefs).size).toBe(p.cellDefs.length) // no cell name defined twice
+
+    // the TOP holds only the die + one prBoundary outline per placed cell (all 4, mapped or not) — no silicon
+    const topRects = p.cells.get('demo') as Rect[]
+    expect(topRects).toHaveLength(5) // die + 4 cell outlines
+    for (const r of topRects) expect(r.layer).toBe(PR_BOUNDARY.layer)
     // the die is the first rect: full size at the origin
-    expect(rects[0]).toMatchObject({ layer: 235, datatype: 4, x: 0, y: 0, w: nm(112), h: nm(90) })
-    // the second rect is the first cell outline reusing layer+datatype+height via modal (info 0x58 = W|X|Y)
-    expect(rects[1]?.info).toBe(0x58)
-    expect(rects[1]).toMatchObject({ layer: 235, datatype: 4, w: nm(32), h: nm(90) })
-    // real silicon layers present, keyed on the (layer,datatype) PAIR (poly 66/20 vs licon1 66/44 share 66)
-    const pairs = new Set(rects.map((r) => `${r.layer}/${r.datatype}`))
+    expect(topRects[0]).toMatchObject({
+      layer: 235,
+      datatype: 4,
+      x: 0,
+      y: 0,
+      w: nm(112),
+      h: nm(90),
+    })
+    // the first cell outline reuses layer+datatype+height via modal (info 0x58 = W|X|Y)
+    expect(topRects[1]?.info).toBe(0x58)
+    expect(topRects[1]).toMatchObject({ layer: 235, datatype: 4, w: nm(32), h: nm(90) })
+
+    // one PLACEMENT per MAPPED instance (AND, OR, AND — MYSTERY has none): 3 refs, 2 to cell_AND
+    const places = p.placements.get('demo') as Placement[]
+    expect(places).toHaveLength(3)
+    expect(places.map((q) => q.cell).sort()).toEqual(['cell_AND', 'cell_AND', 'cell_OR'])
+    for (const q of places) expect(q.info).toBe(0xb0) // C|X|Y, no flip
+    // the placement origins are the cell's flipped bottom-left — g1 at x0/top, g3 at x=64
+    expect(places[0]).toMatchObject({ cell: 'cell_AND', x: nm(0), y: nm(0) })
+    expect(places[2]).toMatchObject({ cell: 'cell_AND', x: nm(64), y: nm(0) })
+
+    // the GATE cell carries the real silicon polygons, cell-local — and is byte-for-byte the SAME geometry
+    // the GDS hierarchy emits for that gate (cellToStructure), proving the two writers agree.
+    const andCell = p.cells.get('cell_AND') as Rect[]
+    const pairs = new Set(andCell.map((r) => `${r.layer}/${r.datatype}`))
     for (const name of ['poly', 'diff', 'nwell', 'met1'] as const) {
       const g = gdsOf(name)
       expect(pairs.has(`${g?.layer}/${g?.datatype}`), name).toBe(true)
     }
-    expect(p.cursor).toBe(writeOasis(floorplanToOasis(fp, { topName: 'demo' })).length)
+    const gdsAnd = cellToStructure('AND')
+    const gdsRects = (gdsAnd?.elements ?? []).flatMap((el) => {
+      if (el.kind !== 'boundary') return []
+      const xs = el.points.map((pt) => pt.x)
+      const ys = el.points.map((pt) => pt.y)
+      const x = Math.min(...xs)
+      const y = Math.min(...ys)
+      return [
+        {
+          layer: el.layer,
+          datatype: el.datatype,
+          x,
+          y,
+          w: Math.max(...xs) - x,
+          h: Math.max(...ys) - y,
+        },
+      ]
+    })
+    expect(canonRects(andCell)).toEqual(canonRects(gdsRects))
+
+    expect(p.cursor).toBe(bytes.length)
     expect(p.endLength).toBe(256)
   })
 
-  test('cellPolygons:false gives outlines only (5 prBoundary rects, no silicon layers)', () => {
-    const rects = parseOasis(writeOasis(floorplanToOasis(fp, { cellPolygons: false }))).cells.get(
-      'chipblocks_top',
-    ) as Rect[]
+  test('cellPolygons:false gives the top outline shell only (5 prBoundary rects, no gate cells)', () => {
+    const p = parseOasis(writeOasis(floorplanToOasis(fp, { cellPolygons: false })))
+    expect([...p.cells.keys()]).toEqual(['chipblocks_top'])
+    const rects = p.cells.get('chipblocks_top') as Rect[]
     expect(rects).toHaveLength(5)
     for (const r of rects) expect(r.layer).toBe(PR_BOUNDARY.layer)
+    // outline-only ⇒ no placements either
+    expect(p.placements.get('chipblocks_top')).toHaveLength(0)
   })
 
   test('an empty floorplan yields a valid file: one cell, zero rectangles, END 256', () => {

@@ -6,7 +6,10 @@
  *
  * FORMAT: LEF/DEF 5.8 Language Reference. Coordinates in integer database units (1 dbu = 1 nm), the same
  * λ→nm grid gds.ts uses, so the DEF placement and the exported GDSII coincide. Y is FLIPPED to DEF's y-up,
- * bottom-left convention exactly as floorplanToGds flips it (the floorplan is y-down, top-left).
+ * bottom-left convention exactly as floorplanToGds flips it (the floorplan is y-down, top-left). DEF is
+ * hierarchical by construction: every COMPONENT names its `cell_<NAME>` LEF macro (from lef.ts) rather than
+ * inlining geometry — the same one-definition-per-gate-type, placed-by-reference shape the OASIS/GDS writers
+ * emit — so the three exports describe one identical hierarchy in three formats.
  *
  * HONEST SCOPE (see lef.ts): PINS and NETS are emitted as empty stubs — this is a PLACED design, not a
  * connected one, so OpenROAD can inspect/re-place it but cannot route or time it without a Liberty library
