@@ -6,11 +6,11 @@
  * connectivity checks. The CellRect `net` labels are used only for human-readable report names, NEVER for
  * connectivity — the verdict is decided by graph structure, so scrambling the labels can't change it.
  *
- * HONEST OUTCOME: cell-polygons.ts deliberately leaves a COMPOSITE gate's inter-stage gate net unrouted
- * (noted "left to the router"), so a geometry-only extractor correctly sees the driven stage's gate poly as
- * FLOATING. The 3 single-stage gates (NOT/NAND/NOR) are fully connected and LVS-MATCH; the 5 composites
- * (Buffer/AND/OR/XOR/XNOR) report a MISMATCH flagged `areaEstimate: true` — an expected unrouted-inter-stage
- * layout, distinct from a true regression. LVS thus both proves the simple cells and pinpoints the real gap.
+ * OUTCOME: all 8 library cells LVS-MATCH from geometry alone — the drawn silicon provably IS the circuit.
+ * (Before the inter-stage router, a composite gate's driven gate poly was left unrouted and extracted as a
+ * FLOATING net, so the 5 composites came back as a MISMATCH flagged `areaEstimate: true`. The router
+ * strapping every multi-column gate net closed that gap; the `areaEstimate` flag remains for any future
+ * layout that leaves a gate net open, distinguishing an expected unrouted estimate from a true regression.)
  *
  * All geometry is in λ, bottom-left origin, y-up (matching cell-polygons.ts). Body/bulk is ignored on both
  * sides (the teaching cells expose no bulk terminal; the schematic MOSFETs are 3-terminal), so LVS is
@@ -268,6 +268,10 @@ export function extractLayoutNetlist(rects: CellRect[]): ExtractedNetlist {
   if (outCandidates.length > 1) notes.push('multiple output-tie candidates (unrouted composite)')
 
   // inputs: poly nets that reach a gate contact (a licon1 whose centre sits on the poly), by x ascending.
+  // A PRIMARY input is poly-only — it never touches a diffusion region. A driven/inter-stage net also has a
+  // gate contact now (the router strapped it) but its component touches the driver's diffusion, so excluding
+  // region-touching nets keeps those out of `inputs` (otherwise WL would mis-anchor them as inputs).
+  const netTouchesRegion = new Set([...nNetsWithRegion, ...pNetsWithRegion])
   const gateContactPoly = new Set<string>()
   for (const c of licons) {
     const cx = c.x + c.w / 2
@@ -279,6 +283,7 @@ export function extractLayoutNetlist(rects: CellRect[]): ExtractedNetlist {
     .filter((p) => gateContactPoly.has(polyKey(p)))
     .sort((a, b) => a.x - b.x)
     .map((p) => net(polyKey(p)))
+    .filter((id) => !netTouchesRegion.has(id))
     .filter((id, i, arr) => arr.indexOf(id) === i)
 
   // floating-gate note: a poly that IS a transistor gate but reaches no gate contact — the unrouted

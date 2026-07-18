@@ -129,6 +129,13 @@ const GATE_CONTACT_Y = 44 // input gate contact, in the field gap between the di
 const OUT_JOG_Y = 48 // output-strap horizontal jog band, clear of the gate contacts below it
 const NDIFF_CONTACT_Y = NDIFF_Y + DIFF_H / 2 - CONTACT / 2 // centred in the n-diffusion
 const PDIFF_CONTACT_Y = PDIFF_Y + DIFF_H / 2 - CONTACT / 2
+// inter-stage router: horizontal met1 tracks in the field band, met1 vias down to li1 at each end. A track
+// lands inside the driver's n-output stub (y 22..50) so no extra driver-side li1 is needed.
+const MET1_WIDTH = ruleLambda('minMetal1Width') // 3 — routing-track width
+const MET1_SPACE = ruleLambda('minMetal1Space') // 2
+const TRACK_Y0 = NDIFF_CONTACT_Y // 22 — first track
+const TRACK_PITCH = MET1_WIDTH + MET1_SPACE // 5
+const MAX_TRACK_Y = 42 // 5 tracks (22,27,32,37,42): pad top 46 ≤ jog 48, mcon top ≤ 44 ≤ n-stub top 50
 
 /** Column c's poly centre-line: edge margin + half a pitch + c pitches. */
 const centerX = (c: number): number => EDGE + POLY_PITCH / 2 + c * POLY_PITCH
@@ -647,23 +654,103 @@ export function cellPolygons(block: BlockData): CellLayout {
     }
   }
 
-  // input gate contacts (poly → li1 landing pin) for the columns switched by a primary input
+  // ROUTER + input gate contacts. Every gate net that spans MORE THAN ONE poly column — a driven
+  // inter-stage net, or a primary input that fans out to several columns (XOR/XNOR) — is strapped together
+  // in real metal so it reads as ONE conductor. A driven net vias down to its driver's output li1 (the
+  // n-stub); an input fan-out net just ties its poly stripes; a single-column input keeps the plain gate
+  // pad it always had (so single-stage cells are byte-identical). Grouping by gate net makes fan-out free.
   const inputSet = new Set(net.inputs)
+  const emitGateContact = (col: ColumnInfo, g: string) => {
+    const gx = col.centerXLambda - CONTACT / 2
+    rects.push(rectFrom('licon1', gx, GATE_CONTACT_Y, gx + CONTACT, GATE_CONTACT_Y + CONTACT, g))
+    rects.push(rectFrom('li1', gx, GATE_CONTACT_Y, gx + CONTACT, GATE_CONTACT_Y + CONTACT, g))
+  }
+  type StrapDesc = {
+    net: string
+    drivenGx: number[]
+    anchorX: number | null
+    leftX: number
+    rightX: number
+  }
+  const mkDesc = (g: string, drivenGx: number[], anchorX: number | null): StrapDesc => {
+    const xs = anchorX === null ? drivenGx : [...drivenGx, anchorX]
+    const leftX = Math.min(...xs)
+    const rightX = Math.max(Math.max(...xs) + CONTACT, leftX + MET1_WIDTH) // ≥ met1 min width
+    return { net: g, drivenGx, anchorX, leftX, rightX }
+  }
+  const gateGroups = new Map<string, ColumnInfo[]>()
   for (const col of columns) {
-    if (!inputSet.has(col.gate)) {
-      if (!broken)
-        notes.push(
-          `internal gate net on column ${col.index} — inter-stage route left to the router`,
-        )
+    const arr = gateGroups.get(col.gate) ?? []
+    arr.push(col)
+    gateGroups.set(col.gate, arr)
+  }
+  const straps: StrapDesc[] = []
+  for (const [g, cols] of [...gateGroups.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    if (broken) {
+      if (inputSet.has(g)) for (const col of cols) emitGateContact(col, g)
       continue
     }
-    const cx = col.centerXLambda - CONTACT / 2
-    rects.push(
-      rectFrom('licon1', cx, GATE_CONTACT_Y, cx + CONTACT, GATE_CONTACT_Y + CONTACT, col.gate),
-    )
-    rects.push(
-      rectFrom('li1', cx, GATE_CONTACT_Y, cx + CONTACT, GATE_CONTACT_Y + CONTACT, col.gate),
-    )
+    const driver = outByNet.get(g)
+    const drivenGx = cols.map((c) => c.centerXLambda - CONTACT / 2)
+    if (driver !== undefined && driver.n.length > 0) {
+      // via down to the driver's nearest n-output stub
+      const mean = drivenGx.reduce((s, x) => s + x, 0) / drivenGx.length + CONTACT / 2
+      const anchorX = [...driver.n].sort(
+        (p, q) => Math.abs(p - mean) - Math.abs(q - mean) || p - q,
+      )[0] as number
+      straps.push(mkDesc(g, drivenGx, anchorX))
+    } else if (inputSet.has(g) && cols.length > 1) {
+      straps.push(mkDesc(g, drivenGx, null)) // driverless primary-input fan-out
+    } else if (!inputSet.has(g)) {
+      notes.push(`internal gate net ${g}: no driver geometry — left unrouted`)
+    }
+    // a single-column primary input falls through — its plain pad is emitted in column order below.
+  }
+  // plain gate pads for single-column primary inputs, in COLUMN order, so the single-stage cells
+  // (NOT/NAND/NOR — every input single-column, no strap) stay byte-identical to the pre-router layout.
+  if (!broken) {
+    for (const col of columns) {
+      if (inputSet.has(col.gate) && gateGroups.get(col.gate)?.length === 1) {
+        emitGateContact(col, col.gate)
+      }
+    }
+  }
+
+  // left-edge channel assignment: each strap gets a met1 y-track; different-net wires never overlap.
+  const trackRight: number[] = []
+  const trackY = new Map<string, number>()
+  for (const s of [...straps].sort((a, b) => a.leftX - b.leftX || (a.net < b.net ? -1 : 1))) {
+    let k = trackRight.findIndex((r) => r + MET1_SPACE <= s.leftX)
+    if (k < 0) {
+      k = trackRight.length
+      trackRight.push(s.rightX)
+    } else {
+      trackRight[k] = s.rightX
+    }
+    const yk = TRACK_Y0 + k * TRACK_PITCH
+    if (yk > MAX_TRACK_Y) {
+      notes.push(`inter-stage net ${s.net}: routing channel over capacity — left unrouted`)
+      continue // skip, never force a different-net short — leaves the poly floating (honest)
+    }
+    trackY.set(s.net, yk)
+  }
+
+  // emit the via stack per routed strap: gate contact + li1 pad + mcon at each column, one met1 track, and
+  // (driven nets only) an mcon down onto the driver's n-output stub.
+  for (const s of straps) {
+    const t = trackY.get(s.net)
+    if (t === undefined) continue
+    for (const gx of s.drivenGx) {
+      rects.push(
+        rectFrom('licon1', gx, GATE_CONTACT_Y, gx + CONTACT, GATE_CONTACT_Y + CONTACT, s.net),
+      )
+      rects.push(rectFrom('li1', gx, t, gx + CONTACT, GATE_CONTACT_Y + CONTACT, s.net))
+      rects.push(rectFrom('mcon', gx, t, gx + CONTACT, t + CONTACT, s.net))
+    }
+    rects.push(rectFrom('met1', s.leftX, t, s.rightX, t + MET1_WIDTH, s.net))
+    if (s.anchorX !== null) {
+      rects.push(rectFrom('mcon', s.anchorX, t, s.anchorX + CONTACT, t + CONTACT, s.net))
+    }
   }
 
   const balanced =

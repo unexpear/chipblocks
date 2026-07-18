@@ -79,21 +79,72 @@ describe('the LVS verdict on the standard-cell library', () => {
     }
   })
 
-  test('composite gates MISMATCH, flagged areaEstimate (unrouted inter-stage), not a true fail', () => {
+  test('composite gates now MATCH too (the inter-stage router closed the gap)', () => {
     for (const name of ['Buffer', 'AND', 'OR', 'XOR', 'XNOR']) {
       const r = byName.get(name)
       expect(stageCount(name)).toBeGreaterThan(1)
-      expect(r?.status, name).toBe('mismatch')
-      expect(r?.areaEstimate, name).toBe(true)
-      expect(r?.notes.some((n) => n.includes('unrouted inter-stage'))).toBe(true)
+      expect(r?.status, name).toBe('match')
+      expect(r?.areaEstimate, name).toBe(false)
+      expect(r?.deviceMap.size, name).toBe(r?.deviceCountSchematic)
+      expect(r?.notes.some((n) => n.includes('unrouted'))).toBe(false)
     }
   })
 
-  test('summarizeLvs reports 3 matches + 5 area-estimate + 0 true mismatches', () => {
+  test('summarizeLvs reports a full 8/8 match, no area-estimates', () => {
     const s = summarizeLvs(reports)
-    expect(s).toContain('3/8 cells match')
-    expect(s).toContain('5 area-estimate')
+    expect(s).toContain('8/8 cells match')
+    expect(s).not.toContain('area-estimate')
     expect(s).toContain('0 true mismatch')
+  })
+})
+
+describe('the inter-stage router', () => {
+  test("a primary input fanning out to several columns is strapped into ONE net (XOR's A/B)", () => {
+    const xor = STANDARD_CELL_BLOCKS.find(
+      (b) => b.name === 'XOR',
+    ) as (typeof STANDARD_CELL_BLOCKS)[number]
+    const L = extractLayoutNetlist(cellPolygons(xor).rects)
+    // XOR has TWO primary inputs (A, B), each gating several columns — after routing they extract as 2 nets
+    expect(L.inputs).toHaveLength(2)
+    expect(lvsCompare(xor).match).toBe(true)
+  })
+
+  test('no composite has a floating gate left (every gate net is contacted)', () => {
+    for (const name of ['Buffer', 'AND', 'OR', 'XOR', 'XNOR']) {
+      const b = STANDARD_CELL_BLOCKS.find(
+        (x) => x.name === name,
+      ) as (typeof STANDARD_CELL_BLOCKS)[number]
+      expect(extractLayoutNetlist(cellPolygons(b).rects).notes.join(' ')).not.toContain('unrouted')
+    }
+  })
+
+  test('routing introduces no different-net overlap (short) on met1 or li1', () => {
+    const overlapArea = (a: CellRect, b: CellRect) =>
+      Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 1e-9 &&
+      Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > 1e-9
+    for (const b of STANDARD_CELL_BLOCKS) {
+      for (const layer of ['met1', 'li1'] as const) {
+        const rs = cellPolygons(b).rects.filter((r) => r.layer === layer)
+        for (let i = 0; i < rs.length; i++) {
+          for (let j = i + 1; j < rs.length; j++) {
+            const a = rs[i] as CellRect
+            const c = rs[j] as CellRect
+            if (overlapArea(a, c) && a.net !== undefined && a.net !== c.net) {
+              throw new Error(`${b.name}: ${layer} short between ${a.net} and ${c.net}`)
+            }
+          }
+        }
+      }
+    }
+  })
+
+  test('routing is deterministic (XOR/XNOR rects identical across calls)', () => {
+    for (const name of ['XOR', 'XNOR']) {
+      const b = STANDARD_CELL_BLOCKS.find(
+        (x) => x.name === name,
+      ) as (typeof STANDARD_CELL_BLOCKS)[number]
+      expect(cellPolygons(b).rects).toEqual(cellPolygons(b).rects)
+    }
   })
 })
 
