@@ -27,6 +27,7 @@ import { floorplanToDef } from './def.ts'
 import { floorplanToGds, writeGds } from './gds.ts'
 import { floorplanToLef } from './lef.ts'
 import { namedCellLvs, summarizeLvs } from './lvs.ts'
+import { floorplanToOasis, writeOasis } from './oasis.ts'
 import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
 import type { WorkspaceMode } from './workspace.ts'
 import '@xyflow/react/dist/style.css'
@@ -302,6 +303,8 @@ declare global {
       saveLefData?: (text: string) => Promise<{ ok: boolean; path?: string }>
       onExportDefRequest?: (callback: () => void) => void
       saveDefData?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      onExportOasisRequest?: (callback: () => void) => void
+      saveOasisData?: (data: Uint8Array) => Promise<{ ok: boolean; path?: string }>
       readUserLibrary?: () => Promise<string | null>
       writeUserLibrary?: (text: string) => Promise<{ ok: boolean; path?: string }>
       getKeybinds?: () => Promise<Record<string, string>>
@@ -1861,6 +1864,35 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         unsupported: [],
         warnings,
         format: 'def',
+      })
+    })
+  }, [buildChipPlan])
+
+  // Export OASIS: the compact-binary layout (oasis.ts) — the same geometry as the .gds, smaller file.
+  useEffect(() => {
+    const bridge = window.chipblocks
+    if (bridge?.onExportOasisRequest === undefined) return
+    bridge.onExportOasisRequest(() => {
+      const plan = buildChipPlan()
+      void bridge.saveOasisData?.(writeOasis(floorplanToOasis(plan)))
+      const warnings =
+        plan.cells.length === 0
+          ? ['The chip floorplan is empty — nothing to place.']
+          : [
+              'Cells carry real per-layer polygons (poly/diff/nwell/li1/met1) on SKY130 layer numbers with C5N λ-scaled teaching geometry — opens in KLayout (OASIS is a KLayout/OpenROAD format; Magic reads GDSII), but is not a foundry-DRC-clean cell. Flattened (no cell hierarchy/repetition yet); unknown cell types fall back to a prBoundary outline.',
+            ]
+      if (plan.anyUnreliable)
+        warnings.push('Some cells are flagged unreliable in the floorplan (reported, not omitted).')
+      const drc = namedCellDrc(plan.cells.map((c) => c.name))
+      if (drc.length > 0) warnings.push(summarizeDrc(drc))
+      const lvs = namedCellLvs(plan.cells.map((c) => c.name))
+      if (lvs.length > 0) warnings.push(summarizeLvs(lvs))
+      setNetlistReport({
+        kind: 'export',
+        count: plan.cells.length,
+        unsupported: [],
+        warnings,
+        format: 'oas',
       })
     })
   }, [buildChipPlan])

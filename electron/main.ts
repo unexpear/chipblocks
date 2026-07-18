@@ -56,6 +56,10 @@ const GDS_FILTERS = [
   { name: 'GDSII layout', extensions: ['gds'] },
   { name: 'All files', extensions: ['*'] },
 ]
+const OASIS_FILTERS = [
+  { name: 'OASIS layout', extensions: ['oas'] },
+  { name: 'All files', extensions: ['*'] },
+]
 const LEF_FILTERS = [
   { name: 'LEF library', extensions: ['lef'] },
   { name: 'All files', extensions: ['*'] },
@@ -219,6 +223,26 @@ function registerGdsExportHandler(window: BrowserWindow): void {
       await writeFile(picked.filePath, Buffer.from(data))
     } catch (error) {
       dialog.showErrorBox('Could not export GDSII', `Writing the file failed: ${String(error)}`)
+      return { ok: false }
+    }
+    return { ok: true, path: picked.filePath }
+  })
+}
+
+function registerOasisExportHandler(window: BrowserWindow): void {
+  // The renderer sends the placed floorplan's OASIS bytes (oasis.ts); we pick a file and write them
+  // verbatim — binary, like the GDS path.
+  ipcMain.removeHandler('file:save-oasis')
+  ipcMain.handle('file:save-oasis', async (_event, data: Uint8Array) => {
+    const picked = await dialog.showSaveDialog(window, {
+      filters: OASIS_FILTERS,
+      defaultPath: 'layout.oas',
+    })
+    if (picked.canceled || picked.filePath === undefined) return { ok: false }
+    try {
+      await writeFile(picked.filePath, Buffer.from(data))
+    } catch (error) {
+      dialog.showErrorBox('Could not export OASIS', `Writing the file failed: ${String(error)}`)
       return { ok: false }
     }
     return { ok: true, path: picked.filePath }
@@ -481,6 +505,10 @@ function installMenu(window: BrowserWindow): void {
           click: () => window.webContents.send('file:export-gds-request'),
         },
         {
+          label: 'Export OASIS…',
+          click: () => window.webContents.send('file:export-oasis-request'),
+        },
+        {
           label: 'Export LEF…',
           click: () => window.webContents.send('file:export-lef-request'),
         },
@@ -730,6 +758,7 @@ function createWindow(): void {
   registerVerilogExportHandler(window)
   registerFabZipExportHandler(window)
   registerGdsExportHandler(window)
+  registerOasisExportHandler(window)
   registerLefDefExportHandlers(window)
   registerCircuitOpenHandlers(window)
   registerKeybindHandlers(window)

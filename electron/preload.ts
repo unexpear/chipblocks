@@ -60,6 +60,10 @@ contextBridge.exposeInMainWorld('chipblocks', {
   onExportGdsRequest: (callback: () => void) => subscribe('file:export-gds-request', callback),
   saveGdsData: (data: Uint8Array): Promise<{ ok: boolean; path?: string }> =>
     ipcRenderer.invoke('file:save-gds', data),
+  // Export OASIS (compact binary layout): the renderer builds the bytes; main writes them verbatim.
+  onExportOasisRequest: (callback: () => void) => subscribe('file:export-oasis-request', callback),
+  saveOasisData: (data: Uint8Array): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('file:save-oasis', data),
   // Export LEF/DEF (OpenROAD interop): the File menu asks; the renderer builds the text and hands it over.
   onExportLefRequest: (callback: () => void) => subscribe('file:export-lef-request', callback),
   saveLefData: (text: string): Promise<{ ok: boolean; path?: string }> =>
