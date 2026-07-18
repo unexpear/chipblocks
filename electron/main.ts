@@ -56,6 +56,14 @@ const GDS_FILTERS = [
   { name: 'GDSII layout', extensions: ['gds'] },
   { name: 'All files', extensions: ['*'] },
 ]
+const LEF_FILTERS = [
+  { name: 'LEF library', extensions: ['lef'] },
+  { name: 'All files', extensions: ['*'] },
+]
+const DEF_FILTERS = [
+  { name: 'DEF placed design', extensions: ['def'] },
+  { name: 'All files', extensions: ['*'] },
+]
 
 /** The file the window is working on (drives plain Save + the window title). */
 let currentCircuitPath: string | null = null
@@ -215,6 +223,35 @@ function registerGdsExportHandler(window: BrowserWindow): void {
     }
     return { ok: true, path: picked.filePath }
   })
+}
+
+function registerLefDefExportHandlers(window: BrowserWindow): void {
+  // The renderer builds the LEF library / DEF placed-design TEXT (lef.ts / def.ts, for OpenROAD); we pick a
+  // file and write it. Text, like the Verilog export.
+  const textExport = (
+    channel: string,
+    filters: typeof LEF_FILTERS,
+    defaultPath: string,
+    label: string,
+  ) => {
+    ipcMain.removeHandler(channel)
+    ipcMain.handle(channel, async (_event, text: string) => {
+      const picked = await dialog.showSaveDialog(window, { filters, defaultPath })
+      if (picked.canceled || picked.filePath === undefined) return { ok: false }
+      try {
+        await writeFile(picked.filePath, text, 'utf8')
+      } catch (error) {
+        dialog.showErrorBox(
+          `Could not export ${label}`,
+          `Writing the file failed: ${String(error)}`,
+        )
+        return { ok: false }
+      }
+      return { ok: true, path: picked.filePath }
+    })
+  }
+  textExport('file:save-lef', LEF_FILTERS, 'design.lef', 'LEF')
+  textExport('file:save-def', DEF_FILTERS, 'design.def', 'DEF')
 }
 
 /** Read + validate a .chipblocks file at `path` (shared by the open-into-a-new-tab handlers below,
@@ -442,6 +479,14 @@ function installMenu(window: BrowserWindow): void {
         {
           label: 'Export GDS…',
           click: () => window.webContents.send('file:export-gds-request'),
+        },
+        {
+          label: 'Export LEF…',
+          click: () => window.webContents.send('file:export-lef-request'),
+        },
+        {
+          label: 'Export DEF…',
+          click: () => window.webContents.send('file:export-def-request'),
         },
         { type: 'separator' },
         { role: 'quit', label: 'Exit' },
@@ -685,6 +730,7 @@ function createWindow(): void {
   registerVerilogExportHandler(window)
   registerFabZipExportHandler(window)
   registerGdsExportHandler(window)
+  registerLefDefExportHandlers(window)
   registerCircuitOpenHandlers(window)
   registerKeybindHandlers(window)
   registerUserLibraryHandlers()

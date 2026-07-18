@@ -23,7 +23,9 @@ import { chipSignature, type Floorplan, placeCells } from './cell-place.ts'
 import { mergeOverrides } from './chip-canvas.tsx'
 import { type ChipLayout, EMPTY_CHIP_LAYOUT } from './chip-layout.ts'
 import { ChipView } from './chip-workspace.tsx'
+import { floorplanToDef } from './def.ts'
 import { floorplanToGds, writeGds } from './gds.ts'
+import { floorplanToLef } from './lef.ts'
 import { namedCellLvs, summarizeLvs } from './lvs.ts'
 import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
 import type { WorkspaceMode } from './workspace.ts'
@@ -296,6 +298,10 @@ declare global {
       saveFabZip?: (data: Uint8Array) => Promise<{ ok: boolean; path?: string }>
       onExportGdsRequest?: (callback: () => void) => void
       saveGdsData?: (data: Uint8Array) => Promise<{ ok: boolean; path?: string }>
+      onExportLefRequest?: (callback: () => void) => void
+      saveLefData?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      onExportDefRequest?: (callback: () => void) => void
+      saveDefData?: (text: string) => Promise<{ ok: boolean; path?: string }>
       readUserLibrary?: () => Promise<string | null>
       writeUserLibrary?: (text: string) => Promise<{ ok: boolean; path?: string }>
       getKeybinds?: () => Promise<Record<string, string>>
@@ -1773,14 +1779,21 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // the chip-physical chapter (the .gds opens in Magic / KLayout / OpenROAD). We export exactly what the
   // Chip canvas shows: the live floorplan (generated fresh from the schematic if the level was never
   // entered) with the user's hand-placement overrides applied.
+  // What every chip-layout export writes: the live floorplan (generated fresh from the schematic if the
+  // Chip level was never entered) with the user's hand-placement overrides applied — exactly what the Chip
+  // canvas shows. Shared by the GDS / LEF / DEF export effects.
+  const buildChipPlan = useCallback((): Floorplan => {
+    const base =
+      chipFloorplan?.plan ??
+      placeCells(nodes as unknown as BlockNodeLike[], edges as unknown as BlockEdgeLike[])
+    return { ...base, cells: mergeOverrides(base.cells, chipLayout.overrides) }
+  }, [chipFloorplan, chipLayout, nodes, edges])
+
   useEffect(() => {
     const bridge = window.chipblocks
     if (bridge?.onExportGdsRequest === undefined) return
     bridge.onExportGdsRequest(() => {
-      const base =
-        chipFloorplan?.plan ??
-        placeCells(nodes as unknown as BlockNodeLike[], edges as unknown as BlockEdgeLike[])
-      const plan: Floorplan = { ...base, cells: mergeOverrides(base.cells, chipLayout.overrides) }
+      const plan = buildChipPlan()
       void bridge.saveGdsData?.(writeGds(floorplanToGds(plan), new Date()))
       const warnings =
         plan.cells.length === 0
@@ -1802,7 +1815,55 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         format: 'gds',
       })
     })
-  }, [chipFloorplan, chipLayout, nodes, edges])
+  }, [buildChipPlan])
+
+  // Export LEF: the standard-cell library abstract (lef.ts) for the cells this design uses — for OpenROAD.
+  useEffect(() => {
+    const bridge = window.chipblocks
+    if (bridge?.onExportLefRequest === undefined) return
+    bridge.onExportLefRequest(() => {
+      const plan = buildChipPlan()
+      const { text, macros, fallbacks } = floorplanToLef(plan)
+      void bridge.saveLefData?.(text)
+      setNetlistReport({
+        kind: 'export',
+        count: macros,
+        unsupported: fallbacks,
+        warnings: [
+          'Standard-cell library (LEF) for OpenROAD: C5N λ-scaled teaching geometry on SKY130 layer names; the tech-LEF rules are the λ×0.3 µm cell rules (met1 0.9 / li1 0.6 / pitch 1.5), NOT SKY130 silicon rules. For placement inspection/re-placement — a full flow also needs a Liberty timing library. Unknown cell types fall back to a black-box macro.',
+        ],
+        format: 'lef',
+      })
+    })
+  }, [buildChipPlan])
+
+  // Export DEF: the placed design (def.ts) — the floorplan's rows + component placements, for OpenROAD.
+  useEffect(() => {
+    const bridge = window.chipblocks
+    if (bridge?.onExportDefRequest === undefined) return
+    bridge.onExportDefRequest(() => {
+      const plan = buildChipPlan()
+      const { text, components } = floorplanToDef(plan)
+      void bridge.saveDefData?.(text)
+      const warnings =
+        plan.cells.length === 0
+          ? ['The chip floorplan is empty — nothing to place.']
+          : [
+              'Placed design (DEF) for OpenROAD: rows/cells are all orientation N (matching the GDS), so adjacent rails abut VDD-to-VSS — a placement interchange for inspection/re-placement, not a legalized power grid. PINS/NETS are empty (no connectivity round-trip this step).',
+            ]
+      const drc = namedCellDrc(plan.cells.map((c) => c.name))
+      if (drc.length > 0) warnings.push(summarizeDrc(drc))
+      const lvs = namedCellLvs(plan.cells.map((c) => c.name))
+      if (lvs.length > 0) warnings.push(summarizeLvs(lvs))
+      setNetlistReport({
+        kind: 'export',
+        count: components,
+        unsupported: [],
+        warnings,
+        format: 'def',
+      })
+    })
+  }, [buildChipPlan])
   // Drag a cell to a new spot → record a placement override (checkpointed for undo, like a board move).
   const onChipCellMove = useCallback(
     (cellId: string, x: number, y: number) => {

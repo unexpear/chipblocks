@@ -60,6 +60,13 @@ contextBridge.exposeInMainWorld('chipblocks', {
   onExportGdsRequest: (callback: () => void) => subscribe('file:export-gds-request', callback),
   saveGdsData: (data: Uint8Array): Promise<{ ok: boolean; path?: string }> =>
     ipcRenderer.invoke('file:save-gds', data),
+  // Export LEF/DEF (OpenROAD interop): the File menu asks; the renderer builds the text and hands it over.
+  onExportLefRequest: (callback: () => void) => subscribe('file:export-lef-request', callback),
+  saveLefData: (text: string): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('file:save-lef', text),
+  onExportDefRequest: (callback: () => void) => subscribe('file:export-def-request', callback),
+  saveDefData: (text: string): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('file:save-def', text),
   // Personal parts library (user-made parts, slice 3b): the parts you author persist to
   // ~/.chipblocks/user-parts.json so they follow you across projects. Main does the raw file I/O;
   // the renderer owns the format. Read returns the file text (or null when there's no library yet).
