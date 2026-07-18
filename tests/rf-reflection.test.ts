@@ -17,6 +17,7 @@ import {
 } from '../src/ac-analysis.ts'
 import type { World } from '../src/cross-fk-validator.ts'
 import { solveDCRobust } from '../src/dc-robust.ts'
+import { propagationDelayS } from '../src/transmission-line-model.ts'
 
 const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amount, unit } })
 
@@ -335,6 +336,126 @@ describe('a lossy transmission line attenuates (R + G telegrapher loss)', () => 
     expect(g5).toBeLessThan(g1) // more loss, less reflection
     // dielectric (shunt) loss absorbs too — G alone (no series R) still drops |Γ| below 1
     expect(portReflection(shortedLine(0, 1e-3), OPTS, F_MID).gammaMag).toBeLessThan(0.999)
+  })
+})
+
+describe('frequency-dependent line loss — skin effect (R∝√f) + dielectric (G=ωC·tanδ)', () => {
+  // A lossless shorted line reflects everything (|Γ| = 1) at EVERY frequency, so any drop below 1 is purely
+  // loss — the clean observable for showing loss that grows with frequency.
+  const lossyLine = (
+    rDc: number,
+    opts: { skinHz?: number; tanD?: number; gDc?: number } = {},
+  ): World => {
+    const w = makeWorld()
+    ensureNet(w, 'gnd', true)
+    addPart(w, 'p1', 'power_source', { nominal_voltage: scalar(1, 'volt') }, [
+      { net: 'in', terminal: 'terminal_positive' },
+      { net: 'gnd', terminal: 'terminal_negative' },
+    ])
+    addPart(
+      w,
+      'tl',
+      'transmission_line',
+      {
+        characteristic_impedance: scalar(50, 'ohm'),
+        length: scalar(10, 'meter'),
+        velocity_factor: scalar(0.66, 'dimensionless'),
+        series_resistance: scalar(rDc, 'ohm/meter'),
+        shunt_conductance: scalar(opts.gDc ?? 0, 'siemens/meter'),
+        skin_effect_onset_hz: scalar(opts.skinHz ?? 0, 'hertz'),
+        loss_tangent: scalar(opts.tanD ?? 0, 'dimensionless'),
+      },
+      [
+        { net: 'in', terminal: 'near_a' },
+        { net: 'gnd', terminal: 'near_b' },
+        { net: 'gnd', terminal: 'far_a' },
+        { net: 'gnd', terminal: 'far_b' },
+      ],
+    )
+    return w
+  }
+  // The SAME line with the frequency-loss params omitted entirely (not set to 0) — proves they are a true
+  // no-op by default, so increment-4 reduces EXACTLY to the constant-loss telegrapher line.
+  const constLossLine = (rDc: number): World => {
+    const w = makeWorld()
+    ensureNet(w, 'gnd', true)
+    addPart(w, 'p1', 'power_source', { nominal_voltage: scalar(1, 'volt') }, [
+      { net: 'in', terminal: 'terminal_positive' },
+      { net: 'gnd', terminal: 'terminal_negative' },
+    ])
+    addPart(
+      w,
+      'tl',
+      'transmission_line',
+      {
+        characteristic_impedance: scalar(50, 'ohm'),
+        length: scalar(10, 'meter'),
+        velocity_factor: scalar(0.66, 'dimensionless'),
+        series_resistance: scalar(rDc, 'ohm/meter'),
+      },
+      [
+        { net: 'in', terminal: 'near_a' },
+        { net: 'gnd', terminal: 'near_b' },
+        { net: 'gnd', terminal: 'far_a' },
+        { net: 'gnd', terminal: 'far_b' },
+      ],
+    )
+    return w
+  }
+  const F_MID = 2.5e6 // θ ≈ π/4
+  const gamma = (w: World, fHz: number) => portReflection(w, OPTS, fHz).gammaMag
+
+  test('reduces EXACTLY to the constant-loss line when skin/tanδ are unset (no regression)', () => {
+    // Setting the new params to 0 (lossyLine) is identical to omitting them (constLossLine).
+    expect(gamma(lossyLine(5), F_MID)).toBeCloseTo(gamma(constLossLine(5), F_MID), 12)
+    expect(gamma(lossyLine(0), F_MID)).toBeGreaterThan(0.999) // fully lossless still reflects everything
+  })
+
+  test('skin effect does NOTHING well below its onset frequency', () => {
+    // f_s = 1e5·F_MID ⇒ at F_MID, R(f) = R_dc·√(1 + 1e-5) ≈ R_dc: indistinguishable from a flat resistance.
+    const withOnset = gamma(lossyLine(1, { skinHz: 1e5 * F_MID }), F_MID)
+    const flatR = gamma(lossyLine(1), F_MID)
+    expect(withOnset).toBeCloseTo(flatR, 4)
+  })
+
+  test('skin effect adds loss ABOVE its onset — and follows the √f law exactly', () => {
+    // f_s = F_MID/8 ⇒ at F_MID, R(f) = R_dc·√(1 + 8) = 3·R_dc, so it absorbs more than the flat R_dc line.
+    const withSkin = gamma(lossyLine(1, { skinHz: F_MID / 8 }), F_MID)
+    const flatR = gamma(lossyLine(1), F_MID)
+    expect(withSkin).toBeLessThan(flatR)
+    expect(withSkin).toBeLessThan(0.98) // a real, measurable extra absorption
+    // Pin the LAW, not just the direction: √(1 + 8) = 3, so the skin line at F_MID must be identical to a
+    // FLAT 3 Ω/m line. A linear-in-f law would give R_dc·(1 + 8) = 9 and fail this.
+    expect(withSkin).toBeCloseTo(gamma(lossyLine(3), F_MID), 12)
+  })
+
+  test('dielectric loss (tanδ) absorbs, and reduces to lossless at tanδ = 0', () => {
+    expect(gamma(lossyLine(0, { tanD: 0.05 }), F_MID)).toBeLessThan(0.999) // ωC·tanδ absorbs
+    expect(gamma(lossyLine(0, { tanD: 0 }), F_MID)).toBeGreaterThan(0.999) // tanδ 0 = lossless
+  })
+
+  test('dielectric loss follows G = ωC·tanδ exactly (equals the matching constant-G line)', () => {
+    // At a fixed frequency the dielectric conductance over the line is tanδ·(θ/z0). A constant shunt
+    // conductance G_dc that reproduces the same total loss, G_dc·ℓ = tanδ·θ/z0, must give an identical |Γ| —
+    // which pins the ∝ω law (a ∝ω² or ∝√ω or constant dielectric model would compute a different θ-scaling).
+    const z0 = 50
+    const length = 10
+    const theta = 2 * Math.PI * F_MID * propagationDelayS(length, 0.66)
+    const tanD = 0.1
+    const gEquivalent = (tanD * (theta / z0)) / length // S/m that matches tanδ's loss at F_MID
+    expect(gamma(lossyLine(0, { tanD }), F_MID)).toBeCloseTo(
+      gamma(lossyLine(0, { gDc: gEquivalent }), F_MID),
+      12,
+    )
+  })
+
+  test('dielectric loss grows with frequency (G = ωC·tanδ ∝ ω)', () => {
+    // On a shorted line whose lossless |Γ| is 1 at both frequencies, the drop below 1 is pure dielectric loss.
+    // In the sub-quarter-wave region (θ < π/2) both the per-length loss (∝ω) and the electrical length grow
+    // with f, so the same tanδ bites harder at the higher frequency.
+    const dropLo = 1 - gamma(lossyLine(0, { tanD: 0.1 }), 1e6) // θ ≈ 0.32
+    const dropHi = 1 - gamma(lossyLine(0, { tanD: 0.1 }), 2e6) // θ ≈ 0.64
+    expect(dropHi).toBeGreaterThan(dropLo)
   })
 })
 

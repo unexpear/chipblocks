@@ -326,11 +326,18 @@ const DEFAULTS: Record<string, Parameters> = {
     velocity_factor: scalar(0.95, 'dimensionless'),
     // The telegrapher loss terms, per unit length: series conductor resistance R (Ω/m) and shunt
     // dielectric conductance G (S/m). Default 0 = an IDEAL lossless line (the historical behaviour). A real
-    // line has both — RG-58 coax is ~0.5 Ω/m and a low-loss dielectric ~1 µS/m at HF — but those are also
-    // frequency-dependent (skin effect ∝ √f, dielectric ∝ f); here they are the constant telegrapher terms,
-    // the frequency dependence is a later step. Franklin/Pozar "Microwave Engineering" §2.1.
+    // line has both — RG-58 coax is ~0.5 Ω/m and a low-loss dielectric ~1 µS/m at HF. Franklin/Pozar
+    // "Microwave Engineering" §2.1.
     series_resistance: scalar(0, 'ohm/meter'),
     shunt_conductance: scalar(0, 'siemens/meter'),
+    // FREQUENCY-DEPENDENT loss (the two real losses climb with frequency, not flat):
+    //  • skin_effect_onset_hz f_s — above it the current crowds to the conductor surface and R rises as √f:
+    //    R(f) = R_dc·√(1 + f/f_s). 0 = flat R. f_s is where skin depth ≈ the conductor radius (for RG-58's
+    //    ~0.9 mm centre conductor in copper, δ = radius near ~5 kHz; the √f loss dominates well above that).
+    //  • loss_tangent tanδ — the dielectric's shunt conductance G = ωC·tanδ, so dielectric loss rises with f.
+    //    0 = lossless dielectric; solid PE (RG-58) ≈ 2e-4, PTFE ≈ 2e-4, FR-4 ≈ 0.02. Pozar §2.7.
+    skin_effect_onset_hz: scalar(0, 'hertz'),
+    loss_tangent: scalar(0, 'dimensionless'),
   },
   transformer: {
     // Small EI mains transformer class, ~1:10 step-up from the low-voltage winding

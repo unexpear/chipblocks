@@ -351,6 +351,9 @@ function solveSystem(world: World, topo: Topology, inputSource: string, omega: n
       const vf = readScalarParam(inst, 'velocity_factor')
       const rPerMeter = readScalarParam(inst, 'series_resistance') ?? 0
       const gPerMeter = readScalarParam(inst, 'shunt_conductance') ?? 0
+      // Frequency-dependent loss (increment 4), both default 0 = the constant-loss telegrapher line above.
+      const skinOnsetHz = readScalarParam(inst, 'skin_effect_onset_hz') ?? 0
+      const lossTangent = readScalarParam(inst, 'loss_tangent') ?? 0
       const netOf = (t: string) => inst.connects?.find((conn) => conn.terminal === t)?.net
       const na = netOf('near_a')
       const nb = netOf('near_b')
@@ -358,8 +361,15 @@ function solveSystem(world: World, topo: Topology, inputSource: string, omega: n
       const fb = netOf('far_b')
       if (z0 && z0 > 0 && length !== undefined && vf && vf > 0 && na && nb && fa && fb) {
         const theta = omega * propagationDelayS(length, vf)
-        const zSeries: Complex = { re: rPerMeter * length, im: z0 * theta } // R·ℓ + jωL·ℓ
-        const yShunt: Complex = { re: gPerMeter * length, im: theta / z0 } // G·ℓ + jωC·ℓ
+        // SKIN EFFECT: below the onset f_s the current fills the conductor (R = R_dc); above it, it crowds to
+        // the surface and the AC resistance climbs as √f — R(f) = R_dc·√(1 + f/f_s). f_s = 0 keeps R constant.
+        const freqHz = omega / (2 * Math.PI)
+        const rEff = skinOnsetHz > 0 ? rPerMeter * Math.sqrt(1 + freqHz / skinOnsetHz) : rPerMeter
+        // DIELECTRIC LOSS: G = ωC·tanδ. The shunt susceptance ωC·ℓ is exactly θ/z0 (already computed), so the
+        // dielectric conductance over the line is tanδ·(θ/z0) — it rises with frequency. tanδ = 0 = lossless.
+        const gDielectric = lossTangent * (theta / z0)
+        const zSeries: Complex = { re: rEff * length, im: z0 * theta } // R(f)·ℓ + jωL·ℓ
+        const yShunt: Complex = { re: gPerMeter * length + gDielectric, im: theta / z0 } // (G + ωC·tanδ) + jωC·ℓ
         const gammaL = cSqrt(cMul(zSeries, yShunt)) // √(ZY)
         const zc = cSqrt(cDiv(zSeries, yShunt)) // √(Z/Y)
         let sinhG = cSinh(gammaL)
