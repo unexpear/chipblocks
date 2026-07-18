@@ -5,12 +5,7 @@
  */
 import { describe, expect, test } from 'vitest'
 import type { ReflectionPoint } from '../src/ac-analysis.ts'
-import {
-  axisRange,
-  RL_PLOT_MAX,
-  reflectionView,
-  VSWR_PLOT_MAX,
-} from '../src/renderer/reflection-view.ts'
+import { RL_PLOT_MAX, reflectionView, VSWR_PLOT_MAX } from '../src/renderer/reflection-view.ts'
 
 const pt = (
   frequencyHz: number,
@@ -75,12 +70,5 @@ describe('reflectionView — the panel plot model', () => {
     expect(lo).toBeLessThanOrEqual(5)
     expect(hi).toBeGreaterThanOrEqual(22)
     expect(hi - lo).toBeGreaterThanOrEqual(30) // the minimum span
-  })
-})
-
-describe('axisRange', () => {
-  test('snaps to the step and enforces the minimum span, centered', () => {
-    expect(axisRange(2, 8, 10, 40)).toEqual([-20, 30]) // span 10 → padded ±20 about the midpoint 5, snapped
-    expect(axisRange(-33, 12, 10, 40)).toEqual([-40, 20]) // already wider than 40 → just snapped out
   })
 })

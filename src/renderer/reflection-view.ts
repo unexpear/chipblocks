@@ -7,30 +7,12 @@
  * covered by tests, so the panel isn't trusted on inspection alone.
  */
 import type { ReflectionPoint } from '../ac-analysis.ts'
+import { axisRange, niceCeil } from './plot-axis.ts'
 
 /** A perfect match sends return loss → +∞ (and VSWR → 1); a total reflection sends VSWR → +∞. Clamp both so
  *  an infinite value doesn't blow up the plot axis. */
 export const RL_PLOT_MAX = 60
 export const VSWR_PLOT_MAX = 20
-
-const niceFloor = (v: number, step: number) => Math.floor(v / step) * step
-const niceCeil = (v: number, step: number) => Math.ceil(v / step) * step
-/** Pad [min,max] to a minimum span, snapped to a step, centered on the data. */
-export function axisRange(
-  min: number,
-  max: number,
-  step: number,
-  minSpan: number,
-): [number, number] {
-  let lo = niceFloor(min, step)
-  let hi = niceCeil(max, step)
-  if (hi - lo < minSpan) {
-    const mid = (lo + hi) / 2
-    lo = niceFloor(mid - minSpan / 2, step)
-    hi = niceCeil(mid + minSpan / 2, step)
-  }
-  return [lo, hi]
-}
 
 export type BestMatch = {
   frequencyHz: number

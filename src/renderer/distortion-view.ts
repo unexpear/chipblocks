@@ -10,28 +10,10 @@
  * P1dB placement, and the dBc bar heights are here, covered by tests.
  */
 import type { CompressionResult, LargeSignalSpectrum } from './large-signal.ts'
+import { axisRange } from './plot-axis.ts'
 
 /** Bars weaker than this (relative to the fundamental) are drawn at the floor rather than off the bottom. */
 export const SPECTRUM_FLOOR_DBC = -80
-
-const niceFloor = (v: number, step: number) => Math.floor(v / step) * step
-const niceCeil = (v: number, step: number) => Math.ceil(v / step) * step
-/** Pad [min,max] to a minimum span, snapped to a step, centered on the data. */
-export function axisRange(
-  min: number,
-  max: number,
-  step: number,
-  minSpan: number,
-): [number, number] {
-  let lo = niceFloor(min, step)
-  let hi = niceCeil(max, step)
-  if (hi - lo < minSpan) {
-    const mid = (lo + hi) / 2
-    lo = niceFloor(mid - minSpan / 2, step)
-    hi = niceCeil(mid + minSpan / 2, step)
-  }
-  return [lo, hi]
-}
 
 const dbv = (volts: number) => 20 * Math.log10(volts)
 

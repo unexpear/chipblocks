@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { World } from '../cross-fk-validator.ts'
 import { compressionCurveView, SPECTRUM_FLOOR_DBC, spectrumView } from './distortion-view.ts'
 import { gainCompression, largeSignalSpectrum } from './large-signal.ts'
+import { panelColors, panelFieldStyle, panelLabelStyle } from './panel-style.ts'
 import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
 
@@ -62,18 +63,8 @@ export function DistortionPanel({
   picking: boolean
   onPickToggle: () => void
 }) {
-  const text = light ? THEME.borderSubtle : THEME.textPrimary
-  const gridCol = light ? THEME.textPrimary : THEME.surfaceRaised
-  const sub = light ? THEME.textFaint : THEME.textMuted
-  const fieldStyle: React.CSSProperties = {
-    background: light ? THEME.white : THEME.surfaceInput,
-    border: `1px solid ${light ? THEME.textPrimary : THEME.borderStrong}`,
-    color: text,
-    borderRadius: 3,
-    fontSize: 11,
-    padding: '2px 4px',
-    maxWidth: 150,
-  }
+  const { text, gridCol, sub } = panelColors(light)
+  const fieldStyle = panelFieldStyle(light)
 
   const sources = useMemo(
     () =>
@@ -152,12 +143,7 @@ export function DistortionPanel({
   const ySpec = (dbc: number) =>
     specTop + ((0 - dbc) / (0 - SPECTRUM_FLOOR_DBC)) * (specBot - specTop)
 
-  const labelStyle: React.CSSProperties = {
-    fontSize: 9,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    color: sub,
-  }
+  const labelStyle = panelLabelStyle(light)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 6, minWidth: PLOT_W }}>

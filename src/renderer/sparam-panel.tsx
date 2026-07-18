@@ -2,6 +2,12 @@ import { useMemo, useState } from 'react'
 import { portSParameterSweep } from '../ac-analysis.ts'
 import type { World } from '../cross-fk-validator.ts'
 import { readScalarParam } from '../instance-params.ts'
+import {
+  panelColors,
+  panelFieldStyle,
+  panelLabelStyle,
+  RF_FREQUENCY_RANGES as RANGES,
+} from './panel-style.ts'
 import { sparamView } from './sparam-view.ts'
 import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
@@ -28,13 +34,6 @@ const S11_COLOR = THEME.lensTemp
 const S22_COLOR = THEME.textMuted
 const PORT_DEFINITIONS = new Set(['power_source', 'reference_port'])
 
-const RANGES: { label: string; lo: number; hi: number }[] = [
-  { label: '1 kHz – 1 GHz', lo: 1e3, hi: 1e9 },
-  { label: '1 MHz – 10 GHz', lo: 1e6, hi: 1e10 },
-  { label: '10 MHz – 100 GHz', lo: 1e7, hi: 1e11 },
-  { label: '1 Hz – 1 MHz', lo: 1, hi: 1e6 },
-]
-
 export function SParamPanel({
   world,
   temperaturesC,
@@ -54,18 +53,8 @@ export function SParamPanel({
   port2: string
   onPort2: (id: string) => void
 }) {
-  const text = light ? THEME.borderSubtle : THEME.textPrimary
-  const gridCol = light ? THEME.textPrimary : THEME.surfaceRaised
-  const sub = light ? THEME.textFaint : THEME.textMuted
-  const fieldStyle: React.CSSProperties = {
-    background: light ? THEME.white : THEME.surfaceInput,
-    border: `1px solid ${light ? THEME.textPrimary : THEME.borderStrong}`,
-    color: text,
-    borderRadius: 3,
-    fontSize: 11,
-    padding: '2px 4px',
-    maxWidth: 120,
-  }
+  const { text, gridCol, sub } = panelColors(light)
+  const fieldStyle: React.CSSProperties = { ...panelFieldStyle(light), maxWidth: 120 }
 
   const ports = useMemo(
     () =>
@@ -84,10 +73,10 @@ export function SParamPanel({
   const [z0Text, setZ0Text] = useState('')
   const z0Override = Number(z0Text)
   const z0 = z0Text.trim() !== '' && z0Override > 0 ? z0Override : portZ0
-  const [rangeIdx, setRangeIdx] = useState(0)
+  const [rangeIdx, setRangeIdx] = useState(1) // 1 kHz – 1 GHz
 
-  const range = RANGES[rangeIdx] ?? RANGES[0]
-  // biome-ignore lint/style/noNonNullAssertion: RANGES[0] is a literal fallback
+  const range = RANGES[rangeIdx] ?? RANGES[1]
+  // biome-ignore lint/style/noNonNullAssertion: RANGES[1] is a literal fallback
   const { lo: fLo, hi: fHi } = range!
 
   const ready = p1 !== '' && p2 !== '' && p1 !== p2
@@ -129,12 +118,7 @@ export function SParamPanel({
     return out
   }
 
-  const labelStyle: React.CSSProperties = {
-    fontSize: 9,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    color: sub,
-  }
+  const labelStyle = panelLabelStyle(light)
   const portSelect = (value: string, onChange: (id: string) => void, label: string) => (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
       <span style={labelStyle}>{label}</span>

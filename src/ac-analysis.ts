@@ -818,22 +818,31 @@ function portNets(inst: Instance | undefined): { pNet: string; nNet: string } | 
   return p !== undefined && n !== undefined ? { pNet: p, nNet: n } : null
 }
 
+/** A prebuilt S-parameter column: the modified circuit (its ports replaced by a Z0 generator + termination)
+ *  and its MNA topology, plus the nets to read. Frequency-INDEPENDENT, so a sweep builds it once and solves it
+ *  at each ω — the same shape as portReflectionSweep. */
+type SParamColumn = {
+  modWorld: World
+  topo: Topology
+  genId: string
+  drive: { pNet: string; nNet: string }
+  term: { pNet: string; nNet: string }
+}
+
 /**
- * One column of the scattering matrix: DRIVE `driveId` with a Z0-referenced generator (a unit-phasor source in
- * series with Z0) and TERMINATE `termId` in Z0, then read the two port voltages back. Because the generator's
- * open-circuit voltage is 1, the reflected wave at the driven port is Sdd = 2·Vd − 1 and the transmitted wave
- * at the far port is Sod = 2·Vo (standard travelling-wave algebra: a_drive = Vs/(2√Z0) = 1/(2√Z0), and with the
- * far port matched b_term = Vo/√Z0, b_drive = (Vd − Z0·I)/(2√Z0) = Vd/√Z0 − a_drive). Both ports are replaced,
- * so a reference_port (open) or a source used as a port never fights the measurement. Null if unsolvable.
+ * Build one column of the scattering measurement: DRIVE `driveId` with a Z0-referenced generator (a unit-phasor
+ * source in series with Z0) and TERMINATE `termId` in Z0, replacing both ports with collision-free synthetic
+ * parts so a reference_port (open) or a source used as a port never fights the measurement. Returns the modified
+ * world + its topology (built ONCE), to be solved per-ω by readSParamColumn. Null if the ports aren't a valid
+ * 2-terminal pair (same port both ends, or unwired) or the modified circuit has no ground.
  */
-function sParamColumn(
+function buildSParamColumn(
   world: World,
   driveId: string,
   termId: string,
   z0: number,
-  omega: number,
   temperaturesC?: Map<string, number>,
-): { reflect: Complex; thru: Complex } | null {
+): SParamColumn | null {
   const drive = portNets(world.instances.get(driveId))
   const term = portNets(world.instances.get(termId))
   if (drive === null || term === null || driveId === termId) return null
@@ -885,11 +894,24 @@ function sParamColumn(
 
   const topo = buildTopology(modWorld, temperaturesC)
   if (topo === null) return null
-  const solution = solveSystem(modWorld, topo, genId, omega)
-  if (solution === null) return null
+  return { modWorld, topo, genId, drive, term }
+}
 
+/**
+ * Solve a prebuilt column at ω and read the two port voltages back. Because the generator's open-circuit voltage
+ * is 1, the reflected wave at the driven port is Sdd = 2·Vd − 1 and the transmitted wave at the far port is
+ * Sod = 2·Vo (standard travelling-wave algebra: a_drive = Vs/(2√Z0) = 1/(2√Z0), and with the far port matched
+ * b_term = Vo/√Z0, b_drive = (Vd − Z0·I)/(2√Z0) = Vd/√Z0 − a_drive; the √Z0 normalization cancels). Null if
+ * singular.
+ */
+function readSParamColumn(
+  col: SParamColumn,
+  omega: number,
+): { reflect: Complex; thru: Complex } | null {
+  const solution = solveSystem(col.modWorld, col.topo, col.genId, omega)
+  if (solution === null) return null
   const vAt = (net: string): Complex => {
-    const i = net === topo.ground ? -1 : (topo.nodeIndex.get(net) ?? -1)
+    const i = net === col.topo.ground ? -1 : (col.topo.nodeIndex.get(net) ?? -1)
     return i < 0 ? { re: 0, im: 0 } : readComplex(solution, i)
   }
   const across = (pNet: string, nNet: string): Complex => {
@@ -897,8 +919,8 @@ function sParamColumn(
     const n = vAt(nNet)
     return { re: p.re - n.re, im: p.im - n.im }
   }
-  const vd = across(drive.pNet, drive.nNet)
-  const vo = across(term.pNet, term.nNet)
+  const vd = across(col.drive.pNet, col.drive.nNet)
+  const vo = across(col.term.pNet, col.term.nNet)
   return { reflect: { re: 2 * vd.re - 1, im: 2 * vd.im }, thru: { re: 2 * vo.re, im: 2 * vo.im } }
 }
 
@@ -927,17 +949,22 @@ const sParamPoint = (
   }
 }
 
-const sParamsAtOmega = (
-  world: World,
-  opts: SParamOptions,
+/** Read the forward + reverse columns at ω and assemble the full scattering matrix (null if either is
+ *  unbuildable or singular). The columns are prebuilt once by the callers, so a sweep reuses them. */
+const combineColumns = (
+  fwd: SParamColumn | null,
+  rev: SParamColumn | null,
   omega: number,
 ): { s11: Complex; s21: Complex; s12: Complex; s22: Complex } | null => {
-  const z0 = opts.z0Ohms && opts.z0Ohms > 0 ? opts.z0Ohms : DEFAULT_Z0_OHMS
-  const fwd = sParamColumn(world, opts.port1, opts.port2, z0, omega, opts.temperaturesC)
-  const rev = sParamColumn(world, opts.port2, opts.port1, z0, omega, opts.temperaturesC)
   if (fwd === null || rev === null) return null
-  return { s11: fwd.reflect, s21: fwd.thru, s22: rev.reflect, s12: rev.thru }
+  const f = readSParamColumn(fwd, omega)
+  const r = readSParamColumn(rev, omega)
+  if (f === null || r === null) return null
+  return { s11: f.reflect, s21: f.thru, s22: r.reflect, s12: r.thru }
 }
+
+const sParamZ0 = (opts: SParamOptions) =>
+  opts.z0Ohms && opts.z0Ohms > 0 ? opts.z0Ohms : DEFAULT_Z0_OHMS
 
 /** The full 2-port scattering matrix (S11/S21/S12/S22) at a single frequency. */
 export function portSParameters(
@@ -945,17 +972,24 @@ export function portSParameters(
   opts: SParamOptions,
   frequencyHz: number,
 ): SParamPoint {
-  return sParamPoint(frequencyHz, sParamsAtOmega(world, opts, 2 * Math.PI * frequencyHz))
+  const z0 = sParamZ0(opts)
+  const fwd = buildSParamColumn(world, opts.port1, opts.port2, z0, opts.temperaturesC)
+  const rev = buildSParamColumn(world, opts.port2, opts.port1, z0, opts.temperaturesC)
+  return sParamPoint(frequencyHz, combineColumns(fwd, rev, 2 * Math.PI * frequencyHz))
 }
 
-/** A logarithmic S-parameter sweep — an S21/S11 vs frequency plot's worth of points. */
+/** A logarithmic S-parameter sweep — an S21/S11 vs frequency plot's worth of points. The two columns' modified
+ *  worlds + topologies are built ONCE, then only the linear solve re-runs per frequency. */
 export function portSParameterSweep(world: World, opts: SParamSweepOptions): SParamPoint[] {
+  const z0 = sParamZ0(opts)
+  const fwd = buildSParamColumn(world, opts.port1, opts.port2, z0, opts.temperaturesC)
+  const rev = buildSParamColumn(world, opts.port2, opts.port1, z0, opts.temperaturesC)
   const decades = Math.log10(opts.fStopHz / opts.fStartHz)
   const steps = Math.max(1, Math.round(decades * opts.pointsPerDecade))
   const points: SParamPoint[] = []
   for (let s = 0; s <= steps; s++) {
     const f = opts.fStartHz * 10 ** ((s / steps) * decades)
-    points.push(sParamPoint(f, sParamsAtOmega(world, opts, 2 * Math.PI * f)))
+    points.push(sParamPoint(f, combineColumns(fwd, rev, 2 * Math.PI * f)))
   }
   return points
 }

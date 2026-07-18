@@ -7,6 +7,7 @@
  * insertion loss) and MATCH (|S11|, |S22| in dB — how much each port reflects; deeper is better matched).
  */
 import type { SParamPoint } from '../ac-analysis.ts'
+import { axisRange } from './plot-axis.ts'
 
 /** |S| in dB is floored (a deep null shouldn't blow the axis to −∞) and lightly capped (a passive part sits at
  *  ≤ 0 dB; a little headroom shows active gain without runaway). */
@@ -15,22 +16,10 @@ export const S_CEIL_DB = 20
 
 const clampDb = (db: number) =>
   Number.isFinite(db) ? Math.min(S_CEIL_DB, Math.max(S_FLOOR_DB, db)) : S_FLOOR_DB
-const niceFloor = (v: number, step: number) => Math.floor(v / step) * step
-const niceCeil = (v: number, step: number) => Math.ceil(v / step) * step
-/** Pad [min,max] to a minimum span, snapped to a step, centered on the data — clamped to the plot's dB limits. */
-export function axisRange(
-  min: number,
-  max: number,
-  step: number,
-  minSpan: number,
-): [number, number] {
-  let lo = niceFloor(min, step)
-  let hi = niceCeil(max, step)
-  if (hi - lo < minSpan) {
-    const mid = (lo + hi) / 2
-    lo = niceFloor(mid - minSpan / 2, step)
-    hi = niceCeil(mid + minSpan / 2, step)
-  }
+/** The shared axis auto-range, then clamped to the plot's dB limits (a match/gain axis never runs past the
+ *  |S| floor/ceiling the series themselves are clamped to). */
+const clampedAxis = (min: number, max: number): [number, number] => {
+  const [lo, hi] = axisRange(min, max, 10, 20)
   return [Math.max(S_FLOOR_DB, lo), Math.min(S_CEIL_DB, hi)]
 }
 
@@ -69,10 +58,10 @@ export function sparamView(sweep: SParamPoint[]): SParamView {
   const s12Db = sweep.map((p) => clampDb(p.s12Db))
   const s22Db = sweep.map((p) => clampDb(p.s22Db))
   const transAxis: [number, number] = sweep.length
-    ? axisRange(Math.min(...s21Db, ...s12Db), Math.max(...s21Db, ...s12Db), 10, 20)
+    ? clampedAxis(Math.min(...s21Db, ...s12Db), Math.max(...s21Db, ...s12Db))
     : [-40, 0]
   const matchAxis: [number, number] = sweep.length
-    ? axisRange(Math.min(...s11Db, ...s22Db), Math.max(...s11Db, ...s22Db), 10, 20)
+    ? clampedAxis(Math.min(...s11Db, ...s22Db), Math.max(...s11Db, ...s22Db))
     : [-40, 0]
   return {
     s11Db,

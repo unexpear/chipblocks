@@ -2,6 +2,12 @@ import { useMemo, useState } from 'react'
 import { portReflectionSweep } from '../ac-analysis.ts'
 import type { World } from '../cross-fk-validator.ts'
 import { readScalarParam } from '../instance-params.ts'
+import {
+  panelColors,
+  panelFieldStyle,
+  panelLabelStyle,
+  RF_FREQUENCY_RANGES as RANGES,
+} from './panel-style.ts'
 import { RL_PLOT_MAX, reflectionView, VSWR_PLOT_MAX } from './reflection-view.ts'
 import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
@@ -27,13 +33,6 @@ const RL_COLOR = THEME.accentBlueBright
 const VSWR_COLOR = THEME.lensTemp
 const PORT_DEFINITIONS = new Set(['power_source', 'reference_port'])
 
-const RANGES: { label: string; lo: number; hi: number }[] = [
-  { label: '1 Hz – 1 MHz', lo: 1, hi: 1e6 },
-  { label: '1 kHz – 1 GHz', lo: 1e3, hi: 1e9 },
-  { label: '1 MHz – 10 GHz', lo: 1e6, hi: 1e10 },
-  { label: '10 MHz – 100 GHz', lo: 1e7, hi: 1e11 },
-]
-
 export function ReflectionPanel({
   world,
   temperaturesC,
@@ -54,18 +53,8 @@ export function ReflectionPanel({
   picking: boolean
   onPickToggle: () => void
 }) {
-  const text = light ? THEME.borderSubtle : THEME.textPrimary
-  const gridCol = light ? THEME.textPrimary : THEME.surfaceRaised
-  const sub = light ? THEME.textFaint : THEME.textMuted
-  const fieldStyle: React.CSSProperties = {
-    background: light ? THEME.white : THEME.surfaceInput,
-    border: `1px solid ${light ? THEME.textPrimary : THEME.borderStrong}`,
-    color: text,
-    borderRadius: 3,
-    fontSize: 11,
-    padding: '2px 4px',
-    maxWidth: 150,
-  }
+  const { text, gridCol, sub } = panelColors(light)
+  const fieldStyle = panelFieldStyle(light)
 
   const sources = useMemo(
     () =>
@@ -135,12 +124,7 @@ export function ReflectionPanel({
   const vStep = Math.max(1, Math.round((vHi - vLo) / 4))
   for (let v = vLo; v <= vHi + 0.001; v += vStep) vGrid.push(v)
 
-  const labelStyle: React.CSSProperties = {
-    fontSize: 9,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    color: sub,
-  }
+  const labelStyle = panelLabelStyle(light)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 6, minWidth: PLOT_W }}>

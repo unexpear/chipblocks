@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { acSweep, phaseMargin } from '../ac-analysis.ts'
 import type { World } from '../cross-fk-validator.ts'
+import { axisRange } from './plot-axis.ts'
 import { THEME } from './theme.ts'
 import { formatEng } from './units.ts'
 
@@ -32,21 +33,6 @@ const RANGES: { label: string; lo: number; hi: number }[] = [
   { label: '1 kHz – 1 GHz', lo: 1e3, hi: 1e9 },
   { label: '1 MHz – 10 GHz', lo: 1e6, hi: 1e10 },
 ]
-
-const niceFloor = (v: number, step: number) => Math.floor(v / step) * step
-const niceCeil = (v: number, step: number) => Math.ceil(v / step) * step
-
-/** Pad a [min,max] to a minimum span, snapped to a step, centered on the data. */
-function axisRange(min: number, max: number, step: number, minSpan: number): [number, number] {
-  let lo = niceFloor(min, step)
-  let hi = niceCeil(max, step)
-  if (hi - lo < minSpan) {
-    const mid = (lo + hi) / 2
-    lo = niceFloor(mid - minSpan / 2, step)
-    hi = niceCeil(mid + minSpan / 2, step)
-  }
-  return [lo, hi]
-}
 
 export function BodePanel({
   world,
