@@ -19,6 +19,8 @@ const scalar = (amount: number, unit: string) => ({ value: { kind: 'scalar', amo
 
 const NPN: Parameters = defaultParameters('transistor_bjt_npn')
 const PNP: Parameters = defaultParameters('transistor_bjt_pnp')
+const LED: Parameters = defaultParameters('led')
+const DIODE: Parameters = defaultParameters('diode_silicon_rectifier')
 const RTAIL: Parameters = { ...defaultParameters('resistor'), resistance: scalar(8200, 'ohm') }
 const ROUT: Parameters = { ...defaultParameters('resistor'), resistance: scalar(18000, 'ohm') }
 
@@ -110,6 +112,313 @@ export const OPAMP_BLOCK: BlockData = {
       side: 'right',
       offset: 36,
       inner: { nodeId: 'q3', handleId: 'emitter' },
+    },
+  ],
+}
+
+// ── Analog building blocks: the wired starter circuits, packaged as reusable blocks with input/output/supply
+// ports (no internal source) so you drop one and wire it into YOUR circuit. They flatten to the same real
+// parts the templates use — verified in tests/analog-blocks.test.ts.
+const R = (ohms: number): Parameters => ({
+  ...defaultParameters('resistor'),
+  resistance: scalar(ohms, 'ohm'),
+})
+const C = (farads: number): Parameters => ({
+  ...defaultParameters('capacitor'),
+  capacitance: scalar(farads, 'farad'),
+})
+
+/** Voltage divider — R1 (in→tap) over R2 (tap→gnd); the tap holds in·R2/(R1+R2). Equal 10 kΩ halves it. */
+export const VDIVIDER_BLOCK: BlockData = {
+  name: 'Divider',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'r1', definition: 'resistor', x: 40, y: 20, parameters: R(10000) },
+    { id: 'r2', definition: 'resistor', x: 40, y: 200, parameters: R(10000) },
+  ],
+  edges: [
+    {
+      id: 'e1',
+      source: 'r1',
+      sourceHandle: 'terminal_b',
+      target: 'r2',
+      targetHandle: 'terminal_a',
+    },
+  ],
+  ports: [
+    {
+      id: 'in',
+      label: 'in',
+      side: 'top',
+      offset: 20,
+      inner: { nodeId: 'r1', handleId: 'terminal_a' },
+    },
+    {
+      id: 'out',
+      label: 'out',
+      side: 'right',
+      offset: 100,
+      inner: { nodeId: 'r1', handleId: 'terminal_b' },
+    },
+    {
+      id: 'gnd',
+      label: 'gnd',
+      side: 'bottom',
+      offset: 20,
+      inner: { nodeId: 'r2', handleId: 'terminal_b' },
+    },
+  ],
+}
+
+/** LED + series resistor — a 150 Ω current-limit resistor into the LED. Wire `in` to a rail, `gnd` to ground;
+ *  ≈ 20 mA at 5 V. */
+export const LED_R_BLOCK: BlockData = {
+  name: 'LED + R',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'r1', definition: 'resistor', x: 40, y: 20, parameters: R(150) },
+    { id: 'd1', definition: 'led', x: 40, y: 200, parameters: LED },
+  ],
+  edges: [
+    { id: 'e1', source: 'r1', sourceHandle: 'terminal_b', target: 'd1', targetHandle: 'anode' },
+  ],
+  ports: [
+    {
+      id: 'in',
+      label: 'in',
+      side: 'top',
+      offset: 20,
+      inner: { nodeId: 'r1', handleId: 'terminal_a' },
+    },
+    {
+      id: 'gnd',
+      label: 'gnd',
+      side: 'bottom',
+      offset: 20,
+      inner: { nodeId: 'd1', handleId: 'cathode' },
+    },
+  ],
+}
+
+/** RC low-pass — R (in→out) with C (out→gnd); corner 1/(2πRC). 1.6 kΩ / 100 nF ≈ 1 kHz. */
+export const RC_LOWPASS_BLOCK: BlockData = {
+  name: 'RC LPF',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'r1', definition: 'resistor', x: 20, y: 20, parameters: R(1600) },
+    { id: 'c1', definition: 'capacitor', x: 200, y: 120, parameters: C(1e-7) },
+  ],
+  edges: [
+    {
+      id: 'e1',
+      source: 'r1',
+      sourceHandle: 'terminal_b',
+      target: 'c1',
+      targetHandle: 'terminal_a',
+    },
+  ],
+  ports: [
+    {
+      id: 'in',
+      label: 'in',
+      side: 'left',
+      offset: 20,
+      inner: { nodeId: 'r1', handleId: 'terminal_a' },
+    },
+    {
+      id: 'out',
+      label: 'out',
+      side: 'right',
+      offset: 20,
+      inner: { nodeId: 'r1', handleId: 'terminal_b' },
+    },
+    {
+      id: 'gnd',
+      label: 'gnd',
+      side: 'bottom',
+      offset: 20,
+      inner: { nodeId: 'c1', handleId: 'terminal_b' },
+    },
+  ],
+}
+
+/** Common-emitter amplifier — divider bias (R1/R2), collector load Rc, degeneration Re with bypass Ce, input
+ *  coupling Cin. Wire V+/gnd and an input; it biases into the active region (Vc ≈ mid-supply). */
+export const CE_AMP_BLOCK: BlockData = {
+  name: 'CE amp',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'r1', definition: 'resistor', x: 60, y: 20, parameters: R(47000) },
+    { id: 'r2', definition: 'resistor', x: 60, y: 340, parameters: R(10000) },
+    { id: 'rc', definition: 'resistor', x: 260, y: 20, parameters: R(4700) },
+    { id: 're', definition: 'resistor', x: 240, y: 380, parameters: R(1000) },
+    { id: 'ce', definition: 'capacitor', x: 360, y: 380, parameters: C(1e-4) },
+    { id: 'cin', definition: 'capacitor', x: -60, y: 200, parameters: C(1e-6) },
+    { id: 'q1', definition: 'transistor_bjt_npn', x: 240, y: 200, parameters: NPN },
+  ],
+  edges: [
+    { id: 'b1', source: 'r1', sourceHandle: 'terminal_b', target: 'q1', targetHandle: 'base' },
+    { id: 'b2', source: 'r2', sourceHandle: 'terminal_a', target: 'q1', targetHandle: 'base' },
+    { id: 'b3', source: 'cin', sourceHandle: 'terminal_b', target: 'q1', targetHandle: 'base' },
+    { id: 'c1', source: 'rc', sourceHandle: 'terminal_b', target: 'q1', targetHandle: 'collector' },
+    { id: 'e1', source: 'q1', sourceHandle: 'emitter', target: 're', targetHandle: 'terminal_a' },
+    { id: 'e2', source: 'q1', sourceHandle: 'emitter', target: 'ce', targetHandle: 'terminal_a' },
+    {
+      id: 'v1',
+      source: 'r1',
+      sourceHandle: 'terminal_a',
+      target: 'rc',
+      targetHandle: 'terminal_a',
+    },
+    {
+      id: 'g1',
+      source: 'r2',
+      sourceHandle: 'terminal_b',
+      target: 're',
+      targetHandle: 'terminal_b',
+    },
+    {
+      id: 'g2',
+      source: 're',
+      sourceHandle: 'terminal_b',
+      target: 'ce',
+      targetHandle: 'terminal_b',
+    },
+  ],
+  ports: [
+    {
+      id: 'in',
+      label: 'in',
+      side: 'left',
+      offset: 200,
+      inner: { nodeId: 'cin', handleId: 'terminal_a' },
+    },
+    {
+      id: 'out',
+      label: 'out',
+      side: 'right',
+      offset: 20,
+      inner: { nodeId: 'q1', handleId: 'collector' },
+    },
+    {
+      id: 'vcc',
+      label: 'V+',
+      side: 'top',
+      offset: 20,
+      inner: { nodeId: 'r1', handleId: 'terminal_a' },
+    },
+    {
+      id: 'gnd',
+      label: 'gnd',
+      side: 'bottom',
+      offset: 20,
+      inner: { nodeId: 'r2', handleId: 'terminal_b' },
+    },
+  ],
+}
+
+/** Full-wave bridge rectifier + smoothing cap — four diodes rectify both AC half-cycles, Cf holds the rail.
+ *  Wire the AC across ac1/ac2, take the DC between `+` and `gnd`. */
+export const BRIDGE_BLOCK: BlockData = {
+  name: 'Bridge',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'd1', definition: 'diode_silicon_rectifier', x: 140, y: 20, parameters: DIODE },
+    { id: 'd2', definition: 'diode_silicon_rectifier', x: 140, y: 180, parameters: DIODE },
+    { id: 'd3', definition: 'diode_silicon_rectifier', x: 140, y: 300, parameters: DIODE },
+    { id: 'd4', definition: 'diode_silicon_rectifier', x: 140, y: 420, parameters: DIODE },
+    { id: 'cf', definition: 'capacitor', x: 340, y: 120, parameters: C(4.7e-4) },
+  ],
+  edges: [
+    { id: 'o1', source: 'd1', sourceHandle: 'cathode', target: 'd2', targetHandle: 'cathode' },
+    { id: 'o2', source: 'd2', sourceHandle: 'cathode', target: 'cf', targetHandle: 'terminal_a' },
+    { id: 'a1', source: 'd3', sourceHandle: 'cathode', target: 'd1', targetHandle: 'anode' },
+    { id: 'a2', source: 'd4', sourceHandle: 'cathode', target: 'd2', targetHandle: 'anode' },
+    { id: 'n1', source: 'd3', sourceHandle: 'anode', target: 'd4', targetHandle: 'anode' },
+    { id: 'n2', source: 'd4', sourceHandle: 'anode', target: 'cf', targetHandle: 'terminal_b' },
+  ],
+  ports: [
+    {
+      id: 'ac1',
+      label: 'AC1',
+      side: 'left',
+      offset: 20,
+      inner: { nodeId: 'd1', handleId: 'anode' },
+    },
+    {
+      id: 'ac2',
+      label: 'AC2',
+      side: 'left',
+      offset: 180,
+      inner: { nodeId: 'd2', handleId: 'anode' },
+    },
+    {
+      id: 'out',
+      label: '+',
+      side: 'right',
+      offset: 20,
+      inner: { nodeId: 'd1', handleId: 'cathode' },
+    },
+    {
+      id: 'gnd',
+      label: 'gnd',
+      side: 'bottom',
+      offset: 20,
+      inner: { nodeId: 'd3', handleId: 'anode' },
+    },
+  ],
+}
+
+/** Non-inverting op-amp amplifier — the op-amp block with Rf/Rg feedback; gain = 1 + Rf/Rg = 2. Wire ±rails,
+ *  ground, and an input; scope the output. Nests the real transistor op-amp block. */
+export const NONINV_AMP_BLOCK: BlockData = {
+  name: 'Non-inv amp',
+  origin: { x: 0, y: 0 },
+  nodes: [
+    { id: 'u1', definition: 'block', x: 140, y: 60, block: OPAMP_BLOCK },
+    { id: 'rf', definition: 'resistor', x: 400, y: 240, parameters: R(10000) },
+    { id: 'rg', definition: 'resistor', x: 140, y: 300, parameters: R(10000) },
+  ],
+  edges: [
+    { id: 'f1', source: 'u1', sourceHandle: 'out', target: 'rf', targetHandle: 'terminal_a' },
+    { id: 'f2', source: 'rf', sourceHandle: 'terminal_b', target: 'u1', targetHandle: 'in_minus' },
+    { id: 'f3', source: 'u1', sourceHandle: 'in_minus', target: 'rg', targetHandle: 'terminal_a' },
+  ],
+  ports: [
+    {
+      id: 'in',
+      label: 'in',
+      side: 'left',
+      offset: 40,
+      inner: { nodeId: 'u1', handleId: 'in_plus' },
+    },
+    {
+      id: 'out',
+      label: 'out',
+      side: 'right',
+      offset: 40,
+      inner: { nodeId: 'u1', handleId: 'out' },
+    },
+    {
+      id: 'v_plus',
+      label: 'V+',
+      side: 'top',
+      offset: 20,
+      inner: { nodeId: 'u1', handleId: 'v_plus' },
+    },
+    {
+      id: 'v_minus',
+      label: 'V−',
+      side: 'bottom',
+      offset: 20,
+      inner: { nodeId: 'u1', handleId: 'v_minus' },
+    },
+    {
+      id: 'gnd',
+      label: 'gnd',
+      side: 'bottom',
+      offset: 160,
+      inner: { nodeId: 'rg', handleId: 'terminal_b' },
     },
   ],
 }
@@ -7607,6 +7916,12 @@ export const CPU_4BIT: BlockData = buildCpu()
  *  (a fresh deep copy) that descends + flattens like any user-grouped block. */
 export const BUILTIN_BLOCKS: Record<string, BlockData> = {
   op_amp: OPAMP_BLOCK,
+  block_divider: VDIVIDER_BLOCK,
+  block_led_r: LED_R_BLOCK,
+  block_rc_lowpass: RC_LOWPASS_BLOCK,
+  block_ce_amp: CE_AMP_BLOCK,
+  block_bridge: BRIDGE_BLOCK,
+  block_noninv_amp: NONINV_AMP_BLOCK,
   logic_not: INVERTER_BLOCK,
   logic_nand: NAND2_BLOCK,
   logic_nor: NOR2_BLOCK,

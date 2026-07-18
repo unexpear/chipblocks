@@ -5706,19 +5706,33 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       ) {
         checkpointAction('dev: stage')
         setNodes(
-          parts.map(
-            (p) =>
-              ({
+          parts.map((p) => {
+            // A definition that names a built-in block stages as a real block node (flattens to its
+            // inner parts through the same path a palette drop takes); otherwise a plain device.
+            const builtin = BUILTIN_BLOCKS[p.definition]
+            if (builtin) {
+              return {
                 id: p.id,
-                type: 'device',
+                type: 'block',
                 position: { x: p.x, y: p.y },
                 data: {
-                  definition: p.definition,
-                  label: p.id,
-                  parameters: { ...defaultParameters(p.definition), ...(p.parameters ?? {}) },
+                  definition: 'block',
+                  label: builtin.name,
+                  block: cloneBlockData(builtin, p.id),
                 },
-              }) as Node,
-          ),
+              } as Node
+            }
+            return {
+              id: p.id,
+              type: 'device',
+              position: { x: p.x, y: p.y },
+              data: {
+                definition: p.definition,
+                label: p.id,
+                parameters: { ...defaultParameters(p.definition), ...(p.parameters ?? {}) },
+              },
+            } as Node
+          }),
         )
         setEdges(
           wires.map(
