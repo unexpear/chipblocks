@@ -832,27 +832,210 @@ export function App() {
 
 /** The parts a template drops onto a fresh canvas (placed, not yet wired). A template
  *  not listed here opens a blank canvas — the relevant parts are in the palette. */
-// A project template can pre-place (and later pre-wire) a starter circuit, keyed by the browser's template
-// id. Empty for now: the level starts collapsed to a blank canvas and the parts live in the palette (the
-// block system) — real, wired templates land here as a later pass.
-const TEMPLATE_PARTS: Record<string, { def: string; x: number; y: number }[]> = {}
+const tplScalar = (amount: number, unit: string) => ({
+  value: { kind: 'scalar' as const, amount, unit },
+})
+type TemplatePart = {
+  id: string
+  def: string
+  x: number
+  y: number
+  params?: Record<string, { value: { kind: 'scalar'; amount: number; unit: string } }>
+  /** A composite BUILTIN_BLOCK (e.g. the op-amp) rather than a device primitive. */
+  block?: boolean
+}
+/**
+ * Real, WIRED starter circuits for the Circuit level — each opens a working, immediately-simulatable schematic
+ * (not just loose parts). `wires` are [sourceId, sourceHandle, targetId, targetHandle]; a `block: true` part is
+ * placed as a composite block, the rest as device primitives. Keyed by the browser's template id.
+ */
+const TEMPLATE_FLOWS: Record<
+  string,
+  { parts: TemplatePart[]; wires: [string, string, string, string][] }
+> = {
+  // The hello-world: a 5 V source drives an LED through a 150 Ω current-limiting resistor.
+  'led-resistor': {
+    parts: [
+      {
+        id: 'V1',
+        def: 'power_source',
+        x: 80,
+        y: 220,
+        params: { nominal_voltage: tplScalar(5, 'volt') },
+      },
+      { id: 'R1', def: 'resistor', x: 340, y: 140, params: { resistance: tplScalar(150, 'ohm') } },
+      { id: 'D1', def: 'led', x: 560, y: 220 },
+      { id: 'G', def: 'ground', x: 80, y: 420 },
+    ],
+    wires: [
+      ['V1', 'terminal_positive', 'R1', 'terminal_a'],
+      ['R1', 'terminal_b', 'D1', 'anode'],
+      ['D1', 'cathode', 'G', 'reference_terminal'],
+      ['V1', 'terminal_negative', 'G', 'reference_terminal'],
+    ],
+  },
+  // Two equal 10 kΩ resistors halve a 10 V rail — the tap between them sits at 5 V.
+  'voltage-divider': {
+    parts: [
+      {
+        id: 'V1',
+        def: 'power_source',
+        x: 80,
+        y: 220,
+        params: { nominal_voltage: tplScalar(10, 'volt') },
+      },
+      {
+        id: 'R1',
+        def: 'resistor',
+        x: 360,
+        y: 140,
+        params: { resistance: tplScalar(10000, 'ohm') },
+      },
+      {
+        id: 'R2',
+        def: 'resistor',
+        x: 360,
+        y: 320,
+        params: { resistance: tplScalar(10000, 'ohm') },
+      },
+      { id: 'G', def: 'ground', x: 80, y: 440 },
+    ],
+    wires: [
+      ['V1', 'terminal_positive', 'R1', 'terminal_a'],
+      ['R1', 'terminal_b', 'R2', 'terminal_a'],
+      ['R2', 'terminal_b', 'G', 'reference_terminal'],
+      ['V1', 'terminal_negative', 'G', 'reference_terminal'],
+    ],
+  },
+  // A 1.6 kΩ / 100 nF RC low-pass — the corner sits at 1/(2πRC) ≈ 1 kHz (open the Bode panel).
+  'rc-lowpass': {
+    parts: [
+      {
+        id: 'V1',
+        def: 'power_source',
+        x: 80,
+        y: 220,
+        params: {
+          nominal_voltage: tplScalar(0, 'volt'),
+          ac_amplitude: tplScalar(1, 'volt'),
+          frequency: tplScalar(1000, 'hertz'),
+        },
+      },
+      { id: 'R1', def: 'resistor', x: 360, y: 140, params: { resistance: tplScalar(1600, 'ohm') } },
+      {
+        id: 'C1',
+        def: 'capacitor',
+        x: 560,
+        y: 320,
+        params: { capacitance: tplScalar(1e-7, 'farad') },
+      },
+      { id: 'G', def: 'ground', x: 80, y: 440 },
+    ],
+    wires: [
+      ['V1', 'terminal_positive', 'R1', 'terminal_a'],
+      ['R1', 'terminal_b', 'C1', 'terminal_a'],
+      ['C1', 'terminal_b', 'G', 'reference_terminal'],
+      ['V1', 'terminal_negative', 'G', 'reference_terminal'],
+    ],
+  },
+  // A non-inverting op-amp gain stage: gain = 1 + Rf/Rg = 2, on ±15 V rails, driven by a small 1 kHz tone.
+  'noninv-opamp': {
+    parts: [
+      { id: 'U1', def: 'op_amp', x: 420, y: 220, block: true },
+      {
+        id: 'Vin',
+        def: 'power_source',
+        x: 80,
+        y: 180,
+        params: {
+          nominal_voltage: tplScalar(0, 'volt'),
+          ac_amplitude: tplScalar(0.1, 'volt'),
+          frequency: tplScalar(1000, 'hertz'),
+        },
+      },
+      {
+        id: 'Vpos',
+        def: 'power_source',
+        x: 420,
+        y: 40,
+        params: { nominal_voltage: tplScalar(15, 'volt') },
+      },
+      {
+        id: 'Vneg',
+        def: 'power_source',
+        x: 420,
+        y: 470,
+        params: { nominal_voltage: tplScalar(-15, 'volt') },
+      },
+      {
+        id: 'Rf',
+        def: 'resistor',
+        x: 700,
+        y: 320,
+        params: { resistance: tplScalar(10000, 'ohm') },
+      },
+      {
+        id: 'Rg',
+        def: 'resistor',
+        x: 420,
+        y: 360,
+        params: { resistance: tplScalar(10000, 'ohm') },
+      },
+      { id: 'G', def: 'ground', x: 80, y: 400 },
+    ],
+    wires: [
+      ['Vin', 'terminal_positive', 'U1', 'in_plus'],
+      ['Vin', 'terminal_negative', 'G', 'reference_terminal'],
+      ['U1', 'out', 'Rf', 'terminal_a'],
+      ['Rf', 'terminal_b', 'U1', 'in_minus'],
+      ['U1', 'in_minus', 'Rg', 'terminal_a'],
+      ['Rg', 'terminal_b', 'G', 'reference_terminal'],
+      ['Vpos', 'terminal_positive', 'U1', 'v_plus'],
+      ['Vpos', 'terminal_negative', 'G', 'reference_terminal'],
+      ['Vneg', 'terminal_positive', 'U1', 'v_minus'],
+      ['Vneg', 'terminal_negative', 'G', 'reference_terminal'],
+    ],
+  },
+}
 
-function templateNodes(template: string, depth: 'block' | 'design'): Node[] {
-  const parts = TEMPLATE_PARTS[template] ?? []
-  return parts.map((p, i) => {
-    const parameters = { ...defaultParameters(p.def) }
-    // The browser's "design it" choice opens a designable part (the motor) straight into
-    // its design mode, so its behaviour comes from the iron / magnets / winding.
-    if (depth === 'design' && parameters.design_mode !== undefined) {
-      parameters.design_mode = { value: 'design' }
+/** Turn a template id into a wired starting flow — device + block nodes and the net edges between them. */
+function templateFlow(template: string): { nodes: Node[]; edges: Edge[] } {
+  const spec = TEMPLATE_FLOWS[template]
+  if (spec === undefined) return { nodes: [], edges: [] }
+  const nodes: Node[] = spec.parts.map((p) => {
+    if (p.block) {
+      const block = BUILTIN_BLOCKS[p.def]
+      return {
+        id: p.id,
+        type: 'block',
+        position: { x: p.x, y: p.y },
+        data: {
+          definition: 'block',
+          label: block?.name ?? p.def,
+          block: block ? cloneBlockData(block, `tpl_${p.id}`) : undefined,
+        },
+      } as Node
     }
     return {
-      id: `${p.def}_${i + 1}`,
+      id: p.id,
       type: 'device',
       position: { x: p.x, y: p.y },
-      data: { definition: p.def, label: `${p.def}_${i + 1}`, parameters },
-    }
+      data: {
+        definition: p.def,
+        label: p.id,
+        parameters: { ...defaultParameters(p.def), ...(p.params ?? {}) },
+      },
+    } as Node
   })
+  const edges: Edge[] = spec.wires.map(([source, sourceHandle, target, targetHandle], i) => ({
+    id: `tpl_w${i}`,
+    type: 'net',
+    source,
+    sourceHandle,
+    target,
+    targetHandle,
+  })) as Edge[]
+  return { nodes, edges }
 }
 
 /** Snap-to-grid step (px) — parts align to the 20 px major grid (the bold lines) when snap is on. */
@@ -905,11 +1088,10 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     // dropdowns); the canvas itself starts from the chosen template's parts, not the
     // catalog demo layout.
     const world = loadCatalogWorld()
-    // A SAVED project opens from its stored circuit; a fresh one from the chosen template (unwired —
-    // the user draws the connections). The re-solve fills current/length/resistance either way.
-    const flow = project.loaded
-      ? circuitFileToFlow(project.loaded)
-      : { nodes: templateNodes(project.template, project.depth), edges: [] as Edge[] }
+    // A SAVED project opens from its stored circuit; a fresh one from the chosen template — a Blank start is
+    // an empty canvas, a wired template (led-resistor, rc-lowpass, …) is a working schematic. The re-solve
+    // fills current/length/resistance either way.
+    const flow = project.loaded ? circuitFileToFlow(project.loaded) : templateFlow(project.template)
     const nodes: Node[] = flow.nodes
     const baseEdges: Edge[] = flow.edges
     // Catalog material ids for the Properties panel's material dropdown.
@@ -952,7 +1134,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       materialResistivity,
       validMaterialsByDef,
     }
-  }, [project.template, project.depth, project.loaded])
+  }, [project.template, project.loaded])
 
   // Live React Flow state — nodes are draggable (S19-v3-3); setNodes/setEdges
   // also let the palette drop new parts and the user draw new wires.
