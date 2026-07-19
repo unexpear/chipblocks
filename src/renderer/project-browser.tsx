@@ -324,6 +324,20 @@ const CATEGORIES: Category[] = [
 
 const ACCENT = THEME.accentBlueDeep
 
+// Built-in starters the user hid (they don't want them) — persisted per machine. Hiding a shipped
+// template only removes it from view; "restore" brings them all back. (User templates + saved projects
+// are deleted for real.)
+const HIDDEN_TEMPLATES_KEY = 'chipblocks:hidden-templates'
+function loadHiddenTemplates(): Set<string> {
+  try {
+    const raw = localStorage.getItem(HIDDEN_TEMPLATES_KEY)
+    const arr: unknown = raw ? JSON.parse(raw) : []
+    return new Set(Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
 function Thumb({
   glyph,
   size = 1,
@@ -520,6 +534,38 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
   const dropRecent = (path: string) => {
     removeRecentProject(path)
     setRecents(listRecentProjects())
+  }
+
+  // Delete confirmation — a guard against an accidental × click. The × buttons ASK; the real delete
+  // (a saved project, a user template, or hiding a built-in starter) runs only on confirm.
+  const [confirmDelete, setConfirmDelete] = useState<{
+    name: string
+    detail: string
+    label: string
+    onConfirm: () => void
+  } | null>(null)
+
+  // Built-in starters the user chose to remove — hidden (persisted), not deleted; a restore link
+  // per category brings them back.
+  const [hiddenTemplates, setHiddenTemplates] = useState<Set<string>>(() => loadHiddenTemplates())
+  const persistHidden = (next: Set<string>) => {
+    setHiddenTemplates(next)
+    try {
+      localStorage.setItem(HIDDEN_TEMPLATES_KEY, JSON.stringify([...next]))
+    } catch {
+      // a blocked localStorage just means hides don't persist across restarts — not worth failing over
+    }
+  }
+  const hideTemplate = (id: string) => {
+    const next = new Set(hiddenTemplates)
+    next.add(id)
+    persistHidden(next)
+    if (tplId === id) setTplId('')
+  }
+  const restoreTemplates = (ids: string[]) => {
+    const next = new Set(hiddenTemplates)
+    for (const id of ids) next.delete(id)
+    persistHidden(next)
   }
 
   // The design-depth preview is THIS template's own internals (a transformer's core + windings, a relay's
@@ -735,7 +781,14 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                       <button
                         type="button"
                         title="Remove from the list"
-                        onClick={() => dropRecent(rp.path)}
+                        onClick={() =>
+                          setConfirmDelete({
+                            name: rp.name,
+                            detail: 'It comes off this list — the saved file itself is kept.',
+                            label: 'Remove',
+                            onConfirm: () => dropRecent(rp.path),
+                          })
+                        }
                         style={{
                           all: 'unset',
                           cursor: 'pointer',
@@ -799,7 +852,14 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                       <button
                         type="button"
                         title="Delete this template"
-                        onClick={() => deleteTemplate(t.id)}
+                        onClick={() =>
+                          setConfirmDelete({
+                            name: t.name,
+                            detail: 'This removes it from My templates for good.',
+                            label: 'Delete',
+                            onConfirm: () => deleteTemplate(t.id),
+                          })
+                        }
                         style={{
                           all: 'unset',
                           cursor: 'pointer',
@@ -816,37 +876,95 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
               )}
             </div>
           ) : category && category.templates.length > 0 ? (
-            category.templates.map((t) => {
-              const on = t.id === tplId
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => {
-                    setTplId(t.id)
-                    setDepth('design')
-                    suggestName(t)
-                  }}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 10,
-                    alignItems: 'flex-start',
-                    padding: 12,
-                    borderRadius: 8,
-                    border: t.featured
-                      ? `2px solid ${ACCENT}`
-                      : `1px solid ${on ? ACCENT : BORDER}`,
-                    background: on ? 'rgba(90,134,216,0.16)' : PANEL,
-                    color: TEXT,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <Thumb glyph={t.glyph} size={1.2} light={light} />
-                  <span style={{ fontSize: 13, color: on ? ACCENT_TEXT : TEXT }}>{t.name}</span>
-                </button>
-              )
-            })
+            <>
+              {category.templates.some((t) => hiddenTemplates.has(t.id)) ? (
+                <div style={{ gridColumn: '1 / -1', fontSize: 11, color: MUTED }}>
+                  {category.templates.filter((t) => hiddenTemplates.has(t.id)).length} hidden ·{' '}
+                  <button
+                    type="button"
+                    onClick={() => restoreTemplates(category.templates.map((t) => t.id))}
+                    style={{
+                      all: 'unset',
+                      cursor: 'pointer',
+                      color: ACCENT_TEXT,
+                      textDecoration: 'underline',
+                    }}
+                  >
+                    restore
+                  </button>
+                </div>
+              ) : null}
+              {category.templates
+                .filter((t) => !hiddenTemplates.has(t.id))
+                .map((t) => {
+                  const on = t.id === tplId
+                  // The blank/empty starts stay — you always need a clean canvas to begin from.
+                  const hideable = !t.id.startsWith('blank')
+                  return (
+                    <div key={t.id} style={{ position: 'relative' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTplId(t.id)
+                          setDepth('design')
+                          suggestName(t)
+                        }}
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 10,
+                          alignItems: 'flex-start',
+                          padding: 12,
+                          borderRadius: 8,
+                          border: t.featured
+                            ? `2px solid ${ACCENT}`
+                            : `1px solid ${on ? ACCENT : BORDER}`,
+                          background: on ? 'rgba(90,134,216,0.16)' : PANEL,
+                          color: TEXT,
+                          cursor: 'pointer',
+                          width: '100%',
+                          boxSizing: 'border-box',
+                        }}
+                      >
+                        <Thumb glyph={t.glyph} size={1.2} light={light} />
+                        <span style={{ fontSize: 13, color: on ? ACCENT_TEXT : TEXT }}>
+                          {t.name}
+                        </span>
+                      </button>
+                      {hideable ? (
+                        <button
+                          type="button"
+                          title="Remove this starter"
+                          onClick={() =>
+                            setConfirmDelete({
+                              name: t.name,
+                              detail: 'It’s hidden from your starters — Restore brings it back.',
+                              label: 'Hide',
+                              onConfirm: () => hideTemplate(t.id),
+                            })
+                          }
+                          style={{
+                            position: 'absolute',
+                            top: 6,
+                            right: 6,
+                            zIndex: 1,
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: MUTED,
+                            fontSize: 15,
+                            lineHeight: 1,
+                            padding: '2px 6px',
+                            borderRadius: 4,
+                          }}
+                        >
+                          ×
+                        </button>
+                      ) : null}
+                    </div>
+                  )
+                })}
+            </>
           ) : (
             <div
               style={{
@@ -1045,6 +1163,79 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
           Create project
         </button>
       </div>
+      {confirmDelete !== null ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 100,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          onClick={() => setConfirmDelete(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 380,
+              maxWidth: '90vw',
+              background: PANEL,
+              border: `1px solid ${BORDER}`,
+              borderRadius: 12,
+              padding: 20,
+              color: TEXT,
+              boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+            }}
+          >
+            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
+              {confirmDelete.label} “{confirmDelete.name}”?
+            </div>
+            <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.5, marginBottom: 18 }}>
+              {confirmDelete.detail}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(null)}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 7,
+                  border: `1px solid ${BORDER}`,
+                  background: 'transparent',
+                  color: TEXT,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  confirmDelete.onConfirm()
+                  setConfirmDelete(null)
+                }}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 7,
+                  border: '1px solid #c0392b',
+                  background: '#c0392b',
+                  color: '#fff',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                {confirmDelete.label}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {shortcutsPanel}
     </div>
   )
