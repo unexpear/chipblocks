@@ -48,6 +48,8 @@ type Template = {
   glyph?: string
   /** Designable parts show the use-as-a-block / design-it depth switch (a materials-first preview). */
   designable?: boolean
+  /** Component starters offer a Working-demo / Just-the-part switch; create() picks the -demo or -bare flow. */
+  variants?: boolean
   featured?: boolean
   includes: string[]
   /** Suggested project name when this template is picked, before the user types their own. */
@@ -152,6 +154,95 @@ const CATEGORIES: Category[] = [
         designable: true,
         includes: ['Empty assembly', 'Materials catalog', 'Derived terminal behaviour'],
         defaultName: 'MyPart',
+      },
+      {
+        id: 'comp-dc-motor',
+        name: 'DC motor',
+        desc: 'A brushed DC motor — as a demo it runs off a 12 V battery through a switch (watch the current and speed); as a bare part, drop it in to wire and design.',
+        glyph: 'dc_motor',
+        variants: true,
+        includes: [
+          'Demo: 12 V + switch → it spins',
+          'Bare: the motor alone',
+          'Descend to the windings',
+        ],
+        defaultName: 'MyMotor',
+      },
+      {
+        id: 'comp-ac-motor-3ph',
+        name: '3-phase AC motor',
+        desc: 'A three-phase induction motor. The demo drives it from a spun three-phase alternator — a generator turning a motor; the bare part drops the motor alone.',
+        glyph: 'induction_motor_three_phase',
+        variants: true,
+        includes: ['Demo: alternator → 3φ motor', 'Bare: the motor alone', 'Rotor / stator model'],
+        defaultName: 'My3PhMotor',
+      },
+      {
+        id: 'comp-ac-motor-1ph',
+        name: '1-phase AC motor',
+        desc: 'A single-phase induction motor. The demo runs it off a 230 V mains AC source; the bare part is the motor on its own.',
+        glyph: 'induction_motor_single_phase',
+        variants: true,
+        includes: ['Demo: 230 V mains → spins', 'Bare: the motor alone', 'Single-phase model'],
+        defaultName: 'My1PhMotor',
+      },
+      {
+        id: 'comp-ac-motor-shaded',
+        name: 'Shaded-pole motor',
+        desc: 'The little self-starting shaded-pole motor (fans, small pumps). The demo runs it on 230 V mains; the bare part is the motor alone.',
+        glyph: 'induction_motor_shaded_pole',
+        variants: true,
+        includes: ['Demo: 230 V mains → spins', 'Bare: the motor alone', 'Shaded-pole starting'],
+        defaultName: 'MyShadedMotor',
+      },
+      {
+        id: 'comp-transformer',
+        name: 'Transformer',
+        desc: 'An iron-core transformer. The demo feeds 12 V AC into the primary and steps it up to a load on the secondary (scope both windings); the bare part is the transformer alone.',
+        glyph: 'transformer',
+        variants: true,
+        includes: [
+          'Demo: 12 V AC → stepped up',
+          'Bare: the transformer alone',
+          'Turns ratio + core',
+        ],
+        defaultName: 'MyTransformer',
+      },
+      {
+        id: 'comp-relay',
+        name: 'Relay',
+        desc: 'An electromechanical relay. The demo energizes its 5 V coil through a switch to click a separate 12 V lamp circuit on — the little side controls the big side; the bare part is the relay alone.',
+        glyph: 'relay',
+        variants: true,
+        includes: ['Demo: coil switches a lamp', 'Bare: the relay alone', 'Coil + contacts'],
+        defaultName: 'MyRelay',
+      },
+      {
+        id: 'comp-inductor',
+        name: 'Inductor',
+        desc: 'A coil. The demo closes a switch onto it and the current ramps up on the L/R time constant (scope the ramp); the bare part is the inductor alone.',
+        glyph: 'inductor',
+        variants: true,
+        includes: ['Demo: switch → current ramps', 'Bare: the inductor alone', 'Turns + core'],
+        defaultName: 'MyInductor',
+      },
+      {
+        id: 'comp-potentiometer',
+        name: 'Potentiometer',
+        desc: 'A variable divider. The demo runs its wiper into an LED on a 5 V rail — turn the pot to dim it; the bare part is the potentiometer alone.',
+        glyph: 'potentiometer',
+        variants: true,
+        includes: ['Demo: wiper dims an LED', 'Bare: the pot alone', 'Track + wiper'],
+        defaultName: 'MyPot',
+      },
+      {
+        id: 'comp-alternator',
+        name: 'Alternator',
+        desc: 'A spinning AC generator. The demo turns it at 1800 rpm into a load and generates AC (scope the output); the bare part is the alternator alone.',
+        glyph: 'alternator',
+        variants: true,
+        includes: ['Demo: spun → AC out', 'Bare: the alternator alone', 'Rotor speed → voltage'],
+        defaultName: 'MyAlternator',
       },
     ],
   },
@@ -384,6 +475,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
   const [catId, setCatId] = useState('component')
   const [tplId, setTplId] = useState('dc-motor')
   const [depth, setDepth] = useState<'block' | 'design'>('design')
+  const [variant, setVariant] = useState<'demo' | 'bare'>('demo')
   const [name, setName] = useState('MyMotor')
   const [light, setLight] = useState(() => isLight(loadTheme()))
   useEffect(() => {
@@ -424,6 +516,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
     const first = c.templates[0]
     setTplId(first?.id ?? '')
     setDepth('design')
+    setVariant('demo')
     suggestName(first)
     if (c.id === 'recent') refreshProjects() // re-scan + pick up anything saved since mount
     if (c.id === 'my-templates') refreshTemplates() // pick up anything saved since mount
@@ -431,8 +524,10 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
 
   const create = () => {
     if (!template) return
+    // A component starter opens either its wired demo or the bare part (the -demo / -bare flow).
+    const templateId = template.variants ? `${template.id}-${variant}` : template.id
     onCreate({
-      template: template.id,
+      template: templateId,
       templateName: template.name,
       name,
       depth,
@@ -907,6 +1002,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                         onClick={() => {
                           setTplId(t.id)
                           setDepth('design')
+                          setVariant('demo')
                           suggestName(t)
                         }}
                         style={{
@@ -1087,6 +1183,45 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                     <div style={{ fontSize: 11, color: ACCENT_TEXT, marginTop: 6 }}>
                       {depthNote}
                     </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {template.variants ? (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>Open as</div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      border: `1px solid ${BORDER}`,
+                      borderRadius: 7,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    {(['demo', 'bare'] as const).map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setVariant(v)}
+                        style={{
+                          flex: 1,
+                          padding: '7px 4px',
+                          fontSize: 12,
+                          border: 'none',
+                          cursor: 'pointer',
+                          background: variant === v ? 'rgba(90,134,216,0.2)' : 'transparent',
+                          color: variant === v ? ACCENT_TEXT : MUTED,
+                          fontWeight: variant === v ? 600 : 400,
+                        }}
+                      >
+                        {v === 'demo' ? 'Working demo' : 'Just the part'}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11, color: ACCENT_TEXT, marginTop: 6, lineHeight: 1.5 }}>
+                    {variant === 'demo'
+                      ? 'Comes wired to a driver so it runs — flip the switch and watch it work.'
+                      : 'Drops the part alone on the canvas, ready to wire up and design.'}
                   </div>
                 </div>
               ) : null}

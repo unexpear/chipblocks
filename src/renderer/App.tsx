@@ -2049,6 +2049,273 @@ const TEMPLATE_FLOWS: Record<
       ['dQb', 'cathode', 'G', 'reference_terminal'],
     ],
   },
+  // ─── Component starter circuits ─── a real electromechanical part, either wired to a driver so it
+  // runs (the `-demo`) or dropped alone to design (the `-bare`). The browser card offers the choice.
+  // DC motor — driven so it runs.
+  'comp-dc-motor-demo': {
+    parts: [
+      {
+        id: 'V1',
+        def: 'power_source',
+        x: 60,
+        y: 120,
+        params: { nominal_voltage: tplScalar(12, 'volt') },
+      },
+      {
+        id: 'SW',
+        def: 'switch_spst_toggle',
+        x: 260,
+        y: 120,
+        params: { state: { value: 'closed' } },
+      },
+      { id: 'M', def: 'dc_motor', x: 480, y: 200 },
+      { id: 'G', def: 'ground', x: 60, y: 380 },
+    ],
+    wires: [
+      ['V1', 'terminal_positive', 'SW', 'terminal_in'],
+      ['SW', 'terminal_out', 'M', 'terminal_positive'],
+      ['M', 'terminal_negative', 'G', 'reference_terminal'],
+      ['V1', 'terminal_negative', 'G', 'reference_terminal'],
+    ],
+  },
+  // DC motor — the bare part, ready to wire.
+  'comp-dc-motor-bare': {
+    parts: [{ id: 'P1', def: 'dc_motor', x: 400, y: 200 }],
+    wires: [],
+  },
+  // Three-phase induction motor — driven so it runs.
+  'comp-ac-motor-3ph-demo': {
+    parts: [
+      { id: 'ALT', def: 'alternator_three_phase', x: 120, y: 200 },
+      { id: 'M', def: 'induction_motor_three_phase', x: 560, y: 200 },
+      { id: 'G', def: 'ground', x: 120, y: 520 },
+    ],
+    wires: [
+      ['ALT', 'phase_a', 'M', 'phase_a'],
+      ['ALT', 'phase_b', 'M', 'phase_b'],
+      ['ALT', 'phase_c', 'M', 'phase_c'],
+      ['ALT', 'neutral', 'M', 'neutral'],
+      ['ALT', 'neutral', 'G', 'reference_terminal'],
+    ],
+  },
+  // Three-phase induction motor — the bare part, ready to wire.
+  'comp-ac-motor-3ph-bare': {
+    parts: [{ id: 'P1', def: 'induction_motor_three_phase', x: 400, y: 200 }],
+    wires: [],
+  },
+  // Single-phase induction motor — driven so it runs.
+  'comp-ac-motor-1ph-demo': {
+    parts: [
+      {
+        id: 'VAC',
+        def: 'power_source',
+        x: 80,
+        y: 200,
+        params: {
+          nominal_voltage: tplScalar(0, 'volt'),
+          ac_amplitude: tplScalar(230, 'volt'),
+          frequency: tplScalar(50, 'hertz'),
+        },
+      },
+      { id: 'M', def: 'induction_motor_single_phase', x: 460, y: 200 },
+      { id: 'G', def: 'ground', x: 80, y: 420 },
+    ],
+    wires: [
+      ['VAC', 'terminal_positive', 'M', 'terminal_a'],
+      ['M', 'terminal_b', 'G', 'reference_terminal'],
+      ['VAC', 'terminal_negative', 'G', 'reference_terminal'],
+    ],
+  },
+  // Single-phase induction motor — the bare part, ready to wire.
+  'comp-ac-motor-1ph-bare': {
+    parts: [{ id: 'P1', def: 'induction_motor_single_phase', x: 400, y: 200 }],
+    wires: [],
+  },
+  // Shaded-pole motor — driven so it runs.
+  'comp-ac-motor-shaded-demo': {
+    parts: [
+      {
+        id: 'VAC',
+        def: 'power_source',
+        x: 80,
+        y: 200,
+        params: {
+          nominal_voltage: tplScalar(0, 'volt'),
+          ac_amplitude: tplScalar(230, 'volt'),
+          frequency: tplScalar(50, 'hertz'),
+        },
+      },
+      { id: 'M', def: 'induction_motor_shaded_pole', x: 460, y: 200 },
+      { id: 'G', def: 'ground', x: 80, y: 420 },
+    ],
+    wires: [
+      ['VAC', 'terminal_positive', 'M', 'terminal_a'],
+      ['M', 'terminal_b', 'G', 'reference_terminal'],
+      ['VAC', 'terminal_negative', 'G', 'reference_terminal'],
+    ],
+  },
+  // Shaded-pole motor — the bare part, ready to wire.
+  'comp-ac-motor-shaded-bare': {
+    parts: [{ id: 'P1', def: 'induction_motor_shaded_pole', x: 400, y: 200 }],
+    wires: [],
+  },
+  // Transformer — driven so it runs.
+  'comp-transformer-demo': {
+    parts: [
+      {
+        id: 'VAC',
+        def: 'power_source',
+        x: 80,
+        y: 200,
+        params: {
+          nominal_voltage: tplScalar(0, 'volt'),
+          ac_amplitude: tplScalar(12, 'volt'),
+          frequency: tplScalar(60, 'hertz'),
+        },
+      },
+      { id: 'XF', def: 'transformer', x: 420, y: 200 },
+      { id: 'RL', def: 'resistor', x: 760, y: 200, params: { resistance: tplScalar(1000, 'ohm') } },
+      { id: 'G', def: 'ground', x: 80, y: 440 },
+    ],
+    wires: [
+      ['VAC', 'terminal_positive', 'XF', 'primary_a'],
+      ['XF', 'primary_b', 'G', 'reference_terminal'],
+      ['VAC', 'terminal_negative', 'G', 'reference_terminal'],
+      ['XF', 'secondary_a', 'RL', 'terminal_a'],
+      ['RL', 'terminal_b', 'XF', 'secondary_b'],
+      ['XF', 'secondary_b', 'G', 'reference_terminal'],
+    ],
+  },
+  // Transformer — the bare part, ready to wire.
+  'comp-transformer-bare': {
+    parts: [{ id: 'P1', def: 'transformer', x: 400, y: 200 }],
+    wires: [],
+  },
+  // Relay — driven so it runs.
+  'comp-relay-demo': {
+    parts: [
+      {
+        id: 'VC',
+        def: 'power_source',
+        x: 60,
+        y: 120,
+        params: { nominal_voltage: tplScalar(5, 'volt') },
+      },
+      {
+        id: 'SW',
+        def: 'switch_spst_toggle',
+        x: 260,
+        y: 120,
+        params: { state: { value: 'closed' } },
+      },
+      { id: 'K', def: 'relay', x: 480, y: 220 },
+      {
+        id: 'VL',
+        def: 'power_source',
+        x: 60,
+        y: 400,
+        params: { nominal_voltage: tplScalar(12, 'volt') },
+      },
+      { id: 'RL', def: 'resistor', x: 760, y: 360, params: { resistance: tplScalar(330, 'ohm') } },
+      { id: 'DL', def: 'led', x: 900, y: 360 },
+      { id: 'G', def: 'ground', x: 60, y: 580 },
+    ],
+    wires: [
+      ['VC', 'terminal_positive', 'SW', 'terminal_in'],
+      ['SW', 'terminal_out', 'K', 'coil_a'],
+      ['K', 'coil_b', 'G', 'reference_terminal'],
+      ['VC', 'terminal_negative', 'G', 'reference_terminal'],
+      ['VL', 'terminal_positive', 'K', 'common'],
+      ['K', 'normally_open', 'RL', 'terminal_a'],
+      ['RL', 'terminal_b', 'DL', 'anode'],
+      ['DL', 'cathode', 'G', 'reference_terminal'],
+      ['VL', 'terminal_negative', 'G', 'reference_terminal'],
+    ],
+  },
+  // Relay — the bare part, ready to wire.
+  'comp-relay-bare': {
+    parts: [{ id: 'P1', def: 'relay', x: 400, y: 200 }],
+    wires: [],
+  },
+  // Inductor — driven so it runs.
+  'comp-inductor-demo': {
+    parts: [
+      {
+        id: 'V1',
+        def: 'power_source',
+        x: 60,
+        y: 120,
+        params: { nominal_voltage: tplScalar(12, 'volt') },
+      },
+      {
+        id: 'SW',
+        def: 'switch_spst_toggle',
+        x: 260,
+        y: 120,
+        params: { state: { value: 'closed' } },
+      },
+      { id: 'L', def: 'inductor', x: 480, y: 200 },
+      { id: 'G', def: 'ground', x: 60, y: 380 },
+    ],
+    wires: [
+      ['V1', 'terminal_positive', 'SW', 'terminal_in'],
+      ['SW', 'terminal_out', 'L', 'terminal_a'],
+      ['L', 'terminal_b', 'G', 'reference_terminal'],
+      ['V1', 'terminal_negative', 'G', 'reference_terminal'],
+    ],
+  },
+  // Inductor — the bare part, ready to wire.
+  'comp-inductor-bare': {
+    parts: [{ id: 'P1', def: 'inductor', x: 400, y: 200 }],
+    wires: [],
+  },
+  // Potentiometer — driven so it runs.
+  'comp-potentiometer-demo': {
+    parts: [
+      {
+        id: 'V1',
+        def: 'power_source',
+        x: 60,
+        y: 120,
+        params: { nominal_voltage: tplScalar(5, 'volt') },
+      },
+      { id: 'POT', def: 'potentiometer', x: 320, y: 200 },
+      { id: 'RL', def: 'resistor', x: 620, y: 200, params: { resistance: tplScalar(330, 'ohm') } },
+      { id: 'DL', def: 'led', x: 760, y: 200 },
+      { id: 'G', def: 'ground', x: 60, y: 420 },
+    ],
+    wires: [
+      ['V1', 'terminal_positive', 'POT', 'terminal_a'],
+      ['POT', 'terminal_b', 'G', 'reference_terminal'],
+      ['POT', 'wiper', 'RL', 'terminal_a'],
+      ['RL', 'terminal_b', 'DL', 'anode'],
+      ['DL', 'cathode', 'G', 'reference_terminal'],
+      ['V1', 'terminal_negative', 'G', 'reference_terminal'],
+    ],
+  },
+  // Potentiometer — the bare part, ready to wire.
+  'comp-potentiometer-bare': {
+    parts: [{ id: 'P1', def: 'potentiometer', x: 400, y: 200 }],
+    wires: [],
+  },
+  // Alternator — driven so it runs.
+  'comp-alternator-demo': {
+    parts: [
+      { id: 'ALT', def: 'alternator', x: 200, y: 200 },
+      { id: 'RL', def: 'resistor', x: 560, y: 200, params: { resistance: tplScalar(100, 'ohm') } },
+      { id: 'G', def: 'ground', x: 200, y: 420 },
+    ],
+    wires: [
+      ['ALT', 'terminal_positive', 'RL', 'terminal_a'],
+      ['RL', 'terminal_b', 'ALT', 'terminal_negative'],
+      ['ALT', 'terminal_negative', 'G', 'reference_terminal'],
+    ],
+  },
+  // Alternator — the bare part, ready to wire.
+  'comp-alternator-bare': {
+    parts: [{ id: 'P1', def: 'alternator', x: 400, y: 200 }],
+    wires: [],
+  },
 }
 
 /** Turn a template id into a wired starting flow — device + block nodes and the net edges between them. */
