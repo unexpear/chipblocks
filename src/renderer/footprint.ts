@@ -411,6 +411,22 @@ function pin1Dot(cx: number, cy: number, radiusMm = 0.15, segments = 10, width =
 }
 
 /**
+ * A full circle as a closed polyline (the round-body outline for parts whose body is a can/dome — the
+ * 5 mm through-hole LED). Same polygonal-approximation stance as halfRoundBody: a curve drawn as `segments`
+ * chords, the honest way to render a circle in the segment-based footprint model. Its bounding box is
+ * exactly the ±r square, so the extruded 3-D body is the true body diameter.
+ */
+function circleOutline(cx: number, cy: number, r: number, segments = 24, width = 0.1): SilkLine[] {
+  const pt = (i: number) => ({
+    x: cx + r * Math.cos((i / segments) * 2 * Math.PI),
+    y: cy + r * Math.sin((i / segments) * 2 * Math.PI),
+  })
+  const out: SilkLine[] = []
+  for (let i = 0; i < segments; i++) out.push({ from: pt(i), to: pt(i + 1), width })
+  return out
+}
+
+/**
  * SOIC-8 (3.9×4.9 mm body, 1.27 mm pitch) — the 8-lead small-outline IC, gull-wing SMD. Pad geometry is
  * the IPC-7351 / JEDEC MS-012 land pattern (ground-truthed against KiCad's Package_SO library); the fab
  * body is the real 3.9×4.9 mm outline. The SILK is ChipBlocks' own corner-tick rule (cornerTicksSilk),
@@ -963,6 +979,268 @@ export const FOOTPRINT_SOD123: Footprint = {
   },
 }
 
+/**
+ * LED_0805_2012Metric — the surface-mount LED land. An 0805 (2012-metric) LED lands on the SAME IPC-7351
+ * 2012 chip-land geometry as the 0805 resistor/capacitor (two 1.025×1.4 mm pads on 1.825 mm centres): a
+ * chip LED is a two-terminal 2.0×1.25 mm body, so IPC gives it the same land. What differs from the
+ * resistor is polarity: pad 1 is the CATHODE (the marked end), and the silk carries a cathode bar. Body
+ * height is the real 0805 LED body (Kingbright/Würth 0805 LEDs, ≈0.8 mm tall).
+ */
+export const FOOTPRINT_LED_0805: Footprint = {
+  id: 'LED_0805_2012Metric',
+  name: '0805 LED (2012 metric, SMD)',
+  description:
+    'Two-terminal SMD LED land — pad 1 is the cathode (marked end). IPC-7351 2012 chip land.',
+  pads: [
+    {
+      id: '1',
+      center: { x: -0.9125, y: 0 },
+      size: { w: 1.025, h: 1.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '2',
+      center: { x: 0.9125, y: 0 },
+      size: { w: 1.025, h: 1.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+  ],
+  // Corner ticks + a CATHODE bar in the inter-pad gap on the pad-1 (cathode) side, mirroring the SOD-123
+  // band: pad 1 right edge is x = −0.4, so a bar at x = −0.15 clears both pads (the printed polarity cue).
+  silkscreen: [
+    ...cornerTicksSilk({ x: -1.68, y: -0.95, w: 3.36, h: 1.9 }),
+    { from: { x: -0.15, y: -0.5 }, to: { x: -0.15, y: 0.5 }, width: 0.12 },
+  ],
+  // The component body outline (F.Fab): the 2.0 × 1.25 mm LED body extent (F.Fab rect ±1.0 × ±0.625).
+  fabrication: rectOutline(-1.0, -0.625, 1.0, 0.625),
+  labels: { reference: { x: 0, y: -1.65 }, value: { x: 0, y: 1.65 }, fabReference: { x: 0, y: 0 } },
+  courtyard: { x: -1.68, y: -0.95, w: 3.36, h: 1.9 },
+  provenance: {
+    source_type: 'standard',
+    title: 'IPC-7351 nominal 2012 (0805) chip land, LED variant',
+    citation:
+      'KiCad footprint library, LED_SMD.pretty/LED_0805_2012Metric.kicad_mod — the 2012-metric chip land (two 1.025×1.4 mm pads on 1.825 mm centres, shared with R_0805_2012Metric), pad 1 = cathode',
+    confidence: 'high',
+    url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
+    notes:
+      'An 0805 LED uses the same IPC 2012 chip land as the 0805 resistor; the difference is polarity (pad 1 cathode) + the silk cathode bar. Body 2.0×1.25 mm. Silk is ChipBlocks’ own corner-tick + cathode-bar rule.',
+  },
+  body3d: {
+    heightMm: 0.8,
+    standoffMm: 0.05,
+    provenance: {
+      source_type: 'datasheet',
+      title: '0805 (2012M) chip-LED body height',
+      citation:
+        'Kingbright APT2012 and Würth 150080-series 0805 chip-LED datasheets: body 2.0×1.25 mm, height ≈ 0.7–0.8 mm; SMD solder standoff ≈ 0.05 mm',
+      confidence: 'medium',
+    },
+  },
+}
+
+/**
+ * LED_D5.0mm — the classic 5 mm (T-1¾) round through-hole LED, the jellybean indicator. Two through-hole
+ * pads on 2.54 mm (0.1″) pitch, 0.9 mm drills; pin 1 (the SQUARE pad) is the cathode — the short lead /
+ * flat-side end — matching the standard LED_THT convention. The body is the real 5 mm-diameter dome drawn
+ * as a polygon (circleOutline). Origin at pin 1 (the through-hole convention). Body height is the real
+ * 8.6 mm dome of a 5 mm LED.
+ */
+export const FOOTPRINT_LED_5MM: Footprint = {
+  id: 'LED_D5.0mm',
+  name: '5 mm LED (through-hole)',
+  description:
+    'Round 5 mm (T-1¾) through-hole LED — pin 1 (square pad) is the cathode (flat side / short lead).',
+  pads: [
+    {
+      id: '1',
+      center: { x: 0, y: 0 },
+      size: { w: 1.8, h: 1.8 },
+      shape: 'rect',
+      type: 'through_hole',
+      holeDiameter: 0.9,
+    },
+    {
+      id: '2',
+      center: { x: 2.54, y: 0 },
+      size: { w: 1.8, h: 1.8 },
+      shape: 'circle',
+      type: 'through_hole',
+      holeDiameter: 0.9,
+    },
+  ],
+  // Corner ticks + a CATHODE bar just outside pad 1 (the flat-side cue): pad 1 left edge is x = −0.9, so a
+  // bar at x = −1.4 clears it and sits inside the courtyard (left edge −1.6).
+  silkscreen: [
+    ...cornerTicksSilk({ x: -1.6, y: -2.7, w: 5.6, h: 5.4 }),
+    { from: { x: -1.4, y: -1.0 }, to: { x: -1.4, y: 1.0 }, width: 0.12 },
+  ],
+  // The real 5 mm round body outline (F.Fab): a circle r = 2.5 mm about the body centre (1.27, 0), as a
+  // 24-gon — the dome the 5 mm LED can really is. (The cathode flat is marked by the silk bar + pin-1 pad.)
+  fabrication: circleOutline(1.27, 0, 2.5),
+  labels: {
+    reference: { x: 1.27, y: -3.4 },
+    value: { x: 1.27, y: 3.4 },
+    fabReference: { x: 1.27, y: 0 },
+  },
+  courtyard: { x: -1.6, y: -2.7, w: 5.6, h: 5.4 },
+  provenance: {
+    source_type: 'standard',
+    title: '5 mm (T-1¾) through-hole LED land pattern',
+    citation:
+      'KiCad footprint library, LED_THT.pretty/LED_D5.0mm.kicad_mod — two through-hole pads on 2.54 mm pitch, 0.9 mm drill; pin 1 square = cathode; 5.0 mm round body',
+    confidence: 'high',
+    url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
+    notes:
+      'Origin at pin 1 (0,0), through-hole convention. Pin 1 (square) = cathode (flat side / short lead). Silk is ChipBlocks’ own corner-tick + cathode-bar rule.',
+  },
+  body3d: {
+    heightMm: 8.6,
+    standoffMm: 1.0,
+    provenance: {
+      source_type: 'datasheet',
+      title: '5 mm (T-1¾) LED body height',
+      citation:
+        'Standard 5 mm LED drawings (Kingbright WP7113, Vishay TLHR5400): 5.0 mm body diameter, ≈8.6 mm overall height above the seating plane; leads seat the body ≈1 mm above the board',
+      confidence: 'medium',
+    },
+  },
+}
+
+/**
+ * PinHeader_1x02_P2.54mm_Vertical — a 1×2 pin header, 2.54 mm (0.1″) pitch, vertical through-hole. The
+ * two-pin connector a board uses for POWER IN (a DC supply lands as a 2-terminal header — the physical
+ * place power enters the board) or to break out any two-wire external device. Pads + drills + text verbatim
+ * from KiCad (Connector_PinHeader_2.54mm.pretty/PinHeader_1x02_P2.54mm_Vertical.kicad_mod), origin at pin 1
+ * (square). Same family as the 1×4 header above, two pins.
+ */
+export const FOOTPRINT_PINHDR_1X2: Footprint = {
+  id: 'PinHeader_1x02_P2.54mm_Vertical',
+  name: '1×2 pin header (0.1″ / 2.54 mm)',
+  description:
+    'Single-row 2-pin 2.54 mm pin header, vertical through-hole — a board power-in / 2-wire connector.',
+  pads: [
+    {
+      id: '1',
+      center: { x: 0, y: 0 },
+      size: { w: 1.7, h: 1.7 },
+      shape: 'rect',
+      type: 'through_hole',
+      holeDiameter: 1.0,
+    },
+    {
+      id: '2',
+      center: { x: 0, y: 2.54 },
+      size: { w: 1.7, h: 1.7 },
+      shape: 'circle',
+      type: 'through_hole',
+      holeDiameter: 1.0,
+    },
+  ],
+  silkscreen: cornerTicksSilk({ x: -1.77, y: -1.77, w: 3.54, h: 6.08 }),
+  // Body outline with pin-1 (top-left) chamfered — same F.Fab rule as the 1×4 header, two pins tall.
+  fabrication: chamferedRect(-1.27, -1.27, 1.27, 3.81, 0.635),
+  labels: {
+    reference: { x: 0, y: -2.38 },
+    value: { x: 0, y: 4.9 },
+    fabReference: { x: 0, y: 1.27 },
+  },
+  courtyard: { x: -1.77, y: -1.77, w: 3.54, h: 6.08 },
+  provenance: {
+    source_type: 'standard',
+    title: '2.54 mm (0.1″) pitch single-row pin header, 1×2 vertical',
+    citation:
+      'KiCad footprint library, Connector_PinHeader_2.54mm.pretty/PinHeader_1x02_P2.54mm_Vertical.kicad_mod — 2 through-hole pads 1.7 mm, 1.0 mm drill, 2.54 mm pitch',
+    confidence: 'high',
+    url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
+    notes: 'Origin at pin 1 (0,0); pin 1 square. The 2-pin power-in / 2-wire breakout connector.',
+  },
+  body3d: {
+    heightMm: 2.5,
+    standoffMm: 0,
+    pinPosts: { widthMm: 0.64, heightMm: 6.0 },
+    provenance: {
+      source_type: 'datasheet',
+      title: 'Standard 2.54 mm (0.1″) vertical pin header — insulator + pins',
+      citation:
+        'Generic 2.54 mm pin header (Würth 61300211121, Amphenol 10129378): black insulator 2.5 mm tall, 0.64 mm square posts protruding ≈6 mm above the insulator',
+      confidence: 'medium',
+    },
+  },
+}
+
+/**
+ * D_DO-41_SOD81_P10.16mm_Horizontal — the axial DO-41 (SOD-81) through-hole diode body, laid HORIZONTAL:
+ * THE package the 1N4001–1N4007 rectifier family ships in. Two through-hole pads 10.16 mm (0.4″) apart,
+ * 1.0 mm drills; pin 1 (the SQUARE pad) is the CATHODE, the band-marked end. The body is the real
+ * ≈5.2×2.7 mm cylinder centred between the leads, with a silk cathode band near the pin-1 end. Origin at
+ * pin 1 (the through-hole convention).
+ */
+export const FOOTPRINT_DO41: Footprint = {
+  id: 'D_DO-41_SOD81_P10.16mm_Horizontal',
+  name: 'DO-41 axial diode (through-hole, 10.16 mm)',
+  description:
+    'Axial through-hole rectifier diode (1N4001–1N4007) — pin 1 (square pad) is the cathode (band). DO-41 / SOD-81.',
+  pads: [
+    {
+      id: '1',
+      center: { x: 0, y: 0 },
+      size: { w: 2.0, h: 2.0 },
+      shape: 'rect',
+      type: 'through_hole',
+      holeDiameter: 1.0,
+    },
+    {
+      id: '2',
+      center: { x: 10.16, y: 0 },
+      size: { w: 2.0, h: 2.0 },
+      shape: 'circle',
+      type: 'through_hole',
+      holeDiameter: 1.0,
+    },
+  ],
+  // Corner ticks + a CATHODE band near the pin-1 end (x = 3.0, inside the body), the painted band the real
+  // 1N400x wears at its cathode. Clears both pads (pad 1 right edge x = 1.0).
+  silkscreen: [
+    ...cornerTicksSilk({ x: -1.3, y: -1.6, w: 12.76, h: 3.2 }),
+    { from: { x: 3.0, y: -1.35 }, to: { x: 3.0, y: 1.35 }, width: 0.15 },
+  ],
+  // The body cylinder outline (≈5.2×2.7 mm, centred at x = 5.08) + the two axial lead lines out to the pads.
+  fabrication: [
+    ...rectOutline(2.48, -1.35, 7.68, 1.35),
+    { from: { x: 0, y: 0 }, to: { x: 2.48, y: 0 }, width: 0.1 },
+    { from: { x: 7.68, y: 0 }, to: { x: 10.16, y: 0 }, width: 0.1 },
+  ],
+  labels: {
+    reference: { x: 5.08, y: -2.4 },
+    value: { x: 5.08, y: 2.4 },
+    fabReference: { x: 5.08, y: 0 },
+  },
+  courtyard: { x: -1.3, y: -1.6, w: 12.76, h: 3.2 },
+  provenance: {
+    source_type: 'standard',
+    title: 'DO-41 (SOD-81) axial diode land pattern, 10.16 mm horizontal',
+    citation:
+      'KiCad footprint library, Diode_THT.pretty/D_DO-41_SOD81_P10.16mm_Horizontal.kicad_mod — two through-hole pads on 10.16 mm (0.4″) spacing, 1.0 mm drill; pin 1 square = cathode',
+    confidence: 'high',
+    url: 'https://gitlab.com/kicad/libraries/kicad-footprints',
+    notes:
+      'Origin at pin 1 (0,0), through-hole convention. Pin 1 (square) = cathode (band). Body 5.2×2.7 mm per the 1N400x DO-41 datasheet; silk is ChipBlocks’ own corner-tick + cathode-band rule.',
+  },
+  body3d: {
+    heightMm: 2.7,
+    standoffMm: 0.5,
+    provenance: {
+      source_type: 'datasheet',
+      title: 'DO-41 (1N4001–1N4007) axial body dimensions',
+      citation:
+        'Vishay / onsemi 1N4001–1N4007 (DO-41) datasheets: body length ≈4.1–5.2 mm, diameter ≈2.0–2.7 mm, 0.72–0.86 mm leads on 0.4″ centres; lying horizontal the body sits ≈0.5 mm above the board',
+      confidence: 'medium',
+    },
+  },
+}
+
 /** Every built-in footprint, keyed by id. The board road's starter set (TOOLCHAIN-ROADMAP.md Track 1). */
 export const BUILTIN_FOOTPRINTS: Record<string, Footprint> = {
   [FOOTPRINT_0402.id]: FOOTPRINT_0402,
@@ -975,6 +1253,10 @@ export const BUILTIN_FOOTPRINTS: Record<string, Footprint> = {
   [FOOTPRINT_SOT23.id]: FOOTPRINT_SOT23,
   [FOOTPRINT_TO92.id]: FOOTPRINT_TO92,
   [FOOTPRINT_SOD123.id]: FOOTPRINT_SOD123,
+  [FOOTPRINT_LED_0805.id]: FOOTPRINT_LED_0805,
+  [FOOTPRINT_LED_5MM.id]: FOOTPRINT_LED_5MM,
+  [FOOTPRINT_PINHDR_1X2.id]: FOOTPRINT_PINHDR_1X2,
+  [FOOTPRINT_DO41.id]: FOOTPRINT_DO41,
 }
 
 /**

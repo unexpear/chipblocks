@@ -57,6 +57,19 @@ export const PART_FOOTPRINTS: Record<string, { default: string; options: string[
   transistor_bjt_pnp: { default: 'SOT-23', options: ['SOT-23', 'TO-92_Inline'] },
   transistor_mosfet_nmos: { default: 'SOT-23', options: ['SOT-23', 'TO-92_Inline'] },
   transistor_mosfet_pmos: { default: 'SOT-23', options: ['SOT-23', 'TO-92_Inline'] },
+  // An LED lands SMD (0805, default) or as the 5 mm through-hole indicator (pad 1 = cathode either way).
+  led: { default: 'LED_0805_2012Metric', options: ['LED_0805_2012Metric', 'LED_D5.0mm'] },
+  // The rectifier diode ships in the axial DO-41 (1N400x, default) or, small-signal, the SMD SOD-123.
+  diode_silicon_rectifier: {
+    default: 'D_DO-41_SOD81_P10.16mm_Horizontal',
+    options: ['D_DO-41_SOD81_P10.16mm_Horizontal', 'D_SOD-123'],
+  },
+  // A DC supply / battery enters a real board through a connector: a 2-pin 0.1″ header is the power-in land
+  // (its + / − terminals become the two pads). Screw terminals / barrel jacks are future footprint options.
+  power_source: {
+    default: 'PinHeader_1x02_P2.54mm_Vertical',
+    options: ['PinHeader_1x02_P2.54mm_Vertical'],
+  },
 }
 
 /**
@@ -115,6 +128,12 @@ export const TERMINAL_PADS: Record<string, Record<string, string>> = {
   // SOD-123 diode: pad 1 is the CATHODE (band-marked end), pad 2 the anode — the diode-footprint
   // convention, so a wired anode/cathode lands on the physically correct end.
   diode: { anode: '2', cathode: '1' },
+  // The rectifier diode: pad 1 = cathode on both its packages (DO-41 band end, SOD-123 band end).
+  diode_silicon_rectifier: { anode: '2', cathode: '1' },
+  // An LED: pad 1 = cathode on both its packages (0805 marked end, 5 mm square/flat-side pin).
+  led: { anode: '2', cathode: '1' },
+  // A supply's + / − enter the board on the 2-pin power header: positive → pin 1 (square), negative → pin 2.
+  power_source: { terminal_positive: '1', terminal_negative: '2' },
   // SOT-23 pinouts, the industry-standard assignments the datasheets print:
   // BJT 1=Base 2=Emitter 3=Collector (Nexperia BC846/BC847 series, SOT-23 marking diagram);
   // MOSFET 1=Gate 2=Source 3=Drain (onsemi/Nexperia 2N7002, SOT-23 pinning).
@@ -211,10 +230,14 @@ const DESIGNATOR_PREFIXES: Record<string, string> = {
   inductor: 'L',
   thermistor: 'RT',
   diode: 'D',
+  diode_silicon_rectifier: 'D',
+  led: 'D',
   transistor_bjt_npn: 'Q',
   transistor_bjt_pnp: 'Q',
   transistor_mosfet_nmos: 'Q',
   transistor_mosfet_pmos: 'Q',
+  // A connector/header (the board's power-in and 2-wire breakouts) prints as J — IEEE 315 clause 22.
+  power_source: 'J',
 }
 
 /**

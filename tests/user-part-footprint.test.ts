@@ -84,7 +84,7 @@ describe('footprintForPart for a custom part', () => {
   test('an unregistered / built-in id is unaffected by the custom path', () => {
     expect(footprintForPart('my_sensor')).toBeUndefined() // not registered
     expect(footprintForPart('resistor')?.id).toBe('R_0603_1608Metric') // built-in still works
-    expect(footprintForPart('led')).toBeUndefined() // built-in with no footprint, still honest
+    expect(footprintForPart('op_amp')).toBeUndefined() // built-in with no footprint, still honest
   })
 })
 

@@ -36,13 +36,13 @@ const world = (defs: [string, string][], wires: [string, string, string, string]
 
 describe('deriveBoard', () => {
   test('places only the footprinted parts; skips ones with no package', () => {
-    // R1, C1 have footprints (0603), Q1 a SOT-23; D1 (LED) has no package yet.
+    // R1, C1 have footprints (0603), Q1 a SOT-23; D1 (a zener) has no package yet.
     const board = deriveBoard(
       parts([
         ['R1', 'resistor'],
         ['Q1', 'transistor_bjt_npn'],
         ['C1', 'capacitor'],
-        ['D1', 'led'],
+        ['D1', 'diode_zener_silicon'],
       ]),
     )
     expect(board.placements.map((p) => p.partId)).toEqual(['R1', 'Q1', 'C1'])
@@ -108,7 +108,7 @@ describe('deriveBoard', () => {
 
   test('an empty (or footprint-free) schematic yields an empty board, not a crash', () => {
     expect(deriveBoard([]).placements).toEqual([])
-    expect(deriveBoard(parts([['D1', 'led']])).placements).toEqual([])
+    expect(deriveBoard(parts([['D1', 'diode_zener_silicon']])).placements).toEqual([])
     expect(deriveBoard([]).outline.w).toBeGreaterThan(0)
   })
 
@@ -273,9 +273,9 @@ describe('computeRatsnest', () => {
   test('one on-board pad wired to an unplaceable part yields no airwire (nothing to span)', () => {
     const defs: [string, string][] = [
       ['R1', 'resistor'],
-      ['D1', 'led'],
+      ['D1', 'diode_zener_silicon'],
     ]
-    const board = deriveBoard(parts(defs)) // only R1 lands on the board (no LED package yet)
+    const board = deriveBoard(parts(defs)) // only R1 lands on the board (no zener package yet)
     const rn = computeRatsnest(world(defs, [['R1', 'terminal_b', 'D1', 'anode']]), board)
     expect(rn.airwires).toHaveLength(0)
   })
@@ -316,7 +316,7 @@ describe('offBoardPins (the header count)', () => {
     const defs: [string, string][] = [
       ['R1', 'resistor'],
       ['R2', 'resistor'],
-      ['D1', 'led'],
+      ['D1', 'diode_zener_silicon'],
     ]
     const board = deriveBoard(parts(defs))
     // D1's anode carries TWO wires — still ONE pin the board can't show.
@@ -332,23 +332,23 @@ describe('offBoardPins (the header count)', () => {
     expect(n).toBe(2) // anode (once) + cathode
   })
 
-  test('counts the pins the user DREW, not flattening internals', () => {
-    // The canvas has one multi-lead source node; the solver world would expand it into sections
-    // with seam terminals — but the header must count only the schematic's own wired pins.
+  test('an off-board external device counts both its drawn pins', () => {
+    // A motor is an external electromechanical device: it attaches to the board by wires, it does not
+    // reflow onto copper, so it has no PCB footprint. Both of its drawn pins are off-board pins.
     const defs: [string, string][] = [
-      ['V1', 'power_source'],
+      ['M1', 'dc_motor'],
       ['R1', 'resistor'],
     ]
     const board = deriveBoard(parts(defs))
     const n = offBoardPins(
       parts(defs),
       wires([
-        ['V1', 'terminal_positive', 'R1', 'terminal_a'],
-        ['R1', 'terminal_b', 'V1', 'terminal_negative'],
+        ['M1', 'terminal_positive', 'R1', 'terminal_a'],
+        ['R1', 'terminal_b', 'M1', 'terminal_negative'],
       ]),
       board,
     )
-    expect(n).toBe(2) // exactly the source's two drawn pins — never its expansion seams
+    expect(n).toBe(2) // exactly the motor's two drawn pins the board can't place
   })
 })
 

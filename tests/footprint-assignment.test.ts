@@ -26,8 +26,9 @@ describe('footprintForPart', () => {
   })
 
   test('an unmapped part has no footprint yet (honest, not a wrong package)', () => {
-    // An LED has no package in the catalog yet — it waits for one, never gets forced onto a chip.
-    expect(footprintForPart('led')).toBeUndefined()
+    // An op-amp is a composite block (it flattens to transistors), so it has no single package yet —
+    // it waits for one rather than being forced onto a chip land it isn't.
+    expect(footprintForPart('op_amp')).toBeUndefined()
     expect(footprintForPart('not_a_part')).toBeUndefined()
   })
 
@@ -50,7 +51,7 @@ describe('footprintOptions', () => {
   test('lists the part’s footprints; empty for an unmapped part', () => {
     expect(footprintOptions('resistor').map((f) => f.id)).toContain('R_0603_1608Metric')
     expect(footprintOptions('transistor_bjt_npn').map((f) => f.id)).toContain('SOT-23')
-    expect(footprintOptions('led')).toEqual([])
+    expect(footprintOptions('op_amp')).toEqual([])
   })
 
   test('a chip passive now offers all three common sizes (0402 / 0603 / 0805), 0603 default', () => {
@@ -99,7 +100,7 @@ describe('terminalForPad — pad → terminal (inverse of padForTerminal)', () =
   })
 
   test('an unmapped part or pad is undefined (honest, never a wrong terminal)', () => {
-    expect(terminalForPad('led', '1')).toBeUndefined()
+    expect(terminalForPad('op_amp', '1')).toBeUndefined()
     expect(terminalForPad('transistor_bjt_npn', '9')).toBeUndefined()
   })
 })
