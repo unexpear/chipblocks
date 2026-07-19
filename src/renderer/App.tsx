@@ -3537,8 +3537,11 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   pcbVScoredSidesRef.current = pcbVScoredSides
   // A hand-drawn board OUTLINE (a closed polygon). null ⇒ the auto-fit rectangle. When set, the board's
   // `outline` bbox is recomputed from it (the Gerber cut + edge DRC follow the profile). Saved + loaded like
-  // the stack-up. Editing it on the canvas is the next increment; today it round-trips through Save/Load.
-  const [pcbProfile, setPcbProfile] = useState<BoardProfile | null>(null)
+  // the stack-up. Seeded from a project opened into this tab (the project-browser Open path, which — unlike
+  // File>Open — otherwise drops it); editing it on the canvas is the next increment.
+  const [pcbProfile, setPcbProfile] = useState<BoardProfile | null>(
+    () => project.loaded?.boardProfile ?? null,
+  )
   const pcbProfileRef = useRef(pcbProfile)
   pcbProfileRef.current = pcbProfile
   const pcbBoard = useMemo(() => {

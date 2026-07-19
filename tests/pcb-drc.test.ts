@@ -1517,3 +1517,67 @@ describe('Tier 1: a hand-drawn board profile (polygon outline)', () => {
     expect(edgeHits([deep])).toHaveLength(0)
   })
 })
+
+describe('Tier 1: a concave (L-shaped) board flags copper + parts in the cut-away corner', () => {
+  // An L-board: the full 20×20 square MINUS the top-right quadrant (x>10, y>10).
+  const ell: BoardProfile = {
+    points: [
+      { x: 0, y: 0 },
+      { x: 20, y: 0 },
+      { x: 20, y: 10 },
+      { x: 10, y: 10 },
+      { x: 10, y: 20 },
+      { x: 0, y: 20 },
+    ],
+  }
+  const lboard: Board = { outline: profileBBox(ell), profile: ell, placements: [] }
+  const ROUTING = { traces: [], vias: [], unrouted: [] }
+
+  test('copper in the removed corner (inside the bbox, OUTSIDE the L) is flagged off the board', () => {
+    const inCutaway = { net: 'n', pad: 'n/1', throughHole: false, x: 14, y: 14, w: 2, h: 2 }
+    const hits = runDrc(lboard, { airwires: [], padBoxes: [inCutaway] }, ROUTING).filter(
+      (d) => d.code === 'edge-clearance',
+    )
+    expect(hits).toHaveLength(1)
+    expect(hits[0]?.message).toContain('outside the board outline')
+    // …while copper safely inside the L's own bottom strip is clean.
+    const inside = { net: 'n', pad: 'n/1', throughHole: false, x: 4, y: 4, w: 1, h: 1 }
+    expect(
+      runDrc(lboard, { airwires: [], padBoxes: [inside] }, ROUTING).filter(
+        (d) => d.code === 'edge-clearance',
+      ),
+    ).toHaveLength(0)
+  })
+
+  test('a part BODY in the cut-away corner is flagged component-edge (not the bbox blind spot)', () => {
+    BUILTIN_FOOTPRINTS.TEST_LBODY = {
+      id: 'TEST_LBODY',
+      name: 't',
+      description: 't',
+      pads: [{ id: '1', center: { x: 0, y: 0 }, size: { w: 1, h: 1 }, shape: 'rect', type: 'smd' }],
+      silkscreen: [],
+      fabrication: [
+        { from: { x: -1, y: -1 }, to: { x: 1, y: -1 }, width: 0.1 },
+        { from: { x: 1, y: -1 }, to: { x: 1, y: 1 }, width: 0.1 },
+        { from: { x: 1, y: 1 }, to: { x: -1, y: 1 }, width: 0.1 },
+        { from: { x: -1, y: 1 }, to: { x: -1, y: -1 }, width: 0.1 },
+      ],
+      labels: { reference: { x: 0, y: -3 }, value: { x: 0, y: 3 }, fabReference: { x: 0, y: 0 } },
+      courtyard: { x: -1.2, y: -1.2, w: 2.4, h: 2.4 },
+      provenance: { source_type: 'reference', title: 't', citation: 't', confidence: 'low' },
+    }
+    try {
+      const board: Board = {
+        outline: profileBBox(ell),
+        profile: ell,
+        placements: [{ partId: 'M1', footprintId: 'TEST_LBODY', x: 15, y: 15, rotation: 0 }],
+      }
+      const hits = runDrc(board, { airwires: [], padBoxes: [] }, ROUTING).filter(
+        (d) => d.code === 'component-edge',
+      )
+      expect(hits).toHaveLength(1)
+    } finally {
+      delete BUILTIN_FOOTPRINTS.TEST_LBODY
+    }
+  })
+})

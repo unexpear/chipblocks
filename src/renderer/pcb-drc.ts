@@ -511,6 +511,20 @@ function distRingToBox(
   return min
 }
 
+/** Is a point INSIDE a closed board-edge ring (even-odd ray cast)? A copper box or part body whose centre
+ *  falls outside the real polygon is off the board even when it is far from any single edge — the concave
+ *  L-cutaway case a distance-to-edge test alone would miss. */
+function pointInRing(px: number, py: number, ring: readonly { x: number; y: number }[]): boolean {
+  let inside = false
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[i] as { x: number; y: number }
+    const b = ring[j] as { x: number; y: number }
+    if (a.y > py !== b.y > py && px < ((b.x - a.x) * (py - a.y)) / (b.y - a.y) + a.x)
+      inside = !inside
+  }
+  return inside
+}
+
 /** Every copper rectangle on the board (pads as-is; trace segments at their real width). A castellated
  *  pad is tagged so the edge checks can exempt it — it BELONGS on the board edge. */
 function copperBoxes(
@@ -737,11 +751,18 @@ export function runDrc(
   for (const c of copperBoxes(ratsnest, routing)) {
     if (c.castellated === true) continue
     if (profileRing !== undefined) {
-      if (distRingToBox(profileRing, c) < routedEdge - 1e-9) {
+      const cx = c.x + c.w / 2
+      const cy = c.y + c.h / 2
+      // Flag copper OFF the board (its centre outside the polygon — the concave-cutaway case), or copper
+      // within the routed clearance of the real edge.
+      const offBoard = !pointInRing(cx, cy, profileRing)
+      if (offBoard || distRingToBox(profileRing, c) < routedEdge - 1e-9) {
         out.push({
           code: 'edge-clearance',
-          message: `${c.what} sits within ${fmt(routedEdge)} mm of the board edge`,
-          at: { x: c.x + c.w / 2, y: c.y + c.h / 2 },
+          message: offBoard
+            ? `${c.what} sits outside the board outline`
+            : `${c.what} sits within ${fmt(routedEdge)} mm of the board edge`,
+          at: { x: cx, y: cy },
         })
       }
       continue
@@ -784,6 +805,25 @@ export function runDrc(
     const cfp = footprintByPlacement(pl)
     const body = bodyBox(pl)
     if (body === undefined) continue
+    if (profileRing !== undefined) {
+      // A hand-drawn edge: the part body must sit inside the real polygon and clear it by the rail keepout.
+      // A castellated module is exempt (it butts the edge by design); the per-side exemption is rect-only.
+      const hasCastellated = cfp?.pads.some((p) => p.castellated === true) === true
+      if (hasCastellated) continue
+      const bcx = body.x + body.w / 2
+      const bcy = body.y + body.h / 2
+      if (
+        !pointInRing(bcx, bcy, profileRing) ||
+        distRingToBox(profileRing, body) < keepout - 1e-6
+      ) {
+        out.push({
+          code: 'component-edge',
+          message: `${pl.designator ?? pl.partId}'s body is within ${fmt(keepout)} mm of the board edge — an SMT line needs that part-free rail to grip and place the board`,
+          at: { x: bcx, y: bcy },
+        })
+      }
+      continue
+    }
     // A castellated module is DESIGNED to butt the edge(s) its half-holes sit on — exempt ONLY those sides
     // (per castellatedBoardSide). Its body still needs the conveyor-rail keepout on every OTHER edge.
     const castSides = new Set<BoardSide>()

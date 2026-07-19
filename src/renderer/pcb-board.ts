@@ -78,8 +78,9 @@ export type Board = {
    *  the copper-to-edge DRC tightens on these sides. Absent / empty ⇒ every edge is routed (the default). */
   vScoredSides?: BoardSide[]
   /** A hand-drawn board edge (a closed polygon). Absent ⇒ the board is the rectangle `outline`. When
-   *  present, `outline` MUST equal this profile's bounding box — the Gerber cut, the edge-clearance DRC and
-   *  the 3-D body follow the profile, while the many bounding-box consumers keep reading `outline`. */
+   *  present, `outline` MUST equal this profile's bounding box — the Gerber edge cut and the copper- and
+   *  component-to-edge DRC follow the real polygon, while the bounding-box consumers (board size, the 3-D
+   *  body — a later increment) keep reading `outline`. */
   profile?: BoardProfile
 }
 
