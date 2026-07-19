@@ -2414,7 +2414,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     const world = loadCatalogWorld()
     // A SAVED project opens from its stored circuit; a fresh one from the chosen template — a Blank start is
     // an empty canvas, a wired template (led-resistor, rc-lowpass, …) is a working schematic. The re-solve
-    // fills current/length/resistance either way.
+    // fills current/length/resistance either way. Register the opened project's custom parts FIRST (a
+    // non-clobbering merge, idempotent) so its nodes draw + wire as their real symbols — the File>Open path
+    // does the same; without it a browser-opened project's user parts render as unknown boxes.
+    if (project.loaded?.userParts && project.loaded.userParts.length > 0) {
+      mergeUserParts(project.loaded.userParts)
+    }
     const flow = project.loaded ? circuitFileToFlow(project.loaded) : templateFlow(project.template)
     const nodes: Node[] = flow.nodes
     const baseEdges: Edge[] = flow.edges
@@ -2586,7 +2591,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // The Add-Part pop-up (the KiCad-style Choose-a-part dialog) — open state lives here.
   const [pickerOpen, setPickerOpen] = useState(false)
   const [newPartOpen, setNewPartOpen] = useState(false)
-  const [sheetSettings, setSheetSettings] = useState<SheetSettings>(DEFAULT_SHEET)
+  const [sheetSettings, setSheetSettings] = useState<SheetSettings>(() =>
+    project.loaded?.sheet ? { ...DEFAULT_SHEET, ...project.loaded.sheet } : DEFAULT_SHEET,
+  )
   const [showSheet, setShowSheet] = useState(true)
   const [pageSettingsOpen, setPageSettingsOpen] = useState(false)
   // The save handler (registered with [nodes, edges] deps) reads the latest sheet via this ref.
@@ -2903,8 +2910,8 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // starts. Declared up here because the file Open/Import handlers below must clear it: node ids
   // repeat across files (every canvas mints resistor_1 …), so a loaded circuit would otherwise
   // inherit the previous file's hand placements on any id collision.
-  const [pcbPlacements, setPcbPlacements] = useState<ReadonlyMap<string, PlacementOverride>>(
-    new Map(),
+  const [pcbPlacements, setPcbPlacements] = useState<ReadonlyMap<string, PlacementOverride>>(() =>
+    placementsFromSaved(project.loaded?.placements),
   )
   // A live handle to the current placements so the Save handler (registered above, before this
   // declaration) and the undo snapshot can read them without re-registering on every board drag.
@@ -2914,7 +2921,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // The chip floorplan's own persisted layer (cell overrides + lens + schematic fingerprint) — the twin
   // of pcbPlacements one level down. Starts empty (the floorplan auto-generates); saved + loaded so a
   // laid-out chip survives a reload. A live ref for the Save handler + undo snapshot, same as the board.
-  const [chipLayout, setChipLayout] = useState<ChipLayout>(EMPTY_CHIP_LAYOUT)
+  const [chipLayout, setChipLayout] = useState<ChipLayout>(
+    () => project.loaded?.chipLayout ?? EMPTY_CHIP_LAYOUT,
+  )
   const chipLayoutRef = useRef(chipLayout)
   chipLayoutRef.current = chipLayout
 
@@ -3037,7 +3046,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // Project-wide ambient (°C): the environment the whole board sits in. Each part falls back to it
   // unless it sets its own ambient_temperature (electro-thermal.ts). A ref lets the stable-identity
   // reSolve read the current value without being re-created; onProjectAmbient re-solves on change.
-  const [projectAmbientC, setProjectAmbientC] = useState(STANDARD_AMBIENT_C)
+  const [projectAmbientC, setProjectAmbientC] = useState(() =>
+    typeof project.loaded?.projectAmbientC === 'number' &&
+    Number.isFinite(project.loaded.projectAmbientC)
+      ? project.loaded.projectAmbientC
+      : STANDARD_AMBIENT_C,
+  )
   const projectAmbientRef = useRef(projectAmbientC)
   // Appearance (S19-v3-37/38): light/dark theme + grid-line color, driven by the
   // native Settings menu over IPC; the menu's Custom… opens an in-canvas picker.
@@ -3508,8 +3522,10 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const pcbActive = pcbOpen || workspaceMode === 'board'
   // The user's HAND-DRAWN copper (the route/via tools) — kept separate from the auto-router's output so
   // a part drag (which re-runs the router) never wipes it; merged back in via pcbMergedRouting below.
-  const [userTraces, setUserTraces] = useState<CopperTrace[]>([])
-  const [userVias, setUserVias] = useState<Via[]>([])
+  const [userTraces, setUserTraces] = useState<CopperTrace[]>(() => [
+    ...(project.loaded?.traces ?? []),
+  ])
+  const [userVias, setUserVias] = useState<Via[]>(() => [...(project.loaded?.vias ?? [])])
   // Live handles so the Save handler (registered above, before this declaration) reads the current
   // hand-laid copper without re-registering on every trace/via — same pattern as pcbPlacementsRef.
   const userTracesRef = useRef(userTraces)
@@ -3532,7 +3548,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // Which board edges are V-SCORED (separated from a panel by a snap groove, not a routed slot) — those use
   // the tighter 0.4 mm copper-to-edge DRC. A board fab attribute like the stack-up: saved + loaded, not part
   // of the undo document (matches how the stack-up is handled).
-  const [pcbVScoredSides, setPcbVScoredSides] = useState<BoardSide[]>([])
+  const [pcbVScoredSides, setPcbVScoredSides] = useState<BoardSide[]>(() => [
+    ...(project.loaded?.vScoredSides ?? []),
+  ])
   const pcbVScoredSidesRef = useRef(pcbVScoredSides)
   pcbVScoredSidesRef.current = pcbVScoredSides
   // A hand-drawn board OUTLINE (a closed polygon). null ⇒ the auto-fit rectangle. When set, the board's
@@ -3616,8 +3634,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // edits the knobs (finished thickness, copper weight, surface finish, layer count) in the PCB
   // panel; the cross-section (the FR4 core filling to the chosen thickness) is rebuilt from them.
   // Declared here (ahead of routing) because the router needs the copper-layer count.
-  const [pcbStackupOptions, setPcbStackupOptions] =
-    useState<StackupOptions>(DEFAULT_STACKUP_OPTIONS)
+  const [pcbStackupOptions, setPcbStackupOptions] = useState<StackupOptions>(
+    () => project.loaded?.stackup ?? DEFAULT_STACKUP_OPTIONS,
+  )
   // A live handle for the Save handler (registered earlier) so a saved file carries the board's real
   // stack-up — the copper-layer count in particular, so hand-laid inner-layer copper keeps a layer to
   // live on across a reload (else it would be orphaned onto a reverted 2-layer board).
