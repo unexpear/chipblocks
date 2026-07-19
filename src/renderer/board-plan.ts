@@ -112,7 +112,7 @@ export const BOARD_PLAN: PlanTier[] = [
           'Min 3x3mm hard / 5x5mm practical; max 400x500mm cheap → 656x586mm 6-layer, extended 2L 1020x600mm.',
         cite: 'https://jlcpcb.com/capabilities/pcb-capabilities',
         size: 'S',
-        status: 'todo',
+        status: 'done',
         code: 'src/renderer/pcb-drc.ts / pcb-board.ts',
       },
       {

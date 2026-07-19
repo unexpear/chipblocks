@@ -8,9 +8,12 @@ import {
 } from './pcb-board.ts'
 import type { DrcViolation } from './pcb-drc.ts'
 import {
+  BOARD_SIZE_PROVENANCE,
   DRC_RULES,
+  MAX_BOARD_MM,
   MAX_DRILL_MM,
   MAX_DRILL_PROVENANCE,
+  MIN_BOARD_MM,
   PTH_PAD_ANNULAR_MM,
   PTH_PAD_ANNULAR_PROVENANCE,
 } from './pcb-drc.ts'
@@ -312,6 +315,7 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
     'RULES CHECKED (each limit cited — ask the file where a number came from and it answers)',
     `  trace width ${num(DEFAULT_ROUTE_CLASS.traceWidthMm)} mm / clearance ${num(DEFAULT_ROUTE_CLASS.clearanceMm)} mm — ${DEFAULT_ROUTE_CLASS.provenance.title}`,
     `  copper-to-edge ≥ ${num(DRC_RULES['edge-clearance'].limitMm)} mm — ${DRC_RULES['edge-clearance'].provenance.title}`,
+    `  board size ${num(MIN_BOARD_MM)}–${num(MAX_BOARD_MM)} mm per side — ${BOARD_SIZE_PROVENANCE.title}`,
     `  courtyard overlap — ${DRC_RULES['courtyard-overlap'].provenance.title}`,
     `  minimum track width ${num(DRC_RULES['track-width'].limitMm)} mm — ${DRC_RULES['track-width'].provenance.title}`,
     `  via drill ≥ ${num(VIA_RULES.min_drill.limitMm)} mm — ${VIA_RULES.min_drill.provenance.title}`,

@@ -48,6 +48,7 @@ export type DrcCode =
   | 'silk-over-pad'
   | 'over-current'
   | 'open-net'
+  | 'board-size'
 
 /** The temperature rise (°C above ambient) the over-current check sizes to — IPC-2221's standard,
  *  conservative sizing point. A trace exceeding its ampacity at this rise runs hotter and ages fast. */
@@ -134,6 +135,25 @@ export const MAX_DRILL_PROVENANCE: FootprintProvenance = {
   date_accessed: '2026-07-19',
 }
 
+/**
+ * Single-board size window for the standard fab process: a board smaller than 3 mm on a side can't be run
+ * on its own (it must be PANELIZED into an array), and one larger than 500 mm on a side exceeds the standard
+ * production panel (a bigger board needs a special quote). These bound a single-up board — panelization is a
+ * later feature, so the small-board case is a real "you must panelize this" signal, not a silent pass.
+ */
+export const MIN_BOARD_MM = 3
+export const MAX_BOARD_MM = 500
+
+export const BOARD_SIZE_PROVENANCE: FootprintProvenance = {
+  source_type: 'reference',
+  title: 'Single-board size window 3 mm – 500 mm per side (standard process)',
+  citation:
+    'JLCPCB PCB capabilities: minimum single board 3×3 mm (below → must be panelized into an array), and the standard production panel bounds a single board to roughly 500 mm per side on the common process (larger dimensions / higher layer counts need a quote).',
+  confidence: 'high',
+  url: 'https://jlcpcb.com/capabilities/pcb-capabilities',
+  date_accessed: '2026-07-19',
+}
+
 export type DrcViolation = {
   code: DrcCode
   message: string
@@ -154,6 +174,7 @@ export const DRC_RULES: Record<
     | 'hole-to-hole'
     | 'over-current'
     | 'open-net'
+    | 'board-size'
   >,
   { limitMm: number; provenance: FootprintProvenance }
 > = {
@@ -289,6 +310,27 @@ export function runDrc(
   },
 ): DrcViolation[] {
   const out: DrcViolation[] = []
+
+  // Single-board size window: too small must be panelized, too large exceeds the production panel.
+  {
+    const { w, h } = board.outline
+    const center = { x: board.outline.x + w / 2, y: board.outline.y + h / 2 }
+    const smallest = Math.min(w, h)
+    const largest = Math.max(w, h)
+    if (smallest < MIN_BOARD_MM) {
+      out.push({
+        code: 'board-size',
+        message: `the board is ${fmt(smallest)} mm on its smallest side — under the ${fmt(MIN_BOARD_MM)} mm single-board minimum; a board this small must be panelized into an array`,
+        at: center,
+      })
+    } else if (largest > MAX_BOARD_MM) {
+      out.push({
+        code: 'board-size',
+        message: `the board is ${fmt(largest)} mm on its largest side — over the ${fmt(MAX_BOARD_MM)} mm standard-panel limit; a board this large needs a special quote`,
+        at: center,
+      })
+    }
+  }
 
   // Copper-to-copper clearance (traces + pads, cross-net) — the audit the router itself honours, but
   // enforced at the LARGER of the net class and the absolute fab floor, so a net class tightened below

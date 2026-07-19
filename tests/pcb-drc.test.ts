@@ -15,7 +15,9 @@ import {
 } from '../src/renderer/pcb-board.ts'
 import {
   DRC_RULES,
+  MAX_BOARD_MM,
   MAX_DRILL_MM,
+  MIN_BOARD_MM,
   minCopperFeatureMm,
   PTH_PAD_ANNULAR_MM,
   runDrc,
@@ -664,6 +666,26 @@ describe('runDrc — plated through-hole PAD geometry (annular ring + drill floo
         expect(pad.holeDiameter, `${id} pad ${pad.id} drill`).toBeLessThanOrEqual(MAX_DRILL_MM)
       }
     }
+  })
+})
+
+describe('Tier 0: single-board size window (too small must panelize, too large exceeds the panel)', () => {
+  const sized = (w: number, h: number) => {
+    const board: Board = { outline: { x: 0, y: 0, w, h }, placements: [] }
+    const rn = { airwires: [], padBoxes: [] }
+    const routing = { traces: [], vias: [], unrouted: [] }
+    return runDrc(board, rn, routing).filter((v) => v.code === 'board-size')
+  }
+
+  test('the size window is 3 mm – 500 mm per side', () => {
+    expect(MIN_BOARD_MM).toBe(3)
+    expect(MAX_BOARD_MM).toBe(500)
+  })
+
+  test('a normal board (17 × 8 mm) passes; a 2 mm board is flagged too-small; a 600 mm board too-large', () => {
+    expect(sized(17, 8)).toHaveLength(0)
+    expect(sized(2, 2)[0]?.message).toContain('panelized')
+    expect(sized(600, 600)[0]?.message).toContain('quote')
   })
 })
 
