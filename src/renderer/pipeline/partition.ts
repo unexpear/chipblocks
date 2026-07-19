@@ -52,6 +52,12 @@ export const ANALOG_PASSIVE = new Set([
   'power_source',
   'ground',
   'junction',
+  // A switch carries no analog load of its own — it's a contact that routes a level. On a logic canvas
+  // it just gates a digital input (VDD → switch → gate), so it must NOT force the co-sim 'mixed' path;
+  // the fast logic engine already conducts a closed switch (compileLogic unions its terminals). Without
+  // this a gate driven through a switch classified 'mixed' and read as undriven (dead keypad).
+  'switch_spst_toggle',
+  'switch_spst_momentary',
   ...ANNOTATION_DEFINITIONS,
 ])
 
