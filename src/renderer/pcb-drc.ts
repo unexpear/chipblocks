@@ -2,6 +2,7 @@ import { type FootprintProvenance, fabricationBounds } from './footprint.ts'
 import {
   type Board,
   type BoardSide,
+  castellatedBoardSide,
   footprintByPlacement,
   type Placement,
   placePoint,
@@ -648,23 +649,30 @@ export function runDrc(
   const o = board.outline
   for (const c of copperBoxes(ratsnest, routing)) {
     if (c.castellated === true) continue
-    // Check each side against its own limit; report the worst (nearest) offending side by name.
-    const nearSide: BoardSide | undefined =
-      c.x < o.x + sideLimit('left')
-        ? 'left'
-        : c.x + c.w > o.x + o.w - sideLimit('right')
-          ? 'right'
-          : c.y < o.y + sideLimit('top')
-            ? 'top'
-            : c.y + c.h > o.y + o.h - sideLimit('bottom')
-              ? 'bottom'
-              : undefined
-    if (nearSide !== undefined) {
-      const limitMm = sideLimit(nearSide)
-      const kind = scoredSides.has(nearSide) ? 'V-scored ' : ''
+    // The box's actual clearance from each side; a side is violated when that is under the side's limit.
+    // Report the WORST (smallest-clearance) violated side by name — near a corner that's the edge the copper
+    // is really closest to, with its own limit + V-scored/routed label (not just the first side in priority).
+    const clearance: Record<BoardSide, number> = {
+      left: c.x - o.x,
+      right: o.x + o.w - (c.x + c.w),
+      top: c.y - o.y,
+      bottom: o.y + o.h - (c.y + c.h),
+    }
+    let worstSide: BoardSide | undefined
+    for (const side of ['left', 'right', 'top', 'bottom'] as const) {
+      if (
+        clearance[side] < sideLimit(side) &&
+        (worstSide === undefined || clearance[side] < clearance[worstSide])
+      ) {
+        worstSide = side
+      }
+    }
+    if (worstSide !== undefined) {
+      const limitMm = sideLimit(worstSide)
+      const kind = scoredSides.has(worstSide) ? 'V-scored ' : ''
       out.push({
         code: 'edge-clearance',
-        message: `${c.what} sits within ${fmt(limitMm)} mm of the ${kind}board edge (${nearSide})`,
+        message: `${c.what} sits within ${fmt(limitMm)} mm of the ${kind}board edge (${worstSide})`,
         at: { x: c.x + c.w / 2, y: c.y + c.h / 2 },
       })
     }
@@ -676,21 +684,31 @@ export function runDrc(
   // too close (or a future user-tightened outline crowds a part).
   const keepout = COMPONENT_EDGE_KEEPOUT_MM
   for (const pl of board.placements) {
-    // A castellated module is DESIGNED to butt against the board edge (its half-holes are on it), so the
-    // conveyor-rail keepout doesn't apply to it.
     const cfp = footprintByPlacement(pl)
-    if (cfp?.pads.some((p) => p.castellated === true)) continue
     const body = bodyBox(pl)
     if (body === undefined) continue
-    const tooCloseToEdge =
-      body.x < o.x + keepout - 1e-6 ||
-      body.y < o.y + keepout - 1e-6 ||
-      body.x + body.w > o.x + o.w - keepout + 1e-6 ||
-      body.y + body.h > o.y + o.h - keepout + 1e-6
-    if (tooCloseToEdge) {
+    // A castellated module is DESIGNED to butt the edge(s) its half-holes sit on — exempt ONLY those sides
+    // (per castellatedBoardSide). Its body still needs the conveyor-rail keepout on every OTHER edge.
+    const castSides = new Set<BoardSide>()
+    if (cfp !== undefined) {
+      for (const pad of cfp.pads) {
+        if (pad.castellated === true) castSides.add(castellatedBoardSide(cfp, pad, pl.rotation))
+      }
+    }
+    const nearSide: BoardSide | undefined =
+      !castSides.has('left') && body.x < o.x + keepout - 1e-6
+        ? 'left'
+        : !castSides.has('right') && body.x + body.w > o.x + o.w - keepout + 1e-6
+          ? 'right'
+          : !castSides.has('top') && body.y < o.y + keepout - 1e-6
+            ? 'top'
+            : !castSides.has('bottom') && body.y + body.h > o.y + o.h - keepout + 1e-6
+              ? 'bottom'
+              : undefined
+    if (nearSide !== undefined) {
       out.push({
         code: 'component-edge',
-        message: `${pl.designator ?? pl.partId}'s body is within ${fmt(keepout)} mm of the board edge — an SMT line needs that part-free rail to grip and place the board`,
+        message: `${pl.designator ?? pl.partId}'s body is within ${fmt(keepout)} mm of the board edge (${nearSide}) — an SMT line needs that part-free rail to grip and place the board`,
         at: { x: body.x + body.w / 2, y: body.y + body.h / 2 },
       })
     }
@@ -833,7 +851,7 @@ export function runDrc(
   // The profile route BISECTS each plated hole, so they need the WIDER castellated minimums (bigger drill,
   // wider ring, wider pitch) to keep the half-barrel plating from tearing off, AND each must actually sit ON
   // the board edge — a castellated pad in the interior would drill a normal FULL hole (silent mismanufacture).
-  const castellatedHoles: { at: { x: number; y: number }; drillMm: number }[] = []
+  const castellatedHoles: { at: { x: number; y: number }; drillMm: number; side: BoardSide }[] = []
   // A castellated pad's centre sits on the profile line; allow a small band for float + hand placement.
   const onEdgeBandMm = 0.15
   for (const pl of board.placements) {
@@ -852,7 +870,11 @@ export function runDrc(
         })
         continue
       }
-      castellatedHoles.push({ at, drillMm: drill })
+      castellatedHoles.push({
+        at,
+        drillMm: drill,
+        side: castellatedBoardSide(fp, pad, pl.rotation),
+      })
       if (drill < CASTELLATED_MIN_DRILL_MM) {
         out.push({
           code: 'castellated-hole',
@@ -884,13 +906,14 @@ export function runDrc(
     }
   }
   // Adjacent castellated half-holes need a wider edge-to-edge pitch than a normal drill, so the shared
-  // profile cut between them doesn't tear the plating off either one.
+  // profile cut between them doesn't tear the plating off either one. Only holes on the SAME board edge
+  // share a cut — two on opposite/perpendicular edges are separated by solid FR4, so they're not paired.
   for (let i = 0; i < castellatedHoles.length; i++) {
     const a = castellatedHoles[i]
     if (a === undefined) continue
     for (let j = i + 1; j < castellatedHoles.length; j++) {
       const b = castellatedHoles[j]
-      if (b === undefined) continue
+      if (b === undefined || b.side !== a.side) continue
       const gap = Math.hypot(a.at.x - b.at.x, a.at.y - b.at.y) - (a.drillMm + b.drillMm) / 2
       if (gap < CASTELLATED_EDGE_TO_EDGE_MM - 1e-9) {
         out.push({

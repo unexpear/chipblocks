@@ -324,6 +324,10 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
     '',
     'BOARD',
     `  outline: ${num(board.outline.w)} × ${num(board.outline.h)} mm`,
+    // A fab-order instruction: which edges to separate by V-scoring (vs routing). Omitted when all-routed.
+    ...(board.vScoredSides && board.vScoredSides.length > 0
+      ? [`  V-scored (snap-groove) edges: ${board.vScoredSides.join(', ')} — the rest are routed`]
+      : []),
     `  parts placed: ${board.placements.length}`,
     // routed CONNECTIONS, not trace count — one via'd connection is three copper traces
     `  connections: ${ratsnest.airwires.length} owed, ${ratsnest.airwires.length - routing.unrouted.length} routed, ${routing.unrouted.length} unrouted${routing.vias.length > 0 ? ` (${routing.vias.length} via${routing.vias.length === 1 ? '' : 's'})` : ''}`,

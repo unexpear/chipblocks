@@ -607,6 +607,14 @@ describe('runDrc', () => {
         holeDiameter: 0.9,
         castellated: true,
       }))
+    // A closed rectangular body outline (F.Fab) as 4 segments — a real body for the component-edge +
+    // castellated-side tests (which need fabricationBounds to be a rectangle, not a single line).
+    const rectOutlineSegs = (x0: number, y0: number, x1: number, y1: number) => [
+      { from: { x: x0, y: y0 }, to: { x: x1, y: y0 }, width: 0.1 },
+      { from: { x: x1, y: y0 }, to: { x: x1, y: y1 }, width: 0.1 },
+      { from: { x: x1, y: y1 }, to: { x: x0, y: y1 }, width: 0.1 },
+      { from: { x: x0, y: y1 }, to: { x: x0, y: y0 }, width: 0.1 },
+    ]
     const testFp = (pads: Pad[]): Footprint => ({
       id: 'TEST_CAST',
       name: 'test castellated',
@@ -700,7 +708,8 @@ describe('runDrc', () => {
       expect(edgeHits(oneBox('N', false)).length).toBeGreaterThan(0) // a normal pad at the edge IS flagged
     })
 
-    test('deriveBoard snaps the profile through castellated pads → an auto-derived module is clean', () => {
+    test('deriveBoard snaps the profile through castellated pads at EVERY rotation → auto-derived module clean', () => {
+      // Uses the SHIPPED, registered FOOTPRINT_CASTELLATED_1X6 (Castellated_1x6_P2.0mm) via a user part.
       registerUserPart({
         id: 'castmod',
         name: 'Cast Module',
@@ -714,14 +723,84 @@ describe('runDrc', () => {
         footprintId: 'Castellated_1x6_P2.0mm',
       })
       try {
-        const board = deriveBoard([{ id: 'castmod', definition: 'castmod' }])
-        const rn = computeRatsnest(world([['castmod', 'castmod']], []), board)
-        // With the profile snapped through the pad centres, the six half-holes sit ON the edge — so no
-        // 'not on the edge' flag. Without the snap they'd float `margin` mm inside → six flags.
-        const hits = runDrc(board, rn, ROUTING).filter((d) => d.code === 'castellated-hole')
-        expect(hits).toHaveLength(0)
+        for (const rotation of [0, 90, 180, 270] as const) {
+          const overrides = new Map([['castmod', { x: 20, y: 20, rotation }]])
+          const board = deriveBoard([{ id: 'castmod', definition: 'castmod' }], overrides)
+          // GUARD against a vacuous pass: the part MUST actually land (the footprint must be registered),
+          // else deriveBoard drops it and runDrc trivially finds 0 castellated-hole hits on an empty board.
+          expect(board.placements.length, `rotation ${rotation}`).toBe(1)
+          const rn = computeRatsnest(world([['castmod', 'castmod']], []), board)
+          // With the profile snapped through the pad centres (footprint-edge-aware), the six half-holes sit
+          // ON the edge at every rotation — no 'off the edge', drill, ring, or pitch flags.
+          const hits = runDrc(board, rn, ROUTING).filter((d) => d.code === 'castellated-hole')
+          expect(
+            hits,
+            `rotation ${rotation}: ${hits.map((h) => h.message).join(' | ')}`,
+          ).toHaveLength(0)
+        }
       } finally {
         setUserParts([])
+      }
+    })
+
+    test('the conveyor-rail keepout exempts ONLY the castellated edge — a body crowding a routed edge flags', () => {
+      // A real rectangular body with castellations on the BOTTOM, placed so the body TOP (a routed edge)
+      // is 0.5 mm from the board's top edge — well inside the 3 mm keepout. Old code skipped the whole part.
+      BUILTIN_FOOTPRINTS.TEST_CAST = {
+        ...testFp(goodPads()),
+        fabrication: rectOutlineSegs(-6, -3, 6, 3),
+      }
+      try {
+        const board = {
+          outline: { x: -10, y: -3.5, w: 20, h: 20 }, // only the top edge crowds the body
+          placements: [
+            { partId: 'M1', footprintId: 'TEST_CAST', x: 0, y: 0, rotation: 0 as const },
+          ],
+        }
+        const v = runDrc(board, EMPTY_RN, ROUTING).filter((d) => d.code === 'component-edge')
+        expect(v).toHaveLength(1)
+        expect(v[0]?.message).toContain('(top)') // the routed edge it crowds — NOT the exempt bottom
+      } finally {
+        delete BUILTIN_FOOTPRINTS.TEST_CAST
+      }
+    })
+
+    test('castellated pitch pairs only SAME-edge holes (opposite edges share no plating web)', () => {
+      // Two 0.6 mm castellated holes on OPPOSITE edges of a 1 mm-tall board, each correctly on its own edge:
+      // 0.4 mm apart centre-to-edge, but separated by solid FR4. Must NOT flag the shared-cut pitch rule.
+      const body = rectOutlineSegs(-6, -0.3, 6, 0.3) // thin body BETWEEN the two rows
+      const opp: Pad[] = [
+        {
+          id: '1',
+          center: { x: 0, y: 0.5 },
+          size: { w: 1.2, h: 1.2 },
+          shape: 'roundrect',
+          type: 'through_hole',
+          holeDiameter: 0.6,
+          castellated: true,
+        },
+        {
+          id: '2',
+          center: { x: 0, y: -0.5 },
+          size: { w: 1.2, h: 1.2 },
+          shape: 'roundrect',
+          type: 'through_hole',
+          holeDiameter: 0.6,
+          castellated: true,
+        },
+      ]
+      BUILTIN_FOOTPRINTS.TEST_CAST = { ...testFp(opp), fabrication: body }
+      try {
+        const board = {
+          outline: { x: -6, y: -0.5, w: 12, h: 1.0 }, // top edge y=-0.5, bottom edge y=0.5 — a pad on each
+          placements: [
+            { partId: 'M1', footprintId: 'TEST_CAST', x: 0, y: 0, rotation: 0 as const },
+          ],
+        }
+        // Both sit ON their own edge (no off-edge flag) and are on DIFFERENT edges (no pitch flag).
+        expect(cast(runDrc(board, EMPTY_RN, ROUTING))).toHaveLength(0)
+      } finally {
+        delete BUILTIN_FOOTPRINTS.TEST_CAST
       }
     })
   })
@@ -758,6 +837,20 @@ describe('runDrc', () => {
 
     test('marking a DIFFERENT side V-scored leaves copper near the still-routed side clean', () => {
       expect(edgeHits(board(['bottom']))).toHaveLength(0) // top is still routed → 0.35 mm is fine
+    })
+
+    test('near a corner the message names the NEAREST violated side, with its own limit + label', () => {
+      // box near the top-left corner: left is V-scored (0.4 mm), top is routed (0.3 mm). The box is 0.35 mm
+      // from the V-scored left but only 0.05 mm from the routed top — the worst/nearest violation is TOP.
+      const rn = {
+        airwires: [],
+        padBoxes: [{ net: 'n', pad: 'n/1', throughHole: false, x: 0.35, y: 0.05, w: 1, h: 1 }],
+      }
+      const v = runDrc(board(['left']), rn, ROUTING).filter((d) => d.code === 'edge-clearance')
+      expect(v).toHaveLength(1)
+      expect(v[0]?.message).toContain('(top)') // the nearest edge, not the first-in-priority left
+      expect(v[0]?.message).toContain('0.3 mm') // the routed limit, not left's 0.4 mm
+      expect(v[0]?.message).not.toContain('V-scored')
     })
   })
 

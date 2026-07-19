@@ -1,4 +1,10 @@
-import { BUILTIN_FOOTPRINTS, type Footprint, footprintBounds } from './footprint.ts'
+import {
+  BUILTIN_FOOTPRINTS,
+  type Footprint,
+  fabricationBounds,
+  footprintBounds,
+  type Pad,
+} from './footprint.ts'
 import { boardDesignator, footprintForPart, padForTerminal } from './footprint-assignment.ts'
 import { SILK_TEXT, strokeTextWidthMm } from './stroke-font.ts'
 
@@ -89,6 +95,42 @@ export function placePoint(
     case 270:
       return { x: p.x + y, y: p.y - x }
   }
+}
+
+/** How a footprint-LOCAL edge maps to a BOARD edge under each placement rotation (placePoint's rotation
+ *  convention: rot90 (x,y)→(−y,x)). Used to tell which board edge a castellated half-hole sits on. */
+const ROTATED_SIDE: Record<Rotation, Record<BoardSide, BoardSide>> = {
+  0: { top: 'top', right: 'right', bottom: 'bottom', left: 'left' },
+  90: { top: 'right', right: 'bottom', bottom: 'left', left: 'top' },
+  180: { top: 'bottom', right: 'left', bottom: 'top', left: 'right' },
+  270: { top: 'left', right: 'top', bottom: 'right', left: 'bottom' },
+}
+
+/**
+ * Which BOARD edge a castellated half-hole sits on. A castellated pad extends BEYOND the footprint's body
+ * on exactly one side (that's the notched edge); we find that footprint-local side by the largest overhang
+ * of the pad past the body (fabrication) outline, then rotate it into board space. Edge-mounted features
+ * (the profile snap, the per-side conveyor-keepout exemption, the same-edge pitch check) all key off this,
+ * so a castellated part is understood the same way everywhere. Falls back to the full footprint bounds if a
+ * footprint has no body outline.
+ */
+export function castellatedBoardSide(fp: Footprint, pad: Pad, rotation: Rotation): BoardSide {
+  const body = fabricationBounds(fp)
+  const b =
+    body !== undefined
+      ? { minX: body.x, minY: body.y, maxX: body.x + body.w, maxY: body.y + body.h }
+      : footprintBounds(fp)
+  const overhang: Record<BoardSide, number> = {
+    top: b.minY - (pad.center.y - pad.size.h / 2),
+    bottom: pad.center.y + pad.size.h / 2 - b.maxY,
+    left: b.minX - (pad.center.x - pad.size.w / 2),
+    right: pad.center.x + pad.size.w / 2 - b.maxX,
+  }
+  let localSide: BoardSide = 'bottom'
+  for (const side of ['top', 'bottom', 'left', 'right'] as const) {
+    if (overhang[side] > overhang[localSide]) localSide = side
+  }
+  return ROTATED_SIDE[rotation][localSide]
 }
 
 /** A placement's board-space bounding box (its footprint's bounds turned about the origin, then
@@ -187,26 +229,35 @@ export function deriveBoard(
   let top = minY - margin
   let bottom = maxY + margin
   // A castellated half-hole is meant to be BISECTED by the board edge, so snap the profile through those
-  // pad centres instead of clearing them by `margin`. Guarded: a board with no castellated pads is
-  // untouched (castellation is the only edge-mounted feature, so nothing else moves), and each pad snaps
-  // its own nearest edge onto the pad centre.
+  // pad centres instead of clearing them by `margin`. Each pad snaps the board edge it PHYSICALLY sits on
+  // (castellatedBoardSide, footprint-body-relative + rotation-aware) — not merely the nearest current edge,
+  // which would pull a wide row's corner pads onto a side edge and collapse the outline. Targets are all
+  // computed against the SAME pre-snap edges (no mid-loop mutation). Guarded: a board with no castellated
+  // pads is untouched — castellation is the only edge-mounted feature, so nothing else moves.
+  const snap: Partial<Record<BoardSide, number>> = {}
   for (const p of placements) {
     const fp = footprintByPlacement(p)
     if (fp === undefined) continue
     for (const pad of fp.pads) {
       if (pad.castellated !== true) continue
+      const side = castellatedBoardSide(fp, pad, p.rotation)
       const c = placePoint(p, pad.center)
-      const dl = Math.abs(c.x - left)
-      const dr = Math.abs(c.x - right)
-      const dt = Math.abs(c.y - top)
-      const db = Math.abs(c.y - bottom)
-      const nearest = Math.min(dl, dr, dt, db)
-      if (nearest === dl) left = c.x
-      else if (nearest === dr) right = c.x
-      else if (nearest === dt) top = c.y
-      else bottom = c.y
+      const coord = side === 'left' || side === 'right' ? c.x : c.y
+      const prev = snap[side]
+      // The board edge sits at the OUTERMOST castellated pad on that side (they share a line on a real
+      // module): max for bottom/right, min for top/left.
+      snap[side] =
+        prev === undefined
+          ? coord
+          : side === 'bottom' || side === 'right'
+            ? Math.max(prev, coord)
+            : Math.min(prev, coord)
     }
   }
+  if (snap.left !== undefined) left = snap.left
+  if (snap.right !== undefined) right = snap.right
+  if (snap.top !== undefined) top = snap.top
+  if (snap.bottom !== undefined) bottom = snap.bottom
   return {
     outline: { x: left, y: top, w: right - left, h: bottom - top },
     placements,
