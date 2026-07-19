@@ -81,6 +81,13 @@ contextBridge.exposeInMainWorld('chipblocks', {
   readUserLibrary: (): Promise<string | null> => ipcRenderer.invoke('user-library:read'),
   writeUserLibrary: (text: string): Promise<{ ok: boolean; path?: string }> =>
     ipcRenderer.invoke('user-library:write', text),
+  // Personal TEMPLATES library (user-made starter circuits): the circuits you "Save as Template" persist
+  // to ~/.chipblocks/user-templates.json so they follow you across projects, right beside your parts.
+  readUserTemplates: (): Promise<string | null> => ipcRenderer.invoke('user-templates:read'),
+  writeUserTemplates: (text: string): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('user-templates:write', text),
+  onSaveTemplateRequest: (callback: () => void) =>
+    subscribe('file:save-template-request', callback),
   // Shortcuts (S19-v3-62): the renderer panel reads + edits the keybinds the
   // main process persists; the Shortcuts menu opens the panel over IPC.
   getKeybinds: (): Promise<Record<string, string>> => ipcRenderer.invoke('keybinds:get'),

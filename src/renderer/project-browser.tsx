@@ -10,6 +10,11 @@ import {
 import { DeviceGlyph } from './symbols.tsx'
 import { isLight, loadTheme, THEME, type ThemeName } from './theme.ts'
 import { useShortcuts } from './use-shortcuts.tsx'
+import {
+  deserializeUserTemplates,
+  serializeUserTemplates,
+  type UserTemplate,
+} from './user-templates.ts'
 import type { WorkspaceMode } from './workspace.ts'
 
 /**
@@ -72,6 +77,7 @@ type Category = {
 
 const CATEGORIES: Category[] = [
   { id: 'recent', label: 'My Projects', sub: 'Open recent or saved work', templates: [] },
+  { id: 'my-templates', label: 'My templates', sub: 'Your saved starters', templates: [] },
   {
     id: 'circuit',
     label: 'Circuit',
@@ -406,6 +412,7 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
     setDepth('design')
     suggestName(first)
     if (c.id === 'recent') refreshProjects() // re-scan + pick up anything saved since mount
+    if (c.id === 'my-templates') refreshTemplates() // pick up anything saved since mount
   }
 
   const create = () => {
@@ -443,6 +450,43 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
   useEffect(() => {
     refreshProjects()
   }, [])
+
+  // "My templates": the starters you saved with File ▸ Save as Template (~/.chipblocks/user-templates.json).
+  // Picking one opens a FRESH project from its saved circuit (no path → a first Save asks where to put it).
+  const [userTemplates, setUserTemplates] = useState<UserTemplate[]>([])
+  const refreshTemplates = () => {
+    const read = window.chipblocks?.readUserTemplates
+    if (read === undefined) return
+    void read().then((text) => {
+      if (text === null) {
+        setUserTemplates([])
+        return
+      }
+      const result = deserializeUserTemplates(text)
+      setUserTemplates(result.ok ? result.templates : [])
+    })
+  }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-time load on mount
+  useEffect(() => {
+    refreshTemplates()
+  }, [])
+  const startTemplate = (t: UserTemplate) => {
+    onCreate({
+      template: '',
+      templateName: t.name,
+      name: t.name,
+      depth: 'design',
+      loaded: t.circuit,
+      ...(t.workspace !== 'schematic' ? { initialWorkspace: t.workspace } : {}),
+    })
+  }
+  const deleteTemplate = (id: string) => {
+    const write = window.chipblocks?.writeUserTemplates
+    if (write === undefined) return
+    const next = userTemplates.filter((t) => t.id !== id)
+    setUserTemplates(next)
+    void write(serializeUserTemplates(next))
+  }
   const openFromFile = (text: string, path: string) => {
     const result = deserializeCircuit(text)
     if (!result.ok) return
@@ -692,6 +736,70 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
                         type="button"
                         title="Remove from the list"
                         onClick={() => dropRecent(rp.path)}
+                        style={{
+                          all: 'unset',
+                          cursor: 'pointer',
+                          color: MUTED,
+                          fontSize: 15,
+                          padding: '0 4px',
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : catId === 'my-templates' ? (
+            <div
+              style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 12 }}
+            >
+              <div style={{ fontSize: 11, color: MUTED, lineHeight: 1.5 }}>
+                Saved from any project with <strong>File ▸ Save as Template</strong> — pick one to
+                start a fresh project from it (your own blocks come along).
+              </div>
+              {userTemplates.length === 0 ? (
+                <div style={{ color: MUTED, fontSize: 13, padding: '20px 4px', lineHeight: 1.6 }}>
+                  No saved templates yet. Open a project, wire it up, then choose File ▸ Save as
+                  Template — it will appear here to start new projects from.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {userTemplates.map((t) => (
+                    <div
+                      key={t.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: '8px 12px',
+                        borderRadius: 6,
+                        border: `1px solid ${BORDER}`,
+                        background: PANEL,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => startTemplate(t)}
+                        style={{
+                          all: 'unset',
+                          cursor: 'pointer',
+                          flex: 1,
+                          minWidth: 0,
+                          color: TEXT,
+                        }}
+                      >
+                        <div style={{ fontSize: 13, color: TEXT }}>{t.name}</div>
+                        <div style={{ fontSize: 11, color: MUTED }}>
+                          {t.circuit.nodes.length} part{t.circuit.nodes.length === 1 ? '' : 's'} ·{' '}
+                          {t.workspace}
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        title="Delete this template"
+                        onClick={() => deleteTemplate(t.id)}
                         style={{
                           all: 'unset',
                           cursor: 'pointer',

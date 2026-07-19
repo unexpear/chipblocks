@@ -263,6 +263,12 @@ import {
   registerUserPart,
   type UserPart,
 } from './user-parts.ts'
+import {
+  deserializeUserTemplates,
+  serializeUserTemplates,
+  type UserTemplate,
+  withTemplate,
+} from './user-templates.ts'
 import { buildDemoCpu, buildDemoCpu8 } from './verilog-cpu-demo.ts'
 import { STARTER_VERILOG, VerilogEditor } from './verilog-editor.tsx'
 import { isVerilogText, parseVerilogText, serializeVerilog } from './verilog-file.ts'
@@ -317,6 +323,9 @@ declare global {
       saveOasisData?: (data: Uint8Array) => Promise<{ ok: boolean; path?: string }>
       readUserLibrary?: () => Promise<string | null>
       writeUserLibrary?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      readUserTemplates?: () => Promise<string | null>
+      writeUserTemplates?: (text: string) => Promise<{ ok: boolean; path?: string }>
+      onSaveTemplateRequest?: (callback: () => void) => void
       getKeybinds?: () => Promise<Record<string, string>>
       setKeybinds?: (binds: Record<string, string>) => Promise<Record<string, string>>
       onShortcutsOpen?: (callback: () => void) => void
@@ -2488,6 +2497,8 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
 
   // The import-netlist report (rung 1b): what converted, what did not — shown until dismissed.
   const [netlistReport, setNetlistReport] = useState<NetlistReport | null>(null)
+  // A brief confirmation after "Save as Template" lands the current canvas in My Templates.
+  const [templateSaved, setTemplateSaved] = useState<string | null>(null)
 
   // Save / Load (S19-v3-52). Save: the File menu asks, we answer with the
   // serialized circuit (parts + values + wires — never solved data). Re-registers
@@ -2518,6 +2529,53 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           })
         }
       })
+    })
+  }, [nodes, edges, project.name])
+
+  // "Save as Template" (File menu): stash the CURRENT canvas as a reusable starter in the personal
+  // templates library (~/.chipblocks/user-templates.json), so it shows up in the browser's "My templates"
+  // to spin fresh projects from — user-made blocks and all (serializeCircuit embeds the parts it uses).
+  // Read-modify-write, deduped by id; a brief toast confirms it landed.
+  useEffect(() => {
+    const bridge = window.chipblocks
+    if (
+      bridge?.onSaveTemplateRequest === undefined ||
+      bridge.readUserTemplates === undefined ||
+      bridge.writeUserTemplates === undefined
+    ) {
+      return
+    }
+    const read = bridge.readUserTemplates
+    const write = bridge.writeUserTemplates
+    bridge.onSaveTemplateRequest(() => {
+      const circuit = serializeCircuit(
+        nodes.map((n) => ({ id: n.id, position: n.position, data: n.data as DeviceNodeData })),
+        edges,
+        projectAmbientRef.current,
+        sheetSettingsRef.current,
+        placementsToSaved(pcbPlacementsRef.current),
+        allUserParts(),
+        chipLayoutRef.current,
+        userTracesRef.current,
+        userViasRef.current,
+        pcbStackupOptionsRef.current,
+      )
+      const name = project.name || 'My Template'
+      const template: UserTemplate = {
+        id: `tpl_${Date.now().toString(36)}`,
+        name,
+        workspace: workspaceModeRef.current,
+        circuit,
+        createdAt: Date.now(),
+      }
+      void (async () => {
+        const text = await read()
+        const parsed = text ? deserializeUserTemplates(text) : null
+        const existing = parsed?.ok ? parsed.templates : []
+        await write(serializeUserTemplates(withTemplate(existing, template)))
+        setTemplateSaved(name)
+        window.setTimeout(() => setTemplateSaved(null), 3200)
+      })()
     })
   }, [nodes, edges, project.name])
 
@@ -2928,6 +2986,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(
     project.initialWorkspace ?? 'schematic',
   )
+  // Latest workspace level for the Save-as-Template handler (declared earlier than this state).
+  const workspaceModeRef = useRef(workspaceMode)
+  workspaceModeRef.current = workspaceMode
   const onWorkspace = useCallback(
     () => setWorkspaceMode((m) => (m === 'schematic' ? 'board' : 'schematic')),
     [],
@@ -8851,6 +8912,27 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
 
         {netlistReport !== null ? (
           <NetlistReportCard report={netlistReport} onDismiss={() => setNetlistReport(null)} />
+        ) : null}
+        {templateSaved !== null ? (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 24,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 60,
+              background: THEME.surfaceRaised,
+              border: `1px solid ${THEME.borderSubtle}`,
+              borderRadius: 8,
+              padding: '10px 16px',
+              color: THEME.textPrimary,
+              fontSize: 13,
+              boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+            }}
+          >
+            Saved <strong>“{templateSaved}”</strong> to My templates — start it from the project
+            browser.
+          </div>
         ) : null}
         {pickerOpen ? <PartPicker onPick={placePart} onClose={() => setPickerOpen(false)} /> : null}
         {verilogOpen ? (

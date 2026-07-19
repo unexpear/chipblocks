@@ -456,6 +456,39 @@ function registerUserLibraryHandlers(): void {
   )
 }
 
+// The personal TEMPLATES library — the same file-I/O shape as the parts library, at
+// ~/.chipblocks/user-templates.json. The renderer (user-templates.ts) owns the format.
+const userTemplatesPath = () => join(app.getPath('home'), '.chipblocks', 'user-templates.json')
+
+function registerUserTemplatesHandlers(): void {
+  ipcMain.removeHandler('user-templates:read')
+  ipcMain.removeHandler('user-templates:write')
+  ipcMain.handle('user-templates:read', async (): Promise<string | null> => {
+    try {
+      return await readFile(userTemplatesPath(), 'utf8')
+    } catch {
+      return null // no templates file yet → the renderer starts with none
+    }
+  })
+  ipcMain.handle(
+    'user-templates:write',
+    async (_event, text: string): Promise<{ ok: boolean; path?: string }> => {
+      const path = userTemplatesPath()
+      try {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, text, 'utf8')
+        return { ok: true, path }
+      } catch (error) {
+        dialog.showErrorBox(
+          'Could not save your templates library',
+          `Writing failed: ${String(error)}`,
+        )
+        return { ok: false }
+      }
+    },
+  )
+}
+
 // Custom application menu — replaces Electron's default. Top level: File, Edit,
 // View (with the old Window items folded in), Settings, Shortcuts. Every label
 // says what the item actually does. Settings drives the renderer over IPC: a
@@ -496,6 +529,10 @@ function installMenu(window: BrowserWindow): void {
             pendingSaveAs = true
             window.webContents.send('file:save-request')
           },
+        },
+        {
+          label: 'Save as Template…',
+          click: () => window.webContents.send('file:save-template-request'),
         },
         {
           label: 'Export Netlist…',
@@ -772,6 +809,7 @@ function createWindow(): void {
   registerCircuitOpenHandlers(window)
   registerKeybindHandlers(window)
   registerUserLibraryHandlers()
+  registerUserTemplatesHandlers()
 }
 
 app.whenReady().then(async () => {
