@@ -119,22 +119,6 @@ export const CASTELLATED_PROVENANCE: FootprintProvenance = {
   date_accessed: '2026-07-19',
 }
 
-/** The absolute fab floor for copper-to-copper spacing. The per-net-class clearance is USER-settable, so
- *  the copper-clearance check enforces the LARGER of the net class and this floor — the spacing twin of
- *  the cited track-width floor. Without it, tightening a net class below what any fab can hold would
- *  report sub-manufacturable spacing as clean. */
-export const COPPER_CLEARANCE_FLOOR_MM = 0.127
-
-export const COPPER_CLEARANCE_FLOOR_PROVENANCE: FootprintProvenance = {
-  source_type: 'reference',
-  title: 'Minimum copper-to-copper spacing 0.127 mm (5 mil) — common fab capability',
-  citation:
-    'JLCPCB PCB capabilities: minimum trace-to-trace / trace-to-pad spacing 0.127 mm (5 mil) — the reliable low-cost design minimum; the fab can etch finer (down to ~0.0889 mm / 3.5 mil) at higher cost / lower yield. Used as the conservative hard spacing floor a user-tightened net class cannot go below — the spacing counterpart to the track-width floor.',
-  confidence: 'high',
-  url: 'https://jlcpcb.com/capabilities/pcb-capabilities',
-  date_accessed: '2026-07-17',
-}
-
 /**
  * Minimum manufacturable copper feature (track WIDTH and cross-net SPACING) as a function of COPPER WEIGHT:
  * thicker copper etches with more sideways undercut, so the finest feature a fab can hold GROWS with weight.
@@ -187,6 +171,62 @@ export const VOLTAGE_CLEARANCE_PROVENANCE: FootprintProvenance = {
     'IPC-2221B Generic Standard on Printed Board Design, Table 6-1, column B2 (external conductors, uncoated, sea level to 3050 m): minimum spacing keyed on the PEAK voltage between two conductors — ≤30 V: 0.1 mm; 31–150 V: 0.6 mm; 151–300 V: 1.25 mm; 301–500 V: 2.5 mm; >500 V: 2.5 + (V−500)·0.005 mm. The voltage is the peak (AC amplitude or DC) potential difference between the conductors.',
   confidence: 'high',
   date_accessed: '2026-07-19',
+}
+
+/**
+ * IEC 60664-1 Table 4 CREEPAGE distances — the minimum SURFACE separation two conductors need so the board
+ * material doesn't slowly TRACK (carbonise a conductive path) between them. Distinct from air CLEARANCE
+ * (IPC-2221B above): creepage is over the FR4 surface and, at higher voltages / dirtier environments, is the
+ * LARGER (governing) requirement. This is the pollution-degree-2 (typical enclosed board), material-group
+ * IIIa column — FR4's CTI (~175) puts it at the bottom of group IIIa, the conservative choice. The table is
+ * indexed by RMS / DC WORKING voltage. Below the 60 V DC touch-safe (SELV) threshold the stringent creepage
+ * is not a safety requirement (and applying it would flag every logic board), so this returns 0 there.
+ */
+export const CREEPAGE_SELV_THRESHOLD_V = 60
+const CREEPAGE_TABLE_PD2_IIIA: readonly [number, number][] = [
+  [25, 0.5],
+  [32, 0.53],
+  [40, 1.1],
+  [50, 1.2],
+  [63, 1.25],
+  [80, 1.3],
+  [100, 1.4],
+  [125, 1.5],
+  [160, 1.6],
+  [200, 2.0],
+  [250, 2.5],
+  [320, 3.2],
+  [400, 4.0],
+  [500, 5.0],
+  [630, 6.3],
+  [800, 8.0],
+  [1000, 10.0],
+]
+export function creepageMm(workingVoltsBetween: number): number {
+  const v = Math.abs(workingVoltsBetween)
+  if (v <= CREEPAGE_SELV_THRESHOLD_V) return 0 // SELV / touch-safe — no creepage safety requirement
+  const t = CREEPAGE_TABLE_PD2_IIIA
+  for (let i = 1; i < t.length; i++) {
+    const lo = t[i - 1] as [number, number]
+    const hi = t[i] as [number, number]
+    if (v <= hi[0]) return lo[1] + ((hi[1] - lo[1]) * (v - lo[0])) / (hi[0] - lo[0])
+  }
+  // Above 1000 V: extend on the last table slope (0.01 mm/V), never smaller than the top value.
+  const last = t[t.length - 1] as [number, number]
+  const prev = t[t.length - 2] as [number, number]
+  return last[1] + ((last[1] - prev[1]) / (last[0] - prev[0])) * (v - last[0])
+}
+
+export const CREEPAGE_PROVENANCE: FootprintProvenance = {
+  source_type: 'standard',
+  title: 'IEC 60664-1 Table 4 — creepage distance (pollution degree 2, material group IIIa / FR4)',
+  citation:
+    'IEC 60664-1 (insulation coordination for low-voltage equipment) Table 4 "Creepage distances to avoid failure due to tracking", pollution degree 2, material group IIIa (FR4, CTI ≈ 175). Keyed on RMS/DC working voltage: 100 V → 1.4 mm, 250 V → 2.5 mm, 400 V → 4.0 mm, 500 V → 5.0 mm, 1000 V → 10.0 mm (linearly interpolated). Values reproduced in Sierra Circuits "PCB Line Spacing, Creepage & Clearance", cross-checked against the Standard Clarity IEC 60664-1 calculator at multiple anchor voltages.',
+  confidence: 'high',
+  url: 'https://www.protoexpress.com/blog/importance-pcb-line-spacing-creepage-clearance/',
+  date_accessed: '2026-07-19',
+  notes:
+    'Conditions: pollution degree 2, material group IIIa, applied only above the 60 V DC (SELV) touch-safe threshold. The required conductor separation is max(IPC-2221B clearance, this creepage); creepage governs at higher voltages.',
 }
 
 /**
@@ -581,16 +621,27 @@ export function runDrc(
     for (const t of routing.traces) boardNets.add(t.net)
     const nets = [...boardNets]
     const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`)
-    const requiredByPair = new Map<string, { req: number; dv: number }>()
+    const requiredByPair = new Map<
+      string,
+      { req: number; dv: number; governs: 'clearance' | 'creepage' }
+    >()
     const distinctReq = new Set<number>()
     for (let i = 0; i < nets.length; i++) {
       for (let j = i + 1; j < nets.length; j++) {
         const a = nets[i] as string
         const b = nets[j] as string
         const dv = Math.abs((netVolts.get(a) ?? 0) - (netVolts.get(b) ?? 0))
-        const req = ipc2221ClearanceMm(dv)
+        // The required separation is the LARGER of air clearance (IPC-2221B) and surface creepage
+        // (IEC 60664-1); creepage governs at higher voltages / over the FR4 surface.
+        const clearanceReq = ipc2221ClearanceMm(dv)
+        const creepageReq = creepageMm(dv)
+        const req = Math.max(clearanceReq, creepageReq)
         if (req > spacingFloor + 1e-9) {
-          requiredByPair.set(pairKey(a, b), { req, dv })
+          requiredByPair.set(pairKey(a, b), {
+            req,
+            dv,
+            governs: creepageReq > clearanceReq ? 'creepage' : 'clearance',
+          })
           distinctReq.add(req)
         }
       }
@@ -606,9 +657,13 @@ export function runDrc(
         if (entry === undefined || Math.abs(entry.req - R) > 1e-9 || voltageFlagged.has(key))
           continue
         voltageFlagged.add(key)
+        const rule =
+          entry.governs === 'creepage'
+            ? 'IEC 60664-1 surface creepage, pollution degree 2'
+            : 'IPC-2221B air clearance'
         out.push({
           code: 'voltage-clearance',
-          message: `two nets ~${fmt(entry.dv)} V apart are closer than the ${fmt(entry.req)} mm they need (IPC-2221B) — they can arc or track across the gap`,
+          message: `two nets ~${fmt(entry.dv)} V apart are closer than the ${fmt(entry.req)} mm they need (${rule}) — they can arc or track across the gap`,
           at: cv.at,
         })
       }

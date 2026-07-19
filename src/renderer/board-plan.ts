@@ -45,12 +45,12 @@ export const BOARD_PLAN: PlanTier[] = [
       {
         id: 'annular-ring-drc',
         title: 'Annular-ring DRC at 0.15mm (not 0.05mm)',
-        what: 'Add a min-annular-ring rule = (pad_dia − drill_dia)/2 ≥ 0.15mm for PTH/via; keep 0.05mm only as the smallest-via geometric floor, not the rule. NPTH pad ring ≥0.45mm.',
-        value: '0.15mm (6mil) ring, recommended 0.20mm; NPTH ≥0.45mm pad.',
+        what: 'Add a min-annular-ring rule = (pad_dia − drill_dia)/2 ≥ 0.15mm for a PLATED through-hole/via; keep 0.05mm only as the smallest-via geometric floor, not the rule. A NON-plated (NPTH) hole carries no plating, so it has no annular-ring requirement and is exempt.',
+        value: '0.15mm (6mil) ring, recommended 0.20mm; NPTH exempt (no plating → no ring).',
         cite: 'https://jlcpcb.com/capabilities/pcb-capabilities',
         size: 'S',
         status: 'done',
-        code: 'src/renderer/pcb-drc.ts (new rule)',
+        code: 'src/renderer/pcb-drc.ts (PTH_PAD_ANNULAR_MM, plated!==false gate)',
       },
       {
         id: 'min-drill-aspect-ratio',
@@ -107,13 +107,13 @@ export const BOARD_PLAN: PlanTier[] = [
       {
         id: 'board-size-limits',
         title: 'Min/max board-size checks',
-        what: 'Flag boards below 3x3mm (warn <5x5mm practical) and above the layer-count-dependent max; note V-cut panels need ≥70x70mm.',
+        what: 'SHIPPED: a flat 3–500mm-per-side window (too small must be panelized, too large exceeds the standard panel). DEFERRED to a later tier (needs the stackup layer-count + a warn tier): the <5x5mm practical warning, the layer-count-dependent max (up to 656x586 6-layer / extended 2L 1020x600), and the V-cut ≥70x70mm panel note.',
         value:
-          'Min 3x3mm hard / 5x5mm practical; max 400x500mm cheap → 656x586mm 6-layer, extended 2L 1020x600mm.',
+          'Shipped: 3mm min / 500mm max per side (flat, conservative). Richer limits deferred.',
         cite: 'https://jlcpcb.com/capabilities/pcb-capabilities',
         size: 'S',
         status: 'done',
-        code: 'src/renderer/pcb-drc.ts / pcb-board.ts',
+        code: 'src/renderer/pcb-drc.ts (MIN_BOARD_MM/MAX_BOARD_MM)',
       },
       {
         id: 'v-cut-edge-clearance-0.4',
@@ -138,19 +138,20 @@ export const BOARD_PLAN: PlanTier[] = [
       {
         id: 'voltage-clearance-creepage-t0',
         title: 'Voltage-based clearance/creepage check',
-        what: 'Compute per-net-pair spacing from the solved peak ΔV; compare against IPC-2221B Table 6-1 (and creepage via CTI); report which rule governs. Prevents silently passing a board that arcs above ~30V.',
+        what: 'Per-net-pair spacing from the solved ΔV = max(IPC-2221B air CLEARANCE, IEC 60664-1 surface CREEPAGE); flag copper closer than that and report which rule governs. Creepage (pollution degree 2, FR4 material group IIIa) is applied above the 60V DC (SELV) touch-safe threshold. Prevents silently passing a board that arcs or tracks above ~30V.',
         value:
-          '~0.6mm at 50-150V, ~2.5mm at 500V, 0.005mm/V >500V (external uncoated); creepage per CTI/pollution degree.',
-        cite: 'IPC-2221B Table 6-1; IEC 60664-1; IEC 60112',
+          'Clearance ~0.6mm at 50-150V, ~2.5mm at 500V (external uncoated). Creepage 1.4mm at 100V, 2.5mm at 250V, 5.0mm at 500V (PD2, IIIa) — governs at higher V.',
+        cite: 'IPC-2221B Table 6-1; IEC 60664-1 Table 4 (creepage); FR4 CTI ~175',
         size: 'L',
         status: 'done',
-        code: 'src/renderer/pcb-drc.ts (new voltage-aware spacing pass)',
+        code: 'src/renderer/pcb-drc.ts (ipc2221ClearanceMm + creepageMm, max-of-two spacing pass)',
       },
       {
         id: 'ir-drop-t0',
         title: 'DC IR-drop budget on power/ground nets',
         what: "Sum I·R along each rail's delivery path; compare against rail tolerance; distinct from the existing thermal ampacity check.",
-        value: 'e.g. 1.0V ±3% rail tolerates ~30mV total drop; R = ρL/(w·t).',
+        value:
+          'shipped budget 5% of the rail (within the 3–5% guideline); e.g. a 1.0V rail tolerates ~50mV total drop; R = ρL/(w·t).',
         cite: 'IPC-2152 copper resistance + rail budgeting',
         size: 'M',
         status: 'done',

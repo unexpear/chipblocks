@@ -19,6 +19,7 @@ import {
 import {
   CASTELLATED_MIN_DRILL_MM,
   COMPONENT_EDGE_KEEPOUT_MM,
+  creepageMm,
   DRC_RULES,
   ipc2221ClearanceMm,
   MAX_BOARD_MM,
@@ -341,6 +342,44 @@ describe('runDrc', () => {
     // both of the victim resistor's pads flagged from ONE part's lettering — proof the checker
     // doesn't stop at the first pad a stroke touches
     expect(victimPads.size).toBeGreaterThanOrEqual(2)
+  })
+
+  test('silk within 0.15 mm of a pad but NOT overlapping it still flags (pins the positive gap)', () => {
+    // Pin the cited constant so a regression that weakens it below the positive gap is caught…
+    expect(DRC_RULES['silk-over-pad'].limitMm).toBe(0.15)
+    // …and exercise the FIRING on a near-miss: a 0.15 mm silk line whose ink does NOT touch a 1×1 mm pad
+    // but whose nearest edge is only 0.10 mm from it (inside the 0.15 mm clearance) must fire; move it to a
+    // 0.175 mm gap and it clears. The earlier tests only drove OVERLAPPING silk, so they never pinned 0.15.
+    const silkFp = (y: number): Footprint => ({
+      id: 'TEST_SILK',
+      name: 't',
+      description: 't',
+      pads: [{ id: '1', center: { x: 0, y: 0 }, size: { w: 1, h: 1 }, shape: 'rect', type: 'smd' }],
+      silkscreen: [{ from: { x: -0.4, y }, to: { x: 0.4, y }, width: 0.15 }],
+      fabrication: [{ from: { x: -0.6, y: -0.6 }, to: { x: 0.6, y: -0.6 }, width: 0.1 }],
+      labels: { reference: { x: 0, y: 3 }, value: { x: 0, y: 3.5 }, fabReference: { x: 0, y: 0 } },
+      courtyard: { x: -1, y: -1, w: 2, h: 5 }, // tall → the designator anchors well ABOVE the pad
+      provenance: { source_type: 'reference', title: 't', citation: 't', confidence: 'low' },
+    })
+    const run = (y: number) => {
+      BUILTIN_FOOTPRINTS.TEST_SILK = silkFp(y)
+      try {
+        const board = {
+          outline: { x: -10, y: -10, w: 20, h: 20 },
+          placements: [
+            { partId: 'S1', footprintId: 'TEST_SILK', x: 0, y: 0, rotation: 0 as const },
+          ],
+        }
+        const rn = computeRatsnest({ instances: new Map(), nets: new Map() }, board)
+        return runDrc(board, rn, { traces: [], vias: [], unrouted: [] }).filter(
+          (v) => v.code === 'silk-over-pad',
+        )
+      } finally {
+        delete BUILTIN_FOOTPRINTS.TEST_SILK
+      }
+    }
+    expect(run(-0.675).length).toBeGreaterThan(0) // ink 0.10 mm from the pad → inside 0.15 → fires
+    expect(run(-0.75)).toEqual([]) // ink 0.175 mm from the pad → clears the 0.15 mm gap
   })
 
   test('an undersized via and two crowding holes are flagged with their cited limits', () => {
@@ -1165,6 +1204,73 @@ describe('Tier 0: voltage clearance (IPC-2221B B2) — high-ΔV nets need extra 
         ]),
       ),
     ).toContain('voltage-clearance')
+  })
+
+  // The messages the voltage-clearance pass emits, for the same 0.5 mm-gap fixture.
+  const vMessages = (netVolts: Map<string, number>): string[] => {
+    const board: Board = { outline: { x: -5, y: -5, w: 40, h: 40 }, placements: [] }
+    const routing = {
+      traces: [
+        {
+          net: 'a',
+          widthMm: 0.25,
+          layer: 'top' as const,
+          points: [
+            { x: 0, y: 0 },
+            { x: 5, y: 0 },
+          ],
+        },
+        {
+          net: 'b',
+          widthMm: 0.25,
+          layer: 'top' as const,
+          points: [
+            { x: 0, y: 0.75 },
+            { x: 5, y: 0.75 },
+          ],
+        },
+      ],
+      vias: [],
+      unrouted: [],
+    }
+    return runDrc(board, { airwires: [], padBoxes: [] }, routing, DEFAULT_ROUTE_CLASS, { netVolts })
+      .filter((v) => v.code === 'voltage-clearance')
+      .map((v) => v.message)
+  }
+
+  test('creepageMm matches IEC 60664-1 Table 4 (PD2, material group IIIa) and gates at the 60 V SELV limit', () => {
+    expect(creepageMm(50)).toBe(0) // below SELV — no creepage safety requirement
+    expect(creepageMm(60)).toBe(0) // at the SELV boundary
+    expect(creepageMm(100)).toBeCloseTo(1.4, 6)
+    expect(creepageMm(250)).toBeCloseTo(2.5, 6)
+    expect(creepageMm(500)).toBeCloseTo(5.0, 6)
+    expect(creepageMm(1000)).toBeCloseTo(10.0, 6)
+  })
+
+  test('above SELV, surface creepage (IEC 60664-1) governs and the message says so', () => {
+    // 250 V: air clearance 1.25 mm, creepage 2.5 mm → creepage governs; the 0.5 mm gap is under it.
+    const m = vMessages(
+      new Map([
+        ['a', 250],
+        ['b', 0],
+      ]),
+    )
+    expect(m).toHaveLength(1)
+    expect(m[0]).toContain('creepage')
+    expect(m[0]).toContain('2.5 mm')
+  })
+
+  test('below the 60 V SELV gate only air clearance applies — creepage does not govern', () => {
+    // 50 V: air clearance 0.6 mm (over the 0.5 mm gap → flagged), creepage 0 (SELV) → clearance governs.
+    const m = vMessages(
+      new Map([
+        ['a', 50],
+        ['b', 0],
+      ]),
+    )
+    expect(m).toHaveLength(1)
+    expect(m[0]).toContain('air clearance')
+    expect(m[0]).not.toContain('creepage')
   })
 })
 
