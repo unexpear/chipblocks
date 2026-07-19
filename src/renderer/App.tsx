@@ -205,6 +205,7 @@ import {
   solveCanvasDispatch,
   solveTransientDispatch,
 } from './pipeline/solve-canvas.ts'
+import { PlanPanel } from './plan-panel.tsx'
 import { ProjectBrowser, type ProjectChoice } from './project-browser.tsx'
 import { projectNameFromPath, recordRecentProject } from './recent-projects.ts'
 import { ReflectionPanel } from './reflection-panel.tsx'
@@ -3226,6 +3227,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // PCB view: the physical layout — the footprinted parts placed on a board. Derived from the
   // schematic parts (each part → its footprint → a spot on the board); re-derives as parts change.
   const [pcbOpen, setPcbOpen] = useState(false)
+  const [planOpen, setPlanOpen] = useState(false)
   // Verilog IDE: write hardware in Verilog, watch it synthesize live, drop the resulting gates on the sheet.
   const [verilogOpen, setVerilogOpen] = useState(false)
   // The editor's text, kept here so it survives closing + reopening the panel (the editor unmounts on close).
@@ -9764,6 +9766,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 onDistortion={() => setDistortionOpen((open) => !open)}
                 onSParam={() => setSparamOpen((open) => !open)}
                 onPcb={() => setPcbOpen((open) => !open)}
+                onPlan={() => setPlanOpen((open) => !open)}
                 onVerilog={() => setVerilogOpen((open) => !open)}
                 onTrace={() => setTraceOpen((open) => !open)}
                 onStress={() => setStressOpen((open) => !open)}
@@ -10093,6 +10096,11 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 light={light}
               />
             ),
+          },
+          plan: {
+            title: 'Plan',
+            visible: planOpen,
+            content: <PlanPanel light={light} />,
           },
           pcb: {
             title: 'PCB',
@@ -10551,6 +10559,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             'distortion',
             'sparam',
             'pcb',
+            'plan',
             'timing',
           ],
           (id) => Boolean(registry[id]?.visible),

@@ -58,6 +58,7 @@ export type ToolbarActionId =
   | 'distortion'
   | 'sparam'
   | 'pcb'
+  | 'plan'
   | 'verilog'
   | 'trace'
   | 'stress'
@@ -148,6 +149,14 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
     color: THEME.statusOk,
     title:
       'PCB — the physical layout in a side panel: every part that has a footprint placed on a board, copper pads and all. The first physical form of the circuit, on the road to the manufacturing files.',
+  },
+  {
+    id: 'plan',
+    label: 'Plan',
+    icon: '☑',
+    color: THEME.accentBlue,
+    title:
+      'Plan — the board manufacturing-readiness roadmap: the tiered work that makes ChipBlocks’ PCB rules match real fab constraints, each item with its verified cited number. Track what is done, in progress, or to-do so nothing is lost.',
   },
   {
     id: 'verilog',
@@ -284,6 +293,7 @@ export function ToolbarItems({
   onDistortion,
   onSParam,
   onPcb,
+  onPlan,
   onVerilog,
   onTrace,
   onStress,
@@ -327,6 +337,7 @@ export function ToolbarItems({
   onDistortion: () => void
   onSParam: () => void
   onPcb: () => void
+  onPlan: () => void
   onVerilog: () => void
   onTrace: () => void
   onStress: () => void
@@ -360,6 +371,7 @@ export function ToolbarItems({
     distortion: onDistortion,
     sparam: onSParam,
     pcb: onPcb,
+    plan: onPlan,
     verilog: onVerilog,
     trace: onTrace,
     stress: onStress,
