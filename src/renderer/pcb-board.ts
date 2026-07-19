@@ -116,7 +116,11 @@ export function deriveBoard(
   parts: readonly BoardPart[],
   overrides?: ReadonlyMap<string, PlacementOverride>,
   gap = 2,
-  margin = 2.5,
+  // 3 mm margin = the minimum SMT assembly edge keepout (a part-free rail for the conveyor to grip). The
+  // outline fits to each part's full bounds (which enclose its body) + this margin, so every part body ends
+  // up ≥ 3 mm from the board edge — the component-edge-keepout DRC then passes for an auto-derived board and
+  // only fires if a part is dragged too close to the edge.
+  margin = 3,
 ): Board {
   const placements: Placement[] = []
   // Short designators, deduped: two ids can collapse onto one designator ('r1' and 'resistor_1'

@@ -174,7 +174,7 @@ export const BOARD_PLAN: PlanTier[] = [
           '3-5mm part-free rail keepout on ≥2 edges (distinct from 0.3mm copper edge-clearance).',
         cite: 'IPC-2221 board-edge clearance; SMT DFM',
         size: 'M',
-        status: 'todo',
+        status: 'done',
         code: 'src/renderer/pcb-board.ts:170-175; pcb-drc.ts',
       },
     ],

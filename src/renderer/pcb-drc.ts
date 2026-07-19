@@ -1,4 +1,4 @@
-import type { FootprintProvenance } from './footprint.ts'
+import { type FootprintProvenance, fabricationBounds } from './footprint.ts'
 import {
   type Board,
   footprintByPlacement,
@@ -51,6 +51,7 @@ export type DrcCode =
   | 'open-net'
   | 'board-size'
   | 'voltage-clearance'
+  | 'component-edge'
 
 /** The temperature rise (°C above ambient) the over-current check sizes to — IPC-2221's standard,
  *  conservative sizing point. A trace exceeding its ampacity at this rise runs hotter and ages fast. */
@@ -197,6 +198,25 @@ export const MIN_DRILL_PROVENANCE: FootprintProvenance = {
 export const MIN_BOARD_MM = 3
 export const MAX_BOARD_MM = 500
 
+/**
+ * Component-to-board-edge assembly keepout (3 mm) — the minimum part-free RAIL an SMT line needs at the
+ * board edge for the conveyor to grip and the pick-and-place to reach (a part body closer than this can be
+ * clipped by handling or unreachable by the nozzle). Distinct from the 0.3 mm COPPER edge clearance (that's
+ * the mill tolerance; this is the physical part body). Measured to the fabrication (body) outline. The
+ * auto-derived board fits with a 3 mm margin so it passes; this fires if a part is dragged too close.
+ */
+export const COMPONENT_EDGE_KEEPOUT_MM = 3
+
+export const COMPONENT_EDGE_KEEPOUT_PROVENANCE: FootprintProvenance = {
+  source_type: 'reference',
+  title: 'Component-to-board-edge assembly keepout ≈ 3 mm (SMT conveyor rail)',
+  citation:
+    'IPC-2221 / IPC-7351 assembly guidance + common SMT-assembler DFM (e.g. JLCPCB, PCBWay assembly rules): parts should sit ≥ ~3 mm (rail edges) from the board edge so the conveyor rails can grip the board and the placement head can reach every part; tighter needs a breakaway rail. Separate from the 0.3 mm copper-to-edge (mill) clearance.',
+  confidence: 'medium',
+  url: 'https://jlcpcb.com/capabilities/pcb-assembly-capabilities',
+  date_accessed: '2026-07-19',
+}
+
 export const BOARD_SIZE_PROVENANCE: FootprintProvenance = {
   source_type: 'reference',
   title: 'Single-board size window 3 mm – 500 mm per side (standard process)',
@@ -246,6 +266,7 @@ export const DRC_RULES: Record<
     | 'open-net'
     | 'board-size'
     | 'voltage-clearance'
+    | 'component-edge'
   >,
   { limitMm: number; provenance: FootprintProvenance }
 > = {
@@ -324,6 +345,26 @@ function courtyardBox(pl: Placement): { x: number; y: number; w: number; h: numb
     placePoint(pl, { x: c.x + c.w, y: c.y }),
     placePoint(pl, { x: c.x + c.w, y: c.y + c.h }),
     placePoint(pl, { x: c.x, y: c.y + c.h }),
+  ]
+  const xs = corners.map((p) => p.x)
+  const ys = corners.map((p) => p.y)
+  const x0 = Math.min(...xs)
+  const y0 = Math.min(...ys)
+  return { x: x0, y: y0, w: Math.max(...xs) - x0, h: Math.max(...ys) - y0 }
+}
+
+/** A placement's fabrication (component BODY) outline as a board-space box — the physical part extent (
+ *  smaller than the courtyard), for the assembly edge-keepout. undefined when the footprint has no body. */
+function bodyBox(pl: Placement): { x: number; y: number; w: number; h: number } | undefined {
+  const fp = footprintByPlacement(pl)
+  if (fp === undefined) return undefined
+  const b = fabricationBounds(fp)
+  if (b === undefined) return undefined
+  const corners = [
+    placePoint(pl, { x: b.x, y: b.y }),
+    placePoint(pl, { x: b.x + b.w, y: b.y }),
+    placePoint(pl, { x: b.x + b.w, y: b.y + b.h }),
+    placePoint(pl, { x: b.x, y: b.y + b.h }),
   ]
   const xs = corners.map((p) => p.x)
   const ys = corners.map((p) => p.y)
@@ -535,6 +576,28 @@ export function runDrc(
         code: 'edge-clearance',
         message: `${c.what} sits within ${fmt(edge)} mm of the board edge`,
         at: { x: c.x + c.w / 2, y: c.y + c.h / 2 },
+      })
+    }
+  }
+
+  // Component-to-edge assembly keepout — a part BODY closer than the rail keepout to the board edge can be
+  // clipped by the conveyor rails or unreachable by the placement head. Measured on the fabrication (body)
+  // outline; the auto-derived board's matching margin clears it, so this fires only when a part is dragged
+  // too close (or a future user-tightened outline crowds a part).
+  const keepout = COMPONENT_EDGE_KEEPOUT_MM
+  for (const pl of board.placements) {
+    const body = bodyBox(pl)
+    if (body === undefined) continue
+    const tooCloseToEdge =
+      body.x < o.x + keepout - 1e-6 ||
+      body.y < o.y + keepout - 1e-6 ||
+      body.x + body.w > o.x + o.w - keepout + 1e-6 ||
+      body.y + body.h > o.y + o.h - keepout + 1e-6
+    if (tooCloseToEdge) {
+      out.push({
+        code: 'component-edge',
+        message: `${pl.designator ?? pl.partId}'s body is within ${fmt(keepout)} mm of the board edge — an SMT line needs that part-free rail to grip and place the board`,
+        at: { x: body.x + body.w / 2, y: body.y + body.h / 2 },
       })
     }
   }

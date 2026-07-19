@@ -14,6 +14,7 @@ import {
   deriveBoard,
 } from '../src/renderer/pcb-board.ts'
 import {
+  COMPONENT_EDGE_KEEPOUT_MM,
   DRC_RULES,
   ipc2221ClearanceMm,
   MAX_BOARD_MM,
@@ -824,6 +825,34 @@ describe('Tier 0: min plated drill = max(0.15 mm, board thickness ÷ 8)', () => 
     expect(viaSize(0.2, 1.0)).not.toContain('via-size') // 0.2 ≥ 0.15 floor — the old flat 0.3 over-rejected it
     expect(viaSize(0.2, 2.4)).toContain('via-size') // 0.2 < 0.30 (aspect ratio on a thick board)
     expect(viaSize(0.18, 1.6)).toContain('via-size') // 0.18 < 0.20 on a standard board
+  })
+})
+
+describe('Tier 0: component-to-edge assembly keepout (3 mm SMT rail)', () => {
+  test('an auto-derived board passes — its 3 mm margin clears the keepout (no false-positive)', () => {
+    expect(COMPONENT_EDGE_KEEPOUT_MM).toBe(3)
+    const defs: [string, string][] = [
+      ['R1', 'resistor'],
+      ['R2', 'resistor'],
+    ]
+    const board = deriveBoard(parts(defs))
+    const rn = computeRatsnest(world(defs, [['R1', 'terminal_b', 'R2', 'terminal_a']]), board)
+    expect(runDrc(board, rn, routeBoard(rn)).some((v) => v.code === 'component-edge')).toBe(false)
+  })
+
+  test("a part body within 3 mm of the edge is flagged; a centred part isn't", () => {
+    const at = (x: number): Board => ({
+      outline: { x: 0, y: 0, w: 20, h: 20 },
+      placements: [
+        { partId: 'R1', footprintId: 'R_0603_1608Metric', x, y: 10, rotation: 0, designator: 'R1' },
+      ],
+    })
+    const edgeCodes = (b: Board) =>
+      runDrc(b, { airwires: [], padBoxes: [] }, { traces: [], vias: [], unrouted: [] }).filter(
+        (v) => v.code === 'component-edge',
+      )
+    expect(edgeCodes(at(1))).toHaveLength(1) // body ~0.2 mm from the left edge
+    expect(edgeCodes(at(10))).toHaveLength(0) // centred — ≥ 3 mm all round
   })
 })
 
