@@ -163,6 +163,7 @@ import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { PartPicker } from './part-picker.tsx'
 import { buildCrtTraces, type CrtSpot } from './part-readings.ts'
 import {
+  type BoardSide,
   computeRatsnest,
   deriveBoard,
   netThroughCurrents,
@@ -2786,6 +2787,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         userTracesRef.current,
         userViasRef.current,
         pcbStackupOptionsRef.current,
+        pcbVScoredSidesRef.current,
       )
       void bridge.saveCircuitData(JSON.stringify(file, null, 2)).then((r) => {
         // A successful save lands the project in the "My Projects" list (by its file path).
@@ -2827,6 +2829,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         userTracesRef.current,
         userViasRef.current,
         pcbStackupOptionsRef.current,
+        pcbVScoredSidesRef.current,
       )
       const name = project.name || 'My Template'
       const template: UserTemplate = {
@@ -2951,6 +2954,8 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       // with none load on the 2-layer default. Set BEFORE the copper below so the restored inner-layer
       // hand copper lands on a board that actually has those layers (the review-caught orphaning).
       setPcbStackupOptions(result.file.stackup ?? DEFAULT_STACKUP_OPTIONS)
+      // Restore THIS file's V-scored board edges (older files with none load all-routed).
+      setPcbVScoredSides(result.file.vScoredSides ?? [])
       // Restore THIS file's hand-laid copper (replacing the previous canvas's — sanitized already by
       // deserializeCircuit); older files with none load with only auto-routed copper.
       setUserTraces(result.file.traces ?? [])
@@ -2987,6 +2992,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       setUserTraces([]) // …and no hand-laid copper (only what the auto-router lays)
       setUserVias([])
       setPcbStackupOptions(DEFAULT_STACKUP_OPTIONS) // …on the default 2-layer stack-up
+      setPcbVScoredSides([]) // …and every edge routed (no V-scoring)
       setChipFloorplan(null)
       dropCount.current = maxIdSuffix(circuit.nodes)
       window.setTimeout(() => fitView({ padding: 0.15 }), 80)
@@ -3517,21 +3523,26 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [pendingMeasureA, setPendingMeasureA] = useState<{ x: number; y: number } | null>(null)
   const [measureCursor, setMeasureCursor] = useState<{ x: number; y: number } | null>(null)
   const [measureUnit, setMeasureUnit] = useState<MeasureUnit>('mm')
-  const pcbBoard = useMemo(
-    () =>
-      deriveBoard(
-        nodes.map((n) => {
-          const data = n.data as DeviceNodeData
-          return {
-            id: n.id,
-            definition: data.definition,
-            ...(data.footprintId ? { footprintId: data.footprintId } : {}),
-          }
-        }),
-        pcbPlacements,
-      ),
-    [nodes, pcbPlacements],
-  )
+  // Which board edges are V-SCORED (separated from a panel by a snap groove, not a routed slot) — those use
+  // the tighter 0.4 mm copper-to-edge DRC. A board fab attribute like the stack-up: saved + loaded, not part
+  // of the undo document (matches how the stack-up is handled).
+  const [pcbVScoredSides, setPcbVScoredSides] = useState<BoardSide[]>([])
+  const pcbVScoredSidesRef = useRef(pcbVScoredSides)
+  pcbVScoredSidesRef.current = pcbVScoredSides
+  const pcbBoard = useMemo(() => {
+    const board = deriveBoard(
+      nodes.map((n) => {
+        const data = n.data as DeviceNodeData
+        return {
+          id: n.id,
+          definition: data.definition,
+          ...(data.footprintId ? { footprintId: data.footprintId } : {}),
+        }
+      }),
+      pcbPlacements,
+    )
+    return pcbVScoredSides.length > 0 ? { ...board, vScoredSides: pcbVScoredSides } : board
+  }, [nodes, pcbPlacements, pcbVScoredSides])
   const pcbBoardRef = useRef(pcbBoard)
   pcbBoardRef.current = pcbBoard
   // Hand-placed spots for parts that leave the schematic are dropped. (File Open/Import clear the
@@ -10366,6 +10377,38 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                           ),
                         )}
                       </select>
+                    </span>
+                    <span
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11 }}
+                      title="V-scored panel edges — a V-scored (snap-groove) edge needs 0.4 mm copper clearance vs 0.3 mm for a routed edge. Click a side to toggle it V-scored."
+                    >
+                      <span style={{ color: THEME.textFaint }}>V-score:</span>
+                      {(['top', 'bottom', 'left', 'right'] as const).map((side) => {
+                        const on = pcbVScoredSides.includes(side)
+                        return (
+                          <button
+                            key={side}
+                            type="button"
+                            onClick={() =>
+                              setPcbVScoredSides((cur) =>
+                                cur.includes(side) ? cur.filter((s) => s !== side) : [...cur, side],
+                              )
+                            }
+                            title={`${side} edge — ${on ? 'V-scored (0.4 mm clearance)' : 'routed (0.3 mm clearance)'}`}
+                            style={{
+                              border: `1px solid ${THEME.borderStrong}`,
+                              background: on ? THEME.accentBlue : THEME.surfaceInput,
+                              color: on ? '#0b1220' : THEME.textSoft,
+                              borderRadius: 4,
+                              fontSize: 10,
+                              padding: '1px 5px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {side[0]?.toUpperCase()}
+                          </button>
+                        )
+                      })}
                     </span>
                     {pcbImpedance.z !== undefined && (
                       <span

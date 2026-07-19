@@ -122,7 +122,7 @@ export const BOARD_PLAN: PlanTier[] = [
         value: '≥0.4mm copper-to-edge along a V-scored line.',
         cite: 'https://jlcpcb.com/capabilities/pcb-capabilities',
         size: 'S',
-        status: 'todo',
+        status: 'done',
         code: 'src/renderer/pcb-drc.ts:129-140,278-293',
       },
       {
