@@ -7,7 +7,13 @@ import {
   type Recess,
 } from './pcb-board.ts'
 import type { DrcViolation } from './pcb-drc.ts'
-import { DRC_RULES } from './pcb-drc.ts'
+import {
+  DRC_RULES,
+  MAX_DRILL_MM,
+  MAX_DRILL_PROVENANCE,
+  PTH_PAD_ANNULAR_MM,
+  PTH_PAD_ANNULAR_PROVENANCE,
+} from './pcb-drc.ts'
 import { type GbrjobFileAttr, gerberJobFile } from './pcb-gbrjob.ts'
 import {
   excellonDrill,
@@ -310,6 +316,8 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
     `  minimum track width ${num(DRC_RULES['track-width'].limitMm)} mm — ${DRC_RULES['track-width'].provenance.title}`,
     `  via drill ≥ ${num(VIA_RULES.min_drill.limitMm)} mm — ${VIA_RULES.min_drill.provenance.title}`,
     `  via annular ring ≥ ${num(VIA_RULES.min_annular.limitMm)} mm — ${VIA_RULES.min_annular.provenance.title}`,
+    `  plated-pad annular ring ≥ ${num(PTH_PAD_ANNULAR_MM)} mm — ${PTH_PAD_ANNULAR_PROVENANCE.title}`,
+    `  maximum drill ${num(MAX_DRILL_MM)} mm (larger holes are routed slots) — ${MAX_DRILL_PROVENANCE.title}`,
     `  hole-to-hole ≥ ${num(VIA_RULES.hole_to_hole.limitMm)} mm — ${VIA_RULES.hole_to_hole.provenance.title}`,
     `  via-in-pad — ${DRC_RULES['via-in-pad'].provenance.title}`,
     inputs.overCurrentEvaluated === false

@@ -13,7 +13,13 @@ import {
   computeRatsnest,
   deriveBoard,
 } from '../src/renderer/pcb-board.ts'
-import { DRC_RULES, minCopperFeatureMm, runDrc } from '../src/renderer/pcb-drc.ts'
+import {
+  DRC_RULES,
+  MAX_DRILL_MM,
+  minCopperFeatureMm,
+  PTH_PAD_ANNULAR_MM,
+  runDrc,
+} from '../src/renderer/pcb-drc.ts'
 import { DEFAULT_ROUTE_CLASS, routeBoard } from '../src/renderer/pcb-route.ts'
 
 const parts = (defs: [string, string][]): BoardPart[] =>
@@ -606,11 +612,28 @@ describe('runDrc — plated through-hole PAD geometry (annular ring + drill floo
     delete BUILTIN_FOOTPRINTS[badId]
   })
 
-  test('a pad barely larger than its hole is flagged annular-ring (0.025 mm < 0.05 mm)', () => {
+  test('a pad barely larger than its hole is flagged annular-ring (0.025 mm < 0.15 mm)', () => {
     // pad 0.85 mm, hole 0.8 mm → ring (0.85 − 0.8)/2 = 0.025 mm; the 0.8 mm drill is fine
     const codes = codesFor(0.8, 0.85)
     expect(codes).toContain('annular-ring')
     expect(codes).not.toContain('drill-size')
+  })
+
+  test('Tier 0: the PTH pad annular rule is 0.15 mm, not the 0.05 mm via floor', () => {
+    expect(PTH_PAD_ANNULAR_MM).toBeCloseTo(0.15, 6)
+    // pad 1.0 mm, hole 0.8 mm → ring 0.10 mm: PASSED the old 0.05 mm via floor, now FAILS the 0.15 mm
+    // plated-through-hole design rule (registration drift could break a 0.10 mm ring open).
+    const codes = codesFor(0.8, 1.0)
+    expect(codes).toContain('annular-ring')
+    expect(codes).not.toContain('drill-size')
+  })
+
+  test('Tier 0: a round hole over the 6.3 mm max drill must be a routed slot', () => {
+    expect(MAX_DRILL_MM).toBeCloseTo(6.3, 6)
+    // pad 8 mm, hole 7 mm → drill 7 > 6.3 (drill-size); ring (8 − 7)/2 = 0.5 mm is fine
+    const codes = codesFor(7.0, 8.0)
+    expect(codes).toContain('drill-size')
+    expect(codes).not.toContain('annular-ring')
   })
 
   test('a hole under the 0.3 mm drill floor is flagged drill-size', () => {
@@ -624,6 +647,23 @@ describe('runDrc — plated through-hole PAD geometry (annular ring + drill floo
     const codes = codesFor(0.8, 1.6) // ring 0.4 mm, drill 0.8 mm — both well within the floors
     expect(codes).not.toContain('annular-ring')
     expect(codes).not.toContain('drill-size')
+  })
+
+  test('EVERY shipped through-hole footprint pad clears the 0.15 mm annular + drill floors (no false flag)', () => {
+    // The tightening from 0.05 → 0.15 must not falsely reject any real footprint — the same over-rejection
+    // trap the trace-width fix avoided. Check the shipped footprints directly.
+    for (const [id, fp] of Object.entries(BUILTIN_FOOTPRINTS)) {
+      if (id === badId) continue
+      for (const pad of fp.pads) {
+        if (pad.holeDiameter === undefined) continue
+        const ring = (Math.min(pad.size.w, pad.size.h) - pad.holeDiameter) / 2
+        expect(ring, `${id} pad ${pad.id} annular`).toBeGreaterThanOrEqual(
+          PTH_PAD_ANNULAR_MM - 1e-9,
+        )
+        expect(pad.holeDiameter, `${id} pad ${pad.id} drill`).toBeGreaterThanOrEqual(0.3 - 1e-9)
+        expect(pad.holeDiameter, `${id} pad ${pad.id} drill`).toBeLessThanOrEqual(MAX_DRILL_MM)
+      }
+    }
   })
 })
 

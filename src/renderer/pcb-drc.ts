@@ -97,6 +97,43 @@ export const MIN_COPPER_FEATURE_PROVENANCE: FootprintProvenance = {
 export const minCopperFeatureMm = (weight?: CopperWeight): number =>
   MIN_COPPER_FEATURE_MM[weight ?? 'one_oz']
 
+/**
+ * Minimum annular ring for a PLATED THROUGH-HOLE COMPONENT PAD (0.15 mm / 6 mil) — the copper the pad must
+ * keep around its drilled hole so machine-registration drift cannot break the ring open. This is the fab
+ * DESIGN rule and is DISTINCT FROM (and larger than) VIA_RULES.min_annular (0.05 mm), which is only the
+ * geometric floor of the smallest allowable via — a small fabricated via, not a solderable component pad.
+ * Every shipped through-hole footprint pad clears this comfortably (TO-92 ≈0.28 mm, DIP-8 ≈0.40 mm); it
+ * catches a user-authored/edited pad whose copper is barely larger than its hole.
+ */
+export const PTH_PAD_ANNULAR_MM = 0.15
+
+export const PTH_PAD_ANNULAR_PROVENANCE: FootprintProvenance = {
+  source_type: 'reference',
+  title: 'Plated through-hole component pad — minimum annular ring 0.15 mm (6 mil)',
+  citation:
+    'JLCPCB PCB capabilities: minimum annular ring for a plated through-hole 0.15 mm (6 mil), recommended 0.20 mm — larger than the 0.05 mm floor of the smallest allowable VIA. An NPTH pad, having no plating to aid registration, needs a larger pad still.',
+  confidence: 'high',
+  url: 'https://jlcpcb.com/capabilities/pcb-capabilities',
+  date_accessed: '2026-07-19',
+}
+
+/**
+ * Maximum mechanical DRILL diameter (6.30 mm). A round hole larger than this — or any elongated hole — is
+ * MILLED as a routed slot/cutout at the fab, not drilled. A footprint declaring a >6.3 mm round hole is not
+ * manufacturable as a drill and must be reworked as a slot.
+ */
+export const MAX_DRILL_MM = 6.3
+
+export const MAX_DRILL_PROVENANCE: FootprintProvenance = {
+  source_type: 'reference',
+  title: 'Maximum mechanical drill 6.30 mm — larger holes are routed slots',
+  citation:
+    'JLCPCB PCB capabilities: mechanical drill range 0.15–6.30 mm; a round hole above 6.30 mm (or any elongated hole) is milled as a routed slot/cutout, not drilled.',
+  confidence: 'high',
+  url: 'https://jlcpcb.com/capabilities/pcb-capabilities',
+  date_accessed: '2026-07-19',
+}
+
 export type DrcViolation = {
   code: DrcCode
   message: string
@@ -398,11 +435,21 @@ export function runDrc(
           at,
         })
       }
+      // A round hole larger than the max drill must be a routed slot, not a drill (6.3 mm mill limit).
+      if (pad.holeDiameter > MAX_DRILL_MM) {
+        out.push({
+          code: 'drill-size',
+          message: `${ref} pad ${pad.id}: a ${fmt(pad.holeDiameter)} mm hole is over the ${fmt(MAX_DRILL_MM)} mm max drill — it must be a routed slot, not a drilled hole`,
+          at,
+        })
+      }
+      // A plated component pad needs the PTH design-rule annular ring (0.15 mm) — larger than the via
+      // floor: the ring is the copper the pad keeps around its hole so registration drift can't break it.
       const annular = (Math.min(pad.size.w, pad.size.h) - pad.holeDiameter) / 2
-      if (annular < VIA_RULES.min_annular.limitMm) {
+      if (annular < PTH_PAD_ANNULAR_MM) {
         out.push({
           code: 'annular-ring',
-          message: `${ref} pad ${pad.id}: a ${fmt(annular)} mm annular ring is under the ${fmt(VIA_RULES.min_annular.limitMm)} mm minimum (pad barely larger than its hole)`,
+          message: `${ref} pad ${pad.id}: a ${fmt(annular)} mm annular ring is under the ${fmt(PTH_PAD_ANNULAR_MM)} mm minimum for a plated through-hole pad`,
           at,
         })
       }

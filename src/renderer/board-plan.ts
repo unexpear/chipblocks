@@ -49,7 +49,7 @@ export const BOARD_PLAN: PlanTier[] = [
         value: '0.15mm (6mil) ring, recommended 0.20mm; NPTH ≥0.45mm pad.',
         cite: 'https://jlcpcb.com/capabilities/pcb-capabilities',
         size: 'S',
-        status: 'todo',
+        status: 'done',
         code: 'src/renderer/pcb-drc.ts (new rule)',
       },
       {
@@ -69,7 +69,7 @@ export const BOARD_PLAN: PlanTier[] = [
         value: 'Circular drill 0.15-6.30mm; larger = milled slot.',
         cite: 'https://jlcpcb.com/capabilities/pcb-capabilities',
         size: 'S',
-        status: 'todo',
+        status: 'done',
         code: 'src/renderer/pcb-drc.ts / pcb-gerber.ts drill',
       },
       {
