@@ -13,6 +13,8 @@ import {
   COMPONENT_EDGE_KEEPOUT_PROVENANCE,
   DRC_RULES,
   DRILL_ASPECT_RATIO,
+  IR_DROP_BUDGET_FRACTION,
+  IR_DROP_PROVENANCE,
   MAX_BOARD_MM,
   MAX_DRILL_MM,
   MAX_DRILL_PROVENANCE,
@@ -342,6 +344,7 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
       ? []
       : [
           `  via over-current (each via's plated barrel vs its net current) — ${VIA_PLATING_PROVENANCE.title}`,
+          `  rail IR-drop ≤ ${num(IR_DROP_BUDGET_FRACTION * 100)}% of the rail voltage — ${IR_DROP_PROVENANCE.title}`,
         ]),
     '  net continuity (every net whole — each net verified joined by its OWN copper, no opens)',
     '',

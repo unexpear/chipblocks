@@ -523,6 +523,69 @@ describe('runDrc', () => {
     })
   })
 
+  describe('IR-drop — a power rail vs its 5%-of-voltage budget', () => {
+    // A single rail trace under full control: 0.25 mm × 200 mm at 1 oz is ~0.38 Ω, so 3 A drops ~1.15 V —
+    // way over the 0.25 V budget on a 5 V rail. The over-current thermal check is a SEPARATE limit; this is
+    // the resistive-sag one.
+    const board = { outline: { x: -5, y: -5, w: 260, h: 20 }, placements: [] }
+    const rail = (widthMm: number, lengthMm: number) => ({
+      traces: [
+        {
+          net: 'VCC',
+          widthMm,
+          layer: 'top' as const,
+          points: [
+            { x: 0, y: 0 },
+            { x: lengthMm, y: 0 },
+          ],
+        },
+      ],
+      vias: [],
+      unrouted: [],
+    })
+    const rn = { airwires: [], padBoxes: [] }
+    const irDrop = (
+      routing: Parameters<typeof runDrc>[2],
+      amps: number,
+      volts: number,
+      copperWeight: 'half_oz' | 'one_oz' | 'two_oz' = 'one_oz',
+    ) =>
+      runDrc(board, rn, routing, undefined, {
+        netCurrents: new Map([['VCC', amps]]),
+        netVolts: new Map([['VCC', volts]]),
+        copperWeight,
+      }).filter((v) => v.code === 'ir-drop')
+
+    test('a long thin 5 V rail at high current is flagged over its 5% budget', () => {
+      const v = irDrop(rail(0.25, 200), 3, 5)
+      expect(v).toHaveLength(1)
+      expect(v[0]?.message).toContain('VCC')
+      expect(v[0]?.message).toContain('budget')
+    })
+
+    test('the same rail at a tiny current is clean (a normal board drops mV, not volts)', () => {
+      expect(irDrop(rail(0.25, 200), 0.02, 5)).toHaveLength(0)
+    })
+
+    test('widening the copper clears the drop — same current, a 16× wider rail', () => {
+      // 0.25 mm flagged at 3 A; 4 mm (16× the copper) drops ~1/16 as much → under budget
+      expect(irDrop(rail(4, 200), 3, 5)).toHaveLength(0)
+    })
+
+    test('a ground / signal net (|V| < 1) is never an IR-drop rail', () => {
+      // same punishing geometry + current, but at 0 V — ground is not a rail, so it is never checked
+      expect(irDrop(rail(0.25, 200), 3, 0)).toHaveLength(0)
+    })
+
+    test('no IR-drop check without solved net voltages (currents alone are not enough)', () => {
+      const v = runDrc(board, rn, rail(0.25, 200), undefined, {
+        netCurrents: new Map([['VCC', 3]]),
+        copperWeight: 'one_oz',
+      }).filter((x) => x.code === 'ir-drop')
+      expect(v).toHaveLength(0)
+    })
+  })
+
   describe('open-net — a net not joined by its own copper', () => {
     const defs: [string, string][] = [
       ['R1', 'resistor'],

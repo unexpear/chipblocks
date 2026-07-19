@@ -20,6 +20,7 @@ import {
   type CopperWeight,
   IPC2221,
   traceAmpacity,
+  traceResistanceOhm,
   VIA_PLATING_MM,
   viaAmpacity,
 } from './pcb-stackup.ts'
@@ -52,10 +53,30 @@ export type DrcCode =
   | 'board-size'
   | 'voltage-clearance'
   | 'component-edge'
+  | 'ir-drop'
 
 /** The temperature rise (°C above ambient) the over-current check sizes to — IPC-2221's standard,
  *  conservative sizing point. A trace exceeding its ampacity at this rise runs hotter and ages fast. */
 export const OVER_CURRENT_DELTA_T_C = 10
+
+/**
+ * IR-drop budget as a fraction of the rail voltage (5%): a power rail may pass the ampacity (thermal) check
+ * yet drop too much RESISTIVE voltage (I·R) along its copper, sagging the rail below what the load needs.
+ * 5% of the nominal rail is a common design guideline (keep supply IR-drop under ~3–5%). The drop here is the
+ * conservative SERIES estimate (I_net × total rail-trace resistance) — exact for a simple source→load rail,
+ * an over-estimate for a heavily-branched star. A normal board (mA currents, short traces) drops µV–mV, far
+ * under budget, so this fires only on a genuinely under-sized power rail.
+ */
+export const IR_DROP_BUDGET_FRACTION = 0.05
+
+export const IR_DROP_PROVENANCE: FootprintProvenance = {
+  source_type: 'reference',
+  title: 'DC IR-drop budget ≈ 5% of the rail voltage (supply integrity guideline)',
+  citation:
+    'Common power-integrity design guideline (e.g. Altium / Cadence PDN notes, IPC-2152 copper resistance): keep the DC IR-drop from the supply to the load under ~3–5% of the rail voltage so the rail stays in tolerance. Separate from the thermal ampacity limit — a trace can pass ampacity yet drop too much voltage.',
+  confidence: 'medium',
+  date_accessed: '2026-07-19',
+}
 
 /** The absolute fab floor for copper-to-copper spacing. The per-net-class clearance is USER-settable, so
  *  the copper-clearance check enforces the LARGER of the net class and this floor — the spacing twin of
@@ -267,6 +288,7 @@ export const DRC_RULES: Record<
     | 'board-size'
     | 'voltage-clearance'
     | 'component-edge'
+    | 'ir-drop'
   >,
   { limitMm: number; provenance: FootprintProvenance }
 > = {
@@ -888,6 +910,47 @@ export function runDrc(
         code: 'over-current',
         message: `a via on net ${v.net} (${fmt(v.drillMm)} mm drill) carries ${fmtA(current)} A — over its ~${fmtA(ampacity)} A plated-barrel rating (IPC-2221 internal on a ${VIA_PLATING_MM * 1000} µm IPC-6012 barrel, ${OVER_CURRENT_DELTA_T_C} °C rise). Add a parallel via, or use a larger drill.`,
         at: v.at,
+      })
+    }
+  }
+
+  // IR-drop — a power rail can pass ampacity (a thermal limit) yet drop too much RESISTIVE voltage (I·R)
+  // across its copper, sagging the rail below what the load needs. Runs only with solved currents + voltages
+  // + copper weight. For each POWER net (|V| ≥ 1 V — a rail, not ground/signal), the conservative series drop
+  // I × total-rail-trace-resistance vs the 5%-of-rail budget.
+  if (
+    opts?.netCurrents !== undefined &&
+    opts.netVolts !== undefined &&
+    opts.copperWeight !== undefined
+  ) {
+    const weight = opts.copperWeight
+    const railResistance = new Map<string, number>()
+    for (const t of routing.traces) {
+      let len = 0
+      for (let i = 0; i < t.points.length - 1; i++) {
+        const a = t.points[i]
+        const b = t.points[i + 1]
+        if (a === undefined || b === undefined) continue
+        len += Math.hypot(b.x - a.x, b.y - a.y)
+      }
+      if (len <= 0) continue
+      railResistance.set(
+        t.net,
+        (railResistance.get(t.net) ?? 0) + traceResistanceOhm(t.widthMm, len, weight),
+      )
+    }
+    for (const [net, r] of railResistance) {
+      const railV = Math.abs(opts.netVolts.get(net) ?? 0)
+      const railI = opts.netCurrents.get(net) ?? 0
+      if (railV < 1 || railI <= 1e-9 || r <= 0) continue // only real power rails carrying current
+      const dropV = railI * r
+      const budgetV = IR_DROP_BUDGET_FRACTION * railV
+      if (dropV <= budgetV) continue
+      const at = routing.traces.find((t) => t.net === net)?.points[0] ?? { x: 0, y: 0 }
+      out.push({
+        code: 'ir-drop',
+        message: `net ${net} (~${fmt(railV)} V rail) drops ${fmt(dropV * 1000)} mV of IR (${fmt((dropV / railV) * 100)}% at ${fmtA(railI)} A) — over its ${fmt(budgetV * 1000)} mV (${fmt(IR_DROP_BUDGET_FRACTION * 100)}%) budget. Widen the rail's copper or shorten its path.`,
+        at,
       })
     }
   }

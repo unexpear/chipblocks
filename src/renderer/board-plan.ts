@@ -153,8 +153,8 @@ export const BOARD_PLAN: PlanTier[] = [
         value: 'e.g. 1.0V ±3% rail tolerates ~30mV total drop; R = ρL/(w·t).',
         cite: 'IPC-2152 copper resistance + rail budgeting',
         size: 'M',
-        status: 'todo',
-        code: 'src/renderer/pcb-fab.ts:317',
+        status: 'done',
+        code: 'src/renderer/pcb-drc.ts:917',
       },
       {
         id: 'thermal-via-false-reject-t0',
