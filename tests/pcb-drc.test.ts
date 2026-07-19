@@ -13,6 +13,8 @@ import {
   type BoardSide,
   computeRatsnest,
   deriveBoard,
+  footprintByPlacement,
+  placementBounds,
 } from '../src/renderer/pcb-board.ts'
 import {
   CASTELLATED_MIN_DRILL_MM,
@@ -737,6 +739,42 @@ describe('runDrc', () => {
             hits,
             `rotation ${rotation}: ${hits.map((h) => h.message).join(' | ')}`,
           ).toHaveLength(0)
+        }
+      } finally {
+        setUserParts([])
+      }
+    })
+
+    test('a castellated module BESIDE another part does not clip it — the outline still encloses both', () => {
+      // The profile snap only fires on a lone module; with a second part the outline must re-fit around
+      // BOTH (moving an edge inward through the half-holes would otherwise push the other part outside).
+      registerUserPart({
+        id: 'castmod2',
+        name: 'Cast Module',
+        designatorPrefix: 'U',
+        pins: Array.from({ length: 6 }, (_, i) => ({
+          id: `p${i + 1}`,
+          name: `${i + 1}`,
+          side: 'bottom' as const,
+          electrical: 'passive' as const,
+        })),
+        footprintId: 'Castellated_1x6_P2.0mm',
+      })
+      try {
+        const board = deriveBoard([
+          { id: 'castmod2', definition: 'castmod2' },
+          { id: 'R1', definition: 'resistor' },
+        ])
+        expect(board.placements).toHaveLength(2)
+        const o = board.outline
+        for (const pl of board.placements) {
+          const fp = footprintByPlacement(pl)
+          if (fp === undefined) throw new Error('no footprint')
+          const b = placementBounds(pl, fp)
+          expect(b.minX).toBeGreaterThanOrEqual(o.x - 1e-6)
+          expect(b.maxX).toBeLessThanOrEqual(o.x + o.w + 1e-6)
+          expect(b.minY).toBeGreaterThanOrEqual(o.y - 1e-6)
+          expect(b.maxY).toBeLessThanOrEqual(o.y + o.h + 1e-6)
         }
       } finally {
         setUserParts([])

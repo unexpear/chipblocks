@@ -232,32 +232,37 @@ export function deriveBoard(
   // pad centres instead of clearing them by `margin`. Each pad snaps the board edge it PHYSICALLY sits on
   // (castellatedBoardSide, footprint-body-relative + rotation-aware) — not merely the nearest current edge,
   // which would pull a wide row's corner pads onto a side edge and collapse the outline. Targets are all
-  // computed against the SAME pre-snap edges (no mid-loop mutation). Guarded: a board with no castellated
-  // pads is untouched — castellation is the only edge-mounted feature, so nothing else moves.
-  const snap: Partial<Record<BoardSide, number>> = {}
-  for (const p of placements) {
-    const fp = footprintByPlacement(p)
-    if (fp === undefined) continue
-    for (const pad of fp.pads) {
-      if (pad.castellated !== true) continue
-      const side = castellatedBoardSide(fp, pad, p.rotation)
-      const c = placePoint(p, pad.center)
-      const coord = side === 'left' || side === 'right' ? c.x : c.y
-      const prev = snap[side]
-      // The board edge sits at the OUTERMOST castellated pad on that side (they share a line on a real
-      // module): max for bottom/right, min for top/left.
-      snap[side] =
-        prev === undefined
-          ? coord
-          : side === 'bottom' || side === 'right'
-            ? Math.max(prev, coord)
-            : Math.min(prev, coord)
+  // computed against the SAME pre-snap edges (no mid-loop mutation). Guarded twice: a board with no
+  // castellated pads is untouched, AND the snap only applies to a LONE module (one placement). Moving an
+  // edge inward through a castellated pad could push a SEPARATE part outside the outline on a mixed board;
+  // there we keep the enclosing outline and let the on-edge DRC honestly flag the not-on-edge castellations
+  // (a mixed castellated + normal board is a hand-placed / panelized layout, not an auto-seeded one).
+  if (placements.length === 1) {
+    const snap: Partial<Record<BoardSide, number>> = {}
+    for (const p of placements) {
+      const fp = footprintByPlacement(p)
+      if (fp === undefined) continue
+      for (const pad of fp.pads) {
+        if (pad.castellated !== true) continue
+        const side = castellatedBoardSide(fp, pad, p.rotation)
+        const c = placePoint(p, pad.center)
+        const coord = side === 'left' || side === 'right' ? c.x : c.y
+        const prev = snap[side]
+        // The board edge sits at the OUTERMOST castellated pad on that side (they share a line on a real
+        // module): max for bottom/right, min for top/left.
+        snap[side] =
+          prev === undefined
+            ? coord
+            : side === 'bottom' || side === 'right'
+              ? Math.max(prev, coord)
+              : Math.min(prev, coord)
+      }
     }
+    if (snap.left !== undefined) left = snap.left
+    if (snap.right !== undefined) right = snap.right
+    if (snap.top !== undefined) top = snap.top
+    if (snap.bottom !== undefined) bottom = snap.bottom
   }
-  if (snap.left !== undefined) left = snap.left
-  if (snap.right !== undefined) right = snap.right
-  if (snap.top !== undefined) top = snap.top
-  if (snap.bottom !== undefined) bottom = snap.bottom
   return {
     outline: { x: left, y: top, w: right - left, h: bottom - top },
     placements,
