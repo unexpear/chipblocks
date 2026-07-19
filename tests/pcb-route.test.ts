@@ -13,6 +13,7 @@ import {
   deriveBoard,
   type Ratsnest,
 } from '../src/renderer/pcb-board.ts'
+import { minDrillMm } from '../src/renderer/pcb-drc.ts'
 import {
   clearanceViolations,
   copperConnects,
@@ -523,8 +524,8 @@ describe('the bottom layer through vias', () => {
       expect(rule.provenance.citation.length).toBeGreaterThan(10)
       expect(rule.provenance.confidence).toBe('high')
     }
-    // the class via satisfies its own rules: drill ≥ floor, ring ≥ minimum
-    expect(DEFAULT_ROUTE_CLASS.viaDrillMm).toBeGreaterThanOrEqual(VIA_RULES.min_drill.limitMm)
+    // the class via satisfies its own rules: drill ≥ the LIVE DRC floor (minDrillMm, aspect-ratio), ring ≥ minimum
+    expect(DEFAULT_ROUTE_CLASS.viaDrillMm).toBeGreaterThanOrEqual(minDrillMm())
     expect(
       (DEFAULT_ROUTE_CLASS.viaDiameterMm - DEFAULT_ROUTE_CLASS.viaDrillMm) / 2,
     ).toBeGreaterThanOrEqual(VIA_RULES.min_annular.limitMm)

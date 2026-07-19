@@ -71,6 +71,8 @@ export const VIA_RULES: Record<
   'min_drill' | 'min_annular' | 'hole_to_hole',
   { limitMm: number; provenance: FootprintProvenance }
 > = {
+  // SUPERSEDED as the DRC drill floor by pcb-drc's `minDrillMm(thickness)` (the plating aspect-ratio floor);
+  // kept as the cited via-drill reference the default via is sanity-checked against.
   min_drill: {
     limitMm: 0.3,
     provenance: {

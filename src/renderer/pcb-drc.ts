@@ -677,10 +677,14 @@ export function runDrc(
       // breaks into the pad copper and opens the plated barrel), so DRC must catch it too. The ring is
       // measured on the pad's SMALLEST copper dimension — the thinnest side around the hole.
       const ref = pl.designator ?? pl.partId
-      if (pad.holeDiameter < minDrill) {
+      // The min-drill floor is the plating aspect-ratio (thickness ÷ 8) for a PLATED hole; a NON-plated hole
+      // isn't plated, so only the mechanical hard minimum (0.15 mm) applies — else a fine mounting hole on a
+      // thick board is falsely blocked.
+      const padDrillFloor = pad.plated === false ? MIN_DRILL_HARD_MM : minDrill
+      if (pad.holeDiameter < padDrillFloor) {
         out.push({
           code: 'drill-size',
-          message: `${ref} pad ${pad.id}: a ${fmt(pad.holeDiameter)} mm hole is under the ${fmt(minDrill)} mm minimum drill (0.15 mm floor or board thickness ÷ 8)`,
+          message: `${ref} pad ${pad.id}: a ${fmt(pad.holeDiameter)} mm hole is under the ${fmt(padDrillFloor)} mm minimum drill${pad.plated === false ? ' (non-plated hard floor)' : ' (0.15 mm floor or board thickness ÷ 8)'}`,
           at,
         })
       }

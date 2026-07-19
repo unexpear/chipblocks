@@ -11,6 +11,7 @@ import type { Board } from '../src/renderer/pcb-board.ts'
 import { runDrc } from '../src/renderer/pcb-drc.ts'
 import { buildManufacturingZip, FAB_FILE_NAMES, type FabInputs } from '../src/renderer/pcb-fab.ts'
 import { boardHasNonPlatedHoles, excellonDrill } from '../src/renderer/pcb-gerber.ts'
+import { DEFAULT_ROUTE_CLASS } from '../src/renderer/pcb-route.ts'
 
 const WHEN = new Date('2026-07-19T00:00:00Z')
 const NO_ROUTING = { traces: [], vias: [], unrouted: [] }
@@ -114,6 +115,37 @@ describe('NPTH split drill file', () => {
     )
     // the MH pad has zero annular (pad = hole), but plated: false exempts it
     expect(codes).not.toContain('annular-ring')
+  })
+
+  test('a fine NON-plated hole on a thick board uses the 0.15 mm hard floor, not the plating aspect ratio', () => {
+    // On a 2.4 mm board the plating aspect ratio floor is 0.30 mm — but an unplated hole isn't plated, so
+    // only the 0.15 mm hard minimum applies. A 0.2 mm mounting hole must NOT be falsely blocked.
+    const NPTH_FINE = '__TEST_FINE_NPTH__'
+    const PTH_FINE = '__TEST_FINE_PTH__'
+    const fine = (id: string, plated: boolean) => ({
+      ...baseFp(id),
+      pads: [
+        {
+          id: '1',
+          center: { x: 0, y: 0 },
+          size: { w: 3, h: 3 },
+          shape: 'circle' as const,
+          type: 'through_hole' as const,
+          holeDiameter: 0.2,
+          plated,
+        },
+      ],
+    })
+    BUILTIN_FOOTPRINTS[NPTH_FINE] = fine(NPTH_FINE, false)
+    BUILTIN_FOOTPRINTS[PTH_FINE] = fine(PTH_FINE, true)
+    const codesOf = (id: string) =>
+      runDrc(boardOf(id), { airwires: [], padBoxes: [] }, NO_ROUTING, DEFAULT_ROUTE_CLASS, {
+        boardThicknessMm: 2.4,
+      }).map((v) => v.code)
+    expect(codesOf(NPTH_FINE)).not.toContain('drill-size') // 0.2 ≥ 0.15 hard floor
+    expect(codesOf(PTH_FINE)).toContain('drill-size') // 0.2 < 0.30 plated aspect floor
+    delete BUILTIN_FOOTPRINTS[NPTH_FINE]
+    delete BUILTIN_FOOTPRINTS[PTH_FINE]
   })
 
   test('the manufacturing ZIP carries the NPTH file only when the board has a mounting hole', () => {
