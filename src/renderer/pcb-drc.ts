@@ -54,6 +54,7 @@ export type DrcCode =
   | 'voltage-clearance'
   | 'component-edge'
   | 'ir-drop'
+  | 'castellated-hole'
 
 /** The temperature rise (°C above ambient) the over-current check sizes to — IPC-2221's standard,
  *  conservative sizing point. A trace exceeding its ampacity at this rise runs hotter and ages fast. */
@@ -75,6 +76,26 @@ export const IR_DROP_PROVENANCE: FootprintProvenance = {
   citation:
     'Common power-integrity design guideline (e.g. Altium / Cadence PDN notes, IPC-2152 copper resistance): keep the DC IR-drop from the supply to the load under ~3–5% of the rail voltage so the rail stays in tolerance. Separate from the thermal ampacity limit — a trace can pass ampacity yet drop too much voltage.',
   confidence: 'medium',
+  date_accessed: '2026-07-19',
+}
+
+/**
+ * Castellated half-hole minimums — the plated notch-pads on a solder-down module's edge (an ESP-12, an
+ * RF module). The profile route BISECTS the plated hole, leaving a half-barrel, so a castellated pad needs
+ * MORE margin than a normal through-hole to keep that half of the plating from tearing off during the edge
+ * cut: a bigger drill (≥ 0.6 mm), a wider copper ring (≥ 0.25 mm), and a wider hole-to-hole pitch (≥ 0.6 mm
+ * edge-to-edge). Fabs publish 0.6 mm as the standard castellated-hole minimum (0.5 mm on special processes).
+ */
+export const CASTELLATED_MIN_DRILL_MM = 0.6
+export const CASTELLATED_RING_MM = 0.25
+export const CASTELLATED_EDGE_TO_EDGE_MM = 0.6
+export const CASTELLATED_PROVENANCE: FootprintProvenance = {
+  source_type: 'reference',
+  title: 'Castellated half-hole ≥ 0.6 mm drill, ≥ 0.25 mm ring, ≥ 0.6 mm edge-to-edge',
+  citation:
+    'JLCPCB castellated-hole design requirements: minimum castellated hole 0.6 mm, plated half-hole on the board edge; keep ≥ 0.6 mm between adjacent castellated holes so the edge cut does not tear the shared plating. The half-barrel needs a wider ring (~0.25 mm) than a normal PTH (0.15 mm). 0.5 mm is an absolute floor on special processes.',
+  confidence: 'high',
+  url: 'https://jlcpcb.com/blog/castellated-pcbs-introduction-and-design-requirements',
   date_accessed: '2026-07-19',
 }
 
@@ -289,6 +310,7 @@ export const DRC_RULES: Record<
     | 'voltage-clearance'
     | 'component-edge'
     | 'ir-drop'
+    | 'castellated-hole'
   >,
   { limitMm: number; provenance: FootprintProvenance }
 > = {
@@ -401,14 +423,23 @@ function bodyBox(pl: Placement): { x: number; y: number; w: number; h: number } 
 const fmt = (v: number) => (Math.round(v * 100) / 100).toString()
 const fmtA = (v: number) => (Math.round(v * 1000) / 1000).toString() // amps, mA precision
 
-/** Every copper rectangle on the board (pads as-is; trace segments at their real width). */
+/** Every copper rectangle on the board (pads as-is; trace segments at their real width). A castellated
+ *  pad is tagged so the edge checks can exempt it — it BELONGS on the board edge. */
 function copperBoxes(
   ratsnest: Ratsnest,
   routing: BoardRouting,
-): { x: number; y: number; w: number; h: number; what: string }[] {
-  const out: { x: number; y: number; w: number; h: number; what: string }[] = []
+): { x: number; y: number; w: number; h: number; what: string; castellated?: boolean }[] {
+  const out: { x: number; y: number; w: number; h: number; what: string; castellated?: boolean }[] =
+    []
   for (const pad of ratsnest.padBoxes) {
-    out.push({ x: pad.x, y: pad.y, w: pad.w, h: pad.h, what: `a pad (${pad.net})` })
+    out.push({
+      x: pad.x,
+      y: pad.y,
+      w: pad.w,
+      h: pad.h,
+      what: `a pad (${pad.net})`,
+      ...(pad.castellated ? { castellated: true } : {}),
+    })
   }
   for (const t of routing.traces) {
     for (let i = 0; i < t.points.length - 1; i++) {
@@ -587,10 +618,13 @@ export function runDrc(
     }
   }
 
-  // Copper to board edge — the mill tears copper closer than the limit.
+  // Copper to board edge — the mill tears copper closer than the limit. A castellated pad is EXEMPT: it is
+  // a plated half-hole meant to sit ON the edge (the profile route bisects it), held instead to the wider
+  // castellated minimums below.
   const edge = DRC_RULES['edge-clearance'].limitMm
   const o = board.outline
   for (const c of copperBoxes(ratsnest, routing)) {
+    if (c.castellated === true) continue
     const tooClose =
       c.x < o.x + edge ||
       c.y < o.y + edge ||
@@ -611,6 +645,10 @@ export function runDrc(
   // too close (or a future user-tightened outline crowds a part).
   const keepout = COMPONENT_EDGE_KEEPOUT_MM
   for (const pl of board.placements) {
+    // A castellated module is DESIGNED to butt against the board edge (its half-holes are on it), so the
+    // conveyor-rail keepout doesn't apply to it.
+    const cfp = footprintByPlacement(pl)
+    if (cfp?.pads.some((p) => p.castellated === true)) continue
     const body = bodyBox(pl)
     if (body === undefined) continue
     const tooCloseToEdge =
@@ -754,6 +792,79 @@ export function runDrc(
         out.push({
           code: 'hole-to-hole',
           message: `two plated holes sit ${fmt(Math.max(0, gap))} mm apart — under the ${fmt(minHoleGap)} mm minimum`,
+          at: { x: (a.at.x + b.at.x) / 2, y: (a.at.y + b.at.y) / 2 },
+        })
+      }
+    }
+  }
+
+  // Castellated half-holes — the plated notch-pads on a solder-down module's edge (an ESP-12, an RF can).
+  // The profile route BISECTS each plated hole, so they need the WIDER castellated minimums (bigger drill,
+  // wider ring, wider pitch) to keep the half-barrel plating from tearing off, AND each must actually sit ON
+  // the board edge — a castellated pad in the interior would drill a normal FULL hole (silent mismanufacture).
+  const castellatedHoles: { at: { x: number; y: number }; drillMm: number }[] = []
+  // A castellated pad's centre sits on the profile line; allow a small band for float + hand placement.
+  const onEdgeBandMm = 0.15
+  for (const pl of board.placements) {
+    const fp = footprintByPlacement(pl)
+    if (fp === undefined) continue
+    for (const pad of fp.pads) {
+      if (pad.castellated !== true) continue
+      const at = placePoint(pl, pad.center)
+      const ref = pl.designator ?? pl.partId
+      const drill = pad.holeDiameter
+      if (drill === undefined) {
+        out.push({
+          code: 'castellated-hole',
+          message: `${ref} pad ${pad.id}: a castellated pad must be a plated hole on the edge, but it has no drill`,
+          at,
+        })
+        continue
+      }
+      castellatedHoles.push({ at, drillMm: drill })
+      if (drill < CASTELLATED_MIN_DRILL_MM) {
+        out.push({
+          code: 'castellated-hole',
+          message: `${ref} pad ${pad.id}: a ${fmt(drill)} mm castellated half-hole is under the ${fmt(CASTELLATED_MIN_DRILL_MM)} mm minimum — the edge cut would tear its half-barrel plating`,
+          at,
+        })
+      }
+      const ring = (Math.min(pad.size.w, pad.size.h) - drill) / 2
+      if (ring < CASTELLATED_RING_MM) {
+        out.push({
+          code: 'castellated-hole',
+          message: `${ref} pad ${pad.id}: a ${fmt(ring)} mm ring around a castellated half-hole is under the ${fmt(CASTELLATED_RING_MM)} mm minimum (a half-barrel needs more copper than a normal ${fmt(PTH_PAD_ANNULAR_MM)} mm ring)`,
+          at,
+        })
+      }
+      const distToEdge = Math.min(
+        Math.abs(at.x - o.x),
+        Math.abs(at.x - (o.x + o.w)),
+        Math.abs(at.y - o.y),
+        Math.abs(at.y - (o.y + o.h)),
+      )
+      if (distToEdge > onEdgeBandMm) {
+        out.push({
+          code: 'castellated-hole',
+          message: `${ref} pad ${pad.id}: a castellated pad sits ${fmt(distToEdge)} mm from the nearest board edge — a half-hole must be ON the edge (the profile route bisects it) or it drills as a normal full hole`,
+          at,
+        })
+      }
+    }
+  }
+  // Adjacent castellated half-holes need a wider edge-to-edge pitch than a normal drill, so the shared
+  // profile cut between them doesn't tear the plating off either one.
+  for (let i = 0; i < castellatedHoles.length; i++) {
+    const a = castellatedHoles[i]
+    if (a === undefined) continue
+    for (let j = i + 1; j < castellatedHoles.length; j++) {
+      const b = castellatedHoles[j]
+      if (b === undefined) continue
+      const gap = Math.hypot(a.at.x - b.at.x, a.at.y - b.at.y) - (a.drillMm + b.drillMm) / 2
+      if (gap < CASTELLATED_EDGE_TO_EDGE_MM - 1e-9) {
+        out.push({
+          code: 'castellated-hole',
+          message: `two castellated half-holes sit ${fmt(Math.max(0, gap))} mm apart — under the ${fmt(CASTELLATED_EDGE_TO_EDGE_MM)} mm minimum; the edge cut can tear the plating between them`,
           at: { x: (a.at.x + b.at.x) / 2, y: (a.at.y + b.at.y) / 2 },
         })
       }

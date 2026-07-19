@@ -45,6 +45,12 @@ export type Pad = {
    *  same-net via ARRAY to conduct heat into a plane. So a same-net via inside it is by design, not the
    *  solder-wicking via-in-pad defect; the DRC exempts those (the vias are assumed filled-and-capped). */
   thermal?: boolean
+  /** A CASTELLATED pad (`castellated: true`) — a plated half-hole on the board EDGE (the notched pads of a
+   *  solder-down module like an ESP-12). Its plated hole is bisected by the outline, so the pad is MEANT to
+   *  touch the edge: the edge-clearance + component-edge DRC exempt it, and a dedicated castellated rule holds
+   *  it to the larger half-hole minimums (bigger drill, wider ring, wider edge-to-edge) real fabs need to
+   *  keep the half-barrel plating from tearing out. Only meaningful for through-hole pads on the edge. */
+  castellated?: boolean
 }
 
 /** A silkscreen line segment (the white outline printed on the board), in mm. */
@@ -1251,6 +1257,57 @@ export const FOOTPRINT_DO41: Footprint = {
         'Vishay / onsemi 1N4001–1N4007 (DO-41) datasheets: body length ≈4.1–5.2 mm, diameter ≈2.0–2.7 mm, 0.72–0.86 mm leads on 0.4″ centres; lying horizontal the body sits ≈0.5 mm above the board',
       confidence: 'medium',
     },
+  },
+}
+
+/**
+ * A castellated module edge — the plated half-holes along the edge of a solder-down module (an ESP-12
+ * WiFi module, an HC-05 Bluetooth module, an nRF24 board). Six castellated through-holes on 2.0 mm pitch
+ * sit ON the module's bottom edge: the board profile route bisects each plated hole, leaving a solderable
+ * half-barrel. The pitch is the ESP-module standard (2.0 mm); the hole (0.9 mm), ring (0.30 mm) and 1.1 mm
+ * edge-to-edge all clear the JLCPCB castellated minimums (≥ 0.6 mm hole, ≥ 0.25 mm ring, ≥ 0.6 mm spacing).
+ * The DRC exempts these pads from the copper-to-edge rule (they belong on the edge) and holds them to the
+ * wider castellated minimums instead; deriveBoard snaps the board profile through the pad centres so the
+ * half-holes actually sit on the finished edge.
+ */
+export const FOOTPRINT_CASTELLATED_1X6: Footprint = {
+  id: 'Castellated_1x6_P2.0mm',
+  name: 'castellated module edge (1×6, 2.0 mm)',
+  description:
+    'Six plated half-holes on 2.0 mm pitch along a module edge — a solder-down module land pattern.',
+  pads: ([-5, -3, -1, 1, 3, 5] as const).map(
+    (x, i): Pad => ({
+      id: `${i + 1}`,
+      center: { x, y: 3 },
+      size: { w: 1.5, h: 1.5 },
+      shape: i === 0 ? 'rect' : 'roundrect',
+      type: 'through_hole',
+      holeDiameter: 0.9,
+      castellated: true,
+    }),
+  ),
+  // Silk on the top + upper sides only — the bottom edge carries the castellations, so no ink there.
+  silkscreen: [
+    { from: { x: -6, y: -3 }, to: { x: 6, y: -3 }, width: 0.15 },
+    { from: { x: -6, y: -3 }, to: { x: -6, y: 1.5 }, width: 0.15 },
+    { from: { x: 6, y: -3 }, to: { x: 6, y: 1.5 }, width: 0.15 },
+  ],
+  fabrication: rectOutline(-6, -3, 6, 3),
+  labels: {
+    reference: { x: 0, y: -3.8 },
+    value: { x: 0, y: 4.4 },
+    fabReference: { x: 0, y: 0 },
+  },
+  courtyard: { x: -6, y: -3.2, w: 12, h: 7 },
+  provenance: {
+    source_type: 'reference',
+    title: 'Castellated module edge — plated half-holes, 2.0 mm pitch (ESP-module standard)',
+    citation:
+      'Representative castellated solder-down module edge: 2.0 mm castellation pitch (the ESP-8266/ESP-12 module standard), with hole/ring/spacing sized to the JLCPCB castellated design requirements (≥ 0.6 mm hole, ≥ 0.25 mm ring, ≥ 0.6 mm edge-to-edge). Each half-hole is bisected by the board profile.',
+    confidence: 'medium',
+    url: 'https://jlcpcb.com/blog/castellated-pcbs-introduction-and-design-requirements',
+    notes:
+      'A generic castellated edge, not a verbatim vendor footprint; the pitch is the common 2.0 mm module standard, the pad geometry is sized to the fab castellated minimums.',
   },
 }
 

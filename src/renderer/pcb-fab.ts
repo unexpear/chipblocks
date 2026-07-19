@@ -9,6 +9,10 @@ import {
 import type { DrcViolation } from './pcb-drc.ts'
 import {
   BOARD_SIZE_PROVENANCE,
+  CASTELLATED_EDGE_TO_EDGE_MM,
+  CASTELLATED_MIN_DRILL_MM,
+  CASTELLATED_PROVENANCE,
+  CASTELLATED_RING_MM,
   COMPONENT_EDGE_KEEPOUT_MM,
   COMPONENT_EDGE_KEEPOUT_PROVENANCE,
   DRC_RULES,
@@ -336,6 +340,7 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
     `  plated-pad annular ring ≥ ${num(PTH_PAD_ANNULAR_MM)} mm — ${PTH_PAD_ANNULAR_PROVENANCE.title}`,
     `  maximum drill ${num(MAX_DRILL_MM)} mm (larger holes are routed slots) — ${MAX_DRILL_PROVENANCE.title}`,
     `  hole-to-hole ≥ ${num(VIA_RULES.hole_to_hole.limitMm)} mm — ${VIA_RULES.hole_to_hole.provenance.title}`,
+    `  castellated half-hole ≥ ${num(CASTELLATED_MIN_DRILL_MM)} mm drill, ≥ ${num(CASTELLATED_RING_MM)} mm ring, ≥ ${num(CASTELLATED_EDGE_TO_EDGE_MM)} mm edge-to-edge — ${CASTELLATED_PROVENANCE.title}`,
     `  via-in-pad — ${DRC_RULES['via-in-pad'].provenance.title}`,
     inputs.overCurrentEvaluated === false
       ? '  trace over-current — NOT CHECKED: this board has no solved currents (a digital / logic board), so trace widths were not verified against current. Check on a current-solving (analog) build.'

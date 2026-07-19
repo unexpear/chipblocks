@@ -6,7 +6,7 @@
  */
 import { afterEach, describe, expect, test } from 'vitest'
 import { canvasToWorld } from '../src/renderer/canvas-to-world.ts'
-import { BUILTIN_FOOTPRINTS, type Footprint } from '../src/renderer/footprint.ts'
+import { BUILTIN_FOOTPRINTS, type Footprint, type Pad } from '../src/renderer/footprint.ts'
 import {
   type Board,
   type BoardPart,
@@ -14,6 +14,7 @@ import {
   deriveBoard,
 } from '../src/renderer/pcb-board.ts'
 import {
+  CASTELLATED_MIN_DRILL_MM,
   COMPONENT_EDGE_KEEPOUT_MM,
   DRC_RULES,
   ipc2221ClearanceMm,
@@ -28,6 +29,7 @@ import {
 } from '../src/renderer/pcb-drc.ts'
 import { DEFAULT_ROUTE_CLASS, routeBoard } from '../src/renderer/pcb-route.ts'
 import { SILK_TEXT } from '../src/renderer/stroke-font.ts'
+import { registerUserPart, setUserParts } from '../src/renderer/user-parts.ts'
 
 const parts = (defs: [string, string][]): BoardPart[] =>
   defs.map(([id, definition]) => ({ id, definition }))
@@ -583,6 +585,142 @@ describe('runDrc', () => {
         copperWeight: 'one_oz',
       }).filter((x) => x.code === 'ir-drop')
       expect(v).toHaveLength(0)
+    })
+  })
+
+  describe('castellated half-holes — the plated edge notches of a solder-down module', () => {
+    const ROUTING = { traces: [], vias: [], unrouted: [] }
+    const EMPTY_RN = { airwires: [], padBoxes: [] }
+    const cast = (v: ReturnType<typeof runDrc>) => v.filter((d) => d.code === 'castellated-hole')
+
+    // Six well-formed castellated pads on the module's bottom edge (y = 3): 0.9 mm drill, 0.3 mm ring,
+    // 2.0 mm pitch (1.1 mm edge-to-edge) — all clear the castellated minimums.
+    const goodPads = (): Pad[] =>
+      [-5, -3, -1, 1, 3, 5].map((x, i) => ({
+        id: `${i + 1}`,
+        center: { x, y: 3 },
+        size: { w: 1.5, h: 1.5 },
+        shape: 'roundrect',
+        type: 'through_hole',
+        holeDiameter: 0.9,
+        castellated: true,
+      }))
+    const testFp = (pads: Pad[]): Footprint => ({
+      id: 'TEST_CAST',
+      name: 'test castellated',
+      description: 'test',
+      pads,
+      silkscreen: [],
+      fabrication: [{ from: { x: -6, y: -3 }, to: { x: 6, y: -3 }, width: 0.1 }],
+      labels: { reference: { x: 0, y: 0 }, value: { x: 0, y: 0 }, fabReference: { x: 0, y: 0 } },
+      courtyard: { x: -6, y: -3.2, w: 12, h: 7 },
+      provenance: { source_type: 'reference', title: 't', citation: 't', confidence: 'low' },
+    })
+    // Inject the throwaway footprint, place it at the origin, size the outline to a chosen bottom edge, run DRC.
+    const run = (pads: Pad[], outline: Board['outline']) => {
+      BUILTIN_FOOTPRINTS.TEST_CAST = testFp(pads)
+      try {
+        return runDrc(
+          {
+            outline,
+            placements: [{ partId: 'M1', footprintId: 'TEST_CAST', x: 0, y: 0, rotation: 0 }],
+          },
+          EMPTY_RN,
+          ROUTING,
+        )
+      } finally {
+        delete BUILTIN_FOOTPRINTS.TEST_CAST
+      }
+    }
+    const onEdge = { x: -6, y: -3, w: 12, h: 6 } // bottom edge at y = 3, where the pads sit
+
+    test('a well-formed castellated module sitting ON the edge is castellated-clean', () => {
+      expect(cast(run(goodPads(), onEdge))).toHaveLength(0)
+    })
+
+    test('the same module 3 mm inside the edge is flagged — a half-hole must sit ON the edge', () => {
+      const v = cast(run(goodPads(), { x: -6, y: -3, w: 12, h: 12 })) // bottom now at y = 9
+      expect(v).toHaveLength(6) // all six pads off the edge
+      expect(v[0]?.message).toContain('board edge')
+    })
+
+    test('an under-0.6 mm castellated drill is flagged', () => {
+      const v = cast(
+        run(
+          goodPads().map((p) => ({ ...p, holeDiameter: 0.4 })),
+          onEdge,
+        ),
+      )
+      expect(v.some((x) => x.message.includes(`${CASTELLATED_MIN_DRILL_MM} mm minimum`))).toBe(true)
+    })
+
+    test('an under-0.25 mm castellated ring is flagged', () => {
+      // a 1.1 mm pad on a 0.9 mm hole → 0.1 mm ring, under the 0.25 mm castellated ring
+      const v = cast(
+        run(
+          goodPads().map((p) => ({ ...p, size: { w: 1.1, h: 1.1 } })),
+          onEdge,
+        ),
+      )
+      expect(v.some((x) => x.message.includes('ring'))).toBe(true)
+    })
+
+    test('castellated half-holes closer than 0.6 mm edge-to-edge are flagged', () => {
+      const first = goodPads()[0] as Pad
+      const tight: Pad[] = [
+        { ...first, id: '1', center: { x: 0, y: 3 } },
+        { ...first, id: '2', center: { x: 0.9, y: 3 } }, // 0.9 mm apart on 0.9 mm drills → 0 gap
+      ]
+      const v = cast(run(tight, onEdge))
+      expect(v.some((x) => x.message.includes('apart'))).toBe(true)
+    })
+
+    test('a castellated pad on the edge is EXEMPT from copper-to-edge (a normal pad there is flagged)', () => {
+      const board = { outline: { x: 0, y: 0, w: 20, h: 20 }, placements: [] }
+      const oneBox = (net: string, castellated: boolean) => ({
+        airwires: [],
+        padBoxes: [
+          {
+            net,
+            pad: `${net}/1`,
+            throughHole: true,
+            x: 0.1, // 0.1 mm from the left edge
+            y: 9,
+            w: 1.5,
+            h: 1.5,
+            ...(castellated ? { castellated: true } : {}),
+          },
+        ],
+      })
+      const edgeHits = (rn: Parameters<typeof runDrc>[1]) =>
+        runDrc(board, rn, ROUTING).filter((d) => d.code === 'edge-clearance')
+      expect(edgeHits(oneBox('C', true))).toHaveLength(0) // castellated: belongs on the edge, exempt
+      expect(edgeHits(oneBox('N', false)).length).toBeGreaterThan(0) // a normal pad at the edge IS flagged
+    })
+
+    test('deriveBoard snaps the profile through castellated pads → an auto-derived module is clean', () => {
+      registerUserPart({
+        id: 'castmod',
+        name: 'Cast Module',
+        designatorPrefix: 'U',
+        pins: Array.from({ length: 6 }, (_, i) => ({
+          id: `p${i + 1}`,
+          name: `${i + 1}`,
+          side: 'bottom' as const,
+          electrical: 'passive' as const,
+        })),
+        footprintId: 'Castellated_1x6_P2.0mm',
+      })
+      try {
+        const board = deriveBoard([{ id: 'castmod', definition: 'castmod' }])
+        const rn = computeRatsnest(world([['castmod', 'castmod']], []), board)
+        // With the profile snapped through the pad centres, the six half-holes sit ON the edge — so no
+        // 'not on the edge' flag. Without the snap they'd float `margin` mm inside → six flags.
+        const hits = runDrc(board, rn, ROUTING).filter((d) => d.code === 'castellated-hole')
+        expect(hits).toHaveLength(0)
+      } finally {
+        setUserParts([])
+      }
     })
   })
 

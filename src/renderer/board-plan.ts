@@ -132,7 +132,7 @@ export const BOARD_PLAN: PlanTier[] = [
         value: '0.6mm design min / 0.5mm capability floor.',
         cite: 'jlcpcb.com/blog/castellated-pcbs-introduction-and-design-requirements',
         size: 'S',
-        status: 'todo',
+        status: 'done',
         code: 'src/renderer/pcb-drc.ts',
       },
       {

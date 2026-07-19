@@ -171,13 +171,33 @@ export function deriveBoard(
     minY = Math.min(minY, anchor.y - SILK_TEXT.heightMm / 2)
     maxY = Math.max(maxY, anchor.y + SILK_TEXT.heightMm / 2)
   }
+  let left = minX - margin
+  let right = maxX + margin
+  let top = minY - margin
+  let bottom = maxY + margin
+  // A castellated half-hole is meant to be BISECTED by the board edge, so snap the profile through those
+  // pad centres instead of clearing them by `margin`. Guarded: a board with no castellated pads is
+  // untouched (castellation is the only edge-mounted feature, so nothing else moves), and each pad snaps
+  // its own nearest edge onto the pad centre.
+  for (const p of placements) {
+    const fp = footprintByPlacement(p)
+    if (fp === undefined) continue
+    for (const pad of fp.pads) {
+      if (pad.castellated !== true) continue
+      const c = placePoint(p, pad.center)
+      const dl = Math.abs(c.x - left)
+      const dr = Math.abs(c.x - right)
+      const dt = Math.abs(c.y - top)
+      const db = Math.abs(c.y - bottom)
+      const nearest = Math.min(dl, dr, dt, db)
+      if (nearest === dl) left = c.x
+      else if (nearest === dr) right = c.x
+      else if (nearest === dt) top = c.y
+      else bottom = c.y
+    }
+  }
   return {
-    outline: {
-      x: minX - margin,
-      y: minY - margin,
-      w: maxX - minX + 2 * margin,
-      h: maxY - minY + 2 * margin,
-    },
+    outline: { x: left, y: top, w: right - left, h: bottom - top },
     placements,
   }
 }
@@ -227,6 +247,9 @@ export type PadBox = {
   /** The plated hole's drill diameter (mm), for through-hole pads — the router's via placement
    *  must keep the hole-to-hole gap from EVERY drill, same net or not (the drill breaks out). */
   holeMm?: number
+  /** A CASTELLATED half-hole on the board edge (mirrors the footprint pad's `castellated`) — the edge
+   *  checks exempt it (it BELONGS on the edge) and the castellated-hole DRC holds it to half-hole minimums. */
+  castellated?: boolean
   x: number
   y: number
   w: number
@@ -409,6 +432,7 @@ export function computeRatsnest(world: RatsnestWorld, board: Board): Ratsnest {
         pad: padKey,
         throughHole: pad.type === 'through_hole',
         ...(pad.holeDiameter !== undefined ? { holeMm: pad.holeDiameter } : {}),
+        ...(pad.castellated ? { castellated: true } : {}),
         x: x0,
         y: y0,
         w: Math.max(...xs) - x0,
