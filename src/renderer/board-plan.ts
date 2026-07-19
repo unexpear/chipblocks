@@ -59,7 +59,7 @@ export const BOARD_PLAN: PlanTier[] = [
         value: 'Hard 0.15mm, recommended 0.2mm, aspect 8:1 std (10:1 adv).',
         cite: 'https://jlcpcb.com/capabilities/pcb-capabilities ; IPC-2221B/6012',
         size: 'M',
-        status: 'todo',
+        status: 'done',
         code: 'src/renderer/pcb-drc.ts',
       },
       {

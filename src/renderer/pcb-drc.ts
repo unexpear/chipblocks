@@ -137,6 +137,31 @@ export const MAX_DRILL_PROVENANCE: FootprintProvenance = {
 }
 
 /**
+ * Minimum plated DRILL diameter = max(0.15 mm hard floor, board thickness ÷ 8). A plated through-hole has an
+ * ASPECT-RATIO limit (hole depth ÷ diameter ≤ ~8:1 on the standard process): a hole too narrow for the
+ * board's thickness can't be evenly copper-plated down its barrel. So the min drill GROWS with board
+ * thickness — a 1.6 mm board allows 0.20 mm, a 2.4 mm board 0.30 mm. The old flat 0.3 mm was only correct
+ * for a 2.4 mm board and over-rejected finer holes on thinner boards. Omitted thickness assumes the thickest
+ * standard board (2.4 mm → 0.30 mm), reproducing the old floor as a fail-safe for unknown-thickness callers.
+ */
+export const DRILL_ASPECT_RATIO = 8
+export const MIN_DRILL_HARD_MM = 0.15
+const FALLBACK_THICKNESS_MM = 2.4
+
+export const minDrillMm = (boardThicknessMm?: number): number =>
+  Math.max(MIN_DRILL_HARD_MM, (boardThicknessMm ?? FALLBACK_THICKNESS_MM) / DRILL_ASPECT_RATIO)
+
+export const MIN_DRILL_PROVENANCE: FootprintProvenance = {
+  source_type: 'reference',
+  title: 'Minimum plated drill = max(0.15 mm, board thickness ÷ 8) — hard floor + 8:1 aspect ratio',
+  citation:
+    'JLCPCB PCB capabilities + IPC-2221B / IPC-6012 plated-through-hole aspect ratio: the smallest reliably platable hole is the larger of a 0.15 mm hard drill minimum (0.2 mm recommended) and thickness ÷ 8 (the 8:1 standard plating aspect ratio — a thin hole in a thick board cannot be evenly plated). A 1.6 mm board → 0.20 mm, a 2.4 mm board → 0.30 mm. Replaces the flat 0.3 mm, which was only correct for a 2.4 mm board.',
+  confidence: 'high',
+  url: 'https://jlcpcb.com/capabilities/pcb-capabilities',
+  date_accessed: '2026-07-19',
+}
+
+/**
  * Single-board size window for the standard fab process: a board smaller than 3 mm on a side can't be run
  * on its own (it must be PANELIZED into an array), and one larger than 500 mm on a side exceeds the standard
  * production panel (a bigger board needs a special quote). These bound a single-up board — panelization is a
@@ -332,6 +357,9 @@ export function runDrc(
   opts?: {
     netCurrents?: Map<string, number>
     copperWeight?: CopperWeight
+    /** The board's finished thickness (mm) — sets the min plated-drill floor via the 8:1 aspect ratio.
+     *  Omitted ⇒ assumes the thickest standard board (fail-safe: the strictest 0.30 mm floor). */
+    boardThicknessMm?: number
     /** Per-pad current (magnitude), keyed by the pad's `partId/padId`. When present, a multi-drop
      *  net's copper is resolved into a tree and each TRACE SEGMENT is checked against the current it
      *  actually carries — so a thin branch off a high-current trunk is checked against its own small
@@ -339,6 +367,8 @@ export function runDrc(
     padCurrents?: Map<string, number>
   },
 ): DrcViolation[] {
+  // The plated-drill floor grows with board thickness (8:1 aspect ratio); shared by the via + pad checks.
+  const minDrill = minDrillMm(opts?.boardThicknessMm)
   const out: DrcViolation[] = []
 
   // Single-board size window: too small must be panelized, too large exceeds the production panel.
@@ -447,10 +477,10 @@ export function runDrc(
 
   // Via geometry — the drill floor and the copper ring the plating needs (VIA_RULES, cited).
   for (const v of routing.vias) {
-    if (v.drillMm < VIA_RULES.min_drill.limitMm) {
+    if (v.drillMm < minDrill) {
       out.push({
         code: 'via-size',
-        message: `a ${fmt(v.drillMm)} mm via drill is under the ${fmt(VIA_RULES.min_drill.limitMm)} mm minimum`,
+        message: `a ${fmt(v.drillMm)} mm via drill is under the ${fmt(minDrill)} mm minimum (0.15 mm floor or board thickness ÷ 8)`,
         at: v.at,
       })
     }
@@ -505,10 +535,10 @@ export function runDrc(
       // breaks into the pad copper and opens the plated barrel), so DRC must catch it too. The ring is
       // measured on the pad's SMALLEST copper dimension — the thinnest side around the hole.
       const ref = pl.designator ?? pl.partId
-      if (pad.holeDiameter < VIA_RULES.min_drill.limitMm) {
+      if (pad.holeDiameter < minDrill) {
         out.push({
           code: 'drill-size',
-          message: `${ref} pad ${pad.id}: a ${fmt(pad.holeDiameter)} mm hole is under the ${fmt(VIA_RULES.min_drill.limitMm)} mm minimum drill`,
+          message: `${ref} pad ${pad.id}: a ${fmt(pad.holeDiameter)} mm hole is under the ${fmt(minDrill)} mm minimum drill (0.15 mm floor or board thickness ÷ 8)`,
           at,
         })
       }

@@ -3694,6 +3694,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         ? runDrc(pcbBoard, pcbRatsnest, pcbMergedRouting, DEFAULT_ROUTE_CLASS, {
             netCurrents: pcbNetCurrents,
             copperWeight: pcbStackup.copperWeight,
+            boardThicknessMm: pcbStackup.thicknessMm,
             padCurrents: pcbPadCurrents,
           })
         : [],
@@ -3704,6 +3705,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       pcbMergedRouting,
       pcbNetCurrents,
       pcbStackup.copperWeight,
+      pcbStackup.thicknessMm,
       pcbPadCurrents,
     ],
   )

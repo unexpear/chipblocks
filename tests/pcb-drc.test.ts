@@ -20,6 +20,7 @@ import {
   MIN_BOARD_MM,
   MIN_SILK_CHAR_HEIGHT_MM,
   minCopperFeatureMm,
+  minDrillMm,
   PTH_PAD_ANNULAR_MM,
   runDrc,
 } from '../src/renderer/pcb-drc.ts'
@@ -717,6 +718,35 @@ describe('Tier 0: silkscreen stroke width + character height', () => {
   test('the designator font renders at ≥ the 1.0 mm minimum character height', () => {
     expect(MIN_SILK_CHAR_HEIGHT_MM).toBe(1.0)
     expect(SILK_TEXT.heightMm).toBeGreaterThanOrEqual(MIN_SILK_CHAR_HEIGHT_MM)
+  })
+})
+
+describe('Tier 0: min plated drill = max(0.15 mm, board thickness ÷ 8)', () => {
+  const viaSize = (drillMm: number, thicknessMm?: number): string[] => {
+    const board: Board = { outline: { x: 0, y: 0, w: 20, h: 20 }, placements: [] }
+    const routing = {
+      traces: [],
+      // diameter = drill + 0.3 → a healthy 0.15 mm annular, so only the DRILL floor can flag it
+      vias: [{ net: 'n', at: { x: 10, y: 10 }, diameterMm: drillMm + 0.3, drillMm }],
+      unrouted: [],
+    }
+    const opts = thicknessMm === undefined ? {} : { boardThicknessMm: thicknessMm }
+    return runDrc(board, { airwires: [], padBoxes: [] }, routing, DEFAULT_ROUTE_CLASS, opts)
+      .filter((v) => v.code === 'via-size')
+      .map((v) => v.code)
+  }
+
+  test('minDrillMm: 1.0 mm→0.15 (hard floor), 1.6 mm→0.20, 2.4 mm→0.30, omitted→0.30 (fail-safe)', () => {
+    expect(minDrillMm(1.0)).toBeCloseTo(0.15, 6)
+    expect(minDrillMm(1.6)).toBeCloseTo(0.2, 6)
+    expect(minDrillMm(2.4)).toBeCloseTo(0.3, 6)
+    expect(minDrillMm(undefined)).toBeCloseTo(0.3, 6)
+  })
+
+  test('a 0.2 mm via drill: fine on a thin 1.0 mm board, flagged on a thick 2.4 mm board', () => {
+    expect(viaSize(0.2, 1.0)).not.toContain('via-size') // 0.2 ≥ 0.15 floor — the old flat 0.3 over-rejected it
+    expect(viaSize(0.2, 2.4)).toContain('via-size') // 0.2 < 0.30 (aspect ratio on a thick board)
+    expect(viaSize(0.18, 1.6)).toContain('via-size') // 0.18 < 0.20 on a standard board
   })
 })
 
