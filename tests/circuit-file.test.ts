@@ -118,6 +118,41 @@ describe('serialize → deserialize round-trip', () => {
     if (r.ok) expect(r.file.placements).toBeUndefined()
   })
 
+  test('round-trips the V-scored board sides; junk entries drop; omitted when none', () => {
+    const r = deserializeCircuit(
+      JSON.stringify(
+        // vScoredSides is the 11th positional arg (after the stackup slot)
+        serializeCircuit(
+          nodes,
+          edges,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          ['top', 'left'],
+        ),
+      ),
+    )
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.file.vScoredSides).toEqual(['top', 'left'])
+    // a junk side name is filtered out, not a reason to reject the whole circuit
+    const dirty = {
+      ...serializeCircuit(nodes, edges),
+      vScoredSides: ['top', 'nonsense', 'bottom'],
+    }
+    const d = deserializeCircuit(JSON.stringify(dirty))
+    expect(d.ok).toBe(true)
+    if (d.ok) expect(d.file.vScoredSides).toEqual(['top', 'bottom'])
+    // none → the field is omitted (older files / an all-routed board)
+    const none = deserializeCircuit(JSON.stringify(serializeCircuit(nodes, edges)))
+    expect(none.ok).toBe(true)
+    if (none.ok) expect(none.file.vScoredSides).toBeUndefined()
+  })
+
   test('round-trips the chip floorplan layer (overrides + lens + signature); omitted when empty', () => {
     const chipLayout = {
       overrides: [

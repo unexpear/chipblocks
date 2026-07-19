@@ -1,6 +1,7 @@
 import { type FootprintProvenance, fabricationBounds } from './footprint.ts'
 import {
   type Board,
+  type BoardSide,
   footprintByPlacement,
   type Placement,
   placePoint,
@@ -86,6 +87,24 @@ export const IR_DROP_PROVENANCE: FootprintProvenance = {
  * cut: a bigger drill (≥ 0.6 mm), a wider copper ring (≥ 0.25 mm), and a wider hole-to-hole pitch (≥ 0.6 mm
  * edge-to-edge). Fabs publish 0.6 mm as the standard castellated-hole minimum (0.5 mm on special processes).
  */
+/**
+ * Copper-to-edge clearance on a V-SCORED board edge — larger than the 0.3 mm routed-edge rule. A V-score
+ * is a shallow groove cut into the top and bottom of the panel along the separation line; the board is
+ * later snapped along it. The scoring blade has a finite tip radius and the snap flexes the board, so
+ * copper too close to a V-scored line chips or lifts. Fabs ask for ≥ 0.4 mm copper-to-edge on a V-cut
+ * (vs ≥ 0.3 mm on a routed edge). Only the edges a board declares V-scored use this tighter value.
+ */
+export const V_CUT_EDGE_CLEARANCE_MM = 0.4
+export const V_CUT_PROVENANCE: FootprintProvenance = {
+  source_type: 'reference',
+  title: 'V-scored edge copper-to-edge ≥ 0.4 mm (vs 0.3 mm routed)',
+  citation:
+    'JLCPCB / PCBWay V-scoring (V-cut) design rules: keep copper ≥ 0.4 mm from a V-scored edge — larger than a routed edge — because the scoring groove + snap can chip or lift copper at the score line.',
+  confidence: 'high',
+  url: 'https://jlcpcb.com/capabilities/pcb-capabilities',
+  date_accessed: '2026-07-19',
+}
+
 export const CASTELLATED_MIN_DRILL_MM = 0.6
 export const CASTELLATED_RING_MM = 0.25
 export const CASTELLATED_EDGE_TO_EDGE_MM = 0.6
@@ -618,22 +637,34 @@ export function runDrc(
     }
   }
 
-  // Copper to board edge — the mill tears copper closer than the limit. A castellated pad is EXEMPT: it is
-  // a plated half-hole meant to sit ON the edge (the profile route bisects it), held instead to the wider
-  // castellated minimums below.
-  const edge = DRC_RULES['edge-clearance'].limitMm
+  // Copper to board edge — the mill tears (or the V-score snap chips) copper closer than the limit. Each
+  // of the four sides has its OWN limit: a V-SCORED edge needs the wider 0.4 mm, a routed edge the 0.3 mm.
+  // A castellated pad is EXEMPT: it is a plated half-hole meant to sit ON the edge (the profile bisects it),
+  // held instead to the wider castellated minimums below.
+  const routedEdge = DRC_RULES['edge-clearance'].limitMm
+  const scoredSides = new Set(board.vScoredSides ?? [])
+  const sideLimit = (side: BoardSide) =>
+    scoredSides.has(side) ? V_CUT_EDGE_CLEARANCE_MM : routedEdge
   const o = board.outline
   for (const c of copperBoxes(ratsnest, routing)) {
     if (c.castellated === true) continue
-    const tooClose =
-      c.x < o.x + edge ||
-      c.y < o.y + edge ||
-      c.x + c.w > o.x + o.w - edge ||
-      c.y + c.h > o.y + o.h - edge
-    if (tooClose) {
+    // Check each side against its own limit; report the worst (nearest) offending side by name.
+    const nearSide: BoardSide | undefined =
+      c.x < o.x + sideLimit('left')
+        ? 'left'
+        : c.x + c.w > o.x + o.w - sideLimit('right')
+          ? 'right'
+          : c.y < o.y + sideLimit('top')
+            ? 'top'
+            : c.y + c.h > o.y + o.h - sideLimit('bottom')
+              ? 'bottom'
+              : undefined
+    if (nearSide !== undefined) {
+      const limitMm = sideLimit(nearSide)
+      const kind = scoredSides.has(nearSide) ? 'V-scored ' : ''
       out.push({
         code: 'edge-clearance',
-        message: `${c.what} sits within ${fmt(edge)} mm of the board edge`,
+        message: `${c.what} sits within ${fmt(limitMm)} mm of the ${kind}board edge (${nearSide})`,
         at: { x: c.x + c.w / 2, y: c.y + c.h / 2 },
       })
     }

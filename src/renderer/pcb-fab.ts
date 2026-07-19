@@ -28,6 +28,8 @@ import {
   MIN_SILK_CHAR_HEIGHT_MM,
   PTH_PAD_ANNULAR_MM,
   PTH_PAD_ANNULAR_PROVENANCE,
+  V_CUT_EDGE_CLEARANCE_MM,
+  V_CUT_PROVENANCE,
   VOLTAGE_CLEARANCE_PROVENANCE,
 } from './pcb-drc.ts'
 import { type GbrjobFileAttr, gerberJobFile } from './pcb-gbrjob.ts'
@@ -328,7 +330,7 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
     '',
     'RULES CHECKED (each limit cited — ask the file where a number came from and it answers)',
     `  trace width ${num(DEFAULT_ROUTE_CLASS.traceWidthMm)} mm / clearance ${num(DEFAULT_ROUTE_CLASS.clearanceMm)} mm — ${DEFAULT_ROUTE_CLASS.provenance.title}`,
-    `  copper-to-edge ≥ ${num(DRC_RULES['edge-clearance'].limitMm)} mm — ${DRC_RULES['edge-clearance'].provenance.title}`,
+    `  copper-to-edge ≥ ${num(DRC_RULES['edge-clearance'].limitMm)} mm routed / ≥ ${num(V_CUT_EDGE_CLEARANCE_MM)} mm on a V-scored edge — ${DRC_RULES['edge-clearance'].provenance.title}; ${V_CUT_PROVENANCE.title}`,
     `  board size ${num(MIN_BOARD_MM)}–${num(MAX_BOARD_MM)} mm per side — ${BOARD_SIZE_PROVENANCE.title}`,
     `  voltage clearance (spacing between nets scaled to their potential difference) — ${VOLTAGE_CLEARANCE_PROVENANCE.title}`,
     `  component-to-edge keepout ≥ ${num(COMPONENT_EDGE_KEEPOUT_MM)} mm — ${COMPONENT_EDGE_KEEPOUT_PROVENANCE.title}`,

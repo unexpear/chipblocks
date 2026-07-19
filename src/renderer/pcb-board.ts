@@ -50,7 +50,18 @@ export type Recess = {
   side: 'top' | 'bottom'
 }
 
-export type Board = { outline: BoardOutline; placements: Placement[] }
+/** Which side of the rectangular outline — the four board edges. */
+export type BoardSide = 'top' | 'bottom' | 'left' | 'right'
+
+export type Board = {
+  outline: BoardOutline
+  placements: Placement[]
+  /** The board edges that will be separated from a production panel by V-SCORING (a shallow groove cut
+   *  top and bottom, then snapped) rather than by a routed mill slot. A V-scored edge needs MORE copper
+   *  clearance than a routed one (the scoring blade + the snap can chip copper right at the groove), so
+   *  the copper-to-edge DRC tightens on these sides. Absent / empty ⇒ every edge is routed (the default). */
+  vScoredSides?: BoardSide[]
+}
 
 /** The minimal part shape deriveBoard reads (a schematic node). */
 export type BoardPart = { id: string; definition: string; footprintId?: string }

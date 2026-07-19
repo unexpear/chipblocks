@@ -10,6 +10,7 @@ import { BUILTIN_FOOTPRINTS, type Footprint, type Pad } from '../src/renderer/fo
 import {
   type Board,
   type BoardPart,
+  type BoardSide,
   computeRatsnest,
   deriveBoard,
 } from '../src/renderer/pcb-board.ts'
@@ -26,6 +27,7 @@ import {
   minDrillMm,
   PTH_PAD_ANNULAR_MM,
   runDrc,
+  V_CUT_EDGE_CLEARANCE_MM,
 } from '../src/renderer/pcb-drc.ts'
 import { DEFAULT_ROUTE_CLASS, routeBoard } from '../src/renderer/pcb-route.ts'
 import { SILK_TEXT } from '../src/renderer/stroke-font.ts'
@@ -721,6 +723,41 @@ describe('runDrc', () => {
       } finally {
         setUserParts([])
       }
+    })
+  })
+
+  describe('V-scored board edges — the tighter 0.4 mm copper-to-edge on a snap groove', () => {
+    const ROUTING = { traces: [], vias: [], unrouted: [] }
+    // A pad 0.35 mm from the TOP edge — over the 0.3 mm routed limit but under the 0.4 mm V-cut limit.
+    const padNearTop = {
+      airwires: [],
+      padBoxes: [{ net: 'n', pad: 'n/1', throughHole: false, x: 5, y: 0.35, w: 1, h: 1 }],
+    }
+    const board = (vScoredSides?: BoardSide[]): Board => ({
+      outline: { x: 0, y: 0, w: 20, h: 20 },
+      placements: [],
+      ...(vScoredSides ? { vScoredSides } : {}),
+    })
+    const edgeHits = (b: Board) =>
+      runDrc(b, padNearTop, ROUTING).filter((d) => d.code === 'edge-clearance')
+
+    test('the V-cut limit is wider than the routed one (0.4 > 0.3 mm)', () => {
+      expect(V_CUT_EDGE_CLEARANCE_MM).toBeGreaterThan(DRC_RULES['edge-clearance'].limitMm)
+    })
+
+    test('0.35 mm from a ROUTED edge is clean (over the 0.3 mm routed limit)', () => {
+      expect(edgeHits(board())).toHaveLength(0)
+    })
+
+    test('0.35 mm from a V-SCORED edge is flagged (under the 0.4 mm V-cut limit)', () => {
+      const v = edgeHits(board(['top']))
+      expect(v).toHaveLength(1)
+      expect(v[0]?.message).toContain('V-scored')
+      expect(v[0]?.message).toContain('top')
+    })
+
+    test('marking a DIFFERENT side V-scored leaves copper near the still-routed side clean', () => {
+      expect(edgeHits(board(['bottom']))).toHaveLength(0) // top is still routed → 0.35 mm is fine
     })
   })
 
