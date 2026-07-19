@@ -24,6 +24,7 @@ import {
 } from './pcb-drc.ts'
 import { type GbrjobFileAttr, gerberJobFile } from './pcb-gbrjob.ts'
 import {
+  boardHasNonPlatedHoles,
   excellonDrill,
   GERBER_CONVENTIONS,
   gerberBottomCopper,
@@ -384,6 +385,7 @@ export const FAB_FILE_NAMES = {
   bottomSilk: `${BASE}-B_Silkscreen.gbo`,
   edgeCuts: `${BASE}-Edge_Cuts.gm1`,
   drill: `${BASE}.drl`,
+  drillNpth: `${BASE}-NPTH.drl`,
   gbrjob: `${BASE}-job.gbrjob`,
   bom: 'bom.csv',
   placement: 'placement.csv',
@@ -423,6 +425,7 @@ function buildReadme(inputs: FabInputs): string {
     `  ${FAB_FILE_NAMES.bottomSilk}   bottom silkscreen (empty — no bottom-mounted parts)`,
     `  ${FAB_FILE_NAMES.edgeCuts}  board outline (the fab cuts this centreline)`,
     `  ${FAB_FILE_NAMES.drill}           plated drill hits (component holes + via holes)`,
+    `  ${FAB_FILE_NAMES.drillNpth}      NON-plated drill hits (mounting/tooling holes) — present only if the board has any`,
     `  ${FAB_FILE_NAMES.gbrjob}      job manifest — names every Gerber's layer + the fab attributes`,
     '',
     'Assembly:',
@@ -524,6 +527,16 @@ export function buildManufacturingZip(inputs: FabInputs): FabZip {
     text(FAB_FILE_NAMES.bottomSilk, gerberSilkscreen(board, 'Bot', when)),
     text(FAB_FILE_NAMES.edgeCuts, gerberEdgeCuts(board.outline, when)),
     text(FAB_FILE_NAMES.drill, excellonDrill(board, routing, when, stackup.copperLayers)),
+    // The non-plated drill file — only when the board has NPTH (mounting/tooling) holes. Plating a
+    // mounting hole is wrong fab data, so its hole goes here (FileFunction NonPlated,…,NPTH), not above.
+    ...(boardHasNonPlatedHoles(board)
+      ? [
+          text(
+            FAB_FILE_NAMES.drillNpth,
+            excellonDrill(board, routing, when, stackup.copperLayers, true),
+          ),
+        ]
+      : []),
     text(FAB_FILE_NAMES.gbrjob, gbrjobText),
     text(FAB_FILE_NAMES.bom, buildBomCsv(inputs.bomRows)),
     text(FAB_FILE_NAMES.placement, buildPlacementCsv(board)),

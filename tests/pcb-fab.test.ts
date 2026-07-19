@@ -395,7 +395,12 @@ describe('the ZIP itself', () => {
     const fab = buildManufacturingZip(cleanInputs())
     expect(fab.validation.status).toBe('pass')
     const files = readZip(fab.bytes)
-    expect([...files.keys()].sort()).toEqual([...Object.values(FAB_FILE_NAMES)].sort())
+    // Every fab file EXCEPT the non-plated drill, which ships only when the board has mounting holes (this
+    // 2-resistor board has none).
+    const expected = Object.values(FAB_FILE_NAMES)
+      .filter((n) => n !== FAB_FILE_NAMES.drillNpth)
+      .sort()
+    expect([...files.keys()].sort()).toEqual(expected)
     const decoder = new TextDecoder()
     const topCopper = decoder.decode(files.get(FAB_FILE_NAMES.topCopper))
     expect(topCopper).toContain('%TF.FileFunction,Copper,L1,Top*%')

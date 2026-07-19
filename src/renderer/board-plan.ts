@@ -80,7 +80,7 @@ export const BOARD_PLAN: PlanTier[] = [
           'KiCad default: separate PTH + NPTH Excellon files; mounting holes NPTH by DFM default.',
         cite: 'rheingoldheavy.com/combining-kicad-drill-files; digikey forum',
         size: 'M',
-        status: 'todo',
+        status: 'done',
         code: 'src/renderer/pcb-gerber.ts:534-593; pcb-fab.ts:507',
       },
       {

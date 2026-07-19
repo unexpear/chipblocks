@@ -37,6 +37,10 @@ export type Pad = {
   type: PadType
   /** Drill diameter in mm — through-hole pads only. */
   holeDiameter?: number
+  /** Whether the drilled hole is copper-PLATED (default true). A NON-plated hole (`plated: false`) — a
+   *  mounting/tooling hole — carries no plating and no annular-ring requirement, and the fab drills it in a
+   *  SEPARATE non-plated (NPTH) drill file. Only meaningful for through-hole pads. */
+  plated?: boolean
 }
 
 /** A silkscreen line segment (the white outline printed on the board), in mm. */

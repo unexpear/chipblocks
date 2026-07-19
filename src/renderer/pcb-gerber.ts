@@ -541,11 +541,35 @@ const drillNum = (mm: number): string => {
  * board's copper-layer count. Hardcoding 1,2 was correct only on a 2-layer board; on a 4-/6-layer board
  * the drill must agree with the .gbrjob / inner-Gerber layer count (integration-audit-caught).
  */
+/** Whether the board has any NON-plated (NPTH) component holes — a mounting/tooling hole (pad.plated ===
+ *  false). When true, the fab needs a SEPARATE non-plated drill file alongside the plated one. */
+export function boardHasNonPlatedHoles(board: Board): boolean {
+  for (const placement of board.placements) {
+    const fp = footprintByPlacement(placement)
+    if (fp === undefined) continue
+    for (const pad of fp.pads) {
+      if (pad.type === 'through_hole' && pad.holeDiameter !== undefined && pad.plated === false) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+/**
+ * A drill file — Excellon per Ucamco's XNC format, shaped exactly like KiCad 10's output. `nonPlated`
+ * selects which drills go in this file: the PLATED file (default) carries every plated hole (component legs
+ * + via barrels, FileFunction Plated,1,N,PTH); the NON-plated file (`nonPlated: true`) carries only the
+ * non-plated component holes (mounting/tooling holes, FileFunction NonPlated,1,N,NPTH). A fab needs BOTH
+ * when a board mixes plated and non-plated holes — plating a mounting hole (or leaving a real NPTH hole in
+ * the plated file) is wrong manufacturing data. Vias are always plated, so they never appear in the NPTH file.
+ */
 export function excellonDrill(
   board: Board,
   routing: BoardRouting,
   when: Date,
   copperLayers = 2,
+  nonPlated = false,
 ): string {
   const holes = new Map<string, { drill: number; kind: string; at: { x: number; y: number }[] }>()
   const add = (
@@ -563,10 +587,15 @@ export function excellonDrill(
     if (fp === undefined) continue
     for (const pad of fp.pads) {
       if (pad.type !== 'through_hole' || pad.holeDiameter === undefined) continue
+      // Plated file: every plated hole (plated !== false). Non-plated file: only the NPTH holes.
+      if ((pad.plated === false) !== nonPlated) continue
       add(pad.holeDiameter, 'ComponentDrill', placePoint(placement, pad.center))
     }
   }
-  for (const v of routing.vias) add(v.drillMm, 'ViaDrill', v.at)
+  // Vias are plated barrels — only in the plated file.
+  if (!nonPlated) for (const v of routing.vias) add(v.drillMm, 'ViaDrill', v.at)
+  const plating = nonPlated ? 'NonPlated' : 'Plated'
+  const through = nonPlated ? 'NPTH' : 'PTH'
   const tools = [...holes.values()].sort((a, b) => a.drill - b.drill || (a.kind < b.kind ? -1 : 1))
   const lines = [
     'M48',
@@ -574,12 +603,12 @@ export function excellonDrill(
     '; FORMAT={-:-/ absolute / metric / decimal}',
     `; #@! TF.CreationDate,${isoWithOffset(when)}`,
     '; #@! TF.GenerationSoftware,ChipBlocks,BoardExport,1',
-    `; #@! TF.FileFunction,Plated,1,${copperLayers},PTH`,
+    `; #@! TF.FileFunction,${plating},1,${copperLayers},${through}`,
     'FMAT,2',
     'METRIC',
   ]
   tools.forEach((tool, i) => {
-    lines.push(`; #@! TA.AperFunction,Plated,PTH,${tool.kind}`)
+    lines.push(`; #@! TA.AperFunction,${plating},${through},${tool.kind}`)
     lines.push(`T${i + 1}C${tool.drill.toFixed(3)}`)
   })
   lines.push('%', 'G90', 'G05')

@@ -629,10 +629,11 @@ export function runDrc(
           at,
         })
       }
-      // A plated component pad needs the PTH design-rule annular ring (0.15 mm) — larger than the via
-      // floor: the ring is the copper the pad keeps around its hole so registration drift can't break it.
+      // A PLATED component pad needs the PTH design-rule annular ring (0.15 mm) — the copper it keeps around
+      // its hole so registration drift can't break the plating. A NON-plated hole (a mounting/tooling hole)
+      // has no plating and no ring requirement, so it's exempt (its "pad" may be a bare hole with no copper).
       const annular = (Math.min(pad.size.w, pad.size.h) - pad.holeDiameter) / 2
-      if (annular < PTH_PAD_ANNULAR_MM) {
+      if (pad.plated !== false && annular < PTH_PAD_ANNULAR_MM) {
         out.push({
           code: 'annular-ring',
           message: `${ref} pad ${pad.id}: a ${fmt(annular)} mm annular ring is under the ${fmt(PTH_PAD_ANNULAR_MM)} mm minimum for a plated through-hole pad`,
