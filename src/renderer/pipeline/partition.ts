@@ -58,6 +58,7 @@ export const ANALOG_PASSIVE = new Set([
   // this a gate driven through a switch classified 'mixed' and read as undriven (dead keypad).
   'switch_spst_toggle',
   'switch_spst_momentary',
+  'switch_spdt',
   ...ANNOTATION_DEFINITIONS,
 ])
 

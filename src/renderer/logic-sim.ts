@@ -163,6 +163,16 @@ export function compileLogic(nodes: CanvasNodeLike[], edges: CanvasEdgeLike[]): 
   // (`state` !== 'open'). This is what lets a real-switch keypad drive logic inputs.
   for (const node of flat.nodes) {
     const def = node.data.definition
+    // An SPDT selects which throw its common pole conducts to (throw_a default, throw_b when flipped) —
+    // same rule as dc-solver's stampSpdt. Wire throw_a→V+ and throw_b→GND and the common carries a
+    // DEFINED 1 or 0, never a floating input (what an open SPST would leave). This is the clean logic
+    // input: flip the switch to pick the level.
+    if (def === 'switch_spdt') {
+      const position = (node.data.parameters as Record<string, { value?: unknown }> | undefined)
+        ?.position?.value
+      union(key(node.id, 'common'), key(node.id, position === 'throw_b' ? 'throw_b' : 'throw_a'))
+      continue
+    }
     if (def !== 'switch_spst_toggle' && def !== 'switch_spst_momentary') continue
     const stateVal = (node.data.parameters as Record<string, { value?: unknown }> | undefined)
       ?.state?.value

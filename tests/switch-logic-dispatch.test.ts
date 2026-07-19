@@ -103,3 +103,90 @@ describe('a switch drives a logic input through the solve dispatch', () => {
     expect(open.terminalVolts.get('B/out') ?? 0).toBeLessThan(1)
   })
 })
+
+// biome-ignore lint/suspicious/noExplicitAny: React Flow node/edge shapes, minimal for the solve
+const spdt = (position: 'throw_a' | 'throw_b'): { nodes: any[]; edges: any[] } => ({
+  nodes: [
+    {
+      id: 'sw',
+      type: 'device',
+      position: { x: 0, y: 0 },
+      data: {
+        definition: 'switch_spdt',
+        parameters: { ...defaultParameters('switch_spdt'), position: { value: position } },
+      },
+    },
+    {
+      id: 'B',
+      type: 'block',
+      position: { x: 0, y: 0 },
+      data: { definition: 'block', block: BUFFER_BLOCK },
+    },
+    {
+      id: 'vp',
+      type: 'device',
+      position: { x: 0, y: 0 },
+      data: { definition: 'power_source', parameters: V(5) },
+    },
+    {
+      id: 'g',
+      type: 'device',
+      position: { x: 0, y: 0 },
+      data: { definition: 'ground', parameters: defaultParameters('ground') },
+    },
+  ],
+  edges: [
+    { id: 'c', type: 'net', source: 'sw', sourceHandle: 'common', target: 'B', targetHandle: 'in' },
+    {
+      id: 'a',
+      type: 'net',
+      source: 'sw',
+      sourceHandle: 'throw_a',
+      target: 'vp',
+      targetHandle: 'terminal_positive',
+    },
+    {
+      id: 'b',
+      type: 'net',
+      source: 'sw',
+      sourceHandle: 'throw_b',
+      target: 'g',
+      targetHandle: 'reference_terminal',
+    },
+    {
+      id: 'ep',
+      type: 'net',
+      source: 'vp',
+      sourceHandle: 'terminal_positive',
+      target: 'B',
+      targetHandle: 'v_dd',
+    },
+    {
+      id: 'eg',
+      type: 'net',
+      source: 'B',
+      sourceHandle: 'gnd',
+      target: 'g',
+      targetHandle: 'reference_terminal',
+    },
+    {
+      id: 'vpn',
+      type: 'net',
+      source: 'vp',
+      sourceHandle: 'terminal_negative',
+      target: 'g',
+      targetHandle: 'reference_terminal',
+    },
+  ],
+})
+
+describe('an SPDT switch selects V+ or GND for a defined logic input', () => {
+  test('throw_a → V+ drives HIGH, throw_b → GND drives LOW; stays on the logic engine', () => {
+    const a = spdt('throw_a')
+    const b = spdt('throw_b')
+    expect(classifyCanvas(a.nodes)).toBe('logic')
+    // Unlike an open SPST (undriven, floating), an SPDT always ties the input to a defined rail.
+    expect(solveCanvasDispatch(a.nodes, a.edges).terminalVolts.get('B/out')).toBeGreaterThan(4)
+    expect(solveCanvasDispatch(b.nodes, b.edges).terminalVolts.get('B/out') ?? 0).toBeLessThan(1)
+  })
+})
