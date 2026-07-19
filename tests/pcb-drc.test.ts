@@ -239,6 +239,13 @@ describe('runDrc', () => {
       expect(flagged(0.11, 'one_oz')).toBe(true)
       expect(flagged(0.11, 'half_oz')).toBe(false)
     })
+
+    test('omitting the copper weight fails SAFE — a 0.14 mm trace is flagged (assumes the heaviest floor)', () => {
+      // 0.14 mm passes at 1 oz (0.127) but not at 2 oz (0.15); with no weight the check assumes 2 oz so an
+      // unknown-weight caller over-rejects rather than passing a gap it can't verify.
+      expect(flagged(0.14)).toBe(true)
+      expect(flagged(0.14, 'one_oz')).toBe(false)
+    })
   })
 
   test('silk lettering over a neighbour’s exposed pad is flagged — the fab would clip the ink', () => {
@@ -730,6 +737,13 @@ describe('Tier 0: single-board size window (too small must panelize, too large e
     expect(sized(17, 8)).toHaveLength(0)
     expect(sized(2, 2)[0]?.message).toContain('panelized')
     expect(sized(600, 600)[0]?.message).toContain('quote')
+  })
+
+  test('a pathological 2 × 600 mm outline reports BOTH reasons (too narrow AND too long)', () => {
+    const v = sized(2, 600)
+    expect(v).toHaveLength(2)
+    expect(v.some((d) => d.message.includes('panelized'))).toBe(true)
+    expect(v.some((d) => d.message.includes('quote'))).toBe(true)
   })
 })
 

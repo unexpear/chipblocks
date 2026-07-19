@@ -65,7 +65,7 @@ export const COPPER_CLEARANCE_FLOOR_PROVENANCE: FootprintProvenance = {
   source_type: 'reference',
   title: 'Minimum copper-to-copper spacing 0.127 mm (5 mil) — common fab capability',
   citation:
-    'JLCPCB PCB capabilities: minimum trace-to-trace / trace-to-pad spacing 0.127 mm (5 mil) on the standard process (0.0889 mm / 3.5 mil advanced). Used as the hard spacing floor a user-tightened net class cannot go below — the spacing counterpart to the track-width floor.',
+    'JLCPCB PCB capabilities: minimum trace-to-trace / trace-to-pad spacing 0.127 mm (5 mil) — the reliable low-cost design minimum; the fab can etch finer (down to ~0.0889 mm / 3.5 mil) at higher cost / lower yield. Used as the conservative hard spacing floor a user-tightened net class cannot go below — the spacing counterpart to the track-width floor.',
   confidence: 'high',
   url: 'https://jlcpcb.com/capabilities/pcb-capabilities',
   date_accessed: '2026-07-17',
@@ -76,7 +76,7 @@ export const COPPER_CLEARANCE_FLOOR_PROVENANCE: FootprintProvenance = {
  * thicker copper etches with more sideways undercut, so the finest feature a fab can hold GROWS with weight.
  * The old flat 0.2 mm track-width floor was KiCad's editor default, not a fab spec — it over-rejected makeable
  * 0.127 mm traces AND disagreed with the 0.127 mm spacing floor. These are the JLCPCB standard-process
- * capabilities (the advanced process goes finer); `one_oz` is the default when no weight is known and equals
+ * capabilities (a fab can go finer at higher cost); `one_oz` is the value when 1 oz is chosen and equals
  * the cited spacing floor, so a normal 1 oz board is unchanged and heavier copper is held to a wider minimum.
  */
 export const MIN_COPPER_FEATURE_MM: Record<CopperWeight, number> = {
@@ -89,7 +89,7 @@ export const MIN_COPPER_FEATURE_PROVENANCE: FootprintProvenance = {
   source_type: 'reference',
   title: 'Minimum track width / spacing scales with copper weight — JLCPCB capabilities',
   citation:
-    'JLCPCB PCB capabilities: the finest trace width and spacing a fab can etch grows with copper weight — ~0.1 mm (4 mil) at 0.5 oz, 0.127 mm (5 mil) at 1 oz on the standard process, 0.15 mm (6 mil) at 2 oz (heavier copper etches with more undercut). Finer on the advanced process. Supersedes the flat 0.2 mm KiCad editor default.',
+    'JLCPCB PCB capabilities: the finest trace width and spacing a fab can reliably etch grows with copper weight — ~0.1 mm (4 mil) at 0.5 oz, 0.127 mm (5 mil) at 1 oz, 0.15 mm (6 mil) at 2 oz (heavier copper etches with more undercut). These are the reliable low-cost design minimums; a fab can go finer (to ~0.09 mm / 3.5 mil at 1 oz) at higher cost / lower yield — we use the conservative recommended floor. Supersedes the flat 0.2 mm KiCad editor default.',
   confidence: 'high',
   url: 'https://jlcpcb.com/capabilities/pcb-capabilities',
   date_accessed: '2026-07-19',
@@ -347,13 +347,15 @@ export function runDrc(
     const center = { x: board.outline.x + w / 2, y: board.outline.y + h / 2 }
     const smallest = Math.min(w, h)
     const largest = Math.max(w, h)
+    // Independent checks (not else-if): a pathological outline can be both too narrow AND too long.
     if (smallest < MIN_BOARD_MM) {
       out.push({
         code: 'board-size',
         message: `the board is ${fmt(smallest)} mm on its smallest side — under the ${fmt(MIN_BOARD_MM)} mm single-board minimum; a board this small must be panelized into an array`,
         at: center,
       })
-    } else if (largest > MAX_BOARD_MM) {
+    }
+    if (largest > MAX_BOARD_MM) {
       out.push({
         code: 'board-size',
         message: `the board is ${fmt(largest)} mm on its largest side — over the ${fmt(MAX_BOARD_MM)} mm standard-panel limit; a board this large needs a special quote`,
@@ -367,8 +369,10 @@ export function runDrc(
   // what any fab can hold (sub-manufacturable spacing) is still caught (the spacing twin of the
   // track-width floor). For a normal board (clearance ≥ the floor) this is exactly the net-class value.
   // The spacing floor scales with copper weight (heavier copper needs wider gaps) — for 1 oz this is the
-  // same 0.127 mm as before, so a normal board is unchanged; a 2 oz board is held to 0.15 mm.
-  const spacingFloor = minCopperFeatureMm(opts?.copperWeight)
+  // same 0.127 mm as before, a 2 oz board is held to 0.15 mm. When the weight is UNKNOWN (a caller that
+  // omits it) we assume the HEAVIEST, widest floor so it fails SAFE — over-reject rather than pass an
+  // unmakeable gap. The live board always passes its real weight, so this only guards other callers.
+  const spacingFloor = minCopperFeatureMm(opts?.copperWeight ?? 'two_oz')
   const enforcedClearance = Math.max(cls.clearanceMm, spacingFloor)
   const clearanceCls =
     enforcedClearance === cls.clearanceMm ? cls : { ...cls, clearanceMm: enforcedClearance }
@@ -428,7 +432,8 @@ export function runDrc(
 
   // Minimum manufacturable track width — scales with the board's copper weight (thicker copper etches a
   // wider minimum feature); 1 oz keeps the 0.127 mm value, replacing the old flat 0.2 mm editor default.
-  const minTrack = minCopperFeatureMm(opts?.copperWeight)
+  // Omitted weight assumes the heaviest (fail-safe, matching the spacing floor above).
+  const minTrack = minCopperFeatureMm(opts?.copperWeight ?? 'two_oz')
   for (const t of routing.traces) {
     if (t.widthMm >= minTrack) continue
     const p = t.points[0]
