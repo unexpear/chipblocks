@@ -15,6 +15,7 @@ import {
 } from '../src/renderer/pcb-board.ts'
 import {
   DRC_RULES,
+  ipc2221ClearanceMm,
   MAX_BOARD_MM,
   MAX_DRILL_MM,
   MIN_BOARD_MM,
@@ -718,6 +719,82 @@ describe('Tier 0: silkscreen stroke width + character height', () => {
   test('the designator font renders at ≥ the 1.0 mm minimum character height', () => {
     expect(MIN_SILK_CHAR_HEIGHT_MM).toBe(1.0)
     expect(SILK_TEXT.heightMm).toBeGreaterThanOrEqual(MIN_SILK_CHAR_HEIGHT_MM)
+  })
+})
+
+describe('Tier 0: voltage clearance (IPC-2221B B2) — high-ΔV nets need extra spacing', () => {
+  test('ipc2221ClearanceMm matches the B2 table', () => {
+    expect(ipc2221ClearanceMm(5)).toBeCloseTo(0.1, 6)
+    expect(ipc2221ClearanceMm(100)).toBeCloseTo(0.6, 6)
+    expect(ipc2221ClearanceMm(250)).toBeCloseTo(1.25, 6)
+    expect(ipc2221ClearanceMm(400)).toBeCloseTo(2.5, 6)
+    expect(ipc2221ClearanceMm(600)).toBeCloseTo(3.0, 6) // 2.5 + (600−500)·0.005
+  })
+
+  // Two parallel 0.25 mm traces of different nets; centre gap 0.75 → edge gap 0.5 mm — clears the fab
+  // spacing floor but not the 1.25 mm a 300 V pair needs.
+  const codes = (netVolts: Map<string, number>): string[] => {
+    const board: Board = { outline: { x: -5, y: -5, w: 40, h: 40 }, placements: [] }
+    const routing = {
+      traces: [
+        {
+          net: 'a',
+          widthMm: 0.25,
+          layer: 'top' as const,
+          points: [
+            { x: 0, y: 0 },
+            { x: 5, y: 0 },
+          ],
+        },
+        {
+          net: 'b',
+          widthMm: 0.25,
+          layer: 'top' as const,
+          points: [
+            { x: 0, y: 0.75 },
+            { x: 5, y: 0.75 },
+          ],
+        },
+      ],
+      vias: [],
+      unrouted: [],
+    }
+    return runDrc(board, { airwires: [], padBoxes: [] }, routing, DEFAULT_ROUTE_CLASS, {
+      netVolts,
+    }).map((v) => v.code)
+  }
+
+  test('two nets 300 V apart at a 0.5 mm gap are flagged voltage-clearance, not copper-clearance', () => {
+    const c = codes(
+      new Map([
+        ['a', 300],
+        ['b', 0],
+      ]),
+    )
+    expect(c).toContain('voltage-clearance')
+    expect(c).not.toContain('copper-clearance')
+  })
+
+  test('the same 0.5 mm gap at 5 V is clean (5 V needs only 0.1 mm — the fab floor already covers it)', () => {
+    expect(
+      codes(
+        new Map([
+          ['a', 5],
+          ['b', 0],
+        ]),
+      ),
+    ).not.toContain('voltage-clearance')
+  })
+
+  test('signed voltages: +150 V vs −150 V is a 300 V difference, not 0 — still flagged', () => {
+    expect(
+      codes(
+        new Map([
+          ['a', 150],
+          ['b', -150],
+        ]),
+      ),
+    ).toContain('voltage-clearance')
   })
 })
 

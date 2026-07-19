@@ -3686,6 +3686,26 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     }
     return m
   }, [pcbActive, pcbRatsnest, pcbPadCurrentOf])
+  // Per-net SIGNED node voltage (V) from the DC solve — feeds the voltage-clearance DRC (two nets far apart
+  // in potential need extra spacing so they don't arc). A board net is one solved node, so every pad on it
+  // shares the voltage; take the first found. Signed so a +HV/−HV pair reads the full difference.
+  const pcbNetVolts = useMemo(() => {
+    const m = new Map<string, number>()
+    if (!pcbActive) return m
+    for (const pb of pcbRatsnest.padBoxes) {
+      if (m.has(pb.net)) continue
+      const slash = pb.pad.indexOf('/')
+      const partId = slash >= 0 ? pb.pad.slice(0, slash) : pb.pad
+      const padId = slash >= 0 ? pb.pad.slice(slash + 1) : ''
+      const definition = solvedWorld.instances.get(partId)?.definition
+      const footprintId = pcbBoard.placements.find((p) => p.partId === partId)?.footprintId
+      const terminal =
+        definition !== undefined ? terminalForPad(definition, padId, footprintId) : undefined
+      const v = terminal !== undefined ? terminalVolts.get(`${partId}/${terminal}`) : undefined
+      if (v !== undefined) m.set(pb.net, v)
+    }
+    return m
+  }, [pcbActive, pcbRatsnest, solvedWorld, pcbBoard, terminalVolts])
   // Design-rule check — the board's failure-mode pass (cited limits), re-run live like the routing.
   // The solved net currents + copper weight enable the over-current check (trace vs IPC-2221 ampacity).
   const pcbDrc = useMemo(
@@ -3695,6 +3715,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             netCurrents: pcbNetCurrents,
             copperWeight: pcbStackup.copperWeight,
             boardThicknessMm: pcbStackup.thicknessMm,
+            netVolts: pcbNetVolts,
             padCurrents: pcbPadCurrents,
           })
         : [],
@@ -3706,6 +3727,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       pcbNetCurrents,
       pcbStackup.copperWeight,
       pcbStackup.thicknessMm,
+      pcbNetVolts,
       pcbPadCurrents,
     ],
   )

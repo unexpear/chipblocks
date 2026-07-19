@@ -143,7 +143,7 @@ export const BOARD_PLAN: PlanTier[] = [
           '~0.6mm at 50-150V, ~2.5mm at 500V, 0.005mm/V >500V (external uncoated); creepage per CTI/pollution degree.',
         cite: 'IPC-2221B Table 6-1; IEC 60664-1; IEC 60112',
         size: 'L',
-        status: 'todo',
+        status: 'done',
         code: 'src/renderer/pcb-drc.ts (new voltage-aware spacing pass)',
       },
       {

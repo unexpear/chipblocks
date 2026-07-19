@@ -50,6 +50,7 @@ export type DrcCode =
   | 'over-current'
   | 'open-net'
   | 'board-size'
+  | 'voltage-clearance'
 
 /** The temperature rise (°C above ambient) the over-current check sizes to — IPC-2221's standard,
  *  conservative sizing point. A trace exceeding its ampacity at this rise runs hotter and ages fast. */
@@ -98,6 +99,32 @@ export const MIN_COPPER_FEATURE_PROVENANCE: FootprintProvenance = {
 /** The minimum manufacturable track width / cross-net spacing (mm) for a copper weight — 1 oz default. */
 export const minCopperFeatureMm = (weight?: CopperWeight): number =>
   MIN_COPPER_FEATURE_MM[weight ?? 'one_oz']
+
+/**
+ * IPC-2221B Table 6-1, column B2 (external conductors, UNCOATED, sea level to 3050 m) — the minimum copper
+ * spacing between two conductors as a function of the PEAK voltage BETWEEN them (peak = amplitude for AC).
+ * A manufacturing spacing floor (~0.13 mm) is plenty at logic voltages, but two nets hundreds of volts
+ * apart need MILLIMETRES of air/board or they arc or track across the surface. This is the electrical
+ * requirement, separate from (and usually larger than) the etch-capability floor. Values verified against
+ * multiple independent reproductions of IPC-2221B Table 6-1 (2026-07-19).
+ */
+export function ipc2221ClearanceMm(peakVoltsBetween: number): number {
+  const v = Math.abs(peakVoltsBetween)
+  if (v <= 30) return 0.1
+  if (v <= 150) return 0.6 // 31–150 V band
+  if (v <= 300) return 1.25 // 151–300 V band
+  if (v <= 500) return 2.5 // 301–500 V band
+  return 2.5 + (v - 500) * 0.005 // > 500 V: +0.005 mm per volt
+}
+
+export const VOLTAGE_CLEARANCE_PROVENANCE: FootprintProvenance = {
+  source_type: 'standard',
+  title: 'IPC-2221B Table 6-1 (B2) — voltage-based conductor spacing (external, uncoated, ≤3050 m)',
+  citation:
+    'IPC-2221B Generic Standard on Printed Board Design, Table 6-1, column B2 (external conductors, uncoated, sea level to 3050 m): minimum spacing keyed on the PEAK voltage between two conductors — ≤30 V: 0.1 mm; 31–150 V: 0.6 mm; 151–300 V: 1.25 mm; 301–500 V: 2.5 mm; >500 V: 2.5 + (V−500)·0.005 mm. The voltage is the peak (AC amplitude or DC) potential difference between the conductors.',
+  confidence: 'high',
+  date_accessed: '2026-07-19',
+}
 
 /**
  * Minimum annular ring for a PLATED THROUGH-HOLE COMPONENT PAD (0.15 mm / 6 mil) — the copper the pad must
@@ -218,6 +245,7 @@ export const DRC_RULES: Record<
     | 'over-current'
     | 'open-net'
     | 'board-size'
+    | 'voltage-clearance'
   >,
   { limitMm: number; provenance: FootprintProvenance }
 > = {
@@ -360,6 +388,10 @@ export function runDrc(
     /** The board's finished thickness (mm) — sets the min plated-drill floor via the 8:1 aspect ratio.
      *  Omitted ⇒ assumes the thickest standard board (fail-safe: the strictest 0.30 mm floor). */
     boardThicknessMm?: number
+    /** Per-net SIGNED node voltage (V) from the solve — enables the voltage-clearance check (two nets far
+     *  apart in potential need extra spacing so they don't arc). Signed so a +150/−150 pair reads 300 V,
+     *  not 0. Absent ⇒ the check is skipped (no faked voltages). DC operating point today; AC-peak later. */
+    netVolts?: Map<string, number>
     /** Per-pad current (magnitude), keyed by the pad's `partId/padId`. When present, a multi-drop
      *  net's copper is resolved into a tree and each TRACE SEGMENT is checked against the current it
      *  actually carries — so a thin branch off a high-current trunk is checked against its own small
@@ -417,6 +449,53 @@ export function runDrc(
           : ''),
       at: v.at,
     })
+  }
+
+  // Voltage clearance (IPC-2221B Table 6-1, B2) — two nets far apart in POTENTIAL need extra copper-to-copper
+  // spacing or they arc / surface-track. Separate from the manufacturing spacing floor and usually larger.
+  // Only pairs whose required spacing EXCEEDS that floor add anything (below ~50 V the floor already covers
+  // them), so a normal logic board does no extra work. For each distinct required spacing R among the
+  // high-ΔV pairs, run the clearance check at R and flag the pairs whose OWN requirement is exactly R and
+  // whose copper is closer than it. Uses the solved SIGNED per-net voltage (DC operating point today).
+  const netVolts = opts?.netVolts
+  if (netVolts !== undefined) {
+    const boardNets = new Set<string>()
+    for (const p of ratsnest.padBoxes) boardNets.add(p.net)
+    for (const t of routing.traces) boardNets.add(t.net)
+    const nets = [...boardNets]
+    const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`)
+    const requiredByPair = new Map<string, { req: number; dv: number }>()
+    const distinctReq = new Set<number>()
+    for (let i = 0; i < nets.length; i++) {
+      for (let j = i + 1; j < nets.length; j++) {
+        const a = nets[i] as string
+        const b = nets[j] as string
+        const dv = Math.abs((netVolts.get(a) ?? 0) - (netVolts.get(b) ?? 0))
+        const req = ipc2221ClearanceMm(dv)
+        if (req > spacingFloor + 1e-9) {
+          requiredByPair.set(pairKey(a, b), { req, dv })
+          distinctReq.add(req)
+        }
+      }
+    }
+    const voltageFlagged = new Set<string>()
+    for (const R of distinctReq) {
+      for (const cv of clearanceViolations(routing, ratsnest.padBoxes, {
+        ...cls,
+        clearanceMm: R,
+      })) {
+        const key = pairKey(cv.netA, cv.netB)
+        const entry = requiredByPair.get(key)
+        if (entry === undefined || Math.abs(entry.req - R) > 1e-9 || voltageFlagged.has(key))
+          continue
+        voltageFlagged.add(key)
+        out.push({
+          code: 'voltage-clearance',
+          message: `two nets ~${fmt(entry.dv)} V apart are closer than the ${fmt(entry.req)} mm they need (IPC-2221B) — they can arc or track across the gap`,
+          at: cv.at,
+        })
+      }
+    }
   }
 
   // Courtyard overlap — two parts physically colliding at assembly.
