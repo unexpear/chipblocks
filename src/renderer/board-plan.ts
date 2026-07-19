@@ -91,7 +91,7 @@ export const BOARD_PLAN: PlanTier[] = [
           'Stroke ≥0.15mm (6mil), char height ≥1.0mm (40mil); 0.10mm/0.8mm high-precision only.',
         cite: 'https://jlcpcb.com/capabilities/pcb-capabilities',
         size: 'M',
-        status: 'todo',
+        status: 'done',
         code: 'src/renderer/pcb-drc.ts:38-50,401-455; footprint.ts:379,403,948,1014; stroke-font.ts:21',
       },
       {

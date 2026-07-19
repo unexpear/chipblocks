@@ -376,7 +376,7 @@ function halfRoundBody(
  * ticks never touch copper (the silk-over-pad DRC stays clean). One clean, tool-independent silk style
  * for every package, so no shipped silk coordinate is derived from any third-party library.
  */
-function cornerTicksSilk(rect: Courtyard, tickMm = 0.5, width = 0.12): SilkLine[] {
+function cornerTicksSilk(rect: Courtyard, tickMm = 0.5, width = 0.15): SilkLine[] {
   const t = Math.max(0.2, Math.min(tickMm, rect.w / 2 - 0.05, rect.h / 2 - 0.05))
   const x0 = rect.x
   const y0 = rect.y
@@ -400,7 +400,7 @@ function cornerTicksSilk(rect: Courtyard, tickMm = 0.5, width = 0.12): SilkLine[
  * no way to tell which end is which; this is the printed marker for it, the way a real IC wears a pin-1
  * dot. The footprint places it clear of every pad, so the silk-over-pad DRC stays clean.
  */
-function pin1Dot(cx: number, cy: number, radiusMm = 0.15, segments = 10, width = 0.12): SilkLine[] {
+function pin1Dot(cx: number, cy: number, radiusMm = 0.15, segments = 10, width = 0.15): SilkLine[] {
   const pt = (i: number) => ({
     x: cx + radiusMm * Math.cos((i / segments) * 2 * Math.PI),
     y: cy + radiusMm * Math.sin((i / segments) * 2 * Math.PI),
@@ -945,7 +945,7 @@ export const FOOTPRINT_SOD123: Footprint = {
   // Pad 1 is the cathode; this is the printed polarity cue, the way a real diode wears its band.
   silkscreen: [
     ...cornerTicksSilk({ x: -2.35, y: -1.15, w: 4.7, h: 2.3 }),
-    { from: { x: -1.0, y: -0.85 }, to: { x: -1.0, y: 0.85 }, width: 0.12 },
+    { from: { x: -1.0, y: -0.85 }, to: { x: -1.0, y: 0.85 }, width: 0.15 },
   ],
   // The component body outline (F.Fab): the 2.8 × 1.8 mm body extent (F.Fab rect ±1.4 × ±0.9).
   fabrication: rectOutline(-1.4, -0.9, 1.4, 0.9),
@@ -1011,7 +1011,7 @@ export const FOOTPRINT_LED_0805: Footprint = {
   // band: pad 1 right edge is x = −0.4, so a bar at x = −0.15 clears both pads (the printed polarity cue).
   silkscreen: [
     ...cornerTicksSilk({ x: -1.68, y: -0.95, w: 3.36, h: 1.9 }),
-    { from: { x: -0.15, y: -0.5 }, to: { x: -0.15, y: 0.5 }, width: 0.12 },
+    { from: { x: -0.15, y: -0.5 }, to: { x: -0.15, y: 0.5 }, width: 0.15 },
   ],
   // The component body outline (F.Fab): the 2.0 × 1.25 mm LED body extent (F.Fab rect ±1.0 × ±0.625).
   fabrication: rectOutline(-1.0, -0.625, 1.0, 0.625),
@@ -1074,7 +1074,7 @@ export const FOOTPRINT_LED_5MM: Footprint = {
   // bar at x = −1.4 clears it and sits inside the courtyard (left edge −1.6).
   silkscreen: [
     ...cornerTicksSilk({ x: -1.6, y: -2.7, w: 5.6, h: 5.4 }),
-    { from: { x: -1.4, y: -1.0 }, to: { x: -1.4, y: 1.0 }, width: 0.12 },
+    { from: { x: -1.4, y: -1.0 }, to: { x: -1.4, y: 1.0 }, width: 0.15 },
   ],
   // The real 5 mm round body outline (F.Fab): a circle r = 2.5 mm about the body centre (1.27, 0), as a
   // 24-gon — the dome the 5 mm LED can really is. (The cathode flat is marked by the silk bar + pin-1 pad.)

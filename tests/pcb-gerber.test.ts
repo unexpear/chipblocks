@@ -236,7 +236,7 @@ describe('silkscreen and profile', () => {
     const { board } = routedPair()
     const silk = gerberSilkscreen(board, 'Top', WHEN)
     expect(silk).toContain('%TF.FileFunction,Legend,Top*%')
-    expect(silk).toContain('C,0.120000') // the 0603’s silk width (ChipBlocks’ own cornerTicksSilk)
+    expect(silk).toContain('C,0.150000') // the 0603’s silk width (cornerTicksSilk, ≥ the 0.15 mm fab min)
     // the corner ticks are stroked: a pen-up move (D02) then a pen-down draw (D01) per segment
     expect(silk).toMatch(/D02\*/)
     expect(silk).toMatch(/D01\*/)

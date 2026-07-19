@@ -18,11 +18,13 @@ import {
   MAX_BOARD_MM,
   MAX_DRILL_MM,
   MIN_BOARD_MM,
+  MIN_SILK_CHAR_HEIGHT_MM,
   minCopperFeatureMm,
   PTH_PAD_ANNULAR_MM,
   runDrc,
 } from '../src/renderer/pcb-drc.ts'
 import { DEFAULT_ROUTE_CLASS, routeBoard } from '../src/renderer/pcb-route.ts'
+import { SILK_TEXT } from '../src/renderer/stroke-font.ts'
 
 const parts = (defs: [string, string][]): BoardPart[] =>
   defs.map(([id, definition]) => ({ id, definition }))
@@ -666,6 +668,48 @@ describe('runDrc — plated through-hole PAD geometry (annular ring + drill floo
         expect(pad.holeDiameter, `${id} pad ${pad.id} drill`).toBeLessThanOrEqual(MAX_DRILL_MM)
       }
     }
+  })
+})
+
+describe('Tier 0: silkscreen stroke width + character height', () => {
+  const thinId = '__TEST_THIN_SILK__'
+  afterEach(() => {
+    delete BUILTIN_FOOTPRINTS[thinId]
+  })
+  const codesForSilk = (strokeMm: number): string[] => {
+    BUILTIN_FOOTPRINTS[thinId] = {
+      id: thinId,
+      name: 'thin silk',
+      description: 'a footprint with a chosen silk stroke width for the DRC test',
+      pads: [{ id: '1', center: { x: 0, y: 0 }, size: { w: 1, h: 1 }, shape: 'rect', type: 'smd' }],
+      // a silk stroke well clear of the pad (so only the stroke-WIDTH rule can fire, not silk-over-pad)
+      silkscreen: [{ from: { x: -2, y: -2 }, to: { x: 2, y: -2 }, width: strokeMm }],
+      fabrication: [{ from: { x: -1, y: -1 }, to: { x: 1, y: -1 }, width: 0.1 }],
+      labels: { reference: { x: 0, y: 0 }, value: { x: 0, y: 0 }, fabReference: { x: 0, y: 0 } },
+      courtyard: { x: -2.5, y: -2.5, w: 5, h: 5 },
+      provenance: { source_type: 'reference', title: 't', citation: 't', confidence: 'high' },
+    }
+    const board: Board = {
+      outline: { x: 0, y: 0, w: 20, h: 20 },
+      placements: [
+        { partId: 'U1', footprintId: thinId, x: 10, y: 10, rotation: 0, designator: 'U1' },
+      ],
+    }
+    return runDrc(
+      board,
+      { airwires: [], padBoxes: [] },
+      { traces: [], vias: [], unrouted: [] },
+    ).map((v) => v.code)
+  }
+
+  test('a 0.10 mm silk stroke is flagged silk-stroke; a 0.15 mm stroke is not', () => {
+    expect(codesForSilk(0.1)).toContain('silk-stroke')
+    expect(codesForSilk(0.15)).not.toContain('silk-stroke')
+  })
+
+  test('the designator font renders at ≥ the 1.0 mm minimum character height', () => {
+    expect(MIN_SILK_CHAR_HEIGHT_MM).toBe(1.0)
+    expect(SILK_TEXT.heightMm).toBeGreaterThanOrEqual(MIN_SILK_CHAR_HEIGHT_MM)
   })
 })
 

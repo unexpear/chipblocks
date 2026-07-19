@@ -46,6 +46,7 @@ export type DrcCode =
   | 'drill-size'
   | 'hole-to-hole'
   | 'silk-over-pad'
+  | 'silk-stroke'
   | 'over-current'
   | 'open-net'
   | 'board-size'
@@ -154,6 +155,23 @@ export const BOARD_SIZE_PROVENANCE: FootprintProvenance = {
   date_accessed: '2026-07-19',
 }
 
+/**
+ * Minimum silkscreen character HEIGHT (1.0 mm / 40 mil) on the standard process — smaller lettering doesn't
+ * print legibly. The board's designators render from the stroke font at exactly 1.0 mm (a fixed size, so
+ * they can never violate this at runtime); this constant documents the limit + is asserted against the font.
+ */
+export const MIN_SILK_CHAR_HEIGHT_MM = 1.0
+
+export const MIN_SILK_CHAR_HEIGHT_PROVENANCE: FootprintProvenance = {
+  source_type: 'reference',
+  title: 'Minimum silkscreen character height 1.0 mm (40 mil) on the standard process',
+  citation:
+    'JLCPCB PCB capabilities: minimum silkscreen text/character height 1.0 mm (40 mil) on the standard process (0.8 mm high-precision). Matches KiCad’s 1.0 mm silk_text_size default.',
+  confidence: 'high',
+  url: 'https://jlcpcb.com/capabilities/pcb-capabilities',
+  date_accessed: '2026-07-19',
+}
+
 export type DrcViolation = {
   code: DrcCode
   message: string
@@ -188,6 +206,18 @@ export const DRC_RULES: Record<
       confidence: 'high',
       url: 'https://jlcpcb.com/capabilities/pcb-capabilities',
       date_accessed: '2026-07-04',
+    },
+  },
+  'silk-stroke': {
+    limitMm: 0.15,
+    provenance: {
+      source_type: 'reference',
+      title: 'Minimum silkscreen stroke width 0.15 mm (6 mil) on the standard process',
+      citation:
+        'JLCPCB PCB capabilities: minimum silkscreen line width / character stroke 0.15 mm (6 mil) on the standard process (0.10 mm high-precision); ink thinner than this does not print reliably and drops off the board. Matches KiCad’s 0.15 mm silk_text_thickness default.',
+      confidence: 'high',
+      url: 'https://jlcpcb.com/capabilities/pcb-capabilities',
+      date_accessed: '2026-07-19',
     },
   },
   'via-in-pad': {
@@ -557,11 +587,24 @@ export function runDrc(
       }
     }
   }
+  // Silk stroke too thin to print — ink under the fab minimum (0.15 mm) drops off the board. Checked on the
+  // footprint's own F.SilkS strokes (the designator text is a fixed 0.15 mm, always compliant); one flag
+  // per part so a whole under-inked footprint reports once, not per segment.
+  const minSilkStroke = DRC_RULES['silk-stroke'].limitMm
+  const silkWidthFlagged = new Set<string>()
   for (const pl of board.placements) {
     const fp = footprintByPlacement(pl)
     if (fp === undefined) continue
     for (const s of fp.silkscreen) {
       checkStroke(placePoint(pl, s.from), placePoint(pl, s.to), s.width, pl.partId)
+      if (s.width < minSilkStroke - 1e-9 && !silkWidthFlagged.has(pl.partId)) {
+        silkWidthFlagged.add(pl.partId)
+        out.push({
+          code: 'silk-stroke',
+          message: `${pl.designator ?? pl.partId}: a ${fmt(s.width)} mm silkscreen stroke is under the ${fmt(minSilkStroke)} mm minimum — it won't print`,
+          at: placePoint(pl, s.from),
+        })
+      }
     }
     const text = strokeText(pl.designator ?? pl.partId, silkReferenceAnchor(pl, fp))
     for (const seg of text.segments) {

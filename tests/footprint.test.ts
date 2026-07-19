@@ -309,6 +309,17 @@ describe('every built-in footprint is cited + physically valid (the anti-placeho
     for (const [key, fp] of entries) expect(fp.id).toBe(key)
   })
 
+  test('every printed silkscreen stroke is ≥ the 0.15 mm fab minimum (prints reliably)', () => {
+    // The F.SilkS strokes (corner ticks, cathode bands, pin-1 dots) must clear the 0.15 mm min silk
+    // stroke, or the ink drops off the board — and the DRC would flag a shipped footprint. F.Fab
+    // (fabrication[]) is the assembly layer, not manufactured as silk, so it is exempt.
+    for (const [key, fp] of entries) {
+      for (const s of fp.silkscreen) {
+        expect(s.width, `${key} silk stroke`).toBeGreaterThanOrEqual(0.15 - 1e-9)
+      }
+    }
+  })
+
   for (const [key, fp] of entries) {
     test(`${key}: cited, non-empty, pads inside the courtyard, real copper`, () => {
       // Cited (a real source, high/medium/low — never unknown for a shipped value).
