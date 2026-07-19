@@ -4,6 +4,7 @@ import {
   type BoardSide,
   castellatedBoardSide,
   footprintByPlacement,
+  outlineRing,
   type Placement,
   placePoint,
   type Ratsnest,
@@ -483,6 +484,33 @@ function bodyBox(pl: Placement): { x: number; y: number; w: number; h: number } 
 const fmt = (v: number) => (Math.round(v * 100) / 100).toString()
 const fmtA = (v: number) => (Math.round(v * 1000) / 1000).toString() // amps, mA precision
 
+/** Min distance (mm) from a copper box (AABB) to a closed board-edge RING — the ring sampled finely (0.1 mm),
+ *  each sample's point-to-box distance taken. Used to check copper clearance to a HAND-DRAWN (polygon) edge;
+ *  a rectangular board uses the exact per-side comparison instead. Targets simple/convex outlines. */
+function distRingToBox(
+  ring: readonly { x: number; y: number }[],
+  box: { x: number; y: number; w: number; h: number },
+): number {
+  const pointToBox = (px: number, py: number) =>
+    Math.hypot(
+      Math.max(box.x - px, 0, px - (box.x + box.w)),
+      Math.max(box.y - py, 0, py - (box.y + box.h)),
+    )
+  let min = Number.POSITIVE_INFINITY
+  const n = ring.length
+  for (let i = 0; i < n; i++) {
+    const a = ring[i] as { x: number; y: number }
+    const b = ring[(i + 1) % n] as { x: number; y: number }
+    const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 0.1))
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps
+      const d = pointToBox(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
+      if (d < min) min = d
+    }
+  }
+  return min
+}
+
 /** Every copper rectangle on the board (pads as-is; trace segments at their real width). A castellated
  *  pad is tagged so the edge checks can exempt it — it BELONGS on the board edge. */
 function copperBoxes(
@@ -702,8 +730,22 @@ export function runDrc(
   const sideLimit = (side: BoardSide) =>
     scoredSides.has(side) ? V_CUT_EDGE_CLEARANCE_MM : routedEdge
   const o = board.outline
+  // A HAND-DRAWN profile: measure each copper box against the real polygon edge (every edge treated as
+  // routed — per-edge V-score is a later increment). A plain rectangular board keeps the exact, per-side
+  // (V-cut-aware) comparison below.
+  const profileRing = board.profile !== undefined ? outlineRing(board) : undefined
   for (const c of copperBoxes(ratsnest, routing)) {
     if (c.castellated === true) continue
+    if (profileRing !== undefined) {
+      if (distRingToBox(profileRing, c) < routedEdge - 1e-9) {
+        out.push({
+          code: 'edge-clearance',
+          message: `${c.what} sits within ${fmt(routedEdge)} mm of the board edge`,
+          at: { x: c.x + c.w / 2, y: c.y + c.h / 2 },
+        })
+      }
+      continue
+    }
     // The box's actual clearance from each side; a side is violated when that is under the side's limit.
     // Report the WORST (smallest-clearance) violated side by name — near a corner that's the edge the copper
     // is really closest to, with its own limit + V-scored/routed label (not just the first side in priority).

@@ -153,6 +153,68 @@ describe('serialize → deserialize round-trip', () => {
     if (none.ok) expect(none.file.vScoredSides).toBeUndefined()
   })
 
+  test('round-trips a hand-drawn board profile; a <3-vertex or malformed one drops; omitted when none', () => {
+    const tri = {
+      points: [
+        { x: 0, y: 0 },
+        { x: 30, y: 0 },
+        { x: 15, y: 20 },
+      ],
+    }
+    // boardProfile is the 12th positional arg (after vScoredSides).
+    const r = deserializeCircuit(
+      JSON.stringify(
+        serializeCircuit(
+          nodes,
+          edges,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          tri,
+        ),
+      ),
+    )
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.file.boardProfile).toEqual(tri)
+    // a 2-vertex "profile" is not a polygon → dropped, not fatal
+    const tooFew = {
+      ...serializeCircuit(nodes, edges),
+      boardProfile: {
+        points: [
+          { x: 0, y: 0 },
+          { x: 1, y: 1 },
+        ],
+      },
+    }
+    const t = deserializeCircuit(JSON.stringify(tooFew))
+    expect(t.ok).toBe(true)
+    if (t.ok) expect(t.file.boardProfile).toBeUndefined()
+    // a NaN vertex is dropped, leaving too few → the whole profile is dropped
+    const bad = {
+      ...serializeCircuit(nodes, edges),
+      boardProfile: {
+        points: [
+          { x: 0, y: 0 },
+          { x: Number.NaN, y: 1 },
+          { x: 2, y: 2 },
+        ],
+      },
+    }
+    const b = deserializeCircuit(JSON.stringify(bad))
+    expect(b.ok).toBe(true)
+    if (b.ok) expect(b.file.boardProfile).toBeUndefined()
+    // none → omitted (older files / a rectangular board)
+    const none = deserializeCircuit(JSON.stringify(serializeCircuit(nodes, edges)))
+    expect(none.ok).toBe(true)
+    if (none.ok) expect(none.file.boardProfile).toBeUndefined()
+  })
+
   test('round-trips the chip floorplan layer (overrides + lens + signature); omitted when empty', () => {
     const chipLayout = {
       overrides: [

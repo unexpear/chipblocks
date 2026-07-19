@@ -283,7 +283,16 @@ describe('silkscreen and profile', () => {
   })
 
   test('the profile is the outline rectangle, drawn as a closed centreline at the cited width', () => {
-    const edge = gerberEdgeCuts({ x: 0, y: 0, w: 30, h: 20 }, WHEN)
+    // The rectangle as its 4-corner ring — byte-identical to the old hard-coded rectangle output.
+    const edge = gerberEdgeCuts(
+      [
+        { x: 0, y: 0 },
+        { x: 30, y: 0 },
+        { x: 30, y: 20 },
+        { x: 0, y: 20 },
+      ],
+      WHEN,
+    )
     expect(edge).toContain('%TF.FileFunction,Profile,NP*%')
     expect(edge).not.toContain('FilePolarity') // a profile is not an image layer
     expect(edge).toContain(`C,${GERBER_CONVENTIONS.edge_line_width.valueMm.toFixed(6)}`)
@@ -292,6 +301,24 @@ describe('silkscreen and profile', () => {
     expect(edge).toContain('X30000000Y-20000000D01*')
     expect(edge.match(/D02\*/g)).toHaveLength(4)
     expect(edge.match(/D01\*/g)).toHaveLength(4)
+  })
+
+  test('a hand-drawn polygon profile emits its REAL edges (an L-shape → six segments)', () => {
+    // A 6-vertex L-shape — the edge cut walks all six real edges, not a bounding rectangle.
+    const edge = gerberEdgeCuts(
+      [
+        { x: 0, y: 0 },
+        { x: 30, y: 0 },
+        { x: 30, y: 10 },
+        { x: 15, y: 10 },
+        { x: 15, y: 20 },
+        { x: 0, y: 20 },
+      ],
+      WHEN,
+    )
+    expect(edge.match(/D01\*/g)).toHaveLength(6) // one stroke per real edge, not 4
+    expect(edge).toContain('X15000000Y-10000000D01*') // an interior (concave) vertex the bbox would miss
+    expect(edge.trimEnd().endsWith('M02*')).toBe(true)
   })
 })
 

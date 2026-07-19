@@ -10,11 +10,14 @@ import { BUILTIN_FOOTPRINTS, type Footprint, type Pad } from '../src/renderer/fo
 import {
   type Board,
   type BoardPart,
+  type BoardProfile,
   type BoardSide,
   computeRatsnest,
   deriveBoard,
   footprintByPlacement,
+  outlineRing,
   placementBounds,
+  profileBBox,
 } from '../src/renderer/pcb-board.ts'
 import {
   CASTELLATED_MIN_DRILL_MM,
@@ -1468,5 +1471,49 @@ describe('runDrc — absolute copper-clearance floor (a net class cannot be tigh
   test('a comfortable 0.2 mm copper gap on the same tight class is clean (above the floor)', () => {
     // centre gap 0.45 → edge gap 0.2 mm ≥ the 0.127 fab floor
     expect(clearance(runDrc(board, rn, twoTraces(0.45), tight))).toHaveLength(0)
+  })
+})
+
+describe('Tier 1: a hand-drawn board profile (polygon outline)', () => {
+  // A triangular board — its real edges are the three polygon sides, not a bounding rectangle.
+  const tri: BoardProfile = {
+    points: [
+      { x: 0, y: 0 },
+      { x: 20, y: 0 },
+      { x: 10, y: 20 },
+    ],
+  }
+  const board: Board = { outline: profileBBox(tri), profile: tri, placements: [] }
+  const ROUTING = { traces: [], vias: [], unrouted: [] }
+  const edgeHits = (
+    padBoxes: {
+      net: string
+      pad: string
+      throughHole: boolean
+      x: number
+      y: number
+      w: number
+      h: number
+    }[],
+  ) => runDrc(board, { airwires: [], padBoxes }, ROUTING).filter((d) => d.code === 'edge-clearance')
+
+  test('outlineRing returns the profile points; a rect returns its 4 corners; profileBBox is the bbox', () => {
+    expect(outlineRing(board)).toEqual(tri.points)
+    expect(outlineRing({ outline: { x: 1, y: 2, w: 4, h: 3 } })).toEqual([
+      { x: 1, y: 2 },
+      { x: 5, y: 2 },
+      { x: 5, y: 5 },
+      { x: 1, y: 5 },
+    ])
+    expect(profileBBox(tri)).toEqual({ x: 0, y: 0, w: 20, h: 20 })
+  })
+
+  test('copper within 0.3 mm of a POLYGON edge is flagged; copper deep inside is clean', () => {
+    // A pad 0.1 mm above the bottom edge (the (0,0)→(20,0) side) — inside the 0.3 mm routed clearance.
+    const near = { net: 'n', pad: 'n/1', throughHole: false, x: 9.5, y: 0.1, w: 1, h: 1 }
+    // A pad near the triangle's centroid — metres from every slanted edge.
+    const deep = { net: 'n', pad: 'n/1', throughHole: false, x: 9, y: 6, w: 1, h: 1 }
+    expect(edgeHits([near])).toHaveLength(1)
+    expect(edgeHits([deep])).toHaveLength(0)
   })
 })

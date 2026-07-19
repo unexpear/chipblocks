@@ -4,6 +4,7 @@ import {
   type Airwire,
   type Board,
   footprintByPlacement,
+  outlineRing,
   type PadBox,
   placePoint,
   type Rotation,
@@ -496,19 +497,34 @@ export function PcbView({
         })()}
 
       {/* the FR4 board with its edge cut — the sheet everything sits on. On the core layer it is
-          the solid FR4 slab; on the other sheets it is the faint board outline for context. */}
-      <rect
-        x={sx(o.x)}
-        y={sy(o.y)}
-        width={o.w * pxPerMm}
-        height={o.h * pxPerMm}
-        rx={4}
-        fill={mode === 'flat' || activeLayer === 'core' ? BOARD : 'none'}
-        stroke={BOARD_EDGE}
-        strokeWidth={1.4}
-        opacity={mode === 'layers' && activeLayer !== 'core' ? 0.4 : 1}
-        onPointerDown={interactive ? () => setSelected(null) : undefined}
-      />
+          the solid FR4 slab; on the other sheets it is the faint board outline for context. A hand-drawn
+          profile renders as its real polygon; a plain board stays the rounded rectangle. */}
+      {board.profile !== undefined ? (
+        <polygon
+          points={outlineRing(board)
+            .map((p) => `${sx(p.x)},${sy(p.y)}`)
+            .join(' ')}
+          fill={mode === 'flat' || activeLayer === 'core' ? BOARD : 'none'}
+          stroke={BOARD_EDGE}
+          strokeWidth={1.4}
+          strokeLinejoin="round"
+          opacity={mode === 'layers' && activeLayer !== 'core' ? 0.4 : 1}
+          onPointerDown={interactive ? () => setSelected(null) : undefined}
+        />
+      ) : (
+        <rect
+          x={sx(o.x)}
+          y={sy(o.y)}
+          width={o.w * pxPerMm}
+          height={o.h * pxPerMm}
+          rx={4}
+          fill={mode === 'flat' || activeLayer === 'core' ? BOARD : 'none'}
+          stroke={BOARD_EDGE}
+          strokeWidth={1.4}
+          opacity={mode === 'layers' && activeLayer !== 'core' ? 0.4 : 1}
+          onPointerDown={interactive ? () => setSelected(null) : undefined}
+        />
+      )}
 
       {/* FR4 core sheet: the drilled holes that pass through the substrate */}
       {show('core') && drillEls()}

@@ -163,6 +163,7 @@ import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { PartPicker } from './part-picker.tsx'
 import { buildCrtTraces, type CrtSpot } from './part-readings.ts'
 import {
+  type BoardProfile,
   type BoardSide,
   computeRatsnest,
   deriveBoard,
@@ -170,6 +171,7 @@ import {
   offBoardPins,
   type PadBox,
   type PlacementOverride,
+  profileBBox,
   type Recess,
   type Rotation,
 } from './pcb-board.ts'
@@ -2788,6 +2790,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         userViasRef.current,
         pcbStackupOptionsRef.current,
         pcbVScoredSidesRef.current,
+        pcbProfileRef.current ?? undefined,
       )
       void bridge.saveCircuitData(JSON.stringify(file, null, 2)).then((r) => {
         // A successful save lands the project in the "My Projects" list (by its file path).
@@ -2830,6 +2833,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         userViasRef.current,
         pcbStackupOptionsRef.current,
         pcbVScoredSidesRef.current,
+        pcbProfileRef.current ?? undefined,
       )
       const name = project.name || 'My Template'
       const template: UserTemplate = {
@@ -2956,6 +2960,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       setPcbStackupOptions(result.file.stackup ?? DEFAULT_STACKUP_OPTIONS)
       // Restore THIS file's V-scored board edges (older files with none load all-routed).
       setPcbVScoredSides(result.file.vScoredSides ?? [])
+      setPcbProfile(result.file.boardProfile ?? null) // hand-drawn outline, else the auto-fit rectangle
       // Restore THIS file's hand-laid copper (replacing the previous canvas's — sanitized already by
       // deserializeCircuit); older files with none load with only auto-routed copper.
       setUserTraces(result.file.traces ?? [])
@@ -2993,6 +2998,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       setUserVias([])
       setPcbStackupOptions(DEFAULT_STACKUP_OPTIONS) // …on the default 2-layer stack-up
       setPcbVScoredSides([]) // …and every edge routed (no V-scoring)
+      setPcbProfile(null) // …and the auto-fit rectangular outline
       setChipFloorplan(null)
       dropCount.current = maxIdSuffix(circuit.nodes)
       window.setTimeout(() => fitView({ padding: 0.15 }), 80)
@@ -3529,6 +3535,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const [pcbVScoredSides, setPcbVScoredSides] = useState<BoardSide[]>([])
   const pcbVScoredSidesRef = useRef(pcbVScoredSides)
   pcbVScoredSidesRef.current = pcbVScoredSides
+  // A hand-drawn board OUTLINE (a closed polygon). null ⇒ the auto-fit rectangle. When set, the board's
+  // `outline` bbox is recomputed from it (the Gerber cut + edge DRC follow the profile). Saved + loaded like
+  // the stack-up. Editing it on the canvas is the next increment; today it round-trips through Save/Load.
+  const [pcbProfile, setPcbProfile] = useState<BoardProfile | null>(null)
+  const pcbProfileRef = useRef(pcbProfile)
+  pcbProfileRef.current = pcbProfile
   const pcbBoard = useMemo(() => {
     const board = deriveBoard(
       nodes.map((n) => {
@@ -3541,8 +3553,14 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       }),
       pcbPlacements,
     )
-    return pcbVScoredSides.length > 0 ? { ...board, vScoredSides: pcbVScoredSides } : board
-  }, [nodes, pcbPlacements, pcbVScoredSides])
+    const withScore =
+      pcbVScoredSides.length > 0 ? { ...board, vScoredSides: pcbVScoredSides } : board
+    // A profile overrides the auto-fit edge AND the bbox outline (kept in sync — the invariant every
+    // bbox consumer relies on).
+    return pcbProfile !== null
+      ? { ...withScore, profile: pcbProfile, outline: profileBBox(pcbProfile) }
+      : withScore
+  }, [nodes, pcbPlacements, pcbVScoredSides, pcbProfile])
   const pcbBoardRef = useRef(pcbBoard)
   pcbBoardRef.current = pcbBoard
   // Hand-placed spots for parts that leave the schematic are dropped. (File Open/Import clear the

@@ -2,6 +2,7 @@ import { buildZip, type ZipEntry } from '../zip-store.ts'
 import {
   type Board,
   footprintByPlacement,
+  outlineRing,
   placePoint,
   type Ratsnest,
   type Recess,
@@ -543,7 +544,7 @@ export function buildManufacturingZip(inputs: FabInputs): FabZip {
     text(FAB_FILE_NAMES.bottomPaste, gerberPaste(board, 'Bot', when)),
     text(FAB_FILE_NAMES.topSilk, gerberSilkscreen(board, 'Top', when)),
     text(FAB_FILE_NAMES.bottomSilk, gerberSilkscreen(board, 'Bot', when)),
-    text(FAB_FILE_NAMES.edgeCuts, gerberEdgeCuts(board.outline, when)),
+    text(FAB_FILE_NAMES.edgeCuts, gerberEdgeCuts(outlineRing(board), when)),
     text(FAB_FILE_NAMES.drill, excellonDrill(board, routing, when, stackup.copperLayers)),
     // The non-plated drill file — only when the board has NPTH (mounting/tooling) holes. Plating a
     // mounting hole is wrong fab data, so its hole goes here (FileFunction NonPlated,…,NPTH), not above.

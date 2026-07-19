@@ -1,7 +1,7 @@
 import type { FootprintProvenance, Pad } from './footprint.ts'
 import {
   type Board,
-  type BoardOutline,
+  type BoardPoint,
   footprintByPlacement,
   placePoint,
   type Ratsnest,
@@ -482,33 +482,17 @@ export function gerberSilkscreen(board: Board, side: 'Top' | 'Bot', when: Date):
 }
 
 /** The board profile (Edge.Cuts): the outline rectangle as four draws — the fab cuts the centreline. */
-export function gerberEdgeCuts(outline: BoardOutline, when: Date): string {
+export function gerberEdgeCuts(ring: readonly BoardPoint[], when: Date): string {
   const apertures = new Apertures()
   const code = apertures.code(`C,${apNum(GERBER_CONVENTIONS.edge_line_width.valueMm)}`, 'Profile')
-  const x0 = outline.x
-  const y0 = outline.y
-  const x1 = outline.x + outline.w
-  const y1 = outline.y + outline.h
-  const corners: [{ x: number; y: number }, { x: number; y: number }][] = [
-    [
-      { x: x0, y: y0 },
-      { x: x1, y: y0 },
-    ],
-    [
-      { x: x1, y: y0 },
-      { x: x1, y: y1 },
-    ],
-    [
-      { x: x1, y: y1 },
-      { x: x0, y: y1 },
-    ],
-    [
-      { x: x0, y: y1 },
-      { x: x0, y: y0 },
-    ],
-  ]
+  // Walk the closed ring, emitting each edge as a pen-up move to its start then a stroke to its end. For a
+  // rectangle's four corners this is byte-identical to the old hard-coded rectangle; a hand-drawn polygon
+  // emits its real edges. The ring closes with the last→first segment.
   const body = [`D${code}*`]
-  for (const [from, to] of corners) {
+  const n = ring.length
+  for (let i = 0; i < n; i++) {
+    const from = ring[i] as BoardPoint
+    const to = ring[(i + 1) % n] as BoardPoint
     body.push(`${xy(from)}D02*`)
     body.push(`${xy(to)}D01*`)
   }

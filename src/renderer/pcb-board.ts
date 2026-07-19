@@ -36,8 +36,18 @@ export type Placement = {
   designator?: string
 }
 
-/** The board outline (its physical edge), in mm — a rectangle for now. */
+/** The board outline's BOUNDING BOX, in mm. Always the axis-aligned extent of the board — for a plain
+ *  rectangular board it IS the board; for a hand-drawn `profile` it is that polygon's bounding box. */
 export type BoardOutline = { x: number; y: number; w: number; h: number }
+
+/** One vertex of a hand-drawn board profile, in board mm. */
+export type BoardPoint = { x: number; y: number }
+
+/** A user-drawn board PROFILE — the real physical edge as a closed ring of vertices (mm), replacing the
+ *  auto-fit rectangle. Absent ⇒ the board IS its bounding-box rectangle (`outline`). Increment 1: the outer
+ *  contour only, straight edges, implicitly closed (last→first), ≥ 3 points. Later increments add inner
+ *  cutout contours + curved (arc) edges. */
+export type BoardProfile = { points: readonly BoardPoint[] }
 
 /**
  * A controlled-depth RECESS — a rectangular pocket milled into the board to a partial depth (it does
@@ -67,6 +77,33 @@ export type Board = {
    *  clearance than a routed one (the scoring blade + the snap can chip copper right at the groove), so
    *  the copper-to-edge DRC tightens on these sides. Absent / empty ⇒ every edge is routed (the default). */
   vScoredSides?: BoardSide[]
+  /** A hand-drawn board edge (a closed polygon). Absent ⇒ the board is the rectangle `outline`. When
+   *  present, `outline` MUST equal this profile's bounding box — the Gerber cut, the edge-clearance DRC and
+   *  the 3-D body follow the profile, while the many bounding-box consumers keep reading `outline`. */
+  profile?: BoardProfile
+}
+
+/** The board's bounding-box outline (mm) for a hand-drawn profile — the axis-aligned extent of its ring. */
+export function profileBBox(profile: BoardProfile): BoardOutline {
+  const xs = profile.points.map((p) => p.x)
+  const ys = profile.points.map((p) => p.y)
+  const x = Math.min(...xs)
+  const y = Math.min(...ys)
+  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y }
+}
+
+/** The board's physical edge as a closed ring of vertices — the profile's points if hand-drawn, else the
+ *  four `outline` corners IN THE ORDER the Gerber writer has always used (so a rectangular board's edge cut
+ *  stays byte-identical). The Gerber profile, the edge-clearance DRC and the 3-D body all walk this ring. */
+export function outlineRing(board: Pick<Board, 'outline' | 'profile'>): BoardPoint[] {
+  if (board.profile !== undefined) return board.profile.points.map((p) => ({ x: p.x, y: p.y }))
+  const o = board.outline
+  return [
+    { x: o.x, y: o.y },
+    { x: o.x + o.w, y: o.y },
+    { x: o.x + o.w, y: o.y + o.h },
+    { x: o.x, y: o.y + o.h },
+  ]
 }
 
 /** The minimal part shape deriveBoard reads (a schematic node). */

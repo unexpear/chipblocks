@@ -1,7 +1,7 @@
 import type { BlockData } from './blocks.ts'
 import { type ChipLayout, isEmptyChipLayout, sanitizeChipLayout } from './chip-layout.ts'
 import type { Parameters } from './part-defaults.ts'
-import type { BoardSide } from './pcb-board.ts'
+import type { BoardProfile, BoardSide } from './pcb-board.ts'
 import { type CopperTrace, sanitizeCopper, type Via } from './pcb-route.ts'
 import { isDefaultStackupOptions, type StackupOptions, sanitizeStackup } from './pcb-stackup.ts'
 import type { SheetSettings } from './sheet-frame.tsx'
@@ -81,6 +81,9 @@ export type CircuitFile = {
   /** The board edges the user marked V-SCORED (separated from a panel by a snap groove, not a routed
    *  slot) — those edges use the tighter 0.4 mm copper-to-edge rule. Absent / empty ⇒ every edge routed. */
   vScoredSides?: BoardSide[]
+  /** A hand-drawn board edge (a closed polygon of ≥ 3 vertices, mm). Absent ⇒ the board is the auto-fit
+   *  rectangle. Saved so a shaped board reopens as its real outline (the Gerber cut + edge DRC follow it). */
+  boardProfile?: BoardProfile
   /** The chip floorplan's own layer — cell-placement overrides + lens + schematic fingerprint; absent ⇒
    *  the chip layout was never touched (older files), so it re-generates fresh from the design. */
   chipLayout?: ChipLayout
@@ -205,6 +208,7 @@ export function serializeCircuit(
   userVias?: readonly Via[],
   stackup?: StackupOptions,
   vScoredSides?: readonly BoardSide[],
+  boardProfile?: BoardProfile,
 ): CircuitFile {
   // Save only the user parts THIS circuit references (not the whole session registry, which is shared
   // across open tabs) — so the file is self-contained + portable without leaking unrelated parts.
@@ -221,6 +225,9 @@ export function serializeCircuit(
     ...(sheet ? { sheet } : {}),
     ...(placements && placements.length > 0 ? { placements: [...placements] } : {}),
     ...(vScoredSides && vScoredSides.length > 0 ? { vScoredSides: [...vScoredSides] } : {}),
+    ...(boardProfile && boardProfile.points.length >= 3
+      ? { boardProfile: { points: boardProfile.points.map((p) => ({ x: p.x, y: p.y })) } }
+      : {}),
     ...(referencedUserParts.length > 0 ? { userParts: referencedUserParts } : {}),
     ...(chipLayout && !isEmptyChipLayout(chipLayout) ? { chipLayout } : {}),
     ...(stackup && !isDefaultStackupOptions(stackup) ? { stackup } : {}),
@@ -319,6 +326,7 @@ export function deserializeCircuit(text: string): DeserializeResult {
     sheet,
     placements,
     vScoredSides,
+    boardProfile,
     userParts,
     chipLayout,
     stackup,
@@ -352,6 +360,24 @@ export function deserializeCircuit(text: string): DeserializeResult {
   const cleanVScoredSides = Array.isArray(vScoredSides)
     ? validSides.filter((s) => (vScoredSides as unknown[]).includes(s))
     : []
+  // Board profile: keep only a real closed polygon — {points: [...]} with ≥ 3 vertices, each a finite
+  // {x, y}. Anything malformed is dropped (the board falls back to the auto-fit rectangle), never fatal.
+  const rawProfilePoints = (boardProfile as { points?: unknown })?.points
+  const cleanProfilePoints = Array.isArray(rawProfilePoints)
+    ? rawProfilePoints
+        .filter((p): p is BoardProfile['points'][number] => {
+          const q = p as Record<string, unknown>
+          return (
+            typeof q?.x === 'number' &&
+            Number.isFinite(q.x) &&
+            typeof q?.y === 'number' &&
+            Number.isFinite(q.y)
+          )
+        })
+        .map((p) => ({ x: p.x, y: p.y }))
+    : []
+  const cleanBoardProfile: BoardProfile | undefined =
+    cleanProfilePoints.length >= 3 ? { points: cleanProfilePoints } : undefined
   // User parts: validate each against the user-part shape (mirrors user-part.schema.json). A malformed
   // entry is dropped — not a reason to reject the whole circuit — so a mostly-good file still loads its
   // good parts (and the parts that reference a dropped one just render as the honest unknown-part box).
@@ -375,6 +401,7 @@ export function deserializeCircuit(text: string): DeserializeResult {
       ...(sheetOk ? { sheet: sheet as SheetSettings } : {}),
       ...(cleanPlacements.length > 0 ? { placements: cleanPlacements } : {}),
       ...(cleanVScoredSides.length > 0 ? { vScoredSides: cleanVScoredSides } : {}),
+      ...(cleanBoardProfile ? { boardProfile: cleanBoardProfile } : {}),
       ...(cleanUserParts.length > 0 ? { userParts: cleanUserParts } : {}),
       ...(cleanChipLayout ? { chipLayout: cleanChipLayout } : {}),
       ...(cleanStackup ? { stackup: cleanStackup } : {}),
