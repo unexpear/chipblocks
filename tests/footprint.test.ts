@@ -246,8 +246,10 @@ describe('pin-1 chamfers on the fabrication body outline', () => {
 })
 
 describe('printed pin-1 / polarity markers on the silkscreen (assembly orientation)', () => {
-  // point → pad-rectangle distance (0 inside) — the exact metric the silk-over-pad DRC uses. A marker
-  // must clear every pad by at least its stroke half-width, or the fab would clip the ink off.
+  // point → pad-rectangle distance (0 inside) — the exact metric the silk-over-pad DRC uses. A marker's
+  // INK must clear every pad by ≥ the 0.15 mm silk-to-pad clearance, or the fab clips it (silk half-width
+  // + 0.15 mm from the pad copper).
+  const SILK_TO_PAD_MM = 0.15
   const distToPad = (px: number, py: number, pad: Footprint['pads'][number]) => {
     const rx = pad.center.x - pad.size.w / 2
     const ry = pad.center.y - pad.size.h / 2
@@ -257,7 +259,7 @@ describe('printed pin-1 / polarity markers on the silkscreen (assembly orientati
   }
   const silkClearsPads = (fp: Footprint) => {
     for (const s of fp.silkscreen) {
-      const g = s.width / 2
+      const g = s.width / 2 + SILK_TO_PAD_MM
       const steps = Math.max(1, Math.ceil(Math.hypot(s.to.x - s.from.x, s.to.y - s.from.y) / 0.05))
       for (let i = 0; i <= steps; i++) {
         const t = i / steps
@@ -267,6 +269,12 @@ describe('printed pin-1 / polarity markers on the silkscreen (assembly orientati
       }
     }
   }
+
+  test('EVERY shipped footprint clears the 0.15 mm silk-to-pad rule (no DRC false-positive)', () => {
+    // The catalog-wide guard: after the silk-to-pad rule tightened to a positive 0.15 mm gap, no shipped
+    // footprint's silk may sit within it (else a placed part would false-flag silk-over-pad).
+    for (const fp of Object.values(BUILTIN_FOOTPRINTS)) silkClearsPads(fp)
+  })
 
   test('SOIC-8 prints a pin-1 dot above pad 1 (its 8 pads are otherwise identical), clear of every pad', () => {
     // more than the 8 corner ticks alone — the added pin-1 dot

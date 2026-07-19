@@ -271,15 +271,18 @@ export const DRC_RULES: Record<
   { limitMm: number; provenance: FootprintProvenance }
 > = {
   'silk-over-pad': {
-    limitMm: 0,
+    // A POSITIVE gap, not just non-overlap: the solder-mask opening is slightly larger than the copper pad,
+    // and silk within ~0.15 mm of it gets clipped or bleeds onto the joint. So silk ink must clear the pad
+    // copper by ≥ 0.15 mm (which also covers the mask expansion), not merely avoid overlapping it.
+    limitMm: 0.15,
     provenance: {
       source_type: 'reference',
-      title: 'Silkscreen must not print on exposed pads — fabs clip it; ink on a joint is a defect',
+      title: 'Silkscreen must clear pads by ≥ 0.15 mm — fabs clip ink near the mask opening',
       citation:
-        'JLCPCB PCB capabilities / order rules: silkscreen over pad openings is removed (clipped) during fabrication — lettering that lands there simply disappears from the board, and any ink that survives ends up under solder. KiCad ships the same check (DRC “silkscreen clipped by solder mask”).',
+        'JLCPCB / OSH Park PCB capabilities: silkscreen must keep ≥ ~0.15 mm from a pad (its solder-mask opening); ink closer is clipped during fabrication (it disappears) or bleeds onto the solder joint. KiCad ships the same check (DRC “silkscreen clipped by solder mask”).',
       confidence: 'high',
       url: 'https://jlcpcb.com/capabilities/pcb-capabilities',
-      date_accessed: '2026-07-04',
+      date_accessed: '2026-07-19',
     },
   },
   'silk-stroke': {
@@ -750,7 +753,9 @@ export function runDrc(
     strokeWidth: number,
     partId: string,
   ) => {
-    const g = strokeWidth / 2
+    // The ink must clear the pad copper by ≥ the silk-to-pad clearance (which covers the mask opening) — so
+    // a stroke sample is a violation when its distance-to-pad is under stroke-half + that clearance.
+    const g = strokeWidth / 2 + DRC_RULES['silk-over-pad'].limitMm
     const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / 0.05))
     for (let s = 0; s <= steps; s++) {
       const t = s / steps
@@ -763,7 +768,7 @@ export function runDrc(
         silkHits.add(key)
         out.push({
           code: 'silk-over-pad',
-          message: `${partId}'s silkscreen prints on an exposed pad (${pad.pad}) — the fab clips it`,
+          message: `${partId}'s silkscreen is within ${fmt(DRC_RULES['silk-over-pad'].limitMm)} mm of an exposed pad (${pad.pad}) — the fab clips ink that close to the mask opening`,
           at: { x: px, y: py },
         })
       }

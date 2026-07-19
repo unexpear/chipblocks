@@ -101,7 +101,7 @@ export const BOARD_PLAN: PlanTier[] = [
         value: '~0.15mm (6mil) silk-to-pad.',
         cite: 'JLCPCB / OSH Park silk-to-pad ~0.15mm',
         size: 'S',
-        status: 'todo',
+        status: 'done',
         code: 'src/renderer/pcb-drc.ts:420-444',
       },
       {
