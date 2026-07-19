@@ -1299,9 +1299,9 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
         </button>
       </div>
       {confirmDelete !== null ? (
+        // biome-ignore lint/a11y/noStaticElementInteractions: a full-screen modal backdrop overlay is not a semantic control; the dialog itself is the inner element below
+        // biome-ignore lint/a11y/useKeyWithClickEvents: the backdrop click is a mouse-only convenience (click outside to dismiss); the modal is keyboard-dismissable via its Cancel button
         <div
-          role="dialog"
-          aria-modal="true"
           style={{
             position: 'fixed',
             inset: 0,
@@ -1311,10 +1311,15 @@ export function ProjectBrowser({ onCreate }: { onCreate: (choice: ProjectChoice)
             alignItems: 'center',
             justifyContent: 'center',
           }}
-          onClick={() => setConfirmDelete(null)}
+          // Close only when the backdrop ITSELF is clicked, not a click that bubbled up from the dialog
+          // body — this replaces an inner stopPropagation handler (which had no keyboard equivalent).
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setConfirmDelete(null)
+          }}
         >
           <div
-            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
             style={{
               width: 380,
               maxWidth: '90vw',
