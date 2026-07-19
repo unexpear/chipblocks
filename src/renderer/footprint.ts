@@ -41,6 +41,10 @@ export type Pad = {
    *  mounting/tooling hole — carries no plating and no annular-ring requirement, and the fab drills it in a
    *  SEPARATE non-plated (NPTH) drill file. Only meaningful for through-hole pads. */
   plated?: boolean
+  /** A THERMAL pad (`thermal: true`) — the large pad under a power part — intentionally carries a filled
+   *  same-net via ARRAY to conduct heat into a plane. So a same-net via inside it is by design, not the
+   *  solder-wicking via-in-pad defect; the DRC exempts those (the vias are assumed filled-and-capped). */
+  thermal?: boolean
 }
 
 /** A silkscreen line segment (the white outline printed on the board), in mm. */

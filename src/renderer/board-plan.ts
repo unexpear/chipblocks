@@ -163,7 +163,7 @@ export const BOARD_PLAN: PlanTier[] = [
         value: '~0.3mm vias at ~1.0-1.2mm pitch, filled-and-capped (IPC-4761 type IV/Vb-VII).',
         cite: 'IPC-7093; IPC-4761; JLCPCB thermal-pad guidance',
         size: 'M',
-        status: 'todo',
+        status: 'done',
         code: 'src/renderer/pcb-drc.ts:331-347',
       },
       {

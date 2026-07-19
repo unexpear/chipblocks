@@ -799,6 +799,73 @@ describe('Tier 0: voltage clearance (IPC-2221B B2) — high-ΔV nets need extra 
   })
 })
 
+describe('Tier 0: thermal-via exemption (a filled same-net via array under a power pad is legit)', () => {
+  const THERMAL = '__TEST_THERMAL_PAD__'
+  const PLAIN = '__TEST_PLAIN_PAD__'
+  afterEach(() => {
+    delete BUILTIN_FOOTPRINTS[THERMAL]
+    delete BUILTIN_FOOTPRINTS[PLAIN]
+  })
+  const bigPad = (id: string, thermal: boolean): Footprint => ({
+    id,
+    name: 'thermal pad',
+    description: 'a large power pad, optionally thermal',
+    pads: [
+      {
+        id: 'TH',
+        center: { x: 0, y: 0 },
+        size: { w: 4, h: 4 },
+        shape: 'rect',
+        type: 'smd',
+        ...(thermal ? { thermal: true } : {}),
+      },
+    ],
+    silkscreen: [],
+    fabrication: [
+      { from: { x: -1, y: -1 }, to: { x: 1, y: -1 }, width: 0.15 },
+      { from: { x: 1, y: -1 }, to: { x: 1, y: 1 }, width: 0.15 },
+      { from: { x: 1, y: 1 }, to: { x: -1, y: 1 }, width: 0.15 },
+      { from: { x: -1, y: 1 }, to: { x: -1, y: -1 }, width: 0.15 },
+    ],
+    labels: { reference: { x: 0, y: 0 }, value: { x: 0, y: 0 }, fabReference: { x: 0, y: 0 } },
+    courtyard: { x: -2.5, y: -2.5, w: 5, h: 5 },
+    provenance: { source_type: 'reference', title: 't', citation: 't', confidence: 'high' },
+  })
+  const board: Board = {
+    outline: { x: -5, y: -5, w: 30, h: 30 },
+    placements: [
+      { partId: 'U1', footprintId: THERMAL, x: 10, y: 10, rotation: 0, designator: 'U1' },
+    ],
+  }
+  const withId = (id: string): Board => ({
+    ...board,
+    placements: [{ ...board.placements[0], footprintId: id } as (typeof board.placements)[number]],
+  })
+  const rn = (padNet: string) => ({
+    airwires: [],
+    padBoxes: [{ net: padNet, pad: 'U1/TH', throughHole: false, x: 8, y: 8, w: 4, h: 4 }],
+  })
+  const viaAt = (net: string) => ({
+    traces: [],
+    vias: [{ net, at: { x: 10, y: 10 }, diameterMm: 0.4, drillMm: 0.2 }],
+    unrouted: [],
+  })
+  const inPad = (id: string, padNet: string, viaNet: string) => {
+    BUILTIN_FOOTPRINTS[id] = bigPad(id, id === THERMAL)
+    return runDrc(withId(id), rn(padNet), viaAt(viaNet)).filter((v) => v.code === 'via-in-pad')
+  }
+
+  test('a SAME-net via inside a THERMAL pad is exempt (deliberate filled thermal array)', () => {
+    expect(inPad(THERMAL, 'GND', 'GND')).toHaveLength(0)
+  })
+  test('a DIFFERENT-net via inside a thermal pad is still flagged (a foreign via is a defect)', () => {
+    expect(inPad(THERMAL, 'GND', 'VCC')).toHaveLength(1)
+  })
+  test('a same-net via inside a NON-thermal pad is still flagged (unintentional via-in-pad)', () => {
+    expect(inPad(PLAIN, 'GND', 'GND')).toHaveLength(1)
+  })
+})
+
 describe('Tier 0: min plated drill = max(0.15 mm, board thickness ÷ 8)', () => {
   const viaSize = (drillMm: number, thicknessMm?: number): string[] => {
     const board: Board = { outline: { x: 0, y: 0, w: 20, h: 20 }, placements: [] }

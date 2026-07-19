@@ -642,7 +642,15 @@ export function runDrc(
   // Via in pad — a via whose barrel sits inside a component pad's copper wicks that joint's solder
   // down the barrel (via-in-pad). It is its OWN defect, not a clearance one: it applies even same-net
   // (a via in its own net's pad still starves the joint). The auto-router keeps vias off every pad;
-  // this catches a HAND-placed via dropped on a pad.
+  // this catches a HAND-placed via dropped on a pad. EXEMPTION: a THERMAL pad intentionally carries a
+  // filled same-net via array to conduct heat, so a same-net via inside a thermal pad is by design.
+  const thermalPadKeys = new Set<string>()
+  for (const pl of board.placements) {
+    const fp = footprintByPlacement(pl)
+    if (fp === undefined) continue
+    for (const pad of fp.pads)
+      if (pad.thermal === true) thermalPadKeys.add(`${pl.partId}/${pad.id}`)
+  }
   for (const v of routing.vias) {
     const bx = v.at.x - v.diameterMm / 2
     const by = v.at.y - v.diameterMm / 2
@@ -650,6 +658,8 @@ export function runDrc(
     for (const pad of ratsnest.padBoxes) {
       // open-interval overlap: a via touching a pad edge is legal; interior overlap is via-in-pad
       if (bx < pad.x + pad.w && pad.x < bx + bs && by < pad.y + pad.h && pad.y < by + bs) {
+        // A same-net via inside a THERMAL pad is a deliberate (filled) thermal-via array, not a defect.
+        if (v.net === pad.net && thermalPadKeys.has(pad.pad)) continue
         const part = pad.pad.split('/')[0] ?? pad.net
         out.push({
           code: 'via-in-pad',
