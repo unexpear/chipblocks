@@ -19,6 +19,7 @@
  */
 
 import type { Instance, World } from './cross-fk-validator.ts'
+import { solveDCRobust } from './dc-robust.ts'
 import { dcRan, type Solution, type SolveOptions, solveDC } from './dc-solver.ts'
 import { readScalarParam } from './instance-params.ts'
 import {
@@ -259,6 +260,19 @@ export type ElectroThermalOptions = SolveOptions & {
  * to the electro-thermal fixed point. With no thermally-rated parts this reduces
  * to a single plain DC solve (plus one confirmation pass).
  */
+/**
+ * A DC solve that falls back to the robust (source/gmin-stepping) solver only when the fast plain-Newton
+ * solve fails to converge. A stiff circuit — a cross-coupled SRAM cell, a tight bistable latch — can leave
+ * the plain solve short of convergence; the robust solver walks it in. Converging circuits (the vast
+ * majority) never pay the extra cost, so this can only make a failing solve succeed, never a passing one slower.
+ */
+function solveDCConverging(world: World, options?: SolveOptions): Solution {
+  const solution = solveDC(world, options)
+  if (solution.converged) return solution
+  const robust = solveDCRobust(world, options)
+  return robust.converged ? robust : solution
+}
+
 export function solveElectroThermal(
   world: World,
   options?: ElectroThermalOptions,
@@ -266,7 +280,7 @@ export function solveElectroThermal(
   const warnings: string[] = []
   const projectAmbientC = options?.projectAmbientC
   let temperaturesC = new Map<string, number>()
-  let solution: Solution = solveDC(world, options)
+  let solution: Solution = solveDCConverging(world, options)
   let thermalConverged = false
   let iteration = 0
 
@@ -288,7 +302,7 @@ export function solveElectroThermal(
     }
 
     const adjusted = worldAtTemperatures(world, temperaturesC, warnings)
-    solution = solveDC(adjusted.world, { ...options, temperaturesC })
+    solution = solveDCConverging(adjusted.world, { ...options, temperaturesC })
     if (adjusted.outOfRange) break // model out of validity — report, don't fake
   }
 
