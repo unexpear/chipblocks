@@ -39,7 +39,7 @@ export const BOARD_PLAN: PlanTier[] = [
           '1oz cap 0.10mm/design 0.127-0.15mm; 2oz 0.15-0.16mm; 2.5oz 0.20mm; 3.5oz 0.25mm; 4.5oz 0.30mm.',
         cite: 'https://jlcpcb.com/capabilities/pcb-capabilities',
         size: 'M',
-        status: 'todo',
+        status: 'done',
         code: 'src/renderer/pcb-drc.ts:141-151,296-306,461-538',
       },
       {

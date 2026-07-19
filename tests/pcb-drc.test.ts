@@ -13,7 +13,7 @@ import {
   computeRatsnest,
   deriveBoard,
 } from '../src/renderer/pcb-board.ts'
-import { DRC_RULES, runDrc } from '../src/renderer/pcb-drc.ts'
+import { DRC_RULES, minCopperFeatureMm, runDrc } from '../src/renderer/pcb-drc.ts'
 import { DEFAULT_ROUTE_CLASS, routeBoard } from '../src/renderer/pcb-route.ts'
 
 const parts = (defs: [string, string][]): BoardPart[] =>
@@ -178,6 +178,57 @@ describe('runDrc', () => {
     }
     const violations = runDrc(board, rn, routing)
     expect(violations.some((v) => v.code === 'track-width')).toBe(true)
+  })
+
+  describe('Tier 0: the track-width floor scales with copper weight (not a flat 0.2 mm)', () => {
+    // A one-trace board of a chosen trace width — the minimal fixture for the width floor.
+    const boardWith = (widthMm: number) => ({
+      board: { outline: { x: 0, y: 0, w: 20, h: 20 }, placements: [] } as Board,
+      rn: { airwires: [], padBoxes: [] },
+      routing: {
+        traces: [
+          {
+            net: 'n',
+            widthMm,
+            layer: 'top' as const,
+            points: [
+              { x: 5, y: 10 },
+              { x: 12, y: 10 },
+            ],
+          },
+        ],
+        vias: [],
+        unrouted: [],
+      },
+    })
+    const flagged = (widthMm: number, copperWeight?: 'half_oz' | 'one_oz' | 'two_oz') => {
+      const { board, rn, routing } = boardWith(widthMm)
+      const opts = copperWeight === undefined ? {} : { copperWeight }
+      return runDrc(board, rn, routing, DEFAULT_ROUTE_CLASS, opts).some(
+        (v) => v.code === 'track-width',
+      )
+    }
+
+    test('minCopperFeatureMm is the JLCPCB weight table, 1 oz default', () => {
+      expect(minCopperFeatureMm('half_oz')).toBeCloseTo(0.1, 6)
+      expect(minCopperFeatureMm('one_oz')).toBeCloseTo(0.127, 6)
+      expect(minCopperFeatureMm('two_oz')).toBeCloseTo(0.15, 6)
+      expect(minCopperFeatureMm(undefined)).toBeCloseTo(0.127, 6) // default 1 oz
+    })
+
+    test('a 0.15 mm trace at 1 oz PASSES — the old flat 0.2 mm falsely rejected makeable traces', () => {
+      expect(flagged(0.15, 'one_oz')).toBe(false)
+    })
+
+    test('a 0.14 mm trace is fine at 1 oz but too thin at 2 oz (heavier copper, wider floor)', () => {
+      expect(flagged(0.14, 'one_oz')).toBe(false)
+      expect(flagged(0.14, 'two_oz')).toBe(true)
+    })
+
+    test('a 0.11 mm trace is too thin at 1 oz but OK at 0.5 oz (thinner copper resolves finer)', () => {
+      expect(flagged(0.11, 'one_oz')).toBe(true)
+      expect(flagged(0.11, 'half_oz')).toBe(false)
+    })
   })
 
   test('silk lettering over a neighbour’s exposed pad is flagged — the fab would clip the ink', () => {
