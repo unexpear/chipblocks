@@ -188,6 +188,7 @@ export function BoardView({
       mode={mode}
       activeLayer={activeLayer}
       pxPerMm={pxPerMm}
+      viewHeight={viewHeight}
       coordinateGrid={coordinateGrid}
       {...(onMove ? { onMove } : {})}
       {...(onMoveStart ? { onMoveStart } : {})}

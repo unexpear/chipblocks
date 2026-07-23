@@ -1,4 +1,12 @@
-import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react'
+import {
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type { Pad } from './footprint.ts'
 import {
   type Airwire,
@@ -20,6 +28,7 @@ import {
 } from './pcb-measure.ts'
 import { hitCopper, hitPad } from './pcb-pick.ts'
 import { ALL_COPPER_LAYERS, type CopperLayer, type CopperTrace, type Via } from './pcb-route.ts'
+import { type Bounds, clientToView, fitView, panByPx, type View, zoomAt } from './pcb-viewport.ts'
 import { SILK_TEXT, strokeText } from './stroke-font.ts'
 
 /**
@@ -145,7 +154,6 @@ export function PcbView({
   mode = 'flat',
   activeLayer = 'f_cu',
   pxPerMm = 12,
-  paddingMm = 3,
   onMove,
   onMoveStart,
   onRotate,
@@ -166,6 +174,7 @@ export function PcbView({
   onMeasureClick,
   onMeasureMove,
   coordinateGrid = false,
+  viewHeight = 460,
   outlineActive = false,
   outlineDragIndex = null,
   onOutlineVertexDown,
@@ -186,7 +195,6 @@ export function PcbView({
   /** The sheet shown in 'layers' mode. */
   activeLayer?: BoardLayerId
   pxPerMm?: number
-  paddingMm?: number
   /** Move a part's footprint origin to (x, y) mm — supplied by the panel to make the board editable. */
   onMove?: (partId: string, x: number, y: number) => void
   /** A drag has begun to actually MOVE a part (fired once, on the first move — not on a plain click) so
@@ -222,6 +230,8 @@ export function PcbView({
   /** Draw the coordinate reference behind the board: the x/y axes through the origin (0,0), the four
    *  quadrants (I–IV), and a faint mm grid — the same coordinate system the schematic canvas shows. */
   coordinateGrid?: boolean
+  /** On-screen height (px) of the flat board canvas; it fills the pane's width and pans/zooms inside. */
+  viewHeight?: number
   /** OUTLINE TOOL: when on, a draggable handle sits on every board-edge corner (outlineRing). Dragging
    *  one reports the new vertex position in mm (onOutlineMove) so the panel can rewrite the board
    *  profile; outlineDragIndex highlights the grabbed corner. The Gerber edge-cut + edge-clearance DRC
@@ -245,81 +255,86 @@ export function PcbView({
   const svgRef = useRef<SVGSVGElement | null>(null)
   const drag = useRef<{
     partId: string
-    originX: number
-    originY: number
-    startClientX: number
-    startClientY: number
+    /** The grab point's offset from the part origin (mm), so the part stays under the cursor as it moves. */
+    offsetX: number
+    offsetY: number
     /** Has this gesture actually moved the part yet? Gates the one-per-drag undo checkpoint so a plain
      *  click (select, no move) never floods the undo stack. */
     moved: boolean
   } | null>(null)
-  const [frozenOutline, setFrozenOutline] = useState<Board['outline'] | null>(null)
-  // The outline tool freezes the frame on its OWN state (not the part-drag frozenOutline) so dragging a
-  // vertex doesn't reflow the viewBox out from under the cursor. An effect releases it whenever the tool
-  // deactivates, so an Escape / tool-switch mid-drag — which App handles but can't reach into this
-  // component to clean up — never leaves the board stuck frozen. A normal release clears it directly.
-  const [outlineFrozen, setOutlineFrozen] = useState<Board['outline'] | null>(null)
-  useEffect(() => {
-    if (!outlineActive) setOutlineFrozen(null)
-  }, [outlineActive])
-
+  // VIEWPORT (viewBox pan/zoom) — the board draws in content-px (board-mm × pxPerMm) with a FIXED origin
+  // (model 0,0 → 0,0), so `view` (the visible content-px window) is what pans/zooms. Because sx/sy never
+  // depend on the board's own bbox, a part or outline-vertex drag never reflows the frame under the cursor
+  // (no freeze needed — that whole class of bug is gone). Pan by dragging the empty board, zoom on the
+  // wheel centred at the cursor, double-click to re-fit — the model the chip canvas uses.
   const o = board.outline
-  const frame = frozenOutline ?? outlineFrozen ?? o
-  const minX = frame.x - paddingMm
-  const minY = frame.y - paddingMm
-  const wPx = (frame.w + 2 * paddingMm) * pxPerMm
-  const hPx = (frame.h + 2 * paddingMm) * pxPerMm
-  const sx = (x: number) => (x - minX) * pxPerMm
-  const sy = (y: number) => (y - minY) * pxPerMm
+  const contentBounds = useMemo<Bounds>(
+    () => ({ x: o.x * pxPerMm, y: o.y * pxPerMm, w: o.w * pxPerMm, h: o.h * pxPerMm }),
+    [o.x, o.y, o.w, o.h, pxPerMm],
+  )
+  const [view, setView] = useState<View>(() => fitView(contentBounds, 1))
+  const pan = useRef<{ px: number; py: number; view: View } | null>(null)
+  const contentBoundsRef = useRef(contentBounds)
+  contentBoundsRef.current = contentBounds
+  // Once the user pans or zooms, the view is THEIRS — auto-fit stops yanking it (a part/outline edit or a
+  // pane resize won't reframe). Double-click re-fits and hands control back.
+  const userView = useRef(false)
+  const fitToBoard = useCallback(() => {
+    const el = svgRef.current
+    const aspect = el && el.clientWidth > 0 ? el.clientWidth / Math.max(1, el.clientHeight) : 1
+    userView.current = false
+    setView(fitView(contentBoundsRef.current, aspect))
+  }, [])
+  // Fit when the pane first gets a real size (the board workspace mounts display:none, so the initial
+  // measure is 0) and on any later resize — but only while the user hasn't taken the view over.
+  useLayoutEffect(() => {
+    const el = svgRef.current
+    if (el === null) return
+    const ro = new ResizeObserver(() => {
+      if (!userView.current) fitToBoard()
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [fitToBoard])
+  const sx = (x: number) => x * pxPerMm
+  const sy = (y: number) => y * pxPerMm
 
-  // screen → board mm (the inverse of sx/sy), and the pad under a board point (net inference for routing)
+  // screen → board mm: client px → content-px (through the view) → mm.
   const eventToMm = (e: { clientX: number; clientY: number }): { x: number; y: number } => {
     const rect = svgRef.current?.getBoundingClientRect()
     if (rect === undefined) return { x: 0, y: 0 }
-    return {
-      x: (e.clientX - rect.left) / pxPerMm + minX,
-      y: (e.clientY - rect.top) / pxPerMm + minY,
-    }
+    const p = clientToView(view, rect, e.clientX, e.clientY)
+    return { x: p.x / pxPerMm, y: p.y / pxPerMm }
   }
 
   const endDrag = (e: ReactPointerEvent) => {
     if (drag.current === null) return
     drag.current = null
-    setFrozenOutline(null)
     if (svgRef.current?.hasPointerCapture(e.pointerId)) {
       svgRef.current.releasePointerCapture(e.pointerId)
     }
   }
   const grabPart = (partId: string, originX: number, originY: number) => (e: ReactPointerEvent) => {
     if (e.button !== 0) return
+    e.stopPropagation() // this part owns the gesture — don't also start a background pan
     setSelected(partId)
     if (onMove === undefined) return
-    drag.current = {
-      partId,
-      originX,
-      originY,
-      startClientX: e.clientX,
-      startClientY: e.clientY,
-      moved: false,
-    }
-    setFrozenOutline(board.outline)
+    const m = eventToMm(e)
+    drag.current = { partId, offsetX: originX - m.x, offsetY: originY - m.y, moved: false }
     svgRef.current?.setPointerCapture(e.pointerId)
     e.preventDefault()
     svgRef.current?.focus({ preventScroll: true })
   }
-  // OUTLINE tool: grab a board-edge corner. The gesture is captured on the svg (like a part drag) so
-  // moves keep flowing even if the cursor leaves the small handle; the frame is frozen at the pre-drag
-  // outline so reshaping the polygon (which changes the bbox) doesn't reflow the viewBox mid-drag.
+  // OUTLINE tool: grab a board-edge corner. Captured on the svg (like a part drag) so moves keep flowing
+  // even if the cursor leaves the small handle. No frame freeze needed — the content-px origin is fixed.
   const grabVertex = (index: number) => (e: ReactPointerEvent) => {
     if (e.button !== 0) return
-    e.stopPropagation() // this handle owns the gesture — don't also fire the board's deselect
-    setOutlineFrozen(board.outline)
+    e.stopPropagation() // this handle owns the gesture — don't deselect or start a pan
     svgRef.current?.setPointerCapture(e.pointerId)
     onOutlineVertexDown?.(index)
     e.preventDefault()
   }
   const endOutlineDrag = (e: ReactPointerEvent) => {
-    setOutlineFrozen(null)
     if (svgRef.current?.hasPointerCapture(e.pointerId)) {
       svgRef.current.releasePointerCapture(e.pointerId)
     }
@@ -337,11 +352,42 @@ export function PcbView({
       d.moved = true
       onMoveStart?.(d.partId)
     }
+    const m = eventToMm(e)
     onMove(
       d.partId,
-      Math.round((d.originX + (e.clientX - d.startClientX) / pxPerMm) * 100) / 100,
-      Math.round((d.originY + (e.clientY - d.startClientY) / pxPerMm) * 100) / 100,
+      Math.round((m.x + d.offsetX) * 100) / 100,
+      Math.round((m.y + d.offsetY) * 100) / 100,
     )
+  }
+  // PAN — a pointerdown that reaches the svg (i.e. not a part or handle, which stopPropagation) drags the
+  // view; the wheel zooms centred on the cursor; double-click re-fits.
+  const startPan = (e: ReactPointerEvent) => {
+    if (e.button !== 0 || drag.current !== null) return
+    userView.current = true
+    pan.current = { px: e.clientX, py: e.clientY, view }
+    svgRef.current?.setPointerCapture(e.pointerId)
+  }
+  const movePan = (e: ReactPointerEvent) => {
+    const p = pan.current
+    const rect = svgRef.current?.getBoundingClientRect()
+    if (p === null || rect === undefined) return
+    setView(panByPx(p.view, rect, e.clientX - p.px, e.clientY - p.py))
+  }
+  const endPan = (e: ReactPointerEvent) => {
+    if (pan.current === null) return
+    pan.current = null
+    if (svgRef.current?.hasPointerCapture(e.pointerId)) {
+      svgRef.current.releasePointerCapture(e.pointerId)
+    }
+  }
+  const onWheelZoom = (e: ReactWheelEvent) => {
+    const rect = svgRef.current?.getBoundingClientRect()
+    if (rect === undefined) return
+    userView.current = true
+    const factor = e.deltaY > 0 ? 1.12 : 1 / 1.12
+    const anchor = clientToView(view, rect, e.clientX, e.clientY)
+    const contentW = Math.max(1, contentBounds.w)
+    setView((v) => zoomAt(v, factor, anchor, contentW * 0.02, contentW * 8))
   }
   const rotateSelected = () => {
     if (onRotate === undefined || selected === null) return
@@ -417,9 +463,9 @@ export function PcbView({
   return (
     <svg
       ref={svgRef}
-      width={wPx}
-      height={hPx}
-      viewBox={`0 0 ${wPx} ${hPx}`}
+      width="100%"
+      height={viewHeight}
+      viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
       style={{
         display: 'block',
         fontFamily: 'system-ui, sans-serif',
@@ -431,6 +477,9 @@ export function PcbView({
       role="img"
       aria-label="PCB layout"
       tabIndex={interactive ? 0 : undefined}
+      onWheel={onWheelZoom}
+      onPointerDown={startPan}
+      onDoubleClick={fitToBoard}
       onClick={
         routeActive
           ? (e) => {
@@ -454,6 +503,10 @@ export function PcbView({
               : undefined
       }
       onPointerMove={(e) => {
+        if (pan.current !== null) {
+          movePan(e)
+          return
+        }
         if (interactive) movePart(e)
         if (routeActive) onRouteMove?.(eventToMm(e))
         if (measureActive) onMeasureMove?.(eventToMm(e))
@@ -467,8 +520,16 @@ export function PcbView({
           }
         }
       }}
-      onPointerUp={interactive ? endDrag : outlineActive ? endOutlineDrag : undefined}
-      onPointerCancel={interactive ? endDrag : outlineActive ? endOutlineDrag : undefined}
+      onPointerUp={(e) => {
+        endPan(e)
+        endDrag(e)
+        if (outlineActive) endOutlineDrag(e)
+      }}
+      onPointerCancel={(e) => {
+        endPan(e)
+        endDrag(e)
+        if (outlineActive) endOutlineDrag(e)
+      }}
       onKeyDown={
         interactive
           ? (e) => {
@@ -489,13 +550,24 @@ export function PcbView({
           const ox = sx(0)
           const oy = sy(0)
           const stepMm = 5
-          const xLo = Math.ceil(minX / stepMm) * stepMm
-          const xHi = minX + wPx / pxPerMm
-          const yLo = Math.ceil(minY / stepMm) * stepMm
-          const yHi = minY + hPx / pxPerMm
+          // the visible board region (mm) from the current view window, in content-px extents
+          const xLoMm = view.x / pxPerMm
+          const xHiMm = (view.x + view.w) / pxPerMm
+          const yLoMm = view.y / pxPerMm
+          const yHiMm = (view.y + view.h) / pxPerMm
+          const left = view.x
+          const right = view.x + view.w
+          const top = view.y
+          const bottom = view.y + view.h
           const grid: number[][] = []
-          for (let gx = xLo; gx <= xHi; gx += stepMm) grid.push([sx(gx), 0, sx(gx), hPx])
-          for (let gy = yLo; gy <= yHi; gy += stepMm) grid.push([0, sy(gy), wPx, sy(gy)])
+          // Cap the line count when zoomed far out — the grid is decorative, so drop it past a ~2.5 m span
+          // rather than emit thousands of lines.
+          if (xHiMm - xLoMm <= 2500 && yHiMm - yLoMm <= 2500) {
+            for (let gx = Math.ceil(xLoMm / stepMm) * stepMm; gx <= xHiMm; gx += stepMm)
+              grid.push([sx(gx), top, sx(gx), bottom])
+            for (let gy = Math.ceil(yLoMm / stepMm) * stepMm; gy <= yHiMm; gy += stepMm)
+              grid.push([left, sy(gy), right, sy(gy)])
+          }
           return (
             <g pointerEvents="none" data-coord-grid="true">
               {grid.map(([x1, y1, x2, y2]) => (
@@ -510,8 +582,24 @@ export function PcbView({
                   opacity={0.14}
                 />
               ))}
-              <line x1={0} y1={oy} x2={wPx} y2={oy} stroke={AXIS} strokeWidth={1} opacity={0.5} />
-              <line x1={ox} y1={0} x2={ox} y2={hPx} stroke={AXIS} strokeWidth={1} opacity={0.5} />
+              <line
+                x1={left}
+                y1={oy}
+                x2={right}
+                y2={oy}
+                stroke={AXIS}
+                strokeWidth={1}
+                opacity={0.5}
+              />
+              <line
+                x1={ox}
+                y1={top}
+                x2={ox}
+                y2={bottom}
+                stroke={AXIS}
+                strokeWidth={1}
+                opacity={0.5}
+              />
               <circle
                 cx={ox}
                 cy={oy}
