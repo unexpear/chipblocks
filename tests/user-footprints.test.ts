@@ -9,7 +9,11 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import { deserializeCircuit, serializeCircuit } from '../src/renderer/circuit-file.ts'
 import { BUILTIN_FOOTPRINTS, type Footprint } from '../src/renderer/footprint.ts'
-import { footprintsForPinCount } from '../src/renderer/footprint-assignment.ts'
+import {
+  footprintForPart,
+  footprintOptions,
+  footprintsForPinCount,
+} from '../src/renderer/footprint-assignment.ts'
 import {
   footprintProblems,
   validateUserFootprint,
@@ -157,6 +161,26 @@ describe('the payoff — an authored package is one a part can actually land on'
     expect(after).toContain('TEST_QFN4')
     // and it is offered alongside the shipped ones, not instead of them
     expect(after.length).toBe(before.length + 1)
+  })
+
+  test('a shipped part can be given an authored package with the same pad count', () => {
+    // Without this an authored footprint could only ever reach a CUSTOM part: you could draw a better
+    // two-pad land pattern and have no way to put a resistor on it.
+    const twoPad: Footprint = {
+      ...qfn4('TEST_LAND_2'),
+      pads: qfn4().pads.slice(0, 2),
+      courtyard: { x: -2, y: -2, w: 4, h: 4 },
+    }
+    registerUserFootprint(twoPad)
+    expect(footprintOptions('resistor').map((f) => f.id)).toContain('TEST_LAND_2')
+    expect(footprintForPart('resistor', 'TEST_LAND_2')?.id).toBe('TEST_LAND_2')
+  })
+
+  test('…but never one with the wrong number of pads', () => {
+    registerUserFootprint(qfn4()) // 4 pads; a resistor has 2
+    expect(footprintOptions('resistor').map((f) => f.id)).not.toContain('TEST_QFN4')
+    // asking for it anyway falls back to the part's real default rather than mis-soldering
+    expect(footprintForPart('resistor', 'TEST_QFN4')?.id).toBe('R_0603_1608Metric')
   })
 
   test('the available library is the shipped set plus whatever has been authored', () => {

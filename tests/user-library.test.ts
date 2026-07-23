@@ -5,11 +5,13 @@
  * individual part is dropped while the rest load, and withPart adds/updates by id (authoring only).
  */
 import { describe, expect, test } from 'vitest'
+import type { Footprint } from '../src/renderer/footprint.ts'
 import {
   deserializeUserLibrary,
   serializeUserLibrary,
   USER_LIBRARY_FORMAT,
   USER_LIBRARY_VERSION,
+  withFootprint,
   withPart,
 } from '../src/renderer/user-library.ts'
 import type { UserPart } from '../src/renderer/user-parts.ts'
@@ -78,7 +80,90 @@ describe('honest rejections + resilient loading', () => {
     const r = deserializeUserLibrary(
       JSON.stringify({ format: USER_LIBRARY_FORMAT, version: USER_LIBRARY_VERSION }),
     )
-    expect(r).toEqual({ ok: true, parts: [] })
+    expect(r).toEqual({ ok: true, parts: [], footprints: [] })
+  })
+})
+
+describe('the library also carries the footprints you draw', () => {
+  const qfn: Footprint = {
+    id: 'TEST_LIB_QFN',
+    name: 'Library QFN',
+    description: '',
+    pads: [
+      {
+        id: '1',
+        center: { x: -1, y: 0 },
+        size: { w: 0.5, h: 0.3 },
+        shape: 'rect',
+        type: 'smd',
+      },
+    ],
+    silkscreen: [],
+    fabrication: [],
+    labels: { reference: { x: 0, y: -2 }, value: { x: 0, y: 2 }, fabReference: { x: 0, y: 0 } },
+    courtyard: { x: -2, y: -1, w: 4, h: 2 },
+    provenance: {
+      source_type: 'datasheet',
+      title: 'A datasheet',
+      citation: 'package drawing',
+      confidence: 'high',
+    },
+  }
+
+  test('a drawn footprint survives a write → read round-trip', () => {
+    const r = deserializeUserLibrary(serializeUserLibrary([sensor], [qfn]))
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.footprints).toEqual([qfn])
+  })
+
+  test('a v1 library (parts only) still loads, just with no footprints', () => {
+    // Someone's existing library was written before footprints existed — it must not be refused.
+    const v1 = JSON.stringify({ format: USER_LIBRARY_FORMAT, version: 1, userParts: [sensor] })
+    const r = deserializeUserLibrary(v1)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.parts).toEqual([sensor])
+    expect(r.footprints).toEqual([])
+    // and it is written back in the current format, so the next save can hold footprints
+    expect(JSON.parse(serializeUserLibrary(r.parts, r.footprints)).version).toBe(
+      USER_LIBRARY_VERSION,
+    )
+  })
+
+  test('a malformed footprint is dropped; the parts still load', () => {
+    const text = JSON.stringify({
+      format: USER_LIBRARY_FORMAT,
+      version: USER_LIBRARY_VERSION,
+      userParts: [sensor],
+      userFootprints: [{ ...qfn, pads: [] }], // nothing to solder to
+    })
+    const r = deserializeUserLibrary(text)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.parts).toEqual([sensor])
+    expect(r.footprints).toEqual([])
+  })
+
+  test('withFootprint replaces by id and keeps the others', () => {
+    const other = { ...qfn, id: 'TEST_LIB_OTHER' }
+    const list = withFootprint([qfn, other], { ...qfn, name: 'Redrawn' })
+    expect(list).toHaveLength(2)
+    expect(list.find((f) => f.id === qfn.id)?.name).toBe('Redrawn')
+    expect(list.find((f) => f.id === other.id)).toBeDefined()
+  })
+
+  test('saving a PART carries the footprints through untouched', () => {
+    // The two authoring paths share one file. A part save that wrote only parts would silently delete
+    // every package the user had drawn.
+    const start = deserializeUserLibrary(serializeUserLibrary([sensor], [qfn]))
+    expect(start.ok).toBe(true)
+    if (!start.ok) return
+    const afterPartSave = serializeUserLibrary(withPart(start.parts, poweredIc), start.footprints)
+    const r = deserializeUserLibrary(afterPartSave)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.parts.map((p) => p.id).sort()).toEqual([sensor.id, poweredIc.id].sort())
+    expect(r.footprints).toEqual([qfn])
   })
 })
 

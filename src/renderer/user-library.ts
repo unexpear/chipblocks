@@ -1,3 +1,5 @@
+import type { Footprint } from './footprint.ts'
+import { validateUserFootprint } from './user-footprint-validate.ts'
 import { validateUserPart } from './user-part-validate.ts'
 import type { UserPart } from './user-parts.ts'
 
@@ -27,25 +29,38 @@ import type { UserPart } from './user-parts.ts'
  */
 
 export const USER_LIBRARY_FORMAT = 'chipblocks-user-library'
-export const USER_LIBRARY_VERSION = 1
+export const USER_LIBRARY_VERSION = 2
+/**
+ * Versions this build can READ. v1 held parts only; v2 adds the footprints you author, so that a
+ * package you drew follows you between projects the way a part already does. A v1 library still loads
+ * (it simply has no footprints) and is written back as v2.
+ */
+const READABLE_VERSIONS = new Set([1, 2])
 
 export type UserLibraryFile = {
   format: typeof USER_LIBRARY_FORMAT
   version: typeof USER_LIBRARY_VERSION
   userParts: UserPart[]
+  userFootprints?: Footprint[]
 }
 
-/** The library parts → the versioned file text written to ~/.chipblocks/user-parts.json. */
-export function serializeUserLibrary(parts: readonly UserPart[]): string {
+/** The library → the versioned file text written to ~/.chipblocks/user-parts.json. */
+export function serializeUserLibrary(
+  parts: readonly UserPart[],
+  footprints: readonly Footprint[] = [],
+): string {
   const file: UserLibraryFile = {
     format: USER_LIBRARY_FORMAT,
     version: USER_LIBRARY_VERSION,
     userParts: [...parts],
   }
+  if (footprints.length > 0) file.userFootprints = [...footprints]
   return JSON.stringify(file, null, 2)
 }
 
-export type LibraryResult = { ok: true; parts: UserPart[] } | { ok: false; reason: string }
+export type LibraryResult =
+  | { ok: true; parts: UserPart[]; footprints: Footprint[] }
+  | { ok: false; reason: string }
 
 /** Parse + validate the library file. Honest rejections (not JSON / wrong format / future version); a
  *  malformed individual part is dropped, so a mostly-good library still loads its good parts. */
@@ -63,15 +78,24 @@ export function deserializeUserLibrary(text: string): LibraryResult {
   if (file.format !== USER_LIBRARY_FORMAT) {
     return { ok: false, reason: 'Not a ChipBlocks parts library (wrong or missing format).' }
   }
-  if (file.version !== USER_LIBRARY_VERSION) {
+  if (typeof file.version !== 'number' || !READABLE_VERSIONS.has(file.version)) {
     return {
       ok: false,
-      reason: `Unsupported parts-library version ${String(file.version)} (this build reads ${USER_LIBRARY_VERSION}).`,
+      reason: `Unsupported parts-library version ${String(file.version)} (this build reads ${[...READABLE_VERSIONS].join(' and ')}).`,
     }
   }
   const list = Array.isArray(file.userParts) ? file.userParts : []
   const parts = list.map((p) => validateUserPart(p)).filter((p): p is UserPart => p !== null)
-  return { ok: true, parts }
+  const footprintList = Array.isArray(file.userFootprints) ? file.userFootprints : []
+  const footprints = footprintList
+    .map((f) => validateUserFootprint(f))
+    .filter((f): f is Footprint => f !== null)
+  return { ok: true, parts, footprints }
+}
+
+/** Add (or replace) a footprint in a library list, deduped by id — mirrors `withPart`. */
+export function withFootprint(footprints: readonly Footprint[], footprint: Footprint): Footprint[] {
+  return [...footprints.filter((f) => f.id !== footprint.id), footprint]
 }
 
 /**

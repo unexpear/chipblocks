@@ -124,7 +124,7 @@ export function footprintProblems(raw: unknown): string[] {
   if (!Array.isArray(pads) || pads.length === 0) {
     out.push('needs at least one pad')
   } else {
-    pads.forEach((p, i) => out.push(...padProblems(p, i)))
+    for (const [i, p] of pads.entries()) out.push(...padProblems(p, i))
     const ids = pads.filter(isRec).map((p) => p.id)
     const dupes = [
       ...new Set(ids.filter((id, i) => typeof id === 'string' && ids.indexOf(id) !== i)),
@@ -140,8 +140,11 @@ export function footprintProblems(raw: unknown): string[] {
   ] as const) {
     const lines = raw[key]
     if (lines === undefined) continue
-    if (!Array.isArray(lines)) out.push(`${label}: must be a list of lines`)
-    else lines.forEach((l, i) => out.push(...silkProblems(l, i, label)))
+    if (!Array.isArray(lines)) {
+      out.push(`${label}: must be a list of lines`)
+      continue
+    }
+    for (const [i, line] of lines.entries()) out.push(...silkProblems(line, i, label))
   }
 
   const labels = raw.labels

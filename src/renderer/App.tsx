@@ -99,7 +99,9 @@ import { ContextMenu } from './context-menu.tsx'
 import { CoordinateAxes } from './coordinate-axes.tsx'
 import { DistortionPanel } from './distortion-panel.tsx'
 import { DockablePanel } from './dockable-panel.tsx'
+import type { Footprint } from './footprint.ts'
 import { BOM_VALUE_PARAMS, terminalForPad } from './footprint-assignment.ts'
+import { FootprintEditor } from './footprint-editor.tsx'
 import {
   CrtScreenContext,
   type CrtScreenData,
@@ -258,6 +260,7 @@ import { allUserFootprints, mergeUserFootprints } from './user-footprints.ts'
 import {
   deserializeUserLibrary,
   serializeUserLibrary,
+  withFootprint,
   withInternalParts,
   withPart,
 } from './user-library.ts'
@@ -789,7 +792,9 @@ export function App() {
     void bridge.readUserLibrary().then((text) => {
       if (text === null) return
       const result = deserializeUserLibrary(text)
-      if (result.ok) mergeUserParts(result.parts)
+      if (!result.ok) return
+      mergeUserParts(result.parts)
+      mergeUserFootprints(result.footprints)
     })
   }, [])
 
@@ -2355,40 +2360,60 @@ function templateFlow(template: string): { nodes: Node[]; edges: Edge[] } {
 /** Snap-to-grid step (px) — parts align to the 20 px major grid (the bold lines) when snap is on. */
 const SNAP_GRID: [number, number] = [20, 20]
 
+type PersonalLibrary = { parts: UserPart[]; footprints: Footprint[] }
+
 /**
- * Persist a freshly-authored part into the personal library (~/.chipblocks/user-parts.json) so it
- * follows you across projects. Read-modify-write, deduped by id — the library grows ONLY by authoring,
- * so a part that merely passed through the session from opening someone else's project is never added.
+ * Read the personal library (~/.chipblocks/user-parts.json), fold the newly-authored thing in, write it
+ * back. Both authoring paths go through here so that neither can forget the other's half: the file holds
+ * parts AND footprints, and a save that wrote only its own kind would quietly delete the other.
  *
- * The read-modify-write isn't internally serialized; it's safe because it's fired only from the New-Part
- * dialog's Save, which is a single modal (no two open at once). If a second author path is ever added
- * (import, batch), serialize the writes — otherwise a later read could lose the earlier part.
+ * The read-modify-write isn't internally serialized; it's safe because each caller fires from a single
+ * modal's Save (no two open at once). If a second author path is ever added (import, batch), serialize
+ * the writes — otherwise a later read could lose the earlier one.
  */
-async function persistAuthoredPart(part: UserPart): Promise<void> {
+async function updateUserLibrary(
+  what: string,
+  fold: (library: PersonalLibrary) => PersonalLibrary,
+): Promise<void> {
   const bridge = window.chipblocks
   if (bridge?.readUserLibrary === undefined || bridge.writeUserLibrary === undefined) return
+  const text = await bridge.readUserLibrary()
+  // No library yet → start an empty one and let the caller put the first thing in it.
+  const existing =
+    text === null ? { ok: true as const, parts: [], footprints: [] } : deserializeUserLibrary(text)
+  if (!existing.ok) {
+    // The library is there but unreadable (corrupt, or a newer format from a future build). Do NOT
+    // overwrite it — that would clobber it — just skip persisting; the authored thing still works this
+    // session and can be re-authored once the library is sorted out.
+    console.warn(`[user-library] not persisting "${what}": library unreadable (${existing.reason})`)
+    return
+  }
+  const next = fold({ parts: existing.parts, footprints: existing.footprints })
+  await bridge.writeUserLibrary(serializeUserLibrary(next.parts, next.footprints))
+}
+
+/**
+ * Persist a freshly-authored part so it follows you across projects. Deduped by id — the library grows
+ * ONLY by authoring, so a part that merely passed through the session from opening someone else's
+ * project is never added.
+ */
+async function persistAuthoredPart(part: UserPart): Promise<void> {
   // A module built around OTHER custom parts needs those sub-parts wherever it goes — persist the
   // whole transitive set, not just the authored part (else the module is silently dead elsewhere).
   const closure = withInternalParts(part, allUserParts())
-  const text = await bridge.readUserLibrary()
-  if (text === null) {
-    // No library yet → create it with this part (+ its custom sub-parts).
-    await bridge.writeUserLibrary(serializeUserLibrary(closure))
-    return
-  }
-  const parsed = deserializeUserLibrary(text)
-  if (!parsed.ok) {
-    // The existing library is there but unreadable (corrupt, or a newer format from a future build). Do
-    // NOT overwrite it — that would clobber it — just skip persisting; the part still works this session
-    // and can be re-authored once the library is sorted out.
-    console.warn(
-      `[user-library] not persisting "${part.id}": library unreadable (${parsed.reason})`,
-    )
-    return
-  }
-  let parts = parsed.parts
-  for (const p of closure) parts = withPart(parts, p)
-  await bridge.writeUserLibrary(serializeUserLibrary(parts))
+  await updateUserLibrary(part.id, (library) => {
+    let parts = library.parts
+    for (const p of closure) parts = withPart(parts, p)
+    return { parts, footprints: library.footprints }
+  })
+}
+
+/** Persist a freshly-drawn footprint, so a package you drew is still there next time you open the app. */
+async function persistAuthoredFootprint(footprint: Footprint): Promise<void> {
+  await updateUserLibrary(footprint.id, (library) => ({
+    parts: library.parts,
+    footprints: withFootprint(library.footprints, footprint),
+  }))
 }
 
 function Canvas({ project, active = true }: { project: ProjectChoice; active?: boolean }) {
@@ -2588,6 +2613,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   // The Add-Part pop-up (the KiCad-style Choose-a-part dialog) — open state lives here.
   const [pickerOpen, setPickerOpen] = useState(false)
   const [newPartOpen, setNewPartOpen] = useState(false)
+  const [newFootprintOpen, setNewFootprintOpen] = useState(false)
   const [sheetSettings, setSheetSettings] = useState<SheetSettings>(() => initial.boardFab.sheet)
   const [showSheet, setShowSheet] = useState(true)
   const [pageSettingsOpen, setPageSettingsOpen] = useState(false)
@@ -4693,6 +4719,10 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       const target = event.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
       if (shortcutsOpen) return // the panel owns the keyboard while open
+      // A modal marked data-modal owns the keyboard too. The text-field guard above isn't enough for a
+      // dialog whose main surface is a CANVAS: with the footprint editor open, Delete would otherwise
+      // fall through and destroy the selected parts on the schematic behind it.
+      if (document.querySelector('[data-modal]') !== null) return
       if (eventMatchesBinding(event, keybinds.shortcutsPanel)) {
         window.dispatchEvent(new Event('chipblocks:shortcuts'))
         return
@@ -9387,6 +9417,12 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             onCreated={(part) => void persistAuthoredPart(part)}
           />
         ) : null}
+        {newFootprintOpen ? (
+          <FootprintEditor
+            onClose={() => setNewFootprintOpen(false)}
+            onSaved={(footprint) => void persistAuthoredFootprint(footprint)}
+          />
+        ) : null}
         {pageSettingsOpen ? (
           <PageSettings
             settings={sheetSettings}
@@ -9916,6 +9952,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 onSolve={handleSolve}
                 onAddPart={() => setPickerOpen(true)}
                 onNewPart={() => setNewPartOpen(true)}
+                onNewFootprint={() => setNewFootprintOpen(true)}
                 onScope={runScope}
                 onTimeline={() => setTimelineOpen((open) => !open)}
                 onMath={() => setShowMath((open) => !open)}

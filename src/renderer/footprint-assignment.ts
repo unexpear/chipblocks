@@ -1,5 +1,5 @@
 import type { Footprint } from './footprint.ts'
-import { allAvailableFootprints, resolveFootprint } from './user-footprints.ts'
+import { allAvailableFootprints, allUserFootprints, resolveFootprint } from './user-footprints.ts'
 import { getUserPart, type UserPart } from './user-parts.ts'
 
 /**
@@ -74,6 +74,19 @@ export const PART_FOOTPRINTS: Record<string, { default: string; options: string[
 }
 
 /**
+ * Packages YOU drew that a shipped part may also be given: the ones with the same number of pads as its
+ * standard land pattern. Without this, an authored footprint could only ever reach a custom part —
+ * you could draw a better 0603 land pattern and have no way to put a resistor on it. The pad-count
+ * match is what keeps it honest: a two-pad resistor can take another two-pad land pattern, never a
+ * 48-pad QFN.
+ */
+function authoredOptionsFor(defaultFootprintId: string): Footprint[] {
+  const standard = resolveFootprint(defaultFootprintId)
+  if (standard === undefined) return []
+  return allUserFootprints().filter((f) => f.pads.length === standard.pads.length)
+}
+
+/**
  * The footprint a part lands on: the chosen one if it's a valid option for this part, else the part's
  * default. `undefined` when the part has no real footprint yet (honest — never a wrong package).
  */
@@ -83,8 +96,11 @@ export function footprintForPart(definition: string, chosenId?: string): Footpri
   // `entry.options.includes` crash. hasOwn only matches a real mapping.
   const entry = Object.hasOwn(PART_FOOTPRINTS, definition) ? PART_FOOTPRINTS[definition] : undefined
   if (entry !== undefined) {
-    const id = chosenId !== undefined && entry.options.includes(chosenId) ? chosenId : entry.default
-    return resolveFootprint(id)
+    const allowed =
+      chosenId !== undefined &&
+      (entry.options.includes(chosenId) ||
+        authoredOptionsFor(entry.default).some((f) => f.id === chosenId))
+    return resolveFootprint(allowed && chosenId !== undefined ? chosenId : entry.default)
   }
   const userPart = getUserPart(definition)
   return userPart !== undefined ? userPartFootprint(userPart, chosenId) : undefined
@@ -95,9 +111,12 @@ export function footprintForPart(definition: string, chosenId?: string): Footpri
 export function footprintOptions(definition: string): Footprint[] {
   const entry = PART_FOOTPRINTS[definition]
   if (entry !== undefined) {
-    return entry.options
-      .map((id) => resolveFootprint(id))
-      .filter((f): f is Footprint => f !== undefined)
+    return [
+      ...entry.options
+        .map((id) => resolveFootprint(id))
+        .filter((f): f is Footprint => f !== undefined),
+      ...authoredOptionsFor(entry.default),
+    ]
   }
   const userPart = getUserPart(definition)
   if (userPart === undefined) return []

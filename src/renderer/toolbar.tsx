@@ -51,6 +51,7 @@ const AMBIENT_PRESETS: { label: string; c: number }[] = [
 export type ToolbarActionId =
   | 'addPart'
   | 'newPart'
+  | 'newFootprint'
   | 'scope'
   | 'timeline'
   | 'bode'
@@ -94,6 +95,14 @@ export const TOOLBAR_ACTIONS: ToolbarAction[] = [
     color: THEME.accentPurple,
     title:
       'New Part — author your own custom part: give it a name, pins (each on a chosen side with an electrical role), and optional default values. It draws itself from those pins and joins the palette, ready to drop and wire like any built-in.',
+  },
+  {
+    id: 'newFootprint',
+    label: 'New Footprint',
+    icon: '⬛',
+    color: THEME.accentPink,
+    title:
+      'New Footprint — draw the PHYSICAL package a part solders to: the copper pads, the component body and the assembly keep-out. Stamp a whole row of pads from the numbers a datasheet prints (how many, what pitch, how big), drag any of them to fine-tune, and the package joins the footprint list so a part can be given it and land on a real board.',
   },
   {
     id: 'scope',
@@ -286,6 +295,7 @@ export function ToolbarItems({
   onSolve,
   onAddPart,
   onNewPart,
+  onNewFootprint,
   onScope,
   onTimeline,
   onBode,
@@ -330,6 +340,7 @@ export function ToolbarItems({
   onSolve: () => void
   onAddPart: () => void
   onNewPart: () => void
+  onNewFootprint: () => void
   onScope: () => void
   onTimeline: () => void
   onBode: () => void
@@ -364,6 +375,7 @@ export function ToolbarItems({
   const actionHandlers: Record<ToolbarActionId, () => void> = {
     addPart: onAddPart,
     newPart: onNewPart,
+    newFootprint: onNewFootprint,
     scope: onScope,
     timeline: onTimeline,
     bode: onBode,
