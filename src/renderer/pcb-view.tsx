@@ -310,6 +310,25 @@ export function PcbView({
     ro.observe(el)
     return () => ro.disconnect()
   }, [fitToBoard])
+  // Reframe when the SET of placed parts changes — a different board loaded (File>Open / undo to another
+  // layout), or parts added/removed. A part move, rotation, or outline reshape keeps the same set, so an
+  // ordinary edit never yanks a view the user has panned; only a genuinely different layout refits. (The
+  // ResizeObserver only fires on pane-SIZE changes, so without this a new board loaded into a panned view
+  // would sit half off-screen until a double-click.)
+  const placementIdentity = useMemo(
+    () =>
+      board.placements
+        .map((p) => p.partId)
+        .sort()
+        .join('|'),
+    [board.placements],
+  )
+  const prevIdentity = useRef(placementIdentity)
+  useLayoutEffect(() => {
+    if (prevIdentity.current === placementIdentity) return // same layout (a move/reshape) — keep the view
+    prevIdentity.current = placementIdentity
+    fitToBoard()
+  }, [placementIdentity, fitToBoard])
   const sx = (x: number) => x * pxPerMm
   const sy = (y: number) => y * pxPerMm
 
