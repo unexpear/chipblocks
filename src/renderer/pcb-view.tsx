@@ -291,7 +291,21 @@ export function PcbView({
     const el = svgRef.current
     if (el === null) return
     const ro = new ResizeObserver(() => {
-      if (!userView.current) fitToBoard()
+      const target = svgRef.current
+      if (target === null) return
+      if (!userView.current) {
+        fitToBoard()
+        return
+      }
+      // The user owns the view — don't reframe it, but the viewBox aspect MUST stay equal to the pane's
+      // or the SVG's default 'meet' scaling letterboxes, and screen↔board mm (clientToView, which assumes
+      // the viewBox fills the box) desyncs — mis-placing every click/drag. Keep the vertical scale and
+      // centre, widen/narrow the horizontal extent to match the new pane aspect.
+      const aspect = target.clientWidth / Math.max(1, target.clientHeight)
+      setView((v) => {
+        const w = v.h * aspect
+        return { x: v.x + v.w / 2 - w / 2, y: v.y, w, h: v.h }
+      })
     })
     ro.observe(el)
     return () => ro.disconnect()
@@ -466,6 +480,7 @@ export function PcbView({
       width="100%"
       height={viewHeight}
       viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
+      preserveAspectRatio="none"
       style={{
         display: 'block',
         fontFamily: 'system-ui, sans-serif',
