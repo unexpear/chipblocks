@@ -1335,33 +1335,71 @@ export const BUILTIN_FOOTPRINTS: Record<string, Footprint> = {
  * courtyard is the outermost by construction, but pads/silk are unioned in so a bad courtyard can't clip
  * the render. Used to frame + scale the footprint viewer.
  */
-export function footprintBounds(fp: Footprint): {
-  minX: number
-  minY: number
-  maxX: number
-  maxY: number
-} {
-  let minX = fp.courtyard.x
-  let minY = fp.courtyard.y
-  let maxX = fp.courtyard.x + fp.courtyard.w
-  let maxY = fp.courtyard.y + fp.courtyard.h
-  const grow = (x: number, y: number) => {
-    if (x < minX) minX = x
-    if (y < minY) minY = y
-    if (x > maxX) maxX = x
-    if (y > maxY) maxY = y
+/** A rectangle in mm as its two corners — how far a set of footprint features reaches. */
+export type Extent = { minX: number; minY: number; maxX: number; maxY: number }
+
+/** An extent covering nothing, which any merge leaves untouched. `isEmptyExtent` recognises it. */
+export const EMPTY_EXTENT: Extent = {
+  minX: Number.POSITIVE_INFINITY,
+  minY: Number.POSITIVE_INFINITY,
+  maxX: Number.NEGATIVE_INFINITY,
+  maxY: Number.NEGATIVE_INFINITY,
+}
+
+export function isEmptyExtent(extent: Extent): boolean {
+  return !Number.isFinite(extent.minX) || !Number.isFinite(extent.minY)
+}
+
+export function mergeExtent(a: Extent, b: Extent): Extent {
+  return {
+    minX: Math.min(a.minX, b.minX),
+    minY: Math.min(a.minY, b.minY),
+    maxX: Math.max(a.maxX, b.maxX),
+    maxY: Math.max(a.maxY, b.maxY),
   }
-  for (const p of fp.pads) {
-    grow(p.center.x - p.size.w / 2, p.center.y - p.size.h / 2)
-    grow(p.center.x + p.size.w / 2, p.center.y + p.size.h / 2)
+}
+
+export function extentOfPoints(points: readonly { x: number; y: number }[]): Extent {
+  let out = EMPTY_EXTENT
+  for (const p of points) {
+    out = mergeExtent(out, { minX: p.x, minY: p.y, maxX: p.x, maxY: p.y })
   }
-  for (const s of [...fp.silkscreen, ...fp.fabrication]) {
-    grow(s.from.x, s.from.y)
-    grow(s.to.x, s.to.y)
+  return out
+}
+
+/** A min-corner + size rectangle (a courtyard, a body) as an extent. */
+export function extentOfRect(rect: { x: number; y: number; w: number; h: number }): Extent {
+  return { minX: rect.x, minY: rect.y, maxX: rect.x + rect.w, maxY: rect.y + rect.h }
+}
+
+/**
+ * How far a set of pads' COPPER reaches. This is the one scan — the footprint viewer, the editor's
+ * fit-to-view and the courtyard fit all ask this rather than each walking the pads themselves.
+ */
+export function padsExtent(pads: readonly Pad[]): Extent {
+  let out = EMPTY_EXTENT
+  for (const pad of pads) {
+    out = mergeExtent(out, {
+      minX: pad.center.x - pad.size.w / 2,
+      minY: pad.center.y - pad.size.h / 2,
+      maxX: pad.center.x + pad.size.w / 2,
+      maxY: pad.center.y + pad.size.h / 2,
+    })
   }
-  // The reference/value text sits outside the courtyard (KiCad places them at ±1.43 on a 0603) —
-  // include the anchors so the framed viewer doesn't clip the designator.
-  grow(fp.labels.reference.x, fp.labels.reference.y)
-  grow(fp.labels.value.x, fp.labels.value.y)
-  return { minX, minY, maxX, maxY }
+  return out
+}
+
+/** How far a set of drawn lines (silkscreen, body outline) reaches. */
+export function linesExtent(lines: readonly SilkLine[]): Extent {
+  return extentOfPoints(lines.flatMap((line) => [line.from, line.to]))
+}
+
+export function footprintBounds(fp: Footprint): Extent {
+  return [
+    padsExtent(fp.pads),
+    linesExtent([...fp.silkscreen, ...fp.fabrication]),
+    // The reference/value text sits outside the courtyard (KiCad places them at ±1.43 on a 0603) —
+    // include the anchors so the framed viewer doesn't clip the designator.
+    extentOfPoints([fp.labels.reference, fp.labels.value]),
+  ].reduce(mergeExtent, extentOfRect(fp.courtyard))
 }

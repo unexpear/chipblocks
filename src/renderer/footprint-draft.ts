@@ -11,14 +11,18 @@
  * Everything is in millimetres relative to the footprint origin, matching footprint.ts.
  */
 
-import type {
-  Courtyard,
-  Footprint,
-  FootprintProvenance,
-  Pad,
-  PadShape,
-  PadType,
-  SilkLine,
+import {
+  type Courtyard,
+  type Extent,
+  type Footprint,
+  type FootprintProvenance,
+  isEmptyExtent,
+  mergeExtent,
+  type Pad,
+  type PadShape,
+  type PadType,
+  padsExtent,
+  type SilkLine,
 } from './footprint.ts'
 
 /** Editor snap, in mm. 0.05 mm is finer than any land pattern needs but still kills mouse jitter. */
@@ -121,15 +125,13 @@ export function nextPadNumber(pads: readonly Pad[]): string {
   return String(candidate)
 }
 
-/** A rectangle outline centred on the origin, as four line segments. */
-export function rectOutline(widthMm: number, heightMm: number, lineWidthMm: number): SilkLine[] {
-  const x = widthMm / 2
-  const y = heightMm / 2
+/** A rectangle outline, as four line segments — drawn where the extent actually is. */
+export function rectOutline(extent: Extent, lineWidthMm: number): SilkLine[] {
   const corners = [
-    { x: -x, y: -y },
-    { x, y: -y },
-    { x, y },
-    { x: -x, y },
+    { x: extent.minX, y: extent.minY },
+    { x: extent.maxX, y: extent.minY },
+    { x: extent.maxX, y: extent.maxY },
+    { x: extent.minX, y: extent.maxY },
   ]
   return corners.map((from, i) => ({
     from,
@@ -148,34 +150,35 @@ export function fitCourtyard(
   marginMm = DEFAULT_COURTYARD_MARGIN_MM,
   bodyMm?: { w: number; h: number } | null,
 ): Courtyard {
-  let minX = Number.POSITIVE_INFINITY
-  let minY = Number.POSITIVE_INFINITY
-  let maxX = Number.NEGATIVE_INFINITY
-  let maxY = Number.NEGATIVE_INFINITY
-  const grow = (x0: number, y0: number, x1: number, y1: number) => {
-    if (x0 < minX) minX = x0
-    if (y0 < minY) minY = y0
-    if (x1 > maxX) maxX = x1
-    if (y1 > maxY) maxY = y1
-  }
-  for (const pad of pads) {
-    grow(
-      pad.center.x - pad.size.w / 2,
-      pad.center.y - pad.size.h / 2,
-      pad.center.x + pad.size.w / 2,
-      pad.center.y + pad.size.h / 2,
-    )
-  }
-  if (bodyMm && bodyMm.w > 0 && bodyMm.h > 0) {
-    grow(-bodyMm.w / 2, -bodyMm.h / 2, bodyMm.w / 2, bodyMm.h / 2)
-  }
+  const copper = padsExtent(pads)
+  const body = bodyExtent(pads, bodyMm ?? { w: 0, h: 0 })
+  const all = body === null ? copper : mergeExtent(copper, body)
   // Nothing drawn yet — a placeholder square, so the canvas still has something to show.
-  if (!Number.isFinite(minX)) return { x: -1, y: -1, w: 2, h: 2 }
+  if (isEmptyExtent(all)) return { x: -1, y: -1, w: 2, h: 2 }
   return {
-    x: minX - marginMm,
-    y: minY - marginMm,
-    w: maxX - minX + 2 * marginMm,
-    h: maxY - minY + 2 * marginMm,
+    x: all.minX - marginMm,
+    y: all.minY - marginMm,
+    w: all.maxX - all.minX + 2 * marginMm,
+    h: all.maxY - all.minY + 2 * marginMm,
+  }
+}
+
+/**
+ * Where the component body sits: centred on its own COPPER, not on the origin.
+ * The origin is only the centre for a symmetric SMD chip. A through-hole IC puts the origin at pin 1
+ * (the EDA convention), so a body drawn around the origin would hang off the end of the part.
+ * Returns null when there is no body to draw.
+ */
+function bodyExtent(pads: readonly Pad[], bodyMm: { w: number; h: number }): Extent | null {
+  if (!hasBody(bodyMm)) return null
+  const copper = padsExtent(pads)
+  const centerX = isEmptyExtent(copper) ? 0 : (copper.minX + copper.maxX) / 2
+  const centerY = isEmptyExtent(copper) ? 0 : (copper.minY + copper.maxY) / 2
+  return {
+    minX: centerX - bodyMm.w / 2,
+    minY: centerY - bodyMm.h / 2,
+    maxX: centerX + bodyMm.w / 2,
+    maxY: centerY + bodyMm.h / 2,
   }
 }
 
@@ -202,18 +205,14 @@ function inPadNumberOrder(pads: readonly Pad[]): Pad[] {
   return [...pads].sort((a, b) => Number(a.id) - Number(b.id))
 }
 
-/** The printed outline's size: clear of every pad AND of the body, so no ink lands on copper. */
-function silkExtent(
-  pads: readonly Pad[],
-  bodyMm: { w: number; h: number },
-): { w: number; h: number } {
-  let halfWidth = bodyMm.w / 2
-  let halfHeight = bodyMm.h / 2
-  for (const pad of pads) {
-    halfWidth = Math.max(halfWidth, Math.abs(pad.center.x) + pad.size.w / 2)
-    halfHeight = Math.max(halfHeight, Math.abs(pad.center.y) + pad.size.h / 2)
+/** Grow an extent outward on every side. */
+function padExtent(extent: Extent, byMm: number): Extent {
+  return {
+    minX: extent.minX - byMm,
+    minY: extent.minY - byMm,
+    maxX: extent.maxX + byMm,
+    maxY: extent.maxY + byMm,
   }
-  return { w: 2 * (halfWidth + SILK_OFFSET_MM), h: 2 * (halfHeight + SILK_OFFSET_MM) }
 }
 
 /** What the editor holds while you draw. The courtyard and outlines are DERIVED unless overridden. */
@@ -277,18 +276,19 @@ export function slugFootprintId(name: string): string {
  */
 export function draftToFootprint(draft: FootprintDraft): Footprint {
   const courtyard = draftCourtyard(draft)
-  const body = hasBody(draft.bodyMm) ? draft.bodyMm : null
+  const body = bodyExtent(draft.pads, draft.bodyMm)
   // The silkscreen is INK, and ink on a pad stops solder wetting it — real fabs clip silk that crosses
   // copper. A package's pads often reach in under its body (a QFN's do), so an outline drawn at the body
-  // would print across them: the printed outline goes outside the copper as well as the body.
-  const silk = body === null ? null : silkExtent(draft.pads, body)
+  // would print across them: the printed outline clears the copper as well as the body.
+  const silk =
+    body === null ? null : padExtent(mergeExtent(padsExtent(draft.pads), body), SILK_OFFSET_MM)
   return {
     id: draft.id.trim(),
     name: draft.name.trim(),
     description: draft.description.trim(),
     pads: inPadNumberOrder(draft.pads),
-    silkscreen: silk === null ? [] : rectOutline(silk.w, silk.h, SILK_LINE_MM),
-    fabrication: body === null ? [] : rectOutline(body.w, body.h, FAB_LINE_MM),
+    silkscreen: silk === null ? [] : rectOutline(silk, SILK_LINE_MM),
+    fabrication: body === null ? [] : rectOutline(body, FAB_LINE_MM),
     labels: {
       reference: { x: 0, y: courtyard.y - 0.5 },
       value: { x: 0, y: courtyard.y + courtyard.h + 0.5 },

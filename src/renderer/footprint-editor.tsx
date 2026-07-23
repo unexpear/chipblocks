@@ -17,7 +17,16 @@
 
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Courtyard, Footprint, Pad, PadShape, PadType } from './footprint.ts'
+import {
+  type Courtyard,
+  extentOfRect,
+  type Footprint,
+  mergeExtent,
+  type Pad,
+  type PadShape,
+  type PadType,
+  padsExtent,
+} from './footprint.ts'
 import {
   blankFootprintDraft,
   draftCourtyard,
@@ -109,38 +118,29 @@ export function FootprintEditor({
   const selectedPad = selectedPadIndex === null ? null : (draft.pads[selectedPadIndex] ?? null)
 
   const contentBounds = useCallback((): Bounds => {
-    const c = draftCourtyard(draft)
-    let minX = c.x
-    let minY = c.y
-    let maxX = c.x + c.w
-    let maxY = c.y + c.h
-    for (const pad of draft.pads) {
-      minX = Math.min(minX, pad.center.x - pad.size.w / 2)
-      minY = Math.min(minY, pad.center.y - pad.size.h / 2)
-      maxX = Math.max(maxX, pad.center.x + pad.size.w / 2)
-      maxY = Math.max(maxY, pad.center.y + pad.size.h / 2)
-    }
+    const seen = mergeExtent(extentOfRect(draftCourtyard(draft)), padsExtent(draft.pads))
     return {
-      x: minX * PX_PER_MM,
-      y: minY * PX_PER_MM,
-      w: Math.max(maxX - minX, 0.5) * PX_PER_MM,
-      h: Math.max(maxY - minY, 0.5) * PX_PER_MM,
+      x: seen.minX * PX_PER_MM,
+      y: seen.minY * PX_PER_MM,
+      w: Math.max(seen.maxX - seen.minX, 0.5) * PX_PER_MM,
+      h: Math.max(seen.maxY - seen.minY, 0.5) * PX_PER_MM,
     }
   }, [draft])
+
+  // Read the bounds through a ref, for two reasons. The observer below can then subscribe ONCE:
+  // depending on contentBounds directly would tear down and re-create it on every draft change, and
+  // each fresh observe() fires immediately, so the view would re-fit on every step of a pad drag and
+  // the pad would crawl away from the cursor. And `fitToDraft` stays stable, so the refit queued after
+  // "Add row" measures the draft WITH the new row in it rather than the one captured before it.
+  const contentBoundsRef = useRef(contentBounds)
+  contentBoundsRef.current = contentBounds
 
   const fitToDraft = useCallback(() => {
     const rect = svgRef.current?.getBoundingClientRect()
     if (!rect || rect.height === 0) return
     userView.current = false
-    setView(fitView(contentBounds(), rect.width / rect.height, 0.14))
-  }, [contentBounds])
-
-  // Read through a ref so the effect below can subscribe ONCE. Depending on contentBounds directly
-  // would tear down and re-create the observer on every draft change, and each fresh observe() fires
-  // immediately — so the view would re-fit on every step of a pad drag and the pad would crawl away
-  // from the cursor.
-  const contentBoundsRef = useRef(contentBounds)
-  contentBoundsRef.current = contentBounds
+    setView(fitView(contentBoundsRef.current(), rect.width / rect.height, 0.14))
+  }, [])
 
   // Fit once the canvas has a size, and keep the aspect honest if the dialog is resized.
   useEffect(() => {
@@ -881,6 +881,38 @@ export function FootprintEditor({
                     </select>
                   </label>
                 </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                  <PadFlag
+                    label="thermal"
+                    title="The big pad under a power part, there to carry heat into a plane. A same-net via array inside it is by design, so the board's via-in-pad rule leaves it alone."
+                    checked={selectedPad.thermal === true}
+                    onChange={(on) =>
+                      updatePad(selectedPadIndex, (p) => withFlag(p, 'thermal', on))
+                    }
+                  />
+                  {selectedPad.type === 'through_hole' ? (
+                    <>
+                      <PadFlag
+                        label="castellated"
+                        title="A plated half-hole on the board EDGE — the notched pads of a solder-down module. It is MEANT to touch the outline, so the edge-clearance rules exempt it and the larger half-hole minimums apply instead."
+                        checked={selectedPad.castellated === true}
+                        onChange={(on) =>
+                          updatePad(selectedPadIndex, (p) => withFlag(p, 'castellated', on))
+                        }
+                      />
+                      <PadFlag
+                        label="plated"
+                        title="Whether the hole is copper-plated. Unplated is a mounting or tooling hole: no plating, no ring of copper needed, and the fab drills it in a separate file."
+                        checked={selectedPad.plated !== false}
+                        onChange={(on) =>
+                          updatePad(selectedPadIndex, (p) =>
+                            on ? withFlag(p, 'plated', false, true) : { ...p, plated: false },
+                          )
+                        }
+                      />
+                    </>
+                  ) : null}
+                </div>
                 <button
                   type="button"
                   style={subtleButton}
@@ -1051,6 +1083,54 @@ export function FootprintEditor({
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * Set (or clear) one of a pad's optional flags. Clearing REMOVES the key rather than writing `false`,
+ * so a plain pad stays a plain pad in the saved file instead of accumulating a row of negatives.
+ * `clearedValue` covers `plated`, whose "off" state is the meaningful one.
+ */
+function withFlag(
+  pad: Pad,
+  flag: 'thermal' | 'castellated' | 'plated',
+  on: boolean,
+  removeWhenOn = false,
+): Pad {
+  if (on === removeWhenOn) {
+    const { [flag]: _dropped, ...rest } = pad
+    return rest
+  }
+  return { ...pad, [flag]: on }
+}
+
+/** A small labelled tick for a pad's optional flags. */
+function PadFlag({
+  label,
+  title,
+  checked,
+  onChange,
+}: {
+  label: string
+  title: string
+  checked: boolean
+  onChange: (checked: boolean) => void
+}) {
+  return (
+    <label
+      title={title}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 5,
+        fontSize: 11,
+        color: THEME.textMuted,
+        cursor: 'help',
+      }}
+    >
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      {label}
+    </label>
   )
 }
 

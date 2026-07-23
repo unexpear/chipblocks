@@ -110,10 +110,15 @@ describe('the derived courtyard', () => {
     expect(c.y + c.h).toBeCloseTo(-2.75, 6)
   })
 
-  test('it grows to cover the component body too', () => {
+  test('it grows to cover the component body too, wherever the copper actually is', () => {
+    // These pads are a TOP row: their copper is centred on y = −3.4, not on the origin. The body sits
+    // over the copper it belongs to, so the keep-out follows it there rather than back to y = 0.
     const c = fitCourtyard(pads, 0.25, { w: 7, h: 7 })
-    expect(c.x).toBeCloseTo(-3.75, 6)
-    expect(c.y + c.h).toBeCloseTo(3.75, 6)
+    expect(c.x).toBeCloseTo(-3.75, 6) // 7 mm body centred on x = 0 (the row is symmetric) + margin
+    expect(c.y).toBeCloseTo(-7.15, 6) // −3.4 − 3.5 − 0.25
+    expect(c.y + c.h).toBeCloseTo(0.35, 6) // −3.4 + 3.5 + 0.25
+    expect(c.w).toBeCloseTo(7.5, 6)
+    expect(c.h).toBeCloseTo(7.5, 6)
   })
 
   test('with nothing drawn it is a placeholder square, not an infinite rectangle', () => {
@@ -155,11 +160,15 @@ describe('small pieces', () => {
     expect(nextPadNumber(named)).toBe('3')
   })
 
-  test('a rectangle outline closes back on itself', () => {
-    const lines = rectOutline(4, 2, 0.1)
+  test('a rectangle outline closes back on itself, where the extent says', () => {
+    const lines = rectOutline({ minX: -2, minY: -1, maxX: 2, maxY: 1 }, 0.1)
     expect(lines).toHaveLength(4)
     expect(lines[3]?.to).toEqual(lines[0]?.from)
     expect(lines[0]?.from).toEqual({ x: -2, y: -1 })
+    // an off-centre rectangle is drawn off-centre, not folded back onto the origin
+    const shifted = rectOutline({ minX: 10, minY: 4, maxX: 14, maxY: 6 }, 0.1)
+    expect(shifted[0]?.from).toEqual({ x: 10, y: 4 })
+    expect(shifted[2]?.from).toEqual({ x: 14, y: 6 })
   })
 
   test('an id comes from the name without spaces or punctuation', () => {
@@ -276,6 +285,30 @@ describe('the payoff — the editor builds packages the rest of the app accepts'
     // the designator sits above the keep-out, the value below it — nobody had to place them
     expect(fp.labels.reference.y).toBeLessThan(fp.courtyard.y)
     expect(fp.labels.value.y).toBeGreaterThan(fp.courtyard.y + fp.courtyard.h)
+    expect(footprintProblems(fp)).toEqual([])
+  })
+
+  test('the body sits over its copper, even when the copper is nowhere near the origin', () => {
+    // A through-hole IC puts the ORIGIN at pin 1, the EDA convention — so the copper runs off to one
+    // side. A body drawn around the origin would hang half off the end of the part.
+    const draft = {
+      ...blankFootprintDraft(),
+      id: 'TEST_OFFSET',
+      name: 'Origin at pin 1',
+      pads: generatePadRow(row({ side: 'top', count: 4, pitchMm: 2.54 })).map((p) => ({
+        ...p,
+        center: { x: p.center.x + 3.81, y: 0 }, // shifted so pad 1 sits on the origin
+      })),
+      bodyMm: { w: 9, h: 3 },
+      provenance,
+    }
+    const fp = draftToFootprint(draft)
+    const fabX = fp.fabrication.flatMap((s) => [s.from.x, s.to.x])
+    const bodyCentre = (Math.min(...fabX) + Math.max(...fabX)) / 2
+    const padX = fp.pads.map((p) => p.center.x)
+    const copperCentre = (Math.min(...padX) + Math.max(...padX)) / 2
+    expect(bodyCentre).toBeCloseTo(copperCentre, 6)
+    expect(bodyCentre).toBeCloseTo(3.81, 6) // over the pads, NOT at x = 0
     expect(footprintProblems(fp)).toEqual([])
   })
 
