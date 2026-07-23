@@ -164,12 +164,14 @@ import { PartInspector, type SelectedPart } from './part-inspector.tsx'
 import { PartPicker } from './part-picker.tsx'
 import { buildCrtTraces, type CrtSpot } from './part-readings.ts'
 import {
+  type BoardPoint,
   type BoardProfile,
   type BoardSide,
   computeRatsnest,
   deriveBoard,
   netThroughCurrents,
   offBoardPins,
+  outlineRing,
   type PadBox,
   type PlacementOverride,
   profileBBox,
@@ -2619,6 +2621,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       edges: Edge[]
       placements: SavedPlacement[]
       chipLayout: ChipLayout
+      boardProfile: BoardProfile | null
     }>(),
   )
   const snapshotCanvas = useCallback((): {
@@ -2626,13 +2629,15 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     edges: Edge[]
     placements: SavedPlacement[]
     chipLayout: ChipLayout
+    boardProfile: BoardProfile | null
   } => {
     const canvas = JSON.parse(
       JSON.stringify({ nodes: nodesRef.current, edges: edgesRef.current }),
     ) as { nodes: Node[]; edges: Edge[] }
-    // Board hand-placements AND the chip layout (cell overrides + lens) ride the SAME undo snapshot as
-    // the canvas, so a board drag/rotate or a chip cell move undoes together with the parts + wires
-    // (they're one document). The chip layout is copied (fresh overrides array) so history can't be mutated.
+    // Board hand-placements, the chip layout (cell overrides + lens), AND the hand-drawn board outline
+    // ride the SAME undo snapshot as the canvas, so a board drag/rotate, a chip cell move, or reshaping
+    // the board outline undoes together with the parts + wires (they're one document). Each is copied
+    // (fresh arrays / points) so a later edit can't reach back and mutate a stored snapshot.
     return {
       ...canvas,
       placements: placementsToSaved(pcbPlacementsRef.current),
@@ -2640,6 +2645,10 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         ...chipLayoutRef.current,
         overrides: [...chipLayoutRef.current.overrides],
       },
+      boardProfile:
+        pcbProfileRef.current !== null
+          ? { points: pcbProfileRef.current.points.map((p) => ({ x: p.x, y: p.y })) }
+          : null,
     }
   }, [])
   const checkpointAction = useCallback(
@@ -3177,6 +3186,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     setEdges(result.restored.edges)
     setPcbPlacements(placementsFromSaved(result.restored.placements))
     setChipLayout(result.restored.chipLayout ?? EMPTY_CHIP_LAYOUT)
+    setPcbProfile(result.restored.boardProfile ?? null)
     reSolve(result.restored.nodes, result.restored.edges)
   }, [snapshotCanvas, setNodes, setEdges, reSolve])
   const doRedo = useCallback(() => {
@@ -3187,6 +3197,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     setEdges(result.restored.edges)
     setPcbPlacements(placementsFromSaved(result.restored.placements))
     setChipLayout(result.restored.chipLayout ?? EMPTY_CHIP_LAYOUT)
+    setPcbProfile(result.restored.boardProfile ?? null)
     reSolve(result.restored.nodes, result.restored.edges)
   }, [snapshotCanvas, setNodes, setEdges, reSolve])
   const [crtTraces, setCrtTraces] = useState<
@@ -3513,7 +3524,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   const userViasRef = useRef(userVias)
   userViasRef.current = userVias
   // The board-editing tool + the route being laid (click a pad → corners → a pad, like the wire tool).
-  const [boardTool, setBoardTool] = useState<'select' | 'route' | 'via' | 'measure'>('select')
+  const [boardTool, setBoardTool] = useState<'select' | 'route' | 'via' | 'measure' | 'outline'>(
+    'select',
+  )
   const [pendingRoute, setPendingRoute] = useState<{
     net: string
     layer: CopperLayer
@@ -3542,6 +3555,16 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
   )
   const pcbProfileRef = useRef(pcbProfile)
   pcbProfileRef.current = pcbProfile
+  // The OUTLINE tool's in-progress vertex drag. A ref carries the transient — which vertex, the ring it
+  // started from (used to seed a profile the first time a rectangular board is reshaped), and a
+  // checkpoint-once flag — so a per-pixel move never re-renders; the {index} state only drives the
+  // grabbed-handle highlight.
+  const [outlineDragIndex, setOutlineDragIndex] = useState<number | null>(null)
+  const outlineDragRef = useRef<{
+    index: number
+    ring: readonly BoardPoint[]
+    checkpointed: boolean
+  } | null>(null)
   const pcbBoard = useMemo(() => {
     const board = deriveBoard(
       nodes.map((n) => {
@@ -3921,10 +3944,53 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     },
     [boardTool],
   )
-  // Leaving the board workspace or switching tools abandons a half-drawn route / measurement.
+  // The OUTLINE tool: drag a board-edge corner to reshape the board profile. A handle sits on every
+  // vertex of outlineRing(board); dragging one rewrites that vertex in pcbProfile, and the pcbBoard memo
+  // re-derives outline = bbox(profile) so the Gerber edge-cut + the edge-clearance / component-to-edge
+  // DRC follow the new polygon. A still-rectangular board (no profile yet) is seeded from its own 4
+  // corners on the FIRST drag, so merely selecting the tool changes nothing on disk. Mirrors the part-drag
+  // discipline: checkpoint once at the first real motion (so it undoes), the per-move setter never does.
+  const onBoardOutlineVertexDown = useCallback(
+    (index: number) => {
+      if (boardTool !== 'outline') return
+      outlineDragRef.current = {
+        index,
+        ring: outlineRing(pcbBoardRef.current),
+        checkpointed: false,
+      }
+      setOutlineDragIndex(index)
+    },
+    [boardTool],
+  )
+  const onBoardOutlineMove = useCallback(
+    (mm: { x: number; y: number }) => {
+      const drag = outlineDragRef.current
+      if (drag === null) return
+      if (!drag.checkpointed) {
+        checkpointAction('board-outline')
+        drag.checkpointed = true
+      }
+      const vertex = { x: Math.round(mm.x * 100) / 100, y: Math.round(mm.y * 100) / 100 }
+      setPcbProfile((prev) => {
+        const base = prev !== null ? prev.points : drag.ring
+        if (drag.index < 0 || drag.index >= base.length) return prev
+        return { points: base.map((pt, i) => (i === drag.index ? vertex : pt)) }
+      })
+    },
+    [checkpointAction],
+  )
+  const onBoardOutlineVertexUp = useCallback(() => {
+    outlineDragRef.current = null
+    setOutlineDragIndex(null)
+  }, [])
+  // Leaving the board workspace or switching tools abandons a half-drawn route / measurement / outline drag.
   useEffect(() => {
     if (workspaceMode !== 'board' || boardTool !== 'route') setPendingRoute(null)
     if (workspaceMode !== 'board' || boardTool !== 'measure') setPendingMeasureA(null)
+    if (workspaceMode !== 'board' || boardTool !== 'outline') {
+      outlineDragRef.current = null
+      setOutlineDragIndex(null)
+    }
   }, [workspaceMode, boardTool])
   const [pcbExportNote, setPcbExportNote] = useState<string | null>(null)
   // A "manufacturing ZIP saved" note is only true for the board it was exported from — any edit
@@ -4645,6 +4711,8 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       if (workspaceMode !== 'schematic') {
         if (workspaceMode === 'board' && event.key === 'Escape') {
           setPendingRoute(null)
+          outlineDragRef.current = null
+          setOutlineDragIndex(null)
           setBoardTool('select')
         }
         return
@@ -8751,6 +8819,27 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
               >
                 📏 Measure
               </button>
+              <button
+                type="button"
+                onClick={() => setBoardTool((t) => (t === 'outline' ? 'select' : 'outline'))}
+                title="Outline tool — drag the board-edge corners to reshape the board profile. The Gerber edge-cut and the copper / component-to-edge clearance checks follow the polygon. A rectangular board becomes an editable outline on the first drag."
+                style={{
+                  border: `1px solid ${THEME.borderStrong}`,
+                  background: boardTool === 'outline' ? THEME.accentBlue : THEME.surfaceInput,
+                  color: boardTool === 'outline' ? '#0b1220' : THEME.textSoft,
+                  borderRadius: 4,
+                  fontSize: 11,
+                  padding: '2px 10px',
+                  cursor: 'pointer',
+                }}
+              >
+                ⬡ Outline
+              </button>
+              {boardTool === 'outline' && (
+                <span style={{ fontSize: 11, color: THEME.textFaint }}>
+                  Drag a corner to reshape the board · Esc to finish
+                </span>
+              )}
               {boardTool === 'measure' && (
                 <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <select
@@ -8870,6 +8959,13 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                   cursor: measureCursor,
                   onClick: onBoardMeasureClick,
                   onMove: onBoardMeasureMove,
+                }}
+                outline={{
+                  active: boardTool === 'outline',
+                  dragIndex: outlineDragIndex,
+                  onVertexDown: onBoardOutlineVertexDown,
+                  onMove: onBoardOutlineMove,
+                  onVertexUp: onBoardOutlineVertexUp,
                 }}
               />
             ) : (

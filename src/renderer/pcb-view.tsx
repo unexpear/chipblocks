@@ -1,4 +1,4 @@
-import { type PointerEvent as ReactPointerEvent, useRef, useState } from 'react'
+import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react'
 import type { Pad } from './footprint.ts'
 import {
   type Airwire,
@@ -166,6 +166,11 @@ export function PcbView({
   onMeasureClick,
   onMeasureMove,
   coordinateGrid = false,
+  outlineActive = false,
+  outlineDragIndex = null,
+  onOutlineVertexDown,
+  onOutlineMove,
+  onOutlineVertexUp,
 }: {
   board: Board
   /** Unrouted connections (the ratsnest) — drawn as thin straight lines pad-to-pad. */
@@ -217,11 +222,25 @@ export function PcbView({
   /** Draw the coordinate reference behind the board: the x/y axes through the origin (0,0), the four
    *  quadrants (I–IV), and a faint mm grid — the same coordinate system the schematic canvas shows. */
   coordinateGrid?: boolean
+  /** OUTLINE TOOL: when on, a draggable handle sits on every board-edge corner (outlineRing). Dragging
+   *  one reports the new vertex position in mm (onOutlineMove) so the panel can rewrite the board
+   *  profile; outlineDragIndex highlights the grabbed corner. The Gerber edge-cut + edge-clearance DRC
+   *  follow the reshaped polygon. */
+  outlineActive?: boolean
+  outlineDragIndex?: number | null
+  onOutlineVertexDown?: (index: number) => void
+  onOutlineMove?: (mm: { x: number; y: number }) => void
+  onOutlineVertexUp?: () => void
 }) {
   // Editing (drag / rotate) belongs only to the full flat layout — the layer sheets are view-only, and
   // the route/via tools take over the pointer when on.
   const interactive =
-    onMove !== undefined && mode === 'flat' && !routeActive && !viaActive && !measureActive
+    onMove !== undefined &&
+    mode === 'flat' &&
+    !routeActive &&
+    !viaActive &&
+    !measureActive &&
+    !outlineActive
   const [selected, setSelected] = useState<string | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
   const drag = useRef<{
@@ -235,9 +254,17 @@ export function PcbView({
     moved: boolean
   } | null>(null)
   const [frozenOutline, setFrozenOutline] = useState<Board['outline'] | null>(null)
+  // The outline tool freezes the frame on its OWN state (not the part-drag frozenOutline) so dragging a
+  // vertex doesn't reflow the viewBox out from under the cursor. An effect releases it whenever the tool
+  // deactivates, so an Escape / tool-switch mid-drag — which App handles but can't reach into this
+  // component to clean up — never leaves the board stuck frozen. A normal release clears it directly.
+  const [outlineFrozen, setOutlineFrozen] = useState<Board['outline'] | null>(null)
+  useEffect(() => {
+    if (!outlineActive) setOutlineFrozen(null)
+  }, [outlineActive])
 
   const o = board.outline
-  const frame = frozenOutline ?? o
+  const frame = frozenOutline ?? outlineFrozen ?? o
   const minX = frame.x - paddingMm
   const minY = frame.y - paddingMm
   const wPx = (frame.w + 2 * paddingMm) * pxPerMm
@@ -279,6 +306,24 @@ export function PcbView({
     svgRef.current?.setPointerCapture(e.pointerId)
     e.preventDefault()
     svgRef.current?.focus({ preventScroll: true })
+  }
+  // OUTLINE tool: grab a board-edge corner. The gesture is captured on the svg (like a part drag) so
+  // moves keep flowing even if the cursor leaves the small handle; the frame is frozen at the pre-drag
+  // outline so reshaping the polygon (which changes the bbox) doesn't reflow the viewBox mid-drag.
+  const grabVertex = (index: number) => (e: ReactPointerEvent) => {
+    if (e.button !== 0) return
+    e.stopPropagation() // this handle owns the gesture — don't also fire the board's deselect
+    setOutlineFrozen(board.outline)
+    svgRef.current?.setPointerCapture(e.pointerId)
+    onOutlineVertexDown?.(index)
+    e.preventDefault()
+  }
+  const endOutlineDrag = (e: ReactPointerEvent) => {
+    setOutlineFrozen(null)
+    if (svgRef.current?.hasPointerCapture(e.pointerId)) {
+      svgRef.current.releasePointerCapture(e.pointerId)
+    }
+    onOutlineVertexUp?.()
   }
   const movePart = (e: ReactPointerEvent) => {
     const d = drag.current
@@ -380,7 +425,8 @@ export function PcbView({
         fontFamily: 'system-ui, sans-serif',
         outline: 'none',
         touchAction: 'none',
-        cursor: routeActive || viaActive || measureActive ? 'crosshair' : undefined,
+        cursor:
+          routeActive || viaActive || measureActive || outlineActive ? 'crosshair' : undefined,
       }}
       role="img"
       aria-label="PCB layout"
@@ -411,9 +457,18 @@ export function PcbView({
         if (interactive) movePart(e)
         if (routeActive) onRouteMove?.(eventToMm(e))
         if (measureActive) onMeasureMove?.(eventToMm(e))
+        if (outlineActive) {
+          // Recover a vertex drag whose pointerup was missed (button released off-window): end it on the
+          // next move with no button held, exactly as movePart does for a part drag.
+          if (e.buttons === 0) {
+            if (outlineDragIndex !== null) endOutlineDrag(e)
+          } else {
+            onOutlineMove?.(eventToMm(e))
+          }
+        }
       }}
-      onPointerUp={interactive ? endDrag : undefined}
-      onPointerCancel={interactive ? endDrag : undefined}
+      onPointerUp={interactive ? endDrag : outlineActive ? endOutlineDrag : undefined}
+      onPointerCancel={interactive ? endDrag : outlineActive ? endOutlineDrag : undefined}
       onKeyDown={
         interactive
           ? (e) => {
@@ -798,6 +853,27 @@ export function PcbView({
               )}
             </>
           )}
+        </g>
+      )}
+
+      {/* OUTLINE tool: a draggable handle on every board-edge corner. Dragging one reshapes the board
+          profile (the Gerber edge-cut + the edge-clearance / component-to-edge DRC follow it). Unlike the
+          read-only overlays above these are interactive, so each captures its own pointerdown. */}
+      {outlineActive && (
+        <g data-outline-overlay="true">
+          {outlineRing(board).map((p, i) => (
+            <circle
+              key={`outline-handle-${p.x}-${p.y}`}
+              cx={sx(p.x)}
+              cy={sy(p.y)}
+              r={5}
+              fill={i === outlineDragIndex ? SELECT : BOARD_EDGE}
+              stroke="#0b1220"
+              strokeWidth={1.5}
+              style={{ cursor: 'grab' }}
+              onPointerDown={grabVertex(i)}
+            />
+          ))}
         </g>
       )}
     </svg>

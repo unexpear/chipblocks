@@ -120,6 +120,7 @@ export function BoardView({
   onRotate,
   route,
   measure,
+  outline,
 }: {
   board: Board
   stackup: Stackup
@@ -151,6 +152,15 @@ export function BoardView({
     cursor?: { x: number; y: number } | null
     onClick: (mm: { x: number; y: number }) => void
     onMove: (mm: { x: number; y: number }) => void
+  }
+  /** The outline / board-shape tool's live state + handlers (flat/layers view): drag a board-edge
+   *  corner to reshape the profile. Flat-only, like measure — not threaded into the 3-D view. */
+  outline?: {
+    active: boolean
+    dragIndex: number | null
+    onVertexDown: (index: number) => void
+    onMove: (mm: { x: number; y: number }) => void
+    onVertexUp: () => void
   }
 }) {
   if (mode === 'exploded') {
@@ -204,6 +214,15 @@ export function BoardView({
             onMeasureMove: measure.onMove,
             ...(measure.pendingA !== undefined ? { pendingMeasureA: measure.pendingA } : {}),
             ...(measure.cursor !== undefined ? { measureCursor: measure.cursor } : {}),
+          }
+        : {})}
+      {...(outline
+        ? {
+            outlineActive: outline.active,
+            outlineDragIndex: outline.dragIndex,
+            onOutlineVertexDown: outline.onVertexDown,
+            onOutlineMove: outline.onMove,
+            onOutlineVertexUp: outline.onVertexUp,
           }
         : {})}
     />
