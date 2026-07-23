@@ -254,6 +254,7 @@ import { useShortcuts } from './use-shortcuts.tsx'
 import { useSParam } from './use-sparam.ts'
 import { useTimeline } from './use-timeline.ts'
 import { useWireTool } from './use-wire-tool.ts'
+import { allUserFootprints, mergeUserFootprints } from './user-footprints.ts'
 import {
   deserializeUserLibrary,
   serializeUserLibrary,
@@ -2409,6 +2410,9 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     if (project.loaded?.userParts && project.loaded.userParts.length > 0) {
       mergeUserParts(project.loaded.userParts)
     }
+    if (project.loaded?.userFootprints && project.loaded.userFootprints.length > 0) {
+      mergeUserFootprints(project.loaded.userFootprints)
+    }
     const flow = project.loaded ? circuitFileToFlow(project.loaded) : templateFlow(project.template)
     const nodes: Node[] = flow.nodes
     const baseEdges: Edge[] = flow.edges
@@ -2796,6 +2800,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         pcbStackupOptionsRef.current,
         pcbVScoredSidesRef.current,
         pcbProfileRef.current ?? undefined,
+        allUserFootprints(),
       )
       void bridge.saveCircuitData(JSON.stringify(file, null, 2)).then((r) => {
         // A successful save lands the project in the "My Projects" list (by its file path).
@@ -2839,6 +2844,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         pcbStackupOptionsRef.current,
         pcbVScoredSidesRef.current,
         pcbProfileRef.current ?? undefined,
+        allUserFootprints(),
       )
       const name = project.name || 'My Template'
       const template: UserTemplate = {
@@ -2950,6 +2956,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       // part another open tab authored), the EXISTING one is kept — loading a project never silently
       // rewrites a part in use elsewhere. (Built-in-id clashes are skipped too.)
       mergeUserParts(result.file.userParts ?? [])
+      mergeUserFootprints(result.file.userFootprints ?? [])
       const flow = circuitFileToFlow(result.file)
       setNodes(flow.nodes)
       setEdges(flow.edges)

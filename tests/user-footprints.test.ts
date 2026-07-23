@@ -7,6 +7,7 @@
  */
 
 import { afterEach, describe, expect, test } from 'vitest'
+import { deserializeCircuit, serializeCircuit } from '../src/renderer/circuit-file.ts'
 import { BUILTIN_FOOTPRINTS, type Footprint } from '../src/renderer/footprint.ts'
 import { footprintsForPinCount } from '../src/renderer/footprint-assignment.ts'
 import {
@@ -162,5 +163,71 @@ describe('the payoff — an authored package is one a part can actually land on'
     const shipped = Object.keys(BUILTIN_FOOTPRINTS).length
     registerUserFootprint(qfn4())
     expect(allAvailableFootprints()).toHaveLength(shipped + 1)
+  })
+})
+
+describe('an authored package travels with the project', () => {
+  const nodeUsing = (footprintId: string) => [
+    {
+      id: 'U1',
+      position: { x: 0, y: 0 },
+      data: { definition: 'resistor', footprintId },
+    },
+  ]
+
+  test('a referenced authored footprint survives save → load', () => {
+    registerUserFootprint(qfn4())
+    const saved = serializeCircuit(
+      nodeUsing('TEST_QFN4'),
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      allUserFootprints(),
+    )
+    const r = deserializeCircuit(JSON.stringify(saved))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.file.userFootprints?.map((f) => f.id)).toEqual(['TEST_QFN4'])
+    // and re-registering from the file makes it resolvable again in a fresh session
+    setUserFootprints([])
+    expect(resolveFootprint('TEST_QFN4')).toBeUndefined()
+    mergeUserFootprints(r.file.userFootprints ?? [])
+    expect(resolveFootprint('TEST_QFN4')?.pads).toHaveLength(4)
+  })
+
+  test('an UNreferenced authored footprint is not written into the file', () => {
+    registerUserFootprint(qfn4('TEST_UNUSED'))
+    const saved = serializeCircuit(
+      nodeUsing('R_0603_1608Metric'), // a built-in package — nothing authored is in play
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      allUserFootprints(),
+    )
+    expect(saved.userFootprints).toBeUndefined()
+  })
+
+  test('a malformed footprint in a file is DROPPED, not placed', () => {
+    const broken = { ...qfn4(), pads: [] } // no pads — nothing to solder to
+    const file = { ...serializeCircuit(nodeUsing('TEST_QFN4'), []), userFootprints: [broken] }
+    const r = deserializeCircuit(JSON.stringify(file))
+    expect(r.ok).toBe(true) // a bad package doesn't sink the whole circuit…
+    if (r.ok) expect(r.file.userFootprints).toBeUndefined() // …it just isn't loaded
   })
 })

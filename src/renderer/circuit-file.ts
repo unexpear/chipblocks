@@ -1,10 +1,12 @@
 import type { BlockData } from './blocks.ts'
 import { type ChipLayout, isEmptyChipLayout, sanitizeChipLayout } from './chip-layout.ts'
+import type { Footprint } from './footprint.ts'
 import type { Parameters } from './part-defaults.ts'
 import type { BoardProfile, BoardSide } from './pcb-board.ts'
 import { type CopperTrace, sanitizeCopper, type Via } from './pcb-route.ts'
 import { isDefaultStackupOptions, type StackupOptions, sanitizeStackup } from './pcb-stackup.ts'
 import type { SheetSettings } from './sheet-frame.tsx'
+import { validateUserFootprint } from './user-footprint-validate.ts'
 import { validateUserPart } from './user-part-validate.ts'
 import type { UserPart } from './user-parts.ts'
 
@@ -90,6 +92,10 @@ export type CircuitFile = {
   /** User-authored custom parts used by this project, so the file is self-contained + portable; absent
    *  ⇒ none (older files). Validated on load by user-part-validate.ts (mirrors user-part.schema.json). */
   userParts?: UserPart[]
+  /** Footprints AUTHORED in this project — packages the shipped library doesn't have. Only the ones this
+   *  board actually references are saved, so the file stays self-contained + portable without shipping the
+   *  whole authored library; absent ⇒ none. Validated on load by user-footprint-validate.ts. */
+  userFootprints?: Footprint[]
   /** The board stack-up the user chose — copper-layer count, thickness, copper weight, surface finish;
    *  absent ⇒ the shipped 2-layer default (older files). Saved so a 4-/6-layer board reopens as itself
    *  (not silently reverted to 2-layer) AND so hand-laid copper on an inner layer keeps a layer to live
@@ -209,6 +215,7 @@ export function serializeCircuit(
   stackup?: StackupOptions,
   vScoredSides?: readonly BoardSide[],
   boardProfile?: BoardProfile,
+  userFootprints?: readonly Footprint[],
 ): CircuitFile {
   // Save only the user parts THIS circuit references (not the whole session registry, which is shared
   // across open tabs) — so the file is self-contained + portable without leaking unrelated parts.
@@ -218,6 +225,12 @@ export function serializeCircuit(
       ? closeOverInternals(collectDefinitionIds(nodes), userParts)
       : undefined
   const referencedUserParts = usedIds ? (userParts ?? []).filter((p) => usedIds.has(p.id)) : []
+  // Same rule for AUTHORED footprints: save the packages this board actually places — a per-instance
+  // choice on a node, or a referenced custom part's package — not the whole authored library.
+  const usedFootprintIds = new Set<string>()
+  for (const n of nodes) if (n.data.footprintId) usedFootprintIds.add(n.data.footprintId)
+  for (const p of referencedUserParts) if (p.footprintId) usedFootprintIds.add(p.footprintId)
+  const referencedFootprints = (userFootprints ?? []).filter((f) => usedFootprintIds.has(f.id))
   return {
     format: CIRCUIT_FILE_FORMAT,
     version: CIRCUIT_FILE_VERSION,
@@ -229,6 +242,7 @@ export function serializeCircuit(
       ? { boardProfile: { points: boardProfile.points.map((p) => ({ x: p.x, y: p.y })) } }
       : {}),
     ...(referencedUserParts.length > 0 ? { userParts: referencedUserParts } : {}),
+    ...(referencedFootprints.length > 0 ? { userFootprints: referencedFootprints } : {}),
     ...(chipLayout && !isEmptyChipLayout(chipLayout) ? { chipLayout } : {}),
     ...(stackup && !isDefaultStackupOptions(stackup) ? { stackup } : {}),
     ...(userTraces && userTraces.length > 0 ? { traces: [...userTraces] } : {}),
@@ -328,6 +342,7 @@ export function deserializeCircuit(text: string): DeserializeResult {
     vScoredSides,
     boardProfile,
     userParts,
+    userFootprints,
     chipLayout,
     stackup,
     traces,
@@ -384,6 +399,11 @@ export function deserializeCircuit(text: string): DeserializeResult {
   const cleanUserParts = Array.isArray(userParts)
     ? userParts.map((p) => validateUserPart(p)).filter((p): p is UserPart => p !== null)
     : []
+  // An authored footprint that doesn't validate is DROPPED rather than placed — a malformed package would
+  // mis-solder a real part. The board then honestly reports that part as having no footprint.
+  const cleanUserFootprints = Array.isArray(userFootprints)
+    ? userFootprints.map((f) => validateUserFootprint(f)).filter((f): f is Footprint => f !== null)
+    : []
   // Chip layout: a malformed layer (or malformed overrides inside it) is dropped, not a reason to reject
   // the circuit — the chip level just re-generates its floorplan fresh, exactly like an older file.
   const cleanChipLayout = sanitizeChipLayout(chipLayout)
@@ -403,6 +423,7 @@ export function deserializeCircuit(text: string): DeserializeResult {
       ...(cleanVScoredSides.length > 0 ? { vScoredSides: cleanVScoredSides } : {}),
       ...(cleanBoardProfile ? { boardProfile: cleanBoardProfile } : {}),
       ...(cleanUserParts.length > 0 ? { userParts: cleanUserParts } : {}),
+      ...(cleanUserFootprints.length > 0 ? { userFootprints: cleanUserFootprints } : {}),
       ...(cleanChipLayout ? { chipLayout: cleanChipLayout } : {}),
       ...(cleanStackup ? { stackup: cleanStackup } : {}),
       ...(cleanCopper.traces.length > 0 ? { traces: cleanCopper.traces } : {}),
