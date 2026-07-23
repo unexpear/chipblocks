@@ -1,12 +1,7 @@
-import {
-  BUILTIN_FOOTPRINTS,
-  type Footprint,
-  fabricationBounds,
-  footprintBounds,
-  type Pad,
-} from './footprint.ts'
+import { type Footprint, fabricationBounds, footprintBounds, type Pad } from './footprint.ts'
 import { boardDesignator, footprintForPart, padForTerminal } from './footprint-assignment.ts'
 import { SILK_TEXT, strokeTextWidthMm } from './stroke-font.ts'
+import { resolveFootprint } from './user-footprints.ts'
 
 /**
  * The PCB board — the physical layout the schematic becomes (TOOLCHAIN-ROADMAP.md Track 1, the PCB
@@ -112,7 +107,7 @@ export type BoardPart = { id: string; definition: string; footprintId?: string }
 
 /** Resolve a placement's footprint (it stores the id, not the object). */
 export function footprintByPlacement(p: Placement): Footprint | undefined {
-  return BUILTIN_FOOTPRINTS[p.footprintId]
+  return resolveFootprint(p.footprintId)
 }
 
 /** Turn a footprint-local point onto the board: rotate about the footprint ORIGIN (the same pivot the

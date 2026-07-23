@@ -1,4 +1,5 @@
-import { BUILTIN_FOOTPRINTS, type Footprint } from './footprint.ts'
+import type { Footprint } from './footprint.ts'
+import { allAvailableFootprints, resolveFootprint } from './user-footprints.ts'
 import { getUserPart, type UserPart } from './user-parts.ts'
 
 /**
@@ -9,11 +10,11 @@ import { getUserPart, type UserPart } from './user-parts.ts'
  */
 function userPartFootprint(userPart: UserPart, chosenId?: string): Footprint | undefined {
   const fits = (id: string | undefined): Footprint | undefined => {
-    // Object.hasOwn guards the lookup: a user part's persisted footprintId is untrusted, and
-    // BUILTIN_FOOTPRINTS['constructor'] / ['__proto__'] returns an inherited member (not undefined),
-    // whose `.pads` is undefined → a crash on `.length`. hasOwn only accepts a real footprint id.
-    if (id === undefined || !Object.hasOwn(BUILTIN_FOOTPRINTS, id)) return undefined
-    const fp = BUILTIN_FOOTPRINTS[id]
+    if (id === undefined) return undefined
+    // resolveFootprint checks the AUTHORED library first, then the built-ins, and carries the
+    // Object.hasOwn guard a persisted (untrusted) footprintId needs — 'constructor' / '__proto__' would
+    // otherwise hand back an inherited member whose `.pads` is undefined → a crash on `.length`.
+    const fp = resolveFootprint(id)
     return fp !== undefined && fp.pads.length >= userPart.pins.length ? fp : undefined
   }
   return fits(chosenId) ?? fits(userPart.footprintId)
@@ -83,7 +84,7 @@ export function footprintForPart(definition: string, chosenId?: string): Footpri
   const entry = Object.hasOwn(PART_FOOTPRINTS, definition) ? PART_FOOTPRINTS[definition] : undefined
   if (entry !== undefined) {
     const id = chosenId !== undefined && entry.options.includes(chosenId) ? chosenId : entry.default
-    return BUILTIN_FOOTPRINTS[id]
+    return resolveFootprint(id)
   }
   const userPart = getUserPart(definition)
   return userPart !== undefined ? userPartFootprint(userPart, chosenId) : undefined
@@ -95,7 +96,7 @@ export function footprintOptions(definition: string): Footprint[] {
   const entry = PART_FOOTPRINTS[definition]
   if (entry !== undefined) {
     return entry.options
-      .map((id) => BUILTIN_FOOTPRINTS[id])
+      .map((id) => resolveFootprint(id))
       .filter((f): f is Footprint => f !== undefined)
   }
   const userPart = getUserPart(definition)
@@ -107,7 +108,8 @@ export function footprintOptions(definition: string): Footprint[] {
  *  small → large. The New-Part editor uses this for an in-progress (unregistered) part; footprintOptions
  *  uses it for a saved custom part. */
 export function footprintsForPinCount(pinCount: number): Footprint[] {
-  return Object.values(BUILTIN_FOOTPRINTS)
+  // the AUTHORED library too — a package you drew is exactly what a part the built-ins don't cover needs
+  return allAvailableFootprints()
     .filter((f) => f.pads.length >= pinCount)
     .sort((a, b) => a.pads.length - b.pads.length || a.name.localeCompare(b.name))
 }
