@@ -58,6 +58,23 @@ export type DrcCode =
   | 'component-edge'
   | 'ir-drop'
   | 'castellated-hole'
+  | 'board-outline'
+
+/** A hand-drawn board outline (the Edge.Cuts / Gerber profile) must be ONE closed, non-self-intersecting
+ *  contour — CAM reads it as the single boundary that separates board from not-board, so a self-crossing
+ *  ("bow-tie") or collapsed (zero-area / collinear) outline has no well-defined inside and is rejected or
+ *  mis-cut. Below this area (mm²) an outline has collapsed to a sliver/point; a real board is far larger
+ *  (the smallest single board is already MIN_BOARD_MM per side), so this only trips on a degenerate shape. */
+export const MIN_BOARD_OUTLINE_AREA_MM2 = 0.1
+export const BOARD_OUTLINE_PROVENANCE: FootprintProvenance = {
+  source_type: 'reference',
+  title: 'The board profile (Edge.Cuts) must be a single closed, non-self-intersecting contour',
+  citation:
+    "PCB fabrication takes the board outline from a closed contour on the profile / Edge.Cuts layer; a self-intersecting or open outline has no well-defined board boundary, so CAM tooling (and KiCad's own board-outline check, which refuses to plot a board whose Edge.Cuts does not form a valid closed polygon) rejects it. The milled or V-scored edge is otherwise undefined.",
+  confidence: 'high',
+  url: 'https://docs.kicad.org/',
+  date_accessed: '2026-07-23',
+}
 
 /** The temperature rise (°C above ambient) the over-current check sizes to — IPC-2221's standard,
  *  conservative sizing point. A trace exceeding its ampacity at this rise runs hotter and ages fast. */
@@ -372,6 +389,7 @@ export const DRC_RULES: Record<
     | 'component-edge'
     | 'ir-drop'
     | 'castellated-hole'
+    | 'board-outline'
   >,
   { limitMm: number; provenance: FootprintProvenance }
 > = {
@@ -525,6 +543,61 @@ function pointInRing(px: number, py: number, ring: readonly { x: number; y: numb
   return inside
 }
 
+type RingPoint = { x: number; y: number }
+
+/** Twice the signed area of a ring (shoelace). |value|/2 is the polygon area; ~0 ⇒ collinear / collapsed. */
+function ringSignedArea2(ring: readonly RingPoint[]): number {
+  let sum = 0
+  for (let i = 0; i < ring.length; i++) {
+    const p = ring[i] as RingPoint
+    const q = ring[(i + 1) % ring.length] as RingPoint
+    sum += p.x * q.y - q.x * p.y
+  }
+  return sum
+}
+
+/** > 0 / < 0 / 0 = c is left of / right of / on the directed line a→b. */
+function orient(a: RingPoint, b: RingPoint, c: RingPoint): number {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+}
+
+/** Do segments a-b and c-d PROPERLY cross (each strictly straddles the other)? Endpoint touching and
+ *  collinear overlap are deliberately NOT flagged — a simple polygon's adjacent edges share endpoints. */
+function segmentsProperlyCross(a: RingPoint, b: RingPoint, c: RingPoint, d: RingPoint): boolean {
+  const d1 = orient(c, d, a)
+  const d2 = orient(c, d, b)
+  const d3 = orient(a, b, c)
+  const d4 = orient(a, b, d)
+  return d1 > 0 !== d2 > 0 && d3 > 0 !== d4 > 0 && d1 !== 0 && d2 !== 0 && d3 !== 0 && d4 !== 0
+}
+
+/** The intersection point of lines a-b and c-d (both known to cross); the ring centre as a safe fallback. */
+function lineIntersection(a: RingPoint, b: RingPoint, c: RingPoint, d: RingPoint): RingPoint {
+  const denom = (b.x - a.x) * (d.y - c.y) - (b.y - a.y) * (d.x - c.x)
+  if (Math.abs(denom) < 1e-12)
+    return { x: (a.x + b.x + c.x + d.x) / 4, y: (a.y + b.y + c.y + d.y) / 4 }
+  const t = ((c.x - a.x) * (d.y - c.y) - (c.y - a.y) * (d.x - c.x)) / denom
+  return { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) }
+}
+
+/** The first point where two NON-ADJACENT edges of a closed ring cross, or null if the outline is simple. */
+function firstSelfIntersection(ring: readonly RingPoint[]): RingPoint | null {
+  const n = ring.length
+  if (n < 4) return null // a triangle (or less) can't self-intersect
+  for (let i = 0; i < n; i++) {
+    const a = ring[i] as RingPoint
+    const b = ring[(i + 1) % n] as RingPoint
+    for (let j = i + 1; j < n; j++) {
+      if (j === i + 1) continue // adjacent — shares vertex ring[i+1]
+      if (i === 0 && j === n - 1) continue // the wrap pair (edge 0 & edge n-1) shares vertex ring[0]
+      const c = ring[j] as RingPoint
+      const d = ring[(j + 1) % n] as RingPoint
+      if (segmentsProperlyCross(a, b, c, d)) return lineIntersection(a, b, c, d)
+    }
+  }
+  return null
+}
+
 /** Every copper rectangle on the board (pads as-is; trace segments at their real width). A castellated
  *  pad is tagged so the edge checks can exempt it — it BELONGS on the board edge. */
 function copperBoxes(
@@ -621,6 +694,30 @@ export function runDrc(
         code: 'board-size',
         message: `the board is ${fmt(largest)} mm on its largest side — over the ${fmt(MAX_BOARD_MM)} mm standard-panel limit; a board this large needs a special quote`,
         at: center,
+      })
+    }
+  }
+
+  // A hand-drawn board OUTLINE must be a single simple (non-self-intersecting), non-collapsed polygon —
+  // the fab cuts/scores the board along this one contour, so a self-crossing ("bow-tie") or zero-area
+  // outline has no well-defined inside and would be rejected or mis-cut. Only a custom profile can be
+  // either; a plain auto-fit rectangle (no profile) is always valid, so this is skipped for it.
+  if (board.profile !== undefined) {
+    const ring = outlineRing(board)
+    const crossing = firstSelfIntersection(ring)
+    if (crossing !== null) {
+      out.push({
+        code: 'board-outline',
+        message:
+          'the board outline crosses itself — a board edge must be one loop that never crosses, or the fab can’t tell what is inside the board',
+        at: crossing,
+      })
+    } else if (Math.abs(ringSignedArea2(ring)) / 2 < MIN_BOARD_OUTLINE_AREA_MM2) {
+      out.push({
+        code: 'board-outline',
+        message:
+          'the board outline has collapsed to nearly zero area — drag its corners back out into a real shape',
+        at: { x: board.outline.x + board.outline.w / 2, y: board.outline.y + board.outline.h / 2 },
       })
     }
   }

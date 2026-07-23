@@ -9,6 +9,7 @@ import {
 } from './pcb-board.ts'
 import type { DrcViolation } from './pcb-drc.ts'
 import {
+  BOARD_OUTLINE_PROVENANCE,
   BOARD_SIZE_PROVENANCE,
   CASTELLATED_EDGE_TO_EDGE_MM,
   CASTELLATED_MIN_DRILL_MM,
@@ -338,6 +339,7 @@ export function buildValidationReport(inputs: FabInputs): FabValidation {
     `  trace width ${num(DEFAULT_ROUTE_CLASS.traceWidthMm)} mm / clearance ${num(DEFAULT_ROUTE_CLASS.clearanceMm)} mm — ${DEFAULT_ROUTE_CLASS.provenance.title}`,
     `  copper-to-edge ≥ ${num(DRC_RULES['edge-clearance'].limitMm)} mm routed / ≥ ${num(V_CUT_EDGE_CLEARANCE_MM)} mm on a V-scored edge — ${DRC_RULES['edge-clearance'].provenance.title}; ${V_CUT_PROVENANCE.title}`,
     `  board size ${num(MIN_BOARD_MM)}–${num(MAX_BOARD_MM)} mm per side — ${BOARD_SIZE_PROVENANCE.title}`,
+    `  board outline (a custom shape must be one simple, non-self-intersecting, non-collapsed loop) — ${BOARD_OUTLINE_PROVENANCE.title}`,
     `  voltage clearance + creepage (net spacing = max(air clearance, surface creepage), scaled to their ΔV) — ${VOLTAGE_CLEARANCE_PROVENANCE.title}; ${CREEPAGE_PROVENANCE.title}`,
     `  component-to-edge keepout ≥ ${num(COMPONENT_EDGE_KEEPOUT_MM)} mm — ${COMPONENT_EDGE_KEEPOUT_PROVENANCE.title}`,
     `  silkscreen stroke ≥ ${num(DRC_RULES['silk-stroke'].limitMm)} mm, character height ≥ ${num(MIN_SILK_CHAR_HEIGHT_MM)} mm — ${DRC_RULES['silk-stroke'].provenance.title}`,

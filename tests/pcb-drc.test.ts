@@ -1581,3 +1581,69 @@ describe('Tier 1: a concave (L-shaped) board flags copper + parts in the cut-awa
     }
   })
 })
+
+describe('board-outline validity (a hand-drawn outline must be a simple, non-collapsed polygon)', () => {
+  const ROUTING = { traces: [], vias: [], unrouted: [] }
+  const outlineViolations = (points: { x: number; y: number }[]) => {
+    const profile = { points }
+    const board: Board = { outline: profileBBox(profile), profile, placements: [] }
+    return runDrc(board, { airwires: [], padBoxes: [] }, ROUTING).filter(
+      (d) => d.code === 'board-outline',
+    )
+  }
+
+  test('a simple rectangular custom outline is valid (no board-outline violation)', () => {
+    expect(
+      outlineViolations([
+        { x: 0, y: 0 },
+        { x: 20, y: 0 },
+        { x: 20, y: 15 },
+        { x: 0, y: 15 },
+      ]),
+    ).toEqual([])
+  })
+
+  test('a valid concave L-shaped outline is NOT flagged (a real non-rectangular board is fine)', () => {
+    expect(
+      outlineViolations([
+        { x: 0, y: 0 },
+        { x: 20, y: 0 },
+        { x: 20, y: 8 },
+        { x: 8, y: 8 },
+        { x: 8, y: 20 },
+        { x: 0, y: 20 },
+      ]),
+    ).toEqual([])
+  })
+
+  test('a self-intersecting (bow-tie) outline is flagged — a corner dragged past the opposite edge', () => {
+    const hits = outlineViolations([
+      { x: 0, y: 0 },
+      { x: 20, y: 20 },
+      { x: 20, y: 0 },
+      { x: 0, y: 20 },
+    ])
+    expect(hits).toHaveLength(1)
+    expect(hits[0]?.message).toContain('crosses itself')
+  })
+
+  test('a collapsed / collinear outline (near-zero area) is flagged', () => {
+    const hits = outlineViolations([
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 20, y: 0 },
+      { x: 30, y: 0 },
+    ])
+    expect(hits).toHaveLength(1)
+    expect(hits[0]?.message).toContain('collapsed')
+  })
+
+  test('a plain rectangular board (no custom profile) is never outline-checked', () => {
+    const board: Board = { outline: { x: 0, y: 0, w: 20, h: 20 }, placements: [] }
+    expect(
+      runDrc(board, { airwires: [], padBoxes: [] }, ROUTING).filter(
+        (d) => d.code === 'board-outline',
+      ),
+    ).toEqual([])
+  })
+})
