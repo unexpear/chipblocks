@@ -145,6 +145,38 @@ function padCornersAtZ(
   })
 }
 
+/**
+ * The thinnest a layer is DRAWN in the exploded stack-up (mm). Real copper is ~0.035 mm and solder mask
+ * ~0.01 mm — next to a 1.51 mm core those are sub-pixel, so the stack reads as sheets of paper with only
+ * the core having any depth. The exploded view is a stack-up DIAGRAM (its layers are already separated by
+ * gaps that do not exist on the real board), so every layer is drawn at least this thick to make the
+ * lamination legible. The ASSEMBLED view stays exactly to scale, and the true per-layer thickness is what
+ * the stack-up panel and the fab files carry — nothing here changes a manufactured number.
+ */
+export const MIN_EXPLODED_LAYER_MM = 0.12
+
+/**
+ * Extrude a flat polygon (its own z ignored) into a solid prism z0..z1 — how a copper trace, pad ring or
+ * via cap gets real thickness instead of being an infinitely thin decal. Double-sided: these are small
+ * slabs seen from any angle in the exploded stack.
+ */
+function pushPrism(faces: Face[], base: Vec3[], z0: number, z1: number, color: string): void {
+  if (base.length < 3) return
+  const top = base.map((v) => ({ x: v.x, y: v.y, z: z1 }))
+  const bot = base.map((v) => ({ x: v.x, y: v.y, z: z0 }))
+  faces.push({ verts: top, color, decals: [], doubleSided: true })
+  faces.push({ verts: [...bot].reverse(), color, decals: [], doubleSided: true })
+  for (let i = 0; i < base.length; i++) {
+    const j = (i + 1) % base.length
+    const b0 = bot[i]
+    const b1 = bot[j]
+    const t1 = top[j]
+    const t0 = top[i]
+    if (!b0 || !b1 || !t1 || !t0) continue
+    faces.push({ verts: [b0, b1, t1, t0], color, decals: [], doubleSided: true })
+  }
+}
+
 /** A trace segment as a flat copper ribbon of the trace width, at surface height z. */
 function ribbonSegment(
   a: { x: number; y: number },
@@ -410,8 +442,11 @@ export function buildBoardScene(
   if (exploded) {
     let z = 0
     for (const L of [...stackup.layers].reverse()) {
-      placed.push({ name: L.name, type: L.type, z0: z, z1: z + L.thicknessMm })
-      z = z + L.thicknessMm + explodeMm
+      // Each layer is a SLAB of its own thickness — but drawn at least MIN_EXPLODED_LAYER_MM, or the
+      // 0.035 mm copper and 0.01 mm mask vanish beside the 1.51 mm core and the stack reads as paper.
+      const drawn = Math.max(L.thicknessMm, MIN_EXPLODED_LAYER_MM)
+      placed.push({ name: L.name, type: L.type, z0: z, z1: z + drawn })
+      z = z + drawn + explodeMm
     }
   }
   const layerTop = (name: string, fallback: number) =>
@@ -556,21 +591,25 @@ export function buildBoardScene(
         // layer with nothing routed on it shows just the faint marker (its Gerber is empty too).
         const cl = stackupCopperLayer(p.name)
         const copper = cl !== null ? copperByLayer.get(cl) : undefined
+        // The faint plane marks the layer's LEVEL (its Gerber extent) and sits at the slab's base, so the
+        // etched copper standing on it never fights it for the same pixels.
         faces.push({
           verts: [
-            { x: x0, y: y0, z: p.z1 },
-            { x: x1, y: y0, z: p.z1 },
-            { x: x1, y: y1, z: p.z1 },
-            { x: x0, y: y1, z: p.z1 },
+            { x: x0, y: y0, z: p.z0 },
+            { x: x1, y: y0, z: p.z0 },
+            { x: x1, y: y1, z: p.z0 },
+            { x: x0, y: y1, z: p.z0 },
           ],
           color: COLORS.maskTop,
           decals: [],
           doubleSided: true,
           alpha: 0.12,
         })
+        // Only the ETCHED copper is solid (a real layer is mostly removed) — each trace, pad ring and via
+        // cap becomes a slab of the layer's drawn thickness, so copper reads as metal with depth.
         if (copper !== undefined) {
           for (const poly of copper) {
-            faces.push({ verts: poly.verts, color: poly.color, decals: [], doubleSided: true })
+            pushPrism(faces, poly.verts, p.z0, p.z1, poly.color)
           }
         }
       }

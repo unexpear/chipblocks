@@ -9,6 +9,7 @@ import { describe, expect, test } from 'vitest'
 import {
   buildBoardScene,
   defaultCamera,
+  MIN_EXPLODED_LAYER_MM,
   makeProjector,
   type OrbitCamera,
   projectToScreen,
@@ -351,14 +352,13 @@ describe('multilevel board — inner copper routed + shown at its real buried de
 
   test('an unrouted inner layer shows NO copper pour — the 3-D matches its empty inner Gerber', () => {
     // nothing routed and no vias: the inner planes carry ZERO copper (the old solid-pour depiction is
-    // gone — an unrouted inner layer's Gerber is empty, so its 3-D plane is bare too).
+    // gone — an unrouted inner layer's Gerber is empty, so its 3-D plane is bare too). Checked at each
+    // inner layer's own height, so a copper feature's real thickness on ANOTHER layer can't false-trip it.
     const scene = buildBoardScene(board, { traces: [], vias: [], unrouted: [] }, stack4(), 5)
-    const between = scene.faces.filter((f) => {
-      if (f.color !== COPPER_GOLD) return false
-      const z = flatZ(f)
-      return z !== null && z > scene.copperZ.bottom + 1e-6 && z < scene.copperZ.top - 1e-6
-    })
-    expect(between).toHaveLength(0)
+    for (const z of [scene.copperZ.inner1, scene.copperZ.inner2]) {
+      expect(z).toBeDefined()
+      expect(copperFacesAt(scene, z as number)).toHaveLength(0)
+    }
   })
 
   test('a plated through-via flashes a copper cap on EVERY copper layer (matches its Gerber)', () => {
@@ -391,14 +391,19 @@ describe('multilevel board — inner copper routed + shown at its real buried de
     }
   })
 
-  test('a plain 2-layer board has NO copper between its two copper layers', () => {
+  test('a plain 2-layer board has copper ONLY in its two copper layers — none floating in the core', () => {
     const scene = buildBoardScene(board, routing, defaultStackup(), 5)
-    const between = scene.faces.filter((f) => {
+    // Copper is a real slab now, so a feature occupies its layer's own thickness band (surface −
+    // drawn thickness … surface). Anything outside BOTH bands would be copper floating in the
+    // dielectric — the phantom pour this guards against.
+    const surfaces = [scene.copperZ.top, scene.copperZ.bottom]
+    const stray = scene.faces.filter((f) => {
       if (f.color !== COPPER_GOLD) return false
       const z = flatZ(f)
-      return z !== null && z > scene.copperZ.bottom + 1e-6 && z < scene.copperZ.top - 1e-6
+      if (z === null) return false
+      return !surfaces.some((s) => z <= s + 1e-6 && z >= s - MIN_EXPLODED_LAYER_MM - 1e-6)
     })
-    expect(between).toHaveLength(0)
+    expect(stray).toHaveLength(0)
   })
 })
 
@@ -539,5 +544,72 @@ describe('3-D routing pick — the inverse projection that turns a click into a 
     }
     expect(projectToScreen(proj, behindEye)).toBeNull()
     expect(projectToScreen(proj, scene.center)).not.toBeNull()
+  })
+})
+
+/**
+ * The EXPLODED stack-up. Every earlier exploded test passed an empty routing, so the routed copper was
+ * never checked in this mode at all — and the copper layers were drawn as infinitely thin sheets, so the
+ * lamination read as paper with only the core having depth. These pin both: the real traces appear, and
+ * every layer (copper included) is a slab you can actually see.
+ */
+describe('exploded stack-up — routed copper appears, and every layer is a visible slab', () => {
+  const COPPER_HEX = '#d7a13c' // COLORS.copper — the etched copper
+  const twoSided: BoardRouting = {
+    traces: [
+      {
+        net: 'N1',
+        widthMm: 0.25,
+        layer: 'top',
+        points: [
+          { x: board.outline.x + 1, y: board.outline.y + 1 },
+          { x: board.outline.x + 5, y: board.outline.y + 1 },
+        ],
+      },
+      {
+        net: 'N2',
+        widthMm: 0.4,
+        layer: 'bottom',
+        points: [
+          { x: board.outline.x + 1, y: board.outline.y + 3 },
+          { x: board.outline.x + 6, y: board.outline.y + 3 },
+        ],
+      },
+    ],
+    vias: [],
+    unrouted: [],
+  }
+  const zSpan = (f: { verts: { z: number }[] }) =>
+    Math.max(...f.verts.map((v) => v.z)) - Math.min(...f.verts.map((v) => v.z))
+
+  test('the routed copper is in the exploded scene (top AND bottom layers)', () => {
+    const scene = buildBoardScene(board, twoSided, defaultStackup(), 3)
+    const copper = scene.faces.filter((f) => f.color === COPPER_HEX)
+    expect(copper.length).toBeGreaterThan(0)
+    // the two traces sit at different heights — the separated top and bottom copper layers
+    const heights = new Set(copper.map((f) => Math.max(...f.verts.map((v) => v.z)).toFixed(3)))
+    expect(heights.size).toBeGreaterThan(1)
+  })
+
+  test('copper is EXTRUDED — a trace is a slab with thickness, not an infinitely thin sheet', () => {
+    const scene = buildBoardScene(board, twoSided, defaultStackup(), 3)
+    const copper = scene.faces.filter((f) => f.color === COPPER_HEX)
+    expect(copper.some((f) => zSpan(f) > 0)).toBe(true)
+  })
+
+  test('no layer is drawn thinner than the legibility minimum', () => {
+    const scene = buildBoardScene(board, twoSided, defaultStackup(), 3)
+    const solid = scene.faces.map(zSpan).filter((s) => s > 1e-9)
+    expect(solid.length).toBeGreaterThan(0)
+    expect(Math.min(...solid)).toBeGreaterThanOrEqual(MIN_EXPLODED_LAYER_MM - 1e-9)
+  })
+
+  test('the ASSEMBLED board stays exactly to scale — the minimum is an exploded-only aid', () => {
+    const flat = buildBoardScene(board, twoSided, defaultStackup(), 0)
+    const T = defaultStackup().layers.reduce((s, l) => s + l.thicknessMm, 0)
+    // the board itself still spans exactly 0..T (part bodies ride above it)
+    const boardZs = flat.faces.flatMap((f) => f.verts.map((v) => v.z)).filter((z) => z <= T + 1e-9)
+    expect(Math.max(...boardZs)).toBeCloseTo(T, 6)
+    expect(Math.min(...boardZs)).toBeCloseTo(0, 6)
   })
 })
