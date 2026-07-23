@@ -234,11 +234,16 @@ export function validateUserPart(raw: unknown): UserPart | null {
     if (typeof p.electrical !== 'string' || !ELECTRICAL.includes(p.electrical as PinElectrical)) {
       return null
     }
+    // The pad this pin lands on, if the author named one. Blank means "work it out" (name, then
+    // declaration order) rather than "pad named empty string", so it is dropped rather than stored.
+    if (p.pad !== undefined && typeof p.pad !== 'string') return null
+    const pad = typeof p.pad === 'string' ? p.pad.trim() : ''
     pins.push({
       id: p.id,
       name: p.name,
       side: p.side as PinSide,
       electrical: p.electrical as PinElectrical,
+      ...(pad.length > 0 ? { pad } : {}),
     })
   }
 

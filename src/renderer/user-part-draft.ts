@@ -14,7 +14,13 @@ import {
  * The editor component (user-part-editor.tsx) owns the inputs + preview and calls this on Save.
  */
 
-export type PinInput = { name: string; side: PinSide; electrical: PinElectrical }
+export type PinInput = {
+  name: string
+  side: PinSide
+  electrical: PinElectrical
+  /** Which footprint pad this pin solders to, as the package labels it. Blank/absent = work it out. */
+  pad?: string
+}
 export type ParamInput = { name: string; amount: string; unit: string }
 export type UserPartInput = {
   name: string
@@ -95,12 +101,17 @@ export function buildUserPartDraft(input: UserPartInput): DraftResult {
   if (input.pins.length === 0) return { ok: false, error: 'Add at least one pin.' }
 
   const ids = pinIds(input.pins)
-  const userPins = input.pins.map((pin, i) => ({
-    id: ids[i] as string,
-    name: pin.name.trim(),
-    side: pin.side,
-    electrical: pin.electrical,
-  }))
+  const userPins = input.pins.map((pin, i) => {
+    const pad = pin.pad?.trim() ?? ''
+    return {
+      id: ids[i] as string,
+      name: pin.name.trim(),
+      side: pin.side,
+      electrical: pin.electrical,
+      // Blank means "work it out" (by name, then by order), not "a pad called empty string".
+      ...(pad.length > 0 ? { pad } : {}),
+    }
+  })
 
   const parameters: Parameters = {}
   const usedParam = new Set<string>()

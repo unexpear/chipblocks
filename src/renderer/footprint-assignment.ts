@@ -200,13 +200,53 @@ export function padForTerminal(
 ): string | undefined {
   const pinout = pinoutFor(definition, footprintId)
   if (pinout !== undefined) return pinout[handleId]
-  // A custom part maps its pins to the footprint's pads in declaration order (pin i → pad i).
+  const map = userPartPadMap(definition, footprintId)
+  return map?.get(handleId)
+}
+
+/**
+ * Which pad each of a custom part's pins solders to — the one answer both directions read, so the
+ * board's pin→pad and its pad→pin can never disagree.
+ *
+ * Three ways, in this order:
+ *  1. the pad the pin NAMES (`pin.pad`) — a real symbol carries the package's pad label alongside the
+ *     signal name, and on a 48-pin chip 'IO_12' and pad '31' have nothing to do with each other;
+ *  2. a pad whose label matches the pin's name — so a package drawn with GND / VCC / OUT pads lines
+ *     itself up with a part whose pins are called that, with nothing to fill in;
+ *  3. declaration order over whatever pads are left — pin 1 → pad 1, which is what a two-pin part
+ *     wants and what every part authored before pins could name a pad already relies on.
+ *
+ * A pad is claimed once, so an explicit or by-name match never steals the pad an earlier pin took.
+ */
+function userPartPadMap(definition: string, footprintId?: string): Map<string, string> | undefined {
   const userPart = getUserPart(definition)
   if (userPart === undefined) return undefined
   const fp = userPartFootprint(userPart, footprintId)
   if (fp === undefined) return undefined
-  const pinIndex = userPart.pins.findIndex((p) => p.id === handleId)
-  return pinIndex >= 0 ? fp.pads[pinIndex]?.id : undefined
+
+  const padIds = new Set(fp.pads.map((p) => p.id))
+  const assigned = new Map<string, string>()
+  const claimed = new Set<string>()
+  const take = (pinId: string, padId: string) => {
+    assigned.set(pinId, padId)
+    claimed.add(padId)
+  }
+
+  for (const pin of userPart.pins) {
+    if (pin.pad !== undefined && padIds.has(pin.pad) && !claimed.has(pin.pad)) take(pin.id, pin.pad)
+  }
+  for (const pin of userPart.pins) {
+    if (assigned.has(pin.id)) continue
+    if (padIds.has(pin.name) && !claimed.has(pin.name)) take(pin.id, pin.name)
+  }
+  const unclaimed = fp.pads.filter((p) => !claimed.has(p.id))
+  let next = 0
+  for (const pin of userPart.pins) {
+    if (assigned.has(pin.id)) continue
+    const pad = unclaimed[next++]
+    if (pad !== undefined) assigned.set(pin.id, pad.id)
+  }
+  return assigned
 }
 
 /** The terminal (handle) a footprint pad belongs to — the inverse of padForTerminal, for the part's
@@ -224,14 +264,14 @@ export function terminalForPad(
     }
     return undefined
   }
-  // Custom part: the inverse of padForTerminal — the pad's index in the footprint maps back to the pin
-  // at that same declaration index (extra footprint pads beyond the pin count have no terminal).
-  const userPart = getUserPart(definition)
-  if (userPart === undefined) return undefined
-  const fp = userPartFootprint(userPart, footprintId)
-  if (fp === undefined) return undefined
-  const padIndex = fp.pads.findIndex((p) => p.id === padId)
-  return padIndex >= 0 ? userPart.pins[padIndex]?.id : undefined
+  // Custom part: the inverse of the SAME map padForTerminal reads, so the two can't drift apart. A
+  // footprint pad no pin claimed (a spare, a mounting hole) simply has no terminal.
+  const map = userPartPadMap(definition, footprintId)
+  if (map === undefined) return undefined
+  for (const [pinId, pad] of map) {
+    if (pad === padId) return pinId
+  }
+  return undefined
 }
 
 /** Which parameter is a part's BOM "value" (the number an assembler reads — '470 Ω', '100 µF'),

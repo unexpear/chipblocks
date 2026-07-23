@@ -23,7 +23,14 @@ import {
 
 const SIDES: PinSide[] = ['left', 'right', 'top', 'bottom']
 
-type PinRow = { key: string; name: string; side: PinSide; electrical: PinElectrical }
+type PinRow = {
+  key: string
+  name: string
+  side: PinSide
+  electrical: PinElectrical
+  /** The footprint pad this pin solders to, as the package labels it. Blank = work it out. */
+  pad: string
+}
 type ParamRow = { key: string; name: string; amount: string; unit: string }
 
 export function UserPartEditor({
@@ -39,8 +46,8 @@ export function UserPartEditor({
   const keyRef = useRef(0)
   const freshKey = (prefix: string) => `${prefix}-${keyRef.current++}`
   const [pins, setPins] = useState<PinRow[]>(() => [
-    { key: 'pin-init-0', name: 'IN', side: 'left', electrical: 'input' },
-    { key: 'pin-init-1', name: 'OUT', side: 'right', electrical: 'output' },
+    { key: 'pin-init-0', name: 'IN', side: 'left', electrical: 'input', pad: '' },
+    { key: 'pin-init-1', name: 'OUT', side: 'right', electrical: 'output', pad: '' },
   ])
   const [params, setParams] = useState<ParamRow[]>([])
   const [footprint, setFootprint] = useState('')
@@ -77,7 +84,7 @@ export function UserPartEditor({
   const addPin = () =>
     setPins((ps) => [
       ...ps,
-      { key: freshKey('pin'), name: '', side: 'left', electrical: 'passive' },
+      { key: freshKey('pin'), name: '', side: 'left', electrical: 'passive', pad: '' },
     ])
   const removePin = (key: string) => setPins((ps) => ps.filter((p) => p.key !== key))
   const updatePin = (key: string, patch: Partial<PinRow>) =>
@@ -107,7 +114,12 @@ export function UserPartEditor({
     const result = buildUserPartDraft({
       name,
       designatorPrefix: designator,
-      pins: pins.map((p) => ({ name: p.name, side: p.side, electrical: p.electrical })),
+      pins: pins.map((p) => ({
+        name: p.name,
+        side: p.side,
+        electrical: p.electrical,
+        pad: p.pad,
+      })),
       params: params.map((p) => ({ name: p.name, amount: p.amount, unit: p.unit })),
       ...(footprintValue ? { footprintId: footprintValue } : {}),
       ...(behaviourValid && behaviourDevice
@@ -247,6 +259,14 @@ export function UserPartEditor({
                   placeholder="pin name"
                   style={{ ...textInput, flex: 1, minWidth: 0 }}
                 />
+                <input
+                  type="text"
+                  value={pin.pad}
+                  onChange={(e) => updatePin(pin.key, { pad: e.target.value })}
+                  placeholder="pad"
+                  title="Which pad of the footprint this pin solders to, named as the package labels it (1, A5). A real symbol carries this alongside the signal name — on a 48-pin chip, IO_12 and pad 31 are unrelated. Leave blank to match the pin name against a pad, then fall back to order."
+                  style={{ ...textInput, width: 58, flexShrink: 0 }}
+                />
                 <select
                   value={pin.side}
                   onChange={(e) => updatePin(pin.key, { side: e.target.value as PinSide })}
@@ -291,7 +311,7 @@ export function UserPartEditor({
                 Board footprint
               </span>
               <span style={{ fontSize: 10.5, color: THEME.textFaint }}>
-                optional — so it lands on a board (pins map to pads in order)
+                optional — so it lands on a board (name a pad per pin, or leave it to order)
               </span>
             </div>
             <select
