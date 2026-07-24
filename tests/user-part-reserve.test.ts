@@ -12,15 +12,20 @@ import { PARTS } from '../src/renderer/palette.tsx'
 import { isReservedBuiltinId } from '../src/renderer/user-parts.ts'
 
 describe('reserved ids cover every built-in id the canvas can resolve', () => {
-  test('a placeable PART id is reserved', () => {
-    expect(isReservedBuiltinId('resistor')).toBe(true)
+  test('every placeable PART id is reserved', () => {
+    // Importing palette.tsx above runs its module-load reserveBuiltinIds side effect (as the app does).
+    expect(PARTS.length).toBeGreaterThan(0)
+    for (const p of PARTS) expect(isReservedBuiltinId(p.definition), p.definition).toBe(true)
   })
 
-  test('every BUILTIN_BLOCKS-only id (not in PARTS) is reserved — onDrop resolves these first', () => {
-    const partIds = new Set(PARTS.map((p) => p.definition))
-    const blockOnly = Object.keys(BUILTIN_BLOCKS).filter((id) => !partIds.has(id))
-    expect(blockOnly.length).toBeGreaterThan(0) // the gap is real: blocks like row_scanner_8 aren't in PARTS
-    for (const id of blockOnly) expect(isReservedBuiltinId(id)).toBe(true)
+  test('every BUILTIN_BLOCKS id is reserved — onDrop resolves these, so none can be shadowed', () => {
+    // The canvas resolves a composite block by its id (onDrop / placePart look it up in BUILTIN_BLOCKS),
+    // so EVERY block id must be reserved whether or not it also appears in PARTS — otherwise a user part
+    // slugging to that id would show its own glyph but drop the built-in. (These days every block is also
+    // a placeable PART, but reservation must not depend on that staying true.)
+    const blockIds = Object.keys(BUILTIN_BLOCKS)
+    expect(blockIds.length).toBeGreaterThan(0)
+    for (const id of blockIds) expect(isReservedBuiltinId(id), id).toBe(true)
   })
 
   test('an unrelated id is not reserved (a genuine custom name is still allowed)', () => {
