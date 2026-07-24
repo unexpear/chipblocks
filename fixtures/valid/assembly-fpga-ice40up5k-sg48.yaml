@@ -213,11 +213,27 @@ notes: |
 
   WHAT IS HONESTLY ABSENT — every one of these was looked for in the primary sources and is not there:
     - ESD rating. FPGA-DS-02008-2.4 section 4.8 "ESD Performance" (p. 31) is one sentence: "Please
-      contact Lattice Semiconductor for additional information." No HBM/CDM/MM figure is published, so
-      none is recorded here. A generic substitute would be a fabrication.
+      contact Lattice Semiconductor for additional information." Chased further: the sibling iCE40
+      LP/HX datasheet instead points at an "iCE40 Product Family Qualification Summary", and Lattice
+      really does publish that class of document with per-package HBM/CDM tables — for CrossLink
+      (Doc. MS-107656 Rev. D, January 2021) and for MachXO (Doc. 25-106236, January 2015). No iCE40
+      instance of it could be found. THE TRAP: CrossLink is ALSO a 40 nm Lattice part and its
+      published result is HBM 2 kV Class 2, CDM 500 V to 1 kV — a different die, a different I/O ring
+      and a different package set, so copying those across would be wrong. Unsourced web claims that
+      "iCE40 is over 2000 V HBM" were also encountered and are not evidence. The honest entry is:
+      not published, ask Lattice. What IS known is the framework — Lattice qualifies to JESD47, with
+      HBM per ANSI/ESDA/JEDEC JS-001 and CDM per JS-002 — but knowing the test method is not knowing
+      the result, and no class is claimed here.
     - Operating supply current at any clock frequency. Table 4.6 gives static current at 0 MHz and a
       startup peak only, and redirects to the Lattice Power Calculator for anything design-specific.
-      There is no current-versus-frequency curve, so board power cannot be estimated from this entry.
+      Chased further: Lattice publishes power-estimation technical notes for other families (MachXO3
+      TN1289, LatticeECP3 TN1181, Certus-NX FPGA-TN-02257, Avant FPGA-TN-02291) and there is NO iCE40
+      equivalent. The textbook P = alpha x C x V^2 x f cannot be instantiated for this part either:
+      V is sourceable and f is the user's, but the effective switched capacitance is nowhere
+      published and alpha is a property of the design, not the device. TWO TRAPS: the Lattice white
+      paper "Ultra Low-Power iCE FPGAs" does carry a power-versus-frequency table, but for the iCE65
+      / SiliconBlue generation rather than the UP5K; and the Power Calculator's default 10 percent
+      activity factor is a property of the TOOL, not of the silicon. Neither is a device parameter.
     - Moisture sensitivity level and peak reflow temperature — absent from the datasheet, the package
       diagrams, and TN1257 (whose reflow section offers its figure "as a general reference" only).
     - Solder-mask and paste-aperture dimensions for the 48 QFN land. TN1257 Figure 18 dimensions the

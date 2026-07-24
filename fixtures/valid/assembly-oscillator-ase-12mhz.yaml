@@ -80,7 +80,7 @@ properties:
     provenance:
       source_type: datasheet
       title: Abracon ASE Series, ordering options
-      citation: "Abracon ASE Series datasheet, REV 02-18-22, p. 3 'Options and Part Identification' — option code C = +/-50 ppm (the series default with no option is +/-100 ppm; options run +/-20/25/30/35/40/50). COMPOSITION UNSTATED: the datasheet never says whether this budget covers initial tolerance plus temperature plus supply plus load plus ageing, or only some of those. Treat it as a total of undefined composition."
+      citation: "Abracon ASE Series datasheet, REV 02-18-22, p. 3 'Options and Part Identification' — option code C = +/-50 ppm (the series default with no option is +/-100 ppm; options run +/-20/25/30/35/40/50). COMPOSITION UNSTATED, AND ABRACON CONTRADICTS ITSELF ON IT: the ASE datasheet never defines what the budget covers, and the two Abracon documents that DO define 'overall frequency stability' disagree with each other. The ASE7 series datasheet (Rev IR, 26 August 2025 — same 3.2 x 2.5 mm package) gives a narrow reading in its p. 1 Note 2; Abracon's undated 'Application Notes — Quartz Crystal Oscillators' gives a broader one. Neither footnote is attached to the ASE datasheet, and they cannot both be true. So this number is a total whose composition is genuinely undetermined — budget it as if it excludes nothing, and ask Abracon if the margin matters."
       confidence: medium
     support:
       model_status: defined
@@ -161,10 +161,23 @@ notes: |
       figure anywhere. A comparable Epson part prints "20 % VCC to 80 % VCC, 15 pF" — those thresholds
       belong to Epson's number and must NOT be transplanted onto Abracon's.
     - Output drive current. No IOL or IOH in any form, as recorded on output_load_capacitance above.
+      Checked further and still absent: Abracon's sibling ASE7 series (Rev IR, 26 August 2025), same
+      3.2 x 2.5 mm package and same manufacturer, also publishes none — it gives the identical
+      VOH >= 0.9*Vdd / VOL <= 0.1*Vdd into 15 pF and nothing more. THE TRAP: SiTime publishes +/-4 mA
+      for its MEMS oscillators, and it is the first number a search returns. It must not be imported.
+      A SiTime part is a MEMS resonator with a CMOS output stage carrying a PROGRAMMABLE drive
+      strength — a fundamentally different driver from this quartz part's fixed one. Bounding the
+      current from I = C dV/dt using the 15 pF load and the rise time was also considered and
+      rejected: the rise time itself has no stated measurement thresholds, so the derivation would
+      rest on an assumption, not a specification.
     - The reference point for the start-up time. 1 ms typical / 2.0 ms maximum is given with no stated
       t = 0 reference and no temperature.
     - Phase noise at any offset. Only jitter is given (28 ps peak-to-peak typical, itself marked
-      "Reference only. Contact ABRACON"; 3.2 ps RMS typical / 5 ps maximum).
+      "Reference only. Contact ABRACON"; 3.2 ps RMS typical / 5 ps maximum). Abracon publishes no
+      phase noise for this series in any located document, and the datasheet's own "Contact ABRACON"
+      annotation shows the manufacturer treats even the jitter figure as a contact-us value.
+      Converting the given RMS jitter into a phase-noise figure was considered and rejected: the
+      conversion needs an integration bandwidth, and Abracon states none.
     - Confirmation that the full ordering code ASE-12.000MHZ-L-C-T is a stocked, orderable SKU. The
       Abracon parametric page returns HTTP 403 to automated fetches. What IS sourced: 12 MHz lies in
       the series range, and the p. 3 ordering scheme decodes L = -40~+85 C, C = +/-50 ppm,

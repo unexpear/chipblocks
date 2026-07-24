@@ -139,6 +139,13 @@ notes: |
     - Minimum or maximum output capacitance, and the ESR window over which the part is stable. Only
       the single 1.0 uF figure appears. Nor does the datasheet say whether 1.0 uF means nameplate or
       effective capacitance after DC-bias derating, which for a small ceramic is a large difference.
+      THE TRAP, named so nobody falls into it later: the sibling AP2127 (Diodes DS36478 Rev. 4-2,
+      February 2014, p. 11) publishes exactly the missing data — two plots titled "Region of Stable
+      COUT ESR vs. Output Current" at COUT = 1 uF and 4.7 uF. Same manufacturer, same product line,
+      one search away, and copying them onto the AP2112 would be a fabrication. They describe the
+      AP2127. What IS sourced for the AP2112 is only the qualitative claim: Diodes calls it "stable
+      with 1.0uF flexible cap", "flexible cap" being the industry term for a regulator designed to be
+      insensitive to output-capacitor ESR rather than needing a specific ESR window.
     - Output ramp rate or soft-start time. This matters here specifically: the iCE40UP5K requires a
       monotonic 0.6-10 V/ms ramp (FPGA-DS-02008-2.4 section 4.3, Table 4.3, p. 30) and the AP2112
       publishes no number to check that against. The sibling AP2127 does specify a 50 us soft start,
