@@ -56,6 +56,47 @@ describe('a catalog part is placeable and resolves like any other', () => {
   })
 })
 
+describe('the iCE40UP5K — all 48 pads plus the paddle, sourced and anchored', () => {
+  const fpga = CATALOG_PARTS.find((p) => p.id === 'catalog_ice40up5k_sg48')
+
+  test('49 pins (48 signals + the ground paddle) cover pads 1..49 exactly once', () => {
+    expect(fpga).toBeDefined()
+    if (!fpga) return
+    expect(fpga.pins).toHaveLength(49)
+    const pads = fpga.pins.map((p) => p.pad).sort((a, b) => Number(a) - Number(b))
+    expect(new Set(pads).size).toBe(49) // no pad claimed twice — a duplicate would be a short
+    expect(pads).toEqual(Array.from({ length: 49 }, (_, i) => String(i + 1)))
+  })
+
+  test('the power and config pads match the Lattice UG anchor exactly', () => {
+    expect(fpga).toBeDefined()
+    if (!fpga) return
+    // the 9 pads already cited in the fixture from FPGA-UG-02001 Figure A.3 — a wrong one shorts a rail
+    const padOf = (name: string) =>
+      fpga.pins
+        .filter((p) => p.name === name)
+        .map((p) => p.pad)
+        .sort()
+    expect(padOf('VCCIO_2')).toEqual(['1'])
+    expect(padOf('VCC')).toEqual(['30', '5']) // TWO pads — 5 and 30
+    expect(padOf('CDONE')).toEqual(['7'])
+    expect(padOf('CRESET_B')).toEqual(['8'])
+    expect(padOf('SPI_VCCIO1')).toEqual(['22'])
+    expect(padOf('VPP_2V5')).toEqual(['24'])
+    expect(padOf('VCCPLL')).toEqual(['29'])
+    expect(padOf('VCCIO_0')).toEqual(['33'])
+    // the exposed paddle is pad 49 of the footprint and MUST be ground
+    const paddle = fpga.pins.find((p) => p.pad === '49')
+    expect(paddle?.name).toBe('GND')
+    expect(paddle?.electrical).toBe('passive')
+  })
+
+  test('config pins carry the right direction — CDONE out, CRESET_B in', () => {
+    expect(fpga?.pins.find((p) => p.name === 'CDONE')?.electrical).toBe('output')
+    expect(fpga?.pins.find((p) => p.name === 'CRESET_B')?.electrical).toBe('input')
+  })
+})
+
 describe('a catalog part is NOT a user part', () => {
   test('it is invisible to the authoring/save paths', () => {
     for (const part of CATALOG_PARTS) {

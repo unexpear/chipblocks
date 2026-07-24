@@ -16,12 +16,20 @@
  * the cited fixture; the fixture stays the source of truth for the numbers, this file is only the
  * placeable shape.
  *
- * SCOPE TODAY: a part appears here only when it has BOTH a complete public pinout AND a footprint. The
- * regulator (SOT-25), oscillator (3.2×2.5) and flash (208-mil SOIC-8) have both. The iCE40 waits on its
- * full 48-pin pinout (its datasheet publishes none — sourceable from the UPduino open-hardware board).
+ * SCOPE: a part appears here once it has BOTH a complete public pinout AND a footprint. All four of the
+ * FPGA-board parts now qualify — the regulator (SOT-25), oscillator (3.2×2.5), flash (208-mil SOIC-8),
+ * and the iCE40UP5K (QFN-48). The iCE40's pinout is not in its datasheet (which gives only bank counts);
+ * it is sourced pad-for-pad from the Lattice breakout-board schematic, cross-checked against KiCad.
  */
 
-import { registerBuiltinParts, reserveBuiltinIds, type UserPart } from './user-parts.ts'
+import {
+  type PinElectrical,
+  type PinSide,
+  registerBuiltinParts,
+  reserveBuiltinIds,
+  type UserPart,
+  type UserPin,
+} from './user-parts.ts'
 
 /**
  * Diodes AP2112K-3.3 — a fixed 3.3 V LDO in SOT-25. Pins + pad map from the datasheet Pin Configuration
@@ -87,8 +95,110 @@ const W25Q32JV: UserPart = {
   footprintId: 'SOIC-8_5.23x5.23mm_P1.27mm',
 }
 
+/**
+ * The iCE40UP5K-SG48 full 48-pad pinout + the exposed paddle. Every pad is sourced from the Lattice
+ * iCE40 UltraPlus Breakout Board User Guide (FPGA-UG-02001-1.2, Figure A.3 "DUT Connection"), which
+ * names each numbered SG48 pin — the same authoritative Lattice mapping the fixture's 9 key pads came
+ * from. Cross-checked pad-for-pad against the KiCad FPGA_Lattice symbol (they agree on all 48; the one
+ * difference is cosmetic — KiCad labels pad 12 IOB_22B where Lattice labels it IOB_22A, same pad).
+ * `p` = power_in, `g` = ground (the paddle), `i`/`o` = the two config pins, `x` = I/O (user I/O, the
+ * SPI-config pins in their default I/O role, the clock-capable pins, the RGB-driver pins).
+ */
+const ICE40_PADS: { pad: string; name: string; kind: 'p' | 'g' | 'i' | 'o' | 'x' }[] = [
+  { pad: '1', name: 'VCCIO_2', kind: 'p' },
+  { pad: '2', name: 'IOB_6A', kind: 'x' },
+  { pad: '3', name: 'IOB_9B', kind: 'x' },
+  { pad: '4', name: 'IOB_8A', kind: 'x' },
+  { pad: '5', name: 'VCC', kind: 'p' },
+  { pad: '6', name: 'IOB_13B', kind: 'x' },
+  { pad: '7', name: 'CDONE', kind: 'o' },
+  { pad: '8', name: 'CRESET_B', kind: 'i' },
+  { pad: '9', name: 'IOB_16A', kind: 'x' },
+  { pad: '10', name: 'IOB_18A', kind: 'x' },
+  { pad: '11', name: 'IOB_20A', kind: 'x' },
+  { pad: '12', name: 'IOB_22A', kind: 'x' },
+  { pad: '13', name: 'IOB_24A', kind: 'x' },
+  { pad: '14', name: 'SPI_SO', kind: 'x' },
+  { pad: '15', name: 'SPI_SCK', kind: 'x' },
+  { pad: '16', name: 'SPI_SS', kind: 'x' },
+  { pad: '17', name: 'SPI_SI', kind: 'x' },
+  { pad: '18', name: 'IOB_31B', kind: 'x' },
+  { pad: '19', name: 'IOB_29B', kind: 'x' },
+  { pad: '20', name: 'IOB_25B_G3', kind: 'x' },
+  { pad: '21', name: 'IOB_23B', kind: 'x' },
+  { pad: '22', name: 'SPI_VCCIO1', kind: 'p' },
+  { pad: '23', name: 'IOT_37A', kind: 'x' },
+  { pad: '24', name: 'VPP_2V5', kind: 'p' },
+  { pad: '25', name: 'IOT_36B', kind: 'x' },
+  { pad: '26', name: 'IOT_39A', kind: 'x' },
+  { pad: '27', name: 'IOT_38B', kind: 'x' },
+  { pad: '28', name: 'IOT_41A', kind: 'x' },
+  { pad: '29', name: 'VCCPLL', kind: 'p' },
+  { pad: '30', name: 'VCC', kind: 'p' },
+  { pad: '31', name: 'IOT_42B', kind: 'x' },
+  { pad: '32', name: 'IOT_43A', kind: 'x' },
+  { pad: '33', name: 'VCCIO_0', kind: 'p' },
+  { pad: '34', name: 'IOT_44B', kind: 'x' },
+  { pad: '35', name: 'IOT_46B_G0', kind: 'x' },
+  { pad: '36', name: 'IOT_48B', kind: 'x' },
+  { pad: '37', name: 'IOT_45A_G1', kind: 'x' },
+  { pad: '38', name: 'IOT_50B', kind: 'x' },
+  { pad: '39', name: 'RGB0', kind: 'x' },
+  { pad: '40', name: 'RGB1', kind: 'x' },
+  { pad: '41', name: 'RGB2', kind: 'x' },
+  { pad: '42', name: 'IOT_51A', kind: 'x' },
+  { pad: '43', name: 'IOT_49A', kind: 'x' },
+  { pad: '44', name: 'IOB_3B_G6', kind: 'x' },
+  { pad: '45', name: 'IOB_5B', kind: 'x' },
+  { pad: '46', name: 'IOB_0A', kind: 'x' },
+  { pad: '47', name: 'IOB_2A', kind: 'x' },
+  { pad: '48', name: 'IOB_4A', kind: 'x' },
+  // The exposed thermal paddle — pad 49 of the QFN-48-1EP footprint. MUST be tied to GND (datasheet).
+  { pad: '49', name: 'GND', kind: 'g' },
+]
+
+const KIND_TO_ELECTRICAL: Record<string, PinElectrical> = {
+  p: 'power_in',
+  g: 'passive',
+  i: 'input',
+  o: 'output',
+  x: 'bidirectional',
+}
+
+/**
+ * Build the iCE40's pins from the pad table. Pins are laid on the four sides by pad-number range to
+ * mirror the QFN's counter-clockwise numbering (1-12 left, 13-24 bottom, 25-36 right, 37-48 top), with
+ * the paddle on the bottom — so the symbol reads like the physical package. Each pin carries its pad.
+ */
+function ice40Pins(): UserPin[] {
+  const sideFor = (pad: number): PinSide => {
+    if (pad <= 12) return 'left'
+    if (pad <= 24) return 'bottom'
+    if (pad <= 36) return 'right'
+    if (pad <= 48) return 'top'
+    return 'bottom' // the paddle
+  }
+  return ICE40_PADS.map((entry) => ({
+    id: `p${entry.pad}`,
+    name: entry.name,
+    side: sideFor(Number(entry.pad)),
+    electrical: KIND_TO_ELECTRICAL[entry.kind] as PinElectrical,
+    pad: entry.pad,
+  }))
+}
+
+const ICE40UP5K_SG48: UserPart = {
+  id: 'catalog_ice40up5k_sg48',
+  name: 'iCE40UP5K-SG48 FPGA',
+  designatorPrefix: 'U',
+  description:
+    'Lattice iCE40UP5K FPGA in the 48-pin QFN (SG48). 39 user I/O across three banks, plus config and power; the exposed paddle is ground. What it does is set by the bitstream, so it is a black box at its pins. See assembly-fpga-ice40up5k-sg48.yaml.',
+  pins: ice40Pins(),
+  footprintId: 'QFN-48-1EP_7x7mm_P0.5mm',
+}
+
 /** Every catalog part, in palette order. Grows as parts gain both a pinout and a footprint. */
-export const CATALOG_PARTS: readonly UserPart[] = [AP2112K_33, ASE_12MHZ, W25Q32JV]
+export const CATALOG_PARTS: readonly UserPart[] = [AP2112K_33, ASE_12MHZ, W25Q32JV, ICE40UP5K_SG48]
 
 /** The ids the catalog owns — reserved so a user part can't shadow one, and skipped on save. */
 export const CATALOG_PART_IDS: ReadonlySet<string> = new Set(CATALOG_PARTS.map((p) => p.id))
