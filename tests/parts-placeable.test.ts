@@ -10,9 +10,10 @@
  */
 import { describe, expect, test } from 'vitest'
 import { solveDC } from '../src/dc-solver.ts'
+import { BUILTIN_BLOCKS } from '../src/renderer/builtin-blocks.ts'
 import { type CanvasNode, canvasToWorld } from '../src/renderer/canvas-to-world.ts'
 import { registerCatalogParts } from '../src/renderer/catalog-parts.ts'
-import { PARTS } from '../src/renderer/palette.tsx'
+import { APPLIANCE_PART_IDS, PARTS } from '../src/renderer/palette.tsx'
 import { defaultParameters } from '../src/renderer/part-defaults.ts'
 import { DRAWABLE_PART_IDS } from '../src/renderer/symbols.tsx'
 import { getUserPartsSnapshot } from '../src/renderer/user-parts.ts'
@@ -21,6 +22,14 @@ registerCatalogParts()
 
 // The wire is drawn by the wire TOOL, not placed as a node — the one drawable id that isn't a palette part.
 const NOT_A_PALETTE_PART = new Set(['wire'])
+const ANNOTATIONS = new Set([
+  'net_label',
+  'text_note',
+  'text_box',
+  'graphic_line',
+  'graphic_rect',
+  'graphic_circle',
+])
 
 function reachableFromPicker(): Set<string> {
   return new Set([...PARTS.map((p) => p.definition), ...getUserPartsSnapshot().map((p) => p.id)])
@@ -39,6 +48,42 @@ describe('every drawable part can be gotten from the Add-Part picker', () => {
     const reachable = reachableFromPicker()
     expect(reachable.has('led_uv_algan')).toBe(true)
     expect(reachable.has('diode_schottky_al_si')).toBe(true)
+  })
+})
+
+// A part is only truly placeable if BOTH placement paths (drag-drop AND the Add-Part list) know how to
+// build it. They once diverged: the big composites (calculator, Verilog CPUs) lay out a whole appliance
+// with a descendable brain via a dedicated function, but only drag-drop called it — the Add-Part list
+// dropped a dead `calculator` device node that neither rendered nor simulated nor descended. Both paths
+// now share the same appliance router; this guards that every built-in id resolves to a real handler.
+describe('no built-in part places as a dead node', () => {
+  const blocks = new Set(Object.keys(BUILTIN_BLOCKS)) // → descendable block node
+  const appliances = new Set<string>(APPLIANCE_PART_IDS) // → lays out an appliance (descendable brain)
+  const drawable = new Set(DRAWABLE_PART_IDS) // → a device with a schematic symbol
+  const hasDefaults = (id: string) => Object.keys(defaultParameters(id) ?? {}).length > 0
+
+  test('every PARTS id is a block, an appliance, or a real device — never an unknown dead node', () => {
+    const dead = PARTS.map((p) => p.definition).filter(
+      (id) =>
+        !blocks.has(id) &&
+        !appliances.has(id) &&
+        !drawable.has(id) &&
+        !ANNOTATIONS.has(id) &&
+        !hasDefaults(id),
+    )
+    expect(dead, `these would place as dead device nodes: ${dead.join(', ')}`).toEqual([])
+  })
+
+  test('APPLIANCE_PART_IDS is exactly the placeable composites that need a layout function', () => {
+    // Pins the appliance list down: a composite in PARTS that is neither a block nor a drawable device
+    // MUST be an appliance (or it dead-nodes). If someone adds such a part without listing it here, this
+    // fails — forcing them to wire a placer, the exact gap that bit the calculator.
+    const needsPlacer = PARTS.map((p) => p.definition)
+      .filter(
+        (id) => !blocks.has(id) && !drawable.has(id) && !ANNOTATIONS.has(id) && !hasDefaults(id),
+      )
+      .sort()
+    expect(needsPlacer).toEqual([...APPLIANCE_PART_IDS].sort())
   })
 })
 

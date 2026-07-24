@@ -149,7 +149,7 @@ import {
 import { routeAllWires, type WireReq } from './orthogonal-route.ts'
 import { detectOutputContention } from './output-contention.ts'
 import { PageSettings } from './page-settings.tsx'
-import { BLOCK_MIME, DEFINITION_MIME, Palette } from './palette.tsx'
+import { APPLIANCE_PART_IDS, BLOCK_MIME, DEFINITION_MIME, Palette } from './palette.tsx'
 import { panelGroups } from './panel-groups.ts'
 import {
   blownFuse,
@@ -5552,6 +5552,16 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
     paintVcpu8({ h: 0, t: 0, o: 0, pc: 0 })
   }, [setNodes, setEdges, checkpointAction, reSolve, paintVcpu8])
 
+  // Ids that aren't a single part — each lays out a whole appliance (keypad + displays, or CPU readouts
+  // + controls) whose brain is a descendable block. Shared by BOTH placement paths — drag-drop and the
+  // Add-Part list — so either way you get the real, descendable thing, never a sealed unknown-device node.
+  // Keeping the routing in one place is what stops the two paths drifting apart (they once did: the
+  // Add-Part list dropped a dead `calculator` device node because only drag-drop knew to lay it out).
+  const appliancePlacers = useMemo<Record<string, () => void>>(() => {
+    const [calc, vcpu, vcpu8] = APPLIANCE_PART_IDS // keyed by the shared id list so the two can't drift
+    return { [calc]: placeCalculator, [vcpu]: placeVerilogCpuDemo, [vcpu8]: placeVerilogCpu8Demo }
+  }, [placeCalculator, placeVerilogCpuDemo, placeVerilogCpu8Demo])
+
   const onDrop = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
       event.preventDefault()
@@ -5584,18 +5594,11 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
       }
       const definition = event.dataTransfer.getData(DEFINITION_MIME)
       if (!definition) return
-      // The calculator isn't a single part — it lays out the whole appliance (keypad + decoder + displays).
-      if (definition === 'calculator') {
-        placeCalculator()
-        return
-      }
-      // The Verilog CPU demo lays out the readouts + Run/Step/Reset controls for a Verilog-synthesized CPU.
-      if (definition === 'verilog_cpu') {
-        placeVerilogCpuDemo()
-        return
-      }
-      if (definition === 'verilog_cpu8') {
-        placeVerilogCpu8Demo()
+      // The calculator / Verilog CPUs aren't single parts — they lay out a whole appliance (see
+      // appliancePlacers). Same routing the Add-Part list uses.
+      const appliance = appliancePlacers[definition]
+      if (appliance) {
+        appliance()
         return
       }
       // A built-in (e.g. the op-amp) drops as a block node — a fresh deep copy that
@@ -5631,22 +5634,20 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
         }),
       )
     },
-    [
-      screenToFlowPosition,
-      setNodes,
-      nodes,
-      checkpointAction,
-      snapToGrid,
-      placeCalculator,
-      placeVerilogCpuDemo,
-      placeVerilogCpu8Demo,
-    ],
+    [screenToFlowPosition, setNodes, nodes, checkpointAction, snapToGrid, appliancePlacers],
   )
 
   // Place a part from the Add-Part pop-up — the same node-creation as a drop, but centred in the
   // current view (there is no drag) and selected, so it is ready to move.
   const placePart = useCallback(
     (definition: string) => {
+      // Appliances (calculator, Verilog CPUs) lay themselves out — same routing drag-drop uses, so
+      // picking one from the Add-Part list builds the real, descendable thing, not a dead device node.
+      const appliance = appliancePlacers[definition]
+      if (appliance) {
+        appliance()
+        return
+      }
       checkpointAction('add part')
       const raw = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
       const position = snapToGrid
@@ -5685,7 +5686,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
           }),
       )
     },
-    [screenToFlowPosition, setNodes, checkpointAction, snapToGrid],
+    [screenToFlowPosition, setNodes, checkpointAction, snapToGrid, appliancePlacers],
   )
 
   // Select a part by id from the Schematic Hierarchy outline — sets it selected (which fills the

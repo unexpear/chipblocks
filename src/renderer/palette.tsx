@@ -87,6 +87,14 @@ export function BlockPaletteItems({
   )
 }
 
+/**
+ * Placeable ids that aren't a single part — each lays out a whole appliance (the calculator keypad +
+ * displays, a Verilog CPU's readouts + controls) whose brain is a descendable block. App.tsx routes
+ * these through dedicated layout functions on BOTH placement paths (drag-drop and the Add-Part list).
+ * Single source of truth so the placeability test can prove none of them falls through to a dead node.
+ */
+export const APPLIANCE_PART_IDS = ['calculator', 'verilog_cpu', 'verilog_cpu8'] as const
+
 export const PARTS: { definition: string; label: string }[] = [
   { definition: 'power_source', label: 'Source' },
   { definition: 'resistor', label: 'Resistor' },
