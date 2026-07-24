@@ -1311,6 +1311,540 @@ export const FOOTPRINT_CASTELLATED_1X6: Footprint = {
   },
 }
 
+/**
+ * QFN-48, 7×7 mm, 0.5 mm pitch, with the central exposed thermal pad — the package the Lattice
+ * iCE40UP5K-SG48 lands in (see fixtures/valid/assembly-fpga-ice40up5k-sg48.yaml). The 48 perimeter
+ * lands were produced by ChipBlocks' own pad-row generator from Lattice's TN1257 land pattern and
+ * checked against it: land 0.25 mm wide × 0.40 mm long on the 0.50 mm pitch, land-ring outer span
+ * 7.00 mm (= the package body edge, zero toe) and inner span 6.20 mm, so the land centre sits at
+ * ±3.30 mm. Pin 1 is the top-left corner and numbering runs counter-clockwise (JEDEC QFN convention);
+ * TN1257's own "44×0.50" callout — 44 pitch intervals = 4 sides × 11 gaps — confirms 12 lands per side.
+ * Pad 49 is the exposed thermal paddle (4.2×4.2 mm), which the datasheet requires be tied to GND.
+ */
+export const FOOTPRINT_QFN48: Footprint = {
+  id: 'QFN-48-1EP_7x7mm_P0.5mm',
+  name: 'QFN-48 (7×7 mm, 0.5 mm pitch, exposed pad)',
+  description:
+    '48-lead quad flat no-lead, 7 mm square, 0.5 mm pitch, with a central exposed thermal pad. The iCE40UP5K-SG48 package. Lattice TN1257 land pattern.',
+  pads: [
+    {
+      id: '1',
+      center: { x: -3.3, y: -2.75 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '2',
+      center: { x: -3.3, y: -2.25 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '3',
+      center: { x: -3.3, y: -1.75 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '4',
+      center: { x: -3.3, y: -1.25 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '5',
+      center: { x: -3.3, y: -0.75 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '6',
+      center: { x: -3.3, y: -0.25 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '7',
+      center: { x: -3.3, y: 0.25 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '8',
+      center: { x: -3.3, y: 0.75 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '9',
+      center: { x: -3.3, y: 1.25 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '10',
+      center: { x: -3.3, y: 1.75 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '11',
+      center: { x: -3.3, y: 2.25 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '12',
+      center: { x: -3.3, y: 2.75 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '13',
+      center: { x: -2.75, y: 3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '14',
+      center: { x: -2.25, y: 3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '15',
+      center: { x: -1.75, y: 3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '16',
+      center: { x: -1.25, y: 3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '17',
+      center: { x: -0.75, y: 3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '18',
+      center: { x: -0.25, y: 3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '19',
+      center: { x: 0.25, y: 3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '20',
+      center: { x: 0.75, y: 3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '21',
+      center: { x: 1.25, y: 3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '22',
+      center: { x: 1.75, y: 3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '23',
+      center: { x: 2.25, y: 3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '24',
+      center: { x: 2.75, y: 3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '25',
+      center: { x: 3.3, y: 2.75 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '26',
+      center: { x: 3.3, y: 2.25 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '27',
+      center: { x: 3.3, y: 1.75 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '28',
+      center: { x: 3.3, y: 1.25 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '29',
+      center: { x: 3.3, y: 0.75 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '30',
+      center: { x: 3.3, y: 0.25 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '31',
+      center: { x: 3.3, y: -0.25 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '32',
+      center: { x: 3.3, y: -0.75 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '33',
+      center: { x: 3.3, y: -1.25 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '34',
+      center: { x: 3.3, y: -1.75 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '35',
+      center: { x: 3.3, y: -2.25 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '36',
+      center: { x: 3.3, y: -2.75 },
+      size: { w: 0.4, h: 0.25 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '37',
+      center: { x: 2.75, y: -3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '38',
+      center: { x: 2.25, y: -3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '39',
+      center: { x: 1.75, y: -3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '40',
+      center: { x: 1.25, y: -3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '41',
+      center: { x: 0.75, y: -3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '42',
+      center: { x: 0.25, y: -3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '43',
+      center: { x: -0.25, y: -3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '44',
+      center: { x: -0.75, y: -3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '45',
+      center: { x: -1.25, y: -3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '46',
+      center: { x: -1.75, y: -3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '47',
+      center: { x: -2.25, y: -3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '48',
+      center: { x: -2.75, y: -3.3 },
+      size: { w: 0.25, h: 0.4 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    // The exposed thermal paddle (KiCad numbers it 49 on a 48+1EP QFN). MUST be tied to GND.
+    {
+      id: '49',
+      center: { x: 0, y: 0 },
+      size: { w: 4.2, h: 4.2 },
+      shape: 'rect',
+      type: 'smd',
+      thermal: true,
+    },
+  ],
+  silkscreen: [...cornerTicksSilk({ x: -3.75, y: -3.75, w: 7.5, h: 7.5 }), ...pin1Dot(-3.3, -3.3)],
+  fabrication: rectOutline(-3.5, -3.5, 3.5, 3.5),
+  labels: { reference: { x: 0, y: -4.4 }, value: { x: 0, y: 4.4 }, fabReference: { x: 0, y: 0 } },
+  courtyard: { x: -3.75, y: -3.75, w: 7.5, h: 7.5 },
+  provenance: {
+    source_type: 'standard',
+    title: 'Lattice iCE40 SG48 (QFN-48) land pattern, TN1257 + Package Diagrams pkg_5.4',
+    citation:
+      'Perimeter lands: Lattice TN1257 (tn1257_01.3, Oct 2013) Fig 18 "QFN Footprints", 48 QFN — land 0.25 wide, pitch 0.50 ("44×0.50"), ring outer span 7.00 / inner 6.20 (so land length 0.40, centre ±3.30), thermal pad 4.2×4.2. Body 7.0×7.0 (D=E BSC), height A 0.80/0.90/1.00, from Package Diagrams pkg_5.4 (Nov 2017) "48-Pin QFN Package Option 2". Paddle-to-GND: FPGA-DS-02008-2.4 §5.2 footnote.',
+    confidence: 'high',
+    notes:
+      'Perimeter lands generated by ChipBlocks’ own pad-row generator from the TN1257 numbers and checked against the figure. Silk is ChipBlocks’ corner-tick rule; land ring has zero toe (outer edge on the 7.00 mm body edge), per TN1257.',
+  },
+  body3d: {
+    heightMm: 0.9,
+    standoffMm: 0.02,
+    provenance: {
+      source_type: 'datasheet',
+      title: 'Lattice SG48 (QFN-48) body height',
+      citation:
+        'Lattice Package Diagrams pkg_5.4, "48-Pin QFN Package Option 2" — overall height A 0.80/0.90/1.00 mm (0.90 nom), standoff A1 0.00/0.02/0.05 mm.',
+      confidence: 'high',
+    },
+  },
+}
+
+/**
+ * SOT-25 (SOT-23-5) — the 5-lead small-outline package the Diodes AP2112K-3.3 regulator lands in
+ * (fixtures/valid/assembly-regulator-ap2112k-33-sot25.yaml). Land geometry is Diodes' own "Suggested
+ * Pad Layout" (DS39724 Rev 2-2, p. 14): pad 0.55 wide × 0.80 long, pitch 0.95 within a row, rows
+ * 2.40 mm apart (so ±1.20). Three lands down the left, two down the right. Numbering follows the AP2112
+ * pin configuration: 1 = VIN and 5 = VOUT diagonally opposite, 2 = GND, so pin 1 is top-left.
+ */
+export const FOOTPRINT_SOT25: Footprint = {
+  id: 'SOT-25_SOT-23-5',
+  name: 'SOT-25 (SOT-23-5, 5-lead)',
+  description:
+    '5-lead small-outline package (SOT-23-5). The AP2112K regulator package. Diodes DS39724 suggested pad layout.',
+  pads: [
+    {
+      // Pad 1 (VIN) is squared off as the pin-1 cue — a SOT-25 courtyard is too tight to clear a silk
+      // pin-1 dot by the 0.15 mm rule, the same reason the 0402 carries no silk marker.
+      id: '1',
+      center: { x: -1.2, y: -0.95 },
+      size: { w: 0.8, h: 0.55 },
+      shape: 'rect',
+      type: 'smd',
+    },
+    {
+      id: '2',
+      center: { x: -1.2, y: 0 },
+      size: { w: 0.8, h: 0.55 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '3',
+      center: { x: -1.2, y: 0.95 },
+      size: { w: 0.8, h: 0.55 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '4',
+      center: { x: 1.2, y: 0.95 },
+      size: { w: 0.8, h: 0.55 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '5',
+      center: { x: 1.2, y: -0.95 },
+      size: { w: 0.8, h: 0.55 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+  ],
+  silkscreen: cornerTicksSilk({ x: -1.85, y: -1.475, w: 3.7, h: 2.95 }),
+  fabrication: rectOutline(-0.8, -1.45, 0.8, 1.45),
+  labels: { reference: { x: 0, y: -2.1 }, value: { x: 0, y: 2.1 }, fabReference: { x: 0, y: 0 } },
+  courtyard: { x: -1.85, y: -1.475, w: 3.7, h: 2.95 },
+  provenance: {
+    source_type: 'datasheet',
+    title: 'Diodes AP2112 SOT-25 suggested pad layout, DS39724 Rev 2-2',
+    citation:
+      'Diodes Incorporated DS39724 Rev 2-2 (June 2017), p. 14 "Suggested Pad Layout" — pad X 0.55 × Y 0.80, pitch C2 0.95, row centres C1 2.40 (so rows at ±1.20), outer span Z 3.20, inner gap G 1.60 (internally consistent: Z−G = 2Y, C1 = (Z+G)/2). Pin map from the datasheet Pin Configuration: 1 VIN, 2 GND, 3 EN, 4 NC, 5 VOUT. Body ~1.6 × 2.9 mm, height K 1.10 typ.',
+    confidence: 'high',
+    notes:
+      'Land pattern verbatim from Diodes’ suggested layout (Diodes notes it is "for reference only" and adds 0.2 mm to Z for wave). Silk is ChipBlocks’ corner-tick rule.',
+  },
+  body3d: {
+    heightMm: 1.1,
+    standoffMm: 0.1,
+    provenance: {
+      source_type: 'datasheet',
+      title: 'AP2112 SOT-25 body height',
+      citation:
+        'Diodes DS39724 Rev 2-2, p. 14 package outline — Dim K (height) 1.10 typ (1.00/1.30). Lead standoff ~0.1 mm (SOT-23-5 standard).',
+      confidence: 'medium',
+    },
+  },
+}
+
+/**
+ * A 4-pad 3.2×2.5 mm SMD crystal-oscillator land — the package the Abracon ASE 12 MHz oscillator lands
+ * in (fixtures/valid/assembly-oscillator-ase-12mhz.yaml). Land geometry is Abracon's own "Recommended
+ * land pattern" (ASE datasheet REV 02-18-22, p. 5): 1.3 × 1.1 mm lands, centre-to-centre 2.10 mm in X
+ * and 1.65 mm in Y (so ±1.05, ±0.825). Pin 1 (standby) is the marked corner; the ASE numbers its pads
+ * 1 standby, 2 GND, 3 output, 4 Vdd around the package.
+ */
+export const FOOTPRINT_OSC_3225: Footprint = {
+  id: 'Oscillator_SMD_3.2x2.5mm',
+  name: 'SMD oscillator (3.2×2.5 mm, 4-pad)',
+  description:
+    '4-pad SMD crystal-oscillator package, 3.2 × 2.5 mm. The Abracon ASE-series package. Abracon recommended land pattern.',
+  pads: [
+    {
+      // Pad 1 (standby) is squared off as the pin-1 cue — the lands nearly fill the courtyard, so a
+      // silk pin-1 dot can't clear the 0.15 mm rule.
+      id: '1',
+      center: { x: -1.05, y: 0.825 },
+      size: { w: 1.3, h: 1.1 },
+      shape: 'rect',
+      type: 'smd',
+    },
+    {
+      id: '2',
+      center: { x: 1.05, y: 0.825 },
+      size: { w: 1.3, h: 1.1 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '3',
+      center: { x: 1.05, y: -0.825 },
+      size: { w: 1.3, h: 1.1 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '4',
+      center: { x: -1.05, y: -0.825 },
+      size: { w: 1.3, h: 1.1 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+  ],
+  silkscreen: cornerTicksSilk({ x: -1.95, y: -1.625, w: 3.9, h: 3.25 }),
+  fabrication: rectOutline(-1.6, -1.25, 1.6, 1.25),
+  labels: { reference: { x: 0, y: -2.25 }, value: { x: 0, y: 2.25 }, fabReference: { x: 0, y: 0 } },
+  courtyard: { x: -1.95, y: -1.625, w: 3.9, h: 3.25 },
+  provenance: {
+    source_type: 'datasheet',
+    title: 'Abracon ASE-series 3.2×2.5 mm oscillator land pattern, REV 02-18-22',
+    citation:
+      'Abracon ASE Series datasheet, REV 02-18-22, p. 5 "Recommended land pattern" — land 1.3 × 1.1 mm, centre-to-centre 2.10 mm in X and 1.65 mm in Y (lands at ±1.05, ±0.825). Body 3.2 × 2.5 mm, 1.2 mm max height. Pad map: 1 standby, 2 GND, 3 output, 4 Vdd.',
+    confidence: 'high',
+    notes:
+      'Land pattern verbatim from Abracon’s recommended pattern. Silk is ChipBlocks’ corner-tick rule; lands slightly overhang the 3.2×2.5 body, per the recommended pattern.',
+  },
+  body3d: {
+    heightMm: 1.2,
+    standoffMm: 0,
+    provenance: {
+      source_type: 'datasheet',
+      title: 'Abracon ASE body height',
+      citation: 'Abracon ASE Series datasheet, REV 02-18-22, p. 5 — 1.2 mm max height.',
+      confidence: 'high',
+    },
+  },
+}
+
 /** Every built-in footprint, keyed by id. The board road's starter set (TOOLCHAIN-ROADMAP.md Track 1). */
 export const BUILTIN_FOOTPRINTS: Record<string, Footprint> = {
   [FOOTPRINT_0402.id]: FOOTPRINT_0402,
@@ -1328,6 +1862,9 @@ export const BUILTIN_FOOTPRINTS: Record<string, Footprint> = {
   [FOOTPRINT_PINHDR_1X2.id]: FOOTPRINT_PINHDR_1X2,
   [FOOTPRINT_DO41.id]: FOOTPRINT_DO41,
   [FOOTPRINT_CASTELLATED_1X6.id]: FOOTPRINT_CASTELLATED_1X6,
+  [FOOTPRINT_QFN48.id]: FOOTPRINT_QFN48,
+  [FOOTPRINT_SOT25.id]: FOOTPRINT_SOT25,
+  [FOOTPRINT_OSC_3225.id]: FOOTPRINT_OSC_3225,
 }
 
 /**
