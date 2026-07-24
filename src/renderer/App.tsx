@@ -9391,7 +9391,13 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
             browser.
           </div>
         ) : null}
-        {pickerOpen ? <PartPicker onPick={placePart} onClose={() => setPickerOpen(false)} /> : null}
+        {pickerOpen ? (
+          <PartPicker
+            onPick={placePart}
+            onClose={() => setPickerOpen(false)}
+            level={workspaceMode}
+          />
+        ) : null}
         {verilogOpen ? (
           <VerilogEditor
             initialText={verilogText}
