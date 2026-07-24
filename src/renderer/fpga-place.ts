@@ -16,7 +16,9 @@
  * (its driver LUT's tile + every consumer LUT's tile); the total over all nets estimates routed wirelength,
  * so shrinking it makes the router's job easier and the design more routable. Moves (relocate/swap a LUT to
  * another tile) are accepted if they cut cost or, with probability e^(−Δ/T), uphill — T cooled geometrically.
- * A seeded PRNG makes every placement reproducible (the annealer is deterministic given its seed).
+ * It returns the BEST placement seen across the anneal, not the final (possibly uphill) state, so the result
+ * is never worse than the initial placement under any schedule. A seeded PRNG makes every placement
+ * reproducible (the annealer is deterministic given its seed).
  *
  * Net extraction bridges logical nets to physical nodes: a LUT placed on tile (x,y) drives `src_x_y` and
  * reads each input on a distinct `ipin_x_y_p`. An input net driven by another LUT becomes a RouteNet from
@@ -160,6 +162,12 @@ export function placeClusters(
   const movableIds = clusters.slice(0, n).map((c) => c.id)
   let current = initialHpwl
   let temperature = Math.max(1, initialHpwl)
+  // The annealer accepts uphill moves and may end on a worse state than it passed through, so we return the
+  // BEST placement SEEN, not the final one. The initial placement is best-seen at step 0, so the returned
+  // hpwl is ≤ initialHpwl unconditionally — under any cooling/move schedule, never a placement worse than
+  // doing nothing.
+  let bestCost = initialHpwl
+  let bestPos = new Map(pos)
 
   // One move: relocate a random cluster to a random tile — swapping with its occupant if any.
   const pick = <T>(arr: readonly T[]): T => arr[Math.floor(rng() * arr.length)] as T
@@ -178,6 +186,10 @@ export function placeClusters(
     const delta = next - current
     if (delta <= 0 || rng() < Math.exp(-delta / temperature)) {
       current = next
+      if (current < bestCost) {
+        bestCost = current
+        bestPos = new Map(pos)
+      }
     } else {
       // revert
       pos.set(id, from)
@@ -188,7 +200,10 @@ export function placeClusters(
     temperature *= cooling
   }
 
-  return { fits, placement: placementOf(), hpwl: current, initialHpwl }
+  // Restore the best-seen placement and report its cost.
+  pos.clear()
+  for (const [id, idx] of bestPos) pos.set(id, idx)
+  return { fits, placement: placementOf(), hpwl: bestCost, initialHpwl }
 }
 
 export type ExtractedRouting = {
@@ -213,8 +228,16 @@ export function extractRouting(
 ): ExtractedRouting {
   const driverOf = new Map<string, string>() // net → cluster id that drives it
   for (const c of clusters) for (const lut of c.luts) driverOf.set(lut.output, c.id)
-  const tileOf = (clusterId: string): { x: number; y: number } =>
-    placement.get(clusterId) ?? { x: 0, y: 0 }
+  // A cluster missing from the placement means a partial (`fits:false`) placement — extracting it would put
+  // several LUTs on tile (0,0) and short distinct nets together. Fail loudly instead of shipping that circuit.
+  const tileOf = (clusterId: string): { x: number; y: number } => {
+    const t = placement.get(clusterId)
+    if (t === undefined)
+      throw new Error(
+        `extractRouting: cluster ${clusterId} is not placed (pass a complete placeClusters result where fits === true)`,
+      )
+    return t
+  }
 
   const netDriverNode = new Map<string, string>()
   for (const c of clusters) {

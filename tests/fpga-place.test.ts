@@ -43,6 +43,26 @@ const chainLuts = (): KLut[] => [
   { id: 'L2', k: 2, config: [false, true, true, false], inputs: ['y', 'a'], output: 'z' }, // z = y^a
 ]
 
+/** A four-LUT chain — used with a 4-tile fabric so every accepted anneal move displaces an occupant (a dense grid). */
+const fourLuts = (): KLut[] => [
+  { id: 'L0', k: 2, config: [false, false, false, true], inputs: ['a', 'b'], output: 'w' },
+  { id: 'L1', k: 2, config: [false, true, true, true], inputs: ['w', 'c'], output: 'x' },
+  { id: 'L2', k: 2, config: [false, true, true, false], inputs: ['x', 'd'], output: 'y' },
+  { id: 'L3', k: 2, config: [false, false, false, true], inputs: ['y', 'a'], output: 'z' },
+]
+
+/** A star: one driver feeding many consumers — its identity placement scatters, so annealing has clear work. */
+const starLuts = (fanout: number): KLut[] => [
+  { id: 'D', k: 1, config: [false, true], inputs: ['pi'], output: 's' },
+  ...Array.from({ length: fanout }, (_, i) => ({
+    id: `C${i}`,
+    k: 1,
+    config: [false, true] as boolean[],
+    inputs: ['s'],
+    output: `o${i}`,
+  })),
+]
+
 describe('packLuts — one BLE per tile (Stage-1 fabric)', () => {
   test('each LUT becomes its own single-BLE cluster', () => {
     const clusters = packLuts(chainLuts())
@@ -70,28 +90,47 @@ describe('placeClusters — SA minimizes half-perimeter wirelength', () => {
   test('SA actually improves a deliberately-bad spread — final HPWL is strictly lower', () => {
     // A star net (one driver, many consumers) on a big grid: the identity placement scatters the consumers to
     // the far corners; annealing must pull them together, strictly cutting HPWL.
-    const star: KLut[] = [
-      { id: 'D', k: 1, config: [false, true], inputs: ['pi'], output: 's' },
-      ...Array.from({ length: 6 }, (_, i) => ({
-        id: `C${i}`,
-        k: 1,
-        config: [false, true] as boolean[],
-        inputs: ['s'],
-        output: `o${i}`,
-      })),
-    ]
     const device = generateFabric(DEFAULT_FABRIC_ARCH, 6, 6).device
-    const res = placeClusters(packLuts(star), device, { seed: 7 })
+    const res = placeClusters(packLuts(starLuts(6)), device, { seed: 7 })
     expect(res.fits).toBe(true)
     expect(res.hpwl).toBeLessThan(res.initialHpwl)
   })
 
-  test('deterministic: same seed ⇒ identical placement; a design larger than the fabric reports fits:false', () => {
+  test('best-seen: even a flat/short anneal (cooling 1, few moves) never returns worse than the initial', () => {
+    // placeClusters returns the BEST placement seen, not the final SA state. Returning the final state would
+    // ship a random-walk endpoint worse than doing nothing under a warm/short schedule; best-seen makes
+    // hpwl ≤ initialHpwl hold under ANY schedule. (Reverting to the final state reddens this across these seeds.)
+    const device = generateFabric(DEFAULT_FABRIC_ARCH, 6, 6).device
+    const clusters = packLuts(starLuts(7))
+    for (const seed of [0, 1, 2, 3, 5, 8, 13, 21, 34, 55]) {
+      const res = placeClusters(clusters, device, { seed, cooling: 1, moves: 40 })
+      expect(res.hpwl).toBeLessThanOrEqual(res.initialHpwl)
+    }
+  })
+
+  test('on a DENSE grid (clusters == tiles) the annealed placement stays a true permutation — no tile double-booked', () => {
+    // A 2×2 fabric has exactly 4 logic tiles and we place 4 clusters, so EVERY accepted move displaces an
+    // occupant — exercising the swap-with-occupant path the sparse test never hits. After annealing the
+    // placement must still be a bijection onto distinct tiles. (A double-booking swap bug reddens this.)
+    const device = generateFabric(DEFAULT_FABRIC_ARCH, 2, 2).device
+    const clusters = packLuts(fourLuts())
+    for (const seed of [1, 2, 3, 4, 5, 7, 13, 42, 99]) {
+      const res = placeClusters(clusters, device, { seed })
+      expect(res.fits).toBe(true)
+      expect(res.placement.size).toBe(4)
+      const tiles = [...res.placement.values()].map((t) => `${t.x}_${t.y}`)
+      expect(new Set(tiles).size).toBe(4) // 4 distinct tiles — no cluster shares a tile with another
+    }
+  })
+
+  test('deterministic: same seed ⇒ identical placement AND hpwl; a design larger than the fabric reports fits:false', () => {
     const device = generateFabric(DEFAULT_FABRIC_ARCH, 4, 4).device
     const clusters = packLuts(chainLuts())
     const a = placeClusters(clusters, device, { seed: 42 })
     const b = placeClusters(clusters, device, { seed: 42 })
     expect([...a.placement.entries()]).toEqual([...b.placement.entries()])
+    expect(a.hpwl).toBe(b.hpwl)
+    expect(a.initialHpwl).toBe(b.initialHpwl)
 
     const tiny = generateFabric(DEFAULT_FABRIC_ARCH, 1, 1).device // 1 tile, 3 clusters
     expect(placeClusters(clusters, tiny, { seed: 1 }).fits).toBe(false)
@@ -117,6 +156,15 @@ describe('extractRouting — logical nets → physical route nets + placed LUTs'
     expect(ex.netDriverNode.has('z')).toBe(true) // the design output
     expect(ex.placedLuts.length).toBe(3)
     expect(ex.placedLuts.every((l) => l.output.startsWith('src_'))).toBe(true)
+  })
+
+  test('a partial (!fits) placement is rejected loudly — never silently shorted onto tile (0,0)', () => {
+    const clusters = packLuts(chainLuts())
+    const tiny = generateFabric(DEFAULT_FABRIC_ARCH, 1, 1).device // 1 tile, 3 clusters ⇒ fits:false
+    const { placement, fits } = placeClusters(clusters, tiny, { seed: 1 })
+    expect(fits).toBe(false)
+    // extracting an incomplete placement would collapse LUTs onto (0,0) and short distinct nets — it must throw
+    expect(() => extractRouting(clusters, placement)).toThrow(/not placed/)
   })
 })
 
