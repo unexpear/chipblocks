@@ -13,6 +13,7 @@ import {
   RIPPLE_CARRY_2BIT,
 } from '../src/renderer/builtin-blocks.ts'
 import {
+  type Cut,
   coverToLuts,
   type KLut,
   lutConfigSize,
@@ -20,6 +21,7 @@ import {
   lutIndex,
   lutifyCompiled,
   mapCompiledToLuts,
+  prioritizeCuts,
   synthLutConfig,
 } from '../src/renderer/fpga-fabric.ts'
 import {
@@ -437,5 +439,94 @@ describe('LUT-covering mapper (Engine #1) — covers gate cones into fewer k-LUT
     const qbLut = luts.find((l) => l.output === 'qb')
     expect(qLut?.inputs).toContain('qb')
     expect(qbLut?.inputs).toContain('Q')
+  })
+
+  test('a combinational self-loop net is never silently dropped — it falls back to a single gate LUT', () => {
+    // A gate whose output feeds its own input (g.out ∈ g.ins) — a single-inverter ring, which compileLogic does
+    // NOT record as a cutNet. No non-self LUT can represent it, so every cut is rejected; coverToLuts must still
+    // DRIVE the net (fall back to the node's own gate) rather than silently skip it and strand downstream loads.
+    const NOT1 = (i: boolean[]) => [i[0] !== true]
+    const AND2 = (i: boolean[]) => [i[0] === true && i[1] === true]
+
+    // (a) N = NOT(N) as a primary output — must be emitted, not dropped to []
+    const selfOut: CompiledLogic = {
+      gates: [{ fn: NOT1, ins: ['N'], out: 'N' }],
+      seeds: [],
+      portNet: (_id, h) => h,
+      cutNets: [],
+    }
+    const lutsA = coverToLuts(selfOut, new Set(['N']), 4)
+    expect(lutsA.map((l) => l.output)).toContain('N')
+    expect(lutsA.every((l) => l.k <= 4 && l.config.length === lutConfigSize(l.k))).toBe(true)
+
+    // (b) N = AND(N, b) [self-loop, fanout 2] feeding Z = AND(N, c) [primary output] — Z must not read an
+    // undriven leaf: the self-loop net N is itself emitted (coverage holds, no dangling leaf)
+    const selfFeed: CompiledLogic = {
+      gates: [
+        { fn: AND2, ins: ['N', 'b'], out: 'N' },
+        { fn: AND2, ins: ['N', 'c'], out: 'Z' },
+      ],
+      seeds: [],
+      portNet: (_id, h) => h,
+      cutNets: [],
+    }
+    const lutsB = coverToLuts(selfFeed, new Set(['Z']), 4)
+    const drivenB = new Set(lutsB.map((l) => l.output))
+    expect(drivenB.has('Z')).toBe(true)
+    expect(drivenB.has('N')).toBe(true)
+    const pisB = new Set(['b', 'c'])
+    for (const l of lutsB)
+      for (const leaf of l.inputs) expect(pisB.has(leaf) || drivenB.has(leaf)).toBe(true)
+  })
+
+  test('prioritizeCuts drops a self-referential superset — the mechanism that keeps feedback LUTs self-loop-free', () => {
+    const cut = (leaves: string[]): Cut => ({
+      leaves,
+      table: Array(1 << leaves.length).fill(false),
+    })
+    // {qb} is a node's trivial self-cut; {qb,r,s} is a self-superset a downstream merge produced. The
+    // subset-drop must remove the superset so no self-referential cut ever reaches area-flow / becomes a LUT.
+    const kept = prioritizeCuts([cut(['qb', 'r', 's']), cut(['qb']), cut(['Q', 'r'])], 8).map((c) =>
+      c.leaves.join(','),
+    )
+    expect(kept).toContain('qb') // the size-1 self-cut survives (smallest)
+    expect(kept).not.toContain('qb,r,s') // its self-superset is dropped
+    expect(prioritizeCuts([cut(['a', 'b']), cut(['a', 'b'])], 8)).toHaveLength(1) // dedup by leaf-set
+    expect(prioritizeCuts([cut(['a']), cut(['b']), cut(['c'])], 2)).toHaveLength(2) // cap honored
+  })
+
+  test('outputNetsOf resolves each block to real, non-empty output nets (the boundary oracle is not a no-op)', () => {
+    for (const block of [HALF_ADDER_BLOCK, FULL_ADDER_BLOCK, RIPPLE_CARRY_2BIT]) {
+      const compiled = compileLogic(blockCanvas(block), [])
+      const outs = outputNetsOf(block, compiled)
+      const outputPortCount = block.ports.filter(
+        (p) => !POWER_PORT_IDS.has(p.id.toLowerCase()) && isOutputPort(p),
+      ).length
+      expect(outs.size).toBe(outputPortCount)
+      expect(outs.size).toBeGreaterThan(0)
+      const driven = new Set(compiled.gates.map((g) => g.out))
+      const pis = primaryInputsOf(compiled)
+      for (const net of outs) expect(driven.has(net) || pis.has(net)).toBe(true) // resolves to a real net
+    }
+  })
+
+  test('threading outputNets is load-bearing — with an EMPTY set a fanout-1 primary output is left undriven', () => {
+    // The three adder blocks can't show this (their outputs are fanout-0 terminals isRoot roots anyway). Here N
+    // is an output that also feeds Z (fanout 1): it is emitted ONLY because it is threaded in as an output net.
+    const AND2 = (i: boolean[]) => [i[0] === true && i[1] === true]
+    const compiled: CompiledLogic = {
+      gates: [
+        { fn: AND2, ins: ['a', 'b'], out: 'N' },
+        { fn: AND2, ins: ['N', 'c'], out: 'Z' },
+      ],
+      seeds: [],
+      portNet: (_id, h) => h,
+      cutNets: [],
+    }
+    const withOut = new Set(coverToLuts(compiled, new Set(['N', 'Z']), 4).map((l) => l.output))
+    const without = new Set(coverToLuts(compiled, new Set(), 4).map((l) => l.output))
+    expect(withOut.has('N')).toBe(true) // emitted because threaded in
+    expect(without.has('N')).toBe(false) // with no output nets, the fanout-1 output is absorbed away
+    expect(without.has('Z')).toBe(true) // Z (fanout 0) is still rooted the old way
   })
 })

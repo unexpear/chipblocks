@@ -102,13 +102,18 @@ export function lutifyCompiled(compiled: CompiledLogic): CompiledLogic {
 }
 
 /** A k-feasible cut of a node: its leaf nets (sorted) + the node's truth table over them (LSB-first). */
-type Cut = { leaves: string[]; table: boolean[] }
+export type Cut = { leaves: string[]; table: boolean[] }
 
 /** The trivial cut of a net — the wire itself (identity: config[0]=false, config[1]=true). */
-const trivialCut = (net: string): Cut => ({ leaves: [net], table: [false, true] })
+export const trivialCut = (net: string): Cut => ({ leaves: [net], table: [false, true] })
 
-/** Dedup cuts by leaf-set, drop any a strict subset already covers, keep the `cap` smallest. */
-function prioritizeCuts(cuts: Cut[], cap: number): Cut[] {
+/**
+ * Dedup cuts by leaf-set, drop any a strict subset already covers, keep the `cap` smallest. The
+ * subset-drop is not just an area heuristic: because the trivial self-cut `{g.out}` is always among a node's
+ * cuts, any self-referential cut `{g.out, …}` is a strict superset of it and is dropped here — which is what
+ * keeps a feedback pair from mapping to a self-reading LUT (see the self-cut guard note in coverToLuts).
+ */
+export function prioritizeCuts(cuts: Cut[], cap: number): Cut[] {
   const byKey = new Map<string, Cut>()
   for (const c of cuts) {
     const key = c.leaves.join(',')
@@ -238,25 +243,46 @@ export function coverToLuts(
   const worklist = gates.map((g) => g.out).filter(isRoot)
   const queued = new Set(worklist)
   let index = 0
-  while (worklist.length > 0) {
-    const root = worklist.pop() as string
-    if (emitted.has(root) || isPI(root)) continue
-    const cut = bestCut.get(root)
-    if (cut === undefined) continue
-    emitted.add(root)
-    luts.push({
-      id: `L${index++}`,
-      k: cut.leaves.length,
-      config: cut.table,
-      inputs: [...cut.leaves],
-      output: root,
-    })
-    for (const leaf of cut.leaves) {
+  const queueLeaves = (leaves: readonly string[]): void => {
+    for (const leaf of leaves) {
       if (!isPI(leaf) && !emitted.has(leaf) && !queued.has(leaf)) {
         queued.add(leaf)
         worklist.push(leaf)
       }
     }
+  }
+  while (worklist.length > 0) {
+    const root = worklist.pop() as string
+    if (emitted.has(root) || isPI(root)) continue
+    emitted.add(root)
+    const cut = bestCut.get(root)
+    if (cut !== undefined) {
+      luts.push({
+        id: `L${index++}`,
+        k: cut.leaves.length,
+        config: cut.table,
+        inputs: [...cut.leaves],
+        output: root,
+      })
+      queueLeaves(cut.leaves)
+      continue
+    }
+    // No covered cut exists for this driven net. The only way that arises is a combinational self-loop gate
+    // (g.out ∈ g.ins) — a net wired back into its own driver, which NO non-self-referential LUT can represent
+    // (every cut of it is rejected by the self-cut guard). Rather than silently drop it, fall back to the
+    // node's own gate as one LUT — exactly what mapCompiledToLuts emits — so the net stays DRIVEN (coverage
+    // holds unconditionally) and the degenerate self-reference is faithful to the input. (g.ins ≤ 2 for every
+    // compileLogic primitive, so the fallback LUT is k-feasible for any k ≥ 2.)
+    const g = driverOf.get(root)
+    if (g === undefined) continue
+    luts.push({
+      id: `L${index++}`,
+      k: g.ins.length,
+      config: synthLutConfig(g.fn, g.ins.length),
+      inputs: [...g.ins],
+      output: root,
+    })
+    queueLeaves(g.ins)
   }
   return luts
 }
