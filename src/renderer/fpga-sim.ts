@@ -37,6 +37,12 @@ export type Drive = { node: string; high: boolean }
  * placed LUT becomes a gate over those nets, and each drive seeds its node's net. Returns a
  * `CompiledLogic` ready for `stepLogic`. Reading is by node id — `result.value(nodeId, '')` returns the
  * level of whatever net that node sits on, so a load anywhere on a routed net reads its driver's value.
+ *
+ * Stage-1 scope (honest): this assumes a SINGLE driver per net. It does not detect driver contention —
+ * two LUT outputs (or a LUT + a drive) unioned onto one net just resolve to whichever gate stepLogic
+ * settles last, silently. That never arises from a legal routing (the mapper drives each net once and the
+ * router never shorts two drivers), but a hand-built ON-pip set could. Contention detection belongs with
+ * the router increment, not here.
  */
 export function bridgeToSim(
   rrg: Rrg,

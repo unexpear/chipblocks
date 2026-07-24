@@ -98,6 +98,24 @@ describe('chipdb round-trip — the RRG serializes/parses in IceStorm chipdb voc
     expect(rrgIntegrity(back.rrg).ok).toBe(true)
   })
 
+  test('the span (Stage-2 segmentation) hook round-trips — serialize AND parse carry it', () => {
+    // Stage 1 never sets span, so the fabric round-trip above can't prove it survives. Inject a
+    // segmented wire (the Stage-2 shape) and confirm both directions carry span, end to end.
+    const fabric = generateFabric(DEFAULT_FABRIC_ARCH, 2, 1)
+    fabric.rrg.nodes.set('seg', { id: 'seg', kind: 'chanx', x: 0, y: 0, track: 1, span: 4 })
+    const back = parseChipdb(serializeChipdb(fabric))
+    expect(back.rrg.nodes.get('seg')).toEqual({
+      id: 'seg',
+      kind: 'chanx',
+      x: 0,
+      y: 0,
+      track: 1,
+      span: 4,
+    })
+    // and span= parses straight from icebox-shaped text
+    expect(parseChipdb('.net w chany 1 2 span=12').rrg.nodes.get('w')?.span).toBe(12)
+  })
+
   test('a hand-written IceStorm-shaped snippet parses into the RRG types (schema is a data-load target)', () => {
     const snippet = [
       '# a hand-authored chipdb fragment in icebox vocabulary',
