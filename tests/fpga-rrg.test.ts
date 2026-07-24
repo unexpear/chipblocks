@@ -10,8 +10,10 @@ import {
   clusterInputs,
   DEFAULT_FABRIC_ARCH,
   generateFabric,
+  parseChipdb,
   reachableFrom,
   rrgIntegrity,
+  serializeChipdb,
 } from '../src/renderer/fpga-rrg.ts'
 
 describe('cluster-input math (research §1: I = ceil((k/2)(N+1)))', () => {
@@ -74,5 +76,61 @@ describe('generateFabric — a well-formed island routing-resource graph', () =>
     // with sparse Fc a route to every sink is no longer guaranteed, but sources must still reach routing
     const reached = reachableFrom(sparse.rrg, sources)
     expect([...reached].some((id) => id.startsWith('chanx_'))).toBe(true)
+  })
+})
+
+describe('chipdb round-trip — the RRG serializes/parses in IceStorm chipdb vocabulary', () => {
+  test('a generated fabric survives serialize → parse identically', () => {
+    const fabric = generateFabric(DEFAULT_FABRIC_ARCH, 3, 3)
+    const back = parseChipdb(serializeChipdb(fabric))
+    // device + arch + tiles
+    expect(back.device.gridWidth).toBe(fabric.device.gridWidth)
+    expect(back.device.gridHeight).toBe(fabric.device.gridHeight)
+    expect(back.device.arch).toEqual(fabric.device.arch)
+    expect(back.device.tiles).toEqual(fabric.device.tiles)
+    // every node reconstructed exactly (id, kind, coords, track/pin/span)
+    expect(back.rrg.nodes.size).toBe(fabric.rrg.nodes.size)
+    for (const [id, node] of fabric.rrg.nodes) expect(back.rrg.nodes.get(id)).toEqual(node)
+    // every pip reconstructed (from, to, kind) in order, and the parsed graph is still well-formed
+    expect(back.rrg.pips.map((p) => `${p.from}->${p.to}:${p.kind}`)).toEqual(
+      fabric.rrg.pips.map((p) => `${p.from}->${p.to}:${p.kind}`),
+    )
+    expect(rrgIntegrity(back.rrg).ok).toBe(true)
+  })
+
+  test('a hand-written IceStorm-shaped snippet parses into the RRG types (schema is a data-load target)', () => {
+    const snippet = [
+      '# a hand-authored chipdb fragment in icebox vocabulary',
+      '.device 2 2',
+      '.arch k=4 n=1 i=4 w=2 fc_in=1 fc_out=1 fs=2',
+      '.logic_tile 0 0',
+      '.io_tile 1 0',
+      '.net drv opin 0 0',
+      '.net trk chanx 0 0 track=1',
+      '.net ld ipin 1 0 pin=2',
+      '.buffer drv trk',
+      '.routing trk ld',
+      '.foobar 9 9 ignored', // an unknown directive is skipped, not fatal
+    ].join('\n')
+    const fabric = parseChipdb(snippet)
+    expect(fabric.device.gridWidth).toBe(2)
+    expect(fabric.device.arch.k).toBe(4)
+    expect(fabric.device.arch.clusterInputs).toBe(4)
+    expect(fabric.device.tiles).toEqual([
+      { x: 0, y: 0, kind: 'logic' },
+      { x: 1, y: 0, kind: 'io' },
+    ])
+    expect(fabric.rrg.nodes.get('trk')).toEqual({ id: 'trk', kind: 'chanx', x: 0, y: 0, track: 1 })
+    expect(fabric.rrg.nodes.get('ld')).toEqual({ id: 'ld', kind: 'ipin', x: 1, y: 0, pin: 2 })
+    expect(fabric.rrg.pips).toHaveLength(2)
+    expect(fabric.rrg.pips[0]).toEqual({
+      id: 'p0',
+      from: 'drv',
+      to: 'trk',
+      kind: 'buffer',
+      configBits: null,
+    })
+    expect(fabric.rrg.pips[1]?.kind).toBe('routing')
+    expect(rrgIntegrity(fabric.rrg).ok).toBe(true) // every pip endpoint resolved to a parsed node
   })
 })

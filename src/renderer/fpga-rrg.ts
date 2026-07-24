@@ -113,6 +113,22 @@ function fcTracks(fc: number, w: number): number[] {
   return Array.from({ length: count }, (_, i) => Math.floor((i * w) / count))
 }
 
+/** Build the per-node incoming/outgoing pip adjacency maps from a pip list. */
+function indexPips(pips: Pip[]): { edgesFrom: Map<string, Pip[]>; edgesTo: Map<string, Pip[]> } {
+  const edgesFrom = new Map<string, Pip[]>()
+  const edgesTo = new Map<string, Pip[]>()
+  const push = (map: Map<string, Pip[]>, key: string, pip: Pip): void => {
+    const arr = map.get(key)
+    if (arr) arr.push(pip)
+    else map.set(key, [pip])
+  }
+  for (const pip of pips) {
+    push(edgesFrom, pip.from, pip)
+    push(edgesTo, pip.to, pip)
+  }
+  return { edgesFrom, edgesTo }
+}
+
 /**
  * Generate an island-style fabric: a `gridWidth × gridHeight` grid of logic tiles + a routing-resource
  * graph (one horizontal channel per row and one vertical channel per column, W tracks each; connection
@@ -181,18 +197,7 @@ export function generateFabric(arch: FabricArch, gridWidth = 3, gridHeight = 3):
     }
   }
 
-  const edgesFrom = new Map<string, Pip[]>()
-  const edgesTo = new Map<string, Pip[]>()
-  const push = (map: Map<string, Pip[]>, key: string, pip: Pip): void => {
-    const arr = map.get(key)
-    if (arr) arr.push(pip)
-    else map.set(key, [pip])
-  }
-  for (const pip of pips) {
-    push(edgesFrom, pip.from, pip)
-    push(edgesTo, pip.to, pip)
-  }
-
+  const { edgesFrom, edgesTo } = indexPips(pips)
   return {
     device: { gridWidth, gridHeight, arch, tiles },
     rrg: { nodes, pips, edgesFrom, edgesTo },
@@ -231,4 +236,115 @@ export function reachableFrom(rrg: Rrg, starts: Iterable<string>): Set<string> {
     }
   }
   return seen
+}
+
+/**
+ * Serialize a fabric to a text chipdb in Project IceStorm's directive vocabulary (research §4a): a
+ * `.device W H` line, an `.arch` line, per-kind `.<kind>_tile X Y` lines, `.net <id> <kind> X Y …` wires,
+ * and `.buffer`/`.routing` pips. This is icebox-FLAVOURED, not byte-identical: our net is a single wire
+ * node (icebox's is a multi-segment wire) and our pip is a plain from→to (icebox carries the CRAM bit
+ * pattern that `Pip.configBits` will hold in Stage 2). The point is to prove the schema round-trips and
+ * that a real IceStorm-shaped snippet ingests into these exact types — i.e. Stage 2 is a data-load.
+ */
+export function serializeChipdb(fabric: Fabric): string {
+  const { device, rrg } = fabric
+  const a = device.arch
+  const lines: string[] = [
+    `.device ${device.gridWidth} ${device.gridHeight}`,
+    `.arch k=${a.k} n=${a.n} i=${a.clusterInputs} w=${a.channelWidth} fc_in=${a.fcIn} fc_out=${a.fcOut} fs=${a.fs}`,
+  ]
+  for (const tile of device.tiles) lines.push(`.${tile.kind}_tile ${tile.x} ${tile.y}`)
+  for (const node of rrg.nodes.values()) {
+    const extra = [
+      node.track === undefined ? '' : `track=${node.track}`,
+      node.pin === undefined ? '' : `pin=${node.pin}`,
+      node.span === undefined ? '' : `span=${node.span}`,
+    ]
+      .filter((s) => s !== '')
+      .join(' ')
+    lines.push(`.net ${node.id} ${node.kind} ${node.x} ${node.y}${extra === '' ? '' : ` ${extra}`}`)
+  }
+  for (const pip of rrg.pips) lines.push(`.${pip.kind} ${pip.from} ${pip.to}`)
+  return `${lines.join('\n')}\n`
+}
+
+const TILE_KINDS: readonly TileKind[] = ['logic', 'io', 'empty']
+const WIRE_KINDS: readonly WireKind[] = ['source', 'sink', 'opin', 'ipin', 'chanx', 'chany']
+
+/**
+ * Parse a chipdb text (see `serializeChipdb`) back into a fabric — including a hand-written IceStorm-shaped
+ * snippet. Pip `configBits` parse to `null` (the Stage-2 hook); the edge maps are rebuilt from the pips.
+ * Unknown directives are ignored so a richer real chipdb still parses its recognized subset.
+ */
+export function parseChipdb(text: string): Fabric {
+  let gridWidth = 0
+  let gridHeight = 0
+  const arch: FabricArch = { ...DEFAULT_FABRIC_ARCH }
+  const tiles: FabricTile[] = []
+  const nodes = new Map<string, WireNode>()
+  const pips: Pip[] = []
+  const num = (s: string | undefined): number => Number(s ?? Number.NaN)
+
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (line === '' || line.startsWith('#')) continue
+    const tok = line.split(/\s+/)
+    const dir = tok[0] ?? ''
+    if (dir === '.device') {
+      gridWidth = num(tok[1])
+      gridHeight = num(tok[2])
+    } else if (dir === '.arch') {
+      for (const kv of tok.slice(1)) {
+        const [key, value] = kv.split('=')
+        const v = num(value)
+        if (key === 'k') arch.k = v
+        else if (key === 'n') arch.n = v
+        else if (key === 'i') arch.clusterInputs = v
+        else if (key === 'w') arch.channelWidth = v
+        else if (key === 'fc_in') arch.fcIn = v
+        else if (key === 'fc_out') arch.fcOut = v
+        else if (key === 'fs') arch.fs = v
+      }
+    } else if (dir.endsWith('_tile')) {
+      const kind = dir.slice(1).replace(/_tile$/, '')
+      if ((TILE_KINDS as readonly string[]).includes(kind)) {
+        tiles.push({ x: num(tok[1]), y: num(tok[2]), kind: kind as TileKind })
+      }
+    } else if (dir === '.net') {
+      const id = tok[1]
+      const kind = tok[2]
+      if (
+        id !== undefined &&
+        kind !== undefined &&
+        (WIRE_KINDS as readonly string[]).includes(kind)
+      ) {
+        const node: WireNode = { id, kind: kind as WireKind, x: num(tok[3]), y: num(tok[4]) }
+        for (const kv of tok.slice(5)) {
+          const [key, value] = kv.split('=')
+          if (key === 'track') node.track = num(value)
+          else if (key === 'pin') node.pin = num(value)
+          else if (key === 'span') node.span = num(value)
+        }
+        nodes.set(id, node)
+      }
+    } else if (dir === '.buffer' || dir === '.routing') {
+      const from = tok[1]
+      const to = tok[2]
+      if (from !== undefined && to !== undefined) {
+        pips.push({
+          id: `p${pips.length}`,
+          from,
+          to,
+          kind: dir === '.buffer' ? 'buffer' : 'routing',
+          configBits: null,
+        })
+      }
+    }
+  }
+
+  const { edgesFrom, edgesTo } = indexPips(pips)
+  return {
+    device: { gridWidth, gridHeight, arch, tiles },
+    rrg: { nodes, pips, edgesFrom, edgesTo },
+  }
 }
