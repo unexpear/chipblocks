@@ -108,6 +108,45 @@ describe('placeClusters — SA minimizes half-perimeter wirelength', () => {
     }
   })
 
+  test('the reported hpwl exactly equals an independent full HPWL recompute (the incremental Δ stays exact)', () => {
+    // The annealer scores each move as a Δ over only the affected nets rather than recomputing the whole HPWL.
+    // If that Δ accounting ever drifted, the running cost would diverge from the truth — so recompute the HPWL
+    // of the returned placement from scratch and require it to match exactly, over a design big enough (a
+    // 20-LUT chain) that thousands of incremental moves accumulate.
+    const luts = Array.from({ length: 20 }, (_, i) => ({
+      id: `L${i}`,
+      k: i === 0 ? 1 : 2,
+      config: i === 0 ? [false, true] : [false, false, false, true],
+      inputs: i === 0 ? ['pi'] : [`w${i - 1}`, 'pi'],
+      output: `w${i}`,
+    }))
+    const clusters = packLuts(luts)
+    const device = generateFabric(DEFAULT_FABRIC_ARCH, 6, 6).device
+    const res = placeClusters(clusters, device, { seed: 3 })
+
+    const driverOf = new Map<string, string>()
+    for (const c of clusters) for (const l of c.luts) driverOf.set(l.output, c.id)
+    const netEnds = new Map<string, Set<string>>()
+    for (const c of clusters)
+      for (const l of c.luts)
+        for (const w of l.inputs) {
+          const s = netEnds.get(w) ?? new Set<string>()
+          s.add(c.id)
+          const d = driverOf.get(w)
+          if (d !== undefined) s.add(d)
+          netEnds.set(w, s)
+        }
+    let hpwl = 0
+    for (const ids of netEnds.values()) {
+      const pts = [...ids].map((id) => res.placement.get(id)).filter((p) => p !== undefined)
+      if (pts.length < 2) continue
+      const xs = pts.map((p) => (p as { x: number }).x)
+      const ys = pts.map((p) => (p as { y: number }).y)
+      hpwl += Math.max(...xs) - Math.min(...xs) + (Math.max(...ys) - Math.min(...ys))
+    }
+    expect(res.hpwl).toBe(hpwl)
+  })
+
   test('on a DENSE grid (clusters == tiles) the annealed placement stays a true permutation — no tile double-booked', () => {
     // A 2×2 fabric has exactly 4 logic tiles and we place 4 clusters, so EVERY accepted move displaces an
     // occupant — exercising the swap-with-occupant path the sparse test never hits. After annealing the
