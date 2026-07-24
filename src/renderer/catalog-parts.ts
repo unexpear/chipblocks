@@ -17,8 +17,8 @@
  * placeable shape.
  *
  * SCOPE TODAY: a part appears here only when it has BOTH a complete public pinout AND a footprint. The
- * regulator (SOT-25) and oscillator (3.2×2.5) have both. The flash waits on its 208-mil SOIC-8 land
- * pattern; the iCE40 waits on its full 48-pin pinout (its datasheet publishes none).
+ * regulator (SOT-25), oscillator (3.2×2.5) and flash (208-mil SOIC-8) have both. The iCE40 waits on its
+ * full 48-pin pinout (its datasheet publishes none — sourceable from the UPduino open-hardware board).
  */
 
 import { registerBuiltinParts, reserveBuiltinIds, type UserPart } from './user-parts.ts'
@@ -62,8 +62,33 @@ const ASE_12MHZ: UserPart = {
   footprintId: 'Oscillator_SMD_3.2x2.5mm',
 }
 
+/**
+ * Winbond W25Q32JV — a 32 Mbit SPI NOR flash in the 208-mil SOIC-8. Pin map from the datasheet
+ * (standard SOIC-8 numbering: 1–4 down the left, 5–8 up the right), matching
+ * fixtures/valid/assembly-flash-w25q32jv-soic8.yaml. Names use the Quad-SPI dual roles the datasheet
+ * gives each pin.
+ */
+const W25Q32JV: UserPart = {
+  id: 'catalog_w25q32jv',
+  name: 'W25Q32JV SPI flash',
+  designatorPrefix: 'U',
+  description:
+    'Winbond W25Q32JV, 32 Mbit SPI NOR flash in a 208-mil SOIC-8 — the FPGA-configuration memory on an iCE40 board. Not simulated — a black box at its pins. See assembly-flash-w25q32jv-soic8.yaml.',
+  pins: [
+    { id: 'cs', name: '/CS', side: 'left', electrical: 'input', pad: '1' },
+    { id: 'do', name: 'DO/IO1', side: 'right', electrical: 'bidirectional', pad: '2' },
+    { id: 'wp', name: '/WP/IO2', side: 'left', electrical: 'bidirectional', pad: '3' },
+    { id: 'gnd', name: 'GND', side: 'bottom', electrical: 'passive', pad: '4' },
+    { id: 'di', name: 'DI/IO0', side: 'left', electrical: 'bidirectional', pad: '5' },
+    { id: 'clk', name: 'CLK', side: 'left', electrical: 'input', pad: '6' },
+    { id: 'hold', name: '/HOLD/IO3', side: 'right', electrical: 'bidirectional', pad: '7' },
+    { id: 'vcc', name: 'VCC', side: 'top', electrical: 'power_in', pad: '8' },
+  ],
+  footprintId: 'SOIC-8_5.23x5.23mm_P1.27mm',
+}
+
 /** Every catalog part, in palette order. Grows as parts gain both a pinout and a footprint. */
-export const CATALOG_PARTS: readonly UserPart[] = [AP2112K_33, ASE_12MHZ]
+export const CATALOG_PARTS: readonly UserPart[] = [AP2112K_33, ASE_12MHZ, W25Q32JV]
 
 /** The ids the catalog owns — reserved so a user part can't shadow one, and skipped on save. */
 export const CATALOG_PART_IDS: ReadonlySet<string> = new Set(CATALOG_PARTS.map((p) => p.id))

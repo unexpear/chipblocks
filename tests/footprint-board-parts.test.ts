@@ -1,16 +1,18 @@
 /**
- * The three cited footprints added for the FPGA-board parts (QFN-48, SOT-25, 3.2×2.5 oscillator).
- * These are hand-entered geometry copied from manufacturer land patterns, so the point of the tests is
- * to catch a transcription error: the pad COUNT, the KEY dimensions the source states, that no two
- * pads overlap (a short), and that no silk line is printed across a pad (ink that stops solder). The
- * flash's SOIC-8W (208-mil) footprint is deliberately NOT here — its row pitch is ambiguous in
- * Winbond's app note and wants an IPC-7351B derivation, not a transcription.
+ * The four cited footprints added for the FPGA-board parts (QFN-48, SOT-25, 3.2×2.5 oscillator,
+ * 208-mil SOP-8). These are hand-entered geometry copied from manufacturer / IPC-7351 land patterns,
+ * so the point of the tests is to catch a transcription error: the pad COUNT, the KEY dimensions the
+ * source states, that no two pads overlap (a short), and that no silk line is printed across a pad
+ * (ink that stops solder). The SOP-8's row pitch was the one that needed care — Winbond's app note
+ * prints only the 6.00 mm inner gap, so the footprint uses the KiCad/IPC-7351 pattern (cross-checked)
+ * whose 7.20 mm row pitch sits on the lead span, not that inner gap.
  */
 
 import { describe, expect, test } from 'vitest'
 import {
   FOOTPRINT_OSC_3225,
   FOOTPRINT_QFN48,
+  FOOTPRINT_SOP8_208MIL,
   FOOTPRINT_SOT25,
   type Footprint,
   type Pad,
@@ -78,7 +80,7 @@ const silkOnPad = (fp: Footprint) => {
 }
 
 describe('every board-part footprint is coherent', () => {
-  for (const fp of [FOOTPRINT_QFN48, FOOTPRINT_SOT25, FOOTPRINT_OSC_3225]) {
+  for (const fp of [FOOTPRINT_QFN48, FOOTPRINT_SOT25, FOOTPRINT_OSC_3225, FOOTPRINT_SOP8_208MIL]) {
     test(`${fp.id}: no overlapping pads, no silk on copper`, () => {
       // NB: footprintProblems is the USER-footprint gate — it deliberately rejects a built-in id, so
       // it is the wrong check for a shipped footprint. Coherence is the geometry checks below.
@@ -147,5 +149,32 @@ describe('the 3.2×2.5 oscillator matches the Abracon ASE land pattern', () => {
       expect(Math.abs(p.center.y)).toBe(0.825) // 1.65 mm Y pitch
       expect(p.size).toEqual({ w: 1.3, h: 1.1 })
     }
+  })
+})
+
+describe('the SOP-8 208-mil matches the KiCad / IPC-7351 land pattern', () => {
+  test('8 lands, rows 7.20 mm apart (NOT the 6.00 mm inner gap), 1.6×0.6 lands', () => {
+    expect(FOOTPRINT_SOP8_208MIL.pads).toHaveLength(8)
+    for (const p of FOOTPRINT_SOP8_208MIL.pads) {
+      expect(Math.abs(p.center.x)).toBe(3.6) // centre ±3.60 → row pitch 7.20
+      expect([0.635, 1.905]).toContain(Math.abs(p.center.y)) // 1.27 pitch, 4 per side
+      expect(p.size).toEqual({ w: 1.6, h: 0.6 })
+    }
+    // the trap the research resolved: the row pitch is the 7.90 lead-span line, not the 6.00 inner gap.
+    // Pad inner edge = 3.60 − 1.6/2 = 2.80, so the inner heel-to-heel gap is 5.60 (KiCad) — and NOT the
+    // 6.00 mm printed on the Winbond drawing that a naive read mistakes for the pitch.
+    const innerGap = 2 * (3.6 - 1.6 / 2)
+    expect(innerGap).toBe(5.6)
+  })
+
+  test('pin 1 is top-left, standard SOIC-8 numbering', () => {
+    expect(FOOTPRINT_SOP8_208MIL.pads.find((p) => p.id === '1')?.center).toEqual({
+      x: -3.6,
+      y: -1.905,
+    })
+    expect(FOOTPRINT_SOP8_208MIL.pads.find((p) => p.id === '8')?.center).toEqual({
+      x: 3.6,
+      y: -1.905,
+    })
   })
 })

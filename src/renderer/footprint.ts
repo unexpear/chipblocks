@@ -1845,6 +1845,108 @@ export const FOOTPRINT_OSC_3225: Footprint = {
   },
 }
 
+/**
+ * SOIC-8 208-mil (SOP-8, the WIDE 5.23 mm body, distinct from the narrow 3.9 mm SOIC-8 above) — the
+ * package the Winbond W25Q32JV flash lands in (fixtures/valid/assembly-flash-w25q32jv-soic8.yaml). Land
+ * pattern from KiCad's IPC-7351 footprint SOIC-8_5.23x5.23mm_P1.27mm: pad 1.6 × 0.6 mm on the 1.27 mm
+ * pitch, pad centres at ±3.60 mm (row centre-to-centre 7.20 mm), four per side. This was the deferred
+ * one: Winbond's own layout drawing prints only the INNER heel-to-heel gap (6.00 mm), which is easy to
+ * mistake for the row pitch — the true centre pitch is 6.00 + pad-length = the 7.90 mm lead span. Three
+ * sources (KiCad, an independent IPC-7351B derivation, and Winbond's app note) agree within 0.1 mm.
+ */
+export const FOOTPRINT_SOP8_208MIL: Footprint = {
+  id: 'SOIC-8_5.23x5.23mm_P1.27mm',
+  name: 'SOIC-8 208-mil (SOP-8, 5.23×5.23 mm, 1.27 mm pitch)',
+  description:
+    '8-lead wide-body small-outline IC (SOP-8, 208-mil), 1.27 mm pitch. The W25Q32JV flash package. KiCad / IPC-7351 land pattern.',
+  pads: [
+    {
+      id: '1',
+      center: { x: -3.6, y: -1.905 },
+      size: { w: 1.6, h: 0.6 },
+      shape: 'rect',
+      type: 'smd',
+    },
+    {
+      id: '2',
+      center: { x: -3.6, y: -0.635 },
+      size: { w: 1.6, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '3',
+      center: { x: -3.6, y: 0.635 },
+      size: { w: 1.6, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '4',
+      center: { x: -3.6, y: 1.905 },
+      size: { w: 1.6, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '5',
+      center: { x: 3.6, y: 1.905 },
+      size: { w: 1.6, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '6',
+      center: { x: 3.6, y: 0.635 },
+      size: { w: 1.6, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '7',
+      center: { x: 3.6, y: -0.635 },
+      size: { w: 1.6, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+    {
+      id: '8',
+      center: { x: 3.6, y: -1.905 },
+      size: { w: 1.6, h: 0.6 },
+      shape: 'roundrect',
+      type: 'smd',
+    },
+  ],
+  // Pad 1 squared off + a pin-1 dot above it (the body is clear of the pads, so there is room here).
+  silkscreen: [
+    ...cornerTicksSilk({ x: -4.65, y: -2.86, w: 9.3, h: 5.72 }),
+    ...pin1Dot(-3.6, -2.62, 0.13),
+  ],
+  fabrication: rectOutline(-2.615, -2.615, 2.615, 2.615),
+  labels: { reference: { x: 0, y: -3.5 }, value: { x: 0, y: 3.5 }, fabReference: { x: 0, y: 0 } },
+  courtyard: { x: -4.65, y: -2.86, w: 9.3, h: 5.72 },
+  provenance: {
+    source_type: 'standard',
+    title: 'KiCad / IPC-7351 SOIC-8 208-mil (SOP-8) land pattern',
+    citation:
+      'KiCad footprint library, Package_SO.pretty/SOIC-8_5.23x5.23mm_P1.27mm.kicad_mod (IPC-7351 nominal; its descr cites the Winbond W25Q32JV datasheet) — pads 1.6 × 0.6 mm, centres ±3.60 (row pitch 7.20), pitch 1.27, courtyard 9.30 × 5.72, body 5.23 × 5.23. Cross-checked by an independent IPC-7351B derivation from the Winbond Rev G §10.2 lead dims (span 7.90, foot 0.65, width 0.42) → pad 1.72 × 0.60 at ±3.55, within 0.1 mm. Winbond app note AN0000009 recommends a larger 1.9 × 0.8 land at ±3.95 (its drawing prints only the 6.00 mm inner gap, NOT the row pitch — the true centre pitch = 6.00 + pad-length = 7.90 lead span).',
+    confidence: 'high',
+    notes:
+      'The WIDE 208-mil SOP-8, not the narrow 3.9 mm SOIC-8. KiCad values shipped for consistency with the other footprints; the Winbond larger-pad alternative is noted above. Silk is ChipBlocks’ corner-tick rule + a pin-1 dot.',
+  },
+  body3d: {
+    heightMm: 1.75,
+    standoffMm: 0.1,
+    provenance: {
+      source_type: 'datasheet',
+      title: 'W25Q32JV SOIC-8 208-mil body height',
+      citation:
+        'Winbond W25Q32JV Rev J §10.2 — height A 1.95 nom (1.75/2.16 mm), lead standoff A1 ~0.1 mm.',
+      confidence: 'high',
+    },
+  },
+}
+
 /** Every built-in footprint, keyed by id. The board road's starter set (TOOLCHAIN-ROADMAP.md Track 1). */
 export const BUILTIN_FOOTPRINTS: Record<string, Footprint> = {
   [FOOTPRINT_0402.id]: FOOTPRINT_0402,
@@ -1865,6 +1967,7 @@ export const BUILTIN_FOOTPRINTS: Record<string, Footprint> = {
   [FOOTPRINT_QFN48.id]: FOOTPRINT_QFN48,
   [FOOTPRINT_SOT25.id]: FOOTPRINT_SOT25,
   [FOOTPRINT_OSC_3225.id]: FOOTPRINT_OSC_3225,
+  [FOOTPRINT_SOP8_208MIL.id]: FOOTPRINT_SOP8_208MIL,
 }
 
 /**
