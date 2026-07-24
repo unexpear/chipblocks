@@ -20,11 +20,15 @@
  * is never worse than the initial placement under any schedule. A seeded PRNG makes every placement
  * reproducible (the annealer is deterministic given its seed).
  *
- * Cost scales: each move re-scores only the nets it can change (an exact incremental Δ, not a full HPWL
- * recompute) and the move budget is the VPR-standard ≈N^(4/3) rather than N·tiles — together these take the
- * annealer from O(n³) to ~O(N^(4/3)) for bounded-fanout designs (measured: ~12.8k LUTs placed in ~9 s, where
- * the old cost hit its wall near ~150). A single very-high-fanout net (fanout ∝ n, e.g. an unbuffered clock)
- * still costs O(fanout) per move it touches; a VPR-style incremental bounding box would make that O(1) too.
+ * Cost scales: each move re-scores only the nets it can change — an EXACT incremental Δ over the nets touching
+ * the moved (and displaced) clusters (via the `netsOf` map), not a full HPWL recompute. This is byte-identical
+ * to the full recompute (same accept/reject decisions, same result — a test recomputes the returned HPWL from
+ * scratch to prove it), but drops each move from O(all nets) to O(local), taking the annealer from O(n³) to
+ * O(n²) with NO change to placement quality. (The move budget is still ≈N·tiles moves — the O(n²) term. A
+ * VPR-standard ~N^(4/3) budget would improve the asymptotics further, but only with an adaptive-temperature
+ * schedule + range-limited moves to preserve quality at fewer moves; a naive budget cut alone measurably
+ * worsens wirelength, so it is deliberately left for a future quality-preserving placer.) A single very-high-
+ * fanout net (fanout ∝ n) still costs O(fanout) per move it touches.
  *
  * Net extraction bridges logical nets to physical nodes: a LUT placed on tile (x,y) drives `src_x_y` and
  * reads each input on a distinct `ipin_x_y_p`. An input net driven by another LUT becomes a RouteNet from
@@ -64,7 +68,7 @@ export type PlaceResult = {
 export type PlaceOptions = {
   /** PRNG seed — same seed ⇒ same placement (the annealer is deterministic). */
   seed?: number
-  /** total annealing moves (default ≈ 20·N^(4/3), the VPR-standard budget, floored at 2000). */
+  /** total annealing moves (default scales with design + fabric size: N·tiles·20, floored at 500). */
   moves?: number
   /** geometric cooling factor applied to the temperature each move (default 0.99). */
   cooling?: number
@@ -199,7 +203,7 @@ export function placeClusters(
 
   const rng = makeRng(options.seed ?? 1)
   const cooling = options.cooling ?? 0.99
-  const moves = options.moves ?? Math.max(2000, Math.round(20 * n ** (4 / 3)))
+  const moves = options.moves ?? Math.max(500, clusters.length * tiles.length * 20)
   const movableIds = clusters.slice(0, n).map((c) => c.id)
   let current = initialHpwl
   let temperature = Math.max(1, initialHpwl)
@@ -212,8 +216,8 @@ export function placeClusters(
 
   // One move: relocate a random cluster to a random tile — swapping with its occupant if any. Only the nets
   // touching the moved (and displaced) clusters can change, so we score the DELTA over just those nets, not
-  // the whole design — the exact same accept/reject decision the full recompute made, but O(local) per move
-  // instead of O(all nets). That is what kills the O(n³) (n² moves × O(n) each) → O(n²).
+  // the whole design — the EXACT same accept/reject decision the full recompute made (byte-identical results),
+  // but O(local) per move instead of O(all nets). That drops the annealer from O(n³) to O(n²).
   const pick = <T>(arr: readonly T[]): T => arr[Math.floor(rng() * arr.length)] as T
   for (let m = 0; m < moves; m++) {
     const id = pick(movableIds)
