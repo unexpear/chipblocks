@@ -15,6 +15,8 @@
  * come in later increments; the atom itself is a table lookup.
  */
 
+import type { CompiledLogic } from './logic-sim.ts'
+
 /** The number of truth-table entries (configuration bits) a k-input LUT holds: 2^k. */
 export function lutConfigSize(k: number): number {
   return 1 << k
@@ -52,4 +54,49 @@ export type KLut = {
  */
 export function lutFn(config: readonly boolean[]): (inputs: boolean[]) => boolean[] {
   return (inputs) => [config[lutIndex(inputs)] === true]
+}
+
+/**
+ * Synthesize a LUT's 2^k config table from a gate's boolean function: `config[j]` is the gate's output
+ * when its k inputs, read LSB-first, encode j. Because it enumerates the function exhaustively,
+ * `lutFn(synthLutConfig(g.fn, k))` is behaviourally identical to `g.fn` for a k-input gate — that
+ * identity is what makes the mapping below provably faithful.
+ */
+export function synthLutConfig(fn: (inputs: boolean[]) => boolean[], k: number): boolean[] {
+  return Array.from(
+    { length: 1 << k },
+    (_, j) => fn(Array.from({ length: k }, (_, i) => ((j >> i) & 1) === 1))[0] === true,
+  )
+}
+
+/**
+ * The TRIVIAL technology mapper (Stage 1, increment 2): turn a compiled gate netlist into LUTs, ONE LUT
+ * per gate, each LUT's config synthesized from that gate's function. The real mapper (increments 7-8)
+ * will COVER several gates into one LUT; this 1:1 version exists first to prove the map→simulate spine
+ * and the net-id convention against the golden gate simulation, before any optimizer. Reuses
+ * `compileLogic`'s already-net-resolved `{ fn, ins, out }` gate list (feedback / flip-flops arrive as
+ * internal gates + `cutNets`, so this handles them unchanged).
+ */
+export function mapCompiledToLuts(compiled: CompiledLogic): KLut[] {
+  return compiled.gates.map((gate, i) => ({
+    id: `L${i}`,
+    k: gate.ins.length,
+    config: synthLutConfig(gate.fn, gate.ins.length),
+    inputs: [...gate.ins],
+    output: gate.out,
+  }))
+}
+
+/**
+ * A compiled logic identical to `compiled` except every gate is replaced by its equivalent LUT — so it
+ * co-simulates through the real `stepLogic` and can be characterized against the original. Seeds, port
+ * mapping, and feedback cut-nets are carried through unchanged.
+ */
+export function lutifyCompiled(compiled: CompiledLogic): CompiledLogic {
+  const gates = mapCompiledToLuts(compiled).map((lut) => ({
+    fn: lutFn(lut.config),
+    ins: lut.inputs,
+    out: lut.output,
+  }))
+  return { gates, seeds: compiled.seeds, portNet: compiled.portNet, cutNets: compiled.cutNets }
 }
