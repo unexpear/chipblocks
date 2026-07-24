@@ -8,7 +8,7 @@
  * drive each other across a routed interconnect end to end.
  */
 import { describe, expect, test } from 'vitest'
-import { type RouteNet, routeDesign } from '../src/renderer/fpga-router.ts'
+import { type RouteNet, type RouteResult, routeDesign } from '../src/renderer/fpga-router.ts'
 import { DEFAULT_FABRIC_ARCH, generateFabric } from '../src/renderer/fpga-rrg.ts'
 import { bridgeToSim, type PlacedLut } from '../src/renderer/fpga-sim.ts'
 import { stepLogic } from '../src/renderer/logic-sim.ts'
@@ -19,6 +19,23 @@ const buffer = (input: string, output: string): PlacedLut => ({
   inputs: [input],
   output,
 })
+
+/**
+ * Independently of the router's own occupancy bookkeeping, re-derive how many distinct nets' trees use each
+ * node and assert none exceeds capacity 1. This catches an occupancy under-count on ANY node class (chany,
+ * opin, ipin — not just the chanx the negotiation test happens to contend), which would otherwise ship
+ * routed:true + a real electrical short.
+ */
+const assertNoSharedNode = (res: RouteResult): void => {
+  const usedByNets = new Map<string, number>()
+  for (const r of res.routes.values())
+    for (const id of r.nodes) usedByNets.set(id, (usedByNets.get(id) ?? 0) + 1)
+  for (const [id, count] of usedByNets)
+    expect(
+      count,
+      `node ${id} is shared by ${count} nets (would short in the sim)`,
+    ).toBeLessThanOrEqual(1)
+}
 
 const AND2 = [false, false, false, true]
 const OR2 = [false, true, true, true]
@@ -82,6 +99,7 @@ describe('routeDesign — independent nets route without shorting together', () 
     const res = routeDesign(fabric.rrg, nets)
     expect(res.routed).toBe(true)
     expect(res.overused).toEqual([])
+    assertNoSharedNode(res) // no node shared across the two nets (independent of the router's own bookkeeping)
 
     // drive A high and B low: if the two routes shorted, the sinks would agree; they must not.
     const drvA = buffer('ia', 'src_0_0')
@@ -116,6 +134,7 @@ describe('routeDesign — negotiation resolves a contended channel', () => {
     ])
     expect(res.routed).toBe(true)
     expect(res.overused).toEqual([])
+    assertNoSharedNode(res)
     expect(res.iterations).toBeGreaterThan(1) // a first greedy pass did NOT suffice — negotiation was needed
     expect(res.iterations).toBeLessThan(4) // history converges it fast (=2); without it this rises to 5
 
@@ -135,28 +154,109 @@ describe('routeDesign — negotiation resolves a contended channel', () => {
     expect(sim.value('sink_2_0', '')).toBe(true)
     expect(sim.value('sink_0_0', '')).toBe(false)
   })
+
+  test('contention on a VERTICAL (chany) track negotiates apart too — both axes are congestion-counted', () => {
+    // Mirror of the row test on the column axis: 2×3 grid, ONE track per channel, two counter-nets up/down
+    // column 0 both want chany_0_0. If chany occupancy were not counted, they would silently share it and
+    // short; instead they must negotiate onto a column-1 detour. Guards against a per-axis occupancy blind spot.
+    const narrow = generateFabric({ ...DEFAULT_FABRIC_ARCH, channelWidth: 1, fs: 1 }, 2, 3)
+    const res = routeDesign(narrow.rrg, [
+      { id: 'a', source: 'src_0_0', sinks: ['sink_0_2'] },
+      { id: 'b', source: 'src_0_2', sinks: ['sink_0_0'] },
+    ])
+    expect(res.routed).toBe(true)
+    expect(res.overused).toEqual([])
+    assertNoSharedNode(res) // in particular, chany_0_0 is not shared
+
+    const drvA = buffer('ia', 'src_0_0')
+    const drvB = buffer('ib', 'src_0_2')
+    const sim = stepLogic(
+      bridgeToSim(
+        narrow.rrg,
+        res.onPips,
+        [drvA, drvB],
+        [
+          { node: 'ia', high: true },
+          { node: 'ib', high: false },
+        ],
+      ),
+    )
+    expect(sim.value('sink_0_2', '')).toBe(true) // A's value, not shorted to B
+    expect(sim.value('sink_0_0', '')).toBe(false)
+  })
 })
 
-describe('routeDesign — an impossible design fails honestly', () => {
-  test('two nets forced onto one capacity-1 sink never converge → routed:false + the overused node', () => {
+describe('routeDesign — two nets to one node are a short, and the router reports it (not accepts it)', () => {
+  test('two nets to the SAME sink fail honestly BY DEFAULT — a shared node would short in the sim', () => {
     const fabric = generateFabric(DEFAULT_FABRIC_ARCH, 3, 3)
-    // capacity 1 for EVERY node (including the sink aggregator): two nets to the same sink cannot coexist.
+    // No capacity override: every node incl. the sink aggregator is capacity 1, so two nets onto sink_1_1 —
+    // which bridgeToSim would union into ONE shorted net — is reported as overuse, never routed:true.
     const res = routeDesign(
       fabric.rrg,
       [
         { id: 'a', source: 'src_0_0', sinks: ['sink_1_1'] },
         { id: 'b', source: 'src_2_2', sinks: ['sink_1_1'] },
       ],
-      { capacity: () => 1, maxIterations: 20 },
+      { maxIterations: 20 },
     )
     expect(res.routed).toBe(false)
-    expect(res.overused).toContain('sink_1_1') // named honestly, not silently dropped
-    expect(res.iterations).toBe(20) // it tried every round before giving up
+    expect(res.overused).toContain('sink_1_1') // the short is NAMED, not shipped as routed:true
+    expect(res.unroutable).toEqual([]) // a congestion failure, not an unreachable one
+    expect(res.iterations).toBe(20)
+  })
+
+  test('two loads in ONE tile route to DISTINCT ipins with no short — the correct multi-input pattern', () => {
+    const fabric = generateFabric(DEFAULT_FABRIC_ARCH, 3, 3)
+    // A LUT on tile (1,1) fed by two different source nets: each net targets a DIFFERENT input pin, so no
+    // node is shared and nothing shorts — the legitimate two-signals-into-one-tile design the sink case is not.
+    const res = routeDesign(fabric.rrg, [
+      { id: 'a', source: 'src_0_0', sinks: ['ipin_1_1_0'] },
+      { id: 'b', source: 'src_2_2', sinks: ['ipin_1_1_1'] },
+    ])
+    expect(res.routed).toBe(true)
+    expect(res.overused).toEqual([])
+    assertNoSharedNode(res)
+
+    const drvA = buffer('ia', 'src_0_0')
+    const drvB = buffer('ib', 'src_2_2')
+    const sim = stepLogic(
+      bridgeToSim(
+        fabric.rrg,
+        res.onPips,
+        [drvA, drvB],
+        [
+          { node: 'ia', high: true },
+          { node: 'ib', high: false },
+        ],
+      ),
+    )
+    expect(sim.value('ipin_1_1_0', '')).toBe(true) // pin 0 reads A
+    expect(sim.value('ipin_1_1_1', '')).toBe(false) // pin 1 reads B — distinct, no short
   })
 })
 
-describe('routeDesign — deterministic', () => {
-  test('routing the same design twice yields the identical ON-pip set and iteration count', () => {
+describe('routeDesign — an unreachable sink fails with a NAMED reason, not silently', () => {
+  test('with switch blocks removed (Fs=0) a cross-tile net is unroutable, and `unroutable` names it', () => {
+    // No SBs => the row/column channels never interconnect, so tile (0,0)'s driver cannot reach tile (1,2).
+    // This is a genuine "fabric too poor to route this design" failure — it must name WHY, not return a bare
+    // routed:false with an empty diagnostic (which is what the old sink-∞ / no-unroutable code did).
+    const noSb = generateFabric({ ...DEFAULT_FABRIC_ARCH, fs: 0 }, 3, 3)
+    const res = routeDesign(noSb.rrg, [{ id: 'n', source: 'src_0_0', sinks: ['sink_1_2'] }], {
+      maxIterations: 5,
+    })
+    expect(res.routed).toBe(false)
+    expect(res.unroutable).toContain('n->sink_1_2') // the unreachable sink is named
+    expect(res.overused).toEqual([]) // nothing was overused — it's unreachability, not congestion
+    // and the SAME net routes fine once switch blocks exist, confirming it was the fabric, not the net
+    const ok = generateFabric(DEFAULT_FABRIC_ARCH, 3, 3)
+    expect(routeDesign(ok.rrg, [{ id: 'n', source: 'src_0_0', sinks: ['sink_1_2'] }]).routed).toBe(
+      true,
+    )
+  })
+})
+
+describe('routeDesign — deterministic AND correct', () => {
+  test('the same design twice yields the identical routing, and that routing actually works electrically', () => {
     const fabric = generateFabric(DEFAULT_FABRIC_ARCH, 3, 3)
     const nets: RouteNet[] = [
       { id: 'a', source: 'src_0_0', sinks: ['sink_2_2'] },
@@ -167,6 +267,24 @@ describe('routeDesign — deterministic', () => {
     expect([...a.onPips].sort()).toEqual([...b.onPips].sort())
     expect(a.iterations).toBe(b.iterations)
     expect(a.routed).toBe(b.routed)
+
+    // stability alone would pass for a wrong-but-deterministic router; pin that the routing is CORRECT too —
+    // each sink reads its own source and the two nets do not short.
+    expect(a.routed).toBe(true)
+    assertNoSharedNode(a)
+    const sim = stepLogic(
+      bridgeToSim(
+        fabric.rrg,
+        a.onPips,
+        [buffer('ia', 'src_0_0'), buffer('ib', 'src_2_0')],
+        [
+          { node: 'ia', high: true },
+          { node: 'ib', high: false },
+        ],
+      ),
+    )
+    expect(sim.value('sink_2_2', '')).toBe(true) // net a
+    expect(sim.value('sink_0_2', '')).toBe(false) // net b — separate
   })
 })
 

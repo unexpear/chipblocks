@@ -16,18 +16,21 @@
  *
  * Each outer iteration rips up and re-routes every net against the current costs; nodes that stay overused
  * accumulate `history` (a permanent penalty) and `pfac` grows, so persistently-contested resources become
- * expensive enough that some net detours. It terminates when no node is overused (a legal, congestion-free
- * routing) — or reports the overused nodes honestly if it cannot within `maxIterations` (a fabric too poor
- * to route this design; never a silent partial result).
+ * expensive enough that some net detours. It terminates when every net reached all its sinks with no node
+ * overused (a legal, congestion-free routing). If it cannot within `maxIterations`, it fails honestly and
+ * names WHY: `overused` lists the contended nodes it could not decongest, and `unroutable` lists any net
+ * whose sink was simply unreachable on this fabric — never a bare `routed:false` with no diagnostic.
  *
  * Router-independent by construction on the sim side: the output is exactly the ON-pip set bridgeToSim
  * already consumes, so the hand-traced routes in fpga-sim's tests and this engine's routes are interchangeable.
  *
- * Stage-1 model (honest): a wire/pin has capacity 1; a `sink` is an aggregation point (a tile's whole input
- * cluster), not a physical wire, so it is treated as uncontended (capacity ∞) — the real contention it
- * stands in for is on the individual `ipin`s (capacity 1), which is what forces two nets into a tile to take
- * distinct input pins. Costs are hop-count base costs (every resource = 1); a real delay-weighted base and
- * segmentation come with the Stage-2 device data. Both are overridable via RouterOptions.
+ * Capacity model: EVERY routing resource — track, pin, and the `sink` aggregator alike — has capacity 1,
+ * because bridgeToSim unions the endpoints of every ON pip, so ANY node shared by two nets shorts them
+ * regardless of a nominal capacity ≥ 2. A tile's loads are therefore routed to its distinct `ipin`s (each a
+ * capacity-1 node); routing two nets onto one node — a shared `sink` or a single `ipin` — is a request to
+ * short them, which the router reports as overuse (routed:false) instead of silently accepting. Costs are
+ * hop-count base costs (every resource = 1); a real delay-weighted base and segmentation come with the
+ * Stage-2 device data. Base cost and capacity are both overridable via RouterOptions.
  */
 
 import type { Pip, Rrg, WireNode } from './fpga-rrg.ts'
@@ -47,8 +50,10 @@ export type RouteResult = {
   routes: Map<string, RoutedNet>
   /** outer iterations run (1 = routed with no negotiation needed). */
   iterations: number
-  /** node ids still overused when `routed` is false (empty when routed). */
+  /** node ids still overused (occupancy > capacity) when `routed` is false — a congestion failure (empty when routed). */
   overused: string[]
+  /** `netId->sink` for any net whose sink was unreachable on this fabric — an unroutability failure (empty when routed). */
+  unroutable: string[]
 }
 
 export type RouterOptions = {
@@ -62,7 +67,7 @@ export type RouterOptions = {
   historyFac?: number
   /** base cost of routing through a node (default 1 = hop count; a delay model overrides). */
   baseCost?: (node: WireNode) => number
-  /** node capacity (default: ∞ for a `sink` aggregator, 1 for every physical wire/pin). */
+  /** node capacity (default: 1 for every node — see the capacity-model note in the file header). */
   capacity?: (node: WireNode) => number
 }
 
@@ -128,8 +133,7 @@ export function routeDesign(
   const presentFacMult = options.presentFacMult ?? 1.5
   const historyFac = options.historyFac ?? 1
   const baseCostOf = options.baseCost ?? (() => 1)
-  const capacityOf =
-    options.capacity ?? ((node: WireNode) => (node.kind === 'sink' ? Number.POSITIVE_INFINITY : 1))
+  const capacityOf = options.capacity ?? (() => 1)
 
   const cap = (id: string): number => {
     const node = rrg.nodes.get(id)
@@ -214,40 +218,57 @@ export function routeDesign(
     return { nodes, pips }
   }
 
-  const routeNet = (net: RouteNet): boolean => {
+  // Route one net; returns the first sink it could NOT reach (an unroutability failure), or null on success.
+  const routeNet = (net: RouteNet): string | null => {
     const treeNodes = new Set<string>([net.source])
     const treePips: string[] = []
     for (const sink of net.sinks) {
       if (treeNodes.has(sink)) continue
       const path = searchToSink(treeNodes, sink)
-      if (path === null) return false
+      if (path === null) return sink // unreachable from the net's current tree (⇒ from its source)
       for (const id of path.nodes) treeNodes.add(id)
       for (const p of path.pips) treePips.push(p)
     }
     const nodes = [...treeNodes]
     for (const id of nodes) bump(id, +1)
     routes.set(net.id, { netId: net.id, nodes, pips: treePips })
-    return true
+    return null
   }
 
   const stillOverused = (): string[] => [...occupancy.keys()].filter((id) => occ(id) > cap(id))
 
   let iterations = 0
+  let unroutable: string[] = []
   for (let iter = 0; iter < maxIterations; iter++) {
     iterations = iter + 1
-    let allRouted = true
+    unroutable = []
     for (const net of nets) {
       ripUp(net)
-      if (!routeNet(net)) allRouted = false
+      const failedSink = routeNet(net)
+      if (failedSink !== null) unroutable.push(`${net.id}->${failedSink}`)
     }
     const overused = stillOverused()
-    if (allRouted && overused.length === 0) {
-      return { routed: true, onPips: unionPips(routes), routes, iterations, overused: [] }
+    if (unroutable.length === 0 && overused.length === 0) {
+      return {
+        routed: true,
+        onPips: unionPips(routes),
+        routes,
+        iterations,
+        overused: [],
+        unroutable: [],
+      }
     }
     for (const id of overused) history.set(id, hist(id) + historyFac * (occ(id) - cap(id)))
     pfac *= presentFacMult
   }
-  return { routed: false, onPips: unionPips(routes), routes, iterations, overused: stillOverused() }
+  return {
+    routed: false,
+    onPips: unionPips(routes),
+    routes,
+    iterations,
+    overused: stillOverused(),
+    unroutable,
+  }
 }
 
 function unionPips(routes: Map<string, RoutedNet>): Set<string> {
