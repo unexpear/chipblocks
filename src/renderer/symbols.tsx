@@ -2007,6 +2007,13 @@ const GLYPHS: Record<string, () => React.JSX.Element> = {
 }
 
 /**
+ * Every part id the app can DRAW a schematic symbol for. Ground truth for "this is a real, drawable
+ * part" — used by the part-placeability test to prove every drawable part is reachable from the Add-Part
+ * picker (`wire` is the one exception: it's laid by the wire tool, not placed as a node).
+ */
+export const DRAWABLE_PART_IDS: readonly string[] = Object.keys(GLYPHS)
+
+/**
  * Connection terminals per device — a handle's id IS the terminal name, so a
  * wire the user draws carries which terminals it joins (read by canvas→World for
  * the live re-solve). Names match the catalog fixtures + what the solver looks

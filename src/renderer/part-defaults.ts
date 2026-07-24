@@ -377,6 +377,22 @@ const DEFAULTS: Record<string, Parameters> = {
     thermal_resistance_junction_ambient: scalar(100, 'kelvin_per_watt'),
     max_operating_temperature: scalar(150, 'celsius'),
   },
+  diode_schottky_al_si: {
+    // 1N5817 — the universal 1 A / 20 V Schottky rectifier (the Schottky analog of
+    // the 1N4007): forward drop ~0.45 V max at the 1 A rating (the Shockley
+    // calibration point — a metal-semiconductor barrier gives a much lower V_F than
+    // the ~1 V silicon PN drop), blocking only 20 V PIV (Schottky trades PIV for the
+    // low drop + fast recovery). Metal/semiconductor junction: an aluminium anode on
+    // n-type silicon, so there is no p-side. Thermal: DO-41 axial, R_thJA package-
+    // typical (mounting/lead-length dependent); T_J max 125 °C (lower than a silicon
+    // PN part — Schottky leakage rises fast with temperature).
+    forward_voltage: scalar(0.45, 'volt'),
+    max_forward_current: scalar(1, 'ampere'),
+    peak_inverse_voltage: scalar(20, 'volt'),
+    n_side: { value: 'silicon_n_type' },
+    thermal_resistance_junction_ambient: scalar(80, 'kelvin_per_watt'),
+    max_operating_temperature: scalar(125, 'celsius'),
+  },
   diode_zener_silicon: {
     // 1N4733A — a 5.1 V, 1 W silicon zener. Reverse breakdown REGULATES at V_Z
     // (5.1 V); forward it drops like a silicon diode — V_F 1.2 V max at I_F =
@@ -997,6 +1013,15 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     thermal_resistance_junction_ambient:
       '100 K/W (Diodes Inc. 1N4007 datasheet; Fairchild lists 50 K/W at 9.5 mm lead — mounting-dependent)',
     max_operating_temperature: '1N4007 T_J max 150 °C (datasheet)',
+  },
+  diode_schottky_al_si: {
+    forward_voltage: '1N5817: V_F ~0.45 V max at 1 A (datasheet); ~0.32 V typical at 0.1 A',
+    max_forward_current: '1N5817 I_F(AV) 1 A continuous',
+    peak_inverse_voltage: '1N5817 V_RRM 20 V (Schottky trades PIV for the low forward drop)',
+    thermal_resistance_junction_ambient:
+      '~80 K/W, DO-41 axial package typical — mounting/lead-length dependent (medium confidence)',
+    max_operating_temperature:
+      '1N5817 T_J max 125 °C (below a silicon PN part — Schottky leakage rises fast with T)',
   },
   led: {
     forward_voltage: 'Kingbright WP7113SRD-D (5 mm red)',
