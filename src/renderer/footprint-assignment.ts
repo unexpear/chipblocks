@@ -1,6 +1,6 @@
 import type { Footprint } from './footprint.ts'
 import { allAvailableFootprints, allUserFootprints, resolveFootprint } from './user-footprints.ts'
-import { getUserPart, type UserPart } from './user-parts.ts'
+import { resolveUserPart, type UserPart } from './user-parts.ts'
 
 /**
  * A user-authored part lands on the board too (user-made parts, slice 4a): it declares a footprint id,
@@ -102,7 +102,7 @@ export function footprintForPart(definition: string, chosenId?: string): Footpri
         authoredOptionsFor(entry.default).some((f) => f.id === chosenId))
     return resolveFootprint(allowed && chosenId !== undefined ? chosenId : entry.default)
   }
-  const userPart = getUserPart(definition)
+  const userPart = resolveUserPart(definition)
   return userPart !== undefined ? userPartFootprint(userPart, chosenId) : undefined
 }
 
@@ -118,7 +118,7 @@ export function footprintOptions(definition: string): Footprint[] {
       ...authoredOptionsFor(entry.default),
     ]
   }
-  const userPart = getUserPart(definition)
+  const userPart = resolveUserPart(definition)
   if (userPart === undefined) return []
   return footprintsForPinCount(userPart.pins.length)
 }
@@ -219,7 +219,7 @@ export function padForTerminal(
  * A pad is claimed once, so an explicit or by-name match never steals the pad an earlier pin took.
  */
 function userPartPadMap(definition: string, footprintId?: string): Map<string, string> | undefined {
-  const userPart = getUserPart(definition)
+  const userPart = resolveUserPart(definition)
   if (userPart === undefined) return undefined
   const fp = userPartFootprint(userPart, footprintId)
   if (fp === undefined) return undefined
@@ -309,7 +309,7 @@ const DESIGNATOR_PREFIXES: Record<string, string> = {
  */
 export function boardDesignator(partId: string, definition: string): string {
   // A custom part carries its own designator letter (e.g. 'U'); built-ins use the standard class map.
-  const prefix = DESIGNATOR_PREFIXES[definition] ?? getUserPart(definition)?.designatorPrefix
+  const prefix = DESIGNATOR_PREFIXES[definition] ?? resolveUserPart(definition)?.designatorPrefix
   if (prefix !== undefined) {
     const minted = partId.match(new RegExp(`^${definition}[_-]?(\\d+)$`, 'i'))
     if (minted !== null) return `${prefix}${minted[1]}`

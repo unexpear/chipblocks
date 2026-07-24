@@ -3,7 +3,7 @@ import { readEnumParam, readScalarParam } from '../instance-params.ts'
 import { ldrResistance, lightSensorCurrent } from '../light.ts'
 import { propagationDelayS } from '../transmission-line-model.ts'
 import { formatEng } from './units.ts'
-import { getUserPart } from './user-parts.ts'
+import { resolveUserPart } from './user-parts.ts'
 
 /**
  * Part parameter defaults + display (Sprint 19 S19-v3-20).
@@ -1278,14 +1278,14 @@ export function defaultParameters(definition: string): Parameters {
   // JSON.parse(undefined) → SyntaxError. hasOwn only reads a real preset.
   const preset = Object.hasOwn(DEFAULTS, definition) ? DEFAULTS[definition] : undefined
   if (preset) return JSON.parse(JSON.stringify(preset)) as Parameters
-  const userPart = getUserPart(definition)
+  const userPart = resolveUserPart(definition)
   // A part that behaves as a real device gets THAT device's cited defaults (so a placed instance solves
   // with real values, editable per instance), then any of the part's own overrides on top. A behaviour
   // target should be a BUILT-IN device; if a hand-edited file points it at another custom part, don't
   // follow it (that could cycle) — just use the part's own params.
   if (userPart?.behavesAs) {
     const target = userPart.behavesAs.definition
-    const deviceDefaults = getUserPart(target) === undefined ? defaultParameters(target) : {}
+    const deviceDefaults = resolveUserPart(target) === undefined ? defaultParameters(target) : {}
     const merged = { ...deviceDefaults, ...(userPart.parameters ?? {}) }
     return JSON.parse(JSON.stringify(merged)) as Parameters
   }

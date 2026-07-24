@@ -30,8 +30,8 @@ import {
 } from './part-defaults.ts'
 import { formatEng } from './units.ts'
 import {
-  getUserPart,
   type PinElectrical,
+  resolveUserPart,
   type UserPart,
   userPartGeometry,
   userPartTerminals,
@@ -2285,7 +2285,7 @@ export function terminalsOf(
     }
   }
   // A user-authored part draws its terminals from its pin spec (a labelled box), not a hardcoded map.
-  const userPart = getUserPart(definition)
+  const userPart = resolveUserPart(definition)
   if (userPart !== undefined) return userPartTerminals(userPart)
   // Object.hasOwn, not `TERMINALS[definition] ?? …`: an untrusted definition ('constructor' etc.) from a
   // loaded file returns the inherited Object ctor (not nullish), so `??` alone would return THAT instead
@@ -2540,7 +2540,7 @@ export function DeviceGlyph({
   if (Glyph) return <Glyph />
   // A user-authored part draws its own labelled box from its pin spec (matching terminalsOf's handles),
   // so a definition that isn't hardcoded here still renders instead of falling back to a bare name box.
-  const userPart = getUserPart(definition)
+  const userPart = resolveUserPart(definition)
   if (userPart !== undefined) return <UserPartGlyph part={userPart} />
   return (
     <div
@@ -2636,7 +2636,7 @@ export function DeviceNode({ id, data }: NodeProps) {
   const isCrtScreen = definition === 'crt'
   // A user-authored part sizes its box to its own pin-spec geometry, so the fixed W×H symbol box
   // becomes a labelled pin box exactly as wide/tall as the drawn glyph (handles share its space).
-  const userPartDef = getUserPart(definition)
+  const userPartDef = resolveUserPart(definition)
   const userGeom = userPartDef ? userPartGeometry(userPartDef) : undefined
   const boxW = isCrtScreen ? 240 : (userGeom?.width ?? W)
   const boxH = isCrtScreen ? 88 : (userGeom?.height ?? H)

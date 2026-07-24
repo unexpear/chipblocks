@@ -203,13 +203,34 @@ export function userPartTerminals(
 // symbol / terminal / palette / defaults lookups consult it so a user part behaves like a built-in.
 const registry = new Map<string, UserPart>()
 
+// BUILT-IN parts — the catalog's placeable commercial parts (catalog-parts.ts). Kept SEPARATE from the
+// authored `registry` on purpose, exactly as BUILTIN_FOOTPRINTS sits beside the user-footprint registry:
+// a built-in part resolves for drawing / footprint / defaults but is NEVER in `allUserParts()`, so it is
+// never written into a project save file (it ships in the app, like a built-in footprint). `resolveUserPart`
+// is the lookup every PLACED-part consumer uses; `getUserPart` stays registry-only for the authoring/save
+// paths, which must not treat a catalog part as something the user made.
+const builtinParts = new Map<string, UserPart>()
+
+/** Seed the built-in (catalog) parts. Idempotent; call at startup. Pairs with reserveBuiltinIds. */
+export function registerBuiltinParts(parts: Iterable<UserPart>): void {
+  let changed = false
+  for (const p of parts) {
+    if (!builtinParts.has(p.id)) {
+      builtinParts.set(p.id, p)
+      changed = true
+    }
+  }
+  if (changed) publish()
+}
+
 // A tiny external store so React (the palette) re-renders when the registry changes. The module-global
 // Map is invisible to React; `snapshot` is a stable array rebuilt only on a mutation, and getSnapshot
 // returns the SAME reference until then — exactly what useSyncExternalStore needs to avoid render loops.
 let snapshot: UserPart[] = []
 const listeners = new Set<() => void>()
 function publish(): void {
-  snapshot = [...registry.values()]
+  // Built-ins first, then authored — the palette shows the catalog parts alongside the user's own.
+  snapshot = [...builtinParts.values(), ...registry.values()]
   for (const listener of listeners) listener()
 }
 /** Subscribe to registry changes (returns an unsubscribe). Pairs with getUserPartsSnapshot. */
@@ -252,6 +273,15 @@ export function registerUserPart(part: UserPart): boolean {
 }
 export function getUserPart(id: string): UserPart | undefined {
   return registry.get(id)
+}
+
+/**
+ * Resolve a PLACED part's definition — an authored part first, then a built-in catalog part. This is
+ * what the symbol, footprint, defaults and designator lookups use, so a catalog part draws and lands
+ * exactly like an authored one. `getUserPart` stays registry-only for the authoring/save paths.
+ */
+export function resolveUserPart(id: string): UserPart | undefined {
+  return registry.get(id) ?? builtinParts.get(id)
 }
 export function isUserPart(id: string): boolean {
   return registry.has(id)

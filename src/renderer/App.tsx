@@ -269,9 +269,9 @@ import { UserPartEditor } from './user-part-editor.tsx'
 import { validateUserPart } from './user-part-validate.ts'
 import {
   allUserParts,
-  getUserPart,
   mergeUserParts,
   registerUserPart,
+  resolveUserPart,
   type UserPart,
 } from './user-parts.ts'
 import {
@@ -10061,7 +10061,7 @@ function Canvas({ project, active = true }: { project: ProjectChoice; active?: b
                 // switch — the same data.fidelity seam blocks use.
                 {...(selectedPart &&
                 selectedNode &&
-                getUserPart(selectedPart.definition)?.internal !== undefined
+                resolveUserPart(selectedPart.definition)?.internal !== undefined
                   ? {
                       moduleFidelity: (isLogicFidelity(selectedNode) ? 'logic' : 'transistor') as
                         | 'logic'

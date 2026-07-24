@@ -1,5 +1,6 @@
 import { useState, useSyncExternalStore } from 'react'
 import { BUILTIN_BLOCKS, DIGIT_DISPLAY_SIZES } from './builtin-blocks.ts'
+import { registerCatalogParts } from './catalog-parts.ts'
 import { DeviceGlyph } from './symbols.tsx'
 import { THEME } from './theme.ts'
 import { getUserPartsSnapshot, reserveBuiltinIds, subscribeUserParts } from './user-parts.ts'
@@ -208,6 +209,11 @@ export const PARTS: { definition: string; label: string }[] = [
 // yet the onDrop path checks BUILTIN_BLOCKS first). Both lists are the authoritative sources, so this
 // stays in step automatically.
 reserveBuiltinIds([...PARTS.map((part) => part.definition), ...Object.keys(BUILTIN_BLOCKS)])
+
+// The catalog's placeable commercial parts (iCE40-board regulator, oscillator, …) — registered here,
+// where the palette already runs its startup reservation, so they appear in the parts list and resolve
+// for drawing / footprint / placement exactly like the built-in devices.
+registerCatalogParts()
 
 export function PaletteItems({ filter }: { filter?: string }) {
   const query = (filter ?? '').trim().toLowerCase()
