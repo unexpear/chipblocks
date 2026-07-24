@@ -1,0 +1,233 @@
+# Valid fixture: the Lattice iCE40UP5K in the SG48 (48-pin QFN) package — a SPECIFIC, purchasable
+# part, and the first entry in the catalog at the ASSEMBLY layer.
+#
+# WHY THIS IS NOT A PLACEHOLDER. ChipBlocks cannot simulate what is inside an FPGA: its behaviour is
+# whatever bitstream you load into it, which is a design, not a device property. Per OBJECT-MODEL.md §10
+# that is exactly what `solver_status: defined_not_solved` is for — "this physics is real, ChipBlocks
+# knows about it, the solver does not handle it yet." What IS modelled here is everything true of the
+# part at its TERMINALS regardless of the bitstream: the supply rails it needs, the order they must come
+# up in, the package it lands in, and the pads it solders to. Those are the facts a board needs, and
+# every one of them is cited to a primary Lattice document below.
+#
+# SOURCES (all Lattice Semiconductor, all primary):
+#   [DS]   iCE40 UltraPlus Family Data Sheet, FPGA-DS-02008-2.4, February 2025 — electrical values.
+#          NOTE: revision 2.4 is current and MATTERS. Rev 2.0 (August 2021) gave VCCIO min as 1.71 V;
+#          rev 2.4 lowered it to 1.20 V (its own Revision History, p. 46: "Updated the min value of
+#          VCCIO from 1.7 V to 1.20 V"). Shipping the older number would misstate the part.
+#   [UG]   iCE40 UltraPlus Breakout Board User Guide, FPGA-UG-02001-1.2, April 2022 — PIN NUMBERS.
+#          The datasheet deliberately carries none: its §5.2 gives only per-package COUNTS and directs
+#          the reader to "the device pinout file from the Lattice website for exact pin locations".
+#          Figure A.3 "DUT Connection" (p. 27) is a schematic of a real Lattice-built board and names
+#          each numbered pin of the SG48 part directly.
+#   [PKG]  Package Diagrams, pkg_5.4, November 2017, "48-Pin QFN Package Option 2" (p. 32) — outline.
+#   [TN12] PCB Layout Recommendations for Leaded Packages, TN1257 (tn1257_01.3), October 2013,
+#          Figure 18 "QFN Footprints", 48 QFN sub-figure (p. 9) — the PCB land pattern.
+#   [TN02] iCE40 Hardware Checklist, FPGA-TN-02006-2.3, April 2024 — sequencing + rail accuracy.
+# MUST validate against definition.schema.json.
+kind: assembly
+id: fpga_ice40up5k_sg48
+origin: builtin
+layer: assembly
+name: Lattice iCE40UP5K-SG48 FPGA
+description: A 5280-LUT field-programmable gate array in a 48-pin QFN, 7 mm square. What it DOES is set by the configuration bitstream loaded into it at power-up, so this entry models the part at its terminals — the rails it needs, the sequence they must rise in, and the pads it solders to — not its internal logic. Three I/O banks, 39 user I/O in this package, and a ground that exists only as the exposed paddle underneath.
+composition:
+  requires:
+    die:
+      kind: material
+      must_enable:
+        - semiconductor
+    package_contacts:
+      kind: interface
+      must_enable:
+        - electrical_connection
+      min_count: 48
+properties:
+  core_supply_voltage:
+    value:
+      kind: range
+      min: 1.14
+      max: 1.26
+      typical: 1.2
+      unit: volt
+    provenance:
+      source_type: datasheet
+      title: iCE40 UltraPlus Family Data Sheet, Recommended Operating Conditions
+      citation: "Lattice Semiconductor FPGA-DS-02008-2.4 (February 2025), section 4.2, Table 4.2, p. 29 — VCC core supply. Table note 1: VCC and VCCPLL are recommended to be tied to the same supply with an RC noise filter between them."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  pll_supply_voltage:
+    value:
+      kind: range
+      min: 1.14
+      max: 1.26
+      typical: 1.2
+      unit: volt
+    provenance:
+      source_type: datasheet
+      title: iCE40 UltraPlus Family Data Sheet, Recommended Operating Conditions
+      citation: "Lattice Semiconductor FPGA-DS-02008-2.4 (February 2025), section 4.2, Table 4.2, p. 29 — VCCPLL analog supply for the sysCLOCK PLL."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  io_supply_voltage:
+    value:
+      kind: range
+      min: 1.2
+      max: 3.46
+      unit: volt
+    provenance:
+      source_type: datasheet
+      title: iCE40 UltraPlus Family Data Sheet, Recommended Operating Conditions
+      citation: "Lattice Semiconductor FPGA-DS-02008-2.4 (February 2025), section 4.2, Table 4.2, p. 29 — VCCIO_0, SPI_VCCIO1, VCCIO_2. CONDITION THAT MUST TRAVEL WITH THIS NUMBER: the 1.20 V floor exists only for LVCMOS 1.2, which rev 2.4 added as an OUTPUT-ONLY standard (Table 3.10 Supported Output Standards lists LVCMOS12; Table 3.9 Supported Input Standards does not). At VCCIO = 1.2 V the datasheet publishes no per-standard VIL/VIH/VOL/VOH — Table 4.12 and Table 4.13 (p. 34) still cover only LVCMOS 3.3 / 2.5 / 1.8. The lowest VCCIO with a complete published specification is 1.71 V (LVCMOS 1.8). Corroboration that 1.20 V is deliberate rather than a typo: Table 4.2 note 3 says unused banks' VCCIO should be tied to VCC, which is 1.2 V — self-consistent only at a 1.20 V floor."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  config_supply_voltage_master_spi:
+    value:
+      kind: range
+      min: 2.3
+      max: 3.46
+      unit: volt
+    provenance:
+      source_type: datasheet
+      title: iCE40 UltraPlus Family Data Sheet, Recommended Operating Conditions
+      citation: "Lattice Semiconductor FPGA-DS-02008-2.4 (February 2025), section 4.2, Table 4.2, p. 29 — VPP_2V5 when configuring as Master SPI (the mode a board with its own config flash uses). The same rail may run 1.714-3.46 V in Slave SPI, and 2.30-3.00 V while PROGRAMMING the on-chip NVCM. Table 4.2 note 4 allows 1.8 V +/-5 percent in Slave SPI only, and only when the internal HFOSC/LFOSC oscillators and the RGB LED driver are all unused."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  supply_ramp_rate:
+    value:
+      kind: range
+      min: 0.6
+      max: 10
+      unit: volt_per_millisecond
+    provenance:
+      source_type: datasheet
+      title: iCE40 UltraPlus Family Data Sheet, Power-On-Reset ramp requirement
+      citation: "Lattice Semiconductor FPGA-DS-02008-2.4 (February 2025), section 4.3, Table 4.3, p. 30 — every supply must ramp monotonically within this rate. Sequence (DS section 4.5, p. 30; corroborated by FPGA-TN-02006-2.3 section 2.3, p. 10): VCC and VCCPLL first, then SPI_VCCIO1, then VPP_2V5; VCCIO_0 and VCCIO_2 any time after VCC. No timing delay is specified between rails, but each must reach 0.5 V or higher before the next is applied."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  junction_temperature_range:
+    value:
+      kind: range
+      min: -40
+      max: 100
+      unit: celsius
+    provenance:
+      source_type: datasheet
+      title: iCE40 UltraPlus Family Data Sheet, Recommended Operating Conditions
+      citation: "Lattice Semiconductor FPGA-DS-02008-2.4 (February 2025), section 4.2, Table 4.2, p. 29 — tJIND, the Industrial grade (the 'I' in iCE40UP5K-SG48I). This is a JUNCTION temperature, not ambient; converting to ambient needs a thermal resistance the datasheet does not publish for this package. Commercial grade is 0 to +85 C. Programming the NVCM has its own far narrower window, tPROG = +10 to +30 C."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  user_io_count:
+    value:
+      kind: scalar
+      amount: 39
+      unit: dimensionless
+    provenance:
+      source_type: datasheet
+      title: iCE40 UltraPlus Family Selection Guide
+      citation: "Lattice Semiconductor FPGA-DS-02008-2.4, section 2, Table 2.1, p. 9 — Total User I/O Count for iCE40UP5K reads 21 / 39 across the two packages (30-ball WLCSP / 48-ball QFN). The QFN is offered on the UP5K only; the UP3K is WLCSP-only, corroborated by the Ordering Part Numbers table (section 5.4.1, p. 46)."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  package_body_size:
+    value:
+      kind: scalar
+      amount: 7.0
+      unit: millimeter
+    provenance:
+      source_type: datasheet
+      title: Lattice Package Diagrams, 48-Pin QFN Package Option 2
+      citation: "Lattice Semiconductor Package Diagrams, pkg_5.4, November 2017, p. 32 — D = E = 7.0 BSC (square). Overall height A 0.80/0.90/1.00; standoff A1 0.00/0.02/0.05; terminal width b 0.15/0.20/0.25; terminal length L 0.35/0.40/0.45; pitch e 0.50 BSC; exposed pad D2 = E2 5.30/5.40/5.50. All millimetres."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  package_pitch:
+    value:
+      kind: scalar
+      amount: 0.5
+      unit: millimeter
+    provenance:
+      source_type: datasheet
+      title: Lattice Package Diagrams, 48-Pin QFN Package Option 2
+      citation: "Lattice Semiconductor Package Diagrams, pkg_5.4, November 2017, p. 32 — e = 0.50 BSC. Corroborated by the part-number decode in FPGA-DS-02008-2.4 section 5.3, p. 45: 'SG48 = 48-Pin QFN (0.50 mm Pin Pitch)'."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  land_pattern_pad_width:
+    value:
+      kind: scalar
+      amount: 0.25
+      unit: millimeter
+    provenance:
+      source_type: standard
+      title: Lattice PCB Layout Recommendations for Leaded Packages, 48 QFN footprint
+      citation: "Lattice Semiconductor TN1257 (tn1257_01.3), October 2013, Figure 18 'QFN Footprints', 48 QFN sub-figure, p. 9 — copper land width 0.25 mm on a 0.50 mm pitch. Land LENGTH is 0.40 mm, derived from the same figure's two ring callouts (outer span 7.00 mm, inner span 6.20 mm; (7.00-6.20)/2 = 0.40) rather than being labelled directly. Thermal-pad land 4.2 x 4.2 mm. Note this ring's outer edge sits exactly on the 7.00 mm package outline — Lattice's pattern has zero toe extension."
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+terminals:
+  vcc:
+    description: Core logic supply, 1.2 V nominal. TWO pads on the SG48 — 5 and 30 [UG Figure A.3]. Must rise first, together with VCCPLL.
+  vccpll:
+    description: Analog supply for the sysCLOCK PLL, 1.2 V nominal, pad 29 [UG Figure A.3]. Tie to the same supply as VCC through an RC noise filter [DS Table 4.2 note 1].
+  vccio_0:
+    description: Bank 0 I/O driver supply, pad 33 [UG Figure A.3]. An unused bank's VCCIO should be tied to VCC [DS Table 4.2 note 3].
+  spi_vccio1:
+    description: Bank 1 I/O driver supply, pad 22 [UG Figure A.3]. On UltraPlus the Bank 1 I/O supply IS the SPI configuration supply — the Hardware Checklist calls the same rail SPI_VCC. One of the three rails the power-on-reset actually monitors.
+  vccio_2:
+    description: Bank 2 I/O driver supply, pad 1 [UG Figure A.3].
+  vpp_2v5:
+    description: NVCM programming and operating supply, pad 24 [UG Figure A.3]. Needs 2.30 V or more to configure as Master SPI. Monitored by the power-on-reset.
+  creset_b:
+    description: Active-low configuration reset, pad 8 [UG Figure A.3]. Holding it low and releasing it restarts configuration.
+  cdone:
+    description: Configuration-done indicator, pad 7 [UG Figure A.3]. Goes high once the bitstream has loaded successfully.
+  paddle:
+    description: The exposed thermal paddle on the underside — and the ONLY ground connection. The SG48 has no ground pin at all; the datasheet requires the paddle be tied to GND [DS section 5.2 footnote, p. 45]. Ignoring this leaves the part with no return path.
+support:
+  model_status: partial_but_real
+  solver_status: defined_not_solved
+extensions:
+  overridable: false
+  user_extensible: false
+  allowed_origins: [builtin]
+notes: |
+  WHY overridable AND user_extensible ARE FALSE. This entry describes one real, purchasable part. Its
+  numbers are the manufacturer's, and a project that "overrode" them would be describing a part that
+  does not exist while still calling it an iCE40UP5K. Author a new entry for a different part instead.
+
+  WHAT IS HONESTLY ABSENT — every one of these was looked for in the primary sources and is not there:
+    - ESD rating. FPGA-DS-02008-2.4 section 4.8 "ESD Performance" (p. 31) is one sentence: "Please
+      contact Lattice Semiconductor for additional information." No HBM/CDM/MM figure is published, so
+      none is recorded here. A generic substitute would be a fabrication.
+    - Operating supply current at any clock frequency. Table 4.6 gives static current at 0 MHz and a
+      startup peak only, and redirects to the Lattice Power Calculator for anything design-specific.
+      There is no current-versus-frequency curve, so board power cannot be estimated from this entry.
+    - Moisture sensitivity level and peak reflow temperature — absent from the datasheet, the package
+      diagrams, and TN1257 (whose reflow section offers its figure "as a general reference" only).
+    - Solder-mask and paste-aperture dimensions for the 48 QFN land. TN1257 Figure 18 dimensions the
+      copper land only. TN1257's stencil advice (0.125 mm, NSMD pads) is scoped in its own text to
+      DUAL-ROW QFNs; SG48 is single-row, so that guidance is not transferred here. The one piece of
+      stencil guidance that does cover all QFNs is the thermal pad's cross-hatch at 75 percent area.
+    - Per-standard I/O levels at VCCIO = 1.2 V, as described on io_supply_voltage above.
+
+  WHAT THE SOLVER DOES WITH THIS: nothing yet, by design. solver_status is defined_not_solved because
+  an FPGA's terminal behaviour is a property of the bitstream, not of the part. A board carrying this
+  part can still be laid out, design-rule-checked and exported — the geometry and the rails are real —
+  but ChipBlocks will not claim to simulate what the logic inside it does. If you want simulated logic,
+  build it at the Digital or Chip level, where ChipBlocks owns the whole model.

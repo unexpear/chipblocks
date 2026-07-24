@@ -1,0 +1,158 @@
+# Valid fixture: the Diodes Incorporated AP2112K-3.3 low-dropout linear regulator in SOT25 — the
+# 3.3 V rail on a small FPGA board.
+#
+# Unlike the FPGA and the flash beside it, this part's behaviour IS a device property: it holds its
+# output at 3.3 V and drops the difference as heat. That is solvable physics, and a future increment
+# could give it a real model. It is marked defined_not_solved TODAY because ChipBlocks has no regulator
+# element yet — an honest "not implemented", not an honest "unmodellable".
+#
+# SOURCE:
+#   [DS] Diodes Incorporated, "AP2112 — 600mA CMOS LDO Regulator with Enable", document DS39724
+#        Rev. 2-2, June 2017. This is the current revision served at the canonical Diodes URL.
+#        Corroborated for the package by the standalone Diodes document "SOT25 Package Information",
+#        Rev. 2017-04-11, April 2017, p. 1 — number for number.
+# MUST validate against definition.schema.json.
+kind: assembly
+id: regulator_ap2112k_33_sot25
+origin: builtin
+layer: assembly
+name: Diodes AP2112K-3.3 LDO Regulator (SOT25)
+description: A 600 mA low-dropout linear regulator fixed at 3.3 V, in a five-pad SOT25. Takes an input between 4.3 V and 6 V and holds its output steady, burning the difference as heat — which is why its thermal resistance matters as much as its electrical rating. Has an enable pin, so a second regulator's enable can be driven from this one's output to sequence two rails.
+composition:
+  requires:
+    die:
+      kind: material
+      must_enable:
+        - semiconductor
+    package_contacts:
+      kind: interface
+      must_enable:
+        - electrical_connection
+      min_count: 5
+properties:
+  input_voltage_range:
+    value:
+      kind: range
+      min: 4.3
+      max: 6.0
+      unit: volt
+    provenance:
+      source_type: datasheet
+      title: AP2112 Electrical Characteristics, -3.3 V option
+      citation: "Diodes Incorporated DS39724 Rev. 2-2 (June 2017) — 4.3 V is the VIN at which the 3.3 V option is CHARACTERISED (p. 8 conditions). The family's Recommended Operating Conditions (p. 3) give a wider 2.5-6 V VIN across all output options, but 2.5 V input cannot produce a regulated 3.3 V output, so the narrower characterised range is what a 3.3 V design must respect. Absolute maximum VIN is 6.5 V (p. 3), which is a do-not-exceed limit, not an operating range."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  output_voltage:
+    value:
+      kind: range
+      min: 3.251
+      max: 3.35
+      typical: 3.3
+      unit: volt
+    provenance:
+      source_type: datasheet
+      title: AP2112 Electrical Characteristics, output accuracy
+      citation: "Diodes Incorporated DS39724 Rev. 2-2 (June 2017), p. 8 — VOUT over line, load and temperature for the -3.3 option. Relevant to an iCE40 board: the iCE40 Hardware Checklist (Lattice FPGA-TN-02006-2.3, section 2.4, p. 10) asks for regulator accuracy within 3 percent, leaving the remaining 2 percent for noise; this part's spread is inside that."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  maximum_output_current:
+    value:
+      kind: scalar
+      amount: 0.6
+      unit: ampere
+    provenance:
+      source_type: datasheet
+      title: AP2112 title specification
+      citation: "Diodes Incorporated DS39724 Rev. 2-2 (June 2017) — '600mA CMOS LDO Regulator with Enable', stated on the datasheet title and features list. Whether 600 mA is actually deliverable depends on the thermal path, not the silicon: at 184 C/W in SOT25, dissipating (VIN - 3.3) x IOUT raises the junction that many degrees per watt above ambient."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  thermal_resistance_junction_ambient:
+    value:
+      kind: scalar
+      amount: 184
+      unit: kelvin_per_watt
+    provenance:
+      source_type: datasheet
+      title: AP2112 Absolute Maximum Ratings, thermal resistance
+      citation: "Diodes Incorporated DS39724 Rev. 2-2 (June 2017), p. 3 — theta-JA for SOT25 with no heatsink (SO-8 is 114 C/W, SOT89-5 is 120 C/W). theta-JC for SOT25 is 96 C/W (p. 8). Operating junction temperature limit is +150 C; thermal shutdown trips at +160 C typical with 25 C hysteresis (p. 8)."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  ambient_temperature_range:
+    value:
+      kind: range
+      min: -40
+      max: 85
+      unit: celsius
+    provenance:
+      source_type: datasheet
+      title: AP2112 Recommended Operating Conditions
+      citation: "Diodes Incorporated DS39724 Rev. 2-2 (June 2017), p. 3, TA row; corroborated by the features bullet on p. 1 and by every row of the Ordering Information table on p. 12. Storage -65 to +150 C; lead soldering +260 C for 10 s."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  land_pattern_pad_pitch:
+    value:
+      kind: scalar
+      amount: 0.95
+      unit: millimeter
+    provenance:
+      source_type: datasheet
+      title: AP2112 Suggested Pad Layout, SOT25
+      citation: "Diodes Incorporated DS39724 Rev. 2-2 (June 2017), p. 14, 'Suggested Pad Layout' table — pad pitch C2 = 0.95 mm; pad X = 0.55 wide by Y = 0.80 long; row centres C1 = 2.40; outer span Z = 3.20; inner gap G = 1.60. These are internally consistent (Z - G = 2Y, C1 = (Z+G)/2), so the footprint is fully sourced. Diodes' own note on that page: the pattern is 'provided for reference only', a more robust wave-solder pattern adds 0.2 mm to Z, and it refers the reader to IPC-7351A."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+terminals:
+  vin:
+    description: Input supply, pad 1. Wants 1.0 uF of ceramic close by.
+  gnd:
+    description: Ground, pad 2.
+  en:
+    description: Chip enable, pad 3. High runs the regulator, low shuts the output down. Has an internal 3.0 Mohm typical pull-down, so a floating enable holds the part OFF rather than leaving it undefined — deliberate, and useful for rail sequencing.
+  nc:
+    description: No connection, pad 4. Not internally bonded; safe to leave unrouted or use as a via anchor.
+  vout:
+    description: Regulated 3.3 V output, pad 5. Wants 1.0 uF of ceramic close by.
+support:
+  model_status: partial_but_real
+  solver_status: defined_not_solved
+extensions:
+  overridable: false
+  user_extensible: false
+  allowed_origins: [builtin]
+notes: |
+  DECOUPLING, as actually specified: CIN = 1.0 uF and COUT = 1.0 uF, both ceramic, shown in the
+  Typical Applications Circuit on p. 2 and echoed by the features bullet "Stable with 1.0uF Flexible
+  Cap". That is the whole of what Diodes states.
+
+  WHAT IS HONESTLY ABSENT — searched for and not published:
+    - Minimum or maximum output capacitance, and the ESR window over which the part is stable. Only
+      the single 1.0 uF figure appears. Nor does the datasheet say whether 1.0 uF means nameplate or
+      effective capacitance after DC-bias derating, which for a small ceramic is a large difference.
+    - Output ramp rate or soft-start time. This matters here specifically: the iCE40UP5K requires a
+      monotonic 0.6-10 V/ms ramp (FPGA-DS-02008-2.4 section 4.3, Table 4.3, p. 30) and the AP2112
+      publishes no number to check that against. The sibling AP2127 does specify a 50 us soft start,
+      but that is a different part and its figure is not transferable.
+    - Power-supply rejection above 1 kHz. Specified only at 100 Hz and 1 kHz (65 dB typical at both).
+      If a design leans on this LDO to clean up switching noise ahead of the FPGA's PLL filter, the
+      datasheet does not support that expectation.
+    - Any power-good or reset output. The part has none, so sequencing between rails must be arranged
+      externally — typically by driving the second regulator's enable from this one's output.
+    - The mapping from the SOT25 outline's letter callouts (A, B, C, D, H, J, K, L, M, N) to named
+      features. Neither Diodes document defines them in text, so no body length-versus-width claim is
+      made here. The pad-layout numbers ARE named in their own table and are recorded above.
+
+  WHY defined_not_solved: a linear regulator is genuinely solvable — it is a controlled source with a
+  dropout floor and a thermal limit — but ChipBlocks has no regulator element today. This is the
+  honest "not implemented yet" case, and it is the most likely of these four parts to gain a real
+  model, since everything needed for one is cited above.

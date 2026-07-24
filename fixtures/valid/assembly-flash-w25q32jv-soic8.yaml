@@ -1,0 +1,141 @@
+# Valid fixture: the Winbond W25Q32JV 32 Mbit SPI NOR flash in the 8-pin 208-mil SOIC — the
+# configuration memory a real iCE40 board loads its bitstream from at power-up.
+#
+# Like the FPGA next to it, what this part DOES with its contents is not a device property, so its
+# stored-data behaviour is `defined_not_solved`. What is real and cited here is the part at its pins:
+# one supply, eight pads, and the SPI signals the FPGA drives.
+#
+# SOURCES:
+#   [DS]  Winbond, "W25Q32JV 3V 32M-BIT SERIAL FLASH MEMORY WITH DUAL, QUAD SPI", Revision J,
+#         24 December 2024. Winbond prints no document number; the part name plus revision identifies
+#         it. Revision J is current and differs from the widely-linked Revision G (27 March 2018) —
+#         notably in the operating-voltage rows below.
+#   [AN]  Winbond Application Note AN0000009, "Serial Flash PCB Layout Guidelines", Revision 2.0,
+#         25 September 2017 — the LAND PATTERN, which the datasheet does not contain.
+# MUST validate against definition.schema.json.
+kind: assembly
+id: flash_w25q32jv_soic8
+origin: builtin
+layer: assembly
+name: Winbond W25Q32JV SPI NOR Flash (SOIC-8)
+description: A 32 Mbit serial NOR flash in an 8-pin SOIC, read over SPI. On an FPGA board this is the configuration memory — the FPGA reads its bitstream out of here at power-up, which is why the FPGA's SPI bank supply and this part's supply are normally the same rail. Supports Standard, Dual and Quad SPI; in Quad mode two of the pins change role from write-protect and hold to data lines.
+composition:
+  requires:
+    die:
+      kind: material
+      must_enable:
+        - semiconductor
+    package_contacts:
+      kind: interface
+      must_enable:
+        - electrical_connection
+      min_count: 8
+properties:
+  supply_voltage:
+    value:
+      kind: range
+      min: 2.7
+      max: 3.6
+      typical: 3.3
+      unit: volt
+    provenance:
+      source_type: datasheet
+      title: W25Q32JV Operating Ranges
+      citation: "Winbond W25Q32JV Revision J (24 December 2024), section 9.2 'Operating Ranges', p. 59 — VCC supply voltage. A NARROWER 3.0-3.6 V applies if the device is clocked above 104 MHz. Absolute maximum (not an operating range) is -0.6 to 4.6 V, section 9.1, p. 59. Caution recorded rather than resolved: rev J updated section 9.2 to 2.7-3.6 V for the 104 MHz row while section 9.6 still annotates fC2 as '(2.7V-3.0V)'; Winbond does not reconcile the two statements anywhere found, so the tighter figure should be assumed when clocking fast."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  ambient_temperature_range:
+    value:
+      kind: range
+      min: -40
+      max: 85
+      unit: celsius
+    provenance:
+      source_type: datasheet
+      title: W25Q32JV Operating Ranges and Ordering Information
+      citation: "Winbond W25Q32JV Revision J, section 9.2 'Operating Ranges', p. 59 — TA for the Industrial grade, which is the 'I' in the W25Q32JVSSIM ordering code (section 11 'Ordering Information', p. 78: 'I = Industrial (-40C to +85C)'). Industrial Plus ('J' suffix) reaches +105 C. Storage TSTG is -65 to +150 C. Note this is an AMBIENT rating, unlike the FPGA's junction rating — the datasheet publishes no thermal resistance for this package."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  capacity:
+    value:
+      kind: scalar
+      amount: 33554432
+      unit: bit
+    provenance:
+      source_type: datasheet
+      title: W25Q32JV General Description
+      citation: "Winbond W25Q32JV Revision J — 32 Mbit = 4 M x 8 bit. Stated on the datasheet title and in the General Description."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  package_lead_pitch:
+    value:
+      kind: scalar
+      amount: 1.27
+      unit: millimeter
+    provenance:
+      source_type: datasheet
+      title: W25Q32JV package outline, 8-Pin SOIC 208-mil
+      citation: "Winbond W25Q32JV Revision J, section 10.2 '8-Pin SOIC 208-mil (Package Code SS)', p. 68 — dimension e. Body D = E = 5.28 nom (5.18/5.38); D1 = E1 = 5.23 nom; lead span H = 7.90 nom (7.70/8.10); height A = 1.95 nom (1.75/2.16). Drawing note 2 refers the outline to JEDEC MS-012 and states the length and width exclude mould flash."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  land_pattern_pad_size:
+    value:
+      kind: scalar
+      amount: 1.9
+      unit: millimeter
+    provenance:
+      source_type: reference
+      title: Winbond Serial Flash PCB Layout Guidelines, 8L SOP 208-mil land pattern
+      citation: "Winbond Application Note AN0000009, Revision 2.0 (25 September 2017), figure '8L SOP 208-MIL Land Pattern', p. 7 — copper land 0.80 mm wide by 1.90 mm long (this value is the LENGTH); the stencil aperture is a separate, smaller 0.70 x 1.80 mm at 0.1 mm stencil thickness. NOT FROM THE DATASHEET: the W25Q32JV datasheet contains no land pattern at all. The figure is a raster drawing carrying only seven dimension labels and no soldermask, courtyard or silkscreen numbers."
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+terminals:
+  cs_n:
+    description: Chip select, active low — pad 1. Must go high-to-low after power-up before the part will accept an instruction. Wants a pull-up so it is not left floating while the FPGA's own pins are still high-impedance during configuration.
+  do_io1:
+    description: Data output, pad 2. Becomes bidirectional IO1 in Dual and Quad SPI modes.
+  wp_n_io2:
+    description: Write protect, active low — pad 3. Becomes bidirectional IO2 only when the Quad Enable bit is set.
+  gnd:
+    description: Ground, pad 4.
+  di_io0:
+    description: Data input, pad 5. Becomes bidirectional IO0 in Dual and Quad SPI modes.
+  clk:
+    description: Serial clock input, pad 6.
+  hold_n_reset_n_io3:
+    description: Hold or reset, active low — pad 7. Becomes bidirectional IO3 in Quad mode. Which of hold or reset this pin performs is itself configurable, so its function is not fixed by the package.
+  vcc:
+    description: Supply, pad 8. On an FPGA board this is normally the same rail as the FPGA's SPI bank supply, so that neither part drives the other while unpowered.
+support:
+  model_status: partial_but_real
+  solver_status: defined_not_solved
+extensions:
+  overridable: false
+  user_extensible: false
+  allowed_origins: [builtin]
+notes: |
+  WHAT IS HONESTLY ABSENT — looked for in the primary sources and not published:
+    - Thermal resistance. No theta-JA, theta-JC or psi-JT appears anywhere in W25Q32JV rev J. A
+      junction temperature for this part cannot be derived from its datasheet.
+    - Decoupling. The datasheet specifies no bypass capacitor value, no recommended network and no
+      power-supply filtering section, and AN0000009 adds none. The customary 0.1 uF close to pin 8 is
+      good practice but is NOT a manufacturer statement, so it is not recorded here as one.
+    - Output levels at usable currents. VOL/VOH are specified only at +/-100 uA. Output drive IS
+      programmable (Status Register-3, DRV1/DRV0, four settings, 25 percent default) but Winbond
+      publishes no current or impedance figure for ANY of the four settings — so this part's real
+      drive strength is not available from the manufacturer at all.
+    - ESD beyond +/-2000 V HBM (JESD22-A114A). No CDM, machine model or latch-up rating.
+
+  The stored bitstream is data, not a device property, so solver_status is defined_not_solved: a board
+  carrying this part lays out and checks correctly, and ChipBlocks does not pretend to simulate what
+  reading it back would produce.

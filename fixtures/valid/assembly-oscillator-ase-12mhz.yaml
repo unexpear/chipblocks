@@ -1,0 +1,175 @@
+# Valid fixture: the Abracon ASE-series 12.000 MHz CMOS crystal oscillator, 3.2 x 2.5 mm — the clock
+# source on a small FPGA board.
+#
+# This is a complete oscillator, not a bare crystal: the resonator and its drive circuit are inside the
+# can, so it needs only a supply and produces a CMOS square wave. That is why it has four pads rather
+# than two.
+#
+# SOURCE:
+#   [DS] Abracon LLC, "3.3V CMOS Compatible 3.2 x 2.5mm SMD Crystal Oscillator — ASE Series",
+#        REVISED 02-18-22 (the revision date printed in the footer of all six pages). Abracon prints
+#        no document number; the series name and that date identify it.
+# MUST validate against definition.schema.json.
+kind: assembly
+id: oscillator_ase_12mhz
+origin: builtin
+layer: assembly
+name: Abracon ASE 12.000 MHz Crystal Oscillator (3.2 x 2.5 mm)
+description: A packaged 12 MHz crystal oscillator with a CMOS output — resonator and drive circuit sealed in one ceramic package, so a board needs only to feed it 3.3 V and take the square wave out. Four pads, one of which is a standby input that stops the output when pulled low. The part most small FPGA boards use for their system clock.
+composition:
+  requires:
+    resonator:
+      kind: material
+      must_enable:
+        - semiconductor
+    package_contacts:
+      kind: interface
+      must_enable:
+        - electrical_connection
+      min_count: 4
+properties:
+  output_frequency:
+    value:
+      kind: scalar
+      amount: 12.0
+      unit: megahertz
+    provenance:
+      source_type: datasheet
+      title: Abracon ASE Series, frequency
+      citation: "Abracon ASE Series datasheet, REV 02-18-22 — 12.000 MHz, the frequency named in the part number. The series covers 0.625 to 200 MHz (p. 1), so 12 MHz sits well inside it."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  supply_voltage:
+    value:
+      kind: range
+      min: 3.135
+      max: 3.465
+      typical: 3.3
+      unit: volt
+    provenance:
+      source_type: datasheet
+      title: Abracon ASE Series, supply voltage
+      citation: "Abracon ASE Series datasheet, REV 02-18-22, p. 1 specification table — Vdd 3.3 V nominal, +/-5 percent."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  supply_current:
+    value:
+      kind: range
+      min: 2.5
+      max: 7.0
+      typical: 2.5
+      unit: milliampere
+    provenance:
+      source_type: datasheet
+      title: Abracon ASE Series, supply current
+      citation: "Abracon ASE Series datasheet, REV 02-18-22, p. 1 — Idd 2.5 mA typical / 7 mA maximum for the 0.5-20 MHz band that 12 MHz falls in. CONDITION GAP: the Idd rows carry only a frequency band in their Notes column — no load condition, no temperature, no Vdd point. Epson tags the equivalent rows on a comparable part 'No load condition'; Abracon does not, so the load this figure assumes is unstated."
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  frequency_stability:
+    value:
+      kind: range
+      min: -50
+      max: 50
+      unit: ppm
+    provenance:
+      source_type: datasheet
+      title: Abracon ASE Series, ordering options
+      citation: "Abracon ASE Series datasheet, REV 02-18-22, p. 3 'Options and Part Identification' — option code C = +/-50 ppm (the series default with no option is +/-100 ppm; options run +/-20/25/30/35/40/50). COMPOSITION UNSTATED: the datasheet never says whether this budget covers initial tolerance plus temperature plus supply plus load plus ageing, or only some of those. Treat it as a total of undefined composition."
+      confidence: medium
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  output_load_capacitance:
+    value:
+      kind: scalar
+      amount: 15
+      unit: picofarad
+    provenance:
+      source_type: datasheet
+      title: Abracon ASE Series, output load
+      citation: "Abracon ASE Series datasheet, REV 02-18-22, p. 1 — maximum CMOS output load. VOH is specified as at least 0.9 x Vdd and VOL as at most 0.1 x Vdd INTO THIS LOAD. No IOL/IOH drive current is given in any form, so fan-out beyond 15 pF cannot be computed from this datasheet."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  ambient_temperature_range:
+    value:
+      kind: range
+      min: -40
+      max: 85
+      unit: celsius
+    provenance:
+      source_type: datasheet
+      title: Abracon ASE Series, operating temperature options
+      citation: "Abracon ASE Series datasheet, REV 02-18-22, p. 3 'Options and Part Identification', Operating Temp. column — option code L = -40 to +85 C. The series DEFAULT with no option is only -10 to +70 C (p. 1), so the temperature range is a function of the ordering code, not of the series. Storage -55 to +125 C."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  package_body_length:
+    value:
+      kind: scalar
+      amount: 3.2
+      unit: millimeter
+    provenance:
+      source_type: datasheet
+      title: Abracon ASE Series, mechanical dimensions
+      citation: "Abracon ASE Series datasheet, REV 02-18-22, p. 5 'Mechanical Dimensions' — 3.2 +/-0.2 by 2.5 +/-0.2 mm, 1.2 mm maximum height (drawn in inches with millimetres in parentheses). The datasheet gives NO JEDEC or industry package designator; the series name and body size are the only identifiers printed."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  land_pattern_pad_pitch:
+    value:
+      kind: scalar
+      amount: 2.1
+      unit: millimeter
+    provenance:
+      source_type: datasheet
+      title: Abracon ASE Series, recommended land pattern
+      citation: "Abracon ASE Series datasheet, REV 02-18-22, p. 5 'Recommended land pattern' drawing — land 1.3 x 1.1 mm each, centre-to-centre 2.10 mm in X and 1.65 mm in Y. This value records the X pitch; the Y pitch is 1.65 mm. The package's own terminal pads are 0.9 x 0.65 mm with a 1.2 mm X gap and 1.0 mm Y gap, which is self-consistent with the land pitches (0.9+1.2 = 2.1; 0.65+1.0 = 1.65) — a check performed here, not a datasheet statement."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+terminals:
+  standby:
+    description: Standby / output enable, pad 1. High (at least 0.7 x Vdd) or left OPEN lets it oscillate; low stops the output. Note the open state runs — an unconnected pad does not silence the part.
+  gnd:
+    description: Ground, pad 2. Also the package case connection.
+  output:
+    description: CMOS clock output, pad 3.
+  vdd:
+    description: "Supply, pad 4. Abracon specifies one bypass capacitor and nothing else — verbatim, datasheet p. 5 note 1: 'Recommend using an approximately 0.01uF bypass capacitor between PIN 2 and 4.'"
+support:
+  model_status: partial_but_real
+  solver_status: defined_not_solved
+extensions:
+  overridable: false
+  user_extensible: false
+  allowed_origins: [builtin]
+notes: |
+  WHAT IS HONESTLY ABSENT — read all six pages of REV 02-18-22 and these are not in it:
+    - Rise/fall measurement thresholds. The 2.5 ns typical / 4.0 ns maximum figure names no threshold
+      pair (no 10/90, no 20/80, no 0.1/0.9 Vdd) and the document contains no test-circuit or test-load
+      figure anywhere. A comparable Epson part prints "20 % VCC to 80 % VCC, 15 pF" — those thresholds
+      belong to Epson's number and must NOT be transplanted onto Abracon's.
+    - Output drive current. No IOL or IOH in any form, as recorded on output_load_capacitance above.
+    - The reference point for the start-up time. 1 ms typical / 2.0 ms maximum is given with no stated
+      t = 0 reference and no temperature.
+    - Phase noise at any offset. Only jitter is given (28 ps peak-to-peak typical, itself marked
+      "Reference only. Contact ABRACON"; 3.2 ps RMS typical / 5 ps maximum).
+    - Confirmation that the full ordering code ASE-12.000MHZ-L-C-T is a stocked, orderable SKU. The
+      Abracon parametric page returns HTTP 403 to automated fetches. What IS sourced: 12 MHz lies in
+      the series range, and the p. 3 ordering scheme decodes L = -40~+85 C, C = +/-50 ppm,
+      T = 1000 pcs/reel. The existence of that exact SKU is unverified.
+
+  WHY defined_not_solved: ChipBlocks can already generate a clock, but it has no model of THIS part —
+  its start-up behaviour, its jitter, or how its 15 pF load limit interacts with a real trace. Marking
+  it solved because a square wave is easy would overstate what is actually modelled.
