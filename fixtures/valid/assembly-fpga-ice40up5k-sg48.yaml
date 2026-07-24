@@ -180,6 +180,32 @@ properties:
     support:
       model_status: defined
       solver_status: not_applicable
+  moisture_sensitivity_level:
+    value:
+      kind: scalar
+      amount: 3
+      unit: dimensionless
+    provenance:
+      source_type: reference
+      title: Lattice Soldering and Reflow guidance, MSL by package
+      citation: "Lattice Semiconductor FPGA-TN-02041-4.8 (September 2023), section 8, Table 8.2, 48-lead QFN-family row, Pb-Free/Halogen-Free column — Moisture Sensitivity Level 3 (per J-STD-020). SCOPE: this is a Lattice PACKAGE-CLASS value (the 48-lead QFN family), not an SG48-part-specific statement, and iCE40UP5K-SG48I is the Pb-free/halogen-free part (ordering table, DS section 5.4). MSL 3 means 168 h floor life at <= 30 C / 60% RH once the dry-pack is opened (J-STD-033); exceed it and the part must be baked before reflow (see notes)."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
+  peak_reflow_temperature:
+    value:
+      kind: scalar
+      amount: 260
+      unit: celsius
+    provenance:
+      source_type: reference
+      title: Lattice Soldering and Reflow guidance, peak reflow by package
+      citation: "Lattice Semiconductor FPGA-TN-02041-4.8 (September 2023), section 8, Table 8.2, 48-lead QFN-family row — peak package-body temperature 260 C (+0 / -5 C) for the Pb-free/halogen-free SAC process (the SnPb value in the same table is 235 C, but this part is Pb-free). Lattice cites J-STD-020 for the classification. SCOPE: a package-class value, not SG48-specific. Reflow profile (same TN, Table 9.1): ramp-up <= 3 C/s, soak 150-200 C, above 217 C for 60-150 s, within 5 C of peak for <= 30 s, <= 8 min total from 25 C to peak."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
 terminals:
   vcc:
     description: Core logic supply, 1.2 V nominal. TWO pads on the SG48 — 5 and 30 [UG Figure A.3]. Must rise first, together with VCCPLL.
@@ -234,8 +260,12 @@ notes: |
       paper "Ultra Low-Power iCE FPGAs" does carry a power-versus-frequency table, but for the iCE65
       / SiliconBlue generation rather than the UP5K; and the Power Calculator's default 10 percent
       activity factor is a property of the TOOL, not of the silicon. Neither is a device parameter.
-    - Moisture sensitivity level and peak reflow temperature — absent from the datasheet, the package
-      diagrams, and TN1257 (whose reflow section offers its figure "as a general reference" only).
+    - Moisture sensitivity level and peak reflow are absent from the DATASHEET, but Lattice publishes
+      them elsewhere — its Soldering and Reflow note FPGA-TN-02041, which gives MSL 3 and a 260 C
+      Pb-free peak for the 48-QFN package class (both now recorded above). Those are package-class
+      figures, not SG48-specific, which is why they are source_type reference. If floor life (168 h per
+      MSL 3) is exceeded, J-STD-033 requires a bake before reflow — 8 h at 125 C if exceeded by more
+      than 72 h, else 6 h (low-temperature alternatives: 90 C for ~25 h, or 40 C for ~8 days).
     - Solder-mask and paste-aperture dimensions for the 48 QFN land. TN1257 Figure 18 dimensions the
       copper land only. TN1257's stencil advice (0.125 mm, NSMD pads) is scoped in its own text to
       DUAL-ROW QFNs; SG48 is single-row, so that guidance is not transferred here. The one piece of

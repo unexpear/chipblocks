@@ -99,6 +99,19 @@ properties:
     support:
       model_status: defined
       solver_status: not_applicable
+  startup_time:
+    value:
+      kind: scalar
+      amount: 20
+      unit: microsecond
+    provenance:
+      source_type: datasheet
+      title: AP2112 Electrical Characteristics, Start-up Time
+      citation: "Diodes Incorporated DS39724 Rev. 2-2 (June 2017) — parameter 'Start-up Time', symbol tS, 20 us typical (no min/max), in the -3.3 Electrical Characteristics table. This is the ENABLE-to-regulation interval, NOT a soft-start or a controlled output slew: the AP2112 has no soft-start (its sibling AP2127 does). Conditions: No Load, VIN 4.3 V, CIN = COUT = 1.0 uF ceramic, TA 25 C; production-tested at 25 C, over-temperature guaranteed by design only (datasheet Note 3). So this bounds how fast the part comes alive, but does NOT tell you the output ramp RATE the iCE40 cares about (see notes)."
+      confidence: high
+    support:
+      model_status: defined
+      solver_status: not_applicable
   land_pattern_pad_pitch:
     value:
       kind: scalar
@@ -146,10 +159,13 @@ notes: |
       AP2127. What IS sourced for the AP2112 is only the qualitative claim: Diodes calls it "stable
       with 1.0uF flexible cap", "flexible cap" being the industry term for a regulator designed to be
       insensitive to output-capacitor ESR rather than needing a specific ESR window.
-    - Output ramp rate or soft-start time. This matters here specifically: the iCE40UP5K requires a
-      monotonic 0.6-10 V/ms ramp (FPGA-DS-02008-2.4 section 4.3, Table 4.3, p. 30) and the AP2112
-      publishes no number to check that against. The sibling AP2127 does specify a 50 us soft start,
-      but that is a different part and its figure is not transferable.
+    - Output ramp RATE. Not the same as the start-up time now recorded above: tS = 20 us bounds how
+      long the part takes to come alive, but says nothing about the SLEW of the output during that
+      time, which is what the iCE40UP5K's monotonic 0.6-10 V/ms ramp requirement (FPGA-DS-02008-2.4
+      section 4.3, Table 4.3, p. 30) is about. The AP2112 has NO soft-start and publishes no ramp or
+      slew figure, so whether it meets the FPGA's ramp window cannot be settled from the datasheet —
+      it is dominated in practice by the output capacitor and load, not the regulator. The sibling
+      AP2127 does specify a 50 us soft start, but that is a different part and not transferable.
     - Power-supply rejection above 1 kHz. Specified only at 100 Hz and 1 kHz (65 dB typical at both).
       If a design leans on this LDO to clean up switching noise ahead of the FPGA's PLL filter, the
       datasheet does not support that expectation.

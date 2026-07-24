@@ -86,6 +86,22 @@ properties:
     support:
       model_status: defined
       solver_status: not_applicable
+  recommended_decoupling:
+    value:
+      kind: range
+      min: 0.01
+      max: 0.22
+      typical: 0.1
+      unit: microfarad
+    provenance:
+      source_type: reference
+      title: Winbond Reference Schematic for SPI NOR Flash, decoupling capacitor
+      citation: "Winbond Application Note AN0000026 Rev 1.1 (11 March 2019), p. 2 parameter table (row 'Decoupling Capacitor', symbol C1) and section 3 — 0.1 uF typical (0.01 min, 0.22 max), 'connected closely to Vcc & GND'; section 3 adds that 0.1 uF is the common value and capacitors above ~10 uF self-resonate too low to decouple. SCOPE: this is a FAMILY-level recommendation — the app note is headed 'Recommended Schematic for 8-pin device of SPI NOR Flash' and does not name the W25Q32JV; the datasheet itself specifies no decoupling. So this is a manufacturer RECOMMENDATION for the 8-pin SPI-NOR family, not a device parameter."
+      confidence: high
+      url: https://www.winbond.com
+    support:
+      model_status: defined
+      solver_status: not_applicable
   land_pattern_pad_size:
     value:
       kind: scalar
@@ -127,9 +143,12 @@ notes: |
   WHAT IS HONESTLY ABSENT — looked for in the primary sources and not published:
     - Thermal resistance. No theta-JA, theta-JC or psi-JT appears anywhere in W25Q32JV rev J. A
       junction temperature for this part cannot be derived from its datasheet.
-    - Decoupling. The datasheet specifies no bypass capacitor value, no recommended network and no
-      power-supply filtering section, and AN0000009 adds none. The customary 0.1 uF close to pin 8 is
-      good practice but is NOT a manufacturer statement, so it is not recorded here as one.
+    - Decoupling is NOT in the datasheet — but Winbond DOES recommend it in an app note, now recorded
+      above as recommended_decoupling (0.1 uF typ, AN0000026). That value is a FAMILY-level Winbond
+      recommendation for its 8-pin SPI-NOR parts, not a W25Q32JV datasheet parameter; the distinction
+      is why it is source_type reference, not datasheet. Real boards confirm the practice: UPduino v3.0
+      fits a 0.1 uF next to its flash. What the DATASHEET itself still omits is any electrical basis for
+      a value — no power-integrity or bypass section exists in it.
     - Output levels at usable currents. VOL/VOH are specified only at +/-100 uA. Output drive IS
       programmable (Status Register-3, DRV1/DRV0, four settings, 25 percent default) but Winbond
       publishes no current or impedance figure for ANY of the four settings — so this part's real
