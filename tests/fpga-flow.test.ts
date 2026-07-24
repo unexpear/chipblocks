@@ -204,9 +204,9 @@ describe('placeAndRoute — deterministic', () => {
     // (a) a first-shot case, and (b) a case that runs several feedback rounds — both must reproduce exactly.
     for (const { fabric, opts } of [
       { fabric: generateFabric(DEFAULT_FABRIC_ARCH, 6, 6), opts: { seed: 1 } },
-      // seed 4 runs several feedback rounds AND its per-round congestion magnitudes matter — so a
+      // seed 2 runs several feedback rounds AND its per-round congestion magnitudes matter — so a
       // nondeterministic feedback (e.g. a stray Math.random in the bump) diverges run-to-run and reddens this.
-      { fabric: generateFabric(W1, 3, 3), opts: { seed: 4, maxAttempts: 12 } },
+      { fabric: generateFabric(W1, 3, 3), opts: { seed: 2, maxAttempts: 12 } },
     ]) {
       const a = placeAndRoute(clusters, fabric, opts)
       const b = placeAndRoute(clusters, fabric, opts)
