@@ -13,10 +13,12 @@
  *                (connection block) → ipin → sink
  *   pip kinds  : `buffer` (directional, a tri-state/mux — CB + pin pips) and `routing` (a pass switch — SB).
  *
- * Design choice — a **generic superset of Project IceStorm's chipdb** (research §4a): a `.device W H`
- * grid of typed tiles, wires as nodes (its `.net`), and `.buffer`/`.routing` pips. `Pip.configBits` is
- * `null` in Stage 1 and is the Stage-2 hook where the real iCE40 CRAM bit coordinates attach — so Stage 2
- * is a data-load into these structures, not a rewrite.
+ * Design choice — the schema deliberately mirrors **Project IceStorm's chipdb vocabulary** (research
+ * §4a): a `.device W H` grid of typed tiles, wires as nodes (its `.net`), and `.buffer`/`.routing` pips.
+ * Two of chipdb's fields are left empty in Stage 1 — `Pip.configBits` is `null` (the CRAM-coordinate
+ * hook) and `WireNode.span` is undefined (the segmentation hook) — so today this is a generic island
+ * model *shaped to ingest* the real iCE40 data (it becomes a superset once those hooks are filled), and
+ * Stage 2 is a data-load into these structures, not a rewrite.
  *
  * Stage-1 simplification (honest): tracks are **full-length** (one node per row/column track), not yet
  * segmented into span-4/span-12 wires — the `span` field is the hook for that later refinement. This is a
@@ -46,7 +48,11 @@ export function clusterInputs(k: number, n: number): number {
   return Math.ceil((k / 2) * (n + 1))
 }
 
-/** A ready-to-use Stage-1 arch: a 4-LUT, one BLE per tile, W = 4, fully-connected CB, Fs = 3. */
+/**
+ * A ready-to-use Stage-1 arch: a 4-LUT, one BLE per tile, W = 4, Fs = 3, and a fully-connected CB
+ * (Fc = 1 — a generous near-crossbar so a small fabric is always routable; sparse Fc is a later
+ * refinement, exercised by the sparse-Fc test).
+ */
 export const DEFAULT_FABRIC_ARCH: FabricArch = {
   k: 4,
   n: 1,

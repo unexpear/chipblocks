@@ -238,6 +238,20 @@ describe('trivial tech-map — gates → LUTs, proven identical to the golden ga
     expect(synthLutConfig(xor, 2)).toEqual([false, true, true, false])
   })
 
+  test('synthLutConfig respects LSB-first input order — an ASYMMETRIC function pins it (A AND NOT B)', () => {
+    // XOR above is symmetric, so LSB-first and MSB-first give the same table — this catches a mirrored
+    // bit order the future covering mapper would otherwise expose. LSB-first: bit0=A, bit1=B →
+    // 00:F, 01(A=1):T, 10(B=1):F, 11:F. MSB-first would instead give [F,F,T,F].
+    const andNotB = (ins: boolean[]) => [ins[0] === true && ins[1] !== true]
+    expect(synthLutConfig(andNotB, 2)).toEqual([false, true, false, false])
+    // and the LUT round-trips the function exactly over every input (bit-order drift end to end fails)
+    const fn = lutFn(synthLutConfig(andNotB, 2))
+    for (let i = 0; i < 4; i++) {
+      const ins = [(i & 1) !== 0, (i & 2) !== 0]
+      expect(fn(ins)[0]).toBe(andNotB(ins)[0])
+    }
+  })
+
   for (const block of [HALF_ADDER_BLOCK, FULL_ADDER_BLOCK]) {
     test(`${block.name}: one LUT per gate, and the LUT fabric matches the golden truth table exactly`, () => {
       const golden = characterizeBlock(block)
