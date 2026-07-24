@@ -135,6 +135,35 @@ describe('placeClusters — SA minimizes half-perimeter wirelength', () => {
     const tiny = generateFabric(DEFAULT_FABRIC_ARCH, 1, 1).device // 1 tile, 3 clusters
     expect(placeClusters(clusters, tiny, { seed: 1 }).fits).toBe(false)
   })
+
+  test('congestionWeight defaults to 0 — a congestion map with no weight leaves the placement unchanged', () => {
+    // Pins the no-regression guarantee: the congestion cost is inert unless a caller opts in with a weight,
+    // so shipping congestion support did not alter pure-HPWL placement. (Raising the default to nonzero would
+    // change these placements and redden this test.)
+    const device = generateFabric(DEFAULT_FABRIC_ARCH, 4, 4).device
+    const clusters = packLuts(chainLuts())
+    const congestion = new Map([
+      ['chanx_0', 5],
+      ['chany_1', 3],
+    ])
+    const base = placeClusters(clusters, device, { seed: 3 })
+    const withMapNoWeight = placeClusters(clusters, device, { seed: 3, congestion }) // weight defaults to 0
+    expect([...withMapNoWeight.placement.entries()]).toEqual([...base.placement.entries()])
+    expect(withMapNoWeight.hpwl).toBe(base.hpwl)
+    // and opting in DOES change the objective (so the term is real, not dead): with every channel congested,
+    // any net spans a congested channel, so the reported cost carries a real penalty above pure wirelength.
+    const allChannels = new Map<string, number>()
+    for (let i = 0; i < 4; i++) {
+      allChannels.set(`chanx_${i}`, 5)
+      allChannels.set(`chany_${i}`, 5)
+    }
+    const withWeight = placeClusters(clusters, device, {
+      seed: 3,
+      congestion: allChannels,
+      congestionWeight: 8,
+    })
+    expect(withWeight.hpwl).toBeGreaterThan(base.hpwl)
+  })
 })
 
 describe('extractRouting — logical nets → physical route nets + placed LUTs', () => {

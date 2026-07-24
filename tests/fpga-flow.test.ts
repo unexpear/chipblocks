@@ -174,4 +174,46 @@ describe('placeAndRoute — fails honestly with a diagnostic', () => {
     expect(pr.attempts).toBe(8) // it tried every round before giving up
     expect(pr.route?.overused.length ?? 0).toBeGreaterThan(0) // the failure is NAMED, not a silent give-up
   })
+
+  test('maxAttempts ≤ 0 is clamped to one real attempt — never a fabricated fits:true with nothing placed', () => {
+    // A degenerate maxAttempts must still place+check once, so the reported fits/route reflect reality rather
+    // than the loop's fall-through defaults. On a 1-tile fabric a 6-LUT design genuinely does not fit.
+    for (const maxAttempts of [0, -3]) {
+      const pr = placeAndRoute(packLuts(andChain(6)), generateFabric(DEFAULT_FABRIC_ARCH, 1, 1), {
+        seed: 1,
+        maxAttempts,
+      })
+      expect(pr.fits).toBe(false) // actually computed, not the hardcoded fall-through fits:true
+      expect(pr.routed).toBe(false)
+      expect(pr.route).toBeNull()
+      expect(pr.attempts).toBe(1)
+    }
+    // and a routable design still routes under maxAttempts:0 (clamped to one attempt)
+    const ok = placeAndRoute(packLuts(andChain(6)), generateFabric(DEFAULT_FABRIC_ARCH, 6, 6), {
+      seed: 1,
+      maxAttempts: 0,
+    })
+    expect(ok.routed).toBe(true)
+    expect(ok.attempts).toBe(1)
+  })
+})
+
+describe('placeAndRoute — deterministic', () => {
+  test('same (clusters, fabric, options) ⇒ identical routed, attempts, and ON-pip set — even through the feedback loop', () => {
+    const clusters = packLuts(andChain(6))
+    // (a) a first-shot case, and (b) a case that runs several feedback rounds — both must reproduce exactly.
+    for (const { fabric, opts } of [
+      { fabric: generateFabric(DEFAULT_FABRIC_ARCH, 6, 6), opts: { seed: 1 } },
+      // seed 4 runs several feedback rounds AND its per-round congestion magnitudes matter — so a
+      // nondeterministic feedback (e.g. a stray Math.random in the bump) diverges run-to-run and reddens this.
+      { fabric: generateFabric(W1, 3, 3), opts: { seed: 4, maxAttempts: 12 } },
+    ]) {
+      const a = placeAndRoute(clusters, fabric, opts)
+      const b = placeAndRoute(clusters, fabric, opts)
+      expect(a.routed).toBe(true)
+      expect(a.routed).toBe(b.routed)
+      expect(a.attempts).toBe(b.attempts)
+      expect([...(a.route?.onPips ?? [])].sort()).toEqual([...(b.route?.onPips ?? [])].sort())
+    }
+  })
 })

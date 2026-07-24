@@ -36,7 +36,7 @@ export type PlaceAndRouteOptions = {
    *  feedback, not a random restart. (With `congestionWeight: 0` the placement never changes and the loop is a
    *  no-op — which is exactly what makes the feedback demonstrably load-bearing, not seed luck.) */
   seed?: number
-  /** how many place→route rounds to try before giving up (default 8). */
+  /** how many place→route rounds to try before giving up (default 8; clamped to ≥ 1 — always runs once). */
   maxAttempts?: number
   /** weight on the congestion feedback in the placer's cost (default 8; 0 disables feedback). */
   congestionWeight?: number
@@ -77,7 +77,9 @@ export function placeAndRoute(
   fabric: Fabric,
   options: PlaceAndRouteOptions = {},
 ): PlaceAndRouteResult {
-  const maxAttempts = options.maxAttempts ?? 8
+  // Always run at least one place+route round — a maxAttempts of 0 or negative must not skip the loop and
+  // return a fabricated result (fits:true with nothing ever placed); it means "one attempt, no retries".
+  const maxAttempts = Math.max(1, options.maxAttempts ?? 8)
   const congestionWeight = options.congestionWeight ?? 8
   const congestion = new Map<string, number>()
   let lastPlacement: Placement = new Map()
