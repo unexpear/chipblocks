@@ -2,7 +2,7 @@
 
 > **This file is not a roadmap commitment.** It records how FPGAs work internally, how they evolved, and — the point of the doc — which FPGA fabrics are documented publicly in enough detail that ChipBlocks could model the actual fabric (LUTs, routing, configuration memory), not just the pinout, and potentially place-and-route or simulate a design onto it.
 >
-> **Status:** living document. Last verified **2026-07-24** via two deep-research passes (see Verification log). The academic fundamentals are stable; vendor device numbers are current-generation and can move with new silicon.
+> **Status:** living document. Last verified **2026-07-24** via three research passes + a staging red-team + a code-grounded Stage-1 design workflow (see Verification log; the Stage-1 plan is Appendix A). The academic fundamentals are stable; vendor device numbers are current-generation and can move with new silicon.
 >
 > **Scope:** FPGA architecture + the open-source bitstream-documentation ecosystem, oriented at what ChipBlocks (first-principles, everything-real-and-cited) could realistically build. Closed families are noted only to explain why the open ones matter.
 >
@@ -197,3 +197,167 @@ The `generic → real fabric → bitstream` order is sound and each stage stands
 - It does **not** commit ChipBlocks to building an FPGA-fabric simulator — that's a chapter-sized decision for the project lead (§5).
 - It does **not** cover analog/mixed-signal FPGA behaviour or PLL/transceiver electrical modeling.
 - It does **not** replace the catalog fixture's cited electrical data for the iCE40UP5K — that remains the authority for the part at its terminals.
+
+---
+
+# Appendix A — Stage 1 (mini-VPR): design & increment plan
+
+> Produced 2026-07-24 by an 11-agent design workflow (run `winduj35b`: 4 readers over the real modules, 6 component designers, 1 synthesizer), grounded in the actual `verilog-synth.ts` / `logic-sim.ts` / `cell-place.ts` code. Scopes **Stage 1 only** (the abstract-fabric mini-VPR; no vendor data). Code-grounded confirmation of the red-team point: `placeCells` is net-blind row-packing and our routers emit free-space geometry, so the LUT technology-mapper and the PathFinder router have no precursor.
+
+## Stage 1 — design & increment plan
+
+## Plain-English summary
+
+Stage 1 builds a small, from-scratch FPGA CAD flow: take a digital design that ChipBlocks already synthesizes into logic gates, fold those gates into look-up tables (LUTs), arrange them on an abstract chip grid, wire them together over a fixed routing fabric, and then prove — by simulation — that the fabric computes the exact same thing the original gates did. The important honest finding is that **this is not "reusing the place-and-route we already have."** Two of the hardest engines in the whole chapter are secretly born here and exist nowhere in the codebase: a **gates→LUT technology mapper** and a **PathFinder-style FPGA router** over a routing-resource graph — a genuinely different algorithm class from our copper PCB/standard-cell routers. What *does* transfer is real and load-bearing: the gate netlist front-end (`flattenBlocks`), the fast 0/1 logic engine (`logic-sim.ts`), union-find net resolution, and the save/undo persistence pattern. We keep the fabric's data model shaped as a **generic superset of Project IceStorm's chipdb** so that Stage 2 (real iCE40 data) becomes a data-load, not a rewrite.
+
+---
+
+## 1. Reuse map — what transfers vs. what is genuinely new
+
+| Concern | TRANSFERS (real module/type) | GENUINELY NEW | Verdict |
+|---|---|---|---|
+| **Netlist input** | `importVerilog()` → `ImportResult.block: BlockData`; `flattenBlocks(nodes, edges, isLogicGate)`; `GateInst`, `FlopInst` (`verilog-import.ts`) | — | Full reuse. The gate netlist is the *input*, already bit-blasted to scalar nets. |
+| **Net resolution** | `buildNets` / `endpointKey` (`output-contention.ts`); `DisjointSet` (`lvs.ts`) | — | Full reuse (this becomes union-find's **3rd** consumer → trigger to extract a shared util). |
+| **Logic simulation** | `stepLogic` / `compileLogic` / `CompiledLogic` / `characterizeBlock` (`logic-sim.ts`); the closed-switch conduction rule; `D_FLIPFLOP_BLOCK` | One small edit: a **per-instance LUT gate branch** whose `fn` closes over `2^k` config bits (`config[Σ inᵢ<<i]`) | Mostly reuse; one documented small engine edit. |
+| **Gates → k-LUT mapping** | *(nothing)* | **Cut enumeration + priority-cut covering + truth-table synthesis** | **NEW ENGINE #1.** No cut/cover concept anywhere. |
+| **Packing LUT+FF → clusters** | `FlopInst`, `D_FLIPFLOP_BLOCK` as the FF atom | **BLE formation + AAPack-style seed-and-attract clustering** under `I=⌈(k/2)(N+1)⌉` | NEW. No cluster/CLB model exists. |
+| **Placement** | *Data-shape only:* `PlacedCell`/`Floorplan` discipline; `chipSignature` (FNV) | **Island grid + HPWL cost + VPR simulated annealing** | NEW. `placeCells` is net-blind row-packing — wrong algorithm class, cannot be "made FPGA-aware." |
+| **Routing** | *A\* skeleton only* (open set + `gScore` + `cameFrom`) from `gridRouteAround` (`orthogonal-route.ts`), **re-pointed at the RRG** | **RRG data model + PathFinder negotiated congestion** (present + historical cost, rip-up-reroute, legality, Wmin) | **NEW ENGINE #2.** Our copper router is one-shot greedy free-space maze routing — opposite problem. |
+| **Fabric data model (RRG + tile grid)** | `BlockData`/`BlockInnerNode` as the *authoring/descend container*; `BlockViewer` recursive drill | **`Rrg` (wires=nodes, pips=edges), typed-tile grid, island-fabric generator** — chipdb-superset | NEW. `BlockInnerEdge` is a point-to-point net, **cannot** express a routing resource; RRG lives *beside* BlockData. |
+| **Equivalence check** | `characterizeBlock` + `simulateLogic` as the golden oracle; `weisfeilerLehmanMatch`/`findBijection` (`lvs.ts`) for structural check | **Miter-style co-sim harness + I/O correspondence map + mismatch localization** | Mostly reuse of oracles; the harness + port alignment are new. |
+| **Persistence / undo / drift** | `ChipLayout`/`ChipCellOverride`/`sanitizeChipLayout`/`chipSignature` (`chip-layout.ts`) | A `FabricLayout` clone keyed by **stable grid-slot id** (not flatten-order cell id) | Near-clone reuse. |
+
+**Settling the "not a reuse" point:** only *logic-sim* (LUT eval = one array lookup) and *generic graph tooling* (union-find, A\* skeleton, WL isomorphism) actually transfer. The two algorithm classes that define FPGA CAD — **technology mapping (cut covering)** and **negotiated-congestion routing over a fixed RRG** — have zero precursor. Our standard-cell placer (`cell-place.ts`) is net-blind; our routers (`pcb-route.ts`, `cell-polygons.ts`) generate free-space geometry rather than selecting pre-existing pips. Different inputs, different outputs, different core loops.
+
+---
+
+## 2. Architecture
+
+### Data flow
+
+```
+Verilog ──importVerilog──► BlockData (gate netlist, already bit-blasted)
+   │
+   │ flattenBlocks(., ., isLogicGate) + buildNets   [REUSE]
+   ▼
+Boolean network (2-input gate cells + D-flops, PI/PO at ports & flop D/Q, power rails stripped)
+   │
+   ├─(1) TECH-MAP  ──►  LutNetlist { luts:KLut[], dffs:KDff[] }        [NEW ENGINE #1]
+   │        cut enumeration → priority-cut covering → 2^k truth-table synth
+   ▼
+   ├─(2) PACK     ──►  PackResult { clusters:Cluster[] }               [NEW]
+   │        BLE formation (LUT+FF) → seed-and-attract, legality I=⌈(k/2)(N+1)⌉
+   ▼
+   ├─(3) PLACE    ──►  Placement { slots:Map<clusterId,Slot> }         [NEW]
+   │        island grid + HPWL cost → greedy hill-climb → VPR annealing
+   ▼
+   ├─(4) ROUTE    ──►  RouteResult { pipOn, routes, unrouted }         [NEW ENGINE #2]
+   │        PathFinder negotiated congestion over the fixed RRG
+   ▼
+   └─(5) SIM+EQUIV ──► EquivResult { equivalent, mismatches }          [REUSE oracles]
+            ON pip ⇒ union(src,dst)  →  compileLutFabric → stepLogic
+            co-simulate vs golden gate netlist (characterizeBlock)
+```
+
+Steps (1)–(4) each read from and write to the **shared fabric data model**; step (5) binds the routed fabric to the existing logic engine and is the acceptance gate.
+
+### Shared fabric data model (RRG + tile grid)
+
+Two structures held **side by side**, never merged (the RRG is not a `BlockData.edges` list):
+
+- **Tile grid** — `FabricDevice { width, height, arch, tiles: FabricTile[] }`, `FabricTile { x, y, kind:'logic'|'io'|'ram'|'dsp'|'empty', logic?:{ luts:LutBel[], ffs:FfBel[] } }`. Architecture knobs live in `FabricArch { k, n, clusterInputs, channelWidth W, fcIn, fcOut, fs, spanLengths }` — cited from research §1 (k=4–6, N=4–10, `I=⌈(k/2)(N+1)⌉`, `Fs=3`, island/Wilton switch blocks).
+- **Routing-resource graph** — `Rrg { nodes:Map<id,WireNode>, edgesFrom, edgesTo }` with `WireNode { id, kind:'chanx'|'chany'|'opin'|'ipin'|'source'|'sink'|'local'|'span'|'global', x, y, span?, dir?, track? }` and `Pip { id, from, to, kind:'buffer'|'routing', configBits?:null }`. Mutable congestion state (`occ`/`cap`/`hist`/`pcost`) is kept **separate** from the immutable graph (mirrors `orthogonal-route.ts` purity discipline).
+
+### The design choice that makes Stage 2 a data-load, not a rewrite
+
+The RRG schema is deliberately a **generic superset of IceStorm's chipdb** (research §4a): wires-as-nodes / pips-as-edges, `.buffer` (directional) vs `.routing` (bidirectional) pip kinds, span-length tracks (`local`/`sp4`/`sp12` analogs), `Fc`/`Fs` connectivity. `Pip.configBits` is `null` in Stage 1 and is the **Stage-2 hook** for real CRAM bit coordinates. We validate this by shipping a `serializeChipdb`/`parseChipdb` round-trip that ingests a hand-written IceStorm-shaped `.device`/`.net`/`.buffer`/`.routing` snippet into the *same* Stage-1 types. Stage 2 (real iCE40) then just loads §4a's chipdb into these structures; Stage 3 (bitstream) fills `configBits`.
+
+---
+
+## 3. Increment sequence (cheapest proof-of-life first)
+
+Each increment is independently verifiable; each has a one-line definition-of-done (DoD). Order deliberately front-loads the map+sim spine so the two hard engines land on top of a proven substrate.
+
+**A. Substrate & sim spine (map → direct sim, before place/route)**
+
+1. **Shared atom types.** `LutAtom`/`FfAtom`/`Atom`/`KLut`/`KDff`/`LutNetlist` in one module both mapper and packer import. *DoD: types compile; a hand-built `LutNetlist` fixture instantiates.*
+2. **LUT-eval engine branch.** Add the per-instance LUT gate to `compileLogic`/`stepLogic` (`fn = config[Σ inᵢ<<i]`); teach `blockIsLogicCompatible`/`LOGIC_PASSIVE_DEFS` the `fpga_lut` element so it isn't silently dropped. *DoD: a single hand-configured 4-LUT returns its truth table over all 2⁴ inputs via `stepLogic`.*
+3. **Trivial tech-map + equivalence gate.** Map each 2-input/1-input gate cell to its own LUT (synthesize `config[]` from that cell's `LogicSpec.fn`), pass `FlopInst` through as `KDff`, strip power rails. *DoD: for a synthesized full-adder/XOR-chain, `characterizeBlock(original)` === truth table of the emitted `LutNetlist` (the mandatory sim-equivalence oracle) — proving data model, net-id convention, DFF pass-through **before** any optimizer.*
+4. **RRG types + island-fabric generator.** `generateFabric(arch)` builds a small W×H grid + synthesized RRG (channels of width W, `Fc` connection blocks, `Fs=3` switch blocks). *DoD: RRG integrity holds (every node reachable, fanout/fanin consistent, no dangling pip endpoints) on a 3×3, K=4, N=1, W=4 fabric.*
+5. **chipdb-superset round-trip.** `serializeChipdb`/`parseChipdb`. *DoD: (a) generated fabric survives serialize→parse identical; (b) a hand-written IceStorm-shaped `.net`/`.buffer`/`.routing` snippet parses into the same types — schema proven a valid superset.*
+6. **ON-pip → union sim bridge.** Adapter turning chosen pips into `union(src,dst)` seeds for `compileLogic`. *DoD: a hand-configured LUT + hand-chosen ON-pip set drives a load high through `stepLogic` — the router→sim seam works independent of any real router.*
+
+**B. The tech-mapper optimizer (New Engine #1)**
+
+7. **Cut enumeration.** Topological k-feasible priority cuts (cap C≈8/node, dominance prune). *DoD: cut sets match hand-computed cuts on a small DAG; no blow-up on a reconvergent fanout case.*
+8. **Priority-cut covering + area-flow.** DAG covering (fanout-escaping node ⇒ own LUT root) + area-flow recovery pass. *DoD: LUT count drops vs. trivial cover on the full-adder, and the increment-3 equivalence oracle still passes.*
+
+**C. Packing (New)**
+
+9. **BLE formation.** Fuse LUT+FF when `FF.d === lut.output`. *DoD: `LUT.output===FF.d` ⇒ exactly one BLE, external inputs = LUT inputs, output = FF.q.*
+10. **Seed-and-attract clustering.** Legality: `bles ≤ N`, distinct external inputs `≤ I`, single clock domain. *DoD: materialize clusters → `flattenBlocks` → `simulateLogic` equals the pre-pack truth table; `I`/`N` bounds asserted.*
+
+**D. Placement (New)**
+
+11. **HPWL cost + greedy hill-climb.** Net→block adjacency, `Σ q(n)·HPWL`, deterministic seeded swap-if-improves. *DoD: on a hand-computable 3×3 case, cost = analytic HPWL, every accepted swap matches a full recompute (catches stale-bbox bug), final beats random seed.*
+12. **VPR simulated annealing.** Adaptive temperature + range-limit window (~0.44 acceptance). *DoD: seeded RNG, HPWL improves over the greedy result within asserted bounds; periodic full-recompute equals incremental running cost.*
+
+**E. Routing (New Engine #2)**
+
+13. **Single-net maze over RRG.** A\* skeleton re-pointed at `rrg.edgesFrom`, cost = pip base cost. *DoD: a 2-sink net on a hand-built 2×2 fabric returns a connected source→both-sinks RRG tree; lowered pips make `stepLogic` read both loads high.*
+14. **PathFinder negotiated congestion.** Present cost `pn=(1+max(0,occ+1−cap)·pfac)`, historical `hn`, rip-up-reroute loop, converge when no node overused; report `unrouted` honestly (never fake a route). *DoD: a congested design routes legally at sufficient W; an under-provisioned W reports unrouted nets instead of looping; optional Wmin binary search reported.*
+
+**F. Acceptance**
+
+15. **End-to-end co-sim.** Full map→pack→place→route→sim on a real synthesized design; I/O correspondence map aligns original ports to fabric IO pins. *DoD: the Stage-1 acceptance test below passes.*
+
+---
+
+## 4. Stage-1 milestone / definition of done
+
+**A mapped + placed + routed abstract LUT fabric co-simulates identically to the input gate netlist.**
+
+Concretely: take a synthesized design ChipBlocks already produces (e.g. a full-adder, an XOR chain, and one small sequential design such as a counter or the SAP-1 register), run the complete flow, and assert:
+
+- **Combinational designs:** exhaustive `2ⁿ` compare (n ≲ 18; else reported as *sampled*, not proven) between `characterizeBlock(originalBlock)` and the fabric's `compileLutFabric + stepLogic` output — `EquivResult.equivalent === true`, `method: 'exhaustive'`.
+- **Sequential designs:** bounded co-simulation over a shared directed+random vector sequence for N clocks (matched reset), comparing outputs and every flop Q each cycle — reported honestly as *bounded*, not a proof.
+- **Routing honesty:** any unrouted net leaves its LUT input undriven → LUT skipped → `undefined` output, which the equivalence engine treats as a **mismatch** (never coerced to 0).
+- **Substrate honesty:** the RRG round-trips through the chipdb-superset serializer and ingests an IceStorm-shaped snippet unchanged.
+
+Passing gates: `npx tsc --noEmit`, `npx biome check`, `npx vitest run`, `npm run build`.
+
+---
+
+## 5. Top risks & open questions for the project lead
+
+**Risks**
+
+- **Two brand-new algorithm engines, not one.** The cut-covering tech-mapper and the PathFinder router are the real cost of Stage 1; the earlier "it's mostly place-and-route reuse" framing was wrong. Cut enumeration is worst-case exponential (mitigated by capping priority cuts ≈8/node) and PathFinder can fail to converge (mitigated by hard iteration cap + honest unrouted reporting).
+- **Silent-wrong-logic traps.** Union-find nets are *undirected* with no driver-vs-sink notion — two LUT outputs routed onto one wire merge silently; the router's `occ ≤ cap` legality check is the only guard, so it must be airtight and separately tested. Wrong input-bit→config-index mapping yields a plausible-but-wrong LUT — the sim-equivalence oracle must be **mandatory** on every mapper increment.
+- **I/O correspondence is subtle.** Flattened nets are dot-namespaced and bit-blasted; constants are `XOR(x,x)` cells, not literals. The port alignment must be built from `portTarget` + declared port order, never name-matching, or equivalence compares the wrong nets (false pass/fail).
+- **Schema lock-in.** If the Stage-1 RRG isn't a genuine chipdb superset (missing span-4/span-12 tracks, buffered-vs-pass pips, local-vs-global), Stage 2 becomes a rewrite — defeating the staging rationale. Validated by the IceStorm-snippet round-trip in increment 5.
+- **Third union-find copy.** `DisjointSet` already exists in `lvs.ts` and `cell-polygons.ts`; Stage 1 is the third use — the codebase's own "three uses" rule says extract a shared graph util now.
+
+**Open questions**
+
+1. **k and N defaults?** Recommend **k=4, N=8** for Stage 1 (matches iCE40 LUT4, keeps `config[]` = 16 bits, cut enumeration cheap; k is a parameter so k=6 is a later config change). Confirm.
+2. **Scope of the sequential acceptance case** — is a small counter/register sufficient, or should the SAP-1 CPU be a Stage-1 target? (SAP-1 stresses cut blow-up and router convergence — recommend deferring it to a follow-up.)
+3. **Quality bar.** Stage 1 targets *correctness* (co-sim equivalence), not routed-wirelength or timing quality. Timing-driven placement/routing and a Wmin quality metric are explicitly out of scope — confirm that's acceptable.
+4. **Where does the fabric live in the UI?** As a new `BlockData`-backed descendable level (tile-as-leaf to stay under `MAX_DESCEND_NODES=400`) with its own saved/undoable `FabricLayout`? Confirm parity expectations with board/chip levels.
+
+---
+
+## 6. Rough size
+
+| Component | Size | Note |
+|---|---|---|
+| Shared atom types + LUT-eval engine branch | **S** | One small documented `compileLogic` edit + type module. |
+| Tech-mapper (cuts + covering + truth-table synth) | **M** | Trivial-cover milestone is S; grows to L only if depth-optimal FlowMap is pursued over the priority-cut heuristic. |
+| Packer (BLE + seed-and-attract) | **M** | Two greedy passes; sized up by input-pin absorption + clock-domain edge cases. |
+| Fabric model (RRG + tile grid + generator + chipdb round-trip) | **M** | New substrate; excludes the two hard engines by design. |
+| Placer (HPWL + hill-climb + SA) | **M** | Greedy starter is S; full VPR annealing schedule pushes to M. |
+| Router (RRG + PathFinder) | **L** | The single largest piece: RRG generator + full negotiated-congestion loop from scratch. |
+| Sim binding + equivalence check | **M** | Reuses oracles; new harness + I/O alignment + `compileLutFabric`. |
+| **Stage 1 overall** | **L (heavy L, approaching XL)** | Two new algorithm-class engines + substrate + optimizer, all novel. |
+
+**Versus prior chapters:** Stage 1 is **larger than the Verilog bridge** (which was mostly parsing + lowering onto the *existing* gate/logic engines — heavy reuse, no new algorithm class) and **comparable to or larger than chip-physical/mask** (which was also from-scratch — GDSII writer, Euler-path cell layout, scanline DRC, Gemini-LVS — but leaned on established, well-specified algorithms). Stage 1's distinguishing cost is that **two of its engines (cut-covering tech-mapping and negotiated-congestion routing) have no precursor anywhere in ChipBlocks and are different algorithm classes from everything shipped**, so the honest planning posture is: budget it like chip-physical, but expect the router increment (13–14) to be the true schedule driver.
