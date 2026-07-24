@@ -100,3 +100,139 @@ export function lutifyCompiled(compiled: CompiledLogic): CompiledLogic {
   }))
   return { gates, seeds: compiled.seeds, portNet: compiled.portNet, cutNets: compiled.cutNets }
 }
+
+/** A k-feasible cut of a node: its leaf nets (sorted) + the node's truth table over them (LSB-first). */
+type Cut = { leaves: string[]; table: boolean[] }
+
+/** The trivial cut of a net — the wire itself (identity: config[0]=false, config[1]=true). */
+const trivialCut = (net: string): Cut => ({ leaves: [net], table: [false, true] })
+
+/** Dedup cuts by leaf-set, drop any a strict subset already covers, keep the `cap` smallest. */
+function prioritizeCuts(cuts: Cut[], cap: number): Cut[] {
+  const byKey = new Map<string, Cut>()
+  for (const c of cuts) {
+    const key = c.leaves.join(',')
+    if (!byKey.has(key)) byKey.set(key, c)
+  }
+  const uniq = [...byKey.values()]
+  const kept = uniq.filter(
+    (c) =>
+      !uniq.some(
+        (o) =>
+          o !== c &&
+          o.leaves.length < c.leaves.length &&
+          o.leaves.every((l) => c.leaves.includes(l)),
+      ),
+  )
+  kept.sort((a, b) => a.leaves.length - b.leaves.length)
+  return kept.slice(0, cap)
+}
+
+/**
+ * The LUT-covering technology mapper (Engine #1): cut enumeration + area-flow covering. Where the trivial
+ * `mapCompiledToLuts` makes one LUT per gate, this COVERS a whole cone of gates into a single k-LUT, so a
+ * design uses far fewer LUTs.
+ *
+ * How: walk the gate netlist in topological order and enumerate each node's k-feasible cuts (leaf sets
+ * ≤ k through which every path from the inputs passes), carrying each cut's exact truth table by
+ * composing the gate functions — so a cut IS the LUT that would implement it. Pick each node's cut by
+ * area-flow (estimated total LUTs), then cover from the outputs down: a net that is a primary output or is
+ * shared (fanout ≥ 2) becomes a LUT root; its cut's internal leaves become roots in turn, down to the
+ * primary inputs. Correctness is not a matter of trust — each LUT's config is the exhaustive truth table
+ * of its cone, and the whole cover is checked against the golden gate simulation.
+ */
+export function coverToLuts(compiled: CompiledLogic, k = 4, cutCap = 8): KLut[] {
+  const gates = compiled.gates
+  const driverOf = new Map<string, (typeof gates)[number]>()
+  for (const g of gates) driverOf.set(g.out, g)
+  const isPI = (net: string): boolean => !driverOf.has(net)
+
+  const fanout = new Map<string, number>()
+  for (const g of gates) for (const net of g.ins) fanout.set(net, (fanout.get(net) ?? 0) + 1)
+  const foOf = (net: string): number => fanout.get(net) ?? 0
+  // A net must be its own LUT output when it is a primary output (nothing reads it) or shared (fanout ≥ 2).
+  const isRoot = (net: string): boolean => !isPI(net) && (foOf(net) === 0 || foOf(net) >= 2)
+
+  // Cut enumeration — gates are already topologically ordered by compileLogic.
+  const cutsOf = new Map<string, Cut[]>()
+  const cutsFor = (net: string): Cut[] => cutsOf.get(net) ?? [trivialCut(net)]
+  for (const g of gates) {
+    const faninCuts = g.ins.map(cutsFor)
+    const merged: Cut[] = []
+    const combine = (i: number, chosen: Cut[]): void => {
+      if (i === faninCuts.length) {
+        const leaves = [...new Set(chosen.flatMap((c) => c.leaves))].sort()
+        if (leaves.length > k) return
+        const table: boolean[] = []
+        for (let a = 0; a < 1 << leaves.length; a++) {
+          const faninVals = chosen.map((c) => {
+            let sub = 0
+            c.leaves.forEach((leaf, p) => {
+              if (((a >> leaves.indexOf(leaf)) & 1) === 1) sub |= 1 << p
+            })
+            return c.table[sub] === true
+          })
+          table.push(g.fn(faninVals)[0] === true)
+        }
+        merged.push({ leaves, table })
+        return
+      }
+      for (const c of faninCuts[i] ?? []) combine(i + 1, [...chosen, c])
+    }
+    combine(0, [])
+    merged.push(trivialCut(g.out)) // usable as a leaf in downstream cuts
+    cutsOf.set(g.out, prioritizeCuts(merged, cutCap))
+  }
+
+  // Area-flow: choose each node's implementation cut (the one minimizing estimated total LUTs).
+  const bestCut = new Map<string, Cut>()
+  const areaFlow = new Map<string, number>()
+  const afOf = (net: string): number => (isPI(net) ? 0 : (areaFlow.get(net) ?? 0))
+  for (const g of gates) {
+    // the trivial self-cut is only for use as a leaf, never as a node's own implementation
+    const cuts = (cutsOf.get(g.out) ?? []).filter(
+      (c) => !(c.leaves.length === 1 && c.leaves[0] === g.out),
+    )
+    let best: Cut | undefined
+    let bestAf = Number.POSITIVE_INFINITY
+    for (const c of cuts) {
+      const area = 1 + c.leaves.reduce((s, leaf) => s + afOf(leaf) / Math.max(1, foOf(leaf)), 0)
+      if (area < bestAf) {
+        bestAf = area
+        best = c
+      }
+    }
+    if (best) {
+      bestCut.set(g.out, best)
+      areaFlow.set(g.out, bestAf)
+    }
+  }
+
+  // Cover from the roots down: emit a LUT per root, then recurse on its internal leaves.
+  const luts: KLut[] = []
+  const emitted = new Set<string>()
+  const worklist = gates.map((g) => g.out).filter(isRoot)
+  const queued = new Set(worklist)
+  let index = 0
+  while (worklist.length > 0) {
+    const root = worklist.pop() as string
+    if (emitted.has(root) || isPI(root)) continue
+    const cut = bestCut.get(root)
+    if (cut === undefined) continue
+    emitted.add(root)
+    luts.push({
+      id: `L${index++}`,
+      k: cut.leaves.length,
+      config: cut.table,
+      inputs: [...cut.leaves],
+      output: root,
+    })
+    for (const leaf of cut.leaves) {
+      if (!isPI(leaf) && !emitted.has(leaf) && !queued.has(leaf)) {
+        queued.add(leaf)
+        worklist.push(leaf)
+      }
+    }
+  }
+  return luts
+}

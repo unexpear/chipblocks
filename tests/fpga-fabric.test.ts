@@ -7,8 +7,13 @@
  */
 import { describe, expect, test } from 'vitest'
 import type { BlockData, CanvasEdgeLike, CanvasNodeLike } from '../src/renderer/blocks.ts'
-import { FULL_ADDER_BLOCK, HALF_ADDER_BLOCK } from '../src/renderer/builtin-blocks.ts'
 import {
+  FULL_ADDER_BLOCK,
+  HALF_ADDER_BLOCK,
+  RIPPLE_CARRY_2BIT,
+} from '../src/renderer/builtin-blocks.ts'
+import {
+  coverToLuts,
   type KLut,
   lutConfigSize,
   lutFn,
@@ -271,4 +276,50 @@ describe('trivial tech-map — gates → LUTs, proven identical to the golden ga
       expect(luts.every((l) => l.config.length === lutConfigSize(l.k))).toBe(true)
     })
   }
+})
+
+describe('LUT-covering mapper (Engine #1) — covers gate cones into fewer k-LUTs, still equivalent', () => {
+  /** Replace a compiled netlist's gates with the k-LUT COVER, for the equivalence harness. */
+  const coverTransform =
+    (k: number) =>
+    (compiled: CompiledLogic): CompiledLogic => ({
+      ...compiled,
+      gates: coverToLuts(compiled, k).map((l) => ({
+        fn: lutFn(l.config),
+        ins: l.inputs,
+        out: l.output,
+      })),
+    })
+
+  // Small designs plus a bigger, more reconvergent one — the 2-bit ripple adder's carry chain (shared
+  // sub-functions + deeper cones) is exactly where a cut-enumeration / covering bug would surface.
+  for (const block of [HALF_ADDER_BLOCK, FULL_ADDER_BLOCK, RIPPLE_CARRY_2BIT]) {
+    test(`${block.name}: the COVERED LUT netlist matches the golden truth table exactly (k=4)`, () => {
+      const golden = characterizeBlock(block)
+      expect(golden).not.toBeNull()
+      // the cover computes the IDENTICAL function as the original gates — the equivalence gate
+      expect(characterizeVia(block, coverTransform(4))?.rows).toEqual(golden?.rows)
+    })
+  }
+
+  test('covering uses FEWER LUTs than the trivial one-LUT-per-gate map (full adder, k=4)', () => {
+    const compiled = compileLogic(blockCanvas(FULL_ADDER_BLOCK), [])
+    const trivial = mapCompiledToLuts(compiled).length
+    const covered = coverToLuts(compiled, 4).length
+    expect(covered).toBeGreaterThan(0)
+    expect(covered).toBeLessThan(trivial) // a whole cone of 2-input gates folds into each 4-LUT
+  })
+
+  test('every covered LUT is k-feasible and well-formed (config length = 2^k, inputs = k)', () => {
+    const luts = coverToLuts(compileLogic(blockCanvas(FULL_ADDER_BLOCK), []), 4)
+    expect(luts.length).toBeGreaterThan(0)
+    expect(luts.every((l) => l.k <= 4)).toBe(true)
+    expect(luts.every((l) => l.config.length === lutConfigSize(l.k))).toBe(true)
+    expect(luts.every((l) => l.inputs.length === l.k)).toBe(true)
+  })
+
+  test('a smaller LUT size (k=3) still covers correctly (equivalence holds at a different k)', () => {
+    const golden = characterizeBlock(FULL_ADDER_BLOCK)
+    expect(characterizeVia(FULL_ADDER_BLOCK, coverTransform(3))?.rows).toEqual(golden?.rows)
+  })
 })
