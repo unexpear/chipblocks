@@ -279,47 +279,163 @@ describe('trivial tech-map — gates → LUTs, proven identical to the golden ga
 })
 
 describe('LUT-covering mapper (Engine #1) — covers gate cones into fewer k-LUTs, still equivalent', () => {
-  /** Replace a compiled netlist's gates with the k-LUT COVER, for the equivalence harness. */
+  /** The nets a cover MUST preserve as its own LUT outputs: the block's primary-output ports, resolved to
+   *  nets through the compiled portNet (a covered net absorbed away here would leave the output undriven). */
+  const outputNetsOf = (block: BlockData, compiled: CompiledLogic): Set<string> =>
+    new Set(
+      block.ports
+        .filter((p) => !POWER_PORT_IDS.has(p.id.toLowerCase()) && isOutputPort(p))
+        .map((p) => compiled.portNet('b', p.id)),
+    )
+
+  /** Replace a compiled netlist's gates with the k-LUT COVER, for the equivalence harness. Threads the
+   *  block's real output nets in, so the cover is required to drive exactly the ports characterizeVia reads. */
   const coverTransform =
-    (k: number) =>
+    (k: number, block: BlockData) =>
     (compiled: CompiledLogic): CompiledLogic => ({
       ...compiled,
-      gates: coverToLuts(compiled, k).map((l) => ({
+      gates: coverToLuts(compiled, outputNetsOf(block, compiled), k).map((l) => ({
         fn: lutFn(l.config),
         ins: l.inputs,
         out: l.output,
       })),
     })
 
+  /** A cover is WELL-FORMED iff every LUT is k-feasible with a 2^k config, every internal leaf it reads is
+   *  driven by some LUT (or is a primary input), and every primary output is driven — the structural
+   *  invariants an equivalence check over a few input rows does not, on its own, pin. */
+  const assertWellFormedCover = (
+    luts: { k: number; config: boolean[]; inputs: string[]; output: string }[],
+    k: number,
+    primaryInputs: Set<string>,
+    outputs: Set<string>,
+  ): void => {
+    for (const l of luts) {
+      expect(l.k).toBeLessThanOrEqual(k)
+      expect(l.inputs.length).toBe(l.k)
+      expect(l.config.length).toBe(lutConfigSize(l.k))
+    }
+    const driven = new Set(luts.map((l) => l.output))
+    expect(driven.size).toBe(luts.length) // each net driven at most once — no two LUTs fight one net
+    for (const l of luts)
+      for (const leaf of l.inputs) expect(primaryInputs.has(leaf) || driven.has(leaf)).toBe(true) // no dangling leaf
+    for (const o of outputs) expect(primaryInputs.has(o) || driven.has(o)).toBe(true) // every output driven
+  }
+
+  const primaryInputsOf = (compiled: CompiledLogic): Set<string> => {
+    const driven = new Set(compiled.gates.map((g) => g.out))
+    const ins = new Set<string>()
+    for (const g of compiled.gates) for (const net of g.ins) if (!driven.has(net)) ins.add(net)
+    return ins
+  }
+
   // Small designs plus a bigger, more reconvergent one — the 2-bit ripple adder's carry chain (shared
   // sub-functions + deeper cones) is exactly where a cut-enumeration / covering bug would surface.
   for (const block of [HALF_ADDER_BLOCK, FULL_ADDER_BLOCK, RIPPLE_CARRY_2BIT]) {
-    test(`${block.name}: the COVERED LUT netlist matches the golden truth table exactly (k=4)`, () => {
+    test(`${block.name}: covered netlist matches the golden truth table AND is a well-formed k-feasible cover (k=4)`, () => {
       const golden = characterizeBlock(block)
       expect(golden).not.toBeNull()
       // the cover computes the IDENTICAL function as the original gates — the equivalence gate
-      expect(characterizeVia(block, coverTransform(4))?.rows).toEqual(golden?.rows)
+      expect(characterizeVia(block, coverTransform(4, block))?.rows).toEqual(golden?.rows)
+
+      // and it is structurally sound: k-feasible, single-driver, no dangling leaves, every output driven.
+      // (Equivalence alone is k-AGNOSTIC — lutFn evaluates an over-wide config happily — so without this a
+      // >k LUT slips through; asserted for EVERY block, not just the 3-input full adder.)
+      const compiled = compileLogic(blockCanvas(block), [])
+      const luts = coverToLuts(compiled, outputNetsOf(block, compiled), 4)
+      assertWellFormedCover(luts, 4, primaryInputsOf(compiled), outputNetsOf(block, compiled))
     })
   }
 
   test('covering uses FEWER LUTs than the trivial one-LUT-per-gate map (full adder, k=4)', () => {
     const compiled = compileLogic(blockCanvas(FULL_ADDER_BLOCK), [])
     const trivial = mapCompiledToLuts(compiled).length
-    const covered = coverToLuts(compiled, 4).length
+    const covered = coverToLuts(compiled, outputNetsOf(FULL_ADDER_BLOCK, compiled), 4).length
     expect(covered).toBeGreaterThan(0)
     expect(covered).toBeLessThan(trivial) // a whole cone of 2-input gates folds into each 4-LUT
   })
 
-  test('every covered LUT is k-feasible and well-formed (config length = 2^k, inputs = k)', () => {
-    const luts = coverToLuts(compileLogic(blockCanvas(FULL_ADDER_BLOCK), []), 4)
-    expect(luts.length).toBeGreaterThan(0)
-    expect(luts.every((l) => l.k <= 4)).toBe(true)
-    expect(luts.every((l) => l.config.length === lutConfigSize(l.k))).toBe(true)
-    expect(luts.every((l) => l.inputs.length === l.k)).toBe(true)
+  test('the k bound is LOAD-BEARING: a wide design stays k-feasible even at a large cut cap', () => {
+    // RIPPLE_CARRY_2BIT's Cout cone spans 5 primary inputs. At a big cutCap the enumerator finds the wide
+    // cuts, so the `leaves.length > k` guard is the ONLY thing keeping every LUT ≤ k — delete it and this
+    // fails (widths would reach 5). This is the assertion the default-cutCap tests could not make bind.
+    const compiled = compileLogic(blockCanvas(RIPPLE_CARRY_2BIT), [])
+    const outs = outputNetsOf(RIPPLE_CARRY_2BIT, compiled)
+    for (const k of [4, 3]) {
+      const luts = coverToLuts(compiled, outs, k, 64)
+      expect(luts.length).toBeGreaterThan(0)
+      expect(luts.every((l) => l.k <= k && l.inputs.length <= k)).toBe(true)
+    }
   })
 
   test('a smaller LUT size (k=3) still covers correctly (equivalence holds at a different k)', () => {
     const golden = characterizeBlock(FULL_ADDER_BLOCK)
-    expect(characterizeVia(FULL_ADDER_BLOCK, coverTransform(3))?.rows).toEqual(golden?.rows)
+    expect(characterizeVia(FULL_ADDER_BLOCK, coverTransform(3, FULL_ADDER_BLOCK))?.rows).toEqual(
+      golden?.rows,
+    )
+  })
+
+  test('a primary output that ALSO feeds internal logic (fanout 1) is still emitted and driven', () => {
+    // The exact defect the fanout heuristic missed: net N is a primary output AND the single input of gate Z.
+    // With only the fanout rule, N (fanout 1) is neither terminal nor shared, gets absorbed into Z's cone,
+    // and the output reads an undriven net. Threading N in as an output net forces it to be its own LUT.
+    const AND2 = (i: boolean[]) => [i[0] === true && i[1] === true]
+    const compiled: CompiledLogic = {
+      gates: [
+        { fn: AND2, ins: ['a', 'b'], out: 'N' }, // N = a AND b  (a primary output)
+        { fn: AND2, ins: ['N', 'c'], out: 'Z' }, // Z = N AND c  (a primary output that consumes N)
+      ],
+      seeds: [],
+      portNet: (_id, handle) => handle,
+      cutNets: [],
+    }
+    const luts = coverToLuts(compiled, new Set(['N', 'Z']), 4)
+    const outputs = new Set(luts.map((l) => l.output))
+    expect(outputs.has('N')).toBe(true) // the fanout-1 primary output is NOT absorbed away
+    expect(outputs.has('Z')).toBe(true)
+
+    // and it simulates correctly: N = a·b, Z = a·b·c, read back through stepLogic over all 8 input combos
+    for (let combo = 0; combo < 8; combo++) {
+      const [a, b, c] = [(combo & 1) !== 0, (combo & 2) !== 0, (combo & 4) !== 0]
+      const sim: CompiledLogic = {
+        gates: luts.map((l) => ({ fn: lutFn(l.config), ins: l.inputs, out: l.output })),
+        seeds: [
+          { net: 'a', high: a },
+          { net: 'b', high: b },
+          { net: 'c', high: c },
+        ],
+        portNet: (_id, handle) => handle,
+        cutNets: [],
+      }
+      const r = stepLogic(sim)
+      expect(r.value('x', 'N')).toBe(a && b)
+      expect(r.value('x', 'Z')).toBe(a && b && c)
+    }
+  })
+
+  test('a feedback cut point is preserved as a boundary — a cross-coupled pair covers to two mutual LUTs', () => {
+    // A NAND SR latch: Q = NAND(s, qb), qb = NAND(r, Q). The loop's cut point (Q) and both outputs are
+    // boundaries, so neither gate may be absorbed into the other. Without boundary/self-cut handling the
+    // worklist would be empty (both nets fanout 1) and the cover would be [] — the docstring's feedback claim.
+    const NAND2 = (i: boolean[]) => [!(i[0] === true && i[1] === true)]
+    const compiled: CompiledLogic = {
+      gates: [
+        { fn: NAND2, ins: ['s', 'qb'], out: 'Q' },
+        { fn: NAND2, ins: ['r', 'Q'], out: 'qb' },
+      ],
+      seeds: [],
+      portNet: (_id, handle) => handle,
+      cutNets: ['Q'], // compileLogic's cut point for this cycle
+    }
+    const luts = coverToLuts(compiled, new Set(['Q', 'qb']), 4)
+    const outputs = new Set(luts.map((l) => l.output))
+    expect(outputs.has('Q')).toBe(true)
+    expect(outputs.has('qb')).toBe(true)
+    // each LUT reads the OTHER's net as a leaf (no LUT contains its own output — no combinational self-loop)
+    for (const l of luts) expect(l.inputs.includes(l.output)).toBe(false)
+    const qLut = luts.find((l) => l.output === 'Q')
+    const qbLut = luts.find((l) => l.output === 'qb')
+    expect(qLut?.inputs).toContain('qb')
+    expect(qbLut?.inputs).toContain('Q')
   })
 })

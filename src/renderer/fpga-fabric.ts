@@ -136,12 +136,24 @@ function prioritizeCuts(cuts: Cut[], cap: number): Cut[] {
  * How: walk the gate netlist in topological order and enumerate each node's k-feasible cuts (leaf sets
  * ≤ k through which every path from the inputs passes), carrying each cut's exact truth table by
  * composing the gate functions — so a cut IS the LUT that would implement it. Pick each node's cut by
- * area-flow (estimated total LUTs), then cover from the outputs down: a net that is a primary output or is
- * shared (fanout ≥ 2) becomes a LUT root; its cut's internal leaves become roots in turn, down to the
- * primary inputs. Correctness is not a matter of trust — each LUT's config is the exhaustive truth table
- * of its cone, and the whole cover is checked against the golden gate simulation.
+ * area-flow (estimated total LUTs), then cover from the roots down to the primary inputs.
+ *
+ * A net is a COVER ROOT — forced to be emitted as its own LUT output — when it is a primary output, a
+ * feedback cut point (`compiled.cutNets`: the state nets a latch reads back), or shared (fanout ≥ 2), or
+ * terminal (fanout 0). Primary outputs are passed in explicitly (`outputNets`): they cannot be inferred
+ * from the gate list, because a driven output net that ALSO feeds internal logic has fanout ≥ 1 and would
+ * otherwise be absorbed into a downstream cone and left undriven. And no cut may contain its own node — so a
+ * feedback pair decomposes into two LUTs that read each other's net rather than one self-referential LUT,
+ * exactly as the trivial map does. Correctness is not a matter of trust — each LUT's config is the
+ * exhaustive truth table of its cone, and the cover is checked against the golden gate simulation, with
+ * coverage + k-feasibility asserted structurally (tests/fpga-fabric.test.ts).
  */
-export function coverToLuts(compiled: CompiledLogic, k = 4, cutCap = 8): KLut[] {
+export function coverToLuts(
+  compiled: CompiledLogic,
+  outputNets: Iterable<string> = [],
+  k = 4,
+  cutCap = 8,
+): KLut[] {
   const gates = compiled.gates
   const driverOf = new Map<string, (typeof gates)[number]>()
   for (const g of gates) driverOf.set(g.out, g)
@@ -150,10 +162,22 @@ export function coverToLuts(compiled: CompiledLogic, k = 4, cutCap = 8): KLut[] 
   const fanout = new Map<string, number>()
   for (const g of gates) for (const net of g.ins) fanout.set(net, (fanout.get(net) ?? 0) + 1)
   const foOf = (net: string): number => fanout.get(net) ?? 0
-  // A net must be its own LUT output when it is a primary output (nothing reads it) or shared (fanout ≥ 2).
-  const isRoot = (net: string): boolean => !isPI(net) && (foOf(net) === 0 || foOf(net) >= 2)
+  // `boundary` = the nets forced to be their own LUT output because we can't tell them from internal logic
+  // by the gate list alone: primary outputs and feedback cut points (both supplied). A driven output that
+  // also feeds logic has fanout ≥ 1, so without this it would be absorbed into a downstream cone and left
+  // undriven. A net is then a ROOT if it is a boundary, or shared (fanout ≥ 2), or terminal (fanout 0).
+  const boundary = new Set<string>(outputNets)
+  for (const net of compiled.cutNets) boundary.add(net)
+  const isRoot = (net: string): boolean =>
+    !isPI(net) && (boundary.has(net) || foOf(net) === 0 || foOf(net) >= 2)
 
-  // Cut enumeration — gates are already topologically ordered by compileLogic.
+  // Cut enumeration — gates are already topologically ordered by compileLogic. Reject any cut that would
+  // contain its OWN node (`leaves.includes(g.out)`): a LUT can never read its own output. In a combinational
+  // DAG this never fires (a node is never in its own fanin cone); the one place it would is a path back
+  // across a feedback cut point, so this local invariant is what makes a cross-coupled pair decompose into
+  // two LUTs reading each other's net rather than one self-referential LUT. (prioritizeCuts + the area-flow
+  // self-cut filter would also drop such a cut, but enforcing it here keeps feedback-safety local, not an
+  // emergent side effect of the cut-prioritizer.)
   const cutsOf = new Map<string, Cut[]>()
   const cutsFor = (net: string): Cut[] => cutsOf.get(net) ?? [trivialCut(net)]
   for (const g of gates) {
@@ -162,7 +186,7 @@ export function coverToLuts(compiled: CompiledLogic, k = 4, cutCap = 8): KLut[] 
     const combine = (i: number, chosen: Cut[]): void => {
       if (i === faninCuts.length) {
         const leaves = [...new Set(chosen.flatMap((c) => c.leaves))].sort()
-        if (leaves.length > k) return
+        if (leaves.length > k || leaves.includes(g.out)) return
         const table: boolean[] = []
         for (let a = 0; a < 1 << leaves.length; a++) {
           const faninVals = chosen.map((c) => {
