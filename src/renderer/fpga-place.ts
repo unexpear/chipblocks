@@ -62,6 +62,12 @@ export type PlaceOptions = {
   moves?: number
   /** geometric cooling factor applied to the temperature each move (default 0.99). */
   cooling?: number
+  /** per-channel congestion history from a failed routing round: key `chanx_<y>` / `chany_<x>` → penalty. A
+   *  net crossing a congested row/column is charged `congestionWeight × penalty`, so the placer steers nets
+   *  off it. Empty/absent ⇒ pure-HPWL placement (the default; existing behaviour unchanged). */
+  congestion?: Map<string, number>
+  /** weight on the congestion term relative to wirelength (default 0 ⇒ congestion ignored). */
+  congestionWeight?: number
 }
 
 /** A small deterministic PRNG (mulberry32) so placement is reproducible from a seed. */
@@ -123,6 +129,9 @@ export function placeClusters(
     const idx = pos.get(id)
     return idx === undefined ? { x: 0, y: 0 } : (tiles[idx] as { x: number; y: number })
   }
+  const congestion = options.congestion
+  const congestionWeight = options.congestionWeight ?? 0
+  const useCongestion = congestionWeight > 0 && congestion !== undefined && congestion.size > 0
   const cost = (): number => {
     let total = 0
     for (const cn of clusterNets) {
@@ -140,6 +149,14 @@ export function placeClusters(
         if (t.y > maxY) maxY = t.y
       }
       total += maxX - minX + (maxY - minY)
+      // Charge the net for every congested row/column its bounding box spans, so a placement that keeps nets
+      // off the channels a previous routing round overused is cheaper — the placer steers around congestion.
+      if (useCongestion) {
+        for (let y = minY; y <= maxY; y++)
+          total += congestionWeight * ((congestion as Map<string, number>).get(`chanx_${y}`) ?? 0)
+        for (let x = minX; x <= maxX; x++)
+          total += congestionWeight * ((congestion as Map<string, number>).get(`chany_${x}`) ?? 0)
+      }
     }
     return total
   }
