@@ -15,15 +15,19 @@
  *
  * Design choice — the schema deliberately mirrors **Project IceStorm's chipdb vocabulary** (research
  * §4a): a `.device W H` grid of typed tiles, wires as nodes (its `.net`), and `.buffer`/`.routing` pips.
- * Two of chipdb's fields are left empty in Stage 1 — `Pip.configBits` is `null` (the CRAM-coordinate
- * hook) and `WireNode.span` is undefined (the segmentation hook) — so today this is a generic island
- * model *shaped to ingest* the real iCE40 data (it becomes a superset once those hooks are filled), and
- * Stage 2 is a data-load into these structures, not a rewrite.
+ * Two of chipdb's fields were left empty in Stage 1 — `Pip.configBits` and `WireNode.span` — so a
+ * generateFabric fabric is a generic island model *shaped to ingest* the real iCE40 data. Stage 2 FILLS
+ * those hooks: `Pip.configBits` is now `PipCondition | null` (the real CRAM bit coordinates, `null` for a
+ * synthetic fabric) and `WireNode.span` carries the real segmentation. The icebox→RRG bridge that populates
+ * them lives in `fpga-icebox-rrg.ts`; a `generateFabric` fabric still leaves both empty (Stage 1 unchanged).
  *
- * Stage-1 simplification (honest): tracks are **full-length** (one node per row/column track), not yet
- * segmented into span-4/span-12 wires — the `span` field is the hook for that later refinement. This is a
- * valid, routable island model; realistic segmentation and sparse Fc/Fs come with the real iCE40 data.
+ * Stage-1 simplification (honest): a `generateFabric` fabric's tracks are **full-length** (one node per
+ * row/column track), not yet segmented into span-4/span-12 wires — the `span` field is the hook for that,
+ * filled by the real iCE40 data. This is a valid, routable island model; realistic segmentation and sparse
+ * Fc/Fs come with the ingested device.
  */
+
+import type { PipCondition } from './fpga-icebox.ts'
 
 /** Island-fabric architecture knobs (research §1: k = 4–6, N = 4–10, I = ⌈(k/2)(N+1)⌉, Fs = 3). */
 export type FabricArch = {
@@ -72,7 +76,13 @@ export type FabricDevice = {
   tiles: FabricTile[]
 }
 
-export type WireKind = 'source' | 'sink' | 'opin' | 'ipin' | 'chanx' | 'chany'
+/**
+ * Stage 1 uses source/sink/opin/ipin/chanx/chany. Ingesting a real iCE40 device (fpga-icebox-rrg.ts) adds two
+ * kinds its wires need but the synthetic island model has no analogue for: `local` (tile-local interconnect —
+ * `local_*`, `neigh_op_*`, `logic_op_*`) and `global` (the chip-wide clock/reset network — `glb_netwk_*`,
+ * `fabout`, `padin_*`). Real span tracks still classify as chanx (horizontal) / chany (vertical) with `span` set.
+ */
+export type WireKind = 'source' | 'sink' | 'opin' | 'ipin' | 'chanx' | 'chany' | 'local' | 'global'
 export type WireNode = {
   id: string
   kind: WireKind
@@ -92,8 +102,11 @@ export type Pip = {
   from: string
   to: string
   kind: PipKind
-  /** Stage-2 hook: the real CRAM bit coordinate(s) that turn this pip on. `null` in Stage 1. */
-  configBits: null
+  /** The real CRAM bit values that turn this pip on (from the ingested device); `null` for a synthetic
+   *  `generateFabric` fabric. NOTE: a `PipCondition` carries no tile coordinate — reading it in isolation is
+   *  per-tile ambiguous, so `fpga-icebox-rrg`'s `pipToIcebox` map (which keeps each pip's tile) is the
+   *  authoritative source for actual CRAM programming; this field is a convenient self-description. */
+  configBits: PipCondition | null
 }
 
 export type Rrg = {
@@ -114,7 +127,10 @@ function fcTracks(fc: number, w: number): number[] {
 }
 
 /** Build the per-node incoming/outgoing pip adjacency maps from a pip list. */
-function indexPips(pips: Pip[]): { edgesFrom: Map<string, Pip[]>; edgesTo: Map<string, Pip[]> } {
+export function indexPips(pips: Pip[]): {
+  edgesFrom: Map<string, Pip[]>
+  edgesTo: Map<string, Pip[]>
+} {
   const edgesFrom = new Map<string, Pip[]>()
   const edgesTo = new Map<string, Pip[]>()
   const push = (map: Map<string, Pip[]>, key: string, pip: Pip): void => {
@@ -269,7 +285,16 @@ export function serializeChipdb(fabric: Fabric): string {
 }
 
 const TILE_KINDS: readonly TileKind[] = ['logic', 'io', 'empty']
-const WIRE_KINDS: readonly WireKind[] = ['source', 'sink', 'opin', 'ipin', 'chanx', 'chany']
+const WIRE_KINDS: readonly WireKind[] = [
+  'source',
+  'sink',
+  'opin',
+  'ipin',
+  'chanx',
+  'chany',
+  'local',
+  'global',
+]
 
 /**
  * Parse a chipdb text (see `serializeChipdb`) back into a fabric — including a hand-written IceStorm-shaped
