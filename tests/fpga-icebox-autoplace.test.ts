@@ -79,6 +79,21 @@ describe('autoPlace — choose real cells with no hand-placement', () => {
     expect([...a.placement.entries()]).toEqual([...b.placement.entries()])
     expect(a.attempts).toBe(b.attempts)
   })
+
+  test('varies WHICH cell the FIRST LUT takes — not pinned to pool index 0', () => {
+    // Reorder the pool so A's only routable cell (0) is NOT at index 0. A search that fixed luts[0] on pool[0]
+    // and only permuted the rest would never find the answer; the real search moves the first LUT off pool[0].
+    const shuffled: Cell[] = [
+      { x: 1, y: 1, cell: 2 }, // pool[0] — NOT A's routable cell
+      { x: 1, y: 1, cell: 5 }, // pool[1] — B's cell
+      { x: 1, y: 1, cell: 0 }, // pool[2] — A's routable cell
+      { x: 1, y: 1, cell: 1 },
+    ]
+    const placed = autoPlace(DEVICE, LAYOUT, [A, B], shuffled)
+    expect(placed.placed).toBe(true)
+    expect(placed.placement.get('A')).toEqual({ x: 1, y: 1, cell: 0 }) // found cell 0 though it is pool[2]
+    expect(placed.placement.get('B')).toEqual({ x: 1, y: 1, cell: 5 })
+  })
 })
 
 describe('autoPlace — honest failure, never a fabricated placement', () => {
@@ -96,7 +111,8 @@ describe('autoPlace — honest failure, never a fabricated placement', () => {
     )
     expect(noRoute.placed).toBe(false)
     expect(noRoute.result.routed).toBe(false)
-    expect(noRoute.reason).toMatch(/no routable placement/)
+    expect(noRoute.reason).toMatch(/no routable placement exists/)
+    expect(noRoute.exhaustive).toBe(true) // only P(3,2)=6 assignments — the whole space was searched, so this is proven absent
     expect(noRoute.attempts).toBeGreaterThan(0) // it actually tried
   })
 
@@ -114,5 +130,23 @@ describe('autoPlace — honest failure, never a fabricated placement', () => {
     expect(tooBig.placed).toBe(false)
     expect(tooBig.attempts).toBe(0)
     expect(tooBig.reason).toMatch(/3 LUTs but only 2 cells/)
+  })
+
+  test('a budget too small to reach the answer fails as TRUNCATED, not proven-absent; a larger one succeeds', () => {
+    // The routable assignment (A→cell 0, B→cell 5) is the 5th candidate on the natural pool. A budget of 4
+    // stops before it — an inconclusive truncation, flagged exhaustive:false — while 5 reaches it.
+    const truncated = autoPlace(DEVICE, LAYOUT, [A, B], tile11Cells, { maxCandidates: 4 })
+    expect(truncated.placed).toBe(false)
+    expect(truncated.exhaustive).toBe(false) // the search did NOT cover the space — a possible false negative
+    expect(truncated.reason).toMatch(/truncated/)
+    expect(truncated.attempts).toBe(4)
+    expect(autoPlace(DEVICE, LAYOUT, [A, B], tile11Cells, { maxCandidates: 5 }).placed).toBe(true)
+  })
+
+  test('an empty netlist is trivially placed — placed never contradicts result.routed, even at budget 0', () => {
+    const empty = autoPlace(DEVICE, LAYOUT, [], tile11Cells, { maxCandidates: 0 })
+    expect(empty.placed).toBe(true)
+    expect(empty.result.routed).toBe(true)
+    expect(empty.attempts).toBe(0)
   })
 })
