@@ -102,6 +102,42 @@ describe('assembleBitstream — conflict detection across sources', () => {
     expect(bitstream.conflicts.length).toBeGreaterThan(0) // AND2 and XOR2 disagree on some LUT bit at cell 2
   })
 
+  test('cell-vs-routing: a routing pip that drives a logic-cell bit to the opposite value is reported', () => {
+    // cell 0 on tile (5,5) with truth[0]=true sets LUT bit 0 = 1 at B0[40] (LC-bit 4, row 0 col 40).
+    const onehot0 = Array.from({ length: 16 }, (_, i) => i === 0)
+    // a routing pip at the SAME tile whose CRAM condition drives B0[40] to 0 — it collides with the cell's 1.
+    const clash: IceboxPip = {
+      x: 5,
+      y: 5,
+      src: 0,
+      dst: 1,
+      kind: 'buffer',
+      condition: [{ bit: { row: 0, col: 40 }, value: 0 }],
+    }
+    const bitstream = assembleBitstream(LAYOUT, {
+      cells: [{ x: 5, y: 5, cell: 0, config: combinational(onehot0) }],
+      routingPips: [clash],
+    })
+    // reported with the exact cross-source key, not silently letting the routing pip clobber the LUT config
+    expect(bitstream.conflicts).toContain('5_5_B0[40]')
+  })
+
+  test('routing-vs-routing: two mux source-options needing one bit both ways carry their conflict through', () => {
+    // the fragment's real .routing mux (net 143 ← 97/127/80) shares bits B0[11]/B0[12]; selecting 97 (B0[12]=1)
+    // AND 127 (B0[12]=0) demands B0[12] be both — an illegal routing cramBitsForRoute flags, which the
+    // assembler must surface, not swallow.
+    const fragment = parseIceboxChipdb(
+      readFileSync(
+        new URL('../fixtures/icebox-ice40-384-fragment.chipdb', import.meta.url),
+        'utf8',
+      ),
+    )
+    const both = fragment.pips.filter((p) => p.dst === 143 && (p.src === 97 || p.src === 127))
+    expect(both).toHaveLength(2)
+    const bitstream = assembleBitstream(LAYOUT, { routingPips: both })
+    expect(bitstream.conflicts).toContain('0_1_B0[12]')
+  })
+
   test('a logic-only or routing-only design assembles cleanly (each source is optional)', () => {
     const logicOnly = assembleBitstream(LAYOUT, {
       cells: [{ x: 0, y: 0, cell: 0, config: combinational(AND2) }],
