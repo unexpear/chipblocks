@@ -5,20 +5,21 @@
  * the "load a bitstream and watch it run" payoff.
  *
  * The new piece is CONNECTIVITY reconstruction: the parsed ON pips form the routed wires, so for each recovered
- * cell's input pin (`lutff_<cell>/in_<p>`) we trace BACKWARD along those pips (each routed sink has one driving
- * source) until we reach some cell's output wire (`lutff_<cell>/out`) — that cell drives this input. An input
- * whose trace dead-ends at a wire no cell drives is a PRIMARY input (an external signal the testbench sets);
- * an input whose wire is not on the device at all is unused. With the netlist rebuilt, `simulateCombinational`
- * evaluates it: drive the primary inputs, evaluate each cell's LUT (`evalLut4`) in dependency order, read the
- * outputs. So a design that was synthesized to a bitstream (increments 4–6), read back (parse), and rebuilt
- * here computes the SAME function it started with.
+ * cell's input pin (`lutff_<cell>/in_<p>`) that the LUT actually depends on, we trace BACKWARD along those pips
+ * (each routed sink has one driving source) until we reach some cell's output wire (`lutff_<cell>/out`) — that
+ * cell drives this input. A depended-on pin whose trace dead-ends at a wire no cell drives is a PRIMARY input (an
+ * external signal the testbench sets); a pin the LUT ignores (a don't-care), or one whose wire is not on the
+ * device at all, is unused (it contributes no logical edge — see `dependsOnInput`). With the netlist rebuilt,
+ * `simulateCombinational` evaluates it: drive the primary inputs, evaluate each cell's LUT (`evalLut4`) in
+ * dependency order, read the outputs. So a design that was synthesized to a bitstream (increments 4–6), read back
+ * (parse), and rebuilt here computes the SAME function it started with.
  *
  * Honest scope: this simulates the COMBINATIONAL logic. A registered cell (its `dffEnable` bit set) is a
  * flip-flop whose output is its stored value, NOT its LUT output, and computing that needs clock stepping —
  * so registered cells are reported in `registered` and hold `false` in this pass; a clocked simulation is the
  * follow-up. It also inherits the parser's limits (the cell POOL / routing come from the bitstream; primary
- * inputs are named by their net, left for the caller to drive). Nothing is invented — an input that cannot be
- * traced to a driver is reported as primary, not guessed.
+ * inputs are named by their net, left for the caller to drive). Nothing is invented — a pin becomes a primary
+ * input only when the LUT depends on it and no cell drives it (else it is unused), never a guessed connection.
  */
 
 import type { IceboxDevice } from './fpga-icebox.ts'
@@ -74,6 +75,11 @@ export function reconstructNetlist(parsed: ParsedDesign, device: IceboxDevice): 
     const inputs: InputSource[] = [0, 1, 2, 3].map((pin) => {
       const inNet = at(c.x, c.y, `lutff_${c.cell}/in_${pin}`)
       if (inNet === undefined) return { kind: 'unused' }
+      // A pin the LUT ignores (a don't-care) is unused no matter what drives it — classify that FIRST, before
+      // tracing. Otherwise a wire a cell happens to drive into a masked pin becomes a phantom logical edge, which
+      // can even close a false combinational cycle and corrupt the simulation. Only a pin the LUT truly depends
+      // on can be a real cell/primary source.
+      if (!dependsOnInput(c.config.truth, pin)) return { kind: 'unused' }
       // Trace backward through routed pips to a cell output, or dead-end at a primary input.
       let cur = inNet
       const seen = new Set<number>([cur])
@@ -84,11 +90,8 @@ export function reconstructNetlist(parsed: ParsedDesign, device: IceboxDevice): 
       }
       const driver = cellByOutNet.get(cur)
       if (driver !== undefined) return { kind: 'cell', driver, net: cur }
-      // No cell drives this pin. It is a real external PRIMARY only if the LUT actually depends on it; a pin a
-      // real cell declares but the LUT ignores (a don't-care) is unused, not a phantom input to drive.
-      return dependsOnInput(c.config.truth, pin)
-        ? { kind: 'primary', net: cur }
-        : { kind: 'unused' }
+      // No cell drives this pin, and the LUT depends on it ⇒ a real external PRIMARY input.
+      return { kind: 'primary', net: cur }
     })
     return { ref: { x: c.x, y: c.y, cell: c.cell }, config: c.config, inputs }
   })
@@ -167,9 +170,11 @@ export type ClockedResult = {
  *
  * Honest scope (matches the cell model recovered from the bitstream): this is a plain rising-edge D flip-flop
  * per registered cell. The set/reset config bits (`setNoReset` / `asyncSetReset`) ARE recovered by the parser
- * (decodeLc) but are NOT applied here; the clock-enable and the carry chain are NOT modeled or recovered at
- * all. Every flip-flop simply latches D each cycle from a 0 reset. Applying set/reset, recovering + applying
- * clock-enable, and driving a per-cycle input sequence are the follow-ups.
+ * (decodeLc) but are NOT applied here. Likewise the per-cell carry-enable BIT is recovered (into
+ * `config.carryEnable`) but inert — the carry CHAIN itself (carry_in/cout propagation between cells) is neither
+ * traced by `reconstructNetlist` nor modeled here. The clock-enable is NOT recovered or modeled at all. Every
+ * flip-flop simply latches D each cycle from a 0 reset. Applying set/reset, modeling the carry chain, recovering
+ * + applying clock-enable, and driving a per-cycle input sequence are the follow-ups.
  */
 export function simulateClocked(
   netlist: RecoveredNetlist,

@@ -228,6 +228,48 @@ describe('reconstructNetlist — real cells declare all 4 pins; unused LUT input
     expect(sim.outputs.get('1_1_0')).toBe(true)
     expect(sim.outputs.get('1_1_1')).toBe(true)
   })
+
+  test("a don't-care pin a cell physically drives is still unused — no phantom edge, no false cycle", () => {
+    // A = BUF (depends only on in_0); B = BUF. Route A.out → B.in_0 AND B.out → A.in_1. A's in_1 is a don't-care,
+    // yet a cell (B) drives it. Classifying that as a real 'cell' edge would close a false A→B→A cycle and, in
+    // simulateCombinational, memoize B=false forever. The don't-care guard must win FIRST: A.in_1 is unused, and B
+    // correctly equals A. (Reverting the guard-first order regresses B to false when the primary is high.)
+    const dev = parseIceboxChipdb(
+      [
+        '.device T 8 8 5',
+        '.net 0',
+        '1 1 lutff_0/in_0',
+        '.net 1',
+        '1 1 lutff_0/in_1',
+        '.net 2',
+        '1 1 lutff_0/out',
+        '.net 3',
+        '1 1 lutff_1/in_0',
+        '.net 4',
+        '1 1 lutff_1/out',
+        '.buffer 1 1 3 B0[14]', // A.out (net 2) → B.in_0 (net 3)
+        '1 2',
+        '.buffer 1 1 1 B0[15]', // B.out (net 4) → A.in_1 (net 1) — into A's don't-care pin
+        '1 4',
+      ].join('\n'),
+    )
+    const parsed: ParsedDesign = {
+      cells: [
+        { x: 1, y: 1, cell: 0, config: comb(BUF) },
+        { x: 1, y: 1, cell: 1, config: comb(BUF) },
+      ],
+      onPips: dev.pips,
+    }
+    const nl = reconstructNetlist(parsed, dev)
+    const a = nl.cells.find((c) => c.ref.cell === 0)
+    expect(a?.inputs[0]).toEqual({ kind: 'primary', net: 0 }) // the pin A actually uses
+    expect(a?.inputs[1]).toEqual({ kind: 'unused' }) // driven by B, but a don't-care ⇒ NOT a phantom cell edge
+    for (const v of [false, true]) {
+      const sim = simulateCombinational(nl, new Map([[0, v]]))
+      expect(sim.outputs.get('1_1_0')).toBe(v) // A = the primary
+      expect(sim.outputs.get('1_1_1')).toBe(v) // B follows A — no false-cycle corruption
+    }
+  })
 })
 
 describe('simulateCombinational — flip-flops, chains, order, cycles', () => {
@@ -326,5 +368,26 @@ describe('simulateClocked — a sequential circuit runs over clock cycles', () =
     const ffB = oneIn(2, reg(BUF), cellSrc(1)) // samples the combinational NOT
     const run = simulateClocked({ cells: [ffA, notCell, ffB] }, new Map([[7, true]]), 3)
     expect(run.trace.map((cy) => cy.get('0_0_2'))).toEqual([false, true, false])
+  })
+
+  test('a purely combinational cell reading a primary is re-evaluated each cycle from the live primary value', () => {
+    // The only cell is combinational (NOT of a primary), so this exercises the clocked OUTPUT phase's primary read
+    // and its comb path directly — and confirms it reflects the ACTUAL primary, not a stuck constant.
+    const notCell = oneIn(0, comb(expandTruth([true, false])), prim(7)) // out = NOT(net 7)
+    const high = simulateClocked({ cells: [notCell] }, new Map([[7, true]]), 3)
+    expect(high.trace.map((cy) => cy.get('0_0_0'))).toEqual([false, false, false]) // NOT(true)
+    const low = simulateClocked({ cells: [notCell] }, new Map([[7, false]]), 2)
+    expect(low.trace.map((cy) => cy.get('0_0_0'))).toEqual([true, true]) // NOT(false) — reads the real value
+  })
+
+  test('a pure combinational cycle inside a clocked run bails to false instead of hanging', () => {
+    // No register breaks the loop, so the clocked output phase must apply the same combinational-cycle guard the
+    // combinational simulator does — bail to false, never recurse forever.
+    const a = oneIn(0, comb(BUF), cellSrc(1))
+    const b = oneIn(1, comb(BUF), cellSrc(0)) // A ↔ B
+    const run = simulateClocked({ cells: [a, b] }, new Map(), 3)
+    expect(run.trace.map((cy) => cy.get('0_0_0'))).toEqual([false, false, false]) // guard bailed, no hang
+    expect(run.trace.map((cy) => cy.get('0_0_1'))).toEqual([false, false, false])
+    expect(run.finalState.size).toBe(0) // no registered cells ⇒ empty flip-flop state
   })
 })
