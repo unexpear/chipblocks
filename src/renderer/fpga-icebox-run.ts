@@ -30,11 +30,23 @@ import { buildWireIndex } from './fpga-icebox-synth.ts'
 export type CellRef = { x: number; y: number; cell: number }
 const cellKey = (ref: CellRef): string => `${ref.x}_${ref.y}_${ref.cell}`
 
-/** What drives one input pin of a recovered cell. */
+/** What drives one input pin of a recovered cell. `net` is the SOURCE net (the driver cell's output net for a
+ *  cell source, or the external wire the trace dead-ended at for a primary) — so a signal that fans out to
+ *  several pins carries the same `net` at every consumer. */
 export type InputSource =
   | { kind: 'cell'; driver: CellRef; net: number } // another placed cell's output, reached over routed pips
-  | { kind: 'primary'; net: number } // an external input: its wire exists but no cell drives it
-  | { kind: 'unused' } // no `lutff_<cell>/in_<p>` wire for this pin on the device
+  | { kind: 'primary'; net: number } // an external input the LUT uses, driven from outside the design
+  | { kind: 'unused' } // this LUT does not depend on the pin (a don't-care), or the pin has no wire
+
+/** Whether a 16-entry LUT truth table actually depends on input `pin` (some index pair differing only in that
+ *  bit disagrees) — used to tell a genuine external input from a don't-care pin a real cell still declares. */
+function dependsOnInput(truth: readonly boolean[], pin: number): boolean {
+  const bit = 1 << pin
+  for (let idx = 0; idx < 16; idx++) {
+    if ((idx & bit) === 0 && truth[idx] !== truth[idx | bit]) return true
+  }
+  return false
+}
 
 /** A recovered logic cell: where it is, its function, and the source of each of its four LUT inputs. */
 export type RecoveredCell = { ref: CellRef; config: LcConfig; inputs: InputSource[] }
@@ -71,9 +83,12 @@ export function reconstructNetlist(parsed: ParsedDesign, device: IceboxDevice): 
         seen.add(cur)
       }
       const driver = cellByOutNet.get(cur)
-      return driver === undefined
-        ? { kind: 'primary', net: inNet }
-        : { kind: 'cell', driver, net: inNet }
+      if (driver !== undefined) return { kind: 'cell', driver, net: cur }
+      // No cell drives this pin. It is a real external PRIMARY only if the LUT actually depends on it; a pin a
+      // real cell declares but the LUT ignores (a don't-care) is unused, not a phantom input to drive.
+      return dependsOnInput(c.config.truth, pin)
+        ? { kind: 'primary', net: cur }
+        : { kind: 'unused' }
     })
     return { ref: { x: c.x, y: c.y, cell: c.cell }, config: c.config, inputs }
   })

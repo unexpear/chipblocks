@@ -9,9 +9,19 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import type { KLut } from '../src/renderer/fpga-fabric.ts'
 import { parseIceboxChipdb } from '../src/renderer/fpga-icebox.ts'
-import { parseLogicTileBits } from '../src/renderer/fpga-icebox-logic.ts'
+import {
+  expandTruth,
+  type LcConfig,
+  parseLogicTileBits,
+} from '../src/renderer/fpga-icebox-logic.ts'
+import type { ParsedDesign } from '../src/renderer/fpga-icebox-parse.ts'
 import { parseBitstream } from '../src/renderer/fpga-icebox-parse.ts'
-import { reconstructNetlist, simulateCombinational } from '../src/renderer/fpga-icebox-run.ts'
+import {
+  type InputSource,
+  type RecoveredCell,
+  reconstructNetlist,
+  simulateCombinational,
+} from '../src/renderer/fpga-icebox-run.ts'
 import { type Placement, synthesizeBitstream } from '../src/renderer/fpga-icebox-synth.ts'
 
 const LAYOUT = parseLogicTileBits(
@@ -66,8 +76,9 @@ describe('reconstructNetlist + simulateCombinational — load a bitstream and wa
     expect(design.routed).toBe(true)
     const a = netlist.cells.find((c) => c.ref.cell === 0)
     const b = netlist.cells.find((c) => c.ref.cell === 1)
-    // cell 1's input pin 0 is driven by cell 0 (traced back through the routed pip), the rest unused
-    expect(b?.inputs[0]).toEqual({ kind: 'cell', driver: { x: 1, y: 1, cell: 0 }, net: 3 })
+    // cell 1's input pin 0 is driven by cell 0 (traced back through the routed pip); `net` is cell 0's OUTPUT
+    // net (2 = lutff_0/out, the source), not cell 1's input-pin net.
+    expect(b?.inputs[0]).toEqual({ kind: 'cell', driver: { x: 1, y: 1, cell: 0 }, net: 2 })
     expect(b?.inputs[1]).toEqual({ kind: 'unused' })
     // cell 0's two inputs are primary (external), pins 2/3 unused
     expect(a?.inputs[0]).toEqual({ kind: 'primary', net: 0 })
@@ -127,7 +138,133 @@ describe('reconstructNetlist — recovers connectivity from the REAL vendored sl
       DEVICE,
     )
     const q = netlist.cells.find((c) => c.ref.cell === 5)
-    // net 1121 = lutff_5/in_1 ← (through 1057) ← net 39 = lutff_0/out = cell 0
-    expect(q?.inputs[1]).toEqual({ kind: 'cell', driver: { x: 1, y: 1, cell: 0 }, net: 1121 })
+    // net 1121 = lutff_5/in_1 ← (through 1057) ← net 39 = lutff_0/out = cell 0; `net` is the source (39).
+    expect(q?.inputs[1]).toEqual({ kind: 'cell', driver: { x: 1, y: 1, cell: 0 }, net: 39 })
+  })
+})
+
+// --- helpers for hand-built netlists (testing reconstruct classification + the simulator directly) ---
+const comb = (truth: boolean[]): LcConfig => ({
+  truth,
+  carryEnable: false,
+  dffEnable: false,
+  setNoReset: false,
+  asyncSetReset: false,
+})
+const BUF = expandTruth([false, true]) // out = in0
+const AND2_16 = expandTruth([false, false, false, true])
+const ref = (cell: number): { x: number; y: number; cell: number } => ({ x: 0, y: 0, cell })
+const prim = (net: number): InputSource => ({ kind: 'primary', net })
+const cellSrc = (cell: number): InputSource => ({ kind: 'cell', driver: ref(cell), net: cell })
+const UNUSED: InputSource = { kind: 'unused' }
+const oneIn = (cell: number, config: LcConfig, in0: InputSource): RecoveredCell => ({
+  ref: ref(cell),
+  config,
+  inputs: [in0, UNUSED, UNUSED, UNUSED],
+})
+
+describe('reconstructNetlist — real cells declare all 4 pins; unused LUT inputs are not phantom primaries', () => {
+  test('a 2-input LUT on a device that declares in_2/in_3 marks those pins UNUSED, not primary', () => {
+    const dev = parseIceboxChipdb(
+      [
+        '.device T 8 8 4',
+        '.net 0',
+        '1 1 lutff_0/in_0',
+        '.net 1',
+        '1 1 lutff_0/in_1',
+        '.net 5',
+        '1 1 lutff_0/in_2', // declared, but the AND2 does not depend on it
+        '.net 6',
+        '1 1 lutff_0/in_3', // declared, but ignored
+      ].join('\n'),
+    )
+    const parsed: ParsedDesign = {
+      cells: [{ x: 1, y: 1, cell: 0, config: comb(AND2_16) }],
+      onPips: [],
+    }
+    const c0 = reconstructNetlist(parsed, dev).cells[0]
+    expect(c0?.inputs[0]).toEqual({ kind: 'primary', net: 0 }) // in_0 used ⇒ external primary
+    expect(c0?.inputs[1]).toEqual({ kind: 'primary', net: 1 }) // in_1 used ⇒ external primary
+    expect(c0?.inputs[2]).toEqual({ kind: 'unused' }) // in_2 declared but a don't-care ⇒ unused
+    expect(c0?.inputs[3]).toEqual({ kind: 'unused' }) // in_3 declared but a don't-care ⇒ unused
+  })
+
+  test('one external input fanning out to two cells unifies under a single source net', () => {
+    const dev = parseIceboxChipdb(
+      [
+        '.device T 8 8 5',
+        '.net 0',
+        '1 1 lutff_0/in_0',
+        '.net 2',
+        '1 1 lutff_0/out',
+        '.net 3',
+        '1 1 lutff_1/in_0',
+        '.net 4',
+        '1 1 lutff_1/out',
+        '.net 100',
+        '0 1 glb_netwk_0', // an external signal, driven by no cell
+        '.buffer 1 1 0 B0[1]', // net 100 → cell 0's in_0
+        '1 100',
+        '.buffer 1 1 3 B0[2]', // net 100 → cell 1's in_0
+        '1 100',
+      ].join('\n'),
+    )
+    const parsed: ParsedDesign = {
+      cells: [
+        { x: 1, y: 1, cell: 0, config: comb(BUF) },
+        { x: 1, y: 1, cell: 1, config: comb(BUF) },
+      ],
+      onPips: dev.pips,
+    }
+    const nl = reconstructNetlist(parsed, dev)
+    // both cells' input pin 0 report the SAME source net (100), not their own pin nets (0 and 3)
+    expect(nl.cells[0]?.inputs[0]).toEqual({ kind: 'primary', net: 100 })
+    expect(nl.cells[1]?.inputs[0]).toEqual({ kind: 'primary', net: 100 })
+    // so driving the one real external net reaches both cells
+    const sim = simulateCombinational(nl, new Map([[100, true]]))
+    expect(sim.outputs.get('1_1_0')).toBe(true)
+    expect(sim.outputs.get('1_1_1')).toBe(true)
+  })
+})
+
+describe('simulateCombinational — flip-flops, chains, order, cycles', () => {
+  test('a registered cell is reported and held false; a cell reading it sees false', () => {
+    const registeredCell: RecoveredCell = {
+      ref: ref(0),
+      config: { ...comb(BUF), dffEnable: true },
+      inputs: [prim(0), UNUSED, UNUSED, UNUSED],
+    }
+    const reader = oneIn(1, comb(BUF), cellSrc(0))
+    const sim = simulateCombinational({ cells: [registeredCell, reader] }, new Map([[0, true]]))
+    expect(sim.registered).toEqual([ref(0)]) // the flip-flop is reported, not silently mis-evaluated
+    expect(sim.outputs.get('0_0_0')).toBe(false) // held false despite its primary being true
+    expect(sim.outputs.get('0_0_1')).toBe(false) // the reader sees the held-false value
+  })
+
+  test('evaluates correctly regardless of cells[] order — a consumer listed before its driver', () => {
+    const driver = oneIn(0, comb(BUF), prim(0))
+    const consumer = oneIn(1, comb(BUF), cellSrc(0))
+    const sim = simulateCombinational({ cells: [consumer, driver] }, new Map([[0, true]])) // consumer FIRST
+    expect(sim.outputs.get('0_0_1')).toBe(true)
+  })
+
+  test('a 3-cell chain and a fan-out both propagate correctly', () => {
+    const a = oneIn(0, comb(BUF), prim(0))
+    const b = oneIn(1, comb(BUF), cellSrc(0))
+    const c = oneIn(2, comb(BUF), cellSrc(1)) // chain A→B→C
+    const d = oneIn(3, comb(BUF), cellSrc(0)) // fan-out: also reads A
+    for (const v of [false, true]) {
+      const sim = simulateCombinational({ cells: [a, b, c, d] }, new Map([[0, v]]))
+      expect(sim.outputs.get('0_0_2')).toBe(v) // end of the chain
+      expect(sim.outputs.get('0_0_3')).toBe(v) // the fan-out branch
+    }
+  })
+
+  test('a combinational cycle bails to false instead of looping forever', () => {
+    const a = oneIn(0, comb(BUF), cellSrc(1))
+    const b = oneIn(1, comb(BUF), cellSrc(0)) // A ↔ B
+    const sim = simulateCombinational({ cells: [a, b] }, new Map())
+    expect(sim.outputs.get('0_0_0')).toBe(false) // bailed on the cycle, no hang
+    expect(sim.outputs.get('0_0_1')).toBe(false)
   })
 })
