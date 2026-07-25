@@ -149,3 +149,102 @@ export function simulateCombinational(
   for (const cell of netlist.cells) evalCell(cell, new Set())
   return { outputs, registered }
 }
+
+/** A clocked run: each cycle's per-cell output values, and the flip-flop state after the last cycle. */
+export type ClockedResult = {
+  /** trace[cycle].get(cellKey) = that cell's output at that cycle. */
+  trace: Map<string, boolean>[]
+  /** the flip-flop state (Q per registered cell) after the final cycle. */
+  finalState: Map<string, boolean>
+}
+
+/**
+ * Simulate a SEQUENTIAL netlist over `cycles` clock ticks. A registered cell (dffEnable) is a D flip-flop: its
+ * OUTPUT during a cycle is its stored value Q (so a feedback loop through it is well-defined — the register is
+ * the state boundary), and its LUT computes the next-state D from this cycle's values; on the clock edge every
+ * flip-flop latches Q ← D at once. Combinational cells evaluate their LUT as usual. Primary inputs are held at
+ * `primary` for the whole run. Flip-flops start at 0 (reset).
+ *
+ * Honest scope (matches the cell model recovered from the bitstream): this is a plain rising-edge D flip-flop
+ * per registered cell. The set/reset and clock-enable config bits (`setNoReset` / `asyncSetReset`, and the
+ * tile's clock-enable) are recovered by the parser but NOT applied here — every flip-flop simply latches D each
+ * cycle from a 0 reset; a per-cycle input sequence and those control semantics are the follow-up.
+ */
+export function simulateClocked(
+  netlist: RecoveredNetlist,
+  primary: Map<number, boolean>,
+  cycles: number,
+): ClockedResult {
+  const byKey = new Map(netlist.cells.map((c) => [cellKey(c.ref), c]))
+  let state = new Map<string, boolean>() // registered cell Q; absent ⇒ false (reset 0)
+  const trace: Map<string, boolean>[] = []
+
+  const readSource = (source: InputSource, outputs: Map<string, boolean>): boolean => {
+    if (source.kind === 'cell') return outputs.get(cellKey(source.driver)) ?? false
+    if (source.kind === 'primary') return primary.get(source.net) ?? false
+    return false // unused
+  }
+
+  for (let cy = 0; cy < cycles; cy++) {
+    const outputs = new Map<string, boolean>()
+    // A cell's OUTPUT this cycle: a flip-flop shows its stored Q; a combinational cell evaluates its LUT.
+    const evalOut = (cell: RecoveredCell, stack: Set<string>): boolean => {
+      const key = cellKey(cell.ref)
+      const done = outputs.get(key)
+      if (done !== undefined) return done
+      if (cell.config.dffEnable) {
+        const q = state.get(key) ?? false
+        outputs.set(key, q)
+        return q
+      }
+      if (stack.has(key)) return false // combinational cycle
+      stack.add(key)
+      const out = evalLut4(
+        cell.config.truth,
+        readViaEval(cell.inputs[0] as InputSource, evalOut, stack, byKey, primary),
+        readViaEval(cell.inputs[1] as InputSource, evalOut, stack, byKey, primary),
+        readViaEval(cell.inputs[2] as InputSource, evalOut, stack, byKey, primary),
+        readViaEval(cell.inputs[3] as InputSource, evalOut, stack, byKey, primary),
+      )
+      stack.delete(key)
+      outputs.set(key, out)
+      return out
+    }
+    for (const cell of netlist.cells) evalOut(cell, new Set())
+
+    // Latch: every flip-flop's next Q is its LUT's D, computed from this cycle's outputs, all at once.
+    const nextState = new Map(state)
+    for (const cell of netlist.cells) {
+      if (!cell.config.dffEnable) continue
+      nextState.set(
+        cellKey(cell.ref),
+        evalLut4(
+          cell.config.truth,
+          readSource(cell.inputs[0] as InputSource, outputs),
+          readSource(cell.inputs[1] as InputSource, outputs),
+          readSource(cell.inputs[2] as InputSource, outputs),
+          readSource(cell.inputs[3] as InputSource, outputs),
+        ),
+      )
+    }
+    trace.push(outputs)
+    state = nextState
+  }
+  return { trace, finalState: state }
+}
+
+/** Read one input pin's value during combinational evaluation (recursing into a driver cell's output). */
+function readViaEval(
+  source: InputSource,
+  evalOut: (cell: RecoveredCell, stack: Set<string>) => boolean,
+  stack: Set<string>,
+  byKey: Map<string, RecoveredCell>,
+  primary: Map<number, boolean>,
+): boolean {
+  if (source.kind === 'cell') {
+    const driver = byKey.get(cellKey(source.driver))
+    return driver === undefined ? false : evalOut(driver, stack)
+  }
+  if (source.kind === 'primary') return primary.get(source.net) ?? false
+  return false // unused
+}

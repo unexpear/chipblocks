@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import type { KLut } from '../src/renderer/fpga-fabric.ts'
 import { parseIceboxChipdb } from '../src/renderer/fpga-icebox.ts'
+import { assembleBitstream } from '../src/renderer/fpga-icebox-bitstream.ts'
 import {
   expandTruth,
   type LcConfig,
@@ -20,6 +21,7 @@ import {
   type InputSource,
   type RecoveredCell,
   reconstructNetlist,
+  simulateClocked,
   simulateCombinational,
 } from '../src/renderer/fpga-icebox-run.ts'
 import { type Placement, synthesizeBitstream } from '../src/renderer/fpga-icebox-synth.ts'
@@ -151,6 +153,7 @@ const comb = (truth: boolean[]): LcConfig => ({
   setNoReset: false,
   asyncSetReset: false,
 })
+const reg = (truth: boolean[]): LcConfig => ({ ...comb(truth), dffEnable: true }) // a registered (flip-flop) cell
 const BUF = expandTruth([false, true]) // out = in0
 const AND2_16 = expandTruth([false, false, false, true])
 const ref = (cell: number): { x: number; y: number; cell: number } => ({ x: 0, y: 0, cell })
@@ -266,5 +269,48 @@ describe('simulateCombinational — flip-flops, chains, order, cycles', () => {
     const sim = simulateCombinational({ cells: [a, b] }, new Map())
     expect(sim.outputs.get('0_0_0')).toBe(false) // bailed on the cycle, no hang
     expect(sim.outputs.get('0_0_1')).toBe(false)
+  })
+})
+
+describe('simulateClocked — a sequential circuit runs over clock cycles', () => {
+  test('a toggle flip-flop, round-tripped from its BITSTREAM, toggles 0,1,0,1', () => {
+    // A cell whose LUT is NOT(in0) with its flip-flop enabled, wired output → its own input (a real routed
+    // self-feedback). Encoded to a bitstream, parsed back, rebuilt, and clocked — it should toggle.
+    const device = parseIceboxChipdb(
+      [
+        '.device T 8 8 3',
+        '.net 0',
+        '1 1 lutff_0/in_0',
+        '.net 2',
+        '1 1 lutff_0/out',
+        '.buffer 1 1 0 B0[14]', // route lutff_0/out (net 2) back to lutff_0/in_0 (net 0)
+        '1 2',
+      ].join('\n'),
+    )
+    const toggle = reg(expandTruth([true, false])) // out = NOT in0, registered
+    const bitstream = assembleBitstream(LAYOUT, {
+      cells: [{ x: 1, y: 1, cell: 0, config: toggle }],
+      routingPips: device.pips,
+    })
+    const netlist = reconstructNetlist(parseBitstream(bitstream.bits, device, LAYOUT), device)
+    // the rebuilt cell reads its OWN output — the flip-flop feedback, recovered from the bits
+    expect(netlist.cells[0]?.inputs[0]).toEqual({
+      kind: 'cell',
+      driver: { x: 1, y: 1, cell: 0 },
+      net: 2,
+    })
+    const run = simulateClocked(netlist, new Map(), 4)
+    expect(run.trace.map((cycle) => cycle.get('1_1_0'))).toEqual([false, true, false, true])
+  })
+
+  test('a 2-stage shift register delays a held input by two cycles', () => {
+    // ff0 samples the primary input; ff1 samples ff0. With the input held high from a 0 reset, the high value
+    // reaches ff0 after 1 clock and ff1 after 2 — a real synchronous 2-cycle pipeline.
+    const ff0 = oneIn(0, reg(BUF), prim(7))
+    const ff1 = oneIn(1, reg(BUF), cellSrc(0))
+    const run = simulateClocked({ cells: [ff0, ff1] }, new Map([[7, true]]), 4)
+    expect(run.trace.map((cy) => cy.get('0_0_0'))).toEqual([false, true, true, true]) // stage 1: 1-cycle delay
+    expect(run.trace.map((cy) => cy.get('0_0_1'))).toEqual([false, false, true, true]) // stage 2: 2-cycle delay
+    expect(run.finalState.get('0_0_1')).toBe(true) // the pipeline is full after it has run
   })
 })
