@@ -15,6 +15,7 @@ import {
   type LcConfig,
   parseLogicTileBits,
 } from '../src/renderer/fpga-icebox-logic.ts'
+import { rrgFromIcebox } from '../src/renderer/fpga-icebox-rrg.ts'
 import {
   buildWireIndex,
   type Placement,
@@ -103,8 +104,8 @@ describe('synthesizeBitstream — a placed 2-LUT design → real bitstream, rout
   })
 })
 
-describe('synthesizeBitstream — honest failure reporting', () => {
-  test('an unplaced LUT is reported in unbound, never silently dropped', () => {
+describe('synthesizeBitstream — honest failure reporting (a partial design is never reported legal)', () => {
+  test('an unplaced LUT is reported in unbound, and the design is NOT routed (legal)', () => {
     const result = synthesizeBitstream(
       DEVICE,
       LAYOUT,
@@ -113,11 +114,12 @@ describe('synthesizeBitstream — honest failure reporting', () => {
     )
     expect(result.unbound).toContain('cell:B') // B has no placement
     expect(result.cells).toHaveLength(1) // only A placed
+    expect(result.routed).toBe(false) // unbound ⇒ not a legal, fully-realized design
   })
 
-  test('a net whose driver cell output wire is not on the device is reported, not faked', () => {
+  test('a net whose driver cell output wire is not on the device is reported, and routed is false', () => {
     // place A on a cell whose lutff/out is absent from this tiny slice (cell 3), but B still reads nA — so the
-    // net has a real sink but no bindable source: reported as out:A, and no fabricated route.
+    // net has a real sink but no bindable source: reported as out:A, no fabricated route, and routed:false.
     const result = synthesizeBitstream(
       DEVICE,
       LAYOUT,
@@ -129,5 +131,35 @@ describe('synthesizeBitstream — honest failure reporting', () => {
     )
     expect(result.unbound).toContain('out:A')
     expect(result.nets).toHaveLength(0) // nothing routed — the source could not bind
+    expect(result.routed).toBe(false) // a clean route over a partially-bound netlist is NOT success
+  })
+
+  test('two LUTs on the same physical cell (one BLE) is flagged structurally, even with identical functions', () => {
+    // A real iCE40 BLE holds one LUT. Two distinct LUTs (same truth table, unconsumed outputs) on (1,1,0) would
+    // otherwise slip past the assembler's value-conflict check (identical bits ⇒ no differing bit). The
+    // structural occupancy check catches it regardless of the encoded values.
+    const C: KLut = { id: 'C', k: 2, config: A.config, inputs: ['i4', 'i5'], output: 'nC' }
+    const result = synthesizeBitstream(
+      DEVICE,
+      LAYOUT,
+      [A, C],
+      new Map([
+        ['A', { x: 1, y: 1, cell: 0 }],
+        ['C', { x: 1, y: 1, cell: 0 }], // same BLE as A — illegal
+      ]),
+    )
+    expect(result.unbound).toContain('cell-conflict:A:C')
+    expect(result.routed).toBe(false)
+  })
+})
+
+describe('synthesizeBitstream — real multi-source muxes: only the in-slice source connects', () => {
+  test('each mux lists 16 real sources; 30 pips are excluded (source wire outside the slice), 2 routed', () => {
+    // The fixture keeps each mux's full 16 source options verbatim. rrgFromIcebox excludes the 30 whose source
+    // wire is not one of {39,1057,1121} and includes the 2 that form the real 39→1057→1121 path.
+    const { report } = rrgFromIcebox(DEVICE)
+    expect(report.pipsTotal).toBe(32) // 16 + 16 real mux source options
+    expect(report.pipsIncluded).toBe(2) // only the two whose src+dst are both in the slice
+    expect(report.excludedMissingSrc).toBe(30) // the other source options reference wires outside the slice
   })
 })

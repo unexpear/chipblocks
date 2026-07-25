@@ -34,7 +34,8 @@ export type Placement = Map<string, { x: number; y: number; cell: number }>
 export type SynthResult = {
   /** the assembled logic + routing bitstream (with the assembler's cross-source conflict check). */
   bitstream: Bitstream
-  /** true iff every internal net routed cell-to-cell with no overuse (a legal design). */
+  /** true iff the design is legal AND fully realized: every internal net routed cell-to-cell with no overuse
+   *  AND nothing was left `unbound` (no missing placement, missing pin wire, or over-subscribed cell). */
   routed: boolean
   route: RouteResult
   /** the internal nets the router was given (driver cell output → consumer cell input pins). */
@@ -80,14 +81,22 @@ export function synthesizeBitstream(
     wireIndex.get(`${x}_${y}_${name}`)
   const unbound: string[] = []
 
-  // Place each LUT: program its cell. (Its output wire is looked up lazily below, only if it drives a net.)
+  // Place each LUT: program its cell. A real iCE40 BLE holds ONE LUT, so two LUTs on the same (x,y,cell) is an
+  // illegal placement — flag it structurally (independent of whether their encoded bits happen to differ, which
+  // the assembler's value-conflict check would otherwise be the only, and incomplete, backstop). The output
+  // wire is looked up lazily below, only if the LUT drives a net.
   const cells: PlacedCell[] = []
+  const occupant = new Map<string, string>() // "x_y_cell" → the LUT id already placed there
   for (const lut of luts) {
     const place = placement.get(lut.id)
     if (place === undefined) {
       unbound.push(`cell:${lut.id}`)
       continue
     }
+    const cellKey = `${place.x}_${place.y}_${place.cell}`
+    const already = occupant.get(cellKey)
+    if (already !== undefined) unbound.push(`cell-conflict:${already}:${lut.id}`)
+    else occupant.set(cellKey, lut.id)
     cells.push({
       x: place.x,
       y: place.y,
@@ -133,5 +142,7 @@ export function synthesizeBitstream(
   }
 
   const bitstream = assembleBitstream(layout, { cells, routingPips })
-  return { bitstream, routed: route.routed, route, nets, cells, unbound }
+  // A design is only legal + fully realized if it routed AND everything bound — a caller must not read a
+  // clean route over a partially-bound netlist as success.
+  return { bitstream, routed: route.routed && unbound.length === 0, route, nets, cells, unbound }
 }
