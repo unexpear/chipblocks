@@ -13,7 +13,12 @@ import {
   RIPPLE_CARRY_2BIT,
 } from '../src/renderer/builtin-blocks.ts'
 import { coverToLuts, type KLut } from '../src/renderer/fpga-fabric.ts'
-import { extractRouting, packLuts, placeClusters } from '../src/renderer/fpga-place.ts'
+import {
+  coolingGamma,
+  extractRouting,
+  packLuts,
+  placeClusters,
+} from '../src/renderer/fpga-place.ts'
 import { routeDesign } from '../src/renderer/fpga-router.ts'
 import { DEFAULT_FABRIC_ARCH, generateFabric } from '../src/renderer/fpga-rrg.ts'
 import { bridgeToSim, type Drive } from '../src/renderer/fpga-sim.ts'
@@ -50,6 +55,46 @@ const fourLuts = (): KLut[] => [
   { id: 'L2', k: 2, config: [false, true, true, false], inputs: ['x', 'd'], output: 'y' },
   { id: 'L3', k: 2, config: [false, false, false, true], inputs: ['y', 'a'], output: 'z' },
 ]
+
+/**
+ * An n-LUT chain sharing one primary input: L0 = pi, Lᵢ = Lᵢ₋₁ ∧ pi. A scalable design whose annealing
+ * TRAJECTORY affects the returned placement — used to stress incremental-cost exactness, determinism (a tiny
+ * design converges to the same optimum regardless of trajectory, so it can't detect nondeterminism), and
+ * schedule quality on a design big enough that the adaptive schedule's mechanisms actually matter.
+ */
+const sharedInputChain = (n: number): KLut[] =>
+  Array.from({ length: n }, (_, i) =>
+    i === 0
+      ? { id: 'L0', k: 1, config: [false, true], inputs: ['pi'], output: 'w0' }
+      : {
+          id: `L${i}`,
+          k: 2,
+          config: [false, false, false, true],
+          inputs: [`w${i - 1}`, 'pi'],
+          output: `w${i}`,
+        },
+  )
+
+/** A 2-D mesh: LUT[r][c] reads its left and up neighbour — a connectivity-rich design where spreading matters. */
+const meshLuts = (side: number): KLut[] => {
+  const luts: KLut[] = []
+  for (let r = 0; r < side; r++)
+    for (let c = 0; c < side; c++) {
+      const inputs: string[] = []
+      if (c > 0) inputs.push(`m_${r}_${c - 1}`)
+      if (r > 0) inputs.push(`m_${r - 1}_${c}`)
+      if (inputs.length === 0) inputs.push('pi')
+      const k = Math.max(1, inputs.length)
+      luts.push({
+        id: `m_${r}_${c}`,
+        k,
+        config: Array(1 << k).fill(true),
+        inputs,
+        output: `m_${r}_${c}`,
+      })
+    }
+  return luts
+}
 
 /** A star: one driver feeding many consumers — its identity placement scatters, so annealing has clear work. */
 const starLuts = (fanout: number): KLut[] => [
@@ -113,14 +158,7 @@ describe('placeClusters — SA minimizes half-perimeter wirelength', () => {
     // If that Δ accounting ever drifted, the running cost would diverge from the truth — so recompute the HPWL
     // of the returned placement from scratch and require it to match exactly, over a design big enough (a
     // 20-LUT chain) that thousands of incremental moves accumulate.
-    const luts = Array.from({ length: 20 }, (_, i) => ({
-      id: `L${i}`,
-      k: i === 0 ? 1 : 2,
-      config: i === 0 ? [false, true] : [false, false, false, true],
-      inputs: i === 0 ? ['pi'] : [`w${i - 1}`, 'pi'],
-      output: `w${i}`,
-    }))
-    const clusters = packLuts(luts)
+    const clusters = packLuts(sharedInputChain(20))
     const device = generateFabric(DEFAULT_FABRIC_ARCH, 6, 6).device
     const res = placeClusters(clusters, device, { seed: 3 })
 
@@ -163,15 +201,19 @@ describe('placeClusters — SA minimizes half-perimeter wirelength', () => {
   })
 
   test('deterministic: same seed ⇒ identical placement AND hpwl; a design larger than the fabric reports fits:false', () => {
-    const device = generateFabric(DEFAULT_FABRIC_ARCH, 4, 4).device
-    const clusters = packLuts(chainLuts())
+    // Use a NON-TRIVIAL design (20-LUT chain on 6×6) whose annealing TRAJECTORY affects the returned placement.
+    // A tiny 3-cluster design converges to the same optimum regardless of the trajectory, so it can't detect a
+    // stray nondeterministic tiebreak (e.g. a Math.random in the accept path) — on this design, injected
+    // nondeterminism diverges run-to-run and reddens this directly, rather than relying on the flow suite.
+    const clusters = packLuts(sharedInputChain(20))
+    const device = generateFabric(DEFAULT_FABRIC_ARCH, 6, 6).device
     const a = placeClusters(clusters, device, { seed: 42 })
     const b = placeClusters(clusters, device, { seed: 42 })
     expect([...a.placement.entries()]).toEqual([...b.placement.entries()])
     expect(a.hpwl).toBe(b.hpwl)
     expect(a.initialHpwl).toBe(b.initialHpwl)
 
-    const tiny = generateFabric(DEFAULT_FABRIC_ARCH, 1, 1).device // 1 tile, 3 clusters
+    const tiny = generateFabric(DEFAULT_FABRIC_ARCH, 1, 1).device // 1 tile ⇒ 20 clusters cannot fit
     expect(placeClusters(clusters, tiny, { seed: 1 }).fits).toBe(false)
   })
 
@@ -202,6 +244,69 @@ describe('placeClusters — SA minimizes half-perimeter wirelength', () => {
       congestionWeight: 8,
     })
     expect(withWeight.hpwl).toBeGreaterThan(base.hpwl)
+  })
+
+  test('the adaptive schedule beats a long fixed-budget anneal on larger designs — pins the range limiter', () => {
+    // The range limiter (rlim shrinking toward α ≈ 0.44) is what makes the cold phase do LOCAL swaps instead
+    // of random long-distance ones; freezing it at full range costs 20–40% wirelength on large designs, yet
+    // every existing test still passes (they anneal tiny grids where rlim barely moves). Guard it behaviourally:
+    // on larger designs with room to spread, the DEFAULT adaptive schedule reaches STRICTLY SHORTER wirelength
+    // than the same placer run as a long fixed geometric anneal (moves = clusters × tiles × 20, full-range
+    // throughout) — the scaling claim, made testable. Freezing rlim (or gutting the adaptive schedule) makes the
+    // default tie-or-lose against that long anneal and reddens this. Everything is seeded, so it is exact, not flaky.
+    for (const { luts, grid, seed } of [
+      { luts: sharedInputChain(60), grid: 14, seed: 2 },
+      { luts: meshLuts(7), grid: 12, seed: 1 },
+      { luts: meshLuts(7), grid: 12, seed: 4 },
+    ]) {
+      const clusters = packLuts(luts)
+      const device = generateFabric(DEFAULT_FABRIC_ARCH, grid, grid).device
+      const tiles = device.tiles.filter((t) => t.kind === 'logic').length
+      const adaptive = placeClusters(clusters, device, { seed })
+      const fixedLong = placeClusters(clusters, device, {
+        seed,
+        moves: clusters.length * tiles * 20,
+      })
+      expect(adaptive.hpwl).toBeLessThan(fixedLong.hpwl)
+    }
+  })
+
+  test('an explicit moves budget is clamped — Infinity terminates, NaN/negative is a no-op, not undefined behaviour', () => {
+    // Termination is a required invariant under ANY options. The fixed-schedule loop `for (m=0; m<moves; m++)`
+    // has no finiteness guard of its own, so a stray moves:Infinity would spin forever. The clamp makes Infinity
+    // (and NaN/negative) degrade to "zero moves ⇒ return the initial placement". WITHOUT the clamp this test
+    // hangs on the Infinity case — so it guards the clamp directly.
+    const device = generateFabric(DEFAULT_FABRIC_ARCH, 4, 4).device
+    const clusters = packLuts(chainLuts())
+    for (const moves of [Number.POSITIVE_INFINITY, Number.NaN, -5, 0]) {
+      const res = placeClusters(clusters, device, { seed: 1, moves })
+      expect(res.hpwl).toBe(res.initialHpwl) // zero moves ⇒ the initial placement, unchanged
+      expect(res.fits).toBe(true)
+      expect(res.placement.size).toBe(3)
+    }
+    // a normal finite budget still anneals (the clamp only rejects non-finite/non-positive budgets)
+    const normal = placeClusters(clusters, device, { seed: 1, moves: 400 })
+    expect(normal.hpwl).toBeLessThanOrEqual(normal.initialHpwl)
+  })
+})
+
+describe('coolingGamma — the VPR VPlace temperature-cooling band table', () => {
+  test('selects the Betz–Rose γ band from the acceptance rate α, and always cools (γ < 1)', () => {
+    // These four bands are VPR's published VPlace schedule — pinning the exact constants here means a refactor
+    // cannot silently invert, drop, or mis-tune a band. No placement-quality test catches a broken γ (scrambling
+    // it barely moves final wirelength, since best-seen + the range limiter mask it), so this unit test is the
+    // only guard on the schedule's SHAPE.
+    expect(coolingGamma(0.99)).toBe(0.5) // far too hot ⇒ cool fast
+    expect(coolingGamma(0.9)).toBe(0.9) // hot ⇒ ease off
+    expect(coolingGamma(0.5)).toBe(0.95) // productive band ⇒ dwell
+    expect(coolingGamma(0.05)).toBe(0.8) // nearly frozen ⇒ cool faster again
+    // band boundaries are strict `>`, so a value ON a threshold falls into the LOWER band
+    expect(coolingGamma(0.96)).toBe(0.9)
+    expect(coolingGamma(0.8)).toBe(0.95)
+    expect(coolingGamma(0.15)).toBe(0.8)
+    // every band cools — this is what guarantees the anneal terminates
+    for (const alpha of [0, 0.1, 0.15, 0.44, 0.8, 0.96, 1])
+      expect(coolingGamma(alpha)).toBeLessThan(1)
   })
 })
 

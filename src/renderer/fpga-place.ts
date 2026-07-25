@@ -19,13 +19,20 @@
  * placement under any schedule. A seeded PRNG makes every placement reproducible (deterministic given its seed).
  *
  * The default schedule is VPR's VPlace (Betz & Rose): ~10·N^(4/3) moves per temperature level, with BOTH the
- * temperature and a range limiter adapting to the measured acceptance rate α each level — cool fast while too
- * hot (α > 0.96 ⇒ ×0.5), dwell in the productive band (×0.95), and shrink the move window toward α ≈ 0.44 so
- * the low-temperature phase makes LOCAL swaps, not random long-distance ones. The number of levels is set by
- * the schedule (∝ log N), not by N, so the total move count grows ~N^(4/3)·log N rather than N·tiles — and,
- * because the adaptive schedule spends its moves where they help, it produces ~15–30% SHORTER wirelength than
- * the old fixed geometric schedule, not merely as-good. (Passing an explicit `moves` uses a simple fixed
- * geometric schedule instead — for tests/callers that want a specific budget.)
+ * temperature and a range limiter adapting to the measured acceptance rate α each level. The cooling factor
+ * γ(α) has four bands (see `coolingGamma`): cool fast while far too hot (α > 0.96 ⇒ ×0.5), ease off in the
+ * productive band (×0.9 then ×0.95), and cool faster again once nearly frozen (α ≤ 0.15 ⇒ ×0.8); the move
+ * window shrinks toward α ≈ 0.44 so the low-temperature phase makes LOCAL swaps, not random long-distance ones.
+ * The number of levels is set by the schedule (∝ log N), not by N, so the total move count grows ~N^(4/3)·log N
+ * rather than N·tiles.
+ *
+ * The robust, load-bearing win is SCALING: the adaptive schedule reaches comparable-or-better wirelength using
+ * far fewer moves, which is what turns the annealer from O(n³) into ~O(N^1.5). On wirelength specifically the
+ * result is design-dependent — on larger, connectivity-rich designs (chains, meshes with room to spread) it is
+ * typically ~10–25% shorter than the same placer run as a long fixed geometric anneal (a test pins that the
+ * default beats that fixed anneal on a 60-LUT chain and a 7×7 mesh), while on small or tightly-packed designs
+ * the two are comparable and it can occasionally be marginally worse. (Passing an explicit `moves` uses that
+ * simple fixed geometric schedule instead — for tests/callers that want a specific budget.)
  *
  * Cost: each move re-scores only the nets it can change — an EXACT incremental Δ over the nets touching the
  * moved (and displaced) clusters (via `netsOf` + a version-stamped, allocation-free affected list), not a full
@@ -64,7 +71,11 @@ export type PlaceResult = {
   /** true iff every cluster got a distinct logic tile (false ⇒ the design has more LUTs than the fabric has tiles). */
   fits: boolean
   placement: Placement
-  /** HPWL of the returned placement, and of the initial (pre-anneal) placement — so a test can see SA improved it. */
+  /** The placement COST of the returned placement, and of the initial (pre-anneal) placement — so a test can
+   *  see SA improved it. With no congestion (the default) this is pure HPWL; when a `congestion` map + a
+   *  nonzero `congestionWeight` are supplied it is the congestion-AUGMENTED anneal cost (HPWL + Σ
+   *  congestionWeight·penalty over the bounding box's rows/cols) — the objective the annealer actually
+   *  minimized, NOT pure half-perimeter wirelength. */
   hpwl: number
   initialHpwl: number
 }
@@ -95,6 +106,22 @@ function makeRng(seed: number): () => number {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
+}
+
+/**
+ * VPR VPlace temperature-cooling factor γ(α): how much to multiply the temperature by after a level, chosen
+ * from the measured acceptance rate α (Betz & Rose, "VPR"). Cool fast when far too hot (α > 0.96 ⇒ ×0.5),
+ * ease off through the productive band (×0.9 then ×0.95), and cool faster again once nearly frozen
+ * (α ≤ 0.15 ⇒ ×0.8). Every band is < 1, so the schedule always cools (which is what bounds the level count).
+ * Exported and factored out so the exact VPR band table is a guarded invariant: scrambling it barely moves
+ * final wirelength (best-seen + range-limiting mask it), so no placement-quality test catches a broken γ — a
+ * direct unit test on this function does.
+ */
+export function coolingGamma(alpha: number): number {
+  if (alpha > 0.96) return 0.5
+  if (alpha > 0.8) return 0.9
+  if (alpha > 0.15) return 0.95
+  return 0.8
 }
 
 /** The cluster-level connectivity a placement optimizes: which cluster drives a net and which consume it. */
@@ -283,10 +310,15 @@ export function placeClusters(
 
   if (options.moves !== undefined) {
     // Explicit fixed schedule (a caller/test asking for a specific budget): `moves` moves over a
-    // geometrically-cooled temperature. Best-seen still guarantees hpwl ≤ initialHpwl.
+    // geometrically-cooled temperature. Best-seen still guarantees hpwl ≤ initialHpwl. Clamp the budget to a
+    // finite non-negative integer so Termination holds under ANY input: a stray Infinity can't spin the loop
+    // forever, and a NaN/negative degrades to "no moves" (returns the initial placement) rather than looping
+    // on undefined behaviour. (The default adaptive schedule already has its own maxLevels backstop.)
+    const budget =
+      Number.isFinite(options.moves) && options.moves > 0 ? Math.floor(options.moves) : 0
     const cooling = options.cooling ?? 0.99
     let temperature = Math.max(1, initialHpwl)
-    for (let m = 0; m < options.moves; m++) {
+    for (let m = 0; m < budget; m++) {
       attemptMove(maxDim, temperature)
       temperature *= cooling
     }
@@ -309,8 +341,7 @@ export function placeClusters(
       for (let i = 0; i < movesPerTemp; i++)
         if (attemptMove(rlim, temperature) === 'accepted') accepts++
       const alpha = accepts / movesPerTemp
-      const gamma = alpha > 0.96 ? 0.5 : alpha > 0.8 ? 0.9 : alpha > 0.15 ? 0.95 : 0.8
-      temperature *= gamma
+      temperature *= coolingGamma(alpha)
       rlim = Math.max(1, Math.min(maxDim, Math.round(rlim * (1 - 0.44 + alpha))))
     }
   }
