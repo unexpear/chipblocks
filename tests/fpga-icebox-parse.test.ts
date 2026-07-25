@@ -12,6 +12,7 @@ import {
   decodeLc,
   expandTruth,
   type LcConfig,
+  lcCramBits,
   parseLogicTileBits,
 } from '../src/renderer/fpga-icebox-logic.ts'
 import {
@@ -116,5 +117,41 @@ describe('parseBitstream — the inverse never invents structure', () => {
     expect(cells.some((c) => c.cell === 1)).toBe(false)
     // and each recovered cell really decodes to what decodeLc says (self-consistent)
     for (const c of cells) expect(c.config).toEqual(decodeLc(LAYOUT, c.cell, c.x, c.y, bits))
+  })
+})
+
+describe('parseBitstream — flip-flops and multiple tiles', () => {
+  test("recovers a registered cell's flip-flop config, not just the LUT — each sequential bit round-trips", () => {
+    // The demo cells are combinational; program a REAL register and confirm all four sequential bits read back.
+    for (const ff of [
+      { carryEnable: true, dffEnable: false, setNoReset: false, asyncSetReset: false },
+      { carryEnable: false, dffEnable: true, setNoReset: false, asyncSetReset: false },
+      { carryEnable: false, dffEnable: false, setNoReset: true, asyncSetReset: false },
+      { carryEnable: false, dffEnable: false, setNoReset: false, asyncSetReset: true },
+    ]) {
+      const config: LcConfig = { truth: expandTruth(A.config), ...ff }
+      const recovered = decodeUsedCells(lcCramBits(LAYOUT, 3, 2, 4, config), LAYOUT)
+      expect(recovered.find((c) => c.cell === 3)?.config).toEqual(config) // FF fields recovered exactly
+    }
+  })
+
+  test('a registered cell with a constant-0 LUT is still "used" — the flip-flop branch of used, not just the LUT', () => {
+    const config: LcConfig = {
+      truth: Array.from({ length: 16 }, () => false), // constant-0 LUT…
+      carryEnable: false,
+      dffEnable: true, // …but a real register, so the cell IS used, not unprogrammed
+      setNoReset: false,
+      asyncSetReset: false,
+    }
+    const cells = decodeUsedCells(lcCramBits(LAYOUT, 0, 1, 1, config), LAYOUT)
+    expect(cells).toHaveLength(1)
+    expect(cells[0]?.config).toEqual(config)
+  })
+
+  test('recovers cells across MULTIPLE tiles — not just the first tile the bits touch', () => {
+    const onTileA = lcCramBits(LAYOUT, 0, 1, 1, combinational(expandTruth(A.config))) // tile (1,1) cell 0
+    const onTileB = lcCramBits(LAYOUT, 2, 2, 4, combinational(expandTruth(B.config))) // tile (2,4) cell 2
+    const cells = decodeUsedCells([...onTileA, ...onTileB], LAYOUT)
+    expect(cells.map((c) => `${c.x}_${c.y}_${c.cell}`).sort()).toEqual(['1_1_0', '2_4_2'])
   })
 })

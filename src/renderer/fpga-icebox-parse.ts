@@ -18,7 +18,10 @@
  * next increment), nor parse a whole vendor `.bin` FILE (its frame format, CRC, IO / PLL / BRAM and
  * unused-tile default bits are unmodeled; this reads the CRAM-bit representation our own flow produces, and the
  * documented logic/routing bits of a real one). A cell configured to a constant-0 LUT with no flip-flop is
- * indistinguishable from an unprogrammed cell and is read as unused — disclosed, not guessed.
+ * indistinguishable from an unprogrammed cell and is read as unused — disclosed, not guessed. And
+ * `decodeUsedCells` treats every tile the bits touch as a LOGIC tile (our own bitstreams only put bits on
+ * logic tiles): parsing an arbitrary real image would first need a logic-tile filter (from the chipdb's
+ * `.logic_tile` list) so routing- or IO-tile bits can't decode into phantom cells.
  */
 
 import type { IceboxDevice, IceboxPip, ProgrammedBit } from './fpga-icebox.ts'
