@@ -149,4 +149,23 @@ describe('autoPlace — honest failure, never a fabricated placement', () => {
     expect(empty.result.routed).toBe(true)
     expect(empty.attempts).toBe(0)
   })
+
+  test('the exhaustive/truncated boundary is EXACT: budget == P(m,n) is exhaustive, one less is truncated', () => {
+    // 3 non-connected cells ⇒ P(3,2) = 6 injective assignments, none routable. This straddles cap == P(m,n),
+    // so it pins the strict `>` in injectiveCountExceeds — a `>=` off-by-one would mislabel the full-space
+    // search at budget 6 as truncated.
+    const pool = [
+      { x: 1, y: 1, cell: 1 },
+      { x: 1, y: 1, cell: 2 },
+      { x: 1, y: 1, cell: 3 },
+    ]
+    const atWholeSpace = autoPlace(DEVICE, LAYOUT, [A, B], pool, { maxCandidates: 6 })
+    expect(atWholeSpace.placed).toBe(false)
+    expect(atWholeSpace.attempts).toBe(6) // all 6 assignments were tried
+    expect(atWholeSpace.exhaustive).toBe(true) // budget == whole space ⇒ conclusively proven-absent
+    expect(atWholeSpace.reason).toMatch(/no routable placement exists/)
+    const oneShort = autoPlace(DEVICE, LAYOUT, [A, B], pool, { maxCandidates: 5 })
+    expect(oneShort.exhaustive).toBe(false) // one short of the whole space ⇒ inconclusive
+    expect(oneShort.reason).toMatch(/truncated/)
+  })
 })
