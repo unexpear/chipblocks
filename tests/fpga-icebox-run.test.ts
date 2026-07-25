@@ -391,3 +391,150 @@ describe('simulateClocked — a sequential circuit runs over clock cycles', () =
     expect(run.finalState.size).toBe(0) // no registered cells ⇒ empty flip-flop state
   })
 })
+
+describe('simulateClocked — a per-cycle input sequence drives primaries differently each cycle', () => {
+  test('an array stimulus feeds a distinct value per cycle; a constant map holds it', () => {
+    const ff = oneIn(0, reg(BUF), prim(7)) // a plain D-FF sampling net 7
+    // per-cycle sequence 1,0,1,0 → the FF echoes it one clock late
+    const seq = [
+      new Map([[7, true]]),
+      new Map([[7, false]]),
+      new Map([[7, true]]),
+      new Map([[7, false]]),
+    ]
+    const run = simulateClocked({ cells: [ff] }, seq, 4)
+    expect(run.trace.map((cy) => cy.get('0_0_0'))).toEqual([false, true, false, true])
+    // contrast: the SAME FF with the input HELD constant fills and stays high (proves the sequence really varied)
+    const held = simulateClocked({ cells: [ff] }, new Map([[7, true]]), 4)
+    expect(held.trace.map((cy) => cy.get('0_0_0'))).toEqual([false, true, true, true])
+  })
+
+  test('a function stimulus, and a short array held past its end, both resolve per cycle', () => {
+    const ff = oneIn(0, reg(BUF), prim(7))
+    // function: net 7 high only in cycle 1 → FF shows it in cycle 2
+    const fn = simulateClocked({ cells: [ff] }, (cy) => new Map([[7, cy === 1]]), 4)
+    expect(fn.trace.map((cy) => cy.get('0_0_0'))).toEqual([false, false, true, false])
+    // a 1-entry array holds for all 3 cycles (same as the constant map)
+    const short = simulateClocked({ cells: [ff] }, [new Map([[7, true]])], 3)
+    expect(short.trace.map((cy) => cy.get('0_0_0'))).toEqual([false, true, true])
+  })
+})
+
+describe('reconstructNetlist — recovers the tile set/reset signal', () => {
+  test("a signal routed into lutff_global/s_r is recovered as the flip-flop's setReset source", () => {
+    const dev = parseIceboxChipdb(
+      [
+        '.device T 8 8 5',
+        '.net 0',
+        '1 1 lutff_0/in_0',
+        '.net 2',
+        '1 1 lutff_0/out',
+        '.net 5',
+        '1 1 lutff_global/s_r',
+        '.net 9',
+        '0 1 glb_netwk_0', // an external signal (driven by no cell)
+        '.buffer 1 1 5 B0[20]', // route glb (net 9) → the tile's s_r (net 5)
+        '1 9',
+      ].join('\n'),
+    )
+    const parsed: ParsedDesign = {
+      cells: [{ x: 1, y: 1, cell: 0, config: reg(BUF) }],
+      onPips: dev.pips,
+    }
+    const c = reconstructNetlist(parsed, dev).cells[0]
+    expect(c?.setReset).toEqual({ kind: 'primary', net: 9 }) // the external SR input, recovered from the routing
+  })
+
+  test('a flip-flop with nothing routed to s_r has no setReset (a plain D flip-flop)', () => {
+    const dev = parseIceboxChipdb(
+      [
+        '.device T 8 8 5',
+        '.net 0',
+        '1 1 lutff_0/in_0',
+        '.net 2',
+        '1 1 lutff_0/out',
+        '.net 5',
+        '1 1 lutff_global/s_r', // the s_r wire exists but nothing drives it
+      ].join('\n'),
+    )
+    const parsed: ParsedDesign = {
+      cells: [{ x: 1, y: 1, cell: 0, config: reg(BUF) }],
+      onPips: [],
+    }
+    expect(reconstructNetlist(parsed, dev).cells[0]?.setReset ?? null).toBeNull()
+  })
+})
+
+describe('simulateClocked — the recovered set/reset is applied', () => {
+  const HIGH = Array.from({ length: 16 }, () => true) // D = constant 1
+  const LOW = Array.from({ length: 16 }, () => false) // D = constant 0
+  // a registered cell whose next-state D is constant, with its s_r driven by primary net 9
+  const srCell = (config: LcConfig): RecoveredCell => ({
+    ref: ref(0),
+    config,
+    inputs: [UNUSED, UNUSED, UNUSED, UNUSED],
+    setReset: prim(9),
+  })
+  // s_r asserted in cycles 0 and 3, deasserted in 1 and 2
+  const srSeq = [
+    new Map([[9, true]]),
+    new Map([[9, false]]),
+    new Map([[9, false]]),
+    new Map([[9, true]]),
+  ]
+  const dff = (truth: boolean[], setNoReset: boolean, asyncSetReset: boolean): LcConfig => ({
+    truth,
+    carryEnable: false,
+    dffEnable: true,
+    setNoReset,
+    asyncSetReset,
+  })
+
+  test('an ASYNCHRONOUS reset forces the output the same cycle s_r is asserted', () => {
+    const run = simulateClocked({ cells: [srCell(dff(HIGH, false, true))] }, srSeq, 4)
+    // cy0 reset→0 (immediate); cy1 loads D=1 → shows 0 then; cy2 shows 1; cy3 reset→0 immediately
+    expect(run.trace.map((cy) => cy.get('0_0_0'))).toEqual([false, false, true, false])
+  })
+
+  test('a SYNCHRONOUS reset changes only at the next edge — one cycle later than async', () => {
+    const run = simulateClocked({ cells: [srCell(dff(HIGH, false, false))] }, srSeq, 4)
+    // identical to async EXCEPT cy3: sync s_r does not force the output this cycle, so it still shows the old Q
+    expect(run.trace.map((cy) => cy.get('0_0_0'))).toEqual([false, false, true, true])
+  })
+
+  test('setNoReset makes s_r a SET — Q is forced to 1', () => {
+    const run = simulateClocked({ cells: [srCell(dff(LOW, true, true))] }, srSeq, 4)
+    // cy0 set→1 (and latched 1); cy1 shows the latched 1 then loads D=0; cy2 shows 0; cy3 set→1
+    expect(run.trace.map((cy) => cy.get('0_0_0'))).toEqual([true, true, false, true])
+  })
+
+  test('everything-real: a registered async-reset cell with s_r routed from a primary, round-tripped through its BITSTREAM, resets', () => {
+    const dev = parseIceboxChipdb(
+      [
+        '.device T 8 8 5',
+        '.net 2',
+        '1 1 lutff_0/out',
+        '.net 5',
+        '1 1 lutff_global/s_r',
+        '.net 9',
+        '0 1 glb_netwk_0',
+        '.buffer 1 1 5 B0[14]', // glb (net 9) → s_r (net 5)
+        '1 9',
+      ].join('\n'),
+    )
+    const config = dff(HIGH, false, true) // load 1, async reset
+    const bitstream = assembleBitstream(LAYOUT, {
+      cells: [{ x: 1, y: 1, cell: 0, config }],
+      routingPips: dev.pips,
+    })
+    const netlist = reconstructNetlist(parseBitstream(bitstream.bits, dev, LAYOUT), dev)
+    // the s_r source was recovered from the real bits, not hand-set
+    expect(netlist.cells[0]?.setReset).toEqual({ kind: 'primary', net: 9 })
+    const run = simulateClocked(
+      netlist,
+      [new Map([[9, true]]), new Map([[9, false]]), new Map([[9, false]])],
+      3,
+    )
+    expect(run.trace.map((cy) => cy.get('1_1_0'))).toEqual([false, false, true]) // reset cy0, then loads D=1
+  })
+})

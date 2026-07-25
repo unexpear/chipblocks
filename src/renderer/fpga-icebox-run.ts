@@ -50,7 +50,15 @@ function dependsOnInput(truth: readonly boolean[], pin: number): boolean {
 }
 
 /** A recovered logic cell: where it is, its function, and the source of each of its four LUT inputs. */
-export type RecoveredCell = { ref: CellRef; config: LcConfig; inputs: InputSource[] }
+export type RecoveredCell = {
+  ref: CellRef
+  config: LcConfig
+  inputs: InputSource[]
+  /** The tile-shared set/reset signal driving this flip-flop, if the bitstream routed one into the tile's
+   *  `lutff_global/s_r` sink (a cell output or an external primary). `null`/absent ⇒ a plain flip-flop with no
+   *  set/reset. Only set for registered cells. */
+  setReset?: InputSource | null
+}
 export type RecoveredNetlist = { cells: RecoveredCell[] }
 
 /**
@@ -71,6 +79,25 @@ export function reconstructNetlist(parsed: ParsedDesign, device: IceboxDevice): 
     if (out !== undefined) cellByOutNet.set(out, { x: c.x, y: c.y, cell: c.cell })
   }
 
+  // Trace a routed wire backward to its ultimate source net (a cell output, or a driven external wire), following
+  // each sink's single driver until it reaches a cell output or dead-ends. A `seen` set guards a malformed cycle.
+  const traceBack = (startNet: number): number => {
+    let cur = startNet
+    const seen = new Set<number>([cur])
+    while (!cellByOutNet.has(cur) && driverOf.has(cur)) {
+      cur = driverOf.get(cur) as number
+      if (seen.has(cur)) break
+      seen.add(cur)
+    }
+    return cur
+  }
+  // The source of a routed sink net: the cell that drives it, else the external wire it dead-ends at (a primary).
+  const sourceOf = (net: number): InputSource => {
+    const cur = traceBack(net)
+    const driver = cellByOutNet.get(cur)
+    return driver !== undefined ? { kind: 'cell', driver, net: cur } : { kind: 'primary', net: cur }
+  }
+
   const cells: RecoveredCell[] = parsed.cells.map((c) => {
     const inputs: InputSource[] = [0, 1, 2, 3].map((pin) => {
       const inNet = at(c.x, c.y, `lutff_${c.cell}/in_${pin}`)
@@ -80,20 +107,15 @@ export function reconstructNetlist(parsed: ParsedDesign, device: IceboxDevice): 
       // can even close a false combinational cycle and corrupt the simulation. Only a pin the LUT truly depends
       // on can be a real cell/primary source.
       if (!dependsOnInput(c.config.truth, pin)) return { kind: 'unused' }
-      // Trace backward through routed pips to a cell output, or dead-end at a primary input.
-      let cur = inNet
-      const seen = new Set<number>([cur])
-      while (!cellByOutNet.has(cur) && driverOf.has(cur)) {
-        cur = driverOf.get(cur) as number
-        if (seen.has(cur)) break // cycle guard on a malformed routing
-        seen.add(cur)
-      }
-      const driver = cellByOutNet.get(cur)
-      if (driver !== undefined) return { kind: 'cell', driver, net: cur }
-      // No cell drives this pin, and the LUT depends on it ⇒ a real external PRIMARY input.
-      return { kind: 'primary', net: cur }
+      return sourceOf(inNet)
     })
-    return { ref: { x: c.x, y: c.y, cell: c.cell }, config: c.config, inputs }
+    // The tile-shared set/reset signal: present only if the bitstream actually routed something into the tile's
+    // `lutff_global/s_r` sink. A registered cell whose s_r is routed carries that source (a cell or a primary); a
+    // plain flip-flop (nothing routed to s_r) carries none. Combinational cells never carry one.
+    const srNet = at(c.x, c.y, 'lutff_global/s_r')
+    const setReset: InputSource | null =
+      c.config.dffEnable && srNet !== undefined && driverOf.has(srNet) ? sourceOf(srNet) : null
+    return { ref: { x: c.x, y: c.y, cell: c.cell }, config: c.config, inputs, setReset }
   })
   return { cells }
 }
@@ -162,55 +184,82 @@ export type ClockedResult = {
 }
 
 /**
+ * Per-cycle primary-input stimulus for a clocked run. Three forms: a single map held constant every cycle
+ * (back-compatible); one map per cycle (an array — the last entry holds for any cycles beyond its length); or a
+ * function of the cycle index. Values are keyed by net index (the primary's `net`), missing ⇒ false.
+ */
+export type Stimulus =
+  | Map<number, boolean>
+  | Map<number, boolean>[]
+  | ((cycle: number) => Map<number, boolean>)
+
+const EMPTY_INPUTS: Map<number, boolean> = new Map()
+/** The primary-input values for one cycle, resolving any of the three `Stimulus` forms. */
+function inputsAt(stimulus: Stimulus, cycle: number): Map<number, boolean> {
+  if (typeof stimulus === 'function') return stimulus(cycle)
+  if (Array.isArray(stimulus)) return stimulus[Math.min(cycle, stimulus.length - 1)] ?? EMPTY_INPUTS
+  return stimulus
+}
+
+/**
  * Simulate a SEQUENTIAL netlist over `cycles` clock ticks. A registered cell (dffEnable) is a D flip-flop: its
  * OUTPUT during a cycle is its stored value Q (so a feedback loop through it is well-defined — the register is
  * the state boundary), and its LUT computes the next-state D from this cycle's values; on the clock edge every
- * flip-flop latches Q ← D at once. Combinational cells evaluate their LUT as usual. Primary inputs are held at
- * `primary` for the whole run. Flip-flops start at 0 (reset).
+ * flip-flop latches Q ← D at once. Combinational cells evaluate their LUT as usual. Flip-flops start at 0 (reset).
  *
- * Honest scope (matches the cell model recovered from the bitstream): this is a plain rising-edge D flip-flop
- * per registered cell. The set/reset config bits (`setNoReset` / `asyncSetReset`) ARE recovered by the parser
- * (decodeLc) but are NOT applied here. Likewise the per-cell carry-enable BIT is recovered (into
- * `config.carryEnable`) but inert — the carry CHAIN itself (carry_in/cout propagation between cells) is neither
- * traced by `reconstructNetlist` nor modeled here. The clock-enable is NOT recovered or modeled at all. Every
- * flip-flop simply latches D each cycle from a 0 reset. Applying set/reset, modeling the carry chain, recovering
- * + applying clock-enable, and driving a per-cycle input sequence are the follow-ups.
+ * Set/reset: if the bitstream routed a signal into the tile's shared `lutff_global/s_r` (recovered as the cell's
+ * `setReset` source), an asserted s_r overrides D at the clock edge — Q ← 1 when `setNoReset`, else Q ← 0. An
+ * ASYNCHRONOUS flip-flop (`asyncSetReset`) additionally forces its OUTPUT the instant s_r is asserted (the same
+ * cycle); a SYNCHRONOUS one changes only at the next edge — so the two differ observably by one cycle. A
+ * flip-flop with no routed s_r is a plain D flip-flop.
+ *
+ * Stimulus: `stimulus` drives the primary inputs each cycle (constant map / per-cycle array / function — see
+ * `Stimulus`).
+ *
+ * Honest scope (matches the cell model recovered from the bitstream): the clock-enable is NOT recovered or
+ * modeled (every flip-flop clocks each cycle); the per-cell carry-enable BIT is recovered (`config.carryEnable`)
+ * but inert, and the carry CHAIN (carry_in/cout propagation) is neither traced nor modeled. Those are the
+ * remaining follow-ups.
  */
 export function simulateClocked(
   netlist: RecoveredNetlist,
-  primary: Map<number, boolean>,
+  stimulus: Stimulus,
   cycles: number,
 ): ClockedResult {
   const byKey = new Map(netlist.cells.map((c) => [cellKey(c.ref), c]))
   let state = new Map<string, boolean>() // registered cell Q; absent ⇒ false (reset 0)
   const trace: Map<string, boolean>[] = []
 
-  const readSource = (source: InputSource, outputs: Map<string, boolean>): boolean => {
-    if (source.kind === 'cell') return outputs.get(cellKey(source.driver)) ?? false
-    if (source.kind === 'primary') return primary.get(source.net) ?? false
-    return false // unused
-  }
-
   for (let cy = 0; cy < cycles; cy++) {
+    const inputs = inputsAt(stimulus, cy)
     const outputs = new Map<string, boolean>()
-    // A cell's OUTPUT this cycle: a flip-flop shows its stored Q; a combinational cell evaluates its LUT.
+    // A cell's OUTPUT this cycle: a flip-flop shows its stored Q (an async set/reset forces it immediately); a
+    // combinational cell evaluates its LUT.
     const evalOut = (cell: RecoveredCell, stack: Set<string>): boolean => {
       const key = cellKey(cell.ref)
       const done = outputs.get(key)
       if (done !== undefined) return done
       if (cell.config.dffEnable) {
-        const q = state.get(key) ?? false
-        outputs.set(key, q)
-        return q
+        const stored = state.get(key) ?? false
+        outputs.set(key, stored) // provisional — lets an async s_r that reads this same flip-flop see its Q
+        if (cell.config.asyncSetReset && cell.setReset) {
+          // Asynchronous set/reset forces the output the moment s_r is asserted, not at the clock edge.
+          if (readViaEval(cell.setReset, evalOut, stack, byKey, inputs)) {
+            const forced = cell.config.setNoReset // s_r asserted ⇒ SET (1) or RESET (0) per the config bit
+            outputs.set(key, forced)
+            return forced
+          }
+        }
+        return stored
       }
       if (stack.has(key)) return false // combinational cycle
       stack.add(key)
       const out = evalLut4(
         cell.config.truth,
-        readViaEval(cell.inputs[0] as InputSource, evalOut, stack, byKey, primary),
-        readViaEval(cell.inputs[1] as InputSource, evalOut, stack, byKey, primary),
-        readViaEval(cell.inputs[2] as InputSource, evalOut, stack, byKey, primary),
-        readViaEval(cell.inputs[3] as InputSource, evalOut, stack, byKey, primary),
+        readViaEval(cell.inputs[0] as InputSource, evalOut, stack, byKey, inputs),
+        readViaEval(cell.inputs[1] as InputSource, evalOut, stack, byKey, inputs),
+        readViaEval(cell.inputs[2] as InputSource, evalOut, stack, byKey, inputs),
+        readViaEval(cell.inputs[3] as InputSource, evalOut, stack, byKey, inputs),
       )
       stack.delete(key)
       outputs.set(key, out)
@@ -218,25 +267,39 @@ export function simulateClocked(
     }
     for (const cell of netlist.cells) evalOut(cell, new Set())
 
-    // Latch: every flip-flop's next Q is its LUT's D, computed from this cycle's outputs, all at once.
+    // Latch: every flip-flop's next Q is its set/reset value if s_r is asserted this cycle, else its LUT's D,
+    // computed from this cycle's outputs — all at once. (This edge behaviour is identical for sync and async s_r;
+    // only the OUTPUT this cycle differs, handled above.)
     const nextState = new Map(state)
     for (const cell of netlist.cells) {
       if (!cell.config.dffEnable) continue
-      nextState.set(
-        cellKey(cell.ref),
-        evalLut4(
-          cell.config.truth,
-          readSource(cell.inputs[0] as InputSource, outputs),
-          readSource(cell.inputs[1] as InputSource, outputs),
-          readSource(cell.inputs[2] as InputSource, outputs),
-          readSource(cell.inputs[3] as InputSource, outputs),
-        ),
-      )
+      const sr = cell.setReset ? readSource(cell.setReset, outputs, inputs) : false
+      const next = sr
+        ? cell.config.setNoReset
+        : evalLut4(
+            cell.config.truth,
+            readSource(cell.inputs[0] as InputSource, outputs, inputs),
+            readSource(cell.inputs[1] as InputSource, outputs, inputs),
+            readSource(cell.inputs[2] as InputSource, outputs, inputs),
+            readSource(cell.inputs[3] as InputSource, outputs, inputs),
+          )
+      nextState.set(cellKey(cell.ref), next)
     }
     trace.push(outputs)
     state = nextState
   }
   return { trace, finalState: state }
+}
+
+/** Read one input's value at latch time from this cycle's outputs (cell source) or primary inputs. */
+function readSource(
+  source: InputSource,
+  outputs: Map<string, boolean>,
+  inputs: Map<number, boolean>,
+): boolean {
+  if (source.kind === 'cell') return outputs.get(cellKey(source.driver)) ?? false
+  if (source.kind === 'primary') return inputs.get(source.net) ?? false
+  return false // unused
 }
 
 /** Read one input pin's value during combinational evaluation (recursing into a driver cell's output). */
@@ -245,12 +308,12 @@ function readViaEval(
   evalOut: (cell: RecoveredCell, stack: Set<string>) => boolean,
   stack: Set<string>,
   byKey: Map<string, RecoveredCell>,
-  primary: Map<number, boolean>,
+  inputs: Map<number, boolean>,
 ): boolean {
   if (source.kind === 'cell') {
     const driver = byKey.get(cellKey(source.driver))
     return driver === undefined ? false : evalOut(driver, stack)
   }
-  if (source.kind === 'primary') return primary.get(source.net) ?? false
+  if (source.kind === 'primary') return inputs.get(source.net) ?? false
   return false // unused
 }
