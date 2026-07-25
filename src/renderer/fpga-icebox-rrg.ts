@@ -14,8 +14,8 @@
  *     classifies by its true role. Kinds resolve in priority order (a wire can carry several families of
  *     name): a cell/IO output pin → opin, then the chip-wide clock/reset network (glb_netwk, fabout, padin)
  *     → global, then a load pin → ipin, then a routing track by its DOMINANT orientation (more
- *     horizontal-named segments → chanx, else chany — a corner-wrapping span classifies by its majority),
- *     else tile-local interconnect (local_*, neigh_op_*, logic_op_*) or anything unrecognized → local.
+ *     horizontal-named segments → chanx, more vertical → chany, an exact tie → chanx), else tile-local
+ *     interconnect (local_*, neigh_op_*, logic_op_*) or anything unrecognized → local.
  *   - Each `.buffer`/`.routing` switch → one directional `Pip` (`w<src>` → `w<dst>`) carrying its real CRAM
  *     `condition` as `configBits`. A reverse `pipToIcebox` map (pip id → the source `IceboxPip`, which keeps
  *     the switch's own tile) is the authoritative CRAM bridge: `cramBitsForRoutedPips` maps a router's ON-pip
@@ -52,8 +52,8 @@ export function wireNodeId(index: number): string {
  * (so a carry net `lutff_7/cout` + `carry_in` classifies by its driver, not its load), then the chip-wide
  * global network → global (so a fabric-out that also aliases a global-control pin, `fabout` + `io_global/…`,
  * counts global not ipin), then a load pin → ipin, then a routing track by its DOMINANT orientation (more
- * horizontal-named segments ⇒ chanx, else chany — a corner-wrapping span classifies by its majority, not by
- * whichever end is seen first), else tile-local interconnect → local.
+ * horizontal-named segments ⇒ chanx, more vertical ⇒ chany, and an exact tie — equal counts, common on
+ * corner-wrapping spans — resolves to chanx). Anything else is tile-local interconnect → local.
  */
 function classifyKind(names: readonly string[]): WireKind {
   const any = (re: RegExp): boolean => names.some((n) => re.test(n))
@@ -73,7 +73,8 @@ function classifyKind(names: readonly string[]): WireKind {
   )
     return 'ipin'
   // Segmented routing tracks: a corner-wrapping span carries both horizontal (…_h_…/…horz…) and vertical
-  // (…_v_…/…vert…) names, so classify by the DOMINANT orientation rather than whichever is matched first.
+  // (…_v_…/…vert…) names, so classify by the DOMINANT orientation rather than whichever is matched first. An
+  // exact tie (equal counts — ~half of the real device's corner spans) resolves to chanx (the `>=`).
   const horizontal = names.filter((n) => /_h_|horz/.test(n)).length
   const vertical = names.filter((n) => /_v_|vert/.test(n)).length
   if (horizontal > 0 || vertical > 0) return horizontal >= vertical ? 'chanx' : 'chany'

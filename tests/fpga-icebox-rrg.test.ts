@@ -95,6 +95,9 @@ describe('classifyWire — real iCE40 wire-name → RRG kind', () => {
     expect(classifyWire(wire(5, 'span4_horz_r_0', 'span4_horz_r_4', 'span4_vert_t_12')).kind).toBe(
       'chanx',
     )
+    // An EXACT tie (equal horizontal + vertical counts — ~half of the real device's corner spans hit this)
+    // resolves to chanx by the `>=`; no majority case exercises it, so pin the tie edge directly.
+    expect(classifyWire(wire(6, 'span4_vert_b_0', 'span4_horz_r_0')).kind).toBe('chanx')
   })
 })
 
@@ -213,16 +216,17 @@ describe('rrgFromIcebox — pips with a missing endpoint wire are excluded and f
   test('a pip missing only its src vs only its dst is labelled and counted by which end dangles', () => {
     // The fragment only ever produces missing-both, so the single-endpoint sub-buckets would go untested — a
     // mislabel (missing-src ↔ missing-dst) or a wrong excluded[] entry would ship green. Exercise each directly.
+    // Use OFF-DIAGONAL switch tiles (x ≠ y) so an x/y axis-swap in the excluded[] entry is caught too.
     const device = parseIceboxChipdb(
       [
-        '.device T 4 4 2',
+        '.device T 8 8 2',
         '.net 0',
         '0 0 wa',
         '.net 1',
         '1 0 wb',
-        '.buffer 2 2 1 B0[0]', // dst 1 defined, src 99 undefined ⇒ missing-src
+        '.buffer 2 5 1 B0[0]', // dst 1 defined, src 99 undefined ⇒ missing-src, at tile (2,5)
         '1 99',
-        '.buffer 3 3 99 B0[1]', // dst 99 undefined, src 0 defined ⇒ missing-dst
+        '.buffer 6 3 99 B0[1]', // dst 99 undefined, src 0 defined ⇒ missing-dst, at tile (6,3)
         '1 0',
       ].join('\n'),
     )
@@ -235,9 +239,9 @@ describe('rrgFromIcebox — pips with a missing endpoint wire are excluded and f
       excludedMissingDst: 1,
       excludedMissingBoth: 0,
     })
-    // the excluded[] entries carry the right tile, endpoints, and reason (not just a count)
-    expect(report.excluded).toContainEqual({ x: 2, y: 2, src: 99, dst: 1, reason: 'missing-src' })
-    expect(report.excluded).toContainEqual({ x: 3, y: 3, src: 0, dst: 99, reason: 'missing-dst' })
+    // the excluded[] entries carry the right tile (x,y not swapped), endpoints, and reason (not just a count)
+    expect(report.excluded).toContainEqual({ x: 2, y: 5, src: 99, dst: 1, reason: 'missing-src' })
+    expect(report.excluded).toContainEqual({ x: 6, y: 3, src: 0, dst: 99, reason: 'missing-dst' })
   })
 })
 
