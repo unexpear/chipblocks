@@ -301,6 +301,9 @@ describe('simulateClocked — a sequential circuit runs over clock cycles', () =
     })
     const run = simulateClocked(netlist, new Map(), 4)
     expect(run.trace.map((cycle) => cycle.get('1_1_0'))).toEqual([false, true, false, true])
+    // finalState is the LATCHED Q entering the next cycle, not the value shown last cycle: after the cycle that
+    // SHOWED true, the flip-flop latched D = NOT(true) = false. (Pins finalState to the state, not trace[last].)
+    expect(run.finalState.get('1_1_0')).toBe(false)
   })
 
   test('a 2-stage shift register delays a held input by two cycles', () => {
@@ -312,5 +315,16 @@ describe('simulateClocked — a sequential circuit runs over clock cycles', () =
     expect(run.trace.map((cy) => cy.get('0_0_0'))).toEqual([false, true, true, true]) // stage 1: 1-cycle delay
     expect(run.trace.map((cy) => cy.get('0_0_1'))).toEqual([false, false, true, true]) // stage 2: 2-cycle delay
     expect(run.finalState.get('0_0_1')).toBe(true) // the pipeline is full after it has run
+  })
+
+  test('a flip-flop whose D is driven THROUGH a combinational cell (a counter/next-state path) clocks correctly', () => {
+    // ff_a samples a held-high primary; a combinational NOT sits between ff_a and ff_b; ff_b samples that NOT.
+    // ff_b therefore registers NOT(ff_a's CURRENT Q), one clock late — this only works if a driver's COMPUTED
+    // output (not its stored state) feeds the flip-flop's D, so it pins that path that FF→FF hops cannot.
+    const ffA = oneIn(0, reg(BUF), prim(7))
+    const notCell = oneIn(1, comb(expandTruth([true, false])), cellSrc(0)) // NOT(ff_a)
+    const ffB = oneIn(2, reg(BUF), cellSrc(1)) // samples the combinational NOT
+    const run = simulateClocked({ cells: [ffA, notCell, ffB] }, new Map([[7, true]]), 3)
+    expect(run.trace.map((cy) => cy.get('0_0_2'))).toEqual([false, true, false])
   })
 })

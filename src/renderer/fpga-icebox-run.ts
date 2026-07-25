@@ -166,9 +166,10 @@ export type ClockedResult = {
  * `primary` for the whole run. Flip-flops start at 0 (reset).
  *
  * Honest scope (matches the cell model recovered from the bitstream): this is a plain rising-edge D flip-flop
- * per registered cell. The set/reset and clock-enable config bits (`setNoReset` / `asyncSetReset`, and the
- * tile's clock-enable) are recovered by the parser but NOT applied here — every flip-flop simply latches D each
- * cycle from a 0 reset; a per-cycle input sequence and those control semantics are the follow-up.
+ * per registered cell. The set/reset config bits (`setNoReset` / `asyncSetReset`) ARE recovered by the parser
+ * (decodeLc) but are NOT applied here; the clock-enable and the carry chain are NOT modeled or recovered at
+ * all. Every flip-flop simply latches D each cycle from a 0 reset. Applying set/reset, recovering + applying
+ * clock-enable, and driving a per-cycle input sequence are the follow-ups.
  */
 export function simulateClocked(
   netlist: RecoveredNetlist,
