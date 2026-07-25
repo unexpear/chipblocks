@@ -82,23 +82,51 @@ describe('evalLut4 / expandTruth — the iCE40 LUT4 evaluation', () => {
 })
 
 describe('lcCramBits — encode a cell to GENUINE, tool-verified CRAM positions', () => {
-  test('LUT bit 0 and each sequential bit land at the exact coordinates icebox.py reports', () => {
-    // truth true only at index 0 ⇒ LUT bit 0 = 1; enable every sequential bit to place all four.
-    const truth = Array.from({ length: 16 }, (_, i) => i === 0)
-    const bits = lcCramBits(LAYOUT, 0, 1, 1, {
-      truth,
-      carryEnable: true,
-      dffEnable: true,
-      setNoReset: true,
-      asyncSetReset: true,
-    })
-    // cross-checked against get_lutff_lut_bits / get_lutff_seq_bits on the real tool:
-    expect(bits).toContainEqual({ x: 1, y: 1, row: 0, col: 40, value: 1 }) // lut[0] at LC-bit 4 = B0[40]
-    expect(bits).toContainEqual({ x: 1, y: 1, row: 0, col: 44, value: 1 }) // carryEnable  at LC-bit 8  = B0[44]
-    expect(bits).toContainEqual({ x: 1, y: 1, row: 0, col: 45, value: 1 }) // dffEnable    at LC-bit 9  = B0[45]
-    expect(bits).toContainEqual({ x: 1, y: 1, row: 1, col: 44, value: 1 }) // setNoReset   at LC-bit 18 = B1[44]
-    expect(bits).toContainEqual({ x: 1, y: 1, row: 1, col: 45, value: 1 }) // asyncSetReset at LC-bit 19 = B1[45]
-    expect(bits.length).toBe(20) // 16 LUT + 4 sequential, every bit emitted with its value
+  test('EVERY LUT bit and sequential bit lands at the exact coordinate the real icebox tool reports', () => {
+    // Ground-truth CRAM coordinates for cell 0 (rows 0/1), captured by RUNNING icebox.py's get_lutff_lut_bits
+    // / get_lutff_seq_bits — hardcoded here INDEPENDENTLY of the source permutation constant. Pinning all 20
+    // positions individually catches a transposed permutation entry or a swapped sequential field; a round-trip
+    // alone is permutation-symmetric and would mask it. LUT_COORD[j] = where LUT truth-table bit j must land.
+    const LUT_COORD: [number, number][] = [
+      [0, 40],
+      [1, 40],
+      [1, 41],
+      [0, 41],
+      [0, 42],
+      [1, 42],
+      [1, 43],
+      [0, 43],
+      [0, 39],
+      [1, 39],
+      [1, 38],
+      [0, 38],
+      [0, 37],
+      [1, 37],
+      [1, 36],
+      [0, 36],
+    ]
+    for (let j = 0; j < 16; j++) {
+      const truth = Array.from({ length: 16 }, (_, i) => i === j) // one-hot: only LUT bit j is 1
+      const bits = lcCramBits(LAYOUT, 0, 1, 1, combinational(truth))
+      const [row, col] = LUT_COORD[j] as [number, number]
+      expect(bits).toContainEqual({ x: 1, y: 1, row, col, value: 1 })
+      expect(bits.filter((b) => b.value === 1)).toHaveLength(1) // uniquely bound to (row,col)
+    }
+    // each sequential bit, set ONE AT A TIME, at its own ground-truth coordinate
+    const SEQ_COORD = {
+      carryEnable: [0, 44],
+      dffEnable: [0, 45],
+      setNoReset: [1, 44],
+      asyncSetReset: [1, 45],
+    } as const
+    const zeros = Array.from({ length: 16 }, () => false)
+    for (const field of ['carryEnable', 'dffEnable', 'setNoReset', 'asyncSetReset'] as const) {
+      const bits = lcCramBits(LAYOUT, 0, 1, 1, { ...combinational(zeros), [field]: true })
+      const [row, col] = SEQ_COORD[field]
+      expect(bits).toContainEqual({ x: 1, y: 1, row, col, value: 1 })
+      expect(bits.filter((b) => b.value === 1)).toHaveLength(1) // only this field's bit is set
+    }
+    expect(lcCramBits(LAYOUT, 0, 1, 1, combinational(zeros))).toHaveLength(20) // 16 LUT + 4 seq always emitted
   })
 
   test('a cell is placed on its own rows: cell 3 uses rows 6 and 7', () => {
