@@ -153,6 +153,33 @@ describe('serializeBinFile ⟷ parseBinFile — round-trip on arbitrary data', (
     )
     expect([on.warmboot, on.nosleep]).toEqual(['enabled', 'enabled'])
   })
+
+  test('a device with BRAM round-trips (non-5k BRAM path: global width + 128-row chunks)', () => {
+    // BRAM 8 × 256 = two 128-row chunks. Set a bit in the SECOND chunk (y=200) and one in another bank's first
+    // chunk, to pin both the chunk loop and per-bank writing.
+    const bram: BinBanks = Array.from({ length: 4 }, (_, b) =>
+      Array.from({ length: 8 }, (_, x) =>
+        Array.from(
+          { length: 256 },
+          (_, y) => (b === 0 && x === 3 && y === 200) || (b === 2 && x === 5 && y === 10),
+        ),
+      ),
+    )
+    const bytes = serializeBinFile({
+      cramWidth: W,
+      cramHeight: H,
+      cram: makeCram(),
+      bram,
+      bramWidth: 8,
+      bramHeight: 256,
+    })
+    const p = parseBinFile(bytes)
+    expect([p.bramWidth, p.bramHeight]).toEqual([8, 256])
+    expect(p.bram[0]?.[3]?.[200]).toBe(true) // recovered from the second 128-row chunk (offset 128)
+    expect(p.bram[2]?.[5]?.[10]).toBe(true) // first chunk, a different bank
+    expect(p.bram[0]?.[3]?.[199]).toBe(false)
+    expect(p.crcOk).toBe(true)
+  })
 })
 
 describe('parseBinFile — BRAM data and malformed input', () => {
@@ -315,10 +342,42 @@ describe('crc16Update — matches icepack CRC-16-CCITT', () => {
   })
 })
 
-describe('serializeBinFile — rejects the 5k device (asymmetric per-bank framing unsupported)', () => {
-  test('throws on 5k CRAM dimensions rather than silently emit a structurally-wrong file', () => {
-    // 692×336 is the 5k CRAM size; the guard fires before touching cram, so a minimal cram is fine.
-    expect(() => serializeBinFile({ cramWidth: 692, cramHeight: 336, cram: [] })).toThrow(/5k/)
+describe('the 5k device — asymmetric per-bank CRAM framing + BRAM (against a real icepack 5k file)', () => {
+  // A GENUINE icepack-produced 5k .bin (same recipe as the 384 fixture but `.device 5k`). Its CRAM banks are
+  // asymmetric — [0]/[2] are 692×336, [1]/[3] are 692×176 — and it carries a BRAM section, so it exercises both
+  // the parser's 5k+BRAM read path and the writer's 5k+BRAM write path that the 384 fixture cannot.
+  const REAL_5K = new Uint8Array(
+    readFileSync(new URL('../fixtures/icebox-ice40-5k-onebit.bin', import.meta.url)),
+  )
+
+  test('parses a real 5k .bin: 5k device, four CRAM banks, a BRAM section, CRC verified', () => {
+    const p = parseBinFile(REAL_5K)
+    expect(p.device).toBe('5k')
+    expect([p.cramWidth, p.cramHeight]).toEqual([692, 336])
+    expect(p.cram).toHaveLength(4)
+    expect([p.bramWidth, p.bramHeight]).toEqual([160, 256]) // BRAM present; odd banks written half-width
+    expect(p.bram).toHaveLength(4)
+    expect(p.crcChecks).toBe(1)
+    expect(p.crcOk).toBe(true)
+  })
+
+  test('serialize reproduces the real 5k file byte-for-byte (per-bank heights + half-width BRAM chunks)', () => {
+    const p = parseBinFile(REAL_5K)
+    const cfg: BinConfig = {
+      comment: p.comment,
+      cramWidth: p.cramWidth,
+      cramHeight: p.cramHeight,
+      cram: p.cram,
+      bram: p.bram,
+      bramWidth: p.bramWidth,
+      bramHeight: p.bramHeight,
+    }
+    if (p.freqrange) cfg.freqrange = p.freqrange
+    if (p.warmboot) cfg.warmboot = p.warmboot
+    if (p.nosleep) cfg.nosleep = p.nosleep
+    const rebuilt = serializeBinFile(cfg)
+    expect(rebuilt.length).toBe(REAL_5K.length)
+    expect(Array.from(rebuilt)).toEqual(Array.from(REAL_5K)) // identical to the genuine icepack 5k output
   })
 })
 
