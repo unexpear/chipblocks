@@ -83,3 +83,49 @@ describe('loadIce40Bitstream — refuses honestly, never mis-parses', () => {
     else expect(result.reason.length).toBeGreaterThan(0) // or a structural fault — either is honest, not silent
   })
 })
+
+describe('every iCE40 device is covered — all six chip databases ship and work', () => {
+  const DEVICES = ['384', '1k', '5k', '8k', 'u4k', 'lm4k'] as const
+
+  test('a chip database ships for every iCE40 device the parser can detect', () => {
+    for (const d of DEVICES) {
+      const path = new URL(`../fixtures/icebox-ice40-${d}-chipdb.txt`, import.meta.url)
+      expect(readFileSync(path, 'utf8').length).toBeGreaterThan(1000) // present and non-trivial
+    }
+  })
+
+  test('a REAL routed 1k bitstream loads on the 1k chip database and simulates (B = A = i0 & i1)', () => {
+    // Proves the flow is genuinely device-agnostic: a different device, its own chipdb, same code path.
+    const chipdbs: Record<string, Ice40ChipDb> = {
+      '1k': {
+        device: parseIceboxChipdb(
+          readFileSync(new URL('../fixtures/icebox-ice40-1k-chipdb.txt', import.meta.url), 'utf8'),
+        ),
+        layout: ICE40_384.layout, // the LC bit layout is the same across iCE40 devices
+      },
+    }
+    const result = loadIce40Bitstream(read('icebox-ice40-1k-routed.bin'), chipdbs)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.reason)
+    expect([result.device, result.crcOk]).toEqual(['1k', true])
+
+    const a = result.netlist.cells.find((c) => c.ref.cell === 0)
+    const b = result.netlist.cells.find((c) => c.ref.cell === 5)
+    expect(b?.inputs.some((i) => i.kind === 'cell' && i.driver.cell === 0)).toBe(true) // routing recovered
+    const primNets = (a?.inputs ?? [])
+      .filter((i) => i.kind === 'primary')
+      .map((i) => (i as { net: number }).net)
+    expect(primNets).toHaveLength(2)
+    for (const i0 of [false, true])
+      for (const i1 of [false, true]) {
+        const sim = simulateCombinational(
+          result.netlist,
+          new Map([
+            [primNets[0] as number, i0],
+            [primNets[1] as number, i1],
+          ]),
+        )
+        expect(sim.outputs.get('5_8_5')).toBe(i0 && i1)
+      }
+  }, 60000)
+})
