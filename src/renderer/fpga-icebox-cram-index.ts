@@ -8,9 +8,10 @@
  * plus the device geometry it depends on (`chip_width`/`chip_height`/`chip_cols`/`tile_type`/`tile_width`, ISC).
  * `cramIndex(device, tileX, tileY, bitX, bitY)` returns the `(bank, x, y)` CRAM coordinate of one within-tile bit;
  * `tileBitsFromCram` reads a whole tile's 16 × tile-width bit grid out of parsed banks; `cramToProgrammedBits`
- * turns every set CRAM bit into the `ProgrammedBit`s the tile-level decoders consume. Cross-checked against the
- * real tool: `fixtures/icebox-ice40-384.asc` is icepack's own per-tile rendering of the 384 fixture bitstream, and
- * reconstructing every tile from the parsed `.bin` via this geometry reproduces that `.asc` exactly (see the test).
+ * turns every in-tile set CRAM bit into the `ProgrammedBit`s the tile-level decoders consume. Cross-checked against
+ * the real tool: `fixtures/icebox-ice40-384-dense.asc` is icepack's own per-tile rendering of a DENSE 384 bitstream,
+ * and reconstructing every tile from the parsed `.bin` via this geometry reproduces that `.asc` exactly (see the
+ * test); the same reconstruction was verified byte-for-byte against genuine icepack output for all six devices.
  *
  * Honest scope: this is the coordinate GEOMETRY for all six devices (384 / 1k / 8k / 5k / u4k / lm4k) and all tile
  * types (logic / io / ramb / ramt / dsp / ipcon). Turning the recovered per-tile bits into a simulatable netlist
@@ -185,9 +186,11 @@ export function tileBitsFromCram(
 }
 
 /**
- * Every set CRAM bit, attributed to its tile as a `ProgrammedBit` (`{x, y, row: bitY, col: bitX, value: 1}`) — the
- * per-tile representation the tile-level decoders (`decodeUsedCells`, `pipsOnInBitstream`) consume. Corner tiles
- * (zero width) are skipped.
+ * Every set IN-TILE CRAM bit, attributed to its tile as a `ProgrammedBit` (`{x, y, row: bitY, col: bitX, value: 1}`)
+ * — the per-tile representation the tile-level decoders (`decodeUsedCells`, `pipsOnInBitstream`) consume. Corner
+ * tiles (zero width) are skipped. Note: CRAM cells that map to NO tile — icepack's `.extra_bit`s, e.g. padding
+ * columns; ~8704 exist on the 384 alone — are intentionally NOT emitted: they belong to no tile and the tile-level
+ * decoders cannot consume them. So the emitted count equals the number of set IN-TILE cells, not every set CRAM cell.
  */
 export function cramToProgrammedBits(device: string, cram: BinBanks): ProgrammedBit[] {
   const { width: chipW, height: chipH } = dims(device)
