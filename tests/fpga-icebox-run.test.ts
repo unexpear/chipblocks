@@ -655,3 +655,85 @@ describe('simulateClocked — the recovered clock-enable is applied', () => {
     expect(run.trace.map((cy) => cy.get('1_1_0'))).toEqual([false, false, true]) // loads D=1 only across the cen-high edge
   })
 })
+
+describe('the carry chain — a real ripple adder', () => {
+  // LUT truth tables (indexed truth[8·in3 + 4·in2 + 2·in1 + in0]):
+  const xor2 = Array.from({ length: 16 }, (_, i) => Boolean(((i >> 1) & 1) ^ ((i >> 2) & 1))) // in1 ^ in2
+  const xor3 = Array.from({ length: 16 }, (_, i) =>
+    Boolean(((i >> 1) & 1) ^ ((i >> 2) & 1) ^ ((i >> 3) & 1)),
+  ) // in1 ^ in2 ^ in3
+  const carryCfg = (truth: boolean[]): LcConfig => ({
+    truth,
+    carryEnable: true,
+    dffEnable: false,
+    setNoReset: false,
+    asyncSetReset: false,
+  })
+  const carryFrom = (cell: number): InputSource => ({ kind: 'carry', driver: ref(cell), net: 0 })
+
+  test('two carry cells add two 2-bit numbers: sum + final carry match a + b', () => {
+    // cell 0: sum0 = a0 ^ b0 (carry-in 0); its carry-out = maj(a0, b0, 0) = a0 & b0.
+    const cell0: RecoveredCell = {
+      ref: ref(0),
+      config: carryCfg(xor2),
+      inputs: [UNUSED, prim(10), prim(11), UNUSED], // in1 = a0 (net 10), in2 = b0 (net 11)
+      carryIn: null, // start of the chain ⇒ carry-in 0
+    }
+    // cell 1: sum1 = a1 ^ b1 ^ carry0 (carry0 routed into in3); its carry-out = maj(a1, b1, carry0).
+    const cell1: RecoveredCell = {
+      ref: ref(1),
+      config: carryCfg(xor3),
+      inputs: [UNUSED, prim(12), prim(13), carryFrom(0)], // in1 = a1, in2 = b1, in3 = cell 0's carry-out
+      carryIn: ref(0), // carry chains from cell 0
+    }
+    // cell 2: a plain buffer that just surfaces cell 1's carry-out as an output, so we can read the final carry.
+    const cell2 = oneIn(2, comb(BUF), carryFrom(1))
+
+    for (let a = 0; a < 4; a++)
+      for (let b = 0; b < 4; b++) {
+        const primary = new Map([
+          [10, (a & 1) === 1],
+          [11, (b & 1) === 1],
+          [12, (a & 2) === 2],
+          [13, (b & 2) === 2],
+        ])
+        const sim = simulateCombinational({ cells: [cell0, cell1, cell2] }, primary)
+        const sum0 = sim.outputs.get('0_0_0') ? 1 : 0
+        const sum1 = sim.outputs.get('0_0_1') ? 1 : 0
+        const carry = sim.outputs.get('0_0_2') ? 1 : 0
+        expect(sum0 + 2 * sum1 + 4 * carry).toBe(a + b) // a full 2-bit ripple-carry adder
+      }
+  })
+
+  test('reconstructNetlist resolves a routed carry-out to a carry source and chains carry-in', () => {
+    // cell 0's carry output (net 0) is routed into cell 1's in_3 (net 1); both cells are carry-enabled.
+    const dev = parseIceboxChipdb(
+      [
+        '.device T 8 8 5',
+        '.net 0',
+        '1 1 lutff_0/cout',
+        '.net 1',
+        '1 1 lutff_1/in_3',
+        '.net 2',
+        '1 1 lutff_0/out',
+        '.net 3',
+        '1 1 lutff_1/out',
+        '.buffer 1 1 1 B0[14]', // cout (net 0) → cell 1's in_3 (net 1)
+        '1 0',
+      ].join('\n'),
+    )
+    const parsed: ParsedDesign = {
+      cells: [
+        { x: 1, y: 1, cell: 0, config: carryCfg(xor2) },
+        { x: 1, y: 1, cell: 1, config: carryCfg(xor3) },
+      ],
+      onPips: dev.pips,
+    }
+    const netlist = reconstructNetlist(parsed, dev)
+    const c1 = netlist.cells.find((c) => c.ref.cell === 1)
+    // in_3, traced back through the routed pip, dead-ends at cell 0's CARRY output ⇒ a carry source (not a primary)
+    expect(c1?.inputs[3]).toEqual({ kind: 'carry', driver: { x: 1, y: 1, cell: 0 }, net: 0 })
+    expect(c1?.carryIn).toEqual({ x: 1, y: 1, cell: 0 }) // structural chain from the previous cell
+    expect(netlist.cells.find((c) => c.ref.cell === 0)?.carryIn ?? null).toBeNull() // cell 0 starts the chain
+  })
+})
