@@ -538,3 +538,120 @@ describe('simulateClocked — the recovered set/reset is applied', () => {
     expect(run.trace.map((cy) => cy.get('1_1_0'))).toEqual([false, false, true]) // reset cy0, then loads D=1
   })
 })
+
+describe('simulateClocked — the recovered clock-enable is applied', () => {
+  const HIGH = Array.from({ length: 16 }, () => true) // D = constant 1
+  const dffPlain = (truth: boolean[]): LcConfig => ({
+    truth,
+    carryEnable: false,
+    dffEnable: true,
+    setNoReset: false,
+    asyncSetReset: false,
+  })
+  const enCell = (config: LcConfig, cenNet: number): RecoveredCell => ({
+    ref: ref(0),
+    config,
+    inputs: [UNUSED, UNUSED, UNUSED, UNUSED],
+    clockEnable: prim(cenNet),
+  })
+
+  test('a clock-enable gates the latch: Q updates only on cycles where cen is HIGH', () => {
+    const cell = enCell(dffPlain(HIGH), 8) // D = constant 1, gated by cen (net 8)
+    const seq = [
+      new Map([[8, false]]),
+      new Map([[8, true]]),
+      new Map([[8, false]]),
+      new Map([[8, true]]),
+    ]
+    const run = simulateClocked({ cells: [cell] }, seq, 4)
+    expect(run.trace.map((cy) => cy.get('0_0_0'))).toEqual([false, false, true, true]) // latches only when cen high
+    // contrast: the SAME FF with cen held HIGH loads on the first edge (proves cen actually gated the run above)
+    const alwaysOn = simulateClocked({ cells: [cell] }, new Map([[8, true]]), 4)
+    expect(alwaysOn.trace.map((cy) => cy.get('0_0_0'))).toEqual([false, true, true, true])
+  })
+
+  test('a flip-flop with no routed clock-enable is always enabled (cen tied high)', () => {
+    const ff = oneIn(0, reg(BUF), prim(7)) // plain D-FF, no clockEnable field
+    // "driving" net 8 does nothing — it is not this FF's cen — so it clocks every cycle
+    const run = simulateClocked(
+      { cells: [ff] },
+      new Map([
+        [7, true],
+        [8, false],
+      ]),
+      3,
+    )
+    expect(run.trace.map((cy) => cy.get('0_0_0'))).toEqual([false, true, true])
+  })
+
+  test('an async set/reset overrides a disabled clock, but a sync set/reset is gated by it', () => {
+    const dff2 = (asyncSetReset: boolean): LcConfig => ({
+      truth: HIGH,
+      carryEnable: false,
+      dffEnable: true,
+      setNoReset: false, // reset (Q←0) when s_r asserted
+      asyncSetReset,
+    })
+    const cellSR = (asyncSetReset: boolean, cell: number): RecoveredCell => ({
+      ref: ref(cell),
+      config: dff2(asyncSetReset),
+      inputs: [UNUSED, UNUSED, UNUSED, UNUSED],
+      clockEnable: prim(8),
+      setReset: prim(9),
+    })
+    // cy0: cen high, s_r low → both load D=1. cy1: cen LOW, s_r high (reset asserted). cy2: cen LOW, s_r low —
+    // reveals the LATCHED value: the async FF reset to 0 at cy1's edge (ignoring cen), the sync FF still holds 1.
+    const seq = [
+      new Map([
+        [8, true],
+        [9, false],
+      ]),
+      new Map([
+        [8, false],
+        [9, true],
+      ]),
+      new Map([
+        [8, false],
+        [9, false],
+      ]),
+    ]
+    const run = simulateClocked({ cells: [cellSR(true, 0), cellSR(false, 1)] }, seq, 3)
+    expect(run.trace.map((cy) => cy.get('0_0_0'))).toEqual([false, false, false]) // async: reset applied despite cen LOW
+    expect(run.trace.map((cy) => cy.get('0_0_1'))).toEqual([false, true, true]) // sync: reset gated by cen LOW ⇒ holds 1
+  })
+
+  test('everything-real: a clock-enable routed from a primary is recovered from the BITSTREAM and gates the FF', () => {
+    const dev = parseIceboxChipdb(
+      [
+        '.device T 8 8 5',
+        '.net 2',
+        '1 1 lutff_0/out',
+        '.net 6',
+        '1 1 lutff_global/cen',
+        '.net 8',
+        '0 1 glb_netwk_1',
+        '.buffer 1 1 6 B0[14]', // glb (net 8) → cen (net 6)
+        '1 8',
+      ].join('\n'),
+    )
+    const config: LcConfig = {
+      truth: HIGH,
+      carryEnable: false,
+      dffEnable: true,
+      setNoReset: false,
+      asyncSetReset: false,
+    }
+    const bitstream = assembleBitstream(LAYOUT, {
+      cells: [{ x: 1, y: 1, cell: 0, config }],
+      routingPips: dev.pips,
+    })
+    const netlist = reconstructNetlist(parseBitstream(bitstream.bits, dev, LAYOUT), dev)
+    expect(netlist.cells[0]?.clockEnable).toEqual({ kind: 'primary', net: 8 }) // cen recovered from the real bits
+    const run = simulateClocked(
+      netlist,
+      [new Map([[8, false]]), new Map([[8, true]]), new Map([[8, false]])],
+      3,
+    )
+    expect(run.trace.map((cy) => cy.get('1_1_0'))).toEqual([false, false, true]) // loads D=1 only across the cen-high edge
+  })
+})

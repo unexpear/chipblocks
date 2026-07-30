@@ -58,6 +58,10 @@ export type RecoveredCell = {
    *  `lutff_global/s_r` sink (a cell output or an external primary). `null`/absent ⇒ a plain flip-flop with no
    *  set/reset. Only set for registered cells. */
   setReset?: InputSource | null
+  /** The tile-shared clock-enable signal driving this flip-flop, if the bitstream routed one into the tile's
+   *  `lutff_global/cen` sink. `null`/absent ⇒ the flip-flop is always enabled (cen tied high). Only set for
+   *  registered cells. */
+  clockEnable?: InputSource | null
 }
 export type RecoveredNetlist = { cells: RecoveredCell[] }
 
@@ -115,7 +119,17 @@ export function reconstructNetlist(parsed: ParsedDesign, device: IceboxDevice): 
     const srNet = at(c.x, c.y, 'lutff_global/s_r')
     const setReset: InputSource | null =
       c.config.dffEnable && srNet !== undefined && driverOf.has(srNet) ? sourceOf(srNet) : null
-    return { ref: { x: c.x, y: c.y, cell: c.cell }, config: c.config, inputs, setReset }
+    // The tile-shared clock-enable, likewise present only if the bitstream routed something into `lutff_global/cen`.
+    const cenNet = at(c.x, c.y, 'lutff_global/cen')
+    const clockEnable: InputSource | null =
+      c.config.dffEnable && cenNet !== undefined && driverOf.has(cenNet) ? sourceOf(cenNet) : null
+    return {
+      ref: { x: c.x, y: c.y, cell: c.cell },
+      config: c.config,
+      inputs,
+      setReset,
+      clockEnable,
+    }
   })
   return { cells }
 }
@@ -213,13 +227,18 @@ function inputsAt(stimulus: Stimulus, cycle: number): Map<number, boolean> {
  * cycle); a SYNCHRONOUS one changes only at the next edge — so the two differ observably by one cycle. A
  * flip-flop with no routed s_r is a plain D flip-flop.
  *
+ * Clock-enable: if the bitstream routed a signal into the tile's shared `lutff_global/cen` (recovered as the
+ * cell's `clockEnable` source), the flip-flop latches only on cycles where cen is HIGH; when cen is LOW it HOLDS
+ * its Q. An asynchronous set/reset still overrides even a disabled clock (matching the SB_DFFE*R hardware, where
+ * async set/reset sits outside the enable), while a synchronous set/reset is gated by cen along with the D latch.
+ * A flip-flop with no routed cen is always enabled (cen tied high).
+ *
  * Stimulus: `stimulus` drives the primary inputs each cycle (constant map / per-cycle array / function — see
  * `Stimulus`).
  *
- * Honest scope (matches the cell model recovered from the bitstream): the clock-enable is NOT recovered or
- * modeled (every flip-flop clocks each cycle); the per-cell carry-enable BIT is recovered (`config.carryEnable`)
- * but inert, and the carry CHAIN (carry_in/cout propagation) is neither traced nor modeled. Those are the
- * remaining follow-ups.
+ * Honest scope (matches the cell model recovered from the bitstream): the per-cell carry-enable BIT is recovered
+ * (`config.carryEnable`) but inert, and the carry CHAIN (carry_in/cout propagation) is neither traced nor modeled
+ * — the remaining follow-up.
  */
 export function simulateClocked(
   netlist: RecoveredNetlist,
@@ -267,23 +286,32 @@ export function simulateClocked(
     }
     for (const cell of netlist.cells) evalOut(cell, new Set())
 
-    // Latch: every flip-flop's next Q is its set/reset value if s_r is asserted this cycle, else its LUT's D,
-    // computed from this cycle's outputs — all at once. (This edge behaviour is identical for sync and async s_r;
-    // only the OUTPUT this cycle differs, handled above.)
+    // Latch: compute each flip-flop's next Q. An asynchronous set/reset forces it (ignoring clock-enable); a LOW
+    // clock-enable holds Q (which also gates a synchronous set/reset); otherwise, when enabled, an asserted s_r
+    // sets/resets and a de-asserted one latches the LUT's D — all at once, from this cycle's outputs.
     const nextState = new Map(state)
     for (const cell of netlist.cells) {
       if (!cell.config.dffEnable) continue
+      const key = cellKey(cell.ref)
       const sr = cell.setReset ? readSource(cell.setReset, outputs, inputs) : false
-      const next = sr
-        ? cell.config.setNoReset
-        : evalLut4(
-            cell.config.truth,
-            readSource(cell.inputs[0] as InputSource, outputs, inputs),
-            readSource(cell.inputs[1] as InputSource, outputs, inputs),
-            readSource(cell.inputs[2] as InputSource, outputs, inputs),
-            readSource(cell.inputs[3] as InputSource, outputs, inputs),
-          )
-      nextState.set(cellKey(cell.ref), next)
+      const cen = cell.clockEnable ? readSource(cell.clockEnable, outputs, inputs) : true
+      const forced = cell.config.setNoReset // s_r asserted ⇒ SET (1) or RESET (0)
+      let next: boolean
+      if (cell.config.asyncSetReset && sr)
+        next = forced // async set/reset: immediate, ignores clock-enable
+      else if (!cen)
+        next = state.get(key) ?? false // clock disabled ⇒ hold Q (gates a sync s_r too)
+      else if (sr)
+        next = forced // synchronous set/reset (clock enabled)
+      else
+        next = evalLut4(
+          cell.config.truth,
+          readSource(cell.inputs[0] as InputSource, outputs, inputs),
+          readSource(cell.inputs[1] as InputSource, outputs, inputs),
+          readSource(cell.inputs[2] as InputSource, outputs, inputs),
+          readSource(cell.inputs[3] as InputSource, outputs, inputs),
+        )
+      nextState.set(key, next)
     }
     trace.push(outputs)
     state = nextState
