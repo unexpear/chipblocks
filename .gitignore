@@ -37,6 +37,8 @@ ENV/
 *.gds
 *.gdsii
 build_*/
+# …but keep committed test fixtures (real vendor-format bitstreams the tests parse)
+!fixtures/*.bin
 soc_*.v
 
 # IDE / editor
