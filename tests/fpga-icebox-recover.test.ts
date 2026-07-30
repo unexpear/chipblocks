@@ -87,3 +87,34 @@ describe('recoverLogicCells — the logic-tile filter (1k, which has RAM tiles t
     ) // the real logic cell survives
   })
 })
+
+describe('recoverLogicCells — a real NON-384 vendor .bin (1k) with set/reset + carry cells', () => {
+  // A GENUINE icepack-packed 1k bitstream (cells authored via lcCramBits -> .asc -> real icepack -> .bin). Covers a
+  // different device geometry, the set/reset + carry flip-flop bits, and a top-right (bank 3) tile — none of which
+  // the 384 fixture exercises. It also has real RAM tiles present, so the logic-tile filter runs on real data.
+  const BIN = new Uint8Array(
+    readFileSync(new URL('../fixtures/icebox-ice40-1k-cells.bin', import.meta.url)),
+  )
+  const cells = recoverLogicCells('1k', parseBinFile(BIN).cram, LAYOUT)
+
+  test('recovers the three cells with their full FF config (async-set, carry+dff, comb) — no phantoms', () => {
+    const byKey = new Map(cells.map((c) => [`${c.x}_${c.y}_${c.cell}`, c.config]))
+    expect(byKey.get('1_1_0')).toEqual({
+      truth: expandTruth([false, false, false, true]),
+      carryEnable: false,
+      dffEnable: true,
+      setNoReset: true,
+      asyncSetReset: true, // async SET registered AND2
+    })
+    expect(byKey.get('1_1_3')).toEqual({
+      truth: expandTruth([false, true]),
+      carryEnable: true,
+      dffEnable: true,
+      setNoReset: false,
+      asyncSetReset: false, // buffer, carry + dff
+    })
+    expect(byKey.get('8_14_2')).toEqual(comb([false, true, true, false])) // XOR2 in a top-right (bank 3) tile
+    expect(cells).toHaveLength(3)
+    expect(cells.every((c) => tileType('1k', c.x, c.y) === 'logic')).toBe(true) // ram tiles produce no phantoms
+  })
+})
