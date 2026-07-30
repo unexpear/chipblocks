@@ -120,6 +120,39 @@ describe('serializeBinFile ⟷ parseBinFile — round-trip on arbitrary data', (
     expect(parsed.crcChecks).toBe(1)
     expect(parsed.crcOk).toBe(false) // structural parse still succeeds; the CRC catches the corruption
   })
+
+  test("freqrange 'medium' round-trips (the untested middle value, payload 1)", () => {
+    const bytes = serializeBinFile({
+      freqrange: 'medium',
+      cramWidth: W,
+      cramHeight: H,
+      cram: makeCram(),
+    })
+    expect(parseBinFile(bytes).freqrange).toBe('medium')
+  })
+
+  test('warmboot/nosleep both-disabled (payload 0) and both-enabled (payload 33) round-trip', () => {
+    const off = parseBinFile(
+      serializeBinFile({
+        warmboot: 'disabled',
+        nosleep: 'disabled',
+        cramWidth: W,
+        cramHeight: H,
+        cram: makeCram(),
+      }),
+    )
+    expect([off.warmboot, off.nosleep]).toEqual(['disabled', 'disabled'])
+    const on = parseBinFile(
+      serializeBinFile({
+        warmboot: 'enabled',
+        nosleep: 'enabled',
+        cramWidth: W,
+        cramHeight: H,
+        cram: makeCram(),
+      }),
+    )
+    expect([on.warmboot, on.nosleep]).toEqual(['enabled', 'enabled'])
+  })
 })
 
 describe('parseBinFile — BRAM data and malformed input', () => {
@@ -167,6 +200,110 @@ describe('parseBinFile — BRAM data and malformed input', () => {
   test('a truncated file (preamble then nothing) throws', () => {
     expect(() => parseBinFile(Uint8Array.from([0x7e, 0xaa, 0x99, 0x7e]))).toThrow(/end of .bin/)
   })
+
+  test('recovers BRAM across MULTIPLE offset chunks, preserving earlier chunks (the real multi-chunk path)', () => {
+    // Two BRAM data blocks into bank 0 (width 8, height 8) at offsets 0 and 8 ⇒ bramHeight grows to 16 and the
+    // second chunk must NOT clobber the first. chunk0 byte0=0x80 ⇒ (0,0); chunk1 byte1=0x01 ⇒ (7, 8+1=9).
+    const bytes = Uint8Array.from([
+      0x7e,
+      0xaa,
+      0x99,
+      0x7e, // preamble
+      0x62,
+      0x00,
+      0x07, // width 8
+      0x72,
+      0x00,
+      0x08, // height 8
+      0x11,
+      0x00, // bank 0
+      0x82,
+      0x00,
+      0x00, // offset 0
+      0x01,
+      0x03,
+      0x80,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0x00,
+      0x00, // BRAM chunk @ offset 0
+      0x82,
+      0x00,
+      0x08, // offset 8
+      0x01,
+      0x03,
+      0,
+      0x01,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0x00,
+      0x00, // BRAM chunk @ offset 8
+      0x01,
+      0x06, // wakeup
+    ])
+    const parsed = parseBinFile(bytes)
+    expect([parsed.bramWidth, parsed.bramHeight]).toEqual([8, 16]) // max(0+8, 8+8)
+    expect(parsed.bram[0]?.[0]?.[0]).toBe(true) // chunk 0 — still set after chunk 1 grew the bank
+    expect(parsed.bram[0]?.[7]?.[9]).toBe(true) // chunk 1, placed at offset 8 (y = 9, not 1)
+    expect(parsed.bram[0]?.[0]?.[8]).toBe(false) // chunk 1's byte0 was 0
+  })
+
+  const P = [0x7e, 0xaa, 0x99, 0x7e] // preamble prefix for the structural-fault cases
+  test('a nonzero end token after bank data throws', () => {
+    // width 8 / height 8 / bank 0 / offset 0 / CRAM data (8 bytes) / end token 0x0001 (nonzero)
+    const bytes = Uint8Array.from([
+      ...P,
+      0x62,
+      0x00,
+      0x07,
+      0x72,
+      0x00,
+      0x08,
+      0x11,
+      0x00,
+      0x82,
+      0x00,
+      0x00,
+      0x01,
+      0x01,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0x00,
+      0x01,
+    ])
+    expect(() => parseBinFile(bytes)).toThrow(/0x0000 after bank data/)
+  })
+  test('an unknown command byte throws', () => {
+    expect(() => parseBinFile(Uint8Array.from([...P, 0x40]))).toThrow(/Unknown command/)
+  })
+  test('an unknown 0x00-family payload throws', () => {
+    expect(() => parseBinFile(Uint8Array.from([...P, 0x01, 0x99]))).toThrow(
+      /Unknown 0x00 command payload/,
+    )
+  })
+  test('an unknown freqrange payload throws', () => {
+    expect(() => parseBinFile(Uint8Array.from([...P, 0x51, 0x99]))).toThrow(/Unknown freqrange/)
+  })
+  test('an unknown warmboot/nosleep payload throws', () => {
+    expect(() => parseBinFile(Uint8Array.from([...P, 0x92, 0x00, 0x99]))).toThrow(
+      /Unknown warmboot/,
+    )
+  })
 })
 
 describe('crc16Update — matches icepack CRC-16-CCITT', () => {
@@ -175,5 +312,37 @@ describe('crc16Update — matches icepack CRC-16-CCITT', () => {
     let crc = 0xffff
     for (const ch of '123456789') crc = crc16Update(crc, ch.charCodeAt(0))
     expect(crc).toBe(0x29b1)
+  })
+})
+
+describe('serializeBinFile — rejects the 5k device (asymmetric per-bank framing unsupported)', () => {
+  test('throws on 5k CRAM dimensions rather than silently emit a structurally-wrong file', () => {
+    // 692×336 is the 5k CRAM size; the guard fires before touching cram, so a minimal cram is fine.
+    expect(() => serializeBinFile({ cramWidth: 692, cramHeight: 336, cram: [] })).toThrow(/5k/)
+  })
+})
+
+describe('parseBinFile — crcOk aggregation across multiple CRC-check segments', () => {
+  test('a failing check followed by a passing check reports crcOk=false (sticky, not overwritten)', () => {
+    // check #1 (0x20) runs while crc≠0 (accumulated over the preamble) ⇒ FAILS; then reset (0x01 0x05) and a
+    // VALID check #2 (0x22 + the correct CRC of the 0x22 byte) ⇒ PASSES. A per-check overwrite would mask #1.
+    const c = crc16Update(0xffff, 0x22) // crc after the reset (0xffff) then reading the 0x22 command byte
+    const bytes = Uint8Array.from([
+      0x7e,
+      0xaa,
+      0x99,
+      0x7e, // preamble (leaves crc ≠ 0)
+      0x20, // CRC check #1 → crc ≠ 0 → FAILS
+      0x01,
+      0x05, // reset CRC to 0xffff
+      0x22,
+      c >> 8,
+      c & 0xff, // CRC check #2 → valid → PASSES
+      0x01,
+      0x06, // wakeup
+    ])
+    const parsed = parseBinFile(bytes)
+    expect(parsed.crcChecks).toBe(2)
+    expect(parsed.crcOk).toBe(false) // #1's failure is not masked by #2's pass
   })
 })

@@ -244,18 +244,25 @@ export function parseBinFile(bytes: Uint8Array): ParsedBin {
 }
 
 /**
- * Serialize CRAM banks + metadata into a `.bin` file, mirroring icepack's `write_bits` byte-for-byte (comment →
- * preamble → freqrange → CRC reset → warmboot/nosleep → width/height/offset → four CRAM banks → CRC → wakeup →
- * pad). The CRC is computed exactly as icepack does, so real `icepack -u` accepts the output and `parseBinFile`
- * round-trips it. Companion to the parser and the on-ramp to the future "loadable .bin" goal.
+ * Serialize CRAM banks + metadata into a `.bin` file, mirroring icepack's `write_bits` (comment → preamble →
+ * freqrange → CRC reset → warmboot/nosleep → width/height/offset → four CRAM banks → CRC → wakeup → pad). The CRC
+ * is computed exactly as icepack does, so real `icepack -u` accepts the output and `parseBinFile` round-trips it.
+ * Companion to the parser and the on-ramp to the future "loadable .bin" goal.
  *
- * Scope: writes the CRAM path (the four banks + container). It does NOT emit BRAM data (the parser READS BRAM);
- * writing BRAM needs icepack's 128-row chunking, deferred — this throws if that path is ever needed.
+ * Byte-for-byte identical to icepack for the height-symmetric devices (384 / 1k / 8k / u4k / lm4k). The iCE40UP
+ * **5k** is NOT supported: icepack special-cases it (skips the global height command, writes odd banks 1/3 at
+ * cramHeight/2+8 = 176 rows, and emits a per-bank height) — this writer would emit a structurally-wrong 5k image,
+ * so it REJECTS 5k dimensions rather than produce one silently (a correct 5k export also needs the BRAM path).
+ *
+ * Scope: writes the CRAM path (the four banks + container). It does NOT emit BRAM data — the parser READS BRAM,
+ * but `BinConfig` has no BRAM field to write; adding it needs icepack's 128-row chunking, deferred.
  */
 export function serializeBinFile(config: BinConfig): Uint8Array {
   const { cramWidth, cramHeight, cram } = config
   if ((cramWidth * cramHeight) % 8 !== 0)
     throw new Error(`CRAM width × height (${cramWidth}×${cramHeight}) must be a multiple of 8`)
+  if (detectDevice(cramWidth, cramHeight) === '5k')
+    throw new Error('5k asymmetric per-bank framing is not supported by serializeBinFile')
 
   const out: number[] = []
   let crc = 0
