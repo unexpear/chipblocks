@@ -343,12 +343,17 @@ describe('crc16Update — matches icepack CRC-16-CCITT', () => {
 })
 
 describe('the 5k device — asymmetric per-bank CRAM framing + BRAM (against a real icepack 5k file)', () => {
-  // A GENUINE icepack-produced 5k .bin (same recipe as the 384 fixture but `.device 5k`). Its CRAM banks are
-  // asymmetric — [0]/[2] are 692×336, [1]/[3] are 692×176 — and it carries a BRAM section, so it exercises both
-  // the parser's 5k+BRAM read path and the writer's 5k+BRAM write path that the 384 fixture cannot.
+  // A GENUINE icepack-produced 5k .bin (`.device 5k`) with a bit set in EVERY tile row, so it carries real data in
+  // the odd (half-height CRAM = 176 rows, half-width BRAM = 80 cols) banks — not just the symmetric even banks.
+  // That makes the byte-identity oracle below pin the half-height/half-width DATA layout, not merely the framing.
   const REAL_5K = new Uint8Array(
-    readFileSync(new URL('../fixtures/icebox-ice40-5k-onebit.bin', import.meta.url)),
+    readFileSync(new URL('../fixtures/icebox-ice40-5k-oddbanks.bin', import.meta.url)),
   )
+  const setCount = (bank: boolean[][], maxX: number, maxY: number): number => {
+    let n = 0
+    for (let x = 0; x < maxX; x++) for (let y = 0; y < maxY; y++) if (bank[x]?.[y]) n++
+    return n
+  }
 
   test('parses a real 5k .bin: 5k device, four CRAM banks, a BRAM section, CRC verified', () => {
     const p = parseBinFile(REAL_5K)
@@ -357,11 +362,14 @@ describe('the 5k device — asymmetric per-bank CRAM framing + BRAM (against a r
     expect(p.cram).toHaveLength(4)
     expect([p.bramWidth, p.bramHeight]).toEqual([160, 256]) // BRAM present; odd banks written half-width
     expect(p.bram).toHaveLength(4)
+    // real data lands in the ODD banks' halved regions (proves the fixture exercises the asymmetric layout)
+    expect(setCount(p.cram[1] as boolean[][], 692, 176)).toBeGreaterThan(0) // odd CRAM bank, half-height rows
+    expect(setCount(p.bram[1] as boolean[][], 80, 256)).toBeGreaterThan(0) // odd BRAM bank, half-width cols
     expect(p.crcChecks).toBe(1)
     expect(p.crcOk).toBe(true)
   })
 
-  test('serialize reproduces the real 5k file byte-for-byte (per-bank heights + half-width BRAM chunks)', () => {
+  test('serialize reproduces the real 5k file byte-for-byte (per-bank heights + half-width BRAM data)', () => {
     const p = parseBinFile(REAL_5K)
     const cfg: BinConfig = {
       comment: p.comment,
