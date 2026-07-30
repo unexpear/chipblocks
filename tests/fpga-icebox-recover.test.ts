@@ -9,6 +9,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
+import { parseIceboxChipdb } from '../src/renderer/fpga-icebox.ts'
 import { type BinBanks, parseBinFile } from '../src/renderer/fpga-icebox-bin.ts'
 import { cramIndex, tileType } from '../src/renderer/fpga-icebox-cram-index.ts'
 import {
@@ -17,7 +18,8 @@ import {
   lcCramBits,
   parseLogicTileBits,
 } from '../src/renderer/fpga-icebox-logic.ts'
-import { recoverLogicCells } from '../src/renderer/fpga-icebox-recover.ts'
+import { recoverLogicCells, recoverNetlist } from '../src/renderer/fpga-icebox-recover.ts'
+import { simulateCombinational } from '../src/renderer/fpga-icebox-run.ts'
 
 const LAYOUT = parseLogicTileBits(
   readFileSync(
@@ -116,5 +118,47 @@ describe('recoverLogicCells — a real NON-384 vendor .bin (1k) with set/reset +
     expect(byKey.get('8_14_2')).toEqual(comb([false, true, true, false])) // XOR2 in a top-right (bank 3) tile
     expect(cells).toHaveLength(3)
     expect(cells.every((c) => tileType('1k', c.x, c.y) === 'logic')).toBe(true) // ram tiles produce no phantoms
+  })
+})
+
+describe('recoverNetlist — load a real routed vendor .bin and simulate it (384, full chipdb)', () => {
+  // The capstone: fixtures/icebox-ice40-384-routed.bin is a GENUINE icepack-packed 384 bitstream of a real
+  // routed design (A = i0 & i1 in cell 0, feeding B = buffer(A) in cell 5, wired through the chip's REAL routing),
+  // and fixtures/icebox-ice40-384-chipdb.txt is the full Project IceStorm chip database. This loads the .bin like
+  // a user's own file — device detected from it — then rebuilds the whole netlist (cells + routing) and runs it.
+  const DEVICE = parseIceboxChipdb(
+    readFileSync(new URL('../fixtures/icebox-ice40-384-chipdb.txt', import.meta.url), 'utf8'),
+  )
+  const BIN = new Uint8Array(
+    readFileSync(new URL('../fixtures/icebox-ice40-384-routed.bin', import.meta.url)),
+  )
+
+  test('rebuilds A→B connectivity from the recovered routing and computes B = A = i0 & i1', () => {
+    const parsed = parseBinFile(BIN)
+    expect(parsed.device).toBe('384') // device auto-detected from the loaded file, not assumed
+    const netlist = recoverNetlist('384', DEVICE, LAYOUT, parsed.cram)
+
+    const a = netlist.cells.find((c) => c.ref.cell === 0)
+    const b = netlist.cells.find((c) => c.ref.cell === 5)
+    // B's input traces back to A (cell 0) through the routing recovered from the real bitstream
+    expect(b?.inputs.some((i) => i.kind === 'cell' && i.driver.cell === 0)).toBe(true)
+    // A reads two external primary inputs (i0, i1)
+    const primNets = (a?.inputs ?? [])
+      .filter((i) => i.kind === 'primary')
+      .map((i) => (i as { net: number }).net)
+    expect(primNets).toHaveLength(2)
+
+    // simulate the whole thing straight from the loaded bitstream: B (cell 5) = A (cell 0) = i0 & i1
+    for (const i0 of [false, true])
+      for (const i1 of [false, true]) {
+        const sim = simulateCombinational(
+          netlist,
+          new Map([
+            [primNets[0] as number, i0],
+            [primNets[1] as number, i1],
+          ]),
+        )
+        expect(sim.outputs.get('1_1_5')).toBe(i0 && i1)
+      }
   })
 })
