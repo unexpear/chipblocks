@@ -67,6 +67,11 @@ export type RecoveredCell = {
    *  previous cell in the tile's carry chain `(x, y, cell-1)`. `null`/absent ⇒ carry-in is 0 (cell 0 of a chain;
    *  the tile CarryInSet bit is not decoded, so a set carry-in is not modelled). */
   carryIn?: CellRef | null
+  /** The carry unit's own two operands (`in_1`, `in_2`), resolved WITHOUT the LUT's don't-care mask. The carry
+   *  unit is independent of the LUT (icebox fetches in_1/in_2 for the carry regardless of `lut_bits`), so a
+   *  carry-only cell — or one whose LUT ignores an operand it still adds — carries the real signal here while
+   *  `inputs` stays don't-care-masked (which keeps phantom LUT edges out). Absent ⇒ fall back to `inputs`. */
+  carryOperands?: [InputSource, InputSource] | null
 }
 export type RecoveredNetlist = { cells: RecoveredCell[] }
 
@@ -147,6 +152,16 @@ export function reconstructNetlist(parsed: ParsedDesign, device: IceboxDevice): 
       c.config.carryEnable && c.cell > 0 && carryCells.has(`${c.x}_${c.y}_${c.cell - 1}`)
         ? { x: c.x, y: c.y, cell: c.cell - 1 }
         : null
+    // The carry unit's operands are resolved WITHOUT the LUT don't-care mask: icebox fetches in_1/in_2 for the
+    // carry independently of the truth table, so a carry-only cell (all-zero LUT) or an operand the LUT happens
+    // to ignore still carries its real signal. `inputs` stays masked, so no phantom LUT edge is created.
+    const carryPin = (pin: 1 | 2): InputSource => {
+      const net = at(c.x, c.y, `lutff_${c.cell}/in_${pin}`)
+      return net === undefined ? { kind: 'unused' } : sourceOf(net)
+    }
+    const carryOperands: [InputSource, InputSource] | null = c.config.carryEnable
+      ? [carryPin(1), carryPin(2)]
+      : null
     return {
       ref: { x: c.x, y: c.y, cell: c.cell },
       config: c.config,
@@ -154,6 +169,7 @@ export function reconstructNetlist(parsed: ParsedDesign, device: IceboxDevice): 
       setReset,
       clockEnable,
       carryIn,
+      carryOperands,
     }
   })
   return { cells }
@@ -203,11 +219,11 @@ export function simulateCombinational(
     const guard = `cout:${key}`
     if (stack.has(guard)) return false // guard a malformed carry cycle
     stack.add(guard)
-    const in1 = readInput(cell.inputs[1] as InputSource, stack)
-    const in2 = readInput(cell.inputs[2] as InputSource, stack)
-    const cin = cell.carryIn
-      ? coutOf(byKey.get(cellKey(cell.carryIn)) as RecoveredCell, stack)
-      : false
+    const ops = cell.carryOperands ?? [cell.inputs[1] as InputSource, cell.inputs[2] as InputSource]
+    const in1 = readInput(ops[0], stack)
+    const in2 = readInput(ops[1], stack)
+    const prev = cell.carryIn ? byKey.get(cellKey(cell.carryIn)) : undefined
+    const cin = prev === undefined ? false : coutOf(prev, stack)
     const cout = (in1 && in2) || ((in1 || in2) && cin)
     stack.delete(guard)
     carryOut.set(key, cout)
@@ -316,25 +332,14 @@ export function simulateClocked(
       const guard = `cout:${ckey}`
       if (stack.has(guard)) return false
       stack.add(guard)
-      const in1 = readViaEval(
+      const ops = cell.carryOperands ?? [
         cell.inputs[1] as InputSource,
-        evalOut,
-        stack,
-        byKey,
-        inputs,
-        coutOfCycle,
-      )
-      const in2 = readViaEval(
         cell.inputs[2] as InputSource,
-        evalOut,
-        stack,
-        byKey,
-        inputs,
-        coutOfCycle,
-      )
-      const cin = cell.carryIn
-        ? coutOfCycle(byKey.get(cellKey(cell.carryIn)) as RecoveredCell, stack)
-        : false
+      ]
+      const in1 = readViaEval(ops[0], evalOut, stack, byKey, inputs, coutOfCycle)
+      const in2 = readViaEval(ops[1], evalOut, stack, byKey, inputs, coutOfCycle)
+      const prevCell = cell.carryIn ? byKey.get(cellKey(cell.carryIn)) : undefined
+      const cin = prevCell === undefined ? false : coutOfCycle(prevCell, stack)
       const cout = (in1 && in2) || ((in1 || in2) && cin)
       stack.delete(guard)
       carryOut.set(ckey, cout)

@@ -30,8 +30,13 @@ export type LoweredCanvas = {
   cellOutputs: Map<string, string>
   /** registered cells: lowered as combinational logic here; their stored value needs the clocked simulator. */
   registered: CellRef[]
-  /** inputs that could not be lowered (a carry-unit source) — reported, never silently mis-wired. */
+  /** inputs that could not be lowered faithfully — a carry-unit source, or a pin the LUT DEPENDS on whose driver
+   *  could not be resolved. Reported, never silently mis-wired. */
   unlowered: { cell: CellRef; pin: number; reason: string }[]
+  /** cells whose lowered gates do NOT faithfully compute the cell's function (they have an entry in `unlowered`,
+   *  or they read a registered cell's LUT output rather than its stored Q). Their `cellOutputs` node still exists
+   *  so the graph is complete, but its value must not be trusted — surface this to the user. */
+  unfaithful: CellRef[]
 }
 
 const cellKey = (ref: CellRef): string => `${ref.x}_${ref.y}_${ref.cell}`
@@ -71,6 +76,8 @@ export function lowerNetlistToCanvas(netlist: RecoveredNetlist): LoweredCanvas {
   const cellOutputs = new Map<string, string>()
   const unlowered: LoweredCanvas['unlowered'] = []
   const registered = netlist.cells.filter((c) => c.config.dffEnable).map((c) => c.ref)
+  const registeredKeys = new Set(registered.map((r) => cellKey(r)))
+  const unfaithfulKeys = new Set<string>()
   let wire = 0
   const sourceIds = new Set<string>() // power-source nodes drive `terminal_positive`, gates drive `out`
   const connect = (source: string, target: string, targetHandle: string): void => {
@@ -93,15 +100,34 @@ export function lowerNetlistToCanvas(netlist: RecoveredNetlist): LoweredCanvas {
     inputNodes.set(net, id)
     return id
   }
+  // PASS 1 — every cell's terminal node id is deterministic, so register them ALL before any wiring. Without this
+  // a cell whose driver appears LATER in `cells` would resolve to nothing and silently lose that input.
+  for (const cell of netlist.cells) {
+    const key = cellKey(cell.ref)
+    const minterms = cell.config.truth.filter(Boolean).length
+    cellOutputs.set(key, minterms === 0 || minterms === 16 ? `${key}_const` : `${key}_out`)
+  }
   netlist.cells.forEach((cell, ci) => {
     cell.inputs.forEach((source, pin) => {
       if (source.kind === 'primary') primaryNode(source.net, inputNodes.size)
-      else if (source.kind === 'carry')
+      else if (source.kind === 'carry') {
         unlowered.push({
           cell: cell.ref,
           pin,
           reason: 'driven by the carry unit, which has no gate-level equivalent here',
         })
+        unfaithfulKeys.add(cellKey(cell.ref)) // this cell's lowered gates cannot compute its real function
+      } else if (source.kind === 'cell' && registeredKeys.has(cellKey(source.driver))) {
+        // A consumer of a REGISTERED cell reads that cell's stored Q on real hardware, but the lowering only has
+        // its LUT (the D input) — so this consumer's value is not faithful either. Report, do not pretend.
+        unlowered.push({
+          cell: cell.ref,
+          pin,
+          reason:
+            "driven by a registered cell's stored value (Q), which needs the clocked simulator",
+        })
+        unfaithfulKeys.add(cellKey(cell.ref))
+      }
       void ci
     })
   })
@@ -150,9 +176,24 @@ export function lowerNetlistToCanvas(netlist: RecoveredNetlist): LoweredCanvas {
     const mintermOuts: string[] = []
     minterms.forEach((m, mi) => {
       let acc: string | null = null
+      let unsatisfiable = false
       for (let pin = 0; pin < 4; pin++) {
         const src = pinValue(pin, ((m >> pin) & 1) === 0)
-        if (src === null) continue // an unused/unlowered pin contributes nothing to this product
+        if (src === null) {
+          // A pin with no usable source reads as 0 (exactly what the FPGA simulator does for it). So a minterm
+          // that needs this pin HIGH can never be satisfied — drop the whole minterm, don't just drop the literal
+          // (dropping it would wrongly make the product true when the pin is 0). A minterm that needs it LOW is
+          // already satisfied by that pin, so only the literal goes.
+          if (((m >> pin) & 1) === 1) {
+            unsatisfiable = true
+            break
+          }
+          // A pin the LUT DEPENDS on whose driver could not be resolved (carry / a missing driver) is reported —
+          // the lowered gates cannot be trusted for this cell.
+          if ((cell.inputs[pin] as InputSource | undefined)?.kind !== 'unused')
+            unfaithfulKeys.add(key)
+          continue
+        }
         if (acc === null) {
           acc = src
           continue
@@ -163,7 +204,7 @@ export function lowerNetlistToCanvas(netlist: RecoveredNetlist): LoweredCanvas {
         connect(src, id, 'b')
         acc = id
       }
-      if (acc !== null) mintermOuts.push(acc)
+      if (!unsatisfiable && acc !== null) mintermOuts.push(acc)
     })
 
     // OR the minterms together; a single minterm needs no OR.
@@ -182,5 +223,8 @@ export function lowerNetlistToCanvas(netlist: RecoveredNetlist): LoweredCanvas {
     cellOutputs.set(key, outId)
   })
 
-  return { nodes, edges, inputNodes, cellOutputs, registered, unlowered }
+  const unfaithful = netlist.cells
+    .filter((c) => unfaithfulKeys.has(cellKey(c.ref)))
+    .map((c) => c.ref)
+  return { nodes, edges, inputNodes, cellOutputs, registered, unlowered, unfaithful }
 }

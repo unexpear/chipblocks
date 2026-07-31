@@ -87,12 +87,31 @@ describe('loadIce40Bitstream — refuses honestly, never mis-parses', () => {
 describe('every iCE40 device is covered — all six chip databases ship and work', () => {
   const DEVICES = ['384', '1k', '5k', '8k', 'u4k', 'lm4k'] as const
 
-  test('a chip database ships for every iCE40 device the parser can detect', () => {
+  // The real geometry of each device (icebox chip_width/chip_height + the CRAM dimensions the .bin parser detects).
+  const GEOMETRY: Record<string, { tiles: number; carriesIsc: boolean }> = {
+    '384': { tiles: 6 * 8, carriesIsc: true },
+    '1k': { tiles: 12 * 16, carriesIsc: true },
+    '5k': { tiles: 24 * 30, carriesIsc: true },
+    '8k': { tiles: 32 * 32, carriesIsc: true },
+    u4k: { tiles: 24 * 20, carriesIsc: true },
+    lm4k: { tiles: 24 * 20, carriesIsc: true },
+  }
+
+  test('every shipped chip database really PARSES and carries its ISC notice (not just a file of the right size)', () => {
     for (const d of DEVICES) {
-      const path = new URL(`../fixtures/icebox-ice40-${d}-chipdb.txt`, import.meta.url)
-      expect(readFileSync(path, 'utf8').length).toBeGreaterThan(1000) // present and non-trivial
+      const text = readFileSync(
+        new URL(`../fixtures/icebox-ice40-${d}-chipdb.txt`, import.meta.url),
+        'utf8',
+      )
+      // the ISC permission notice the license requires us to carry with the vendored data
+      expect(text).toMatch(/Permission to use, copy, modify/)
+      expect(text).toMatch(/WARRANTIES/) // the disclaimer paragraph, not just the permission grant
+      // and it is genuinely a parseable chipdb with real routing, not junk of the right length
+      const device = parseIceboxChipdb(text)
+      expect(device.pips.length).toBeGreaterThan(100)
+      expect(GEOMETRY[d]?.tiles).toBeGreaterThan(0)
     }
-  })
+  }, 120000)
 
   test('a REAL routed 1k bitstream loads on the 1k chip database and simulates (B = A = i0 & i1)', () => {
     // Proves the flow is genuinely device-agnostic: a different device, its own chipdb, same code path.

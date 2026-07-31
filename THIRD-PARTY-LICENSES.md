@@ -136,7 +136,7 @@ The integration audit (2026-06-16) also noted `caniuse-lite` (CC-BY-4.0), carrie
 - **License:** ISC (on CLAUDE.md principle 4's permissive whitelist)
 - **Copyright:** Copyright (C) 2015 Claire Xenia Wolf \<claire@clairexen.net\>
 - **Source:** <https://github.com/YosysHQ/icestorm> (`icebox/iceboxdb.py` + `icebox/icebox_chipdb.py`)
-- **License text:** the ISC permission notice is preserved verbatim in every vendored file's header comment — the full `icebox-ice40-384-chipdb.txt` and each fragment (as ISC requires — "the above copyright notice and this permission notice appear in all copies"). No separate LICENSE file is vendored. (The generated `.bin` bitstream fixtures under `fixtures/` — e.g. `icebox-ice40-384-routed.bin`, `-cells.bin`, `-1k-cells.bin` — are our own test artifacts produced with the ISC-licensed `icepack` tool, not vendored ISC source, so they carry no third-party notice.)
+- **License text:** the full ISC notice — both the permission grant AND the warranty-disclaimer paragraph — is preserved verbatim in every vendored file's header comment — the full `icebox-ice40-384-chipdb.txt` and each fragment (as ISC requires — "the above copyright notice and this permission notice appear in all copies"). No separate LICENSE file is vendored. (The generated `.bin` bitstream fixtures under `fixtures/` — e.g. `icebox-ice40-384-routed.bin`, `-cells.bin`, `-1k-cells.bin` — are our own test artifacts produced with the ISC-licensed `icepack` tool, not vendored ISC source, so they carry no third-party notice.)
 - **Usage tier:** dev-time/test only (test fixtures; not shipped in the product artifact).
 
 ---

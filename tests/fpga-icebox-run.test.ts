@@ -737,3 +737,106 @@ describe('the carry chain — a real ripple adder', () => {
     expect(netlist.cells.find((c) => c.ref.cell === 0)?.carryIn ?? null).toBeNull() // cell 0 starts the chain
   })
 })
+
+describe('the carry chain — operands are independent of the LUT (icebox semantics)', () => {
+  // icebox_vlog.py fetches the carry unit's in_1/in_2 regardless of the LUT truth table, so an operand the LUT
+  // happens to ignore (or a carry-only cell with an all-zero LUT) still carries a real signal. Before this was
+  // modelled the carry died at stage 0 and a+1 computed a-1 for every odd a.
+  const P = (net: number): InputSource => ({ kind: 'primary', net })
+  const CARRY = (cell: number): InputSource => ({ kind: 'carry', driver: ref(cell), net: 0 })
+  const carryCfg = (truth: boolean[]): LcConfig => ({
+    truth,
+    carryEnable: true,
+    dffEnable: false,
+    setNoReset: false,
+    asyncSetReset: false,
+  })
+  const ALL_ZERO = Array.from({ length: 16 }, () => false)
+  const ALL_ONE = Array.from({ length: 16 }, () => true)
+  const NOT_IN1 = Array.from({ length: 16 }, (_, i) => ((i >> 1) & 1) === 0)
+  const XOR_IN1_IN3 = Array.from({ length: 16 }, (_, i) => Boolean(((i >> 1) & 1) ^ ((i >> 3) & 1)))
+
+  test('a 4-bit incrementer: a carry operand the LUT IGNORES still propagates the carry', () => {
+    // stage 0's LUT is just NOT(a0) — the tied-high "+1" operand is a don't-care for the LUT but a real carry
+    // operand. Each later stage XORs its bit with the incoming carry.
+    const one: RecoveredCell = {
+      ref: ref(7),
+      config: comb(ALL_ONE),
+      inputs: [UNUSED, UNUSED, UNUSED, UNUSED],
+    }
+    const stage0: RecoveredCell = {
+      ref: ref(0),
+      config: carryCfg(NOT_IN1),
+      inputs: [UNUSED, P(10), UNUSED, UNUSED], // the LUT ignores the tied-high operand…
+      carryOperands: [P(10), { kind: 'cell', driver: ref(7), net: 7 }], // …but the carry unit does not
+      carryIn: null,
+    }
+    const stage = (cell: number, bitNet: number): RecoveredCell => ({
+      ref: ref(cell),
+      config: carryCfg(XOR_IN1_IN3),
+      inputs: [UNUSED, P(bitNet), UNUSED, CARRY(cell - 1)],
+      carryOperands: [P(bitNet), { kind: 'unused' }],
+      carryIn: ref(cell - 1),
+    })
+    const cells = [one, stage0, stage(1, 11), stage(2, 12), stage(3, 13)]
+    for (let a = 0; a < 16; a++) {
+      const sim = simulateCombinational(
+        { cells },
+        new Map([
+          [10, (a & 1) === 1],
+          [11, (a & 2) === 2],
+          [12, (a & 4) === 4],
+          [13, (a & 8) === 8],
+        ]),
+      )
+      const got = [0, 1, 2, 3].reduce(
+        (acc, i) => acc + (sim.outputs.get(`0_0_${i}`) ? 1 << i : 0),
+        0,
+      )
+      expect(got).toBe((a + 1) & 15)
+    }
+  })
+
+  test('a carry-only cell (all-zero LUT) still produces a real carry-out, combinational and clocked', () => {
+    const carryOnly: RecoveredCell = {
+      ref: ref(0),
+      config: carryCfg(ALL_ZERO), // the parser keeps such a cell precisely because its carry matters
+      inputs: [UNUSED, UNUSED, UNUSED, UNUSED],
+      carryOperands: [P(1), P(2)],
+      carryIn: null,
+    }
+    const probe = oneIn(1, comb(BUF), CARRY(0)) // surfaces the carry-out as a readable cell output
+    for (const a of [false, true])
+      for (const b of [false, true]) {
+        const inputs = new Map([
+          [1, a],
+          [2, b],
+        ])
+        expect(
+          simulateCombinational({ cells: [carryOnly, probe] }, inputs).outputs.get('0_0_1'),
+        ).toBe(
+          a && b, // majority(a, b, 0)
+        )
+        expect(
+          simulateClocked({ cells: [carryOnly, probe] }, inputs, 2).trace[1]?.get('0_0_1'),
+        ).toBe(a && b)
+      }
+  })
+
+  test('a carryIn naming a cell that is not in the netlist is treated as 0, not a crash', () => {
+    const orphan: RecoveredCell = {
+      ref: ref(0),
+      config: carryCfg(ALL_ZERO),
+      inputs: [UNUSED, UNUSED, UNUSED, UNUSED],
+      carryOperands: [P(1), P(2)],
+      carryIn: ref(99), // no such cell
+    }
+    const probe = oneIn(1, comb(BUF), CARRY(0))
+    const inputs = new Map([
+      [1, true],
+      [2, false],
+    ])
+    expect(() => simulateCombinational({ cells: [orphan, probe] }, inputs)).not.toThrow()
+    expect(() => simulateClocked({ cells: [orphan, probe] }, inputs, 2)).not.toThrow()
+  })
+})

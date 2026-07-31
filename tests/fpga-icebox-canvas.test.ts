@@ -13,7 +13,7 @@ import { parseIceboxChipdb } from '../src/renderer/fpga-icebox.ts'
 import { lowerNetlistToCanvas } from '../src/renderer/fpga-icebox-canvas.ts'
 import { type Ice40ChipDb, loadIce40Bitstream } from '../src/renderer/fpga-icebox-load.ts'
 import { parseLogicTileBits } from '../src/renderer/fpga-icebox-logic.ts'
-import type { RecoveredCell } from '../src/renderer/fpga-icebox-run.ts'
+import { type RecoveredCell, simulateCombinational } from '../src/renderer/fpga-icebox-run.ts'
 import { simulateLogic } from '../src/renderer/logic-sim.ts'
 
 const CHIPDBS: Record<string, Ice40ChipDb> = {
@@ -152,5 +152,86 @@ describe('lowerNetlistToCanvas — honest about what it cannot lower', () => {
     const out = lowered.cellOutputs.get('0_0_0') as string
     const result = simulateLogic(lowered.nodes, lowered.edges)
     expect(result.value(out, 'out')).toBe(true) // the constant-1 LUT really reads high on the canvas
+  })
+})
+
+describe('lowerNetlistToCanvas — computes the SAME function as the FPGA simulator', () => {
+  const cref = (cell: number) => ({ x: 0, y: 0, cell })
+  const NONE = { kind: 'unused' } as const
+  const lc = (truth: boolean[]) => ({
+    truth,
+    carryEnable: false,
+    dffEnable: false,
+    setNoReset: false,
+    asyncSetReset: false,
+  })
+  const BUF16 = Array.from({ length: 16 }, (_, i) => (i & 1) === 1)
+  /** Run a lowered canvas with the given primary-net values and read one cell's output. */
+  const runCanvas = (
+    lowered: ReturnType<typeof lowerNetlistToCanvas>,
+    values: Map<number, boolean>,
+    key: string,
+  ): boolean | undefined => {
+    const nodes = lowered.nodes.map((n) => {
+      for (const [net, id] of lowered.inputNodes)
+        if (id === n.id) return drive(n, values.get(net) ? 5 : 0)
+      return n
+    })
+    return simulateLogic(nodes, lowered.edges).value(lowered.cellOutputs.get(key) as string, 'out')
+  }
+
+  test('a driver listed AFTER its consumer is still wired (two-pass lowering)', () => {
+    // Cell 0 reads cell 1, but cell 1 comes later in the array. A single forward pass silently dropped this
+    // input — the canvas computed a different function while reporting nothing.
+    const consumer = {
+      ref: cref(0),
+      config: lc(BUF16),
+      inputs: [{ kind: 'cell' as const, driver: cref(1), net: 1 }, NONE, NONE, NONE],
+    }
+    const driver = {
+      ref: cref(1),
+      config: lc(BUF16),
+      inputs: [{ kind: 'primary' as const, net: 7 }, NONE, NONE, NONE],
+    }
+    const netlist = { cells: [consumer, driver] }
+    const lowered = lowerNetlistToCanvas(netlist)
+    expect(lowered.unfaithful).toEqual([]) // nothing was dropped, so nothing is unfaithful
+    for (const v of [false, true]) {
+      const want = simulateCombinational(netlist, new Map([[7, v]])).outputs.get('0_0_0')
+      expect(runCanvas(lowered, new Map([[7, v]]), '0_0_0')).toBe(want)
+      expect(want).toBe(v) // the buffer chain passes the input through
+    }
+  })
+
+  test('100 random LUTs agree with the FPGA simulator on every input, including pins with no source', () => {
+    // A pin with no source reads as 0 in the FPGA simulator, so a minterm needing it HIGH is unsatisfiable and
+    // must be dropped ENTIRELY — dropping only its literal made the product true when the pin was 0.
+    let seed = 4242
+    const rnd = (): number => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff
+    for (let trial = 0; trial < 100; trial++) {
+      const truth = Array.from({ length: 16 }, () => rnd() < 0.5) // depends on pins 2/3, which have NO source
+      const cell = {
+        ref: cref(0),
+        config: lc(truth),
+        inputs: [
+          { kind: 'primary' as const, net: 1 },
+          { kind: 'primary' as const, net: 2 },
+          NONE,
+          NONE,
+        ],
+      }
+      const netlist = { cells: [cell] }
+      const lowered = lowerNetlistToCanvas(netlist)
+      for (const a of [false, true])
+        for (const b of [false, true]) {
+          const values = new Map([
+            [1, a],
+            [2, b],
+          ])
+          expect(runCanvas(lowered, values, '0_0_0')).toBe(
+            simulateCombinational(netlist, values).outputs.get('0_0_0'),
+          )
+        }
+    }
   })
 })
