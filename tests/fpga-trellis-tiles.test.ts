@@ -13,9 +13,14 @@ import { describe, expect, test } from 'vitest'
 import { evalLut4 } from '../src/renderer/fpga-icebox-logic.ts'
 import {
   decodeEcp5Luts,
+  decodeEcp5Routing,
+  decodeEcp5Slices,
+  type Ecp5Bit,
   type Ecp5Tile,
   parseEcp5TileBits,
   parseEcp5TileGrid,
+  readTileEnum,
+  readTileMux,
   readTileWord,
 } from '../src/renderer/fpga-trellis-tiles.ts'
 
@@ -170,5 +175,124 @@ describe('readTileWord — the inversion and window rules', () => {
     // every SLICEA.K0.INIT bit is inverted in the database, so all-zero storage reads as all-ones
     expect(word.bits.every((g) => g.every((b) => b.inv))).toBe(true)
     expect(readTileWord(frames, tile, word).every((v) => v)).toBe(true)
+  })
+})
+
+/** Stamp a group of database bits into the frames so it MATCHES (stored = value XOR inv). */
+function writeGroup(frames: boolean[][], tile: Ecp5Tile, bits: readonly Ecp5Bit[]): void {
+  for (const { frame, bit, inv } of bits) {
+    const row = frames[tile.startFrame + frame] as boolean[]
+    row[tile.startBit + bit] = !inv
+  }
+}
+
+describe('parseEcp5TileBits — the enum / mux / fixed-conn sections', () => {
+  test('reads all four section kinds out of the real PLC2 database', () => {
+    expect(PLC2.enums.size).toBe(91)
+    expect(PLC2.muxes.size).toBe(128)
+    expect(PLC2.fixedConns).toHaveLength(124)
+
+    // the SLICE mode + flip-flop settings we need to know how a SLICE behaves
+    expect(PLC2.enums.get('SLICEA.MODE')).toBeDefined()
+    expect(PLC2.enums.get('SLICEA.REG0.SD')).toBeDefined()
+    expect(PLC2.enums.get('SLICEA.REG0.REGSET')).toBeDefined()
+    // an option with no bits is recorded as an empty group (it matches vacuously — hence the longest-match rule)
+    const a0mux = PLC2.enums.get('SLICEA.A0MUX')
+    expect(a0mux?.options.get('A0')).toEqual([])
+    expect((a0mux?.options.get('1') ?? []).length).toBeGreaterThan(0)
+  })
+})
+
+describe('readTileEnum / readTileMux — longest match wins (Trellis get_value / get_driver)', () => {
+  test('an enum resolves to the option whose bits are set, not to the empty option', () => {
+    const tile = GRID.get('R10C10:PLC2') as Ecp5Tile
+    const setting = PLC2.enums.get('SLICEA.A0MUX')
+    if (setting === undefined) throw new Error('missing A0MUX')
+    const frames = blankFrames()
+    // nothing programmed: the winning option IS the declared default, which Trellis reports as unset
+    expect(readTileEnum(frames, tile, setting)).toBeNull()
+    // program the "1" option's bits and it must win, because it matches with MORE bits
+    writeGroup(frames, tile, setting.options.get('1') as Ecp5Bit[])
+    expect(readTileEnum(frames, tile, setting)).toBe('1')
+  })
+
+  test('a mux reports the source its bits select, and nothing when unprogrammed', () => {
+    const tile = GRID.get('R10C10:PLC2') as Ecp5Tile
+    const mux = [...PLC2.muxes.values()].find((m) => m.arcs.size > 2)
+    if (mux === undefined) throw new Error('no multi-source mux')
+    const frames = blankFrames()
+    expect(readTileMux(frames, tile, mux)).toBeNull() // no arc selected on a blank device
+    const [source, bits] = [...mux.arcs.entries()].find(([, b]) => b.length > 0) as [
+      string,
+      Ecp5Bit[],
+    ]
+    writeGroup(frames, tile, bits)
+    expect(readTileMux(frames, tile, mux)).toBe(source)
+  })
+})
+
+describe('decodeEcp5Slices — LUTs and flip-flop modes together', () => {
+  test('recovers a SLICE mode and its register settings alongside the LUTs', () => {
+    const frames = blankFrames()
+    const tile = GRID.get('R10C10:PLC2') as Ecp5Tile
+    const AND2 = Array.from({ length: 16 }, (_, i) => (i & 1) === 1 && ((i >> 1) & 1) === 1)
+    writeLut(frames, tile, 'A', 0, AND2)
+    // put SLICEA into carry mode and make REG0 a SET flip-flop
+    const mode = PLC2.enums.get('SLICEA.MODE') as NonNullable<ReturnType<typeof PLC2.enums.get>>
+    writeGroup(frames, tile, mode.options.get('CCU2') as Ecp5Bit[])
+    const regset = PLC2.enums.get('SLICEA.REG0.REGSET') as NonNullable<
+      ReturnType<typeof PLC2.enums.get>
+    >
+    // RESET, not SET: SET is this enum's declared DEFAULT, and Trellis reports a default as unset
+    writeGroup(frames, tile, regset.options.get('RESET') as Ecp5Bit[])
+
+    const slices = decodeEcp5Slices(frames, GRID, PLC2)
+    const a = slices.find((s) => s.tile === 'R10C10' && s.slice === 'A')
+    expect(a?.luts[0]).toEqual(AND2)
+    expect(a?.mode).toBe('CCU2') // the SLICE is in carry mode, not plain LOGIC
+    expect(a?.regs[0]?.regset).toBe('RESET')
+    expect(slices.every((s) => s.tile === 'R10C10' && s.slice === 'A')).toBe(true) // nothing else touched
+  })
+
+  test('a blank device yields no slices; includeDefault surfaces every SLICE position', () => {
+    const frames = blankFrames()
+    expect(decodeEcp5Slices(frames, GRID, PLC2)).toEqual([])
+    expect(decodeEcp5Slices(frames, GRID, PLC2, { includeDefault: true })).toHaveLength(3036 * 4)
+  })
+})
+
+describe('decodeEcp5Routing — the muxes become real connections', () => {
+  test('a programmed mux is recovered as an arc in its own tile only', () => {
+    const frames = blankFrames()
+    const tile = GRID.get('R10C10:PLC2') as Ecp5Tile
+    const mux = [...PLC2.muxes.values()].find((m) => [...m.arcs.values()].some((b) => b.length > 0))
+    if (mux === undefined) throw new Error('no mux with bits')
+    const [source, bits] = [...mux.arcs.entries()].find(([, b]) => b.length > 0) as [
+      string,
+      Ecp5Bit[],
+    ]
+    writeGroup(frames, tile, bits)
+
+    const arcs = decodeEcp5Routing(frames, GRID, (t) => (t === 'PLC2' ? PLC2 : null))
+    const mine = arcs.filter((a) => a.tile === 'R10C10' && a.sink === mux.sink)
+    expect(mine).toHaveLength(1)
+    expect(mine[0]?.source).toBe(source)
+    // the bits we set select this source in OUR tile only — no other tile reports this sink/source pair
+    expect(arcs.filter((a) => a.sink === mux.sink && a.source === source)).toEqual(mine)
+  })
+
+  test('tile types with no database loaded are skipped, never guessed at', () => {
+    const frames = blankFrames()
+    const arcs = decodeEcp5Routing(frames, GRID, () => null)
+    expect(arcs).toEqual([])
+  })
+
+  test('fixed connections are reported on request', () => {
+    const frames = blankFrames()
+    const arcs = decodeEcp5Routing(frames, GRID, (t) => (t === 'PLC2' ? PLC2 : null), {
+      includeFixed: true,
+    })
+    // every PLC2 tile's always-present connections are reported, alongside any programmed mux arcs
+    expect(arcs.filter((a) => a.fixed)).toHaveLength(3036 * 124)
   })
 })
