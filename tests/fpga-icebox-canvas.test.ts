@@ -211,7 +211,10 @@ describe('lowerNetlistToCanvas — computes the SAME function as the FPGA simula
     // A pin with no source reads as 0 in the FPGA simulator, so a minterm needing it HIGH is unsatisfiable and
     // must be dropped ENTIRELY — dropping only its literal made the product true when the pin was 0.
     let seed = 4242
-    const rnd = (): number => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff
+    const rnd = (): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff
+      return seed / 0x7fffffff
+    }
     for (let trial = 0; trial < 100; trial++) {
       const truth = Array.from({ length: 16 }, () => rnd() < 0.5) // depends on pins 2/3, which have NO source
       const cell = {

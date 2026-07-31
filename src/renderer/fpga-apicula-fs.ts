@@ -134,6 +134,12 @@ export function parseGowinBitstream(text: string): ParsedGowinBitstream {
             'This Gowin bitstream is COMPRESSED; expanding it needs the compression-key path, which is not implemented',
           )
       }
+      if (preamble > 0) {
+        preamble--
+        continue
+      }
+      // From here Apicula gates on `not preamble`, so the IDCODE and frame-count records are only honoured
+      // after the three preamble lines — matching `read_bitstream` exactly.
       if (first === 0x06) {
         idcode =
           (((bytes[4] as number) << 24) |
@@ -147,13 +153,13 @@ export function parseGowinBitstream(text: string): ParsedGowinBitstream {
             `Gowin bitstream declares IDCODE 0x${idcode.toString(16)}, which is not a part we know — its frame padding is unknown`,
           )
       }
-      if (preamble > 0) {
-        preamble--
-        continue
-      }
       if (first !== 0xd2) crcData.push(...bytes)
       if (first === 0x3b) {
-        framesLeft = ((bytes[2] as number) << 8) | (bytes[3] as number)
+        // Apicula: `frames = int.from_bytes(ba[2:], 'big')` — EVERY remaining byte, not a fixed 16-bit field.
+        // The real record is four bytes (`3b 80 hi lo`, seen in the vendor chipdb's own `cmd_hdr`), so reading a
+        // fixed `ba[2..3]` only coincides with Apicula at that one length and diverges at any other.
+        framesLeft = 0
+        for (let i = 2; i < bytes.length; i++) framesLeft = framesLeft * 256 + (bytes[i] as number)
         sawFrameCount = true
       }
       continue

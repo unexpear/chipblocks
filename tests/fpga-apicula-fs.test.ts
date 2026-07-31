@@ -48,7 +48,11 @@ function buildFs(options: {
     ]),
   )
   const frames = options.frames ?? []
-  out.push(bytesToBits([0x3b, 0, (frames.length >> 8) & 0xff, frames.length & 0xff, 0, 0, 0, 0]))
+  // The frame-count record is FOUR bytes, not eight — `3b 80 hi lo`, as the vendor chipdb's own `cmd_hdr` shows.
+  // The earlier eight-byte version here was invented, and it hid a real bug: Apicula reads the count as
+  // `int.from_bytes(ba[2:], 'big')` over EVERY remaining byte, so an eight-byte record would have made the vendor
+  // tool read a wildly wrong count from a file this builder called valid.
+  out.push(bytesToBits([0x3b, 0x80, (frames.length >> 8) & 0xff, frames.length & 0xff]))
 
   // the reader's CRC state: header lines after the preamble contribute, then each frame
   let crcData: number[] = []

@@ -181,7 +181,9 @@ describe('parseEcp5Bitstream — reads the container', () => {
     // The parser returns the DEVICE's full frame set (unwritten frames read as zero), and ECP5 streams frames in
     // reverse — so the first frame on the wire is the last frame of the device.
     expect(parsed.frames).toHaveLength(7562)
-    FRAMES.forEach((frame, i) => expect(parsed.frames[7562 - 1 - i]).toEqual(frame))
+    FRAMES.forEach((frame, i) => {
+      expect(parsed.frames[7562 - 1 - i]).toEqual(frame)
+    })
   })
 
   test('a corrupted frame byte is reported as crcOk=false, not thrown', () => {
