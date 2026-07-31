@@ -17,6 +17,7 @@ import {
   decodeEcp5Slices,
   type Ecp5Bit,
   type Ecp5Tile,
+  globaliseEcp5Wire,
   parseEcp5TileBits,
   parseEcp5TileGrid,
   readTileEnum,
@@ -294,5 +295,36 @@ describe('decodeEcp5Routing — the muxes become real connections', () => {
     })
     // every PLC2 tile's always-present connections are reported, alongside any programmed mux arcs
     expect(arcs.filter((a) => a.fixed)).toHaveLength(3036 * 124)
+  })
+})
+
+describe('globaliseEcp5Wire — one physical wire, different names per tile', () => {
+  test('N/S/E/W prefixes shift the tile coordinate (Trellis globalise_net_ecp5)', () => {
+    // seen from tile (row 20, col 30): E1_ means the wire belongs to the tile one column EAST
+    expect(globaliseEcp5Wire(20, 30, 'E1_H01E0001')).toEqual({ x: 31, y: 20, name: 'H01E0001' })
+    expect(globaliseEcp5Wire(20, 30, 'W2_H02W0501')).toEqual({ x: 28, y: 20, name: 'H02W0501' })
+    expect(globaliseEcp5Wire(20, 30, 'N1_V01N0001')).toEqual({ x: 30, y: 19, name: 'V01N0001' })
+    expect(globaliseEcp5Wire(20, 30, 'S3_V02S0701')).toEqual({ x: 30, y: 23, name: 'V02S0701' })
+    // both prefixes at once, and a bare name that belongs to the tile itself
+    expect(globaliseEcp5Wire(20, 30, 'N1E2_X')).toEqual({ x: 32, y: 19, name: 'X' })
+    expect(globaliseEcp5Wire(20, 30, 'F5')).toEqual({ x: 30, y: 20, name: 'F5' })
+  })
+
+  test('the SAME physical wire resolves identically from either tile that names it', () => {
+    // tile (20,30) calling it "E1_H01E0001" and tile (20,31) calling it "H01E0001" are the same wire
+    expect(globaliseEcp5Wire(20, 30, 'E1_H01E0001')).toEqual(globaliseEcp5Wire(20, 31, 'H01E0001'))
+    // and a west-looking name from the far side agrees too
+    expect(globaliseEcp5Wire(20, 32, 'W1_H01E0001')).toEqual(globaliseEcp5Wire(20, 31, 'H01E0001'))
+  })
+
+  test('global nets sit at a nominal (0,0), except spine/tap wires which stay in their tile', () => {
+    expect(globaliseEcp5Wire(20, 30, 'G_PCLKT0')).toEqual({ x: 0, y: 0, name: 'G_PCLKT0' })
+    expect(globaliseEcp5Wire(20, 30, 'G_HPBX0000')).toEqual({ x: 30, y: 20, name: 'G_HPBX0000' })
+  })
+
+  test('a wire that leaves the device is null, not a bogus coordinate', () => {
+    expect(globaliseEcp5Wire(0, 0, 'W1_H01E0001')).toBeNull() // off the west edge
+    expect(globaliseEcp5Wire(0, 0, 'N1_V01N0001')).toBeNull() // off the north edge
+    expect(globaliseEcp5Wire(20, 30, 'E9_X', { maxRow: 50, maxCol: 32 })).toBeNull() // past the east edge
   })
 })

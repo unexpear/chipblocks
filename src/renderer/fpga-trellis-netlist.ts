@@ -31,18 +31,13 @@ import {
   decodeEcp5Slices,
   type Ecp5Tile,
   type Ecp5TileDb,
+  globaliseEcp5Wire,
 } from './fpga-trellis-tiles.ts'
 
 /** `R10C23` → `{ row: 10, col: 23 }`, or null for a tile whose name is not a grid position. */
 function tilePosition(name: string): { row: number; col: number } | null {
   const match = /^R(\d+)C(\d+)$/.exec(name)
   return match === null ? null : { row: Number(match[1]), col: Number(match[2]) }
-}
-
-/** `F3` / `Q3` → LUT index 3; anything else → null (a wire from outside the tile). */
-function localDriver(source: string): number | null {
-  const match = /^[FQ](\d)$/.exec(source)
-  return match === null ? null : Number(match[1])
 }
 
 /** What a reconstructed ECP5 design carries beyond the shared netlist. */
@@ -65,9 +60,49 @@ export function reconstructEcp5Netlist(
   const slices = decodeEcp5Slices(frames, grid, dbFor('PLC2') as Ecp5TileDb)
   const arcs = decodeEcp5Routing(frames, grid, dbFor)
 
-  // What drives each routed sink, per tile: "tile/sink" → source wire name.
-  const driverOf = new Map<string, string>()
-  for (const arc of arcs) driverOf.set(`${arc.tile}/${arc.sink}`, arc.source)
+  // What drives each routed sink, resolved to GLOBAL wires so a connection can cross tile boundaries: the same
+  // physical wire is named differently in each tile it touches, and `globaliseEcp5Wire` reconciles those names.
+  const wireKey = (w: { x: number; y: number; name: string }): string => `${w.x}/${w.y}/${w.name}`
+  const globalDriverOf = new Map<string, string>()
+  for (const arc of arcs) {
+    const position = tilePosition(arc.tile)
+    if (position === null) continue
+    const sink = globaliseEcp5Wire(position.row, position.col, arc.sink)
+    const source = globaliseEcp5Wire(position.row, position.col, arc.source)
+    if (sink === null || source === null) continue
+    globalDriverOf.set(wireKey(sink), wireKey(source))
+  }
+  // Every LUT / flip-flop OUTPUT wire, as a global wire → the cell that drives it.
+  const cellByOutput = new Map<string, { ref: CellRef; registered: boolean }>()
+  for (const slice of slices) {
+    const position = tilePosition(slice.tile)
+    if (position === null) continue
+    const sliceIndex = 'ABCD'.indexOf(slice.slice)
+    if (sliceIndex < 0) continue
+    for (let lut = 0; lut < 2; lut++) {
+      const k = sliceIndex * 2 + lut
+      const ref: CellRef = { x: position.col, y: position.row, cell: k }
+      for (const [prefix, registered] of [
+        ['F', false],
+        ['Q', true],
+      ] as const) {
+        const wire = globaliseEcp5Wire(position.row, position.col, `${prefix}${k}`)
+        if (wire !== null) cellByOutput.set(wireKey(wire), { ref, registered })
+      }
+    }
+  }
+  /** Follow a sink back through the routing until it reaches a cell output, or runs out of drivers. */
+  const traceBack = (start: string): string => {
+    let current = start
+    const seen = new Set<string>([current])
+    while (!cellByOutput.has(current)) {
+      const next = globalDriverOf.get(current)
+      if (next === undefined || seen.has(next)) break
+      current = next
+      seen.add(current)
+    }
+    return current
+  }
   // Which LUT outputs are read through their FLIP-FLOP (`Q<k>`) rather than the bare LUT (`F<k>`).
   const registered = new Set<string>()
   for (const arc of arcs) {
@@ -100,16 +135,16 @@ export function reconstructEcp5Netlist(
       const k = sliceIndex * 2 + lut
       const ref: CellRef = { x: position.col, y: position.row, cell: k }
       const inputs: InputSource[] = ['A', 'B', 'C', 'D'].map((pin) => {
-        const source = driverOf.get(`${slice.tile}/${pin}${k}`)
-        if (source === undefined) return { kind: 'unused' }
-        const driver = localDriver(source)
-        if (driver !== null)
-          return {
-            kind: 'cell',
-            driver: { x: position.col, y: position.row, cell: driver },
-            net: internNet(`${slice.tile}/${source}`),
-          }
-        return { kind: 'primary', net: internNet(source) }
+        const start = globaliseEcp5Wire(position.row, position.col, `${pin}${k}`)
+        if (start === null) return { kind: 'unused' }
+        const startKey = wireKey(start)
+        if (!globalDriverOf.has(startKey) && !cellByOutput.has(startKey)) return { kind: 'unused' } // nothing is routed to this pin
+        // follow the routing back across as many tiles as it takes
+        const reached = traceBack(startKey)
+        const cell = cellByOutput.get(reached)
+        if (cell !== undefined) return { kind: 'cell', driver: cell.ref, net: internNet(reached) }
+        // it left the fabric we can see (an IO / EBR / DSP tile, or a wire off the edge): an honest primary
+        return { kind: 'primary', net: internNet(reached) }
       })
       cells.push({
         ref,

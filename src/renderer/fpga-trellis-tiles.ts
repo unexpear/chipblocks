@@ -414,3 +414,47 @@ export function decodeEcp5Routing(
   }
   return arcs
 }
+
+/** A wire's identity on the whole device: a tile coordinate plus the wire's base name. */
+export type Ecp5GlobalWire = { x: number; y: number; name: string }
+
+/**
+ * Resolve a tile-LOCAL wire name to its identity on the whole device — a faithful port of Trellis's
+ * `RoutingGraph::globalise_net_ecp5`. This is what makes routing BETWEEN tiles work: the same physical wire is
+ * called different things depending on which tile you look at it from, and the name itself carries the offset.
+ *
+ * A local name is `[N<k>|S<k>][E<k>|W<k>]_<base>`: `N`/`S` shift the row (north is decreasing y, south
+ * increasing), `E`/`W` shift the column (east increasing x, west decreasing). So `E1_H01E0001` seen from tile
+ * (row, col) is the wire `H01E0001` belonging to tile (row, col + 1) — two tiles naming one wire.
+ *
+ * Names beginning `G_` / `L_` / `R_` are global nets: most live at a nominal (0, 0), except the VPTX / HPBX / HPRX
+ * spine and tap wires, which stay in their own tile. A wire whose resolved position falls outside the device is
+ * an edge net and returns null rather than a bogus coordinate.
+ */
+export function globaliseEcp5Wire(
+  row: number,
+  col: number,
+  name: string,
+  bounds?: { maxRow: number; maxCol: number },
+): Ecp5GlobalWire | null {
+  if (name.startsWith('G_') || name.startsWith('L_') || name.startsWith('R_')) {
+    const spine = name.includes('VPTX') || name.includes('HPBX') || name.includes('HPRX')
+    const global = name.startsWith('G_') && !spine
+    return { x: global ? 0 : col, y: global ? 0 : row, name }
+  }
+  const match = /^([NS]\d+)?([EW]\d+)?_(.*)$/.exec(name)
+  if (match === null) return { x: col, y: row, name }
+  let x = col
+  let y = row
+  for (const group of [match[1], match[2]]) {
+    if (group === undefined || group === '') continue
+    const amount = Number(group.slice(1))
+    if (group[0] === 'N') y -= amount
+    else if (group[0] === 'S') y += amount
+    else if (group[0] === 'W') x -= amount
+    else if (group[0] === 'E') x += amount
+  }
+  if (x < 0 || y < 0) return null // an edge net leaving the device
+  if (bounds !== undefined && (x > bounds.maxCol || y > bounds.maxRow)) return null
+  return { x, y, name: match[3] as string }
+}
