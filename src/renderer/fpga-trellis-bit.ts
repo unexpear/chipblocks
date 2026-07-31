@@ -321,6 +321,11 @@ export function parseEcp5Bitstream(bytes: Uint8Array): ParsedEcp5Bitstream {
         if (!Number.isInteger(bytesPerFrame))
           throw new Error(`ECP5 frame width for ${device.name} is not a whole number of bytes`)
         const frameBytes = new Uint8Array(bytesPerFrame)
+        // ECP5 streams its configuration frames in REVERSE order: the first frame on the wire is the LAST frame
+        // of the device (Trellis `BitstreamOptions::reversed_frames`, applied in its LSC_PROG_INCR_RTI loop as
+        // `idx = num_frames - 1 - i`). Storing them in wire order puts every tile's bits at the wrong frame —
+        // which a synthetic round-trip cannot catch, because it writes and reads with the same wrong convention.
+        const ordered: boolean[][] = new Array(device.frames)
         for (let f = 0; f < frameCount; f++) {
           for (let i = 0; i < bytesPerFrame; i++) frameBytes[i] = read()
           // Trellis reads each frame LSB-first from the END of the byte run, offset by the leading pad bits.
@@ -330,10 +335,12 @@ export function parseEcp5Bitstream(bytes: Uint8Array): ParsedEcp5Bitstream {
             const byte = frameBytes[bytesPerFrame - 1 - Math.floor(ofs / 8)] as number
             row.push(((byte >> (ofs % 8)) & 1) === 1)
           }
-          frames.push(row)
+          ordered[device.frames - 1 - f] = row
           if (crcAfterEachFrame || (checkCrcFlag && f === frameCount - 1)) checkCrc()
           skip(dummyBytes)
         }
+        for (const row of ordered)
+          frames.push(row ?? Array.from({ length: device.bitsPerFrame }, () => false))
         break
       }
       case CMD.LSC_PROG_INCR_CMP:

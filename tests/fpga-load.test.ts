@@ -106,8 +106,9 @@ function buildEcp5(idcode = 0x41111043): Uint8Array {
   w(0x80)
   w((FRAMES >> 8) & 0xff)
   w(FRAMES & 0xff)
-  for (const row of frames) {
-    for (const b of row) w(b)
+  // ECP5 streams frames in REVERSE (the device's last frame goes first), so a realistic bitstream must too
+  for (let i = frames.length - 1; i >= 0; i--) {
+    for (const b of frames[i] as Uint8Array) w(b)
     wCrc()
   }
   w(0x5e) // ISC_PROGRAM_DONE with check

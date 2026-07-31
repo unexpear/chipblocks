@@ -15,6 +15,11 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import { crc16Trellis, ECP5_DEVICES, parseEcp5Bitstream } from '../src/renderer/fpga-trellis-bit.ts'
+import {
+  decodeEcp5Luts,
+  parseEcp5TileBits,
+  parseEcp5TileGrid,
+} from '../src/renderer/fpga-trellis-tiles.ts'
 
 /** Trellis `finalise_crc16` — push the last 16 bits through. */
 const finalise = (crc: number): number => {
@@ -173,9 +178,10 @@ describe('parseEcp5Bitstream — reads the container', () => {
     expect(parsed.programDone).toBe(true)
     expect(parsed.crcOk).toBe(true)
     expect(parsed.crcChecks).toBeGreaterThanOrEqual(FRAMES.length)
-    // every frame bit round-trips through the byte packing
-    expect(parsed.frames).toHaveLength(FRAMES.length)
-    expect(parsed.frames).toEqual(FRAMES)
+    // The parser returns the DEVICE's full frame set (unwritten frames read as zero), and ECP5 streams frames in
+    // reverse — so the first frame on the wire is the last frame of the device.
+    expect(parsed.frames).toHaveLength(7562)
+    FRAMES.forEach((frame, i) => expect(parsed.frames[7562 - 1 - i]).toEqual(frame))
   })
 
   test('a corrupted frame byte is reported as crcOk=false, not thrown', () => {
@@ -187,7 +193,7 @@ describe('parseEcp5Bitstream — reads the container', () => {
     })
     const parsed = parseEcp5Bitstream(bits)
     expect(parsed.crcOk).toBe(false) // structural parse still succeeds; the CRC catches it
-    expect(parsed.frames).toHaveLength(FRAMES.length)
+    expect(parsed.frames).toHaveLength(7562)
   })
 })
 
@@ -250,5 +256,50 @@ describe('parseEcp5Bitstream — a GENUINE ecppack bitstream', () => {
     // the device's full frame set, each the declared width
     expect(parsed.frames).toHaveLength(7562)
     for (const frame of parsed.frames) expect(frame).toHaveLength(592)
+  }, 60000)
+
+  test('frames are stored in the REVERSED order ECP5 streams them in', () => {
+    // ECP5 sends the LAST frame of the device first (Trellis `reversed_frames`). Reading them in wire order puts
+    // every tile's bits ~1300 frames away from where the tile grid says they are — and a synthetic round-trip
+    // cannot catch that, because it writes and reads with the same wrong convention. This real bitstream can:
+    // its one programmed LUT sits in tile R20C30, whose window starts at frame 3110.
+    const parsed = parseEcp5Bitstream(REAL)
+    const setFrames: number[] = []
+    parsed.frames.forEach((frame, index) => {
+      if (frame[241]) setFrames.push(index) // bit 241 = the tile's bit 231 + the INIT word's bit 10
+    })
+    expect(setFrames.length).toBeGreaterThan(0)
+    // every one of those bits must land inside the tile's own 106-frame window, not off in the reversed half
+    for (const index of setFrames) {
+      expect(index).toBeGreaterThanOrEqual(3110)
+      expect(index).toBeLessThan(3110 + 106)
+    }
+  }, 60000)
+
+  test('the config-word BIT ORDER, verified against the real tool rather than derived from its source', () => {
+    // This is the check no vendored fixture could make: every `.config` default in the database is the symmetric
+    // all-ones word, so only a bitstream carrying a deliberately ASYMMETRIC value can distinguish the order.
+    // This artefact was packed by real ecppack from `word: SLICEA.K0.INIT 1000000000000011`, and ecpunpack
+    // round-trips that same string back out of it, so the value in the file is not in doubt.
+    const parsed = parseEcp5Bitstream(REAL)
+    const grid = parseEcp5TileGrid(
+      readFileSync(
+        new URL('../fixtures/trellis-ecp5-LFE5U-25F-tilegrid.json', import.meta.url),
+        'utf8',
+      ),
+    )
+    const plc2 = parseEcp5TileBits(
+      readFileSync(new URL('../fixtures/trellis-ecp5-PLC2-bits.db', import.meta.url), 'utf8'),
+    )
+    const luts = decodeEcp5Luts(parsed.frames, grid, plc2)
+    expect(luts).toHaveLength(1) // exactly the one LUT the design programs
+    const lut = luts[0]
+    expect([lut?.tile, lut?.slice, lut?.lut]).toEqual(['R20C30', 'A', 0])
+    // Trellis prints a word REVERSED (Util.hpp to_string), so entry 0 is the LAST character of the config string.
+    // '1000000000000011' must therefore decode to '1100000000000001' — the reversal. Reading it the other way
+    // round would give back the config string unchanged, so this assertion genuinely distinguishes the two.
+    const decoded = (lut?.truth ?? []).map((b) => (b ? '1' : '0')).join('')
+    expect(decoded).toBe('1100000000000001')
+    expect(decoded).not.toBe('1000000000000011')
   }, 60000)
 })
