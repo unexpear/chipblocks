@@ -39,6 +39,7 @@ ENV/
 build_*/
 # …but keep committed test fixtures (real vendor-format bitstreams the tests parse)
 !fixtures/*.bin
+!fixtures/*.bit
 soc_*.v
 
 # IDE / editor

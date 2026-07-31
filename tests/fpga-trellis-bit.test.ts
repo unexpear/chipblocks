@@ -7,11 +7,12 @@
  * rather than against ourselves. The container framing (preamble, command stream, frame payload) is transcribed
  * from the same file and exercised here by bitstreams assembled byte-by-byte to that spec.
  *
- * Honest limit: these are not yet checked against a bitstream produced by the real `ecppack` tool — building it
- * needs boost + cmake, which are not available in this environment — so unlike the iCE40 suite (which round-trips
- * genuine `icepack` output) this proves conformance to Trellis's documented/transcribed format, not to a captured
- * vendor artefact. Feeding a real `.bit` through it is the next step.
+ * The container is ALSO checked against a genuine vendor artefact: `fixtures/trellis-ecp5-asym-lut.bit` was
+ * produced by the real Project Trellis `ecppack` (from the prebuilt oss-cad-suite), and this suite requires our
+ * parser to read it end to end — the right device off its IDCODE, the CRC verifying over the real command stream,
+ * and all 7562 configuration frames extracted.
  */
+import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import { crc16Trellis, ECP5_DEVICES, parseEcp5Bitstream } from '../src/renderer/fpga-trellis-bit.ts'
 
@@ -230,4 +231,24 @@ describe('parseEcp5Bitstream — refuses honestly, never mis-parses', () => {
     const bits = Uint8Array.from([0xff, 0xff, 0xbd, 0xb3, 0x11])
     expect(() => parseEcp5Bitstream(bits)).toThrow(/Unknown ECP5 bitstream command/)
   })
+})
+
+describe('parseEcp5Bitstream — a GENUINE ecppack bitstream', () => {
+  // Produced by the real Project Trellis ecppack (oss-cad-suite build) for an LFE5U-25F. Unlike the assembled
+  // streams above, nothing about this file came from our own code: it is a vendor-tool artefact.
+  const REAL = new Uint8Array(
+    readFileSync(new URL('../fixtures/trellis-ecp5-asym-lut.bit', import.meta.url)),
+  )
+
+  test('reads a real vendor bitstream: right device, CRC verified, every frame recovered', () => {
+    const parsed = parseEcp5Bitstream(REAL)
+    expect(parsed.device?.name).toBe('LFE5U-25F') // identified from the file's own IDCODE
+    expect(parsed.idcode).toBe(0x41111043)
+    expect(parsed.crcOk).toBe(true) // our CRC-16 agrees with the real tool's over the whole command stream
+    expect(parsed.crcChecks).toBeGreaterThan(0)
+    expect(parsed.programDone).toBe(true)
+    // the device's full frame set, each the declared width
+    expect(parsed.frames).toHaveLength(7562)
+    for (const frame of parsed.frames) expect(frame).toHaveLength(592)
+  }, 60000)
 })
