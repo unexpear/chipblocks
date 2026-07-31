@@ -64,14 +64,21 @@ export type RecoveredCell = {
    *  registered cells. */
   clockEnable?: InputSource | null
   /** For a carry-enabled cell (`carryEnable`), the cell whose carry output feeds this cell's carry-in — the
-   *  previous cell in the tile's carry chain `(x, y, cell-1)`. `null`/absent ⇒ carry-in is 0 (cell 0 of a chain;
-   *  the tile CarryInSet bit is not decoded, so a set carry-in is not modelled). */
+   *  previous cell in the tile's carry chain `(x, y, cell-1)`. `null`/absent ⇒ this cell starts the tile's chain,
+   *  so its carry-in comes from `carryInSource` (a cascade from the tile below) or `carryInConst` (CarryInSet). */
   carryIn?: CellRef | null
   /** The carry unit's own two operands (`in_1`, `in_2`), resolved WITHOUT the LUT's don't-care mask. The carry
    *  unit is independent of the LUT (icebox fetches in_1/in_2 for the carry regardless of `lut_bits`), so a
    *  carry-only cell — or one whose LUT ignores an operand it still adds — carries the real signal here while
    *  `inputs` stays don't-care-masked (which keeps phantom LUT edges out). Absent ⇒ fall back to `inputs`. */
   carryOperands?: [InputSource, InputSource] | null
+  /** For cell 0 of a tile's carry chain: what is routed into the tile's `carry_in_mux`. On real silicon a chain
+   *  longer than one tile CASCADES — the tile below's `lutff_7/cout` is routed here — so this is normally a
+   *  `carry` source naming that cell. `null` ⇒ nothing routed, and `carryInConst` applies instead. */
+  carryInSource?: InputSource | null
+  /** For cell 0 with no routed cascade: the tile's `CarryInSet` bit — the CONSTANT carry-in (icebox
+   *  `get_carry_bit`). An adder that starts at 1 (`a + 1`, a subtractor) sets it. Defaults to false. */
+  carryInConst?: boolean
 }
 export type RecoveredNetlist = { cells: RecoveredCell[] }
 
@@ -162,6 +169,17 @@ export function reconstructNetlist(parsed: ParsedDesign, device: IceboxDevice): 
     const carryOperands: [InputSource, InputSource] | null = c.config.carryEnable
       ? [carryPin(1), carryPin(2)]
       : null
+    // Cell 0 of a tile's chain takes its carry-in from the tile's `carry_in_mux`: either a CASCADE routed in from
+    // the tile below (icebox's `carry_in` buffer — a real pip, so the normal backward trace resolves it, giving a
+    // multi-tile ripple chain), or, when nothing is routed, the tile's CarryInSet constant bit.
+    const cinMuxNet =
+      c.config.carryEnable && c.cell === 0 ? at(c.x, c.y, 'carry_in_mux') : undefined
+    const carryInSource: InputSource | null =
+      cinMuxNet !== undefined && driverOf.has(cinMuxNet) ? sourceOf(cinMuxNet) : null
+    const carryInConst =
+      c.config.carryEnable && c.cell === 0 && carryInSource === null
+        ? (parsed.tiles?.get(`${c.x}_${c.y}`)?.carryInSet ?? false)
+        : false
     return {
       ref: { x: c.x, y: c.y, cell: c.cell },
       config: c.config,
@@ -170,6 +188,8 @@ export function reconstructNetlist(parsed: ParsedDesign, device: IceboxDevice): 
       clockEnable,
       carryIn,
       carryOperands,
+      carryInSource,
+      carryInConst,
     }
   })
   return { cells }
@@ -223,7 +243,12 @@ export function simulateCombinational(
     const in1 = readInput(ops[0], stack)
     const in2 = readInput(ops[1], stack)
     const prev = cell.carryIn ? byKey.get(cellKey(cell.carryIn)) : undefined
-    const cin = prev === undefined ? false : coutOf(prev, stack)
+    const cin =
+      prev !== undefined
+        ? coutOf(prev, stack) // chained from the previous cell in this tile
+        : cell.carryInSource
+          ? readInput(cell.carryInSource, stack) // cascaded in from the tile below
+          : (cell.carryInConst ?? false) // the tile's CarryInSet constant
     const cout = (in1 && in2) || ((in1 || in2) && cin)
     stack.delete(guard)
     carryOut.set(key, cout)
@@ -303,8 +328,9 @@ function inputsAt(stimulus: Stimulus, cycle: number): Map<number, boolean> {
  * Carry chain: a carry-enabled cell (`carryEnable`) produces a carry-out `cout = majority(in1, in2, carry-in)`
  * (icebox's `(in1 & in2) | ((in1 | in2) & cin)`), with the carry-in chaining structurally from the previous cell
  * in the tile (`carryIn`). A pin routed from a cell's `lutff_c/cout` reads that carry-out (so an adder's sum LUT,
- * which routes the carry into an input, sees it). Honest scope: within-tile chains only; cell 0's carry-in is 0
- * (the tile CarryInSet bit is not decoded), and tile-to-tile carry cascade is not modeled.
+ * which routes the carry into an input, sees it). Cell 0 of a tile takes its carry-in from the tile's
+ * `carry_in_mux`: a CASCADE routed in from the tile below (`carryInSource` — so a ripple chain spans tiles), or,
+ * when nothing is routed, the tile's `CarryInSet` constant bit (`carryInConst`, icebox `get_carry_bit`).
  *
  * Stimulus: `stimulus` drives the primary inputs each cycle (constant map / per-cycle array / function — see
  * `Stimulus`).
@@ -339,7 +365,12 @@ export function simulateClocked(
       const in1 = readViaEval(ops[0], evalOut, stack, byKey, inputs, coutOfCycle)
       const in2 = readViaEval(ops[1], evalOut, stack, byKey, inputs, coutOfCycle)
       const prevCell = cell.carryIn ? byKey.get(cellKey(cell.carryIn)) : undefined
-      const cin = prevCell === undefined ? false : coutOfCycle(prevCell, stack)
+      const cin =
+        prevCell !== undefined
+          ? coutOfCycle(prevCell, stack)
+          : cell.carryInSource
+            ? readViaEval(cell.carryInSource, evalOut, stack, byKey, inputs, coutOfCycle)
+            : (cell.carryInConst ?? false)
       const cout = (in1 && in2) || ((in1 || in2) && cin)
       stack.delete(guard)
       carryOut.set(ckey, cout)

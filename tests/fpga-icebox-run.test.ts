@@ -840,3 +840,100 @@ describe('the carry chain — operands are independent of the LUT (icebox semant
     expect(() => simulateClocked({ cells: [orphan, probe] }, inputs, 2)).not.toThrow()
   })
 })
+
+describe("the carry chain — cell 0's carry-in: a cascade from the tile below, or the CarryInSet constant", () => {
+  const P = (net: number): InputSource => ({ kind: 'primary', net })
+  const at = (cell: number, x = 0, y = 0) => ({ x, y, cell })
+  const CARRY_AT = (cell: number, x: number, y: number): InputSource => ({
+    kind: 'carry',
+    driver: at(cell, x, y),
+    net: 0,
+  })
+  const carryLc = (truth: boolean[]): LcConfig => ({
+    truth,
+    carryEnable: true,
+    dffEnable: false,
+    setNoReset: false,
+    asyncSetReset: false,
+  })
+  const ZERO = Array.from({ length: 16 }, () => false)
+  const NOT_IN1 = Array.from({ length: 16 }, (_, i) => ((i >> 1) & 1) === 0)
+  const XOR_IN1_IN3 = Array.from({ length: 16 }, (_, i) => Boolean(((i >> 1) & 1) ^ ((i >> 3) & 1)))
+
+  test("the tile's CarryInSet bit is a real constant carry-in: a + 1 with no second operand", () => {
+    // icebox get_carry_bit (B1[50]). A design that starts its chain at 1 sets it; decoding it is what makes an
+    // incrementer / subtractor come out right.
+    const stage0: RecoveredCell = {
+      ref: ref(0),
+      config: carryLc(NOT_IN1),
+      inputs: [UNUSED, P(10), UNUSED, UNUSED],
+      carryOperands: [P(10), { kind: 'unused' }],
+      carryIn: null,
+      carryInConst: true, // the CarryInSet bit
+    }
+    const stage = (cell: number, bitNet: number): RecoveredCell => ({
+      ref: ref(cell),
+      config: carryLc(XOR_IN1_IN3),
+      inputs: [UNUSED, P(bitNet), UNUSED, { kind: 'carry', driver: ref(cell - 1), net: 0 }],
+      carryOperands: [P(bitNet), { kind: 'unused' }],
+      carryIn: ref(cell - 1),
+    })
+    const cells = [stage0, stage(1, 11), stage(2, 12), stage(3, 13)]
+    for (let a = 0; a < 16; a++) {
+      const sim = simulateCombinational(
+        { cells },
+        new Map([
+          [10, (a & 1) === 1],
+          [11, (a & 2) === 2],
+          [12, (a & 4) === 4],
+          [13, (a & 8) === 8],
+        ]),
+      )
+      const got = [0, 1, 2, 3].reduce(
+        (acc, i) => acc + (sim.outputs.get(`0_0_${i}`) ? 1 << i : 0),
+        0,
+      )
+      expect(got).toBe((a + 1) & 15) // without the constant carry-in this is a - 1 for odd a
+    }
+  })
+
+  test('a carry chain CASCADES across tiles: cell 0 of the tile above continues the chain below', () => {
+    // On real silicon a ripple longer than 8 bits spans tiles: the lower tile's lutff_7/cout is routed into the
+    // upper tile's carry_in_mux. `carryInSource` carries that, so the chain does not stop at a tile boundary.
+    const lower: RecoveredCell = {
+      ref: at(7, 1, 1),
+      config: carryLc(ZERO),
+      inputs: [UNUSED, UNUSED, UNUSED, UNUSED],
+      carryOperands: [P(1), P(2)], // cout = a & b
+      carryIn: null,
+    }
+    const upper: RecoveredCell = {
+      ref: at(0, 1, 2),
+      config: carryLc(ZERO),
+      inputs: [UNUSED, UNUSED, UNUSED, UNUSED],
+      carryOperands: [P(3), { kind: 'unused' }], // with in_1 = 1, cout = carry-in (a pure propagate)
+      carryIn: null,
+      carryInSource: CARRY_AT(7, 1, 1), // the cascade from the tile below
+    }
+    const probe: RecoveredCell = {
+      ref: at(1, 1, 2),
+      config: comb(BUF),
+      inputs: [CARRY_AT(0, 1, 2), UNUSED, UNUSED, UNUSED],
+    }
+    for (const a of [false, true])
+      for (const b of [false, true]) {
+        const values = new Map([
+          [1, a],
+          [2, b],
+          [3, true],
+        ])
+        // the lower tile's carry (a & b) propagates through the upper tile's cell 0
+        expect(
+          simulateCombinational({ cells: [lower, upper, probe] }, values).outputs.get('1_2_1'),
+        ).toBe(a && b)
+        expect(
+          simulateClocked({ cells: [lower, upper, probe] }, values, 2).trace[1]?.get('1_2_1'),
+        ).toBe(a && b)
+      }
+  })
+})

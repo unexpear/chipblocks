@@ -84,8 +84,35 @@ export function decodeUsedCells(
   return cells
 }
 
-/** A design recovered from a bitstream: the configured logic cells and the ON routing pips. */
-export type ParsedDesign = { cells: PlacedCell[]; onPips: IceboxPip[] }
+/** A design recovered from a bitstream: the configured logic cells, the ON routing pips, and each logic tile's
+ *  shared config (currently the CarryInSet bit — the constant carry-in of cell 0 when nothing is cascaded in). */
+export type ParsedDesign = {
+  cells: PlacedCell[]
+  onPips: IceboxPip[]
+  /** `"x_y"` → that tile's shared carry config. Absent for hand-built designs (treated as carry-in 0). */
+  tiles?: Map<string, { carryInSet: boolean }>
+}
+
+/**
+ * Each logic tile's shared carry config: whether its `CarryInSet` bit (icebox `get_carry_bit`, B1[50]) is
+ * programmed. That bit is the CONSTANT carry-in fed to cell 0 of the tile's chain when no carry is cascaded in
+ * from the tile below — an adder that starts at 1 (a subtractor, or `a + 1`) sets it.
+ */
+export function decodeTileCarry(
+  bits: readonly ProgrammedBit[],
+  layout: LogicTileBits,
+): Map<string, { carryInSet: boolean }> {
+  const tiles = new Map<string, { carryInSet: boolean }>()
+  const at = layout.carryInSet
+  if (at === null) return tiles
+  for (const bit of bits) {
+    const key = `${bit.x}_${bit.y}`
+    if (!tiles.has(key)) tiles.set(key, { carryInSet: false })
+    if (bit.row === at.row && bit.col === at.col && bit.value === 1)
+      tiles.set(key, { carryInSet: true })
+  }
+  return tiles
+}
 
 /**
  * Parse a bitstream back into its design: the configured logic cells (`decodeUsedCells`) and the ON routing
@@ -96,5 +123,9 @@ export function parseBitstream(
   device: IceboxDevice,
   layout: LogicTileBits,
 ): ParsedDesign {
-  return { cells: decodeUsedCells(bits, layout), onPips: pipsOnInBitstream(bits, device.pips) }
+  return {
+    cells: decodeUsedCells(bits, layout),
+    onPips: pipsOnInBitstream(bits, device.pips),
+    tiles: decodeTileCarry(bits, layout),
+  }
 }

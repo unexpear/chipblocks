@@ -10,11 +10,15 @@
  * "everything real, no shortcuts" move the rest of the project makes — the recovered LUT becomes actual gates the
  * user can open and inspect, not an opaque black box. A cell whose LUT is constant emits a fixed level instead.
  *
- * Honest scope: this lowers the COMBINATIONAL function of each recovered cell. A registered cell (`dffEnable`) has
- * no gate-level equivalent here — its stored value needs the clocked simulator — so its LUT is lowered as
- * combinational logic and the cell is listed in `registered` for the caller to handle (the same split
- * `simulateCombinational` makes). Carry outputs (`kind: 'carry'` inputs) are likewise not lowered: they come from
- * the carry unit, not the LUT, and are reported in `unlowered` rather than silently wired to something wrong.
+ * Registers are real boundaries, not pretended away: a registered cell (`dffEnable`) lowers to its LUT gates
+ * computing the NEXT-state D (`cellD`) plus an explicit STATE node carrying the stored Q (`stateNodes`), and it is
+ * the Q node that `cellOutputs` names — so consumers read Q exactly as they would on silicon. Drive the state
+ * nodes from `simulateClocked`'s state to step the canvas through cycles. The result is the standard synchronous
+ * view: a combinational cloud between register boundaries.
+ *
+ * Honest scope: carry outputs (`kind: 'carry'` inputs) come from the carry unit, not the LUT, so they have no
+ * gate-level equivalent here — they are reported in `unlowered` (and their cell in `unfaithful`) rather than
+ * silently wired to something wrong.
  */
 
 import type { BlockData, CanvasEdgeLike, CanvasNodeLike } from './blocks.ts'
@@ -28,8 +32,14 @@ export type LoweredCanvas = {
   inputNodes: Map<number, string>
   /** cell key (`x_y_cell`) → the node id whose `out` handle carries that cell's output. */
   cellOutputs: Map<string, string>
-  /** registered cells: lowered as combinational logic here; their stored value needs the clocked simulator. */
+  /** registered cells (flip-flops). Each has a STATE node in `stateNodes` carrying its stored Q (drive it to run
+   *  a cycle) and a `cellD` node carrying the next-state D its LUT computes. */
   registered: CellRef[]
+  /** cellKey → the node carrying a registered cell's stored value Q. This is what `cellOutputs` names for a
+   *  registered cell, so consumers read Q (as on real silicon), not the LUT. Drive it per cycle to animate. */
+  stateNodes: Map<string, string>
+  /** cellKey → the node carrying a registered cell's NEXT-state D (its LUT's output). Read it to latch. */
+  cellD: Map<string, string>
   /** inputs that could not be lowered faithfully — a carry-unit source, or a pin the LUT DEPENDS on whose driver
    *  could not be resolved. Reported, never silently mis-wired. */
   unlowered: { cell: CellRef; pin: number; reason: string }[]
@@ -76,7 +86,8 @@ export function lowerNetlistToCanvas(netlist: RecoveredNetlist): LoweredCanvas {
   const cellOutputs = new Map<string, string>()
   const unlowered: LoweredCanvas['unlowered'] = []
   const registered = netlist.cells.filter((c) => c.config.dffEnable).map((c) => c.ref)
-  const registeredKeys = new Set(registered.map((r) => cellKey(r)))
+  const stateNodes = new Map<string, string>()
+  const cellD = new Map<string, string>()
   const unfaithfulKeys = new Set<string>()
   let wire = 0
   const sourceIds = new Set<string>() // power-source nodes drive `terminal_positive`, gates drive `out`
@@ -105,6 +116,16 @@ export function lowerNetlistToCanvas(netlist: RecoveredNetlist): LoweredCanvas {
   for (const cell of netlist.cells) {
     const key = cellKey(cell.ref)
     const minterms = cell.config.truth.filter(Boolean).length
+    if (cell.config.dffEnable) {
+      // A flip-flop's output is its stored Q. Create it HERE, in the pre-pass, so it is a known source before any
+      // consumer is wired (a source is connected from its terminal handle, not a gate's `out`).
+      const qId = `${key}_q`
+      nodes.push(sourceNode(qId, -120, stateNodes.size * 60 + 20, false))
+      sourceIds.add(qId)
+      stateNodes.set(key, qId)
+      cellOutputs.set(key, qId)
+      continue
+    }
     cellOutputs.set(key, minterms === 0 || minterms === 16 ? `${key}_const` : `${key}_out`)
   }
   netlist.cells.forEach((cell, ci) => {
@@ -117,16 +138,6 @@ export function lowerNetlistToCanvas(netlist: RecoveredNetlist): LoweredCanvas {
           reason: 'driven by the carry unit, which has no gate-level equivalent here',
         })
         unfaithfulKeys.add(cellKey(cell.ref)) // this cell's lowered gates cannot compute its real function
-      } else if (source.kind === 'cell' && registeredKeys.has(cellKey(source.driver))) {
-        // A consumer of a REGISTERED cell reads that cell's stored Q on real hardware, but the lowering only has
-        // its LUT (the D input) — so this consumer's value is not faithful either. Report, do not pretend.
-        unlowered.push({
-          cell: cell.ref,
-          pin,
-          reason:
-            "driven by a registered cell's stored value (Q), which needs the clocked simulator",
-        })
-        unfaithfulKeys.add(cellKey(cell.ref))
       }
       void ci
     })
@@ -153,6 +164,10 @@ export function lowerNetlistToCanvas(netlist: RecoveredNetlist): LoweredCanvas {
       sourceIds.add(`${constId}_src`)
       nodes.push(gateNode(constId, 'Buffer', x, 0))
       connect(`${constId}_src`, constId, 'in')
+      if (cell.config.dffEnable) {
+        cellD.set(key, constId) // a constant next-state D; the OUTPUT stays the pre-created Q node
+        return
+      }
       cellOutputs.set(key, constId)
       return
     }
@@ -217,14 +232,30 @@ export function lowerNetlistToCanvas(netlist: RecoveredNetlist): LoweredCanvas {
       out = id
     }
     // A Buffer terminates every cell, so `cellOutputs` always names a node with a stable `out` handle.
-    const outId = `${key}_out`
+    const outId = cell.config.dffEnable ? `${key}_d` : `${key}_out`
     nodes.push(gateNode(outId, 'Buffer', x + 240, 0))
     if (out !== null) connect(out, outId, 'in')
+    if (cell.config.dffEnable) {
+      // A REGISTER boundary: these gates compute the next-state D; the cell's OUTPUT is the stored Q created in
+      // the pre-pass, so consumers read Q exactly as on real silicon.
+      cellD.set(key, outId)
+      return
+    }
     cellOutputs.set(key, outId)
   })
 
   const unfaithful = netlist.cells
     .filter((c) => unfaithfulKeys.has(cellKey(c.ref)))
     .map((c) => c.ref)
-  return { nodes, edges, inputNodes, cellOutputs, registered, unlowered, unfaithful }
+  return {
+    nodes,
+    edges,
+    inputNodes,
+    cellOutputs,
+    registered,
+    stateNodes,
+    cellD,
+    unlowered,
+    unfaithful,
+  }
 }

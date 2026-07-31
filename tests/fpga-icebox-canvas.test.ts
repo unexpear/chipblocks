@@ -13,7 +13,11 @@ import { parseIceboxChipdb } from '../src/renderer/fpga-icebox.ts'
 import { lowerNetlistToCanvas } from '../src/renderer/fpga-icebox-canvas.ts'
 import { type Ice40ChipDb, loadIce40Bitstream } from '../src/renderer/fpga-icebox-load.ts'
 import { parseLogicTileBits } from '../src/renderer/fpga-icebox-logic.ts'
-import { type RecoveredCell, simulateCombinational } from '../src/renderer/fpga-icebox-run.ts'
+import {
+  type RecoveredCell,
+  simulateClocked,
+  simulateCombinational,
+} from '../src/renderer/fpga-icebox-run.ts'
 import { simulateLogic } from '../src/renderer/logic-sim.ts'
 
 const CHIPDBS: Record<string, Ice40ChipDb> = {
@@ -232,6 +236,72 @@ describe('lowerNetlistToCanvas — computes the SAME function as the FPGA simula
             simulateCombinational(netlist, values).outputs.get('0_0_0'),
           )
         }
+    }
+  })
+})
+
+describe('lowerNetlistToCanvas — registers are real boundaries (Q is the output, D is the LUT)', () => {
+  const cref = (cell: number) => ({ x: 0, y: 0, cell })
+  const NONE = { kind: 'unused' } as const
+  const lc = (truth: boolean[], dffEnable = false) => ({
+    truth,
+    carryEnable: false,
+    dffEnable,
+    setNoReset: false,
+    asyncSetReset: false,
+  })
+  const BUF16 = Array.from({ length: 16 }, (_, i) => (i & 1) === 1)
+  const NOT_IN1 = Array.from({ length: 16 }, (_, i) => ((i >> 1) & 1) === 0)
+
+  test("a registered cell's output is its stored Q; consumers follow Q, not the LUT's D", () => {
+    const ff = {
+      ref: cref(0),
+      config: lc(NOT_IN1, true), // D = NOT(in_1)
+      inputs: [NONE, { kind: 'primary' as const, net: 9 }, NONE, NONE],
+    }
+    const consumer = {
+      ref: cref(1),
+      config: lc(BUF16),
+      inputs: [{ kind: 'cell' as const, driver: cref(0), net: 0 }, NONE, NONE, NONE],
+    }
+    const lowered = lowerNetlistToCanvas({ cells: [ff, consumer] })
+    const qNode = lowered.stateNodes.get('0_0_0') as string
+    const dNode = lowered.cellD.get('0_0_0') as string
+    expect(qNode).toBeDefined()
+    expect(dNode).toBeDefined()
+    expect(lowered.cellOutputs.get('0_0_0')).toBe(qNode) // the cell's OUTPUT is its stored value
+    expect(lowered.unfaithful).toEqual([]) // consumers read Q correctly, so nothing is unfaithful
+
+    // hold the flip-flop's LUT input at 0 (so D = 1) and sweep the stored Q: the consumer must follow Q.
+    for (const q of [false, true]) {
+      const nodes = lowered.nodes.map((n) =>
+        n.id === qNode ? drive(n, q ? 5 : 0) : n.id === lowered.inputNodes.get(9) ? drive(n, 0) : n,
+      )
+      const result = simulateLogic(nodes, lowered.edges)
+      expect(result.value(lowered.cellOutputs.get('0_0_1') as string, 'out')).toBe(q) // follows Q
+      expect(result.value(dNode, 'out')).toBe(true) // D = NOT(0) = 1, independent of Q
+    }
+  })
+
+  test('driving the state nodes from simulateClocked steps the canvas through real cycles', () => {
+    // A toggle flip-flop: D = NOT(Q). Feeding each cycle's Q from the clocked simulator into the canvas must
+    // reproduce the same next-state D the simulator latches — the canvas IS the combinational cloud.
+    const toggle = {
+      ref: cref(0),
+      config: lc(NOT_IN1, true),
+      inputs: [NONE, { kind: 'cell' as const, driver: cref(0), net: 0 }, NONE, NONE], // reads its own Q
+    }
+    const netlist = { cells: [toggle] }
+    const lowered = lowerNetlistToCanvas(netlist)
+    const qNode = lowered.stateNodes.get('0_0_0') as string
+    const run = simulateClocked(netlist, new Map(), 4)
+    expect(run.trace.map((cy) => cy.get('0_0_0'))).toEqual([false, true, false, true]) // it toggles
+    for (const cycle of run.trace) {
+      const q = cycle.get('0_0_0') as boolean
+      const nodes = lowered.nodes.map((n) => (n.id === qNode ? drive(n, q ? 5 : 0) : n))
+      const result = simulateLogic(nodes, lowered.edges)
+      // the canvas computes the same next state the simulator will latch: D = NOT(Q)
+      expect(result.value(lowered.cellD.get('0_0_0') as string, 'out')).toBe(!q)
     }
   })
 })
