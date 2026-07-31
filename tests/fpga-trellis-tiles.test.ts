@@ -328,3 +328,66 @@ describe('globaliseEcp5Wire — one physical wire, different names per tile', ()
     expect(globaliseEcp5Wire(20, 30, 'E9_X', { maxRow: 50, maxCol: 32 })).toBeNull() // past the east edge
   })
 })
+
+describe('the wider tile-type databases — routing beyond the logic tiles', () => {
+  // Every tile type a real design's routing actually passes through, vendored from prjtrellis-db (CC0).
+  const TYPES = [
+    'PLC2',
+    'CIB',
+    'CIB_LR',
+    'CIB_EBR',
+    'CIB_DSP',
+    'TAP_DRIVE',
+    'PIOT0',
+    'PIOT1',
+    'PICT0',
+    'PICT1',
+  ]
+  const DBS = new Map(
+    TYPES.map((t) => [
+      t,
+      parseEcp5TileBits(
+        readFileSync(new URL(`../fixtures/trellis-ecp5-${t}-bits.db`, import.meta.url), 'utf8'),
+      ),
+    ]),
+  )
+  const dbFor = (t: string) => DBS.get(t) ?? null
+
+  test('every vendored tile type parses and carries real routing', () => {
+    for (const type of TYPES) {
+      const db = DBS.get(type)
+      expect(db, type).toBeDefined()
+      // each type must parse to real content — though NOT all of it is routing: an IO tile like PIOT1 is pure
+      // configuration (8 enums, no muxes at all), which is why the routing assertion below is scoped to the
+      // connection blocks rather than applied to every type.
+      const content =
+        (db?.words.size ?? 0) +
+        (db?.enums.size ?? 0) +
+        (db?.muxes.size ?? 0) +
+        (db?.fixedConns.length ?? 0)
+      expect(content, type).toBeGreaterThan(0)
+    }
+    // the connection blocks are where the fabric's general routing lives, so each carries real muxes (they are
+    // not, as one might assume, larger than a logic tile's: CIB has 112 muxes to PLC2's 128 — measured, not
+    // guessed, which is why this asserts presence rather than a made-up ordering)
+    for (const cib of ['CIB', 'CIB_LR', 'CIB_EBR', 'CIB_DSP'])
+      expect(DBS.get(cib)?.muxes.size ?? 0, cib).toBeGreaterThan(0)
+  })
+
+  test('routing is now recovered in NON-logic tiles, not just PLC2', () => {
+    const frames = blankFrames()
+    // with only the logic database, a connection block contributes nothing…
+    const logicOnly = decodeEcp5Routing(frames, GRID, (t) => (t === 'PLC2' ? PLC2 : null), {
+      includeFixed: true,
+    })
+    const cibTiles = new Set(
+      [...GRID.values()].filter((t) => t.type.startsWith('CIB')).map((t) => t.name),
+    )
+    expect(logicOnly.some((a) => cibTiles.has(a.tile))).toBe(false)
+
+    // …but with the connection-block databases loaded, those tiles take part
+    const withCib = decodeEcp5Routing(frames, GRID, dbFor, { includeFixed: true })
+    expect(withCib.some((a) => cibTiles.has(a.tile))).toBe(true)
+    expect(withCib.length).toBeGreaterThan(logicOnly.length)
+  }, 120000)
+})

@@ -30,9 +30,11 @@
  * default is reported as unset rather than as a configured value.
  *
  * Honest scope: `decodeEcp5Routing` reports arcs for the tile types whose bit database the caller supplies; tiles
- * of any other type are skipped, never guessed at. Only the PLC2 (logic) database is vendored here, so routing
- * through IO / EBR / DSP / clock tiles is not yet recovered. Assembling these arcs into a whole-design netlist —
- * the ECP5 equivalent of `reconstructNetlist` — is the next step.
+ * of any other type are skipped, never guessed at. Ten tile types are vendored — the logic tile (PLC2), the
+ * connection blocks that carry the fabric's general routing (CIB, CIB_LR, CIB_EBR, CIB_DSP), the clock taps
+ * (TAP_DRIVE) and the IO tiles (PIOT0/1, PICT0/1) — which covers the types a design's routing normally traverses.
+ * Note not every tile type contains routing: an IO tile such as PIOT1 is pure configuration (enums, no muxes).
+ * Types outside that set still end a trace in an honest primary rather than a guess.
  */
 
 /** One tile's window into the configuration frames. */
