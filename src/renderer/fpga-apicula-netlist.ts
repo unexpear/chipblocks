@@ -1,0 +1,231 @@
+/**
+ * FPGA fabric — Gowin (via Project Apicula): assemble the decoded pieces into a NETLIST.
+ *
+ * The decoders next door each answer one question about a bitstream — what a lookup table computes, what kind of
+ * flip-flop a cell is, which wire drives which. Individually they describe a pile of parts. This joins them into
+ * a graph: which cell feeds which, and where a signal enters the chip from a pin.
+ *
+ * THE HARD PART IS WIRE NAMING. A tile calls its own wires by local names, and the SAME physical wire has a
+ * different name in every tile it passes through — a wire called `N111` in one tile is the same copper as a
+ * differently-named wire one tile north. Joining connections without reconciling those names produces a graph
+ * that looks plausible and is wrong. Apicula reconciles them with `wire2global`, transcribed here as
+ * `gowinGlobalWire`: an inter-tile wire is named after the tile it ORIGINATES in, so two tiles referring to one
+ * piece of copper arrive at the same name.
+ *
+ * Output is the SAME `RecoveredNetlist` shape the iCE40 and ECP5 paths produce, so a Gowin design reaches the
+ * shared simulator through the seam those families already proved.
+ */
+
+import {
+  decodeGowinLuts,
+  extractGowinTileBits,
+  type GowinChipdb,
+  gowinTileAt,
+} from './fpga-apicula-chipdb.ts'
+import { decodeGowinRouting, type GowinPipDatabase } from './fpga-apicula-routing.ts'
+import type { CellRef, InputSource, RecoveredCell, RecoveredNetlist } from './fpga-icebox-run.ts'
+
+const DIRECTIONS: Record<string, readonly [number, number]> = {
+  N: [1, 0],
+  E: [0, -1],
+  S: [-1, 0],
+  W: [0, 1],
+}
+const UTURN: Record<string, string> = { N: 'S', S: 'N', E: 'W', W: 'E' }
+
+/**
+ * Reconcile a tile-local wire name into one shared across every tile the wire touches — Apicula's `wire2global`.
+ *
+ * An inter-tile wire is named `<direction><number><segment>`, where the segment says how many tiles away the
+ * wire STARTS. Walking that far in that direction gives the origin tile, and the wire is named after it. Wires
+ * that would run off the edge of the die turn back on themselves, which is why a reflection is applied rather
+ * than clamping — clamping would merge two distinct wires into one name.
+ *
+ * `row`/`col` are ONE-based here, matching Apicula's floorplanner convention.
+ */
+export function gowinGlobalWire(
+  row: number,
+  col: number,
+  wire: string,
+  rows: number,
+  cols: number,
+): string {
+  if (wire === 'VCC' || wire === 'VSS') return wire
+  const match = /^([NESW])([128]\d)(\d)/.exec(wire)
+  if (match === null) return `R${row}C${col}_${wire}` // a wire local to this tile
+  let direction = match[1] as string
+  const number = match[2] as string
+  const segment = Number.parseInt(match[3] as string, 10)
+
+  const delta = DIRECTIONS[direction] as readonly [number, number]
+  let rootRow = row + delta[0] * segment
+  let rootCol = col + delta[1] * segment
+  if (rootRow < 1) {
+    rootRow = 1 - rootRow
+    direction = UTURN[direction] as string
+  }
+  if (rootCol < 1) {
+    rootCol = 1 - rootCol
+    direction = UTURN[direction] as string
+  }
+  if (rootRow > rows) {
+    rootRow = 2 * rows + 1 - rootRow
+    direction = UTURN[direction] as string
+  }
+  if (rootCol > cols) {
+    rootCol = 2 * cols + 1 - rootCol
+    direction = UTURN[direction] as string
+  }
+  return `R${rootRow}C${rootCol}_${direction}${number}`
+}
+
+/** A lookup table recovered from a bitstream, with where it sits and what it computes. */
+export type GowinLutCell = {
+  ref: CellRef
+  /** the tile position, ZERO-based as the grid stores it. */
+  row: number
+  col: number
+  /** which lookup table within the tile: `LUT0`..`LUT7`. */
+  bel: string
+  /** the 16-entry truth table. */
+  init: number
+}
+
+/** What a Gowin bitstream was found to contain. */
+export type GowinDesign = {
+  netlist: RecoveredNetlist
+  cells: GowinLutCell[]
+  /** global wire -> the global wire driving it, across the whole device. */
+  drivers: Map<string, string>
+  /**
+   * The external wire each primary-input net stands for. A trace that ends at a wire with no driver has reached
+   * something outside the recovered logic — an I/O buffer, or a cell kind this path does not model — so the wire
+   * becomes a primary input. Naming it here is what keeps that honest: the design is not claimed to start from
+   * nowhere, and a caller can see exactly which piece of copper each input is.
+   */
+  primaryWires: Map<number, string>
+}
+
+/** The four data inputs of a Gowin lookup table, in truth-table bit order. */
+const LUT_PINS = ['A', 'B', 'C', 'D'] as const
+
+/**
+ * Rebuild the logical netlist from a Gowin bitstream.
+ *
+ * Walks every tile, keeps the lookup tables that are not blank, and resolves each of their four inputs by
+ * following the routing backwards through global wire names until it reaches another cell's output (`F<n>` for
+ * a lookup table, `Q<n>` for a flip-flop) or runs out of routing.
+ *
+ * An input whose trace runs out becomes a primary input NAMED after the wire it stopped at, recorded in
+ * `primaryWires`. Naming it is the point: an anonymous primary would let a decoding failure and a genuine chip
+ * input look identical. One wire feeding several pins becomes ONE net, so fan-out survives the trace.
+ */
+export function reconstructGowinNetlist(
+  frames: readonly (readonly boolean[])[],
+  db: GowinChipdb,
+  pipdb: GowinPipDatabase,
+): GowinDesign {
+  // 1. every routed connection, in global wire names
+  const drivers = new Map<string, string>()
+  for (let row = 0; row < db.rows; row++)
+    for (let col = 0; col < db.cols; col++) {
+      const tile = gowinTileAt(db, row, col)
+      if (tile === null) continue
+      const bits = extractGowinTileBits(frames, db, row, col)
+      if (bits === null) continue
+      const routing = decodeGowinRouting(bits, pipdb, tile.ttyp)
+      for (const [destination, source] of [...routing.pips, ...routing.clockPips])
+        drivers.set(
+          gowinGlobalWire(row + 1, col + 1, destination, db.rows, db.cols),
+          gowinGlobalWire(row + 1, col + 1, source, db.rows, db.cols),
+        )
+    }
+
+  // 2. every lookup table that is doing something, and the wire its output leaves on
+  const cells: GowinLutCell[] = []
+  const cellByOutput = new Map<string, CellRef>()
+  for (let row = 0; row < db.rows; row++)
+    for (let col = 0; col < db.cols; col++) {
+      const tile = gowinTileAt(db, row, col)
+      if (tile === null) continue
+      const bits = extractGowinTileBits(frames, db, row, col)
+      if (bits === null) continue
+      for (const [bel, init] of decodeGowinLuts(bits, db, tile.ttyp)) {
+        if (init === 0xffff) continue // an erased lookup table is not part of the design
+        const index = Number.parseInt(bel.slice(3), 10)
+        const ref: CellRef = { x: col, y: row, cell: index }
+        cells.push({ ref, row, col, bel, init })
+        cellByOutput.set(gowinGlobalWire(row + 1, col + 1, `F${index}`, db.rows, db.cols), ref)
+      }
+    }
+
+  // 3. resolve each input by following the routing backwards
+  const primaryNets = new Map<string, number>()
+  const primaryWires = new Map<number, string>()
+  const recovered: RecoveredCell[] = []
+  for (const cell of cells) {
+    const inputs: InputSource[] = []
+    for (let pin = 0; pin < 4; pin++) {
+      const index = Number.parseInt(cell.bel.slice(3), 10)
+      const start = gowinGlobalWire(
+        cell.row + 1,
+        cell.col + 1,
+        `${LUT_PINS[pin]}${index}`,
+        db.rows,
+        db.cols,
+      )
+      inputs.push(traceInput(start, drivers, cellByOutput, primaryNets, primaryWires))
+    }
+    // Both fabrics index a 4-input truth table the same way — entry i is the output when the inputs spell out i
+    // with input 0 as the least-significant bit — so the Gowin word maps straight onto the shared cell.
+    const truth = Array.from({ length: 16 }, (_, entry) => ((cell.init >> entry) & 1) === 1)
+    recovered.push({
+      ref: cell.ref,
+      config: {
+        truth,
+        carryEnable: false,
+        dffEnable: false,
+        setNoReset: false,
+        asyncSetReset: false,
+      },
+      inputs,
+    })
+  }
+
+  return { netlist: { cells: recovered }, cells, drivers, primaryWires }
+}
+
+/**
+ * Follow one input wire backwards until it reaches a cell output or runs out of routing.
+ *
+ * The walk remembers where it has been: Gowin routing legitimately contains loops through bidirectional
+ * segments, so an unbounded walk would hang on a perfectly valid bitstream rather than on a malformed one.
+ *
+ * Ending at a wire with no driver means the signal comes from outside the logic this path models, so it becomes
+ * a primary input named after that wire.
+ */
+function traceInput(
+  start: string,
+  drivers: ReadonlyMap<string, string>,
+  cellByOutput: ReadonlyMap<string, CellRef>,
+  primaryNets: Map<string, number>,
+  primaryWires: Map<number, string>,
+): InputSource {
+  const seen = new Set<string>()
+  let wire = start
+  while (!seen.has(wire)) {
+    seen.add(wire)
+    const driver = cellByOutput.get(wire)
+    if (driver !== undefined) return { kind: 'cell', driver, net: 0 }
+    const next = drivers.get(wire)
+    if (next === undefined) break
+    wire = next
+  }
+  let net = primaryNets.get(wire)
+  if (net === undefined) {
+    net = primaryNets.size + 1
+    primaryNets.set(wire, net)
+    primaryWires.set(net, wire)
+  }
+  return { kind: 'primary', net }
+}
