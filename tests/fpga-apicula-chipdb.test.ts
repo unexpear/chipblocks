@@ -14,12 +14,14 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import {
+  decodeGowinFlipFlops,
   decodeGowinLuts,
   extractGowinTileBits,
   type GowinChipdb,
   gowinFabricInventory,
   gowinTileAt,
   gowinTileWindow,
+  parseGowinAttrValues,
   parseGowinChipdb,
 } from '../src/renderer/fpga-apicula-chipdb.ts'
 import { crc16Arc, GOWIN_DEVICES, parseGowinBitstream } from '../src/renderer/fpga-apicula-fs.ts'
@@ -325,3 +327,93 @@ describe('decodeGowinLuts — frame bits become truth tables', () => {
     expect(seen.size).toBe(8 * 16) // 128 distinct bits, no aliasing between cells
   })
 })
+
+/**
+ * Reference outputs produced by running APICULA'S OWN `parse_attrvals` and `get_dff_type` (imported from the
+ * oss-cad-suite build) over these exact tile bit patterns. This is the same discipline as the CRC check: the
+ * decode is pinned against the reference implementation rather than against itself, which is the only way a
+ * transcription error in a three-pass algorithm would show up.
+ */
+type DffCase = {
+  label: string
+  bits: number[][]
+  attrs: Record<string, Record<string, number>>
+  dff: Record<string, string | null>
+}
+const DFF_CASES: DffCase[] = JSON.parse(
+  readFileSync(new URL('../fixtures/gowin-gw1n1-dff-cases.json', import.meta.url), 'utf8'),
+)
+
+describe('decodeGowinFlipFlops — pinned against Apicula’s own decoder', () => {
+  const REFERENCE_TTYP = 12
+  const tileOf = (bits: number[][]): boolean[][] => {
+    const tile = db.tileTypes.get(REFERENCE_TTYP) as GowinTileTypeShape
+    const grid = Array.from({ length: tile.height }, () =>
+      new Array<boolean>(tile.width).fill(false),
+    )
+    for (const [row, col] of bits) (grid[row as number] as boolean[])[col as number] = true
+    return grid
+  }
+  type GowinTileTypeShape = { width: number; height: number }
+
+  test('the fixture carries real reference cases', () => {
+    expect(DFF_CASES.length).toBeGreaterThanOrEqual(10)
+  })
+
+  for (const reference of DFF_CASES) {
+    test(`attributes match Apicula for: ${reference.label}`, () => {
+      const tile = tileOf(reference.bits)
+      for (const [table, expected] of Object.entries(reference.attrs)) {
+        const actual = parseGowinAttrValues(tile, db, REFERENCE_TTYP, table)
+        expect(Object.fromEntries(actual)).toEqual(expected)
+      }
+    })
+
+    test(`flip-flop types match Apicula for: ${reference.label}`, () => {
+      const actual = decodeGowinFlipFlops(tileOf(reference.bits), db, REFERENCE_TTYP)
+      expect(Object.fromEntries(actual)).toEqual(reference.dff)
+    })
+  }
+
+  test('an ERASED tile still reports flip-flops, via the negative-key default pass', () => {
+    // Worth pinning explicitly: a blank tile is not "no attributes". Apicula's third pass supplies defaults, so
+    // an erased logic cell reads as a settable flip-flop (DFFS). A decoder that only handled the positive pass
+    // would return nothing here and look plausible while being wrong.
+    const erased = DFF_CASES.find((c) => c.label === 'erased') as DffCase
+    expect(erased.bits).toHaveLength(0)
+    expect(erased.dff.DFF0).toBe('DFFS')
+    expect(parseGowinAttrValues(tileOf([]), db, REFERENCE_TTYP, 'CLS0').get('LSRONMUX')).toBe(7)
+  })
+
+  test('a tile type with no attribute tables decodes to nothing', () => {
+    const centre = gowinTileAt(db, db.centerRow, db.centerCol) as { ttyp: number }
+    expect(decodeGowinFlipFlops([[false]], db, centre.ttyp).size).toBe(0)
+    expect(parseGowinAttrValues([[false]], db, centre.ttyp, 'CLS0').size).toBe(0)
+  })
+
+  test('all ten flip-flop variants are distinguishable', () => {
+    // The mode table must not collapse: negative-edge (N), sync reset/set (R/S) and async clear/preset (C/P)
+    // are genuinely different hardware, and a key collision would silently merge two of them.
+    const keys = new Set<string>()
+    for (const regset of ['RESET', 'SET'])
+      for (const lsr of ['', 'LSRMUX'])
+        for (const clk of ['SIG', 'INV'])
+          for (const sr of ['', 'ASYNC']) keys.add(`${regset}|${lsr}|${clk}|${sr}`)
+    const named = [...keys].filter((k) => DFF_TYPES_PROBE.has(k))
+    expect(new Set(named.map((k) => DFF_TYPES_PROBE.get(k))).size).toBe(10)
+  })
+})
+
+/** The published variant set, mirrored here so a silent merge in the decoder would fail the test above. */
+const DFF_TYPES_PROBE: ReadonlyMap<string, string> = new Map([
+  ['RESET||SIG|', 'DFF'],
+  ['RESET||INV|', 'DFFN'],
+  ['RESET|LSRMUX|SIG|ASYNC', 'DFFC'],
+  ['RESET|LSRMUX|INV|ASYNC', 'DFFNC'],
+  ['RESET|LSRMUX|SIG|', 'DFFR'],
+  ['RESET|LSRMUX|INV|', 'DFFNR'],
+  ['SET|LSRMUX|SIG|ASYNC', 'DFFP'],
+  ['SET|LSRMUX|INV|ASYNC', 'DFFNP'],
+  ['SET|LSRMUX|SIG|', 'DFFS'],
+  ['SET|LSRMUX|INV|', 'DFFNS'],
+])

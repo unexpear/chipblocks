@@ -58,6 +58,22 @@ export type GowinChipdb = {
   /** the whole device's configuration bitmap size, summed from the tile grid. */
   bitmapRows: number
   bitmapCols: number
+  /** per tile type, per attribute table (`CLS0`/`CLS1`/`CLS2`), the fuse entries that decode it. */
+  clsFuses: ReadonlyMap<number, ReadonlyMap<string, readonly GowinFuseEntry[]>>
+  /** attribute-value index -> `[attribute id, raw value]` (Apicula's reversed `logicinfo['SLICE']`). */
+  logicinfoSlice: ReadonlyMap<number, readonly [number, number]>
+  /** attribute id -> name, and raw value -> name. */
+  attributeNames: ReadonlyMap<number, string>
+  valueNames: ReadonlyMap<number, string>
+}
+
+/**
+ * One row of an attribute fuse table. The key is a list of SIGNED attribute-value indices: a positive index
+ * must have its bits programmed, a negative index must have them erased. Zero is padding and is ignored.
+ */
+export type GowinFuseEntry = {
+  key: readonly number[]
+  bits: readonly string[]
 }
 
 /** Where a tile's own bit window sits in the device bitmap. */
@@ -105,6 +121,10 @@ export function parseGowinChipdb(text: string): GowinChipdb {
     cmd_hdr: string[]
     cmd_ftr: string[]
     lut_flags?: Record<string, Record<string, Record<string, number[][]>>>
+    cls_fuses?: Record<string, Record<string, Record<string, number[][]>>>
+    logicinfo_slice?: Record<string, number[]>
+    cls_attrids?: Record<string, number>
+    cls_attrvals?: Record<string, number>
   }
 
   const grid = raw.grid
@@ -178,6 +198,30 @@ export function parseGowinChipdb(text: string): GowinChipdb {
     lutFlagBits.set(Number.parseInt(ttypKey, 10), perBel)
   }
 
+  const clsFuses = new Map<number, Map<string, GowinFuseEntry[]>>()
+  for (const [ttypKey, tables] of Object.entries(raw.cls_fuses ?? {})) {
+    const perTable = new Map<string, GowinFuseEntry[]>()
+    for (const [tableName, rows] of Object.entries(tables)) {
+      const entries: GowinFuseEntry[] = []
+      for (const [keyText, coords] of Object.entries(rows))
+        entries.push({
+          key: keyText.split(',').map((n) => Number.parseInt(n, 10)),
+          bits: coords.map((c) => bitKey(c[0] as number, c[1] as number)),
+        })
+      perTable.set(tableName, entries)
+    }
+    clsFuses.set(Number.parseInt(ttypKey, 10), perTable)
+  }
+
+  const logicinfoSlice = new Map<number, readonly [number, number]>()
+  for (const [index, pair] of Object.entries(raw.logicinfo_slice ?? {}))
+    logicinfoSlice.set(Number.parseInt(index, 10), [pair[0] as number, pair[1] as number])
+
+  const attributeNames = new Map<number, string>()
+  for (const [name, id] of Object.entries(raw.cls_attrids ?? {})) attributeNames.set(id, name)
+  const valueNames = new Map<number, string>()
+  for (const [name, id] of Object.entries(raw.cls_attrvals ?? {})) valueNames.set(id, name)
+
   return {
     device: raw.device,
     idcode: Number.parseInt(raw.idcode, 16) >>> 0,
@@ -192,7 +236,169 @@ export function parseGowinChipdb(text: string): GowinChipdb {
     lutFlagBits,
     bitmapRows: [...colHeights][0] as number,
     bitmapCols: [...rowWidths][0] as number,
+    clsFuses,
+    logicinfoSlice,
+    attributeNames,
+    valueNames,
   }
+}
+
+/** Bits are compared as `"row,col"` strings so set operations stay cheap and exact. */
+const bitKey = (row: number, col: number): string => `${row},${col}`
+
+const isSubset = (bits: readonly string[], of: ReadonlySet<string>): boolean =>
+  bits.every((b) => of.has(b))
+
+const isStrictSubset = (bits: readonly string[], of: readonly string[]): boolean => {
+  if (bits.length >= of.length) return false
+  const target = new Set(of)
+  return bits.every((b) => target.has(b))
+}
+
+/**
+ * Decode one attribute table out of a tile's bits — Apicula's `parse_attrvals`, transcribed.
+ *
+ * The table is not a simple lookup. Each row's key lists attribute-value indices that must be PROGRAMMED
+ * (positive) or ERASED (negative), and three passes run over it:
+ *
+ *  1. rows whose bits are all programmed, keeping only the MAXIMAL matches — a row whose bits are a strict
+ *     subset of another matching row loses, the same longest-match rule the ECP5 mux decode needed;
+ *  2. rows keyed negatively whose bits ARE programmed, which contribute values but never override pass 1;
+ *  3. rows keyed negatively whose bits are NOT programmed — this is where DEFAULTS come from, and it is why an
+ *     erased tile still reports attributes rather than nothing.
+ *
+ * Values are returned raw (as indices into the value table), exactly as Apicula returns them.
+ */
+export function parseGowinAttrValues(
+  tileBits: readonly (readonly boolean[])[],
+  db: GowinChipdb,
+  ttyp: number,
+  table: string,
+): Map<string, number> {
+  const result = new Map<string, number>()
+  const entries = db.clsFuses.get(ttyp)?.get(table)
+  if (entries === undefined) return result
+
+  const negativeKey = (key: readonly number[]): boolean => key.some((k) => k < 0)
+  const positives = (key: readonly number[]): number[] => key.filter((k) => k > 0)
+  const negatives = (key: readonly number[]): number[] =>
+    key.filter((k) => k < 0).map((k) => Math.abs(k))
+
+  const programmed = (bit: string): boolean => {
+    const [row, col] = bit.split(',')
+    return (tileBits[Number(row)] as readonly boolean[] | undefined)?.[Number(col)] === true
+  }
+  const setBits = new Set<string>()
+  const negBits = new Set<string>()
+  for (const entry of entries)
+    for (const bit of entry.bits) {
+      if (!programmed(bit)) continue
+      if (negativeKey(entry.key)) negBits.add(bit)
+      else setBits.add(bit)
+    }
+
+  const nameOf = (attributeId: number): string => db.attributeNames.get(attributeId) ?? ''
+  const record = (index: number): void => {
+    const pair = db.logicinfoSlice.get(index)
+    if (pair === undefined) return
+    result.set(nameOf(pair[0]), pair[1])
+  }
+
+  // pass 1 — positively keyed rows that fully match
+  const matched = entries.filter((e) => !negativeKey(e.key) && isSubset(e.bits, setBits))
+  const usedValues = new Set<number>()
+  for (const entry of matched) {
+    if (matched.some((other) => isStrictSubset(entry.bits, other.bits))) continue
+    for (const index of positives(entry.key)) {
+      usedValues.add(index)
+      record(index)
+    }
+  }
+
+  // pass 2 — negatively keyed rows whose bits ARE programmed
+  const negMatched = entries.filter((e) => negativeKey(e.key) && isSubset(e.bits, negBits))
+  const carried = new Set<number>()
+  const ignored = new Set<number>()
+  for (const entry of negMatched) {
+    if (negMatched.some((other) => isStrictSubset(entry.bits, other.bits))) continue
+    const clashes = entry.key.some((index) => {
+      const pair = db.logicinfoSlice.get(Math.abs(index))
+      return pair !== undefined && result.has(nameOf(pair[0]))
+    })
+    if (clashes) continue
+    for (const index of positives(entry.key)) carried.add(index)
+    for (const index of negatives(entry.key)) ignored.add(index)
+  }
+  for (const index of carried) record(index)
+
+  // pass 3 — negatively keyed rows whose bits are NOT programmed: the defaults
+  for (const entry of entries) {
+    if (!negativeKey(entry.key) || isSubset(entry.bits, negBits)) continue
+    const wanted = positives(entry.key)
+    const keep = negatives(entry.key).every(
+      (index) => !ignored.has(index) && wanted.every((w) => usedValues.has(w)),
+    )
+    if (!keep) continue
+    for (const index of negatives(entry.key)) record(index)
+  }
+  return result
+}
+
+/**
+ * The ten flip-flop variants a Gowin logic cell can be, keyed by
+ * `REGSET | LSRONMUX | CLKMUX_CLK | SRMODE` — Apicula's `_dff_types`.
+ *
+ * `N` means the cell clocks on the FALLING edge; `R`/`S` are synchronous reset/set and `C`/`P` are asynchronous
+ * clear/preset.
+ */
+const DFF_TYPES: ReadonlyMap<string, string> = new Map([
+  ['RESET||SIG|', 'DFF'],
+  ['RESET||INV|', 'DFFN'],
+  ['RESET|LSRMUX|SIG|ASYNC', 'DFFC'],
+  ['RESET|LSRMUX|INV|ASYNC', 'DFFNC'],
+  ['RESET|LSRMUX|SIG|', 'DFFR'],
+  ['RESET|LSRMUX|INV|', 'DFFNR'],
+  ['SET|LSRMUX|SIG|ASYNC', 'DFFP'],
+  ['SET|LSRMUX|INV|ASYNC', 'DFFNP'],
+  ['SET|LSRMUX|SIG|', 'DFFS'],
+  ['SET|LSRMUX|INV|', 'DFFNS'],
+])
+
+/**
+ * Work out what kind of flip-flop each cell in a tile is configured as.
+ *
+ * Flip-flops carry no configuration bits of their own — a logic tile's `DFF*` cells have empty flag tables. The
+ * mode lives in the tile-level `CLS` attribute tables, one per PAIR of cells (`CLS0` covers DFF0/DFF1), which is
+ * why this reads a different table from the LUT decode.
+ *
+ * Returns null for a cell whose attribute combination is not a flip-flop at all (a memory or arithmetic mode),
+ * rather than guessing at one.
+ */
+export function decodeGowinFlipFlops(
+  tileBits: readonly (readonly boolean[])[],
+  db: GowinChipdb,
+  ttyp: number,
+): Map<string, string | null> {
+  const out = new Map<string, string | null>()
+  if (!db.clsFuses.has(ttyp)) return out
+  for (let index = 0; index < 6; index++) {
+    const attributes = parseGowinAttrValues(tileBits, db, ttyp, `CLS${Math.floor(index / 2)}`)
+    const named = (attribute: string, fallback: string): string => {
+      const raw = attributes.get(attribute)
+      if (raw === undefined) return fallback
+      // A value with no name must NOT fall back to the default — that would let an unrecognised setting
+      // masquerade as a plain flip-flop. Apicula returns None here and matches nothing; so do we.
+      return db.valueNames.get(raw) ?? '<unnamed>'
+    }
+    const key = [
+      named(`REG${index % 2}_REGSET`, 'SET'),
+      named('LSRONMUX', ''),
+      named('CLKMUX_CLK', 'SIG'),
+      named('SRMODE', ''),
+    ].join('|')
+    out.set(`DFF${index}`, DFF_TYPES.get(key) ?? null)
+  }
+  return out
 }
 
 /**
