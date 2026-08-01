@@ -417,3 +417,92 @@ const DFF_TYPES_PROBE: ReadonlyMap<string, string> = new Map([
   ['SET|LSRMUX|SIG|', 'DFFS'],
   ['SET|LSRMUX|INV|', 'DFFNS'],
 ])
+
+/**
+ * A GENUINE bitstream, produced by the real vendor-format toolchain: yosys -> nextpnr-himbaechel ->
+ * `gowin_pack`, targeting a GW1N-1 in a QN48 package. The design is one XNOR feeding one flip-flop:
+ *
+ *     module top(input clk, input a, input b, output reg q);
+ *       always @(posedge clk) q <= (a & b) | (~a & ~b);
+ *     endmodule
+ *
+ * Everything before this was checked against Apicula's source, its database, and Gowin's datasheet — all real,
+ * but none of them a complete file a tool actually emitted. This is that file. It is the check that caught
+ * ECP5's reversed frame order, and the one the Gowin work had been missing.
+ */
+const REAL_FS = readFileSync(
+  new URL('../fixtures/gowin-gw1n1-xnor-dff.fs', import.meta.url),
+  'utf8',
+)
+
+describe('a REAL gowin_pack bitstream', () => {
+  const parsed = parseGowinBitstream(REAL_FS)
+
+  test('parses, identifies the part, and every frame CRC checks out', () => {
+    expect(parsed.device?.name).toBe('GW1N-1')
+    expect(parsed.idcode).toBe(0x0900281b)
+    expect(parsed.crcOk).toBe(true)
+    expect(parsed.crcChecks).toBe(274)
+  })
+
+  test('its dimensions are exactly the ones we DERIVED from the tile grid', () => {
+    // The strongest confirmation in this whole family: 274 x 1216 was computed by summing tile heights and
+    // widths out of the device database, with no bitstream involved. A real tool independently emits exactly
+    // that shape. If the tiling arithmetic were wrong, these would not agree.
+    expect(parsed.frames).toHaveLength(db.bitmapRows)
+    expect(parsed.frames).toHaveLength(274)
+    for (const frame of parsed.frames) expect(frame).toHaveLength(db.bitmapCols)
+    expect(db.bitmapCols).toBe(1216)
+  })
+
+  test('the frame-count record really is four bytes, as the fix assumed', () => {
+    // `3b 80 01 12` -> 0x0112 = 274. The eight-byte record our old test fixture invented does not occur.
+    const lines = REAL_FS.split('\n')
+      .map((l) => l.trim())
+      .filter((l) => /^[01]+$/.test(l))
+    const record = lines.find((l) => l.length >= 8 && Number.parseInt(l.slice(0, 8), 2) === 0x3b)
+    expect(record).toBeDefined()
+    expect((record as string).length).toBe(32)
+  })
+
+  test('the design is really in there: exactly one LUT is programmed away from blank', () => {
+    // A one-XNOR design should leave all but a handful of the 1152 lookup tables erased (0xFFFF). Finding
+    // exactly one non-blank LUT is evidence the tile-window arithmetic lands on the right bits — decoding at a
+    // wrong offset would smear nonsense across many cells.
+    const programmed: { row: number; col: number; name: string; init: number }[] = []
+    for (let row = 0; row < db.rows; row++)
+      for (let col = 0; col < db.cols; col++) {
+        const tile = gowinTileAt(db, row, col)
+        if (tile === null || !db.lutFlagBits.has(tile.ttyp)) continue
+        const bits = extractGowinTileBits(parsed.frames, db, row, col) as boolean[][]
+        for (const [name, init] of decodeGowinLuts(bits, db, tile.ttyp))
+          if (init !== 0xffff) programmed.push({ row, col, name, init })
+      }
+    expect(programmed).toHaveLength(1)
+    // XNOR of two inputs, as a 4-input lookup table with the upper two inputs unused:
+    // entry i is 1 when bit0 == bit1, giving 1001 repeated -> 0x9999.
+    expect((programmed[0] as { init: number }).init).toBe(0x9999)
+  })
+
+  test('the flip-flop the design asked for is present and clocked on the rising edge', () => {
+    const target = (() => {
+      for (let row = 0; row < db.rows; row++)
+        for (let col = 0; col < db.cols; col++) {
+          const tile = gowinTileAt(db, row, col)
+          if (tile === null || !db.lutFlagBits.has(tile.ttyp)) continue
+          const bits = extractGowinTileBits(parsed.frames, db, row, col) as boolean[][]
+          for (const [, init] of decodeGowinLuts(bits, db, tile.ttyp))
+            if (init !== 0xffff) return { bits, ttyp: tile.ttyp }
+        }
+      return null
+    })()
+    expect(target).not.toBeNull()
+    const { bits, ttyp } = target as { bits: boolean[][]; ttyp: number }
+    const flops = decodeGowinFlipFlops(bits, db, ttyp)
+    // The source says `always @(posedge clk)`, so whatever cell holds q must be a RISING-edge flip-flop:
+    // every decoded type here is a non-inverted-clock variant (no 'N' after DFF).
+    const kinds = [...flops.values()].filter((k) => k !== null)
+    expect(kinds.length).toBeGreaterThan(0)
+    for (const kind of kinds) expect(kind).toMatch(/^DFF(?!N)/)
+  })
+})
