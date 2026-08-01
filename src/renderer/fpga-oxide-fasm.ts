@@ -33,6 +33,25 @@ export type NexusFeature = {
   value: string
 }
 
+/**
+ * A wide value written to a range of bits, e.g. `SLICEA.K0.INIT[15:0] = 16'b1111000000001111`.
+ *
+ * These are how a lookup table's truth table and a memory's contents are written, and they are a DIFFERENT line
+ * shape from a plain setting — an `=` and a Verilog-style literal rather than a dotted value. Reading one as a
+ * plain setting parses without complaint and yields a meaningless string, so they are separated here.
+ */
+export type NexusAssignment = {
+  /** the dotted path, e.g. `SLICEA.K0.INIT`. */
+  path: string
+  /** the declared bit range, high first. */
+  high: number
+  low: number
+  /** the value, already converted from the literal. */
+  value: number
+  /** the literal's own bit width. */
+  width: number
+}
+
 /** Everything a FASM file says about one tile. */
 export type NexusTile = {
   /** the full tile name as written, e.g. `CIB_R0C76__SYSIO_B0_0_ODD`. */
@@ -43,6 +62,7 @@ export type NexusTile = {
   type: string
   pips: NexusPip[]
   features: NexusFeature[]
+  assignments: NexusAssignment[]
 }
 
 /** A parsed FASM file. */
@@ -72,6 +92,9 @@ const ATTRIBUTE = /^\{\s*([\w.]+)\s*=\s*"?([^"}]*?)"?\s*\}$/
  * The coordinate match is greedy on purpose: `TAP_PLC_R5C14__TAP_PLC` contains something coordinate-shaped in
  * its prefix, and taking the first match would place the tile somewhere else entirely.
  */
+/** `<path>[<high>:<low>] = <width>'b<bits>` — a wide value such as a lookup table's truth table. */
+const ASSIGNMENT = /^(.+?)\[(\d+):(\d+)\]\s*=\s*(\d+)'b([01]+)$/
+
 const TILE_NAME = /^(.*R(\d+)C(\d+))_{1,2}(.+)$/
 
 /**
@@ -130,8 +153,24 @@ export function parseNexusFasm(text: string): NexusFasm {
         type: named[4] as string,
         pips: [],
         features: [],
+        assignments: [],
       }
       tiles.set(tileName, tile)
+    }
+
+    // A wide assignment must be recognised BEFORE the plain-setting path, which would otherwise swallow the
+    // whole `INIT[15:0] = 16'b...` tail as if it were a value and lose the number inside it.
+    const assignment = ASSIGNMENT.exec(rest)
+    if (assignment !== null) {
+      tile.assignments.push({
+        path: (assignment[1] as string).trim(),
+        high: Number.parseInt(assignment[2] as string, 10),
+        low: Number.parseInt(assignment[3] as string, 10),
+        width: Number.parseInt(assignment[4] as string, 10),
+        // the literal is written most-significant bit first, as Verilog writes it
+        value: Number.parseInt(assignment[5] as string, 2),
+      })
+      continue
     }
 
     if (rest.startsWith('PIP.')) {
@@ -180,5 +219,18 @@ export function nexusFeaturesNamed(
   for (const tile of fasm.tiles.values())
     for (const feature of tile.features)
       if (feature.path === leaf || feature.path.endsWith(`.${leaf}`)) found.push({ tile, feature })
+  return found
+}
+
+/** Every wide assignment whose path ends with the given leaf, across the whole design. */
+export function nexusAssignmentsNamed(
+  fasm: NexusFasm,
+  leaf: string,
+): { tile: NexusTile; assignment: NexusAssignment }[] {
+  const found: { tile: NexusTile; assignment: NexusAssignment }[] = []
+  for (const tile of fasm.tiles.values())
+    for (const assignment of tile.assignments)
+      if (assignment.path === leaf || assignment.path.endsWith(`.${leaf}`))
+        found.push({ tile, assignment })
   return found
 }

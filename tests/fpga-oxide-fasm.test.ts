@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import {
   type NexusFasm,
+  nexusAssignmentsNamed,
   nexusFeaturesNamed,
   nexusTilesOfType,
   parseNexusFasm,
@@ -157,5 +158,78 @@ describe('device-wide settings', () => {
   test('and a genuinely unparseable line is still a leftover', () => {
     // The globals rule must not become a catch-all that hides malformed input.
     expect(parseNexusFasm('nonsense_without_coordinates.FOO.BAR\n').unrecognised).toHaveLength(1)
+  })
+})
+
+/**
+ * Wide assignments — and a mis-parse the leftovers check could NOT catch.
+ *
+ * A lookup table's truth table is written as `SLICEA.K0.INIT[15:0] = 16'b1111000000001111`: an `=` and a
+ * Verilog literal, not a dotted value. Read as a plain setting it parses happily, producing a path of
+ * `SLICEA.K0` and a "value" of the entire `INIT[15:0] = 16'b...` tail — no leftover, no complaint, and the
+ * number thrown away. That is the limit of the leftovers check: it finds lines that fit NO shape, not lines
+ * that fit the WRONG one. This one was found by going looking for the design's logic and not finding it.
+ */
+describe('wide assignments carry the actual logic', () => {
+  test('the truth table is read as a number, not swallowed as text', () => {
+    const inits = nexusAssignmentsNamed(requested, 'INIT')
+    expect(inits.length).toBeGreaterThan(0)
+    const first = inits[0]?.assignment
+    expect(first?.path).toMatch(/INIT$/)
+    expect([first?.high, first?.low, first?.width]).toEqual([15, 0, 16])
+  })
+
+  test('THE PAYOFF — the recovered truth table really is exclusive-NOR', () => {
+    // The source was `q <= (a & b) | (~a & ~b)`. The router placed it on inputs 2 and 3 of a four-input cell,
+    // giving 0xF00F: entry i is 1 exactly when those two inputs agree. Nothing in the parser was told what the
+    // design does - this is the number the real toolchain wrote into a real bitstream.
+    const inits = nexusAssignmentsNamed(requested, 'INIT').filter((i) => i.assignment.width === 16)
+    expect(inits).toHaveLength(1)
+    const truth = (inits[0] as { assignment: { value: number } }).assignment.value
+    expect(truth).toBe(0xf00f)
+    for (let entry = 0; entry < 16; entry++) {
+      const agree = ((entry >> 2) & 1) === ((entry >> 3) & 1)
+      expect(((truth >> entry) & 1) === 1, `entry ${entry}`).toBe(agree)
+    }
+  })
+
+  test('it is XNOR of TWO inputs, and the other two are ignored', () => {
+    // Confirms which inputs matter, rather than assuming: the output must not change with inputs 0 or 1.
+    const truth = (nexusAssignmentsNamed(requested, 'INIT')[0] as { assignment: { value: number } })
+      .assignment.value
+    const dependsOn = (pin: number): boolean => {
+      for (let entry = 0; entry < 16; entry++)
+        if (
+          ((entry >> pin) & 1) === 0 &&
+          ((truth >> entry) & 1) !== ((truth >> (entry | (1 << pin))) & 1)
+        )
+          return true
+      return false
+    }
+    expect([dependsOn(0), dependsOn(1), dependsOn(2), dependsOn(3)]).toEqual([
+      false,
+      false,
+      true,
+      true,
+    ])
+  })
+
+  test('the flip-flop the design asked for is configured in the same slice', () => {
+    // `always @(posedge clk)` - so the slice holding the logic must have its register switched on.
+    const slice = requested.tiles.get('R5C2__PLC')
+    expect(slice?.features.some((f) => f.path === 'SLICEA.REG0.USED' && f.value === 'YES')).toBe(
+      true,
+    )
+    expect(slice?.features.some((f) => f.path === 'SLICEA.CLKMUX' && f.value === 'CLK')).toBe(true)
+  })
+
+  test('a plain setting is still not mistaken for an assignment', () => {
+    const parsed = parseNexusFasm(
+      "R1C1__PLC.SLICEA.CLKMUX.CLK\nR1C1__PLC.SLICEA.K0.INIT[3:0] = 4'b1010\n",
+    )
+    const tile = parsed.tiles.get('R1C1__PLC')
+    expect(tile?.features.map((f) => [f.path, f.value])).toEqual([['SLICEA.CLKMUX', 'CLK']])
+    expect(tile?.assignments.map((a) => [a.path, a.value])).toEqual([['SLICEA.K0.INIT', 0b1010]])
+    expect(parsed.unrecognised).toEqual([])
   })
 })
