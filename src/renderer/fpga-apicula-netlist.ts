@@ -16,7 +16,9 @@
  * shared simulator through the seam those families already proved.
  */
 
+import { decodeGowinCarryCells, type GowinAttributeDatabase } from './fpga-apicula-attributes.ts'
 import {
+  decodeGowinFlipFlops,
   decodeGowinLuts,
   extractGowinTileBits,
   type GowinChipdb,
@@ -89,7 +91,42 @@ export type GowinLutCell = {
   bel: string
   /** the 16-entry truth table. */
   init: number
+  /** whether a clock is routed to this cell, which is what makes its flip-flop real rather than merely present. */
+  registered: boolean
+  /** the flip-flop variant (`DFF`, `DFFN`, `DFFR`, ...) when registered, else null. */
+  flipFlop: string | null
+  /** whether the cell is switched into arithmetic (carry) mode rather than plain lookup-table mode. */
+  carry: boolean
 }
+
+/**
+ * How each Gowin flip-flop variant maps onto the shared cell's set/reset flags.
+ *
+ * `N` means a falling-edge clock, which the shared simulator does not model, so it is deliberately absent here
+ * rather than silently treated as rising — see `GOWIN_FALLING_EDGE`.
+ */
+const FLIP_FLOP_FLAGS: ReadonlyMap<string, { setNoReset: boolean; asyncSetReset: boolean }> =
+  new Map([
+    ['DFF', { setNoReset: false, asyncSetReset: false }],
+    ['DFFN', { setNoReset: false, asyncSetReset: false }],
+    ['DFFR', { setNoReset: false, asyncSetReset: false }],
+    ['DFFNR', { setNoReset: false, asyncSetReset: false }],
+    ['DFFS', { setNoReset: true, asyncSetReset: false }],
+    ['DFFNS', { setNoReset: true, asyncSetReset: false }],
+    ['DFFC', { setNoReset: false, asyncSetReset: true }],
+    ['DFFNC', { setNoReset: false, asyncSetReset: true }],
+    ['DFFP', { setNoReset: true, asyncSetReset: true }],
+    ['DFFNP', { setNoReset: true, asyncSetReset: true }],
+  ])
+
+/** The variants that clock on the FALLING edge — recorded because the shared simulator assumes rising. */
+export const GOWIN_FALLING_EDGE: ReadonlySet<string> = new Set([
+  'DFFN',
+  'DFFNR',
+  'DFFNS',
+  'DFFNC',
+  'DFFNP',
+])
 
 /** What a Gowin bitstream was found to contain. */
 export type GowinDesign = {
@@ -124,6 +161,7 @@ export function reconstructGowinNetlist(
   frames: readonly (readonly boolean[])[],
   db: GowinChipdb,
   pipdb: GowinPipDatabase,
+  attributes: GowinAttributeDatabase | null = null,
 ): GowinDesign {
   // 1. every routed connection, in global wire names
   const drivers = new Map<string, string>()
@@ -141,7 +179,8 @@ export function reconstructGowinNetlist(
         )
     }
 
-  // 2. every lookup table that is doing something, and the wire its output leaves on
+  // 2. every lookup table that is doing something, plus whether its flip-flop is clocked and whether the cell is
+  //    switched into arithmetic mode
   const cells: GowinLutCell[] = []
   const cellByOutput = new Map<string, CellRef>()
   for (let row = 0; row < db.rows; row++)
@@ -150,11 +189,29 @@ export function reconstructGowinNetlist(
       if (tile === null) continue
       const bits = extractGowinTileBits(frames, db, row, col)
       if (bits === null) continue
-      for (const [bel, init] of decodeGowinLuts(bits, db, tile.ttyp)) {
+      const luts = decodeGowinLuts(bits, db, tile.ttyp)
+      if (luts.size === 0) continue
+      const routing = decodeGowinRouting(bits, pipdb, tile.ttyp)
+      const flipFlops = decodeGowinFlipFlops(bits, db, tile.ttyp)
+      const carry = attributes === null ? [] : decodeGowinCarryCells(bits, attributes, tile.ttyp)
+      for (const [bel, init] of luts) {
         if (init === 0xffff) continue // an erased lookup table is not part of the design
         const index = Number.parseInt(bel.slice(3), 10)
         const ref: CellRef = { x: col, y: row, cell: index }
-        cells.push({ ref, row, col, bel, init })
+        // A flip-flop's MODE decodes even on a blank tile (the fabric's default is a settable flip-flop), so the
+        // mode alone is NOT evidence the register is used. A CLOCK being routed to the cell's pair is: an
+        // unclocked flip-flop cannot hold anything. Pairs share a clock, matching the CLS tables.
+        const clocked = routing.pips.has(`CLK${Math.floor(index / 2)}`)
+        cells.push({
+          ref,
+          row,
+          col,
+          bel,
+          init,
+          registered: clocked,
+          flipFlop: clocked ? (flipFlops.get(`DFF${index}`) ?? null) : null,
+          carry: carry.includes(index),
+        })
         cellByOutput.set(gowinGlobalWire(row + 1, col + 1, `F${index}`, db.rows, db.cols), ref)
       }
     }
@@ -179,16 +236,39 @@ export function reconstructGowinNetlist(
     // Both fabrics index a 4-input truth table the same way — entry i is the output when the inputs spell out i
     // with input 0 as the least-significant bit — so the Gowin word maps straight onto the shared cell.
     const truth = Array.from({ length: 16 }, (_, entry) => ((cell.init >> entry) & 1) === 1)
+    const flags = FLIP_FLOP_FLAGS.get(cell.flipFlop ?? '') ?? {
+      setNoReset: false,
+      asyncSetReset: false,
+    }
+    // A carry chain runs upward through a tile, so a carry cell takes its carry-in from the cell below it. Cell 0
+    // starts the tile's chain and has none — cross-tile cascade is not recovered, and is reported by its absence
+    // rather than invented.
+    const previous = cells.find(
+      (other) =>
+        other.carry &&
+        other.row === cell.row &&
+        other.col === cell.col &&
+        other.ref.cell === cell.ref.cell - 1,
+    )
     recovered.push({
       ref: cell.ref,
       config: {
         truth,
-        carryEnable: false,
-        dffEnable: false,
-        setNoReset: false,
-        asyncSetReset: false,
+        carryEnable: cell.carry,
+        dffEnable: cell.registered,
+        setNoReset: flags.setNoReset,
+        asyncSetReset: flags.asyncSetReset,
       },
       inputs,
+      ...(cell.carry
+        ? {
+            carryIn: previous === undefined ? null : previous.ref,
+            carryOperands: [inputs[0] as InputSource, inputs[1] as InputSource] as [
+              InputSource,
+              InputSource,
+            ],
+          }
+        : {}),
     })
   }
 

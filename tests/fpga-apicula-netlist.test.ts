@@ -8,18 +8,23 @@
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
+import { parseGowinAttributeDatabase } from '../src/renderer/fpga-apicula-attributes.ts'
 import {
   type GowinChipdb,
   gowinTileAt,
   parseGowinChipdb,
 } from '../src/renderer/fpga-apicula-chipdb.ts'
 import { parseGowinBitstream } from '../src/renderer/fpga-apicula-fs.ts'
-import { gowinGlobalWire, reconstructGowinNetlist } from '../src/renderer/fpga-apicula-netlist.ts'
+import {
+  GOWIN_FALLING_EDGE,
+  gowinGlobalWire,
+  reconstructGowinNetlist,
+} from '../src/renderer/fpga-apicula-netlist.ts'
 import {
   type GowinPipDatabase,
   parseGowinPipDatabase,
 } from '../src/renderer/fpga-apicula-routing.ts'
-import { simulateCombinational } from '../src/renderer/fpga-icebox-run.ts'
+import { simulateClocked, simulateCombinational } from '../src/renderer/fpga-icebox-run.ts'
 
 const db: GowinChipdb = parseGowinChipdb(
   readFileSync(new URL('../fixtures/gowin-gw1n1-chipdb.json', import.meta.url), 'utf8'),
@@ -91,27 +96,22 @@ describe('reconstructGowinNetlist — the XNOR design', () => {
       expect(design.primaryWires.get(input.net as number)).toMatch(/^R\d+C\d+_/)
   })
 
-  test('THE PAYOFF — the recovered logic computes XNOR in the shared simulator', () => {
-    // The decode path was never told what this design does. It read bits out of a real bitstream, worked out a
-    // truth table, resolved wire names across tiles, and handed the result to the SAME simulator the iCE40 and
-    // ECP5 families use. If any layer were wrong, this would not come out as XNOR.
-    const cell = design.netlist.cells[0] as {
-      ref: { x: number; y: number; cell: number }
-      inputs: { kind: string; net?: number }[]
-    }
-    const nets = cell.inputs.filter((i) => i.kind === 'primary').map((i) => i.net as number)
-    const [first, second] = [nets[0] as number, nets[1] as number]
-    const key = `${cell.ref.x}_${cell.ref.y}_${cell.ref.cell}`
+  test('the shared simulator reports the cell as REGISTERED, needing a clocked run', () => {
+    // The design's only cell is clocked, so the combinational simulator correctly declines to give it a value
+    // and lists it as registered instead. Asserting that here is what makes the clocked test below meaningful:
+    // it shows the register is real rather than the clocked run just re-deriving a combinational answer.
+    const cell = design.netlist.cells[0] as { ref: { x: number; y: number; cell: number } }
+    const result = simulateCombinational(design.netlist, new Map())
+    expect(result.registered.map((r) => `${r.x}_${r.y}_${r.cell}`)).toContain(
+      `${cell.ref.x}_${cell.ref.y}_${cell.ref.cell}`,
+    )
+  })
 
-    for (const a of [false, true])
-      for (const b of [false, true]) {
-        const values = new Map<number, boolean>([
-          [first, a],
-          [second, b],
-        ])
-        const result = simulateCombinational(design.netlist, values)
-        expect(result.outputs.get(key), `a=${a} b=${b}`).toBe(a === b)
-      }
+  test('the recovered truth table IS exclusive-NOR, entry by entry', () => {
+    // The lookup table's own function, checked directly: entry i is 1 exactly when the two used inputs agree.
+    const truth = (design.netlist.cells[0] as { config: { truth: boolean[] } }).config.truth
+    for (let entry = 0; entry < 16; entry++)
+      expect(truth[entry], `entry ${entry}`).toBe(((entry >> 0) & 1) === ((entry >> 1) & 1))
   })
 })
 
@@ -175,5 +175,87 @@ describe('the netlist is built from the fabric, not from assumptions', () => {
     const cell = design.cells[0] as { row: number; col: number; ref: { x: number; y: number } }
     expect(gowinTileAt(db, cell.row, cell.col)).not.toBeNull()
     expect([cell.ref.y, cell.ref.x]).toEqual([cell.row, cell.col])
+  })
+})
+
+/**
+ * Attaching the flip-flops and the carry chain.
+ *
+ * The flip-flop MODE decodes even on a blank tile — the fabric's default is a settable flip-flop — so the mode
+ * alone cannot tell us a register is in use. A CLOCK routed to the cell is what can: an unclocked flip-flop
+ * holds nothing. That is the evidence used here, and the two designs disagree in exactly the way they should.
+ */
+describe('flip-flops and carry attached to the netlist', () => {
+  const attributes = parseGowinAttributeDatabase(
+    readFileSync(new URL('../fixtures/gowin-gw1n1-attributes.json', import.meta.url), 'utf8'),
+  )
+  const xnorDesign = reconstructGowinNetlist(xnor, db, pipdb, attributes)
+  const adderDesign = reconstructGowinNetlist(adder, db, pipdb, attributes)
+
+  test('the XNOR design has one clocked cell, a plain rising-edge flip-flop', () => {
+    const registered = xnorDesign.netlist.cells.filter((c) => c.config.dffEnable)
+    expect(registered).toHaveLength(1)
+    expect((xnorDesign.cells[0] as { flipFlop: string | null }).flipFlop).toBe('DFF')
+    // `DFF` is the plain variant: rising edge, no set or reset, matching `always @(posedge clk)`
+    expect(GOWIN_FALLING_EDGE.has('DFF')).toBe(false)
+    expect(registered[0]?.config.setNoReset).toBe(false)
+    expect(registered[0]?.config.asyncSetReset).toBe(false)
+  })
+
+  test('the adder recovers FOUR registered cells — one per bit of sum[3:0]', () => {
+    const registered = adderDesign.netlist.cells.filter((c) => c.config.dffEnable)
+    expect(registered).toHaveLength(4)
+  })
+
+  test('the adder recovers a carry chain, and the XNOR design has none', () => {
+    const carry = adderDesign.netlist.cells.filter((c) => c.config.carryEnable)
+    expect(carry.length).toBeGreaterThan(0)
+    expect(xnorDesign.netlist.cells.filter((c) => c.config.carryEnable)).toHaveLength(0)
+  })
+
+  test('carry cells link to the cell below them, and the first one starts the chain', () => {
+    const carry = adderDesign.netlist.cells
+      .filter((c) => c.config.carryEnable)
+      .sort((a, b) => a.ref.cell - b.ref.cell)
+    expect(carry.length).toBeGreaterThan(1)
+    expect(carry[0]?.carryIn ?? null).toBeNull() // starts the tile's chain
+    for (const cell of carry.slice(1)) {
+      expect(cell.carryIn, `cell ${cell.ref.cell}`).toBeDefined()
+      expect((cell.carryIn as { cell: number }).cell).toBe(cell.ref.cell - 1)
+    }
+  })
+
+  test('a carry cell carries its two operands, so arithmetic is not read through the LUT mask', () => {
+    for (const cell of adderDesign.netlist.cells.filter((c) => c.config.carryEnable))
+      expect(cell.carryOperands).toHaveLength(2)
+  })
+
+  test('THE PAYOFF — the recovered flip-flop holds the XNOR result across clock cycles', () => {
+    // A clocked run of a design read out of a real bitstream. The register should present the PREVIOUS cycle's
+    // XNOR, which is exactly what `q <= a XNOR b` means: one cycle of delay.
+    const cell = xnorDesign.netlist.cells[0] as {
+      ref: { x: number; y: number; cell: number }
+      inputs: { kind: string; net?: number }[]
+    }
+    const nets = cell.inputs.filter((i) => i.kind === 'primary').map((i) => i.net as number)
+    const [first, second] = [nets[0] as number, nets[1] as number]
+    const key = `${cell.ref.x}_${cell.ref.y}_${cell.ref.cell}`
+
+    // four cycles of (a, b): (0,0) (1,0) (1,1) (0,1) -> XNOR is 1, 0, 1, 0
+    const a = [false, true, true, false]
+    const b = [false, false, true, true]
+    const stimulus = a.map(
+      (_, cycle) =>
+        new Map<number, boolean>([
+          [first, a[cycle] as boolean],
+          [second, b[cycle] as boolean],
+        ]),
+    )
+    const result = simulateClocked(xnorDesign.netlist, stimulus, 4)
+    expect(result.trace).toHaveLength(4)
+    // the register lags by one cycle, so from cycle 1 onward it shows the previous cycle's XNOR
+    for (let cycle = 1; cycle < 4; cycle++)
+      expect(result.trace[cycle]?.get(key), `cycle ${cycle}`).toBe(a[cycle - 1] === b[cycle - 1])
+    expect(result.finalState.get(key)).toBe(a[3] === b[3])
   })
 })
