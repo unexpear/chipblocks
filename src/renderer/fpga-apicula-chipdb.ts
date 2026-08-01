@@ -11,10 +11,17 @@
  * conversion encodes a tuple key by joining its parts with a comma and FAILS LOUDLY on any collision rather than
  * silently dropping entries. `fixtures/gowin-gw1n1-chipdb.json` holds the slice this module needs.
  *
- * HONEST SCOPE. This reads the fabric INVENTORY — grid, tile types, tile sizes, bel names, and the vendor's own
- * header/footer command records. It does NOT yet decode a LUT's truth table or a flip-flop's mode from the frame
- * bits: that needs the per-tile bit tables (`shortval`/`longval`/`logicinfo`), which are a much larger slice and
- * the next step. Nothing here pretends to more than the inventory.
+ * HONEST SCOPE. This reads the fabric inventory (grid, tile types, tile sizes, bel names, the vendor's own
+ * command records), locates any tile's bits in the device bitmap, and decodes LUT TRUTH TABLES from those bits.
+ *
+ * It does NOT yet recover:
+ *   - flip-flop modes, which live in the tile-level `shortval`/`logicinfo` attribute tables rather than in the
+ *     cell's own flags (a logic tile's `DFF*` bels carry no flags at all — checked, not assumed);
+ *   - routing, which needs the `pips` tables;
+ *   - carry/ALU, BRAM, DSP, PLL and IO configuration.
+ * So a Gowin bitstream does not yet reach the shared netlist/simulator the way an iCE40 or ECP5 one does.
+ *
+ * The decode convention is stated at `decodeGowinLuts` because it is INVERTED and easy to get backwards.
  */
 
 /** One kind of tile: its size in configuration bits, and the cells it contains. */
@@ -43,6 +50,22 @@ export type GowinChipdb = {
   /** the command records the vendor tool writes before / after the configuration frames. */
   commandHeader: readonly Uint8Array[]
   commandFooter: readonly Uint8Array[]
+  /**
+   * Per tile type, per LUT cell, the tile-local bit that carries each of the 16 truth-table entries:
+   * `lutFlagBits.get(ttyp)?.get('LUT0')?.[5]` is the `[row, col]` holding truth-table entry 5.
+   */
+  lutFlagBits: ReadonlyMap<number, ReadonlyMap<string, readonly (readonly [number, number])[]>>
+  /** the whole device's configuration bitmap size, summed from the tile grid. */
+  bitmapRows: number
+  bitmapCols: number
+}
+
+/** Where a tile's own bit window sits in the device bitmap. */
+export type GowinTileWindow = {
+  top: number
+  left: number
+  width: number
+  height: number
 }
 
 /** How many of each kind of cell the whole fabric holds. */
@@ -81,6 +104,7 @@ export function parseGowinChipdb(text: string): GowinChipdb {
     tiles: Record<string, { width: number; height: number; bels: string[] | null; pips: number }>
     cmd_hdr: string[]
     cmd_ftr: string[]
+    lut_flags?: Record<string, Record<string, Record<string, number[][]>>>
   }
 
   const grid = raw.grid
@@ -108,6 +132,52 @@ export function parseGowinChipdb(text: string): GowinChipdb {
       if (!tileTypes.has(ttyp))
         throw new Error(`Gowin chipdb grid references tile type ${ttyp}, which it does not define`)
 
+  // The tiles must TILE — every grid row the same total width, every column the same total height, or the
+  // cumulative offsets used to find a tile's bits would silently address the wrong bits.
+  const rowWidths = new Set(
+    grid.map((row) => row.reduce((sum, t) => sum + (tileTypes.get(t) as GowinTileType).width, 0)),
+  )
+  if (rowWidths.size !== 1)
+    throw new Error(
+      `Gowin chipdb tiles do not tile: grid rows have differing total widths (${[...rowWidths].join(', ')})`,
+    )
+  const colHeights = new Set(
+    Array.from({ length: cols }, (_, col) =>
+      grid.reduce(
+        (sum, row) => sum + (tileTypes.get(row[col] as number) as GowinTileType).height,
+        0,
+      ),
+    ),
+  )
+  if (colHeights.size !== 1)
+    throw new Error(
+      `Gowin chipdb tiles do not tile: grid columns have differing total heights (${[...colHeights].join(', ')})`,
+    )
+
+  const lutFlagBits = new Map<number, Map<string, (readonly [number, number])[]>>()
+  for (const [ttypKey, bels] of Object.entries(raw.lut_flags ?? {})) {
+    const perBel = new Map<string, (readonly [number, number])[]>()
+    for (const [belName, flags] of Object.entries(bels)) {
+      const bits: (readonly [number, number])[] = []
+      for (const [flagKey, coords] of Object.entries(flags)) {
+        // Each truth-table entry is carried by exactly one bit in this fabric; anything else means the shape
+        // changed and the decode below would be wrong.
+        if (coords.length !== 1)
+          throw new Error(
+            `Gowin chipdb: ${belName} truth-table entry ${flagKey} has ${coords.length} bits, expected 1`,
+          )
+        const [row, col] = coords[0] as number[]
+        bits[Number.parseInt(flagKey, 10)] = [row as number, col as number]
+      }
+      if (bits.length !== 16)
+        throw new Error(
+          `Gowin chipdb: ${belName} has ${bits.length} truth-table entries, expected 16`,
+        )
+      perBel.set(belName, bits)
+    }
+    lutFlagBits.set(Number.parseInt(ttypKey, 10), perBel)
+  }
+
   return {
     device: raw.device,
     idcode: Number.parseInt(raw.idcode, 16) >>> 0,
@@ -119,7 +189,87 @@ export function parseGowinChipdb(text: string): GowinChipdb {
     tileTypes,
     commandHeader: raw.cmd_hdr.map(hexToBytes),
     commandFooter: raw.cmd_ftr.map(hexToBytes),
+    lutFlagBits,
+    bitmapRows: [...colHeights][0] as number,
+    bitmapCols: [...rowWidths][0] as number,
   }
+}
+
+/**
+ * Where a tile's bits live in the device bitmap. Apicula's `tile_bitmap` walks the grid accumulating widths
+ * across and heights down, so a tile's window starts at the sum of everything above and to the left of it.
+ */
+export function gowinTileWindow(db: GowinChipdb, row: number, col: number): GowinTileWindow | null {
+  if (row < 0 || col < 0 || row >= db.rows || col >= db.cols) return null
+  let top = 0
+  for (let r = 0; r < row; r++)
+    top += (db.tileTypes.get((db.grid[r] as readonly number[])[0] as number) as GowinTileType)
+      .height
+  let left = 0
+  const gridRow = db.grid[row] as readonly number[]
+  for (let c = 0; c < col; c++)
+    left += (db.tileTypes.get(gridRow[c] as number) as GowinTileType).width
+  const tile = db.tileTypes.get(gridRow[col] as number) as GowinTileType
+  return { top, left, width: tile.width, height: tile.height }
+}
+
+/**
+ * Cut one tile's bits out of a device bitmap (the frame matrix a `.fs` parse returns).
+ *
+ * Refuses a bitmap whose size does not match the fabric, rather than reading whatever happens to be there — a
+ * bitmap of the wrong device would otherwise decode into confident nonsense.
+ */
+export function extractGowinTileBits(
+  bitmap: readonly (readonly boolean[])[],
+  db: GowinChipdb,
+  row: number,
+  col: number,
+): boolean[][] | null {
+  if (bitmap.length !== db.bitmapRows)
+    throw new Error(
+      `Gowin bitmap has ${bitmap.length} rows but ${db.device} has ${db.bitmapRows} — wrong device?`,
+    )
+  const window = gowinTileWindow(db, row, col)
+  if (window === null) return null
+  const out: boolean[][] = []
+  for (let r = 0; r < window.height; r++) {
+    const source = bitmap[window.top + r] as readonly boolean[]
+    if (source.length !== db.bitmapCols)
+      throw new Error(
+        `Gowin bitmap row ${window.top + r} has ${source.length} bits but ${db.device} frames are ${db.bitmapCols} wide`,
+      )
+    out.push(source.slice(window.left, window.left + window.width))
+  }
+  return out
+}
+
+/**
+ * Decode the LUT truth tables in one tile.
+ *
+ * The convention is Apicula's, and it is INVERTED: a truth-table entry's bit being PROGRAMMED means that entry
+ * outputs 0. `gowin_unpack` computes `INIT = 0xffff - sum(1 << f for f in set_flags)`, so an erased tile
+ * (all bits zero) reads as `0xFFFF` — a LUT that outputs 1 for every input. Getting this backwards would invert
+ * every gate on the chip while still looking like a plausible design, which is why it is stated here.
+ *
+ * Returns an empty map for tile types that hold no LUTs.
+ */
+export function decodeGowinLuts(
+  tileBits: readonly (readonly boolean[])[],
+  db: GowinChipdb,
+  ttyp: number,
+): Map<string, number> {
+  const out = new Map<string, number>()
+  const perBel = db.lutFlagBits.get(ttyp)
+  if (perBel === undefined) return out
+  for (const [belName, bits] of perBel) {
+    let programmed = 0
+    for (let flag = 0; flag < 16; flag++) {
+      const [row, col] = bits[flag] as readonly [number, number]
+      if ((tileBits[row] as readonly boolean[])[col] === true) programmed |= 1 << flag
+    }
+    out.set(belName, 0xffff & ~programmed)
+  }
+  return out
 }
 
 /** The tile at a grid position, or null if the position is off the fabric. */

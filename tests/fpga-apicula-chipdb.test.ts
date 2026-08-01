@@ -14,9 +14,12 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import {
+  decodeGowinLuts,
+  extractGowinTileBits,
   type GowinChipdb,
   gowinFabricInventory,
   gowinTileAt,
+  gowinTileWindow,
   parseGowinChipdb,
 } from '../src/renderer/fpga-apicula-chipdb.ts'
 import { crc16Arc, GOWIN_DEVICES, parseGowinBitstream } from '../src/renderer/fpga-apicula-fs.ts'
@@ -207,5 +210,118 @@ describe('the frame count is read the way Apicula reads it', () => {
     const parsed = parseGowinBitstream(lines.join('\n'))
     // a huge count means all three lines are consumed as frames; the old fixed read would have stopped at two
     expect(parsed.frames).toHaveLength(3)
+  })
+})
+
+/** The first grid position holding LUTs, and its tile type. */
+function findLogicTile(): { row: number; col: number; ttyp: number } {
+  for (let row = 0; row < db.rows; row++)
+    for (let col = 0; col < db.cols; col++) {
+      const tile = gowinTileAt(db, row, col)
+      if (tile?.bels.some((b) => /^LUT\d$/.test(b))) return { row, col, ttyp: tile.ttyp }
+    }
+  throw new Error('no logic tile in the fixture')
+}
+
+/** An all-zero device bitmap of the fabric's real size. */
+const blankBitmap = (): boolean[][] =>
+  Array.from({ length: db.bitmapRows }, () => new Array<boolean>(db.bitmapCols).fill(false))
+
+describe('the tile grid tiles the bitmap exactly', () => {
+  test('220 differently-sized tiles cover a 274 x 1216 rectangle with no gaps or overlaps', () => {
+    // A real structural invariant, not bookkeeping: the tile sizes come from the vendor database and the grid
+    // layout from Apicula's `tile_bitmap`, and they have to agree or every tile lookup addresses wrong bits.
+    expect([db.bitmapRows, db.bitmapCols]).toEqual([274, 1216])
+    let covered = 0
+    for (let row = 0; row < db.rows; row++)
+      for (let col = 0; col < db.cols; col++) {
+        const w = gowinTileWindow(db, row, col) as { width: number; height: number }
+        covered += w.width * w.height
+      }
+    expect(covered).toBe(274 * 1216)
+  })
+
+  test('tile windows advance by the previous tile size', () => {
+    const first = gowinTileWindow(db, 0, 0) as { left: number; top: number; width: number }
+    const second = gowinTileWindow(db, 0, 1) as { left: number; top: number }
+    expect([first.left, first.top]).toEqual([0, 0])
+    expect(second.left).toBe(first.width)
+    expect(second.top).toBe(0)
+  })
+
+  test('a database whose tiles do NOT tile is refused', () => {
+    const broken = JSON.parse(CHIPDB_TEXT) as {
+      grid: number[][]
+      tiles: Record<string, { width: number }>
+    }
+    const ttyp = String((broken.grid[0] as number[])[0])
+    ;(broken.tiles[ttyp] as { width: number }).width += 1
+    expect(() => parseGowinChipdb(JSON.stringify(broken))).toThrow(/do not tile/)
+  })
+
+  test('off-fabric windows are null, and a wrong-size bitmap is refused', () => {
+    expect(gowinTileWindow(db, db.rows, 0)).toBeNull()
+    expect(() => extractGowinTileBits([[true]], db, 0, 0)).toThrow(/wrong device/)
+  })
+})
+
+describe('decodeGowinLuts — frame bits become truth tables', () => {
+  const { row, col, ttyp } = findLogicTile()
+
+  test('an ERASED tile reads as all-ones LUTs, because the convention is inverted', () => {
+    // Apicula: INIT = 0xffff - sum(1 << f for set flags). A programmed bit means that truth-table entry is 0,
+    // so a blank device is 0xFFFF everywhere. Reading this backwards would invert every gate on the chip.
+    const tileBits = extractGowinTileBits(blankBitmap(), db, row, col) as boolean[][]
+    const luts = decodeGowinLuts(tileBits, db, ttyp)
+    expect(luts.size).toBe(8)
+    for (const [name, init] of luts) expect([name, init]).toEqual([name, 0xffff])
+  })
+
+  test('a fully programmed tile reads as all-zero LUTs', () => {
+    const tile = gowinTileAt(db, row, col) as { width: number; height: number }
+    const filled = Array.from({ length: tile.height }, () =>
+      new Array<boolean>(tile.width).fill(true),
+    )
+    for (const init of decodeGowinLuts(filled, db, ttyp).values()) expect(init).toBe(0)
+  })
+
+  test('an arbitrary truth table survives the whole device-sized round trip', () => {
+    // Set the bits for a chosen INIT in ONE LUT of ONE tile, in a full 274x1216 device bitmap, then read it
+    // back through the same window arithmetic the real flow uses.
+    const bitmap = blankBitmap()
+    const window = gowinTileWindow(db, row, col) as { top: number; left: number }
+    const bits = (
+      db.lutFlagBits.get(ttyp) as ReadonlyMap<string, readonly (readonly number[])[]>
+    ).get('LUT3') as readonly (readonly number[])[]
+    const wanted = 0xabcd
+    for (let flag = 0; flag < 16; flag++) {
+      if (((wanted >> flag) & 1) === 1) continue // a 1 entry is left ERASED
+      const [r, c] = bits[flag] as readonly number[]
+      ;(bitmap[window.top + (r as number)] as boolean[])[window.left + (c as number)] = true
+    }
+    const luts = decodeGowinLuts(
+      extractGowinTileBits(bitmap, db, row, col) as boolean[][],
+      db,
+      ttyp,
+    )
+    expect(luts.get('LUT3')).toBe(wanted)
+    // the other seven LUTs in the same tile are untouched
+    for (const [name, init] of luts)
+      if (name !== 'LUT3') expect([name, init]).toEqual([name, 0xffff])
+  })
+
+  test('a tile type with no LUTs decodes to nothing rather than guessing', () => {
+    const centre = gowinTileAt(db, db.centerRow, db.centerCol) as { ttyp: number }
+    expect(decodeGowinLuts([[false]], db, centre.ttyp).size).toBe(0)
+  })
+
+  test('every LUT in a logic tile uses its own 16 bits, shared with no other LUT', () => {
+    const perBel = db.lutFlagBits.get(ttyp) as ReadonlyMap<string, readonly (readonly number[])[]>
+    const seen = new Set<string>()
+    for (const bits of perBel.values()) {
+      expect(bits).toHaveLength(16)
+      for (const [r, c] of bits) seen.add(`${r},${c}`)
+    }
+    expect(seen.size).toBe(8 * 16) // 128 distinct bits, no aliasing between cells
   })
 })
