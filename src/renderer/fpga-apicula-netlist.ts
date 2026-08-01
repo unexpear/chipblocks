@@ -81,6 +81,37 @@ export function gowinGlobalWire(
   return `R${rootRow}C${rootCol}_${direction}${number}`
 }
 
+/**
+ * Wire equivalences: one physical wire is named differently in each tile that can reach it, and the device
+ * database records those groups. `gowinGlobalWire` reconciles the DIRECTIONAL wires by arithmetic; this table
+ * covers the rest — chiefly the global clock network, where a clock hop is named `PCLKL1` in one tile, `SPINE16`
+ * in another and `GT00` in a third. Without it a routed clock reads as several disconnected fragments.
+ *
+ * Apicula picks the SHORTEST name in a group as the canonical one, and so do we, so both agree on which name a
+ * group collapses to.
+ *
+ * HONEST LIMIT: this does NOT join a cell's output wire (`F<n>`/`Q<n>`) as seen from a neighbouring tile. Those
+ * names are absent from the table — checked, not assumed — so a lookup table's output referenced from the tile
+ * next door still does not connect. That is what stands between here and naming a design's package pins.
+ */
+export function parseGowinWireAliases(text: string): Map<string, string> {
+  const raw = JSON.parse(text) as Record<string, [number, number, string][]>
+  const aliases = new Map<string, string>()
+  for (const group of Object.values(raw)) {
+    const sorted = [...group].sort((a, b) => a[2].length - b[2].length)
+    let root: string | null = null
+    for (const [row, col, wire] of sorted) {
+      const name = `R${row + 1}C${col + 1}_${wire}`
+      if (root === null) {
+        root = name
+        continue
+      }
+      aliases.set(name, root)
+    }
+  }
+  return aliases
+}
+
 /** A lookup table recovered from a bitstream, with where it sits and what it computes. */
 export type GowinLutCell = {
   ref: CellRef
@@ -177,7 +208,20 @@ export function reconstructGowinNetlist(
   db: GowinChipdb,
   pipdb: GowinPipDatabase,
   attributes: GowinAttributeDatabase | null = null,
+  aliases: ReadonlyMap<string, string> | null = null,
 ): GowinDesign {
+  // Reconcile a tile-local name into the one every tile agrees on: first the arithmetic for directional wires,
+  // then the database's equivalence groups. The alias walk is bounded — a malformed table could otherwise cycle.
+  const globalWire = (row: number, col: number, wire: string): string => {
+    let name = gowinGlobalWire(row, col, wire, db.rows, db.cols)
+    for (let hop = 0; hop < 8 && aliases !== null; hop++) {
+      const next = aliases.get(name)
+      if (next === undefined || next === name) break
+      name = next
+    }
+    return name
+  }
+
   // 1. every routed connection, in global wire names
   const drivers = new Map<string, string>()
   for (let row = 0; row < db.rows; row++)
@@ -188,10 +232,7 @@ export function reconstructGowinNetlist(
       if (bits === null) continue
       const routing = decodeGowinRouting(bits, pipdb, tile.ttyp)
       for (const [destination, source] of [...routing.pips, ...routing.clockPips])
-        drivers.set(
-          gowinGlobalWire(row + 1, col + 1, destination, db.rows, db.cols),
-          gowinGlobalWire(row + 1, col + 1, source, db.rows, db.cols),
-        )
+        drivers.set(globalWire(row + 1, col + 1, destination), globalWire(row + 1, col + 1, source))
     }
 
   // 2. every lookup table that is doing something, plus whether its flip-flop is clocked and whether the cell is
@@ -227,7 +268,7 @@ export function reconstructGowinNetlist(
           flipFlop: clocked ? (flipFlops.get(`DFF${index}`) ?? null) : null,
           carry: carry.includes(index),
         })
-        cellByOutput.set(gowinGlobalWire(row + 1, col + 1, `F${index}`, db.rows, db.cols), ref)
+        cellByOutput.set(globalWire(row + 1, col + 1, `F${index}`), ref)
       }
     }
 
@@ -246,13 +287,7 @@ export function reconstructGowinNetlist(
     // carry-only cell computed the wrong sum because its operands were masked away as don't-cares.
     const resolved: InputSource[] = []
     for (let pin = 0; pin < 4; pin++) {
-      const start = gowinGlobalWire(
-        cell.row + 1,
-        cell.col + 1,
-        `${LUT_PINS[pin]}${index}`,
-        db.rows,
-        db.cols,
-      )
+      const start = globalWire(cell.row + 1, cell.col + 1, `${LUT_PINS[pin]}${index}`)
       resolved.push(traceInput(start, drivers, cellByOutput, primaryNets, primaryWires))
     }
     // A pin the truth table ignores is not an input to this design, whatever the fabric happens to route there.

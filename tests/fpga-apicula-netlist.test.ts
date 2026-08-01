@@ -18,6 +18,7 @@ import { parseGowinBitstream } from '../src/renderer/fpga-apicula-fs.ts'
 import {
   GOWIN_FALLING_EDGE,
   gowinGlobalWire,
+  parseGowinWireAliases,
   reconstructGowinNetlist,
 } from '../src/renderer/fpga-apicula-netlist.ts'
 import {
@@ -328,5 +329,73 @@ describe('unused lookup-table pins are not mistaken for chip inputs', () => {
         if (cell.inputs[pin]?.kind === 'unused' && operands[pin]?.kind !== 'unused') bypassed++
     }
     expect(bypassed).toBeGreaterThan(0)
+  })
+})
+
+/**
+ * Wire equivalences from the device database.
+ *
+ * `gowinGlobalWire` reconciles directional wires by arithmetic, but the global clock network is named quite
+ * differently in each tile it crosses — `PCLKL1` here, `SPINE16` there, `GT00` further on — and no arithmetic
+ * relates those. The database records which names are the same copper; without applying it a routed clock reads
+ * as several disconnected fragments.
+ */
+describe('parseGowinWireAliases — joining wires the arithmetic cannot', () => {
+  const aliases = parseGowinWireAliases(
+    readFileSync(new URL('../fixtures/gowin-gw1n1-nodes.json', import.meta.url), 'utf8'),
+  )
+
+  test('the database yields thousands of equivalences', () => {
+    expect(aliases.size).toBeGreaterThan(3000)
+  })
+
+  test('a group collapses to its SHORTEST name, as Apicula chooses it', () => {
+    // Both sides must pick the same canonical name or the two decoders would disagree about wire identity.
+    for (const [name, root] of aliases) {
+      const wireOf = (full: string): string => full.slice(full.indexOf('_') + 1)
+      expect(wireOf(root).length, `${name} -> ${root}`).toBeLessThanOrEqual(wireOf(name).length)
+    }
+  })
+
+  test('applying them JOINS routing that was otherwise in fragments', () => {
+    // Measured, not asserted by construction: the same bitstream decoded with and without the table.
+    const countNets = (aliasTable: ReadonlyMap<string, string> | null): number => {
+      const design = reconstructGowinNetlist(xnor, db, pipdb, null, aliasTable)
+      const wires = new Set<string>()
+      for (const [to, from] of design.drivers) {
+        wires.add(to)
+        wires.add(from)
+      }
+      const parent = new Map<string, string>([...wires].map((w) => [w, w]))
+      const find = (x: string): string => {
+        let root = x
+        while (parent.get(root) !== root) root = parent.get(root) as string
+        return root
+      }
+      for (const [to, from] of design.drivers) parent.set(find(to), find(from))
+      return new Set([...wires].map(find)).size
+    }
+    const fragmented = countNets(null)
+    const joined = countNets(aliases)
+    expect(joined).toBeLessThan(fragmented)
+    expect([fragmented, joined]).toEqual([9, 7])
+  })
+
+  test('applying them does not change the recovered LOGIC', () => {
+    // Joining wires must not invent or destroy cells: the same lookup table, with the same truth table.
+    const plain = reconstructGowinNetlist(xnor, db, pipdb)
+    const aliased = reconstructGowinNetlist(xnor, db, pipdb, null, aliases)
+    expect(aliased.cells).toHaveLength(plain.cells.length)
+    expect((aliased.cells[0] as { init: number }).init).toBe(
+      (plain.cells[0] as { init: number }).init,
+    )
+  })
+
+  test('cell-output wires are NOT covered, which is the remaining blocker', () => {
+    // Stated as a test so the limit is not quietly assumed away. A lookup table's output as named from the tile
+    // next door is absent from the table, so it still does not join up — and that is exactly what stands between
+    // this and naming a design's package pins.
+    const outputNames = [...aliases.keys()].filter((n) => /_(F|Q)\d+$/.test(n))
+    expect(outputNames).toHaveLength(0)
   })
 })
