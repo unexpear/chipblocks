@@ -8,7 +8,11 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import { parseNexusFasm } from '../src/renderer/fpga-oxide-fasm.ts'
-import { isNexusClockWire, nexusGlobalWire } from '../src/renderer/fpga-oxide-wires.ts'
+import {
+  isNexusClockWire,
+  nexusGlobalWire,
+  resolveNexusWire,
+} from '../src/renderer/fpga-oxide-wires.ts'
 
 const design = parseNexusFasm(
   readFileSync(new URL('../fixtures/nexus-lifcl40-xnor-dff.fasm', import.meta.url), 'utf8'),
@@ -118,5 +122,134 @@ describe('what the rule deliberately does NOT claim', () => {
     const reference = 'N1__JHPRX4_CMUX_CORE_CMUX0'
     expect(isNexusClockWire(reference)).toBe(false) // the port looks directional...
     expect(nexusGlobalWire(29, 48, reference)).toBeNull() // ...but the wire is not, so it is refused
+  })
+})
+
+/**
+ * Resolving EVERY wire, including the clock network — and following the design's clock end to end.
+ */
+describe('resolveNexusWire — one name per wire, whatever kind', () => {
+  test('the three kinds are told apart', () => {
+    expect(resolveNexusWire(5, 2, 'S3__V06S0003')).toEqual({
+      kind: 'directional',
+      global: 'R5C2_V06S0003',
+    })
+    expect(resolveNexusWire(5, 14, 'SPINE__VPSX0400')).toEqual({
+      kind: 'clock',
+      global: 'VPSX0400',
+    })
+    expect(resolveNexusWire(5, 2, 'JQ0')).toEqual({ kind: 'local', global: 'R5C2_JQ0' })
+  })
+
+  test('a clock wire gets the SAME name from tiles that share nothing', () => {
+    // R5C14 and R29C13 share neither row nor column. A clock net is chip-level, so its identity cannot depend on
+    // where it happens to be mentioned.
+    const one = resolveNexusWire(5, 14, 'SPINE__VPSX0400')
+    const other = resolveNexusWire(29, 13, 'SPINE__VPSX0400')
+    expect(one.global).toBe(other.global)
+  })
+
+  test('a local wire stays tied to its tile', () => {
+    // The opposite requirement: `JQ0` in two tiles is two different wires, and merging them would connect
+    // unrelated registers.
+    expect(resolveNexusWire(5, 2, 'JQ0').global).not.toBe(resolveNexusWire(11, 2, 'JQ0').global)
+  })
+})
+
+describe('the design’s clock is ONE connected net, end to end', () => {
+  /** The routing graph with every wire resolved. */
+  const edges = (): { from: string; to: string }[] => {
+    const found: { from: string; to: string }[] = []
+    for (const tile of design.tiles.values())
+      for (const pip of tile.pips)
+        found.push({
+          from: resolveNexusWire(tile.row, tile.col, pip.source).global,
+          to: resolveNexusWire(tile.row, tile.col, pip.destination).global,
+        })
+    return found
+  }
+
+  test('the spine and row wires now unify across distant tiles', () => {
+    // Real progress: these were unresolvable before. The spine is named the same from R5C14 and R29C13, so the
+    // long vertical run of the clock tree is now one net rather than two unrelated fragments.
+    const all = edges()
+    expect(all.some((e) => e.from === 'VPSX0400' || e.to === 'VPSX0400')).toBe(true)
+    expect(all.some((e) => e.from === 'HPRX0400' || e.to === 'HPRX0400')).toBe(true)
+    const spine = new Set<string>()
+    for (const tile of design.tiles.values())
+      for (const pip of tile.pips)
+        for (const wire of [pip.destination, pip.source])
+          if (wire.endsWith('VPSX0400'))
+            spine.add(resolveNexusWire(tile.row, tile.col, wire).global)
+    expect(spine.size).toBe(1) // one net, seen from two tiles that share nothing
+  })
+
+  test('the clock now traces from the logic tile out across the die', () => {
+    // Before clock wires resolved, this walk managed one hop. It now crosses the branch along the logic row and
+    // the spine down the die to the row wire - the clock tree as the design actually built it.
+    const driverOf = new Map<string, string>()
+    for (const edge of edges()) driverOf.set(edge.to, edge.from)
+
+    const path: string[] = ['R5C2_JCLK0']
+    const seen = new Set<string>(path)
+    for (let hop = 0; hop < 40; hop++) {
+      const next = driverOf.get(path[path.length - 1] as string)
+      if (next === undefined || seen.has(next)) break
+      path.push(next)
+      seen.add(next)
+    }
+    expect(path).toEqual(['R5C2_JCLK0', 'HPBX0000', 'VPSX0400', 'HPRX0400'])
+  })
+
+  test('KNOWN LIMIT — the trace stops where one wire has two names', () => {
+    // It ends at the row wire because nothing in the file drives `HPRX0400`. The next link exists but is written
+    // `LHPRX4` - the same row wire under a different name, presumably one half of it. Joining the two would need
+    // a rule relating the plain and prefixed forms, and one design is not enough evidence to write that rule.
+    const driverOf = new Map<string, string>()
+    for (const edge of edges()) driverOf.set(edge.to, edge.from)
+    expect(driverOf.has('HPRX0400')).toBe(false)
+
+    const names = new Set<string>()
+    for (const tile of design.tiles.values())
+      for (const pip of tile.pips)
+        for (const wire of [pip.destination, pip.source])
+          if (wire.includes('HPRX4') || wire.includes('HPRX0400'))
+            names.add(resolveNexusWire(tile.row, tile.col, wire).global)
+    // both forms are present in the design, and they do not currently unify
+    expect(names.has('HPRX0400')).toBe(true)
+    expect(names.has('LHPRX4')).toBe(true)
+  })
+
+  test('the tap tile really does name two branch halves the same', () => {
+    // Separately worth pinning: at the tap, `BRANCH_L__HPBX0000` is driven by `BRANCH_R__HPBX0000`. Those are
+    // different copper sharing one name, so a driver map records a self-edge for it. Harmless here only because
+    // another edge supplies the real driver.
+    const selfEdges = edges().filter((e) => e.from === e.to && e.from === 'HPBX0000')
+    expect(selfEdges.length).toBeGreaterThan(0)
+  })
+
+  test('without clock resolution the same walk stops almost immediately', () => {
+    // Shows the test above is not passing by accident: treating clock wires as tile-local breaks the chain,
+    // because each tile would then name the same net differently.
+    const driverOf = new Map<string, string>()
+    for (const tile of design.tiles.values())
+      for (const pip of tile.pips) {
+        const name = (w: string): string => {
+          const directional = nexusGlobalWire(tile.row, tile.col, w)
+          return directional === null ? `R${tile.row}C${tile.col}_${w}` : directional.global
+        }
+        driverOf.set(name(pip.destination), name(pip.source))
+      }
+    let current = 'R5C2_JCLK0'
+    let hops = 0
+    const seen = new Set([current])
+    while (hops < 40) {
+      const next = driverOf.get(current)
+      if (next === undefined || seen.has(next)) break
+      current = next
+      seen.add(next)
+      hops++
+    }
+    expect(hops).toBeLessThan(3)
   })
 })
