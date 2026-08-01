@@ -398,3 +398,80 @@ describe('carry chains that outgrow a single tile', () => {
     }
   })
 })
+
+/**
+ * Whether a falling-edge flip-flop is reachable at all.
+ *
+ * The variant table names five falling-edge kinds, and the netlist layer exports them so a design using one can
+ * be spotted rather than silently simulated as rising. That raised an obvious question: does a plain
+ * `always @(negedge clk)` actually produce one? The variants design asks for exactly that, so it can answer.
+ */
+describe('falling-edge clocking', () => {
+  test('NO cell anywhere on the device has an inverted clock', () => {
+    // The answer is no. Across all 220 tiles, every clock select reads SIG and INV never appears - even though
+    // the source contains `always @(negedge clk)`. The toolchain satisfied it some other way (the clock network
+    // or the input buffer), not by configuring a falling-edge flip-flop.
+    let inverted = 0
+    let sampled = 0
+    for (let row = 0; row < db.rows; row++)
+      for (let col = 0; col < db.cols; col++) {
+        const tile = gowinTileAt(db, row, col)
+        if (tile === null || !attributes.tables.get(tile.ttyp)?.has('CLS0')) continue
+        const bits = tileBitsAt(variants.frames, row, col)
+        for (const table of ['CLS0', 'CLS1', 'CLS2']) {
+          const decoded = decodeAttributeTable(
+            bits,
+            attributes,
+            tile.ttyp,
+            table,
+            GOWIN_SLICE_FAMILY,
+          )
+          const clock = decoded.get('CLKMUX_CLK')
+          if (clock === undefined) continue
+          sampled++
+          if (gowinValueName(attributes, 'cls', clock) === 'INV') inverted++
+        }
+      }
+    expect(sampled).toBeGreaterThan(0) // the attribute really is being read
+    expect(inverted).toBe(0)
+  })
+
+  test('so Apicula reports no falling-edge variant either, and neither do we', () => {
+    // Consistency between the two decoders on the negative case. This is why falling-edge support has NOT been
+    // added to the shared simulator: there is no artefact this flow can produce that would exercise it, and
+    // untested simulator behaviour shared with two other chip families is worse than a stated gap.
+    const kinds = new Set(
+      variants.reference.flatMap((t) =>
+        Object.entries(t.bels)
+          .filter(([name]) => /^DFF\d$/.test(name))
+          .flatMap(([, kind]) => kind),
+      ),
+    )
+    for (const kind of kinds) expect(kind).not.toMatch(/^DFFN/)
+    expect(kinds.size).toBeGreaterThan(1) // and the design is not trivially empty
+  })
+
+  test('a latch really is present, so the sample is not simply unconfigured', () => {
+    // Guards the two tests above: this device DOES carry non-default register settings, so finding no inverted
+    // clock is a real absence rather than a bitstream nobody configured.
+    let latches = 0
+    for (let row = 0; row < db.rows; row++)
+      for (let col = 0; col < db.cols; col++) {
+        const tile = gowinTileAt(db, row, col)
+        if (tile === null || !attributes.tables.get(tile.ttyp)?.has('CLS0')) continue
+        const bits = tileBitsAt(variants.frames, row, col)
+        for (const table of ['CLS0', 'CLS1', 'CLS2']) {
+          const decoded = decodeAttributeTable(
+            bits,
+            attributes,
+            tile.ttyp,
+            table,
+            GOWIN_SLICE_FAMILY,
+          )
+          const mode = decoded.get('REGMODE')
+          if (mode !== undefined && gowinValueName(attributes, 'cls', mode) === 'LATCH') latches++
+        }
+      }
+    expect(latches).toBeGreaterThan(0)
+  })
+})
