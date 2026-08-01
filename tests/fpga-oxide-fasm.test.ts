@@ -233,3 +233,64 @@ describe('wide assignments carry the actual logic', () => {
     expect(parsed.unrecognised).toEqual([])
   })
 })
+
+/**
+ * Cross-checking the two views against each other.
+ *
+ * This is what having a packer that reads its own output buys. One view is what the router ASKED for; the other
+ * is what a genuine bitstream ACTUALLY contains, recovered by the vendor's own tool. Agreement between them
+ * means the logic survived synthesis, placement, packing into a real binary, and being read back out - a much
+ * stronger statement than either file alone supports.
+ */
+describe('what was asked for is what the bitstream contains', () => {
+  test('every wide assignment the router requested is present in the bitstream, unchanged', () => {
+    const key = (t: { name: string }, a: { path: string; value: number; high: number }): string =>
+      `${t.name}.${a.path}[${a.high}]=${a.value}`
+    const asked = new Set(
+      [...requested.tiles.values()].flatMap((t) => t.assignments.map((a) => key(t, a))),
+    )
+    const got = new Set(
+      [...readBack.tiles.values()].flatMap((t) => t.assignments.map((a) => key(t, a))),
+    )
+    expect(asked.size).toBeGreaterThan(0)
+    for (const entry of asked) expect(got.has(entry), entry).toBe(true)
+  })
+
+  test('the truth table itself round-trips through a real binary', () => {
+    // The strongest single claim available for this family: 0xF00F was written into an 808 KB bitstream and read
+    // back out of it, in the same tile and the same slice.
+    const inTile = (fasm: NexusFasm): { tile: string; value: number } | null => {
+      for (const tile of fasm.tiles.values())
+        for (const assignment of tile.assignments)
+          if (assignment.path.endsWith('INIT') && assignment.width === 16)
+            return { tile: tile.name, value: assignment.value }
+      return null
+    }
+    const before = inTile(requested)
+    const after = inTile(readBack)
+    expect(before).toEqual(after)
+    expect(after?.value).toBe(0xf00f)
+    expect(after?.tile).toBe('R5C2__PLC')
+  })
+
+  test('both views agree the register is used and clocked', () => {
+    for (const view of [requested, readBack]) {
+      const slice = view.tiles.get('R5C2__PLC')
+      expect(slice?.features.some((f) => f.path === 'SLICEA.REG0.USED' && f.value === 'YES')).toBe(
+        true,
+      )
+      expect(slice?.features.some((f) => f.path === 'SLICEA.CLKMUX' && f.value === 'CLK')).toBe(
+        true,
+      )
+    }
+  })
+
+  test('the bitstream carries MORE than was asked for, as a real chip must', () => {
+    // Not a discrepancy: a packed bitstream also sets every default a physical device needs. The check above is
+    // one-directional on purpose, and this states why.
+    const askedFeatures = [...requested.tiles.values()].reduce((n, t) => n + t.features.length, 0)
+    const gotFeatures = [...readBack.tiles.values()].reduce((n, t) => n + t.features.length, 0)
+    expect(gotFeatures).toBeGreaterThan(askedFeatures)
+    expect(readBack.tiles.size).toBeGreaterThan(0)
+  })
+})
