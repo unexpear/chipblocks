@@ -351,6 +351,22 @@ export function parseGowinAttrValues(
  * `N` means the cell clocks on the FALLING edge; `R`/`S` are synchronous reset/set and `C`/`P` are asynchronous
  * clear/preset.
  */
+/**
+ * The LATCH variants a logic cell can be, keyed the same way as the flip-flops — Apicula's `_latch_types`.
+ *
+ * A latch is not a flip-flop: it is level-sensitive rather than edge-triggered, so it passes its input through
+ * whenever the enable is high instead of sampling once per clock edge. Reporting one as the other would describe
+ * genuinely different hardware, which is why they are kept in separate tables rather than merged.
+ */
+const LATCH_TYPES: ReadonlyMap<string, string> = new Map([
+  ['RESET||SIG|', 'DL'],
+  ['RESET||INV|', 'DLN'],
+  ['RESET|LSRMUX|SIG|ASYNC', 'DLC'],
+  ['RESET|LSRMUX|INV|ASYNC', 'DLNC'],
+  ['SET|LSRMUX|SIG|ASYNC', 'DLP'],
+  ['SET|LSRMUX|INV|ASYNC', 'DLNP'],
+])
+
 const DFF_TYPES: ReadonlyMap<string, string> = new Map([
   ['RESET||SIG|', 'DFF'],
   ['RESET||INV|', 'DFFN'],
@@ -396,9 +412,25 @@ export function decodeGowinFlipFlops(
       named('CLKMUX_CLK', 'SIG'),
       named('SRMODE', ''),
     ].join('|')
-    out.set(`DFF${index}`, DFF_TYPES.get(key) ?? null)
+
+    // A cell switched into distributed-memory mode is not a register at all — Apicula skips it, and reporting a
+    // flip-flop here would describe hardware that is not there.
+    if (named('MODE', '') === 'SSRAM') {
+      out.set(`DFF${index}`, null)
+      continue
+    }
+    // The SAME key selects from a different table when the cell is a LATCH. Falling through to the flip-flop
+    // table would name level-sensitive hardware after an edge-triggered part — a real bitstream containing
+    // latches is what showed this, so the two tables are kept apart.
+    const table = named('REGMODE', '') === 'LATCH' ? LATCH_TYPES : DFF_TYPES
+    out.set(`DFF${index}`, table.get(key) ?? null)
   }
   return out
+}
+
+/** Whether a decoded cell kind is a level-sensitive LATCH rather than an edge-triggered flip-flop. */
+export function isGowinLatch(kind: string | null): boolean {
+  return kind?.startsWith('DL') ?? false
 }
 
 /**

@@ -329,10 +329,15 @@ describe('decodeGowinLuts — frame bits become truth tables', () => {
 })
 
 /**
- * Reference outputs produced by running APICULA'S OWN `parse_attrvals` and `get_dff_type` (imported from the
- * oss-cad-suite build) over these exact tile bit patterns. This is the same discipline as the CRC check: the
+ * Reference outputs produced by running APICULA'S OWN `parse_attrvals` and register-naming code (imported from
+ * the oss-cad-suite build) over these exact tile bit patterns. This is the same discipline as the CRC check: the
  * decode is pinned against the reference implementation rather than against itself, which is the only way a
  * transcription error in a three-pass algorithm would show up.
+ *
+ * The reference applies the SAME gating `parse_tile_` does — a cell in distributed-memory mode names no
+ * register, and a cell in latch mode is named from the latch table — because an earlier version called
+ * `get_dff_type` directly and so described cells as flip-flops that the real decoder gates out entirely. Seven
+ * of these ten cases gate out, so the difference was not marginal.
  */
 type DffCase = {
   label: string
