@@ -147,6 +147,21 @@ export type GowinDesign = {
 const LUT_PINS = ['A', 'B', 'C', 'D'] as const
 
 /**
+ * Whether a truth table's output actually changes with one of its inputs.
+ *
+ * A four-input cell used as a two-input gate leaves two pins doing nothing, and the fabric still routes SOMETHING
+ * to them. Reporting those as chip inputs would invent signals the design does not have — the XNOR test design
+ * has two real inputs and would otherwise claim four.
+ */
+function dependsOnInput(truth: readonly boolean[], pin: number): boolean {
+  for (let entry = 0; entry < 16; entry++) {
+    if (((entry >> pin) & 1) !== 0) continue
+    if (truth[entry] !== truth[entry | (1 << pin)]) return true
+  }
+  return false
+}
+
+/**
  * Rebuild the logical netlist from a Gowin bitstream.
  *
  * Walks every tile, keeps the lookup tables that are not blank, and resolves each of their four inputs by
@@ -221,9 +236,16 @@ export function reconstructGowinNetlist(
   const primaryWires = new Map<number, string>()
   const recovered: RecoveredCell[] = []
   for (const cell of cells) {
-    const inputs: InputSource[] = []
+    // Both fabrics index a 4-input truth table the same way — entry i is the output when the inputs spell out i
+    // with input 0 as the least-significant bit — so the Gowin word maps straight onto the shared cell.
+    const truth = Array.from({ length: 16 }, (_, entry) => ((cell.init >> entry) & 1) === 1)
+    const index = Number.parseInt(cell.bel.slice(3), 10)
+
+    // Resolve every pin FIRST, unmasked. The carry unit reads its operands directly, independently of what the
+    // lookup table does with them, so masking must not reach it — the same trap the iCE40 path hit, where a
+    // carry-only cell computed the wrong sum because its operands were masked away as don't-cares.
+    const resolved: InputSource[] = []
     for (let pin = 0; pin < 4; pin++) {
-      const index = Number.parseInt(cell.bel.slice(3), 10)
       const start = gowinGlobalWire(
         cell.row + 1,
         cell.col + 1,
@@ -231,11 +253,12 @@ export function reconstructGowinNetlist(
         db.rows,
         db.cols,
       )
-      inputs.push(traceInput(start, drivers, cellByOutput, primaryNets, primaryWires))
+      resolved.push(traceInput(start, drivers, cellByOutput, primaryNets, primaryWires))
     }
-    // Both fabrics index a 4-input truth table the same way — entry i is the output when the inputs spell out i
-    // with input 0 as the least-significant bit — so the Gowin word maps straight onto the shared cell.
-    const truth = Array.from({ length: 16 }, (_, entry) => ((cell.init >> entry) & 1) === 1)
+    // A pin the truth table ignores is not an input to this design, whatever the fabric happens to route there.
+    const inputs: InputSource[] = resolved.map((source, pin) =>
+      dependsOnInput(truth, pin) ? source : { kind: 'unused' },
+    )
     const flags = FLIP_FLOP_FLAGS.get(cell.flipFlop ?? '') ?? {
       setNoReset: false,
       asyncSetReset: false,
@@ -263,7 +286,7 @@ export function reconstructGowinNetlist(
       ...(cell.carry
         ? {
             carryIn: previous === undefined ? null : previous.ref,
-            carryOperands: [inputs[0] as InputSource, inputs[1] as InputSource] as [
+            carryOperands: [resolved[0] as InputSource, resolved[1] as InputSource] as [
               InputSource,
               InputSource,
             ],
@@ -271,6 +294,16 @@ export function reconstructGowinNetlist(
         : {}),
     })
   }
+
+  // Only report inputs the design actually reads. A pin resolved and then masked away as a don't-care left a
+  // primary behind, which would overstate how many signals enter the chip.
+  const referenced = new Set<number>()
+  for (const cell of recovered) {
+    for (const input of cell.inputs) if (input.kind === 'primary') referenced.add(input.net)
+    for (const operand of cell.carryOperands ?? [])
+      if (operand.kind === 'primary') referenced.add(operand.net)
+  }
+  for (const net of [...primaryWires.keys()]) if (!referenced.has(net)) primaryWires.delete(net)
 
   return { netlist: { cells: recovered }, cells, drivers, primaryWires }
 }

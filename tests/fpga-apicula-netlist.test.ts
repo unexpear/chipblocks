@@ -259,3 +259,74 @@ describe('flip-flops and carry attached to the netlist', () => {
     expect(result.finalState.get(key)).toBe(a[3] === b[3])
   })
 })
+
+/**
+ * Pins a lookup table IGNORES are not inputs to the design.
+ *
+ * A Gowin cell has four inputs; a two-input gate leaves two of them doing nothing, and the fabric still routes
+ * something to them. Counting those as chip inputs invents signals the design does not have.
+ */
+describe('unused lookup-table pins are not mistaken for chip inputs', () => {
+  const design = reconstructGowinNetlist(xnor, db, pipdb)
+
+  test('the XNOR cell reads TWO inputs, not four', () => {
+    const cell = design.netlist.cells[0] as { inputs: { kind: string }[] }
+    expect(cell.inputs.filter((i) => i.kind !== 'unused')).toHaveLength(2)
+    expect(cell.inputs.filter((i) => i.kind === 'unused')).toHaveLength(2)
+  })
+
+  test('and the design reports exactly two external signals', () => {
+    // Before this, the two ignored pins each dead-ended on a wire and were reported as chip inputs, so a
+    // two-input gate claimed four.
+    expect(design.primaryWires.size).toBe(2)
+  })
+
+  test('the masked pins are the ones the truth table really ignores', () => {
+    // 0x9999 depends on inputs 0 and 1 only: entry i is 1 exactly when bit0 == bit1, whatever bits 2 and 3 do.
+    const cell = design.netlist.cells[0] as {
+      inputs: { kind: string }[]
+      config: { truth: boolean[] }
+    }
+    for (let pin = 0; pin < 4; pin++) {
+      let matters = false
+      for (let entry = 0; entry < 16; entry++)
+        if (
+          ((entry >> pin) & 1) === 0 &&
+          cell.config.truth[entry] !== cell.config.truth[entry | (1 << pin)]
+        )
+          matters = true
+      expect(cell.inputs[pin]?.kind === 'unused', `pin ${pin}`).toBe(!matters)
+    }
+  })
+
+  test('every reported external signal is still reachable by name', () => {
+    for (const cell of design.netlist.cells)
+      for (const input of cell.inputs) {
+        if (input.kind !== 'primary') continue
+        expect(design.primaryWires.get(input.net)).toBeDefined()
+      }
+  })
+
+  test('CARRY operands bypass the mask, as they must', () => {
+    // The trap this avoids, learned the hard way on the iCE40 path: a carry unit reads its operands directly,
+    // independently of what the lookup table does with them. Masking them away made a carry-only cell compute
+    // the wrong sum while looking perfectly reasonable.
+    const attributes = parseGowinAttributeDatabase(
+      readFileSync(new URL('../fixtures/gowin-gw1n1-attributes.json', import.meta.url), 'utf8'),
+    )
+    const adderDesign = reconstructGowinNetlist(adder, db, pipdb, attributes)
+    const carry = adderDesign.netlist.cells.filter((c) => c.config.carryEnable)
+    expect(carry.length).toBeGreaterThan(0)
+
+    // At least one carry cell must carry an operand that its own truth table ignores - otherwise the mask and
+    // the bypass are indistinguishable and this test proves nothing.
+    let bypassed = 0
+    for (const cell of carry) {
+      const operands = cell.carryOperands as { kind: string }[]
+      expect(operands).toHaveLength(2)
+      for (let pin = 0; pin < 2; pin++)
+        if (cell.inputs[pin]?.kind === 'unused' && operands[pin]?.kind !== 'unused') bypassed++
+    }
+    expect(bypassed).toBeGreaterThan(0)
+  })
+})
