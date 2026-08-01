@@ -269,9 +269,10 @@ export function decodeGowinIoBuffers(
  * (`BSRAM_SP` / `BSRAM_DP` / `BSRAM_SDP` / `BSRAM_ROM`) rather than one table with a mode field. This returns
  * whichever tables the tile type defines, keyed by mode.
  *
- * NOTE ON COVERAGE: unlike the LUT, flip-flop, routing, carry and I/O paths, this one is NOT yet checked against
- * a real bitstream — neither test design instantiates a block memory. It is the same engine those use, but that
- * is an argument, not evidence, and it is stated here rather than left to be assumed.
+ * Checked against a real bitstream: a 1024x8 memory, which the toolchain infers into a genuine block RAM. The
+ * decode finds it at exactly the three tiles Apicula does (one main tile plus two auxiliaries), reports nothing
+ * in the two designs that use no memory, and recovers a data width matching the NINE-bit primitive the toolchain
+ * actually built rather than the eight-bit array the source declared.
  */
 export function decodeGowinBlockMemory(
   tileBits: readonly (readonly boolean[])[],

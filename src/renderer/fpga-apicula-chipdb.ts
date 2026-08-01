@@ -431,9 +431,13 @@ export function extractGowinTileBits(
   row: number,
   col: number,
 ): boolean[][] | null {
-  if (bitmap.length !== db.bitmapRows)
+  // A bitstream may legitimately carry MORE frames than the tile grid: block-memory initial contents follow the
+  // fabric rows. A GW1N-1 design with one block RAM declares 530 frames where the grid accounts for 274 — a real
+  // `gowin_pack` output that an equality check here would have rejected as the wrong device. Too FEW frames is
+  // still an error, because then the tile windows would read off the end.
+  if (bitmap.length < db.bitmapRows)
     throw new Error(
-      `Gowin bitmap has ${bitmap.length} rows but ${db.device} has ${db.bitmapRows} — wrong device?`,
+      `Gowin bitmap has only ${bitmap.length} rows but ${db.device} needs ${db.bitmapRows} — wrong device?`,
     )
   const window = gowinTileWindow(db, row, col)
   if (window === null) return null

@@ -168,26 +168,80 @@ describe('I/O buffers in the REAL bitstreams', () => {
   })
 })
 
-describe('block memory', () => {
-  test('the device really does have block-memory tile types', () => {
-    const withBsram = [...attributes.tables.values()].filter((t) =>
-      [...t.keys()].some((n) => n.startsWith('BSRAM_')),
+/**
+ * A THIRD real bitstream, built to close the block-memory gap: a 1024x8 memory, which yosys infers into a real
+ * block RAM (it emits an `SPX9` primitive and nextpnr reports "BSRAM: 1/4").
+ */
+const bram = load('gowin-gw1n1-bram1k.fs', 'gowin-gw1n1-bram1k-reference.json')
+
+describe('block memory in a REAL bitstream', () => {
+  test('a bitstream carrying memory contents has MORE frames than the tile grid', () => {
+    // Found by this artefact, not predicted: the fabric grid accounts for 274 rows, but this file declares 530.
+    // The extra rows are the memory's initial contents. An equality check on the bitmap height - which is what
+    // `extractGowinTileBits` used to do - rejects this perfectly valid file as being for the wrong device.
+    expect(bram.frames).toHaveLength(530)
+    expect(db.bitmapRows).toBe(274)
+    expect(bram.frames.length).toBeGreaterThan(db.bitmapRows)
+    for (const frame of bram.frames) expect(frame).toHaveLength(db.bitmapCols)
+  })
+
+  test('a bitstream with too FEW frames is still refused', () => {
+    // The relaxed check must not become no check at all.
+    expect(() => extractGowinTileBits([[true]], db, 0, 0)).toThrow(/wrong device/)
+  })
+
+  test('we find block memory at exactly the tiles Apicula does', () => {
+    const theirs = new Set(
+      bram.reference
+        .filter((t) => Object.keys(t.bels).some((n) => n.startsWith('BSRAM')))
+        .map((t) => `R${t.row}C${t.col}`),
     )
-    expect(withBsram.length).toBeGreaterThan(0)
+    expect(theirs.size).toBe(3) // one block RAM occupies a main tile plus two auxiliaries
+
+    const mine = new Set<string>()
+    for (let row = 0; row < db.rows; row++)
+      for (let col = 0; col < db.cols; col++) {
+        const tile = gowinTileAt(db, row, col)
+        if (tile === null) continue
+        const memory = decodeGowinBlockMemory(
+          tileBitsAt(bram.frames, row, col),
+          attributes,
+          tile.ttyp,
+        )
+        if (memory.size > 0) mine.add(`R${row}C${col}`)
+      }
+    expect(mine).toEqual(theirs)
   })
 
-  test('a tile type with no block memory decodes to nothing', () => {
-    const logic = gowinTileAt(db, 9, 2) as { ttyp: number }
-    expect(
-      decodeGowinBlockMemory(tileBitsAt(adder.frames, 9, 2), attributes, logic.ttyp).size,
-    ).toBe(0)
+  test('the decoded width is the width the toolchain actually built', () => {
+    // The source declares `reg [7:0]`, but yosys maps it to Gowin's NINE-bit mode (8 data + 1 parity) and emits
+    // an SPX9 cell. The decoded attribute names to "9", agreeing with the primitive rather than with the source
+    // - which is the stronger check, since it is the hardware that the bits describe.
+    const memory = decodeGowinBlockMemory(tileBitsAt(bram.frames, 5, 3), attributes, 41)
+    const single = memory.get('SP') as Map<string, number>
+    const width = single.get('SPA_DATA_WIDTH') as number
+    expect(gowinValueName(attributes, 'bsram', width)).toBe('9')
   })
 
-  test('NEITHER test design instantiates a block memory — so this path is unverified', () => {
-    // Stated as a test so the gap cannot quietly be forgotten. If a future bitstream does use block RAM, this
-    // will start failing and should be replaced by a real comparison against Apicula.
+  test('the two designs WITHOUT memory report none anywhere', () => {
+    // The negative control: a decoder that reported block memory on every memory-capable tile would pass the
+    // test above and fail this one.
     for (const design of [xnor, adder])
-      for (const tile of design.reference)
-        expect(Object.keys(tile.bels).some((n) => n.startsWith('BSRAM'))).toBe(false)
+      for (let row = 0; row < db.rows; row++)
+        for (let col = 0; col < db.cols; col++) {
+          const tile = gowinTileAt(db, row, col)
+          if (tile === null) continue
+          expect(
+            decodeGowinBlockMemory(tileBitsAt(design.frames, row, col), attributes, tile.ttyp).size,
+            `R${row}C${col}`,
+          ).toBe(0)
+        }
+  })
+
+  test('a logic tile never reports block memory', () => {
+    const logic = gowinTileAt(db, 9, 2) as { ttyp: number }
+    expect(decodeGowinBlockMemory(tileBitsAt(bram.frames, 9, 2), attributes, logic.ttyp).size).toBe(
+      0,
+    )
   })
 })
