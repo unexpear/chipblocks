@@ -112,6 +112,33 @@ export function parseGowinWireAliases(text: string): Map<string, string> {
   return aliases
 }
 
+/**
+ * The fixed per-tile equivalences the database does not list — Apicula builds these in code.
+ *
+ * A short hop between neighbouring tiles has a name from each end: the tile above calls it `N1x1`, the tile below
+ * calls the same copper `S1x1`, and both are the tile's shared `SN{x}0`. The east–west pair works the same way.
+ * These are pure geometry, which is presumably why they are generated rather than stored.
+ *
+ * They matter more than they look: without them a signal leaving a cell and entering its neighbour is two
+ * unrelated wires, so a trace stops at the tile boundary.
+ */
+export function gowinFixedAliases(rows: number, cols: number): Map<string, string> {
+  const aliases = new Map<string, string>()
+  const global = (row: number, col: number, wire: string): string =>
+    gowinGlobalWire(row, col, wire, rows, cols)
+  for (let row = 0; row < rows; row++)
+    for (let col = 0; col < cols; col++)
+      for (const index of [1, 2]) {
+        const northSouth = `R${row + 1}C${col + 1}_SN${index}0`
+        aliases.set(global(row + 0, col + 1, `N1${index}1`), northSouth)
+        aliases.set(global(row + 2, col + 1, `S1${index}1`), northSouth)
+        const eastWest = `R${row + 1}C${col + 1}_EW${index}0`
+        aliases.set(global(row + 1, col + 0, `W1${index}1`), eastWest)
+        aliases.set(global(row + 1, col + 2, `E1${index}1`), eastWest)
+      }
+  return aliases
+}
+
 /** A lookup table recovered from a bitstream, with where it sits and what it computes. */
 export type GowinLutCell = {
   ref: CellRef

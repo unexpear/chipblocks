@@ -17,6 +17,7 @@ import {
 import { parseGowinBitstream } from '../src/renderer/fpga-apicula-fs.ts'
 import {
   GOWIN_FALLING_EDGE,
+  gowinFixedAliases,
   gowinGlobalWire,
   parseGowinWireAliases,
   reconstructGowinNetlist,
@@ -397,5 +398,79 @@ describe('parseGowinWireAliases — joining wires the arithmetic cannot', () => 
     // this and naming a design's package pins.
     const outputNames = [...aliases.keys()].filter((n) => /_(F|Q)\d+$/.test(n))
     expect(outputNames).toHaveLength(0)
+  })
+})
+
+/**
+ * The fixed per-tile equivalences, which the database does NOT list because they are pure geometry.
+ *
+ * A hop between neighbouring tiles is called `N1x1` from one end and `S1x1` from the other, and both are the
+ * tile's shared `SN{x}0`. Without them a signal leaving a cell and entering its neighbour is two unrelated
+ * wires, so a trace stops dead at the tile boundary.
+ */
+describe('gowinFixedAliases — the equivalences that are generated, not stored', () => {
+  const nodeAliases = parseGowinWireAliases(
+    readFileSync(new URL('../fixtures/gowin-gw1n1-nodes.json', import.meta.url), 'utf8'),
+  )
+  const fixed = gowinFixedAliases(db.rows, db.cols)
+  const both = new Map([...nodeAliases, ...fixed])
+
+  const countNets = (aliases: ReadonlyMap<string, string> | null): number => {
+    const design = reconstructGowinNetlist(xnor, db, pipdb, null, aliases)
+    const wires = new Set<string>()
+    for (const [to, from] of design.drivers) {
+      wires.add(to)
+      wires.add(from)
+    }
+    const parent = new Map<string, string>([...wires].map((w) => [w, w]))
+    const find = (x: string): string => {
+      let root = x
+      while (parent.get(root) !== root) root = parent.get(root) as string
+      return root
+    }
+    for (const [to, from] of design.drivers) parent.set(find(to), find(from))
+    return new Set([...wires].map(find)).size
+  }
+
+  test('covers both directions of both axes, for every tile', () => {
+    // four aliases per (tile, index) pair, two indices, but ends of the die fold back and collide - so the
+    // count is bounded by, not equal to, rows x cols x 8.
+    expect(fixed.size).toBeGreaterThan(1000)
+    expect(fixed.size).toBeLessThanOrEqual(db.rows * db.cols * 8)
+  })
+
+  test('the north hop into a tile is the same wire as that tile’s shared segment', () => {
+    // The specific equivalence that unblocked the trace below, checked by name.
+    expect(fixed.get('R11C3_N11')).toBe('R11C3_SN10')
+  })
+
+  test('they join MORE than the database table does on its own', () => {
+    const alone = countNets(nodeAliases)
+    const combined = countNets(both)
+    expect(combined).toBeLessThan(alone)
+    expect([countNets(null), alone, combined]).toEqual([9, 7, 6])
+  })
+
+  test('the design’s inputs now reach the I/O tile instead of stopping mid-fabric', () => {
+    // Before: the trace died on interconnect wires part-way across the chip. After: both inputs arrive at cell
+    // outputs in ONE tile on the chip's edge - which is where a signal from a package pin should appear.
+    const before = reconstructGowinNetlist(xnor, db, pipdb, null, nodeAliases)
+    const after = reconstructGowinNetlist(xnor, db, pipdb, null, both)
+    expect([...before.primaryWires.values()].some((w) => /_N\d+$/.test(w))).toBe(true)
+    const wires = [...after.primaryWires.values()]
+    expect(wires).toHaveLength(2)
+    for (const wire of wires) expect(wire).toMatch(/^R\d+C\d+_[FQ]\d+$/)
+    // and both land in the SAME edge tile, as two pins of one I/O block would
+    expect(new Set(wires.map((w) => w.slice(0, w.indexOf('_')))).size).toBe(1)
+  })
+
+  test('joining more wires still does not change the recovered logic', () => {
+    const plain = reconstructGowinNetlist(xnor, db, pipdb)
+    const aliased = reconstructGowinNetlist(xnor, db, pipdb, null, both)
+    expect(aliased.cells).toHaveLength(plain.cells.length)
+    expect((aliased.cells[0] as { init: number }).init).toBe(
+      (plain.cells[0] as { init: number }).init,
+    )
+    expect(aliased.netlist.cells[0]?.config.truth).toEqual(plain.netlist.cells[0]?.config.truth)
   })
 })
