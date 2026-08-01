@@ -38,6 +38,7 @@ const attributes: GowinAttributeDatabase = parseGowinAttributeDatabase(
 )
 
 type ReferenceTile = {
+  pips?: Record<string, string>
   row: number
   col: number
   ttyp: number
@@ -330,5 +331,70 @@ describe('flip-flop and latch variants in a REAL bitstream', () => {
       grid.ttyp,
     )
     expect(new Set(mine.values()).size).toBeGreaterThan(2)
+  })
+})
+
+/**
+ * A FIFTH real bitstream: a registered 16-bit adder, built to find out how carry behaves when a chain outgrows
+ * one tile. A Gowin tile holds six arithmetic cells, so sixteen bits cannot fit in one.
+ */
+const adder16 = load('gowin-gw1n1-adder16.fs', 'gowin-gw1n1-adder16-reference.json')
+
+describe('carry chains that outgrow a single tile', () => {
+  const carryTiles = (design: { reference: ReferenceTile[] }): ReferenceTile[] =>
+    design.reference.filter((t) => Object.keys(t.bels).some((n) => /^ALU\d$/.test(n)))
+
+  test('sixteen bits of arithmetic really do span several tiles', () => {
+    const tiles = carryTiles(adder16)
+    expect(tiles.length).toBe(3)
+    // six arithmetic cells per tile is the tile's capacity, so three tiles is what sixteen bits needs
+    for (const tile of tiles)
+      expect(Object.keys(tile.bels).filter((n) => /^ALU\d$/.test(n))).toHaveLength(6)
+  })
+
+  test('the tiles are adjacent columns of ONE row, not stacked vertically', () => {
+    // Worth pinning: a chain continues sideways across the fabric. Assuming it ran up or down the rows - the
+    // direction a chain runs WITHIN a tile - would look reasonable and link the wrong cells.
+    const tiles = carryTiles(adder16)
+    expect(new Set(tiles.map((t) => t.row)).size).toBe(1)
+    const columns = tiles.map((t) => t.col).sort((a, b) => a - b)
+    expect(columns).toEqual([columns[0], (columns[0] as number) + 1, (columns[0] as number) + 2])
+  })
+
+  test('we find every one of those arithmetic cells', () => {
+    const theirs = new Set(
+      carryTiles(adder16).flatMap((t) =>
+        Object.keys(t.bels)
+          .filter((n) => /^ALU\d$/.test(n))
+          .map((n) => `R${t.row}C${t.col}/${n}`),
+      ),
+    )
+    const mine = new Set<string>()
+    for (let row = 0; row < db.rows; row++)
+      for (let col = 0; col < db.cols; col++) {
+        const tile = gowinTileAt(db, row, col)
+        if (tile === null) continue
+        for (const index of decodeGowinCarryCells(
+          tileBitsAt(adder16.frames, row, col),
+          attributes,
+          tile.ttyp,
+        ))
+          mine.add(`R${row}C${col}/ALU${index}`)
+      }
+    expect(mine).toEqual(theirs)
+  })
+
+  test('the carry does NOT cross tiles through routing — so we cannot yet link the chains', () => {
+    // The limitation, made concrete rather than left as a note. Within a tile the chain is recovered by cell
+    // order. Between tiles the carry is hardwired, not routed: no switch anywhere in these tiles carries a
+    // chain signal, so nothing in the bitstream says which tile feeds which. Linking them would mean asserting
+    // a direction the bitstream does not state, and getting it backwards would silently reverse the adder.
+    for (const tile of carryTiles(adder16)) {
+      const wires = [...Object.keys(tile.pips ?? {}), ...Object.values(tile.pips ?? {})]
+      expect(
+        wires.some((w) => /^(CIN|COUT|CI|CO)\d*$/.test(w)),
+        `R${tile.row}C${tile.col}`,
+      ).toBe(false)
+    }
   })
 })
