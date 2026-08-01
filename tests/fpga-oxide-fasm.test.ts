@@ -294,3 +294,65 @@ describe('what was asked for is what the bitstream contains', () => {
     expect(readBack.tiles.size).toBeGreaterThan(0)
   })
 })
+
+/**
+ * A REFUTED hypothesis about wire names, recorded so it is not tried again.
+ *
+ * Wire names in the routing come in two forms: tile-local ones like `JQ0`, and ones with a doubled underscore
+ * like `S3__V06S0003`. The obvious guess is that the part after `__` names a physical wire, so two tiles using
+ * the same suffix are talking about the same copper — which would make building a netlist across tiles easy.
+ *
+ * It is wrong, and the real design says so.
+ */
+describe('wire suffixes do NOT identify a shared wire', () => {
+  const suffixTiles = (): Map<string, Set<string>> => {
+    const map = new Map<string, Set<string>>()
+    for (const tile of requested.tiles.values())
+      for (const pip of tile.pips)
+        for (const wire of [pip.destination, pip.source]) {
+          const mark = wire.indexOf('__')
+          if (mark < 0) continue
+          const suffix = wire.slice(mark + 2)
+          const tiles = map.get(suffix) ?? new Set<string>()
+          tiles.add(tile.name)
+          map.set(suffix, tiles)
+        }
+    return map
+  }
+
+  test('one suffix is used by far more tiles than a single wire could reach', () => {
+    // `H06W0103` and friends appear in six different tiles. A wire spanning six tiles would connect neighbours;
+    // these are scattered across dozens of columns, so they are different wires sharing a name.
+    const shared = [...suffixTiles().values()].map((t) => t.size)
+    expect(Math.max(...shared)).toBeGreaterThan(2)
+  })
+
+  test('and the tiles sharing a suffix are too far apart to be one wire', () => {
+    // The decisive check. If matching by suffix were valid, a netlist built on it would join cells at opposite
+    // ends of the chip — producing a graph that looks entirely reasonable and is wrong.
+    let widestSpan = 0
+    for (const tiles of suffixTiles().values()) {
+      if (tiles.size < 3) continue
+      const columns = [...tiles]
+        .map((name) => /R\d+C(\d+)/.exec(name))
+        .filter((m) => m !== null)
+        .map((m) => Number.parseInt((m as RegExpExecArray)[1] as string, 10))
+      widestSpan = Math.max(widestSpan, Math.max(...columns) - Math.min(...columns))
+    }
+    expect(widestSpan).toBeGreaterThan(20)
+  })
+
+  test('and half of all wire references carry no suffix at all', () => {
+    // So even a correct suffix rule would only cover part of the problem: tile-local names like `JQ0` need
+    // resolving too.
+    let withSuffix = 0
+    let without = 0
+    for (const tile of requested.tiles.values())
+      for (const pip of tile.pips)
+        for (const wire of [pip.destination, pip.source])
+          if (wire.includes('__')) withSuffix++
+          else without++
+    expect(without).toBeGreaterThan(0)
+    expect(without).toBeGreaterThanOrEqual(withSuffix / 2)
+  })
+})
