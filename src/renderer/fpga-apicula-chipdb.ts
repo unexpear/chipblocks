@@ -269,6 +269,21 @@ const isStrictSubset = (bits: readonly string[], of: readonly string[]): boolean
 }
 
 /**
+ * A fuse row's key is a list of SIGNED attribute-value indices. A row containing any NEGATIVE index is an
+ * "erased" row — it says what must NOT be programmed — and is a different animal from a positively keyed one.
+ * Index 0 is padding and carries no meaning either way.
+ */
+const negativeKey = (key: readonly number[]): boolean => key.some((k) => k < 0)
+const positives = (key: readonly number[]): number[] => key.filter((k) => k > 0)
+const negatives = (key: readonly number[]): number[] =>
+  key.filter((k) => k < 0).map((k) => Math.abs(k))
+
+const bitProgrammed = (tileBits: readonly (readonly boolean[])[], bit: string): boolean => {
+  const [row, col] = bit.split(',')
+  return (tileBits[Number(row)] as readonly boolean[] | undefined)?.[Number(col)] === true
+}
+
+/**
  * Decode one attribute table out of a tile's bits — Apicula's `parse_attrvals`, transcribed.
  *
  * The table is not a simple lookup. Each row's key lists attribute-value indices that must be PROGRAMMED
@@ -292,15 +307,7 @@ export function parseGowinAttrValues(
   const entries = db.clsFuses.get(ttyp)?.get(table)
   if (entries === undefined) return result
 
-  const negativeKey = (key: readonly number[]): boolean => key.some((k) => k < 0)
-  const positives = (key: readonly number[]): number[] => key.filter((k) => k > 0)
-  const negatives = (key: readonly number[]): number[] =>
-    key.filter((k) => k < 0).map((k) => Math.abs(k))
-
-  const programmed = (bit: string): boolean => {
-    const [row, col] = bit.split(',')
-    return (tileBits[Number(row)] as readonly boolean[] | undefined)?.[Number(col)] === true
-  }
+  const programmed = (bit: string): boolean => bitProgrammed(tileBits, bit)
   const setBits = new Set<string>()
   const negBits = new Set<string>()
   for (const entry of entries)
@@ -394,6 +401,99 @@ export const DFF_TYPES: ReadonlyMap<string, string> = new Map([
 ])
 
 /**
+ * The `ATTRIBUTE=VALUE` names a fuse row's POSITIVE key indices stand for, sorted so two rows can be compared as
+ * sets regardless of the order the database happens to list them in.
+ */
+function fuseRowKeyNames(db: GowinChipdb, key: readonly number[]): string[] {
+  return positives(key)
+    .map((index) => {
+      const pair = db.logicinfoSlice.get(index)
+      if (pair === undefined) return `?${index}`
+      return `${db.attributeNames.get(pair[0]) ?? '?'}=${db.valueNames.get(pair[1]) ?? pair[1]}`
+    })
+    .sort()
+}
+
+/**
+ * The bits of the one positively-keyed row in `table` whose key names are exactly `wanted`, or null if the
+ * device's table has no such row.
+ *
+ * Looked up BY NAME, never by coordinate: the fuse that carries `REGMODE=LATCH` is at (22,5) in CLS0, (22,26) in
+ * CLS1 and (22,37) in CLS2 of the same tile type, and moves again on other tile types and other devices. A
+ * written-down coordinate would decode one table correctly and the rest confidently wrong.
+ */
+function fuseRowWithKey(
+  db: GowinChipdb,
+  ttyp: number,
+  table: string,
+  wanted: readonly string[],
+): readonly string[] | null {
+  const entries = db.clsFuses.get(ttyp)?.get(table)
+  if (entries === undefined) return null
+  const target = [...wanted].sort().join(',')
+  for (const entry of entries) {
+    if (negativeKey(entry.key)) continue
+    if (fuseRowKeyNames(db, entry.key).join(',') === target) return entry.bits
+  }
+  return null
+}
+
+/**
+ * Whether a register cell is a LATCH, and whether its clock is INVERTED — read straight out of the fuse table
+ * instead of from `parseGowinAttrValues`.
+ *
+ * WHY THIS CANNOT COME FROM THE ATTRIBUTE DECODE. The chipdb gives ONE physical fuse three different meanings
+ * depending on the register's mode. For GW1N-1 tile type 12, CLS0, the relevant rows are
+ *
+ *     REGMODE=FF    & CLKMUX_CLK=INV   ->  (22,3)
+ *     REGMODE=FF    & CLKMUX_1=0       ->  (22,3)
+ *     REGMODE=LATCH & CLKMUX_1=1       ->  (22,3)
+ *     REGMODE=LATCH & CLKMUX_CLK=SIG   ->  (22,3)
+ *     REGMODE=LATCH                    ->  (22,5)
+ *
+ * so (22,3) means "clock inverted" in flip-flop mode and "clock NOT inverted" in latch mode, and (22,5) alone
+ * says which mode it is. `parse_attrvals` keeps every MAXIMAL match, and all four (22,3) rows are one bit long,
+ * so none is a strict subset of any other: when (22,3) is programmed all four match, each overwrites the last,
+ * and the final one in insertion order wins. That is `REGMODE=LATCH, CLKMUX_CLK=SIG`, unconditionally. A
+ * falling-edge flip-flop and a genuine latch therefore read back IDENTICALLY through the attribute decode —
+ * upstream Apicula has the same defect, checked by running it — and every negative-edge variant was named after
+ * the wrong kind of hardware, two of them decoding to nothing at all and vanishing from the netlist.
+ *
+ * The fuse rows above are unambiguous, though, so this reads them directly. `parse_attrvals` is deliberately
+ * left alone: it agrees with Apicula on every one of the 793 attribute tables in the recorded reference,
+ * and that
+ * agreement is the only independent oracle this subsystem has.
+ */
+function gowinRegisterClockMode(
+  tileBits: readonly (readonly boolean[])[],
+  db: GowinChipdb,
+  ttyp: number,
+  index: number,
+): { latch: boolean; clockInverted: boolean } {
+  const table = `CLS${Math.floor(index / 2)}`
+  // A row with no bits cannot be observed either way, so it is never "on" — that is not the same as absent, and
+  // the latch branch below distinguishes the two.
+  //
+  // TWO OF THESE CONDITIONS ARE DEFENSIVE AND UNTESTED, and saying so is better than implying otherwise:
+  // mutating `row !== null` away, and mutating `every` to `some`, both leave the whole suite green. Neither can
+  // be reached on the device we ship a chipdb for — every fuse row this consults on GW1N-1 exists and is exactly
+  // ONE bit long, so `every` and `some` agree and the null case never arises. They are kept because other Gowin
+  // parts do have absent rows (CLS3 on GW1N-9 and others) and nothing guarantees one-bit rows in general.
+  const on = (row: readonly string[] | null): boolean =>
+    row !== null && row.length > 0 && row.every((bit) => bitProgrammed(tileBits, bit))
+
+  const latchRow = fuseRowWithKey(db, ttyp, table, ['REGMODE=LATCH'])
+  if (!on(latchRow))
+    return {
+      latch: false,
+      clockInverted: on(fuseRowWithKey(db, ttyp, table, ['REGMODE=FF', 'CLKMUX_CLK=INV'])),
+    }
+  // In LATCH mode the polarity fuse reads the other way round: SET means SIG (not inverted), CLEAR means INV.
+  const latchSigRow = fuseRowWithKey(db, ttyp, table, ['REGMODE=LATCH', 'CLKMUX_CLK=SIG'])
+  return { latch: true, clockInverted: latchSigRow !== null && !on(latchSigRow) }
+}
+
+/**
  * Work out what kind of flip-flop each cell in a tile is configured as.
  *
  * Flip-flops carry no configuration bits of their own — a logic tile's `DFF*` cells have empty flag tables. The
@@ -419,10 +519,14 @@ export function decodeGowinFlipFlops(
       // masquerade as a plain flip-flop. Apicula returns None here and matches nothing; so do we.
       return db.valueNames.get(raw) ?? '<unnamed>'
     }
+    // REGMODE and CLKMUX_CLK are the two components `parse_attrvals` cannot resolve — they share a fuse — so
+    // they come from the fuse table directly. REGSET, LSRONMUX and SRMODE do not share anything and were
+    // measured correct in all sixteen ground-truth bitstreams, so they still come from the attribute decode.
+    const mode = gowinRegisterClockMode(tileBits, db, ttyp, index)
     const key = [
       named(`REG${index % 2}_REGSET`, 'SET'),
       named('LSRONMUX', ''),
-      named('CLKMUX_CLK', 'SIG'),
+      mode.clockInverted ? 'INV' : 'SIG',
       named('SRMODE', ''),
     ].join('|')
 
@@ -440,9 +544,10 @@ export function decodeGowinFlipFlops(
       continue
     }
     // The SAME key selects from a different table when the cell is a LATCH. Falling through to the flip-flop
-    // table would name level-sensitive hardware after an edge-triggered part — a real bitstream containing
-    // latches is what showed this, so the two tables are kept apart.
-    const table = named('REGMODE', '') === 'LATCH' ? LATCH_TYPES : DFF_TYPES
+    // table would name level-sensitive hardware after an edge-triggered part, and reading the LATCH table for a
+    // flip-flop is just as wrong in the other direction — which is what used to happen to every falling-edge
+    // register, because `parse_attrvals` reports one as the other. `gowinRegisterClockMode` tells them apart.
+    const table = mode.latch ? LATCH_TYPES : DFF_TYPES
     out.set(`DFF${index}`, table.get(key) ?? null)
   }
   return out

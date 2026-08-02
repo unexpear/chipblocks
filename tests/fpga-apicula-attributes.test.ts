@@ -253,29 +253,52 @@ describe('block memory in a REAL bitstream', () => {
  *
  * Every earlier design used only the plain `DFF`, so nine of the ten variants — and the set/reset flags derived
  * from them — had never been checked against hardware. This one asks for a falling-edge register, an
- * asynchronous clear and a synchronous set, and the toolchain also produced LATCHES, which is what exposed the
- * gap the accompanying fix closes.
+ * asynchronous clear and a synchronous set.
+ *
+ * IT CONTAINS NO LATCHES. The prose here used to say it did, and the reference file below still says two of its
+ * cells are `DL`, because that file is Apicula's output and Apicula is wrong about exactly those two. The direct
+ * evidence: at R9C5 the `REGMODE=LATCH` fuse row is programmed in NO CLS table of the tile, and sweeping that
+ * row over all 864 register cells of all five shipped `.fs` fixtures finds it programmed nowhere at all. Those
+ * two cells are `DFFN`, the falling-edge register the source Verilog asked for. `fpga-gowin-negedge.test.ts`
+ * carries the bitstreams that establish that against the vendor toolchain, and the reason the two are
+ * indistinguishable through `parse_attrvals`.
  */
 const variants = load('gowin-gw1n1-ffvariants.fs', 'gowin-gw1n1-ffvariants-reference.json')
+
+/**
+ * Where we deliberately disagree with Apicula, and what the toolchain actually built.
+ *
+ * Left as an explicit list rather than edited into the reference file: that file is a faithful record of what
+ * Apicula reports, and rewriting it would destroy the second oracle the rest of these tests depend on.
+ */
+const APICULA_DISAGREES: ReadonlyMap<string, { apicula: string; real: string }> = new Map([
+  ['R9C5 DFF4', { apicula: 'DL', real: 'DFFN' }],
+  ['R9C5 DFF5', { apicula: 'DL', real: 'DFFN' }],
+])
 
 describe('flip-flop and latch variants in a REAL bitstream', () => {
   test('the design really does contain more than one kind of register', () => {
     // Guards the tests below from being vacuous: if the toolchain had emitted only plain flip-flops again,
     // agreeing with Apicula would prove nothing new.
-    const kinds = new Set(
-      variants.reference.flatMap((t) =>
-        Object.entries(t.bels)
-          .filter(([name]) => /^DFF\d$/.test(name))
-          .flatMap(([, kind]) => kind),
-      ),
-    )
+    const kinds = new Set<string | null>()
+    for (const tile of variants.reference) {
+      const grid = gowinTileAt(db, tile.row, tile.col)
+      if (grid === null || !db.clsFuses.has(grid.ttyp)) continue
+      for (const kind of decodeGowinFlipFlops(
+        tileBitsAt(variants.frames, tile.row, tile.col),
+        db,
+        grid.ttyp,
+      ).values())
+        kinds.add(kind)
+    }
     expect(kinds.size).toBeGreaterThan(1)
     expect(kinds).toContain('DFFC') // asynchronous clear
-    expect(kinds).toContain('DL') // and a level-sensitive latch
+    expect(kinds).toContain('DFFN') // and a falling-edge register
   })
 
-  test('we agree with Apicula on EVERY register in the design, latches included', () => {
+  test('we agree with Apicula on every register EXCEPT the two it gets wrong', () => {
     let compared = 0
+    let diverged = 0
     for (const tile of variants.reference) {
       const entries = Object.entries(tile.bels).filter(([name]) => /^DFF\d$/.test(name))
       if (entries.length === 0) continue
@@ -287,28 +310,53 @@ describe('flip-flop and latch variants in a REAL bitstream', () => {
         grid.ttyp,
       )
       for (const [name, kind] of entries) {
-        expect(mine.get(name), `R${tile.row}C${tile.col} ${name}`).toBe(kind[0])
-        compared++
+        const label = `R${tile.row}C${tile.col} ${name}`
+        const known = APICULA_DISAGREES.get(label)
+        if (known === undefined) {
+          expect(mine.get(name), label).toBe(kind[0])
+          compared++
+          continue
+        }
+        // Pin BOTH sides: that Apicula really does say what we claim it says, and what we say instead.
+        expect(kind[0], `${label} reference`).toBe(known.apicula)
+        expect(mine.get(name), label).toBe(known.real)
+        diverged++
       }
     }
     expect(compared).toBeGreaterThan(20)
+    expect(diverged).toBe(APICULA_DISAGREES.size)
   })
 
-  test('a latch is reported as a LATCH, not as some flip-flop', () => {
-    // The bug this closes: latches share their attribute key with flip-flops, so reading the wrong table names
-    // level-sensitive hardware after an edge-triggered part. Both are real; they are not interchangeable.
-    const withLatch = variants.reference.find((t) =>
-      Object.entries(t.bels).some(([n, v]) => /^DFF\d$/.test(n) && v[0] === 'DL'),
-    ) as ReferenceTile
-    const grid = gowinTileAt(db, withLatch.row, withLatch.col) as { ttyp: number }
-    const mine = decodeGowinFlipFlops(
-      tileBitsAt(variants.frames, withLatch.row, withLatch.col),
-      db,
-      grid.ttyp,
-    )
-    const latches = [...mine.entries()].filter(([, kind]) => isGowinLatch(kind))
-    expect(latches.length).toBeGreaterThan(0)
-    for (const [, kind] of latches) expect(kind).toMatch(/^DL/)
+  test('this design contains no latch at all — the LATCH fuse is programmed nowhere', () => {
+    // The claim the old test got backwards. Reading the mode is one thing; here the raw fuse is checked, so a
+    // decoder bug cannot make a latch appear or disappear. `isGowinLatch` is applied to the decode as well, so
+    // the two agree.
+    for (const tile of variants.reference) {
+      const grid = gowinTileAt(db, tile.row, tile.col)
+      if (grid === null || !db.clsFuses.has(grid.ttyp)) continue
+      const bits = tileBitsAt(variants.frames, tile.row, tile.col)
+      for (const table of ['CLS0', 'CLS1', 'CLS2']) {
+        for (const entry of db.clsFuses.get(grid.ttyp)?.get(table) ?? []) {
+          if (entry.key.some((k) => k < 0)) continue
+          const names = entry.key
+            .filter((k) => k > 0)
+            .map((k) => {
+              const pair = db.logicinfoSlice.get(k) as readonly [number, number]
+              return `${db.attributeNames.get(pair[0])}=${db.valueNames.get(pair[1])}`
+            })
+          if (names.length !== 1 || names[0] !== 'REGMODE=LATCH') continue
+          const programmed = entry.bits.every((bit) => {
+            const [row, col] = bit.split(',')
+            return bits[Number(row)]?.[Number(col)] === true
+          })
+          expect(programmed, `R${tile.row}C${tile.col} ${table} ${entry.bits.join(' ')}`).toBe(
+            false,
+          )
+        }
+      }
+      for (const [name, kind] of decodeGowinFlipFlops(bits, db, grid.ttyp))
+        expect(isGowinLatch(kind), `R${tile.row}C${tile.col} ${name}`).toBe(false)
+    }
   })
 
   test('one tile holds several DIFFERENT kinds at once', () => {

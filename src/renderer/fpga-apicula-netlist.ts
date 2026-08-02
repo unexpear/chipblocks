@@ -160,8 +160,9 @@ export type GowinLutCell = {
 /**
  * How each Gowin flip-flop variant maps onto the shared cell's set/reset flags.
  *
- * `N` means a falling-edge clock, which the shared simulator does not model, so it is deliberately absent here
- * rather than silently treated as rising — see `GOWIN_FALLING_EDGE`.
+ * `N` means a falling-edge clock. That is NOT a set/reset property, so it does not live here — it is carried by
+ * `GOWIN_FALLING_EDGE` and lands on the recovered cell's `negClk`, which the shared simulator clocks in its
+ * second half-cycle.
  */
 const FLIP_FLOP_FLAGS: ReadonlyMap<string, { setNoReset: boolean; asyncSetReset: boolean }> =
   new Map([
@@ -193,7 +194,16 @@ export const GOWIN_LATCH_KINDS: ReadonlySet<string> = new Set([
   'DLNP',
 ])
 
-/** The variants that clock on the FALLING edge — recorded because the shared simulator assumes rising. */
+/**
+ * The variants that clock on the FALLING edge.
+ *
+ * This set used to be declared and read by NOTHING: the netlist emitted a falling-edge register as an ordinary
+ * rising-edge one, which reports a design a full half-period out of step with the silicon. It is now what sets
+ * `negClk` on the recovered cell, and `simulateClocked` runs a second phase per cycle for exactly those cells.
+ *
+ * Kept as a set of NAMES rather than a flag on `FLIP_FLOP_FLAGS` because the name is what the fuse decode
+ * produces; the test that walks both tables together is what stops the two drifting apart.
+ */
 export const GOWIN_FALLING_EDGE: ReadonlySet<string> = new Set([
   'DFFN',
   'DFFNR',
@@ -416,6 +426,11 @@ export function reconstructGowinNetlist(
         asyncSetReset: flags.asyncSetReset,
       },
       inputs,
+      // A `DFFN*` samples half a period after a `DFF*` in the same design, so data crossing from one to the other
+      // arrives in the SAME clock period. Emitting it as an ordinary flip-flop — which is what happened until the
+      // fuse decode could tell a falling-edge register from a latch — reports the design a period slower than it
+      // runs, and puts the wrong value on every wire in between.
+      negClk: GOWIN_FALLING_EDGE.has(cell.flipFlop ?? ''),
       ...(setReset === null ? {} : { setReset }),
       ...(clockEnable === null ? {} : { clockEnable }),
       ...(cell.carry

@@ -341,6 +341,10 @@ describe('decodeGowinLuts — frame bits become truth tables', () => {
  * register, and a cell in latch mode is named from the latch table — because an earlier version called
  * `get_dff_type` directly and so described cells as flip-flops that the real decoder gates out entirely. Seven
  * of these ten cases gate out, so the difference was not marginal.
+ *
+ * Apicula is the reference for the ATTRIBUTE decode, which it gets right. It is NOT the reference for the
+ * register NAME, which it gets wrong whenever the clock is inverted: four of these ten cases are excepted below
+ * and pinned against the vendor toolchain instead. See `APICULA_DISAGREES`.
  */
 type DffCase = {
   label: string
@@ -364,8 +368,43 @@ describe('decodeGowinFlipFlops — pinned against Apicula’s own decoder', () =
   }
   type GowinTileTypeShape = { width: number; height: number }
 
+  /**
+   * The four cases where the register NAME deliberately differs from Apicula's, and what it is instead.
+   *
+   * All four program the single bit (22,3), which the chipdb overloads: it is `REGMODE=FF & CLKMUX_CLK=INV`,
+   * `REGMODE=FF & CLKMUX_1=0`, `REGMODE=LATCH & CLKMUX_1=1` AND `REGMODE=LATCH & CLKMUX_CLK=SIG`, all one bit
+   * long, so `parse_attrvals`'s maximal-match keeps all four and the last written wins — `REGMODE=LATCH`. That
+   * makes Apicula read a falling-edge flip-flop as a latch, and a latch with a synchronous set has no entry, so
+   * the cell decodes to nothing. What (22,3) alone actually describes is a falling-edge settable flip-flop.
+   *
+   * The ATTRIBUTE half of each case is NOT excepted — `parseGowinAttrValues` still matches Apicula exactly, on
+   * these and on all 793 tables of the recorded Apicula reference. Only the register naming diverges, and only
+   * here.
+   * `fpga-gowin-negedge.test.ts` is where that divergence is checked against the vendor toolchain rather than
+   * against a second decoder.
+   */
+  const APICULA_DISAGREES: ReadonlyMap<string, Record<string, string | null>> = new Map(
+    ['CLS0 key 2,9', 'CLS0 key 2,12', 'CLS0 key 3,10', 'CLS0 key 3,11'].map((label) => [
+      label,
+      {
+        DFF0: 'DFFNS',
+        DFF1: 'DFFNS',
+        DFF2: 'DFFS',
+        DFF3: 'DFFS',
+        DFF4: 'DFFS',
+        DFF5: 'DFFS',
+      },
+    ]),
+  )
+
   test('the fixture carries real reference cases', () => {
     expect(DFF_CASES.length).toBeGreaterThanOrEqual(10)
+    // The exceptions have to name cases that exist, or a renamed label would silently stop being checked.
+    for (const label of APICULA_DISAGREES.keys())
+      expect(
+        DFF_CASES.some((c) => c.label === label),
+        label,
+      ).toBe(true)
   })
 
   for (const reference of DFF_CASES) {
@@ -379,7 +418,15 @@ describe('decodeGowinFlipFlops — pinned against Apicula’s own decoder', () =
 
     test(`flip-flop types match Apicula for: ${reference.label}`, () => {
       const actual = decodeGowinFlipFlops(tileOf(reference.bits), db, REFERENCE_TTYP)
-      expect(Object.fromEntries(actual)).toEqual(reference.dff)
+      const corrected = APICULA_DISAGREES.get(reference.label)
+      if (corrected === undefined) {
+        expect(Object.fromEntries(actual)).toEqual(reference.dff)
+        return
+      }
+      // Pin both sides: that Apicula really returns null for these, and that we return the falling-edge register.
+      expect(reference.dff.DFF0).toBeNull()
+      expect(reference.dff.DFF1).toBeNull()
+      expect(Object.fromEntries(actual)).toEqual(corrected)
     })
   }
 
