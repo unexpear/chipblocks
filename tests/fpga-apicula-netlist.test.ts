@@ -37,6 +37,10 @@ const pipdb: GowinPipDatabase = parseGowinPipDatabase(
 const framesOf = (name: string): boolean[][] =>
   parseGowinBitstream(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8')).frames
 
+const attributes = parseGowinAttributeDatabase(
+  readFileSync(new URL('../fixtures/gowin-gw1n1-attributes.json', import.meta.url), 'utf8'),
+)
+
 const xnor = framesOf('gowin-gw1n1-xnor-dff.fs')
 const adder = framesOf('gowin-gw1n1-adder4.fs')
 
@@ -71,7 +75,7 @@ describe('gowinGlobalWire — reconciling wire names across tiles', () => {
 })
 
 describe('reconstructGowinNetlist — the XNOR design', () => {
-  const design = reconstructGowinNetlist(xnor, db, pipdb)
+  const design = reconstructGowinNetlist(xnor, db, pipdb, attributes)
 
   test('recovers exactly one lookup table, with the XNOR truth table', () => {
     expect(design.cells).toHaveLength(1)
@@ -118,11 +122,15 @@ describe('reconstructGowinNetlist — the XNOR design', () => {
 })
 
 describe('reconstructGowinNetlist — the adder design', () => {
-  const design = reconstructGowinNetlist(adder, db, pipdb)
+  const design = reconstructGowinNetlist(adder, db, pipdb, attributes)
 
   test('recovers more logic than the single-gate design', () => {
     expect(design.cells.length).toBeGreaterThan(1)
-    expect(design.netlist.cells).toHaveLength(design.cells.length)
+    // Emitted cells are the decoded ones MINUS the refusals. This used to read `design.cells.length`, which
+    // only held because the attribute database was optional and this call omitted it — so nothing was refused
+    // and the arithmetic cells were silently emitted as ordinary lookup tables.
+    expect(design.netlist.cells).toHaveLength(design.cells.length - design.unsupported.length)
+    expect(design.unsupported.length).toBeGreaterThan(0)
   })
 
   test('every recovered cell has a full four-entry input list and a 16-entry truth table', () => {
@@ -167,13 +175,13 @@ describe('the netlist is built from the fabric, not from assumptions', () => {
     const blank = Array.from({ length: db.bitmapRows }, () =>
       new Array<boolean>(db.bitmapCols).fill(false),
     )
-    const design = reconstructGowinNetlist(blank, db, pipdb)
+    const design = reconstructGowinNetlist(blank, db, pipdb, attributes)
     expect(design.cells).toHaveLength(0)
     expect(design.netlist.cells).toHaveLength(0)
   })
 
   test('the cell reference points at the tile the lookup table really lives in', () => {
-    const design = reconstructGowinNetlist(xnor, db, pipdb)
+    const design = reconstructGowinNetlist(xnor, db, pipdb, attributes)
     const cell = design.cells[0] as { row: number; col: number; ref: { x: number; y: number } }
     expect(gowinTileAt(db, cell.row, cell.col)).not.toBeNull()
     expect([cell.ref.y, cell.ref.x]).toEqual([cell.row, cell.col])
@@ -188,9 +196,6 @@ describe('the netlist is built from the fabric, not from assumptions', () => {
  * holds nothing. That is the evidence used here, and the two designs disagree in exactly the way they should.
  */
 describe('flip-flops and carry attached to the netlist', () => {
-  const attributes = parseGowinAttributeDatabase(
-    readFileSync(new URL('../fixtures/gowin-gw1n1-attributes.json', import.meta.url), 'utf8'),
-  )
   const xnorDesign = reconstructGowinNetlist(xnor, db, pipdb, attributes)
   const adderDesign = reconstructGowinNetlist(adder, db, pipdb, attributes)
 
@@ -279,7 +284,7 @@ describe('flip-flops and carry attached to the netlist', () => {
  * something to them. Counting those as chip inputs invents signals the design does not have.
  */
 describe('unused lookup-table pins are not mistaken for chip inputs', () => {
-  const design = reconstructGowinNetlist(xnor, db, pipdb)
+  const design = reconstructGowinNetlist(xnor, db, pipdb, attributes)
 
   test('the XNOR cell reads TWO inputs, not four', () => {
     const cell = design.netlist.cells[0] as { inputs: { kind: string }[] }
@@ -323,9 +328,6 @@ describe('unused lookup-table pins are not mistaken for chip inputs', () => {
     // The carry-operand bypass this test used to check is gone with the cells it protected — arithmetic cells
     // are now refused outright. What must still hold is that a masked pin is masked, and that nothing claims to
     // be a carry cell.
-    const attributes = parseGowinAttributeDatabase(
-      readFileSync(new URL('../fixtures/gowin-gw1n1-attributes.json', import.meta.url), 'utf8'),
-    )
     const design = reconstructGowinNetlist(adder, db, pipdb, attributes)
     for (const cell of design.netlist.cells) {
       expect(cell.config.carryEnable).toBe(false)
@@ -372,7 +374,7 @@ describe('parseGowinWireAliases — joining wires the arithmetic cannot', () => 
   test('applying them JOINS routing that was otherwise in fragments', () => {
     // Measured, not asserted by construction: the same bitstream decoded with and without the table.
     const countNets = (aliasTable: ReadonlyMap<string, string> | null): number => {
-      const design = reconstructGowinNetlist(xnor, db, pipdb, null, aliasTable)
+      const design = reconstructGowinNetlist(xnor, db, pipdb, attributes, aliasTable)
       const wires = new Set<string>()
       for (const [to, from] of design.drivers) {
         wires.add(to)
@@ -395,8 +397,8 @@ describe('parseGowinWireAliases — joining wires the arithmetic cannot', () => 
 
   test('applying them does not change the recovered LOGIC', () => {
     // Joining wires must not invent or destroy cells: the same lookup table, with the same truth table.
-    const plain = reconstructGowinNetlist(xnor, db, pipdb)
-    const aliased = reconstructGowinNetlist(xnor, db, pipdb, null, aliases)
+    const plain = reconstructGowinNetlist(xnor, db, pipdb, attributes)
+    const aliased = reconstructGowinNetlist(xnor, db, pipdb, attributes, aliases)
     expect(aliased.cells).toHaveLength(plain.cells.length)
     expect((aliased.cells[0] as { init: number }).init).toBe(
       (plain.cells[0] as { init: number }).init,
@@ -427,7 +429,7 @@ describe('gowinFixedAliases — the equivalences that are generated, not stored'
   const both = new Map([...nodeAliases, ...fixed])
 
   const countNets = (aliases: ReadonlyMap<string, string> | null): number => {
-    const design = reconstructGowinNetlist(xnor, db, pipdb, null, aliases)
+    const design = reconstructGowinNetlist(xnor, db, pipdb, attributes, aliases)
     const wires = new Set<string>()
     for (const [to, from] of design.drivers) {
       wires.add(to)
@@ -465,8 +467,8 @@ describe('gowinFixedAliases — the equivalences that are generated, not stored'
   test('the design’s inputs now reach the I/O tile instead of stopping mid-fabric', () => {
     // Before: the trace died on interconnect wires part-way across the chip. After: both inputs arrive at cell
     // outputs in ONE tile on the chip's edge - which is where a signal from a package pin should appear.
-    const before = reconstructGowinNetlist(xnor, db, pipdb, null, nodeAliases)
-    const after = reconstructGowinNetlist(xnor, db, pipdb, null, both)
+    const before = reconstructGowinNetlist(xnor, db, pipdb, attributes, nodeAliases)
+    const after = reconstructGowinNetlist(xnor, db, pipdb, attributes, both)
     expect([...before.primaryWires.values()].some((w) => /_N\d+$/.test(w))).toBe(true)
     const wires = [...after.primaryWires.values()]
     expect(wires).toHaveLength(2)
@@ -476,8 +478,8 @@ describe('gowinFixedAliases — the equivalences that are generated, not stored'
   })
 
   test('joining more wires still does not change the recovered logic', () => {
-    const plain = reconstructGowinNetlist(xnor, db, pipdb)
-    const aliased = reconstructGowinNetlist(xnor, db, pipdb, null, both)
+    const plain = reconstructGowinNetlist(xnor, db, pipdb, attributes)
+    const aliased = reconstructGowinNetlist(xnor, db, pipdb, attributes, both)
     expect(aliased.cells).toHaveLength(plain.cells.length)
     expect((aliased.cells[0] as { init: number }).init).toBe(
       (plain.cells[0] as { init: number }).init,

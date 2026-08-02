@@ -258,7 +258,10 @@ export function reconstructGowinNetlist(
   frames: readonly (readonly boolean[])[],
   db: GowinChipdb,
   pipdb: GowinPipDatabase,
-  attributes: GowinAttributeDatabase | null = null,
+  // REQUIRED, not defaulted. It used to default to null, and with null nothing is refused — the adder came
+  // back as 34 ordinary cells instead of 16 plus 18 refusals, silently simulating arithmetic cells as plain
+  // lookup tables. A safety measure that can be skipped by omitting an argument is not a safety measure.
+  attributes: GowinAttributeDatabase,
   aliases: ReadonlyMap<string, string> | null = null,
 ): GowinDesign {
   // Reconcile a tile-local name into the one every tile agrees on: first the arithmetic for directional wires,
@@ -300,7 +303,7 @@ export function reconstructGowinNetlist(
       if (luts.size === 0) continue
       const routing = decodeGowinRouting(bits, pipdb, tile.ttyp)
       const flipFlops = decodeGowinFlipFlops(bits, db, tile.ttyp)
-      const carry = attributes === null ? [] : decodeGowinCarryCells(bits, attributes, tile.ttyp)
+      const carry = decodeGowinCarryCells(bits, attributes, tile.ttyp)
       for (const [bel, init] of luts) {
         if (init === 0xffff) continue // an erased lookup table is not part of the design
         const index = Number.parseInt(bel.slice(3), 10)

@@ -11,6 +11,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
+import { parseGowinAttributeDatabase } from '../src/renderer/fpga-apicula-attributes.ts'
 import { type GowinChipdb, parseGowinChipdb } from '../src/renderer/fpga-apicula-chipdb.ts'
 import { parseGowinBitstream } from '../src/renderer/fpga-apicula-fs.ts'
 import {
@@ -37,6 +38,9 @@ const pinout = parseGowinPinout(
   readFileSync(new URL('../fixtures/gowin-gw1n1-pinout.json', import.meta.url), 'utf8'),
   db.rows,
   db.cols,
+)
+const attributes = parseGowinAttributeDatabase(
+  readFileSync(new URL('../fixtures/gowin-gw1n1-attributes.json', import.meta.url), 'utf8'),
 )
 const aliases = new Map([
   ...parseGowinWireAliases(
@@ -102,7 +106,7 @@ describe('the package pinout', () => {
 })
 
 describe('gowinDesignPins — where a REAL design’s signals enter the chip', () => {
-  const design = reconstructGowinNetlist(xnor, db, pipdb, null, aliases)
+  const design = reconstructGowinNetlist(xnor, db, pipdb, attributes, aliases)
   const pins = gowinDesignPins(design.primaryWires, qn48)
 
   test('both of the design’s inputs are located on the package', () => {
