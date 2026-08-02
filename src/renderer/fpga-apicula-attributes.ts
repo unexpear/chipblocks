@@ -161,11 +161,12 @@ export function decodeAttributeTable(
   const ignored = new Set<number>()
   for (const row of negMatched) {
     if (negMatched.some((other) => isStrictSubset(row.bits, other.bits))) continue
-    const clashes = row.key.some((index) => {
-      const pair = indexToPair.get(Math.abs(index))
-      return pair !== undefined && result.has(nameOf(pair[0]))
-    })
-    if (clashes) continue
+    // Upstream has a second rejection here — "skip this row if one of its attributes is already set" — and it
+    // CANNOT FIRE: it compares a numeric attribute code against a dictionary keyed by attribute NAMES, so the
+    // test is always false. Transcribing it as a working check (comparing name to name, which is the obvious
+    // reading) made this pass reject rows the reference keeps, and cost 97 of 520 I/O tables their `PADDI` and
+    // the right `IO_TYPE`. The reference is the oracle, so its behaviour is what we reproduce — deliberately,
+    // and said out loud, rather than by quietly writing the same no-op.
     for (const index of positives(row.key)) carried.add(index)
     for (const index of negatives(row.key)) ignored.add(index)
   }

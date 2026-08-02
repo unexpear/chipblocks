@@ -100,18 +100,15 @@ describe('decodeAttributeTable — against the reference implementation', () => 
     expect(compared).toBe(273)
   })
 
-  test('I/O tables do NOT yet match — 97 of 520 differ, and that is measured, not assumed', () => {
-    // The other half of the same question, and the answer is the opposite one. Logic tables agree perfectly
-    // while I/O tables do not, so the fault is not the disputed guard — it is something specific to the I/O
-    // path, whose tables come from a different part of the database (`longval`, not `shortval`).
+  test('every I/O table decodes to exactly what Apicula decodes, too', () => {
+    // All 520 of them. These were 97 wrong until the cause was found, and it was not where any amount of
+    // re-reading suggested: upstream's second pass contains a rejection that CANNOT FIRE, because it compares a
+    // numeric attribute code against a dictionary keyed by attribute names. Transcribing it as a working check
+    // — the obvious reading — made this pass throw away rows the reference keeps.
     //
-    // Two shapes of disagreement, both visible in the first failing tile: an attribute Apicula reports and we
-    // omit entirely (`PADDI`), and one where we both report an attribute but pick a different value
-    // (`IO_TYPE` 31 where Apicula says 75). Anything reading recovered I/O settings is reading some wrong ones.
-    //
-    // Pinned as an exact count so it cannot drift unnoticed, and so a fix shows up here as a number going down.
-    let agree = 0
-    let differ = 0
+    // Found by instrumenting the reference and printing its state after each pass, rather than by reasoning
+    // about the source. Pass 1 already agreed; pass 2 was where the two diverged.
+    let compared = 0
     for (const reference of REFERENCE) {
       if (reference.table.startsWith('CLS')) continue
       const bits = extractGowinTileBits(
@@ -127,12 +124,13 @@ describe('decodeAttributeTable — against the reference implementation', () => 
         reference.table,
         GOWIN_IOB_FAMILY,
       )
-      const same =
-        JSON.stringify(Object.fromEntries([...mine].sort())) === JSON.stringify(reference.attrs)
-      if (same) agree++
-      else differ++
+      expect(
+        Object.fromEntries([...mine].sort()),
+        `${reference.design} R${reference.row}C${reference.col} ${reference.table}`,
+      ).toEqual(reference.attrs)
+      compared++
     }
-    expect([agree, differ]).toEqual([423, 97])
+    expect(compared).toBe(520)
   })
 
   test('the I/O tables really do carry the attributes the audit named', () => {
