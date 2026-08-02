@@ -189,6 +189,7 @@ export function lowerNetlistToCanvas(netlist: RecoveredNetlist): LoweredCanvas {
 
     // Each minterm: AND the four (possibly inverted) pin values, two at a time.
     const mintermOuts: string[] = []
+    let alwaysTrue = false
     minterms.forEach((m, mi) => {
       let acc: string | null = null
       let unsatisfiable = false
@@ -219,8 +220,29 @@ export function lowerNetlistToCanvas(netlist: RecoveredNetlist): LoweredCanvas {
         connect(src, id, 'b')
         acc = id
       }
-      if (!unsatisfiable && acc !== null) mintermOuts.push(acc)
+      // ORDER MATTERS. Unsatisfiable is checked FIRST: an impossible product must vanish, and treating it as
+      // the always-true case below would invert the cell's function.
+      if (unsatisfiable) return
+      // `acc === null` with the minterm still satisfiable means every pin was satisfied by ABSENCE — each one
+      // reads 0 and the minterm wanted it low — so the product is unconditionally TRUE. It built no gate, and
+      // this used to discard it, which lowered a genuinely programmed vendor lookup table to a dangling buffer
+      // reading 0 while the simulator read true. Nothing reported it: `unfaithful` stayed empty.
+      if (acc === null) alwaysTrue = true
+      else mintermOuts.push(acc)
     })
+
+    // An always-true product makes the whole function true, so it replaces the ORed minterms outright. It needs
+    // a real power source: registering it in `sourceIds` is what gives the node its `terminal_positive` handle,
+    // and without that it wires from `out` and still reads 0 — the fix would look applied and change nothing.
+    if (alwaysTrue) {
+      const oneId = `${key}_one`
+      nodes.push(sourceNode(`${oneId}_src`, x + 60, -40, true))
+      sourceIds.add(`${oneId}_src`)
+      nodes.push(gateNode(oneId, 'Buffer', x + 60, -10))
+      connect(`${oneId}_src`, oneId, 'in')
+      mintermOuts.length = 0
+      mintermOuts.push(oneId)
+    }
 
     // OR the minterms together; a single minterm needs no OR.
     let out = mintermOuts[0] ?? null

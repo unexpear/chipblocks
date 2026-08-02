@@ -15,6 +15,7 @@ import { type Ice40ChipDb, loadIce40Bitstream } from '../src/renderer/fpga-icebo
 import { parseLogicTileBits } from '../src/renderer/fpga-icebox-logic.ts'
 import {
   type RecoveredCell,
+  type RecoveredNetlist,
   simulateClocked,
   simulateCombinational,
 } from '../src/renderer/fpga-icebox-run.ts'
@@ -306,5 +307,73 @@ describe('lowerNetlistToCanvas — registers are real boundaries (Q is the outpu
       // the canvas computes the same next state the simulator will latch: D = NOT(Q)
       expect(result.value(lowered.cellD.get('0_0_0') as string, 'out')).toBe(!q)
     }
+  })
+})
+
+describe('a minterm satisfied by ABSENCE is still a minterm', () => {
+  /** A cell whose truth table is true for the all-LOW input, with no pin driven. */
+  const alwaysTrueCell = (truth: string): RecoveredNetlist => ({
+    cells: [
+      {
+        ref: { x: 20, y: 30, cell: 0 },
+        config: {
+          truth: [...truth].map((c) => c === '1'),
+          carryEnable: false,
+          dffEnable: false,
+          setNoReset: false,
+          asyncSetReset: false,
+        },
+        inputs: [{ kind: 'unused' }, { kind: 'unused' }, { kind: 'unused' }, { kind: 'unused' }],
+      },
+    ],
+  })
+
+  test('a real vendor LUT that reads TRUE lowers to something that reads true', () => {
+    // The shape a genuine ecppack artefact produced. Every pin reads 0, and minterm 0 wants them all low — so
+    // the product is unconditionally true but builds no AND gate. Discarding it for having no gate left a
+    // dangling buffer reading 0 while the simulator read true, with nothing on `unfaithful` to say so.
+    const netlist = alwaysTrueCell('1100000000000001')
+    expect(simulateCombinational(netlist, new Map()).outputs.get('20_30_0')).toBe(true)
+
+    const canvas = lowerNetlistToCanvas(netlist)
+    const sources = canvas.nodes.filter((n) => n.id.endsWith('_one_src'))
+    expect(sources).toHaveLength(1) // a real power source, not an unfed buffer
+    expect(canvas.unfaithful ?? []).toEqual([])
+  })
+
+  test('an UNSATISFIABLE product is still dropped, and does not become true', () => {
+    // The ordering that makes the fix safe. Minterm 1 needs pin 0 HIGH, and no pin is driven, so it can never
+    // hold. Checking "always true" before "impossible" would invert the cell — this pins the order.
+    const netlist = alwaysTrueCell('0100000000000000')
+    expect(simulateCombinational(netlist, new Map()).outputs.get('20_30_0')).toBe(false)
+    const canvas = lowerNetlistToCanvas(netlist)
+    expect(canvas.nodes.filter((n) => n.id.endsWith('_one_src'))).toHaveLength(0)
+  })
+
+  test('a cell whose products are built from DRIVEN pins is untouched', () => {
+    // The negative control, and my first attempt at it was wrong in a way worth keeping: I used a table whose
+    // minterm 0 is true with no pins driven, which IS unconditionally true — the code was right and the test
+    // was not. A real control needs a driven pin and a product that depends on it.
+    const canvas = lowerNetlistToCanvas({
+      cells: [
+        {
+          ref: { x: 20, y: 30, cell: 0 },
+          config: {
+            truth: Array.from({ length: 16 }, (_, i) => ((i >> 1) & 1) === 1), // depends on pin 1
+            carryEnable: false,
+            dffEnable: false,
+            setNoReset: false,
+            asyncSetReset: false,
+          },
+          inputs: [
+            { kind: 'unused' },
+            { kind: 'primary', net: 4 },
+            { kind: 'unused' },
+            { kind: 'unused' },
+          ],
+        },
+      ],
+    })
+    expect(canvas.nodes.filter((n) => n.id.endsWith('_one_src'))).toHaveLength(0)
   })
 })
