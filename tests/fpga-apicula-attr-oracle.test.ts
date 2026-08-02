@@ -145,3 +145,84 @@ describe('decodeAttributeTable — against the reference implementation', () => 
     expect(names.has('PADDI')).toBe(true)
   })
 })
+
+/**
+ * How many of the 793 reference tables change their answer when their rows are reordered: 440, more than half.
+ *
+ * The decode keeps the LAST matching row, so the database's row order is part of the answer — it is not merely
+ * a tidiness question. Two consequences:
+ *
+ *  - Matching the reference toolchain REQUIRES preserving its row order exactly. The fixtures were being
+ *    written with their keys sorted, which discarded it. They are now written in the database's order.
+ *  - Agreement with the reference is therefore conditional on that order, not a property of the algorithm
+ *    alone. A decode this sensitive to input order deserves the number stated rather than a reassurance.
+ *
+ * I first described this as a hazard that "wasn't the cause here", on the strength of the sorted and unsorted
+ * fixtures happening to give identical results. That much is true — both give 273/0 and 423/97 — but it does
+ * not mean the decode is order-insensitive, and this test is what actually establishes the position.
+ */
+const ORDER_DEPENDENT_TABLES = 440
+
+describe('row order CHANGES what some tables decode to — a live hazard', () => {
+  test('shuffling rows changes a measured number of the 793 decodes', () => {
+    // The decode takes the LAST matching row, so row order can in principle change the answer — which is why
+    // the fixtures are now written in the database's own order rather than sorted.
+    //
+    // I claimed in a commit message that the ordering "wasn't the cause" of the I/O disagreement before
+    // actually measuring it. It wasn't — but this is the check that says so, rather than my say-so. Shuffling
+    // deterministically and re-decoding every reference table must change nothing; if a future table ever does
+    // depend on order, this fires instead of silently picking whichever row came last.
+    let seed = 20260801
+    const shuffled = {
+      ...attributes,
+      tables: new Map(
+        [...attributes.tables].map(([ttyp, byName]) => [
+          ttyp,
+          new Map(
+            [...byName].map(([name, rows]) => {
+              const copy = [...rows]
+              for (let i = copy.length - 1; i > 0; i--) {
+                seed = (Math.imul(seed, 1103515245) + 12345) >>> 0
+                const j = seed % (i + 1)
+                ;[copy[i], copy[j]] = [
+                  copy[j] as (typeof copy)[number],
+                  copy[i] as (typeof copy)[number],
+                ]
+              }
+              return [name, copy]
+            }),
+          ),
+        ]),
+      ),
+    }
+
+    let stable = 0
+    let orderDependent = 0
+    const dependentTables = new Set<string>()
+    for (const reference of REFERENCE) {
+      const bits = extractGowinTileBits(
+        frames.get(reference.design) as boolean[][],
+        db,
+        reference.row,
+        reference.col,
+      ) as boolean[][]
+      const family = reference.table.startsWith('CLS') ? GOWIN_SLICE_FAMILY : GOWIN_IOB_FAMILY
+      const before = decodeAttributeTable(bits, attributes, reference.ttyp, reference.table, family)
+      const after = decodeAttributeTable(bits, shuffled, reference.ttyp, reference.table, family)
+      if (
+        JSON.stringify(Object.fromEntries([...after].sort())) ===
+        JSON.stringify(Object.fromEntries([...before].sort()))
+      )
+        stable++
+      else {
+        orderDependent++
+        dependentTables.add(reference.table)
+      }
+    }
+    expect(stable + orderDependent).toBe(REFERENCE.length)
+    // The measured extent, pinned so it cannot drift and so a fix shows as the number falling to zero.
+    expect(orderDependent).toBe(ORDER_DEPENDENT_TABLES)
+    // Both families are affected, so this is not the I/O-specific fault the previous test isolates.
+    expect(dependentTables.size).toBeGreaterThan(0)
+  })
+})
