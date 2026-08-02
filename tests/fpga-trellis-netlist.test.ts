@@ -202,3 +202,37 @@ describe('untouched slices and untouched companion tables', () => {
     expect(cell?.config.truth.some((b) => !b)).toBe(true) // a real function, not the all-ones default
   })
 })
+
+describe('arithmetic slices are declared untrustworthy, not silently simulated', () => {
+  const realNetlist = () => {
+    const bits = parseEcp5Bitstream(
+      new Uint8Array(
+        readFileSync(new URL('../fixtures/trellis-ecp5-asym-lut.bit', import.meta.url)),
+      ),
+    )
+    return reconstructEcp5Netlist(bits.frames, GRID, dbFor)
+  }
+
+  test('every arithmetic cell is listed in `unfaithful`, and nothing else is', () => {
+    // What this does NOT do is model the carry. A slice in arithmetic mode outputs its lookup table combined
+    // with the incoming carry, and the chain runs between cells; we recover the mode flag and nothing else, so
+    // such a cell would simulate as a plain lookup table and be wrong — 256 of 512 combinations on the first
+    // sum bit of a real adder.
+    //
+    // The alternative was to model the chain with the iCE40 carry formula. That is a DIFFERENT function,
+    // measured to disagree on 128 of 512 combinations, so it would have swapped a visible wrong answer for a
+    // plausible one. Declaring such a cell untrustworthy is the honest position until the arithmetic is decoded.
+    const netlist = realNetlist()
+    const arithmetic = netlist.cells.filter((c) => c.config.carryEnable)
+    expect(netlist.unfaithful).toHaveLength(arithmetic.length)
+    for (const listed of netlist.unfaithful) expect(listed.reason).toMatch(/carry/)
+  })
+
+  test('HONEST GAP: no CCU2 bitstream exists in the fixtures, so the POSITIVE case is unverified', () => {
+    // Written as a test rather than a comment so it cannot be forgotten. The fixture we have contains no
+    // arithmetic slice, so the test above currently checks only that nothing is wrongly flagged. Whether a real
+    // arithmetic slice is correctly DETECTED and reported is not yet demonstrated — building a CCU2 adder
+    // through yosys/nextpnr/ecppack would close it, and this assertion flips the moment such a fixture lands.
+    expect(realNetlist().cells.some((c) => c.config.carryEnable)).toBe(false)
+  })
+})

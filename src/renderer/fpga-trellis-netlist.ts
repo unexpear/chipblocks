@@ -53,6 +53,19 @@ export type Ecp5Netlist = RecoveredNetlist & {
   origin: Map<string, { tile: string; slice: string; lut: number }>
   /** net index → the wire name it stands for (an external wire arriving at a tile). */
   netNames: Map<number, string>
+  /**
+   * Cells whose recovered function is NOT to be trusted, with the reason.
+   *
+   * A slice in arithmetic mode does not compute its lookup table: the hardware output is that table combined
+   * with the carry coming in, and the carry chain runs between cells. None of that is recovered — the mode is
+   * noted and nothing else — so such a cell simulates as a plain lookup table and gets the wrong answer. On a
+   * real 4-bit adder that is 256 of 512 input combinations on the first sum bit alone.
+   *
+   * Listing them is the honest stopgap. The alternative on offer was to model the chain by reusing the iCE40
+   * carry formula, which is a DIFFERENT function — measured to disagree on 128 of 512 combinations — so it
+   * would have replaced a visible wrong answer with a plausible one.
+   */
+  unfaithful: { ref: CellRef; reason: string }[]
 }
 
 /**
@@ -131,6 +144,7 @@ export function reconstructEcp5Netlist(
   }
 
   const cells: RecoveredCell[] = []
+  const unfaithful: { ref: CellRef; reason: string }[] = []
   const origin = new Map<string, { tile: string; slice: string; lut: number }>()
   for (const slice of slices) {
     const position = tilePosition(slice.tile)
@@ -175,6 +189,8 @@ export function reconstructEcp5Netlist(
           truth,
           // The ECP5 database has no single "this LUT is registered" bit: a design shows it by reading the
           // flip-flop's Q output instead of the LUT's F output, which is what we detect above.
+          // NOTE this flag is all we recover of arithmetic mode — see `unfaithful` below, which is where such a
+          // cell is declared untrustworthy rather than quietly simulated as a plain lookup table.
           carryEnable: slice.mode === 'CCU2',
           dffEnable: registered.has(`${slice.tile}/${k}`),
           // `readTileEnum` reports a value EQUAL to the database's declared default as unset, and `SET` IS the
@@ -189,6 +205,12 @@ export function reconstructEcp5Netlist(
         },
         inputs,
       })
+      if (slice.mode === 'CCU2')
+        unfaithful.push({
+          ref,
+          reason:
+            'arithmetic (CCU2) slice: the hardware output is the lookup table combined with the incoming carry, and neither the carry chain nor that combination is recovered',
+        })
       origin.set(`${position.col}_${position.row}_${k}`, {
         tile: slice.tile,
         slice: slice.slice,
@@ -196,5 +218,5 @@ export function reconstructEcp5Netlist(
       })
     }
   }
-  return { cells, origin, netNames }
+  return { cells, origin, netNames, unfaithful }
 }
