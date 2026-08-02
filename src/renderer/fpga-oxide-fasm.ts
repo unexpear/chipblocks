@@ -73,6 +73,19 @@ export type NexusTile = {
   assignments: NexusAssignment[]
 }
 
+/**
+ * A named region with no coordinates — `GLOBAL`, or one of the `IP_*` blocks.
+ *
+ * Not everything in a FASM file sits in a tile. Device-wide settings live under `GLOBAL`, and a block memory's
+ * CONTENTS live under `IP_EBR_WID2` — 64 lines of 320 bits for a 1024×16 memory, none of which carry coordinates.
+ * Requiring an `R<row>C<col>` in every name dropped all of them.
+ */
+export type NexusScope = {
+  name: string
+  features: NexusFeature[]
+  assignments: NexusAssignment[]
+}
+
 /** A parsed FASM file. */
 export type NexusFasm = {
   /** design attributes such as `oxide.device`. */
@@ -81,8 +94,13 @@ export type NexusFasm = {
   device: string | null
   tiles: Map<string, NexusTile>
   /**
+   * Regions with no coordinates, by name: `GLOBAL` for device-wide settings, `IP_EBR_WID2` for block-memory
+   * contents, `IP_UNKNOWN` for the raw address-space bytes the unpacker emits.
+   */
+  scopes: Map<string, NexusScope>
+  /**
    * Settings that belong to the whole device rather than to any tile — bank supply voltages and the like,
-   * written under a `GLOBAL` scope with no coordinates.
+   * written under a `GLOBAL` scope with no coordinates. The same features as `scopes.get('GLOBAL')`.
    */
   globals: NexusFeature[]
   /** lines that did not match any known shape, kept rather than dropped. */
@@ -90,8 +108,23 @@ export type NexusFasm = {
 }
 
 const ATTRIBUTE = /^\{\s*([\w.]+)\s*=\s*"?([^"}]*?)"?\s*\}$/
-/** `<path>[<high>:<low>] = <width>'<base><digits>` — a wide value such as a lookup table's truth table. */
-const ASSIGNMENT = /^(.+?)\[(\d+):(\d+)\]\s*=\s*(\d+)'([bhod])([0-9a-fA-F]+)$/
+/**
+ * `<path>[<high>:<low>] = <width>'<base><digits>` — a wide value such as a lookup table's truth table.
+ *
+ * The trailing `;` is optional because the two halves of the toolchain disagree again: the router writes
+ * `IP_EBR_WID2.INITVAL_00[319:0] = 320'h0006c…` with no terminator, while the unpacker writes
+ * `IP_UNKNOWN.0x20040000[7:0] = 8'h00;` with one. Without it, all 2560 of the unpacker's lines fail to parse.
+ */
+const ASSIGNMENT = /^(.+?)\[(\d+):(\d+)\]\s*=\s*(\d+)'([bhod])([0-9a-fA-F]+);?$/
+
+/**
+ * The regions that legitimately carry no coordinates.
+ *
+ * DELIBERATELY AN ALLOWLIST, not "anything without an R<row>C<col>". Treating every coordinate-less head as a
+ * scope would mean no line could ever be unrecognised, and the leftovers check is the only thing in this file
+ * that notices a shape the parser does not know — it is what caught the router's single-underscore tile names.
+ */
+const SCOPE_NAME = /^(?:GLOBAL|IP_[A-Z0-9_]+)$/
 
 /**
  * A tile name: an optional region prefix, the coordinates, then the type.
@@ -137,6 +170,51 @@ function literalValue(base: string, digits: string): number | null {
 }
 
 /**
+ * The body of a line — everything after the tile or scope name. Returns false if the shape is unknown, so the
+ * caller can keep the whole line as a leftover.
+ *
+ * Shared between tiles and scopes because a scope's lines have exactly the same shapes: `IP_EBR_WID2` carries
+ * wide assignments and `GLOBAL` carries plain settings. Parsing them separately is how the memory contents came
+ * to be dropped while tile assignments worked.
+ */
+function parseBody(
+  rest: string,
+  target: { features: NexusFeature[]; assignments: NexusAssignment[]; pips?: NexusPip[] },
+): boolean {
+  // A wide assignment must be recognised BEFORE the plain-setting path, which would otherwise swallow the
+  // whole `INIT[15:0] = 16'b...` tail as if it were a value and lose the number inside it.
+  const assignment = ASSIGNMENT.exec(rest)
+  if (assignment !== null) {
+    target.assignments.push({
+      path: (assignment[1] as string).trim(),
+      high: Number.parseInt(assignment[2] as string, 10),
+      low: Number.parseInt(assignment[3] as string, 10),
+      width: Number.parseInt(assignment[4] as string, 10),
+      base: assignment[5] as string,
+      // Written most-significant first, as Verilog writes it, so reverse into bit order.
+      bits: literalBits(assignment[5] as string, assignment[6] as string),
+      value: literalValue(assignment[5] as string, assignment[6] as string),
+    })
+    return true
+  }
+
+  if (target.pips !== undefined && rest.startsWith('PIP.')) {
+    // `PIP.<destination>.<source>` — both wire names may themselves contain dots is NOT the case here, but
+    // they do contain `__`, so split on the LAST dot to keep a dotted destination intact if one appears.
+    const arc = rest.slice(4)
+    const split = arc.lastIndexOf('.')
+    if (split < 0) return false
+    target.pips.push({ destination: arc.slice(0, split), source: arc.slice(split + 1) })
+    return true
+  }
+
+  const split = rest.lastIndexOf('.')
+  if (split < 0) return false
+  target.features.push({ path: rest.slice(0, split), value: rest.slice(split + 1) })
+  return true
+}
+
+/**
  * Parse a FASM file.
  *
  * Lines that do not fit a known shape are collected in `unrecognised` rather than skipped. A silently ignored
@@ -146,7 +224,7 @@ function literalValue(base: string, digits: string): number | null {
 export function parseNexusFasm(text: string): NexusFasm {
   const attributes = new Map<string, string>()
   const tiles = new Map<string, NexusTile>()
-  const globals: NexusFeature[] = []
+  const scopes = new Map<string, NexusScope>()
   const unrecognised: string[] = []
 
   for (const raw of text.split('\n')) {
@@ -168,12 +246,15 @@ export function parseNexusFasm(text: string): NexusFasm {
     const tileName = line.slice(0, dot)
     const rest = line.slice(dot + 1)
 
-    // Device-wide settings carry no coordinates. Only the exact `GLOBAL` scope is treated this way, so a line
-    // that is merely unparseable still shows up as a leftover rather than being filed as a global.
-    if (tileName === 'GLOBAL') {
-      const cut = rest.lastIndexOf('.')
-      if (cut < 0) unrecognised.push(line)
-      else globals.push({ path: rest.slice(0, cut), value: rest.slice(cut + 1) })
+    // A named region with no coordinates. Only the allowlisted names are treated this way, so a line that is
+    // merely unparseable still shows up as a leftover rather than being filed under an invented scope.
+    if (SCOPE_NAME.test(tileName)) {
+      let scope = scopes.get(tileName)
+      if (scope === undefined) {
+        scope = { name: tileName, features: [], assignments: [] }
+        scopes.set(tileName, scope)
+      }
+      if (!parseBody(rest, scope)) unrecognised.push(line)
       continue
     }
 
@@ -197,49 +278,15 @@ export function parseNexusFasm(text: string): NexusFasm {
       tiles.set(tileName, tile)
     }
 
-    // A wide assignment must be recognised BEFORE the plain-setting path, which would otherwise swallow the
-    // whole `INIT[15:0] = 16'b...` tail as if it were a value and lose the number inside it.
-    const assignment = ASSIGNMENT.exec(rest)
-    if (assignment !== null) {
-      tile.assignments.push({
-        path: (assignment[1] as string).trim(),
-        high: Number.parseInt(assignment[2] as string, 10),
-        low: Number.parseInt(assignment[3] as string, 10),
-        width: Number.parseInt(assignment[4] as string, 10),
-        base: assignment[5] as string,
-        // Written most-significant first, as Verilog writes it, so reverse into bit order.
-        bits: literalBits(assignment[5] as string, assignment[6] as string),
-        value: literalValue(assignment[5] as string, assignment[6] as string),
-      })
-      continue
-    }
-
-    if (rest.startsWith('PIP.')) {
-      // `PIP.<destination>.<source>` — both wire names may themselves contain dots is NOT the case here, but
-      // they do contain `__`, so split on the LAST dot to keep a dotted destination intact if one appears.
-      const arc = rest.slice(4)
-      const split = arc.lastIndexOf('.')
-      if (split < 0) {
-        unrecognised.push(line)
-        continue
-      }
-      tile.pips.push({ destination: arc.slice(0, split), source: arc.slice(split + 1) })
-      continue
-    }
-
-    const split = rest.lastIndexOf('.')
-    if (split < 0) {
-      unrecognised.push(line)
-      continue
-    }
-    tile.features.push({ path: rest.slice(0, split), value: rest.slice(split + 1) })
+    if (!parseBody(rest, tile)) unrecognised.push(line)
   }
 
   return {
     attributes,
     device: attributes.get('oxide.device') ?? null,
     tiles,
-    globals,
+    scopes,
+    globals: scopes.get('GLOBAL')?.features ?? [],
     unrecognised,
   }
 }
@@ -251,6 +298,9 @@ export function nexusTilesOfType(fasm: NexusFasm, type: string): NexusTile[] {
     .sort((a, b) => a.row - b.row || a.col - b.col)
 }
 
+const leafMatches = (path: string, leaf: string): boolean =>
+  path === leaf || path.endsWith(`.${leaf}`)
+
 /** Every configuration setting whose path ends with the given leaf, across the whole design. */
 export function nexusFeaturesNamed(
   fasm: NexusFasm,
@@ -259,19 +309,32 @@ export function nexusFeaturesNamed(
   const found: { tile: NexusTile; feature: NexusFeature }[] = []
   for (const tile of fasm.tiles.values())
     for (const feature of tile.features)
-      if (feature.path === leaf || feature.path.endsWith(`.${leaf}`)) found.push({ tile, feature })
+      if (leafMatches(feature.path, leaf)) found.push({ tile, feature })
   return found
 }
 
-/** Every wide assignment whose path ends with the given leaf, across the whole design. */
+/**
+ * Every wide assignment whose path ends with the given leaf, across the whole design — in tiles AND in scopes.
+ *
+ * Scopes are included because a block memory's contents live in one, and a caller asking for `INITVAL_00` has no
+ * reason to care which kind of container holds it. `tile` is null for a scope-held assignment.
+ */
 export function nexusAssignmentsNamed(
   fasm: NexusFasm,
   leaf: string,
-): { tile: NexusTile; assignment: NexusAssignment }[] {
-  const found: { tile: NexusTile; assignment: NexusAssignment }[] = []
+): { tile: NexusTile | null; scope: string; assignment: NexusAssignment }[] {
+  const found: { tile: NexusTile | null; scope: string; assignment: NexusAssignment }[] = []
   for (const tile of fasm.tiles.values())
     for (const assignment of tile.assignments)
-      if (assignment.path === leaf || assignment.path.endsWith(`.${leaf}`))
-        found.push({ tile, assignment })
+      if (leafMatches(assignment.path, leaf)) found.push({ tile, scope: tile.name, assignment })
+  for (const scope of fasm.scopes.values())
+    for (const assignment of scope.assignments)
+      if (leafMatches(assignment.path, leaf))
+        found.push({ tile: null, scope: scope.name, assignment })
   return found
+}
+
+/** Every wide assignment held by a named coordinate-less scope, e.g. `IP_EBR_WID2`, in file order. */
+export function nexusScopeAssignments(fasm: NexusFasm, scope: string): NexusAssignment[] {
+  return fasm.scopes.get(scope)?.assignments ?? []
 }

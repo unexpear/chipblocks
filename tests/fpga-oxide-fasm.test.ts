@@ -10,9 +10,11 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import {
+  type NexusAssignment,
   type NexusFasm,
   nexusAssignmentsNamed,
   nexusFeaturesNamed,
+  nexusScopeAssignments,
   nexusTilesOfType,
   parseNexusFasm,
 } from '../src/renderer/fpga-oxide-fasm.ts'
@@ -363,11 +365,15 @@ const NEWLINE = '\n'
 
 describe('wide literals in every base, without losing bits', () => {
   test('a HEX literal is read, not silently mis-filed as plain text', () => {
-    // `INITVAL_00[319:0] = 320'h…` is how memory contents are written. The regex accepted only binary, so this
-    // parsed as an ordinary setting whose "value" was the whole tail — no leftover, no complaint, contents gone.
-    const parsed = parseNexusFasm(`R1C1__EBR.EBR0.INITVAL_00[15:0] = 16'hBEEF${NEWLINE}`)
+    // Memory contents are written in hex. The regex accepted only binary, so this parsed as an ordinary setting
+    // whose "value" was the whole tail — no leftover, no complaint, contents gone.
+    //
+    // This used to be asserted against `R1C1__EBR.EBR0.INITVAL_00[15:0] = 16'hBEEF`, a line shape INVENTED for
+    // the test — the toolchain writes no such thing. The real one is checked against the real file below; what
+    // is left here is only the base-h handling, on a line whose shape is not claimed to be real.
+    const parsed = parseNexusFasm(`R1C1__EBR.EBR0.SOMEWORD[15:0] = 16'hBEEF${NEWLINE}`)
     expect(parsed.unrecognised).toEqual([])
-    const found = nexusAssignmentsNamed(parsed, 'INITVAL_00')
+    const found = nexusAssignmentsNamed(parsed, 'SOMEWORD')
     expect(found).toHaveLength(1)
     expect(found[0]?.assignment.value).toBe(0xbeef)
     expect(found[0]?.assignment.base).toBe('h')
@@ -391,5 +397,119 @@ describe('wide literals in every base, without losing bits', () => {
     const init = nexusAssignmentsNamed(requested, 'INIT')[0]?.assignment
     expect(init?.value).toBe(0xf00f)
     expect(init?.bits).toHaveLength(16)
+  })
+})
+
+/**
+ * A REAL block memory: a 1024x16 ROM with known contents, through yosys -> nextpnr-nexus -> prjoxide.
+ *
+ * The whole reason for this fixture is that its contents are written under a scope with NO COORDINATES, and the
+ * parser required every name to carry an `R<row>C<col>`. All 64 lines of the memory were therefore discarded —
+ * silently, since a dropped line and an understood one look the same from the outside.
+ */
+const bram: NexusFasm = parseNexusFasm(read('nexus-lifcl40-bram1k.fasm'))
+const bramPacked: NexusFasm = parseNexusFasm(read('nexus-lifcl40-bram1k-unpacked.fasm'))
+
+describe('a block memory’s CONTENTS survive the parse', () => {
+  test('neither view of the memory design has a single unrecognised line', () => {
+    // The strongest statement available: every line of both real files fits a shape the parser knows.
+    expect(bram.unrecognised).toEqual([])
+    expect(bramPacked.unrecognised).toEqual([])
+  })
+
+  test('all 64 contents lines are kept — this is the defect, stated as a number', () => {
+    const contents = nexusScopeAssignments(bram, 'IP_EBR_WID2')
+    expect(contents).toHaveLength(64)
+    // A 1024-word memory, 320 bits per line: 20480 bits in total.
+    for (const line of contents) expect(line.bits).toHaveLength(320)
+    expect(contents.reduce((n, l) => n + l.bits.length, 0)).toBe(20480)
+  })
+
+  test('the line index is HEXADECIMAL, which is easy to read as decimal and lose a third of', () => {
+    // `INITVAL_00` through `INITVAL_3F`. Reading those as decimal matches only 40 of the 64 — every index
+    // containing A–F simply vanishes.
+    const paths = nexusScopeAssignments(bram, 'IP_EBR_WID2').map((a) => a.path)
+    expect(paths).toContain('INITVAL_3F')
+    expect(paths).toContain('INITVAL_0A')
+    const indices = paths
+      .map((path) => Number.parseInt(path.replace('INITVAL_', ''), 16))
+      .sort((a, b) => a - b)
+    expect(indices).toEqual(Array.from({ length: 64 }, (_, i) => i))
+  })
+
+  test('a 320-bit literal refuses to become a number rather than rounding to one', () => {
+    const first = nexusScopeAssignments(bram, 'IP_EBR_WID2')[0] as NexusAssignment
+    expect(first.value).toBeNull()
+    expect(first.width).toBe(320)
+    expect(first.base).toBe('h')
+  })
+
+  test('the packer’s own view keeps its 2560 bytes, semicolons and all', () => {
+    // The unpacker terminates every line with `;`, which the router never does. All 2560 of these lines failed
+    // to parse before the terminator was accepted.
+    const bytes = nexusScopeAssignments(bramPacked, 'IP_UNKNOWN')
+    expect(bytes).toHaveLength(2560)
+    for (const byte of bytes) expect(byte.bits).toHaveLength(8)
+  })
+
+  test('THE CROSS-CHECK — both halves of the toolchain carry the same payload', () => {
+    // 64 lines of 320 bits from the router; 2560 bytes of 8 bits from the packer's own reader. The same 20480
+    // bits, and the same number of them set. Two independent views of one memory agreeing is worth more than
+    // either alone — and neither number is one this code chose.
+    const routed = nexusScopeAssignments(bram, 'IP_EBR_WID2').flatMap((a) => a.bits)
+    const packed = nexusScopeAssignments(bramPacked, 'IP_UNKNOWN').flatMap((a) => a.bits)
+    expect(routed).toHaveLength(20480)
+    expect(packed).toHaveLength(20480)
+    expect(packed.filter(Boolean).length).toBe(routed.filter(Boolean).length)
+  })
+
+  test('the memory region appears ONLY when the design has a block memory', () => {
+    // Otherwise the assertions above could be describing anything at all. The two-clock design has no memory,
+    // and no such region in either of its views.
+    expect(nexusScopeAssignments(requested, 'IP_EBR_WID2')).toEqual([])
+    expect(nexusScopeAssignments(readBack, 'IP_UNKNOWN')).toEqual([])
+  })
+
+  test('HONEST GAP — the bits are kept verbatim; which bit is which memory word is NOT decoded', () => {
+    // The contents are recovered as bits and nothing more. The obvious reading — a fixed stride per word — is
+    // WRONG: the source memory holds mem[i] = i*7+3, and no stride from 16 to 20 bits, at any of three starting
+    // offsets, reproduces it. The two views also hold the same bits in a DIFFERENT order, so the packing is not
+    // a straight concatenation either. Decoding it needs the Oxide database, and guessing at it is exactly what
+    // produced a wrong wire rule earlier in this work.
+    const bits = nexusScopeAssignments(bram, 'IP_EBR_WID2').flatMap((a) => a.bits)
+    const wordAt = (offset: number, width: number): number => {
+      let value = 0
+      for (let bit = 0; bit < width; bit++) if (bits[offset + bit]) value |= 1 << bit
+      return value
+    }
+    for (let stride = 16; stride <= 20; stride++)
+      for (let start = 0; start < 3; start++) {
+        const reproduces = Array.from({ length: 1024 }, (_, i) => i).every(
+          (i) =>
+            start + i * stride + 16 > bits.length ||
+            wordAt(start + i * stride, 16) === ((i * 7 + 3) & 0xffff),
+        )
+        expect(reproduces, `stride ${stride} offset ${start}`).toBe(false)
+      }
+  })
+})
+
+describe('the scope allowlist does not become a catch-all', () => {
+  test('a coordinate-less line that is not a known region is STILL a leftover', () => {
+    // The leftovers check is the only thing here that notices an unknown shape. If any head without coordinates
+    // were accepted as a scope, nothing could ever be unrecognised and that check would be worthless.
+    const parsed = parseNexusFasm(`nonsense_without_coordinates.FOO.BAR${NEWLINE}`)
+    expect(parsed.unrecognised).toHaveLength(1)
+    expect(parsed.scopes.size).toBe(0)
+  })
+
+  test('and a malformed line inside a REAL region is a leftover too', () => {
+    const parsed = parseNexusFasm(`IP_EBR_WID2.no_dots_and_no_assignment${NEWLINE}`)
+    expect(parsed.unrecognised).toHaveLength(1)
+  })
+
+  test('`globals` still reports exactly what the GLOBAL scope holds', () => {
+    expect(requested.globals).toEqual(requested.scopes.get('GLOBAL')?.features)
+    expect(requested.globals.length).toBeGreaterThan(0)
   })
 })
