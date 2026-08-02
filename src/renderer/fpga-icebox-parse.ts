@@ -24,7 +24,7 @@
  * `.logic_tile` list) so routing- or IO-tile bits can't decode into phantom cells.
  */
 
-import type { IceboxDevice, IceboxPip, ProgrammedBit } from './fpga-icebox.ts'
+import type { CramBit, IceboxDevice, IceboxPip, ProgrammedBit } from './fpga-icebox.ts'
 import type { PlacedCell } from './fpga-icebox-bitstream.ts'
 import { decodeLc, type LcConfig, type LogicTileBits } from './fpga-icebox-logic.ts'
 
@@ -85,31 +85,51 @@ export function decodeUsedCells(
 }
 
 /** A design recovered from a bitstream: the configured logic cells, the ON routing pips, and each logic tile's
- *  shared config (currently the CarryInSet bit — the constant carry-in of cell 0 when nothing is cascaded in). */
+ *  shared config — the CarryInSet bit (the constant carry-in of cell 0 when nothing is cascaded in) and the
+ *  NegClk bit (the whole tile's flip-flops clock on the FALLING edge). */
 export type ParsedDesign = {
   cells: PlacedCell[]
   onPips: IceboxPip[]
-  /** `"x_y"` → that tile's shared carry config. Absent for hand-built designs (treated as carry-in 0). */
-  tiles?: Map<string, { carryInSet: boolean }>
+  /** `"x_y"` → that tile's shared config. Absent for hand-built designs (carry-in 0, rising edge). */
+  tiles?: Map<string, TileShared>
+}
+
+/** The config bits a logic tile shares across all eight of its cells. */
+export type TileShared = {
+  carryInSet: boolean
+  /** the tile's flip-flops clock on the FALLING edge (icebox `get_negclk_bit`, B0[0]). */
+  negClk: boolean
 }
 
 /**
- * Each logic tile's shared carry config: whether its `CarryInSet` bit (icebox `get_carry_bit`, B1[50]) is
- * programmed. That bit is the CONSTANT carry-in fed to cell 0 of the tile's chain when no carry is cascaded in
- * from the tile below — an adder that starts at 1 (a subtractor, or `a + 1`) sets it.
+ * Each logic tile's shared config bits.
+ *
+ * `CarryInSet` (icebox `get_carry_bit`, B1[50]) is the CONSTANT carry-in fed to cell 0 of the tile's chain when
+ * no carry is cascaded in from the tile below — an adder that starts at 1 (a subtractor, or `a + 1`) sets it.
+ *
+ * `NegClk` (icebox `get_negclk_bit`, B0[0]) makes every flip-flop in the tile clock on the FALLING edge. It was
+ * decoded into the layout and then read by nobody, so a design built with negative-edge flip-flops decoded to a
+ * config identical to the positive-edge one and simulated a full clock period late — silently, with no warning.
+ * icebox itself treats it as load-bearing: `icebox_vlog` writes `always @(negedge …)` when it is set.
  */
-export function decodeTileCarry(
+export function decodeTileShared(
   bits: readonly ProgrammedBit[],
   layout: LogicTileBits,
-): Map<string, { carryInSet: boolean }> {
-  const tiles = new Map<string, { carryInSet: boolean }>()
-  const at = layout.carryInSet
-  if (at === null) return tiles
+): Map<string, TileShared> {
+  const tiles = new Map<string, TileShared>()
+  const carryAt = layout.carryInSet
+  const negClkAt = layout.negClk
+  if (carryAt === null && negClkAt === null) return tiles
+  const isSet = (bit: ProgrammedBit, at: CramBit | null): boolean =>
+    at !== null && bit.row === at.row && bit.col === at.col && bit.value === 1
   for (const bit of bits) {
     const key = `${bit.x}_${bit.y}`
-    if (!tiles.has(key)) tiles.set(key, { carryInSet: false })
-    if (bit.row === at.row && bit.col === at.col && bit.value === 1)
-      tiles.set(key, { carryInSet: true })
+    // `bits` holds only the value-1 positions, so a tile whose bit is 0 never appears here — every tile seen at
+    // all starts from both-false and is upgraded, rather than being assumed present.
+    const tile = tiles.get(key) ?? { carryInSet: false, negClk: false }
+    if (isSet(bit, carryAt)) tile.carryInSet = true
+    if (isSet(bit, negClkAt)) tile.negClk = true
+    tiles.set(key, tile)
   }
   return tiles
 }
@@ -126,6 +146,6 @@ export function parseBitstream(
   return {
     cells: decodeUsedCells(bits, layout),
     onPips: pipsOnInBitstream(bits, device.pips),
-    tiles: decodeTileCarry(bits, layout),
+    tiles: decodeTileShared(bits, layout),
   }
 }

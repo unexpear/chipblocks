@@ -68,6 +68,10 @@ export type RecoveredCell = {
   ref: CellRef
   config: LcConfig
   inputs: InputSource[]
+  /** This flip-flop clocks on the FALLING edge (iCE40's tile-shared NegClk bit). `false`/absent ⇒ rising edge.
+   *  A negative-edge flip-flop between two positive-edge ones passes data through in the SAME clock period, so
+   *  ignoring this reports the design a full period slower than the silicon. */
+  negClk?: boolean
   /** The tile-shared set/reset signal driving this flip-flop, if the bitstream routed one into the tile's
    *  `lutff_global/s_r` sink (a cell output or an external primary). `null`/absent ⇒ a plain flip-flop with no
    *  set/reset. Only set for registered cells. */
@@ -199,6 +203,8 @@ export function reconstructNetlist(parsed: ParsedDesign, device: IceboxDevice): 
       ref: { x: c.x, y: c.y, cell: c.cell },
       config: c.config,
       inputs,
+      // The tile-shared falling-edge bit applies to every flip-flop in the tile.
+      negClk: parsed.tiles?.get(`${c.x}_${c.y}`)?.negClk ?? false,
       setReset,
       clockEnable,
       carryIn,
@@ -360,14 +366,23 @@ export function simulateClocked(
   let state = new Map<string, boolean>() // registered cell Q; absent ⇒ false (reset 0)
   const trace: Map<string, boolean>[] = []
 
-  for (let cy = 0; cy < cycles; cy++) {
-    const inputs = inputsAt(stimulus, cy)
+  /**
+   * Evaluate the whole netlist against a given register state, settling any asynchronous set/reset to a fixed
+   * point. Returns every cell's output and every carry-out.
+   *
+   * Pulled out of the cycle loop so it can be run TWICE in one cycle — once at the rising edge and, only when the
+   * design has falling-edge flip-flops, again at the falling edge with the rising-edge results already latched.
+   */
+  function settle(
+    regState: ReadonlyMap<string, boolean>,
+    inputs: Map<number, boolean>,
+  ): { outputs: Map<string, boolean>; carryOut: Map<string, boolean> } {
     const outputs = new Map<string, boolean>()
-    const carryOut = new Map<string, boolean>() // carry-out per carry-enabled cell, this cycle
+    const carryOut = new Map<string, boolean>() // carry-out per carry-enabled cell, this pass
     /** Flip-flops an asserted asynchronous set/reset is currently forcing, discovered by settling below. */
     const forcedOut = new Map<string, boolean>()
 
-    // A carry-enabled cell's carry-out this cycle: majority(in1, in2, carry-in), carry-in chaining from the prev cell.
+    // A carry-enabled cell's carry-out: majority(in1, in2, carry-in), carry-in chaining from the prev cell.
     function coutOfCycle(cell: RecoveredCell, stack: Set<string>): boolean {
       if (!cell.config.carryEnable) return false
       const ckey = cellKey(cell.ref)
@@ -395,7 +410,7 @@ export function simulateClocked(
       return cout
     }
 
-    // A cell's OUTPUT this cycle: a flip-flop shows its stored Q (an async set/reset forces it immediately); a
+    // A cell's OUTPUT: a flip-flop shows its stored Q (an async set/reset forces it immediately); a
     // combinational cell evaluates its LUT.
     function evalOut(cell: RecoveredCell, stack: Set<string>): boolean {
       const key = cellKey(cell.ref)
@@ -407,7 +422,7 @@ export function simulateClocked(
         // s_r came from a cell already on the stack — the normal shape, since the logic clearing a register
         // usually reads it — the cycle guard returned false and the override was silently dropped. In the
         // opposite cell order it fired, so the answer depended on the order of `netlist.cells`.
-        const stored = forcedOut.get(key) ?? state.get(key) ?? false
+        const stored = forcedOut.get(key) ?? regState.get(key) ?? false
         outputs.set(key, stored)
         return stored
       }
@@ -424,6 +439,7 @@ export function simulateClocked(
       outputs.set(key, out)
       return out
     }
+
     // Settle: an asynchronous set/reset forces its flip-flop the moment s_r is asserted, and s_r may itself be
     // computed from that flip-flop. Evaluate, see which overrides are now asserted, and repeat until nothing
     // changes — a fixed point rather than one pass. Bounded by the cell count, since each round can only add or
@@ -451,13 +467,26 @@ export function simulateClocked(
       }
       if (!changed) break
     }
+    return { outputs, carryOut }
+  }
 
-    // Latch: compute each flip-flop's next Q. An asynchronous set/reset forces it (ignoring clock-enable); a LOW
-    // clock-enable holds Q (which also gates a synchronous set/reset); otherwise, when enabled, an asserted s_r
-    // sets/resets and a de-asserted one latches the LUT's D — all at once, from this cycle's outputs.
-    const nextState = new Map(state)
-    for (const cell of netlist.cells) {
-      if (!cell.config.dffEnable) continue
+  /**
+   * Latch one clock edge: compute each of `edge`'s flip-flops' next Q from the values `settle` produced for that
+   * edge, and write them into `into`.
+   *
+   * An asynchronous set/reset forces it (ignoring clock-enable); a LOW clock-enable holds Q (which also gates a
+   * synchronous set/reset); otherwise, when enabled, an asserted s_r sets/resets and a de-asserted one latches
+   * the LUT's D.
+   */
+  function latchEdge(
+    edge: readonly RecoveredCell[],
+    evaluated: { outputs: Map<string, boolean>; carryOut: Map<string, boolean> },
+    held: ReadonlyMap<string, boolean>,
+    inputs: Map<number, boolean>,
+    into: Map<string, boolean>,
+  ): void {
+    const { outputs, carryOut } = evaluated
+    for (const cell of edge) {
       const key = cellKey(cell.ref)
       const sr = cell.setReset ? readSource(cell.setReset, outputs, inputs, carryOut) : false
       const cen = cell.clockEnable ? readSource(cell.clockEnable, outputs, inputs, carryOut) : true
@@ -466,7 +495,7 @@ export function simulateClocked(
       if (cell.config.asyncSetReset && sr)
         next = forced // async set/reset: immediate, ignores clock-enable
       else if (!cen)
-        next = state.get(key) ?? false // clock disabled ⇒ hold Q (gates a sync s_r too)
+        next = held.get(key) ?? false // clock disabled ⇒ hold Q (gates a sync s_r too)
       else if (sr)
         next = forced // synchronous set/reset (clock enabled)
       else
@@ -477,9 +506,34 @@ export function simulateClocked(
           readSource(cell.inputs[2] as InputSource, outputs, inputs, carryOut),
           readSource(cell.inputs[3] as InputSource, outputs, inputs, carryOut),
         )
-      nextState.set(key, next)
+      into.set(key, next)
     }
-    trace.push(outputs)
+  }
+
+  const rising = netlist.cells.filter((c) => c.config.dffEnable && c.negClk !== true)
+  const falling = netlist.cells.filter((c) => c.config.dffEnable && c.negClk === true)
+
+  for (let cy = 0; cy < cycles; cy++) {
+    const inputs = inputsAt(stimulus, cy)
+
+    // The rising edge: evaluate against the registers as they stand, then latch the rising-edge flip-flops.
+    const rise = settle(state, inputs)
+    const nextState = new Map(state)
+    latchEdge(rising, rise, state, inputs, nextState)
+
+    // The falling edge, HALF A PERIOD LATER. The rising-edge flip-flops are already showing their new Q, so the
+    // combinational logic between them has to be re-evaluated before the falling-edge flip-flops sample it —
+    // which is exactly why a negedge flip-flop between two posedge ones moves data through in ONE period rather
+    // than two. Skipped entirely when the design has no falling-edge flip-flop, so every rising-edge-only design
+    // takes precisely the path it took before and cannot change behaviour.
+    if (falling.length > 0) {
+      const fall = settle(nextState, inputs)
+      latchEdge(falling, fall, nextState, inputs, nextState)
+    }
+
+    // The trace records each cycle's values at the RISING edge, which is where a scope triggered on the clock
+    // would sample them.
+    trace.push(rise.outputs)
     state = nextState
   }
   return { trace, finalState: state }

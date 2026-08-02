@@ -21,7 +21,7 @@ import type { BinBanks } from './fpga-icebox-bin.ts'
 import type { PlacedCell } from './fpga-icebox-bitstream.ts'
 import { cramToProgrammedBits, tileType } from './fpga-icebox-cram-index.ts'
 import type { LogicTileBits } from './fpga-icebox-logic.ts'
-import { decodeTileCarry, decodeUsedCells, pipsOnInBitstream } from './fpga-icebox-parse.ts'
+import { decodeTileShared, decodeUsedCells, pipsOnInBitstream } from './fpga-icebox-parse.ts'
 import { type RecoveredNetlist, reconstructNetlist } from './fpga-icebox-run.ts'
 
 /**
@@ -75,6 +75,6 @@ export function recoverNetlist(
   // used to omit that field entirely, so `carryInConst` was always false however the bitstream was programmed.
   // A real 4-bit `a - b` decoded with 128 of its 256 outputs wrong; adders were unaffected, which is why
   // nothing noticed. The decoder for the bit already existed and worked — only hand-built tests reached it.
-  const tiles = decodeTileCarry(logicBits, layout)
+  const tiles = decodeTileShared(logicBits, layout)
   return reconstructNetlist({ cells, onPips, tiles }, device)
 }
