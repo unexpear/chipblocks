@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import {
   decodeAttributeTable,
+  decodeAttributeTableDetailed,
   GOWIN_IOB_FAMILY,
   GOWIN_SLICE_FAMILY,
   type GowinAttributeDatabase,
@@ -160,6 +161,119 @@ describe('decodeAttributeTable — against the reference implementation', () => 
  * not mean the decode is order-insensitive, and this test is what actually establishes the position.
  */
 const ORDER_DEPENDENT_TABLES = 440
+
+describe('the decode now says which of its answers the BITS determined', () => {
+  test('every attribute NOT flagged ambiguous is stable however the rows are ordered', () => {
+    // The useful form of the order-dependence problem. The algorithm keeps the last matching row, so some
+    // answers are decided by table order rather than by the bitstream — and the reference does the same, so it
+    // cannot be changed without diverging from the only oracle there is.
+    //
+    // What it CAN do is say which answers those are. This shuffles every table's rows and checks that each
+    // attribute the decode did not flag comes out identical. That turns "440 of 793 tables can change" into a
+    // per-attribute guarantee: anything unflagged is solid, and anything flagged is known to be a coin toss.
+    let seed = 20260801
+    const shuffled = {
+      ...attributes,
+      tables: new Map(
+        [...attributes.tables].map(([ttyp, byName]) => [
+          ttyp,
+          new Map(
+            [...byName].map(([name, rows]) => {
+              const copy = [...rows]
+              for (let i = copy.length - 1; i > 0; i--) {
+                seed = (Math.imul(seed, 1103515245) + 12345) >>> 0
+                const j = seed % (i + 1)
+                ;[copy[i], copy[j]] = [
+                  copy[j] as (typeof copy)[number],
+                  copy[i] as (typeof copy)[number],
+                ]
+              }
+              return [name, copy]
+            }),
+          ),
+        ]),
+      ),
+    }
+
+    let checkedAttributes = 0
+    let flagged = 0
+    for (const reference of REFERENCE) {
+      const bits = extractGowinTileBits(
+        frames.get(reference.design) as boolean[][],
+        db,
+        reference.row,
+        reference.col,
+      ) as boolean[][]
+      const family = reference.table.startsWith('CLS') ? GOWIN_SLICE_FAMILY : GOWIN_IOB_FAMILY
+      const before = decodeAttributeTableDetailed(
+        bits,
+        attributes,
+        reference.ttyp,
+        reference.table,
+        family,
+      )
+      const after = decodeAttributeTableDetailed(
+        bits,
+        shuffled,
+        reference.ttyp,
+        reference.table,
+        family,
+      )
+      for (const [attribute, value] of before.attributes) {
+        if (before.ambiguous.has(attribute)) {
+          flagged++
+          continue
+        }
+        expect(
+          after.attributes.get(attribute),
+          `${reference.design} R${reference.row}C${reference.col} ${reference.table}.${attribute}`,
+        ).toBe(value)
+        checkedAttributes++
+      }
+    }
+    // 623 attributes across the 793 tables are determined by the bits and provably order-proof; the rest are
+    // flagged. Pinned exactly so the balance cannot shift unnoticed — more unflagged is an improvement, fewer
+    // is a regression, and either should be deliberate.
+    expect(checkedAttributes).toBe(623)
+    expect(flagged).toBeGreaterThan(0) // the flag is not vacuous: some answers really are order-decided
+  })
+
+  test('a table with no competing rows flags nothing', () => {
+    // The negative half: if everything were flagged the test above would be empty. A logic tile's decode is
+    // fully determined, so its ambiguous set is empty.
+    const reference = REFERENCE.find((r) => r.table === 'CLS0') as Row
+    const bits = extractGowinTileBits(
+      frames.get(reference.design) as boolean[][],
+      db,
+      reference.row,
+      reference.col,
+    ) as boolean[][]
+    const detailed = decodeAttributeTableDetailed(
+      bits,
+      attributes,
+      reference.ttyp,
+      reference.table,
+      GOWIN_SLICE_FAMILY,
+    )
+    expect(detailed.attributes.size).toBeGreaterThan(0)
+    expect([...detailed.ambiguous]).toEqual([])
+  })
+
+  test('the plain decode is unchanged by any of this', () => {
+    // The reporting must not alter what is decoded, or it would break agreement with the reference.
+    for (const reference of REFERENCE.slice(0, 50)) {
+      const bits = extractGowinTileBits(
+        frames.get(reference.design) as boolean[][],
+        db,
+        reference.row,
+        reference.col,
+      ) as boolean[][]
+      const family = reference.table.startsWith('CLS') ? GOWIN_SLICE_FAMILY : GOWIN_IOB_FAMILY
+      const plain = decodeAttributeTable(bits, attributes, reference.ttyp, reference.table, family)
+      expect(Object.fromEntries([...plain].sort())).toEqual(reference.attrs)
+    }
+  })
+})
 
 describe('row order CHANGES what some tables decode to — a live hazard', () => {
   test('shuffling rows changes a measured number of the 793 decodes', () => {

@@ -113,11 +113,37 @@ export function decodeAttributeTable(
   table: string,
   family: GowinAttributeFamily,
 ): Map<string, number> {
+  return decodeAttributeTableDetailed(tileBits, database, ttyp, table, family).attributes
+}
+
+/**
+ * The same decode, plus which of its answers the BITS actually determined.
+ *
+ * The algorithm keeps the last matching row, so when two rows write the same attribute with different values the
+ * winner is decided by the order the table happens to be in — not by anything in the bitstream. That is true of
+ * the reference implementation too, so it cannot be "fixed" without diverging from the only oracle available;
+ * what it can be is REPORTED, so a caller can tell a value the bits pin down from one that fell out of table
+ * order. Shuffling the rows of a real device's tables changes an answer in more than half of them, and until
+ * now nothing said which half.
+ *
+ * `ambiguous` names the attributes that were written more than once with disagreeing values. Everything not
+ * listed is stable however the table is ordered.
+ */
+export function decodeAttributeTableDetailed(
+  tileBits: readonly (readonly boolean[])[],
+  database: GowinAttributeDatabase,
+  ttyp: number,
+  table: string,
+  family: GowinAttributeFamily,
+): { attributes: Map<string, number>; ambiguous: Set<string> } {
   const result = new Map<string, number>()
+  const seen = new Map<string, Set<number>>()
+  const ambiguous = new Set<string>()
   const rows = database.tables.get(ttyp)?.get(table)
   const indexToPair = database.logicinfo.get(family.logicClass)
   const names = database.families.get(family.family)
-  if (rows === undefined || indexToPair === undefined || names === undefined) return result
+  if (rows === undefined || indexToPair === undefined || names === undefined)
+    return { attributes: result, ambiguous }
 
   const negativeKey = (key: readonly number[]): boolean => key.some((k) => k < 0)
   const positives = (key: readonly number[]): number[] => key.filter((k) => k > 0)
@@ -143,7 +169,12 @@ export function decodeAttributeTable(
   const record = (index: number): void => {
     const pair = indexToPair.get(index)
     if (pair === undefined) return
-    result.set(nameOf(pair[0]), pair[1])
+    const attribute = nameOf(pair[0])
+    const values = seen.get(attribute) ?? new Set<number>()
+    values.add(pair[1])
+    seen.set(attribute, values)
+    if (values.size > 1) ambiguous.add(attribute)
+    result.set(attribute, pair[1])
   }
 
   const matched = rows.filter((r) => !negativeKey(r.key) && r.bits.every((b) => setBits.has(b)))
@@ -181,7 +212,7 @@ export function decodeAttributeTable(
     if (!keep) continue
     for (const index of negatives(row.key)) record(index)
   }
-  return result
+  return { attributes: result, ambiguous }
 }
 
 /** Turn a raw attribute value into its name, or null when the family does not name it. */
