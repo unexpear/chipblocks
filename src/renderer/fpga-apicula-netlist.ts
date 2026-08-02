@@ -320,6 +320,11 @@ export function reconstructGowinNetlist(
           carry: carry.includes(index),
         })
         cellByOutput.set(globalWire(row + 1, col + 1, `F${index}`), ref)
+        // A registered cell also presents its stored value on `Q<n>`. Without this the trace dead-ends there
+        // and the consumer becomes a phantom chip input reading zero — six of them in the block-memory design.
+        // Only indexed when this tile really holds the cell: `Q<n>` on an edge tile is an I/O name, not a
+        // register, and is pinned as such by the pin-mapping tests.
+        if (clocked) cellByOutput.set(globalWire(row + 1, col + 1, `Q${index}`), ref)
       }
     }
 
@@ -449,6 +454,12 @@ function traceInput(
   primaryNets: Map<string, number>,
   primaryWires: Map<number, string>,
 ): InputSource {
+  // A pin tied to a rail is a constant, not an input. Reported as a primary it would read zero, silently
+  // changing what the cell computes: an adder cell whose C and D pins are tied high computes A^B, and A if
+  // they read low.
+  if (start === 'VCC') return { kind: 'const', value: true }
+  if (start === 'VSS') return { kind: 'const', value: false }
+
   const seen = new Set<string>()
   let wire = start
   while (!seen.has(wire)) {
@@ -457,6 +468,8 @@ function traceInput(
     if (driver !== undefined) return { kind: 'cell', driver, net: 0 }
     const next = drivers.get(wire)
     if (next === undefined) break
+    if (next === 'VCC') return { kind: 'const', value: true }
+    if (next === 'VSS') return { kind: 'const', value: false }
     wire = next
   }
   let net = primaryNets.get(wire)

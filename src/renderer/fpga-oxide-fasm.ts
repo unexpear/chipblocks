@@ -46,10 +46,18 @@ export type NexusAssignment = {
   /** the declared bit range, high first. */
   high: number
   low: number
-  /** the value, already converted from the literal. */
-  value: number
+  /**
+   * The value as bits, least-significant first. Kept as bits because a memory's contents run to hundreds of
+   * bits and a JS number silently loses everything past 53 of them — two 64-bit literals differing in the low
+   * bit compared equal before this.
+   */
+  bits: boolean[]
+  /** the value as a number, or null when it will not fit one exactly. */
+  value: number | null
   /** the literal's own bit width. */
   width: number
+  /** the literal's base character: `b`, `h`, `o` or `d`. */
+  base: string
 }
 
 /** Everything a FASM file says about one tile. */
@@ -82,6 +90,9 @@ export type NexusFasm = {
 }
 
 const ATTRIBUTE = /^\{\s*([\w.]+)\s*=\s*"?([^"}]*?)"?\s*\}$/
+/** `<path>[<high>:<low>] = <width>'<base><digits>` — a wide value such as a lookup table's truth table. */
+const ASSIGNMENT = /^(.+?)\[(\d+):(\d+)\]\s*=\s*(\d+)'([bhod])([0-9a-fA-F]+)$/
+
 /**
  * A tile name: an optional region prefix, the coordinates, then the type.
  *
@@ -89,13 +100,41 @@ const ATTRIBUTE = /^\{\s*([\w.]+)\s*=\s*"?([^"}]*?)"?\s*\}$/
  * writes `R15C0_PIOA` while the packer writes `CIB_R0C76__SYSIO_B0_0_ODD` for the same kind of thing. Accepting
  * only the doubled form silently drops a third of the router's output — which is how this was noticed.
  *
- * The coordinate match is greedy on purpose: `TAP_PLC_R5C14__TAP_PLC` contains something coordinate-shaped in
- * its prefix, and taking the first match would place the tile somewhere else entirely.
+ * The prefix may itself contain underscores (`TAP_PLC_R5C14__TAP_PLC`), so the type is what follows the LAST
+ * coordinate group. (This block previously sat above the wrong constant and justified the greedy match with a
+ * claim about coordinate-shaped prefixes that no tile name in either fixture actually has.)
  */
-/** `<path>[<high>:<low>] = <width>'b<bits>` — a wide value such as a lookup table's truth table. */
-const ASSIGNMENT = /^(.+?)\[(\d+):(\d+)\]\s*=\s*(\d+)'b([01]+)$/
-
 const TILE_NAME = /^(.*R(\d+)C(\d+))_{1,2}(.+)$/
+
+const BASE_RADIX: Record<string, number> = { b: 2, o: 8, d: 10, h: 16 }
+const BASE_WIDTH: Record<string, number> = { b: 1, o: 3, h: 4 }
+
+/**
+ * A Verilog-style literal as bits, least-significant first.
+ *
+ * Kept as bits because a memory's initial contents run to hundreds of them and a JS number holds 53 — two
+ * 64-bit literals differing only in the low bit compared equal before this. Decimal has no per-digit bit width
+ * so it goes through a number, and is the one base that can still lose precision; no real FASM uses it.
+ */
+function literalBits(base: string, digits: string): boolean[] {
+  const perDigit = BASE_WIDTH[base]
+  const bits: boolean[] = []
+  if (perDigit === undefined) {
+    for (let n = Number.parseInt(digits, 10); n > 0; n = Math.floor(n / 2)) bits.push(n % 2 === 1)
+    return bits
+  }
+  for (let index = digits.length - 1; index >= 0; index--) {
+    const digit = Number.parseInt(digits[index] as string, BASE_RADIX[base] as number)
+    for (let bit = 0; bit < perDigit; bit++) bits.push(((digit >> bit) & 1) === 1)
+  }
+  return bits
+}
+
+/** The literal as a number, or null when it is too wide to hold one exactly. */
+function literalValue(base: string, digits: string): number | null {
+  const value = Number.parseInt(digits, BASE_RADIX[base] as number)
+  return Number.isSafeInteger(value) ? value : null
+}
 
 /**
  * Parse a FASM file.
@@ -167,8 +206,10 @@ export function parseNexusFasm(text: string): NexusFasm {
         high: Number.parseInt(assignment[2] as string, 10),
         low: Number.parseInt(assignment[3] as string, 10),
         width: Number.parseInt(assignment[4] as string, 10),
-        // the literal is written most-significant bit first, as Verilog writes it
-        value: Number.parseInt(assignment[5] as string, 2),
+        base: assignment[5] as string,
+        // Written most-significant first, as Verilog writes it, so reverse into bit order.
+        bits: literalBits(assignment[5] as string, assignment[6] as string),
+        value: literalValue(assignment[5] as string, assignment[6] as string),
       })
       continue
     }

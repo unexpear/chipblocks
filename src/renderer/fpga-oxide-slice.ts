@@ -98,6 +98,9 @@ export function decodeNexusSlices(fasm: NexusFasm): NexusSlice[] {
       const inner = part[2] as string
       const lut = /^(K\d)\.INIT$/.exec(inner)
       if (lut === null) continue
+      // A lookup table is 16 bits, so its value always fits a number; a wider assignment (a memory's contents)
+      // would not, and is not a lookup table.
+      if (assignment.value === null) continue
       sliceFor(tile, part[1] as string).luts.push({
         name: lut[1] as string,
         init: assignment.value,

@@ -185,6 +185,10 @@ export function parseGowinBitstream(text: string): ParsedGowinBitstream {
     framesLeft--
   }
 
+  if (framesLeft > 0)
+    throw new Error(
+      `Gowin bitstream declares ${frames.length + framesLeft} frames but only ${frames.length} are present — the file is truncated`,
+    )
   if (!sawBitLine) throw new Error('Not a Gowin .fs bitstream: no bit lines found')
   if (!sawFrameCount)
     throw new Error('Not a readable Gowin .fs bitstream: no frame-count record (0x3B)')

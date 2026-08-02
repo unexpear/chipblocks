@@ -66,11 +66,18 @@ export function nexusGlobalWire(row: number, col: number, reference: string): Ne
   return { global: `R${rootRow}C${rootCol}_${wire}`, wire, row: rootRow, col: rootCol }
 }
 
-/** Whether a reference is a clock-network wire — reached through a named port rather than a compass one. */
+/**
+ * Whether a reference names a chip-level clock wire.
+ *
+ * Decided by the WIRE, never the port. An earlier version judged by the port spelling and so gave two different
+ * answers for one piece of copper: `N1__JHPRX4_…` and `N1E1__JHPRX4_…` are the same pin of the same cell, and it
+ * called one a clock and the other not. This is now the exact complement of the directional test, so it always
+ * agrees with `resolveNexusWire`.
+ */
 export function isNexusClockWire(reference: string): boolean {
   const mark = reference.indexOf('__')
   if (mark < 0) return false
-  return PORT.exec(reference.slice(0, mark)) === null
+  return !DIRECTIONAL.test(reference.slice(mark + 2))
 }
 
 /** How a wire reference was identified. */

@@ -33,6 +33,7 @@ const CHIPDB_TEXT = readFileSync(
 )
 const db: GowinChipdb = parseGowinChipdb(CHIPDB_TEXT)
 
+const NEWLINE = '\n'
 const byteBits = (n: number): string => n.toString(2).padStart(8, '0')
 const bytesToBits = (bs: Iterable<number>): string => [...bs].map(byteBits).join('')
 
@@ -210,9 +211,10 @@ describe('the frame count is read the way Apicula reads it', () => {
     lines.push(bytesToBits([0x3b, 0, 0, 2, 0, 0, 0, 0])) // eight-byte frame-count record
     const frame = '0'.repeat(64) + '0'.repeat(64)
     for (let i = 0; i < 3; i++) lines.push(frame)
-    const parsed = parseGowinBitstream(lines.join('\n'))
-    // a huge count means all three lines are consumed as frames; the old fixed read would have stopped at two
-    expect(parsed.frames).toHaveLength(3)
+    // Reading every remaining byte makes the declared count enormous, so three frames is a TRUNCATED file and
+    // the parser now says so. That refusal is itself the proof: the old fixed 16-bit read would have seen a
+    // count of 2, been satisfied by three frames, and returned quietly.
+    expect(() => parseGowinBitstream(lines.join(NEWLINE))).toThrow(/truncated/)
   })
 })
 

@@ -244,8 +244,10 @@ describe('wide assignments carry the actual logic', () => {
  */
 describe('what was asked for is what the bitstream contains', () => {
   test('every wide assignment the router requested is present in the bitstream, unchanged', () => {
-    const key = (t: { name: string }, a: { path: string; value: number; high: number }): string =>
-      `${t.name}.${a.path}[${a.high}]=${a.value}`
+    // Compare on the BITS, not the number: a memory's contents are wider than a number holds exactly, and
+    // `value` is deliberately null there.
+    const key = (t: { name: string }, a: { path: string; bits: boolean[]; high: number }): string =>
+      `${t.name}.${a.path}[${a.high}]=${a.bits.map((b) => (b ? '1' : '0')).join('')}`
     const asked = new Set(
       [...requested.tiles.values()].flatMap((t) => t.assignments.map((a) => key(t, a))),
     )
@@ -259,7 +261,7 @@ describe('what was asked for is what the bitstream contains', () => {
   test('the truth table itself round-trips through a real binary', () => {
     // The strongest single claim available for this family: 0xF00F was written into an 808 KB bitstream and read
     // back out of it, in the same tile and the same slice.
-    const inTile = (fasm: NexusFasm): { tile: string; value: number } | null => {
+    const inTile = (fasm: NexusFasm): { tile: string; value: number | null } | null => {
       for (const tile of fasm.tiles.values())
         for (const assignment of tile.assignments)
           if (assignment.path.endsWith('INIT') && assignment.width === 16)
@@ -354,5 +356,40 @@ describe('wire suffixes do NOT identify a shared wire', () => {
           else without++
     expect(without).toBeGreaterThan(0)
     expect(without).toBeGreaterThanOrEqual(withSuffix / 2)
+  })
+})
+
+const NEWLINE = '\n'
+
+describe('wide literals in every base, without losing bits', () => {
+  test('a HEX literal is read, not silently mis-filed as plain text', () => {
+    // `INITVAL_00[319:0] = 320'h…` is how memory contents are written. The regex accepted only binary, so this
+    // parsed as an ordinary setting whose "value" was the whole tail — no leftover, no complaint, contents gone.
+    const parsed = parseNexusFasm(`R1C1__EBR.EBR0.INITVAL_00[15:0] = 16'hBEEF${NEWLINE}`)
+    expect(parsed.unrecognised).toEqual([])
+    const found = nexusAssignmentsNamed(parsed, 'INITVAL_00')
+    expect(found).toHaveLength(1)
+    expect(found[0]?.assignment.value).toBe(0xbeef)
+    expect(found[0]?.assignment.base).toBe('h')
+  })
+
+  test('a literal wider than a number keeps every bit', () => {
+    // Two 64-bit values differing only in the low bit used to compare equal, because both rounded to the same
+    // JS number. The bits are kept, and `value` is null rather than a lie.
+    const lo = parseNexusFasm(`R1C1__EBR.E.V[63:0] = 64'h${'F'.repeat(15)}0${NEWLINE}`)
+    const hi = parseNexusFasm(`R1C1__EBR.E.V[63:0] = 64'h${'F'.repeat(15)}1${NEWLINE}`)
+    const a = nexusAssignmentsNamed(lo, 'V')[0]?.assignment
+    const b = nexusAssignmentsNamed(hi, 'V')[0]?.assignment
+    expect(a?.value).toBeNull()
+    expect(b?.value).toBeNull()
+    expect(a?.bits).not.toEqual(b?.bits)
+    expect(a?.bits[0]).toBe(false)
+    expect(b?.bits[0]).toBe(true)
+  })
+
+  test('the lookup table still reads as a number, being only 16 bits wide', () => {
+    const init = nexusAssignmentsNamed(requested, 'INIT')[0]?.assignment
+    expect(init?.value).toBe(0xf00f)
+    expect(init?.bits).toHaveLength(16)
   })
 })

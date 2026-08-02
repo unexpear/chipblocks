@@ -265,9 +265,13 @@ export function decodeGowinIoBuffers(
 /**
  * Decode a block-memory tile's configuration.
  *
- * A Gowin block RAM can be wired as single-port, dual-port, semi-dual-port or ROM, and each is a SEPARATE table
- * (`BSRAM_SP` / `BSRAM_DP` / `BSRAM_SDP` / `BSRAM_ROM`) rather than one table with a mode field. This returns
- * whichever tables the tile type defines, keyed by mode.
+ * The four tables (`BSRAM_SP` / `BSRAM_DP` / `BSRAM_SDP` / `BSRAM_ROM`) look like one per wiring mode, but they
+ * do NOT distinguish one: on the tile type this fabric uses they cover byte-identical bit coordinates, so every
+ * mode decodes non-empty for a memory that is only ever one of them. Keying the result by mode therefore told a
+ * caller the design contained a ROM, a dual-port and a semi-dual-port RAM that do not exist.
+ *
+ * So the settings are returned as ONE map. Which wiring mode a memory is in has to come from elsewhere — the
+ * reference decoder names the cell mode-lessly too — and claiming it from these tables is not possible.
  *
  * Checked against a real bitstream: a 1024x8 memory, which the toolchain infers into a genuine block RAM. The
  * decode finds it at exactly the three tiles Apicula does (one main tile plus two auxiliaries), reports nothing
@@ -278,15 +282,21 @@ export function decodeGowinBlockMemory(
   tileBits: readonly (readonly boolean[])[],
   database: GowinAttributeDatabase,
   ttyp: number,
-): Map<string, Map<string, number>> {
-  const out = new Map<string, Map<string, number>>()
+): Map<string, number> {
+  const out = new Map<string, number>()
   const tables = database.tables.get(ttyp)
   if (tables === undefined) return out
   for (const mode of ['SP', 'DP', 'SDP', 'ROM']) {
     const table = `BSRAM_${mode}`
     if (!tables.has(table)) continue
-    const attributes = decodeAttributeTable(tileBits, database, ttyp, table, GOWIN_BSRAM_FAMILY)
-    if (attributes.size > 0) out.set(mode, attributes)
+    for (const [name, value] of decodeAttributeTable(
+      tileBits,
+      database,
+      ttyp,
+      table,
+      GOWIN_BSRAM_FAMILY,
+    ))
+      out.set(name, value)
   }
   return out
 }

@@ -97,8 +97,17 @@ export type GowinFabricInventory = {
   ioCells: number
 }
 
+/** Parse a hex word, rejecting anything that is not entirely hex — see `hexToBytes` for why. */
+function parseHexWord(hex: string): number {
+  if (!/^[0-9a-fA-F]+$/.test(hex)) throw new Error(`Gowin chipdb: bad hex value "${hex}"`)
+  return Number.parseInt(hex, 16) >>> 0
+}
+
 function hexToBytes(hex: string): Uint8Array {
   if (hex.length % 2 !== 0) throw new Error(`Gowin chipdb: odd-length hex record "${hex}"`)
+  // `Number.parseInt` stops at the first non-hex character, so it accepts `…281z` as `…2801`. Validate the
+  // whole string instead of trusting the parse to fail.
+  if (!/^[0-9a-fA-F]*$/.test(hex)) throw new Error(`Gowin chipdb: bad hex record "${hex}"`)
   const out = new Uint8Array(hex.length / 2)
   for (let i = 0; i < out.length; i++) {
     const byte = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
@@ -228,7 +237,7 @@ export function parseGowinChipdb(text: string): GowinChipdb {
 
   return {
     device: raw.device,
-    idcode: Number.parseInt(raw.idcode, 16) >>> 0,
+    idcode: parseHexWord(raw.idcode),
     grid,
     rows: grid.length,
     cols,
@@ -419,6 +428,13 @@ export function decodeGowinFlipFlops(
 
     // A cell switched into distributed-memory mode is not a register at all — Apicula skips it, and reporting a
     // flip-flop here would describe hardware that is not there.
+    // `REG{n}_SD` re-targets the register's input from the lookup table to a routed wire. The shared cell has
+    // no way to express that, and ignoring it would silently capture the wrong signal. `gowin_pack` never sets
+    // it, so this only bites bitstreams from the vendor's own tool — which this decoder otherwise accepts.
+    if (attributes.has(`REG${index % 2}_SD`)) {
+      out.set(`DFF${index}`, null)
+      continue
+    }
     if (named('MODE', '') === 'SSRAM') {
       out.set(`DFF${index}`, null)
       continue

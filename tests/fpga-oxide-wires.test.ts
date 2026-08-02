@@ -146,8 +146,11 @@ describe('what the rule deliberately does NOT claim', () => {
     // the test above assumed every unresolved reference would have a clock-shaped PORT, and this one broke it.
     // Resolving on the port alone would place a clock mux one span away from where it is.
     const reference = 'N1__JHPRX4_CMUX_CORE_CMUX0'
-    expect(isNexusClockWire(reference)).toBe(false) // the port looks directional...
-    expect(nexusGlobalWire(29, 48, reference)).toBeNull() // ...but the wire is not, so it is refused
+    expect(nexusGlobalWire(29, 48, reference)).toBeNull() // the port looks directional, the wire is not
+    // And the classifier agrees, because it now decides by the WIRE. Judging by the port gave two different
+    // answers for one piece of copper: `N1__JHPRX4_…` and `N1E1__JHPRX4_…` are the same pin of the same cell.
+    expect(isNexusClockWire(reference)).toBe(true)
+    expect(isNexusClockWire('N1E1__JHPRX4_CMUX_CORE_CMUX0')).toBe(true)
   })
 })
 

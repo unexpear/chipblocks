@@ -38,6 +38,7 @@ export type InputSource =
   | { kind: 'cell'; driver: CellRef; net: number } // another placed cell's output, reached over routed pips
   | { kind: 'carry'; driver: CellRef; net: number } // a cell's CARRY output (`lutff_c/cout`), reached over routed pips
   | { kind: 'primary'; net: number } // an external input the LUT uses, driven from outside the design
+  | { kind: 'const'; value: boolean } // a pin tied to a supply rail; only the Gowin path emits this
   | { kind: 'unused' } // this LUT does not depend on the pin (a don't-care), or the pin has no wire
 
 /** Whether a 16-entry LUT truth table actually depends on input `pin` (some index pair differing only in that
@@ -222,6 +223,7 @@ export function simulateCombinational(
       const driver = byKey.get(cellKey(source.driver))
       return driver === undefined ? false : evalCell(driver, stack)
     }
+    if (source.kind === 'const') return source.value
     if (source.kind === 'carry') {
       const driver = byKey.get(cellKey(source.driver))
       return driver === undefined ? false : coutOf(driver, stack)

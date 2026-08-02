@@ -221,8 +221,7 @@ describe('block memory in a REAL bitstream', () => {
     // an SPX9 cell. The decoded attribute names to "9", agreeing with the primitive rather than with the source
     // - which is the stronger check, since it is the hardware that the bits describe.
     const memory = decodeGowinBlockMemory(tileBitsAt(bram.frames, 5, 3), attributes, 41)
-    const single = memory.get('SP') as Map<string, number>
-    const width = single.get('SPA_DATA_WIDTH') as number
+    const width = memory.get('SPA_DATA_WIDTH') as number
     expect(gowinValueName(attributes, 'bsram', width)).toBe('9')
   })
 
