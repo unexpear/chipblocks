@@ -364,23 +364,33 @@ export function decodeEcp5Slices(
         return word === undefined ? [] : readTileWord(frames, tile, word)
       }) as [boolean[], boolean[]]
       const mode = enumOf(tile, `SLICE${slice}.MODE`)
-      const untouched = luts.every((t) => t.length === 16 && t.every((b) => b)) && mode === null
+      const regs = [0, 1].map((r) => ({
+        sd: enumOf(tile, `SLICE${slice}.REG${r}.SD`),
+        regset: enumOf(tile, `SLICE${slice}.REG${r}.REGSET`),
+        lsrmode: enumOf(tile, `SLICE${slice}.REG${r}.LSRMODE`),
+      }))
+      const clkMux = enumOf(tile, `SLICE${slice}.CLKMUX`)
+      const ceMux = enumOf(tile, `SLICE${slice}.CEMUX`)
+      const lsrMux = enumOf(tile, `SLICE${slice}.LSRMUX`)
+      const gsr = enumOf(tile, `SLICE${slice}.GSR`)
+
+      // "Untouched" has to mean untouched on EVERY axis this function decodes, not just the lookup tables. A
+      // register-only design — `always @(posedge clk or posedge rst)` — carries register and clocking settings
+      // and NO lookup-table contents, so judging by the tables alone reported zero slices and erased the
+      // design's only flip-flop.
+      //
+      // Note this reads `enumOf` output, which is null for a value equal to the database default. Comparing raw
+      // enum matches instead would report 12,144 slices on a completely blank part.
+      const untouched =
+        luts.every((t) => t.length === 16 && t.every((b) => b)) &&
+        mode === null &&
+        clkMux === null &&
+        ceMux === null &&
+        lsrMux === null &&
+        gsr === null &&
+        regs.every((r) => r.sd === null && r.regset === null && r.lsrmode === null)
       if (untouched && !options.includeDefault) continue
-      slices.push({
-        tile: tile.name,
-        slice,
-        luts,
-        mode,
-        regs: [0, 1].map((r) => ({
-          sd: enumOf(tile, `SLICE${slice}.REG${r}.SD`),
-          regset: enumOf(tile, `SLICE${slice}.REG${r}.REGSET`),
-          lsrmode: enumOf(tile, `SLICE${slice}.REG${r}.LSRMODE`),
-        })),
-        clkMux: enumOf(tile, `SLICE${slice}.CLKMUX`),
-        ceMux: enumOf(tile, `SLICE${slice}.CEMUX`),
-        lsrMux: enumOf(tile, `SLICE${slice}.LSRMUX`),
-        gsr: enumOf(tile, `SLICE${slice}.GSR`),
-      })
+      slices.push({ tile: tile.name, slice, luts, mode, regs, clkMux, ceMux, lsrMux, gsr })
     }
   }
   return slices

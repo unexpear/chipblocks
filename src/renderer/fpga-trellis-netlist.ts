@@ -154,6 +154,21 @@ export function reconstructEcp5Netlist(
         // it left the fabric we can see (an IO / EBR / DSP tile, or a wire off the edge): an honest primary
         return { kind: 'primary', net: internNet(reached) }
       })
+
+      // An all-ones lookup table is the database DEFAULT, so a slice can survive the tile-level filter on the
+      // strength of its OTHER settings and still carry a companion table nobody programmed. Emitting it puts a
+      // constant-1 cell in the netlist that exists nowhere in the design.
+      //
+      // EVERY conjunct below is load-bearing, and the suite will not tell you otherwise — it reports 46/46 with
+      // a real cell deleted. Skipping on the table alone removes an all-ones LUT4 in an arithmetic slice, which
+      // is exactly the configuration that passes the carry through. So a table is only untouched if it is also
+      // unread, unregistered, and in a slice doing nothing arithmetic.
+      const allOnes = truth.every((b) => b)
+      const unread = inputs.every((i) => i.kind === 'unused')
+      const isRegistered = registered.has(`${slice.tile}/${k}`)
+      const plainMode = slice.mode === null || slice.mode === 'LOGIC'
+      if (allOnes && unread && !isRegistered && plainMode) continue
+
       cells.push({
         ref,
         config: {

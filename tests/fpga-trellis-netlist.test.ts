@@ -11,6 +11,7 @@ import { describe, expect, test } from 'vitest'
 import type { CanvasNodeLike } from '../src/renderer/blocks.ts'
 import { lowerNetlistToCanvas } from '../src/renderer/fpga-icebox-canvas.ts'
 import { simulateCombinational } from '../src/renderer/fpga-icebox-run.ts'
+import { parseEcp5Bitstream } from '../src/renderer/fpga-trellis-bit.ts'
 import { reconstructEcp5Netlist } from '../src/renderer/fpga-trellis-netlist.ts'
 import {
   type Ecp5Bit,
@@ -173,5 +174,31 @@ describe('reconstructEcp5Netlist — an ECP5 bitstream becomes a netlist the sha
   test('a blank device yields an empty netlist — nothing invented', () => {
     const netlist = reconstructEcp5Netlist(blankFrames(), GRID, dbFor)
     expect(netlist.cells).toEqual([])
+  })
+})
+
+describe('untouched slices and untouched companion tables', () => {
+  /** The genuine ecppack artefact, decoded end to end. */
+  const realNetlist = () => {
+    const bits = parseEcp5Bitstream(
+      new Uint8Array(
+        readFileSync(new URL('../fixtures/trellis-ecp5-asym-lut.bit', import.meta.url)),
+      ),
+    )
+    return reconstructEcp5Netlist(bits.frames, GRID, dbFor)
+  }
+
+  test('the real vendor bitstream yields ONLY the cell the vendor programmed', () => {
+    // It used to yield two: the real one, plus its companion lookup table sitting at the database's all-ones
+    // default with nothing routed to it. That phantom constant-1 cell exists nowhere in the design.
+    const netlist = realNetlist()
+    expect(netlist.cells).toHaveLength(1)
+    expect(netlist.cells[0]?.config.truth.map((b) => (b ? 1 : 0)).join('')).toBe('1100000000000001')
+  })
+
+  test('the surviving cell is the programmed one, not whichever came first', () => {
+    // Guards against "fixed" by dropping the wrong one of the pair.
+    const cell = realNetlist().cells[0]
+    expect(cell?.config.truth.some((b) => !b)).toBe(true) // a real function, not the all-ones default
   })
 })
