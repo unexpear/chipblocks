@@ -364,6 +364,8 @@ export function simulateClocked(
     const inputs = inputsAt(stimulus, cy)
     const outputs = new Map<string, boolean>()
     const carryOut = new Map<string, boolean>() // carry-out per carry-enabled cell, this cycle
+    /** Flip-flops an asserted asynchronous set/reset is currently forcing, discovered by settling below. */
+    const forcedOut = new Map<string, boolean>()
 
     // A carry-enabled cell's carry-out this cycle: majority(in1, in2, carry-in), carry-in chaining from the prev cell.
     function coutOfCycle(cell: RecoveredCell, stack: Set<string>): boolean {
@@ -400,16 +402,13 @@ export function simulateClocked(
       const done = outputs.get(key)
       if (done !== undefined) return done
       if (cell.config.dffEnable) {
-        const stored = state.get(key) ?? false
-        outputs.set(key, stored) // provisional — lets an async s_r that reads this same flip-flop see its Q
-        if (cell.config.asyncSetReset && cell.setReset) {
-          // Asynchronous set/reset forces the output the moment s_r is asserted, not at the clock edge.
-          if (readViaEval(cell.setReset, evalOut, stack, byKey, inputs, coutOfCycle)) {
-            const forced = cell.config.setNoReset // s_r asserted ⇒ SET (1) or RESET (0) per the config bit
-            outputs.set(key, forced)
-            return forced
-          }
-        }
+        // A flip-flop's output is FIXED for the whole pass: either its stored value, or the value an async
+        // set/reset has been found to force. Resolving the override HERE used to re-enter evaluation, and when
+        // s_r came from a cell already on the stack — the normal shape, since the logic clearing a register
+        // usually reads it — the cycle guard returned false and the override was silently dropped. In the
+        // opposite cell order it fired, so the answer depended on the order of `netlist.cells`.
+        const stored = forcedOut.get(key) ?? state.get(key) ?? false
+        outputs.set(key, stored)
         return stored
       }
       if (stack.has(key)) return false // combinational cycle
@@ -425,9 +424,33 @@ export function simulateClocked(
       outputs.set(key, out)
       return out
     }
-    for (const cell of netlist.cells) evalOut(cell, new Set())
-    // Ensure every carry-out is computed (a flip-flop's D may read a carry no LUT touched in the output phase).
-    for (const cell of netlist.cells) if (cell.config.carryEnable) coutOfCycle(cell, new Set())
+    // Settle: an asynchronous set/reset forces its flip-flop the moment s_r is asserted, and s_r may itself be
+    // computed from that flip-flop. Evaluate, see which overrides are now asserted, and repeat until nothing
+    // changes — a fixed point rather than one pass. Bounded by the cell count, since each round can only add or
+    // remove one override per flip-flop.
+    for (let pass = 0; pass <= netlist.cells.length; pass++) {
+      outputs.clear()
+      carryOut.clear()
+      for (const cell of netlist.cells) evalOut(cell, new Set())
+      // Ensure every carry-out is computed (a flip-flop's D may read a carry no LUT touched in the output phase).
+      for (const cell of netlist.cells) if (cell.config.carryEnable) coutOfCycle(cell, new Set())
+
+      let changed = false
+      for (const cell of netlist.cells) {
+        if (!cell.config.dffEnable || !cell.config.asyncSetReset || !cell.setReset) continue
+        const forcedKey = cellKey(cell.ref)
+        const asserted = readSource(cell.setReset, outputs, inputs, carryOut)
+        if (!asserted) {
+          if (forcedOut.delete(forcedKey)) changed = true
+          continue
+        }
+        if (forcedOut.get(forcedKey) !== cell.config.setNoReset) {
+          forcedOut.set(forcedKey, cell.config.setNoReset)
+          changed = true
+        }
+      }
+      if (!changed) break
+    }
 
     // Latch: compute each flip-flop's next Q. An asynchronous set/reset forces it (ignoring clock-enable); a LOW
     // clock-enable holds Q (which also gates a synchronous set/reset); otherwise, when enabled, an asserted s_r

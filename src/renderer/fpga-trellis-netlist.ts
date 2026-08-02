@@ -64,7 +64,8 @@ export function reconstructEcp5Netlist(
   grid: Map<string, Ecp5Tile>,
   dbFor: (tileType: string) => Ecp5TileDb | null,
 ): Ecp5Netlist {
-  const slices = decodeEcp5Slices(frames, grid, dbFor('PLC2') as Ecp5TileDb)
+  const plc2 = dbFor('PLC2') as Ecp5TileDb
+  const slices = decodeEcp5Slices(frames, grid, plc2)
   const arcs = decodeEcp5Routing(frames, grid, dbFor)
 
   // What drives each routed sink, resolved to GLOBAL wires so a connection can cross tile boundaries: the same
@@ -161,7 +162,14 @@ export function reconstructEcp5Netlist(
           // flip-flop's Q output instead of the LUT's F output, which is what we detect above.
           carryEnable: slice.mode === 'CCU2',
           dffEnable: registered.has(`${slice.tile}/${k}`),
-          setNoReset: slice.regs[lut]?.regset === 'SET',
+          // `readTileEnum` reports a value EQUAL to the database's declared default as unset, and `SET` IS the
+          // declared default for `REGSET`. So `=== 'SET'` could never be true and a preset flip-flop always
+          // decoded as a reset one. Resolve an unset value to the database's own default instead of assuming
+          // "not SET". (Inverting this line to `=== 'RESET'` left the whole suite green — nothing tested it.)
+          setNoReset:
+            (slice.regs[lut]?.regset ??
+              plc2.enums.get(`SLICE${slice.slice}.REG${lut}.REGSET`)?.defaultValue ??
+              null) === 'SET',
           asyncSetReset: false, // ECP5 set/reset timing comes from LSRMODE + the tile's clocking, not modelled yet
         },
         inputs,
