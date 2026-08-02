@@ -91,17 +91,21 @@ function risesAt(loaded: ReturnType<typeof load>, cycles: number): number {
 }
 
 describe('the tile’s falling-edge bit is decoded, not thrown away', () => {
-  test('the two bitstreams really do differ in that bit and nothing else structural', () => {
-    // Same Verilog, same tools, same seed - only the middle flip-flop's edge changed. Both recover the same
-    // number of cells, which is why simulating them identically looked so plausible.
+  test('the two bitstreams recover the same number of cells, differing in the edge bit', () => {
+    // Same Verilog, same tools, same seed - only the middle flip-flop's edge changed in the SOURCE. The two are
+    // NOT placed alike (the router puts the chain in different tiles, and the negedge build necessarily spills
+    // into a second tile because the bit is tile-wide), so this asserts the cell count and the bit, which is
+    // what it can honestly claim. Recovering the same count is why simulating them identically looked plausible.
     expect(negmid.netlist.cells).toHaveLength(allpos.netlist.cells.length)
     expect(negmid.netlist.cells.some((c) => c.negClk === true)).toBe(true)
     expect(allpos.netlist.cells.some((c) => c.negClk === true)).toBe(false)
   })
 
   test('exactly ONE flip-flop is on the falling edge, as the source says', () => {
-    // The design has three registers and one of them is `always @(negedge clk)`. A tile-wide bit read carelessly
-    // would flag all eight cells of the tile, so the count matters, not just the presence.
+    // The design has three registers and one of them is `always @(negedge clk)`. NOTE this does not prove the
+    // bit is applied per-cell rather than per-tile - only one recovered cell lives in that tile, so the two are
+    // indistinguishable here. Tile-wide IS the correct hardware semantics; the count is pinned because a decoder
+    // that flagged every cell in the DESIGN would pass the tests below and fail this.
     const falling = negmid.netlist.cells.filter((c) => c.config.dffEnable && c.negClk === true)
     expect(falling).toHaveLength(1)
   })
@@ -118,8 +122,14 @@ describe('the tile’s falling-edge bit is decoded, not thrown away', () => {
 
   test('and the two are genuinely different, not merely both plausible', () => {
     // The negative control: if the fix had shifted BOTH designs, or neither, this passes only by the two
-    // disagreeing in the same direction the hardware disagrees.
-    expect(risesAt(negmid, 10)).toBeLessThan(risesAt(allpos, 10))
+    // disagreeing in the same direction the hardware disagrees. `risesAt` returns -1 for "never rises", and -1
+    // is less than everything, so a design that produced no output at all would have satisfied a bare
+    // `toBeLessThan` - both are required to actually rise first.
+    const negmidAt = risesAt(negmid, 10)
+    const allposAt = risesAt(allpos, 10)
+    expect(negmidAt).toBeGreaterThanOrEqual(0)
+    expect(allposAt).toBeGreaterThanOrEqual(0)
+    expect(negmidAt).toBe(allposAt - 1)
   })
 
   test('the falling-edge flip-flop passes data through in the SAME cycle as its driver', () => {

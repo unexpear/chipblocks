@@ -376,7 +376,12 @@ export function simulateClocked(
   function settle(
     regState: ReadonlyMap<string, boolean>,
     inputs: Map<number, boolean>,
-  ): { outputs: Map<string, boolean>; carryOut: Map<string, boolean> } {
+  ): {
+    outputs: Map<string, boolean>
+    carryOut: Map<string, boolean>
+    /** the flip-flops an asserted asynchronous set/reset is forcing at THIS edge, and to what. */
+    forced: Map<string, boolean>
+  } {
     const outputs = new Map<string, boolean>()
     const carryOut = new Map<string, boolean>() // carry-out per carry-enabled cell, this pass
     /** Flip-flops an asserted asynchronous set/reset is currently forcing, discovered by settling below. */
@@ -467,7 +472,7 @@ export function simulateClocked(
       }
       if (!changed) break
     }
-    return { outputs, carryOut }
+    return { outputs, carryOut, forced: forcedOut }
   }
 
   /**
@@ -510,6 +515,27 @@ export function simulateClocked(
     }
   }
 
+  /**
+   * Write an edge's asynchronous set/reset forces into the register state — for EVERY flip-flop, not just the
+   * ones that clock on this edge.
+   *
+   * An asynchronous set/reset is asynchronous: it forces Q the moment it is asserted, and Q keeps that value
+   * until the flip-flop's own next clock edge. When the cycle had a single edge this needed no special handling,
+   * because every flip-flop was latched every cycle and `latchEdge` committed the force itself. With two edges it
+   * does: a force asserted in one half applies to flip-flops that clock in the OTHER half, and without this it
+   * lived only inside that half's evaluation and evaporated — a rising-edge flip-flop cleared between the edges
+   * sprang back, and a falling-edge flip-flop cleared before the rising edge stored the stale value instead.
+   *
+   * Applied after BOTH phases, deliberately. Doing it after only one repairs one of those two cases and leaves
+   * the other broken, which is the incomplete-fix trap this project has been caught by before.
+   */
+  function commitAsyncForces(
+    forced: ReadonlyMap<string, boolean>,
+    into: Map<string, boolean>,
+  ): void {
+    for (const [key, value] of forced) into.set(key, value)
+  }
+
   const rising = netlist.cells.filter((c) => c.config.dffEnable && c.negClk !== true)
   const falling = netlist.cells.filter((c) => c.config.dffEnable && c.negClk === true)
 
@@ -520,6 +546,7 @@ export function simulateClocked(
     const rise = settle(state, inputs)
     const nextState = new Map(state)
     latchEdge(rising, rise, state, inputs, nextState)
+    commitAsyncForces(rise.forced, nextState)
 
     // The falling edge, HALF A PERIOD LATER. The rising-edge flip-flops are already showing their new Q, so the
     // combinational logic between them has to be re-evaluated before the falling-edge flip-flops sample it —
@@ -529,6 +556,7 @@ export function simulateClocked(
     if (falling.length > 0) {
       const fall = settle(nextState, inputs)
       latchEdge(falling, fall, nextState, inputs, nextState)
+      commitAsyncForces(fall.forced, nextState)
     }
 
     // The trace records each cycle's values at the RISING edge, which is where a scope triggered on the clock
