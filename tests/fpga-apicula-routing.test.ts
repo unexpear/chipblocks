@@ -91,21 +91,23 @@ describe('decodeGowinRouting — against Apicula’s decode of a real bitstream'
     const mine = decodeAll()
     for (const reference of REFERENCE) {
       const key = `R${reference.row}C${reference.col}`
+      // No `continue` on an empty expectation: an absent decode compares as empty, so checking every tile is
+      // what actually proves nothing was invented. With the guard in place an audit fabricated a clock
+      // connection in every routed tile and the whole suite still passed.
       const decoded = mine.get(key)
-      if (Object.keys(reference.pips).length === 0) continue
-      expect(decoded, key).toBeDefined()
-      expect(Object.fromEntries((decoded as { pips: Map<string, string> }).pips), key).toEqual(
-        reference.pips,
-      )
+      expect(Object.fromEntries(decoded?.pips ?? new Map()), `${key} pips`).toEqual(reference.pips)
     }
   })
 
   test('clock routing matches too, and stays separate from general interconnect', () => {
     const mine = decodeAll()
     for (const reference of REFERENCE) {
-      if (Object.keys(reference.clock_pips).length === 0) continue
-      const decoded = mine.get(`R${reference.row}C${reference.col}`)
-      expect(Object.fromEntries((decoded as { clock: Map<string, string> }).clock)).toEqual(
+      const key = `R${reference.row}C${reference.col}`
+      const decoded = mine.get(key)
+      // Every tile, both maps. No tile in this design has both kinds at once, so guarding on non-empty meant a
+      // fabricated clock connection in a routed tile went unnoticed - which is exactly what "stays separate"
+      // is supposed to catch.
+      expect(Object.fromEntries(decoded?.clock ?? new Map()), `${key} clock`).toEqual(
         reference.clock_pips,
       )
     }

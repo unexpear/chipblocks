@@ -177,6 +177,22 @@ const FLIP_FLOP_FLAGS: ReadonlyMap<string, { setNoReset: boolean; asyncSetReset:
     ['DFFNP', { setNoReset: true, asyncSetReset: true }],
   ])
 
+/**
+ * The LEVEL-SENSITIVE latch variants.
+ *
+ * A latch is transparent while its enable is high; the shared cell can only describe an edge-triggered
+ * flip-flop. Rather than emit one that looks identical to a plain register — which is what this did before —
+ * a cell configured as a latch is REFUSED, the same way a falling-edge one would be.
+ */
+export const GOWIN_LATCH_KINDS: ReadonlySet<string> = new Set([
+  'DL',
+  'DLN',
+  'DLC',
+  'DLNC',
+  'DLP',
+  'DLNP',
+])
+
 /** The variants that clock on the FALLING edge — recorded because the shared simulator assumes rising. */
 export const GOWIN_FALLING_EDGE: ReadonlySet<string> = new Set([
   'DFFN',
@@ -199,6 +215,14 @@ export type GowinDesign = {
    * nowhere, and a caller can see exactly which piece of copper each input is.
    */
   primaryWires: Map<number, string>
+  /**
+   * Cells the bitstream configures that this path will NOT describe, with the reason.
+   *
+   * Emitting an approximation would be worse than omitting the cell: an arithmetic cell rendered as a plain
+   * lookup table computes a different function, and a latch rendered as a flip-flop samples on an edge that the
+   * hardware does not have. Both look entirely reasonable in a netlist.
+   */
+  unsupported: { ref: CellRef; kind: string; reason: string }[]
 }
 
 /** The four data inputs of a Gowin lookup table, in truth-table bit order. */
@@ -300,14 +324,37 @@ export function reconstructGowinNetlist(
     }
 
   // 3. resolve each input by following the routing backwards
+  const unsupported: { ref: CellRef; kind: string; reason: string }[] = []
   const primaryNets = new Map<string, number>()
   const primaryWires = new Map<number, string>()
   const recovered: RecoveredCell[] = []
   for (const cell of cells) {
     // Both fabrics index a 4-input truth table the same way — entry i is the output when the inputs spell out i
     // with input 0 as the least-significant bit — so the Gowin word maps straight onto the shared cell.
-    const truth = Array.from({ length: 16 }, (_, entry) => ((cell.init >> entry) & 1) === 1)
     const index = Number.parseInt(cell.bel.slice(3), 10)
+
+    // An arithmetic cell's output is its lookup table XORed with the carry coming in, and the shared cell has no
+    // way to say that — the carry inputs it does have are read only by the iCE40 path's own carry model. Copying
+    // the lookup word alone yields a cell that computes the wrong function, so refuse it instead.
+    if (cell.carry) {
+      unsupported.push({
+        ref: cell.ref,
+        kind: 'carry',
+        reason:
+          'arithmetic mode: output is the lookup table XOR carry-in, which the shared cell cannot express',
+      })
+      continue
+    }
+    if (cell.flipFlop !== null && GOWIN_LATCH_KINDS.has(cell.flipFlop)) {
+      unsupported.push({
+        ref: cell.ref,
+        kind: cell.flipFlop,
+        reason: 'level-sensitive latch: transparent while enabled, not edge-triggered',
+      })
+      continue
+    }
+
+    const truth = Array.from({ length: 16 }, (_, entry) => ((cell.init >> entry) & 1) === 1)
 
     // Resolve every pin FIRST, unmasked. The carry unit reads its operands directly, independently of what the
     // lookup table does with them, so masking must not reach it — the same trap the iCE40 path hit, where a
@@ -325,6 +372,20 @@ export function reconstructGowinNetlist(
       setNoReset: false,
       asyncSetReset: false,
     }
+    // The set/reset and clock-enable signals arrive on the tile's own wires, shared by each PAIR of cells the
+    // same way the clock is. Without them the flags above can never fire: the shared simulator short-circuits a
+    // cell whose `setReset` is absent, so a settable register would sit at zero however the design drove it.
+    // Only report one when the bitstream actually ROUTES something to it. An unrouted set/reset means the
+    // hardware default applies — no reset at all — and inventing a source would hold the register cleared. Same
+    // for clock-enable, where an invented source would stop the register updating entirely.
+    const pair = Math.floor(index / 2)
+    const shared = (name: string): InputSource | null => {
+      const wire = globalWire(cell.row + 1, cell.col + 1, name)
+      if (!drivers.has(wire)) return null
+      return traceInput(wire, drivers, cellByOutput, primaryNets, primaryWires)
+    }
+    const setReset = cell.registered ? shared(`LSR${pair}`) : null
+    const clockEnable = cell.registered ? shared(`CE${pair}`) : null
     // A carry chain runs upward through a tile, so a carry cell takes its carry-in from the cell below it. Cell 0
     // starts the tile's chain and has none — cross-tile cascade is not recovered, and is reported by its absence
     // rather than invented.
@@ -345,6 +406,8 @@ export function reconstructGowinNetlist(
         asyncSetReset: flags.asyncSetReset,
       },
       inputs,
+      ...(setReset === null ? {} : { setReset }),
+      ...(clockEnable === null ? {} : { clockEnable }),
       ...(cell.carry
         ? {
             carryIn: previous === undefined ? null : previous.ref,
@@ -367,7 +430,7 @@ export function reconstructGowinNetlist(
   }
   for (const net of [...primaryWires.keys()]) if (!referenced.has(net)) primaryWires.delete(net)
 
-  return { netlist: { cells: recovered }, cells, drivers, primaryWires }
+  return { netlist: { cells: recovered }, cells, drivers, primaryWires, unsupported }
 }
 
 /**

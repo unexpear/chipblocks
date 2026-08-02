@@ -6,11 +6,17 @@
  * tiles spread across dozens of columns. The pair TOGETHER does identify it, because the name encodes a
  * direction and a span:
  *
- *   `V06S0003` reached through port `S3` in tile R5C2   is the same wire as
- *   `V06S0003` reached through port `N3` in tile R11C2  — six rows away, matching the `06`.
+ *   `V06N0203` reached through port `N3` in tile R8C1 is the same wire as the BARE `V06N0203` in tile R5C1.
  *
- * So a wire is named after the tile at its lower-coordinate end: a `S`/`E` port means this tile IS that end, and
- * a `N`/`W` port means the end is `span` tiles back. Two tiles then arrive at the same name for one wire.
+ * The PORT INDEX is a signed tile offset, and the wire's own span is not part of the arithmetic:
+ *
+ *   `N<i>` → i tiles up      `S<i>` → i tiles down
+ *   `W<i>` → i tiles left    `E<i>` → i tiles right
+ *
+ * so every reference resolves to the tile the wire is ANCHORED at, and a bare mention (offset zero) in that
+ * tile agrees with it. An earlier version of this stepped by the wire's SPAN and only for `N`/`W`, which put
+ * `N3__V06N0203` three tiles past where it lives; the test that was supposed to catch that only checked no wire
+ * claimed more than two tiles, which a wrong rule satisfies just as easily.
  *
  * The CLOCK network works differently and is handled separately — see `resolveNexusWire`. Its wires carry no
  * span and join tiles related by no offset at all, because they are chip-level nets rather than short hops.
@@ -48,14 +54,14 @@ export function nexusGlobalWire(row: number, col: number, reference: string): Ne
   const directional = DIRECTIONAL.exec(wire)
   if (directional === null) return null
 
-  const span = Number.parseInt(directional[2] as string, 10)
   const side = port[1] as string
-  // The wire is named after its lower-coordinate end. Reaching it through a north or west port means this tile
-  // is the FAR end, so step back along the span to find where it starts.
+  const offset = Number.parseInt(port[2] as string, 10)
   let rootRow = row
   let rootCol = col
-  if (side === 'N') rootRow = row - span
-  else if (side === 'W') rootCol = col - span
+  if (side === 'N') rootRow = row - offset
+  else if (side === 'S') rootRow = row + offset
+  else if (side === 'W') rootCol = col - offset
+  else rootCol = col + offset
 
   return { global: `R${rootRow}C${rootCol}_${wire}`, wire, row: rootRow, col: rootCol }
 }

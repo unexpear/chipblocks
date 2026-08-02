@@ -11,15 +11,18 @@
  * conversion encodes a tuple key by joining its parts with a comma and FAILS LOUDLY on any collision rather than
  * silently dropping entries. `fixtures/gowin-gw1n1-chipdb.json` holds the slice this module needs.
  *
- * HONEST SCOPE. This reads the fabric inventory (grid, tile types, tile sizes, bel names, the vendor's own
- * command records), locates any tile's bits in the device bitmap, and decodes LUT TRUTH TABLES from those bits.
+ * SCOPE. This reads the fabric inventory (grid, tile types, tile sizes, bel names, the vendor's own command
+ * records), locates any tile's bits in the device bitmap, and decodes LUT truth tables and flip-flop/latch
+ * modes from those bits.
  *
- * It does NOT yet recover:
- *   - flip-flop modes, which live in the tile-level `shortval`/`logicinfo` attribute tables rather than in the
- *     cell's own flags (a logic tile's `DFF*` bels carry no flags at all — checked, not assumed);
- *   - routing, which needs the `pips` tables;
- *   - carry/ALU, BRAM, DSP, PLL and IO configuration.
- * So a Gowin bitstream does not yet reach the shared netlist/simulator the way an iCE40 or ECP5 one does.
+ * Routing lives in `fpga-apicula-routing.ts`; carry, I/O and block memory in `fpga-apicula-attributes.ts`; and
+ * `fpga-apicula-netlist.ts` assembles all of it into the shared netlist, which a real bitstream is run through
+ * in both the combinational and clocked simulators.
+ *
+ * Genuinely NOT recovered: DSP and PLL configuration.
+ *
+ * (This block previously claimed none of the above existed. It was written before those pieces landed and was
+ * never revised — an audit caught it. A scope note is only worth having if it is re-read when the scope moves.)
  *
  * The decode convention is stated at `decodeGowinLuts` because it is INVERTED and easy to get backwards.
  */
@@ -32,7 +35,8 @@ export type GowinTileType = {
   height: number
   /** the cells in this tile — `LUT0`..`LUT7`, `DFF0`..`DFF5`, `ALU0`..`ALU5`, `IOBA`/`IOBB`, and so on. */
   bels: readonly string[]
-  /** how many routing switches (pips) the tile carries; the pips themselves are not read yet. */
+  /** how many routing switches (pips) the tile carries; the switches themselves are decoded in
+   *  `fpga-apicula-routing.ts` from a separate table. */
   pipCount: number
 }
 
@@ -367,7 +371,7 @@ const LATCH_TYPES: ReadonlyMap<string, string> = new Map([
   ['SET|LSRMUX|INV|ASYNC', 'DLNP'],
 ])
 
-const DFF_TYPES: ReadonlyMap<string, string> = new Map([
+export const DFF_TYPES: ReadonlyMap<string, string> = new Map([
   ['RESET||SIG|', 'DFF'],
   ['RESET||INV|', 'DFFN'],
   ['RESET|LSRMUX|SIG|ASYNC', 'DFFC'],

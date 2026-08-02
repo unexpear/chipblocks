@@ -209,27 +209,37 @@ describe('flip-flops and carry attached to the netlist', () => {
     expect(registered).toHaveLength(4)
   })
 
-  test('the adder recovers a carry chain, and the XNOR design has none', () => {
-    const carry = adderDesign.netlist.cells.filter((c) => c.config.carryEnable)
-    expect(carry.length).toBeGreaterThan(0)
-    expect(xnorDesign.netlist.cells.filter((c) => c.config.carryEnable)).toHaveLength(0)
+  test('the adder’s arithmetic cells are REFUSED, not approximated', () => {
+    // An arithmetic cell outputs its lookup table XORed with the incoming carry. The shared cell has no way to
+    // say that, and an earlier version emitted the lookup table alone — which made the adder cell compute `a`
+    // instead of `a XOR b XOR carry`, in a netlist that looked perfectly ordinary. Refusing is the honest form.
+    expect(adderDesign.unsupported.length).toBeGreaterThan(0)
+    for (const refused of adderDesign.unsupported) expect(refused.kind).toBe('carry')
+    // and none of them slipped through as a plain cell
+    expect(adderDesign.netlist.cells.filter((c) => c.config.carryEnable)).toHaveLength(0)
+    const refusedKeys = new Set(
+      adderDesign.unsupported.map((r) => `${r.ref.x}_${r.ref.y}_${r.ref.cell}`),
+    )
+    for (const cell of adderDesign.netlist.cells)
+      expect(refusedKeys.has(`${cell.ref.x}_${cell.ref.y}_${cell.ref.cell}`)).toBe(false)
   })
 
-  test('carry cells link to the cell below them, and the first one starts the chain', () => {
-    const carry = adderDesign.netlist.cells
-      .filter((c) => c.config.carryEnable)
-      .sort((a, b) => a.ref.cell - b.ref.cell)
-    expect(carry.length).toBeGreaterThan(1)
-    expect(carry[0]?.carryIn ?? null).toBeNull() // starts the tile's chain
-    for (const cell of carry.slice(1)) {
-      expect(cell.carryIn, `cell ${cell.ref.cell}`).toBeDefined()
-      expect((cell.carryIn as { cell: number }).cell).toBe(cell.ref.cell - 1)
-    }
+  test('the design that uses no arithmetic refuses nothing', () => {
+    // The negative half: a decoder that refused everything would pass the test above.
+    expect(xnorDesign.unsupported).toEqual([])
+    expect(xnorDesign.netlist.cells.length).toBeGreaterThan(0)
   })
 
-  test('a carry cell carries its two operands, so arithmetic is not read through the LUT mask', () => {
-    for (const cell of adderDesign.netlist.cells.filter((c) => c.config.carryEnable))
-      expect(cell.carryOperands).toHaveLength(2)
+  test('the refused cells are exactly the ones decoded as arithmetic', () => {
+    // Cross-checks the refusal against the separate carry decoder rather than trusting the netlist layer alone.
+    const decodedCarry = new Set(
+      adderDesign.cells.filter((c) => c.carry).map((c) => `${c.col}_${c.row}_${c.ref.cell}`),
+    )
+    const refused = new Set(
+      adderDesign.unsupported.map((r) => `${r.ref.x}_${r.ref.y}_${r.ref.cell}`),
+    )
+    expect(refused).toEqual(decodedCarry)
+    expect(refused.size).toBe(6)
   })
 
   test('THE PAYOFF — the recovered flip-flop holds the XNOR result across clock cycles', () => {
@@ -309,27 +319,28 @@ describe('unused lookup-table pins are not mistaken for chip inputs', () => {
       }
   })
 
-  test('CARRY operands bypass the mask, as they must', () => {
-    // The trap this avoids, learned the hard way on the iCE40 path: a carry unit reads its operands directly,
-    // independently of what the lookup table does with them. Masking them away made a carry-only cell compute
-    // the wrong sum while looking perfectly reasonable.
+  test('the don’t-care mask still applies to ordinary cells, and no carry leaks through', () => {
+    // The carry-operand bypass this test used to check is gone with the cells it protected — arithmetic cells
+    // are now refused outright. What must still hold is that a masked pin is masked, and that nothing claims to
+    // be a carry cell.
     const attributes = parseGowinAttributeDatabase(
       readFileSync(new URL('../fixtures/gowin-gw1n1-attributes.json', import.meta.url), 'utf8'),
     )
-    const adderDesign = reconstructGowinNetlist(adder, db, pipdb, attributes)
-    const carry = adderDesign.netlist.cells.filter((c) => c.config.carryEnable)
-    expect(carry.length).toBeGreaterThan(0)
-
-    // At least one carry cell must carry an operand that its own truth table ignores - otherwise the mask and
-    // the bypass are indistinguishable and this test proves nothing.
-    let bypassed = 0
-    for (const cell of carry) {
-      const operands = cell.carryOperands as { kind: string }[]
-      expect(operands).toHaveLength(2)
-      for (let pin = 0; pin < 2; pin++)
-        if (cell.inputs[pin]?.kind === 'unused' && operands[pin]?.kind !== 'unused') bypassed++
+    const design = reconstructGowinNetlist(adder, db, pipdb, attributes)
+    for (const cell of design.netlist.cells) {
+      expect(cell.config.carryEnable).toBe(false)
+      expect(cell.carryOperands ?? null).toBeNull()
+      for (let pin = 0; pin < 4; pin++) {
+        let matters = false
+        for (let entry = 0; entry < 16; entry++)
+          if (
+            ((entry >> pin) & 1) === 0 &&
+            cell.config.truth[entry] !== cell.config.truth[entry | (1 << pin)]
+          )
+            matters = true
+        if (!matters) expect(cell.inputs[pin]?.kind).toBe('unused')
+      }
     }
-    expect(bypassed).toBeGreaterThan(0)
   })
 })
 

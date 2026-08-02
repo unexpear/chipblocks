@@ -14,6 +14,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import {
+  DFF_TYPES,
   decodeGowinFlipFlops,
   decodeGowinLuts,
   extractGowinTileBits,
@@ -396,32 +397,20 @@ describe('decodeGowinFlipFlops — pinned against Apicula’s own decoder', () =
     expect(parseGowinAttrValues([[false]], db, centre.ttyp, 'CLS0').size).toBe(0)
   })
 
-  test('all ten flip-flop variants are distinguishable', () => {
-    // The mode table must not collapse: negative-edge (N), sync reset/set (R/S) and async clear/preset (C/P)
-    // are genuinely different hardware, and a key collision would silently merge two of them.
+  test('all ten flip-flop variants are distinguishable — in the REAL table', () => {
+    // This previously asserted against a COPY of the table declared further down this very file, so the
+    // decoder's own table was never touched: an audit mutated `DFF_TYPES` to collapse two variants and all 141
+    // Gowin tests still passed. It now reads the exported table, so a merge fails here.
     const keys = new Set<string>()
     for (const regset of ['RESET', 'SET'])
       for (const lsr of ['', 'LSRMUX'])
         for (const clk of ['SIG', 'INV'])
           for (const sr of ['', 'ASYNC']) keys.add(`${regset}|${lsr}|${clk}|${sr}`)
-    const named = [...keys].filter((k) => DFF_TYPES_PROBE.has(k))
-    expect(new Set(named.map((k) => DFF_TYPES_PROBE.get(k))).size).toBe(10)
+    const named = [...keys].filter((k) => DFF_TYPES.has(k))
+    expect(named).toHaveLength(10)
+    expect(new Set(named.map((k) => DFF_TYPES.get(k))).size).toBe(10)
   })
 })
-
-/** The published variant set, mirrored here so a silent merge in the decoder would fail the test above. */
-const DFF_TYPES_PROBE: ReadonlyMap<string, string> = new Map([
-  ['RESET||SIG|', 'DFF'],
-  ['RESET||INV|', 'DFFN'],
-  ['RESET|LSRMUX|SIG|ASYNC', 'DFFC'],
-  ['RESET|LSRMUX|INV|ASYNC', 'DFFNC'],
-  ['RESET|LSRMUX|SIG|', 'DFFR'],
-  ['RESET|LSRMUX|INV|', 'DFFNR'],
-  ['SET|LSRMUX|SIG|ASYNC', 'DFFP'],
-  ['SET|LSRMUX|INV|ASYNC', 'DFFNP'],
-  ['SET|LSRMUX|SIG|', 'DFFS'],
-  ['SET|LSRMUX|INV|', 'DFFNS'],
-])
 
 /**
  * A GENUINE bitstream, produced by the real vendor-format toolchain: yosys -> nextpnr-himbaechel ->
@@ -489,25 +478,42 @@ describe('a REAL gowin_pack bitstream', () => {
     expect((programmed[0] as { init: number }).init).toBe(0x9999)
   })
 
-  test('the flip-flop the design asked for is present and clocked on the rising edge', () => {
-    const target = (() => {
-      for (let row = 0; row < db.rows; row++)
-        for (let col = 0; col < db.cols; col++) {
-          const tile = gowinTileAt(db, row, col)
-          if (tile === null || !db.lutFlagBits.has(tile.ttyp)) continue
-          const bits = extractGowinTileBits(parsed.frames, db, row, col) as boolean[][]
-          for (const [, init] of decodeGowinLuts(bits, db, tile.ttyp))
-            if (init !== 0xffff) return { bits, ttyp: tile.ttyp }
-        }
-      return null
-    })()
+  test('the flip-flop paired with the programmed LUT is a plain rising-edge DFF', () => {
+    // This used to assert only that SOME cell in the tile matched /^DFF(?!N)/ — which ERASED silicon satisfies,
+    // because a blank logic tile decodes to six DFFS. It now identifies the cell paired with the one programmed
+    // lookup table and pins its exact kind, cross-checked against the vendor reference decode.
+    let target: { row: number; col: number; ttyp: number; index: number } | null = null
+    for (let row = 0; row < db.rows && target === null; row++)
+      for (let col = 0; col < db.cols; col++) {
+        const tile = gowinTileAt(db, row, col)
+        if (tile === null || !db.lutFlagBits.has(tile.ttyp)) continue
+        const bits = extractGowinTileBits(parsed.frames, db, row, col) as boolean[][]
+        for (const [name, init] of decodeGowinLuts(bits, db, tile.ttyp))
+          if (init !== 0xffff) {
+            target = { row, col, ttyp: tile.ttyp, index: Number.parseInt(name.slice(3), 10) }
+            break
+          }
+        if (target !== null) break
+      }
     expect(target).not.toBeNull()
-    const { bits, ttyp } = target as { bits: boolean[][]; ttyp: number }
-    const flops = decodeGowinFlipFlops(bits, db, ttyp)
-    // The source says `always @(posedge clk)`, so whatever cell holds q must be a RISING-edge flip-flop:
-    // every decoded type here is a non-inverted-clock variant (no 'N' after DFF).
-    const kinds = [...flops.values()].filter((k) => k !== null)
-    expect(kinds.length).toBeGreaterThan(0)
-    for (const kind of kinds) expect(kind).toMatch(/^DFF(?!N)/)
+    const { row, col, ttyp, index } = target as {
+      row: number
+      col: number
+      ttyp: number
+      index: number
+    }
+    const bits = extractGowinTileBits(parsed.frames, db, row, col) as boolean[][]
+    const kind = decodeGowinFlipFlops(bits, db, ttyp).get(`DFF${index}`)
+    expect(kind).toBe('DFF') // exactly the plain rising-edge variant, not merely "something DFF-ish"
+
+    // and the vendor's own decode of this bitstream agrees about that cell
+    const vendor: { row: number; col: number; bels: Record<string, string[]> }[] = JSON.parse(
+      readFileSync(
+        new URL('../fixtures/gowin-gw1n1-decode-reference.json', import.meta.url),
+        'utf8',
+      ),
+    )
+    const reference = vendor.find((t) => t.row === row && t.col === col)
+    expect(reference?.bels[`DFF${index}`]).toEqual(['DFF'])
   })
 })

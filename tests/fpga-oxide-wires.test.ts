@@ -33,14 +33,14 @@ describe('nexusGlobalWire — two tiles, one wire, one name', () => {
     // Straight from the design: R5C2 reaches it going south, R11C2 coming from the north, six rows apart.
     const south = nexusGlobalWire(5, 2, 'S3__V06S0003')
     const north = nexusGlobalWire(11, 2, 'N3__V06S0003')
-    expect(south?.global).toBe('R5C2_V06S0003')
+    expect(south?.global).toBe('R8C2_V06S0003')
     expect(north?.global).toBe(south?.global)
   })
 
   test('the two ends of a horizontal wire do too', () => {
     const east = nexusGlobalWire(1, 10, 'E3__H06W0103')
     const west = nexusGlobalWire(1, 16, 'W3__H06W0103')
-    expect(east?.global).toBe('R1C10_H06W0103')
+    expect(east?.global).toBe('R1C13_H06W0103')
     expect(west?.global).toBe(east?.global)
   })
 
@@ -49,8 +49,8 @@ describe('nexusGlobalWire — two tiles, one wire, one name', () => {
     // ignored position they would merge into one net and join logic that is not connected.
     const first = nexusGlobalWire(1, 16, 'W3__H06W0103')?.global
     const second = nexusGlobalWire(1, 16, 'E3__H06W0103')?.global
-    expect(first).toBe('R1C10_H06W0103')
-    expect(second).toBe('R1C16_H06W0103')
+    expect(first).toBe('R1C13_H06W0103')
+    expect(second).toBe('R1C19_H06W0103')
     expect(first).not.toBe(second)
   })
 
@@ -73,6 +73,32 @@ describe('nexusGlobalWire — two tiles, one wire, one name', () => {
     expect(paired.length).toBeGreaterThan(0) // wires really do span tiles here
     // no resolved wire may claim more than two distinct tiles - a wire has two ends
     for (const [name, tiles] of groups) expect(tiles.size, name).toBeLessThanOrEqual(2)
+  })
+
+  test('a ported reference agrees with a BARE mention of the same wire', () => {
+    // THE ORACLE THIS SUITE PREVIOUSLY LACKED. The old whole-graph test only asserted that no resolved wire
+    // claimed more than two tiles - a shape, which a WRONG rule satisfies just as well, and one did: an earlier
+    // version stepped by the wire's span instead of the port index and passed everything here.
+    //
+    // A wire mentioned WITHOUT a port is anchored in the tile that mentions it. So for every wire named both
+    // ways, the ported form must resolve to that same tile. This pins a value, not a shape.
+    const bare = new Map<string, string>()
+    for (const tile of design.tiles.values())
+      for (const pip of tile.pips)
+        for (const wire of [pip.destination, pip.source])
+          if (!wire.includes('__') && /^[HV]\d{2}[NSEW]\d+$/.test(wire))
+            bare.set(wire, `R${tile.row}C${tile.col}_${wire}`)
+
+    let checked = 0
+    for (const { row, col, reference } of references()) {
+      const resolved = nexusGlobalWire(row, col, reference)
+      if (resolved === null) continue
+      const anchor = bare.get(resolved.wire)
+      if (anchor === undefined) continue
+      expect(resolved.global, `${reference} @R${row}C${col}`).toBe(anchor)
+      checked++
+    }
+    expect(checked).toBeGreaterThan(0) // the design really does name wires both ways
   })
 
   test('the reuse that refuted the naive rule is now separated', () => {
@@ -132,7 +158,7 @@ describe('resolveNexusWire — one name per wire, whatever kind', () => {
   test('the three kinds are told apart', () => {
     expect(resolveNexusWire(5, 2, 'S3__V06S0003')).toEqual({
       kind: 'directional',
-      global: 'R5C2_V06S0003',
+      global: 'R8C2_V06S0003',
     })
     expect(resolveNexusWire(5, 14, 'SPINE__VPSX0400')).toEqual({
       kind: 'clock',
