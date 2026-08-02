@@ -21,7 +21,7 @@ import type { BinBanks } from './fpga-icebox-bin.ts'
 import type { PlacedCell } from './fpga-icebox-bitstream.ts'
 import { cramToProgrammedBits, tileType } from './fpga-icebox-cram-index.ts'
 import type { LogicTileBits } from './fpga-icebox-logic.ts'
-import { decodeUsedCells, pipsOnInBitstream } from './fpga-icebox-parse.ts'
+import { decodeTileCarry, decodeUsedCells, pipsOnInBitstream } from './fpga-icebox-parse.ts'
 import { type RecoveredNetlist, reconstructNetlist } from './fpga-icebox-run.ts'
 
 /**
@@ -65,10 +65,16 @@ export function recoverNetlist(
   cram: BinBanks,
 ): RecoveredNetlist {
   const bits = cramToProgrammedBits(deviceName, cram)
-  const cells = decodeUsedCells(
-    bits.filter((bit) => tileType(deviceName, bit.x, bit.y) === 'logic'),
-    layout,
-  )
+  // Only logic tiles: a DSP or ipcon tile is wider, so its bits could land on the CarryInSet coordinate and
+  // invent a carry-in on a tile that has no carry chain.
+  const logicBits = bits.filter((bit) => tileType(deviceName, bit.x, bit.y) === 'logic')
+  const cells = decodeUsedCells(logicBits, layout)
   const onPips = pipsOnInBitstream(bits, device.pips)
-  return reconstructNetlist({ cells, onPips }, device)
+  // The tile's CarryInSet bit is what makes a chain start at one rather than zero — the difference between an
+  // adder and a subtractor or an incrementer. `reconstructNetlist` reads it only from `tiles`, and this path
+  // used to omit that field entirely, so `carryInConst` was always false however the bitstream was programmed.
+  // A real 4-bit `a - b` decoded with 128 of its 256 outputs wrong; adders were unaffected, which is why
+  // nothing noticed. The decoder for the bit already existed and worked — only hand-built tests reached it.
+  const tiles = decodeTileCarry(logicBits, layout)
+  return reconstructNetlist({ cells, onPips, tiles }, device)
 }

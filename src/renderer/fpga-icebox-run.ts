@@ -167,7 +167,9 @@ export function reconstructNetlist(parsed: ParsedDesign, device: IceboxDevice): 
     const clockEnable: InputSource | null =
       c.config.dffEnable && cenNet !== undefined && driverOf.has(cenNet) ? sourceOf(cenNet) : null
     // The carry-in of a carry-enabled cell chains structurally from the previous cell in the tile (cell-1), when
-    // that cell is present and also carry-enabled; otherwise 0 (cell 0 of a chain — the CarryInSet bit is undecoded).
+    // that cell is present and also carry-enabled; otherwise cell 0 of a chain, whose constant carry-in comes
+    // from the tile's CarryInSet bit via `parsed.tiles`. (That comment used to say the bit was undecoded, which
+    // made the real-file path's failure to pass `tiles` read as intentional. It is decoded and it is passed.)
     const carryIn: CellRef | null =
       c.config.carryEnable && c.cell > 0 && carryCells.has(`${c.x}_${c.y}_${c.cell - 1}`)
         ? { x: c.x, y: c.y, cell: c.cell - 1 }

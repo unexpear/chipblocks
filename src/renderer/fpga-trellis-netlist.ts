@@ -34,9 +34,16 @@ import {
   globaliseEcp5Wire,
 } from './fpga-trellis-tiles.ts'
 
-/** `R10C23` → `{ row: 10, col: 23 }`, or null for a tile whose name is not a grid position. */
+/**
+ * `R10C23` → `{ row: 10, col: 23 }`, or null for a tile whose name is not a grid position.
+ *
+ * The prefix is OPTIONAL and that matters: `CIB_R1C10`, `MIB_R2C3` and `TAP_R5C7` name the same grid position
+ * as a bare `R1C10`. Matching only the bare form dropped every arc outside a logic tile — all 3,320 of the
+ * connection-block arcs, which is 100% of that routing. Two lookup-table pins fed by one wire then resolved to
+ * DIFFERENT nets, so the netlist described states the device cannot produce.
+ */
 function tilePosition(name: string): { row: number; col: number } | null {
-  const match = /^R(\d+)C(\d+)$/.exec(name)
+  const match = /^(?:[A-Z0-9_]*_)?R(\d+)C(\d+)$/.exec(name)
   return match === null ? null : { row: Number(match[1]), col: Number(match[2]) }
 }
 

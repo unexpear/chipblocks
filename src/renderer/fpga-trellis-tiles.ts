@@ -408,7 +408,15 @@ export function decodeEcp5Routing(
     if (db === null) continue
     for (const mux of db.muxes.values()) {
       const source = readTileMux(frames, tile, mux)
-      if (source !== null) arcs.push({ tile: tile.name, sink: mux.sink, source, fixed: false })
+      if (source === null) continue
+      // A winner with NO bits is not a connection. Trellis records bit-less arcs (`*BOUNCE`, `*_SLICE`) to mean
+      // "nothing is driving this wire", and `readTileMux` picks one whenever nothing else matches — so without
+      // this a BLANK device decoded to 51,896 "programmed" arcs, against 109 in a real design. They reached the
+      // netlist as phantom drivers. Upstream filters here, in the caller (`tile_cram_to_config`), not inside the
+      // mux reader — and applies the rule to muxes ONLY, so do not copy it onto `readTileEnum`, where a
+      // zero-bit option is a legitimate setting.
+      if ((mux.arcs.get(source) ?? []).length === 0) continue
+      arcs.push({ tile: tile.name, sink: mux.sink, source, fixed: false })
     }
     if (options.includeFixed)
       for (const conn of db.fixedConns)
