@@ -309,16 +309,18 @@ export function reconstructGowinNetlist(
         // mode alone is NOT evidence the register is used. A CLOCK being routed to the cell's pair is: an
         // unclocked flip-flop cannot hold anything. Pairs share a clock, matching the CLS tables.
         const clocked = routing.pips.has(`CLK${Math.floor(index / 2)}`)
-        cells.push({
-          ref,
-          row,
-          col,
-          bel,
-          init,
-          registered: clocked,
-          flipFlop: clocked ? (flipFlops.get(`DFF${index}`) ?? null) : null,
-          carry: carry.includes(index),
-        })
+        const flipFlop = clocked ? (flipFlops.get(`DFF${index}`) ?? null) : null
+        const isCarry = carry.includes(index)
+        cells.push({ ref, row, col, bel, init, registered: clocked, flipFlop, carry: isCarry })
+
+        // A cell this path will REFUSE must not be registered as a driver. It used to be, and the consequence
+        // was worse than the wrong answer refusing was meant to prevent: consumers kept `{kind:'cell'}` pointing
+        // at a cell that never reached the netlist, the simulator resolves a missing driver to false, and the
+        // recovered 4-bit adder became a constant-zero design with no inputs at all. Leaving the output wire
+        // unclaimed makes `traceInput` dead-end there and mint a NAMED primary instead, which is both honest and
+        // drivable.
+        if (isCarry || (flipFlop !== null && GOWIN_LATCH_KINDS.has(flipFlop))) continue
+
         cellByOutput.set(globalWire(row + 1, col + 1, `F${index}`), ref)
         // A registered cell also presents its stored value on `Q<n>`. Without this the trace dead-ends there
         // and the consumer becomes a phantom chip input reading zero — six of them in the block-memory design.
@@ -432,6 +434,10 @@ export function reconstructGowinNetlist(
     for (const input of cell.inputs) if (input.kind === 'primary') referenced.add(input.net)
     for (const operand of cell.carryOperands ?? [])
       if (operand.kind === 'primary') referenced.add(operand.net)
+    // Set/reset and clock-enable are inputs to the design too. Omitting them here deleted the very net a
+    // register's set arrives on, so no caller could assert it and the pin report lost that package pin.
+    for (const control of [cell.setReset, cell.clockEnable])
+      if (control != null && control.kind === 'primary') referenced.add(control.net)
   }
   for (const net of [...primaryWires.keys()]) if (!referenced.has(net)) primaryWires.delete(net)
 

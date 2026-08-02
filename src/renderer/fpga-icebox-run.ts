@@ -31,6 +31,18 @@ import { buildWireIndex } from './fpga-icebox-synth.ts'
 export type CellRef = { x: number; y: number; cell: number }
 const cellKey = (ref: CellRef): string => `${ref.x}_${ref.y}_${ref.cell}`
 
+/**
+ * The value of a pin that is genuinely unused — and a COMPILE-TIME check that every other kind was handled.
+ *
+ * Three separate readers enumerate `InputSource` by hand, and all three used to end in a bare `return false`.
+ * When a `const` kind was added, one reader got it and two did not, so a supply-tied pin read true
+ * combinationally and false when clocked — the same netlist, two answers. The `never` binding makes the next
+ * omission a build error instead of a wrong simulation.
+ */
+function unusedPin(_source: Extract<InputSource, { kind: 'unused' }>): boolean {
+  return false
+}
+
 /** What drives one input pin of a recovered cell. `net` is the SOURCE net (the driver cell's output net for a
  *  cell source, or the external wire the trace dead-ended at for a primary) — so a signal that fans out to
  *  several pins carries the same `net` at every consumer. */
@@ -229,7 +241,7 @@ export function simulateCombinational(
       return driver === undefined ? false : coutOf(driver, stack)
     }
     if (source.kind === 'primary') return primary.get(source.net) ?? false
-    return false // unused
+    return unusedPin(source)
   }
 
   // A carry-enabled cell's carry-out = majority(in1, in2, carry-in); carry-in chains from the previous cell.
@@ -458,7 +470,8 @@ function readSource(
   if (source.kind === 'cell') return outputs.get(cellKey(source.driver)) ?? false
   if (source.kind === 'carry') return carryOut.get(cellKey(source.driver)) ?? false
   if (source.kind === 'primary') return inputs.get(source.net) ?? false
-  return false // unused
+  if (source.kind === 'const') return source.value
+  return unusedPin(source)
 }
 
 /** Read one input pin's value during combinational evaluation (recursing into a driver cell's LUT or carry out). */
@@ -479,5 +492,6 @@ function readViaEval(
     return driver === undefined ? false : coutOf(driver, stack)
   }
   if (source.kind === 'primary') return inputs.get(source.net) ?? false
-  return false // unused
+  if (source.kind === 'const') return source.value
+  return unusedPin(source)
 }
