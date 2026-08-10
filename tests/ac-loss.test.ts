@@ -833,6 +833,39 @@ describe('a part the engine cannot solve is never silently absent', () => {
     expect(dropped[0]?.reason).toContain('exceeds 1')
   })
 
+  test('the refusal threshold is exactly 1 — k just above it is refused, not solved', () => {
+    // k = 1 is ACCEPTED (an ideal transformer is what a user types) and everything above it is refused,
+    // so 1 is the boundary and it is the boundary that has to be pinned. Testing only a far-away k (2)
+    // leaves the whole band just above 1 unguarded: a k of 1.05 couples more energy than the windings
+    // store, and solving it would return a confident number for a part that cannot exist.
+    const at = (k: number) => {
+      const w = makeWorld()
+      ensureNet(w, 'gnd', true)
+      addPart(
+        w,
+        'tx',
+        'transformer',
+        {
+          primary_inductance: scalar(1e-3, 'henry'),
+          secondary_inductance: scalar(1e-3, 'henry'),
+          coupling_coefficient: scalar(k, 'dimensionless'),
+        },
+        [
+          { net: 'in', terminal: 'primary_a' },
+          { net: 'gnd', terminal: 'primary_b' },
+          { net: 'sa', terminal: 'secondary_a' },
+          { net: 'gnd', terminal: 'secondary_b' },
+        ],
+      )
+      return partsDroppedFromAcSolve(w)
+    }
+    expect(at(1)).toEqual([])
+    for (const k of [1.0001, 1.05, 1.2, 1.5]) {
+      expect(at(k)).toHaveLength(1)
+      expect(at(k)[0]?.reason).toContain('exceeds 1')
+    }
+  })
+
   test('a coupling of 0 or below is refused, not quietly solved as two separate coils', () => {
     // With k = 0 the mutual term vanishes and the matrix would solve happily — as two uncoupled inductors
     // that are not a transformer at all. The transient solver refuses the same range, so both engines

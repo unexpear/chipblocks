@@ -109,9 +109,11 @@ const DEFAULTS: Record<string, Parameters> = {
     voltage_rating: scalar(16, 'volt'),
     // A real electrolytic is NOT a perfect capacitor: it has series loss, and the way that loss is
     // specified for this family is the loss angle tan δ, not an ESR. Nichicon UVR (CAT.8100M, the
-    // standard miniature electrolytic series), Specifications table, "Tangent of loss angle (tan δ)":
-    // 16 V rated → tan δ 0.20 MAX, measured at 120 Hz, 20 ˚C (the same 0.20 appears on every 16 V line
-    // of the ratings table; the "+0.02 per 1000 µF" adder starts above 1000 µF, so 100 µF takes none).
+    // standard miniature electrolytic series), Specifications table, "Tangent of loss angle (tan δ)",
+    // which lists tan δ (max.) per rated voltage — 6.3 V 0.28, 10 V 0.24, 16 V 0.20, 25 V 0.16,
+    // 35 V 0.14, 50 V 0.12, 63 V 0.10, 100 V 0.08 — at "Measurement frequency : 120Hz at 20 ˚C", with
+    // "For capacitance of more than 1000 µF, add 0.02 for every increase of 1000 µF". So a 16 V part
+    // takes 0.20, and at 100 µF the >1000 µF adder does not apply.
     // CONDITIONS MATTER HERE: that is a 120 Hz figure and a MAXIMUM. The AC engine holds the loss ANGLE
     // constant (ESR = tanδ/ωC), so it is right at 120 Hz — ESR = 0.20/(2π·120·100µF) = 2.65 Ω — and
     // OPTIMISTIC far above it, where a real electrolytic's ESR flattens out instead of falling as 1/f.
@@ -1310,6 +1312,15 @@ const PROVENANCE: Record<string, Record<string, string>> = {
     max_operating_temperature: '2N3906 T_J max 150 °C (onsemi datasheet)',
   },
 }
+
+/**
+ * Every definition that ships a default parameter set. Exported so a property can be asserted over ALL of
+ * them at once rather than over a hand-written list of the ones somebody remembered: a part added here with a
+ * resistance, an inductance or a capacitance joins the sweep the moment it is written, which is the only way
+ * a coverage rule survives the next part. (A hand-picked list that happens to exclude the failing case is how
+ * a defect lives through three audits.)
+ */
+export const DEFINITIONS_WITH_DEFAULTS: string[] = Object.keys(DEFAULTS)
 
 /** The cited source for a default parameter value, if known. */
 export function defaultProvenance(definition: string, key: string): string | undefined {

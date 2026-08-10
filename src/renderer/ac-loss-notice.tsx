@@ -2,6 +2,7 @@ import {
   type AcLossSlot,
   partsDroppedFromAcSolve,
   partsSolvedAsPerfectReactance,
+  partsWithAcValueIgnored,
 } from '../ac-analysis.ts'
 import type { World } from '../cross-fk-validator.ts'
 import { defaultParameters } from './part-defaults.ts'
@@ -19,6 +20,13 @@ import { THEME } from './theme.ts'
  *
  * It reports per LOSS, not per part: a transformer that declares its core loss still has two windings being
  * solved as zero-resistance copper, and it is named for those.
+ *
+ * THREE THINGS CAN GO UNSAID, and all three are said here. A loss can be undeclared (solved as perfect); a
+ * declared value can be one the stamp does not read (`partsWithAcValueIgnored` — a switch's contact
+ * resistance, a source's internal resistance); and a whole part can be missing from the matrix
+ * (`partsDroppedFromAcSolve` — every rotating machine, every vacuum tube). The third is the worst of them and
+ * was the last to be covered: a motor declaring a complete per-phase model read as a 1 GΩ open with this
+ * notice showing nothing at all.
  *
  * IT ALSO SEPARATES A ZERO SOMEONE CHOSE FROM A ZERO THAT SHIPPED. An instance carries no record of who set a
  * value, so the only evidence of intent available is whether the value DIFFERS from the part's shipped default:
@@ -94,6 +102,13 @@ export function acLossNoticeText(world: World): string | null {
     sentences.push(
       `${listOf(shippedZero)} ${shippedZero.length > 1 ? 'declare' : 'declares'} 0 there, which is the value the part SHIPPED with rather than a measured one — so ${shippedZero.length > 1 ? 'they are' : 'it is'} solved lossless by default, not by choice.`,
     )
+  }
+  for (const part of partsWithAcValueIgnored(world)) {
+    for (const value of part.values) {
+      sentences.push(
+        `${part.id} declares ${value.parameter}, and the AC solve does not read it — ${value.reason}. Editing that number will not move these curves.`,
+      )
+    }
   }
   for (const part of dropped) {
     sentences.push(

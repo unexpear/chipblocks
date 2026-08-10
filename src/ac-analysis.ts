@@ -1,8 +1,14 @@
 import type { Instance, World } from './cross-fk-validator.ts'
 import { solveDCRobust } from './dc-robust.ts'
-import { fuseIsIntact, relayCoilEnergized, switchIsClosed } from './dc-solver.ts'
+import {
+  fuseIsIntact,
+  potentiometerSegments,
+  relayCoilEnergized,
+  switchIsClosed,
+} from './dc-solver.ts'
 import { coilInductanceFromInstance } from './electromagnet-model.ts'
 import { readEnumParam, readScalarParam } from './instance-params.ts'
+import { ldrResistance } from './light.ts'
 import { mathInstance as math } from './mathjs-instance.ts'
 import { dbFromAmplitudeRatio, returnLossDbFromGamma, vswrFromGamma } from './rf-math.ts'
 import {
@@ -55,14 +61,33 @@ import { propagationDelayS } from './transmission-line-model.ts'
  * copper is still named for the copper — so the resulting too-good numbers (an infinite return loss, a
  * bottomless VSWR dip) are not read as physical.
  *
- * WHICH ENGINES READ WHICH LOSS (they do not all read the same set — do not assume they do):
- *   winding_resistance (coil)        DC ✓   transient ✓   AC ✓
- *   transformer winding + core R     DC ✓   transient ✓   AC ✓
- *   transmission-line R / G          DC ✗   transient ✗   AC ✓
- *   capacitor esr / dissipation_factor   DC ✗   transient ✗   AC ✓  ← AC ONLY
+ * WHICH ENGINES READ WHICH LOSS (they do not all read the same set — do not assume they do). Every row was
+ * checked PER PARAMETER, and a row that names several parameters was split until each row is true of all of
+ * them; the earlier one-line "transformer winding + core R — DC ✓" was true of the windings and false of the
+ * iron, which is exactly the kind of averaged row that makes a table lie.
+ *   winding_resistance (coil / electromagnet)        DC ✓   transient ✓   AC ✓
+ *   transformer primary_resistance                   DC ✓   transient ✓   AC ✓
+ *   transformer secondary_resistance                 DC ✓   transient ✓   AC ✓
+ *   transformer core_loss_resistance                 DC ✗   transient ✓   AC ✓  ← NOT DC
+ *   transmission-line series_resistance / shunt_conductance / loss_tangent
+ *                                                    DC ✗   transient ✗   AC ✓  ← AC ONLY
+ *   capacitor esr / dissipation_factor               DC ✗   transient ✗   AC ✓  ← AC ONLY
+ *   power_source internal_resistance                 DC ✓   transient ✓   AC ✗  ← NOT AC
+ *   fuse element_resistance                          DC ✓   transient ✓   AC ✗  ← NOT AC
+ *   relay contact_resistance                         DC ✓   transient ✓   AC ✗  ← NOT AC
+ *   scr gate_cathode_resistance                      DC ✓   transient ✓   AC ✗  ← NOT AC
+ *   switch contact_resistance_closed                 DC ✗   transient ✗   AC ✗  ← NO ENGINE
+ *   MOSFET gate_capacitance                          DC ✗   transient ✗   AC ✗  ← NO ENGINE
  * So a capacitor declaring an ESR is lossy on the Bode / reflection / S-parameter plots and still LOSSLESS in
  * the time domain: its transient ripple and its scope trace show no ESR bump. That is a real gap, not a
- * rounding difference, and it is why the shipped electrolytic's cited tan δ moves the AC curves alone.
+ * rounding difference, and it is why the shipped electrolytic's cited tan δ moves the AC curves alone. The
+ * four "NOT AC" rows are the mirror gap, and every one of them is named on screen by
+ * `partsWithAcValueIgnored`; the two "NO ENGINE" rows are declared values no solver reads at all, and the AC
+ * panels name them too rather than let a shipped 0.02 Ω look as if it were in the answer somewhere.
+ *
+ * A "✓" here means the parameter CHANGES THE ANSWER, measured, not that its name appears in the file:
+ * `secondary_resistance` is read through a `${winding}_resistance` template, so grepping the literal name
+ * finds nothing while the DC solver plainly divides by it.
  */
 
 export type Complex = { re: number; im: number }
@@ -299,13 +324,71 @@ function coupledSpec(inst: Instance): { spec: CoupledSpec } | { dropped: string 
 export type DroppedAcPart = { id: string; definition: string; reason: string }
 
 /**
+ * Definitions this engine has NO small-signal model for, and why. A part of one of these kinds is not
+ * approximated, not idealised — it is simply not in the matrix, so it behaves as an OPEN and every value it
+ * declares is absent from the answer.
+ *
+ * Being on this list is a promise to SAY SO, never a licence to stay quiet. Each one earns its place the same
+ * way: a linear AC model for it would need either a value nothing in the catalog cites or a coupling to a
+ * mechanical state (shaft speed, slip) this engine does not carry, and inventing either would be a fabricated
+ * number wearing a plot's authority. The honest report is "absent, and here is the missing piece".
+ *
+ * The machines are the reason this list exists: `dc_motor` declares a 1 mH / 2 Ω armature and
+ * `induction_motor` declares a COMPLETE per-phase equivalent circuit, and both used to read Zin = 1 GΩ (the
+ * gmin floor — an open) with the on-screen notice saying nothing at all.
+ */
+const AC_UNSOLVED_DEFINITIONS: Record<string, string> = {
+  dc_motor:
+    'the AC engine has no rotating-machine model — its armature resistance and inductance are in the DC and transient engines, but the speed-dependent back-EMF that goes with them has no small-signal form here',
+  generator:
+    'the AC engine has no rotating-machine model — its armature resistance is read by the DC and transient engines only',
+  alternator:
+    'the AC engine has no rotating-machine model — its winding resistance is read by the DC and transient engines only',
+  alternator_three_phase:
+    'the AC engine has no rotating-machine model — its per-phase winding resistance is read by the DC and transient engines only',
+  induction_motor:
+    'the AC engine has no rotating-machine model — the per-phase equivalent circuit it declares (stator, rotor and magnetising branches) depends on the slip, which is a mechanical state this engine does not solve for',
+  induction_motor_three_phase:
+    'the AC engine has no rotating-machine model — the per-phase equivalent circuit it declares depends on the slip, which is a mechanical state this engine does not solve for',
+  induction_motor_single_phase:
+    'the AC engine has no rotating-machine model — its main and auxiliary winding branches depend on the slip, which is a mechanical state this engine does not solve for',
+  induction_motor_shaded_pole:
+    'the AC engine has no rotating-machine model — its main and shading-coil branches depend on the slip, which is a mechanical state this engine does not solve for',
+  photodiode:
+    'the AC engine has no photodiode small-signal model — the shunt resistance it declares is only one part of it, and stamping that alone would look like a whole device',
+  phototransistor:
+    'the AC engine has no phototransistor small-signal model — the shunt resistance it declares is only one part of it, and stamping that alone would look like a whole device',
+  vacuum_diode: 'the AC engine does not linearise vacuum-tube plate characteristics',
+  triode: 'the AC engine does not linearise vacuum-tube plate characteristics',
+  tetrode: 'the AC engine does not linearise vacuum-tube plate characteristics',
+  pentode: 'the AC engine does not linearise vacuum-tube plate characteristics',
+  crt: 'the AC engine does not model the electron gun or its deflection plates',
+  neon_lamp:
+    'the AC engine does not linearise a gas discharge — its negative-resistance arc has no small-signal form here',
+  arc_lamp:
+    'the AC engine does not linearise a gas discharge — its negative-resistance arc has no small-signal form here',
+}
+
+/**
  * Every part the AC solve leaves OUT of the circuit, with the reason. A dropped part is not an approximation —
  * it is simply absent, so its impedance and every loss it declares vanish from the answer. The panels say so
  * rather than letting a plausible-looking number stand for a circuit missing one of its parts.
+ *
+ * Two ways a part ends up absent, and BOTH are reported: a kind this engine has no model for at all
+ * (AC_UNSOLVED_DEFINITIONS), and a kind it does model but this particular instance cannot be built into
+ * (a transformer with an unwired winding, an impossible coupling coefficient). Only the second used to be
+ * reported, which let every rotating machine in the catalog vanish from the solve in silence.
  */
 export function partsDroppedFromAcSolve(world: World): DroppedAcPart[] {
   const dropped: DroppedAcPart[] = []
   for (const inst of world.instances.values()) {
+    const unsolved = Object.hasOwn(AC_UNSOLVED_DEFINITIONS, inst.definition)
+      ? AC_UNSOLVED_DEFINITIONS[inst.definition]
+      : undefined
+    if (unsolved !== undefined) {
+      dropped.push({ id: inst.id, definition: inst.definition, reason: unsolved })
+      continue
+    }
     const built = coupledSpec(inst)
     if (built !== null && 'dropped' in built) {
       dropped.push({ id: inst.id, definition: inst.definition, reason: built.dropped })
@@ -500,6 +583,185 @@ export function acLossParameters(definition: string): string[] {
   )
 }
 
+/**
+ * Values a part declares that this engine STAMPS THE PART WITHOUT. Distinct from a perfect reactance in the
+ * one way that matters to a reader: there the part said nothing (or said zero) and got the ideal element it
+ * asked for, whereas here the part gave a real, non-zero number and the solve went ahead without it. The
+ * curves are not "too good because nothing was declared" — they are too good because something WAS declared
+ * and dropped on the floor, and no amount of editing the value changes the answer, so a user watching the
+ * plot not move deserves to be told why rather than left to conclude the value does not matter.
+ *
+ * Every entry was measured, not read off the source: the part was put in a port, the value was given a size
+ * that would be impossible to miss, and Zin did not move.
+ */
+const AC_IGNORED_VALUES: Record<string, { parameter: string; reason: string }[]> = {
+  power_source: [
+    {
+      parameter: 'internal_resistance',
+      reason: 'every source is driven as ideal here, the DC and transient engines read it',
+    },
+  ],
+  switch_spst_toggle: [
+    {
+      parameter: 'contact_resistance_closed',
+      reason: 'a closed switch is stamped as a 0 V short, and no engine reads this value',
+    },
+  ],
+  switch_spst_momentary: [
+    {
+      parameter: 'contact_resistance_closed',
+      reason: 'a closed switch is stamped as a 0 V short, and no engine reads this value',
+    },
+  ],
+  switch_spdt: [
+    {
+      parameter: 'contact_resistance_closed',
+      reason: 'the selected throw is stamped as a 0 V short, and no engine reads this value',
+    },
+  ],
+  fuse: [
+    {
+      parameter: 'element_resistance',
+      reason: 'an intact fuse is stamped as a 0 V short, the DC and transient engines read it',
+    },
+  ],
+  relay: [
+    {
+      parameter: 'contact_resistance',
+      reason: 'the live contact is stamped as a 0 V short, the DC and transient engines read it',
+    },
+  ],
+  scr: [
+    {
+      parameter: 'gate_cathode_resistance',
+      reason:
+        'only the anode-cathode junction is linearised here, the DC and transient engines read it',
+    },
+  ],
+  transistor_mosfet_nmos: [
+    {
+      parameter: 'gate_capacitance',
+      reason: 'the small-signal MOSFET has an ideal insulated gate, and no engine reads this value',
+    },
+  ],
+  transistor_mosfet_pmos: [
+    {
+      parameter: 'gate_capacitance',
+      reason: 'the small-signal MOSFET has an ideal insulated gate, and no engine reads this value',
+    },
+  ],
+}
+
+export type IgnoredAcValuePart = {
+  id: string
+  definition: string
+  /** The declared, above-zero values this solve is running without, and why each one is not read. */
+  values: { parameter: string; reason: string }[]
+}
+
+/**
+ * Every part carrying a real value the AC solve does not read. A value the part declares as 0 (or not at all)
+ * is NOT listed: nothing is being discarded there, the part is simply the ideal element it says it is, which
+ * is what `partsSolvedAsPerfectReactance` covers.
+ */
+export function partsWithAcValueIgnored(world: World): IgnoredAcValuePart[] {
+  const parts: IgnoredAcValuePart[] = []
+  for (const inst of world.instances.values()) {
+    if (!Object.hasOwn(AC_IGNORED_VALUES, inst.definition)) continue
+    const values = (AC_IGNORED_VALUES[inst.definition] ?? []).filter(
+      (entry) => (readScalarParam(inst, entry.parameter) ?? 0) > 0,
+    )
+    if (values.length > 0) parts.push({ id: inst.id, definition: inst.definition, values })
+  }
+  return parts
+}
+
+/**
+ * Parameter names that name an ELECTRICAL impedance (or the coupling between two) this engine could use. A
+ * deliberately loose substring match, because its job is to catch a parameter nobody has classified yet: a
+ * part added tomorrow with a `rotor_reactance` or a `gate_capacitance` trips it without anyone remembering to
+ * add it anywhere, and the coverage test then fails until it is placed in one of the states below. A tight
+ * allow-list would have caught only the parts someone thought of.
+ */
+const AC_RELEVANT_PARAMETER =
+  /resistance|reactance|inductance|capacitance|impedance|conductance|^esr$|dissipation_factor|loss_tangent|coupling_coefficient|transconductance/
+
+/** Parameters whose NAME matches the pattern above but which are not an impedance in the circuit at all. */
+const NOT_A_CIRCUIT_IMPEDANCE: Record<string, string> = {
+  thermal_resistance_junction_ambient:
+    'a THERMAL resistance in K/W — the electro-thermal loop reads it, no electrical solve does',
+  reference_impedance:
+    'the Z0 a reflection is MEASURED against (the reflection and S-parameter panels read it), not an element in the circuit',
+}
+
+/** Every parameter of `inst` that names an electrical impedance this engine could use. */
+export function acRelevantParameters(inst: Instance): string[] {
+  return Object.keys(inst.parameters ?? {}).filter(
+    (name) => AC_RELEVANT_PARAMETER.test(name) && !Object.hasOwn(NOT_A_CIRCUIT_IMPEDANCE, name),
+  )
+}
+
+/**
+ * The parameters a STAMPED part's stamp actually reads, beyond the loss slots (which are read too, and are
+ * additionally reported when they are zero or absent). Loss slots are not repeated here — `acValueState`
+ * consults both.
+ */
+const AC_SOLVED_PARAMETERS: Record<string, string[]> = {
+  resistor: ['resistance'],
+  incandescent_bulb: ['resistance'],
+  thermistor: ['resistance'],
+  potentiometer: ['resistance'],
+  photoresistor: ['reference_resistance', 'dark_resistance'],
+  capacitor: ['capacitance'],
+  inductor: ['inductance'],
+  relay: ['coil_resistance'],
+  vccs: ['transconductance'],
+  transmission_line: ['characteristic_impedance'],
+  transformer: ['primary_inductance', 'secondary_inductance', 'coupling_coefficient'],
+  transformer_center_tapped: ['primary_inductance', 'secondary_inductance', 'coupling_coefficient'],
+  diode_varactor: ['junction_capacitance_zero_bias'],
+  transistor_mosfet_nmos: ['transconductance_parameter'],
+  transistor_mosfet_pmos: ['transconductance_parameter'],
+  transistor_jfet_n_channel: ['transconductance'],
+  transistor_jfet_p_channel: ['transconductance'],
+}
+
+/**
+ * What this engine does with one declared electrical value — the whole point being that there are only ever
+ * FOUR answers and three of them are reported on screen:
+ *   'solved'         the stamp reads it; the curves have it in them.
+ *   'perfect'        a loss slot; read when above zero, and named by `partsSolvedAsPerfectReactance` when not.
+ *   'ignored'        the part is in the matrix and this value is not; named by `partsWithAcValueIgnored`.
+ *   'absent'         the whole part is out of the solve; named by `partsDroppedFromAcSolve`.
+ *   'not-an-element' the name matched but it is not a circuit impedance (see NOT_A_CIRCUIT_IMPEDANCE).
+ * and the fifth, 'unclassified', which no shipped part may return — a declared impedance nobody has decided
+ * about is exactly the silent absence this whole mechanism exists to prevent, so the coverage test fails on
+ * it. A hand-written list of parts to check would not have caught the rotating machines; deriving the
+ * question from every part's own declared parameters does.
+ */
+export type AcValueState =
+  | 'solved'
+  | 'perfect'
+  | 'ignored'
+  | 'absent'
+  | 'not-an-element'
+  | 'unclassified'
+
+export function acValueState(definition: string, parameter: string): AcValueState {
+  if (Object.hasOwn(NOT_A_CIRCUIT_IMPEDANCE, parameter)) return 'not-an-element'
+  if (Object.hasOwn(AC_UNSOLVED_DEFINITIONS, definition)) return 'absent'
+  const ignored = Object.hasOwn(AC_IGNORED_VALUES, definition)
+    ? AC_IGNORED_VALUES[definition]
+    : undefined
+  if (ignored?.some((entry) => entry.parameter === parameter)) return 'ignored'
+  if (acLossParameters(definition).includes(parameter)) return 'perfect'
+  const solved = Object.hasOwn(AC_SOLVED_PARAMETERS, definition)
+    ? AC_SOLVED_PARAMETERS[definition]
+    : undefined
+  if (solved?.includes(parameter)) return 'solved'
+  return 'unclassified'
+}
+
 export type AcLossSlot = {
   /** Any ONE of these declared above zero carries this loss; the engine reads them in this order. */
   parameters: string[]
@@ -618,12 +880,41 @@ function solveSystem(world: World, topo: Topology, inputSource: string, omega: n
     const ports = (inst.connects ?? []).map((conn) => idx(conn.net))
     if (ports.length < 2) continue
     const [a, c] = ports as [number, number]
-    if (inst.definition === 'resistor' || inst.definition === 'incandescent_bulb') {
+    if (
+      inst.definition === 'resistor' ||
+      inst.definition === 'incandescent_bulb' ||
+      inst.definition === 'thermistor' ||
+      inst.definition === 'photoresistor'
+    ) {
       // A bulb is linear at its operating point — a small AC signal sees the hot
       // filament resistance (the electro-thermal-adjusted `resistance`); the filament
       // can't thermally track the AC, so it's a plain resistor at that value.
-      const r = readScalarParam(inst, 'resistance')
+      //
+      // A thermistor and a photoresistor are the same case one step out: each is a plain resistance whose
+      // VALUE is set by something slow (the body temperature, the light on the track) that a small AC signal
+      // cannot move, so at signal level each is an ordinary resistor at the value the DC and transient
+      // engines already give it — dc-solver's stampResistor reads exactly these two, the photoresistor's
+      // through the same ldrResistance power law. Left unstamped they were OPENS, so a pot-and-cap tone
+      // control or an LDR-tuned filter plotted a Bode curve with its resistance missing.
+      const r =
+        inst.definition === 'photoresistor'
+          ? ldrResistance(inst)
+          : readScalarParam(inst, 'resistance')
       if (r && r > 0) stampY(a, c, 1 / r, 0)
+    } else if (inst.definition === 'potentiometer') {
+      // The real linear-taper track: two resistances sharing the wiper net, R·p and R·(1−p). The same
+      // segments dc-solver's stampPotentiometer builds, from the same helper, so the two engines cannot
+      // disagree about where the wiper is. An end left unwired simply is not stamped — that is a rheostat,
+      // and it is the one wired segment.
+      const segments = potentiometerSegments(inst)
+      const netOf = (t: string) => inst.connects?.find((conn) => conn.terminal === t)?.net
+      const wiper = netOf('wiper')
+      if (segments !== null && wiper !== undefined) {
+        const endA = netOf('terminal_a')
+        const endB = netOf('terminal_b')
+        if (endA !== undefined) stampY(idx(endA), idx(wiper), 1 / segments.top, 0)
+        if (endB !== undefined) stampY(idx(wiper), idx(endB), 1 / segments.bottom, 0)
+      }
     } else if (inst.definition === 'capacitor') {
       // A real capacitor is its reactance IN SERIES with its loss: Z = ESR − j/(ωC). The loss comes only
       // from what the part declares (esr, or a dissipation_factor); a part declaring neither stays exactly
