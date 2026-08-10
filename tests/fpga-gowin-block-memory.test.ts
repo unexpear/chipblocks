@@ -79,10 +79,32 @@ const ALL_GOWIN = readdirSync(new URL('../fixtures/', import.meta.url))
   .map((file) => file.slice('gowin-gw1n1-'.length, -'.fs'.length))
   .sort()
 
-/** the two files that hold a block memory, and the tiles the memories sit on */
+const cellKey = (ref: { x: number; y: number; cell: number }): string =>
+  `${ref.x}_${ref.y}_${ref.cell}`
+
+/** the files that hold a block memory, and the MAIN tiles the memories sit on */
 const WITH_MEMORY: Record<string, string[]> = {
+  // the memory whose main tile decodes to NOTHING — see `blkselhide` below
+  blkselhide: ['R6C5'],
   bram1k: ['R6C2'],
   bramlogic: ['R6C5', 'R6C14'],
+}
+
+/** whether a memory occupies the tile at `main`, judged the way the reader judges it. */
+function memoryAt(
+  frames: readonly (readonly boolean[])[],
+  main: { row: number; col: number },
+): boolean {
+  const tiles = gowinBlockMemoryTiles(main, (row, col) =>
+    (gowinTileAt(db, row, col)?.bels ?? []).includes(GOWIN_BLOCK_MEMORY_AUXILIARY_BEL),
+  )
+  return tiles.some(({ row, col }) => {
+    const tile = gowinTileAt(db, row, col)
+    const bits = tile === null ? null : extractGowinTileBits(frames, db, row, col)
+    return (
+      tile !== null && bits !== null && decodeGowinBlockMemory(bits, attributes, tile.ttyp).size > 0
+    )
+  })
 }
 
 describe('where a block memory can be, on this device', () => {
@@ -148,11 +170,11 @@ describe('where a block memory can be, on this device', () => {
 })
 
 describe('which files hold one, over the whole corpus', () => {
-  test('only the two designs built around a memory report one, and at the right tiles', () => {
+  test('only the three designs built around a memory report one, and at the right tiles', () => {
     // The negative control that matters: a check that fired on every memory-capable tile would refuse four
     // memories in every design on the device, erasing whatever read those tiles' wires. Twenty-three of the
-    // twenty-five files here contain no memory at all.
-    expect(ALL_GOWIN.length).toBeGreaterThan(20)
+    // twenty-six files here contain no memory at all.
+    expect(ALL_GOWIN.length).toBe(26)
     for (const name of ALL_GOWIN) {
       const frames = parseGowinBitstream(text(`gowin-gw1n1-${name}.fs`)).frames
       const found: string[] = []
@@ -160,13 +182,48 @@ describe('which files hold one, over the whole corpus', () => {
         for (let col = 0; col < db.cols; col++) {
           const tile = gowinTileAt(db, row, col)
           if (tile === null || !tile.bels.includes(GOWIN_BLOCK_MEMORY_BEL)) continue
-          const bits = extractGowinTileBits(frames, db, row, col)
-          if (bits === null) continue
-          if (decodeGowinBlockMemory(bits, attributes, tile.ttyp).size > 0)
-            found.push(`R${row + 1}C${col + 1}`)
+          if (memoryAt(frames, { row, col })) found.push(`R${row + 1}C${col + 1}`)
         }
       expect(found, name).toEqual(WITH_MEMORY[name] ?? [])
     }
+  })
+
+  test('the MAIN tile alone is not enough, and blkselhide is the file that says so', () => {
+    // THE ONE-LINE DIFFERENCE THAT MADE A REAL MEMORY INVISIBLE, driven directly so that narrowing the
+    // detector back to the main tile is a failing test rather than a silent loss.
+    //
+    // `gowin_pack.set_bsram_attrs` writes `CSA_i` only where bit `i` of the `BLK_SEL` parameter is '0', so
+    // `blkselhide`'s `BLK_SEL = 3'b111` writes none of the three — and with them gone its main tile decodes to
+    // nothing whatever. The first auxiliary holds `MODE`, which that same function sets for every memory there
+    // is, and both auxiliaries hold data widths.
+    const frames = parseGowinBitstream(text('gowin-gw1n1-blkselhide.fs')).frames
+    const decodeAt = (row: number, col: number): Map<string, number> => {
+      const tile = gowinTileAt(db, row, col)
+      const bits = tile === null ? null : extractGowinTileBits(frames, db, row, col)
+      return tile === null || bits === null
+        ? new Map()
+        : decodeGowinBlockMemory(bits, attributes, tile.ttyp)
+    }
+    // R6C5 / R6C6 / R6C7 are rows and columns counted from one; the arrays count from zero.
+    expect([...decodeAt(5, 4).keys()]).toEqual([])
+    expect([...decodeAt(5, 5).keys()].sort()).toEqual([
+      'DPB_DATA_WIDTH',
+      'GSR',
+      'MODE',
+      'ROMB_DATA_WIDTH',
+      'SDPB_DATA_WIDTH',
+      'SPB_DATA_WIDTH',
+    ])
+    expect([...decodeAt(5, 6).keys()].sort()).toEqual([
+      'DPA_DATA_WIDTH',
+      'ROMA_DATA_WIDTH',
+      'SDPA_DATA_WIDTH',
+      'SPA_DATA_WIDTH',
+    ])
+    expect(memoryAt(frames, { row: 5, col: 4 })).toBe(true)
+    // and the three memory sites this file does NOT use stay empty, under the same widened test
+    for (const col of [1, 13, 16])
+      expect(memoryAt(frames, { row: 5, col }), `col ${col}`).toBe(false)
   })
 
   test('every design without one refuses nothing as a memory, and none of them is the whole corpus', () => {
@@ -177,7 +234,7 @@ describe('which files hold one, over the whole corpus', () => {
       expect(memories, name).toHaveLength((WITH_MEMORY[name] ?? []).length)
       refusals += memories.length
     }
-    expect(refusals).toBe(3)
+    expect(refusals).toBe(4)
   })
 })
 
@@ -230,10 +287,71 @@ describe('what a refused memory says, and what it takes with it', () => {
       'Q4',
       'Q5',
     ])
+    //
+    // THIS TEST USED TO REQUIRE THE DEFECT. It asserted that four of `bramlogic`'s recovered CHIP INPUTS were
+    // `R6C5_F0`..`F3` — that is, it demanded the memory's data outputs still be offered to the user as
+    // switches the chip does not have. They are not inputs any more; they are pins of the reading parts marked
+    // `unreadable`, which is where both families now have to show up.
     const design = decode('bramlogic')
-    const stranded = [...design.primaryWires.values()]
-    expect(stranded.filter((wire) => wire.startsWith('R6C5_F'))).toHaveLength(4)
-    expect(stranded.filter((wire) => wire.startsWith('R6C14_Q'))).toHaveLength(4)
+    const readWires = new Set<string>()
+    for (const cell of design.netlist.cells)
+      for (const source of cell.inputs) if (source.kind === 'unreadable') readWires.add(source.wire)
+    expect([...readWires].filter((wire) => wire.startsWith('R6C5_F')).sort()).toEqual([
+      'R6C5_F0',
+      'R6C5_F1',
+      'R6C5_F2',
+      'R6C5_F3',
+    ])
+    expect([...readWires].filter((wire) => wire.startsWith('R6C14_Q')).sort()).toEqual([
+      'R6C14_Q0',
+      'R6C14_Q1',
+      'R6C14_Q2',
+      'R6C14_Q3',
+    ])
+    // and not one of them is a chip input any more
+    expect([...design.primaryWires.values()].filter((wire) => /^R6C(5|14)_/.test(wire))).toEqual([])
+  })
+
+  test('a refused memory invents no chip input, and every part that depends on one is marked', () => {
+    // The two halves of the bar, stated together because meeting one without the other is what the last round
+    // did: it added the warnings and removed none of the invented inputs.
+    for (const name of Object.keys(WITH_MEMORY)) {
+      const design = decode(name)
+      const memoryTiles = new Set<string>()
+      for (const entry of design.unsupported) {
+        if (entry.kind !== GOWIN_BLOCK_MEMORY_BEL) continue
+        for (const step of [0, 1, 2])
+          memoryTiles.add(`R${entry.ref.y + 1}C${entry.ref.x + 1 + step}`)
+      }
+      expect(memoryTiles.size, name).toBeGreaterThan(0)
+      for (const wire of design.primaryWires.values())
+        expect(memoryTiles.has(wire.slice(0, wire.lastIndexOf('_'))), `${name}: ${wire}`).toBe(
+          false,
+        )
+
+      const marked = new Set(design.distrusted.map((entry) => cellKey(entry.ref)))
+      const reads = (cell: (typeof design.netlist.cells)[number]) => [
+        ...cell.inputs,
+        ...(cell.carryOperands ?? []),
+        cell.setReset,
+        cell.clockEnable,
+      ]
+      for (const cell of design.netlist.cells) {
+        const key = cellKey(cell.ref)
+        if (reads(cell).some((source) => source?.kind === 'unreadable'))
+          expect(marked.has(key), `${name}: ${key} reads a memory`).toBe(true)
+        for (const source of reads(cell))
+          if (
+            source != null &&
+            (source.kind === 'cell' || source.kind === 'carry') &&
+            marked.has(cellKey(source.driver))
+          )
+            expect(
+              marked.has(key),
+              `${name}: ${key} reads the marked ${cellKey(source.driver)}`,
+            ).toBe(true)
+      }
+    }
   })
 
   test('nothing but the memories is refused in either file, so the logic is untouched', () => {
@@ -242,6 +360,7 @@ describe('what a refused memory says, and what it takes with it', () => {
     // away, it only stops the memory's own outputs being sold as switches.
     expect(decode('bram1k').netlist.cells).toHaveLength(18)
     expect(decode('bramlogic').netlist.cells).toHaveLength(51)
+    expect(decode('blkselhide').netlist.cells).toHaveLength(25)
     for (const name of Object.keys(WITH_MEMORY)) {
       const design = decode(name)
       expect(design.unsupported.map((entry) => entry.kind).sort(), name).toEqual(

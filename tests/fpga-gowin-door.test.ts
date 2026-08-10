@@ -69,6 +69,13 @@ const DESIGNS = [
   'muxzero',
   'muxvcc',
   'muxlatch',
+  // The four the list claimed to include and did not, added so the claim above is true. `blkselhide` is the
+  // one that matters most here: a real block memory whose main tile decodes to nothing, which walked through
+  // this door reporting nothing missing at all.
+  'blkselhide',
+  'longwire',
+  'longwiremux',
+  'passlut',
 ] as const
 
 const openGowin = (name: string, files: readonly ChipDescriptionFile[] = GW1N1) =>
@@ -364,6 +371,27 @@ describe('all three lists of what could not be stood behind now fill', () => {
       // and each of them carries that warning ON the part, not only in the list
       expect(report.markings.size).toBe(readers)
     })
+
+  test('blkselhide: the memory the door could not see is named, and nothing is invented for it', () => {
+    // What the user is shown for the design this whole change is for. Before it, this file walked through the
+    // door with an empty card — nothing missing, nothing untrusted, nothing incomplete — and eight switches on
+    // the canvas that the chip does not have. nextpnr placed the memory at `X4Y5/BSRAM`, which is column 4,
+    // row 5.
+    const { report } = readGowin('blkselhide')
+    expect(report.missing.map((line) => line.part)).toEqual(['the block memory at column 4, row 5'])
+    expect(report.untrusted).toHaveLength(20)
+    // sixteen read it directly and say so; four are further away and say THAT
+    const direct = report.untrusted.filter((line) =>
+      line.reason.includes('a value read out of a block memory'),
+    )
+    const downstream = report.untrusted.filter((line) =>
+      line.reason.includes('worked out from another part that is not to be trusted'),
+    )
+    expect([direct.length, downstream.length]).toEqual([16, 4])
+    expect(report.markings.size).toBe(20)
+    // and the card's own words are true of this file: no switch was offered for the memory's outputs
+    expect(report.scope).toContain('those wires are not offered as switches')
+  })
 
   test('every listed part carries its warning on the canvas, as the card says it does', () => {
     // The card counts the untrusted and incomplete parts and tells the user they are marked with a ⚠. Before

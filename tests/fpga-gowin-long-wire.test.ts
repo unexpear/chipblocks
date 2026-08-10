@@ -26,7 +26,7 @@
  * in this work: those three designs are SIMULATED, on all 256 of their input vectors, against what Icarus
  * Verilog says their own source computes.
  */
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import { parseGowinAttributeDatabase } from '../src/renderer/fpga-apicula-attributes.ts'
 import {
@@ -71,6 +71,12 @@ const decode = (name: string, chipdb = db): GowinDesign =>
     attributes,
     aliases,
   )
+
+/** Every Gowin bitstream committed here — the rules below that need no source file run over all of them. */
+const ALL_GOWIN = readdirSync(new URL('../fixtures/', import.meta.url))
+  .filter((file) => file.startsWith('gowin-gw1n1-') && file.endsWith('.fs'))
+  .map((file) => file.slice('gowin-gw1n1-'.length, -'.fs'.length))
+  .sort()
 
 /** The input ports one source file declares, one entry per bit of a vector. */
 function declaredInputPorts(name: string): string[] {
@@ -327,12 +333,19 @@ describe('every recovered chip input is a port the source design declares', () =
     'longwiremux',
     'passlut',
     // The BLOCK-MEMORY design, and the reason this list could not reach the defect it was written for.
-    // `gowin-gw1n1-bram1k.fs` has been in this repository throughout and violates the rule below on eight
+    // `gowin-gw1n1-bram1k.fs` has been in this repository throughout and violated the rule below on eight
     // wires — but it has no source file beside it, so it could not be listed here and nothing checked it.
     // `bramlogic` is two memories with combinational logic beside them on their own pins, built for this, so
     // both halves are checkable: the memories must be refused and their readers marked, and the logic must
     // still come back right.
     'bramlogic',
+    // The memory the main tile CANNOT SEE. `gowin_pack` writes `CSA_i` only where bit `i` of the `BLK_SEL`
+    // parameter is 0, so `BLK_SEL = 3'b111` writes none of the three — and with them gone this design's main
+    // tile decodes to nothing at all, so a detector reading the main tile alone finds no memory here.
+    // `gowin-gw1n1-blkselhide.v` instantiates the `SP` primitive with exactly that, nextpnr places it (its own
+    // placement is committed beside the bitstream), and before the auxiliary tiles were consulted this whole
+    // design reported `0 refused / 0 incomplete / 0 untrusted` with eight invented switches on it.
+    'blkselhide',
   ] as const
 
   for (const name of WITH_SOURCE)
@@ -344,12 +357,15 @@ describe('every recovered chip input is a port the source design declares', () =
       // its logic does not use. MORE is never legitimate: it is a signal the silicon does not have.
       //
       // COUNTED ON THE INPUTS THAT REACH A PIN, because a design with something refused legitimately has
-      // more. Refusing a part leaves the wire it drove with nothing behind it, and that wire is offered as an
-      // input — an input the reader has SAID is not a signal of the chip, sitting in the middle of the fabric
-      // where no package pin is. `bramlogic` has thirty-nine inputs against twenty-nine declared ports, and
-      // eleven of the thirty-nine are those. The count that means anything is the other twenty-eight.
+      // more. Refusing a LOOKUP TABLE leaves the wire it drove with nothing behind it, and that wire is
+      // offered as an input — an input the reader has SAID is not a signal of the chip, sitting in the middle
+      // of the fabric where no package pin is. `bramlogic` has thirty-one inputs against twenty-nine declared
+      // ports, and three of the thirty-one are those. The count that means anything is the other twenty-eight.
       //
-      // The strict form still holds wherever nothing was refused, which is sixteen of these seventeen
+      // A refused BLOCK MEMORY is no longer among them: its data outputs are not offered as inputs at all, so
+      // `bramlogic` lost eight of the thirty-nine it used to report and `blkselhide` lost eight of thirteen.
+      //
+      // The strict form still holds wherever nothing was refused, which is seventeen of these nineteen
       // designs, so this is not the rule loosened — it is the rule applied to the right set.
       const located = gowinDesignPins(design.primaryWires, pins)
       expect(located.size, `${name}: ports ${ports.join(' ')}`).toBeLessThanOrEqual(ports.length)
@@ -363,58 +379,97 @@ describe('every recovered chip input is a port the source design declares', () =
       // middle of the fabric has not reached a pin, it has run out of routing — which is what both defects
       // looked like, and `dense` used to end that way on 226 tiles.
       //
-      // A design that REFUSES a part is a different case and not a defect: the wires that part drove really
-      // do have nothing behind them, which is why they are offered as inputs, and the reader says so. So the
-      // rule is tied to the report the user is shown — a design claiming nothing is wrong must have nothing
-      // stranded, and a design with something stranded must be saying so.
+      // A design that REFUSES a part is a different case and not always a defect: the wires that part drove
+      // really do have nothing behind them.
+      //
+      // THIS RULE WAS DISARMED AND IS NOW BACK. It used to read "a design with something stranded must have at
+      // least one distrusted part", which any design that refuses anything satisfies with ONE — so a block
+      // memory's eight invented switches rode along unchecked for as long as one other part carried a warning.
+      // Every stranded wire is now named, per design, with what it is; a design not listed here must strand
+      // NOTHING. Two of these nineteen designs strand anything at all, and neither strands a memory output.
+      const STRANDED: Record<string, string[]> = {
+        // a level-sensitive latch and the wide multiplexer above it, both refused — see the test below
+        muxlatch: ['R8C9_OF0', 'R8C9_Q0'],
+        // an erased flip-flop and two power-up-arc wires, all three named in the test below. Its two memories
+        // strand nothing: their data outputs are not offered as inputs at all.
+        bramlogic: ['R5C3_E27', 'R5C5_X07', 'R5C6_Q5'],
+      }
       const design = decode(name)
       const located = gowinDesignPins(design.primaryWires, pins)
       const stranded = [...design.primaryWires.entries()]
         .filter(([net]) => !located.has(net))
         .map(([, wire]) => wire)
-      if (design.unsupported.length === 0) expect(stranded, name).toEqual([])
-      else if (stranded.length > 0) expect(design.distrusted.length, name).toBeGreaterThan(0)
+        .sort()
+      expect(stranded, name).toEqual(STRANDED[name] ?? [])
     })
 
-  test('every part reading a wire a BLOCK MEMORY drives is marked untrustworthy', () => {
-    // The rule the shipped block-memory fixture broke, and the one a count of chip inputs cannot catch.
+  test('NO chip input is ever invented for a block memory, in any file here', () => {
+    // THE RULE THIS WHOLE THING IS FOR, and the one that needs no source file — so it reaches `bram1k`, the
+    // one shipped fixture that violated it and the one `WITH_SOURCE` cannot list.
     //
     // A block memory's tiles hold no lookup tables — `BSRAM` and `BSRAM_AUX` are the only cells their tile
     // types declare — so a recovered chip input whose wire sits on one of them is a memory output and nothing
-    // else. Before this, eight such wires on `bram1k` were offered as switches with nothing anywhere saying
-    // so; the parts reading them looked like ordinary parts with one more input.
+    // else. Eight such wires on `bram1k` and eight on `bramlogic` were offered as switches you could set to
+    // 0 V or 5 V, on tiles with no package pin under any package. There must now be NONE, in any of the
+    // twenty-six bitstreams committed here.
     const memoryTiles = new Set<string>()
     for (let row = 0; row < db.rows; row++)
       for (let col = 0; col < db.cols; col++)
         if ((gowinTileAt(db, row, col)?.bels ?? []).some((bel) => bel.startsWith('BSRAM')))
           memoryTiles.add(`R${row + 1}C${col + 1}`)
-    expect(memoryTiles.size).toBeGreaterThan(0)
+    expect(memoryTiles.size).toBe(18)
 
-    for (const name of WITH_SOURCE) {
+    expect(ALL_GOWIN.length).toBe(26)
+    for (const name of ALL_GOWIN) {
       const design = decode(name)
-      const fromMemory = new Set<number>()
-      for (const [net, wire] of design.primaryWires)
-        if (memoryTiles.has(wire.slice(0, wire.lastIndexOf('_')))) fromMemory.add(net)
-      if (fromMemory.size === 0) continue
-      // the memory itself is refused, and named as a memory
-      expect(
-        design.unsupported.some((entry) => entry.kind === 'BSRAM'),
-        name,
-      ).toBe(true)
+      const onMemoryTile = [...design.primaryWires.values()].filter((wire) =>
+        memoryTiles.has(wire.slice(0, wire.lastIndexOf('_'))),
+      )
+      expect(onMemoryTile, name).toEqual([])
+    }
+  })
+
+  test('every part whose value depends on a block memory is marked — however far away', () => {
+    // The other half, and the one a warning that stops at the direct readers fails. A part reading a part that
+    // reads the memory computes a value decided by something that is not there just as surely.
+    //
+    // Measured by flipping the value every `unreadable` pin carries and re-simulating: on `blkselhide`,
+    // eighteen parts change value. Sixteen read the memory directly; the other two do not, and before the
+    // marking was made to follow the wires they carried no warning at all.
+    for (const name of ALL_GOWIN) {
+      const design = decode(name)
       const marked = new Set(design.distrusted.map((entry) => cellKey(entry.ref)))
+      const byRef = new Map(design.netlist.cells.map((cell) => [cellKey(cell.ref), cell]))
+      const readsUnreadable = (key: string): boolean => {
+        const cell = byRef.get(key)
+        if (cell === undefined) return false
+        return [
+          ...cell.inputs,
+          ...(cell.carryOperands ?? []),
+          cell.setReset,
+          cell.clockEnable,
+        ].some((source) => source?.kind === 'unreadable')
+      }
+      // every direct reader, and then everything that reads a marked part
       for (const cell of design.netlist.cells) {
-        const reads = [
+        const key = cellKey(cell.ref)
+        if (readsUnreadable(key))
+          expect(marked.has(key), `${name}: ${key} reads a memory`).toBe(true)
+        const feeders = [
           ...cell.inputs,
           ...(cell.carryOperands ?? []),
           cell.setReset,
           cell.clockEnable,
         ]
-        if (!reads.some((source) => source?.kind === 'primary' && fromMemory.has(source.net)))
-          continue
-        expect(
-          marked.has(cellKey(cell.ref)),
-          `${name}: ${cellKey(cell.ref)} reads the memory`,
-        ).toBe(true)
+        for (const source of feeders) {
+          if (source == null) continue
+          if (source.kind !== 'cell' && source.kind !== 'carry') continue
+          if (!marked.has(cellKey(source.driver))) continue
+          expect(
+            marked.has(key),
+            `${name}: ${key} reads the marked ${cellKey(source.driver)}`,
+          ).toBe(true)
+        }
       }
     }
   })
@@ -422,14 +477,14 @@ describe('every recovered chip input is a port the source design declares', () =
   test('bramlogic: every wire left with nothing behind it, and what each one is', () => {
     // The exhaustive form of the rule above, so that nothing this design strands is merely tolerated.
     //
-    // Eleven wires end up with nothing driving them and all eleven are accounted for. Eight are the two
-    // memories' data outputs, four each — and the two memories present them on DIFFERENT wires, which is the
-    // whole reason this design holds two. The single-port one at `R6C5` puts its four bits on `F0`..`F3`; the
-    // one written on one port and read on the other, at `R6C14`, puts them on `Q0`..`Q3`. `gowin_unpack`
-    // reading the same file names the first wire of each: `.DO0(R6C5_F0)` and `.DO18(R6C14_Q0)`.
-    //
-    // The other three are NOT a memory and are not fixed here; they are the two omissions this reader already
-    // declares, named so that a change to either becomes a failing test rather than a silent one:
+    // THIS LIST USED TO HOLD ELEVEN WIRES and eight of them were the two memories' data outputs, four each —
+    // `R6C5_F0`..`F3` from the single-port memory and `R6C14_Q0`..`Q3` from the one written on one port and
+    // read on the other, which is the whole reason this design holds two. `gowin_unpack` reading the same file
+    // names the first wire of each: `.DO0(R6C5_F0)` and `.DO18(R6C14_Q0)`. All eight are gone: a wire a
+    // refused memory drives is no longer offered as an input, so the parts reading them get an `unreadable`
+    // pin and no switch. The three that remain are NOT a memory and are not fixed here; they are the two
+    // omissions this reader already declares, named so that a change to either becomes a failing test rather
+    // than a silent one:
     //
     //   R5C6_Q5    a flip-flop whose lookup table has no fuse blown. Reading `0xffff` it is dropped as erased
     //              (`decodeGowinLuts`), which takes its flip-flop with it — `gowin_unpack` reading the same
@@ -443,10 +498,16 @@ describe('every recovered chip input is a port the source design declares', () =
       .filter(([net]) => !located.has(net))
       .map(([, wire]) => wire)
       .sort()
-    expect(stranded).toEqual([
-      'R5C3_E27',
-      'R5C5_X07',
-      'R5C6_Q5',
+    expect(stranded).toEqual(['R5C3_E27', 'R5C5_X07', 'R5C6_Q5'])
+    expect(design.unsupported.map((entry) => entry.kind)).toEqual(['BSRAM', 'BSRAM'])
+    expect(design.distrusted).toHaveLength(12)
+    // and the eight that went are readers of the memories, marked, with no switch anywhere
+    const unreadable = design.netlist.cells.flatMap((cell) =>
+      cell.inputs.filter((source) => source.kind === 'unreadable'),
+    )
+    expect(
+      [...new Set(unreadable.map((source) => (source as { wire: string }).wire))].sort(),
+    ).toEqual([
       'R6C14_Q0',
       'R6C14_Q1',
       'R6C14_Q2',
@@ -456,8 +517,37 @@ describe('every recovered chip input is a port the source design declares', () =
       'R6C5_F2',
       'R6C5_F3',
     ])
-    expect(design.unsupported.map((entry) => entry.kind)).toEqual(['BSRAM', 'BSRAM'])
-    expect(design.distrusted).toHaveLength(12)
+  })
+
+  test('blkselhide: the hidden memory, refused, with nothing invented and everything marked', () => {
+    // The design the whole change is for. `nextpnr-himbaechel` placed an `SP` block memory at `X4Y5/BSRAM`
+    // with `BLK_SEL = 3'b111` — its own placement is committed as `gowin-gw1n1-blkselhide-placement.json` —
+    // and the reader saw nothing there at all: `0 refused / 0 incomplete / 0 untrusted`, with eight of its
+    // thirteen chip inputs sitting on the memory's own tiles.
+    //
+    // `gowin_unpack` IS NOT THE ORACLE HERE, and that is worth stating rather than assuming: it reports a
+    // BSRAM only where the `BSRAM_SP` table decodes non-empty, which is exactly the blind spot this design
+    // exposes, and it finds ZERO memories in this file. nextpnr's placement is the ground truth.
+    const placement = JSON.parse(text('gowin-gw1n1-blkselhide-placement.json')) as {
+      blockMemoryBels: Record<string, { kind: string; blkSel: string }>
+    }
+    expect(Object.keys(placement.blockMemoryBels)).toEqual(['X4Y5/BSRAM'])
+    expect(placement.blockMemoryBels['X4Y5/BSRAM']?.blkSel).toBe('111')
+
+    const design = decode('blkselhide')
+    // X4Y5 is column 4, row 5 — the refusal has to land on that tile and nowhere else
+    expect(
+      design.unsupported.map((entry) => `${entry.kind} ${entry.ref.x},${entry.ref.y}`),
+    ).toEqual(['BSRAM 4,5'])
+    const located = gowinDesignPins(design.primaryWires, pins)
+    expect(design.primaryWires.size).toBe(5)
+    expect(located.size).toBe(5)
+    // the logic beside the memory is untouched: its twenty-five parts are all still here
+    expect(design.netlist.cells).toHaveLength(25)
+    expect(design.distrusted).toHaveLength(20)
+    expect(new Set(design.distrusted.map((entry) => entry.kind))).toEqual(
+      new Set(['unreadable-input', 'depends-on-untrusted']),
+    )
   })
 
   test('muxlatch strands an input, and it is the refusal that does it', () => {
@@ -668,6 +758,67 @@ describe('refusing a block memory leaves the logic beside it intact', () => {
       new Set(['y', 'z'].map((output) => [...(agreement.get(output) as Set<string>)][0])).size,
     ).toBe(2)
   })
+
+  test('blkselhide: the same, for the memory the main tile cannot see', () => {
+    // The same proof for the design whose memory is hidden by `BLK_SEL = 3'b111`. It carries the same two
+    // combinational outputs beside the memory — `y = (a & b) | ~c` and `z = a ^ b ^ c` — and they must still
+    // come back right now that the memory is found and refused, on all eight settings of their three inputs.
+    // Golden values from Icarus Verilog on `gowin-gw1n1-blkselhide.v` with the Gowin cell models, driven by
+    // `gowin-gw1n1-blkselhide-tb.v`.
+    const hidden = decode('blkselhide')
+    const goldenHidden = JSON.parse(text('gowin-gw1n1-blkselhide-vectors.json')) as Record<
+      string,
+      number[]
+    >
+    const constraints = pinConstraints('blkselhide')
+    const bitOf = new Map<number, number>()
+    for (const [net, entry] of gowinDesignPins(hidden.primaryWires, pins)) {
+      const ports = new Set(
+        entry.candidates.map((pin) => constraints.get(pin)).filter((port) => port !== undefined),
+      )
+      if (ports.size !== 1) continue
+      const bit = 'abc'.indexOf([...ports][0] as string)
+      if (bit >= 0) bitOf.set(net, bit)
+    }
+    expect([...bitOf.values()].sort()).toEqual([0, 1, 2])
+
+    const marked = new Set(hidden.distrusted.map((entry) => cellKey(entry.ref)))
+    const trusted = hidden.netlist.cells.filter((cell) => !marked.has(cellKey(cell.ref)))
+    expect(trusted).toHaveLength(5)
+
+    const agreement = new Map<string, Set<string>>()
+    for (const output of ['y', 'z']) {
+      expect(goldenHidden[output]).toHaveLength(8)
+      agreement.set(output, new Set())
+    }
+    const run = (sink: string, rest: boolean): number[] =>
+      Array.from({ length: 8 }, (_, vector) => {
+        const primary = new Map<number, boolean>()
+        for (const net of hidden.primaryWires.keys())
+          primary.set(
+            net,
+            bitOf.has(net) ? ((vector >> (bitOf.get(net) as number)) & 1) === 1 : rest,
+          )
+        return simulateCombinational(hidden.netlist, primary).outputs.get(sink) === true ? 1 : 0
+      })
+    for (const cell of trusted) {
+      const sink = cellKey(cell.ref)
+      const low = run(sink, false)
+      const high = run(sink, true)
+      if (!low.every((bit, vector) => bit === high[vector])) continue
+      for (const output of ['y', 'z'])
+        if (low.every((bit, vector) => bit === (goldenHidden[output] as number[])[vector]))
+          (agreement.get(output) as Set<string>).add(sink)
+    }
+    for (const output of ['y', 'z'])
+      expect(
+        [...(agreement.get(output) as Set<string>)],
+        `blkselhide.${output}: no recovered part reproduces it`,
+      ).toHaveLength(1)
+    expect(
+      new Set(['y', 'z'].map((output) => [...(agreement.get(output) as Set<string>)][0])).size,
+    ).toBe(2)
+  })
 })
 
 describe('a long wire whose driver cannot be named is SAID, not invented', () => {
@@ -702,7 +853,16 @@ describe('a long wire whose driver cannot be named is SAID, not invented', () =>
       const reader = design.distrusted.find((entry) => entry.reason.includes(wire))
       expect(reader, `${wire} is offered as a chip input with nothing said about it`).toBeDefined()
     }
-    for (const entry of design.distrusted) expect(entry.kind).toBe('invented-input')
+    // 48 parts read one of those wires directly. The other 17 read one of the 48 — and until the marking was
+    // made to follow the wires they carried no warning at all, which is the same "one level deep" failure the
+    // block memory had. 65 of 65 parts are now marked, which is right: every part of this design is downstream
+    // of a wire whose driver could not be named.
+    const kinds = design.distrusted.reduce<Record<string, number>>((counts, entry) => {
+      counts[entry.kind] = (counts[entry.kind] ?? 0) + 1
+      return counts
+    }, {})
+    expect(kinds).toEqual({ 'invented-input': 48, 'depends-on-untrusted': 17 })
+    expect(design.distrusted).toHaveLength(design.netlist.cells.length)
     expect(design.distrusted.some((entry) => entry.reason.includes('long wire'))).toBe(true)
   })
 })

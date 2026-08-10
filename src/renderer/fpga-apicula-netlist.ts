@@ -408,6 +408,9 @@ export const GOWIN_WIDE_MUX_TRUTH: readonly boolean[] = Array.from({ length: 16 
 /** A tile position as a map key — the tree crosses tiles, so a tile has to be nameable. */
 const tileKey = (row: number, col: number): string => `${row},${col}`
 
+/** One recovered cell as a map key — the distrust walk has to ask whether it has already reached a cell. */
+const cellKey = (ref: CellRef): string => `${ref.x},${ref.y},${ref.cell}`
+
 /**
  * What a wide multiplexer finds when it looks for one of the two lookup tables it picks between.
  *
@@ -1035,13 +1038,15 @@ export function reconstructGowinNetlist(
   // tiles' local names can reconcile to one global wire.
   const defaultArcCandidates: { row: number; col: number; destination: string; source: string }[] =
     []
-  // The BLOCK MEMORIES this file programs, by the main tile each occupies.
+  // The tiles of a BLOCK MEMORY this file programs — main tiles and auxiliary tiles alike, kept apart and
+  // joined below.
   //
   // A memory leaves its settings in the same attribute tables everything else does, so recognising one costs
   // nothing beyond reading them — and it is the only thing that stands between a block-memory design and a
   // report saying nothing is wrong with it. Gathered here rather than in the lookup-table pass below because
   // that pass skips a tile with no lookup tables in it, which is every tile a memory sits in.
-  const blockMemoryMains: { row: number; col: number }[] = []
+  const blockMemoryCandidates: { row: number; col: number }[] = []
+  const blockMemoryProgrammed = new Set<string>()
   const cellOutputArcs = gowinDefaultCellOutputArcs(pipdb)
   for (let row = 0; row < db.rows; row++)
     for (let col = 0; col < db.cols; col++) {
@@ -1049,11 +1054,13 @@ export function reconstructGowinNetlist(
       if (tile === null) continue
       const bits = extractGowinTileBits(frames, db, row, col)
       if (bits === null) continue
+      if (tile.bels.includes(GOWIN_BLOCK_MEMORY_BEL)) blockMemoryCandidates.push({ row, col })
       if (
-        tile.bels.includes(GOWIN_BLOCK_MEMORY_BEL) &&
+        (tile.bels.includes(GOWIN_BLOCK_MEMORY_BEL) ||
+          tile.bels.includes(GOWIN_BLOCK_MEMORY_AUXILIARY_BEL)) &&
         decodeGowinBlockMemory(bits, attributes, tile.ttyp).size > 0
       )
-        blockMemoryMains.push({ row, col })
+        blockMemoryProgrammed.add(tileKey(row, col))
       const routing = decodeGowinRouting(bits, pipdb, tile.ttyp)
       tileRouting.set(tileKey(row, col), routing)
       for (const arc of cellOutputArcs.get(tile.ttyp) ?? []) {
@@ -1312,19 +1319,43 @@ export function reconstructGowinNetlist(
       place: `the long wire ${wire}`,
       reason: `a signal carried across the chip on a long wire, and ${why}`,
     })
-  // A BLOCK MEMORY's data outputs, which no cell of this netlist drives and none ever will.
+  // The BLOCK MEMORIES this file programs, and the data outputs of each.
   //
-  // Without this the trace walks into one, finds nothing behind it, and mints a chip input: on
-  // `fixtures/gowin-gw1n1-bram1k.fs` that was eight of the twelve inputs it reported, offered on the canvas as
-  // switches, on tiles that carry no package pin — and the whole design read as clean. The memory's tiles hold
-  // no lookup tables of any kind (`BSRAM` and `BSRAM_AUX` are the only cells their tile types declare), so
-  // every one of these wires is a memory output and nothing else, and claiming them takes no real part away.
-  const blockMemories = blockMemoryMains.map((main) => ({
-    ref: gowinBlockMemoryRef(main.col, main.row),
-    tiles: gowinBlockMemoryTiles(main, (row, col) =>
-      (gowinTileAt(db, row, col)?.bels ?? []).includes(GOWIN_BLOCK_MEMORY_AUXILIARY_BEL),
-    ),
-  }))
+  // A memory's tiles hold no lookup tables of any kind (`BSRAM` and `BSRAM_AUX` are the only cells their tile
+  // types declare), so every one of those wires is a memory output and nothing else, and claiming them takes no
+  // real part away.
+  //
+  // A memory is here when ANY of its three tiles carries a setting, not when its main tile does.
+  //
+  // Reading the main tile alone made a real memory INVISIBLE, and the evidence was in the file the whole time.
+  // `gowin_pack` hands the same attribute set to all three tiles and each keeps the subset its own tile type
+  // has bits for, so `MODE = ENABLE` — which `set_bsram_attrs` sets for every memory there is — lands in the
+  // FIRST AUXILIARY on all three block-memory bitstreams here and on the main tile of none of them. And the
+  // main tile's own share can come to nothing: `gowin_pack` writes a `CSA_i` only where bit `i` of the
+  // `BLK_SEL` parameter is 0, so `BLK_SEL = 3'b111` writes none of the three.
+  //
+  // MEASURED on a bitstream built for exactly that — `fixtures/gowin-gw1n1-blkselhide.fs`, an `SP` primitive
+  // with `BLK_SEL = 3'b111` which nextpnr places at `X4Y5/BSRAM`, its placement committed beside it. Main tile
+  // `R6C5` decodes to NOTHING AT ALL; `R6C6` to `MODE`, `GSR` and four data widths; `R6C7` to four more data
+  // widths. Before this the whole design read as `0 refused / 0 incomplete / 0 untrusted`, with eight of its
+  // thirteen chip inputs standing on the memory's own tiles.
+  const blockMemories = blockMemoryCandidates
+    .map((main) => ({
+      ref: gowinBlockMemoryRef(main.col, main.row),
+      tiles: gowinBlockMemoryTiles(main, (row, col) =>
+        (gowinTileAt(db, row, col)?.bels ?? []).includes(GOWIN_BLOCK_MEMORY_AUXILIARY_BEL),
+      ),
+    }))
+    .filter((memory) =>
+      memory.tiles.some((tile) => blockMemoryProgrammed.has(tileKey(tile.row, tile.col))),
+    )
+  // A block memory's data outputs are the one thing this reader refuses that must NOT become a chip input.
+  //
+  // Every other refusal leaves a wire whose driver is gone, and the trace mints a named primary there — honest,
+  // because the user can at least drive it. For a memory that is a switch on a tile with no package pin
+  // anywhere near it, one per data bit, and the design reads as an ordinary one with eight more inputs on it.
+  // These wires are handed to `traceInput`, which stops on them and returns an `unreadable` source instead.
+  const memoryOutputs = new Map<string, { key: string; place: string; reason: string }>()
   for (const memory of blockMemories) {
     const dropped = {
       key: `${memory.ref.x},${memory.ref.y},${memory.ref.cell}`,
@@ -1333,7 +1364,7 @@ export function reconstructGowinNetlist(
     }
     for (const tile of memory.tiles)
       for (const wire of GOWIN_BLOCK_MEMORY_OUTPUTS)
-        droppedOutputs.set(globalWire(tile.row + 1, tile.col + 1, wire), dropped)
+        memoryOutputs.set(globalWire(tile.row + 1, tile.col + 1, wire), dropped)
   }
   for (const lut of placed) {
     const { ref, row, col, index } = lut
@@ -1542,7 +1573,15 @@ export function reconstructGowinNetlist(
     for (let pin = 0; pin < 4; pin++) {
       const start = globalWire(cell.row + 1, cell.col + 1, `${LUT_PINS[pin]}${index}`)
       resolved.push(
-        traceInput(start, drivers, defaultDrivers, cellByOutput, primaryNets, primaryWires),
+        traceInput(
+          start,
+          drivers,
+          defaultDrivers,
+          cellByOutput,
+          primaryNets,
+          primaryWires,
+          memoryOutputs,
+        ),
       )
     }
     // A pin the truth table ignores is not an input to this design, whatever the fabric happens to route there.
@@ -1563,7 +1602,15 @@ export function reconstructGowinNetlist(
     const shared = (name: string): InputSource | null => {
       const wire = globalWire(cell.row + 1, cell.col + 1, name)
       if (!drivers.has(wire)) return null
-      return traceInput(wire, drivers, defaultDrivers, cellByOutput, primaryNets, primaryWires)
+      return traceInput(
+        wire,
+        drivers,
+        defaultDrivers,
+        cellByOutput,
+        primaryNets,
+        primaryWires,
+        memoryOutputs,
+      )
     }
     // For a cell shown as two these belong to the STORED half, which is the only one of the two that clocks.
     const holdsRegister = cell.registered || cell.stored !== null
@@ -1663,7 +1710,15 @@ export function reconstructGowinNetlist(
         mux.inputs[0],
         mux.inputs[1],
         drivers.has(select)
-          ? traceInput(select, drivers, defaultDrivers, cellByOutput, primaryNets, primaryWires)
+          ? traceInput(
+              select,
+              drivers,
+              defaultDrivers,
+              cellByOutput,
+              primaryNets,
+              primaryWires,
+              memoryOutputs,
+            )
           : { kind: 'const', value: true },
         { kind: 'unused' },
       ],
@@ -1692,26 +1747,85 @@ export function reconstructGowinNetlist(
   // a chip input. The result reads like an ordinary design with one more switch on it. Measured on a bitstream
   // built for this: the one cell that was RIGHT carried a warning and the two that were WRONG carried none.
   const distrusted: { ref: CellRef; kind: string; reason: string }[] = []
+  const sourcesOf = (cell: RecoveredCell): (InputSource | null | undefined)[] => [
+    ...cell.inputs,
+    ...(cell.carryOperands ?? []),
+    cell.setReset,
+    cell.clockEnable,
+  ]
   for (const cell of recovered) {
     const lost = new Map<string, { key: string; place: string; reason: string }>()
-    for (const source of [
-      ...cell.inputs,
-      ...(cell.carryOperands ?? []),
-      cell.setReset,
-      cell.clockEnable,
-    ])
-      if (source != null && source.kind === 'primary') {
+    const unreadable = new Map<string, { key: string; place: string; reason: string }>()
+    for (const source of sourcesOf(cell)) {
+      if (source == null) continue
+      if (source.kind === 'primary') {
         const wire = primaryWires.get(source.net)
         const dropped = wire === undefined ? undefined : droppedOutputs.get(wire)
         if (dropped !== undefined) lost.set(dropped.key, dropped)
       }
-    if (lost.size === 0) continue
-    const places = [...lost.values()].map(({ place, reason }) => `${reason} (${place})`)
+      if (source.kind === 'unreadable') {
+        const memory = memoryOutputs.get(source.wire)
+        if (memory !== undefined) unreadable.set(memory.key, memory)
+      }
+    }
+    if (lost.size > 0) {
+      const places = [...lost.values()].map(({ place, reason }) => `${reason} (${place})`)
+      distrusted.push({
+        ref: cell.ref,
+        kind: 'invented-input',
+        reason: `${lost.size === 1 ? 'one of this part’s inputs is' : `${lost.size} of this part’s inputs are`} offered on the canvas as a switch you can set to 0 V or 5 V, and the real chip has no such switch: on the chip ${lost.size === 1 ? 'it carries' : 'they carry'} ${places.join(', and ')}`,
+      })
+    }
+    if (unreadable.size === 0) continue
+    // A pin fed by a refused block memory. Said separately from the invented-input warning above because the
+    // two are different situations for the person reading them: this one has NO switch on the canvas, so there
+    // is nothing they can do to explore it, and the pin simply reads 0 V whatever the memory really holds.
+    const places = [...unreadable.values()].map(({ place, reason }) => `${reason} (${place})`)
     distrusted.push({
       ref: cell.ref,
-      kind: 'invented-input',
-      reason: `${lost.size === 1 ? 'one of this part’s inputs is' : `${lost.size} of this part’s inputs are`} offered on the canvas as a switch you can set to 0 V or 5 V, and the real chip has no such switch: on the chip ${lost.size === 1 ? 'it carries' : 'they carry'} ${places.join(', and ')}`,
+      kind: 'unreadable-input',
+      reason: `${unreadable.size === 1 ? 'one of this part’s inputs is' : `${unreadable.size} of this part’s inputs are`} ${places.join(', and ')}. There is no switch for ${unreadable.size === 1 ? 'it' : 'them'} on the canvas, because the real chip has none either: ${unreadable.size === 1 ? 'it reads' : 'they read'} 0 V here whatever the memory really holds, so what this part computes is not what the chip computes`,
     })
+  }
+
+  // And then EVERYTHING DOWNSTREAM of one of those parts.
+  //
+  // Distrust used to stop at the parts that read the missing thing directly, and a warning one level deep is
+  // not a warning about the design. Measured before this walk existed, by flipping every fabricated switch of a
+  // BLK_SEL=111 design and re-simulating: 41 parts changed value and carried NO warning, because they were
+  // reading the direct readers rather than the memory. Their values were decided by a value that does not
+  // exist, with nothing saying so. (`bram1k` recovers 18 cells in total, so it could never show a 32/16 split —
+  // an earlier draft of this comment attributed another design's numbers to it.)
+  //
+  // A REGISTER is included rather than treated as a boundary. It stores what its inputs said, so a flip-flop
+  // fed by a refused memory holds an invented value one cycle later just as surely as a gate carries it
+  // immediately.
+  const distrustedKeys = new Set(distrusted.map((entry) => cellKey(entry.ref)))
+  const readers = new Map<string, RecoveredCell[]>()
+  for (const cell of recovered)
+    for (const source of sourcesOf(cell)) {
+      if (source == null) continue
+      if (source.kind !== 'cell' && source.kind !== 'carry') continue
+      const key = cellKey(source.driver)
+      const existing = readers.get(key)
+      if (existing === undefined) readers.set(key, [cell])
+      else existing.push(cell)
+    }
+  const queue = [...distrustedKeys]
+  while (queue.length > 0) {
+    const from = queue.pop() as string
+    for (const cell of readers.get(from) ?? []) {
+      const key = cellKey(cell.ref)
+      if (distrustedKeys.has(key)) continue
+      distrustedKeys.add(key)
+      queue.push(key)
+      distrusted.push({
+        ref: cell.ref,
+        kind: 'depends-on-untrusted',
+        reason:
+          'this part’s value is worked out from another part that is not to be trusted — follow its inputs back and one of them comes from something this reader could not read, such as a block memory. What this part shows follows correctly from a value the chip does not have',
+      })
+    }
   }
 
   // The SAME arrays, also on the netlist — not copies, so they cannot drift apart. `unsupported` and `partial`
@@ -1755,6 +1869,10 @@ function traceInput(
   cellByOutput: ReadonlyMap<string, CellRef>,
   primaryNets: Map<string, number>,
   primaryWires: Map<number, string>,
+  // Wires a REFUSED block memory drives. Ending on one is not the same as running out of routing: the chip has
+  // no way at all to drive this wire from outside, so a primary here is a switch on the canvas that the silicon
+  // does not have — eight of them on a one-memory design.
+  memoryWires: ReadonlyMap<string, unknown>,
 ): InputSource {
   // A pin tied to a rail is a constant, not an input. Reported as a primary it would read zero, silently
   // changing what the cell computes: an adder cell whose C and D pins are tied high computes A^B, and A if
@@ -1774,6 +1892,7 @@ function traceInput(
     if (next === 'VSS') return { kind: 'const', value: false }
     wire = next
   }
+  if (memoryWires.has(wire)) return { kind: 'unreadable', wire }
   let net = primaryNets.get(wire)
   if (net === undefined) {
     net = primaryNets.size + 1

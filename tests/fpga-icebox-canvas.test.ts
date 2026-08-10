@@ -14,6 +14,7 @@ import { lowerNetlistToCanvas } from '../src/renderer/fpga-icebox-canvas.ts'
 import { type Ice40ChipDb, loadIce40Bitstream } from '../src/renderer/fpga-icebox-load.ts'
 import { parseLogicTileBits } from '../src/renderer/fpga-icebox-logic.ts'
 import {
+  type InputSource,
   type RecoveredCell,
   type RecoveredNetlist,
   simulateClocked,
@@ -381,5 +382,113 @@ describe('a minterm satisfied by ABSENCE is still a minterm', () => {
       ],
     })
     expect(canvas.nodes.filter((n) => n.id.endsWith('_one_src'))).toHaveLength(0)
+  })
+})
+
+describe('a pin driven by something the decoder REFUSED gets no switch, and reads 0 V', () => {
+  /**
+   * The `unreadable` source kind, on the canvas and in the three simulators — pinned because mutating either
+   * end of it left the whole FPGA suite green.
+   *
+   * A block memory's data output is not a signal that enters the chip, so it must not become a power source:
+   * a power source is a switch the user can throw, and the silicon has no such switch. It has to carry SOME
+   * level for the design to run, and that level is LOW in every reader — the canvas and the two simulators
+   * must agree, or the same netlist gives two answers depending on who runs it.
+   */
+  const buffered = (source: InputSource): RecoveredNetlist => ({
+    cells: [
+      {
+        ref: { x: 7, y: 8, cell: 0 },
+        config: {
+          truth: Array.from({ length: 16 }, (_, entry) => (entry & 1) === 1), // passes pin 0
+          carryEnable: false,
+          dffEnable: false,
+          setNoReset: false,
+          asyncSetReset: false,
+        },
+        inputs: [source, { kind: 'unused' }, { kind: 'unused' }, { kind: 'unused' }],
+      },
+    ],
+  })
+  const unreadable: InputSource = { kind: 'unreadable', wire: 'R6C5_F0' }
+
+  test('all three readers of a source agree that it is LOW', () => {
+    // Three separate readers enumerate `InputSource` by hand, and a kind reaching only some of them is a
+    // defect this codebase has already shipped once: a supply-tied pin read true combinationally and false
+    // when clocked. `simulateCombinational` covers one reader; `simulateClocked` covers the other two, which
+    // is why the clocked run is made from a design that really has a register in it.
+    expect(simulateCombinational(buffered(unreadable), new Map()).outputs.get('7_8_0')).toBe(false)
+    // the same table with the pin tied HIGH reads true, so the assertion above is about the pin and not
+    // about a table that ignores it
+    expect(
+      simulateCombinational(buffered({ kind: 'const', value: true }), new Map()).outputs.get(
+        '7_8_0',
+      ),
+    ).toBe(true)
+
+    const clocked: RecoveredNetlist = {
+      cells: [
+        ...buffered(unreadable).cells,
+        {
+          ref: { x: 7, y: 8, cell: 1 },
+          config: {
+            truth: Array.from({ length: 16 }, (_, entry) => (entry & 1) === 1),
+            carryEnable: false,
+            dffEnable: true,
+            setNoReset: false,
+            asyncSetReset: false,
+          },
+          inputs: [unreadable, { kind: 'unused' }, { kind: 'unused' }, { kind: 'unused' }],
+        },
+      ],
+    }
+    const run = simulateClocked(clocked, new Map(), 3)
+    for (let cycle = 0; cycle < 3; cycle++) {
+      expect((run.trace[cycle] as Map<string, boolean>).get('7_8_0'), `cycle ${cycle}`).toBe(false)
+      expect((run.trace[cycle] as Map<string, boolean>).get('7_8_1'), `cycle ${cycle}`).toBe(false)
+    }
+  })
+
+  test('the canvas builds no power source for it, and the gates read the same LOW', () => {
+    // A `primary` in the same place DOES build one — that contrast is the whole point of the kind.
+    const canvas = lowerNetlistToCanvas(buffered(unreadable))
+    expect(canvas.inputNodes.size).toBe(0)
+    expect(lowerNetlistToCanvas(buffered({ kind: 'primary', net: 3 })).inputNodes.size).toBe(1)
+
+    // and what it lowers to computes false, not true: the cell passes its pin 0, so a HIGH tie would invert
+    // the answer the simulators give for the same netlist
+    const result = simulateLogic(canvas.nodes, canvas.edges)
+    expect(result.settled).toBe(true)
+    expect(result.value(canvas.cellOutputs.get('7_8_0') as string, 'out')).toBe(false)
+  })
+
+  test('the lowering adds no caveat of its own — the decoder already said it, and said it better', () => {
+    // A pin the lowering finds NO source for is reported as "no driver that could be followed". An
+    // `unreadable` pin has a source, a known level and a decoder warning that names the memory it came from
+    // and reaches every part downstream. Letting it fall through to the no-source path would put a second,
+    // vaguer sentence on the same part and say nothing the first did not.
+    //
+    // A table needing the pin LOW is what reaches that path at all: one needing it HIGH makes the product
+    // impossible and is dropped before any caveat is considered.
+    const readsLow: RecoveredNetlist = {
+      cells: [
+        {
+          ref: { x: 7, y: 9, cell: 0 },
+          config: {
+            truth: Array.from({ length: 16 }, (_, entry) => (entry & 1) === 0), // inverts pin 0
+            carryEnable: false,
+            dffEnable: false,
+            setNoReset: false,
+            asyncSetReset: false,
+          },
+          inputs: [unreadable, { kind: 'unused' }, { kind: 'unused' }, { kind: 'unused' }],
+        },
+      ],
+    }
+    const canvas = lowerNetlistToCanvas(readsLow)
+    expect(canvas.unfaithful ?? []).toEqual([])
+    expect(simulateCombinational(readsLow, new Map()).outputs.get('7_9_0')).toBe(true)
+    const result = simulateLogic(canvas.nodes, canvas.edges)
+    expect(result.value(canvas.cellOutputs.get('7_9_0') as string, 'out')).toBe(true)
   })
 })

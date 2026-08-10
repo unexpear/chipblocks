@@ -46,6 +46,17 @@ function unusedPin(_source: Extract<InputSource, { kind: 'unused' }>): boolean {
   return false
 }
 
+/**
+ * The value of a pin whose driver this reader REFUSED — one place, so all three readers agree.
+ *
+ * There is no right answer to return: the point of the refusal is that what the silicon puts on this wire is not
+ * known. `false` is a value picked so the rest of the design can be run at all, and every cell that reads one is
+ * marked untrustworthy (transitively) so the picked value is never presented as the chip's.
+ */
+function unreadablePin(_source: Extract<InputSource, { kind: 'unreadable' }>): boolean {
+  return false
+}
+
 /** What drives one input pin of a recovered cell. `net` is the SOURCE net (the driver cell's output net for a
  *  cell source, or the external wire the trace dead-ended at for a primary) — so a signal that fans out to
  *  several pins carries the same `net` at every consumer. */
@@ -55,6 +66,20 @@ export type InputSource =
   | { kind: 'primary'; net: number } // an external input the LUT uses, driven from outside the design
   | { kind: 'const'; value: boolean } // a pin at a fixed level: tied to a supply rail (Gowin), or an iCE40 pin
   //                                     the bitstream never routed, which reads LOW on silicon
+  /**
+   * A pin driven, on the silicon, by something this reader REFUSED — a block memory's data output.
+   *
+   * It is not a `primary`, and the difference is the whole point of the kind existing. A primary is offered on
+   * the canvas as a switch the user can set to 0 V or 5 V, and for a signal that really enters the chip through
+   * a pin that is right. For a block memory's data output there is no such switch anywhere on the silicon, and
+   * minting one made a real memory read as an ordinary design with eight more inputs on it.
+   *
+   * It has to evaluate to SOMETHING for the design to run at all, and that is `false` in every reader here. That
+   * is not a claim about what the memory holds: every cell reading one of these is on the netlist's `unfaithful`
+   * list, transitively, so nothing downstream of it is presented as trustworthy. `wire` is the chip wire the
+   * trace stopped at, kept so the warning can name where the value should have come from.
+   */
+  | { kind: 'unreadable'; wire: string }
   | { kind: 'unused' } // this LUT does not depend on the pin (a don't-care), or the pin has no wire
 
 /** Whether a 16-entry LUT truth table actually depends on input `pin` (some index pair differing only in that
@@ -288,6 +313,7 @@ export function simulateCombinational(
       return driver === undefined ? false : coutOf(driver, stack)
     }
     if (source.kind === 'primary') return primary.get(source.net) ?? false
+    if (source.kind === 'unreadable') return unreadablePin(source)
     return unusedPin(source)
   }
 
@@ -617,6 +643,7 @@ function readSource(
   if (source.kind === 'carry') return carryOut.get(cellKey(source.driver)) ?? false
   if (source.kind === 'primary') return inputs.get(source.net) ?? false
   if (source.kind === 'const') return source.value
+  if (source.kind === 'unreadable') return unreadablePin(source)
   return unusedPin(source)
 }
 
@@ -639,5 +666,6 @@ function readViaEval(
   }
   if (source.kind === 'primary') return inputs.get(source.net) ?? false
   if (source.kind === 'const') return source.value
+  if (source.kind === 'unreadable') return unreadablePin(source)
   return unusedPin(source)
 }

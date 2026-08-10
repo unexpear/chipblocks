@@ -435,6 +435,12 @@ export function lowerNetlistToCanvas(netlist: RecoveredNetlist): LoweredCanvas {
       if (source.kind === 'primary') return inputNodes.get(source.net) ?? null
       if (source.kind === 'cell') return cellOutputs.get(cellKey(source.driver)) ?? null
       if (source.kind === 'const') return constNode(source.value)
+      // Driven on the silicon by something the decoder refused — a block memory's data output. It is tied LOW
+      // here for the one reason it reads low in the simulators: a value has to be picked to build a gate at
+      // all. Deliberately NOT a power source: a source is a switch on the canvas, and the whole point of this
+      // kind is that the chip has no such switch. The cell is on the decoder's `unfaithful` list, and so is
+      // everything downstream of it, which is where the warning comes from.
+      if (source.kind === 'unreadable') return constNode(false)
       return null // carry (reported above) or unused
     }
 

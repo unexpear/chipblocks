@@ -398,7 +398,12 @@ describe('a design without wide multiplexers is untouched', () => {
       // reported nothing refused, nothing incomplete and nothing untrustworthy. The memory is now refused (1)
       // and all sixteen parts reading it are marked (16). The cell count is unchanged: refusing the memory
       // takes no lookup table away.
-      bram1k: [18, 1, 0, 16, 12],
+      //
+      // IT THEN READ `[18, 1, 0, 16, 12]`, WHICH KEPT THE TWELVE. The refusal said the memory was missing and
+      // left its eight data outputs standing there as switches all the same. They are gone now: a wire a
+      // refused memory drives is not offered as an input at all, so twelve becomes FOUR. Nothing else on the
+      // row moves — the same eighteen parts, the same one refusal, the same sixteen marked.
+      bram1k: [18, 1, 0, 16, 4],
       dense: [729, 0, 0, 0, 5],
       ffvariants: [3, 0, 0, 0, 3],
       mixedreg: [4, 2, 0, 0, 2],
